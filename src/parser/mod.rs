@@ -3442,7 +3442,9 @@ pub(crate) fn find_written_vars(
             // OpCopyRecord(src, dst, type) writes through `dst` (arg[1]).
             // Used by struct field whole-replacement (`s.i = fresh`) where the
             // destination is `OpGetField(s, …)`.
-            let second_arg_write = def.name() == "OpCopyRecord";
+            // OpRemove(state_var, data, on, tp) — a walk's `x#remove` — removes from the walked
+            // collection `data` (arg[1]), as OpCopyRecord writes its destination.
+            let second_arg_write = matches!(def.name(), "OpCopyRecord" | "OpRemove");
             for (i, arg) in args.iter().enumerate() {
                 if i < attrs.len()
                     && matches!(attrs[i].typedef, Type::RefVar(_))
@@ -3638,7 +3640,9 @@ pub(crate) fn find_field_written_vars(
                 // (a `__retbuf = call(…)` Set, or the BlockTail path's `OpClearVector`), so
                 // the omission is masked INCIDENTALLY rather than by design.
                 || def.name() == "OpReplaceVector";
-            let second_arg_write = def.name() == "OpCopyRecord";
+            // OpRemove(state_var, data, on, tp) — a walk's `x#remove` — removes from the walked
+            // collection `data` (arg[1]), as OpCopyRecord writes its destination.
+            let second_arg_write = matches!(def.name(), "OpCopyRecord" | "OpRemove");
             for (i, arg) in args.iter().enumerate() {
                 if i == 0 && first_arg_write {
                     collect_vars_in(arg, written);

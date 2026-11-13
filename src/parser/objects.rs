@@ -5276,8 +5276,9 @@ impl Parser {
                     return in_type;
                 }
                 // rev() wrapping a bare collection (not a range subscript).
+                // `@FR-B-Ref-Uniform`: a `&` collection parameter reverses as the collection.
                 if matches!(
-                    in_type,
+                    in_type.peel_link(),
                     Type::Sorted(_, _, _) | Type::Index(_, _, _) | Type::Vector(_, _)
                 ) {
                     // reverse_iterator stays set; consumed and reset by iterator()

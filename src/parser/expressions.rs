@@ -1943,10 +1943,12 @@ impl Parser {
 
     /// Check for iteration-safety violation on `+=` to collections; emit diagnostics.
     pub(crate) fn check_iter_safety(&mut self, to: &Value, f_type: &Type, op: &str) {
+        // `@FR-B-Ref-Uniform`: a `&` collection parameter is the collection it links — the
+        // shape is asked of the peeled type, or an append to a walked `&vector` went unrefused.
         if self.first_pass
             || op != "+="
             || !matches!(
-                f_type,
+                f_type.peel_link(),
                 Type::Vector(_, _)
                     | Type::Hash(_, _, _)
                     | Type::Sorted(_, _, _)

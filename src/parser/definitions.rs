@@ -3702,6 +3702,7 @@ impl Parser {
             if !self.first_pass {
                 self.vars.seed_incoming_writes(&self.data, self.context);
             }
+            let errors_before_body = self.lexer.diagnostics().error_count();
             self.parse_code();
             self.refuse_too_many_variables();
             // A nesting refusal in this body: what the frames above it reported while unwinding
@@ -3731,7 +3732,10 @@ impl Parser {
             // return a stale value for add5 = make_adder(5).
             self.last_closure_work_var = u16::MAX;
             if !self.first_pass {
-                self.check_ref_mutations(&arguments);
+                self.check_ref_mutations(
+                    &arguments,
+                    self.lexer.diagnostics().error_count() > errors_before_body,
+                );
                 self.warn_api_per_call_work();
                 // Plan-06 PRIORITY.md spine step 5 — analyse each
                 // `let r = parallel_for(...)` site for materialising
