@@ -280,7 +280,40 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
         }
         return FirstArm::CallCopy { d_nr: rec };
     }
+    // `@FR-B-Copy` — a choice handing another heap variable over whole on one arm and a store of
+    // its own on the others (`chain = if p { f() ?? NdNull } else { NdNull }`) joins on that
+    // variable, as the rebind does (`join_base`) and the C writer's `join_bind` does for a first
+    // bind.  Bound plainly, `v` named the variable's store, and a later rebind releasing what `v`
+    // displaces freed it under the variable (the self-hosted elaborator's `enum_field`).
+    if let Some(base) = first_bind_choice_join(data, d_nr, function, v, value)
+        && let Some(rec) = join_record(crate::use_analysis::first_bind_shape(tp))
+    {
+        return FirstArm::CallJoin { d_nr: rec, base };
+    }
     first_arm_plain(function, tp, value)
+}
+
+/// The variable a first bind from a choice joins on ([`choice_var_arm`]), for a local that OWNS
+/// what it binds: its deps are empty and no later copy witnessed it, as for an element copy.  A
+/// local that keeps its deps is a view the exit does not free, so a copy into it would leak.
+/// The C writer's `join_stmt` asks the same.
+pub(crate) fn first_bind_choice_join(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    value: &Value,
+) -> Option<u16> {
+    let tp = function.tp(v);
+    if !crate::keys::join_own_enabled()
+        || matches!(crate::use_analysis::first_bind_shape(tp), Type::Optional(_))
+        || !tp.depend().is_empty()
+        || function.owner_witness(v).is_some()
+        || function.is_view_elided(v)
+    {
+        return None;
+    }
+    choice_var_arm(data, d_nr, function, value, v)
 }
 
 /// The arms of a first assignment that is not a heap record bind: the null inits, a function
@@ -1124,26 +1157,42 @@ pub(crate) fn choice_var_arm(
     value: &Value,
     v: u16,
 ) -> Option<u16> {
-    fn leaves<'a>(n: &'a Value, out: &mut Vec<&'a Value>) {
+    fn leaves<'a>(data: &Data, n: &'a Value, out: &mut Vec<&'a Value>) {
         match n.unspan() {
             Value::If(_, t, e) => {
-                leaves(t, out);
-                leaves(e, out);
+                leaves(data, t, out);
+                leaves(data, e, out);
             }
             Value::Block(b) if !b.operators.is_empty() => {
-                // A block's value is its tail; a block that ends in a jump answers nothing.
-                if let Some(last) = b.operators.last() {
-                    out.push(last);
+                // A block's value is its tail; a block that ends in a jump answers nothing.  A
+                // `??` block (`ncc`) is the choice its `if` makes, followed by the frees of its
+                // lifted operands, which answer nothing.
+                let tail = if b.name == "ncc" && !crate::keys::ncc_choice_join_off() {
+                    b.operators.iter().rev().find(|op| !is_free_call(data, op))
+                } else {
+                    b.operators.last()
+                };
+                // The tail answers the block: a nested block or choice is walked the same way.
+                if let Some(last) = tail {
+                    if matches!(last.unspan(), Value::If(..) | Value::Block(_)) {
+                        leaves(data, last, out);
+                    } else {
+                        out.push(last);
+                    }
                 }
             }
             _ => out.push(n),
         }
     }
+    fn is_free_call(data: &Data, op: &Value) -> bool {
+        matches!(op.unspan(), Value::Call(f, _)
+            if matches!(data.def(*f).name(), "OpFreeRef" | "OpFreeRefIfDistinct"))
+    }
     if crate::keys::choice_var_join_off() || !matches!(value.unspan(), Value::If(..)) {
         return None;
     }
     let mut arms = Vec::new();
-    leaves(value, &mut arms);
+    leaves(data, value, &mut arms);
     let mut var = None;
     for arm in arms {
         match arm.unspan() {
@@ -1152,7 +1201,11 @@ pub(crate) fn choice_var_arm(
                     && *w < function.count()
                     && !function.is_argument(*w)
                     && function.tp(*w).base().heap_def_nr().is_some()
-                    && !function.name(*w).starts_with("__") =>
+                    // A `??`'s temp (`__ncc_N`) owns the store its subject answered, freed
+                    // where the `??` runs again and at the exit: a whole variable here too.
+                    && (!function.name(*w).starts_with("__")
+                        || (function.name(*w).starts_with("__ncc_")
+                            && !crate::keys::ncc_choice_join_off())) =>
             {
                 if var.is_some_and(|x| x != *w) {
                     return None;

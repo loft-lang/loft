@@ -3656,6 +3656,14 @@ pub fn lift_temp_view_off() -> bool {
 /// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
 /// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
 /// before `@FR-O-Buffer` was asked there.
+/// `LOFT_NO_NCC_CHOICE_JOIN=1` — a choice whose arm is a `??` (its temp `__ncc_N` handed over
+/// whole) binds plainly again (`bind_lowering::choice_var_arm`).
+#[must_use]
+pub fn ncc_choice_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_NCC_CHOICE_JOIN"))
+}
+
 /// `LOFT_NO_S1_JOIN=1` — a rebind from a call handed the variable itself as its buffer, whose
 /// answer may be an argument's store, binds plainly again (`bind_lowering::re_arm`'s S1 join).
 #[must_use]

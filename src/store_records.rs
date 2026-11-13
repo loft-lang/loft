@@ -1301,9 +1301,10 @@ impl Run<'_> {
             // (`__ref_N = f(x, __ref_N)` answering `x`, freed with `x`'s owner — loft#2474's
             // elaborator, `arm_delivery`).  A null beside them is a path that frees nothing, as
             // for `only_this`.  `LOFT_RECORDS_NO_JOIN_REFREE=1` leaves it unreported.
-            let join_path =
-                !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_REFREE").is_some())
+            let join_path = !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_REFREE").is_some())
                     && pts.len() > 1
+                    // Not a capture: a store a closure record holds ends by the closure rules.
+                    && info.captured_by.is_empty()
                     && pts.iter().all(|p| match p {
                         Pt::Store(o) if *o == k => true,
                         Pt::Store(o) => st.stores.get(o).is_some_and(|i| i.status & ABSENT != 0),
@@ -1316,10 +1317,33 @@ impl Run<'_> {
                 && info.has(LIVE)
                 && !info.ended.is_empty()
                 && !info.ended.contains(&v);
+            // …and a variable naming the store wherever it exists (`live`; its other answer is
+            // null, where the store was never made), after another holder ended it on some
+            // path: freed again on that path (`__ncc_N` after `chain`'s displaced free released
+            // the store `chain` was bound to — loft#2474's elaborator, `enum_field`).
+            // `LOFT_RECORDS_NO_LIVE_NAME_REFREE=1` leaves it unreported.
+            let named_where_live = !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_LIVE_NAME_REFREE").is_some())
+                    && info.has(LIVE)
+                    && info.live.contains(&v)
+                    && !info.ended.contains(&v)
+                    // Known to name it where it ended (`stale`): a store ended where the names
+                    // are not followed (`None`, a loop's earlier pass) says nothing about `v`.
+                    && info.stale.as_ref().is_some_and(|s| s.contains(&v))
+                    // A record variable: a closure's fn-ref is released through the guards
+                    // the closure rules follow, not this one.
+                    && v < MEMBER_BASE
+                    && v < self.data.def(self.d_nr).variables.count()
+                    && self.data.def(self.d_nr).variables.tp(v).base().heap_def_nr().is_some()
+                    // A null beside it is where the store was never made (ABSENT), not where a
+                    // rebind (a link write-back) replaced it.
+                    && pts.iter().all(|p| {
+                        (*p == Pt::Null && info.has(ABSENT)) || *p == Pt::Store(k)
+                    });
             if report
                 && info.has(ENDED)
                 && (info.ended.contains(&v)
-                    || (((only_this && !info.has(LIVE)) || weakly_ended) && maybe_stale(&info, v))
+                    || (((only_this && !info.has(LIVE)) || weakly_ended || named_where_live)
+                        && maybe_stale(&info, v))
                     || (join_path && !info.has(LIVE)))
             {
                 // Every end here is a free, which the runtime refuses on a free slot
@@ -5131,10 +5155,30 @@ impl Run<'_> {
                 }) =>
             {
                 let v = &vals[i as usize];
-                Val {
-                    pts: v.pts.clone(),
-                    corr: BTreeSet::new(),
+                let mut pts = v.pts.clone();
+                let mut corr = BTreeSet::new();
+                // A PARAMETER buffer is null where this function's caller handed null: the
+                // callee mints there, into the parameter, as `OpDatabase` on it does — this
+                // function then answers `Buf` of that parameter, not `Arg` (`field_get` filling
+                // its hidden buffer through `cl`).  Read as `Arg`, a caller handing a null
+                // buffer saw a null answer and lost the store.
+                // `LOFT_RECORDS_NO_PARAM_BUF_MINT=1` answers the parameter alone.
+                if !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_PARAM_BUF_MINT").is_some())
+                    // The parameter itself, not a place in it (`OpPlaceRecord(sc)`, never null).
+                    && let Some(Value::Var(x)) = args.get(i as usize).map(Value::unspan)
+                    && v.pts.contains(&Pt::Param(*x))
+                    && let Some(j) = self.params.iter().position(|q| q == x)
+                {
+                    let site = self.site(node, Origin::MintInto(j as u16));
+                    let k = Self::fresh(&mut s, site);
+                    if let Some(info) = s.stores.get_mut(&k) {
+                        info.status = LIVE | ABSENT;
+                    }
+                    pts.insert(Pt::Store(k));
+                    // The answer owns what the callee minted, as on the `OpDatabase` path.
+                    corr.insert(k);
                 }
+                Val { pts, corr }
             }
             Summary::Join(i) | Summary::Buf(i) => {
                 let viewed = vals.get(i as usize).cloned().unwrap_or_else(Val::unknown);
