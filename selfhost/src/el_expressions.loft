@@ -17404,11 +17404,6 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
-        // A guard on a variant arm (bindings ahead of it) is not carried here.
-        if guard != null && sd >= 0 {
-          el::refuse(e, "a match arm with a guard");
-          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-        }
         cond: ir::Node? = null;
         wild = false;
         binds: vector<ir::Node> = [];
@@ -17460,7 +17455,10 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
             return ex(ir::NdNull, ir::TyUnknown { n: 0 });
           }
           ug = g.code;
-          cond = if cond == null { g.code } else { el_ir::v_if(cond!, g.code, ir::NdBoolean { b: false }) };
+          // An arm with bindings binds them in the guard's own block (`binding_guard`, a
+          // variant's `match_guard`); a variant arm's body then reads them as they stand.
+          gc = if len(binds) > 0 { el_ir::v_block(binds + [g.code], ir::TyBoolean, if binding_arm { "binding_guard" } else { "match_guard" }) } else { g.code };
+          cond = if cond == null { gc } else { el_ir::v_if(cond!, gc, ir::NdBoolean { b: false }) };
           wild = false;
         }
         if wild {
@@ -17498,7 +17496,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         for al in rev(aliases) {
           el_vars::restore_name(vars, al.name, al.nr);
         }
-        if len(binds) > 0 {
+        if len(binds) > 0 && (guard == null || binding_arm) {
           b.code = el_ir::v_block(binds + [b.code], b.tp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
