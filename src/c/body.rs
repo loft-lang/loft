@@ -397,6 +397,9 @@ pub(crate) struct FnWriter<'a> {
     /// text locals a walk binds to an element it only READS, under a loop that writes no store —
     /// each a `loft_str` view of the element, as a text parameter is, never a copy.
     borrowed: Vec<bool>,
+    /// The borrowed text locals every bind of which is a literal: a view of bytes nothing
+    /// rewrites, which `@FR-E-Left`'s operand rule reads in place (`may_write_var`).
+    literal_views: std::collections::HashSet<u16>,
     /// `@FR-R-TextBorrow`'s tested clause: the borrowed locals that view a parameter's text only
     /// while each root parameter's store is not the return buffer's, with those roots.
     tested: std::collections::HashMap<u16, Vec<u16>>,
@@ -446,6 +449,26 @@ struct WindowLoop<'b> {
     inclusive: bool,
     pushes: u32,
     size: u32,
+}
+
+/// The borrowed text locals of `code` that only ever hold a literal: every `Set` of each binds
+/// a text literal.
+fn literal_views(code: &Value, borrowed: &[bool]) -> std::collections::HashSet<u16> {
+    let mut lit = std::collections::HashSet::new();
+    let mut other = std::collections::HashSet::new();
+    code.walk(&mut |n| {
+        if let Value::Set(x, v) = n
+            && borrowed.get(*x as usize).copied().unwrap_or(false)
+        {
+            if matches!(v.unspan(), Value::Text(_)) {
+                lit.insert(*x);
+            } else {
+                other.insert(*x);
+            }
+        }
+    });
+    lit.retain(|x| !other.contains(x));
+    lit
 }
 
 /// `@FR-R-TextBorrow` — the text locals of function `d` the C holds as a `loft_str` view rather
@@ -848,6 +871,7 @@ impl<'a> FnWriter<'a> {
             in_delivery: 0,
             windows: Vec::new(),
             file_holds: Vec::new(),
+            literal_views: literal_views(def.code(), &borrowed),
             borrowed,
             tested,
             slice_borrows,
@@ -7961,10 +7985,43 @@ impl<'a> FnWriter<'a> {
     /// Operand `i` of `args`, evaluated in order: a value a later operand may change is held
     /// in a temporary.
     fn arg<V: Borrow<Value>>(&mut self, args: &[V], i: usize, ind: usize) -> Result<E, String> {
-        let later_writes = args[i + 1..]
-            .iter()
-            .any(|later| self.may_write(later.borrow()));
-        self.arg_with(args[i].borrow(), later_writes, ind)
+        let operand = args[i].borrow();
+        let later_writes = args[i + 1..].iter().any(|later| match operand.unspan() {
+            Value::Var(x) => self.may_write_var(later.borrow(), *x),
+            _ => self.may_write(later.borrow()),
+        });
+        self.arg_with(operand, later_writes, ind)
+    }
+
+    /// May evaluating `v` write variable `x`?  `@FR-E-Left` asks it of each variable operand:
+    /// a later operand that never names `x` — a `??` block binding its own temporaries, a call
+    /// `x` is not handed to — cannot write a local of this frame, which no other name reaches.
+    /// A parameter may share what it names with another reference, a borrowed text views
+    /// bytes another name may rewrite (unless it only ever holds a literal), and a call
+    /// through a function value may reach a captured `x`; each keeps `may_write`'s answer.
+    /// `LOFT_NO_OPERAND_VAR_WRITE=1` asks `may_write` for every operand.
+    fn may_write_var(&self, v: &Value, x: u16) -> bool {
+        if !self.may_write(v) {
+            return false;
+        }
+        // A borrowed text is a view of bytes another name may rewrite — unless every bind of
+        // it is a literal.
+        if self.vars.is_argument(x)
+            || (self.borrowed.get(x as usize).copied().unwrap_or(false)
+                && !self.literal_views.contains(&x))
+            || std::env::var("LOFT_NO_OPERAND_VAR_WRITE").is_ok_and(|s| s != "0")
+        {
+            return true;
+        }
+        let mut hit = false;
+        v.walk(&mut |n| {
+            if matches!(n, Value::Var(y) | Value::Set(y, _) if *y == x)
+                || matches!(n, Value::CallRef(..))
+            {
+                hit = true;
+            }
+        });
+        hit
     }
 
     /// Operand `operand`, evaluated as `arg` does; `later_writes` says whether an operand after

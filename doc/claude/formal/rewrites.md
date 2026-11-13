@@ -1191,6 +1191,20 @@ reservation), `LOFT_PH_RUN` (`src/c/loft_rt.h`).  Switch `LOFT_NO_HELD_PUSH_RUN=
 `R-PushFill/held-run`.  Guard: `tests/scripts/a-run-of-pushes-through-a-loops-header-tests-its-room-once.loft`
 — a run that bumps the length by one less than it stored fails h1, h3 and h4.
 
+**An operand's temporary, per variable (the C).**  `(E-Left)` (`operational.md`) reduces each
+operand before the next, and the C keeps that order by holding an operand in a temporary when a
+later operand may change it.  For a variable operand the question is whether a later operand may
+write THAT variable (`FnWriter::may_write_var`): one that names it, assigns it, or calls through a
+function value.  A later operand that never names it — a `??` block binding its own temporaries,
+a call it is not handed to — leaves it read in place.  A parameter, which may share what it names
+with another reference, and a borrowed text other than a view of a literal keep the temporary.
+For a text the temporary is a copy of the whole text: `out += chars[(v / 64 ?? 0) % 64 ?? 0]` in a
+base64 encoder copied its 64-byte alphabet once per output character.  That encoder, 4 KiB, one
+core: gcc 44 → 6 µs, clang 9 → 3 µs — the index spelling now as fast as the slice
+`chars[c..c + 1]` (6 / 4 µs).  Switch `LOFT_NO_OPERAND_VAR_WRITE=1`.  Guard:
+`tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft` — the rule
+answering "no" for every variable fails e2.
+
 **Reads and cuts through a loop's push header (the C).**  A loop that holds a push header for
 a path keeps the path's record and length current in it — every growth goes through it, and so
 does every cut (below).  So an element READ of the path in the loop goes through the header:
