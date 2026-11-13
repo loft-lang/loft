@@ -8479,3 +8479,79 @@ fn a_u32_element_write_is_a_held_store_and_a_run_of_them_is_one_fill() {
         "0 4294967295 4294967295 12 [0,1500000000,3000000000,205032704]\n"
     );
 }
+
+/// `@FR-R-BufferReturn`: a call to a function that answers its `&text` work buffer goes to the
+/// callee's `__wr` twin and is read from the buffer — no copy on the way out — and a text local
+/// bound from it takes the call site's buffer.
+#[test]
+fn a_text_call_result_is_read_from_its_work_buffer() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("buffer_return");
+    let file = dir.join("br.loft");
+    fa::write(
+        &file,
+        "fn built(s: text) -> text { s + \"!\" }\n\
+         fn keep(s: text) -> integer { t = built(s); len(t) }\n\
+         fn pass(s: text) -> integer { len(built(s)) }\n\
+         fn main() { println(\"{keep(\"ab\")} {pass(\"abc\")} {built(\"x\")}\"); }\n",
+    )
+    .expect("write program");
+    let c = dir.join("br.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let body = |name: &str| -> String {
+        let mut at = None;
+        let mut pos = 0;
+        for line in text.split_inclusive('\n') {
+            if line.contains(&format!(" {name}__fr(")) && line.trim_end().ends_with('{') {
+                at = Some(pos);
+                break;
+            }
+            pos += line.len();
+        }
+        let at = at.unwrap_or_else(|| panic!("{name} has no body"));
+        let end = text[at..].find("\n}\n").map_or(text.len(), |e| at + e);
+        text[at..end].to_string()
+    };
+    let keep = body("n_keep");
+    assert!(
+        keep.contains("n_built__wr(") && keep.contains("loft_text_move(&v1_t, &"),
+        "a bound result takes the call site's buffer:\n{keep}"
+    );
+    let pass = body("n_pass");
+    assert!(
+        pass.contains("n_built__wr(") && !pass.contains("= n_built("),
+        "a result read in place is the buffer:\n{pass}"
+    );
+    let exe = dir.join("br");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3 4 x!\n");
+}

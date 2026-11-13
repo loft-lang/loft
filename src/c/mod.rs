@@ -3418,10 +3418,18 @@ fn inv_inputs(
 /// shapes, and an admitted function's return buffer is no parameter: answers the attribute
 /// the signature drops.
 fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Option<usize> {
+    let n = value_local_shapes(cx, d, shapes);
+    crate::rewrite_census::fired("R-ValueLocal", n);
+    vr_key.and_then(|_| crate::opt::attrs::ret_buffer_attr(cx.data.def(d)))
+}
+
+/// `d`'s value locals — its tuple and value-record parameters among them — given their struct
+/// shapes: the shapes every body of `d` is written with, a twin's too.  Answers how many.
+pub(crate) fn value_local_shapes(cx: &Cx, d: u32, shapes: &mut [CType]) -> usize {
     // In variable order: `vr_ctype` numbers a tuple type the first time it is asked.
     let mut locals: Vec<(u16, u16)> = cx.vr_locals(d).into_iter().collect();
     locals.sort_unstable();
-    crate::rewrite_census::fired("R-ValueLocal", locals.len());
+    let n = locals.len();
     for (v, key) in locals {
         if let Some(c) = cx.vr_ctype(key)
             && (v as usize) < shapes.len()
@@ -3429,7 +3437,7 @@ fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Opti
             shapes[v as usize] = c;
         }
     }
-    vr_key.and_then(|_| crate::opt::attrs::ret_buffer_attr(cx.data.def(d)))
+    n
 }
 
 /// A `#c` binding (`c_signature`, `c_call`): a wrapper declaring the callee by the author's own

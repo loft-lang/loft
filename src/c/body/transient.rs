@@ -885,8 +885,15 @@ fn work_buffer(x: &Value) -> Option<u16> {
 
 impl Cx<'_> {
     /// `d` answers its `&text` parameter — every `return` and its tail name it: that
-    /// parameter's position.
+    /// parameter's position.  `@FR-R-Transient`'s work clause takes only this exact form.
     pub(crate) fn work_return(&self, func: u32) -> Option<usize> {
+        self.answers_work(func, false)
+    }
+
+    /// `d` answers its `&text` parameter, `through_blocks` also where a `return` or the tail
+    /// is a block whose last value names it (a format or a concatenation written into the
+    /// buffer, `@FR-R-BufferReturn`): that parameter's position.
+    pub(crate) fn answers_work(&self, func: u32, through_blocks: bool) -> Option<usize> {
         if (func as usize) >= self.data.definitions.len() {
             return None;
         }
@@ -909,10 +916,11 @@ impl Cx<'_> {
             }
         }
         let (at, param) = found?;
+        let nulls = through_blocks.then_some(self.data);
         let mut ok = true;
         def.code().walk(&mut |n| {
             if let Value::Return(x) = n
-                && !matches!(x.unspan(), Value::Var(w) if *w == param)
+                && !answers(x, param, through_blocks, nulls)
             {
                 ok = false;
             }
@@ -921,7 +929,7 @@ impl Cx<'_> {
             return None;
         };
         let tail_ok = match body.operators.last()?.unspan() {
-            Value::Return(x) => matches!(x.unspan(), Value::Var(w) if *w == param),
+            Value::Return(x) => answers(x, param, through_blocks, nulls),
             Value::Var(w) => *w == param,
             _ => false,
         };
@@ -934,6 +942,9 @@ impl Cx<'_> {
         if let Some(r) = self.tr.borrow().work_twins.get(&d) {
             return r.then(|| name.clone());
         }
+        // Named before it is written: a twin whose body calls itself meets its own name.  A
+        // twin that is then declined took its self-calls with it — they were in its body.
+        self.tr.borrow_mut().work_twins.insert(d, true);
         let r = self.write_work_twin(d, &name);
         if trace() {
             match &r {
@@ -946,7 +957,7 @@ impl Cx<'_> {
     }
 
     fn write_work_twin(&self, d: u32, name: &str) -> Result<(), String> {
-        let p = self.work_return(d).ok_or("no work return")?;
+        let p = self.answers_work(d, true).ok_or("no work return")?;
         let def = self.data.def(d);
         let vars = def.variables();
         let args = vars.arguments();
@@ -957,7 +968,8 @@ impl Cx<'_> {
         {
             return Err("a signature the twin does not take".into());
         }
-        let shapes = crate::c::variable_shapes(self, vars, &args, self.data.body_width32(d))?;
+        let mut shapes = crate::c::variable_shapes(self, vars, &args, self.data.body_width32(d))?;
+        crate::c::value_local_shapes(self, d, &mut shapes);
         let mut params = Vec::new();
         for &a in &args {
             if vars.is_store_text_link(a) {
@@ -983,6 +995,23 @@ impl Cx<'_> {
         let _ = writeln!(self.gen_decls.borrow_mut(), "{sig};");
         let _ = write!(self.gen_bodies.borrow_mut(), "\n{sig} {{\n{body}}}\n");
         Ok(())
+    }
+}
+
+/// Is `x`'s value the buffer `param` itself: the variable, or (`through_blocks`) a block whose
+/// last value is (`return { …; __work_1 }`, a concatenation written into the buffer), or —
+/// `data` given — the null text, which the twin writes into the buffer
+/// (`@FR-R-BufferReturn`)?  Any other shape — a branch, a call, a literal — answers something
+/// else, so the function is no `__wr` candidate.
+fn answers(x: &Value, param: u16, through_blocks: bool, data: Option<&crate::data::Data>) -> bool {
+    match x.unspan() {
+        Value::Var(w) => *w == param,
+        v if data.is_some_and(|d| super::is_null_text(d, v)) => true,
+        Value::Block(b) if through_blocks => b
+            .operators
+            .last()
+            .is_some_and(|t| answers(t, param, true, data)),
+        _ => false,
     }
 }
 

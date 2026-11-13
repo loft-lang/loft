@@ -183,6 +183,9 @@ pub(crate) struct FnWriter<'a> {
     verify_temps: std::collections::HashSet<String>,
     /// The owned text temporaries the current statement made.
     pending: Vec<String>,
+    /// `@FR-R-BufferReturn`'s bind clause: the work buffers a `__wr` call of the current statement
+    /// filled that were made for that call alone, so a text target may take their buffer.
+    pending_work: Vec<String>,
     /// The label number of each enclosing loop, innermost last.
     loops: Vec<u32>,
     labels: u32,
@@ -785,6 +788,7 @@ impl<'a> FnWriter<'a> {
             temps: Vec::new(),
             verify_temps: std::collections::HashSet::new(),
             pending: Vec::new(),
+            pending_work: Vec::new(),
             loops: Vec::new(),
             labels: 0,
             headers: Vec::new(),
@@ -1352,6 +1356,7 @@ impl<'a> FnWriter<'a> {
 
     /// Free the owned text temporaries the statement just finished made.
     fn flush(&mut self, ind: usize) {
+        self.pending_work.clear();
         for t in std::mem::take(&mut self.pending) {
             self.line(ind, &format!("loft_text_free(&{t});"));
         }
@@ -2970,6 +2975,13 @@ impl<'a> FnWriter<'a> {
                 if self.work_ret.is_some()
                     && matches!(v.unspan(), Value::Var(p) if Some(*p) == self.work_ret) =>
             {
+                self.epilogue(ind);
+                self.line(ind, "return;");
+            }
+            // `@FR-R-BufferReturn`: a null answer is the null text in the caller's buffer.
+            (CType::Void, Some(v)) if self.work_ret.is_some() && is_null_text(self.cx.data, v) => {
+                let w = self.text_dest(&Value::Var(self.work_ret.unwrap_or_default()))?;
+                self.line(ind, &format!("loft_text_set(&{w}, loft_null_text());"));
                 self.epilogue(ind);
                 self.line(ind, "return;");
             }
@@ -7288,6 +7300,20 @@ impl<'a> FnWriter<'a> {
                     self.line(ind, &format!("loft_text_move(&{target}, &{t});"));
                     return Ok(());
                 }
+                // `@FR-R-BufferReturn`'s bind clause: the target takes the call site's own buffer;
+                // the next call at the site starts that buffer empty either way.
+                if c == CType::Text
+                    && let Some(w) = e
+                        .code
+                        .strip_prefix("loft_view(&")
+                        .and_then(|r| r.strip_suffix(')'))
+                    && self.pending_work.iter().any(|p| p == w)
+                    && w != target
+                {
+                    self.line(ind, &format!("loft_text_move(&{target}, &{w});"));
+                    crate::rewrite_census::fired("R-BufferReturn/bind", 1);
+                    return Ok(());
+                }
                 let s = match c {
                     CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
                     CType::Void => format!("{};", e.code),
@@ -8422,6 +8448,27 @@ impl<'a> FnWriter<'a> {
         }
         if wr {
             return Ok(E::new(call, K::Void));
+        }
+        // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
+        // through its `__wr` twin, and the call's value is a view of that buffer — what the
+        // interpreter's text return is — not a copy of it taken on the way out.
+        if ret == CType::Text
+            && mask == 0
+            && !tr_named
+            && !native
+            && !crate::env_once!(std::env::var("LOFT_NO_BUFFER_RETURN").is_ok_and(|v| v != "0"))
+            && let Some(p) = cx.answers_work(d, true)
+            && xs.get(p).is_some_and(|x| plain_place(x))
+            && let Some(twin) = cx.work_twin(d)
+        {
+            self.line(ind, &format!("{twin}({});", xs.join(", ")));
+            crate::rewrite_census::fired("R-BufferReturn", 1);
+            if call_site_buffer(&args[p])
+                && let Some(w) = xs[p].strip_prefix('&')
+            {
+                self.pending_work.push(w.to_string());
+            }
+            return Ok(E::new(format!("loft_view({})", xs[p]), K::View));
         }
         Ok(match ret {
             CType::Text => {
@@ -11407,6 +11454,43 @@ fn as_fn(e: E) -> Result<String, String> {
         K::Fn => Ok(e.code),
         k => Err(format!("a function value expected, a {k:?} found")),
     }
+}
+
+/// Is `v` the null text — `OpConvTextFromNull()`, what `return null` is in a text function?
+pub(crate) fn is_null_text(data: &crate::data::Data, v: &Value) -> bool {
+    matches!(v.unspan(), Value::Call(op, a)
+        if a.is_empty()
+            && (*op as usize) < data.definitions.len()
+            && data.def(*op).name() == "OpConvTextFromNull")
+}
+
+/// Is `arg` a work buffer made for this one call — the IR's default reference
+/// `{ w = ""; ref(w) }` — rather than a buffer the caller was handed or reads again?
+fn call_site_buffer(arg: &Value) -> bool {
+    let Value::Block(b) = arg.unspan() else {
+        return false;
+    };
+    matches!(
+        b.operators.as_slice(),
+        [Value::Set(w, x), Value::Call(_, r)]
+            if matches!(x.unspan(), Value::Text(t) if t.is_empty())
+                && matches!(r.as_slice(), [Value::Var(v)] if v == w)
+    )
+}
+
+/// Is `x` a C place that reads the same twice and does nothing else — `name`, `&name`,
+/// `(*name)` — so a call may take it and the caller name it again after?  Anything longer
+/// may compute or write, and is not repeated.
+fn plain_place(x: &str) -> bool {
+    let inner = x
+        .strip_prefix("&(*")
+        .and_then(|r| r.strip_suffix(')'))
+        .or_else(|| x.strip_prefix('&'))
+        .unwrap_or(x);
+    !inner.is_empty()
+        && inner
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn as_view(e: E) -> Result<String, String> {
