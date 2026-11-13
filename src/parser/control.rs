@@ -23629,8 +23629,14 @@ impl Parser {
         }
         self.last_called = u32::MAX;
         if self.first_pass {
-            let def = format!("n_{name}");
-            self.last_forward_call = (self.data.def_nr(&def) == u32::MAX).then_some(def);
+            // The definition name is built in a reused buffer: a call to a declared function, the
+            // common case, allocates nothing here (the front-end allocation pins).
+            let mut def = std::mem::take(&mut self.call_def_name);
+            def.clear();
+            def.push_str("n_");
+            def.push_str(name);
+            self.last_forward_call = (self.data.def_nr(&def) == u32::MAX).then(|| def.clone());
+            self.call_def_name = def;
         }
         // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
         if std::mem::take(&mut self.unhinted_set_refused) {

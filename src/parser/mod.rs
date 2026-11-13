@@ -1055,6 +1055,8 @@ pub struct Parser {
     /// yet (`parse_call`); `None` after a call to a known one.  Taken by the assignment whose
     /// value it was (`note_late_call_join`).
     pub(crate) last_forward_call: Option<String>,
+    /// The scratch buffer `parse_call` builds a callee's definition name in on pass 1.
+    call_def_name: String,
     /// loft#945 — every short `|x|` lambda whose return type is to be read off its own
     /// BODY, because nothing else names it: no `-> τ` (the short form forbids one) and no
     /// return in the hint that placed it (`map`'s callback, whose `U` is free).
@@ -2191,6 +2193,7 @@ impl Parser {
             late_text_tails: Vec::new(),
             late_call_joins: Vec::new(),
             last_forward_call: None,
+            call_def_name: String::new(),
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
