@@ -3292,12 +3292,51 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
         return (Vec::new(), false);
     };
     let attrs = data.def(fn_nr).attributes();
+    // The parameters the callee's return can hand back: its declared deps and the oracle's
+    // base, where both name parameters.  An argument outside them is no borrow source and
+    // neither protects nor blocks: `guard_compound(e, x.code, if h { pt } else { base(pt) },
+    // h)` returns its buffer or `code`, and its third argument — a store this frame made in a
+    // join arm, which the bracket cannot name — left the set incomplete, so the copy of the
+    // answer kept every store the callee made (the self-hosted elaborator's
+    // `place_assignment`).  `None` (a dep or base it cannot name) keeps every argument.
+    // `LOFT_NO_BORROWABLE_ARGS=1` asks of every argument as before.
+    let borrowable: Option<Vec<usize>> =
+        if crate::env_once!(std::env::var_os("LOFT_NO_BORROWABLE_ARGS").is_some()) {
+            None
+        } else {
+            let deps = data.def(fn_nr).returned().depend();
+            let mut set: Vec<usize> = Vec::new();
+            let mut known = deps.iter().all(|&d| {
+                let ok = (d as usize) < attrs.len();
+                if ok && !attrs[d as usize].hidden {
+                    set.push(d as usize);
+                }
+                ok
+            });
+            match return_ownership(data, fn_nr) {
+                Own::Borrowed { base } | Own::Join { base } => {
+                    if (base as usize) < attrs.len() {
+                        if !attrs[base as usize].hidden {
+                            set.push(base as usize);
+                        }
+                    } else {
+                        known = false;
+                    }
+                }
+                Own::Unknown => known = false,
+                _ => {}
+            }
+            known.then_some(set)
+        };
     let mut protectable = Vec::new();
     let mut covers_all = true;
     for (i, arg) in args.iter().enumerate() {
         let Some(tp) = attrs.get(i).map(|a| &a.typedef) else {
             continue;
         };
+        if borrowable.as_ref().is_some_and(|b| !b.contains(&i)) {
+            continue;
+        }
         // Can the callee's return borrow THIS argument's store?  `heap_dep` is the
         // canonical "carries a store" question — and asking it through `base` as well,
         // because an `Optional` wrapper hides the storage under it.  A scalar argument
