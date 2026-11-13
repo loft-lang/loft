@@ -6204,10 +6204,12 @@ fn vector_field_bind(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir::Ty
     },
     _ => {}
   }
-  pd = if base >= 0 { heap_def(el_vars::tp(vars, base)) } else { -1 };
+  // `@FR-B-Ref-Uniform`: a `&` record parameter holds the record it links.
+  pd = if base >= 0 { heap_def(match el_vars::tp(vars, base) { TyRefVar { inner } => inner, _ => el_vars::tp(vars, base) }) } else { -1 };
   inner = match el_types::base(pt) { TyVector { inner: i } => i, _ => ir::TyUnknown { n: 0 } };
   if pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT || has_keyed_field(e, pd) || x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
-    refuse_known(e, x.tp, "a vector field of this record bound whole: {type_kind(x.tp)}");
+    why = if pd < 0 { "the record is not a local" } else if el::def(e, pd).def_type != el::DT_STRUCT { "the record is not a plain struct" } else if has_keyed_field(e, pd) { "the record has a keyed field" } else if x.tp is TyOptional { "the value is nullable" } else { "the value is {display_type_name(e, x.tp)}" };
+    refuse_known(e, x.tp, "a vector field of this record bound whole: {why}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   nm = el_types::elem_name(e, inner);
