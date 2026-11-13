@@ -151,6 +151,11 @@ struct State {
     /// Pairs of variables one a plain copy of the other (`k = h`, smaller number first): the
     /// same value until either is bound again, so a test that narrows one narrows both.
     copies: BTreeSet<(u16, u16)>,
+    /// `(x, w)`: `x` names the store `w` names, or none of the stores `w` may name — `x` bound
+    /// from a projection rooted at `w` (`x = __lift.code`), kept across a join whose other side
+    /// has `w` null or `x` apart from `w`.  An identity test of the two then settles which side they are on: distinct
+    /// only where `w` is null (`OpDistinctStore(x, __lift)` guarding `x`'s free).
+    views: BTreeSet<(u16, u16)>,
     /// The function's closure-record variables (`___clos_N`), the same on every path: the
     /// `live_some` candidates of a store no record captures (`live_some_candidates`).
     records: BTreeSet<u16>,
@@ -593,6 +598,42 @@ fn join_copies(a: &State, b: &State) -> BTreeSet<(u16, u16)> {
         .collect()
 }
 
+/// The stores `v` may name on a path.
+fn stores_named(st: &State, v: u16) -> Vec<SKey> {
+    st.vars
+        .get(&v)
+        .map(|p| {
+            p.iter()
+                .filter_map(|x| if let Pt::Store(k) = x { Some(*k) } else { None })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A view pair survives a join where, on each side, it was kept, its base is null there, or
+/// the view names none of the base's stores there.
+fn join_views(a: &State, b: &State) -> BTreeSet<(u16, u16)> {
+    let null = |st: &State, v: u16| {
+        st.vars
+            .get(&v)
+            .is_none_or(|p| p.iter().all(|x| *x == Pt::Null))
+    };
+    // The pair's claim, as the identity test reads it: `x` names `w`'s store, or none of the
+    // stores `w` may name.  A side whose `x` shares no store with `w` (`x` rebound to a fresh
+    // answer there) keeps it, as does a side where `w` is null.
+    let disjoint = |st: &State, p: &(u16, u16)| {
+        let w = stores_named(st, p.1);
+        stores_named(st, p.0).iter().all(|k| !w.contains(k))
+    };
+    let holds =
+        |st: &State, p: &(u16, u16)| st.views.contains(p) || null(st, p.1) || disjoint(st, p);
+    a.views
+        .union(&b.views)
+        .filter(|p| holds(a, p) && holds(b, p))
+        .copied()
+        .collect()
+}
+
 fn join_state(a: &State, b: &State) -> State {
     let null: Pts = [Pt::Null].into();
     let mut vars = BTreeMap::new();
@@ -675,6 +716,7 @@ fn join_state(a: &State, b: &State) -> State {
         points,
         nonnull: a.nonnull.intersection(&b.nonnull).copied().collect(),
         copies: join_copies(a, b),
+        views: join_views(a, b),
         records: a.records.union(&b.records).copied().collect(),
         mints: a.mints.clone(),
     }
@@ -1124,6 +1166,7 @@ impl Run<'_> {
     /// Bind `v` to `val`.  A live store only `v` named is left unreachable: a leak.
     fn bind(&mut self, st: &mut State, v: u16, val: &Val) {
         st.copies.retain(|&(a, b)| a != v && b != v);
+        st.views.retain(|&(a, b)| a != v && b != v);
         for k in Self::stores_of(&Self::pts(st, v)) {
             let info = info_of(st, k);
             if info.has(LIVE)
@@ -2067,6 +2110,31 @@ impl Run<'_> {
                 {
                     Self::give_back_field_captures(&mut st, *x);
                 }
+                // The bases `x` will be a view pair of: a tail of the value projecting `w`, where
+                // `w` is null before the value runs and no other tail's path sets it — so where
+                // the value is not that projection, `w` is still null.
+                let view_bases: Vec<u16> = if views_enabled() {
+                    let mut tails = Vec::new();
+                    value_tails(val, &mut tails);
+                    let mut out = Vec::new();
+                    for (i, (_, t)) in tails.iter().enumerate() {
+                        if let Value::Call(op, pargs) = t.unspan()
+                            && crate::use_analysis::is_projection_op(self.data, *op)
+                            && let Some(Value::Var(w)) =
+                                pargs.first().map(|a| Self::projection_root(self.data, a))
+                            && Self::pts(&st, *w).iter().all(|p| *p == Pt::Null)
+                            && !tails
+                                .iter()
+                                .enumerate()
+                                .any(|(j, (arm, _))| j != i && sets_var(arm, *w))
+                        {
+                            out.push(*w);
+                        }
+                    }
+                    out
+                } else {
+                    Vec::new()
+                };
                 let copied = self.copied_from(val);
                 // `x = f(…, x)` answering `x`'s own store (a value operator writing its result
                 // into the buffer `x` hands it): `x` still names, and must-holds, what it did.
@@ -2090,6 +2158,13 @@ impl Run<'_> {
                     && copy_alias()
                 {
                     st.copies.insert(((*src).min(*x), (*src).max(*x)));
+                }
+                if views_enabled() {
+                    for w in view_bases {
+                        if w != *x {
+                            st.views.insert((*x, w));
+                        }
+                    }
                 }
                 if let Some(src) = copied
                     && src != *x
@@ -3387,6 +3462,18 @@ impl Run<'_> {
         }
     }
 
+    /// The variable a projection chain starts from (`a.b[0].c` → `a`), through spans.
+    fn projection_root<'v>(data: &Data, v: &'v Value) -> &'v Value {
+        match v.unspan() {
+            Value::Call(op, a)
+                if crate::use_analysis::is_projection_op(data, *op) && !a.is_empty() =>
+            {
+                Self::projection_root(data, &a[0])
+            }
+            other => other,
+        }
+    }
+
     /// The variable an `OpDistinctStore` operand names a store through: the variable itself,
     /// or a fn-ref whose closure record it is (`OpFnRefClosure(g)`).
     fn operand_var(&self, v: Option<&Value>) -> Option<u16> {
@@ -3403,6 +3490,59 @@ impl Run<'_> {
     /// both arms.  An operand may be a variable, a closure's record (`OpFnRefClosure`) or a
     /// capture slot read out of a record that stays in this frame (`OpGetDbRef`).
     fn decide_distinct(&self, args: &[Value], st: State) -> (Option<State>, Option<State>) {
+        // A view pair narrows `x` further on both sides of what the rest decides (`view_pair_arms`).
+        if let Some((x, w)) = self.view_pair(args, &st) {
+            let wp = Self::pts(&st, w);
+            let (distinct, same) = self.decide_distinct_plain(args, st);
+            let distinct = distinct.and_then(|mut d| {
+                let xp: Pts = Self::pts(&d, x)
+                    .into_iter()
+                    .filter(|p| !matches!(p, Pt::Store(k) if wp.contains(&Pt::Store(*k))))
+                    .collect();
+                if xp.is_empty() {
+                    return None;
+                }
+                Self::narrow(&mut d, x, xp);
+                Some(d)
+            });
+            let same = same.and_then(|mut sm| {
+                let xp = Self::pts(&sm, x);
+                let keep: Pts = xp.iter().copied().filter(|p| wp.contains(p)).collect();
+                if keep.is_empty() {
+                    return None;
+                }
+                if keep != xp {
+                    Self::narrow(&mut sm, x, keep);
+                }
+                Some(sm)
+            });
+            return (distinct, same);
+        }
+        self.decide_distinct_plain(args, st)
+    }
+
+    /// The view pair (`State::views`) an identity test of two variables reads, as `(view, base)`.
+    fn view_pair(&self, args: &[Value], st: &State) -> Option<(u16, u16)> {
+        if !views_enabled() {
+            return None;
+        }
+        let (Some(Value::Var(x)), Some(Value::Var(w))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
+            return None;
+        };
+        if st.views.contains(&(*x, *w)) {
+            Some((*x, *w))
+        } else if st.views.contains(&(*w, *x)) {
+            Some((*w, *x))
+        } else {
+            None
+        }
+    }
+
+    /// `OpDistinctStore` without the view pairs: the identity test as the stores alone decide it.
+    fn decide_distinct_plain(&self, args: &[Value], st: State) -> (Option<State>, Option<State>) {
         let operand = |v: &Value| -> Option<Pts> {
             match v.unspan() {
                 Value::Var(x) => Some(Self::pts(&st, *x)),
@@ -6145,4 +6285,46 @@ mod tests {
             found.join("\n")
         );
     }
+}
+
+/// The view relation (`State::views`).  `LOFT_RECORDS_NO_VIEW_PAIRS=1` leaves it out.
+fn views_enabled() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_VIEW_PAIRS").is_some())
+}
+
+/// The paths a value can end on, as `(arm, tail)`: the arms of an `if`, and in a block its last
+/// statement, through spans.  `arm` is the whole arm, for asking what that path sets.
+fn value_tails<'v>(v: &'v Value, out: &mut Vec<(&'v Value, &'v Value)>) {
+    fn tail<'v>(v: &'v Value) -> &'v Value {
+        match v.unspan() {
+            Value::Block(bl) if !bl.operators.is_empty() => tail(bl.operators.last().unwrap()),
+            other => other,
+        }
+    }
+    match v.unspan() {
+        Value::If(_, t, e) => {
+            value_tails(t, out);
+            value_tails(e, out);
+        }
+        Value::Block(bl) if !bl.operators.is_empty() => {
+            let last = bl.operators.last().unwrap();
+            if matches!(last.unspan(), Value::If(..)) {
+                value_tails(last, out);
+            } else {
+                out.push((v, tail(v)));
+            }
+        }
+        _ => out.push((v, v)),
+    }
+}
+
+/// Does `v` assign `w` anywhere inside it?
+fn sets_var(v: &Value, w: u16) -> bool {
+    let mut found = false;
+    v.walk(&mut |n| {
+        if matches!(n, Value::Set(x, _) if *x == w) {
+            found = true;
+        }
+    });
+    found
 }
