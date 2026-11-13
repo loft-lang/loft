@@ -671,6 +671,62 @@ fn a_warm_run_keeps_the_owner_witness() {
     let _ = fa::remove_dir_all(&cache_dir);
 }
 
+/// `@FR-L-CapOwn`, `@FR-H-FreeTwice` — the scope pass places a displaced closure record's
+/// cascade right after its `___oldrec_N` bind (`capture_adoption::cascade_before_record_frees`).
+/// A warm load restores the code that pass already patched and runs the pass over it again,
+/// and the bind side placed a second copy.  For a record the frame built, the first copy
+/// empties the frame's record local; the second then cascaded the record and released the
+/// capture the frame released too.  So every fn-field reset and closure-holding field
+/// overwrite re-freed a store on its SECOND run, clean on the first.  Three shapes: a record
+/// this frame built, one a call built, and a struct-valued field overwritten.  Values
+/// hand-computed: 17 + 18 + 23.
+#[test]
+fn a_warm_run_places_a_displaced_closure_records_cascade_once() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_arce_oldrec_{pid}.loft"));
+    fa::write(
+        &script,
+        "struct V { a: integer }\n\
+         struct R2 { f: fn(integer) -> integer, t: integer }\n\
+         struct Bx { r: R2, k: integer }\n\
+         fn id(x: integer) -> integer { x }\n\
+         fn mkr(n: integer) -> R2 { v = V { a: n }; R2 { f: fn(x: integer) -> integer { v.a + x }, t: n } }\n\
+         fn own_build() -> integer { v = V { a: 5 }; h = R2 { f: fn(x: integer) -> integer { v.a + x }, t: 10 }; h.f = id; h.f(7) + h.t }\n\
+         fn call_build() -> integer { h = mkr(5); a = h.f(1); h.f = id; a + h.f(7) + h.t }\n\
+         fn field_overwrite() -> integer { b = Bx { r: mkr(5), k: 1 }; a = b.r.f(1); b.r = mkr(8); a + b.r.f(1) + b.r.t }\n\
+         fn main() { println(\"oldrec {own_build()} {call_build()} {field_overwrite()}\"); }\n",
+    )
+    .expect("write script");
+    let cache_dir = tmp.join(format!("loft_arce_oldrec_cache_{pid}"));
+    let _ = fa::remove_dir_all(&cache_dir);
+    let run = |label: &str| -> String {
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg("--interpret")
+            .arg(&script)
+            .current_dir(workspace_root())
+            .env_remove("LOFT_STDLIB_CACHE")
+            .env_remove("LOFT_NO_CACHE")
+            .env("LOFT_STRICT_STORES", "1")
+            .env("XDG_CACHE_HOME", &cache_dir)
+            .output()
+            .expect("failed to invoke loft binary");
+        assert!(
+            out.status.success(),
+            "{label} run failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for label in ["cold", "warm", "second warm"] {
+        let out = run(label);
+        assert!(out.contains("oldrec 17 18 23"), "{label} output: {out}");
+    }
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
+}
+
 /// A per-variable fact the emitters read must survive the warm load, which is a second
 /// decoder of the parsed program.  A narrow local a `&` names holds its type's FIELD
 /// encoding (@PLN167 decision 1); the snapshot did not carry that fact, so a warm run read
