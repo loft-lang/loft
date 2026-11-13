@@ -4681,6 +4681,27 @@ use a separate collection or add after the loop"
         )
     }
 
+    /// Pass 1: an inferred local bound from a call whose return type is not known yet — a
+    /// callee declared further down — is recorded for [`Self::widen_late_call_joins`].
+    fn note_late_call_join(&mut self, op: &str, to: &Value) {
+        if !self.first_pass
+            || op != "="
+            || crate::env_once!(std::env::var_os("LOFT_NO_LATE_CALL_JOIN").is_some())
+        {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        if self.vars.is_declared(*v) || self.vars.is_argument(*v) {
+            return;
+        }
+        if let Some(callee) = self.last_forward_call.take() {
+            self.late_call_joins
+                .push((self.context, *v, callee, self.lexer.at().0));
+        }
+    }
+
     /// `(F-ParamRebind)` — a WHOLE-VALUE reassignment of a user-visible heap PARAMETER
     /// rebinds LOCALLY, and the rule is about the BINDING, not about the right-hand side's
     /// spelling: `p = other` is named in the rule's own text beside `p = [..]`.
@@ -4707,27 +4728,6 @@ use a separate collection or add after the loop"
     /// caller's VALUE either way — which is what made the gap easy to read as covered — while
     /// the store the callee minted had no owner: forty calls, forty leaked records.  A
     /// nullable parameter is still a parameter (loft#1295).
-    /// Pass 1: an inferred local bound from a call whose return type is not known yet — a
-    /// callee declared further down — is recorded for [`Self::widen_late_call_joins`].
-    fn note_late_call_join(&mut self, op: &str, to: &Value) {
-        if !self.first_pass
-            || op != "="
-            || crate::env_once!(std::env::var_os("LOFT_NO_LATE_CALL_JOIN").is_some())
-        {
-            return;
-        }
-        let Value::Var(v) = to.unspan() else {
-            return;
-        };
-        if self.vars.is_declared(*v) || self.vars.is_argument(*v) {
-            return;
-        }
-        if let Some(callee) = self.last_forward_call.take() {
-            self.late_call_joins
-                .push((self.context, *v, callee, self.lexer.at().0));
-        }
-    }
-
     fn rebind_local_heap_param(&mut self, code: &mut Value, op: &str, to: &Value, var_nr: u16) {
         if self.first_pass
             || op != "="
