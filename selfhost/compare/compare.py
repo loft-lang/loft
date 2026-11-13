@@ -37,9 +37,14 @@ LIBS = ["--lib", os.path.join(ROOT, "tests", "lib")]
 RUN_LAYERS = ("out", "alloc", "leak", "binds")
 
 
+# A hash draws a random seed per table, so its walk and its teardown order change from run to run
+# on either side; both runtimes read one fixed seed from `LOFT_HASH_SEED` (1b-compare.md).
+SEED = {"LOFT_HASH_SEED": os.environ.get("LOFT_HASH_SEED", "0x0123456789abcdef")}
+
+
 def run(cmd, env=None, timeout=300):
     try:
-        p = subprocess.run(cmd, capture_output=True, env={**os.environ, **(env or {})}, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, env={**os.environ, **SEED, **(env or {})}, timeout=timeout)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return -9, b"", b"timeout"
