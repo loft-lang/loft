@@ -9,13 +9,14 @@
 // walk.  Values hand-computed; value AND length.  `LOFT_NO_PLAIN_CLEAR=1` is the same-build
 // oracle.
 //
-// k3 and k5 reach the plain clear (at the callee's buffer and at the caller's adopted one); k1
-// and k2 clear a field of the local's store, which the clause does not type, and k4 (texts own
-// heap) keeps the walk — they hold the same values with it.
+// k1, k3, k5 and k6 reach the plain clear: k1 and k6 at a field of a local's store (typed by
+// `OpGetField`'s vector type), k3 and k5 at the callee's buffer and the caller's adopted one.
+// k2 and k4 hold no clear in the C (their `= []` is written another way) — they hold the same
+// values either way.
 //
 // @falsified-at: none — the clause has no earlier build to catch, so the receipt is a defect
 //   planted (2026-11-13) in the writer: a plain clear that leaves the length as it was fails
-//   k3 and k5.
+//   k1 and k6 at the `OpClearVector` site and k3 and k5 at the return-adopt site.
 //   CHANNEL: an assertion.
 
 enum Tint { Red, Green, Blue }
@@ -114,4 +115,25 @@ fn test_a_returned_byte_buffer_refilled_per_call() {
     for b in bs { s += b; }
   }
   assert(lens == 12 && s == 48, "k5 lens {lens} sum {s}");
+}
+
+// k6: a record buffer refilled in a loop — its two vector fields are cleared before each fill
+// (the hex_recover `forms_upto` shape, `form_new` inlined).  Turn i builds a: [i, i + 1, i + 2]
+// and b: [10 i]; over i in 0..6 the a sums 3 (0 + … + 5) + 6 * 3 = 63, the b 10 * 15 = 150, and
+// every turn's lengths are 3 and 1.
+struct Pair { pa: vector<integer>, pb: vector<integer> }
+
+fn pair_new(a: vector<integer>, b: vector<integer>) -> Pair { Pair { pa: a, pb: b } }
+
+fn test_a_record_buffer_refilled() {
+  sa = 0;
+  sb = 0;
+  lens = 0;
+  for i in 0..6 {
+    p = pair_new([i, i + 1, i + 2], [10 * i]);
+    for x in p.pa { sa += x; }
+    for x in p.pb { sb += x; }
+    lens += len(p.pa) * 10 + len(p.pb);
+  }
+  assert(sa == 63 && sb == 150 && lens == 186, "k6 {sa} {sb} {lens}");
 }

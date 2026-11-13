@@ -3,7 +3,7 @@
 # `scripts/rewrite_census.py --bless`; `make rewrite-census` fails when a name's applied-by
 # set changes.  Read it with `scripts/rule_phases.py`.
 name	applied-by	programs	parse	ir	interp	c	native
-H-ClearRelease/plain	c	35	0	0	0	297	0
+H-ClearRelease/plain	c	37	0	0	0	377	0
 H-SwapRebind	c,native	19	0	0	0	18	90
 R-Alias/versioned	c,native	19	0	0	0	29	125
 R-Apart	c,native	1	0	0	0	5	10

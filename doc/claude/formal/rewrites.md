@@ -1163,7 +1163,12 @@ header path they take in a loop.  The value test is native's, lifted to
 `opt::hoist::run_value_plain` so both backends read one predicate.  Switch
 `LOFT_NO_PUSH_RUN_HEADER=1`; census `R-PushFill/run-header`.  Guard: the run cells
 (`a-run-of-pushes-reserves-its-room-once.loft`) — a header put that never bumps the length
-fails r1 with lengths 0 for 3.
+fails r1 with lengths 0 for 3.  With a header the run derives it FIRST and reserves only when
+it has no room for the run (`len + k > cap`), deriving it again after: a vector refilled with
+its room kept — cleared, or a reused record buffer's field — takes no reservation call.
+hex_recover `forms_upto` (two 3-element runs per candidate): gcc −16 %, clang −6 %.  The
+reservation is capacity: no defect in it changes a value (a header left stale after it has too
+little room, so every push takes the put's own growth step), so the run cells guard values.
 
 **The run's held-header clause (the C).**  A run whose vector already has a push header
 held by an enclosing loop is not reserved; the run clause above declines it.  With every
@@ -1333,15 +1338,19 @@ Guard: the same cells — a select that answers 1 at the wrap fails `main` (6898
 **A clear with nothing to release (the C).**  `(H-ClearRelease)` (`heap.md`) releases what a
 cleared vector's elements own; a vector of scalars owns nothing through them, so its clear is
 the length reset.  The C writes `loft_vec_clear` for a local of type `vector<τ>`, `τ` a scalar
-(`data::is_scalar`), at `OpClearVector` and at the return-adopt clear of a reused buffer —
-where `loft_vec_clear_release` walked the type descriptors per clear to learn the same.
+(`data::is_scalar`), and for a field whose vector type (`OpGetField`'s third operand) holds
+elements that own no heap and are not linked — at `OpClearVector` and at the return-adopt
+clear of a reused buffer — where `loft_vec_clear_release` walked the type descriptors per
+clear to learn the same (for a record that is its store's root, a search of its fields).
+hex_recover `forms_upto` clears a reused `Form` buffer's two `vector<integer>` fields per
+candidate: gcc −9.5 %, clang −22 %.
 graphics `polygon_crossings` clears its reused crossings buffer once per scanline: ship lane
 gcc 327 → 308 µs (−6 %), clang 340 → 309 µs (−9 %), the hash unchanged.  A clear that names a
-field of the local's store (`b = []` on a `vector<integer>` local) is not typed there and keeps
-the walk.  Sites: `FnWriter::clear_releases_nothing` (`src/c/body.rs`).  Switch
+field of a local's store is typed by its `OpGetField`.  Sites: `FnWriter::clear_releases_nothing`
+(`src/c/body.rs`).  Switch
 `LOFT_NO_PLAIN_CLEAR=1`; census `H-ClearRelease/plain`.  Guard:
 `tests/scripts/a-vector-of-scalars-clears-without-a-release-walk.loft` — a plain clear that
-leaves the length fails k3 and k5.
+leaves the length fails k1 and k6 at `OpClearVector`, k3 and k5 at the return-adopt clear.
 
 **The guard clause.**  An index a passed test keeps below the length: inside `if e < len(v)`
 (its then-arm), after a `while e < n` loop's test (the rest of each turn), or either side of

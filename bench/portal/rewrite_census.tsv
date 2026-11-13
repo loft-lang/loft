@@ -1218,6 +1218,7 @@
 16_consumer_shapes	-	rust	R-WorkBuffer/result	1
 16_consumer_shapes	-	rust	R-Wrapper	27
 16_consumer_shapes	-	rust	R-ZeroCount	8
+17_consumer_moros_dryopea	-	c	H-ClearRelease/plain	1
 17_consumer_moros_dryopea	-	c	R-Alias/versioned	1
 17_consumer_moros_dryopea	-	c	R-Apart/records	3
 17_consumer_moros_dryopea	-	c	R-Apart/records/boundary	1
@@ -1993,7 +1994,7 @@ arguments	c76d7f409	rust	R-ValueLocal	6
 arguments	c76d7f409	rust	R-View	34
 arguments	c76d7f409	rust	R-Wrapper	20
 arguments	c76d7f409	rust	R-ZeroCount	28
-assets	7108f3550+shapes@0.5.4	c	H-ClearRelease/plain	17
+assets	7108f3550+shapes@0.5.4	c	H-ClearRelease/plain	18
 assets	7108f3550+shapes@0.5.4	c	R-Base	35
 assets	7108f3550+shapes@0.5.4	c	R-Base/counter	3
 assets	7108f3550+shapes@0.5.4	c	R-Base/guard	1
@@ -2119,7 +2120,7 @@ assets	7108f3550+shapes@0.5.4	rust	R-WorkBuffer	5
 assets	7108f3550+shapes@0.5.4	rust	R-WorkBuffer/onward	16
 assets	7108f3550+shapes@0.5.4	rust	R-Wrapper	27
 assets	7108f3550+shapes@0.5.4	rust	R-ZeroCount	8
-cbor	c76d7f409	c	H-ClearRelease/plain	9
+cbor	c76d7f409	c	H-ClearRelease/plain	11
 cbor	c76d7f409	c	R-AppendTwin	15
 cbor	c76d7f409	c	R-AppendTwin/loop-window	1
 cbor	c76d7f409	c	R-AppendTwin/mint	2
@@ -2265,7 +2266,7 @@ cbor	c76d7f409	rust	R-WorkBuffer/onward	2
 cbor	c76d7f409	rust	R-WorkBuffer/result	2
 cbor	c76d7f409	rust	R-Wrapper	26
 cbor	c76d7f409	rust	R-ZeroCount	8
-crypto	c76d7f409	c	H-ClearRelease/plain	8
+crypto	c76d7f409	c	H-ClearRelease/plain	9
 crypto	c76d7f409	c	R-Base	4
 crypto	c76d7f409	c	R-Base/counter	3
 crypto	c76d7f409	c	R-Base/guard	5
@@ -2374,7 +2375,7 @@ crypto	c76d7f409	rust	R-WorkBuffer/onward	35
 crypto	c76d7f409	rust	R-WorkBuffer/result	1
 crypto	c76d7f409	rust	R-Wrapper	19
 crypto	c76d7f409	rust	R-ZeroCount	8
-drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	H-ClearRelease/plain	47
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	H-ClearRelease/plain	57
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Alias/versioned	2
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Apart/vector	2
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base	132
@@ -3542,7 +3543,7 @@ hex_edge	7db0174ab	rust	R-View	5
 hex_edge	7db0174ab	rust	R-WorkBuffer	5
 hex_edge	7db0174ab	rust	R-Wrapper	24
 hex_edge	7db0174ab	rust	R-ZeroCount	8
-hex_field	7db0174ab	c	H-ClearRelease/plain	13
+hex_field	7db0174ab	c	H-ClearRelease/plain	16
 hex_field	7db0174ab	c	H-SwapRebind	1
 hex_field	7db0174ab	c	R-Base	63
 hex_field	7db0174ab	c	R-Base/counter	3
@@ -3826,7 +3827,7 @@ hex_fit	7db0174ab	rust	R-WorkBuffer/onward	35
 hex_fit	7db0174ab	rust	R-WorkBuffer/result	2
 hex_fit	7db0174ab	rust	R-Wrapper	145
 hex_fit	7db0174ab	rust	R-ZeroCount	8
-hex_form	7db0174ab	c	H-ClearRelease/plain	7
+hex_form	7db0174ab	c	H-ClearRelease/plain	27
 hex_form	7db0174ab	c	R-Alias/versioned	1
 hex_form	7db0174ab	c	R-Base	18
 hex_form	7db0174ab	c	R-Base/counter	14
@@ -4171,7 +4172,7 @@ hex_place	7db0174ab	rust	R-WorkBuffer	11
 hex_place	7db0174ab	rust	R-WorkBuffer/onward	1
 hex_place	7db0174ab	rust	R-Wrapper	64
 hex_place	7db0174ab	rust	R-ZeroCount	8
-hex_recover	7db0174ab	c	H-ClearRelease/plain	17
+hex_recover	7db0174ab	c	H-ClearRelease/plain	32
 hex_recover	7db0174ab	c	R-Alias/versioned	6
 hex_recover	7db0174ab	c	R-Base	46
 hex_recover	7db0174ab	c	R-Base/counter	23
@@ -4453,7 +4454,7 @@ hex_roof	7db0174ab	rust	R-WorkBuffer	9
 hex_roof	7db0174ab	rust	R-WorkBuffer/onward	7
 hex_roof	7db0174ab	rust	R-Wrapper	35
 hex_roof	7db0174ab	rust	R-ZeroCount	8
-hex_shape	7db0174ab	c	H-ClearRelease/plain	4
+hex_shape	7db0174ab	c	H-ClearRelease/plain	24
 hex_shape	7db0174ab	c	R-Base	45
 hex_shape	7db0174ab	c	R-Base/counter	24
 hex_shape	7db0174ab	c	R-Base/guard	1
@@ -4998,6 +4999,7 @@ html	dd260f04c	rust	R-ValueLocal	6
 html	dd260f04c	rust	R-View	2
 html	dd260f04c	rust	R-Wrapper	9
 html	dd260f04c	rust	R-ZeroCount	8
+markdown	dd260f04c	c	H-ClearRelease/plain	1
 markdown	dd260f04c	c	R-Base	4
 markdown	dd260f04c	c	R-Base/counter	2
 markdown	dd260f04c	c	R-Base/guard	1
@@ -5684,7 +5686,7 @@ ssh	b4075f3fc	rust	R-View	4
 ssh	b4075f3fc	rust	R-WorkBuffer	1
 ssh	b4075f3fc	rust	R-Wrapper	10
 ssh	b4075f3fc	rust	R-ZeroCount	8
-stage	0bde9ed2c+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	H-ClearRelease/plain	7
+stage	0bde9ed2c+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	H-ClearRelease/plain	10
 stage	0bde9ed2c+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Alias/versioned	2
 stage	0bde9ed2c+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Base	36
 stage	0bde9ed2c+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Base/counter	15
@@ -6289,7 +6291,7 @@ web	b4075f3fc	rust	R-View	7
 web	b4075f3fc	rust	R-WorkBuffer	1
 web	b4075f3fc	rust	R-Wrapper	12
 web	b4075f3fc	rust	R-ZeroCount	10
-zttext	c76d7f409	c	H-ClearRelease/plain	11
+zttext	c76d7f409	c	H-ClearRelease/plain	14
 zttext	c76d7f409	c	H-SwapRebind	4
 zttext	c76d7f409	c	R-Alias/versioned	2
 zttext	c76d7f409	c	R-Base	44

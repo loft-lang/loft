@@ -131,3 +131,18 @@ per scanline against the twin's 45, which keeps one buffer in one function); one
 of two, and the clear inlined, priced within ±3 % and not consistently.  draw_bezier's remainder
 is the eight `?? 0` null tests and the slice clamp before each cut (about 30 of 239 instructions
 per split, ~2 % of the routine).  blend_pixel holds at 1.02 / 0.92 with ±0.1 % between runs.
+
+hex_recover `forms_upto` (2.26x gcc) BUILT (2026-11-13): a fifth of it was the release walk on
+a reused `Form` buffer's two `vector<integer>` fields — the plain clear now takes a field whose
+`OpGetField` vector type holds elements that own no heap — and a push run with a header now
+derives the header first and reserves only when it has no room (`loft_ph_reserved`), so a
+refilled vector takes no reservation call.  One core, against the twin's 124 µs: gcc 271 →
+206 µs, clang 216 → 158 µs (1.66x / 1.27x).  Left: `form_closes` (21 %), spread over the frame
+wrappers of three small calls, `head_step`'s twelve-way branch chain and their loops.
+
+Also measured, not built: 11 `par` (2.63x) is two elements per packed divide in the twin
+(rustc unrolls the 50-step Newton loop and vectorises); in the C each step's `?` on the float
+division is a NaN test behind the cold-path barrier — removing it made gcc +47 % and clang
++22 % slower (the select lengthens the dependent chain) and vectorised nothing.  Closing it
+needs a float range proof or a construct-specific `par` transform, which the owner's rule
+excludes.  23 `lru_mixed` (2.89x) stays set aside (bench/portal/analysis/c-3x-bar.md).

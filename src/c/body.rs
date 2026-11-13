@@ -3280,11 +3280,7 @@ impl<'a> FnWriter<'a> {
             return Ok(None);
         }
         let v = as_ref(self.expr(first.vector, ind)?)?;
-        self.line(
-            ind,
-            &format!("loft_vec_reserve_run({v}, INT64_C({k}), {});", first.size),
-        );
-        crate::rewrite_census::fired("R-PushFill/run", 1);
+        let reserve = format!("loft_vec_reserve_run({v}, INT64_C({k}), {});", first.size);
         // The header clause: values computed from scalars and operators cannot move the store,
         // and the run's one growth is the reservation above — so its pushes write through one
         // header and its held record address (`loft_ph_putb*`), the growth step left as the
@@ -3295,15 +3291,28 @@ impl<'a> FnWriter<'a> {
             && vals.iter().all(|val| {
                 crate::opt::hoist::run_value_plain(self.cx.data, self.vars, first.path.0, val)
             });
+        crate::rewrite_census::fired("R-PushFill/run", 1);
         if header {
+            // The header first: a vector that already has room for the run — one cleared and
+            // refilled, a record buffer reused — takes no reservation call, only the header's
+            // own room test; one without room reserves and derives the header again.
             let h = format!("ph{}", self.decls.len() + 1);
             self.decls.push(format!(
                 "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
-            self.line(ind, &format!("{h} = loft_ph_of({v}, {});", first.size));
+            let size = first.size;
+            self.line(ind, &format!("{h} = loft_ph_of({v}, {size});"));
+            self.line(
+                ind,
+                &format!(
+                    "if (LOFT_UNLIKELY({h}.cap < {k} || {h}.len > {h}.cap - {k})) {h} = loft_ph_reserved({h}, INT64_C({k}), {size});"
+                ),
+            );
             self.push_heads
                 .push(vec![(first.path.clone(), h, first.size, true)]);
             crate::rewrite_census::fired("R-PushFill/run-header", 1);
+        } else {
+            self.line(ind, &reserve);
         }
         Ok(Some((end, header)))
     }
@@ -4005,18 +4014,41 @@ impl<'a> FnWriter<'a> {
         None
     }
 
-    /// `@FR-H-ClearRelease` with nothing to release: a local vector of scalars, whose elements
-    /// own no heap.  Its clear is the length set to 0 — what `loft_vec_clear_release` comes to
-    /// after walking the type descriptors to learn the same at run time — so the C writes
-    /// `loft_vec_clear`.  `LOFT_NO_PLAIN_CLEAR=1` writes the walk.
+    /// `@FR-H-ClearRelease` with nothing to release: a vector whose elements own no heap — a
+    /// local `vector<τ>` of a scalar `τ`, or a record's field whose vector type
+    /// (`OpGetField`'s third operand) holds elements that own none.  Its clear is the length
+    /// set to 0 — what `loft_vec_clear_release` comes to after walking the type descriptors to
+    /// learn the same at run time (for a record that is its store's root, a search of its
+    /// fields per clear) — so the C writes `loft_vec_clear`.  `LOFT_NO_PLAIN_CLEAR=1` writes
+    /// the walk.
     fn clear_releases_nothing(&self, v: &Value) -> bool {
         if std::env::var("LOFT_NO_PLAIN_CLEAR").is_ok_and(|x| x != "0") {
             return false;
         }
-        let Value::Var(x) = v.unspan() else {
-            return false;
-        };
-        matches!(self.vars.tp(*x).base(), crate::data::Type::Vector(elem, _) if crate::data::is_scalar(elem))
+        match v.unspan() {
+            Value::Var(x) => matches!(
+                self.vars.tp(*x).base(),
+                crate::data::Type::Vector(elem, _) if crate::data::is_scalar(elem)
+            ),
+            Value::Call(d, args)
+                if (*d as usize) < self.cx.data.definitions.len()
+                    && self.cx.data.def(*d).name() == "OpGetField" =>
+            {
+                let Some(Value::Int(content)) = args.get(2).map(Value::unspan) else {
+                    return false;
+                };
+                let Ok(tp) = u16::try_from(*content) else {
+                    return false;
+                };
+                let stores = self.cx.stores;
+                if !stores.is_plain_vector(tp) {
+                    return false;
+                }
+                let elem = stores.content(tp);
+                elem != u16::MAX && !stores.type_owns_heap(elem) && !stores.is_linked(elem)
+            }
+            _ => false,
+        }
     }
 
     /// The index `idx` names when it is proven inside the held vector `h` (`counters_in_range`):

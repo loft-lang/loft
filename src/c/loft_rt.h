@@ -4064,6 +4064,15 @@ LOFT_PH_PUTB(8, uint64_t)
 LOFT_PH_PUTB(4, uint32_t)
 LOFT_PH_PUTB(1, uint8_t)
 
+/* `@FR-R-PushFill`'s run clause through its header: the writer tests the header's room for the
+ * run's `k` elements inline, and a header without it takes this — the reservation
+ * (`loft_vec_reserve_run`, capacity only) and the header derived again.  One with room — a
+ * vector cleared and refilled, a reused record buffer's field — takes no call. */
+LOFT_HOT_INLINE loft_ph loft_ph_reserved(loft_ph h, int64_t k, uint32_t size) {
+    loft_vec_reserve_run(h.v, k, size);
+    return loft_ph_of(h.v, size);
+}
+
 /* A loop's push header read as a held vector header: its record and length are current — every
  * growth and cut of the path inside the loop goes through it (`loft_ph_keep` below) — and the
  * element base is derived from the record, as `loft_vh_fresh` derives it, since a growth may
