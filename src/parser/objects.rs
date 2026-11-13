@@ -4460,7 +4460,7 @@ impl Parser {
             let mut create_iter = expr;
             let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
             let iter_next = self.iterator(&mut create_iter, &in_type, &it, iter_var, pre_var);
-            if !self.first_pass && iter_next == Value::Null {
+            if !self.first_pass && iter_next == Value::Null && !self.source_refused {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -5233,6 +5233,7 @@ impl Parser {
         name: &str,
     ) -> Type {
         self.unordered_iterator = false;
+        self.source_refused = false;
         // Borrowed, not cloned: this runs for every `for` header, and a cloned identifier is
         // an allocation each time (the front-end allocation pins count it).
         if matches!(&self.lexer.peek().has, LexItem::Identifier(u) if u == "unordered") {
@@ -5282,7 +5283,11 @@ impl Parser {
                     Type::Sorted(_, _, _) | Type::Index(_, _, _) | Type::Vector(_, _)
                 ) {
                     // reverse_iterator stays set; consumed and reset by iterator()
-                } else if !matches!(in_type, Type::Null) {
+                } else if !matches!(in_type, Type::Null)
+                    // A local bound from a function declared further down is typed only on
+                    // the second pass, which decides it; the first knows nothing to refuse.
+                    && !(self.first_pass && in_type.is_unknown())
+                {
                     self.reverse_iterator = false;
                     // A NULLABLE collection is refused — `@FR-I-NullSrc` draws the line
                     // explicitly: a `nullref` (a runtime null of a NON-nullable type) iterates
@@ -5304,6 +5309,7 @@ impl Parser {
                             "rev() on a non-range expression must wrap a sorted, index, or vector collection"
                         );
                     }
+                    self.source_refused = true;
                 }
                 self.lexer.token(")");
             }
