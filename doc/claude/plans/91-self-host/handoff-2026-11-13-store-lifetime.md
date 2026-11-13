@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN91 — handoff, 2026-11-13: the elaborator's store-lifetime cases
 
-Branch `tuxedo-pr2474-next` (pushed through `ac6dd4a2c`) = main `efbb7b00e` + `91-self-host`
+Branch `tuxedo-pr2474-next` (pushed through `ba445643c`) = main `efbb7b00e` + `91-self-host`
 through `cf0483c23` (the store-records rework) + the fixes below.  The owner's goal for the
 stream: *fix the remaining lifetime cases and the store-records checker with it*, then gather
 every active branch into one PR.
@@ -19,8 +19,11 @@ every active branch into one PR.
 - **Store records**: every fix below reads CAUGHT with its switch off and CLEAN with it on; the
   suite sweep under ten fix switches reads 0 MISS, 0 STATIC
   (`scripts/own_sweep.py --oracle check-records --suite <suite> --switch '' --switch <S> …`).
+- **Strict stores over gate E's corpus** (`LOFT_STRICT_STORES=1` C elaborator, never reusing a
+  freed slot): no use after free and no double free in any of the 2054 programs; what is left
+  is leaks.  `LOFT_LEAK_SITES` names each leaked store's maker and its caller.
 - **Records on the elaborator** (`LOFT_OWN_ORACLE=check-records loft --interpret
-  selfhost/front/elab.loft`): 58 findings — 49 leaks, 6 re-frees, 3 uses after end.
+  selfhost/front/elab.loft`): 38 findings.
 
 ## Fixed today (each with a switch that restores the defect)
 
@@ -34,6 +37,10 @@ every active branch into one PR.
 | `4f2a3f141` | a rebind from a choice handing another variable over whole (`class = bound ?? Owned`) aliased it (`classify_var`, `tag_in`) | `LOFT_NO_CHOICE_VAR_JOIN` |
 | `b83ab0844` | a join arm's owning call bound into its own buffer (`__ref_N = without_deps(x, __ref_N)`) named the argument's store where the call answered it (`arm_delivery`) | `LOFT_NO_S1_JOIN` |
 | `8255edd6c` | a first bind from a choice over a `??` (`chain = if p { f() ?? NdNull } else { NdNull }`) aliased the `??`'s temporary; the rebind freed it under the temporary (`enum_field`) | `LOFT_NO_NCC_CHOICE_JOIN` |
+| `7b1d8f614` | an early `return` written before a later rebind paired a literal's buffer free against its adopter, which the rebind had already freed (`tuple_match`; interpreter, seen under strict stores) | `LOFT_NO_LATE_OWNER_DISARM` |
+| `684dc8504` | a comprehension body on a line of its own kept its block, so the slot leaked every store its call made (`with_deps` over tuples; main, both backends) | `LOFT_NO_COMP_LINE_PEEL` |
+| `6c9a4ff68` | C: a first bind joined on a choice's variable into a view, and the copy leaked (`call_args`' `last_t`: ~100k TypeT; came with `8255edd6c`) | `LOFT_C_FIRST_CHOICE_JOIN_ANY` |
+| `ba445643c` | a witnessed local bound from a choice of buffer calls lost the store a call made into a null buffer (`member`: ~71k Ex; both backends) | `LOFT_NO_WITNESS_NULL_BUFFER` |
 | `c89a8b1f4` | the cargo build-dir opt-out retired (release-blocking); `9152f7fd3` fixes the tests that assumed `deps/` | — |
 
 The C re-free census (`LOFT_DOUBLE_FREE`) now names a same-site re-free (first 20); it only
@@ -41,18 +48,23 @@ counted them.
 
 ## Open
 
-1. **Records findings on the elaborator** (58): each is a defect on a path gate E does not
-   run or a records error (a gap) to cure in `src/store_records.rs`.  `tuple_match`'s `mc`
-   cluster was a gap (`ac6dd4a2c`); `struct_match`'s `__ref_2` re-free reads as one too.
-2. **CI reds of run `43390150731`**: `tests/swap_rebind.rs` `n_r1` and
-   `tests/rebind_buffer.rs` `n_b1` (the plain bind `daf8dbd40` skips H-SwapRebind /
-   R-RebindBuffer; `LOFT_NATIVE_OWN_CALL_BIND=1` restores them), and the Heavy test-duration
-   gate (four `html_wasm` `rust_writer::html_debug_*` tests near 410 s).
+1. **loft#2476**: a VIEW bound from a choice of buffer calls leaks the store a call made into a
+   null record buffer (main, both backends; `vector_return`'s `tail`, ~2k Node).  Needs a
+   design: the buffer names its callee's answer, or such a view gets an owner witness.
+2. **Leaks still on the corpus**: rebuild the leak-sites elaborator
+   (`LOFT_LEAK_SITES=1 LOFT_STRICT_STORES=1 … --native-c --out <dir> selfhost/front/elab.loft`)
+   and total the `[leak-site]` lines per maker and caller.
+3. **CI reds of run `43390150731`**: `tests/swap_rebind.rs` `n_r1` and `tests/rebind_buffer.rs`
+   `n_b1` — the rustc writer's plain bind (`daf8dbd40`) skipped the hand-over of
+   `R-RebindBuffer`; a fix that hands the displaced store over after a plain bind is in the
+   working tree, waiting on a rustc-native run.  The Heavy duration gate (four
+   `rust_writer::html_debug_*` tests, ~260 s → ~410 s since `c89a8b1f4`) runs on dispatch and
+   nightly only.
 
 ## The next PR
 
 Gather every active branch once the open items are closed: `91-self-host` (the records rework
-and cherry-picks of the first four fixes), laptop-c-perf `11651a5f5..28408ab57` (including the
+and cherry-picks of the first four fixes), laptop-c-perf `11651a5f5..b1043e270` (including the
 Linux daily's version string, `41235157e`), loft2's branch (the five `LOFT_NO_OWNER_WITNESS`
 switch-ab cells), and this branch.  The full CI run on the new cargo layout is `43390150731`.
 
