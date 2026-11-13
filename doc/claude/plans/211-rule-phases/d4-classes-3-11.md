@@ -146,3 +146,22 @@ division is a NaN test behind the cold-path barrier — removing it made gcc +47
 +22 % slower (the select lengthens the dependent chain) and vectorised nothing.  Closing it
 needs a float range proof or a construct-specific `par` transform, which the owner's rule
 excludes.  23 `lru_mixed` (2.89x) stays set aside (bench/portal/analysis/c-3x-bar.md).
+
+**The rest of the cross-library list** (gcc C ship lane, re-measured 2026-11-13), each with its
+reason:
+- 14 `sum` (1.96x): the parked null-integer cost — the kernel already sums in blocks, but each
+  element also feeds the null-and-overflow test the twin's wrapping `.sum()` does not make.
+- drawing `parse` (2.15x): class 9, the char walk — `at` tests the index, `byte_at` again, per
+  byte; dropping the frames of `at` priced 0 % gcc / −3 % clang.
+- hex_roof `roof_match` (2.17x): every `pv` read raw is the most a version twin could give —
+  priced −6 % gcc, −19 % clang.  `seg_distance` needs three widenings of `@FR-R-Version`: a
+  call that takes and answers scalars only made opaque (`sqrt`, `atan2`, `ang_wrap` with its
+  loop), callees entered more than one level deep (`seg_point` → `seg_len`), and a fast twin
+  per caller — `seg_len` is a leaf of its own whose plan proves two accesses where
+  `seg_distance`'s part of it proves one, so one shared body would read an access raw that
+  the caller never tested.  The first two were built and traced; without the third nothing
+  is admitted, so none is kept.
+- moros `map_json` (2.23x), gridmesh `build_index` (2.20x), `field_add_cell`: runtime work (the
+  JSON lexer's owned token per peek, the keyed and hash runtime), D1 classes 8 and 10.
+- pluginabi `request` (2.16x), `req_state_b64`: the base64 alphabet, priced in class 3 (clang
+  loses).
