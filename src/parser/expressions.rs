@@ -8538,13 +8538,18 @@ use a separate collection or add after the loop"
                 crate::use_analysis::protectable_ref_args(&self.data, self.context, code).0
             };
             // This bracket is set BEFORE the value runs, so it names only stores that exist
-            // then: a block argument's root is its tail, bound by the value itself
+            // then: a block argument's root is its tail, BOUND to a value inside the value itself
             // (`set(["c", "a"])` names the literal's `_vec_1`), and protecting that before the
-            // block ran read a stale slot on the interpreter and a variable out of scope in the
-            // Rust writer (E0425, script 0.4.0).  `LOFT_KEYED_BRACKET_NAMES_INNER=1` keeps them.
+            // block ran named a variable out of scope in the Rust writer (E0425, script 0.4.0).
+            // A buffer the value only pre-initialises (`Set(__kvb_N, Null)` before its
+            // `OpDatabase`, an empty keyed literal) is declared ahead of the statement and holds
+            // its store when the bracket is set: dropping it re-freed that store (G-Mono's
+            // `addi([], 4)`).  `LOFT_KEYED_BRACKET_NAMES_INNER=1` keeps them all.
             if !crate::env_once!(std::env::var_os("LOFT_KEYED_BRACKET_NAMES_INNER").is_some()) {
                 fn bound_in(node: &Value, out: &mut Vec<u16>) {
-                    if let Value::Set(v, _) = node.unspan() {
+                    if let Value::Set(v, value) = node.unspan()
+                        && !matches!(value.unspan(), Value::Null)
+                    {
                         out.push(*v);
                     }
                     node.for_each_child(&mut |c| bound_in(c, out));
