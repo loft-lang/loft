@@ -19898,12 +19898,47 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   if el_types::is_unknown(in_t) {
     return refused_build();
   }
+  // `parse_item`: each later item is converted to the element the first set
+  // (`convert_store_lenient`: a `null`, or a nullable value of the element's own base, is stored
+  // as the slot's null — `@FR-N-Store` warns there); an undeclared literal whose later item is a
+  // float where the earlier ones are integers widens them (`widen_literal_items`).
+  conv: vector<Ex> = [];
   for x in xs {
-    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, in_t, x.tp) && !(el_types::struct_enum_def(in_t) >= 0 && variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
+    if el_types::is_unknown(x.tp) || el_types::is_equal(e, in_t, x.tp) || (el_types::struct_enum_def(in_t) >= 0 && variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
+      conv += [x];
+      continue;
+    }
+    if el_convert::plain_scalar(in_t) || el_types::base(in_t) is TyText {
+      if x.tp is TyNull {
+        nl = el_convert::null_of(e, el_types::base(in_t));
+        if nl != null {
+          conv += [ex(if e.first_pass { x.code } else { nl! }, in_t)];
+          continue;
+        }
+      }
+      if x.tp is TyOptional && el_types::is_equal(e, el_types::without_deps(el_types::base(in_t)), el_types::without_deps(el_types::base(x.tp))) {
+        conv += [ex(x.code, in_t)];
+        continue;
+      }
+    }
+    if el_types::is_unknown(declared) && el_types::base(in_t) is TyInteger && el_types::base(x.tp) is TyFloat {
+      wide: vector<Ex> = [];
+      for y in conv {
+        cy = if e.first_pass { y.code } else { el_convert::convert_store(e, vars, y.code, y.tp, ir::TyFloat) ?? ir::NdNull };
+        wide += [ex(cy, ir::TyFloat)];
+      }
+      in_t = ir::TyFloat;
+      conv = wide + [x];
+      continue;
+    }
+    cx = if e.first_pass { x.code } else { el_convert::convert_store(e, vars, x.code, x.tp, in_t) ?? ir::NdNull };
+    if !e.first_pass && el_ir::is_null(cx) {
       el::refuse(e, "a vector item of another type than the first: {display_type_name(e, in_t)} then {display_type_name(e, x.tp)}");
       return refused_build();
     }
+    conv += [ex(cx, in_t)];
   }
+  xs = conv;
   // `(I-Comp)` (`literal_reads_dest`): an item that reads the vector it is appended to sees the
   // vector as the statement began.  For scalar items on a plain local, whose calls are all
   // primitives or `#pure`, each such item is evaluated into a `_build_val_N` before anything
