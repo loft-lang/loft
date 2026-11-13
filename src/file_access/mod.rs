@@ -686,10 +686,7 @@ pub fn same_file_identity(a: impl HostPath, b: impl HostPath) -> bool {
     }
     #[cfg(not(unix))]
     {
-        x.len() == y.len()
-            && x.modified()
-                .ok()
-                .is_some_and(|m| y.modified().ok() == Some(m))
+        x.len() == y.len() && x.modified().is_ok_and(|m| y.modified().ok() == Some(m))
     }
 }
 
