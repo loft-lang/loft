@@ -335,17 +335,27 @@ pub(super) fn owner_witness_locals(
             && !matches!(function.tp(*t), Type::RefVar(_))
             && function.tp(*t).base().heap_def_nr().is_some()
         {
-            match witness_set_kind(val, *t, *t, function, data, d_nr, &mut |v| {
+            let kind = witness_set_kind(val, *t, *t, function, data, d_nr, &mut |v| {
                 let defs =
                     defs.get_or_insert_with(|| crate::use_analysis::function_defs(data, d_nr));
                 crate::use_analysis::ownership_of_with(data, d_nr, v, defs)
-            }) {
+            });
+            match kind {
                 WitnessSet::Mint | WitnessSet::MintReading => {
                     minted.insert(*t);
                 }
-                // Deciding WHO is witnessed reads the choice as it always did: the temps own
-                // it on the paths that filled them.
-                WitnessSet::Other | WitnessSet::MintUnless(_) => {
+                // A choice of buffer calls owns the store a call made into a null buffer: the
+                // local is mixed where another bind views (`x = h.ex`), which is what a witness
+                // is for (loft#2476).  `LOFT_NO_WITNESS_NULL_BUFFER=1` never answers `MintUnless`.
+                WitnessSet::MintUnless(_) => {
+                    minted.insert(*t);
+                    // A local the parser typed as a view (`tail = if … { unspan(…) } else {
+                    // NdNull }`, deps naming the buffer) frees nothing itself: mixed already.
+                    if !function.tp(*t).depend().is_empty() {
+                        viewed.insert(*t);
+                    }
+                }
+                WitnessSet::Other => {
                     // A view of another variable's storage.  A null or a store nobody names
                     // is not a VIEW and does not make the ownership mixed on its own.
                     if is_view_of_storage(val, function, data, d_nr) {
@@ -543,10 +553,10 @@ fn choice_delivering_temps(value: &Value, function: &Function, data: &Data) -> O
                 let def = data.def(*d);
                 let attrs = def.attributes();
                 let deps = def.returned().depend();
-                let through_buffer = !deps.is_empty()
-                    && deps
-                        .iter()
-                        .all(|&x| x == u16::MAX || attrs.get(x as usize).is_some_and(|a| a.hidden));
+                // Fresh (no deps) or through its hidden buffer: never a visible argument's store.
+                let through_buffer = deps
+                    .iter()
+                    .all(|&x| x == u16::MAX || attrs.get(x as usize).is_some_and(|a| a.hidden));
                 // The buffer this frame hands: a compiler work ref, never an argument.
                 let buf = args.iter().find_map(|a| match a.unspan() {
                     Value::Var(w)
