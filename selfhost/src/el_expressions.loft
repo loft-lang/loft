@@ -17271,6 +17271,31 @@ fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: vector
   own_match_arms(e, vars, ex(chain, result))
 }
 
+// port: Parser::match_borrow_source — the frame variable a match binding borrows from: a bare
+// variable subject, the root of a getter chain (`OpGet…` reads into its first argument's record),
+// a tuple member's own borrow (else the tuple temporary); -1 for a chain rooted in a call.
+fn match_borrow_source(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  at = el_ir::unspan(n);
+  for _ in 0..10000 {
+    match at {
+      NdVar { n: v } => { return v; },
+      NdCall { def_nr, args } => {
+        if !starts_with(el::def(e, def_nr).name, "OpGet") || len(args) == 0 {
+          return -1;
+        }
+        at = el_ir::unspan(args[0]!);
+      },
+      NdTupleGet { var, idx } => {
+        member = match el_types::base(el_vars::tp(vars, var)) { TyTuple { elems } => elems[idx] ?? ir::TyVoid, _ => ir::TyVoid };
+        d = el_types::deps(member);
+        return if len(d) > 0 { d[0]! } else { var };
+      },
+      _ => { return -1; }
+    }
+  }
+  -1
+}
+
 // `Parser::parse_vector_match` for a vector of plain scalars or texts: the subject held in
 // `_match_subj_N`; an arm `[a, b, ..rest, z]` tests the length (`len == fixed`, or
 // `fixed <= len` with a rest) and binds each named element at its position — the tail's from the
@@ -17288,8 +17313,19 @@ fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) ->
     el::refuse(e, "a vector match over this element type: {type_kind(elm)}");
     return void;
   }
-  sv = el_vars::create_unique(vars, "match_subj", x.tp);
+  // A subject that is already an author's VARIABLE is matched as itself (`@FR-B-View` ×
+  // `@FR-P-Cap-View`): through a temporary, a capture was a view of the temporary, which a
+  // removal from the variable in the arm never shook.  A computed subject (or a link, or a
+  // compiler buffer) still gets its temporary, so it is evaluated once.
+  subject_var = match el_ir::unspan(x.code) {
+    NdVar { n: xv } => if !(el_types::base(el_vars::tp(vars, xv)) is TyRefVar) && !el_vars::is_compiler_generated(vars, xv) { xv } else { -1 },
+    _ => -1
+  };
+  sv = if subject_var >= 0 { subject_var } else { el_vars::create_unique(vars, "match_subj", x.tp) };
   el_vars::set_defined(vars, sv);
+  // `@FR-P-Cap-View`: a record element bound by name borrows the subject's backing variable.
+  mb = match_borrow_source(e, vars, x.code);
+  src = if mb >= 0 { mb } else { sv };
   result = ir::TyVoid;
   out: vector<SMArm> = [];
   shapes: vector<SliceShape> = [];
@@ -17308,7 +17344,7 @@ fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) ->
         match e.p.nodes[pn] {
           PWild => { total = true; },
           PSlice { elems } => {
-            sa = slice_arm(e, vars, sv, elm, elems, names);
+            sa = slice_arm(e, vars, sv, src, elm, elems, names);
             if sa == null {
               return void;
             }
@@ -17368,7 +17404,8 @@ fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) ->
   for a in rev(out[..len(out) - 1]) {
     chain = if a.guard == null { a.code } else { el_ir::v_if(a.guard!, a.code, chain) };
   }
-  own_match_arms(e, vars, ex(el_ir::v_block([el_ir::v_set(sv, x.code), chain], result, "vector_match"), result))
+  head: vector<ir::Node> = if subject_var >= 0 { [] } else { [el_ir::v_set(sv, x.code)] };
+  own_match_arms(e, vars, ex(el_ir::v_block(head + [chain], result, "vector_match"), result))
 }
 
 // Does an arm's code answer a variable one of its `binds` set?
@@ -17441,15 +17478,15 @@ fn pattern_bind(vars: el_vars::Vars, name: text, tp: ir::TypeT, names: vector<el
 }
 
 // `parse_slice_pattern` for plain names, `_` and one `..` / `..rest` over `sv`.
-fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
   // A repetition group (`( V )*`, `( V )+`) over a struct enum: `parse_slice_repetition`; an
   // optional group or a multi-element alternation: `parse_multi_element_alternation`.
   for el0 in elems {
     if rep_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
-      return slice_rep(e, vars, sv, elm, elems, names);
+      return slice_rep(e, vars, sv, src, elm, elems, names);
     }
     if alt_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
-      return slice_alt(e, vars, sv, elm, elems, names);
+      return slice_alt(e, vars, sv, src, elm, elems, names);
     }
   }
   // Each fixed element: a name ("_" for none) or, over a struct enum, a variant pattern (its
@@ -17498,7 +17535,7 @@ fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
   cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
   es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
   // A record element bound by name views the subject's element: it borrows what the subject does.
-  named_t = if sed >= 0 { el_types::with_deps(elm, el_types::deps(el_vars::tp(vars, sv))) } else { elm };
+  named_t = if sed >= 0 { el_types::with_deps(elm, [src]) } else { elm };
   binds: vector<ir::Node> = [];
   for h in head {
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }]);
@@ -17574,7 +17611,7 @@ struct AltBranch { discs: vector<integer>, caps: vector<AltCap> }
 // A capture reads at its branch's position under that branch's test, `τ?` where a branch does not
 // bind it; a rest starts at the taken branch's end (`_alt_pos_N`).  A group capture and the
 // single-element alternation are refused by name.
-fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
   sed = el_types::struct_enum_def(elm);
   es = element_stride(e, elm);
   gi = 0;
@@ -17664,7 +17701,7 @@ fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
   binds: vector<ir::Node> = [];
   head_conds: vector<ir::Node> = [];
   tail_conds: vector<ir::Node> = [];
-  named_t = el_types::with_deps(elm, el_types::deps(el_vars::tp(vars, sv)));
+  named_t = el_types::with_deps(elm, [src]);
   // The fixed head and tail elements: a name bound, a variant tested and bound.
   slots: vector<integer> = [for x in elems[0..gi] { x }];
   slots += tail;
@@ -17847,7 +17884,7 @@ fn rep_group(e: el::El, n: integer) -> integer {
 // a capture collects the run's elements, a `{ f }` the run's fields, and the rest what follows
 // the tail — each a fresh vector.  An alternation or a `?` group, a literal and a cursor subject
 // are refused by name.
-fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
   sed = el_types::struct_enum_def(elm);
   es = element_stride(e, elm);
   int_t = ir::TyInteger { spec: i32_spec() };
@@ -17860,7 +17897,7 @@ fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
   head_len = gi;
   head_conds: vector<ir::Node> = [];
   binds: vector<ir::Node> = [];
-  named_t = el_types::with_deps(elm, el_types::deps(el_vars::tp(vars, sv)));
+  named_t = el_types::with_deps(elm, [src]);
   for h in elems[0..gi] {
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }]);
     nm = rename_of(e, h);
