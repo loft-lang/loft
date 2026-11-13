@@ -15,7 +15,8 @@ every active branch into one PR.
 At `0653ade1e` (later than the rows below): gate E 617 of 2062 agree, 26 differ, 0 freed twice;
 the strict-stores C elaborator leaks **0 stores** over the 2062 programs (no fault); the records
 sweep reads CLEAN on all 1679 suite cells; the records report 13 findings on the elaborator
-itself (`n_index`'s re-free is a false one: the checker loses that `x`, a field of `__lift_3`,
+itself — 7 after `4524dea4c`, the other 6 being real leaks the corpus never reached, fixed above
+(`n_index`'s re-free is a false one: the checker loses that `x`, a field of `__lift_3`,
 names #4 only where `__lift_3` does once the `if` joins — path-correlated holders are owed).
 The suite runner fails a cell arming `LOFT_DOUBLE_FREE` that reports a re-free.  The earlier
 state, kept for reference:
@@ -61,6 +62,9 @@ state, kept for reference:
 | `916d55b2e` | `70fa71fe5` freed an early-leaving arm's LITERAL twice (its record is the literal buffer's); the source owns only a non-literal tail | `LOFT_NO_RET_SRC_OWNS` |
 | `fd2e88c85` | records: a store a hidden buffer parameter holds at an exit is the caller's (false leaks after `ba445643c`) | `LOFT_RECORDS_NO_BUFFER_HANDS_BACK` |
 | `0653ade1e` | C: a literal field read into a skip-free temporary was copied, and leaked (`sink_ncc`) | `LOFT_C_SKIPFREE_ELEMENT_COPY` |
+| `2c952b749` | a call argument's block (`last(match c { … => b.ops, _ => [] })`) read as a mint, so the copy kept the callee's fresh answer (`text_instance_carried`, `fill_instance`; main) | `LOFT_NO_BLOCK_ARG_ROOT` |
+| `b314c1d47` | `t = f(b)!` typed `t` as a view of `b`; the discharge's copy leaked (`default_image`, `row`; main) | `LOFT_NO_NCR_CALL_OWNS` |
+| `4524dea4c` | `f(b)!.name` read in place left the discharge's copy unowned (`default_into`; main) | `LOFT_NO_NCR_LIFT` |
 
 The C re-free census (`LOFT_DOUBLE_FREE`) now names a same-site re-free (first 20); it only
 counted them.
