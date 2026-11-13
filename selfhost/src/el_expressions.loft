@@ -7010,7 +7010,9 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   // `parse_object` builds its literal apart, in a `__ref_p2_N`, and binds it.
   if !e.first_pass && !vars.vars[v].argument && len(el_types::deps(vt)) > 0 {
     el_vars::mark_built(vars, v);
-    o = object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] });
+    // A variant's buffer is typed as its enum (`object_expr`'s `wt`), the record as the variant.
+    wt = if el::def(e, d).def_type == el::DT_ENUM_VALUE { ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
+    o = object_fresh(e, vars, d, fields, wt);
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
   el_vars::mark_built(vars, v);
