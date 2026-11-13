@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-Col-Capacity` — a known count is reserved exactly.  `read_bytes(path)` knows its count,
+// the file's length, before it writes a byte: Rust claims that room once
+// (`vector::alloc_vector_from_bytes`), an empty file's one word included.  The C runtime
+// appended the bytes one at a time, so the vector took the growth step's room (88 bytes at
+// least) and an empty file claimed nothing — on the C backend and on the loft-in-loft
+// interpreter, which runs on that runtime (tests/scripts' raw-scalar and file-lines alloc traces).
+//
+// The channel: the `read_bytes` store's largest free block, off `store_memory()`.  A fresh
+// store is 100 words; its vector record and header take 5, so a claim of w words leaves
+// 95 - w.  Hand-computed: 40 bytes → (40 + 15) / 8 = 6 words → 89 (the growth step: 12 → 83);
+// an empty file → 1 word → 94 (no claim: one record, 95).  The bytes written are appended in
+// a loop, so their own store takes the growth step (83) and cannot stand in for the 89.
+//
+// @falsified-at: none — by hand, on the C backend before the fix: no store read 89 or 94.
+// HOLDS: both reads on the interpreter and the C backend.
+
+// Does some store of exactly `recs` records have a largest free block of `words`?
+fn has_store(recs: integer, words: integer) -> boolean {
+  for line in store_memory().split('\n') {
+    if line.contains(" recs {recs} ") && line.contains("largest-free {words} ") {
+      return true;
+    }
+  }
+  false
+}
+
+fn read_back(p: text, n: integer) -> boolean {
+  data: vector<u8> = [];
+  for i in 0..n { data += [((i * 7 + 3) & 255) as u8]; }
+  write_bytes(p, data);
+  b = read_bytes(p) ?? [];
+  sum = 0;
+  for x in b { sum += x as integer; }
+  want = 0;
+  for i in 0..n { want += (i * 7 + 3) % 256; }
+  assert(len(b) == n && sum == want, "read back {len(b)} bytes summing {sum}, wanted {n} and {want}");
+  has_store(2, 95 - (n + 15) / 8)
+}
+
+fn main() {
+  p = "read_whole_exact.bin";
+  assert(read_back(p, 40), "40 bytes: no store left 89 words free (the growth step leaves 83)");
+  assert(read_back(p, 0), "an empty file: no store left 94 words free (no claim leaves 95)");
+  delete(p);
+  println("ok");
+}
