@@ -6299,9 +6299,9 @@ impl<'a> FnWriter<'a> {
             // `rewrite_unknown`, recursing into `r = rewrite_unknown(inner, …)`).  The bytecode
             // and Rust writers already decline there.  `LOFT_C_NULL_FREES_ENTRY=1` frees it.
             let null_keeps_entry = match self.vars.entry_witness(var) {
-                Some(w) if !crate::keys::c_null_frees_entry() => format!(
+                Some(witness) if !crate::keys::c_null_frees_entry() => format!(
                     "if ({r}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {}.store_nr) {name} = loft_ref_null(); else ",
-                    self.var(w)
+                    self.var(witness)
                 ),
                 _ => String::new(),
             };
