@@ -3570,6 +3570,27 @@ fn view_roots(data: &Data, arg: &Value, join_arm_buffers: bool) -> Option<Vec<u1
         Value::Block(bl) if bl.operators.len() == 1 => {
             view_roots(data, &bl.operators[0], join_arm_buffers)
         }
+        // After the call, a CALL ARGUMENT's block or insert has run, so its value is named by
+        // its last operator: a literal's work variable (`{#Vector … _vec_1 }`), or the
+        // projection a `match` arm ends in (`{ _mv_b = code.block; _mv_b[0].ops }`).  Read as a
+        // mint, `last(match code { NdBlock { block } => block[0].ops, _ => [] })` left the
+        // bracket incomplete and every fresh answer of `last` leaked (the self-hosted
+        // elaborator's `text_instance_carried`, `fill_instance`; main, both backends).
+        // `LOFT_NO_BLOCK_ARG_ROOT=1` reads them as mints again.
+        Value::Block(bl)
+            if join_arm_buffers
+                && !bl.operators.is_empty()
+                && !crate::env_once!(std::env::var_os("LOFT_NO_BLOCK_ARG_ROOT").is_some()) =>
+        {
+            view_roots(data, bl.operators.last()?, join_arm_buffers)
+        }
+        Value::Insert(ops)
+            if join_arm_buffers
+                && !ops.is_empty()
+                && !crate::env_once!(std::env::var_os("LOFT_NO_BLOCK_ARG_ROOT").is_some()) =>
+        {
+            view_roots(data, ops.last()?, join_arm_buffers)
+        }
         // The `!` unwrap's block (`{#ncr _ncr_N = <projection>; <null check>; _ncr_N }`): its
         // value is the projection it bound, checked and handed on — a view of the same roots.
         // Read as a mint it left the witness set incomplete, and the copy of a call taking it
