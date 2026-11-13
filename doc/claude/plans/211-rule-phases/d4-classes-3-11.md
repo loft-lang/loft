@@ -62,6 +62,15 @@ took the checked path.  The plan now admits every narrow element read (`u32`, `u
 (`loft_vh_put_u32`).  `blend_pixel` 1.35 → **1.02x** on gcc, **0.92x** on clang; the rest of
 the package unchanged.  Guard: `c_emit::a_leaf_over_narrow_elements_gets_its_fast_twin`.
 
-Open: `draw_line` 0.94x gcc, 1.05x clang against 0.87x for the 8-byte build — its `set_pixel`
-call is declined by the same pass for another reason (an argument not linear in the counter),
-in both builds.
+`draw_line` (0.94x gcc, 1.05x clang, against 0.87x for the 8-byte build) is closed with no
+change: the gap is the bench canvas's row stride, not code.  `set_pixel`'s call is declined by
+`@FR-R-Version` in both builds (its coordinates step by the error term, not linearly in the
+counter), and gcc emits the same hot loop for both, instruction for instruction; only the
+out-of-line store differs, 4 bytes for 8.  callgrind over `bench_line`: the u32 build runs
+1.7 % fewer instructions (311.7 M against 316.9 M) with the same simulated branch misses,
+yet takes 6 % longer (gcc, one core: 4.44 → 4.73 ms).  The 1024-pixel row is exactly 4096
+bytes as `u32`, so each pixel of a steep line lands in the same L1 set.  Widening the bench
+canvas to 1056 pixels turns it round — u32 3.63 ms against 8-byte 3.91 ms, both faster than
+at 1024 — and on clang the two builds already tie at 1024 (5.2 ms each).  The Rust twin pays
+the same stride.  Nothing in the compiler would move it; padding the canvas rows is a library
+layout choice (callers index `data` as `y * width + x`), not proposed.
