@@ -6556,14 +6556,40 @@ fn record_place_def(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
         return -1;
       }
       if nm == "OpGetVector" && len(args) == 3 {
-        return match el_ir::unspan(args[0]) {
-          NdVar { n: v } => match el_types::base(el_vars::tp(vars, v)) { TyVector { inner } => heap_def(inner), _ => -1 },
-          _ => -1
-        };
+        // The element of whatever vector place it indexes: a local, or a field of a record or of
+        // an element (`b.items[1].tags += [9]`).
+        return match el_types::base(linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => heap_def(inner), _ => -1 };
       }
       -1
     },
     _ => -1
+  }
+}
+
+// The type a place node reads: a variable's, a vector place's element, a record place's field
+// at the read's position; void for any other node.
+fn place_type(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::TypeT {
+  match el_ir::unspan(n) {
+    NdVar { n: v } => el_vars::tp(vars, v),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetVector" && len(args) == 3 {
+        return match el_types::base(linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => inner, _ => ir::TyVoid };
+      }
+      if nm == "OpGetField" && len(args) == 3 {
+        rd = heap_def(el_types::base(place_type(e, vars, args[0])));
+        pos = match el_ir::unspan(args[1]) { NdInt { n: k } => k, _ => -1 };
+        if rd >= 0 && pos >= 0 {
+          for a in el::def(e, rd).attributes {
+            if field_position(e, rd, a.name) == pos {
+              return a.typedef[0] ?? ir::TyVoid;
+            }
+          }
+        }
+      }
+      ir::TyVoid
+    },
+    _ => ir::TyVoid
   }
 }
 
