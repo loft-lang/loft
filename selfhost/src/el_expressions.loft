@@ -17140,7 +17140,14 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   }
   pd = struct_ref(e, el_types::base(st));
   if !scalar_subject && !enum_subject && sd < 0 && pd >= 0 && el::def(e, pd).def_type == el::DT_STRUCT && !(st is TyOptional) {
-    return struct_match(e, vars, x, pd, arms);
+    sm = struct_match(e, vars, x, pd, arms);
+    // A text answer bound to a local is written into the destination arm by arm in Rust — not
+    // carried, as for the other subjects: refused by name.
+    if !e.first_pass && at_bind && el_types::base(sm.tp) is TyText {
+      el::refuse(e, "a match answering a text bound to a local");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return sm;
   }
   if st is TyVector {
     return vector_match(e, vars, x, arms);
@@ -17189,6 +17196,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         wild = false;
         binds: vector<ir::Node> = [];
         aliases: vector<el_vars::VarName> = [];
+        binding_arm = false;
         if sd >= 0 {
           va = variant_arm(e, vars, pats, sd, x.code);
           if va == null {
@@ -17198,6 +17206,15 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
           wild = cond == null;
           binds = va!.binds;
           aliases = va!.aliases;
+        } else if scalar_subject && len(pats) == 1 && binding_name(e, pats[0]!) != "" {
+          // A bare name that names nothing (`n => n * 2`) binds the subject and matches anything
+          // (`binding_arm`: `n#N = _match_subj_N`, then the body).
+          bnames: vector<el_vars::VarName> = [];
+          bvar = pattern_bind(vars, binding_name(e, pats[0]!), st, bnames);
+          binds = [el_ir::v_set(bvar, ir::NdVar { n: v })];
+          aliases = bnames;
+          wild = true;
+          binding_arm = true;
         } else {
           for pn in pats {
             c = pattern_cond(e, vars, pn, v, st, enum_subject);
@@ -17265,7 +17282,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
           el_vars::restore_name(vars, al.name, al.nr);
         }
         if len(binds) > 0 {
-          b.code = el_ir::v_block(binds + [b.code], b.tp, "match_arm");
+          b.code = el_ir::v_block(binds + [b.code], b.tp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
         // (`first_pass_null_arm`).
@@ -18785,6 +18802,11 @@ fn struct_alternative(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, pn: in
                 r.names += [el_vars::VarName { name: bname, nr: el_vars::var(vars, bname) }];
                 el_vars::set_name(vars, bname, bv);
               }
+            } else if plain_variant_ord(e, pat!, ft) >= 0 {
+              // A plain enum's variant compared where the field stands: its ordinal against the
+              // variant constant's (`OpConvIntFromEnum` on both), with no subject temporary.
+              en = match el_types::base(ft) { TyEnum { n: fen } => fen, _ => -1 };
+              r.conds += [el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [read!]), el_ir::cl(e, "OpConvIntFromEnum", [ir::NdEnum { ord: plain_variant_ord(e, pat!, ft), tp: en }])])];
             } else if !(e.p.nodes[pat!] is PWild) {
               tmp = el_vars::create_unique(vars, "fp_subj", ft);
               el_vars::set_defined(vars, tmp);
@@ -19002,13 +19024,59 @@ fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT)
   ex(c!, if x.tp is TyOptional { ir::TyOptional { inner: at } } else { at })
 }
 
+// The name a bare binding pattern binds (`n`), or "" — a lowercase name that names no
+// definition (a constant or a variant compares instead).
+fn binding_name(e: el::El, pn: integer) -> text {
+  match e.p.nodes[pn] {
+    PName { name, member, fields, braces } => {
+      if member != "" || len(fields) > 0 || braces || len(name) == 0 {
+        return "";
+      }
+      c = name[0..1];
+      if c < "a" || c > "z" || el::def_nr(e, name) >= 0 {
+        return "";
+      }
+      name
+    },
+    _ => ""
+  }
+}
+
+// The ordinal of a bare variant name `pn` of the plain enum `t`, or -1.
+fn plain_variant_ord(e: el::El, pn: integer, t: ir::TypeT) -> integer {
+  if !el_convert::plain_enum(t) {
+    return -1;
+  }
+  en = match el_types::base(t) { TyEnum { n } => n, _ => -1 };
+  if en < 0 {
+    return -1;
+  }
+  match e.p.nodes[pn] {
+    PName { name, member, fields, braces } => {
+      if member != "" || len(fields) > 0 || braces {
+        return -1;
+      }
+      a = attr_nr(el::def(e, en), name);
+      if a < 0 {
+        return -1;
+      }
+      match el::def(e, en).attributes[a].value[0] {
+        NdEnum { ord } => ord,
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
 // One pattern's condition on the subject `v`, or null for a wildcard (and a refused pattern,
 // which has refused by name).
 fn pattern_cond(e: el::El, vars: el_vars::Vars, pn: integer, v: integer, st: ir::TypeT, enum_subject: boolean) -> ir::Node? {
   match e.p.nodes[pn] {
     PWild => null,
     PName { name, member, fields, braces } => {
-      if enum_subject && member == "" && len(fields) == 0 && !braces {
+      // A plain enum's variant — the subject's, or a field sub-pattern's (`Order { status: Paid }`).
+      if (enum_subject || el_convert::plain_enum(st)) && member == "" && len(fields) == 0 && !braces {
         n = 0;
         match st {
           TyEnum { n: en } => { n = en; },
@@ -19026,7 +19094,11 @@ fn pattern_cond(e: el::El, vars: el_vars::Vars, pn: integer, v: integer, st: ir:
         }
         return el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [ir::NdVar { n: v }]), ir::NdInt { n: ord }]);
       }
-      el::refuse(e, "a pattern that binds or names a constant");
+      // A subject pass 1 cannot type yet is judged on pass 2.
+      if e.first_pass && el_types::is_unknown(st) {
+        return null;
+      }
+      el::refuse(e, "a pattern that binds or names a constant: `{name}` over {display_type_name(e, st)}");
       null
     },
     PLit { e: le } => {
