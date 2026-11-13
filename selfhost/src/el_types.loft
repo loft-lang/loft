@@ -668,7 +668,7 @@ pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> inte
     a = el::attribute("_{m#index}", t);
     // @PLN114: a member is nullable only where its type says so.
     a.nullable = t is TyOptional;
-    idx += [len(e.b.data.definitions[d].attributes)];
+    idx += [len(e.b.data.definitions[d]!.attributes)];
     e.b.data.definitions[d].attributes += [a];
     // `LinkedFieldGroup::group_size` / `group_alignment`: each member at its natural alignment.
     ma = element_stack_align(t);
