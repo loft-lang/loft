@@ -632,10 +632,15 @@ fn is_return_temp_owning_its_arms(b: ir::Bundle, d: integer, f: ir::Function, v:
 // src/state/codegen.rs:2741 `owned_ref` — the displaced store is this frame's to free:
 // `owns_displaced_store` or a return temp owning its arms, and not the hidden buffer argument
 // unless an entry witness (:2730) guards it.
-fn owned_ref(b: ir::Bundle, d: integer, f: ir::Function, v: integer, value: ir::Node) -> boolean {
+// A keyed local whose null init minted nothing and that is only ever bound to a null or a borrow
+// never holds a store of its own, so a reassignment displaces nothing (src/bind_lowering.rs
+// `re_bind`'s `keyed_view`, @PLN220).
+pub fn owned_ref(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   s1 = s1_substituted(b, v, value);
+  keyed_view = owns_keyed_store(tp(f, v)) && !keyed_null_mints(f, v) && only_null_or_borrowed(b, ops, d, v);
   (owns_displaced_store(b, f, v, value) || is_return_temp_owning_its_arms(b, d, f, v))
     && (!is_hidden_buf_arg(b, d, f, v, s1) || entry_witness(f, v) != null)
+    && !keyed_view
 }
 
 // ── projections (src/use_analysis.rs) ──
@@ -984,18 +989,104 @@ fn is_null_value(b: ir::Bundle, value: ir::Node) -> boolean {
 }
 
 // src/bind_lowering.rs fn rhs_reads_a_view_of (`@FR-H-FreeTwice`): does `value` read a local
-// whose deps name `v` — one that VIEWS the store `v` displaces?
+// that VIEWS the store `v` displaces — whose deps name `v`, or name a view of `v` in turn?  A
+// view of a view counts: `bl = block[0]` out of a match capture of `b` names the capture, whose
+// deps name `b`, so `b = …[bl]…` reads out of the store a pre-free would release.  The views are
+// closed over their dep chains (`LOFT_NO_TRANSITIVE_VIEW_READ` is the Rust side's A/B only).
 fn rhs_reads_a_view_of(f: ir::Function, value: ir::Node, v: integer) -> boolean {
-  for w in 0..len(f.variables) {
-    if w != v && reads_var(value, w) {
-      for x in own::tp_depend(f, w) {
-        if x == v {
-          return true;
+  n = len(f.variables);
+  views: vector<boolean> = [for _ in 0..n { false }];
+  if v >= 0 && v < n {
+    views[v] = true;
+  }
+  grew = true;
+  while grew {
+    grew = false;
+    for w in 0..n {
+      if !(views[w] ?? false) {
+        for x in own::tp_depend(f, w) {
+          if x >= 0 && (views[x] ?? false) {
+            views[w] = true;
+            grew = true;
+            break;
+          }
         }
       }
     }
   }
+  for w in 0..n {
+    if w != v && (views[w] ?? false) && reads_var(value, w) {
+      return true;
+    }
+  }
   false
+}
+
+// src/bind_lowering.rs fn keyed_null_mints — does keyed local `v`'s null init mint a store?  Not
+// for an inline reference or an overwritten view (`_mv_` / `__ncc_`, skip-free).
+fn keyed_null_mints(f: ir::Function, v: integer) -> boolean {
+  !(is_inline_ref(f, v) || is_overwritten_view(f, v))
+}
+
+// src/variables/mod.rs fn is_overwritten_view — a skip-free `_mv_` capture or `__ncc_` hold.
+fn is_overwritten_view(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v]!;
+  x.skip_free && (x.name.starts_with("_mv_") || x.name.starts_with("__ncc_"))
+}
+
+// src/bind_lowering.rs fn only_null_or_borrowed — is every value function `d` binds to `v` a
+// null or a borrow of another binding (`Own::Borrowed`)?  Then `v` never holds a store of its own.
+fn only_null_or_borrowed(b: ir::Bundle, ops: own::Ops, d: integer, v: integer) -> boolean {
+  !binds_an_owner(b, ops, d, v, def(b, d).code[0] ?? ir::NdNull)
+}
+
+// The walk of `only_null_or_borrowed`: a `Set(v, value)` whose value is neither null nor a borrow.
+fn binds_an_owner(b: ir::Bundle, ops: own::Ops, d: integer, v: integer, n: ir::Node) -> boolean {
+  match n {
+    NdSet { var, inner } => {
+      if var == v && !is_null_value(b, inner) && !own::is_borrowed(own::ownership_of(b, ops, d, inner)) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in children(n) {
+    if binds_an_owner(b, ops, d, v, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// src/data.rs Value::for_each_child — the direct child nodes of `n`, in order.
+fn children(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdSpan { inner } => [inner],
+    NdCall { args } => args,
+    NdCallRef { args } => args,
+    NdBlock { block } => block[0]!.operators,
+    NdLoop { block } => block[0]!.operators,
+    NdInsert { items } => items,
+    NdTuple { items } => items,
+    NdSet { inner } => [inner],
+    NdReturn { inner } => [inner],
+    NdDrop { inner } => [inner],
+    NdYield { inner } => [inner],
+    NdIf { cond, t, f } => [cond, t, f],
+    NdIter { create, next, init } => [create, next, init],
+    NdTuplePut { inner } => [inner],
+    NdParallel { arms } => arms,
+    _ => []
+  }
+}
+
+// src/bind_lowering.rs fn row_line — the source line a bind row names for `v = value`: the
+// value's own position where the parser spanned it, else the line the writer last passed.
+pub fn row_line(value: ir::Node, fallback: integer) -> integer {
+  match value {
+    NdSpan { pos } => pos.line,
+    _ => fallback
+  }
 }
 
 // src/bind_lowering.rs fn reads_var_unless_exiting — `reads_var` with the arms that leave by

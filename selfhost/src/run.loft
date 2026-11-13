@@ -1300,7 +1300,8 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         put_int(ints, sp_int, (texts[sp_text] ?? "") as integer?);
         sp_int += 1;
       }
-      // `OpMathFuncFloat`: loft's own function of that number.
+      // `OpMathFuncFloat`: loft's own function of that number, by `fn_id` as `default/01_code.loft`'s
+      // `#rust` table numbers them (10 is `exp`, which the front end folds `E.pow(x)` to).
       MathFunc => {
         f = floats[sp_float - 1];
         // A null operand answers null: it stays where it is.
@@ -1310,12 +1311,14 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           floats[sp_float - 1] = (match op.a {
             0 => g.cos(), 1 => g.sin(), 2 => g.tan(), 3 => g.acos(), 4 => g.asin(),
             5 => g.atan(), 6 => g.ceil(), 7 => g.floor(), 8 => g.round(), 9 => g.sqrt(),
+            10 => g.exp(),
             _ => null,
           }) as float?;
         } else {
           floats[sp_float - 1] = match op.a {
             0 => f.cos(), 1 => f.sin(), 2 => f.tan(), 3 => f.acos(), 4 => f.asin(),
             5 => f.atan(), 6 => f.ceil(), 7 => f.floor(), 8 => f.round(), 9 => f.sqrt(),
+            10 => f.exp(),
             _ => null,
           };
         }
