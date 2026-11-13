@@ -2814,11 +2814,8 @@ impl<'a> FnWriter<'a> {
                 Ok(Some(E::new(format!("({proof}, {code})"), K::Void)))
             }
             // A 4-byte unsigned element (`u32`) is the same write through the held header, four
-            // bytes wide; `@FR-R-Version`'s fast twin has no such kind, so it keeps its own path.
+            // bytes wide.
             ("OpSetInt" | "OpSetFloat" | "OpSetInt4Raw", [inner, fld, val]) => {
-                if name == "OpSetInt4Raw" && self.version_raw(args) {
-                    return Ok(None);
-                }
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
@@ -2830,10 +2827,10 @@ impl<'a> FnWriter<'a> {
                 let (index, value) = self.two(name, &[idx, val], ind)?;
                 if self.version_raw(args) {
                     let index = as_int(index)?;
-                    let value = if name == "OpSetInt" {
-                        as_int(value)?
-                    } else {
+                    let value = if name == "OpSetFloat" {
                         as_float(value)?
+                    } else {
+                        as_int(value)?
                     };
                     let code =
                         version::version_access(name, &held, size, fld, &index, Some(&value));

@@ -49,12 +49,19 @@ min of 7, hashes equal:
 | fill_rect | 1.54 | 4.44 | **0.94** |
 | fill_polygon | 2.18 | 4.88 | **2.05** |
 | fill_triangle | 0.75 | 1.64 | **0.65** |
-| blend_pixel | 1.22 | 1.45 | 1.35 |
+| blend_pixel | 1.22 | 1.45 | 1.35 → **1.02** (fast twin) |
 | draw_line | 0.87 | 1.02 | 0.95 |
 | draw_bezier | 1.95 | 1.91 | 1.94 |
 | median | 1.74 | 1.78 | **0.99** |
 
-Open: `blend_pixel` +10 % and `draw_line` +9 % against the 8-byte build.  Its `?? 0` read
-reaches the C as the reporting accessor (`OpGetVector`, where `u8` and `integer` take
-`OpGetVectorNullable`); a hand swap to the plain accessor priced 1.004, so that is not the
-cost.  Not chased further: both stay under 1.4x.
+`blend_pixel`'s last 10 % was `@FR-R-Version`: the front plan (`opt/version.rs`) admitted
+8-byte, float and boolean element accesses only, so the `u32` read and write left the leaf
+with no proven access (`LOFT_TRACE_VERSION=1`: "proves no element access") and every pixel
+took the checked path.  The plan now admits every narrow element read (`u32`, `u8`, `i16`,
+`single`, an enum: the fast twin reads them through `loft_vh_at_addr`) and the `u32` write
+(`loft_vh_put_u32`).  `blend_pixel` 1.35 → **1.02x** on gcc, **0.92x** on clang; the rest of
+the package unchanged.  Guard: `c_emit::a_leaf_over_narrow_elements_gets_its_fast_twin`.
+
+Open: `draw_line` 0.94x gcc, 1.05x clang against 0.87x for the 8-byte build — its `set_pixel`
+call is declined by the same pass for another reason (an argument not linear in the counter),
+in both builds.
