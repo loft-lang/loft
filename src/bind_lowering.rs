@@ -968,9 +968,22 @@ fn re_arm(
     } else {
         tp
     };
+    // `@FR-O-Move` — a call handed `v` itself as its buffer (S1, `__ref_N = f(x, __ref_N)`, the
+    // shape a join arm's owning call is bound in) whose answer may be an ARGUMENT's store: the
+    // answer is the buffer the callee filled, a store it made, or `x`'s.  Bound plainly, `v`
+    // named `x`'s store on that path and both were freed (loft#2474's elaborator,
+    // `arm_delivery`).  Joined on `x` it is copied there and adopted elsewhere; the stashed
+    // displaced free releases the buffer's store where the answer is not it.
+    // `LOFT_NO_S1_JOIN=1` binds it plainly again.
+    let s1_join = rb.s1_substituted
+        && stashed
+        && !crate::keys::s1_join_off()
+        && matches!(value.unspan(), Value::Call(..))
+        && crate::use_analysis::callee_of(data, d_nr, value).is_some();
     if (rb.owned_ref || rb.buffer_kept)
-        && !rb.s1_substituted
+        && (!rb.s1_substituted || s1_join)
         && (!stashed
+            || s1_join
             || (stashed_join
                 && !rb.rhs_reads_v
                 && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
@@ -980,6 +993,7 @@ fn re_arm(
         && !function.is_view_elided(v)
         && let Some(base) = join_base(data, d_nr, function, value, v)
         && base != u16::MAX
+        && base != v
         && let Some(rec) = join_record(join_shape)
     {
         return ReArm::Join { d_nr: rec, base };
