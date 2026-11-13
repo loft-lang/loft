@@ -13132,7 +13132,7 @@ fn forget_facts(vars: el_vars::Vars, m: FactMark) {
 // `x ?? return v` / `?? break` / `?? continue`: the subject held in an `_ncr_N` (a local tested
 // where it stands), its presence tested — and where it is absent the jump runs — then answered,
 // as a `!` answers it with a panic in the jump's place (`handle_present`).
-fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, r: integer) -> Ex {
+fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
   b = el_types::base(x.tp);
   record = struct_ref(e, b) >= 0 && !starts_with(el::def(e, struct_ref(e, b)).name, "__tuple<");
   vec = b is TyVector;
@@ -13140,7 +13140,6 @@ fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, r: integer) -> Ex {
     el::refuse(e, "a `??` that returns, breaks or continues, over this type: {display_type_name(e, b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  j = expression(e, vars, r);
   if e.first_pass {
     return ex(ir::NdNull, b);
   }
@@ -13217,7 +13216,7 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     x = rx!;
   }
   if e.p.nodes[r] is SJump {
-    return coalesce_jump(e, vars, x, r);
+    return coalesce_jump(e, vars, x, expression(e, vars, r));
   }
   // A field's view as the subject: its literal default is built against the subject's type,
   // which names the record it borrows — no store of its own (`build_null_coalesce_default`).
@@ -13246,6 +13245,10 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   if is_empty_literal(d.code) {
     el::refuse(e, "a `??` with an empty vector literal as its default");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // A default that halts (`?? panic("…")`) runs where the subject is absent, as a jump does.
+  if (d.tp is TyVoid || d.tp is TyNever) && (e.first_pass || ends_in_halt(e, d.code)) && !(x.tp is TyVoid) {
+    return coalesce_jump(e, vars, x, d);
   }
   coalesce_with(e, vars, x, d)
 }
