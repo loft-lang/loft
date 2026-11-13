@@ -594,6 +594,13 @@ fn kind_of_types(ts: vector<ir::TypeT>) -> Kind {
 
 // The kind of the value expression `n` leaves; `KNone` for one that leaves none, or a null
 // whose kind the place it goes to decides.
+// The kind a VALUE of storage kind `k` is read as: a `&text` value is the text it names (the
+// bytecode reads it through the link, `GetStackText`), as a `&text` variable read is.  Only an
+// argument handed to a `&text` parameter takes the link itself (`value` with `KTextRef`).
+fn read_kind(k: Kind) -> Kind {
+  if k == KTextRef { KText } else { k }
+}
+
 fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
   match n {
     NdInt { n: _ } => KInt,
@@ -609,7 +616,7 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
       if k == KTextRef { KText } else if k == KVarRef { l.var_inner[var] ?? KOther } else { k }
     }
     NdSpan { inner } => kind_of(l, b, inner),
-    NdBlock { block } => kind_of_types(block[0]?.result),
+    NdBlock { block } => read_kind(kind_of_types(block[0]?.result)),
     NdIf { cond: _, t, f } => {
       k = kind_of(l, b, t);
       if k == KNone { kind_of(l, b, f) } else { k }
@@ -3916,7 +3923,7 @@ fn block_value(l: Lowering, b: ir::Bundle, whole: ir::Block) {
   for i in 0..at {
     statement(l, b, blk.operators[i]?);
   }
-  value(l, b, blk.operators[at]?, kind_of_types(blk.result));
+  value(l, b, blk.operators[at]?, read_kind(kind_of_types(blk.result)));
   for i in at + 1..len(blk.operators) {
     statement(l, b, blk.operators[i]?);
   }
