@@ -65,6 +65,23 @@ state, kept for reference:
 | `2c952b749` | a call argument's block (`last(match c { … => b.ops, _ => [] })`) read as a mint, so the copy kept the callee's fresh answer (`text_instance_carried`, `fill_instance`; main) | `LOFT_NO_BLOCK_ARG_ROOT` |
 | `b314c1d47` | `t = f(b)!` typed `t` as a view of `b`; the discharge's copy leaked (`default_image`, `row`; main) | `LOFT_NO_NCR_CALL_OWNS` |
 | `4524dea4c` | `f(b)!.name` read in place left the discharge's copy unowned (`default_into`; main) | `LOFT_NO_NCR_LIFT` |
+| `260e87512` | a projection into a KEPT local (`cond = mc.cond` beside `cond = NdIf { a: cond!, … }`, in a block): a wrong answer on the interpreter (main), a double free, and a pooled buffer an early return freed unguarded (`tuple_match`) | `LOFT_NO_KEPT_ELEMENT_COPY`, `LOFT_NO_KEPT_DISPLACED_FREE`, `LOFT_POOL_UNGUARDED_FREE_OK` |
+| `377796e5b`, `32585c2b6` | records: a view of a variable names its store or none of its stores (`State::views`); `coalesce`'s false re-free gone | `LOFT_RECORDS_NO_VIEW_PAIRS` |
+
+### The store records' findings on the elaborator itself: 5
+
+Each was run down until it reproduced or was shown unreachable:
+
+| function | verdict |
+|---|---|
+| `index` | **infeasible path**: the arm where `x` views the lift (`[…][i]`, a literal) never reaches the rebind at line 20165 — a sentinel with a positive control never fires there; the records cannot correlate the two conditions |
+| `fill` | **infeasible path**: `self_type` answers a fresh record only for an ENUM, and the `TyVector { inner }` arm that views it cannot match one; the records do not know a value's variant |
+| `vector_return`, `match_expr`, `parse_function` | not reproduced: probes of each shape run clean and the records say nothing on them |
+
+The kept-local suite cell (`B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy`) reads
+STATIC (two false findings): the absent-tag null test that would settle it is opt-in
+(`LOFT_RECORDS_TAG_NULL_TEST=1`) because a call's answer through a buffer CAN be an absent-tagged
+store; the precise answer needs the variant a mint writes.
 
 The C re-free census (`LOFT_DOUBLE_FREE`) now names a same-site re-free (first 20); it only
 counted them.
