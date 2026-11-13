@@ -984,8 +984,10 @@ pub fn run_image_starts(data: &Data, code_len: usize) -> Option<Vec<u32>> {
     Some(starts)
 }
 
-/// Write the run image of the compiled program in `state` to `path`, with its layout sidecar
-/// (`RunImage` of the IR schema), atomically as [`save_bundle`] writes a bundle.
+/// Write the run image of a compiled program to `path` — its bytecode `code`, the natives by
+/// index, the `program`'s stores' schema and `#cwd` — with its layout sidecar (`RunImage` of
+/// the IR schema), atomically as [`save_bundle`] writes a bundle.  The parts arrive as data:
+/// this layer does not name the interpreter that holds them.
 ///
 /// # Errors
 /// As [`save_bundle`]: a file-remove, sidecar-write or `rename` error, or a temp path that
@@ -995,8 +997,14 @@ pub fn run_image_starts(data: &Data, code_len: usize) -> Option<Vec<u32>> {
 /// # Panics
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`].
 #[cfg(feature = "mmap")]
-pub fn save_run_image(state: &crate::state::State, data: &Data, path: &str) -> std::io::Result<()> {
-    let Some(starts) = run_image_starts(data, state.bytecode.len()) else {
+pub fn save_run_image(
+    code: &[u8],
+    library_names: &crate::fxhash::FxHashMap<String, u16>,
+    program: &Stores,
+    data: &Data,
+    path: &str,
+) -> std::io::Result<()> {
+    let Some(starts) = run_image_starts(data, code.len()) else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "the bytecode is not laid out in definition order",
@@ -1030,12 +1038,12 @@ pub fn save_run_image(state: &crate::state::State, data: &Data, path: &str) -> s
         materialize_run_image(
             &mut stores,
             root,
-            state.bytecode.as_slice(),
+            code,
             &starts,
-            &state.library_names,
-            &state.database.types,
+            library_names,
+            &program.types,
             main,
-            !state.database.program_relative,
+            !program.program_relative,
         );
         // The image is the bytes it holds: the store's growth room past its last record is cut
         // off before the file is published (`Store::shrink_to`, which refuses anything else).

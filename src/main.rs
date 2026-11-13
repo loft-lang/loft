@@ -146,7 +146,13 @@ fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, out: &str) 
 /// without running it.  Exit 1, naming the path, when it cannot be written.
 #[cfg(feature = "mmap")]
 fn emit_program_run_image(state: &State, data: &loft::data::Data, out: &str) -> ! {
-    if let Err(e) = loft::ir_store::save_run_image(state, data, out) {
+    if let Err(e) = loft::ir_store::save_run_image(
+        state.bytecode_bytes(),
+        &state.library_names,
+        &state.database,
+        data,
+        out,
+    ) {
         eprintln!("loft: cannot write the run image to {out}: {e}");
         std::process::exit(1);
     }

@@ -957,6 +957,13 @@ pub enum HostReturn {
 }
 
 impl State {
+    /// The compiled program's bytecode as written (`compile::byte_code`): what the run image
+    /// stores (`ir_store::save_run_image`).
+    #[must_use]
+    pub fn bytecode_bytes(&self) -> &[u8] {
+        self.bytecode.as_slice()
+    }
+
     /**
     Create a new interpreter state
     # Panics
