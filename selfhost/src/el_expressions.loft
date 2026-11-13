@@ -2134,7 +2134,13 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
       // (`classify_ret_promotion`'s `Bind`, `var_call_rebound_nested`).
       match tail {
         NdVar { n } => {
-          if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && el_vars::tp(vars, n) is TyVector && !appends_call_in_loop(e, vars.body, el_vars::name_of(vars, n), false) {
+          // Rust's `bound_to_vector_join` asks the return's type: the local's may be unknown yet.
+          if !vars.vars[n].argument && (bound_to_branch(code, n) || branch_bound_syntax(e, vars.body, el_vars::name_of(vars, n))) {
+            // `Bind`: the local is copied into the buffer at the tail, which the result borrows.
+            if !el_types::deps(ret).contains(ba) {
+              e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+            }
+          } else if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && el_vars::tp(vars, n) is TyVector && !appends_call_in_loop(e, vars.body, el_vars::name_of(vars, n), false) {
             rename_onto(e, vars, rb, n);
           }
         },
@@ -2624,6 +2630,76 @@ fn constant_expr(e: el::El, n: integer) -> boolean {
 }
 
 // Is `v` set from a call anywhere in `n`?
+// `var_bound_to_branch` with `branch_sunk_vectors`: a vector local bound to an `if` (or a block
+// ending in one), or bound inside the arms of a statement `if` (a join sunk into its arms), is
+// REBOUND, not built into, so it cannot carry the buffer's rename: it is copied in at the tail.
+fn bound_to_branch(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSpan { inner } => bound_to_branch(inner, v),
+    NdSet { var, inner } => var == v && rhs_is_branch(inner),
+    NdInsert { items } => { for o in items { if bound_to_branch(o, v) { return true; } } false },
+    NdBlock { block } => { for o in block[0].operators { if bound_to_branch(o, v) { return true; } } false },
+    NdIf { cond: _, t, f } => sets_in_arm(t, v) || sets_in_arm(f, v),
+    _ => false
+  }
+}
+
+// `bound_to_branch` read off the syntax, for the first pass, which builds no code for a scalar
+// `match`: a statement of the body binding `name` (`name = …`, `name: T = …`) to an `if` or a
+// `match`, or to a block ending in one.
+fn branch_bound_syntax(e: el::El, body: integer, name: text) -> boolean {
+  if body < 0 {
+    return false;
+  }
+  stmts = match e.p.nodes[body] { SBlock { stmts: ss } => ss, _ => [] };
+  for st in stmts {
+    se = match e.p.nodes[st] { SStmt { e: x } => x ?? -1, _ => -1 };
+    if se < 0 {
+      continue;
+    }
+    rhs = match e.p.nodes[se] {
+      SLet { name: ln, e: le } => if ln == name { le ?? -1 } else { -1 },
+      SAssign { op, target, e: ae } => if op == "=" && (match e.p.nodes[target] { SName { name: tn, member } => tn == name && member == "", _ => false }) { ae ?? -1 } else { -1 },
+      _ => -1
+    };
+    if rhs >= 0 && branch_syntax(e, rhs) {
+      return true;
+    }
+  }
+  false
+}
+
+fn branch_syntax(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SIf { at: _ } => true,
+    SMatch { at: _ } => true,
+    SBlock { stmts } => len(stmts) > 0 && (match e.p.nodes[stmts[-1]] { SStmt { e: x, semi } => !semi && x != null && branch_syntax(e, x!), _ => false }),
+    _ => false
+  }
+}
+
+fn rhs_is_branch(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => rhs_is_branch(inner),
+    NdIf { cond: _ } => true,
+    NdBlock { block } => len(block[0].operators) > 0 && rhs_is_branch(block[0].operators[-1]!),
+    NdInsert { items } => len(items) > 0 && rhs_is_branch(items[-1]!),
+    _ => false
+  }
+}
+
+// An arm of a statement `if` that binds `v` at its own level (or in a nested arm).
+fn sets_in_arm(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSpan { inner } => sets_in_arm(inner, v),
+    NdSet { var } => var == v,
+    NdInsert { items } => { for o in items { if sets_in_arm(o, v) { return true; } } false },
+    NdBlock { block } => { for o in block[0].operators { if sets_in_arm(o, v) { return true; } } false },
+    NdIf { cond: _, t, f } => sets_in_arm(t, v) || sets_in_arm(f, v),
+    _ => false
+  }
+}
+
 fn bound_from_call(n: ir::Node, v: integer) -> boolean {
   match n {
     NdSet { var, inner } => (var == v && el_ir::unspan(inner) is NdCall) || bound_from_call(inner, v),
@@ -4821,6 +4897,15 @@ fn sink_ncc(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node? {
   }
 }
 
+// A `match` block (the subject held, the selecting `if` its tail) or a value block: a join the
+// bind sinks into, the local set to null ahead of it.
+fn is_match_block(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdBlock { block } => ((block[0].name == "match" || block[0].name == "scalar_match") && len(block[0].operators) > 0 && el_ir::unspan(block[0].operators[-1]!) is NdIf) || block[0].name == "block",
+    _ => false
+  }
+}
+
 // `sink_vec_arms`: each arm that copies a local binds as `vec_copy_bind` does, every other arm
 // sets the local to what it answers.
 fn sink_arms(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
@@ -5364,6 +5449,13 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if el_types::base(x.tp) is TyVector && el_ir::unspan(x.code) is NdIf && !vars.vars[v].argument && sinkable_arms(e, vars, x.code) == 1 {
     first_vector_bind(e, vars, v, el_types::base(x.tp), at);
     return sink_arms(e, vars, v, x);
+  }
+  // …and a vector `match` (its block holding the subject, its selecting `if` the tail) or value
+  // block: the local set to null first, then bound in each arm (at the block's tail).
+  if el_types::base(x.tp) is TyVector && is_match_block(x.code) && !vars.vars[v].argument && sinkable_arms(e, vars, x.code) == 1 {
+    first_vector_bind(e, vars, v, el_types::base(x.tp), at);
+    sunk = sink_arms(e, vars, v, x);
+    return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), sunk.code] }, ir::TyVoid);
   }
   // …and a `??` holding a field in its `__ncc_N`: the present arm copies the held view, the
   // local declared at the statement ahead of the block.
@@ -7002,13 +7094,13 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
     vars.bind_declares = false;
     return ex(o.code, ir::TyVoid);
   }
-  // A declared vector whose value is an `if`: its definitions are made where the right side
+  // A declared vector whose value is an `if` or a `match`: its definitions are made where the right side
   // starts, after the `=` — before either arm's literal is read.
-  if e.p.nodes[rhs!] is SIf {
+  if e.p.nodes[rhs!] is SIf || e.p.nodes[rhs!] is SMatch {
     match declared! {
       TyVector { inner } => {
         nm = el_types::elem_name(e, inner);
-        iat = match e.p.nodes[rhs!] { SIf { at } => at, _ => 0 };
+        iat = match e.p.nodes[rhs!] { SIf { at } => at, SMatch { at } => at, _ => 0 };
         if nm != "" && iat > 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
           el_schema::make_vector_def(e, inner, nm, el::pos_at(e, iat - 1), true);
         }
@@ -7034,6 +7126,14 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   x.code = discharge_copy_typed(e, rhs!, x);
   if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
     return vec_copy_bind(e, vars, v, x);
+  }
+  // `sink_vec_bind_into_arms`, as for an inferred local: an arm copying a local binds per arm.
+  if el_types::base(x.tp) is TyVector && el_ir::unspan(x.code) is NdIf && !vars.vars[v].argument && sinkable_arms(e, vars, x.code) == 1 {
+    return sink_arms(e, vars, v, x);
+  }
+  if el_types::base(x.tp) is TyVector && is_match_block(x.code) && !vars.vars[v].argument && sinkable_arms(e, vars, x.code) == 1 {
+    sunk = sink_arms(e, vars, v, x);
+    return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), sunk.code] }, ir::TyVoid);
   }
   // `parse_declared`: `if !narrow_store_checks(…) { convert(…) }` — a `??` the narrow slot guards
   // inside is not converted again, so its subject takes one checked cast.
@@ -14845,9 +14945,9 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   // `merge_dependencies` for a vector join: the `if` borrows what either arm's vector does —
   // each arm's own `__vdb_N` included.
   if el_types::base(t.tp) is TyVector && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
-    // An arm answering a vector variable is copied into the bound local per arm — not
-    // carried yet.
-    if arm_answers_var(t.code) || arm_answers_var(f.code) {
+    // An arm answering a vector variable is copied into the bound local per arm at a bind
+    // (`sink_vec_bind_into_arms`); anywhere else — not carried yet.
+    if (arm_answers_var(t.code) || arm_answers_var(f.code)) && expected is TyVoid {
       el::refuse(e, "a vector `if` an arm of which answers a variable");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -16701,8 +16801,8 @@ fn yield_is_fresh(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT) ->
 }
 
 // `parse_vector_for` in value position: the comprehension built into a `_vec_N` of its own, the
-// build a "Vector comprehension" block answering it — the walk's start grouped as one insert,
-// as Rust's value form keeps it.
+// build a "Vector comprehension" block answering it — the walk's start as Rust's value form
+// lays it out.
 fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
   built = comprehension_into(e, vars, v, n);
@@ -16717,12 +16817,27 @@ fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       ops += [it];
     }
   }
-  // A start of one statement (a constant range's index) stands alone, as Rust's `create_iter`
-  // is that statement; a longer one is grouped.
-  if len(items) == 5 && items[-1] is NdLoop {
-    ops += [items[3]!, items[-1]];
-  } else if len(items) > 3 && items[-1] is NdLoop {
-    ops += [ir::NdInsert { items: items[3..-1] }, items[-1]];
+  // A vector source's temp (`_vector_N = …`, `parse_vector_for`'s `fill`) is a step of its own;
+  // the rest is `create_iter`: one statement (a constant range's index, a vector's cursor)
+  // stands alone, a longer one is grouped.
+  if len(items) > 3 && items[-1] is NdLoop {
+    start = 3;
+    match items[3]! {
+      NdSet { var } => {
+        if starts_with(el_vars::name_of(vars, var), "_vector_") {
+          ops += [items[3]!];
+          start = 4;
+        }
+      },
+      _ => {}
+    }
+    rest = len(items) - 1 - start;
+    if rest == 1 {
+      ops += [items[start]!];
+    } else if rest > 1 {
+      ops += [ir::NdInsert { items: items[start..-1] }];
+    }
+    ops += [items[-1]];
   }
   ops += [ir::NdVar { n: v }];
   ex(el_ir::v_block(ops, vt, "Vector comprehension"), vt)
@@ -18888,6 +19003,17 @@ fn struct_alternative(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, pn: in
               // variant constant's (`OpConvIntFromEnum` on both), with no subject temporary.
               en = match el_types::base(ft) { TyEnum { n: fen } => fen, _ => -1 };
               r.conds += [el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [read!]), el_ir::cl(e, "OpConvIntFromEnum", [ir::NdEnum { ord: plain_variant_ord(e, pat!, ft), tp: en }])])];
+            } else if len(alt_variant_ords(e, pat!, ft)) > 0 {
+              // …and an alternation of them (`status: Paid | Refunded`): each compared where the
+              // field stands, `if a true else b`.
+              en = match el_types::base(ft) { TyEnum { n: fen } => fen, _ => -1 };
+              ords = alt_variant_ords(e, pat!, ft);
+              chain = ir::NdNull;
+              for k in rev(0..len(ords)) {
+                eq = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [read!]), el_ir::cl(e, "OpConvIntFromEnum", [ir::NdEnum { ord: ords[k], tp: en }])]);
+                chain = if chain is NdNull { eq } else { el_ir::v_if(eq, ir::NdBoolean { b: true }, chain) };
+              }
+              r.conds += [chain];
             } else if !(e.p.nodes[pat!] is PWild) {
               tmp = el_vars::create_unique(vars, "fp_subj", ft);
               el_vars::set_defined(vars, tmp);
@@ -19124,6 +19250,24 @@ fn binding_name(e: el::El, pn: integer) -> text {
 }
 
 // The ordinal of a bare variant name `pn` of the plain enum `t`, or -1.
+// The ordinals of an alternation whose every member is a plain enum's variant; empty otherwise.
+fn alt_variant_ords(e: el::El, pn: integer, t: ir::TypeT) -> vector<integer> {
+  res: vector<integer> = [];
+  match e.p.nodes[pn] {
+    PAlt { alts } => {
+      for a in alts {
+        o = plain_variant_ord(e, a, t);
+        if o < 0 {
+          return [];
+        }
+        res += [o];
+      }
+    },
+    _ => {}
+  }
+  res
+}
+
 fn plain_variant_ord(e: el::El, pn: integer, t: ir::TypeT) -> integer {
   if !el_convert::plain_enum(t) {
     return -1;
