@@ -4976,6 +4976,10 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     el::refuse(e, "an assignment to a place that is not a plain local");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  if !declaring && replaces_walked_source(e, vars, v) {
+    el::refuse(e, "a write that replaces a vector a loop walks (the walk takes a copy)");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   // #330: `x = x` of a name already bound is the identity and emits nothing — a deep copy onto
   // itself would free what it reads.  (A parameter whose type leases a copy keeps the rebind;
   // such types are refused at their declaration here.)
@@ -5543,10 +5547,30 @@ fn note_key_write(e: el::El, vars: el_vars::Vars, place: ir::Node) {
 // converted to the place's type (a compound one computed from the place's current value first),
 // and written through the field's write op — a text field replaced (`OpSetTextReplace`), an
 // element written at offset 0 of `OpGetVector`.  Any other place is refused by name.
+// `@FR-I-For` (loft#1695): does a replacing write rooted at `root` reach a vector place an open
+// loop walks?  Rust then binds every walk over that root's places in the function as a COPY
+// (`loop_sources_replaced`, `materialize_collection_value`) — not carried, so the write is
+// refused by name.
+fn replaces_walked_source(e: el::El, vars: el_vars::Vars, root: integer) -> boolean {
+  if root < 0 {
+    return false;
+  }
+  for av in vars.active_values {
+    if !el_ir::is_null(av) && place_root(e, av) == root && el_types::base(linked_vector(place_type(e, vars, av))) is TyVector {
+      return true;
+    }
+  }
+  false
+}
+
 fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
   // The place, read as a value: its code names the record and position the write takes.
   p = expression(e, vars, target);
   note_key_write(e, vars, p.code);
+  if op == "=" && replaces_walked_source(e, vars, place_root(e, el_ir::unspan(p.code))) {
+    el::refuse(e, "a write that replaces a vector a loop walks (the walk takes a copy)");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if el_types::is_unknown(p.tp) {
     if e.first_pass {
       expression(e, vars, rhs);
@@ -5566,6 +5590,20 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
       return ex(ir::NdNull, ir::TyVoid);
     }
     return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [el_ir::unspan(p.code)])] }, ir::TyVoid);
+  }
+  // An empty literal into a keyed FIELD empties it where it lies: `OpClearKeyed(field, tp)`, the
+  // type the field read names (`parse_assign`'s keyed clear).
+  if op == "=" && keyed_kind(p.tp) && !(p.tp is TyOptional) && vec_lit_len(e, rhs) == 0 {
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    place = el_ir::unspan(p.code);
+    kt = match place { NdCall { def_nr, args } => if el::def(e, def_nr).name == "OpGetField" && len(args) == 3 { args[2]! } else { ir::NdNull }, _ => ir::NdNull };
+    if el_ir::is_null(kt) {
+      el::refuse(e, "an empty literal into a keyed place that is not a field");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(el_ir::cl(e, "OpClearKeyed", [place, kt]), ir::TyVoid);
   }
   // An `S?` slot (`__nullable<S>`): an `S { … }` literal is built as the `Some` and copied in;
   // `null` sets it absent; any other `S` writes it (`nullable_elem_convert`).
@@ -6399,7 +6437,8 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   local = holder is NdVar;
   pd = record_place_def(e, vars, holder);
   if !e.first_pass && (rec < 0 || pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT) {
-    el::refuse(e, "an append to a collection that is not a field of a record");
+    hk = match el_ir::unspan(holder) { NdCall { def_nr } => el::def(e, def_nr).name, NdVar { n: _ } => "a local", NdNull => "no holder", _ => "a value" };
+    el::refuse(e, "an append to a collection that is not a field of a record: {hk} of {type_kind(place_type(e, vars, holder))}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   // A field of a `for` variable's element (`c.hexes += [Ent { id: i, q: c.cx }]`): Rust stages
@@ -6543,7 +6582,8 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
 fn record_place_def(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
   match n {
     NdSpan { inner } => record_place_def(e, vars, inner),
-    NdVar { n: v } => heap_def(el_vars::tp(vars, v)),
+    // `@FR-B-Ref-Uniform`: a `&` record parameter holds the record it links.
+    NdVar { n: v } => heap_def(match el_vars::tp(vars, v) { TyRefVar { inner } => inner, _ => el_vars::tp(vars, v) }),
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
       if nm == "OpGetField" && len(args) == 3 {
@@ -6570,7 +6610,8 @@ fn record_place_def(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
 // at the read's position; void for any other node.
 fn place_type(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::TypeT {
   match el_ir::unspan(n) {
-    NdVar { n: v } => el_vars::tp(vars, v),
+    // `@FR-B-Ref-Uniform`: a `&` local is read as what it links.
+    NdVar { n: v } => match el_vars::tp(vars, v) { TyRefVar { inner } => inner, _ => el_vars::tp(vars, v) },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
       if nm == "OpGetVector" && len(args) == 3 {
@@ -15817,7 +15858,9 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     }
   }
   // `@FR-B-Ref-Uniform`: a `&vector` walks as the vector it links (`peel_link`).
-  x = ex(x.code, linked_vector(x.tp));
+  lx = ex(x.code, linked_vector(x.tp));
+  // loft#2477: through a local — `x` may name a lifted call's field.
+  x = lx;
   if rev && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
     el::refuse(e, "a reversed walk of this source: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -16881,6 +16924,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         } else if b.tp is TyOptional && !(result is TyOptional) {
           result = ir::TyOptional { inner: result };
         }
+        result = join_fn_arm(result, b);
         // `merge_dependencies` (`joined_deps`): a text result borrows what any arm's text does.
         if el_types::base(result) is TyText && el_types::base(b.tp) is TyText {
           tj = el_types::deps(result);
@@ -16898,6 +16942,13 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
           // An arm answering a function local borrows that local (`parse_var`'s `depending`).
           ad = el_types::deps(b.tp);
           match tail_of(b.code) { NdVar { n: av } => { if !ad.contains(av) { ad += [av]; } }, _ => {} }
+          // The arm is typed by the expectation the first arm set; its own closure record is on
+          // its block (`arm_join_type` reads the arm's own type).
+          for x3 in arm_block_deps(b.code) {
+            if !ad.contains(x3) {
+              ad += [x3];
+            }
+          }
           for x2 in ad {
             if !joined.contains(x2) {
               joined += [x2];
@@ -17102,6 +17153,7 @@ fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, at_
         if unsettled(result) {
           result = b.tp;
         }
+        result = join_fn_arm(result, b);
         out += [MArm { cond: cond, code: b.code, tp: b.tp }];
         if cond == null {
           wild_seen = true;
@@ -17272,6 +17324,7 @@ fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: vector
         if unsettled(result) {
           result = b.tp;
         }
+        result = join_fn_arm(result, b);
         wild = e.p.nodes[pats[0]!] is PWild;
         done = false;
         for al in alts {
@@ -17360,6 +17413,26 @@ fn match_borrow_source(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
   -1
 }
 
+// `join_arm_into` (`joined_deps` over `arm_join_type`) for a function value: a `match` of lambdas
+// carries every arm's closure record, as the `if` twin does, not the first arm's alone.
+fn join_fn_arm(result: ir::TypeT, arm: Ex) -> ir::TypeT {
+  if !(el_types::base(result) is TyFunction) || !(el_types::base(arm.tp) is TyFunction) {
+    return result;
+  }
+  ds = el_types::deps(result);
+  for x in el_types::deps(arm.tp) + arm_block_deps(arm.code) {
+    if !ds.contains(x) {
+      ds += [x];
+    }
+  }
+  el_types::with_deps(result, ds)
+}
+
+// The deps an arm's own block is typed with, where it is a block.
+fn arm_block_deps(n: ir::Node) -> vector<integer> {
+  match el_ir::unspan(n) { NdBlock { block } => el_types::deps(block[0].result[0] ?? ir::TyVoid), _ => [] }
+}
+
 // `Parser::parse_vector_match` for a vector of plain scalars or texts: the subject held in
 // `_match_subj_N`; an arm `[a, b, ..rest, z]` tests the length (`len == fixed`, or
 // `fixed <= len` with a rest) and binds each named element at its position — the tail's from the
@@ -17438,6 +17511,7 @@ fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) ->
         if unsettled(result) {
           result = b.tp;
         }
+        result = join_fn_arm(result, b);
         for nm in rev(names) {
           el_vars::restore_name(vars, nm.name, nm.nr);
         }
@@ -20266,7 +20340,10 @@ fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     if copy == null {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
-    return ex(el_ir::v_block([copy!, ir::NdVar { n: tmp }], vec_t, "iter_vec"), vec_t);
+    // `materialise_slice_leaves`: typed as the hidden local now is — a view of the store its
+    // materialisation minted (`@FR-B-View`).
+    mt = el_vars::tp(vars, tmp);
+    return ex(el_ir::v_block([copy!, ir::NdVar { n: tmp }], mt, "iter_vec"), mt);
   }
   if !(el_types::base(x.tp) is TyText) {
     if !el_types::is_unknown(x.tp) {
@@ -20552,9 +20629,10 @@ fn slice_block_value(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   if copy == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  bl.operators[-1] = el_ir::v_block([copy!, ir::NdVar { n: tmp }], vec_t, "iter_vec");
-  bl.result = [vec_t];
-  ex(ir::NdBlock { block: [bl] }, vec_t)
+  mt = el_vars::tp(vars, tmp);
+  bl.operators[-1] = el_ir::v_block([copy!, ir::NdVar { n: tmp }], mt, "iter_vec");
+  bl.result = [mt];
+  ex(ir::NdBlock { block: [bl] }, mt)
 }
 
 // `Parser::parse_index` / `parse_vector_index` for one index into a vector, read as a value: the
@@ -20581,7 +20659,9 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   // keeps the bare reference (`unique_elm_var`'s `was`), as a literal a `for` walks does.
   x = if e.p.nodes[c!] is SVecLit && match e.p.nodes[c!] { SVecLit { items } => len(items) > 0, _ => false } { vector_value(e, vars, c!, hinted: false).x } else { expression(e, vars, c!) };
   // `@FR-B-Ref-Uniform`: a `&vector` is indexed as the vector it links (`peel_link`).
-  x = ex(x.code, linked_vector(x.tp));
+  lx = ex(x.code, linked_vector(x.tp));
+  // loft#2477: through a local — `x` may name a lifted call's field.
+  x = lx;
   if ranged && (x.tp is TyTrie || x.tp is TyRadix) {
     return keyed_slice(e, vars, x, keys, hi, limit);
   }
