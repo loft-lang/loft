@@ -5184,8 +5184,9 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if !link && vars.vars[v].argument && !scalar(el_types::base(el_vars::tp(vars, v))) && !hidden_param(e, vars, v) {
-    el::refuse(e, "a rebound parameter of a heap type");
+  // A text parameter takes its own copy when written (`promote_text_param`, below).
+  if !link && vars.vars[v].argument && !scalar(el_types::base(el_vars::tp(vars, v))) && !(el_types::base(el_vars::tp(vars, v)) is TyText) && !hidden_param(e, vars, v) {
+    el::refuse(e, "a rebound parameter of a heap type: `{el_vars::name_of(vars, v)}` from {syn_kind(e, rhs!)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   // An empty literal rebinding a local takes the local's own type: a keyed local starts over
