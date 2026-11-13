@@ -4029,7 +4029,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // there, naming the `?` and both discharges — and the body consumed, so the
             // literal's `]` is where the parse resumes.  Without them a refused source
             // cascaded into six errors about the parser's own state.
-            if self.lexer.diagnostics().error_count() == errors_before_iterable {
+            if self.lexer.diagnostics().error_count() == errors_before_iterable && !self.source_refused {
                 diagnostic!(
                     self.lexer,
                     Level::Error,

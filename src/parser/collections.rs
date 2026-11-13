@@ -955,7 +955,8 @@ impl Parser {
                             vec![is_type.clone()],
                         );
                     }
-                    if self.first_pass {
+                    // A source refused where it was written has been reported once already.
+                    if self.first_pass || self.source_refused {
                         return Value::Null;
                     }
                     // Plan-07 phase 6 (partial) — name the offending type
@@ -4609,6 +4610,7 @@ use #count instead"
                     if self.data.type_def_nr(e) == u32::MAX);
                 if self.lexer.diagnostics().error_count() == errors_before_iterable
                     && !element_undefined
+                    && !self.source_refused
                 {
                     diagnostic!(
                         self.lexer,

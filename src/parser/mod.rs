@@ -1167,6 +1167,9 @@ pub struct Parser {
     /// Set by `parse_in_range` when `rev(collection)` (without a `..` range) is parsed.
     /// Consumed by `fill_iter` to add the reverse bit (64) into the `on` byte of OpIterate/OpStep.
     reverse_iterator: bool,
+    /// The source of the `for` being parsed was refused where it was written (`rev(n)` over a
+    /// non-collection): the loop's own "cannot iterate" refusal would repeat it.
+    source_refused: bool,
     /// `@FR-Col-Unordered` — set by `parse_in_range` when the iterable is `unordered(c)`, and
     /// taken by `keyed_snapshot`, which then builds a hash's snapshot in slot order instead of
     /// key order.  Any other walk ignores it: key order is one of the orders `unordered` allows.
@@ -2206,6 +2209,7 @@ impl Parser {
             bound_method_stubs: Vec::new(),
             stub_origin: std::collections::HashMap::new(),
             reverse_iterator: false,
+            source_refused: false,
             unordered_iterator: false,
             iterable_context: false,
             last_range_from: None,
