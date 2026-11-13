@@ -1,0 +1,241 @@
+diff --git b/src/bind_lowering.rs a/src/bind_lowering.rs
+index d6940bbfd..88b941177 100644
+--- b/src/bind_lowering.rs
++++ a/src/bind_lowering.rs
+@@ -955,8 +955,35 @@ fn re_arm(
+         return ReArm::KeyedNull;
+     }
+     let stashed = rb.free == DisplacedFree::Stash;
+-    if let Some(arm) = runtime_join(data, d_nr, function, v, value, rb) {
+-        return arm;
++    // A stashed displaced free (a nullable local) runs after the join as it runs after a copy,
++    // and a `τ?` local joins as its `τ` twin does (`first_bind_shape`) — the C writer's
++    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there — either call
++    // spelling, a `CallRef` whose target resolves (`callee_of`) included: a call handed `v`
++    // may answer `v`'s own store, which the copy arm would refill under it (#360), and the
++    // join's "fresh" test is a call's — a `??` block's stored-reference arm names a store
++    // neither `v` nor the base owns.  `LOFT_NO_STASHED_JOIN=1` copies them instead.  @PLN220.
++    let stashed_join = !crate::keys::stashed_join_off();
++    let join_shape = if stashed_join {
++        crate::use_analysis::first_bind_shape(tp)
++    } else {
++        tp
++    };
++    if (rb.owned_ref || rb.buffer_kept)
++        && !rb.s1_substituted
++        && (!stashed
++            || (stashed_join
++                && !rb.rhs_reads_v
++                && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
++                && crate::use_analysis::callee_of(data, d_nr, value).is_some()))
++        && !matches!(value.unspan(), Value::Var(_))
++        && crate::keys::join_own_enabled()
++        && !function.is_view_elided(v)
++        && let crate::use_analysis::Own::Join { base } =
++            crate::use_analysis::ownership_of(data, d_nr, value)
++        && base != u16::MAX
++        && let Some(rec) = join_record(join_shape)
++    {
++        return ReArm::Join { d_nr: rec, base };
+     }
+     if !((rb.owned_ref || rb.witnessed || rb.buffer_kept) && !rb.s1_substituted) {
+         return ReArm::Plain;
+@@ -1094,101 +1121,6 @@ fn only_null_or_borrowed(data: &Data, d_nr: u32, v: u16) -> bool {
+     ok
+ }
+ 
+-/// `R1` — does the rebind `v = value` join at run time (`OpBindOrCopy`: a view of the base
+-/// copied, a fresh store adopted)?  Where the oracle answers `Own::Join`, and where a value
+-/// branch hands back another local whole (`branch_local_join`).
+-fn runtime_join(
+-    data: &Data,
+-    d_nr: u32,
+-    function: &Function,
+-    v: u16,
+-    value: &Value,
+-    rb: &ReBind,
+-) -> Option<ReArm> {
+-    let tp = function.tp(v);
+-    let stashed = rb.free == DisplacedFree::Stash;
+-    // A stashed displaced free (a nullable local) runs after the join as it runs after a copy,
+-    // and a `τ?` local joins as its `τ` twin does (`first_bind_shape`) — the C writer's
+-    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there — either call
+-    // spelling, a `CallRef` whose target resolves (`callee_of`) included: a call handed `v`
+-    // may answer `v`'s own store, which the copy arm would refill under it (#360), and the
+-    // join's "fresh" test is a call's — a `??` block's stored-reference arm names a store
+-    // neither `v` nor the base owns.  `LOFT_NO_STASHED_JOIN=1` copies them instead.  @PLN220.
+-    let stashed_join = !crate::keys::stashed_join_off();
+-    let join_shape = if stashed_join {
+-        crate::use_analysis::first_bind_shape(tp)
+-    } else {
+-        tp
+-    };
+-    if (rb.owned_ref || rb.buffer_kept)
+-        && !rb.s1_substituted
+-        && (!stashed
+-            || (stashed_join
+-                && !rb.rhs_reads_v
+-                && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
+-                && crate::use_analysis::callee_of(data, d_nr, value).is_some()))
+-        && !matches!(value.unspan(), Value::Var(_))
+-        && crate::keys::join_own_enabled()
+-        && !function.is_view_elided(v)
+-        && let crate::use_analysis::Own::Join { base } =
+-            crate::use_analysis::ownership_of(data, d_nr, value)
+-        && base != u16::MAX
+-        && let Some(rec) = join_record(join_shape)
+-    {
+-        return Some(ReArm::Join { d_nr: rec, base });
+-    }
+-    branch_local_join(data, function, v, value, rb, join_shape)
+-}
+-
+-/// `@FR-B-Copy` — a value BRANCH that hands back another local's whole record on one path
+-/// (`c = b ?? Owned`, `c = if k { b } else { mk() }`) copies that arm and adopts the others, as
+-/// the bare `c = b` copies (R2c): the runtime join (R1) with that local as the witness.  The scope
+-/// pass keeps the value form for such a branch where an arm is a compiler temporary, on the
+-/// promise of this join (`scopes::scan_set`'s write-out, `arm_lift::arm_bind`), and the oracle's
+-/// `Owned` for an owned local's arm declined it — the binding named the local's record and both
+-/// freed it (`@FR-H-FreeTwice`).  `LOFT_NO_BRANCH_LOCAL_JOIN=1` binds such a branch plain again.
+-fn branch_local_join(
+-    data: &Data,
+-    function: &Function,
+-    v: u16,
+-    value: &Value,
+-    rb: &ReBind,
+-    join_shape: &Type,
+-) -> Option<ReArm> {
+-    if !(rb.owned_ref || rb.buffer_kept)
+-        || rb.s1_substituted
+-        || rb.free == DisplacedFree::Stash
+-        || crate::keys::branch_local_join_off()
+-        || !crate::keys::join_own_enabled()
+-        || function.is_view_elided(v)
+-    {
+-        return None;
+-    }
+-    let base = sole_branch_local(function, v, value)?;
+-    let rec = join_record(join_shape)?;
+-    function
+-        .record_copy_source(data, v, base)
+-        .is_some_and(|src_d| data.copies_as(rec, src_d))
+-        .then_some(ReArm::Join { d_nr: rec, base })
+-}
+-
+-/// The one program-named local (not `v`, not a compiler temporary) a value branch hands back
+-/// whole on some path — `b` in `b ?? d` or `if k { b } else { mk() }` — or `None` for a value
+-/// that is no branch, or a branch with none or several (one witness names one store).
+-fn sole_branch_local(function: &Function, v: u16, value: &Value) -> Option<u16> {
+-    if !matches!(
+-        value.unspan(),
+-        Value::If(..) | Value::Block(_) | Value::Insert(_)
+-    ) {
+-        return None;
+-    }
+-    let mut named = crate::scopes::branch_tail_vars(value)
+-        .into_iter()
+-        .filter(|&x| x != v && x < function.count() && !function.is_compiler_generated(x));
+-    let first = named.next()?;
+-    named.next().is_none().then_some(first)
+-}
+-
+ /// Is `value` a null — `null`, or the sentinel a reference reset writes?
+ fn is_null_value(data: &Data, value: &Value) -> bool {
+     match value.unspan() {
+diff --git b/src/c/body.rs a/src/c/body.rs
+index 90cb40a75..d59704e55 100644
+--- b/src/c/body.rs
++++ a/src/c/body.rs
+@@ -5669,20 +5669,7 @@ impl<'a> FnWriter<'a> {
+         name: &str,
+         ind: usize,
+     ) -> Result<bool, String> {
+-        let mut join = self.join_bind(var, x);
+-        // `bind_lowering::re_bind` joins (R1) any value the oracle answers `Own::Join` for, not
+-        // only a call's: `class = bound ?? Owned` chooses a view of `bound` or a fresh record.
+-        // Bound as it stands, the local named `bound`'s record and both were freed (the
+-        // self-hosted ownership oracle's `classify_var`); the bytecode writer copies the view
+-        // arm with `OpBindOrCopy`.  @PLN220.  `LOFT_C_CALL_ONLY_JOIN=1` joins calls alone.
+-        if join.is_none()
+-            && !first
+-            && !crate::keys::c_call_only_join()
+-            && let crate::bind_lowering::ReArm::Join { d_nr, base } =
+-                crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm
+-        {
+-            join = Some((self.cx.data.def(d_nr).known_type(), base));
+-        }
++        let join = self.join_bind(var, x);
+         // A rebind releases the store it displaces when the variable owns it, as the bytecode
+         // writer's owned reassignment does — never the base's, nor a store the call was handed.
+         let rebind_owned = !first
+@@ -5742,15 +5729,6 @@ impl<'a> FnWriter<'a> {
+                 // argument naming that store is a view of the variable itself (`f(c ?? d)`'s
+                 // `__lift`), and keeping it there leaked the displaced record on every rebind.
+                 let mut keep = vec![format!("{old}.store_nr != {name}.store_nr")];
+-                // A promoted return buffer keeps the store its caller handed in (`@FR-O-Buffer`,
+-                // the entry witness), as `displacing_rebind` keeps it.
+-                if let Some(w) = self
+-                    .vars
+-                    .entry_witness(var)
+-                    .filter(|_| self.vars.is_argument(var))
+-                {
+-                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(w)));
+-                }
+                 if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
+                     keep.push(format!("{old}.store_nr != {}.store_nr", self.var(buf)));
+                 }
+diff --git b/src/keys.rs a/src/keys.rs
+index 6a3ae20c3..467687ed1 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -3644,25 +3644,6 @@ pub fn lift_temp_view_off() -> bool {
+     *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
+ }
+ 
+-/// `LOFT_NO_BRANCH_LOCAL_JOIN=1` — `bind_lowering::re_bind` binds a value branch that hands
+-/// back another local's whole record on one path (`c = b ?? d` into a binding assigned before)
+-/// plain again, so the binding names that local's record and both free it.
+-#[must_use]
+-pub fn branch_local_join_off() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| env_set("LOFT_NO_BRANCH_LOCAL_JOIN"))
+-}
+-
+-/// `LOFT_C_CALL_ONLY_JOIN=1` — the C writer joins a rebind at run time (`OpBindOrCopy`'s
+-/// copy-or-adopt) only for a call's answer again, binding any other value `bind_lowering::re_bind`
+-/// joins (an `if` choosing a view or a fresh record) as it stands, so the local names the view's
+-/// store and both are freed.
+-#[must_use]
+-pub fn c_call_only_join() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| env_set("LOFT_C_CALL_ONLY_JOIN"))
+-}
+-
+ /// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
+ /// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
+ /// before `@FR-O-Buffer` was asked there.
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 4999e7929..edc7e8bb8 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -130,7 +130,6 @@ use handles::retain_shared_handles;
+ pub(crate) use handoff::{
+     appends_to_element, copy_hands_off, copy_moves_drop_from, drop_bearing_source,
+ };
+-pub(crate) use join_rewrite::branch_tail_vars;
+ use join_rewrite::{reassociate_coalesce_chains, rewrite_written_out, write_out_joined_copies};
+ use last_use::{
+     drop_bearing_stores, last_use_guard, lastuse_reclaim, reclaim_free_intent,
+diff --git b/src/scopes/join_rewrite.rs a/src/scopes/join_rewrite.rs
+index 5b37950c8..2b50ac051 100644
+--- b/src/scopes/join_rewrite.rs
++++ a/src/scopes/join_rewrite.rs
+@@ -10,7 +10,7 @@ use super::handoff::{appends_to_element, copy_hands_off, var_copy_owns};
+ use crate::data::{Block, Data, Type, Value, v_set};
+ use crate::variables::Function;
+ 
+-pub(crate) fn branch_tail_vars(node: &Value) -> Vec<u16> {
++pub(super) fn branch_tail_vars(node: &Value) -> Vec<u16> {
+     fn walk(n: &Value, out: &mut Vec<u16>) {
+         match n.unspan() {
+             Value::Var(x) => {
