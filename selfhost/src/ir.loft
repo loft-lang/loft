@@ -432,3 +432,26 @@ struct Bundle {
 fn empty_bundle() -> Bundle {
   Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false }
 }
+
+// @PLN91 the RUN image (`loft --emit-run-image`): the bytecode the Rust writer produced
+// (`compile::byte_code`) for the program and the standard library, ONE code stream stored as it
+// was written and executed in place by the loft runner — no IR, no lowering on the run path.
+// A function is only where its code starts: `starts[d]` is definition `d`'s first byte.  Code
+// is laid out in definition order, so `starts` rises: a definition with no bytecode (a native,
+// a type, an operator) starts where the one before it ended, and one more entry holds the
+// stream's end — definition `d`'s code is `code[starts[d]..starts[d + 1]]`.  Beside it the
+// natives by the index `OpStaticCall` carries, the type schema of the program's stores, the
+// entry definition and whether the program declared `#cwd`.
+pub struct RunImage {
+  pub code: vector<u8>,
+  pub starts: vector<u32>,
+  pub natives: vector<text>,
+  pub types: vector<DbType>,
+  pub main: integer,
+  pub cwd: boolean,
+}
+
+// The empty run image one is read into.
+pub fn empty_run_image() -> RunImage {
+  RunImage { code: [], starts: [], natives: [], types: [], main: 0, cwd: false }
+}

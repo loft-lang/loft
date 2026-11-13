@@ -34,6 +34,8 @@ IR_STRUCTS = {
     "AppliedImport", "UseName", "TypeVarBound",
     # @PLN11 D2a — database type-schema types (Stores.types).
     "DbField", "EnumPair", "KeyField", "DbType", "Bundle",
+    # @PLN91 — the run image (the stored bytecode the loft runner executes).
+    "RunImage",
 }
 
 
@@ -100,6 +102,26 @@ def main(path: str) -> int:
         # the database dedupes repeated constructors.
         if re.search(r"let [A-Za-z_]\w* = db\.", l) or re.search(r"let _ = t\d+;", l):
             bodies.append(l)
+    # A BYTE type an IR field uses (`vector<u8>`, the run image's code) is a constructor of a
+    # base kind, declared wherever the stdlib first needed one: `let t30 = db.byte(0, false);`
+    # outside the IR block.  It depends on nothing, and the database dedupes it, so its
+    # definition is copied into the body ahead of the fields that read it.
+    bound = set()
+    for l in block:
+        m = re.search(r"let (t\d+) = db\.", l)
+        if m:
+            bound.add(m.group(1))
+    byte_defs = {}
+    for l in lines:
+        m = re.search(r"let (t\d+) = db\.byte\([^)]*\);", l)
+        if m and m.group(1) not in byte_defs:
+            byte_defs[m.group(1)] = l.rstrip()
+    hoisted = []
+    for l in bodies:
+        for tok in re.findall(r"\bt\d+\b", l):
+            if tok not in bound and tok in byte_defs and byte_defs[tok] not in hoisted:
+                hoisted.append(byte_defs[tok])
+    bodies = hoisted + bodies
     keep = decls + bodies
 
     # RENUMBER our type labels to a deterministic, stdlib-independent sequence.

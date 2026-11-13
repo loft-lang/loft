@@ -15,6 +15,16 @@ pub fn load(path: text) -> ir::Bundle? {
   b
 }
 
+// The RUN image at `path` (`loft --emit-run-image`): the bytecode as the Rust writer produced
+// it, read in place.  Null when it is missing or written under another layout.
+pub fn load_run(path: text) -> ir::RunImage? {
+  r = ir::empty_run_image();
+  if !store_load(r, path) {
+    return null;
+  }
+  r
+}
+
 // Do the program's relative paths resolve against its own directory?  Not when it declared `#cwd`.
 pub fn program_relative(b: ir::Bundle) -> boolean {
   !b.cwd
