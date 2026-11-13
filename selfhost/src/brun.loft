@@ -155,6 +155,13 @@ H_FN_REF_CLOSURE = 132;
 H_VAR_FN_REF = 133;
 H_DROP_FN_REF = 134;
 H_FN_REF_DETACH = 135;
+H_PUT_SINGLE = 136;
+H_VAR_SINGLE = 137;
+H_SINGLE2 = 138;
+H_NE_BOOL = 139;
+H_REM_INT_NULLABLE = 140;
+H_GET_DB_REF = 141;
+H_CONV_INT_FROM_CHAR = 142;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -327,6 +334,17 @@ pub fn handler(name: text) -> integer {
     "OpVarFnRef" => H_VAR_FN_REF,
     "OpDropFnRef" => H_DROP_FN_REF,
     "OpFnRefDetachShared" => H_FN_REF_DETACH,
+    "OpPutSingle" => H_PUT_SINGLE,
+    "OpVarSingle" => H_VAR_SINGLE,
+    "OpAddSingle" => H_SINGLE2,
+    "OpMinSingle" => H_SINGLE2,
+    "OpMulSingle" => H_SINGLE2,
+    "OpDivSingle" => H_SINGLE2,
+    "OpNeBool" => H_NE_BOOL,
+    "OpRemIntNullable" => H_REM_INT_NULLABLE,
+    "OpGetDbRef" => H_GET_DB_REF,
+    "OpVecGetInt" => H_VEC_GET_INT,
+    "OpConvIntFromCharacter" => H_CONV_INT_FROM_CHAR,
     _ => -1
   }
 }
@@ -339,6 +357,11 @@ N_NOW = 3;
 N_TICKS = 4;
 N_PROTECT = 5;
 N_UNPROTECT = 6;
+N_STARTS_WITH = 7;
+N_ENDS_WITH = 8;
+N_WRITE_BYTES = 9;
+N_VECTOR_SUM_INT = 10;
+N_OS_TEMP_DIR_DEST = 11;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -348,6 +371,11 @@ pub fn native_handler(name: text) -> integer {
     "n_ticks" => N_TICKS,
     "n_protect_store_frees" => N_PROTECT,
     "n_unprotect_store_frees" => N_UNPROTECT,
+    "t_4text_starts_with" => N_STARTS_WITH,
+    "t_4text_ends_with" => N_ENDS_WITH,
+    "n_write_bytes" => N_WRITE_BYTES,
+    "n_vector_sum_int" => N_VECTOR_SUM_INT,
+    "n_os_temp_dir_dest" => N_OS_TEMP_DIR_DEST,
     _ => -1
   }
 }
@@ -457,6 +485,9 @@ fn layout_of(h: integer) -> text {
     133 => "h",
     134 => "h",
     135 => "hh",
+    136 => "h",
+    137 => "h",
+    141 => "h",
     _ => ""
   }
 }
@@ -1079,6 +1110,29 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         sp -= 16;
         crt::slot_ref(io, stk, sp);
         crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
+      } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
+        nv = crt::stack_str(stk, sp - 16) ?? "";
+        ns2 = crt::stack_str(stk, sp - 32) ?? "";
+        sp -= 32;
+        set_bool(stk, sp, if nh == N_STARTS_WITH { ns2.starts_with(nv) } else { ns2.ends_with(nv) });
+        sp += 8;
+      } else if nh == N_WRITE_BYTES {
+        // The byte vector popped, then the path; answers whether it was written.
+        crt::slot_ref(io, stk, sp - 16);
+        wpath = crt::stack_str(stk, sp - 32) ?? "";
+        sp -= 32;
+        set_bool(stk, sp, crt::write_bytes(wpath, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+        sp += 8;
+      } else if nh == N_VECTOR_SUM_INT {
+        acc = get(stk, sp - 8);
+        crt::slot_ref(io, stk, sp - 24);
+        sp -= 24;
+        set(stk, sp, crt::vector_sum_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acc));
+        sp += 8;
+      } else if nh == N_OS_TEMP_DIR_DEST {
+        crt::slot_ref(io, stk, sp - 16);
+        sp -= 16;
+        crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_temp_dir());
       } else {
         nname = img.natives[idx] ?? "native {idx}";
         return Outcome { refused: "a native the runner does not carry: {nname} at {at}", steps: steps };
@@ -1752,6 +1806,42 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       if (io[1] ?? 0) == 0 || (io[0] ?? NULL_STORE) == nst {
         crt::set_slot_ref(stk, sp - (ofv - 8), NULL_STORE, 0, 0);
       }
+    } else if h == H_PUT_SINGLE {
+      psp = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 8;
+      crt::stack_move(stk, sp, sp + 8 - psp, 4);
+    } else if h == H_VAR_SINGLE {
+      crt::stack_move(stk, sp - u16_at(img.code, pc), sp, 4);
+      pc += 2;
+      sp += 8;
+    } else if h == H_SINGLE2 {
+      // Single precision through the double: for + - * / on single operands the double's result
+      // rounded to single is the single-precision result.
+      sp -= 8;
+      sb = crt::get_float(stk, 1, 8 + sp, 0, true);
+      sa = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+      sname = img.ops[op] ?? "";
+      crt::set_float(stk, 1, 8 + sp - 8, 0, if sname == "OpAddSingle" { sa + sb } else if sname == "OpMinSingle" { sa - sb } else if sname == "OpMulSingle" { sa * sb } else { sa / sb }, true);
+    } else if h == H_NE_BOOL {
+      sp -= 8;
+      nb = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp, 0, 0) ?? 255;
+      na = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp - 8, 0, 0) ?? 255;
+      set_bool(stk, sp - 8, na != nb);
+    } else if h == H_REM_INT_NULLABLE {
+      sp -= 8;
+      rb2 = get(stk, sp);
+      set(stk, sp - 8, if rb2 == 0 { null } else { get(stk, sp - 8) % rb2 });
+    } else if h == H_GET_DB_REF {
+      // The reference a record's field stores.
+      gdf = u16_at(img.code, pc);
+      pc += 2;
+      crt::slot_ref(io, stk, sp - 16);
+      crt::place_ref(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + gdf);
+      crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else if h == H_CONV_INT_FROM_CHAR {
+      cc = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
+      set(stk, sp - 8, if cc == 0 { null } else { cc });
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
