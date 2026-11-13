@@ -1735,7 +1735,8 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if hinted {
       vars.expect_node = -1;
     }
-    if el_types::base(result) is TyReference {
+    // A struct enum is a record as well: a variant is built into the buffer as a struct is.
+    if el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional)) {
       return record_return(e, vars, v, result);
     }
     // A text is returned as it is, the declared result borrowing what the value borrows
@@ -1939,7 +1940,17 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
     },
     _ => {}
   }
-  if w >= 0 && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && el_expressions::rename_candidate(e, vars, v.code, x) == w {
+  // `wrong_shape_for_buffer` (loft#1493): a candidate may BE the buffer only with the return's
+  // own shape — for a struct enum, a work ref or local typed as a record (`ref(Sh)`, a
+  // variant's `ref(Sq)`) is not the enum, and the buffer stays `__retbuf`.
+  // A work ref (`__ref_N`) is a record reference in Rust whatever it holds.
+  w_shape_ok = w < 0 || el_types::struct_enum_def(result) < 0 || (el_types::base(el_vars::tp(vars, w)) is TyEnum && !starts_with(el_vars::name_of(vars, w), "__ref_"));
+  // …and a call's value that cannot be the buffer is handed back as it is: its own work ref holds
+  // it, nothing is delivered into `__retbuf`.
+  if !w_shape_ok && chain {
+    return ex(ir::NdReturn { inner: x }, ir::TyNever);
+  }
+  if w >= 0 && w_shape_ok && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && el_expressions::rename_candidate(e, vars, v.code, x) == w {
     rename_onto(e, vars, rb, w);
   }
   if w < 0 && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && branch_value(x) && owned_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 {
