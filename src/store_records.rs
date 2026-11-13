@@ -1959,8 +1959,32 @@ impl Run<'_> {
         if self.traced {
             self.trace(&Value::Text(format!("exit: {how}")), st);
         }
+        // A store a HIDDEN buffer parameter holds (`OpDatabase(__retbuf)`, `Origin::MintInto`)
+        // goes back to the caller through that buffer, which the caller releases: no leak of
+        // this frame's.  Without this, minting there read as a leak at every exit where the
+        // answer was not followed into the return (`LOFT_RECORDS_NO_HIDDEN_PARAM_MINT`'s mint;
+        // `pc(x) -> Node?` answering a literal arm's copy).  `LOFT_RECORDS_NO_BUFFER_HANDS_BACK=1`
+        // reports it.
+        let buffer_params: Vec<u16> =
+            if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_BUFFER_HANDS_BACK").is_some()) {
+                Vec::new()
+            } else {
+                let attrs = self.data.def(self.d_nr).attributes();
+                self.params
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| attrs.get(*i).is_some_and(|a| a.hidden))
+                    .map(|(_, p)| *p)
+                    .collect()
+            };
         for (k, info) in &st.stores {
             if !info.has(LIVE) || !info.live.is_disjoint(&info.handed_by) {
+                continue;
+            }
+            if buffer_params
+                .iter()
+                .any(|b| st.vars.get(b).is_some_and(|p| p.contains(&Pt::Store(*k))))
+            {
                 continue;
             }
             let holders: Vec<String> = st
