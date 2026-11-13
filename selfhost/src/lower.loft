@@ -4592,12 +4592,20 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
   l
 }
 
-// The definition number of the function the compiler named `name`, or null.
+// port: data.rs def_nr (`get_or_std`) — the definition named `name` in the image's current source
+// (the entry program's), else in the standard library's: an imported module's own `main` is not
+// the program's (loft#1351).
 pub fn find(b: ir::Bundle, name: text) -> integer? {
+  std: integer? = null;
   for d in b.data.definitions {
     if d.name == name {
-      return d#index;
+      if d.source == b.data.source {
+        return d#index;
+      }
+      if d.source == 0 && std == null {
+        std = d#index;
+      }
     }
   }
-  null
+  std
 }
