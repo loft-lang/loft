@@ -244,11 +244,12 @@ fn glb_light_node_json(lt: scene::Light, li: integer) -> text {
     dir = math::normalize3(lt.direction);
     dx = dir.x; dy = dir.y; dz = dir.z;
     dot_val = -dz;
+    // The identity rotation, unless the light faces away from -z or off its axis.  Bound before
+    // the `if`, so the four exist after it (a local bound inside an arm ends with the arm).
+    qx = 0.0 as single; qy = 0.0 as single; qz = 0.0 as single; qw = 1.0 as single;
     if dot_val < -0.9999 {
-      qx = 0.0 as single; qy = 1.0 as single; qz = 0.0 as single; qw = 0.0 as single;
-    } else if dot_val > 0.9999 {
-      qx = 0.0 as single; qy = 0.0 as single; qz = 0.0 as single; qw = 1.0 as single;
-    } else {
+      qy = 1.0 as single; qw = 0.0 as single;
+    } else if dot_val <= 0.9999 {
       half = 1.0 + dot_val;
       ax = dy; ay = -dx; az = 0.0;
       inv_len = 1.0 / sqrt(ax * ax + ay * ay + az * az + half * half) ?? 0.0;
