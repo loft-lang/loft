@@ -88,9 +88,11 @@ message.  It now walks the whole vector, as a loop over the vector itself does. 
 a parameter works, an `x#remove` in its loop counts as a change to it, and adding to it inside
 its own loop is refused as it is for any vector.
 
-**Clearer messages for two mistakes.**  `p.z = 3` on a struct with no field `z` says
+**Clearer messages for common mistakes.**  `p.z = 3` on a struct with no field `z` says
 `Unknown field P.z` instead of "Variable 'p' cannot change type".  An empty `"{}"` in a text says
 it is an empty format hole and that `{{}}` writes a pair of braces, instead of "Expect token )".
+A number passed where text is expected (`println(i)`) points at the format string `"{i}"`, and
+`v.push(x)` or `s.length` name loft's spelling: `v += [x]` and `len(s)`.
 
 **A compiled program that opens a file reads no uninitialised memory when it rebuilds a
 result.**  A `--native` program that read a file into a vector checked the type word of a

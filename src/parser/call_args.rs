@@ -440,6 +440,28 @@ impl Parser {
                             Some(hint) if matches!(tp.base(), Type::Function(..)) => {
                                 format!("{context}; {hint}")
                             }
+                            // A number, a flag or a character handed where text is taken
+                            // (`println(i)`): the cure is a format string, which renders any of
+                            // them — name it with the argument's own spelling when it is a name.
+                            _ if matches!(tp.base(), Type::Text(_))
+                                && matches!(
+                                    actual_type.base(),
+                                    Type::Integer(_)
+                                        | Type::Float
+                                        | Type::Single
+                                        | Type::Boolean
+                                        | Type::Character
+                                ) =>
+                            {
+                                let shown = match actual_code.unspan() {
+                                    Value::Var(v) => self.vars.name(*v).to_string(),
+                                    _ => "…".to_string(),
+                                };
+                                format!(
+                                    "{context} — a format string turns a value into text: \
+                                     `\"{{{shown}}}\"`"
+                                )
+                            }
                             _ => context,
                         };
                         self.validate_convert(&context, actual_type, &tp, &pos);
