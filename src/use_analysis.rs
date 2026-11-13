@@ -3384,7 +3384,7 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
             // bracket cannot emit must leave the set INCOMPLETE, never vanish from it
             // (loft#981 — the narrower list read as complete freed a hash parameter's
             // element out from under the caller).
-            _ if is_protectable_store_type(tp) => match view_root_slots(data, arg) {
+            _ if is_protectable_store_type(tp) => match arg_root_slots(data, arg) {
                 Some(roots) => protectable.extend(roots),
                 None => covers_all = false,
             },
@@ -3491,6 +3491,27 @@ fn is_protectable_store_type(tp: &Type) -> bool {
 /// [`bracket_can_name`] answers — a join's arms must be protected individually, and an arm the
 /// bracket cannot name is the one that vetoes the whole decision.
 pub fn view_root_slots(data: &Data, arg: &Value) -> Option<Vec<u16>> {
+    view_roots(data, arg, false)
+}
+
+/// [`view_root_slots`] for a CALL ARGUMENT, read after the call: a join arm's owning call
+/// (`{#join-arm-owner __ref_N = f(…, __ref_N); __ref_N }`, an `if` arm in argument position) has
+/// put its value in that frame buffer's store by then, so the buffer names it.  Read as a mint it
+/// left the bracket incomplete, the copy of the call's answer lost its source-free, and every
+/// store the callee made leaked (the self-hosted elaborator's `place_assignment`:
+/// `guard_compound(e, x.code, if held { pt } else { base(pt) }, held)`).  Only here: a `??` or
+/// `if` ARM witness is compared while the arms still run, before the buffer holds anything
+/// (suite B-Copy/1612).  `LOFT_NO_JOIN_ARM_ARG_ROOT=1` reads the block as a mint again.
+#[must_use]
+pub fn arg_root_slots(data: &Data, arg: &Value) -> Option<Vec<u16>> {
+    view_roots(
+        data,
+        arg,
+        !crate::env_once!(std::env::var_os("LOFT_NO_JOIN_ARM_ARG_ROOT").is_some()),
+    )
+}
+
+fn view_roots(data: &Data, arg: &Value, join_arm_buffers: bool) -> Option<Vec<u16>> {
     // A SPAN is source position, not structure: the parser wraps a field access in one
     // and leaves a bare local unwrapped, which is why `pick(q, …)` was clean while
     // `pick(b.s, …)` leaked. Reading through it is safe because the bracket is emitted
@@ -3501,14 +3522,24 @@ pub fn view_root_slots(data: &Data, arg: &Value) -> Option<Vec<u16>> {
         Value::Var(v) => Some(vec![*v]),
         Value::Null => Some(Vec::new()),
         Value::If(_, then_v, else_v) => {
-            let mut roots = view_root_slots(data, then_v)?;
-            roots.extend(view_root_slots(data, else_v)?);
+            let mut roots = view_roots(data, then_v, join_arm_buffers)?;
+            roots.extend(view_roots(data, else_v, join_arm_buffers)?);
             Some(roots)
         }
         // A bare `{ v }` arm carries no ops of its own — the parser wraps an `if`'s
         // arms this way. A block with construction ops in it is a MINT, not a view,
         // and falls through to `None` above.
-        Value::Block(bl) if bl.operators.len() == 1 => view_root_slots(data, &bl.operators[0]),
+        Value::Block(bl)
+            if join_arm_buffers && bl.name == crate::parser::Parser::JOIN_ARM_OWNER =>
+        {
+            match bl.operators.last().map(Value::unspan) {
+                Some(Value::Var(buf)) => Some(vec![*buf]),
+                _ => None,
+            }
+        }
+        Value::Block(bl) if bl.operators.len() == 1 => {
+            view_roots(data, &bl.operators[0], join_arm_buffers)
+        }
         // The `!` unwrap's block (`{#ncr _ncr_N = <projection>; <null check>; _ncr_N }`): its
         // value is the projection it bound, checked and handed on — a view of the same roots.
         // Read as a mint it left the witness set incomplete, and the copy of a call taking it
@@ -3526,7 +3557,7 @@ pub fn view_root_slots(data: &Data, arg: &Value) -> Option<Vec<u16>> {
                 Value::Set(x, val) if x == t => Some(val.as_ref()),
                 _ => None,
             })?;
-            view_root_slots(data, bound)
+            view_roots(data, bound, join_arm_buffers)
         }
         Value::Call(d, cargs) => {
             if cargs.is_empty() && data.def(*d).name() == "OpNullRefSentinel" {
@@ -3540,7 +3571,7 @@ pub fn view_root_slots(data: &Data, arg: &Value) -> Option<Vec<u16>> {
             {
                 return None;
             }
-            view_root_slots(data, cargs.first()?)
+            view_roots(data, cargs.first()?, join_arm_buffers)
         }
         _ => None,
     }
@@ -3562,7 +3593,7 @@ pub fn view_root_slots(data: &Data, arg: &Value) -> Option<Vec<u16>> {
 /// bind below are not rivals: the bind is what catches whatever the witness still cannot reach.
 #[must_use]
 pub fn bracket_can_name(data: &Data, arg: &Value) -> bool {
-    view_root_slots(data, arg).is_some()
+    arg_root_slots(data, arg).is_some()
 }
 
 /// Is `d_nr` a field/element PROJECTION — an op that READS a `DbRef` out of its first
