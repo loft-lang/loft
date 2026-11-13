@@ -1222,6 +1222,11 @@ impl Output<'_> {
                 matches!(def.returned(), Type::Void)
             }
             Value::Block(bl) => matches!(bl.result, Type::Void),
+            // A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
+            // witness's) yields no value.
+            Value::Insert(items) => {
+                !items.is_empty() && items.iter().all(|i| self.is_void_value(i))
+            }
             _ => false,
         }
     }
