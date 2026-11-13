@@ -117,6 +117,11 @@ start; the interpreter fills it in.
   differently from what both sides decided.
 - **The tools follow the compiler they were built with:** compare.py builds the runner and the
   report tool with `target/op-census/release/loft`; rebuild that binary after a compiler change.
+- **A copied image needs its layout sidecar:** a `std.store` copied without `std.store.dschema`
+  is refused by `store_load` ("no layout sidecar"), so both `front/elab.loft` and
+  `compare/defs.loft` print nothing, and an empty-against-empty diff reads as agreement.  A
+  one-program comparison script checks that the reference side wrote something before it
+  reports a match.
 
 ## Probes before building (each can fail on its own)
 
