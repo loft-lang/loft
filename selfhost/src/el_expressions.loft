@@ -7457,6 +7457,18 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
             // A nullable pointer field takes a nullable record: its null is the reference
             // sentinel either way (`@FR-L-Null`).
             fc = x.code;
+            // `@FR-H-RefHome`: a fresh record (a call's result, a literal) whose home is assigned
+            // in a loop body lasts one pass, so Rust builds it in the holder's store
+            // (`stored_reference_homes`' `Place`, `OpPlaceRecord`) — not carried: refused by name.
+            fresh_rec = match el_ir::unspan(x.code) {
+              NdCall { def_nr } => starts_with(el::def(e, def_nr).name, "n_") || starts_with(el::def(e, def_nr).name, "t_"),
+              NdBlock { block: xb } => xb[0].name == "Object",
+              _ => false
+            };
+            if !e.first_pass && fresh_rec && (len(vars.active_loops) > 0 || vars.whiles > 0) {
+              el::refuse(e, "a fresh record stored into a `reference<T>` field inside a loop");
+              return null;
+            }
           }
         } else {
           fc = stored(e, vars, x, at);
