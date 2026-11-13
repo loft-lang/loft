@@ -240,6 +240,16 @@ pub(crate) fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
 
 /// The right-hand side `code` binds to `dst`: the statement's own `Set(dst, rhs)`, found
 /// through the `Insert` a lowering may wrap it in (the last `Set` to `dst` is the bind).
+/// The variables `node` binds to a VALUE — a `Set` whose value is not a bare null pre-init.
+fn bound_to_a_value_in(node: &Value, out: &mut Vec<u16>) {
+    if let Value::Set(v, value) = node.unspan()
+        && !matches!(value.unspan(), Value::Null)
+    {
+        out.push(*v);
+    }
+    node.for_each_child(&mut |c| bound_to_a_value_in(c, out));
+}
+
 fn bound_rhs(code: &Value, dst: u16) -> Option<&Value> {
     match code.unspan() {
         Value::Set(v, rhs) if *v == dst => Some(rhs.as_ref()),
@@ -8546,16 +8556,8 @@ use a separate collection or add after the loop"
             // its store when the bracket is set: dropping it re-freed that store (G-Mono's
             // `addi([], 4)`).  `LOFT_KEYED_BRACKET_NAMES_INNER=1` keeps them all.
             if !crate::env_once!(std::env::var_os("LOFT_KEYED_BRACKET_NAMES_INNER").is_some()) {
-                fn bound_in(node: &Value, out: &mut Vec<u16>) {
-                    if let Value::Set(v, value) = node.unspan()
-                        && !matches!(value.unspan(), Value::Null)
-                    {
-                        out.push(*v);
-                    }
-                    node.for_each_child(&mut |c| bound_in(c, out));
-                }
                 let mut inner = Vec::new();
-                bound_in(code, &mut inner);
+                bound_to_a_value_in(code, &mut inner);
                 guarded.retain(|v| !inner.contains(v));
             }
             for av in &guarded {
