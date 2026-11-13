@@ -1344,18 +1344,31 @@ static loft_ref loft_read_bytes(loft_str raw) {
     FILE *h = path ? fopen(path, "rb") : 0;
     free(path);
     if (!h) return loft_ref_null();
-    loft_ref r = loft_ref_null();
-    loft_vector_store(&r);
-    char buf[4096];
+    /* The whole file first, then one exact claim of its length, an empty file's included
+     * (`vector::alloc_vector_from_bytes`, `@FR-Col-Capacity`): appended a byte at a time, the
+     * vector took the growth step's room instead. */
+    size_t len = 0, cap = 4096;
+    uint8_t *data = (uint8_t *) malloc(cap);
     size_t n;
-    while ((n = fread(buf, 1, sizeof buf, h)) > 0) {
-        for (size_t i = 0; i < n; i++) {
-            loft_ref e = loft_vec_append(r, 1);
-            *loft_at(loft_store_of(e), e.rec, e.pos) = (uint8_t) buf[i];
-            loft_vec_finish(r);
+    while (data && (n = fread(data + len, 1, cap - len, h)) > 0) {
+        len += n;
+        if (len == cap) {
+            uint8_t *grown = (uint8_t *) realloc(data, cap * 2);
+            if (!grown) { free(data); data = 0; break; }
+            data = grown;
+            cap *= 2;
         }
     }
     fclose(h);
+    if (!data) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_ref r = loft_ref_null();
+    loft_vector_store(&r);
+    loft_vec_prealloc(r, (uint32_t) len, 1);
+    loft_store_t *s = loft_store_of(r);
+    uint32_t rec = loft_collection_rec(s, r.rec, r.pos);
+    loft_set_u32(s, rec, 4, (uint32_t) len);
+    if (len) memcpy(loft_at(s, rec, 8), data, len);
+    free(data);
     return r;
 }
 
