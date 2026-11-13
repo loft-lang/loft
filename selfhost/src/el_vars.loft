@@ -166,6 +166,10 @@ pub struct Vars {
   // that holds the caller's store (`ensure_rebind_witness`), pairwise
   pub rebind_params: vector<integer>,
   pub rebind_origs: vector<integer>,
+  // `Function::promoted_text_args`: each written text PARAMETER and the owned shadow local
+  // (`__tp_<name>`) its name reads as from then on, pairwise
+  pub promoted_params: vector<integer>,
+  pub promoted_shadows: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
   pub dn4_coalesce: boolean = false,
   // The assignment seam's conversion is in flight (`Parser::parse_assign`, which reaches the
@@ -653,6 +657,22 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.rebuilt = [];
   v.rebind_params = [];
   v.rebind_origs = [];
+  // `parse_function`'s second-pass remap: a parameter the first pass promoted reads as its
+  // shadow from the first statement on, the shadow defined (it is seeded at entry).
+  v.promoted_params = [];
+  v.promoted_shadows = [];
+  for sh in v.vars {
+    if starts_with(sh.name, "__tp_") {
+      for orig in v.vars {
+        if orig.argument && orig.name == sh.name[5..] {
+          v.promoted_params += [orig#index];
+          v.promoted_shadows += [sh#index];
+          set_name(v, orig.name, sh#index);
+          v.defined[sh#index] = true;
+        }
+      }
+    }
+  }
   v.captured = [];
   v.unique = [];
   v.work_vdb = 0;
@@ -880,6 +900,19 @@ fn another_sites_parameter(v: Vars, name: text, t: ir::TypeT) -> boolean {
 // The first pass's work refs that ended as parameters, with their sites, for the second pass.
 pub fn minted_parameters(v: Vars) -> vector<RefSite> {
   [for s in v.ref_sites if v.vars[s.nr].argument { s }]
+}
+
+// `Parser::promote_text_param`: a text PARAMETER that is written takes an owned local,
+// `__tp_<name>`, which its name reads as from here on (`(F-ParamScalar)`'s copy): the parameter
+// is the caller's text, passed borrowed.  It inherits the const mark; first pass only.
+pub fn promote_text_param(v: Vars, p: integer) -> integer {
+  name = v.vars[p]!.name;
+  sh = new_var(v, "__tp_{name}", ir::TyText { dep: [] });
+  v.vars[sh].value_const = v.vars[p]!.value_const;
+  set_name(v, name, sh);
+  v.promoted_params += [p];
+  v.promoted_shadows += [sh];
+  sh
 }
 
 // `Parser::ensure_rebind_witness`: the work-ref that witnesses parameter `p`'s entry store —

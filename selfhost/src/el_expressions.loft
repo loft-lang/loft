@@ -767,6 +767,12 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
         el_vars::set_var_type(vars, v, stack);
       }
     } else if el_types::base(el_vars::tp(vars, v)) is TyText {
+      // `@FR-R-TextBorrow` (`classify_text_dep`'s loop arm): a `for` loop's own variable stays a
+      // local, delivered by copy — promoted to the caller's buffer it would be copied into on
+      // every turn, where left a local it borrows each element of the walked vector.
+      if el_vars::was_loop_var(vars, v) && !vars.vars[v].argument {
+        continue;
+      }
       if !e.first_pass && !starts_with(nm, "_") {
         continue;
       }
@@ -2932,6 +2938,15 @@ fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       }
       for wt in vars.work_texts {
         ops: vector<ir::Node> = [el_ir::v_set(wt, ir::NdText { s: "" })];
+        for op in bl.operators {
+          ops += [op];
+        }
+        bl.operators = ops;
+      }
+      // Each promoted text parameter's shadow is seeded from the parameter, ahead of the work
+      // texts (`finish_body`'s `promoted_text_args`).
+      for sh in vars.promoted_shadows {
+        ops: vector<ir::Node> = [el_ir::v_set(sh, ir::NdVar { n: vars.promoted_params[sh#index] ?? -1 })];
         for op in bl.operators {
           ops += [op];
         }
@@ -5221,6 +5236,9 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   vars.assign_target = v;
   x = expression(e, vars, rhs!);
   vars.assign_target = outer_target;
+  if promotes_text_param(e, vars, v) {
+    v = el_vars::promote_text_param(vars, v);
+  }
   // A call's vector bound to a local a closure shares rotates the call's buffer afterwards
   // (`OpPutRef`, loft#1447's collection half): not carried.
   if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyVector && el_vars::rebind_must_mint(vars, v) && match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false } {
@@ -6592,6 +6610,12 @@ fn place_write(e: el::El, read: ir::Node, val: ir::Node) -> ir::Node? {
 // `x = Op…(x, v)` through the builtin candidates (`towards_set` → `compute_op_code`, no position
 // wrap); a text appends — another text as it is (`assign_text`), any other value rendered as a
 // concatenation operand (`append_rendering`).  Anything else is refused by name.
+// `parse_assign`'s text arm: a write to a text PARAMETER (`=` or `+=`) promotes it on the
+// first pass (`promote_text_param`).
+fn promotes_text_param(e: el::El, vars: el_vars::Vars, v: integer) -> boolean {
+  e.first_pass && v >= 0 && vars.vars[v]!.argument && el_types::base(el_vars::tp(vars, v)) is TyText && !hidden_param(e, vars, v)
+}
+
 fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
   v = -1;
   match e.p.nodes[target] {
@@ -6629,6 +6653,10 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
   vars.read_into = leftmost(e, rhs);
   x = expression(e, vars, rhs);
   vars.read_into = outer_into;
+  if bin == "+" && promotes_text_param(e, vars, v) {
+    v = el_vars::promote_text_param(vars, v);
+    vt = el_vars::tp(vars, v);
+  }
   // A promoted text buffer (`&text`) appends through the stack ops.
   stack = false;
   if vt is TyRefVar { inner } {
@@ -8555,10 +8583,10 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
       }
     }
   }
-  // `try_fn_ref_call` builds the call on the second pass only: the first leaves the value null,
-  // so a tail of such calls yields no text there (`arm_yields_text`).
+  // `try_fn_ref_call`: the first pass answers the call's shape over the arguments as parsed, so
+  // a tail of such calls yields text there (`arm_yields_text`, the `___acc` delivery).
   if e.first_pass {
-    return ex(ir::NdNull, rt);
+    return ex(ir::NdCallRef { var: v, args: [for g in given { g.code }] }, rt);
   }
   list += push_fnref_text_buffers(e, work_vars);
   ex(ir::NdCallRef { var: v, args: list }, rt)
@@ -15643,8 +15671,10 @@ fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, p
     },
     _ => {}
   }
-  if el_types::is_collection(vt) {
-    el::refuse(e, "a collection local handed to a `&` parameter");
+  // A vector local is linked as any local is; a keyed collection's link (its appends and
+  // lookups through `&`) is not carried yet.
+  if el_types::is_collection(vt) && !(el_types::base(vt) is TyVector) {
+    el::refuse(e, "a keyed collection local handed to a `&` parameter");
     return null;
   }
   el_ir::cl(e, "OpCreateStack", [arg])
