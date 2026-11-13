@@ -454,6 +454,18 @@ pub struct RunConst {
   pub bytes: vector<u8>,
 }
 
+// A function's shape as a call through a function reference needs it
+// (`State::fn_call_ref_to`), for one that is not a plain call: the text-buffer bytes the call
+// drops (a reference type pushes as many as the widest text answer needs), the hidden return
+// buffers it allocates in order (-1 a record's, a type number a vector's of that type), and its
+// kind — 0 bytecode, 1 a native, 2 a generator.
+pub struct RunFnRef {
+  pub def: integer,
+  pub drop: integer,
+  pub kind: integer,
+  pub hidden: vector<integer>,
+}
+
 pub struct RunImage {
   pub code: vector<u8>,
   pub starts: vector<u32>,
@@ -461,6 +473,7 @@ pub struct RunImage {
   pub layouts: vector<text>,
   pub natives: vector<text>,
   pub consts: vector<RunConst>,
+  pub fnrefs: vector<RunFnRef>,
   pub types: vector<DbType>,
   pub main: integer,
   pub cwd: boolean,
@@ -468,5 +481,5 @@ pub struct RunImage {
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], types: [], main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], main: 0, cwd: false }
 }

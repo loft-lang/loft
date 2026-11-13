@@ -920,6 +920,7 @@ fn materialize_run_image(
     starts: &[u32],
     ops: &(Vec<String>, Vec<String>),
     consts: &[RunConstBytes],
+    fnrefs: &[RunFnRefShape],
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -977,6 +978,24 @@ fn materialize_run_image(
         };
         crate::vector::pre_alloc_vector(&b, count(c.bytes.len()), 1, &mut stores.allocations);
         crate::vector::append_bytes(&b, &c.bytes, &mut stores.allocations);
+    }
+    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_FNREFS), count(fnrefs.len()), ds::RUNFNREF_STRIDE, &mut stores.allocations);
+    let fv = rec.field_recvec(ds::RUNIMG_FNREFS, ds::RUNFNREF_STRIDE);
+    for f in fnrefs {
+        let e = fv.push(stores);
+        e.set_field_int(stores, ds::RUNFNREF_DEF, i64::from(f.def));
+        e.set_field_int(stores, ds::RUNFNREF_DROP, i64::from(f.drop));
+        e.set_field_int(stores, ds::RUNFNREF_KIND, i64::from(f.kind));
+        let hv = DbRef {
+            pos: e.db_ref().pos + ds::RUNFNREF_HIDDEN,
+            ..e.db_ref()
+        };
+        crate::vector::pre_alloc_vector(&hv, count(f.hidden.len()), 8, &mut stores.allocations);
+        let hr = RecVector::new(hv, 8);
+        for &h in &f.hidden {
+            let x = hr.push(stores);
+            x.set_field_int(stores, 0, h);
+        }
     }
     crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_TYPES), count(schema.len()), ds::DBTYPE_STRIDE, &mut stores.allocations);
     materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
@@ -1068,6 +1087,68 @@ pub fn run_image_consts(program: &Stores) -> Vec<RunConstBytes> {
     out
 }
 
+/// A function's shape as a call through a function reference needs it (`State::fn_call_ref_to`),
+/// written only where it differs from a plain call: the text-buffer bytes the call drops, the
+/// hidden return buffers it allocates (-1 a record's — `Stores::null()`, a store with no root —
+/// a type number a vector's of `main_vector<T>`), and its kind: 0 bytecode, 1 a native (no
+/// code), 2 a generator.
+pub struct RunFnRefShape {
+    pub def: u32,
+    pub drop: u32,
+    pub kind: u8,
+    pub hidden: Vec<i64>,
+}
+
+/// Every function's call-through-a-reference shape that is not a plain call.
+#[must_use]
+pub fn run_image_fnrefs(data: &Data, program: &Stores) -> Vec<RunFnRefShape> {
+    let buf_span = crate::variables::aligned_stack_step(size_of::<DbRef>() as u32);
+    let mut widest: crate::fxhash::FxHashMap<usize, usize> = crate::fxhash::FxHashMap::default();
+    let mut out = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !matches!(def.def_type(), DefType::Function) {
+            continue;
+        }
+        let params = def.fnref_visible_params();
+        let pushed = if matches!(def.returned().base(), Type::Text(_)) {
+            *widest
+                .entry(params)
+                .or_insert_with(|| data.fnref_text_buffers(params, def.returned()))
+        } else {
+            0
+        };
+        let extra = pushed.saturating_sub(def.text_work_buffers());
+        let drop = u32::try_from(extra).unwrap_or(0) * buf_span;
+        let mut hidden = Vec::new();
+        for a in def.attributes() {
+            if !a.hidden {
+                continue;
+            }
+            match a.typedef.base() {
+                Type::Reference(_, _) | Type::Enum(_, true, _) => hidden.push(-1),
+                Type::Vector(elm, _) => {
+                    let tp = program.name(&format!("main_vector<{}>", elm.name(data)));
+                    hidden.push(if tp == u16::MAX { -1 } else { i64::from(tp) });
+                }
+                _ => {}
+            }
+        }
+        let kind = if matches!(def.code, Value::Null) {
+            1
+        } else if matches!(def.returned().base(), Type::Iterator(..)) {
+            2
+        } else {
+            0
+        };
+        if drop == 0 && hidden.is_empty() && kind == 0 {
+            continue;
+        }
+        out.push(RunFnRefShape { def: d, drop, kind, hidden });
+    }
+    out
+}
+
 /// Each definition's first byte in the code stream, and one more entry for the stream's end, so
 /// definition `d`'s code is `starts[d]..starts[d + 1]`: a definition with no bytecode starts
 /// where the one before it ended.  `None` when the code is not laid out in definition order —
@@ -1150,6 +1231,7 @@ pub fn save_run_image(
             &starts,
             &run_image_ops(data),
             &run_image_consts(program),
+            &run_image_fnrefs(data, program),
             library_names,
             &program.types,
             main,

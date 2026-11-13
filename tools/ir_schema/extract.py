@@ -35,7 +35,7 @@ IR_STRUCTS = {
     # @PLN11 D2a — database type-schema types (Stores.types).
     "DbField", "EnumPair", "KeyField", "DbType", "Bundle",
     # @PLN91 — the run image (the stored bytecode the loft runner executes).
-    "RunConst", "RunImage",
+    "RunConst", "RunFnRef", "RunImage",
 }
 
 
