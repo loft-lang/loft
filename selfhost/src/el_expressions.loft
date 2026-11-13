@@ -5749,7 +5749,8 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   // `null` sets it absent; any other `S` writes it (`nullable_elem_convert`).
   // On pass 1 the slot still has its declared `S?` type (`fill_all` tags it at the pass's end),
   // and pass 1 builds nothing: the value is read for its names alone.
-  if op == "=" && e.first_pass && p.tp is TyOptional && el_schema::nullable_record_of(e, p.tp) >= 0 && !calls(e, el_ir::unspan(p.code), "OpGetDbRef") {
+  // A keyed subscript (`h[k] = S { … }`, `OpGetRecord`) is no such slot: its value is read.
+  if op == "=" && e.first_pass && p.tp is TyOptional && el_schema::nullable_record_of(e, p.tp) >= 0 && !calls(e, el_ir::unspan(p.code), "OpGetDbRef") && !calls(e, el_ir::unspan(p.code), "OpGetRecord") {
     if !(e.p.nodes[rhs] is SStructLit) {
       expression(e, vars, rhs);
     }
@@ -5898,6 +5899,22 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetRecord") && struct_ref(e, el_types::base(x.tp)) >= 0 {
     gs = el_ir::unspan(p.code);
     coll_v = match gs { NdCall { args } => if len(args) >= 3 { match el_ir::unspan(args[0] ?? ir::NdNull) { NdVar { n } => n, _ => -1 } } else { -1 }, _ => -1 };
+    // A keyed FIELD (`h.all[k] = …`) is written the same way, the field read as the collection;
+    // the value may not read the record that holds it.
+    coll_f = match gs { NdCall { args } => if len(args) >= 3 && calls(e, el_ir::unspan(args[0] ?? ir::NdNull), "OpGetField") { args[0] ?? ir::NdNull } else { ir::NdNull }, _ => ir::NdNull };
+    froot = if coll_f is NdNull { -1 } else { place_root(e, el_ir::unspan(coll_f)) };
+    if coll_v < 0 && froot >= 0 {
+      if el_ir::reads_var(x.code, froot) {
+        el::refuse(e, "a keyed write whose value reads its collection");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      match gs {
+        NdCall { args } => {
+          return ex(el_ir::cl(e, "OpSetKeyed", [coll_f, x.code] + args[1..]), ir::TyVoid);
+        },
+        _ => {}
+      }
+    }
     if coll_v < 0 || el_vars::tp(vars, coll_v) is TyOptional {
       el::refuse(e, "a keyed write into a field or a nullable keyed local");
       return ex(ir::NdNull, ir::TyVoid);
