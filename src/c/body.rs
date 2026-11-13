@@ -2982,6 +2982,15 @@ impl<'a> FnWriter<'a> {
             }
             // The guarded release `if <holds a record> <release> else null`.
             Value::If(_, t, e) => matches!(e.unspan(), Value::Null) && self.is_free(t),
+            // A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
+            // witness's): a free and a `Set`, so no value.
+            Value::Insert(items) => {
+                !items.is_empty()
+                    && items.iter().all(|i| {
+                        self.is_free(i) || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
+                    })
+                    && items.iter().any(|i| self.is_free(i))
+            }
             _ => false,
         }
     }

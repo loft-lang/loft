@@ -3604,6 +3604,30 @@ pub fn stashed_join_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_STASHED_JOIN"))
 }
 
+/// `LOFT_TAIL_JUMP_FREES_BUFFER=1` — a self tail call's jump runs the return buffer's
+/// return-time release again (`opt::tail_self::releases`, `@FR-O-Buffer`).
+#[must_use]
+pub fn tail_jump_frees_buffer() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TAIL_JUMP_FREES_BUFFER"))
+}
+
+/// `LOFT_NO_LIFT_TEMP_VIEW=1` — a bind of a value a freeing `__lift_N` temporary holds is read as
+/// a mint by the owner-witness census again (`scopes::witness::held_by_compiler_temp`).
+#[must_use]
+pub fn lift_temp_view_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
+}
+
+/// `LOFT_NO_CHOICE_VIEW=1` — an `if` or `match` whose arms view storage is read as no view by
+/// the owner-witness census again (`scopes::witness::is_view_of_storage`, `@FR-O-Witness`).
+#[must_use]
+pub fn choice_view_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_CHOICE_VIEW"))
+}
+
 /// `LOFT_MID_RETURN_PRUNE=1` — a mid-body `return` prunes the return's stale parameter deps on
 /// the spot again, publishing a signature that may omit a parameter a later `return` borrows
 /// while the rest of the body is parsed (`ref_return`'s D-own-2 prune; `@FR-F-Ret`).

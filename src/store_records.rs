@@ -3552,7 +3552,7 @@ impl Run<'_> {
             // A block's value is its last value-producing statement's: the cleanup frees the
             // scope pass places after it (`{ if … ; OpFreeRefIfDistinct(…) }`) run while the
             // value waits, and answer nothing.
-            if self.is_void_call(op) {
+            if self.is_void_call(op) || self.is_void_release(op) {
                 cur.1 = value;
             }
         }
@@ -3629,6 +3629,19 @@ impl Run<'_> {
     }
 
     /// A call to an operator or function that answers nothing (a free, a set).
+    /// A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
+    /// witness's at a scope exit): void calls and `Set`s only, so the block's value waits past it.
+    fn is_void_release(&self, op: &Value) -> bool {
+        let Value::Insert(items) = op.unspan() else {
+            return false;
+        };
+        !items.is_empty()
+            && items.iter().any(|i| self.is_void_call(i))
+            && items.iter().all(|i| {
+                self.is_void_call(i) || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
+            })
+    }
+
     fn is_void_call(&self, op: &Value) -> bool {
         let Value::Call(d, _) = op.unspan() else {
             return false;
