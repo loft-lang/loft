@@ -3644,6 +3644,16 @@ pub fn lift_temp_view_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
 }
 
+/// `LOFT_NO_NCR_TEMP_VIEW=1` — a bind of a discharged projection (`def(e, n).attrs[i]!.t`, its
+/// `_ncr_N` viewing a compiler temporary) is read as a mint by the owner-witness census again
+/// (`scopes::witness::held_by_compiler_temp`): the local is never mixed, takes no witness, and
+/// is freed as an owner of the store the temporary frees.
+#[must_use]
+pub fn ncr_temp_view_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_NCR_TEMP_VIEW"))
+}
+
 /// `LOFT_NO_CHOICE_VIEW=1` — an `if` or `match` whose arms view storage is read as no view by
 /// the owner-witness census again (`scopes::witness::is_view_of_storage`, `@FR-O-Witness`).
 #[must_use]
