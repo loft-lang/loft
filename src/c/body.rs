@@ -6325,7 +6325,19 @@ impl<'a> FnWriter<'a> {
                 // The stores of the call's reference arguments are protected, as the bytecode
                 // writer protects them (`protectable_ref_args`): a result that is a view into
                 // one of them is not the callee's to give away.
-                let mut keep = vec![format!("{r}.store_nr != {held}.store_nr")];
+                // The store the destination held is compared only where the value reads it: an
+                // answer that does not reach the destination cannot be its store, and its number
+                // may be stale — a local first bound in a loop, released at the end of each pass
+                // by its owner witness, still names that freed slot, and the allocator hands it
+                // to the next answer.  The copy then kept the answer and skipped its free (the
+                // self-hosted elaborator's `fill_instance`, `t = substitute_var(…)`; C only).
+                // `LOFT_C_STALE_HELD_KEEP=1` compares it always.
+                let mut keep = Vec::new();
+                if x.reads_var(var)
+                    || crate::env_once!(std::env::var_os("LOFT_C_STALE_HELD_KEEP").is_some())
+                {
+                    keep.push(format!("{r}.store_nr != {held}.store_nr"));
+                }
                 for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
                     // `@FR-R-Transient`: an argument held in the arena has no store for the
                     // result to share — a pointer, where `.store_nr` is not even C.
@@ -6336,7 +6348,11 @@ impl<'a> FnWriter<'a> {
                     keep.push(format!("{r}.store_nr != {arg}.store_nr"));
                 }
                 keep.dedup();
-                let keep = keep.join(" && ");
+                let keep = if keep.is_empty() {
+                    "1".to_string()
+                } else {
+                    keep.join(" && ")
+                };
                 // `@FR-H-SwapRebind`: a result the bind gives up is exchanged into the
                 // destination where the store allows; a fn-ref call's result may be a store it
                 // borrowed, and a type whose tree holds a stored reference keeps the copy.
