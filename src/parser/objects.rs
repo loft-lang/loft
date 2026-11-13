@@ -5286,7 +5286,7 @@ impl Parser {
                 } else if !matches!(in_type, Type::Null)
                     // A local bound from a function declared further down is typed only on
                     // the second pass, which decides it; the first knows nothing to refuse.
-                    && !(self.first_pass && in_type.is_unknown())
+                    && (!self.first_pass || !in_type.is_unknown())
                 {
                     self.reverse_iterator = false;
                     // A NULLABLE collection is refused — `@FR-I-NullSrc` draws the line
