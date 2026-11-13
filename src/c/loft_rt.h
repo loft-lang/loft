@@ -1136,20 +1136,30 @@ static int64_t loft_char_len(uint32_t c) {
     return c == 0 ? 0 : c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
 }
 
-/* ops::text_character: the character holding byte `from` (negative counts from the end); an
- * index inside a character snaps back to its first byte; out of range is the null character. */
-static uint32_t loft_text_char(loft_str t, int64_t from) {
+/* The decode of a character that is not ASCII, the byte at `i` inside the text: snapped back to
+ * its first byte.  Out of line: `loft_text_char` answers an ASCII byte itself. */
+static uint32_t loft_text_char_wide(loft_str t, int64_t i) {
     int64_t len = (int64_t) t.len;
-    int64_t i = from < 0 ? from + len : from;
-    if (from == LOFT_NULL || i < 0 || i >= len) return 0;
     const unsigned char *b = (const unsigned char *) t.p;
-    if (b[i] < 0x80) return b[i];
     while (i > 0 && (b[i] & 0xC0) == 0x80) i--;
     uint32_t c = b[i];
     int n = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1;
     c &= n == 3 ? 0x07 : n == 2 ? 0x0F : 0x1F;
     for (int k = 1; k <= n && i + k < len; k++) c = (c << 6) | (b[i + k] & 0x3F);
     return c;
+}
+
+/* ops::text_character: the character holding byte `from` (negative counts from the end); an
+ * index inside a character snaps back to its first byte; out of range is the null character.
+ * Inline, so an ASCII byte — every character of an ASCII alphabet a loop indexes — is one load
+ * and one test; gcc left the whole decode out of line and called it per character. */
+LOFT_HOT_INLINE uint32_t loft_text_char(loft_str t, int64_t from) {
+    int64_t len = (int64_t) t.len;
+    int64_t i = from < 0 ? from + len : from;
+    if (from == LOFT_NULL || i < 0 || i >= len) return 0;
+    const unsigned char *b = (const unsigned char *) t.p;
+    if (LOFT_LIKELY(b[i] < 0x80)) return b[i];
+    return loft_text_char_wide(t, i);
 }
 
 /* OpAppendCharacter: the null character appends nothing.  An ASCII character into a buffer with
@@ -7731,7 +7741,7 @@ LOFT_HOT_INLINE void loft_vh_set_u32_at_lt(loft_vh h, uint32_t size, int64_t fro
 }
 
 /* `t[i]` (`State::text_char_or_raise`): a byte index naming no byte of the text. */
-static uint32_t loft_text_char_at(loft_str t, int64_t from, const char *file, uint32_t line) {
+LOFT_HOT_INLINE uint32_t loft_text_char_at(loft_str t, int64_t from, const char *file, uint32_t line) {
     int64_t len = (int64_t) t.len, i = from < 0 ? from + len : from;
     if (LOFT_UNLIKELY(i < 0 || i >= len)) loft_index_miss(from, len, file, line);
     return loft_text_char(t, from);

@@ -11,8 +11,7 @@
 //
 // e1 reaches the read in place; e2 (a later operand that assigns the variable) and e4 (a
 // parameter) keep the temporary.  A later operand that hands the variable to a call by
-// reference keeps it too; its cell waits on the interpreter and the Rust backend, which read
-// the variable after that call (`@FR-E-Left` says before).
+// reference keeps it too: `a-text-operand-is-read-before-a-later-operand-writes-it.loft`.
 //
 // @falsified-at: none — the clause has no earlier build to catch, so the receipt is a defect
 //   planted (2026-11-13) in the writer: `may_write_var` answering false for every variable

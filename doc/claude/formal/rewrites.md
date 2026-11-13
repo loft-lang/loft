@@ -1201,7 +1201,12 @@ with another reference, and a borrowed text other than a view of a literal keep 
 For a text the temporary is a copy of the whole text: `out += chars[(v / 64 ?? 0) % 64 ?? 0]` in a
 base64 encoder copied its 64-byte alphabet once per output character.  That encoder, 4 KiB, one
 core: gcc 44 → 6 µs, clang 9 → 3 µs — the index spelling now as fast as the slice
-`chars[c..c + 1]` (6 / 4 µs).  Switch `LOFT_NO_OPERAND_VAR_WRITE=1`.  Guard:
+`chars[c..c + 1]` (6 / 4 µs).  The character read itself is inline for an ASCII byte
+(`loft_text_char`, the decode of a wider character out of line in `loft_text_char_wide`): gcc
+kept the whole decode a call per character — the index spelling 6.08 → 4.92 µs on gcc, clang
+unchanged (guard `a-text-index-reads-the-character-holding-the-byte.loft`).  A text push window
+on the same loop was priced and not built: clang −20 %, gcc +23 %.  Switch
+`LOFT_NO_OPERAND_VAR_WRITE=1`.  Guard:
 `tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft` — the rule
 answering "no" for every variable fails e2.
 
