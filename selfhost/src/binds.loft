@@ -657,7 +657,8 @@ fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer? {
       if !own::is_projection_op(b, def_nr) || len(args) == 0 {
         return null;
       }
-      own::var_of(args[0]!) ?? projection_container_var(b, args[0])
+      // A bare-variable discharge (`va!.p`) is `va` itself (`discharged_variable`).
+      own::var_of(args[0]!) ?? own::discharged_variable(args[0]!) ?? projection_container_var(b, args[0])
     }
     _ => null,
   }
