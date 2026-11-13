@@ -29,5 +29,5 @@ loft    = ">=0.8"
 # file needs `pub`, and mesh3d reads its own `math` module's fields from `mesh`.
 [dependencies]
 graphics = "=0.9.10"
-glb = "=0.1.6"
+glb = "=0.1.8"
 mesh3d = "=0.1.4"
