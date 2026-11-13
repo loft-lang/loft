@@ -1795,6 +1795,48 @@ impl<'a> FnWriter<'a> {
             .map(|(_, h, size, based)| (h.clone(), *size, *based))
     }
 
+    /// A fused push's element as the bits a push header stores, and the header's put for its
+    /// width: `None` for a kind no header put carries.
+    fn push_bits(
+        &mut self,
+        fp: &crate::opt::writes::FusedPush,
+        ind: usize,
+    ) -> Result<Option<(&'static str, String)>, String> {
+        let val = self.expr(fp.val, ind)?;
+        Ok(Some(match fp.op {
+            "OpPushInt" => ("loft_ph_put8", format!("(uint64_t) {}", as_int(val)?)),
+            "OpPushFloat" => ("loft_ph_put8", format!("loft_f64_bits({})", as_float(val)?)),
+            "OpPushSingle" => (
+                "loft_ph_put4",
+                format!("loft_f32_bits({})", as_single(val)?),
+            ),
+            "OpPushInt4" => ("loft_ph_put4", format!("loft_i4_bits({})", as_int(val)?)),
+            "OpPushCharacter" => ("loft_ph_put4", format!("(uint32_t) {}", as_char(val)?)),
+            "OpPushBoolean" => ("loft_ph_put1", format!("(uint8_t) {}", as_bool(val)?)),
+            "OpPushEnum" => ("loft_ph_put1", format!("(uint8_t) {}", as_enum(val)?)),
+            "OpPushByte" => {
+                let min = Self::literal(
+                    fp.bias.ok_or("a byte push without its minimum")?,
+                    "byte minimum",
+                )?;
+                (
+                    "loft_ph_put1",
+                    format!("loft_byte_raw({min}, {})", as_int(val)?),
+                )
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    /// The C type of the bits a push header's put stores.
+    fn put_bits_type(put: &str) -> &'static str {
+        match put {
+            "loft_ph_put8" => "uint64_t",
+            "loft_ph_put4" => "uint32_t",
+            _ => "uint8_t",
+        }
+    }
+
     /// A mint, a finish or a length of a path a record push header serves.
     fn pushed_mint(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
         let data = self.cx.data;
@@ -1818,29 +1860,8 @@ impl<'a> FnWriter<'a> {
             && let Some((h, size, based)) = self.push_head_based(&fp.path)
             && size == fp.size
         {
-            let val = self.expr(fp.val, ind)?;
-            let (put, bits) = match name {
-                "OpPushInt" => ("loft_ph_put8", format!("(uint64_t) {}", as_int(val)?)),
-                "OpPushFloat" => ("loft_ph_put8", format!("loft_f64_bits({})", as_float(val)?)),
-                "OpPushSingle" => (
-                    "loft_ph_put4",
-                    format!("loft_f32_bits({})", as_single(val)?),
-                ),
-                "OpPushInt4" => ("loft_ph_put4", format!("loft_i4_bits({})", as_int(val)?)),
-                "OpPushCharacter" => ("loft_ph_put4", format!("(uint32_t) {}", as_char(val)?)),
-                "OpPushBoolean" => ("loft_ph_put1", format!("(uint8_t) {}", as_bool(val)?)),
-                "OpPushEnum" => ("loft_ph_put1", format!("(uint8_t) {}", as_enum(val)?)),
-                "OpPushByte" => {
-                    let min = Self::literal(
-                        fp.bias.ok_or("a byte push without its minimum")?,
-                        "byte minimum",
-                    )?;
-                    (
-                        "loft_ph_put1",
-                        format!("loft_byte_raw({min}, {})", as_int(val)?),
-                    )
-                }
-                _ => return Ok(None),
+            let Some((put, bits)) = self.push_bits(&fp, ind)? else {
+                return Ok(None);
             };
             let proof_at = format!("{}:{h}", data.def(self.d).original_name());
             let (same, put) = if based {
@@ -3023,6 +3044,15 @@ impl<'a> FnWriter<'a> {
                 run_head = false;
             }
             if i >= run_end
+                && let Some(end) = self.held_push_run(ops, i, ind)?
+            {
+                ops[i..end]
+                    .iter()
+                    .for_each(|o| self.refresh_grown_header(o, ind));
+                i = end;
+                continue;
+            }
+            if i >= run_end
                 && let Some((end, head)) = self.reserve_push_run(ops, i, ind)?
             {
                 run_end = end;
@@ -3244,6 +3274,106 @@ impl<'a> FnWriter<'a> {
             crate::rewrite_census::fired("R-PushFill/run-header", 1);
         }
         Ok(Some((end, header)))
+    }
+
+    /// `@FR-R-PushFill`'s held-run clause on the C: a run of `k >= 2` scalar pushes onto one
+    /// path (consecutive statements, each a push of the same element size; a line marker ends
+    /// it) where an enclosing loop already holds that path's push header, and every value is
+    /// plain (`hoist::run_value_plain`).  The run is one `loft_ph_put<w>_run` call: ONE room
+    /// test for all `k`, the `k` elements stored at one record address and one length bump,
+    /// where each push tested the room, resolved the store and wrote the length on its own.
+    /// The values are computed first: a plain value reads neither the vector nor anything that
+    /// can reach it, so the order is unobservable.  A run the header has no room for pushes one
+    /// call at a time, each taking its own growth step — a refused push refuses where it did.
+    /// Answers the index after the run.
+    /// `LOFT_NO_HELD_PUSH_RUN=1` pushes one call at a time.
+    fn held_push_run(
+        &mut self,
+        ops: &[Value],
+        at: usize,
+        ind: usize,
+    ) -> Result<Option<usize>, String> {
+        if self.gen_elem.is_some()
+            || self.lean()
+            || self.av_any()
+            || std::env::var("LOFT_NO_HELD_PUSH_RUN").is_ok_and(|v| v != "0")
+        {
+            return Ok(None);
+        }
+        let Some((first, mut end)) = self.push_at(ops, at) else {
+            return Ok(None);
+        };
+        let Some((h, size, based)) = self.push_head_based(&first.path) else {
+            return Ok(None);
+        };
+        // A path an inner loop's push window serves takes its pushes there (`operator` asks
+        // `windowed` before the header), and one a value held apart or a deferred copy serves
+        // is left to it, as the reservation clause leaves it.
+        if size != first.size
+            || self.windows.iter().any(|(p, _, _, _)| *p == first.path)
+            || self.apr_holds(first.path.0)
+            || self.dc_root(first.path.0)
+        {
+            return Ok(None);
+        }
+        let mut run = vec![first];
+        while let Some((p, after)) = self.push_at(ops, end) {
+            if p.path != run[0].path
+                || p.size != size
+                || p.vector.unspan() != run[0].vector.unspan()
+            {
+                break;
+            }
+            run.push(p);
+            end = after;
+        }
+        let data = self.cx.data;
+        if run.len() < 2
+            || !run
+                .iter()
+                .all(|p| crate::opt::hoist::run_value_plain(data, self.vars, p.path.0, p.val))
+        {
+            return Ok(None);
+        }
+        // The values are computed into temporaries first, in the run's order: an array
+        // initialiser's elements are not sequenced, and a checked operator's fault is.
+        let mut temps = Vec::with_capacity(run.len());
+        let mut put = "";
+        for p in &run {
+            let Some((each, bits)) = self.push_bits(p, ind)? else {
+                return Ok(None);
+            };
+            put = each;
+            let t = format!("pb{}", self.decls.len() + 1);
+            self.decls
+                .push(format!("{} {t} = 0;", Self::put_bits_type(put)));
+            self.line(ind, &format!("{t} = {bits};"));
+            temps.push(t);
+        }
+        let (same, run_put) = if based {
+            (
+                "loft_phb_same",
+                put.replacen("loft_ph_put", "loft_ph_putb", 1),
+            )
+        } else {
+            ("loft_ph_same", put.to_string())
+        };
+        let proof_at = format!("{}:{h}", data.def(self.d).original_name());
+        self.line(
+            ind,
+            &format!("LOFT_PROVED({same}({h}, {size}), {});", c_string(&proof_at)),
+        );
+        self.line(
+            ind,
+            &format!(
+                "{run_put}_run(&{h}, {}, (const {}[]) {{ {} }});",
+                temps.len(),
+                Self::put_bits_type(put),
+                temps.join(", ")
+            ),
+        );
+        crate::rewrite_census::fired("R-PushFill/held-run", 1);
+        Ok(Some(end))
     }
 
     /// `@FR-R-View` (@PLN157 § V-n, rustc's `bind_view_header`): statement `at` bound a vector

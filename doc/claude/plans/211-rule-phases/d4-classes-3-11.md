@@ -74,3 +74,18 @@ canvas to 1056 pixels turns it round — u32 3.63 ms against 8-byte 3.91 ms, bot
 at 1024 — and on clang the two builds already tie at 1024 (5.2 ms each).  The Rust twin pays
 the same stride.  Nothing in the compiler would move it; padding the canvas rows is a library
 layout choice (callers index `data` as `y * width + x`), not proposed.
+
+`draw_bezier` (1.96x gcc, 1.79x clang) is instruction count: callgrind over the routine gives
+212 M instructions against the Rust twin's 98 M, the pixel loops about equal (42 against 36
+per pixel).  The rest is the subdivision stack — two `vector<integer>` cut back with
+`v = v[0..top]` and refilled with `v += [a, b, c, d]` per split, where the twin pushes one
+`[i64; 8]`.  Per split 575 instructions against 97; per iteration 210 against 50.  BUILT the
+largest piece, `@FR-R-PushFill`'s held-run clause (`rewrites.md` § The run's held-header
+clause): a run of pushes through a header the loop already holds is one room test, the
+elements and one length bump, where each push tested the room, resolved the store twice and
+wrote the length.  Package bench, C ship lane against the Rust twin: gcc 3.18 → 2.82 ms
+(**1.96x → 1.74x**), clang 2.90 → 2.56 ms (**1.79x → 1.58x**); the other seven routines
+unchanged (median 0.99x gcc, 1.01x clang).  Priced,
+not built: the eight pops read through `loft_vec_get` (about 13 instructions each: the store
+table and the store's base are reloaded per read) — reading through the loop's push header
+gains 9 % alone, nothing on top of the run clause in the hand form.

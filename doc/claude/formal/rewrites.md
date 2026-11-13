@@ -264,7 +264,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Prefill)` | not counted — runtime: admitted per TYPE at its first mint |
 | `(R-PureReuse)` | `R-PureReuse` ir |
 | `(R-Push)` | `R-Push` c, native · `/sole` c |
-| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c · `/several` ir · `/text` c |
+| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/held-run` c · `/record` native · `/run` c, native · `/run-header` c · `/several` ir · `/text` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
 | `(R-Range)` | `R-Range` c, native · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
@@ -1164,6 +1164,27 @@ header path they take in a loop.  The value test is native's, lifted to
 `LOFT_NO_PUSH_RUN_HEADER=1`; census `R-PushFill/run-header`.  Guard: the run cells
 (`a-run-of-pushes-reserves-its-room-once.loft`) — a header put that never bumps the length
 fails r1 with lengths 0 for 3.
+
+**The run's held-header clause (the C).**  A run whose vector already has a push header
+held by an enclosing loop is not reserved; the run clause above declines it.  With every
+value plain (the same `run_value_plain`) it is written as ONE call, `loft_ph_put<w>_run(&h,
+k, values)`: a single room test for all k elements, the elements stored past the length at
+one record address, and one length bump in the header and the record.  Pushed one by one,
+each element tested the room, resolved the store twice and wrote the length back.  The
+values are computed into temporaries first, in the run's order (an array initialiser's
+elements are unsequenced, and a checked operator's fault must keep its place), so reading them
+before the first store changes nothing: a plain value reaches neither the vector nor its
+store.  A run that does not fit pushes one element at a time, each through the header's own
+growth step, so an absent vector or a locked store refuses where it did.  A line marker
+ends the run.  Priced in the graphics library's `draw_bezier`, whose subdivision stack
+refills two vectors with `v += [a, b, c, d]` per split (C ship lane, one core): gcc 3.33 →
+2.95 ms (−11 %), clang 3.01 → 2.62 ms (−13 %), with the hash unchanged.  The three
+spellings tried ran within 2 % of each other's instruction count (callgrind) but up to 9 %
+apart on gcc — layout — and this one is the simplest and the fastest on clang.  Sites:
+`FnWriter::held_push_run` and `push_bits` (`src/c/body.rs`, in `stmts_in` before the
+reservation), `LOFT_PH_RUN` (`src/c/loft_rt.h`).  Switch `LOFT_NO_HELD_PUSH_RUN=1`; census
+`R-PushFill/held-run`.  Guard: `tests/scripts/a-run-of-pushes-through-a-loops-header-tests-its-room-once.loft`
+— a run that bumps the length by one less than it stored fails h1, h3 and h4.
 
 **(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds

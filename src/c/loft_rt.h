@@ -4064,6 +4064,31 @@ LOFT_PH_PUTB(8, uint64_t)
 LOFT_PH_PUTB(4, uint32_t)
 LOFT_PH_PUTB(1, uint8_t)
 
+/* `@FR-R-PushFill`'s held-run clause: a run of `k` pushes through a header a loop already holds.
+ * When all `k` elements fit (`len + k <= cap`, so the record is present and its store unlocked)
+ * they are stored past the length at one record address and the length is bumped once, in the
+ * header and the record; else the run pushes one call at a time, each taking its own growth
+ * step, exactly as without the clause.  `_runb` is the sole-growth form: the address the header
+ * holds. */
+#define LOFT_PH_RUN(W, T, B, AT)                                                            \
+    LOFT_HOT_INLINE void loft_ph_put##B##W##_run(loft_ph *h, uint32_t k, const T *bits) {   \
+        if (LOFT_LIKELY(h->cap >= k && h->len <= h->cap - k)) {                             \
+            uint8_t *r = (AT);                                                              \
+            uint8_t *s = r + 8 + (size_t) h->len * W;                                       \
+            for (uint32_t i = 0; i < k; i++) memcpy(s + (size_t) i * W, &bits[i], W);       \
+            h->len += k;                                                                    \
+            memcpy(r + 4, &h->len, 4);                                                      \
+            return;                                                                         \
+        }                                                                                   \
+        for (uint32_t i = 0; i < k; i++) loft_ph_put##B##W(h, bits[i]);                     \
+    }
+LOFT_PH_RUN(8, uint64_t, , loft_at(&loft_stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(4, uint32_t, , loft_at(&loft_stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(1, uint8_t, , loft_at(&loft_stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(8, uint64_t, b, h->base)
+LOFT_PH_RUN(4, uint32_t, b, h->base)
+LOFT_PH_RUN(1, uint8_t, b, h->base)
+
 /* `LOFT_VERIFY`'s proof for a push header: a fresh derivation answers its record, length and room. */
 static int loft_ph_same(loft_ph h, uint32_t size) {
     loft_ph f = loft_ph_of(h.v, size);

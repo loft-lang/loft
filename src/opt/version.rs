@@ -389,10 +389,9 @@ impl Walk<'_> {
             )
             | (
                 "OpGetByte" | "OpGetByteNullable" | "OpGetShort" | "OpGetShortRaw"
-                | "OpGetShortFull",
+                | "OpGetShortFull" | "OpSetInt" | "OpSetFloat" | "OpSetBoolean" | "OpSetInt4Raw",
                 3,
-            )
-            | ("OpSetInt" | "OpSetFloat" | "OpSetBoolean" | "OpSetInt4Raw", 3) => &args[0],
+            ) => &args[0],
             _ => return,
         };
         let Value::Call(g, ga) = elem.unspan() else {
