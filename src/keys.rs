@@ -3644,6 +3644,15 @@ pub fn lift_temp_view_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
 }
 
+/// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
+/// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
+/// before `@FR-O-Buffer` was asked there.
+#[must_use]
+pub fn c_null_frees_entry() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_NULL_FREES_ENTRY"))
+}
+
 /// `LOFT_NO_TRANSITIVE_VIEW_READ=1` — a reassignment whose value reads a view of a view of the
 /// local (`bl` out of a match capture of `b`) frees the displaced store BEFORE the value again
 /// (`bind_lowering::rhs_reads_a_view_of` asks the direct deps alone), so the value copies out of
