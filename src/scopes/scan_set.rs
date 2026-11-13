@@ -312,7 +312,6 @@ impl Scopes<'_> {
         Some(Value::Insert(out))
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `@FR-H-FreeTwice` — `v` names the store of a `__lift_N` its value handed it on some
     /// path (a hoisted arm block, or an arm the lift copied for a binding assigned elsewhere
     /// too), which the lift releases: record the lifts in `lift_viewers`, so `v`'s own frees
@@ -340,6 +339,7 @@ impl Scopes<'_> {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn scan_set(
         &mut self,
         ov: u16,
