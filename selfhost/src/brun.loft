@@ -14,6 +14,9 @@
 use ir;
 use crt;
 
+// The null reference's store (`DbRef::NULL`).
+NULL_STORE = 65535;
+
 // The runner's operators, by the number `handler` gives each name.
 H_GOTO = 1;
 H_GOTO_FALSE = 2;
@@ -45,6 +48,14 @@ H_FORMAT_INT = 27;
 H_ARG_TEXT = 28;
 H_FORMAT_TEXT = 29;
 H_PRINT = 30;
+H_INIT_REF = 31;
+H_INIT_CREATE_STACK = 32;
+H_CMP_INT = 33;
+H_CONST_BOOL = 34;
+H_NOT = 35;
+H_CONV_BOOL_FROM_INT = 36;
+H_INT2 = 37;
+H_NEGATE_INT = 38;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -80,6 +91,25 @@ pub fn handler(name: text) -> integer {
     "OpArgText" => H_ARG_TEXT,
     "OpFormatText" => H_FORMAT_TEXT,
     "OpPrint" => H_PRINT,
+    "OpInitRef" => H_INIT_REF,
+    "OpInitRefSentinel" => H_INIT_REF,
+    "OpInitCreateStack" => H_INIT_CREATE_STACK,
+    "OpEqInt" => H_CMP_INT,
+    "OpNeInt" => H_CMP_INT,
+    "OpLtInt" => H_CMP_INT,
+    "OpLeInt" => H_CMP_INT,
+    "OpConstTrue" => H_CONST_BOOL,
+    "OpConstFalse" => H_CONST_BOOL,
+    "OpNot" => H_NOT,
+    "OpConvBoolFromInt" => H_CONV_BOOL_FROM_INT,
+    "OpDivInt" => H_INT2,
+    "OpRemInt" => H_INT2,
+    "OpSRightInt" => H_INT2,
+    "OpSLeftInt" => H_INT2,
+    "OpEorInt" => H_INT2,
+    "OpLandInt" => H_INT2,
+    "OpLorInt" => H_INT2,
+    "OpMinSingleInt" => H_NEGATE_INT,
     _ => -1
   }
 }
@@ -115,6 +145,8 @@ fn layout_of(h: integer) -> text {
     27 => "hbbzzc",
     28 => "h",
     29 => "hcb",
+    31 => "h",
+    32 => "hh",
     _ => ""
   }
 }
@@ -380,6 +412,55 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, stk: integer, entry: integer)
     } else if h == H_PRINT {
       sp -= 16;
       print(crt::stack_str(stk, sp) ?? "");
+    } else if h == H_INIT_REF {
+      // `init_ref` / `init_ref_sentinel`: the null reference (`DbRef::NULL`) in the slot.
+      crt::set_slot_ref(stk, sp - u16_at(img.code, pc), NULL_STORE, 0, 0);
+      pc += 2;
+    } else if h == H_INIT_CREATE_STACK {
+      // `init_create_stack`: a reference to the place `dep_pos` names in the stack itself.
+      p = u16_at(img.code, pc);
+      dep = u16_at(img.code, pc + 2);
+      pc += 4;
+      crt::set_slot_ref(stk, sp - p, stk, 1, 8 + sp - dep);
+    } else if h == H_CMP_INT {
+      sp -= 8;
+      b = get(stk, sp);
+      a = get(stk, sp - 8);
+      name = img.ops[op] ?? "";
+      kind = if name == "OpEqInt" { 0 } else if name == "OpNeInt" { 1 } else if name == "OpLtInt" { 2 } else { 3 };
+      set_bool(stk, sp - 8, cmp_kind(kind, a, b));
+    } else if h == H_CONST_BOOL {
+      set_bool(stk, sp, (img.ops[op] ?? "") == "OpConstTrue");
+      sp += 8;
+    } else if h == H_NOT {
+      set_bool(stk, sp - 8, !get_bool(stk, sp - 8));
+    } else if h == H_CONV_BOOL_FROM_INT {
+      set_bool(stk, sp - 8, get(stk, sp - 8) != null);
+    } else if h == H_INT2 {
+      sp -= 8;
+      b = get(stk, sp);
+      a = get(stk, sp - 8);
+      name = img.ops[op] ?? "";
+      r: integer? = null;
+      if name == "OpDivInt" {
+        r = if b == 0 { null } else { a / b };
+      } else if name == "OpRemInt" {
+        r = if b == 0 { null } else { a % b };
+      } else if name == "OpSRightInt" {
+        r = if b == null || b! < 0 || b! >= 64 { null } else { a >> b };
+      } else if name == "OpSLeftInt" {
+        r = if b == null || b! < 0 || b! >= 64 { null } else { a << b };
+      } else if name == "OpEorInt" {
+        r = a ^ b;
+      } else if name == "OpLandInt" {
+        r = a & b;
+      } else {
+        r = a | b;
+      }
+      set(stk, sp - 8, r);
+    } else if h == H_NEGATE_INT {
+      a = get(stk, sp - 8);
+      set(stk, sp - 8, if a == null { null } else { -a! });
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };

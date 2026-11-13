@@ -112,6 +112,7 @@ scripts/windows_parity.py	--help
 scripts/work-issues.sh	--help
 scripts/worst.py	--help
 selfhost/bench/measure.py	--help
+selfhost/bench/run_image_survey.py	--help
 selfhost/bench/slowest.py	--help
 selfhost/compare/compare.py	--help
 selfhost/cover/census.py	--help
