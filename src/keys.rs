@@ -1746,6 +1746,15 @@ pub fn protect_after_call() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PROTECT_AFTER_CALL"))
 }
 
+/// `LOFT_NO_LATE_OWNER_RESCAN=1` — an early `return` scanned before the bind that strips a
+/// local's view deps skips that local again, which the frame's exit frees: the store leaks on
+/// the early path (`Scopes::late_owners`, `scopes::phase::run_scan_phase`).
+#[must_use]
+pub fn late_owner_rescan_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_LATE_OWNER_RESCAN"))
+}
+
 /// `@FR-H-FreeTwice` — a local bound from a branch whose arm reads a projection out of a
 /// lifted call result (`d = if c { mk().x } else { fresh() }`) names, on that path, the store
 /// the lift releases; its own free and a rebind's displaced free decline there

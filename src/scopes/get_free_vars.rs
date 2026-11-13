@@ -576,7 +576,14 @@ impl Scopes<'_> {
                 // the hard way: the ladder was attached to that predicate and its gate NEVER
                 // FIRED, because the sweep does not go through it.  That predicate is the
                 // licence for the null-arm / keyed leg; THIS is the licence for the sweep.
+                let viewer_now = !function.proxy_says_owned(v)
+                    && !function.tp(v).depend().is_empty()
+                    && crate::data::is_dbref(function.tp(v).base());
+                if viewer_now {
+                    self.skipped_viewers.insert(v);
+                }
                 let owns = (function.proxy_says_owned(v)
+                    || self.late_owners.contains(&v)
                     || self.lift_join_witness.contains_key(&v)
                     || (dep.len() == 1
                         && dep[0] == v
