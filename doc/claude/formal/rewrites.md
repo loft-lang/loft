@@ -263,7 +263,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Place)` | `R-Place` ir |
 | `(R-Prefill)` | not counted — runtime: admitted per TYPE at its first mint |
 | `(R-PureReuse)` | `R-PureReuse` ir |
-| `(R-Push)` | `R-Push` c, native · `/sole` c |
+| `(R-Push)` | `R-Push` c, native · `/read` c · `/sole` c |
 | `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/held-run` c · `/record` native · `/run` c, native · `/run-header` c · `/several` ir · `/text` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
 | `(R-Range)` | `R-Range` c, native · `/index` c |
@@ -274,7 +274,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-RefParam)` | `R-RefParam` c |
 | `(R-RefillBuffer)` | `R-RefillBuffer` native |
 | `(R-RefillText)` | `R-RefillText` native |
-| `(R-Refresh)` | `R-Refresh` native |
+| `(R-Refresh)` | `R-Refresh` native · `/keep-header` c |
 | `(R-RegisterTable)` | not counted — executor: position and stack top passed in registers |
 | `(R-RepeatRun)` | `R-RepeatRun` ir |
 | `(R-RetAdopt)` | `R-RetAdopt` interp, c, native |
@@ -1185,6 +1185,24 @@ apart on gcc — layout — and this one is the simplest and the fastest on clan
 reservation), `LOFT_PH_RUN` (`src/c/loft_rt.h`).  Switch `LOFT_NO_HELD_PUSH_RUN=1`; census
 `R-PushFill/held-run`.  Guard: `tests/scripts/a-run-of-pushes-through-a-loops-header-tests-its-room-once.loft`
 — a run that bumps the length by one less than it stored fails h1, h3 and h4.
+
+**Reads and cuts through a loop's push header (the C).**  A loop that holds a push header for
+a path keeps the path's record and length current in it — every growth goes through it, and so
+does every cut (below).  So an element READ of the path in the loop goes through the header:
+`FnWriter::read_header` sees it as a held vector header (`loft_ph_vh`: the record and length,
+the base derived from the record) for every read form, and the plain read (`v[i] ?? d`, no
+report, no proven bound) calls `loft_ph_get_int` / `loft_ph_get_float` on the header itself,
+without building the view.  Each keeps the read's meaning: a negative index from the end, null
+outside.  Writes, lengths and the clauses that ask whether a path is held keep `held_vector`.
+A CUT `v = v[lo..hi]` of the path takes the header too (`loft_ph_keep`): from 0 — the truncate —
+it is the length set at the header and the record, clamped as `loft_vec_keep_range` clamps it;
+any other range moves its span there and derives the header again.  graphics `draw_bezier`
+(eight pops and two cuts per split of its stack), ship lane: gcc 2.94 → 2.43 ms (−17 %), clang
+2.60 → 2.38 ms (−9 %), the hash unchanged; the view alone left clang at −4 %.  Switches
+`LOFT_NO_PUSH_HEADER_READ=1`, `LOFT_NO_PUSH_HEADER_KEEP=1`; census `R-Push/read`,
+`R-Refresh/keep-header`.  Guard:
+`tests/scripts/a-loop-reads-and-cuts-its-pushed-vector-through-the-header.loft` — a header read
+without the from-end wrap fails p2, a cut one short fails p1 and p6.
 
 **(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds

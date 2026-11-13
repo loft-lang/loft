@@ -750,6 +750,7 @@
 12_drawing	-	c	R-NoThreads	1
 12_drawing	-	c	R-NonSentinelParam	25
 12_drawing	-	c	R-Push	3
+12_drawing	-	c	R-Push/read	3
 12_drawing	-	c	R-Range	71
 12_drawing	-	c	R-Range/index	29
 12_drawing	-	c	R-RangedCall	3
@@ -1094,7 +1095,7 @@
 16_consumer_shapes	-	c	R-Apart/vector	4
 16_consumer_shapes	-	c	R-Base	22
 16_consumer_shapes	-	c	R-Base/counter	19
-16_consumer_shapes	-	c	R-Base/guard	1
+16_consumer_shapes	-	c	R-Base/guard	3
 16_consumer_shapes	-	c	R-BoundedNest/kernel	1
 16_consumer_shapes	-	c	R-Callee	1
 16_consumer_shapes	-	c	R-CompleteWrite	27
@@ -2437,6 +2438,7 @@ drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-NonSe
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Peel	4
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Place	1
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Push	12
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Push/read	3
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill	10
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/fill	2
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run	3
@@ -2931,6 +2933,7 @@ graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-NonSentinelParam	42
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-NonSentinelParam/twin	2
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-Peel	1
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-Push	3
+graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-Push/read	8
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-Push/sole	1
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-PushFill	1
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-PushFill/fill	2
@@ -2946,6 +2949,7 @@ graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-RecPtr	14
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-RecPtr/held	4
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-RecPtr/param	14
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-RefParam	138
+graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-Refresh/keep-header	2
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-RepeatRun	18
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-RetAdopt	9
 graphics	0bde9ed2c+glb@0.1.7+mesh3d@0.1.5	c	R-Reuse	11

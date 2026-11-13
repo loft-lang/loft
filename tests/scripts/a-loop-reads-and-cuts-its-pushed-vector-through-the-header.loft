@@ -1,0 +1,118 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Push`'s read clause and `@FR-R-Refresh`'s keep-range clause on the C backend: inside a
+// loop that holds a push header for a vector, an element read goes through the header (its
+// record and length are current) and a cut `v = v[0..n]` sets the length at the header and the
+// record, where each read resolved the store, the record and the length and each cut moved the
+// span and derived the header again.  The cells hold the stack the graphics library's
+// `draw_bezier` keeps, a read from the end, a read past it, floats, a slice not from 0, a cut past
+// the length and to one before the end, and a read with no default.  Values hand-computed; value
+// AND length.  `LOFT_NO_PUSH_HEADER_READ=1` and `LOFT_NO_PUSH_HEADER_KEEP=1` are the same-build
+// oracles.
+//
+// @falsified-at: none — the clauses have no earlier build to catch, so the receipts are defects
+//   planted (2026-11-13) in the runtime: a header read without the from-end wrap fails p2, and a
+//   cut one short fails p1 and p6.
+//   CHANNEL: an assertion.
+
+// p1: a stack of 2-element frames.  Frame s = [s, 10 s]; popping s > 1 pushes s - 1 twice.
+// From [3, 30]: pops 3, 2, 1, 1, 2, 1, 1 — seven pops, the first elements summing 11 and the
+// second 110, the stack empty at the end.
+fn test_a_stack_popped_cut_and_pushed() {
+  st: vector<integer> = [3, 30];
+  top = 2;
+  pops = 0;
+  sa = 0;
+  sb = 0;
+  for _ in 0..100 {
+    if top == 0 { break; }
+    a = st[top - 2] ?? 0;
+    b = st[top - 1] ?? 0;
+    top -= 2;
+    pops += 1;
+    sa += a;
+    sb += b;
+    if a > 1 {
+      st = st[0..top];
+      st += [a - 1, b - 10];
+      top += 2;
+      st += [a - 1, b - 10];
+      top += 2;
+    }
+  }
+  assert(pops == 7 && sa == 11 && sb == 110 && top == 0, "p1 pops {pops} {sa} {sb} top {top}");
+}
+
+// p2: a read from the end while pushing — v[-1] is the last element: pushing i + v[-1] from [1]
+// for i in 0..5 gives 1, 1, 2, 4, 7, 11; the last is 11 and the length 6.
+fn test_a_read_from_the_end() {
+  v: vector<integer> = [1];
+  for i in 0..5 {
+    v += [i + (v[-1] ?? 100)];
+  }
+  assert(len(v) == 6 && v[5] == 11 && v[3] == 4, "p2 {v}");
+}
+
+// p3: a read past the end answers the default: each turn pushes v[len(v)] ?? 7, so [7, 7, 7].
+fn test_a_read_past_the_end() {
+  v: vector<integer> = [];
+  for _ in 0..3 {
+    v += [v[len(v)] ?? 7];
+  }
+  assert(len(v) == 3 && v[0] == 7 && v[2] == 7, "p3 {v}");
+}
+
+// p4: floats — push half the last element plus 1 from [2.0]: 2, 2, 2, 2 (a fixed point), and a
+// second vector doubling from [0.5]: 0.5, 1, 2, 4.
+fn test_floats() {
+  f: vector<float> = [2.0];
+  g: vector<float> = [0.5];
+  for _ in 0..3 {
+    f += [(f[-1] ?? 0.0) / 2.0 + 1.0];
+    g += [(g[len(g) - 1] ?? 0.0) * 2.0];
+  }
+  assert(len(f) == 4 && f[3] == 2.0, "p4 f {f}");
+  assert(len(g) == 4 && g[3] == 4.0, "p4 g {g}");
+}
+
+// p5: a slice not from 0 moves the span: each turn drops the first element and pushes two.
+// From [1, 2]: [2, 3, 4], [3, 4, 5, 6], [4, 5, 6, 7, 8] — 5 long, first 4, sum 30.
+fn test_a_slice_not_from_zero() {
+  v: vector<integer> = [1, 2];
+  for _ in 0..3 {
+    n = len(v);
+    last = v[n - 1] ?? 0;
+    v = v[1..n];
+    v += [last + 1, last + 2];
+  }
+  s = 0;
+  for x in v { s += x; }
+  assert(len(v) == 5 && v[0] == 4 && s == 30, "p5 {v}");
+}
+
+// p6: a cut past the length keeps everything, a cut to -1 drops the last: each turn pushes
+// [i, i + 10], cuts to len + 3 (no change) and then to -1.  Turn i leaves i + 1 elements:
+// 0, 1, 2, 3 — length 4, sum 6.
+fn test_cuts_past_the_length_and_from_the_end() {
+  v: vector<integer> = [];
+  for i in 0..4 {
+    v += [i, i + 10];
+    v = v[0..len(v) + 3];
+    v = v[0..-1];
+  }
+  s = 0;
+  for x in v { s += x; }
+  assert(len(v) == 4 && s == 6 && v[3] == 3, "p6 {v}");
+}
+
+// p7: a read with no default, from a loop that pushes: each turn pushes v[i] * 2 from [1]:
+// 1, 2, 4, 8 — the last 8.
+fn test_a_read_with_no_default() {
+  v: vector<integer> = [1];
+  for i in 0..3 {
+    x = v[i];
+    v += [x * 2];
+  }
+  assert(len(v) == 4 && v[3] == 8, "p7 {v}");
+}

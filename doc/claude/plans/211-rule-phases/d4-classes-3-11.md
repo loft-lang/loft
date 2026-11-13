@@ -113,3 +113,11 @@ the process), the 4096-byte row stride (bimodal at width 1056 too), SSE/AVX tran
 in either binary); gcc's row loop is the same two 16-byte stores per turn.  Trigger unknown;
 no change — a rewrite would be a layout fix with no named cause.  Counters: `perf stat -e
 cpu_core/resource_stalls.sb/u,…` works on this box outside the sandbox, pinned to core 0.
+
+`draw_bezier`'s pops and cuts BUILT next (`rewrites.md` § Reads and cuts through a loop's push
+header): the eight pops read through the loop's push header (the plain `v[i] ?? d` form calls
+`loft_ph_get_int` on the header; a view built per read, `loft_ph_vh`, left clang at −4 %), and
+`v = v[0..top]` sets the length at the header instead of moving the span and deriving the
+header again.  Package bench, C ship lane against the Rust twin: gcc **1.74x → 1.43x**, clang
+**1.58x → 1.41x**.  Left: about 80 instructions per split against the twin's 97-instruction
+split, mostly the eight `?? 0` null tests and the slice clamp the IR writes before each cut.

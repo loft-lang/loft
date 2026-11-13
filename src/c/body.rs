@@ -2586,6 +2586,23 @@ impl<'a> FnWriter<'a> {
             })
     }
 
+    /// The header an element READ of `v` goes through: a held vector header, or — `@FR-R-Push`'s
+    /// read clause — the push header an enclosing loop holds for the path, seen as one
+    /// (`loft_ph_vh`: the record and length it keeps current, the base derived from the record).
+    /// Only reads take the push header: a write, a length or a clause that asks whether a path
+    /// is held keeps `held_vector`.  `LOFT_NO_PUSH_HEADER_READ=1` reads the plain way.
+    fn read_header(&self, v: &Value) -> Option<String> {
+        if let Some(h) = self.held_vector(v) {
+            return Some(h);
+        }
+        if std::env::var("LOFT_NO_PUSH_HEADER_READ").is_ok_and(|x| x != "0") {
+            return None;
+        }
+        let path = crate::opt::writes::vector_path(self.cx.data, v)?;
+        let (h, _) = self.push_head(&path)?;
+        Some(format!("loft_ph_vh(&{h})"))
+    }
+
     /// The reader of a field at a known address (`loft_pa_*`) for a store getter: a narrow
     /// read's encoding is decoded by the reader its store getter uses, the null address
     /// answering null.
@@ -2646,7 +2663,7 @@ impl<'a> FnWriter<'a> {
         };
         match (name, args) {
             ("OpGetVector" | "OpGetVectorNullable", [v, size, idx]) => {
-                let Some(h) = self.held_vector(v) else {
+                let Some(h) = self.read_header(v) else {
                     return Ok(None);
                 };
                 let size = Self::literal(size, "element size")?;
@@ -2687,7 +2704,7 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(vec) else {
+                let Some(held) = self.read_header(vec) else {
                     return Ok(None);
                 };
                 let size = Self::literal(size, "element size")?;
@@ -2757,6 +2774,21 @@ impl<'a> FnWriter<'a> {
                 } else {
                     self.index_arg(idx, as_int(index)?)
                 };
+                // The plain read through a loop's push header takes the header itself
+                // (`loft_ph_get_*`), not a view built per read.
+                if at.is_empty()
+                    && nn.is_empty()
+                    && let Some(ph) = held
+                        .strip_prefix("loft_ph_vh(&")
+                        .and_then(|r| r.strip_suffix(')'))
+                {
+                    let f = f.replacen("loft_vh_", "loft_ph_", 1);
+                    crate::rewrite_census::fired("R-Push/read", 1);
+                    return Ok(Some(E::new(
+                        format!("({proof}, {f}(&{ph}, {size}, {index}, {fld}))"),
+                        k,
+                    )));
+                }
                 Ok(Some(E::new(
                     format!("({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}{tail}))"),
                     k,
@@ -2778,7 +2810,7 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(vec) else {
+                let Some(held) = self.read_header(vec) else {
                     return Ok(None);
                 };
                 let Some((f, k)) = Self::pa_reader(name) else {
@@ -8787,7 +8819,7 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(e);
         }
-        if !self.headers.is_empty()
+        if (!self.headers.is_empty() || self.push_heads.iter().any(|f| !f.is_empty()))
             && let Some(e) = self.held_access(name, args, ind)?
         {
             return Ok(e);

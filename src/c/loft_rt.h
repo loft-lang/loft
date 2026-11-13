@@ -4064,6 +4064,57 @@ LOFT_PH_PUTB(8, uint64_t)
 LOFT_PH_PUTB(4, uint32_t)
 LOFT_PH_PUTB(1, uint8_t)
 
+/* A loop's push header read as a held vector header: its record and length are current — every
+ * growth and cut of the path inside the loop goes through it (`loft_ph_keep` below) — and the
+ * element base is derived from the record, as `loft_vh_fresh` derives it, since a growth may
+ * have moved the store's memory.  The `loft_vh` accessors then read an element exactly as they
+ * read a held one: a negative index from the end, a missing element null. */
+LOFT_HOT_INLINE loft_vh loft_ph_vh(const loft_ph *h) {
+    loft_vh r;
+    r.store_nr = h->v.store_nr;
+    r.rec = h->rec;
+    r.len = h->len;
+    r.base = h->rec != 0 ? loft_elem_base(&loft_stores[h->v.store_nr], h->rec) : 0;
+    return r;
+}
+
+/* The plain element reads through a push header — `loft_vh_get_int` and `loft_vh_get_float` on
+ * `loft_ph_vh`, without building the view: a negative index from the end, null (NaN for a float)
+ * outside the vector. */
+LOFT_HOT_INLINE int64_t loft_ph_get_int(const loft_ph *h, uint32_t size, int64_t from, uint32_t fld) {
+    int64_t f = from < 0 ? from + (int64_t) h->len : from;
+    if (LOFT_UNLIKELY((uint64_t) f >= h->len)) return LOFT_NULL;
+    int64_t v;
+    memcpy(&v, loft_at(&loft_stores[h->v.store_nr], h->rec, 8 + (uint32_t) f * size + fld), 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_ph_get_float(const loft_ph *h, uint32_t size, int64_t from, uint32_t fld) {
+    int64_t f = from < 0 ? from + (int64_t) h->len : from;
+    if (LOFT_UNLIKELY((uint64_t) f >= h->len)) return (double) NAN;
+    double v;
+    memcpy(&v, loft_at(&loft_stores[h->v.store_nr], h->rec, 8 + (uint32_t) f * size + fld), 8);
+    return v;
+}
+
+/* `@FR-R-Refresh`'s keep-range clause through a push header: `v = v[lo..hi]` with `lo` 0 — the
+ * truncate — cuts the length at the header and the record, clamped as `loft_vec_keep_range`
+ * clamps it; any other range moves its span there and derives the header again. */
+static void loft_vec_keep_range(loft_ref v, int64_t lo, int64_t hi, uint32_t size);
+LOFT_HOT_INLINE void loft_ph_keep(loft_ph *h, int64_t lo, int64_t hi, uint32_t size) {
+#ifndef LOFT_FOREIGN
+    if (lo == 0 && h->rec != 0) {
+        if (hi < 0) hi = 0;
+        if ((uint64_t) hi < h->len) {
+            h->len = (uint32_t) hi;
+            memcpy(loft_at(&loft_stores[h->v.store_nr], h->rec, 4), &h->len, 4);
+        }
+        return;
+    }
+#endif
+    loft_vec_keep_range(h->v, lo, hi, size);
+    *h = loft_ph_of(h->v, size);
+}
+
 /* `@FR-R-PushFill`'s held-run clause: a run of `k` pushes through a header a loop already holds.
  * When all `k` elements fit (`len + k <= cap`, so the record is present and its store unlocked)
  * they are stored past the length at one record address and the length is bumped once, in the
