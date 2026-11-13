@@ -1,0 +1,2413 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Expression elaboration, part: struct literals and record updates, statements and stores.
+use el_ex_base::*;
+use ir;
+use syntax::*;
+use lex;
+use el;
+use el_ir;
+use fold;
+use el_vars;
+use el_types;
+use el_schema;
+use el_convert;
+use frame;
+use el_length;
+use el_par;
+use el_definitions;
+use el_dispatch;
+use el_trace;
+use own;
+use el_ex_assign;
+use el_ex_place;
+use el_ex_call;
+use el_ex_match;
+use el_ex_pattern;
+
+pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, n: integer) -> vector<ir::Node>? {
+  def = el::def(e, d);
+  // A `vector<T>?` field is built as its dense twin.
+  ft = el_types::base(def.attributes[attr_nr(def, fname)]!.typedef[0]);
+  keyed = !(ft is TyVector);
+  inner = match ft { TyVector { inner: vi } => vi, _ => ir::TyReference { n: el_types::keyed_elem(ft), dep: [] } };
+  items: vector<integer> = [];
+  match e.p.nodes[n] {
+    SVecLit { items: its } => { items = its; },
+    _ => {}
+  }
+  if el_ex_place::refuses_hooked_items(e, items) {
+    return null;
+  }
+  elm = -1;
+  if len(items) > 0 {
+    // `unique_elm_var`: the element borrows what the record's place borrows — the local when
+    // the place is one, nothing for a place inside it.  An inline ref that borrows nothing is
+    // nulled where it is first used (`parse_code`'s inline-ref preamble).
+    dep: vector<integer> = if r is NdVar { [v] } else { [] };
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: dep });
+    if len(dep) == 0 {
+      el_vars::mark_inline(vars, elm);
+    }
+  }
+  out: vector<ir::Node> = [];
+  kt = def.known_type;
+  pos = field_position(e, d, fname);
+  // A keyed field's records are added through the record itself; it has no vector store.
+  vk = if keyed { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
+  fnr = el_schema::field_nr(e, kt, fname);
+  push = el_ex_pattern::push_op(inner);
+  if e.first_pass && elm >= 0 {
+    vars.allocs += [v];
+    // `new_record` on the first pass, before the struct has its layout, takes the element's
+    // vector store type through `vector_of` — the order the schema numbers it in.
+    el_ex_pattern::vector_of(e, inner);
+  }
+  ird = struct_ref(e, inner);
+  for it in items {
+    if e.p.nodes[it] is SRepeat {
+      el::refuse(e, "a repeated vector item");
+      return null;
+    }
+    // `new_record` for a literal item of a record element: the element made in the field's
+    // vector, the literal's fields written into it, the element finished.
+    el_ex_place::unqualify_literal(e, it);
+    if ird >= 0 && e.p.nodes[it] is SStructLit && struct_literal_def(e, it) == ird {
+      fs: vector<integer> = [];
+      match e.p.nodes[it] {
+        SStructLit { member, fields: lf, base } => {
+          if member != "" || base != null {
+            el::refuse(e, "a qualified struct literal or an update");
+            return null;
+          }
+          fs = lf;
+        },
+        _ => {}
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: ird, dep: el_types::deps(el_vars::tp(vars, elm)) });
+      if e.first_pass {
+        el_ex_pattern::first_pass_fields(e, vars, ird, fs);
+        continue;
+      }
+      at = ir::NdVar { n: elm };
+      body = el_ex_place::fields_at(e, vars, elm, at, ird, fs);
+      if body == null {
+        return null;
+      }
+      out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + body! + [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
+      continue;
+    }
+    x = el_ex_assign::expression(e, vars, it);
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
+      el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
+      return null;
+    }
+    if e.first_pass {
+      continue;
+    }
+    if push != "" {
+      out += [el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, inner, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: vk }]), x.code))];
+    } else if inner is TyText || elem_size(inner) == 2 {
+      at = ir::NdVar { n: elm };
+      out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))];
+      out += [el_ex_pattern::elem_write(e, inner, at, x.code)];
+      out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
+    } else {
+      el::refuse(e, "a vector field of records written from a literal: an item that is no literal");
+      return null;
+    }
+  }
+  // A keyed field's items are made with the element's vector type as their known type
+  // (`build_vector_list`'s `vector_of`), which registers it once the layout exists.
+  if keyed && !e.first_pass && len(items) > 0 {
+    el_ex_pattern::vector_of(e, inner);
+  }
+  out
+}
+
+// Does `n` call a function the program declares with an argument that reads local `v`?
+pub fn hands_to_call(e: el::El, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSpan { inner } => hands_to_call(e, inner, v),
+    NdCall { def_nr, args } => {
+      user = !starts_with(el::def(e, def_nr).name, "Op") && el::def(e, def_nr).source == e.source;
+      for a in args {
+        if (user && el_ir::reads_var(a, v)) || hands_to_call(e, a, v) {
+          return true;
+        }
+      }
+      false
+    },
+    NdIf { cond, t, f } => hands_to_call(e, cond, v) || hands_to_call(e, t, v) || hands_to_call(e, f, v),
+    _ => false
+  }
+}
+
+// What a struct literal builds: a struct, or an enum's struct variant (a record whose `enum`
+// field, left out of every literal, is written its ordinal as an omitted field's default).
+pub fn literal_def(e: el::El, d: integer) -> boolean {
+  d >= 0 && (el::def(e, d).def_type == el::DT_STRUCT || el::def(e, d).def_type == el::DT_ENUM_VALUE && len(el::def(e, d).attributes) > 0)
+}
+
+// `Parser::parse_object`'s fresh-record arm, a literal that is a value rather than a bind: on the
+// second pass built in its own `__ref_p2_N` ("Object", answering the buffer and typed as a
+// record borrowing it); on the first its fields are read and it answers the record's type.
+// `Parser::parse_object`'s update (`S { f: v, ..base }`) as a value: built apart in its own
+// `__ref_p2_N` — minted, the base's record copied in (`OpCopyRecord`), then each named field
+// written in the literal's order ("Object").  A base of another type is refused by name.
+pub fn update_value(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>, base: integer) -> Ex {
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+    el::refuse(e, "an update of something other than a plain struct");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  b = el_ex_assign::expression(e, vars, base);
+  if e.first_pass {
+    el_ex_pattern::first_pass_fields(e, vars, d, fields);
+    return ex(ir::NdNull, ir::TyReference { n: d, dep: [] });
+  }
+  if struct_ref(e, el_types::base(b.tp)) != d || b.tp is TyOptional {
+    refuse_known(e, b.tp, "an update over a base of another type: {display_type_name(e, b.tp)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  w = el_vars::work_ref_p2(vars, ir::TyReference { n: d, dep: [] });
+  kt = ir::NdInt { n: el::def(e, d).known_type };
+  wr = ir::NdVar { n: w };
+  writes = update_writes(e, vars, wr, d, fields);
+  if writes == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ops = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [wr, kt]), el_ir::cl(e, "OpCopyRecord", [b.code, wr, kt])] + writes! + [wr];
+  tp = ir::TyReference { n: d, dep: [w] };
+  ex(el_ir::v_block(ops, tp, "Object"), tp)
+}
+
+// An update's named fields written into the record at `r`, in the literal's order: a scalar
+// through its field's write op, a text replaced (`OpSetTextReplace`).  Any other field type is
+// refused by name.
+pub fn update_writes(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
+  out: vector<ir::Node> = [];
+  def = el::def(e, d);
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, e: fe } => {
+        a = attr_nr(def, fname);
+        if a < 0 || fe == null {
+          el::refuse(e, "a field the struct does not declare: `{fname}` of `{def.name}`");
+          return null;
+        }
+        at = def.attributes[a]!.typedef[0] ?? ir::TyVoid;
+        x = el_ex_assign::expression(e, vars, fe!);
+        if el_types::base(at) is TyText {
+          c = stored(e, vars, x, at);
+          if c == null {
+            refuse_known(e, x.tp, "an update field value its type converts: {display_type_name(e, x.tp)} to {display_type_name(e, at)}");
+            return null;
+          }
+          out += [el_ir::cl(e, "OpSetTextReplace", [r, ir::NdInt { n: field_position(e, d, fname) }, c!])];
+        } else if el_convert::plain_scalar(at) || el_convert::plain_enum(at) {
+          c = stored(e, vars, x, at);
+          if c == null {
+            refuse_known(e, x.tp, "an update field value its type converts: {display_type_name(e, x.tp)} to {display_type_name(e, at)}");
+            return null;
+          }
+          out += [set_field(e, d, a, r, c!)];
+        } else {
+          el::refuse(e, "an update of a field of this type: {display_type_name(e, at)}");
+          return null;
+        }
+      },
+      _ => {
+        el::refuse(e, "a field initialiser of this form in an update");
+        return null;
+      }
+    }
+  }
+  out
+}
+
+pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, fields: vector<integer>, base: integer?) -> Ex {
+  qv = el_ex_place::qualified_variant(e, name0, member0);
+  name = if qv != "" { qv } else { name0 };
+  member = if qv != "" { "" } else { member0 };
+  if member == "" && base != null {
+    return update_value(e, vars, el::def_nr(e, name), fields, base!);
+  }
+  if (member != "" && !el::use_exists(e, name)) || base != null {
+    el::refuse(e, "a qualified struct literal or an update");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  d = el::qualified_def(e, name, member);
+  if !literal_def(e, d) {
+    el::refuse(e, "a literal of something other than a declared struct");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // A variant's literal is built in a buffer of its enum, the type every position it stands in
+  // expects of it (`parse_object`'s expected type).
+  wt = if el::def(e, d).def_type == el::DT_ENUM_VALUE { ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
+  object_fresh(e, vars, d, fields, wt)
+}
+
+// The fresh-record build of a literal of `d`: on the first pass its fields read, answering the
+// record's type; on the second built in a `__ref_p2_N` of type `wt` — the record's, or the enum a
+// declaration expects of a variant (`parse_object`'s expected type) — answering the buffer.
+pub fn object_fresh(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>, wt: ir::TypeT) -> Ex {
+  if e.first_pass {
+    el_ex_pattern::first_pass_fields(e, vars, d, fields);
+    return ex(ir::NdNull, ir::TyReference { n: d, dep: [] });
+  }
+  w = el_vars::work_ref_p2(vars, wt);
+  list = el_ex_place::object_fields(e, vars, w, d, fields);
+  if list == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  tp = ir::TyReference { n: d, dep: [w] };
+  ex(el_ir::v_block(list! + [ir::NdVar { n: w }], tp, "Object"), tp)
+}
+
+
+// `data::to_default` for the field types a plain struct holds.
+pub fn to_default(e: el::El, t: ir::TypeT) -> ir::Node {
+  match t {
+    TyBoolean => ir::NdBoolean { b: false },
+    TyInteger { spec } => ir::NdInt { n: if spec.min > 0 { spec.min } else { 0 } },
+    TySingle => ir::NdSingle { f: 0.0f },
+    TyFloat => ir::NdFloat { f: 0.0 },
+    TyCharacter => ir::NdInt { n: 0 },
+    TyText { dep: _ } => ir::NdText { s: "" },
+    _ => {
+      el::refuse(e, "an omitted field of this type");
+      ir::NdNull
+    }
+  }
+}
+
+// `Parser::set_field_check` for a field of a plain type: the write op its type stores through.
+pub fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> ir::Node {
+  def = el::def(e, d);
+  at = def.attributes[a]!;
+  if e.first_pass && el_types::is_unknown(at.typedef[0] ?? ir::TyVoid) {
+    return ir::NdNull;
+  }
+  pos = ir::NdInt { n: field_position(e, d, at.name) };
+  // `set_field_check`'s record arm: a struct field takes a copy of the value; a pointer field
+  // (`reference<T>`) the reference itself.
+  match el_types::base(at.typedef[0]) {
+    TyReference { n: fd, dep } => {
+      if len(dep) > 0 {
+        return el_ir::cl(e, "OpSetDbRef", [r, pos, val]);
+      }
+      if el::def(e, fd).def_type == el::DT_STRUCT {
+        k = ir::NdInt { n: el::def(e, fd).known_type };
+        return el_ir::cl(e, "OpCopyRecord", [val, el_ir::cl(e, "OpGetField", [r, pos, k]), k]);
+      }
+    },
+    // A struct enum's value is a record as well: copied into the field's bytes.
+    TyEnum { n: en, is_ref } => {
+      if is_ref {
+        k = ir::NdInt { n: el::def(e, en).known_type };
+        return el_ir::cl(e, "OpCopyRecord", [val, el_ir::cl(e, "OpGetField", [r, pos, k]), k]);
+      }
+    },
+    _ => {}
+  }
+  write_at(e, at, r, pos, val)
+}
+
+// A plain field's write at `pos`: an integer through its slot's op, the rest through `write_op`.
+pub fn write_at(e: el::El, at: ir::Attribute, r: ir::Node, pos: ir::Node, val: ir::Node) -> ir::Node {
+  match el_types::base(at.typedef[0]) {
+    TyInteger { spec } => {
+      sl = int_slot(e, spec, at.alias_d_nr, at.nullable);
+      if slot_takes_min(sl.kind) {
+        return el_ir::cl(e, slot_set_op(sl.kind), [r, pos, ir::NdInt { n: sl.min }, val]);
+      }
+      return el_ir::cl(e, slot_set_op(sl.kind), [r, pos, val]);
+    },
+    _ => {}
+  }
+  op = write_op(at);
+  if op == "" {
+    el::refuse(e, "a field write of this type: {type_kind(at.typedef[0] ?? ir::TyVoid)}");
+    return ir::NdNull;
+  }
+  el_ir::cl(e, op, [r, pos, val])
+}
+
+// `NarrowIntKind::set_op`.
+pub fn slot_set_op(k: text) -> text {
+  if k == "ShortFull" { "OpSetShortRaw" } else if k == "Int4Full" { "OpSetInt4Raw" } else { "OpSet{k}" }
+}
+
+// The op a tuple member of this type is set through in its record.
+pub fn tuple_set_op(t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec: _ } => "OpSetInt",
+    TyText { dep: _ } => "OpSetText",
+    TyBoolean => "OpSetBoolean",
+    TyFloat => "OpSetFloat",
+    TySingle => "OpSetSingle",
+    _ => "OpSetCharacter"
+  }
+}
+
+// The op a plain field of this attribute's type is written through, or "".
+pub fn write_op(at: ir::Attribute) -> text {
+  match el_types::base(at.typedef[0]) {
+    TyInteger { spec: _ } => "",
+    TyText { dep: _ } => "OpSetText",
+    TyBoolean => "OpSetBoolean",
+    TyFloat => "OpSetFloat",
+    TySingle => "OpSetSingle",
+    TyCharacter => "OpSetCharacter",
+    TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpSetEnum" },
+    _ => ""
+  }
+}
+
+// `Parser::field` / `get_field` for a plain struct's field: the read op its type loads
+// through, typed as the field — borrowing what the record borrows, and the record's local.
+pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text, args: vector<integer>, call: boolean, more: boolean = false) -> Ex {
+  if re == null {
+    el::refuse(e, "a method call: {name}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // `T.parse(text)` on a struct, a record variant or a struct enum (`parse_var`'s type arm).
+  if call && name == "parse" {
+    pd = parse_target(e, vars, re!);
+    if pd >= 0 {
+      return type_parse(e, vars, pd, args);
+    }
+  }
+  if call || len(args) > 0 {
+    return method_call(e, vars, at, re!, name, args);
+  }
+  // `Enum.Value`: a plain enum's value named through its enum.
+  match e.p.nodes[re!] {
+    SName { name: en, member: em } => {
+      ed = el::def_nr(e, en);
+      if em == "" && el_vars::var(vars, en) < 0 && ed >= 0 && el::def(e, ed).def_type == el::DT_ENUM && (el::def(e, ed).returned[0]) == ir::TyEnum { n: ed, is_ref: false, dep: [] } {
+        a = attr_nr(el::def(e, ed), name);
+        if a >= 0 {
+          // Wrapped in the `.`'s position on the second pass, as every chain step is.
+          val = el::def(e, ed).attributes[a]!.value[0];
+          return ex(if e.first_pass { val } else { ir::NdSpan { pos: el::pos_at(e, at), inner: val } }, ir::TyEnum { n: ed, is_ref: false, dep: [] });
+        }
+      }
+    },
+    _ => {}
+  }
+  // A field step's receiver that is a field step itself is read knowing the chain goes on.
+  x = match e.p.nodes[re!] {
+    SMember { at: ra, e: rre, name: rn, args: rargs, call: rc } => if is_field_step(e, re!) { member(e, vars, ra, rre, rn, rargs, rc, true) } else { el_ex_assign::expression(e, vars, re!) },
+    _ => el_ex_assign::expression(e, vars, re!)
+  };
+  // A field of an `S?` slot is read through its tag: absent reads as the null `S?`.
+  if is_nullable_wrapper(e, x.tp) {
+    rx = el_ex_place::read_through_tag(e, vars, x);
+    if rx == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    x = rx!;
+  }
+  d = -1;
+  // A link to a record (`p: &P`) reaches its fields as the record does (`@FR-C-Ref`).
+  rt = match x.tp {
+    TyRefVar { inner } => inner,
+    _ => x.tp
+  };
+  match el_types::base(rt) {
+    TyReference { n } => { d = n; },
+    TyUnknown { n: _ } => {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    },
+    _ => {}
+  }
+  ed = match el_types::base(rt) { TyEnum { n, is_ref } => if is_ref && !el::def(e, n).name.starts_with("__nullable<") { n } else { -1 }, _ => -1 };
+  if ed >= 0 {
+    f = enum_field(e, vars, x, ed, name);
+    // `wrap_chain`: the step wrapped in the `.`'s position on the second pass.
+    return if e.first_pass || (f.code is NdNull) { f } else { ex(ir::NdSpan { pos: el::pos_at(e, at), inner: f.code }, f.tp) };
+  }
+  if !literal_def(e, d) {
+    kind = if d >= 0 { "`{el::def(e, d).name}`, {el::def_type_name(el::def(e, d).def_type)}" } else { type_kind(x.tp) };
+    refuse_known(e, x.tp, "a field of something other than a plain struct: {kind}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  def = el::def(e, d);
+  a = attr_nr(def, name);
+  if a < 0 {
+    el::refuse(e, "a field the struct does not declare: `{name}` of `{def.name}`");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  t = def.attributes[a]!.typedef[0];
+  for on in el_types::deps(x.tp) {
+    t = el_types::with_deps(t, [on]);
+  }
+  match x.code {
+    NdVar { n } => { t = el_types::with_deps(t, [n]); },
+    _ => {}
+  }
+  got = field_get(e, d, a, x.code);
+  if got == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  code = got!;
+  // `wrap_chain`: on the second pass each `.` step is wrapped in the `.`'s position.
+  if !e.first_pass {
+    code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+  }
+  // A field of a record that may be null (`x: S?`) may be null too — unless a guard proved
+  // the record present here (`(N-Guard)`).
+  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(x.code)) };
+  // A tagged `S?` slot spells its own absence (`wrap_projection_nullable`).
+  if rt is TyOptional && !(t is TyOptional) && !proven && !is_nullable_wrapper(e, t) {
+    t = ir::TyOptional { inner: t };
+  }
+  if e.first_pass {
+    return ex(code, t);
+  }
+  chain_hold(e, vars, ex(code, t), more)
+}
+
+// `parse_field`'s struct-enum arm (`find_poly_enum_field`): `e.f` on a value held at its enum
+// reads the field of the variant the value holds.  It resolves to the first variant declaring
+// `f`; where only some declare it the receiver is guarded by the tag, an absent variant reading
+// the type's null (`guard_variant_receiver`, loft#980); where the declaring variants lay `f` out
+// at different offsets the read switches on the tag (`variant_field_getter`, loft#2441).  Code
+// that already knows the variant — a place an `is` test proved — reads it directly.  Only a
+// local or a parameter is carried as the receiver.
+pub fn enum_field(e: el::El, vars: el_vars::Vars, x: Ex, ed: integer, name: text) -> Ex {
+  owning: vector<integer> = [];
+  total = 0;
+  found = -1;
+  for a in el::def(e, ed).attributes {
+    v = el::variant_of(e, ed, a.name);
+    if v < 0 {
+      continue;
+    }
+    total += 1;
+    fa = attr_nr(el::def(e, v), name);
+    if fa >= 0 && found < 0 {
+      found = v;
+    }
+    if fa >= 0 && found >= 0 && el_types::without_deps(el::def(e, v).attributes[fa]!.typedef[0]) == el_types::without_deps(el::def(e, found).attributes[attr_nr(el::def(e, found), name)]!.typedef[0]) {
+      owning += [v];
+    }
+  }
+  if found < 0 {
+    el::refuse(e, "a field no variant of the enum declares");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  fa = attr_nr(el::def(e, found), name);
+  t = el::def(e, found).attributes[fa]!.typedef[0];
+  for on in el_types::deps(x.tp) {
+    t = el_types::with_deps(t, [on]);
+  }
+  place = el_ir::unspan(x.code);
+  match place {
+    NdVar { n } => { t = el_types::with_deps(t, [n]); },
+    _ => {
+      el::refuse(e, "a field of a struct enum read off something other than a local");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, t);
+  }
+  // The declaring variants by offset, in declaration order.
+  offsets: vector<integer> = [];
+  for v in owning {
+    o = field_position(e, v, name);
+    if !offsets.contains(o) {
+      offsets += [o];
+    }
+  }
+  partial = len(owning) < total;
+  if len(offsets) < 2 {
+    recv = if partial { el_ir::v_if(tag_in(e, place, owning), place, el_ir::cl(e, "OpNullRefSentinel", [])) } else { place };
+    return ex(field_get(e, found, fa, recv) ?? ir::NdNull, t);
+  }
+  // Where the offsets differ, a place an `is` test proved holds one variant reads that variant's field directly.
+  for pv in rev(vars.proven) {
+    if pv.place == place {
+      for v in owning {
+        if variant_ord(e, v) == pv.disc {
+          return ex(field_get(e, v, attr_nr(el::def(e, v), name), place) ?? ir::NdNull, t);
+        }
+      }
+    }
+  }
+  // The getter: one read per offset, the value's own; an absent variant reads the null.
+  chain = if partial { field_get(e, found, fa, el_ir::cl(e, "OpNullRefSentinel", [])) ?? ir::NdNull } else { ir::NdNull };
+  groups = len(offsets);
+  for oi in 0..groups {
+    o = offsets[groups - 1 - oi]!;
+    vs = [for v in owning if field_position(e, v, name) == o { v }];
+    arm = field_get(e, vs[0]!, attr_nr(el::def(e, vs[0]!), name), place) ?? ir::NdNull;
+    chain = if !partial && oi == 0 { arm } else { el_ir::v_if(tag_in(e, place, vs), arm, chain) };
+  }
+  ex(el_ir::v_block([chain], t, "variant field"), t)
+}
+
+// `tag(place) == d₁ || tag(place) == d₂ …` over the variants' ordinals.
+pub fn tag_in(e: el::El, place: ir::Node, vs: vector<integer>) -> ir::Node {
+  cond = ir::NdNull;
+  for v in vs {
+    test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [place, ir::NdInt { n: 0 }])]), ir::NdInt { n: variant_ord(e, v) }]);
+    cond = if cond is NdNull { test } else { el_ir::v_if(cond, ir::NdBoolean { b: true }, test) };
+  }
+  cond
+}
+
+// A struct-enum variant's ordinal: the value of its `enum` attribute.
+pub fn variant_ord(e: el::El, v: integer) -> integer {
+  match el::def(e, v).attributes[0]!.value[0] ?? ir::NdNull { NdEnum { ord } => ord, _ => -1 }
+}
+
+// A plain `.field` step (no call): the receiver of a further step is one when the chain goes on
+// past a field (`parse_field`'s `peek_token(".")`).
+pub fn is_field_step(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SMember { e: re, call, args } => re != null && !call && len(args) == 0,
+    _ => false
+  }
+}
+
+// `parse_field`'s chain hold: a record a field step reads out of something that is no variable,
+// borrowing nothing (a call's fresh result), is held in a work ref when the chain goes on
+// (`more`), so its store is freed at scope end.  A member that owns a droppable, read straight
+// off a user call's record, is then a view of that record (`call_member_view`, `(H-Elide)`);
+// any other is copied into the work ref (`inline ref copy`), borrowing it.  A step that ends
+// the chain is held only where its member owns a droppable (D-heap-3): copied, borrowing
+// nothing, so the site that consumes it owns the copy.
+pub fn chain_hold(e: el::El, vars: el_vars::Vars, x: Ex, more: boolean) -> Ex {
+  d = match x.tp { TyReference { n, dep } => if len(dep) == 0 { n } else { -1 }, _ => -1 };
+  if d < 0 || x.code is NdVar {
+    return x;
+  }
+  projection = match el_ir::unspan(x.code) {
+    NdCall { def_nr } => projection_op(el::def(e, def_nr).name) || el::def(e, def_nr).name == "OpGetDbRef",
+    _ => false
+  };
+  if !more && !(projection && el_types::owns_droppable(e, d, [])) {
+    return x;
+  }
+  if more {
+    v = call_member_view(e, vars, x.code, d);
+    if v != null {
+      return v!;
+    }
+  }
+  w = el_vars::work_ref(vars, x.tp);
+  el_vars::mark_inline(vars, w);
+  kt = el::def(e, d).known_type;
+  if projection && kt != el::NO_TYPE {
+    tp = ir::TyReference { n: d, dep: if more { [w] } else { [] } };
+    ops = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: w }, ir::NdInt { n: kt }]), ir::NdVar { n: w }];
+    return ex(el_ir::v_block(ops, tp, "inline ref copy"), tp);
+  }
+  tp = ir::TyReference { n: d, dep: [w] };
+  ex(el_ir::v_block([el_ir::v_set(w, x.code), ir::NdVar { n: w }], tp, "inline ref"), tp)
+}
+
+// A member of a call result handed on as an argument is read where it lives: the argument
+// binds without copying (`(F-ParamHeap)`), so the copy a terminal step made (`chain_hold`) is
+// replaced by the view (`call_member_view`).
+pub fn argument_view(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
+  if e.first_pass {
+    return x;
+  }
+  match el_ir::unspan(x.code) {
+    NdBlock { block } => {
+      if block[0].name != "inline ref copy" {
+        return x;
+      }
+      d = struct_ref(e, el_types::base(x.tp));
+      src = match el_ir::unspan(block[0].operators[2] ?? ir::NdNull) { NdCall { args } => args[0] ?? ir::NdNull, _ => ir::NdNull };
+      if d < 0 || el_ir::is_null(src) {
+        return x;
+      }
+      v = call_member_view(e, vars, src, d);
+      v ?? x
+    },
+    _ => x
+  }
+}
+
+// `call_member_view`: a member `d` that owns a droppable, projected straight out of a user
+// function's fresh record (not `-> S?`), read where it lives — the record bound to a work ref
+// that adopts it and is released whole at its scope end.  Null for any other shape.
+pub fn call_member_view(e: el::El, vars: el_vars::Vars, proj: ir::Node, d: integer) -> Ex? {
+  if !el_types::owns_droppable(e, d, []) {
+    return null;
+  }
+  match el_ir::unspan(proj) {
+    NdCall { def_nr: pd, args: pargs } => {
+      pn = el::def(e, pd).name;
+      if !(pn == "OpGetField" || pn == "OpGetVector" || pn == "OpVectorRef") || len(pargs) == 0 {
+        return null;
+      }
+      match el_ir::unspan(pargs[0]) {
+        NdCall { def_nr: fd } => {
+          call_tp = el::def(e, fd).returned[0] ?? ir::TyVoid;
+          plain = match call_tp { TyReference { dep } => len(dep) == 0, _ => false };
+          if starts_with(el::def(e, fd).name, "Op") || !plain {
+            return null;
+          }
+          holder = el_vars::work_ref(vars, call_tp);
+          el_vars::mark_inline(vars, holder);
+          tp = ir::TyReference { n: d, dep: [holder] };
+          na = [ir::NdVar { n: holder }] + pargs[1..];
+          return ex(el_ir::v_block([el_ir::v_set(holder, pargs[0]), ir::NdCall { def_nr: pd, args: na }], tp, "inline ref view"), tp);
+        },
+        _ => { return null; }
+      }
+    },
+    _ => { return null; }
+  }
+}
+
+// `Parser::parse_place_destructure`, `(a, b) = value`: the tuple held in a fresh `__ref_N`
+// (`work_refs`), then each place assigned its member (`tmp.i`) as a plain `=` assigns it — a
+// name bound or rebound, `_` a fresh `_discard_N`.  A nullable or record-laid tuple, a place that
+// is not a bare name, and a member that is not a plain scalar are refused by name.
+pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer>, rhs: integer?) -> Ex {
+  if rhs == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  x = el_ex_assign::expression(e, vars, rhs!);
+  if el_types::is_unknown(x.tp) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  elems: vector<ir::TypeT> = match x.tp { TyTuple { elems: es } => es, _ => [] };
+  if len(elems) == 0 || len(elems) != len(places) {
+    refuse_known(e, x.tp, "a destructure of this value: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  tmp = el_vars::work_ref(vars, x.tp);
+  steps: vector<ir::Node> = [el_ir::v_set(tmp, x.code)];
+  for pl in places {
+    i = pl#index;
+    et = elems[i] ?? ir::TyVoid;
+    nm = match e.p.nodes[pl] { SName { name, member } => if member == "" { name } else { "" }, _ => "" };
+    if nm == "" || !el_convert::plain_scalar(el_types::base(et)) {
+      el::refuse(e, "a destructure into a place that is not a name, or of a member that is not a plain scalar");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    v = binding_var(e, vars, nm);
+    if v < 0 {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    // A declared local takes the member as its `=` does — converted, a narrow one checked
+    // (`implicit_checked_narrow`): not carried unless the types are the same.
+    if vars.annotated.contains(v) && !(el_vars::tp(vars, v) == et) {
+      el::refuse(e, "a destructure into a declared local of another type");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if !el_vars::change_var_type(e, vars, v, et) {
+      el::refuse(e, "a destructure that changes a local's type");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    steps += [el_ir::v_set(v, ir::NdTupleGet { var: tmp, idx: i })];
+  }
+  ex(ir::NdInsert { items: steps }, ir::TyVoid)
+}
+
+// `Parser::parse_var` for the name a binding writes: on the first pass a name that is not a
+// local yet becomes one, untyped (`create_var`); a known local counts a use; on the second
+// pass the assignment marks it defined.
+pub fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
+  // `_` is a slot of its own at each assignment (`_discard_N`), so one discard takes any type.
+  if name == "_" {
+    d = el_vars::create_unique(vars, "discard", ir::TyUnknown { n: 0 });
+    el_vars::in_use(vars, d, true);
+    return d;
+  }
+  v = el_vars::var(vars, name);
+  if v < 0 {
+    if !e.first_pass {
+      el::refuse(e, "a binding the first pass did not see");
+      return -1;
+    }
+    v = el_vars::add_variable(vars, name, ir::TyUnknown { n: 0 });
+    el_vars::mark_user_named(vars, v);
+    return v;
+  }
+  el_vars::mark_user_named(vars, v);
+  el_vars::in_use(vars, v, true);
+  if !e.first_pass {
+    el_vars::set_defined(vars, v);
+  }
+  v
+}
+
+// A call through a local or parameter holding a function (`fn_ref[v](…)`, `Value::CallRef`):
+// each argument converted to the function type's parameter; typed by its result.  A named
+// argument and a wrong count are refused by name.
+pub fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -> Ex {
+  ft = el_types::base(el_vars::tp(vars, v));
+  pts: vector<ir::TypeT> = [];
+  rt = ir::TyVoid;
+  match ft {
+    TyFunction { args: fa, result } => {
+      // A closure-carrying value is called as any other: the record rides in the value.
+      pts = fa;
+      rt = result;
+    },
+    _ => {}
+  }
+  el_vars::in_use(vars, v, true);
+  list: vector<ir::Node> = [];
+  given: vector<Ex> = [];
+  for a in args {
+    an = "";
+    ae: integer? = null;
+    aat = 0;
+    match e.p.nodes[a] {
+      SArg { at: sa, name: n, e: x } => { an = n; ae = x; aat = sa; },
+      _ => { ae = a; }
+    }
+    if an != "" || ae == null {
+      el::refuse(e, "a named argument to a function value");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if el_trace::on() {
+      el_trace::state(e, vars, "arg", aat, ae!);
+    }
+    x = el_ex_assign::expression(e, vars, ae!);
+    given += [x];
+    if e.first_pass {
+      continue;
+    }
+    pt = pts[len(list)] ?? ir::TyVoid;
+    if len(list) >= len(pts) {
+      el::refuse(e, "a call through a function value with too many arguments");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    c = stored(e, vars, x, pt);
+    if c == null {
+      refuse_known(e, x.tp, "an argument to a function value of another type: {type_kind(x.tp)} for {type_kind(pt)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    list += [c!];
+  }
+  // `fnref_result_type`: the result's borrows, named by parameter, become what those arguments
+  // borrow; a record answered through a parameter that names none borrows its record arguments'
+  // roots (`view_root_slots`).
+  {
+    ds: vector<integer> = [];
+    for a in el_types::deps(rt) {
+      for x2 in el_types::deps((given[a] ?? ex(ir::NdNull, ir::TyVoid)).tp) {
+        if !ds.contains(x2) {
+          ds += [x2];
+        }
+      }
+    }
+    if len(ds) == 0 && vars.vars[v].argument && el_ex_assign::dbref_type(el_types::base(rt)) {
+      for g in given {
+        if el_ex_assign::dbref_type(el_types::base(g.tp)) {
+          match el_ir::unspan(g.code) {
+            NdVar { n: gv } => {
+              if !ds.contains(gv) {
+                ds += [gv];
+              }
+            },
+            _ => {}
+          }
+        }
+      }
+    }
+    rt = el_types::with_deps(rt, ds);
+  }
+  // A text answered through a function value is written into hidden work texts the caller
+  // hands in (`fnref_text_buffer_vars`), minted on both passes so the numbering holds.
+  work_vars = fnref_text_buffer_vars(e, vars, len(pts), rt);
+  if !e.first_pass && len(list) != len(pts) {
+    el::refuse(e, "a call through a function value with too few arguments");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // `@FR-F-ParamText` (`copy_store_text_args_to`): the function a value names may grow the
+  // store a text argument views, so such an argument is passed as a copy.
+  if !e.first_pass && el::def(e, e.context).def_type == el::DT_FUNCTION {
+    for arg in list {
+      if el_types::base(pts[arg#index] ?? ir::TyVoid) is TyText && el_ex_call::store_text_view(e, arg) {
+        list[arg#index] = text_argument_copy(e, vars, arg);
+      }
+    }
+  }
+  // `try_fn_ref_call`: the first pass answers the call's shape over the arguments as parsed, so
+  // a tail of such calls yields text there (`arm_yields_text`, the `___acc` delivery).
+  if e.first_pass {
+    return ex(ir::NdCallRef { var: v, args: [for g in given { g.code }] }, rt);
+  }
+  list += push_fnref_text_buffers(e, work_vars);
+  ex(ir::NdCallRef { var: v, args: list }, rt)
+}
+
+// port: control.rs fnref_text_buffer_vars
+// The hidden `&text` work buffers a call through a function value of this signature carries: a
+// call cannot know which function the value holds, so it mints what the widest candidate wants
+// (`Data::fnref_text_buffers`), and the call trims the frame to what the target declares.
+pub fn fnref_text_buffer_vars(e: el::El, vars: el_vars::Vars, params: integer, ret: ir::TypeT) -> vector<integer> {
+  [for _i in 0..fnref_text_buffers(e, params, ret) { el_vars::work_text(vars) }]
+}
+
+// port: data.rs fnref_text_buffers
+// For a text result: the most hidden text buffers any text function of `params` visible
+// parameters takes, at least one.  None for any other result.
+pub fn fnref_text_buffers(e: el::El, params: integer, ret: ir::TypeT) -> integer {
+  if !(el_types::base(ret) is TyText) {
+    return 0;
+  }
+  most = 1;
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || !(el_types::base(d.returned[0] ?? ir::TyVoid) is TyText) {
+      continue;
+    }
+    // `fnref_visible_params`: neither a hidden parameter nor the closure record.
+    visible = 0;
+    for a in d.attributes {
+      if !a.hidden && a.name != "__closure" {
+        visible += 1;
+      }
+    }
+    if visible == params && el_ex_call::text_work_buffers(d) > most {
+      most = el_ex_call::text_work_buffers(d);
+    }
+  }
+  most
+}
+
+// port: control.rs push_fnref_text_buffers
+// One cleared `OpCreateStack` argument per buffer, after the visible arguments (the callee's
+// order: visible parameters, then work buffers, then the closure the call reads from the value).
+pub fn push_fnref_text_buffers(e: el::El, work_vars: vector<integer>) -> vector<ir::Node> {
+  ref_def = el::def_nr(e, "reference");
+  [for wv in work_vars { el_ir::v_block([el_ir::v_set(wv, ir::NdText { s: "" }), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])], ir::TyReference { n: ref_def, dep: [wv] }, "cref_work_buf") }]
+}
+
+// A text argument that views a store, as a `__work_p2_N` copy of it ("text argument copy").
+pub fn text_argument_copy(e: el::El, vars: el_vars::Vars, arg: ir::Node) -> ir::Node {
+  w = el_vars::work_text_p2(vars);
+  el_ir::v_block([el_ir::v_set(w, ir::NdText { s: "" }), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, arg]), ir::NdVar { n: w }], ir::TyText { dep: [w] }, "text argument copy")
+}
+
+// `argument_hint` of `callee_param_hint(d, i)`, for a short lambda: the `fn(…)` parameter `i` of
+// `d` declares types a `|…|` argument there.  A template's parameter (closed over its bindings,
+// `close_open`) is not carried: the lambda then meets its refusal by name.  Only the lambda half
+// of `argument_hint` is ported; any other argument reads as it does without a hint.
+pub fn hint_lambda(e: el::El, vars: el_vars::Vars, d: integer, i: integer, node: integer) {
+  if d < 0 || el::def(e, d).def_type != el::DT_FUNCTION || i >= len(el::def(e, d).attributes) {
+    return;
+  }
+  pt = el_types::base(el::def(e, d).attributes[i]!.typedef[0] ?? ir::TyVoid);
+  if pt is TyFunction {
+    vars.lambda_node = node;
+    vars.lambda_hint = pt;
+  }
+}
+
+// `argument_hint`'s vector half (`seeds_vector_hint`, #432): a non-empty `[…]` argument is built
+// at the element type parameter `i` of the hinting definition `d` declares — known all through
+// and not a type variable.  Unknown where nothing seeds it.
+pub fn argument_element_hint(e: el::El, d: integer, i: integer, node: integer) -> ir::TypeT {
+  none = ir::TyUnknown { n: 0 };
+  if d < 0 || el::def(e, d).def_type != el::DT_FUNCTION || i >= len(el::def(e, d).attributes) {
+    return none;
+  }
+  if !(match e.p.nodes[node] { SVecLit { items } => len(items) > 0, _ => false }) {
+    return none;
+  }
+  match el::def(e, d).attributes[i]!.typedef[0] ?? ir::TyVoid {
+    TyVector { inner } => if el_types::is_unknown(inner) || el_definitions::mentions_type_var(e, inner) { none } else { inner },
+    _ => none
+  }
+}
+
+// An argument read under its hint: a seeded literal built at its element type, any other
+// expression as it reads.
+pub fn hinted_argument(e: el::El, vars: el_vars::Vars, node: integer, elem: ir::TypeT) -> Ex {
+  if el_types::is_unknown(elem) {
+    return el_ex_assign::expression(e, vars, node);
+  }
+  el_ex_pattern::vector_value(e, vars, node, elem: elem).x
+}
+
+// `Parser::parse_call` of a bare function name: the arguments read in order, then the
+// definition the name and the first argument's type select (`call`, `Data::candidates`), each
+// argument converted to its parameter (`process_call_args`).  On the second pass the call is
+// wrapped in its position: where the lexer stood after the token that follows `(`.
+pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, args: vector<integer>) -> Ex {
+  name = "";
+  // A qualified `lib::f(…)` reaches the library's own definitions alone (`Parser::parse_var`'s
+  // `source`, `select_qualified_overload`); -1 for a bare call.
+  source = -1;
+  match e.p.nodes[f ?? 0] {
+    SName { name: n, member } => {
+      if member == "" {
+        name = n;
+      } else if el::use_exists(e, n) {
+        name = member;
+        source = el::get_source(e, n);
+      }
+    },
+    _ => {}
+  }
+  if source < 0 && name != "" && el_vars::var(vars, name) >= 0 && el_types::base(el_vars::tp(vars, el_vars::var(vars, name))) is TyFunction {
+    rf = call_ref(e, vars, el_vars::var(vars, name), args);
+    // `parse_call`'s position wrap takes a call through a function value as it takes a call
+    // (`Value::with_span` of a `CallRef`); a call with no arguments returns before it.
+    if !e.first_pass && len(args) > 0 && rf.code is NdCallRef {
+      return ex(ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: rf.code }, rf.tp);
+    }
+    return rf;
+  }
+  if name == "" || (source < 0 && el_vars::var(vars, name) >= 0) {
+    kind = if name == "" { syn_kind(e, f ?? 0) } else { "a local of type {type_kind(el_vars::tp(vars, el_vars::var(vars, name)))}" };
+    el::refuse(e, "a call that is not of a function by its bare name: {kind}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  built: vector<ir::TypeT> = [];
+  list: vector<ir::Node> = [];
+  types: vector<ir::TypeT> = [];
+  for a in args {
+    match e.p.nodes[a] {
+      SArg { at: aat, name: an, e: ae } => {
+        if an != "" || ae == null {
+          el::refuse(e, "a named argument");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        // `free_call_hint`, asked per argument with the types read so far: its parameter's
+        // `fn(…)` types a short lambda argument.  A qualified call asks the library alone.
+        hd = if source >= 0 { look(e, source, "n_{name}") } else { el_dispatch::free_call_hint(e, name, types) };
+        hint_lambda(e, vars, hd, a#index, ae!);
+        eh = argument_element_hint(e, hd, a#index, ae!);
+        built += [eh];
+        if el_trace::on() {
+          el_trace::state(e, vars, "arg", aat, ae!);
+        }
+        x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh));
+        vars.lambda_node = -1;
+        list += [x.code];
+        types += [x.tp];
+      },
+      _ => {}
+    }
+  }
+  // `parse_call_diagnostic` for the log calls: the message (or an empty one) with the call's
+  // file and line, where the program declares no function of that name.
+  if source < 0 && (name == "log_info" || name == "log_warn" || name == "log_error" || name == "log_fatal") {
+    ld = el::def_nr(e, "n_{name}");
+    if ld >= 0 && el::def(e, ld).source == 0 {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      cp = el::pos_at(e, after_paren(e, at));
+      message = if len(list) == 0 { ir::NdText { s: "" } } else { list[0] };
+      return ex(ir::NdSpan { pos: cp, inner: el_ir::cl(e, "n_{name}", [message, ir::NdText { s: cp.file }, ir::NdInt { n: cp.line }]) }, ir::TyVoid);
+    }
+  }
+  first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
+  // `next(g)` advances a generator's handle (`OpCoroutineNext`, typed as its element) and
+  // `exhausted(g)` asks whether it is done; a tuple element's advance is not carried.
+  if source < 0 && name == "reserve" {
+    return reserve_call(e, list, types);
+  }
+  if source < 0 && name == "sort" && sorts_itself(types) {
+    return sort_call(e, list, types);
+  }
+  if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
+    step = match el_types::base(first) { TyIterator { step: st } => st, _ => ir::TyVoid };
+    if name == "exhausted" {
+      return ex(el_ir::cl(e, "OpCoroutineExhausted", [list[0]]), ir::TyBoolean);
+    }
+    ops = el_ex_match::next_operands(step);
+    // A tuple's advance is followed by the generator's own state (Rust's `next_tuple` block,
+    // an exhausted advance answering a tuple of nulls): not carried.
+    if len(ops) == 0 || step is TyTuple {
+      el::refuse(e, "a `next` of a generator of this element type: {type_kind(step)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(el_ir::cl(e, "OpCoroutineNext", [list[0]] + ops), step);
+  }
+  // `@FR-Disp-Select`: a name that is an overload set reaches the member its argument types
+  // select; any other name, the definition `find_fn` resolves.
+  set = if source < 0 { el_dispatch::own_set(e, name) } else { el_dispatch::source_set(e, source, name) };
+  // A dispatcher a run-time decided call makes is placed where Rust's lexer then stands: past the
+  // token after the call's `)`.
+  d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1), only: source) } else { find_fn(e, name, routed_receiver(first, types), source) };
+  if d < 0 && set >= 0 {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if d < 0 && source < 0 && name == "size" && len(types) == 1 {
+    sz = size_call(e, list, first);
+    if sz != null {
+      return sz!;
+    }
+  }
+  if d < 0 {
+    // A receiver already refused (untyped on the second pass) chose no method: not refused again.
+    if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if source < 0 && len(types) == 1 {
+      b = by_receiver_type(e, name, list, first);
+      if b != null {
+        return b!;
+      }
+    }
+    // A function the program declares whose definition was refused: that refusal names it.
+    if e.declined.contains(name) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    el::refuse(e, "a call of an unknown function: {name}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if hinted_literal(e, d, args, 0, built) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  r = el_ex_call::call_args(e, vars, d, list, types);
+  if r == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  c = r!;
+  // Phase 3.5 elision (`math_arg_in_domain`): a domain-partial math function whose argument
+  // is provably in its domain cannot answer null, so the `τ?` its declaration carries is peeled.
+  // Bound once: `c.tp = inner` writes a field from a view into its own old value (loft#2391).
+  peel = c.tp is TyOptional && in_domain(e, name, match el_ir::unspan(c.code) { NdCall { args } => args, _ => [] });
+  ct = if peel { el_types::base(c.tp) } else { c.tp };
+  // `wrap_null_transparent`: a nullable argument into one of the functions that propagate
+  // null (`is_null_transparent`) with a non-null scalar result makes the call `τ?` — each such
+  // argument held in a `__ntp_N`, the call made only where all are present.
+  transparent = name == "abs" || name == "min" || name == "max" || name == "clamp" || name == "floor" || name == "ceil" || name == "round" || name == "sin" || name == "cos" || name == "tan" || name == "atan" || name == "exp";
+  nullable_arg = false;
+  for t in types {
+    if t is TyOptional {
+      nullable_arg = true;
+    }
+  }
+  wrap = transparent && nullable_arg && el_convert::plain_scalar(ct);
+  if e.first_pass {
+    return ex(c.code, if wrap { ir::TyOptional { inner: ct } } else { ct });
+  }
+  // A call with no arguments returns before `parse_call`'s position wrap.
+  code = if len(args) == 0 { c.code } else { ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: c.code } };
+  if wrap {
+    return null_transparent(e, vars, c.code, types, ct, code);
+  }
+  ex(code, ct)
+}
+
+// `towards_set_hash_remove` for a keyed FIELD, `h.c[key] = null`: one removal, or — when the
+// field is a member of a linked group (`keyed_group_remove`, `@FR-Col-Group`) — the record
+// looked up once into a borrowed work ref, unlinked from every other member, then removed and
+// freed through the member it was spelled through.  Each unlink reads the record's key, so the
+// free comes last.  Null when the field's holder is not a type this port names.
+pub fn keyed_field_remove(e: el::El, vars: el_vars::Vars, coll: ir::Node, db_tp: ir::Node, get_rec: ir::Node, f_type: ir::TypeT) -> ir::Node? {
+  site = keyed_field_site(e, vars, coll);
+  if site == null {
+    return null;
+  }
+  members = keyed_group_members(e, site!.tp, site!.off);
+  if len(members) < 2 {
+    return el_ir::cl(e, "OpHashRemove", [coll, get_rec, db_tp]);
+  }
+  // The record is a borrow of the collection: never freed as a store of its own.  It is the
+  // record the key names, so the dense type the place resolved to (its `?` is the miss's).
+  found = el_vars::work_ref(vars, el_types::base(f_type));
+  el_vars::mark_inline(vars, found);
+  vars.vars[found].skip_free = true;
+  ops = [el_ir::v_set(found, get_rec)];
+  for m in members {
+    if m.off != site!.off {
+      ops += [el_ir::cl(e, "OpHashRemove", [keyed_field_at(coll, m.off), ir::NdVar { n: found }, ir::NdInt { n: m.content + CLEAR_KEYED_VIEW }])];
+    }
+  }
+  ops += [el_ir::cl(e, "OpHashRemove", [coll, ir::NdVar { n: found }, db_tp])];
+  ir::NdInsert { items: ops }
+}
+
+// `database::CLEAR_KEYED_VIEW`: an `OpHashRemove` that unlinks and never frees.
+pub CLEAR_KEYED_VIEW = 32768;
+
+// A keyed field's place: the schema type of its holder and its byte offset.
+pub struct FieldSite {
+  pub tp: integer,
+  pub off: integer
+}
+
+// One member of a linked group: its byte offset and its collection's schema type.
+pub struct GroupMember {
+  pub off: integer,
+  pub content: integer
+}
+
+// `Parser::keyed_field_site`: `OpGetField(base, off, …)`, the holder's type through `holder_type`.
+pub fn keyed_field_site(e: el::El, vars: el_vars::Vars, coll: ir::Node) -> FieldSite? {
+  match coll {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetField" {
+        return null;
+      }
+      off = match el_ir::unspan(args[1] ?? ir::NdNull) { NdInt { n } => n, _ => -1 };
+      tp = holder_type(e, vars, el_ir::unspan(args[0] ?? ir::NdNull));
+      if off < 0 || tp < 0 { null } else { FieldSite { tp: tp, off: off } }
+    },
+    _ => null
+  }
+}
+
+// `Parser::holder_type`: the schema type a field-access base evaluates to — a record local's
+// type, or the type a nested field read names as its third operand; -1 for any other base.
+pub fn holder_type(e: el::El, vars: el_vars::Vars, base: ir::Node) -> integer {
+  match base {
+    NdVar { n } => {
+      d = match el_types::base(el_vars::tp(vars, n)) {
+        TyReference { n: r } => r,
+        TyRefVar { inner } => match el_types::base(inner) { TyReference { n: r } => r, _ => -1 },
+        _ => -1
+      };
+      kt = if d < 0 { el::NO_TYPE } else { el::def(e, d).known_type };
+      if kt == el::NO_TYPE { -1 } else { kt }
+    },
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetField" {
+        return -1;
+      }
+      match el_ir::unspan(args[2] ?? ir::NdNull) {
+        NdInt { n } => if n >= 0 && n != el::NO_TYPE { n } else { -1 },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+// `Stores::keyed_group_members`: the field at `off` of struct `s` and the members its
+// `other_indexes` link it to (the view marker `NO_TYPE` skipped), in field order; empty for a
+// field of no group.
+pub fn keyed_group_members(e: el::El, s: integer, off: integer) -> vector<GroupMember> {
+  fields = el_schema::struct_fields(e, s);
+  me = -1;
+  for f in fields {
+    if me < 0 && f.position == off {
+      me = f#index;
+    }
+  }
+  if me < 0 || len(fields[me]!.other_indexes) == 0 {
+    return [];
+  }
+  nrs: vector<integer> = [me];
+  for o in fields[me]!.other_indexes {
+    if o != el::NO_TYPE && !nrs.contains(o) {
+      nrs += [o];
+    }
+  }
+  out: vector<GroupMember> = [];
+  for f in fields {
+    if nrs.contains(f#index) {
+      out += [GroupMember { off: f.position, content: f.content }];
+    }
+  }
+  out
+}
+
+// `Parser::keyed_field_at`: the same field read with another byte offset.
+pub fn keyed_field_at(coll: ir::Node, off: integer) -> ir::Node {
+  match coll {
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == 1 { ir::NdInt { n: off } } else { a } }] },
+    _ => coll
+  }
+}
+
+// `Parser::call`'s `size(x)` fallback, where no definition of `size` takes the argument: the
+// bytes `x` occupies — a vector's or a sorted collection's elements times their stride
+// (`OpSizeVector`), a record's size (`OpSizeStruct`), a scalar's width (`OpSizeScalar`: an
+// integer's stored width, else its stack width).  Null for any other argument.
+pub fn size_call(e: el::El, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
+  wide = ir::TyInteger { spec: wide_spec() };
+  op = "";
+  n = -1;
+  match t {
+    TyVector { inner } => { op = "OpSizeVector"; n = elem_stride(e, inner); },
+    TyReference { n: d } => {
+      kt = el::def(e, d).known_type;
+      if (el::def(e, d).def_type == el::DT_STRUCT || el::def(e, d).def_type == el::DT_ENUM_VALUE) && kt != el::NO_TYPE {
+        op = "OpSizeStruct";
+        n = e.b.types[kt]!.size;
+      }
+    },
+    TyInteger { spec } => { op = "OpSizeScalar"; n = byte_width(spec, false); },
+    TyFloat => { op = "OpSizeScalar"; n = 8; },
+    TyBoolean => { op = "OpSizeScalar"; n = 1; },
+    TyCharacter => { op = "OpSizeScalar"; n = 4; },
+    TySingle => { op = "OpSizeScalar"; n = 4; },
+    TyEnum { n: en, is_ref } => {
+      kt = el::def(e, en).known_type;
+      if kt != el::NO_TYPE {
+        op = if is_ref { "OpSizeStruct" } else { "OpSizeScalar" };
+        n = e.b.types[kt]!.size;
+      }
+    },
+    _ => {}
+  }
+  if op == "" {
+    return null;
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, wide);
+  }
+  if n < 0 {
+    el::refuse(e, "a `size` of a value this port sizes no element of");
+    return ex(ir::NdNull, wide);
+  }
+  ex(el_ir::cl(e, op, list + [ir::NdInt { n: n }]), wide)
+}
+
+// `Parser::parse_reserve`, both spellings (`reserve(v, n)`, `v.reserve(n)`): room for `n`
+// elements, `OpReserveVector(v, n, <element size>)`, or a hash's buckets, `OpReserveHash(h, n,
+// <its type>)` — nothing on the first pass.  A malformed call is refused by name (Rust reports
+// it).
+pub fn reserve_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  coll = match types[0] ?? ir::TyVoid { TyRefVar { inner } => inner, _ => types[0] ?? ir::TyVoid };
+  // A hash reserves buckets for its schema type.
+  if coll is TyHash && len(list) == 2 && el_types::base(types[1] ?? ir::TyVoid) is TyInteger {
+    return ex(el_ir::cl(e, "OpReserveHash", [list[0]!, list[1]!, ir::NdInt { n: el_schema::keyed_type(e, coll) }]), ir::TyVoid);
+  }
+  stride = match coll { TyVector { inner } => elem_stride(e, inner), _ => -1 };
+  if len(list) != 2 || !(el_types::base(types[1] ?? ir::TyVoid) is TyInteger) || stride < 0 {
+    refuse_known(e, coll, "a `reserve` of this collection or with these arguments: {type_kind(coll)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(el_ir::cl(e, "OpReserveVector", [list[0]!, list[1]!, ir::NdInt { n: stride }]), ir::TyVoid)
+}
+
+// One statement's expression, and its store `else` arm when it has one (`parse_store_else`).
+pub fn statement(e: el::El, vars: el_vars::Vars, se: integer, orelse: integer?) -> Ex {
+  x = el_ex_assign::expression(e, vars, se);
+  if orelse == null {
+    return x;
+  }
+  ex(store_else(e, vars, x.code, orelse!), x.tp)
+}
+
+// `Parser::parse_store_else`, `place = value else { B }` (`@FR-H-Write-Else`): B runs exactly when
+// the write did not take.  The arm is read first, then the statement's steps are rewritten: a
+// write whose PLACE may be missing (an element past the end, a locked store) goes through
+// `_store_target_N`, taken over by the reported null where the place is absent or locked; a
+// narrow integer write whose VALUE may not fit is computed into `_store_value_N`, its range
+// guard reading that.  A statement that writes no place is refused by name (Rust reports it).
+pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: integer) -> ir::Node {
+  arm = el_ex_assign::parse_block(e, vars, orelse, "else", ir::TyVoid).code;
+  steps = match code { NdInsert { items } => items, _ => [code] };
+  // `store_shape`: the one place every write names, and the narrow write's range.
+  target = ir::NdNull;
+  has_target = false;
+  write_steps: vector<integer> = [];
+  write_args: vector<integer> = [];
+  for st in steps {
+    match el_ir::unspan(st) {
+      NdCall { def_nr, args } => {
+        arg = write_target_arg(el::def(e, def_nr).name);
+        if arg >= 0 && arg < len(args) {
+          t = el_ir::unspan(args[arg]!);
+          if has_target && t != target {
+            el::refuse(e, "a store `else` over writes to two places");
+            return code;
+          }
+          target = t;
+          has_target = true;
+          write_steps += [st#index];
+          write_args += [arg];
+        }
+      },
+      _ => {}
+    }
+  }
+  narrow_at = -1;
+  lo = 0;
+  hi = 0;
+  for st in steps {
+    r = range_default_bounds(st);
+    if narrow_at < 0 && r != null {
+      narrow_at = st#index;
+      lo = r!.lo;
+      hi = r!.hi;
+    }
+  }
+  if !has_target {
+    last = ir::NdNull;
+    for st in steps {
+      if !el_ir::is_line(st) {
+        last = el_ir::unspan(st);
+      }
+    }
+    if !(last is NdSet) && !(last is NdTuplePut) {
+      if !e.first_pass {
+        el::refuse(e, "a store `else` after a statement that writes no place");
+      }
+      return code;
+    }
+  }
+  if e.first_pass {
+    return code;
+  }
+  // The groups put in front of a step: (step, order, statements); the target's first.
+  pre_at: vector<integer> = [];
+  pre_ops: vector<vector<ir::Node>> = [];
+  absent = ir::NdNull;
+  if has_target {
+    tp = match target { NdVar { n } => el_vars::tp(vars, n), NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid, _ => ir::TyVoid };
+    wt = el_vars::create_unique(vars, "store_target", tp);
+    el_vars::set_defined(vars, wt);
+    vars.vars[wt].skip_free = true;
+    src = borrow_source(target);
+    if src >= 0 {
+      el_vars::set_var_type(vars, wt, el_types::with_deps(tp, [src]));
+    }
+    for w in write_steps {
+      steps[w] = with_arg(steps[w]!, write_args[w#index]!, ir::NdVar { n: wt });
+    }
+    present = el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: wt }]);
+    take_over = el_ir::v_if(el_ir::cl(e, "OpNot", [present]), ir::NdBoolean { b: true }, el_ir::cl(e, "n_get_store_lock", [ir::NdVar { n: wt }]));
+    rd = match el_types::base(tp) { TyReference { n } => n, TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+    bound = if target is NdVar && rd >= 0 { el_ir::cl(e, "OpGetField", [target, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, rd).known_type }]) } else { target };
+    pre_at += [write_steps[0]!];
+    pre_ops += [[el_ir::v_set(wt, bound), el_ir::v_if(take_over, el_ir::v_set(wt, el_ir::cl(e, "OpNullReported", [])), ir::NdNull)]];
+    absent = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: wt }])]);
+  }
+  misfit = ir::NdNull;
+  if narrow_at >= 0 {
+    fv = el_vars::create_unique(vars, "store_value", ir::TyOptional { inner: ir::TyInteger { spec: wide_spec() } });
+    el_vars::set_defined(vars, fv);
+    tk = take_range_operand(steps[narrow_at]!, ir::NdVar { n: fv });
+    if tk.taken != null {
+      steps[narrow_at] = tk.node;
+      pre_at += [narrow_at];
+      pre_ops += [[el_ir::v_set(fv, tk.taken!)]];
+      below = el_ir::cl(e, "OpLtInt", [ir::NdVar { n: fv }, ir::NdLong { n: lo }]);
+      above = el_ir::cl(e, "OpLtInt", [ir::NdLong { n: hi }, ir::NdVar { n: fv }]);
+      missing = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: fv }])]);
+      misfit = el_ir::v_if(missing, ir::NdBoolean { b: true }, el_ir::v_if(below, ir::NdBoolean { b: true }, above));
+    }
+  }
+  // Each group goes in front of its step, the target's before the value's at one step.
+  out: vector<ir::Node> = [];
+  for st in steps {
+    for g in pre_at {
+      if g == st#index {
+        out += pre_ops[g#index] ?? [];
+      }
+    }
+    out += [st];
+  }
+  failed = if absent is NdNull { misfit } else if misfit is NdNull { absent } else { el_ir::v_if(absent, ir::NdBoolean { b: true }, misfit) };
+  if !(failed is NdNull) {
+    out += [el_ir::v_if(failed, arm, ir::NdNull)];
+  }
+  ir::NdInsert { items: out }
+}
+
+// `write_target_arg`: which argument of a write op names the place it writes, or -1.
+pub fn write_target_arg(name: text) -> integer {
+  if name == "OpCopyRecord" {
+    return 1;
+  }
+  if starts_with(name, "OpSet") && name != "OpSetStackRef" && name != "OpSetStackFnRef" && name != "OpSetKeyed" {
+    return 0;
+  }
+  -1
+}
+
+// `store_borrow_source`: the variable a place is read out of, or -1.
+pub fn borrow_source(n: ir::Node) -> integer {
+  at = el_ir::unspan(n);
+  while !(at is NdVar) {
+    match at {
+      NdCall { args } => {
+        if len(args) == 0 {
+          return -1;
+        }
+        at = el_ir::unspan(args[0]!);
+      },
+      _ => { return -1; }
+    }
+  }
+  match at { NdVar { n: v } => v, _ => -1 }
+}
+
+// A step with its write op's argument `i` replaced.
+pub fn with_arg(st: ir::Node, i: integer, by: ir::Node) -> ir::Node {
+  match st {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_arg(inner, i, by) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == i { by } else { a } }] },
+    _ => st
+  }
+}
+
+pub struct GuardRange {
+  pub lo: integer,
+  pub hi: integer
+}
+
+// `find_range_default`: the bounds of the first range guard (`OpRangeDefault(v, lo, hi, d)`) in
+// a step, or null.
+pub fn range_default_bounds(n: ir::Node) -> GuardRange? {
+  match n {
+    NdSpan { inner } => range_default_bounds(inner),
+    NdSet { inner } => range_default_bounds(inner),
+    NdCall { args } => {
+      if len(args) == 4 {
+        lo = match args[1]! { NdLong { n: l } => l, _ => null };
+        hi = match args[2]! { NdLong { n: h } => h, _ => null };
+        if lo != null && hi != null {
+          return GuardRange { lo: lo!, hi: hi! };
+        }
+      }
+      for a in args {
+        r = range_default_bounds(a);
+        if r != null {
+          return r;
+        }
+      }
+      null
+    },
+    _ => null
+  }
+}
+
+// A step with its first range guard's operand replaced, and that operand.
+pub struct Taken {
+  pub node: ir::Node,
+  pub taken: ir::Node?
+}
+
+// `take_range_default_operand`.
+pub fn take_range_operand(n: ir::Node, by: ir::Node) -> Taken {
+  match n {
+    NdSpan { pos, inner } => {
+      t = take_range_operand(inner, by);
+      Taken { node: ir::NdSpan { pos: pos, inner: t.node }, taken: t.taken }
+    },
+    NdSet { var, inner } => {
+      t = take_range_operand(inner, by);
+      Taken { node: ir::NdSet { var: var, inner: t.node }, taken: t.taken }
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 4 && args[1]! is NdLong && args[2]! is NdLong {
+        return Taken { node: ir::NdCall { def_nr: def_nr, args: [by] + args[1..] }, taken: args[0]! };
+      }
+      for a in args {
+        t = take_range_operand(a, by);
+        if t.taken != null {
+          return Taken { node: ir::NdCall { def_nr: def_nr, args: [for b in args { if b#index == a#index { t.node } else { b } }] }, taken: t.taken };
+        }
+      }
+      Taken { node: n, taken: null }
+    },
+    _ => Taken { node: n, taken: null }
+  }
+}
+
+// `Data::routed_types`' receiver (`F-Recv`'s argument clause): where any argument is nullable the
+// receiver is asked as nullable too, so a nullable argument reaches the `τ?` method.
+pub fn routed_receiver(first: ir::TypeT, types: vector<ir::TypeT>) -> ir::TypeT {
+  if first is TyOptional || first is TyNull || el_types::is_unknown(first) {
+    return first;
+  }
+  for t in types {
+    if t is TyOptional {
+      return ir::TyOptional { inner: first };
+    }
+  }
+  first
+}
+
+pub fn in_domain(e: el::El, name: text, args: vector<ir::Node>) -> boolean {
+  a0 = if len(args) > 0 { const_float(e, args[0]) } else { null };
+  a1 = if len(args) > 1 { const_float(e, args[1]) } else { null };
+  const_ok = if name == "sqrt" {
+    a0 != null && a0 >= 0.0
+  } else if name == "asin" || name == "acos" {
+    a0 != null && a0 >= -1.0 && a0 <= 1.0
+  } else if name == "ln" || name == "log2" || name == "log10" {
+    a0 != null && a0 > 0.0
+  } else if name == "log" {
+    a0 != null && a0 > 0.0 && a1 != null && a1 > 0.0 && a1 != 1.0
+  } else if name == "pow" {
+    (a0 != null && a0 >= 0.0) || (a1 != null && a1 == floor(a1))
+  } else {
+    false
+  };
+  if const_ok {
+    return true;
+  }
+  sg = if len(args) > 0 { domain_sign(e, args[0]) } else { SIGN_UNKNOWN };
+  if name == "sqrt" || name == "pow" {
+    return sg != SIGN_UNKNOWN;
+  }
+  if name == "ln" || name == "log2" || name == "log10" {
+    return sg == SIGN_POS;
+  }
+  if name == "log" {
+    return sg == SIGN_POS && a1 != null && a1 > 0.0 && a1 != 1.0;
+  }
+  if name == "asin" || name == "acos" {
+    if len(args) == 0 {
+      return false;
+    }
+    b = pm_bounds(e, args[0]);
+    return b.lo >= -1.0 && b.hi <= 1.0;
+  }
+  false
+}
+
+pub fn null_transparent(e: el::El, vars: el_vars::Vars, call: ir::Node, types: vector<ir::TypeT>, ret: ir::TypeT, spanned: ir::Node) -> Ex {
+  opt = ir::TyOptional { inner: ret };
+  sets: vector<ir::Node> = [];
+  checks: vector<integer> = [];
+  d = 0;
+  args: vector<ir::Node> = [];
+  match call {
+    NdCall { def_nr, args: a } => { d = def_nr; args = a; },
+    _ => { return ex(spanned, opt); }
+  }
+  for t in types {
+    if t is TyOptional && t#index < len(args) {
+      tmp = el_vars::create_unique(vars, "_ntp", t);
+      sets += [el_ir::v_set(tmp, args[t#index])];
+      args[t#index] = ir::NdVar { n: tmp };
+      checks += [tmp];
+    }
+  }
+  inner = ir::NdNull;
+  match spanned {
+    NdSpan { pos } => { inner = ir::NdSpan { pos: pos, inner: ir::NdCall { def_nr: d, args: args } }; },
+    _ => { inner = ir::NdCall { def_nr: d, args: args }; }
+  }
+  for held in rev(checks) {
+    test = el_convert::convert(e, vars, ir::NdVar { n: held }, el_types::base(el_vars::tp(vars, held)), ir::TyBoolean, false);
+    nl = el_convert::null_of(e, ret);
+    if test == null || nl == null {
+      el::refuse(e, "a null-transparent call of this type: {type_kind(ret)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    inner = el_ir::v_if(test!, inner, nl!);
+  }
+  sets += [inner];
+  ex(el_ir::v_block(sets, opt, "null_transparent"), opt)
+}
+
+// `vector_hint` (#432): a bare non-empty `[…]` argument is built at its PARAMETER's element
+// type, so a `vector<u8>` parameter gets a byte-stride literal.  The arguments here are
+// elaborated before the callee is known, so a literal whose parameter's element is one a
+// literal does not infer — a narrow integer, a `single` — is refused by name, unless the literal
+// was already built at that element type under the call's hint (`built`, per argument).
+// `first` is the parameter the first argument meets (1 past a method's receiver).
+pub fn hinted_literal(e: el::El, d: integer, args: vector<integer>, first: integer, built: vector<ir::TypeT>) -> boolean {
+  for a in args {
+    match e.p.nodes[a] {
+      SArg { e: ae } => {
+        match e.p.nodes[ae ?? 0] {
+          SVecLit { items } => {
+            at = el::def(e, d).attributes[a#index + first];
+            if len(items) > 0 && at != null {
+              pt = at!.typedef[0] ?? ir::TyVoid;
+              if keyed_kind(el_types::base(pt)) {
+                el::refuse(e, "a vector literal argument built as its parameter's keyed collection");
+                return true;
+              }
+              match pt {
+                TyVector { inner } => {
+                  hinted = built[a#index] ?? ir::TyUnknown { n: 0 };
+                  same = !el_types::is_unknown(hinted) && el_types::is_equal(e, hinted, inner);
+                  if !same && (inner is TySingle || (inner is TyInteger && el_convert::narrowing_int(ir::TyInteger { spec: i32_spec() }, inner))) {
+                    el::refuse(e, "a vector literal argument built at its parameter's element type");
+                    return true;
+                  }
+                },
+                _ => {}
+              }
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// `Parser::parse_method` for `x.name(args)`: the method the receiver's type selects
+// (`find_fn`'s rungs over the receiver), called with the receiver first, as the same call
+// spelled `name(x, args)` is; wrapped on the second pass in the `.`'s position (`wrap_chain`).
+// port: none — `parse_var` reads the name and then the `.parse` after it; here the `.parse(…)` is
+// the node and the name its receiver.  The definition a bare type name `T` in `T.parse(…)`
+// names: a struct or a record variant (not a plain enum's value), or a struct enum; -1 for
+// anything else, a local of that name included.
+pub fn parse_target(e: el::El, vars: el_vars::Vars, re: integer) -> integer {
+  match e.p.nodes[re] {
+    SName { name: tn, member: tm } => {
+      if tm != "" || el_vars::var(vars, tn) >= 0 {
+        return -1;
+      }
+      d = el::def_nr(e, tn);
+      if d < 0 {
+        return -1;
+      }
+      df = el::def(e, d);
+      plain_enum = match df.returned[0] ?? ir::TyVoid { TyEnum { is_ref } => !is_ref, _ => false };
+      if (df.def_type == el::DT_STRUCT || df.def_type == el::DT_ENUM_VALUE) && !plain_enum {
+        return d;
+      }
+      struct_enum = match df.returned[0] ?? ir::TyVoid { TyEnum { is_ref } => is_ref, _ => false };
+      if df.def_type == el::DT_ENUM && struct_enum {
+        return d;
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+// port: objects.rs parse_type_parse
+// `T.parse(x)`: a `JsonValue` argument walks into a `T` (`n_struct_from_jsonvalue`), anything
+// else is read as text by the lenient parse (`OpCastVectorFromText`, plain JSON or loft's bare
+// keys).  Answers a `T` in its own spelling: a struct enum as its enum.  The refusal of a type
+// the parse can leave a field of unfilled (`parse_unfillable`, an error) is not ported: the Rust
+// front end answers no image for such a program.
+pub fn type_parse(e: el::El, vars: el_vars::Vars, d: integer, args: vector<integer>) -> Ex {
+  arg_n: integer? = null;
+  if len(args) == 1 {
+    arg_n = match e.p.nodes[args[0]!] { SArg { name: an, e: ae } => if an == "" { ae } else { null }, _ => null };
+  }
+  if arg_n == null {
+    el::refuse(e, "a `T.parse` with other than one plain argument");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  arg = el_ex_assign::expression(e, vars, arg_n!);
+  rt = if el::def(e, d).def_type == el::DT_ENUM { ir::TyEnum { n: d, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  kt = el::def(e, d).known_type;
+  is_json = match arg.tp {
+    TyReference { n } => el::def(e, n).name == "JsonValue",
+    TyEnum { n, is_ref } => is_ref && el::def(e, n).name == "JsonValue",
+    _ => false
+  };
+  if is_json {
+    return ex(ir::NdCall { def_nr: el::def_nr(e, "n_struct_from_jsonvalue"), args: [arg.code, ir::NdInt { n: kt }] }, rt);
+  }
+  text_code = arg.code;
+  if !(arg.tp is TyText) {
+    c = el_convert::convert(e, vars, arg.code, arg.tp, ir::TyText { dep: [] }, false);
+    if c == null {
+      el::refuse(e, "a `T.parse` argument that does not convert to text: {type_kind(arg.tp)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    text_code = c!;
+  }
+  ex(el_ir::cl(e, "OpCastVectorFromText", [text_code, ir::NdInt { n: kt }]), rt)
+}
+
+pub fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: text, args: vector<integer>) -> Ex {
+  x = el_ex_assign::expression(e, vars, re);
+  list: vector<ir::Node> = [x.code];
+  types: vector<ir::TypeT> = [x.tp];
+  // The method call's `hint_nr`: the definition whose parameters type the arguments before the
+  // call is selected — falling back to the receiver type's own slot.
+  hint_nr = -1;
+  built: vector<ir::TypeT> = [];
+  if !el_types::is_unknown(x.tp) {
+    tn = type_def_nr(e, match x.tp { TyRefVar { inner } => inner, _ => x.tp });
+    slot = -1;
+    if tn >= 0 {
+      for at2 in el::def(e, tn).attributes {
+        if at2.name == name {
+          slot = match el_types::base(at2.typedef[0] ?? ir::TyVoid) { TyRoutine { n } => n, _ => -1 };
+        }
+      }
+    }
+    if slot >= 0 {
+      hint_nr = el_dispatch::method_hint(e, name, x.tp, slot);
+    }
+  }
+  for a in args {
+    match e.p.nodes[a] {
+      SArg { at: aat, name: an, e: ae } => {
+        if an != "" || ae == null {
+          el::refuse(e, "a named argument");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        if el_trace::on() {
+          el_trace::state(e, vars, "arg", aat, ae!);
+        }
+        hint_lambda(e, vars, hint_nr, len(list), ae!);
+        eh = argument_element_hint(e, hint_nr, len(list), ae!);
+        y = hinted_argument(e, vars, ae!, eh);
+        built += [eh];
+        vars.lambda_node = -1;
+        list += [y.code];
+        types += [y.tp];
+      },
+      _ => {}
+    }
+  }
+  if el_types::is_unknown(x.tp) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if name == "remove" && len(list) == 2 && el_types::base(x.tp) is TyVector {
+    return vector_remove(e, at, x, ex(list[1], types[1]));
+  }
+  if name == "reserve" {
+    return reserve_call(e, list, types);
+  }
+  if name == "sort" && sorts_itself(types) {
+    return sort_call(e, list, types);
+  }
+  // A method name that is an overload set reaches the member its argument types select, the
+  // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
+  mset = el_dispatch::own_set(e, name);
+  d = if mset >= 0 { el_dispatch::select(e, mset, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, routed_receiver(x.tp, types)) };
+  if d < 0 && mset >= 0 {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if d < 0 {
+    if !e.first_pass {
+      el::refuse(e, "a method call: {name}");
+    }
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if hinted_literal(e, d, args, 1, built) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  r = el_ex_call::call_args(e, vars, d, list, types);
+  if r == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  c = r!;
+  // `@FR-N-Chain`: a method on a receiver that may be absent may answer absent too — unless a
+  // guard proved the receiver present here (`(N-Guard)`).
+  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(x.code)) };
+  if (x.tp is TyOptional || is_nullable_wrapper(e, x.tp)) && !proven && chain_lifts(e, c.tp) {
+    c.tp = ir::TyOptional { inner: c.tp };
+  }
+  if e.first_pass {
+    return c;
+  }
+  ex(ir::NdSpan { pos: el::pos_at(e, at), inner: c.code }, c.tp)
+}
+
+// Whether `wrap_projection_nullable` makes `t` a `t?`: a type with a null of its own
+// (`has_null`: no function, no tuple), not already absent, known, and not a tagged slot.
+pub fn chain_lifts(e: el::El, t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner: _ } => false,
+    TyNever => false,
+    TyNull => false,
+    TyUnknown { n: _ } => false,
+    TyRewritten { inner: _ } => false,
+    _ => !(el_types::base(t) is TyFunction) && !(el_types::base(t) is TyTuple) && !is_nullable_wrapper(e, t)
+  }
+}
+
+// `sort_is_special` / `sorts_itself`: one vector argument whose (non-nullable) elements the
+// runtime compares itself — an integer of any width, a float, a single, a text.  Any other
+// element is the standard library's `sort<T: Ordered>` to sort, through its body.
+pub fn sorts_itself(types: vector<ir::TypeT>) -> boolean {
+  if len(types) != 1 {
+    return false;
+  }
+  match el_types::base(types[0] ?? ir::TyVoid) {
+    TyVector { inner } => inner is TyInteger || inner is TyFloat || inner is TySingle || inner is TyText,
+    _ => false
+  }
+}
+
+// `parse_sort`: `OpSortVector(v, elem)`, sorting in place by the elements' store type; nothing on
+// the first pass.
+pub fn sort_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  inner = match el_types::base(types[0] ?? ir::TyVoid) { TyVector { inner: vi } => vi, _ => ir::TyUnknown { n: 0 } };
+  et = el_schema::content_type(e, inner);
+  if et < 0 {
+    el::refuse(e, "a `sort` of a vector of this element type: {type_kind(inner)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(el_ir::cl(e, "OpSortVector", [list[0], ir::NdInt { n: et }]), ir::TyVoid)
+}
+
+// `vector_operations`' `remove`: `v.remove(i)` is `OpRemoveVector(v, elem, i)`, answering whether
+// `i` named an element — `elem` the store type the vector's elements are laid out as.  An element
+// holding a generator's frame (released first, `frame_remove`) is refused by name.
+pub fn vector_remove(e: el::El, at: integer, x: Ex, i: Ex) -> Ex {
+  inner = match el_types::base(x.tp) { TyVector { inner: vi } => vi, _ => ir::TyUnknown { n: 0 } };
+  if el_types::holds_generator(e, inner, []) {
+    el::refuse(e, "a `remove` of an element holding a generator");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if !el_types::is_unknown(i.tp) && !(el_types::base(i.tp) is TyInteger) {
+    el::refuse(e, "a `remove` whose index is not an integer: {type_kind(i.tp)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyBoolean);
+  }
+  et = el_schema::content_type(e, inner);
+  if et < 0 {
+    el::refuse(e, "a `remove` from a vector of this element type: {type_kind(inner)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ex(ir::NdSpan { pos: el::pos_at(e, at), inner: el_ir::cl(e, "OpRemoveVector", [x.code, ir::NdInt { n: et }, i.code]) }, ir::TyBoolean)
+}
+
+// `Parser::parse_intrinsic_call` and `parse_call_diagnostic`, for `assert` and `panic`: the
+// arguments read in order; `assert` tests its condition and reports the condition's own text
+// where no message is given, a built message only on the failing branch; `panic` reports its
+// message.  Both carry the file and the line of the call, and are wrapped in its position on
+// the second pass.  `assert` builds nothing on the first.
+pub fn intrinsic(e: el::El, vars: el_vars::Vars, at: integer, kind: text, args: vector<integer>) -> Ex {
+  if kind != "assert" && kind != "panic" {
+    el::refuse(e, "the intrinsic `{kind}`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  call_pos = el::pos_at(e, after_paren(e, at));
+  list: vector<ir::Node> = [];
+  types: vector<ir::TypeT> = [];
+  for a in args {
+    match e.p.nodes[a] {
+      SArg { name: an, e: ae } => {
+        if an != "" || ae == null {
+          el::refuse(e, "a named argument");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        x = el_ex_assign::expression(e, vars, ae!);
+        list += [x.code];
+        types += [x.tp];
+      },
+      _ => {}
+    }
+  }
+  file_arg = ir::NdText { s: call_pos.file };
+  line_arg = ir::NdInt { n: call_pos.line };
+  code = ir::NdNull;
+  if kind == "panic" {
+    message = if len(list) == 0 { ir::NdText { s: "panic" } } else { list[0] };
+    code = el_ir::cl(e, "n_panic", [message, file_arg, line_arg]);
+  } else {
+    if len(list) > 0 && el_types::is_unknown(types[0]) {
+      // Already refused where its type was lost.
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if len(list) == 0 || !(el_types::base(types[0]) is TyBoolean) {
+      el::refuse(e, "an assert whose condition is not a boolean");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if len(list) >= 4 {
+      file_arg = list[2];
+      line_arg = list[3];
+    }
+    test = list[0];
+    message = if len(list) > 1 { list[1] } else { ir::NdText { s: assert_text(call_pos) } };
+    if message is NdText {
+      code = el_ir::cl(e, "n_assert", [test, message, file_arg, line_arg]);
+    } else {
+      pass = el_ir::cl(e, "n_assert", [ir::NdBoolean { b: true }, ir::NdText { s: assert_text(call_pos) }, file_arg, line_arg]);
+      fail = el_ir::cl(e, "n_assert", [ir::NdBoolean { b: false }, message, file_arg, line_arg]);
+      return ex(el_ir::v_block([el_ir::v_if(test, pass, fail)], ir::TyVoid, "assert"), ir::TyVoid);
+    }
+  }
+  if !e.first_pass {
+    code = ir::NdSpan { pos: call_pos, inner: code };
+  }
+  ex(code, ir::TyVoid)
+}
+
+// `Parser::extract_assert_expr`: the condition's text, read back from the source line of the
+// call — what follows `assert(` up to its matching `)`, a string's parentheses skipped, cut at
+// the first top-level comma.  Scanned by character: every character it looks for is ASCII, so
+// the byte scan of the Rust finds the same places.
+pub fn assert_text(pos: ir::Position) -> text {
+  src = file(pos.file).content() ?? "";
+  line = "";
+  for l in src.split('\n') {
+    if l#index == pos.line - 1 {
+      line = if l.ends_with("\r") { l[..-1] } else { l };
+    }
+  }
+  start = line.find("assert(");
+  if start == null {
+    return "assert failure";
+  }
+  rest = line[start! + 7..];
+  cs: vector<character> = [for c in rest { c }];
+  depth = 1;
+  end = 0;
+  // `ch`, not `c`: a later `c` lends the comprehension's `c` its `character?` (loft#2330).
+  while end < len(cs) && depth > 0 {
+    ch = cs[end];
+    if ch == '(' {
+      depth += 1;
+    } else if ch == ')' {
+      depth -= 1;
+    } else if ch == '"' {
+      end += 1;
+      while end < len(cs) && cs[end] != '"' {
+        if cs[end] == '\\' {
+          end += 1;
+        }
+        end += 1;
+      }
+    }
+    if depth > 0 {
+      end += 1;
+    }
+  }
+  expr = "";
+  for c in cs {
+    if c#index < end {
+      expr += "{c}";
+    }
+  }
+  expr = expr.trim();
+  comma_depth = 0;
+  in_string = false;
+  escaped = false;
+  cut = "";
+  for c in expr {
+    if in_string {
+      if escaped {
+        escaped = false;
+      } else if c == '\\' {
+        escaped = true;
+      } else if c == '"' {
+        in_string = false;
+      }
+    } else if c == '"' {
+      in_string = true;
+    } else if c == '(' || c == '[' || c == '{' {
+      comma_depth += 1;
+    } else if c == ')' || c == ']' || c == '}' {
+      comma_depth -= 1;
+    } else if c == ',' && comma_depth == 0 {
+      return cut.trim();
+    }
+    cut += "{c}";
+  }
+  expr
+}
+
+// The token after a call's `(`: the parser's peek when `parse_call` starts.
+pub fn after_paren(e: el::El, from: integer) -> integer {
+  i = from;
+  while i < len(e.p.src) {
+    if e.p.src[i] is LParen {
+      return i + 1;
+    }
+    i += 1;
+  }
+  from
+}
+
+// `Data::candidates`, the rungs a plain receiver reaches: none for an untyped first argument,
+// else the method on the receiver's type under its own nullability spelling and then the
+// other, then the free `n_<name>`.  A variant's type is its enum's; a bound holder answers its
+// one stub.  A generic instance, a variant's own method and the operator fallback are refused
+// by name.
+// `Data::source_nr`: `name` of `source`, or for -1 (a bare name) the current source's or the
+// standard library's.
+pub fn look(e: el::El, source: integer, name: text) -> integer {
+  if source < 0 { el::def_nr(e, name) } else { el::source_nr(e, source, name) }
+}
+
+pub fn find_fn(e: el::El, name: text, receiver: ir::TypeT, source: integer = -1) -> integer {
+  // A standard-library operator called by its name (`OpAbsInt(x)`) is registered under it
+  // (`Data::add_op`).
+  if len(name) >= 3 && starts_with(name, "Op") && "{name[2]}" >= "A" && "{name[2]}" <= "Z" {
+    op = look(e, source, name);
+    if op >= 0 {
+      return op;
+    }
+  }
+  free = look(e, source, "n_{name}");
+  // A method dispatches on the REFERENT of a `&τ`, not on the link (`Data::candidates`, loft#824).
+  first = match receiver { TyRefVar { inner } => inner, _ => receiver };
+  if el_types::is_unknown(first) || first is TyNull {
+    return free;
+  }
+  // A generator's handle has no definition to dispatch on: only `next` and `exhausted` take it
+  // (answered by the caller), so any other call of it is named.
+  if el_types::base(first) is TyIterator {
+    if free < 0 {
+      el::refuse(e, "a call of `{name}` on a generator's handle");
+    }
+    return free;
+  }
+  tn = type_def_nr(e, first);
+  if tn < 0 {
+    return free;
+  }
+  td = el::def(e, tn);
+  // port: data.rs candidates — a variant dispatches on its enum, unless it declares the method
+  // under its own name; then the lookup below stays on the variant.
+  declares_own = false;
+  if td.def_type == el::DT_ENUM_VALUE {
+    for sp in [td.name, "{td.name}?"] {
+      if look(e, source, "t_{len(sp)}{sp}_{name}") >= 0 {
+        declares_own = true;
+      }
+    }
+  }
+  if td.def_type == el::DT_ENUM_VALUE && !declares_own {
+    if td.parent >= 0 && el::def(e, td.parent).def_type == el::DT_ENUM {
+      tn = td.parent;
+      td = el::def(e, tn);
+    }
+  }
+  if td.instance_of >= 0 {
+    el::refuse(e, "a method receiver that is a generic instance");
+    return -1;
+  }
+  // A bound HOLDER's stubs are keyed per signature, and a method call offers no arity: every
+  // arity is probed, and one stub is the answer (two are ambiguous, none the free function).
+  if len(td.bounds) > 0 && el_types::type_var(e, ir::TyReference { n: tn, dep: [] }) >= 0 {
+    stubs: vector<integer> = [];
+    for a in 1..10 {
+      st = look(e, source, bound_stub_name(td.name, name, a));
+      if st >= 0 {
+        stubs += [st];
+      }
+    }
+    if len(stubs) == 1 {
+      return stubs[0] ?? -1;
+    }
+    if len(stubs) > 1 {
+      el::refuse(e, "a method a bound declares at two arities");
+      return -1;
+    }
+    return free;
+  }
+  base = td.name;
+  optional = "{base}?";
+  spellings = if first is TyOptional { [optional, base] } else { [base, optional] };
+  for sp in spellings {
+    m = look(e, source, "t_{len(sp)}{sp}_{name}");
+    if m >= 0 {
+      if receives(e, m, tn) {
+        return m;
+      }
+      el::refuse(e, "a method found in a foreign source");
+      return -1;
+    }
+  }
+  if free < 0 && len(el::possible(e, name)) > 0 {
+    el::refuse(e, "a call that falls back to a builtin operator");
+  }
+  free
+}
+
+// `Parser::parse_call`'s builtins whose answer the receiver's TYPE decides, met where no
+// definition of the name takes the argument: `len(ix)` counts an `index`'s entries
+// (`index_len`, `OpLengthIndex`), and `size(x)` is a width known at compile time — a record's
+// packed size (`OpSizeStruct`), or a vector's or sorted's buffer as its element count times the
+// element's stride (`OpSizeVector`, @PLN110).  The argument is still evaluated; the width rides
+// as a second operand.  Null for any other call.
+pub fn by_receiver_type(e: el::El, name: text, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
+  wide = ir::TyInteger { spec: wide_spec() };
+  if name == "len" && el_types::base(t) is TyIndex {
+    if t is TyOptional {
+      el::refuse(e, "a `len` of a nullable index");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(el_ir::cl(e, "OpLengthIndex", list), wide);
+  }
+  if name != "size" {
+    return null;
+  }
+  match t {
+    TyReference { n: d } => {
+      df = el::def(e, d);
+      if df.def_type != el::DT_STRUCT || df.known_type == el_schema::NO_TYPE {
+        return null;
+      }
+      return ex(el_ir::cl(e, "OpSizeStruct", list + [ir::NdInt { n: e.b.types[df.known_type]!.size }]), wide);
+    },
+    TyVector { inner } => {
+      w = elem_stride(e, inner);
+      return if w < 0 { null } else { ex(el_ir::cl(e, "OpSizeVector", list + [ir::NdInt { n: w }]), wide) };
+    },
+    TySorted { n: d } => {
+      w = elem_stride(e, ir::TyReference { n: d, dep: [] });
+      return if w < 0 { null } else { ex(el_ir::cl(e, "OpSizeVector", list + [ir::NdInt { n: w }]), wide) };
+    },
+    _ => {}
+  }
+  null
+}
+
+// `Parser::vector_elem_iter_stride`: the bytes one element takes in a vector's buffer — a linked
+// record's 4-byte pointer, a narrow integer's width, else the element type's size.  -1 for an
+// element this port does not size yet.
+pub fn elem_stride(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n: d } => {
+      k = el::def(e, d).known_type;
+      if el::def(e, d).def_type != el::DT_STRUCT || k == el_schema::NO_TYPE {
+        return -1;
+      }
+      kt = e.b.types[k]!;
+      if kt.linked { 4 } else { kt.size }
+    },
+    TyInteger { spec } => {
+      w = byte_width(spec, false);
+      if w == 1 || w == 2 || w == 4 { w } else { 8 }
+    },
+    TyFloat => 8,
+    // Any other scalar: its stored size (`vector_element_type`'s layout).
+    TyBoolean => scalar_stored_size(e, t),
+    TyCharacter => scalar_stored_size(e, t),
+    TySingle => scalar_stored_size(e, t),
+    TyText { dep: _ } => scalar_stored_size(e, t),
+    TyEnum { n: _, is_ref } => if is_ref { -1 } else { scalar_stored_size(e, t) },
+    _ => -1
+  }
+}
+
+pub fn scalar_stored_size(e: el::El, t: ir::TypeT) -> integer {
+  d = el_ex_assign::elm_def(e, t);
+  kt = if d < 0 { el::NO_TYPE } else { el::def(e, d).known_type };
+  if kt == el::NO_TYPE { -1 } else { e.b.types[kt]!.size }
+}
+
+// Does every stub call in `n` re-resolve at this binding?
+pub fn stubs_resolve(e: el::El, n: ir::Node, h: integer, bound: ir::TypeT) -> boolean {
+  match n {
+    NdCall { def_nr } => {
+      if stub_call(e, def_nr, h) && re_resolve_stub(e, def_nr, h, bound) < 0 {
+        return false;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if !stubs_resolve(e, c, h, bound) {
+      return false;
+    }
+  }
+  true
+}
+
+pub struct Binding { pub vars: vector<integer>, pub types: vector<ir::TypeT>, pub ok: boolean }
+
+// Each type variable of `p` bound to the part of `a` it stands for, in the order the variables
+// first appear; a second meeting must agree, and a shape the two do not share fails the bind.
+pub fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
+  tv = el_types::type_var(e, el_types::base(p));
+  if tv >= 0 {
+    picked = if p is TyOptional { el_types::base(a) } else { a };
+    // `resolve_type_var`: the argument's borrows are the caller's, not part of the shape — a
+    // record, a vector, an enum and a text bind without them.
+    at = if picked is TyReference || picked is TyVector || picked is TyEnum || picked is TyText { el_types::with_deps(picked, []) } else { picked };
+    for v in b.vars {
+      if v == tv {
+        if !el_types::is_equal(e, b.types[v#index] ?? ir::TyVoid, at) {
+          b.ok = false;
+        }
+        return;
+      }
+    }
+    b.vars += [tv];
+    b.types += [at];
+    return;
+  }
+  // The parts are the parameters' own, so the recursion is a jump.
+  match p {
+    TyVector { inner: pi } => {
+      match a {
+        TyVector { inner: ai } => bind_type_vars(e, pi, ai, b),
+        _ => { b.ok = false; }
+      }
+    },
+    _ => {}
+  }
+}
+
+// The instance of generic `d` the argument types bind (`Data::mangle_instance`:
+// `i_<LEN><spelling>_<template>`, the bound types joined by `#`), or -1.
+pub fn generic_instance(e: el::El, d: integer, types: vector<ir::TypeT>) -> integer {
+  b = template_binding(e, d, types);
+  if b == null {
+    return -1;
+  }
+  nm = instance_name(e, d, b!);
+  if nm == "" {
+    return -1;
+  }
+  // `@FR-G-Mono`: one instance per instantiation program-wide — another module's included.
+  found = el::def_nr(e, nm);
+  if found >= 0 { found } else { el::any_source_nr(e, nm) }
+}
+
+// What the template's variables bind to at a call with these argument types (`bind_template`),
+// or null where a variable is met by no argument or two meet it differently.
+pub fn template_binding(e: el::El, d: integer, types: vector<ir::TypeT>) -> Binding? {
+  b = Binding { vars: [], types: [], ok: true };
+  for a in el::def(e, d).attributes {
+    if a#index < len(types) {
+      bind_type_vars(e, a.typedef[0], types[a#index] ?? ir::TyUnknown { n: 0 }, b);
+    }
+  }
+  if !b.ok || len(b.vars) == 0 { null } else { b }
+}
+
+// `Data::mangle_instance`: `i_<LEN><spelling>_<template>`, the bound types' identity spellings
+// joined by `#` — "" for a bound type this port spells no identity for.
+pub fn instance_name(e: el::El, d: integer, b: Binding) -> text {
+  spelling = "";
+  for t in b.types {
+    sp = el_dispatch::identity(e, t);
+    if sp == "" {
+      return "";
+    }
+    spelling = if t#index == 0 { sp } else { "{spelling}#{sp}" };
+  }
+  // `instance_key`: a library's template names its library (`@<library>`) — a template's name
+  // is unique only within its source, the instance lookup program-wide.
+  src = el::def(e, d).source;
+  if src != el::STD_SOURCE && src != el::MAIN_SOURCE {
+    spelling = "{spelling}@{el::source_label(e, src)}";
+  }
+  "i_{len(spelling)}{spelling}_{el::def(e, d).name}"
+}
+
+// `Parser::predict_template_return`: the first pass's type for a call of a template — its
+// declared result with each variable replaced by what this call binds it to; null where a
+// variable binds to nothing known yet.
+pub fn predict_template_return(e: el::El, d: integer, types: vector<ir::TypeT>) -> ir::TypeT? {
+  b = template_binding(e, d, types);
+  if b == null {
+    return null;
+  }
+  r = el::def(e, d).returned[0] ?? ir::TyVoid;
+  for t in b!.types {
+    if el_types::is_unknown(t) {
+      return null;
+    }
+    r = substitute(r, b!.vars[t#index] ?? -1, t);
+  }
+  r
+}
+
+// `Function::subst_type`: the variable table's twin of `substitute`, which keeps the
+// placeholder's deps on the bound type.
+pub fn substitute_var(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyReference { n, dep } => if n == h { el_types::with_deps(bound, el_types::deps(bound) + dep) } else { t },
+    _ => substitute(t, h, bound)
+  }
+}
+
+// `data::is_scalar`: a value with no store behind it.
+pub fn scalar_type(t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  }
+}
+
+// `Function::drop_scalar_deps`: a variable keeps a dep only on what can lend to it — a text on
+// a text or a store, anything else on a store; never on a scalar.
+pub fn drop_scalar_deps(f: ir::Function) {
+  lends: vector<integer> = [];
+  for v in f.variables {
+    t = v.type_def[0] ?? ir::TyVoid;
+    lends += [if scalar_type(t) { 0 } else if el_types::base(t) is TyText { 1 } else { 2 }];
+  }
+  for v in f.variables {
+    t = v.type_def[0] ?? ir::TyVoid;
+    is_text = el_types::base(t) is TyText;
+    ds = el_types::deps(t);
+    kept: vector<integer> = [];
+    for d in ds {
+      l = lends[d] ?? 2;
+      if l == 2 || (l == 1 && is_text) {
+        kept += [d];
+      }
+    }
+    if len(kept) != len(ds) {
+      f.variables[v#index].type_def = [el_types::with_deps(t, kept)];
+    }
+  }
+}
+
+// The template body as this port instantiates it, or the first construct it does not carry: a
+// block one of the instance's later passes rewrites (a `tv…` marker, a yield or tuple-member
+// copy, a materialised view return), a result over the variable in a shape `substitute` does
+// not carry, a call whose target substitution re-resolves (one over the variable, or another
+// generic), a type row the instance would retarget (`retarget_parametric_type_rows`).
+pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir::Function) -> text {
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name.starts_with("tv") || bl.name == "yield_copy" || bl.name == "tuple_member_copy" || bl.name == "tuple_member_move" || bl.name == "materialized_view_return" {
+        return "a `{bl.name}` block";
+      }
+      if !bare_over(bl.result[0] ?? ir::TyVoid, h) {
+        return "a block over the variable";
+      }
+    },
+    NdCall { def_nr, args } => {
+      cd = el::def(e, def_nr);
+      if cd.def_type == el::DT_GENERIC && !e.bodies2.contains(def_nr) {
+        return "a call of a generic whose second-pass body is not read yet";
+      }
+      // A vector write's triplet, a collection format and a liveness test over the variable are
+      // rewritten per instance (`rewrite_generic_vector_writes`,
+      // `retarget_parametric_vector_format`, P239): not carried.
+      w = cd.name;
+      if (w == "OpNewRecord" || w == "OpFinishRecord" || w == "OpCopyRecord" || w == "OpAppendVector" || w == "OpPreAllocVector" || w == "OpFormatDatabase" || w == "OpFormatStackDatabase" || w == "OpConvBoolFromRef") && el_ex_call::reads_over(n, tv, h) {
+        return "a `{w}` over the variable";
+      }
+      stub = stub_call(e, def_nr, h);
+      for a in cd.attributes {
+        if type_mentions(a.typedef[0] ?? ir::TyVoid, h) && !stub && cd.def_type != el::DT_GENERIC {
+          return "a call over the variable";
+        }
+        if (a.name == "tp" || a.name.ends_with("_tp")) && row != el::NO_TYPE {
+          match args[a#index] ?? ir::NdNull {
+            NdInt { n: r } => { if r == row { return "a type row of the variable"; } },
+            _ => {}
+          }
+        }
+      }
+    },
+    NdParallel { arms: _ } => { return "a parallel block"; },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    w = instance_carried(e, c, h, row, tv);
+    if w != "" {
+      return w;
+    }
+  }
+  ""
+}

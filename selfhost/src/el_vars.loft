@@ -8,6 +8,7 @@
 use ir;
 use el;
 use el_types;
+use el_ex_base;
 
 pub struct VarName {
   pub name: text,
@@ -598,7 +599,7 @@ fn is_dbref(t: ir::TypeT) -> boolean {
   }
 }
 
-// `IntegerSpec::byte_width(true)` (`el_expressions::byte_width`): the bytes a nullable integer
+// `IntegerSpec::byte_width(true)` (`el_ex_base::byte_width`): the bytes a nullable integer
 // of this spec is stored in.
 fn integer_bytes(s: ir::IntegerSpec) -> integer {
   if s.forced_size > 0 {

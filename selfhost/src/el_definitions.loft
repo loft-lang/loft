@@ -12,6 +12,9 @@ use el;
 use el_vars;
 use el_types;
 use el_expressions;
+use el_ex_object;
+use el_ex_base;
+use el_ex_assign;
 use el_dispatch;
 use el_schema;
 
@@ -601,7 +604,7 @@ fn field_init_node(e: el::El, mods: vector<integer>) -> integer? {
 // literal text that names no slot is carried; anything else is refused by name.
 fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   vars = el_vars::new_vars("__default", e.file);
-  x = el_expressions::expression(e, vars, init);
+  x = el_ex_assign::expression(e, vars, init);
   if el_types::is_unknown(x.tp) {
     // An untyped `[]` (a collection field's empty default, Rust's `__dflt_<S>_<f>` builder) is
     // not carried.
@@ -619,7 +622,7 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
     }
   }
   if !plain || slot {
-    el::refuse(e, "a field default of this kind: {el_expressions::type_kind(x.tp)}");
+    el::refuse(e, "a field default of this kind: {el_ex_base::type_kind(x.tp)}");
     return null;
   }
   if e.first_pass {
@@ -633,7 +636,7 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
 // another parameter or calls (Rust hoists those into a `__dflt` function) is refused by name.
 fn param_default(e: el::El, init: integer, pt: ir::TypeT) -> ir::Node? {
   vars = el_vars::new_vars("__default", e.file);
-  x = el_expressions::expression(e, vars, init);
+  x = el_ex_assign::expression(e, vars, init);
   if x.tp is TyNull {
     return ir::NdNull;
   }
@@ -679,7 +682,7 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
   was = e.context;
   e.context = -1;
   vars = el_vars::new_vars("__const_{name}", e.file);
-  x = el_expressions::expression(e, vars, value!);
+  x = el_ex_assign::expression(e, vars, value!);
   e.context = was;
   if el_types::is_unknown(x.tp) {
     return;
@@ -693,7 +696,7 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
     }
   }
   if !plain || slot {
-    el::refuse(e, "a constant of this kind: {el_expressions::type_kind(x.tp)}");
+    el::refuse(e, "a constant of this kind: {el_ex_base::type_kind(x.tp)}");
     return;
   }
   semi = at;
@@ -1049,7 +1052,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           el::refuse(e, "a generic with more than one type variable");
           return "";
         }
-        h = header_var(e, tn, bounds, el::pos_at(e, el_expressions::after_paren(e, tat)));
+        h = header_var(e, tn, bounds, el::pos_at(e, el_ex_object::after_paren(e, tat)));
         if h < 0 {
           return "";
         }
@@ -1411,7 +1414,7 @@ fn add_capture_owner_slots(e: el::El, vars: el_vars::Vars, parent: integer) {
 // Does `t` name a header variable of the function being read?
 pub fn mentions_type_var(e: el::El, t: ir::TypeT) -> boolean {
   for tv in e.type_vars {
-    if el_expressions::type_mentions(t, tv.holder) {
+    if el_ex_base::type_mentions(t, tv.holder) {
       return true;
     }
   }
@@ -1500,17 +1503,17 @@ fn bound_stubs(e: el::El, holder: integer, pos: ir::Position) -> boolean {
         continue;
       }
       method = interface_method_name(c.name);
-      stub = el_expressions::bound_stub_name(hname, method, len(c.attributes));
+      stub = el_ex_base::bound_stub_name(hname, method, len(c.attributes));
       if el::def_nr(e, stub) >= 0 || !e.first_pass {
         continue;
       }
       for a in 1..10 {
-        if a != len(c.attributes) && el::def_nr(e, el_expressions::bound_stub_name(hname, method, a)) >= 0 {
+        if a != len(c.attributes) && el::def_nr(e, el_ex_base::bound_stub_name(hname, method, a)) >= 0 {
           el::refuse(e, "two bounds requiring one method at two arities");
           return false;
         }
       }
-      rt = el_expressions::substitute(c.returned[0] ?? ir::TyVoid, self_nr, href);
+      rt = el_ex_base::substitute(c.returned[0] ?? ir::TyVoid, self_nr, href);
       rb = el_types::base(rt);
       heap = rb is TyReference || rb is TyVector || match rb { TyEnum { is_ref } => is_ref, _ => false };
       if rb is TyTuple || keyed(rb) || (heap && rt is TyOptional) {
@@ -1519,7 +1522,7 @@ fn bound_stubs(e: el::El, holder: integer, pos: ir::Position) -> boolean {
       }
       sd = el::add_def(e, stub, pos, el::DT_FUNCTION);
       for a in c.attributes {
-        na = el::attribute(a.name, el_expressions::substitute(a.typedef[0] ?? ir::TyVoid, self_nr, href));
+        na = el::attribute(a.name, el_ex_base::substitute(a.typedef[0] ?? ir::TyVoid, self_nr, href));
         na.value_const = a.value_const;
         e.b.data.definitions[sd].attributes += [na];
       }
@@ -1623,7 +1626,7 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
     return "";
   }
   t = arguments[0].typedef;
-  tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+  tn = el_ex_base::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
   if tn < 0 {
     return "";
   }
@@ -1674,7 +1677,7 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
   take_slot = -1;
   if len(arguments) > 0 && arguments[0].name == "self" {
     t = arguments[0].typedef;
-    tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+    tn = el_ex_base::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
     if tn >= 0 {
       for a in el::def(e, tn).attributes {
         if a.name == name {
@@ -1699,7 +1702,7 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
         }
       }
       if take_slot >= 0 {
-        tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+        tn = el_ex_base::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
       }
     }
   }

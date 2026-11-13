@@ -15,6 +15,7 @@ use el_ir;
 use el_vars;
 use el_types;
 use el_expressions;
+use el_ex_base;
 use el_buffers;
 use own;
 
@@ -72,14 +73,14 @@ fn promote_def(e: el::El, d: integer) {
   last = len(bl.operators) - 1;
   for op in bl.operators {
     if op#index < last {
-      ops += [el_expressions::into_buffer(op, tv)];
+      ops += [el_ex_base::into_buffer(op, tv)];
     }
   }
   tail = bl.operators[last]!;
   if el_ir::unspan(tail) is NdReturn {
-    ops += [el_ir::v_set(tv, el_expressions::peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
+    ops += [el_ir::v_set(tv, el_ex_base::peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
   } else if diverges(tail) {
-    ops += [el_expressions::into_buffer(tail, tv), ir::NdVar { n: tv }];
+    ops += [el_ex_base::into_buffer(tail, tv), ir::NdVar { n: tv }];
   } else {
     ops += [el_ir::v_set(tv, tail), ir::NdVar { n: tv }];
   }

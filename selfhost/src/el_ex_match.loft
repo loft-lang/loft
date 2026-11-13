@@ -1,0 +1,2305 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Expression elaboration, part: record copies, casts and `match` (control.rs `parse_match`).
+use el_ex_base::*;
+use ir;
+use syntax::*;
+use lex;
+use el;
+use el_ir;
+use fold;
+use el_vars;
+use el_types;
+use el_schema;
+use el_convert;
+use frame;
+use el_length;
+use el_par;
+use el_definitions;
+use el_dispatch;
+use el_trace;
+use own;
+use el_ex_assign;
+use el_ex_call;
+use el_ex_null;
+use el_ex_pattern;
+use el_ex_vector;
+
+// `Parser::chain_return_buffer_var` (@PLN164 B2): the buffer only chain exits renamed — a hidden
+// `__ref_N` the body names nowhere but inside a `one_buffer_chain` — is the caller's too, so a
+// literal tail builds into it.  -1 for any other function.  A record with a `__nullable<…>`
+// field is left out (`record_is_fully_written_by_a_literal`): its literal relies on a zeroed
+// record.
+pub fn chain_buffer(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>) -> integer {
+  def = el::def(e, e.context);
+  if def.def_type != el::DT_FUNCTION || len(ops) == 0 || def.name.contains("__lambda") {
+    return -1;
+  }
+  for a in def.attributes {
+    if a.hidden && el_types::base(a.typedef[0]) is TyReference {
+      if !starts_with(a.name, "__ref_") || starts_with(a.name, "__ref_p2_") || has_nullable_field(e, heap_def(a.typedef[0])) {
+        return -1;
+      }
+      w = el_vars::var(vars, a.name);
+      if w < 0 || !vars.vars[w].argument {
+        return -1;
+      }
+      for op in ops {
+        if el_ir::names_outside_chain(op, w) {
+          return -1;
+        }
+      }
+      return w;
+    }
+  }
+  -1
+}
+
+// `record_is_fully_written_by_a_literal`: a literal writes every byte of a `td` record — none
+// of its fields (any variant's, for an enum) is a `__nullable<…>`, whose absent spelling is the
+// zeroed bytes a fresh record has and an offered one may not.
+pub fn fully_written_by_literal(e: el::El, td: integer) -> boolean {
+  if td < 0 {
+    return false;
+  }
+  if el::def(e, td).def_type == el::DT_ENUM {
+    for c in e.b.data.definitions {
+      if c.def_type == el::DT_ENUM_VALUE && c.parent == td && has_nullable_field(e, c#index) {
+        return false;
+      }
+    }
+    return true;
+  }
+  !has_nullable_field(e, td)
+}
+
+pub fn has_nullable_field(e: el::El, td: integer) -> boolean {
+  if td < 0 {
+    return true;
+  }
+  for a in el::def(e, td).attributes {
+    match el_types::base(a.typedef[0]) {
+      TyEnum { n } => { if starts_with(el::def(e, n).name, "__nullable<") { return true; } },
+      _ => {}
+    }
+  }
+  false
+}
+
+// `build_vector_list`'s record arm for one item that is no literal: what fills the element `elm`
+// once it is made (`OpNewRecord`) and before it is finished.  A local is copied in as a fresh
+// destination (`COPY_FRESH_DEST`); a call answering a fresh record
+// (`element_call_takes_record_buffer`) is handed the element as its return buffer, its answer
+// copied only when it lands elsewhere (`OpDistinctStore`), its store freed after when it gives it
+// away (`call_gives_away_its_store`).  Any other item is copied in.
+pub fn record_item_copy(e: el::El, vars: el_vars::Vars, elm: integer, rd: integer, x: Ex) -> vector<ir::Node>? {
+  at = ir::NdVar { n: elm };
+  kt = el::def(e, rd).known_type;
+  match el_ir::unspan(x.code) {
+    NdVar { n: _ } => {
+      return [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + 16384 }])];
+    },
+    NdCall { def_nr, args } => {
+      // A record with a field no literal writes straight into a fresh element (a collection, a
+      // struct-enum) keeps the copy: the call's answer copied into the fresh element, its
+      // store freed after when it gives it away (`record_fields_placeable`).
+      if len(args) > 0 && takes_record_buffer(e, def_nr, rd) && !fields_placeable(e, rd, 0) {
+        bit = if returns_argument_view(el::def(e, def_nr)) { 0 } else { 32768 };
+        return [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + bit + 16384 }])];
+      }
+      if len(args) > 0 && takes_record_buffer(e, def_nr, rd) {
+        a2 = args;
+        a2[len(a2) - 1] = at;
+        rr = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+        vars.vars[rr].skip_free = true;
+        bit = if returns_argument_view(el::def(e, def_nr)) { 0 } else { 32768 };
+        copy = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rr }, at, ir::NdInt { n: kt + bit + 16384 }]);
+        return [el_ir::v_set(rr, ir::NdCall { def_nr: def_nr, args: a2 }), el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rr }, at]), copy, ir::NdNull)];
+      }
+    },
+    _ => {}
+  }
+  // Any other item — a field, an element, a call that takes no buffer — is copied into the
+  // fresh element, its store freed after when it is a call that gives it away.
+  [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + (if gives_away_its_store(e, x.code) { 32768 } else { 0 }) + 16384 }])]
+}
+
+// `call_gives_away_its_store` (with `is_struct_returning_call`): on the second pass, a call of
+// a loft function that has a body and answers no view of its arguments — or a record literal's
+// block — hands its record's store over.
+pub fn gives_away_its_store(e: el::El, code: ir::Node) -> boolean {
+  if e.first_pass {
+    return false;
+  }
+  match el_ir::unspan(code) {
+    NdCall { def_nr } => {
+      cd = el::def(e, def_nr);
+      starts_with(cd.name, "n_") && !((cd.code[0] ?? ir::NdNull) is NdNull) && !returns_argument_view(cd)
+    },
+    NdBlock { block } => block[0].name == "Object",
+    _ => false
+  }
+}
+
+// `record_fields_placeable`: every field of record `rd` is one a literal may write straight into
+// a fresh element — a constant, a function, a scalar, a text, or an inline record whose fields
+// are (to a depth of 8) the same.
+pub fn fields_placeable(e: el::El, rd: integer, depth: integer) -> boolean {
+  if depth > 8 {
+    return false;
+  }
+  for a in el::def(e, rd).attributes {
+    t = el_types::base(a.typedef[0] ?? ir::TyVoid);
+    ok = a.constant || t is TyFunction || el_ex_call::scalar(t) || t is TyText || (struct_ref(e, t) >= 0 && fields_placeable(e, struct_ref(e, t), depth + 1));
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
+// `element_call_takes_record_buffer`: a loft function answering a non-null record of struct `rd`
+// in a fresh store (`return_adopts_fresh_store`: no borrow) through its last, hidden parameter of
+// that struct.
+pub fn takes_record_buffer(e: el::El, d: integer, rd: integer) -> boolean {
+  def = el::def(e, d);
+  if !starts_with(def.name, "n_") || len(def.attributes) == 0 || def.returned[0] is TyOptional {
+    return false;
+  }
+  if struct_ref(e, el_types::base(def.returned[0])) != rd || len(el_types::deps(def.returned[0])) > 0 {
+    return false;
+  }
+  last = def.attributes[-1];
+  last.hidden && struct_ref(e, last.typedef[0] ?? ir::TyVoid) == rd
+}
+
+// Is local `v` a link to a plain scalar (`n: &integer`)?
+pub fn scalar_link(vars: el_vars::Vars, v: integer) -> boolean {
+  match el_vars::tp(vars, v) {
+    TyRefVar { inner } => el_convert::plain_scalar(inner),
+    _ => false
+  }
+}
+
+// `Parser::convert`'s `RefVar` arm for an argument handed to a `&T` parameter: a local holding a
+// `T` is linked (`OpCreateStack`), and a local that is itself a `&T` link is forwarded as it is
+// (a link to the link would point at this frame's slot).  A place — a field, an element, a tuple
+// member — a narrow or collection local and any other value are refused by name.
+pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+  inner = match pt {
+    TyRefVar { inner } => inner,
+    _ => pt
+  };
+  // A "default ref" (`add_defaults`' fresh stack text) already is the link.
+  is_default_ref = match arg { NdBlock { block } => (block[0]!).name == "default ref", _ => false };
+  if is_default_ref {
+    return arg;
+  }
+  v = match arg {
+    NdVar { n } => n,
+    _ => -1
+  };
+  if v < 0 {
+    refuse_known(e, at, "a `&` argument that is not a local");
+    return null;
+  }
+  vt = el_vars::tp(vars, v);
+  if vt is TyRefVar {
+    if el_types::is_equal(e, vt, pt) && !(el_types::base(inner) is TyText) {
+      return arg;
+    }
+    el::refuse(e, "a `&` argument that is a link of another type");
+    return null;
+  }
+  if !el_types::is_equal(e, el_types::base(inner), el_types::base(at)) {
+    refuse_known(e, at, "a `&` argument of another type: {type_kind(at)} to {type_kind(inner)}");
+    return null;
+  }
+  match el_types::base(vt) {
+    TyInteger { spec } => {
+      if spec.forced_size > 0 {
+        el::refuse(e, "a narrow local handed to a `&` parameter");
+        return null;
+      }
+    },
+    _ => {}
+  }
+  // A vector local is linked as any local is; a keyed collection's link (its appends and
+  // lookups through `&`) is not carried yet.
+  if el_types::is_collection(vt) && !(el_types::base(vt) is TyVector) {
+    el::refuse(e, "a keyed collection local handed to a `&` parameter");
+    return null;
+  }
+  el_ir::cl(e, "OpCreateStack", [arg])
+}
+
+// `Parser::parse_for` for one binding over a vector or an integer range.  The loop's variable
+// takes `loop_binding`'s name; the iterated value and the loop parts are built as `parse_for`
+// assembles them (the "For block" around the "For loop").  Destructuring, `par`, a missing body
+// and any other iterated type are refused by name.
+// The `in` token of the `for` at token `at`.
+pub fn in_token(e: el::El, at: integer) -> integer {
+  i = at;
+  while i < len(e.p.src) && !(e.p.src[i] is KwIn) {
+    i += 1;
+  }
+  i
+}
+
+// `in_tok`: the `for`'s `in`, whose start names a destructuring loop's variable.
+pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  binds: vector<text> = [];
+  source = -1;
+  in_tok = -1;
+  par: integer? = null;
+  filter: integer? = null;
+  body: integer? = null;
+  match e.p.nodes[n] {
+    SFor { at, binds: bs, source: sr, par: pc, filter: f, body: b } => {
+      binds = bs;
+      source = sr;
+      in_tok = in_token(e, at);
+      par = pc;
+      filter = f;
+      body = b;
+    },
+    _ => {}
+  }
+  if len(binds) == 0 || body == null {
+    el::refuse(e, "a `for` with no body");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // A `par` loop over anything but a vector is materialised into one first
+  // (`materialise_iter_for_par`, `materialise_keyed_for_par`): refused by name, as are a
+  // destructure and a filter.
+  if par != null && (len(binds) > 1 || filter != null || e.p.nodes[source] is SRange) {
+    el::refuse(e, "a `par` loop that destructures, filters or walks a range");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // `parse_for`'s tuple destructure (P235): the loop's variable is named by where the `in`
+  // starts, and each named member is bound from it at the body's head.
+  destructure = len(binds) > 1;
+  src_id = if destructure { "__destructure_t_{e.p.line[in_tok] ?? 0}_{e.p.col[in_tok] ?? 0}" } else { binds[0] };
+  id = if src_id == "_" { "_" } else { el_vars::loop_binding(vars, src_id) };
+  h = ForHead { binds: binds, src_id: src_id, id: id, body: body!, filter: filter };
+  // `rev(src)` walks a vector from its end, a range from its top (`reverse_iterator`); an
+  // `unordered(…)` walk is refused by name.
+  rev = false;
+  match e.p.nodes[source] {
+    SIterWrap { kind, e: inner } => {
+      if kind != "rev" || inner == null || par != null || destructure {
+        el::refuse(e, "an `unordered(…)` walk, or a reversed one that destructures or runs `par`");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      rev = true;
+      source = inner!;
+    },
+    _ => {}
+  }
+  if e.p.nodes[source] is SRange {
+    return el_ex_pattern::range_for(e, vars, h, source, rev: rev);
+  }
+  match e.p.nodes[source] {
+    SVarAttr { var: fv, attr: fa } => {
+      if fa == "fields" {
+        if rev || par != null || destructure || filter != null {
+          el::refuse(e, "a `#fields` walk reversed, `par`, destructured or filtered");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        return el_ex_pattern::fields_for(e, vars, h, fv);
+      }
+    },
+    _ => {}
+  }
+  x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  if e.p.nodes[source] is SVecLit {
+    lit = el_ex_pattern::vector_value(e, vars, source, hinted: false);
+    if !rev && par == null && len(lit.items) >= 1 && len(lit.items) <= 16 && el_ex_pattern::walkable_scalar(lit.elem) {
+      return el_ex_pattern::literal_walk(e, vars, h, lit);
+    }
+    x = lit.x;
+  } else {
+    outer_slice = vars.slice_node;
+    vars.slice_node = el_ex_vector::slice_target(e, source);
+    x = el_ex_assign::expression(e, vars, source);
+    vars.slice_node = outer_slice;
+    if x.code is NdIter {
+      if rev {
+        el::refuse(e, "a reversed walk of a slice");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return el_ex_vector::slice_for(e, vars, h, x);
+    }
+  }
+  // `@FR-B-Ref-Uniform`: a `&vector` walks as the vector it links (`peel_link`).
+  lx = ex(x.code, el_ex_vector::linked_vector(x.tp));
+  // loft#2477: through a local — `x` may name a lifted call's field.
+  x = lx;
+  if rev && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
+    el::refuse(e, "a reversed walk of this source: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if par != null && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
+    el::refuse(e, "a `par` loop over this source: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if keyed_kind(x.tp) && !(x.tp is TyOptional) {
+    return keyed_for(e, vars, h, x);
+  }
+  if x.tp is TyIterator && (el_ir::unspan(x.code) is NdCall || el_ir::unspan(x.code) is NdVar) {
+    return generator_for(e, vars, h, x);
+  }
+  if x.tp is TyText {
+    return text_for(e, vars, h, x);
+  }
+  match el_types::base(x.tp) {
+    TyVector { inner: _ } => {},
+    TyUnknown { n: _ } => {
+      if !e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+    },
+    _ => {
+      el::refuse(e, "a `for` over this type: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  // The iterated value hoisted into `_vector_N`, borrowing what the source named (`depending`
+  // REPLACES the deps: a local source is named itself), and typed so on the second pass.
+  in_type = el_types::base(x.tp);
+  match x.code {
+    NdVar { n } => { in_type = el_types::with_deps(in_type, [n]); },
+    _ => {}
+  }
+  vec = el_vars::create_unique(vars, "vector", in_type);
+  if !e.first_pass {
+    el_vars::set_var_type(vars, vec, in_type);
+  }
+  elem = ir::TyUnknown { n: 0 };
+  match in_type {
+    TyVector { inner } => { elem = inner; },
+    _ => {}
+  }
+  // `for_type`: the element, borrowing the hoisted vector; a tuple element as its record.
+  var_tp = el_types::with_deps(elem, [vec]);
+  members: vector<ir::TypeT> = [];
+  if destructure {
+    members = match elem { TyTuple { elems } => elems, _ => [] };
+    td = el_types::tuple_def_of(e, members);
+    if len(members) != len(binds) || td < 0 {
+      if !e.first_pass || !el_types::is_unknown(elem) {
+        el::refuse(e, "a `for` destructuring something other than a tuple of its arity");
+      }
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    var_tp = ir::TyReference { n: td, dep: [vec] };
+  } else if elem is TyTuple {
+    // P189b: a tuple element lives as inline bytes of the vector's record, so the loop
+    // variable is a reference to its `__tuple<…>` record, as a destructured one is.
+    td = el_types::tuple_def_of(e, match elem { TyTuple { elems } => elems, _ => [] });
+    if td < 0 {
+      el::refuse(e, "a `for` over a vector of tuples with no tuple record");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    var_tp = ir::TyReference { n: td, dep: [vec] };
+  }
+  if par != null {
+    return el_par::par_for(e, vars, el_par::Walk { src_id: src_id, id: id, x: x, vec: vec, elem: elem, var_tp: var_tp }, par!, body!);
+  }
+  // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
+  idx = el_ex_pattern::loop_index(vars, id, named: true);
+  lv = loop_var(vars, src_id, id, var_tp);
+  vars.active_loops += [lv];
+  vars.active_values += [x.code];
+  if rev {
+    vars.reversed += [lv];
+  }
+  bound = destructure_members(e, vars, binds, members);
+  if len(bound) < len(members) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  fc = el_ex_pattern::loop_filter(e, vars, filter);
+  b = el_ex_assign::parse_block(e, vars, body, "for", ir::TyVoid);
+  heads: vector<ir::Node> = if destructure && !e.first_pass { destructure_head(e, lv, members, bound) } else { [] };
+  b = head_or_filter(b, heads, fc != null);
+  if fc == null {
+    heads = [];
+  }
+  cnt = el_vars::pop_loop(vars);
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass || el_types::is_unknown(elem) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  nx = vector_step(e, vec, idx, elem, rev: rev);
+  if nx == null {
+    el::refuse(e, "a `for` over a vector of records");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  next = nx!;
+  i = ir::NdVar { n: idx };
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  past_end = vector_past_end(e, vec, idx);
+  before = el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: 0 }]), brk, ir::NdNull);
+  steps: vector<ir::Node> = [el_ir::v_set(lv, next), past_end, before];
+  steps += heads;
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  lp = el_ir::v_loop(steps, "For loop");
+  start = if rev { el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]) } else { ir::NdInt { n: -1 } };
+  el_ex_null::counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, start), lp], ir::TyVoid, "For block"), ir::TyVoid))
+}
+
+// `coroutine_layout::next_operands` for an element this port carries: the packed size — the
+// element's argument-slot size (`variables::size`), its channel tag above it (a tuple 1, float
+// 3, single 4, the rest 0) — then a tuple's member kinds (`YieldSlot::code`).  Empty for any
+// other element.
+pub fn next_operands(step: ir::TypeT) -> vector<ir::Node> {
+  if !el_types::carried_step(step) {
+    return [];
+  }
+  tag = if step is TyTuple { 1 } else if step is TyFloat { 3 } else if step is TySingle { 4 } else { 0 };
+  r: vector<ir::Node> = [ir::NdInt { n: tag * 256 + frame::width(step, true) }];
+  match step {
+    TyTuple { elems } => {
+      for m in elems {
+        r += [ir::NdInt { n: yield_slot(m) }];
+      }
+    },
+    _ => {}
+  }
+  r
+}
+
+// `YieldSlot::classify(..).code()` for a tuple member this port carries.
+pub fn yield_slot(t: ir::TypeT) -> integer {
+  match t {
+    TyCharacter => 1,
+    TyBoolean => 2,
+    TyFloat => 3,
+    TySingle => 4,
+    TyText { dep: _ } => 7,
+    TyReference { n: _ } => 6,
+    _ => 0
+  }
+}
+
+// `parse_for` over a generator (`Type::Iterator` of a call): the coroutine held in a `___gen_N`,
+// each turn its next value (`OpCoroutineNext`, the element's size), the loop left once it is
+// exhausted (`OpCoroutineExhausted`).
+// A handle already in a local is used in place (a second owner of one coroutine's store would
+// free it under the local): the block's setup is then `null`.
+pub fn generator_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
+  step = match x.tp { TyIterator { step: st } => st, _ => ir::TyVoid };
+  held = match el_ir::unspan(x.code) { NdVar { n } => n, _ => -1 };
+  g = if held >= 0 { held } else { el_vars::create_unique(vars, "__gen", el_types::without_deps(x.tp)) };
+  members: vector<ir::TypeT> = [];
+  if len(h.binds) > 1 {
+    members = match step { TyTuple { elems } => elems, _ => [] };
+    if len(members) != len(h.binds) {
+      el::refuse(e, "a `for` destructuring something other than a tuple of its arity");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  lv = loop_var(vars, h.src_id, h.id, step);
+  vars.active_loops += [lv];
+  vars.active_values += [x.code];
+  bound = destructure_members(e, vars, h.binds, members);
+  if len(bound) < len(members) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  fc = el_ex_pattern::loop_filter(e, vars, h.filter);
+  b = el_ex_assign::parse_block(e, vars, h.body, "for", ir::TyVoid);
+  cnt = el_vars::pop_loop(vars);
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ops = next_operands(step);
+  if len(ops) == 0 {
+    el::refuse(e, "a `for` over a generator of this element type: {type_kind(step)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // A generator's tuple is a tuple local: each member read with `.i` (`TupleGet`).
+  heads: vector<ir::Node> = [];
+  for mv in bound {
+    if mv >= 0 {
+      heads += [el_ir::v_set(mv, ir::NdTupleGet { var: lv, idx: mv#index })];
+    }
+  }
+  b = head_or_filter(b, heads, fc != null);
+  gv = ir::NdVar { n: g };
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  steps: vector<ir::Node> = [
+    el_ir::v_set(lv, el_ir::cl(e, "OpCoroutineNext", [gv] + ops)),
+    el_ir::v_if(el_ir::cl(e, "OpCoroutineExhausted", [gv]), brk, ir::NdNull)
+  ];
+  if fc != null {
+    steps += heads;
+    steps += [fc!];
+  }
+  steps += [b.code];
+  setup = if held >= 0 { ir::NdNull } else { el_ir::v_set(g, x.code) };
+  el_ex_null::counted(e, cnt, ex(el_ir::v_block([setup, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
+}
+
+// A destructuring `for`'s named members, made before the body is read so it resolves them —
+// each a binding of this loop (`loop_binding`: a sibling loop's same name is another), a `_`
+// member bound too, to a fresh `___N`.  Fewer than the members when one is refused.
+pub fn destructure_members(e: el::El, vars: el_vars::Vars, binds: vector<text>, members: vector<ir::TypeT>) -> vector<integer> {
+  bound: vector<integer> = [];
+  if len(members) == 0 {
+    return bound;
+  }
+  for nm in binds {
+    mt = el_types::without_deps(members[nm#index] ?? ir::TyUnknown { n: 0 });
+    // A spelling an earlier plain binding holds is renamed by Rust's block-scope rebinding
+    // (`rebind_after_block`), which is not carried: refused by name.  A member is marked by a
+    // `<name>#member` entry, which the stored table keeps across the passes as it keeps `#bind`.
+    held = vars.names[nm];
+    if nm != "_" && held != null && vars.names["{el_vars::name_of(vars, held!.nr)}#member"] == null {
+      el::refuse(e, "a destructured member reusing an earlier binding's name: {nm}");
+      return [];
+    }
+    mv = loop_var(vars, nm, if nm == "_" { "_" } else { el_vars::loop_binding(vars, nm) }, mt);
+    el_vars::set_name(vars, "{el_vars::name_of(vars, mv)}#member", mv);
+    bound += [mv];
+  }
+  bound
+}
+
+// Where a destructuring `for` reads its members: at the head of the body without a filter;
+// with one, before its test (the caller places them there).
+pub fn head_or_filter(b: Ex, heads: vector<ir::Node>, filtered: boolean) -> Ex {
+  if filtered || len(heads) == 0 {
+    return b;
+  }
+  match b.code {
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = heads + bl.operators;
+      b.code = ir::NdBlock { block: [bl] };
+    },
+    _ => {}
+  }
+  b
+}
+
+// The destructured members' binds (`Set(name_i, loop_var._i)`), each read out of the loop's
+// record at its offset.
+pub fn destructure_head(e: el::El, lv: integer, members: vector<ir::TypeT>, bound: vector<integer>) -> vector<ir::Node> {
+  td = el_types::tuple_def_of(e, members);
+  fs = el_schema::struct_fields(e, el::def(e, td).known_type);
+  sets: vector<ir::Node> = [];
+  for v in bound {
+    if v >= 0 {
+      t = members[v#index] ?? ir::TyVoid;
+      f = fs[v#index];
+      if f != null {
+        sets += [el_ir::v_set(v, el_ir::cl(e, read_op(t), [ir::NdVar { n: lv }, ir::NdInt { n: f!.position }]))];
+      }
+    }
+  }
+  sets
+}
+
+// `iterator`'s vector arm, one step: `{ i = i + 1; <element i of the hoisted vector> }` — a plain
+// element read at 0, a record element as its reference.  Null for an element with no size.
+pub fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: boolean = false) -> ir::Node? {
+  size = elem_size(elem);
+  op = read_op(elem);
+  record = false;
+  marked = false;
+  // A vector element is its four-byte handle.
+  if elem is TyVector {
+    size = 4;
+    record = true;
+  }
+  if size == -2 {
+    size = if e.first_pass { 0 } else { record_size(e, elem) };
+    record = size >= 0;
+    // A template's element of its own variable has no width yet: the read carries the
+    // variable's marker (`type_var_stride`), which each instance rewrites.
+    hv = generic_holder(e, el_types::base(elem));
+    if hv >= 0 {
+      size = -1 - hv;
+      record = true;
+      marked = true;
+    }
+  }
+  if (size < 0 && !marked) || (op == "" && !record) {
+    return null;
+  }
+  i = ir::NdVar { n: idx };
+  get = if record && !e.first_pass && linked_record(e, elem) { el_ir::cl(e, "OpVectorRefNullable", [ir::NdVar { n: vec }, i]) } else { el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]) };
+  if !record {
+    get = elem_read(e, elem, get);
+  }
+  // A struct enum's element is read as the enum's place in it (its store type at 0), a vector's
+  // as the inner vector's.
+  pk = element_place_type(e, elem);
+  if record && pk >= 0 && !e.first_pass {
+    get = el_ir::cl(e, "OpGetField", [get, ir::NdInt { n: 0 }, ir::NdInt { n: pk }]);
+  }
+  // A tuple element is read as its record.
+  st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, _ => el_types::without_deps(elem) };
+  // A reversed walk steps down, past the first element to the `i32` null (the "rev step").
+  step = if rev {
+    el_ir::v_block([el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: 1 }, i]), el_ir::cl(e, "OpMinInt", [i, ir::NdInt { n: 1 }]), ir::NdInt { n: -2147483648 })], ir::TyInteger { spec: i32_spec() }, "rev step")
+  } else {
+    el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])
+  };
+  el_ir::v_block([el_ir::v_set(idx, step), get], st, "iter next")
+}
+
+// `vector_loop_break`'s forward test: the walk ends past the hoisted vector's last element.
+pub fn vector_past_end(e: el::El, vec: integer, idx: integer) -> ir::Node {
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]), ir::NdVar { n: idx }]), brk, ir::NdNull)
+}
+
+// `Parser::parse_vector_for` + `build_comprehension_code` for `v = [for x in src (if f)? { body }]`
+// into a plain local `v`: the destination's element temp (`unique_elm_var`, both passes), the
+// source hoisted into `_vector_N` and walked as a `for` walks it, each body value bound to
+// `_comp_N` (the second pass) and pushed (`fuse_scalar_append`), the local given its store first
+// (`insert_new`).  A range walks as a range `for` does.  A literal source, a reversed or sliced
+// walk, a constant fill or unroll, and an element that is not a plain scalar are refused by name.
+// `yield v` in a generator (`@FR-G-Yield`): the value stored into the iterator's element
+// type, as a `return` is into the return type.  `yield from`, and a yield outside a function
+// answering an iterator, are refused by name.
+pub fn yield_expr(e: el::El, vars: el_vars::Vars, from: boolean, ye: integer?) -> Ex {
+  if ye == null {
+    el::refuse(e, "a `yield` with no value");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  step = match el::def(e, e.context).returned[0] ?? ir::TyVoid { TyIterator { step: st } => st, _ => ir::TyVoid };
+  if from {
+    return yield_from(e, vars, ye!);
+  }
+  x = el_ex_assign::expression(e, vars, ye!);
+  if step is TyVoid {
+    el::refuse(e, "a `yield` outside a generator");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.first_pass {
+    return ex(ir::NdYield { inner: x.code }, ir::TyVoid);
+  }
+  v = stored(e, vars, x, step);
+  if v == null {
+    refuse_known(e, x.tp, "a yielded value its element type converts: {type_kind(x.tp)} to {type_kind(step)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if step is TyReference {
+    owned = yield_owned_record(e, vars, v!, x.tp, step);
+    if owned == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(ir::NdYield { inner: owned! }, ir::TyVoid);
+  }
+  ex(ir::NdYield { inner: v! }, ir::TyVoid)
+}
+
+// `yield from sub` (`@FR-G-Delegate`, CO1.4): the sub-generator held in `___yf_sub_N`, each of
+// its values advanced into `___yf_item_N` and yielded on until it is exhausted — the question
+// the streaming `for` asks too, so the two consumers agree on when one has ended.
+pub fn yield_from(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  sub = el_ex_assign::expression(e, vars, n);
+  if !(sub.tp is TyIterator) {
+    if !e.first_pass {
+      el::refuse(e, "a `yield from` of something other than a generator");
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  elem = match sub.tp { TyIterator { step: st } => st, _ => ir::TyVoid };
+  sv = el_vars::create_unique(vars, "__yf_sub", sub.tp);
+  el_vars::set_defined(vars, sv);
+  iv = el_vars::create_unique(vars, "__yf_item", elem);
+  el_vars::set_defined(vars, iv);
+  ops = next_operands(elem);
+  if len(ops) == 0 {
+    el::refuse(e, "a `yield from` a generator of this element type: {type_kind(elem)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  s = ir::NdVar { n: sv };
+  lp: vector<ir::Node> = [
+    el_ir::v_set(iv, el_ir::cl(e, "OpCoroutineNext", [s] + ops)),
+    el_ir::v_if(el_ir::cl(e, "OpCoroutineExhausted", [s]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull),
+    ir::NdYield { inner: ir::NdVar { n: iv } }
+  ];
+  ex(el_ir::v_block([el_ir::v_set(sv, sub.code), el_ir::v_loop(lp, "yield from")], ir::TyVoid, "yield from block"), ir::TyVoid)
+}
+
+// `yield_owned_value` for a record: a yield hands the consumer a record it owns, so a value that
+// is not fresh (`yield_is_fresh`: a named local or parameter, a projection, or anything borrowing
+// one) is copied into a pass-2 backing first (`yield_copy`).  Carried for a record of plain
+// scalars and texts; any other record is refused by name, since one owning a resource cannot be
+// copied at all (`owns_droppable`).
+pub fn yield_owned_record(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT, step: ir::TypeT) -> ir::Node? {
+  if yield_is_fresh(e, vars, v, tp) {
+    return v;
+  }
+  rd = struct_ref(e, step);
+  for a in el::def(e, rd).attributes {
+    at = a.typedef[0] ?? ir::TyVoid;
+    if !el_convert::plain_scalar(at) && !(at is TyText) {
+      el::refuse(e, "a yield of an existing record that holds something other than plain scalars and texts");
+      return null;
+    }
+  }
+  if tp is TyOptional {
+    el::refuse(e, "a yield of an existing nullable record");
+    return null;
+  }
+  kt = el::def(e, rd).known_type;
+  o = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+  k = ir::NdInt { n: kt };
+  fill = el_ir::v_block([el_ir::cl(e, "OpDatabase", [ir::NdVar { n: o }, k]), el_ir::cl(e, "OpCopyRecord", [v, ir::NdVar { n: o }, k])], ir::TyVoid, "yield_copy_fill");
+  el_ir::v_block([el_ir::v_set(o, ir::NdNull), fill, ir::NdVar { n: o }], ir::TyReference { n: rd, dep: [o] }, "yield_copy")
+}
+
+// `yield_is_fresh`: the yielded value is a record nothing else names — not a local the program
+// named or a parameter, not a projection, nor a value borrowing one.
+pub fn yield_is_fresh(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT) -> boolean {
+  for d in el_types::deps(tp) {
+    if vars.vars[d].argument || !el_vars::is_compiler_generated(vars, d) {
+      return false;
+    }
+  }
+  tail = el_ir::unspan(v);
+  while tail is NdBlock {
+    ops = match tail { NdBlock { block } => block[0].operators, _ => [] };
+    if len(ops) == 0 {
+      return false;
+    }
+    tail = el_ir::unspan(ops[-1]);
+  }
+  match tail {
+    NdVar { n } => !(vars.vars[n].argument || !el_vars::is_compiler_generated(vars, n)),
+    NdCall { def_nr } => !projection_op(el::def(e, def_nr).name),
+    _ => false
+  }
+}
+
+// `parse_vector_for` in value position: the comprehension built into a `_vec_N` of its own, the
+// build a "Vector comprehension" block answering it — the walk's start as Rust's value form
+// lays it out.
+pub fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
+  built = comprehension_into(e, vars, v, n);
+  vt = el_vars::tp(vars, v);
+  if e.first_pass || len(e.refused) > 0 {
+    return ex(ir::NdNull, vt);
+  }
+  items = match built.code { NdInsert { items: its } => its, _ => return ex(ir::NdNull, ir::TyUnknown { n: 0 }) };
+  ops: vector<ir::Node> = [];
+  for it in items {
+    if it#index < 3 {
+      ops += [it];
+    }
+  }
+  // A vector source's temp (`_vector_N = …`, `parse_vector_for`'s `fill`) is a step of its own;
+  // the rest is `create_iter`: one statement (a constant range's index, a vector's cursor)
+  // stands alone, a longer one is grouped.
+  if len(items) > 3 && items[-1] is NdLoop {
+    start = 3;
+    match items[3]! {
+      NdSet { var } => {
+        if starts_with(el_vars::name_of(vars, var), "_vector_") {
+          ops += [items[3]!];
+          start = 4;
+        }
+      },
+      _ => {}
+    }
+    rest = len(items) - 1 - start;
+    if rest == 1 {
+      ops += [items[start]!];
+    } else if rest > 1 {
+      ops += [ir::NdInsert { items: items[start..-1] }];
+    }
+    ops += [items[-1]];
+  }
+  ops += [ir::NdVar { n: v }];
+  ex(el_ir::v_block(ops, vt, "Vector comprehension"), vt)
+}
+
+// `declared`: the element a declared local gives it (`v: vector<u8> = [for …]`), which the
+// items are stored at, where the body would answer a wider one.
+pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT = ir::TyUnknown { n: 0 }) -> Ex {
+  binds: vector<text> = [];
+  source = 0;
+  filter: integer? = null;
+  body: integer? = null;
+  match e.p.nodes[n] {
+    SComprehension { binds: bs, source: sc, filter: fl, body: bd } => { binds = bs; source = sc; filter = fl; body = bd; },
+    _ => {}
+  }
+  // The destination's element temp, minted on both passes as the literal path mints it.
+  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  if len(binds) != 1 || body == null || binds[0] == "_" || e.p.nodes[source] is SVecLit {
+    el::refuse(e, "a comprehension over a literal, or with destructuring or `_`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  src_id = binds[0];
+  id = el_vars::loop_binding(vars, src_id);
+  ranged = e.p.nodes[source] is SRange;
+  // The walk: a range's own step, or the source hoisted into `_vector_N` and walked as a `for`
+  // walks it.
+  rw: el_ex_pattern::RangeWalk? = null;
+  x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  vec = -1;
+  elem = ir::TyInteger { spec: i32_spec() };
+  if ranged {
+    rw = el_ex_pattern::range_walk(e, vars, id, source);
+    if rw == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  } else {
+    outer_slice = vars.slice_node;
+    vars.slice_node = el_ex_vector::slice_target(e, source);
+    x = el_ex_assign::expression(e, vars, source);
+    vars.slice_node = outer_slice;
+  }
+  sliced = x.code is NdIter;
+  ss: el_ex_vector::SliceStart? = null;
+  if sliced {
+    ss = el_ex_vector::slice_start(vars, x, id);
+    elem = ss!.elem;
+  } else if !ranged {
+    in_type = el_types::base(x.tp);
+    if !(in_type is TyVector) || x.tp is TyOptional {
+      if !el_types::is_unknown(x.tp) {
+        el::refuse(e, "a comprehension over this source: {type_kind(x.tp)}");
+      }
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    match x.code {
+      NdVar { n: sv } => { in_type = el_types::with_deps(in_type, [sv]); },
+      _ => {}
+    }
+    vec = el_vars::create_unique(vars, "vector", in_type);
+    if !e.first_pass {
+      el_vars::set_var_type(vars, vec, in_type);
+    }
+    elem = match in_type { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
+  }
+  // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
+  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { el_ex_pattern::loop_index(vars, id, named: true) };
+  lv = loop_var(vars, src_id, id, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
+  vars.active_loops += [lv];
+  vars.active_values += [if sliced { ir::NdNull } else { x.code }];
+  fc = el_ex_pattern::loop_filter(e, vars, filter);
+  b = el_ex_assign::parse_block(e, vars, body!, "for", ir::TyUnknown { n: 0 });
+  cnt = el_vars::pop_loop(vars);
+  if cnt >= 0 {
+    el::refuse(e, "a comprehension whose body asks its loop's `#count` or `#first`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  vars.active_values = vars.active_values[..-1];
+  in_t = el_types::without_deps(b.tp);
+  if !el_types::is_unknown(declared) && el_types::base(declared) is TyInteger && el_types::base(in_t) is TyInteger {
+    in_t = declared;
+  }
+  if el_types::is_unknown(in_t) || el_types::is_unknown(elem) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // A range comprehension whose body is one constant fills (`try_const_fill_comprehension`),
+  // and one over constant bounds may unroll (`try_const_unroll_comprehension`) — not carried.
+  if ranged && (constant_body(e, b.code) || (filter != null && rw!.constant)) {
+    el::refuse(e, "a range comprehension that fills or unrolls a constant");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  push = el_ex_pattern::push_op(in_t);
+  if push == "" || in_t is TyOptional {
+    el::refuse(e, "a comprehension of this element type: {type_kind(in_t)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
+    el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // `vector_def` on both passes; the element's store type (`vector_of`) on the second, in
+  // `build_comprehension_code` — the order the schema numbers them in.
+  rows = vector_rows(e, in_t, n, false);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_ex_pattern::vector_of(e, in_t);
+  if len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument {
+    el::refuse(e, "a comprehension into a local that has a store");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  nx: ir::Node? = if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!) } else { vector_step(e, vec, idx, elem) };
+  if nx == null || rows == null {
+    el::refuse(e, "a comprehension over a vector of records");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  comp = el_vars::create_unique(vars, "comp", in_t);
+  steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
+  if !ranged && !sliced {
+    steps += [vector_past_end(e, vec, idx)];
+  }
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, ir::NdVar { n: v }, ir::NdVar { n: comp }))];
+  r = rows!;
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  el_vars::depend(vars, v, db);
+  items: vector<ir::Node> = [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+  ];
+  // `try_const_unroll_comprehension`: a constant empty range builds the empty vector, no loop.
+  if ranged && rw!.empty {
+    return ex(ir::NdInsert { items: items }, ir::TyVoid);
+  }
+  items += if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
+  items += [el_ir::v_loop(steps, "For comprehension")];
+  ex(ir::NdInsert { items: items }, ir::TyVoid)
+}
+
+// A block whose one statement is a constant (`const_eval` answers it): the body a constant fill
+// repeats.
+pub fn constant_body(e: el::El, code: ir::Node) -> boolean {
+  ops: vector<ir::Node> = [];
+  match code {
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if !el_ir::is_line(o) {
+          ops += [o];
+        }
+      }
+    },
+    _ => { ops = [code]; }
+  }
+  if len(ops) != 1 {
+    return false;
+  }
+  match el_ir::unspan(ops[0]) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdText { s: _ } => true,
+    NdNull => true,
+    _ => el_convert::const_int(e, el_ir::unspan(ops[0])) != null
+  }
+}
+
+// `parse_for` over a text (`walks_text`, `iter_text`): the loop's `x#next` (the byte position)
+// and `x#index` (where the character starts), the text held in `_for_text_N` — borrowing a local
+// it names — and each step reading the character there (`OpTextCharacterNullable`) and moving
+// past it, one byte at least.  The walk ends at an absent text and past its size.  A `_`
+// binding and a `&text` source are refused by name.
+pub fn text_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
+  if h.id == "_" {
+    el::refuse(e, "a `for _` over a text");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  pos = el_vars::add_variable(vars, "{h.id}#next", int_t);
+  el_vars::set_defined(vars, pos);
+  idx = el_vars::add_variable(vars, "{h.id}#index", int_t);
+  el_vars::set_defined(vars, idx);
+  lv = loop_var(vars, h.src_id, h.id, ir::TyCharacter);
+  vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
+  fc = el_ex_pattern::loop_filter(e, vars, h.filter);
+  src_tp = match el_ir::unspan(x.code) { NdVar { n } => ir::TyText { dep: [n] }, _ => x.tp };
+  tv = el_vars::create_unique(vars, "for_text", src_tp);
+  res = el_vars::create_unique(vars, "for_result", ir::TyCharacter);
+  b = el_ex_assign::parse_block(e, vars, h.body, "for", ir::TyVoid);
+  cnt = el_vars::pop_loop(vars);
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  t = ir::NdVar { n: tv };
+  p = ir::NdVar { n: pos };
+  i = ir::NdVar { n: idx };
+  r = ir::NdVar { n: res };
+  next = el_ir::v_block([
+    el_ir::v_set(idx, p),
+    el_ir::v_set(res, el_ir::cl(e, "OpTextCharacterNullable", [t, p])),
+    el_ir::v_set(pos, el_ir::cl(e, "OpAddInt", [p, el_ir::cl(e, "OpLengthCharacter", [r])])),
+    el_ir::v_if(el_ir::cl(e, "OpLeInt", [p, i]), el_ir::v_set(pos, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), ir::NdNull),
+    r
+  ], ir::TyCharacter, "for text next");
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  steps: vector<ir::Node> = [
+    el_ir::v_set(lv, next),
+    el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [t])]), brk, ir::NdNull),
+    el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpSizeText", [t]), i]), brk, ir::NdNull)
+  ];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  init: vector<ir::Node> = [el_ir::v_set(idx, ir::NdInt { n: 0 }), el_ir::v_set(tv, x.code), el_ir::v_set(pos, ir::NdInt { n: 0 })];
+  el_ex_null::counted(e, cnt, ex(el_ir::v_block(init + [el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
+}
+
+// `iterator`'s keyed arm: a walk over a hash, sorted or index from its first record
+// (`OpIterate(c, on, arg, keys, 0, 0)` into `x#iter_state`), each step `OpStep` — the record,
+// borrowing what the collection does, or the null sentinel past the last.
+pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
+  ct = el_types::base(x.tp);
+  el_d = el_types::keyed_elem(ct);
+  elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct));
+  match x.code {
+    NdVar { n } => { elem = el_types::with_deps(elem, [n]); },
+    _ => {}
+  }
+  // `keyed_snapshot`: a hash, spatial or trie is walked in key order through a scratch copy of
+  // its records (`n_hash_sorted`; a radix tree's walk is ordered already, `n_radix_sorted`),
+  // released after the loop.
+  scratch = -1;
+  if ct is TyHash || ct is TyRadix || ct is TyTrie {
+    scratch = el_vars::create_unique(vars, "hash_scratch", el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct)));
+  }
+  idx = el_ex_pattern::loop_index(vars, h.id);
+  base = if h.id == "_" { el_vars::name_of(vars, idx) } else { h.id };
+  state = el_vars::add_variable(vars, "{base}#iter_state", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, state);
+  lv = loop_var(vars, h.src_id, h.id, elem);
+  vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
+  fc = el_ex_pattern::loop_filter(e, vars, h.filter);
+  b = el_ex_assign::parse_block(e, vars, h.body, "for", ir::TyVoid);
+  cnt = el_vars::pop_loop(vars);
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  known = el_schema::keyed_type(e, ct);
+  on = 128;
+  arg = 4;
+  match ct {
+    TyIndex { n: _ } => { on += 1; arg = known; },
+    // A sorted field of a linked record is laid out `ordered` (its records by id): stepped by
+    // reference (`fill_iter`'s `Parts::Ordered` arm).
+    TySorted { n: _ } => {
+      if (e.b.types[known]!.parts[0] ?? ir::PtBase) is PtOrdered {
+        on += 3;
+      } else {
+        on += 2;
+        arg = e.b.types[el::def(e, el_d).known_type]!.size;
+      }
+    },
+    _ => { on += 4; }
+  }
+  src = x.code;
+  pre: vector<ir::Node> = [];
+  if scratch >= 0 {
+    el_vars::set_var_type(vars, scratch, el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct)));
+    // A range slice's call builds the scratch itself (`keyed_slice`); a whole collection is
+    // copied into one.
+    built = match el_ir::unspan(x.code) { NdCall { def_nr } => el::def(e, def_nr).name == "n_trie_prefix" || el::def(e, def_nr).name == "n_spatial_range", _ => false };
+    pre += [el_ir::v_set(scratch, if built { x.code } else { el_ir::cl(e, if ct is TyHash { "n_hash_sorted" } else { "n_radix_sorted" }, [x.code, ir::NdInt { n: known }]) })];
+    src = ir::NdVar { n: scratch };
+  }
+  start = el_ir::cl(e, "OpIterate", [src, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
+  i = ir::NdVar { n: idx };
+  next = el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: state }, src, ir::NdInt { n: on }, ir::NdInt { n: arg }])], elem, "sorted iter next");
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  done = el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), brk, ir::NdNull);
+  steps: vector<ir::Node> = [el_ir::v_set(lv, next), done];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  lp = el_ir::v_loop(steps, "For loop");
+  pre += [ir::NdInsert { items: [el_ir::v_set(state, start), el_ir::v_set(idx, ir::NdInt { n: -1 })] }, lp];
+  if scratch >= 0 {
+    pre += [el_ir::cl(e, "OpFreeScratch", [ir::NdVar { n: scratch }]), el_ir::v_set(scratch, el_ir::cl(e, "OpNullRefSentinel", []))];
+  }
+  el_ex_null::counted(e, cnt, ex(el_ir::v_block(pre, ir::TyVoid, "For block"), ir::TyVoid))
+}
+
+// `handle_operator`'s `as`: the target read as a type, the value converted the way an implicit
+// store converts it (`convert` in its explicit-cast mode: a narrowing that a constant provably
+// fits needs no op) or else cast (`OpCast…`), typed as the target.  `as text` renders through its
+// cast (`true as text`).  The checked `as τ?` takes the value's base — a nullable value converts
+// as its base does and stays nullable — a `null` is the target's null, and a text is parsed
+// (`OpCastIntFromText`, null when it does not parse).  A checked narrowing, a non-scalar side and
+// a narrowing no constant answers are refused by name.
+pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
+  if ae == null || tn == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  coalesced = vars.dn4_coalesce;
+  vars.dn4_coalesce = false;
+  x = el_ex_assign::expression(e, vars, ae!);
+  t = el_types::parse_type(e, tn!);
+  if t == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  to = t!;
+  // `as τ?` that narrows nothing: the cast to the base, typed `τ?`.  A checked narrowing (the
+  // `dn4cast` guard and the store's range default) is refused by name.
+  match to {
+    TyOptional { inner } => {
+      src = el_types::base(x.tp);
+      if el_convert::plain_scalar(inner) && x.tp is TyNull {
+        n = el_convert::null_of(e, inner);
+        if n != null {
+          return ex(if e.first_pass { ir::NdNull } else { n! }, to);
+        }
+      } else if el_convert::plain_scalar(inner) && src is TyText {
+        c = el_convert::cast(e, x.code, src, inner);
+        if c != null {
+          return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+        }
+      } else if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(src, inner) {
+        b = cast_expr_to(e, vars, ex(x.code, src), inner);
+        return ex(b.code, if el_types::is_unknown(b.tp) { b.tp } else { to });
+      } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) && (e.first_pass || !el_convert::value_fits(e, vars, x.code, inner)) {
+        // Pass 1 converts nothing: the cast is typed `τ?` there and built on pass 2.
+        return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, x, inner) };
+      }
+      el::refuse(e, "a checked narrowing cast");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    },
+    TyText { dep: _ } => {
+      if el_convert::plain_scalar(x.tp) {
+        c = el_convert::cast(e, x.code, x.tp, to);
+        if c != null {
+          return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+        }
+      }
+    },
+    _ => {}
+  }
+  // A plain enum's value to its integer (`OpConvIntFromEnum`), an integer to an enum's value
+  // (`OpCastEnumFromInt`, under the enum's store type), and — directly left of `??` — a text to
+  // the value its variant name spells (`OpCastEnumFromText`).
+  if el_convert::plain_enum(el_types::base(x.tp)) && el_types::base(to) is TyInteger && !(to is TyOptional) {
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpConvIntFromEnum", [x.code]) }, to);
+  }
+  if el_convert::plain_enum(to) && (el_types::base(x.tp) is TyInteger || (coalesced && el_types::base(x.tp) is TyText)) {
+    en = match to { TyEnum { n } => n, _ => -1 };
+    op = if el_types::base(x.tp) is TyText { "OpCastEnumFromText" } else { "OpCastEnumFromInt" };
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, op, [x.code, ir::NdInt { n: el::def(e, en).known_type }]) }, to);
+  }
+  // A text parse directly left of `??` (`s as integer ?? -1`): the parse, typed as the target,
+  // whose null the `??` tests — a bare one is Rust's `text-parse-may-fail` error.
+  xb = el_types::base(x.tp);
+  if coalesced && xb is TyText && el_convert::plain_scalar(to) {
+    c = el_convert::cast(e, x.code, xb, to);
+    if c != null {
+      return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+    }
+  }
+  // A bare narrowing cast directly left of `??` is checked: the `??` is its fallback.
+  if coalesced && !e.first_pass && el_convert::plain_scalar(xb) && el_convert::narrowing_int(xb, to) && !el_convert::value_fits(e, vars, x.code, to) {
+    return dn4_cast(e, vars, ex(x.code, xb), to);
+  }
+  cast_expr_to(e, vars, x, to)
+}
+
+// `Parser::dn4_checked_cast` — `el_convert::dn4_cast`, typed as an `Ex`.
+pub fn dn4_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
+  ex(el_convert::dn4_cast(e, vars, x.code, x.tp, to), ir::TyOptional { inner: to })
+}
+
+pub fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
+  if el_types::is_unknown(x.tp) {
+    if !e.first_pass {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(ir::NdNull, to);
+  }
+  if !el_convert::plain_scalar(x.tp) || !el_convert::plain_scalar(to) {
+    el::refuse(e, "a cast between these types: {type_kind(x.tp)} to {type_kind(to)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, to);
+  }
+  if el_convert::narrowing_int(x.tp, to) && !el_convert::value_fits(e, vars, x.code, to) {
+    el::refuse(e, "a narrowing cast no constant answers");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  c = el_convert::convert(e, vars, x.code, x.tp, to, true);
+  if c == null {
+    c = el_convert::cast(e, x.code, x.tp, to);
+  }
+  if c == null {
+    el::refuse(e, "a cast between these types: {type_kind(x.tp)} to {type_kind(to)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ex(c!, to)
+}
+
+// ── match (src/parser/control.rs `parse_match`, `parse_scalar_match`) ──────────────────────────
+
+// One parsed arm: its condition (null for a wildcard), its code and its type.
+pub struct MArm {
+  pub cond: ir::Node?,
+  pub code: ir::Node,
+  pub tp: ir::TypeT
+}
+
+// `Parser::parse_match` for a scalar subject (`parse_scalar_match`) and a plain enum's: the
+// subject held in `_match_subj_N`; each arm's patterns read into a condition — a literal compared
+// with `==`, a range `lo <= s && s < hi`, alternatives or-ed, a variant's ordinal against the
+// subject's — its body read against the type the arms settled on; then the chain of `if`s from
+// the last arm back, ending in a wildcard arm's code or the result's null.  A guard, a binding, a
+// field pattern and any other subject are refused by name.
+// Is `n` a getter chain (`OpGetField`, `OpGetVector`, …) rooted at a variable — a place every
+// read of which answers the same record?
+pub fn getter_place(e: el::El, n: ir::Node) -> boolean {
+  at = el_ir::unspan(n);
+  for _ in 0..10000 {
+    match at {
+      NdVar { n: _ } => { return true; },
+      NdCall { def_nr, args } => {
+        if !starts_with(el::def(e, def_nr).name, "OpGet") || len(args) == 0 {
+          return false;
+        }
+        at = el_ir::unspan(args[0]!);
+      },
+      _ => { return false; }
+    }
+  }
+  false
+}
+
+// Is `n` a block whose last statement is a bare `null`?
+pub fn block_ends_null(n: ir::Node) -> boolean {
+  match n {
+    NdBlock { block } => len(block[0].operators) > 0 && el_ir::is_null(el_ir::unspan(block[0].operators[-1]!)),
+    _ => false
+  }
+}
+
+pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
+  // A bind's right-hand side (`r = match …`): Rust writes each arm into the destination.
+  at_bind = node >= 0 && vars.expect_node == node;
+  x = el_ex_assign::expression(e, vars, subject);
+  st = x.tp;
+  match st {
+    TyRefVar { inner } => { st = inner; },
+    _ => {}
+  }
+  scalar_subject = el_convert::plain_scalar(st) || st is TyText;
+  enum_subject = el_convert::plain_enum(st);
+  // A struct enum, or one of its variants, is matched on its record: the ordinal its `enum`
+  // field holds, read in place where the subject is a local.  A nullable one is matched the
+  // same way: its null reaches the wildcard arm.
+  sd = struct_enum_of(e, match st { TyOptional { inner } => inner, _ => st });
+  // `parse_match` for a struct enum: a PLACE (a local, or a getter chain rooted at one —
+  // `match h.sh`) is read in place by every arm's test; any other subject (a call's answer) is
+  // held in `_match_subj_N` first, inside a `match` block.
+  held_set: ir::Node? = null;
+  // A plain struct is held the same way (`parse_match`'s `_match_subj_N` for any record subject
+  // that is not a place), so a call is made once, not once per binding and test.
+  pd0 = struct_ref(e, el_types::base(st));
+  plain_struct = !scalar_subject && !enum_subject && sd < 0 && pd0 >= 0 && el::def(e, pd0).def_type == el::DT_STRUCT && !(st is TyOptional);
+  if (sd >= 0 || plain_struct) && !(el_ir::unspan(x.code) is NdVar) && !getter_place(e, x.code) {
+    held = el_vars::create_unique(vars, "match_subj", el_types::without_deps(st));
+    el_vars::set_defined(vars, held);
+    held_set = el_ir::v_set(held, x.code);
+    x = ex(ir::NdVar { n: held }, el_types::without_deps(st));
+  }
+  pd = struct_ref(e, el_types::base(st));
+  if !scalar_subject && !enum_subject && sd < 0 && pd >= 0 && el::def(e, pd).def_type == el::DT_STRUCT && !(st is TyOptional) {
+    // A text answer bound to a local is written into it arm by arm (`text_branch_into`).
+    sm = struct_match(e, vars, x, pd, arms);
+    if held_set == null || e.first_pass {
+      return sm;
+    }
+    return match sm.code {
+      NdBlock { block } => {
+        hb = block[0];
+        hb.operators = [held_set!] + hb.operators;
+        ex(ir::NdBlock { block: [hb] }, sm.tp)
+      },
+      _ => ex(el_ir::v_block([held_set!, sm.code], sm.tp, "match"), sm.tp)
+    };
+  }
+  if st is TyVector {
+    return vector_match(e, vars, x, arms);
+  }
+  if st is TyTuple {
+    return tuple_match(e, vars, x, arms, at_bind);
+  }
+  if !scalar_subject && !enum_subject && sd < 0 {
+    if !el_types::is_unknown(st) {
+      el::refuse(e, "a match on this type: {type_kind(st)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if !e.first_pass {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  }
+  v = -1;
+  if scalar_subject || enum_subject {
+    // A text read from a local borrows that local.
+    if st is TyText {
+      match x.code {
+        NdVar { n } => { st = ir::TyText { dep: [n] }; },
+        _ => {}
+      }
+    }
+    v = el_vars::create_unique(vars, "match_subj", st);
+    el_vars::set_defined(vars, v);
+  }
+  result = ir::TyVoid;
+  out: vector<MArm> = [];
+  null_arm = false;
+  // `(M-Exhaust)` for a `boolean` (loft#1343): arms naming `true` and `false`, none of them `_`,
+  // leave nothing to fall through to — the last arm is the fallback, as a trailing `_` would be.
+  named_true = false;
+  named_false = false;
+  any_wild = false;
+  for an in arms {
+    match e.p.nodes[an] {
+      SArm { pats, guard, body } => {
+        cond: ir::Node? = null;
+        wild = false;
+        binds: vector<ir::Node> = [];
+        aliases: vector<el_vars::VarName> = [];
+        binding_arm = false;
+        alts: vector<el_ex_pattern::VAlt> = [];
+        if sd >= 0 {
+          va = el_ex_pattern::variant_arm(e, vars, pats, sd, x.code);
+          if va == null {
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          cond = va!.cond;
+          wild = cond == null;
+          binds = va!.binds;
+          aliases = va!.aliases;
+          alts = va!.alts;
+        } else if scalar_subject && len(pats) == 1 && el_ex_pattern::binding_name(e, pats[0]!) != "" {
+          // A bare name that names nothing (`n => n * 2`) binds the subject and matches anything
+          // (`binding_arm`: `n#N = _match_subj_N`, then the body).
+          bnames: vector<el_vars::VarName> = [];
+          bvar = pattern_bind(vars, el_ex_pattern::binding_name(e, pats[0]!), st, bnames);
+          binds = [el_ir::v_set(bvar, ir::NdVar { n: v })];
+          aliases = bnames;
+          wild = true;
+          binding_arm = true;
+        } else {
+          for pn in pats {
+            c = el_ex_pattern::pattern_cond(e, vars, pn, v, st, enum_subject);
+            if c == null {
+              if !(e.p.nodes[pn] is PWild) {
+                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              }
+              wild = true;
+            } else if cond == null {
+              cond = c;
+            } else {
+              cond = el_ir::v_if(cond!, ir::NdBoolean { b: true }, c!);
+            }
+          }
+        }
+        if wild {
+          cond = null;
+        }
+        // `if <pattern> <guard> else false`; a guarded arm covers nothing, a guarded `_` is its
+        // guard alone.
+        ug: ir::Node? = null;
+        if guard != null {
+          g = el_ex_assign::expression(e, vars, guard!);
+          if !e.first_pass && !(g.tp is TyBoolean) {
+            el::refuse(e, "a match guard that is not a boolean: {type_kind(g.tp)}");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          ug = g.code;
+          // An arm with bindings binds them in the guard's own block (`binding_guard`, a
+          // variant's `match_guard`); a variant arm's body then reads them as they stand.
+          gc = if len(binds) > 0 { el_ir::v_block(binds + [g.code], ir::TyBoolean, if binding_arm { "binding_guard" } else { "match_guard" }) } else { g.code };
+          cond = if cond == null { gc } else { el_ir::v_if(cond!, gc, ir::NdBoolean { b: false }) };
+          wild = false;
+        }
+        if wild {
+          any_wild = true;
+        }
+        if len(pats) == 1 && guard == null {
+          match e.p.nodes[pats[0] ?? 0] {
+            PLit { e: le } => {
+              match e.p.nodes[le ?? 0] {
+                SBool { b: bv } => {
+                  if bv { named_true = true; } else { named_false = true; }
+                },
+                _ => {}
+              }
+            },
+            _ => {}
+          }
+        }
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+        facts = el_ex_call::assume_guard(e, vars, ug);
+        b = el_ex_pattern::arm_body(e, vars, body, expected);
+        forget_facts(vars, facts);
+        if sd >= 0 {
+          owned = el_ex_assign::jo_arm_copy(e, vars, b);
+          if owned != null {
+            b = owned!;
+          }
+        }
+        // An untyped `[]` arm is read against the match's vector type (`parse_vector` with the
+        // arm's expectation): built as an empty vector of its element, in a store of its own.
+        if body != null && el_types::base(expected) is TyVector && el_ex_pattern::syntax_tail_empty(e, body!) {
+          b = el_ex_pattern::empty_arm(e, vars, b, expected, ir::TyVoid);
+        }
+        // The bindings' spellings name what they named before the arm.
+        for al in rev(aliases) {
+          el_vars::restore_name(vars, al.name, al.nr);
+        }
+        if len(binds) > 0 && (guard == null || binding_arm) {
+          b.code = el_ir::v_block(binds + [b.code], b.tp, if binding_arm { "binding_arm" } else { "match_arm" });
+        }
+        // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
+        // (`first_pass_null_arm`).
+        if b.tp is TyNull || (!e.first_pass && el_ir::is_null(b.code)) {
+          null_arm = true;
+        }
+        if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
+          // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`).
+          result = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
+        } else if unsettled(result) {
+          // An arm's dep on a store it mints itself (a literal's work ref) is no borrow of the
+          // join (`arm_join_type`).
+          result = if el_types::base(b.tp) is TyReference { el_types::with_deps(b.tp, outside_deps(b.code, el_types::deps(b.tp))) } else { b.tp };
+        } else if b.tp is TyOptional && !(result is TyOptional) {
+          result = ir::TyOptional { inner: result };
+        }
+        result = join_fn_arm(result, b);
+        // `merge_dependencies` (`joined_deps`): a text result borrows what any arm's text does.
+        if el_types::base(result) is TyText && el_types::base(b.tp) is TyText {
+          tj = el_types::deps(result);
+          for x2 in el_types::deps(b.tp) {
+            if !tj.contains(x2) {
+              tj += [x2];
+            }
+          }
+          result = el_types::with_deps(result, tj);
+        }
+        // `merge_dependencies`: a record result borrows what any arm's record does, a function
+        // result what any arm's closure does.
+        if el_types::base(result) is TyFunction && el_types::base(b.tp) is TyFunction {
+          joined = el_types::deps(result);
+          // An arm answering a function local borrows that local (`parse_var`'s `depending`).
+          ad = el_types::deps(b.tp);
+          match tail_of(b.code) { NdVar { n: av } => { if !ad.contains(av) { ad += [av]; } }, _ => {} }
+          // The arm is typed by the expectation the first arm set; its own closure record is on
+          // its block (`arm_join_type` reads the arm's own type).
+          for x3 in arm_block_deps(b.code) {
+            if !ad.contains(x3) {
+              ad += [x3];
+            }
+          }
+          for x2 in ad {
+            if !joined.contains(x2) {
+              joined += [x2];
+            }
+          }
+          result = el_types::with_deps(result, joined);
+        }
+        if el_types::is_heap_record(el_types::base(result)) && el_types::is_heap_record(el_types::base(b.tp)) {
+          joined = el_types::deps(result);
+          for x2 in outside_deps(b.code, el_types::deps(b.tp)) {
+            if !joined.contains(x2) {
+              joined += [x2];
+            }
+          }
+          result = el_types::with_deps(result, joined);
+        }
+        // A record arm's block is typed without the store its own literal mints (`arm_join_type`);
+        // a bare literal arm keeps it.
+        ac = b.code;
+        if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
+          ac = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { el_ex_null::arm_typed(b.code, outside_deps(b.code, el_types::deps(b.tp))) }, _ => b.code };
+        }
+        if len(alts) > 0 {
+          // One arm per listed pattern, each binding its own fields ahead of the body (or of the
+          // guard, which is asked of each pattern).
+          for al in alts {
+            if ug != null {
+              out += [MArm { cond: el_ir::v_if(al.cond, el_ir::v_block(al.binds + [ug!], ir::TyBoolean, "match_guard"), ir::NdBoolean { b: false }), code: ac, tp: b.tp }];
+            } else {
+              ai = el_ir::v_block(al.binds + [b.code], b.tp, "match_arm");
+              if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
+                ai = el_ex_null::arm_typed(ai, outside_deps(ai, el_types::deps(b.tp)));
+              }
+              out += [MArm { cond: al.cond, code: ai, tp: b.tp }];
+            }
+          }
+        } else {
+          out += [MArm { cond: cond, code: ac, tp: b.tp }];
+        }
+        if wild {
+          break;
+        }
+      },
+      _ => {}
+    }
+  }
+  // A record result with a `null` arm is `τ?` on both passes (`(N-Join)`).
+  if null_arm && el_types::base(result) is TyReference && !(result is TyOptional) {
+    result = ir::TyOptional { inner: result };
+  }
+  // A record join keeps its arms on the first pass (as an `if` does): the parameters they hand
+  // back are what the result borrows.
+  if e.first_pass && el_types::base(result) is TyReference && len(out) > 0 {
+    // A wildcard arm is the chain's last value, not an `if` beside a `null`.
+    fc = ir::NdNull;
+    for a in rev(out) {
+      fc = if a.cond == null { a.code } else { el_ir::v_if(a.cond!, a.code, fc) };
+    }
+    return ex(el_ir::v_block([fc], result, "scalar_match"), result);
+  }
+  // `(M-Exhaust)` for a `boolean`: both values named and no `_` — the last arm is the fallback.
+  if st is TyBoolean && named_true && named_false && !any_wild && len(out) > 0 {
+    out[len(out) - 1].cond = null;
+  }
+  // A text answer is built on the first pass too, as Rust builds every match: at a function's
+  // tail its arms take the per-arm accumulator there (`if_tail_yields_text`), which the second
+  // pass follows.
+  if e.first_pass && el_types::base(result) is TyText && (scalar_subject || enum_subject || sd >= 0) && len(out) > 0 {
+    // `type_null_arms` on this pass too: a written `null` arm answers the text's null, so the
+    // tail's per-arm delivery (`if_tail_yields_text`) sees every arm answer a text.
+    tnull = el_convert::null_of(e, el_types::base(result));
+    fc = ir::NdNull;
+    for a in rev(out) {
+      ac = if a.tp is TyNull && el_ir::is_null(a.code) && tnull != null { tnull! } else { a.code };
+      fc = if a.cond == null { ac } else { el_ir::v_if(a.cond!, ac, fc) };
+    }
+    if sd >= 0 {
+      return if held_set == null { ex(fc, result) } else { ex(el_ir::v_block([held_set!, fc], result, "match"), result) };
+    }
+    return ex(el_ir::v_block([el_ir::v_set(v, x.code), fc], result, if scalar_subject { "scalar_match" } else { "match" }), result);
+  }
+  if e.first_pass || (!scalar_subject && !enum_subject && sd < 0) {
+    return ex(ir::NdNull, result);
+  }
+  // A text answer is a value like any other — at a tail its arms take the per-arm accumulator, as
+  // an operand it is read as it stands; bound to a local each arm is written into it
+  // (`text_branch_into`, at the bind).
+  // `type_null_arms`: an arm that answers a written `null` answers the result's null.
+  rbase = el_types::base(result);
+  if !(rbase is TyVoid) && !(rbase is TyNull) {
+    nl = el_convert::null_of(e, rbase);
+    hn = el_ex_null::halt_null(e, result);
+    for a in out {
+      if nl != null && el_ir::is_null(a.code) {
+        out[a#index].code = nl!;
+      } else if nl != null && a.tp is TyNull && block_ends_null(a.code) {
+        // An arm block answering a written `null` (a variant arm with bindings): its tail is
+        // the result's null and the block is typed as the result.
+        out[a#index].code = match a.code {
+          NdBlock { block } => {
+            nb = block[0];
+            nb.operators[-1] = nl!;
+            nb.result = [result];
+            ir::NdBlock { block: [nb] }
+          },
+          _ => a.code
+        };
+      } else if hn != null && el_ex_null::ends_in_halt(e, a.code) && !el_ex_call::scalar(rbase) {
+        // Beside a record arm the arms' own literal stores are stripped from the join
+        // (`arm_join_type`) — not carried.
+        el::refuse(e, "a match arm that halts beside a record or collection result");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      } else if hn != null && el_ex_null::ends_in_halt(e, a.code) {
+        // `@FR-C-Never`: the halt, then a value of the result type no run reaches.
+        out[a#index].code = match a.code {
+          NdBlock { block } => {
+            hb = block[0];
+            hb.operators += [hn!];
+            hb.result = [result];
+            ir::NdBlock { block: [hb] }
+          },
+          _ => el_ir::v_block([a.code, hn!], result, "halt")
+        };
+      }
+    }
+  }
+  chain = ir::NdNull;
+  // A bare function name answered beside a closure is widened to the full fn-ref shape (a
+  // scalar subject's chain; an enum's keeps the bare name).
+  if rbase is TyFunction && scalar_subject {
+    for a in out {
+      out[a#index].code = widen_bare_fn_ref(a.code, rbase);
+    }
+  }
+  // The result's null is the fallback only where no arm always matches (`has_wildcard`); a
+  // function type's is the empty fn-ref.
+  ends_wild = len(out) > 0 && out[len(out) - 1]!.cond == null;
+  if !ends_wild && !(rbase is TyVoid) && !(rbase is TyNull) {
+    fb = match_fallback(e, rbase);
+    if fb == null {
+      el::refuse(e, "a match whose result has no null: {type_kind(result)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    chain = fb!;
+  }
+  for a in rev(out) {
+    if a.cond == null {
+      chain = a.code;
+    } else {
+      chain = el_ir::v_if(a.cond!, a.code, chain);
+    }
+  }
+  if scalar_subject {
+    // `dn1_widen_branch_null`: a non-null scalar result that a branch answers as null is `τ?`;
+    // the block keeps the type the arms settled on.
+    blk = el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "scalar_match");
+    if (el_convert::plain_scalar(result) || result is TyText) && el_ex_pattern::branch_yields_null(e, chain) {
+      return ex(blk, ir::TyOptional { inner: result });
+    }
+    return own_match_arms(e, vars, ex(blk, result));
+  }
+  if null_arm && el_convert::sentinel_value(result) {
+    result = ir::TyOptional { inner: result };
+  }
+  // A struct enum read in place needs no `match` block; a held subject is set inside one.
+  if sd >= 0 {
+    if held_set != null {
+      return own_match_arms(e, vars, ex(el_ir::v_block([held_set!, chain], result, "match"), result));
+    }
+    return own_match_arms(e, vars, ex(chain, result));
+  }
+  own_match_arms(e, vars, ex(el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "match"), result))
+}
+
+// port: control.rs parse_tuple_match
+// A match on a tuple: the subject held in `_match_tuple_N`, each arm `_` or a tuple pattern whose
+// members are and-ed conditions on the subject's members — `_` asks nothing, a variant of a
+// struct-enum member tests its ordinal (`variant_arm` over `TupleGet`) — chained from the last
+// arm back, ending in a wildcard arm's code or the result's null.  A guard, alternatives, a
+// binding and any other member pattern are refused by name.
+pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, at_bind: boolean) -> Ex {
+  elems = match el_types::base(x.tp) { TyTuple { elems: es } => es, _ => [] };
+  tmp = el_vars::create_unique(vars, "match_tuple", x.tp);
+  el_vars::set_defined(vars, tmp);
+  result = ir::TyVoid;
+  out: vector<MArm> = [];
+  wild_seen = false;
+  for an in arms {
+    match e.p.nodes[an] {
+      SArm { pats, guard, body } => {
+        if guard != null {
+          el::refuse(e, "a tuple match arm with a guard");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        if len(pats) != 1 {
+          el::refuse(e, "a tuple match arm with alternatives");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        cond: ir::Node? = null;
+        match e.p.nodes[pats[0]!] {
+          PWild => {},
+          PTuple { elems: pes } => {
+            if len(pes) != len(elems) {
+              el::refuse(e, "a tuple pattern of another length");
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            for pe in pes {
+              if e.p.nodes[pe] is PWild {
+                continue;
+              }
+              et = elems[pe#index]!;
+              sd = struct_enum_of(e, et);
+              if sd < 0 {
+                el::refuse(e, "a tuple pattern member on a member of this type: {type_kind(et)}");
+                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              }
+              mc = member_cond(e, vars, pe, sd, ir::NdTupleGet { var: tmp, idx: pe#index });
+              if mc.refused {
+                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              }
+              if mc.cond != null {
+                cond = if cond == null { mc.cond } else { el_ir::v_if(cond!, mc.cond!, ir::NdBoolean { b: false }) };
+              }
+            }
+          },
+          _ => {
+            el::refuse(e, "a tuple match arm of this pattern: {syn_kind(e, pats[0]!)}");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+        }
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+        b = el_ex_pattern::arm_body(e, vars, body, expected);
+        if unsettled(result) {
+          result = b.tp;
+        }
+        result = join_fn_arm(result, b);
+        out += [MArm { cond: cond, code: b.code, tp: b.tp }];
+        if cond == null {
+          wild_seen = true;
+          break;
+        }
+      },
+      _ => {}
+    }
+  }
+  // Built on both passes, as Rust's is: a text answer at a function's tail takes the per-arm
+  // accumulator on the first pass already (`if_tail_yields_text` sees through `tuple_match`).
+  rbase = el_types::base(result);
+  // As `match_expr`: a text answer bound to a local is not carried.
+  if rbase is TyText && at_bind {
+    el::refuse(e, "a match answering a text bound to a local");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if !e.first_pass && !(rbase is TyVoid) && !(rbase is TyNull) && !el_ex_call::scalar(rbase) && !(rbase is TyText) {
+    el::refuse(e, "a tuple match answering this type: {type_kind(result)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  chain = ir::NdNull;
+  if !wild_seen && !(rbase is TyVoid) && !(rbase is TyNull) {
+    fb = el_convert::null_of(e, rbase);
+    if fb == null {
+      el::refuse(e, "a tuple match whose result has no null: {type_kind(result)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    chain = fb!;
+  }
+  for a in rev(out) {
+    chain = if a.cond == null { a.code } else { el_ir::v_if(a.cond!, a.code, chain) };
+  }
+  ex(el_ir::v_block([el_ir::v_set(tmp, x.code), chain], result, "tuple_match"), result)
+}
+
+pub struct MemberCond {
+  pub cond: ir::Node?,
+  pub refused: boolean
+}
+
+// One tuple-pattern member's test (`variant_arm` over the member), handed back as a value of the
+// caller's own: a field read off the reused result inside the arm loop would be a view of a record
+// the next member's call releases (loft#2447).
+pub fn member_cond(e: el::El, vars: el_vars::Vars, pe: integer, sd: integer, subj: ir::Node) -> MemberCond {
+  va = el_ex_pattern::variant_arm(e, vars, [pe], sd, subj);
+  if va == null {
+    return MemberCond { cond: null, refused: true };
+  }
+  if len(va!.binds) > 0 {
+    el::refuse(e, "a binding in a tuple pattern");
+    return MemberCond { cond: null, refused: true };
+  }
+  MemberCond { cond: va!.cond, refused: false }
+}
+
+// `own_joined_call_arms` (loft#1019) for a `match`: where the merged record borrows, an arm whose
+// value is a call answering a fresh record is given a home in this frame (`own_join_arm`).
+pub fn own_match_arms(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
+  if e.first_pass || !el_types::is_heap_record(el_types::base(x.tp)) || len(el_types::deps(x.tp)) == 0 {
+    return x;
+  }
+  ex(el_ex_null::own_join_arm(e, vars, x.code, x.tp), x.tp)
+}
+
+// The struct enum a match subject of type `t` reads its variant from — the enum, or the enum a
+// variant record belongs to — or -1.
+// Are `a` and `b` both of one struct enum — each the enum or one of its variants?
+pub fn sibling_variants(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
+  ea = struct_enum_of(e, el_types::base(a));
+  ea >= 0 && ea == struct_enum_of(e, el_types::base(b))
+}
+
+pub fn struct_enum_of(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    TyReference { n } => if el::def(e, n).def_type == el::DT_ENUM_VALUE { el::def(e, n).parent } else { -1 },
+    _ => -1
+  }
+}
+
+// A block's last operator, spans peeled (the value an arm answers).
+pub fn tail_of(n: ir::Node) -> ir::Node {
+  u = el_ir::unspan(n);
+  match u {
+    NdBlock { block } => if len(block[0].operators) > 0 { tail_of(block[0].operators[-1]!) } else { u },
+    _ => u
+  }
+}
+
+// The value a match no arm takes answers: the result's null — a function type's is the empty
+// fn-ref `FnRef(0, ??)`.
+pub fn match_fallback(e: el::El, rbase: ir::TypeT) -> ir::Node? {
+  if rbase is TyFunction {
+    return ir::NdFnRef { def_nr: 0, var: el::NO_TYPE, t: [rbase] };
+  }
+  el_convert::null_of(e, rbase)
+}
+
+// `widen_bare_fn_ref`: a bare function value (its definition number) where a function type is
+// joined takes the full fn-ref shape with no closure (`FnRef(d, ??)`); a block's tail likewise.
+pub fn widen_bare_fn_ref(n: ir::Node, ft: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: widen_bare_fn_ref(inner, ft) },
+    NdBlock { block } => {
+      bl = block[0];
+      k = len(bl.operators);
+      if k > 0 {
+        bl.operators[k - 1] = widen_bare_fn_ref(bl.operators[-1]!, ft);
+      }
+      ir::NdBlock { block: [bl] }
+    },
+    NdInt { n: d } => ir::NdFnRef { def_nr: d, var: el::NO_TYPE, t: [ft] },
+    _ => n
+  }
+}
+
+// One `S { … }` alternative of a struct arm: the bindings it makes, the tests it adds, and the
+// names it binds with their variables.
+pub struct SAlt { pub binds: vector<ir::Node>, pub conds: vector<ir::Node>, pub names: vector<el_vars::VarName> }
+
+// `parse_match_struct_arm` over plain struct `pd`: each arm one `S { … }` pattern, alternatives
+// of them, or `_`; a bare field a binding (`pattern_binding`'s `name#N`), a field with a
+// sub-pattern a test of a `_fp_subj_N` copy (`field_sub`), and a guard and-ed after them.  One
+// pattern hoists its bindings ahead of the arms and answers its code in a `struct_match` block;
+// alternatives each bind into the first's variables (`parse_pattern_alternatives`), an
+// alternative with tests guarding its bindings (`guarded_arm`'s `match_guard`) and one without
+// matching always.  The chain runs from the last arm back, ending in the arm that always matches
+// or the result's null.  A name not every alternative binds, a binding of a heap field and a
+// qualified or foreign pattern are refused by name.
+pub fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: vector<integer>) -> Ex {
+  result = ir::TyVoid;
+  hoisted: vector<ir::Node> = [];
+  out: vector<SMArm> = [];
+  for an in arms {
+    match e.p.nodes[an] {
+      SArm { pats, guard, body } => {
+        alts: vector<SAlt> = [];
+        for pn in pats {
+          al = el_ex_pattern::struct_alternative(e, vars, x, pd, pn, if len(alts) > 0 { alts[0]!.names } else { [] });
+          if al == null {
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          alts += [al!];
+        }
+        for al in alts {
+          if al#index > 0 && len(al.names) != len(alts[0]!.names) {
+            el::refuse(e, "a struct match alternative binding other names than the first");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+        }
+        ug: ir::Node? = null;
+        if guard != null {
+          g = el_ex_assign::expression(e, vars, guard!);
+          if !e.first_pass && !(g.tp is TyBoolean) {
+            el::refuse(e, "a match guard that is not a boolean: {type_kind(g.tp)}");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          ug = g.code;
+        }
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+        facts = el_ex_call::assume_guard(e, vars, ug);
+        b = el_ex_pattern::arm_body(e, vars, body, expected);
+        forget_facts(vars, facts);
+        if unsettled(result) {
+          result = b.tp;
+        }
+        result = join_fn_arm(result, b);
+        wild = e.p.nodes[pats[0]!] is PWild;
+        done = false;
+        for al in alts {
+          if done {
+            break;
+          }
+          cs = al.conds;
+          if ug != null {
+            cs += [ug!];
+          }
+          test: ir::Node? = null;
+          for c in cs {
+            test = if test == null { c } else { el_ir::v_if(test!, c, ir::NdBoolean { b: false }) };
+          }
+          done = test == null;
+          if len(alts) == 1 {
+            // One pattern: its bindings ahead of the arms; `_` answers its code as it is.
+            hoisted += al.binds;
+            out += [SMArm { guard: test, code: if wild { b.code } else { el_ir::v_block([b.code], b.tp, "struct_match") } }];
+          } else if test == null {
+            out += [SMArm { guard: null, code: el_ir::v_block(al.binds + [b.code], b.tp, "struct_match") }];
+          } else {
+            cond = if len(al.binds) == 0 { test! } else { el_ir::v_block(al.binds + [test!], ir::TyBoolean, "match_guard") };
+            out += [SMArm { guard: el_ir::v_if(ir::NdBoolean { b: true }, cond, ir::NdBoolean { b: false }), code: el_ir::v_block([b.code], b.tp, "struct_match") }];
+          }
+        }
+        for al in rev(alts[0]!.names) {
+          el_vars::restore_name(vars, al.name, al.nr);
+        }
+        if done {
+          break;
+        }
+      },
+      _ => {}
+    }
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, result);
+  }
+  chain = ir::NdNull;
+  rbase = el_types::base(result);
+  if rbase is TyFunction {
+    for a in out {
+      out[a#index].code = widen_bare_fn_ref(a.code, rbase);
+    }
+  }
+  if !(rbase is TyVoid) && !(rbase is TyNull) && (out[-1] ?? SMArm { guard: null, code: ir::NdNull }).guard != null {
+    fb = match_fallback(e, rbase);
+    if fb == null {
+      el::refuse(e, "a match whose result has no null: {type_kind(result)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    chain = fb!;
+  }
+  for a in rev(out) {
+    chain = if a.guard == null { a.code } else { el_ir::v_if(a.guard!, a.code, chain) };
+  }
+  if len(hoisted) > 0 {
+    return own_match_arms(e, vars, ex(el_ir::v_block(hoisted + [chain], result, "match"), result));
+  }
+  own_match_arms(e, vars, ex(chain, result))
+}
+
+// port: Parser::match_borrow_source — the frame variable a match binding borrows from: a bare
+// variable subject, the root of a getter chain (`OpGet…` reads into its first argument's record),
+// a tuple member's own borrow (else the tuple temporary); -1 for a chain rooted in a call.
+pub fn match_borrow_source(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  at = el_ir::unspan(n);
+  for _ in 0..10000 {
+    match at {
+      NdVar { n: v } => { return v; },
+      NdCall { def_nr, args } => {
+        if !starts_with(el::def(e, def_nr).name, "OpGet") || len(args) == 0 {
+          return -1;
+        }
+        at = el_ir::unspan(args[0]!);
+      },
+      NdTupleGet { var, idx } => {
+        member = match el_types::base(el_vars::tp(vars, var)) { TyTuple { elems } => elems[idx] ?? ir::TyVoid, _ => ir::TyVoid };
+        d = el_types::deps(member);
+        return if len(d) > 0 { d[0]! } else { var };
+      },
+      _ => { return -1; }
+    }
+  }
+  -1
+}
+
+// `join_arm_into` (`joined_deps` over `arm_join_type`) for a function value: a `match` of lambdas
+// carries every arm's closure record, as the `if` twin does, not the first arm's alone.
+pub fn join_fn_arm(result: ir::TypeT, arm: Ex) -> ir::TypeT {
+  if !(el_types::base(result) is TyFunction) || !(el_types::base(arm.tp) is TyFunction) {
+    return result;
+  }
+  ds = el_types::deps(result);
+  for x in el_types::deps(arm.tp) + arm_block_deps(arm.code) {
+    if !ds.contains(x) {
+      ds += [x];
+    }
+  }
+  el_types::with_deps(result, ds)
+}
+
+// The deps an arm's own block is typed with, where it is a block.
+pub fn arm_block_deps(n: ir::Node) -> vector<integer> {
+  match el_ir::unspan(n) { NdBlock { block } => el_types::deps(block[0].result[0] ?? ir::TyVoid), _ => [] }
+}
+
+// `Parser::parse_vector_match` for a vector of plain scalars or texts: the subject held in
+// `_match_subj_N`; an arm `[a, b, ..rest, z]` tests the length (`len == fixed`, or
+// `fixed <= len` with a rest) and binds each named element at its position — the tail's from the
+// end — and the rest as a fresh vector copied from the elements between (`materialize_named_rest`),
+// inside the arm's `slice_binding` block.  `_` and a bare name (bound to the whole subject) end
+// the chain; arms that cover every length (`[]` and `[x, ..rest]`) do too, the last arm the
+// chain's end.  A guard, alternatives, a literal or any other element pattern, a record result
+// and another element type are refused by name.
+pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) -> Ex {
+  void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
+  narrow = match elm { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
+  sed = el_types::struct_enum_def(elm);
+  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0) || narrow || (elm is TyEnum && sed < 0) {
+    el::refuse(e, "a vector match over this element type: {type_kind(elm)}");
+    return void;
+  }
+  // A subject that is already an author's VARIABLE is matched as itself (`@FR-B-View` ×
+  // `@FR-P-Cap-View`): through a temporary, a capture was a view of the temporary, which a
+  // removal from the variable in the arm never shook.  A computed subject (or a link, or a
+  // compiler buffer) still gets its temporary, so it is evaluated once.
+  subject_var = match el_ir::unspan(x.code) {
+    NdVar { n: xv } => if !(el_types::base(el_vars::tp(vars, xv)) is TyRefVar) && !el_vars::is_compiler_generated(vars, xv) { xv } else { -1 },
+    _ => -1
+  };
+  sv = if subject_var >= 0 { subject_var } else { el_vars::create_unique(vars, "match_subj", x.tp) };
+  el_vars::set_defined(vars, sv);
+  // `@FR-P-Cap-View`: a record element bound by name borrows the subject's backing variable.
+  mb = match_borrow_source(e, vars, x.code);
+  src = if mb >= 0 { mb } else { sv };
+  result = ir::TyVoid;
+  out: vector<SMArm> = [];
+  shapes: vector<SliceShape> = [];
+  total = false;
+  for an in arms {
+    match e.p.nodes[an] {
+      SArm { pats, guard, body } => {
+        if len(pats) != 1 || guard != null {
+          el::refuse(e, "a vector match arm with alternatives or a guard");
+          return void;
+        }
+        pn = pats[0]!;
+        names: vector<el_vars::VarName> = [];
+        binds: vector<ir::Node> = [];
+        cond: ir::Node? = null;
+        match e.p.nodes[pn] {
+          PWild => { total = true; },
+          PSlice { elems } => {
+            sa = slice_arm(e, vars, sv, src, elm, elems, names);
+            if sa == null {
+              return void;
+            }
+            binds = sa!.binds;
+            cond = sa!.cond;
+            shapes += [sa!.shape];
+          },
+          _ => {
+            bn = el_ex_pattern::rename_of(e, pn);
+            if bn == "" {
+              el::refuse(e, "a vector match pattern of this form: {syn_kind(e, pn)}");
+              return void;
+            }
+            bv = pattern_bind(vars, bn, x.tp, names);
+            binds = [el_ir::v_set(bv, ir::NdVar { n: sv })];
+            total = true;
+          }
+        }
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+        b = el_ex_pattern::arm_body(e, vars, body, expected);
+        // `@FR-C-Never`'s typed halt in a vector match (`type_null_arms` over the slice arms) is
+        // not carried.
+        if !e.first_pass && el_ex_null::ends_in_halt(e, b.code) {
+          el::refuse(e, "a vector match arm that halts");
+          return void;
+        }
+        if unsettled(result) {
+          result = b.tp;
+        }
+        result = join_fn_arm(result, b);
+        for nm in rev(names) {
+          el_vars::restore_name(vars, nm.name, nm.nr);
+        }
+        out += [SMArm { guard: cond, code: if len(binds) == 0 { b.code } else { el_ir::v_block(binds + [b.code], b.tp, "slice_binding") } }];
+        // A text arm answering an element it bound is a view of the subject: the match borrows
+        // `_match_subj_N` (`join_arm_into`).
+        if el_types::base(result) is TyText && answers_binding(b.code, binds) {
+          result = el_types::with_deps(result, [sv]);
+        }
+        if total {
+          break;
+        }
+      },
+      _ => {}
+    }
+  }
+  // Built on the first pass too: what the body answers there decides its text delivery.
+  if !e.first_pass && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
+    el::refuse(e, "a vector match answering a record or a vector");
+    return void;
+  }
+  if !e.first_pass && !total && !lengths_covered(shapes) {
+    el::refuse(e, "a vector match whose arms leave a length unmatched");
+    return void;
+  }
+  // The last arm is the chain's end: it is the one every length left over reaches.
+  chain = (out[-1] ?? SMArm { guard: null, code: ir::NdNull }).code;
+  for a in rev(out[..len(out) - 1]) {
+    chain = if a.guard == null { a.code } else { el_ir::v_if(a.guard!, a.code, chain) };
+  }
+  head: vector<ir::Node> = if subject_var >= 0 { [] } else { [el_ir::v_set(sv, x.code)] };
+  own_match_arms(e, vars, ex(el_ir::v_block(head + [chain], result, "vector_match"), result))
+}
+
+// Does an arm's code answer a variable one of its `binds` set?
+pub fn answers_binding(code: ir::Node, binds: vector<ir::Node>) -> boolean {
+  u = el_ir::unspan(code);
+  t = match u { NdBlock { block } => if len(block[0].operators) > 0 { el_ir::unspan(block[0].operators[-1]) } else { ir::NdNull }, _ => u };
+  match t {
+    NdVar { n } => {
+      for b0 in binds {
+        if b0 is NdSet && match b0 { NdSet { var } => var == n, _ => false } {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// A slice arm's length shape: `min` elements, exactly that many where `exact`.
+pub struct SliceShape {
+  pub min: integer,
+  pub exact: boolean
+}
+
+pub struct SliceArm {
+  pub binds: vector<ir::Node>,
+  pub cond: ir::Node?,
+  pub shape: SliceShape
+}
+
+// `slice_arms_cover_every_length`: one arm open from some length (a rest), and an exact arm for
+// every length below it.
+pub fn lengths_covered(shapes: vector<SliceShape>) -> boolean {
+  if len(shapes) == 0 || shapes[-1]!.exact {
+    return false;
+  }
+  open = -1;
+  for s0 in shapes {
+    if !s0.exact && (open < 0 || s0.min < open) {
+      open = s0.min;
+    }
+  }
+  for n in 0..open {
+    found = false;
+    for s0 in shapes {
+      if s0.exact && s0.min == n {
+        found = true;
+      }
+    }
+    if !found {
+      return false;
+    }
+  }
+  true
+}
+
+// `parse_slice_pattern` for plain names, `_` and one `..` / `..rest` over `sv`.
+pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+  // A repetition group (`( V )*`, `( V )+`) over a struct enum: `parse_slice_repetition`; an
+  // optional group or a multi-element alternation: `parse_multi_element_alternation`.
+  for el0 in elems {
+    if el_ex_pattern::rep_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
+      return el_ex_pattern::slice_rep(e, vars, sv, src, elm, elems, names);
+    }
+    if alt_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
+      return el_ex_pattern::slice_alt(e, vars, sv, src, elm, elems, names);
+    }
+  }
+  // Each fixed element: a name ("_" for none) or, over a struct enum, a variant pattern (its
+  // syntax node in `head_pat` / `tail_pat`, -1 for a name).
+  head: vector<text> = [];
+  tail: vector<text> = [];
+  head_pat: vector<integer> = [];
+  tail_pat: vector<integer> = [];
+  has_rest = false;
+  rest = "";
+  sed = el_types::struct_enum_def(elm);
+  for el0 in elems {
+    nm = "";
+    pat = -1;
+    match e.p.nodes[el0] {
+      PRest { name } => {
+        if has_rest {
+          el::refuse(e, "a slice pattern with two rests");
+          return null;
+        }
+        has_rest = true;
+        rest = name;
+        continue;
+      },
+      PWild => { nm = "_"; },
+      _ => {
+        nm = el_ex_pattern::rename_of(e, el0);
+        if nm == "" && sed >= 0 && e.p.nodes[el0] is PName {
+          pat = el0;
+        } else if nm == "" {
+          el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
+          return null;
+        }
+      }
+    }
+    if has_rest {
+      tail += [nm];
+      tail_pat += [pat];
+    } else {
+      head += [nm];
+      head_pat += [pat];
+    }
+  }
+  fixed = len(head) + len(tail);
+  ln = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]);
+  cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
+  es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
+  // A record element bound by name views the subject's element: it borrows what the subject does.
+  named_t = if sed >= 0 { el_types::with_deps(elm, [src]) } else { elm };
+  binds: vector<ir::Node> = [];
+  for h in head {
+    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }]);
+    if (head_pat[h#index] ?? -1) >= 0 {
+      va = el_ex_pattern::slice_variant(e, vars, head_pat[h#index] ?? -1, sed, slice_elem(e, elm, at), names);
+      if va == null {
+        return null;
+      }
+      cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
+      binds += va!.binds;
+    } else if h != "_" {
+      bv = pattern_bind(vars, h, named_t, names);
+      binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
+    }
+  }
+  for t in tail {
+    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: t#index - len(tail) }]);
+    if (tail_pat[t#index] ?? -1) >= 0 {
+      va = el_ex_pattern::slice_variant(e, vars, tail_pat[t#index] ?? -1, sed, slice_elem(e, elm, at), names);
+      if va == null {
+        return null;
+      }
+      cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
+      binds += va!.binds;
+    } else if t != "_" {
+      bv = pattern_bind(vars, t, named_t, names);
+      binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
+    }
+  }
+  if rest != "" {
+    rv = pattern_bind(vars, rest, ir::TyVector { inner: elm, dep: [] }, names);
+    if !e.first_pass {
+      m = el_ex_pattern::named_rest(e, vars, sv, elm, rv, len(head), len(tail));
+      if m == null {
+        return null;
+      }
+      binds += [m!];
+    }
+  }
+  SliceArm { binds: binds, cond: cond, shape: SliceShape { min: fixed, exact: !has_rest } }
+}
+
+// The `PGroup` a slice element is when it is an optional group `( … )?` or an alternation of
+// sequences `( A B | C )` (`SliceGroupKind::Alt`), or -1.
+pub fn alt_group(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    PGroup { seqs, quant } => if quant == "?" || (quant == "" && len(seqs) > 1 && seq_width(e, seqs) > 1) { n } else { -1 },
+    _ => -1
+  }
+}
+
+// The widest of the sequences of a group.
+pub fn seq_width(e: el::El, seqs: vector<integer>) -> integer {
+  w = 0;
+  for q in seqs {
+    match e.p.nodes[q] { PSeq { items } => { if len(items) > w { w = len(items); } }, _ => {} }
+  }
+  w
+}
+
+// One capture of an alternation branch: `name` bound to the variant `vd`'s field `fa` (of type
+// `ft`) at the branch's position `pos`, or to the whole element where `fa` is -1.
+pub struct AltCap { pub name: text, pub pos: integer, pub vd: integer, pub fa: integer, pub ft: ir::TypeT }
+
+// One branch of an alternation: its variants' ordinals, position by position, and its captures.
+pub struct AltBranch { pub discs: vector<integer>, pub caps: vector<AltCap> }
