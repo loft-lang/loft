@@ -145,8 +145,10 @@ right and globally inconsistent is what that produces.
   release branch's PR beside other work — the COMMIT is what keeps the move reviewable on
   its own, so it never shares one with a behaviour change.  Take two picks when the previous
   release's split landed clean, one otherwise.
-- **No per-PR file-size limit.**  How large a file has grown is this row's question; a
-  fix never has to carve a file first.
+- **One hard ceiling, any time (owner): no source file passes 5000 lines.**  A file that
+  reaches it is split, before more is added to it, into files of at most 2500 lines each —
+  whatever the release cycle.  Below the ceiling, how large a file has grown is this row's
+  question; a fix never has to carve a file first.
 - **Payoff check**, read in `M-file-sizes`: did last release's split land, and did the
   file it came from stay down?  A split whose parts have regrown had its seam chosen
   wrong.  Re-open that seam; do not add a third part.
