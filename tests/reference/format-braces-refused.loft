@@ -8,7 +8,7 @@
 // round's diagnostics are part of the refusal:
 // @EXPECT_ERROR: No matching operator '==' on 'text' and 'void'
 // @EXPECT_ERROR: Expect token )
-// @EXPECT_ERROR: Formatter error
+// @EXPECT_ERROR: this format hole does not close here
 // @EXPECT_ERROR: Expect token ;
 // @EXPECT_ERROR: Expect token }
 // @EXPECT_ERROR: Syntax error: unexpected ')'
