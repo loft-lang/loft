@@ -961,7 +961,7 @@ fn emit(l: Lowering, code: Code, kind: Kind, a: integer, b: integer) {
 
 // The natives the interpreter carries, by the index a `Native` op names: each runs as loft's
 // own function of that name (`run.loft`), so its behaviour is the stdlib's.
-fn native_index(name: text) -> integer? {
+pub fn native_index(name: text) -> integer? {
   match name {
     "n_assert" => 0,
     "n_env_variable" => 1,

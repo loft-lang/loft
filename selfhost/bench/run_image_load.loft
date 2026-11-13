@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The run image loader's gate (@PLN91, handoff-2026-11-13-run-image.md step 2): open the image
+// `loft --emit-run-image` wrote, bind its natives and find `main`, and write how long that took
+// on stderr — `timed load=<µs> bind=<µs>` — with what was found: the code size, the
+// definitions, the natives the runner carries of those the image names, and where `main`
+// starts.  Build it as the census's runner is built (`--native-c --ship`) to time it.
+use ir;
+use load;
+use run_image;
+
+fn main() {
+  a = arguments();
+  path = a[0] ?? "";
+  t0 = ticks();
+  img = load::load_run(path);
+  if img == null {
+    eprintln("refused: no run image at {path}");
+    exit(3);
+  }
+  r = img!;
+  t1 = ticks();
+  ids = run_image::bind_natives(r);
+  at = run_image::entry(r);
+  t2 = ticks();
+  println("code={len(r.code)} definitions={len(r.starts) - 1} natives={run_image::natives_carried(ids)}/{len(ids)} main@{at}");
+  eprintln("timed load={t1 - t0} bind={t2 - t1}");
+}
