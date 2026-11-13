@@ -3509,11 +3509,35 @@ pub fn view_root_slots(data: &Data, arg: &Value) -> Option<Vec<u16>> {
         // arms this way. A block with construction ops in it is a MINT, not a view,
         // and falls through to `None` above.
         Value::Block(bl) if bl.operators.len() == 1 => view_root_slots(data, &bl.operators[0]),
+        // The `!` unwrap's block (`{#ncr _ncr_N = <projection>; <null check>; _ncr_N }`): its
+        // value is the projection it bound, checked and handed on — a view of the same roots.
+        // Read as a mint it left the witness set incomplete, and the copy of a call taking it
+        // kept every store the callee made (the self-hosted elaborator's
+        // `return_ownership_round` passing `def.code[0]!`).  `LOFT_NO_NCR_ARG_ROOT=1` reads it
+        // as a mint again.
+        Value::Block(bl)
+            if bl.name == "ncr"
+                && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_ARG_ROOT").is_some()) =>
+        {
+            let Some(Value::Var(t)) = bl.operators.last().map(Value::unspan) else {
+                return None;
+            };
+            let bound = bl.operators.iter().find_map(|op| match op.unspan() {
+                Value::Set(x, val) if x == t => Some(val.as_ref()),
+                _ => None,
+            })?;
+            view_root_slots(data, bound)
+        }
         Value::Call(d, cargs) => {
             if cargs.is_empty() && data.def(*d).name() == "OpNullRefSentinel" {
                 return Some(Vec::new());
             }
-            if !is_projection_op(data, *d) {
+            // `v[i]` read as nullable (`OpGetVectorNullable`, the `!` unwrap's element read)
+            // lies in `v`'s store as `OpGetVector`'s does.
+            if !is_projection_op(data, *d)
+                && !(data.def(*d).name() == "OpGetVectorNullable"
+                    && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_ARG_ROOT").is_some()))
+            {
                 return None;
             }
             view_root_slots(data, cargs.first()?)
