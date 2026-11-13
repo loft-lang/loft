@@ -11,6 +11,7 @@ use syntax;
 use el;
 use el_definitions;
 use el_expressions;
+use el_ex_call;
 use report;
 use load;
 use el_buffers;
@@ -80,7 +81,7 @@ fn program(image: text, f: text, std_image: text) {
   el::reset_uses(e);
   el_definitions::elab_file(e, tree ?? 0);
   // `resolve_deferred_unknowns`: the instances made above their template are filled now.
-  el_expressions::rebuild_stale(e);
+  el_ex_call::rebuild_stale(e);
   // After the second pass, on the settled IR (`Parser::after_pass2`): the text-return
   // promotion, then the work buffers.
   el_tret::promote_text_returns(e);

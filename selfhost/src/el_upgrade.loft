@@ -12,6 +12,7 @@ use el;
 use el_ir;
 use el_vars;
 use el_expressions;
+use el_ex_base;
 
 pub fn synth_upgrade_drain(e: el::El) {
   loads: vector<integer> = [];
@@ -185,7 +186,7 @@ fn drain_fn(e: el::El) -> integer {
   vars = el_vars::new_vars("__upgrade_drain", el::def(e, f).position.file);
   ok = el_vars::add_variable(vars, "ok", ir::TyBoolean);
   el_vars::become_argument(vars, ok);
-  k = el_vars::add_variable(vars, "k", ir::TyInteger { spec: el_expressions::wide_spec() });
+  k = el_vars::add_variable(vars, "k", ir::TyInteger { spec: el_ex_base::wide_spec() });
   el_vars::set_defined(vars, k);
   next = ir::NdCall { def_nr: el::def_nr(e, "n_store_upgrade_owed_next"), args: [] };
   finish = ir::NdCall { def_nr: el::def_nr(e, "n_store_upgrade_owed_finish"), args: [] };

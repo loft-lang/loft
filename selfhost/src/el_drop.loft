@@ -20,6 +20,7 @@ use el_vars;
 use el_types;
 use el_schema;
 use el_expressions;
+use el_ex_base;
 
 // Which hook a cascade runs: its name, the cascade's suffix, and whether the members go first
 // to last (a copy) or last to first (a release).
@@ -343,7 +344,7 @@ fn fill(e: el::El, t: integer, c: integer, h: Hook) {
     if tg < 0 {
       continue;
     }
-    field = el_expressions::field_get(e, t, a, me);
+    field = el_ex_base::field_get(e, t, a, me);
     if field == null {
       return;
     }
@@ -357,7 +358,7 @@ fn fill(e: el::El, t: integer, c: integer, h: Hook) {
     if tg < 0 {
       continue;
     }
-    field = el_expressions::field_get(e, t, a, me);
+    field = el_ex_base::field_get(e, t, a, me);
     if field == null {
       return;
     }
@@ -413,7 +414,7 @@ fn elements_loop(e: el::El, vars: el_vars::Vars, field: ir::Node, idx: integer, 
   vars.vars[ev].skip_free = true;
   i = ir::NdVar { n: iv };
   past_end = el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [field]), i]);
-  read = el_ir::cl(e, "OpGetVectorNullable", [field, ir::NdInt { n: el_expressions::element_stride(e, elem) }, i]);
+  read = el_ir::cl(e, "OpGetVectorNullable", [field, ir::NdInt { n: el_ex_base::element_stride(e, elem) }, i]);
   body = [
     el_ir::v_if(past_end, el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull),
     el_ir::v_set(ev, read),
