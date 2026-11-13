@@ -89,3 +89,15 @@ unchanged (median 0.99x gcc, 1.01x clang).  Priced,
 not built: the eight pops read through `loft_vec_get` (about 13 instructions each: the store
 table and the store's base are reloaded per read) — reading through the loop's push header
 gains 9 % alone, nothing on top of the run clause in the hand form.
+
+`fill_polygon` (2.04x gcc, 1.50x clang) had two causes, both BUILT.  On gcc the edge loop
+divided: `polygon_crossings` reads `pc_pts[(i + 1) % pc_n ?? 0]?`, and gcc keeps the `%` as a
+64-bit division on every edge (2.78 M per callgrind run) where clang and rustc turn it into a
+wrapping counter.  The wrapped-counter clause now writes a step of 1 as `i == n - 1 ? 0 : i + 1`
+(`i + 1 < n ? i + 1 : 0` cost clang 5 % more instructions): gcc 485 → 325 µs.  On both, the
+crossings buffer is cleared once per scanline through the release walk, which reads the type
+descriptors to learn that an `integer` owns nothing; a local vector of scalars now clears with
+the length reset: gcc −6 %, clang −9 %.  Package bench, C ship lane against the Rust twin:
+gcc **2.04x → 1.32x**, clang **1.50x → 1.34x**; the other routines unchanged.  Left: the
+callee clears its buffer twice in a row (one clear priced at a further 2 %, gcc only — not
+built), and the per-scanline window derivation (41 instructions).

@@ -513,8 +513,8 @@ the record it points at, not a place of the holder's.
                  backend and through every DbRef that names it — a vector local's
                  own mint, a buffer bound through `OpGetField(…, 0)`, a callee's
                  refill — so a clear reads the vector a fill wrote.  A no-heap
-                 element pays exactly the old reset — for a field vector the
-                 emitter decides that from `OpGetField`'s vector type, since asking
+                 element pays exactly the old reset — the emitter decides that from
+                 the vector type (`OpGetField`'s, or a local's of scalars), since asking
                  the layout at run time searched the record's fields per clear; a
                  field vector, a user-struct root and a placed buffer (never record 1)
                  keep it too.  Values are unaffected either way — this is a leak

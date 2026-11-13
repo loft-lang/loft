@@ -178,7 +178,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Alias)` | `/versioned` c, native |
 | `(R-Apart)` | `R-Apart` c, native · `/records` c, native · `/records/boundary` c · `/vector` c, native |
 | `(R-AppendTwin)` | `R-AppendTwin` c, native · `/loop-window` c · `/mint` c |
-| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c |
+| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c · `/wrap-select` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
@@ -1298,9 +1298,32 @@ pair check struck, t3 with the starts' adjacency struck).  Not yet: an element w
 **The wrapped form.**  A read at `(i + c) % n` — a counter of such a loop, `c` a literal from 0
 up, `n` a local holding the held vector's length for the loop (the range end, or the local it
 was copied from) — lies in `[0, n)` (`(R-InRange)`'s wrapped form gives the reason) and takes
-no test either; it is written `((i + c) % n)`, `i` alone for `c = 0`.  Site:
+no test either; it is written `((i + c) % n)`, `i` alone for `c = 0` and a compare for `c = 1`
+(below).  Site:
 `FnWriter::counter_index`, through `loop_shape::wrapped_counter`.  Census row `R-Base/counter`.
 Guard `tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft`.
+
+**The wrapped form's step-1 spelling (the C).**  `(i + 1) % n` at such a read is written
+`i == n - 1 ? 0 : i + 1` — the same value, since `0 <= i < n`.  gcc keeps the `%` as a 64-bit
+division on every turn; clang and rustc already turn it into a wrapping counter, which this
+spelling leaves them free to keep (`i + 1 < n ? i + 1 : 0` cost clang 5 % more instructions).
+graphics `fill_polygon` (`pc_pts[(i + 1) % pc_n ?? 0]?`, one wrap per edge), ship lane: gcc
+485 → 325 µs (−33 %), clang unchanged, the hash unchanged.  A larger step keeps the `%`: `i + c`
+can pass `n` more than once.  Switch `LOFT_NO_WRAP_SELECT=1`; census `R-Base/wrap-select`.
+Guard: the same cells — a select that answers 1 at the wrap fails `main` (6898 for 6086).
+
+**A clear with nothing to release (the C).**  `(H-ClearRelease)` (`heap.md`) releases what a
+cleared vector's elements own; a vector of scalars owns nothing through them, so its clear is
+the length reset.  The C writes `loft_vec_clear` for a local of type `vector<τ>`, `τ` a scalar
+(`data::is_scalar`), at `OpClearVector` and at the return-adopt clear of a reused buffer —
+where `loft_vec_clear_release` walked the type descriptors per clear to learn the same.
+graphics `polygon_crossings` clears its reused crossings buffer once per scanline: ship lane
+gcc 327 → 308 µs (−6 %), clang 340 → 309 µs (−9 %), the hash unchanged.  A clear that names a
+field of the local's store (`b = []` on a `vector<integer>` local) is not typed there and keeps
+the walk.  Sites: `FnWriter::clear_releases_nothing` (`src/c/body.rs`).  Switch
+`LOFT_NO_PLAIN_CLEAR=1`; census `H-ClearRelease/plain`.  Guard:
+`tests/scripts/a-vector-of-scalars-clears-without-a-release-walk.loft` — a plain clear that
+leaves the length fails k3 and k5.
 
 **The guard clause.**  An index a passed test keeps below the length: inside `if e < len(v)`
 (its then-arm), after a `while e < n` loop's test (the rest of each turn), or either side of

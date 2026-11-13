@@ -3973,9 +3973,27 @@ impl<'a> FnWriter<'a> {
         None
     }
 
+    /// `@FR-H-ClearRelease` with nothing to release: a local vector of scalars, whose elements
+    /// own no heap.  Its clear is the length set to 0 — what `loft_vec_clear_release` comes to
+    /// after walking the type descriptors to learn the same at run time — so the C writes
+    /// `loft_vec_clear`.  `LOFT_NO_PLAIN_CLEAR=1` writes the walk.
+    fn clear_releases_nothing(&self, v: &Value) -> bool {
+        if std::env::var("LOFT_NO_PLAIN_CLEAR").is_ok_and(|x| x != "0") {
+            return false;
+        }
+        let Value::Var(x) = v.unspan() else {
+            return false;
+        };
+        matches!(self.vars.tp(*x).base(), crate::data::Type::Vector(elem, _) if crate::data::is_scalar(elem))
+    }
+
     /// The index `idx` names when it is proven inside the held vector `h` (`counters_in_range`):
     /// a counter, or a counter wrapped at a local holding `h`'s length
-    /// (`loop_shape::wrapped_counter`: `(i + c) % n` is in `[0, n)` there).
+    /// (`loop_shape::wrapped_counter`: `(i + c) % n` is in `[0, n)` there).  A step of 1 is
+    /// written as a compare (`i == n - 1 ? 0 : i + 1`, the same value since `0 <= i < n`): gcc
+    /// divides for the `%` on every turn, a 64-bit division clang and rustc already turn into
+    /// a wrapping counter, which this spelling leaves clang free to keep.
+    /// `LOFT_NO_WRAP_SELECT=1` writes the `%`.
     fn counter_index(&self, idx: &Value, held: &str) -> Option<String> {
         let ours = |ctr: u16| self.in_range.iter().any(|(c, hh)| *c == ctr && hh == held);
         if let Value::Var(ctr) = idx.unspan() {
@@ -3993,14 +4011,14 @@ impl<'a> FnWriter<'a> {
         {
             return None;
         }
+        let (i, n) = (self.var(ctr), self.var(*len));
         Some(if step == 0 {
-            self.var(ctr)
+            i
+        } else if step == 1 && !std::env::var("LOFT_NO_WRAP_SELECT").is_ok_and(|v| v != "0") {
+            crate::rewrite_census::fired("R-Base/wrap-select", 1);
+            format!("({i} == {n} - INT64_C(1) ? INT64_C(0) : {i} + INT64_C(1))")
         } else {
-            format!(
-                "(({} + INT64_C({step})) % {})",
-                self.var(ctr),
-                self.var(*len)
-            )
+            format!("(({i} + INT64_C({step})) % {n})")
         })
     }
 
@@ -7015,10 +7033,16 @@ impl<'a> FnWriter<'a> {
             self.store_operator("OpDatabase", &[Value::Var(a.buf), Value::Int(a.db_tp)], ind)?;
         self.cx.name_types();
         let buf = self.var(a.buf);
+        let clear = if self.clear_releases_nothing(&Value::Var(a.buf)) {
+            crate::rewrite_census::fired("H-ClearRelease/plain", 1);
+            format!("loft_vec_clear({buf})")
+        } else {
+            format!("loft_vec_clear_release(loft_types, loft_ntypes, {buf})")
+        };
         self.line(
             ind,
             &format!(
-                "if ({buf}.store_nr == 0xFFFF || {buf}.rec == 0) {{ {}; }} else {{ loft_vec_clear_release(loft_types, loft_ntypes, {buf}); }}",
+                "if ({buf}.store_nr == 0xFFFF || {buf}.rec == 0) {{ {}; }} else {{ {clear}; }}",
                 mint.code
             ),
         );
@@ -10630,6 +10654,11 @@ impl<'a> FnWriter<'a> {
             // write, where it clears nothing the twin's own result needs.
             ("OpClearVector", [Value::Var(x)]) if self.ap_views.contains(x) => {
                 Ok(E::new("((void) 0)", K::Void))
+            }
+            ("OpClearVector", [v]) if self.clear_releases_nothing(v) => {
+                let v = self.expr(v, ind)?;
+                crate::rewrite_census::fired("H-ClearRelease/plain", 1);
+                Ok(E::new(format!("loft_vec_clear({})", as_ref(v)?), K::Void))
             }
             ("OpClearVector", [v]) => {
                 self.cx.name_types();
