@@ -280,6 +280,15 @@ struct Scopes<'s> {
     /// against that base — `ownership.md` D-own-16's route, no witness slot.  Read by
     /// `get_free_vars`, which frees the temp only where it is NOT the caller's store.
     lift_join_witness: HashMap<u16, u16>,
+    /// `@FR-H-FreeTwice` — per bound local, the `__lift_N` temporaries a branch arm of its value
+    /// reads a projection out of (`d = if c { mk().x } else { fresh() }`).  The arm's block
+    /// hands the lift to the enclosing scope, which frees it there, so `d` names the lift's
+    /// store on that path and must not free it a second time: `get_free_vars` and a rebind's
+    /// displaced free decline where `d` names one of them (`keys::lift_view_guard`).
+    lift_viewers: HashMap<u16, Vec<u16>>,
+    /// The lifts hoisted out of value blocks while the current binding's value is scanned:
+    /// collected into `lift_viewers` by `scan_set`.
+    value_hoists: Vec<u16>,
     /// Set by `callref_owned_return` on that path, consumed by the next `new_lift_var`.
     /// `u16::MAX` = none.
     pending_join_witness: std::cell::Cell<u16>,
