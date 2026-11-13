@@ -3005,6 +3005,31 @@ impl Run<'_> {
                 let (et, ef) = cf.map_or((None, None), |s| self.decide(e, s));
                 (join_opt_arms(tt, et), join_opt_arms(tf, ef))
             }
+            // `OpEqInt(OpGetInt4(x, 0), 0)`: a nullable struct-enum's absent tag, the second half
+            // of its null test (`x == null` is `OpRefIsNull(x) || tag(x) == 0`).  No local OWNS a
+            // tag-0 record — copying an absent field answers null, and a view of one is its
+            // parent's store — so the absent side narrows `x` as the null test does.  Without it
+            // the `x == null` arm kept `x`'s copy and a rebind there read as a leak (`cond =
+            // mc.cond` under `if cond == null`).  `LOFT_RECORDS_NO_TAG_NULL_TEST=1`.
+            Value::Call(op, a)
+                if a.len() == 2
+                    && self.data.def(*op).name() == "OpEqInt"
+                    && matches!(a[1].unspan(), Value::Int(0))
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_NO_TAG_NULL_TEST").is_some()
+                    )
+                    && let Value::Call(g, ga) = a[0].unspan()
+                    && self.data.def(*g).name() == "OpGetInt4"
+                    && matches!(ga.get(1).map(Value::unspan), Some(Value::Int(0)))
+                    && let Some(Value::Var(x)) = ga.first().map(Value::unspan)
+                    && *x < self.data.def(self.d_nr).variables.count()
+                    && matches!(
+                        self.data.def(self.d_nr).variables.tp(*x),
+                        crate::data::Type::Optional(inner) if matches!(inner.base(), crate::data::Type::Enum(_, true, _))
+                    ) =>
+            {
+                Self::null_test(*x, st)
+            }
             Value::Call(op, a) if *op == self.ops.distinct => {
                 let (distinct, mut same) = self.decide_distinct(a, st);
                 // Where the two are the SAME, every name set holding one holds the other.
