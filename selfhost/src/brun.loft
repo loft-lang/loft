@@ -170,6 +170,14 @@ H_READ_FILE = 146;
 H_FS_OP = 147;
 H_FILE_OP = 148;
 H_GET_RECORD = 149;
+H_SET_SHORT = 150;
+H_STORE_LIVE = 151;
+H_LENGTH_HASH = 152;
+H_CMP_SINGLE = 153;
+H_FORMAT_SINGLE = 154;
+H_CONV_BOOL_FROM_SINGLE = 155;
+H_CONV_BOOL_FROM_CHAR = 156;
+H_EQ_REF = 157;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -367,6 +375,21 @@ pub fn handler(name: text) -> integer {
     "OpTruncateFile" => H_FILE_OP,
     "OpSyncFile" => H_FILE_OP,
     "OpGetRecord" => H_GET_RECORD,
+    "OpGetShort" => H_GET_W,
+    "OpGetShortRaw" => H_GET_W,
+    "OpSetShort" => H_SET_SHORT,
+    "OpSetShortRaw" => H_SET_SHORT,
+    "OpStoreLive" => H_STORE_LIVE,
+    "OpLengthHash" => H_LENGTH_HASH,
+    "OpNeText" => H_EQ_TEXT,
+    "OpEqSingle" => H_CMP_SINGLE,
+    "OpNeSingle" => H_CMP_SINGLE,
+    "OpLtSingle" => H_CMP_SINGLE,
+    "OpLeSingle" => H_CMP_SINGLE,
+    "OpFormatSingle" => H_FORMAT_SINGLE,
+    "OpConvBoolFromSingle" => H_CONV_BOOL_FROM_SINGLE,
+    "OpConvBoolFromCharacter" => H_CONV_BOOL_FROM_CHAR,
+    "OpEqRef" => H_EQ_REF,
     _ => -1
   }
 }
@@ -515,6 +538,8 @@ fn layout_of(h: integer) -> text {
     145 => "h",
     146 => "h",
     149 => "hb",
+    150 => "hi",
+    154 => "hbzc",
     _ => ""
   }
 }
@@ -538,7 +563,7 @@ pub fn bind_ops(img: ir::RunImage) -> vector<integer> {
   hs: vector<integer> = [];
   for name in img.ops {
     h = handler(name);
-    want = if name == "OpPushByte" { "i" } else if name == "OpGetByte" { "hi" } else { layout_of(h) };
+    want = if name == "OpPushByte" { "i" } else if name == "OpGetByte" || name == "OpGetShort" || name == "OpGetShortRaw" { "hi" } else { layout_of(h) };
     if h > 0 && (img.layouts[len(hs)] ?? "") != want {
       h = -2;
     }
@@ -1143,7 +1168,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       sp -= 32;
       a = crt::stack_str(stk, sp);
       b = crt::stack_str(stk, sp + 16);
-      set_bool(stk, sp, a == b);
+      set_bool(stk, sp, if (img.ops[op] ?? "") == "OpNeText" { a != b } else { a == b });
       sp += 8;
     } else if h == H_STATIC_CALL {
       // `static_call`: the native by the index the operator carries, which pops its arguments
@@ -1365,16 +1390,16 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       fld = u16_at(img.code, pc);
       mn = 0;
       pc += 2;
-      if name == "OpGetByte" {
+      if name == "OpGetByte" || name == "OpGetShort" || name == "OpGetShortRaw" {
         mn = i32_at(img.code, pc);
         pc += 4;
       }
       sp -= 16;
       crt::slot_ref(io, stk, sp);
-      w = if name == "OpGetByte" { crt::W_BYTE } else if name == "OpGetEnum" { crt::W_ENUM } else { crt::W_BOOLEAN };
+      w = if name == "OpGetByte" { crt::W_BYTE } else if name == "OpGetShort" { crt::W_SHORT } else if name == "OpGetShortRaw" { crt::W_SHORT_RAW } else if name == "OpGetEnum" { crt::W_ENUM } else { crt::W_BOOLEAN };
       v = crt::get_w(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld, mn);
       // A boolean or an enum stays its byte on the stack, 255 for null.
-      set(stk, sp, if w == crt::W_BYTE { v } else { v ?? 255 });
+      set(stk, sp, if w == crt::W_ENUM || w == crt::W_BOOLEAN { v ?? 255 } else { v });
       sp += 8;
     } else if h == H_GET_FLOAT {
       fld = u16_at(img.code, pc);
@@ -2023,6 +2048,64 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       }
       crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
       sp += 16;
+    } else if h == H_SET_SHORT {
+      // The value popped, then the reference; a 2-byte field, `min` its offset.
+      sfld = u16_at(img.code, pc);
+      smn = i32_at(img.code, pc + 2);
+      pc += 6;
+      sv = get(stk, sp - 8);
+      crt::slot_ref(io, stk, sp - 24);
+      sp -= 24;
+      crt::set_w(if (img.ops[op] ?? "") == "OpSetShortRaw" { crt::W_SHORT_RAW } else { crt::W_SHORT }, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, sfld, smn, sv);
+    } else if h == H_STORE_LIVE {
+      // A reference to a record (not null, not the stack's) in a store not freed.
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      lst = io[0] ?? NULL_STORE;
+      set_bool(stk, sp, (io[1] ?? 0) != 0 && lst != NULL_STORE && crt::store_live(lst));
+      sp += 8;
+    } else if h == H_LENGTH_HASH {
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      set(stk, sp, crt::hash_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+      sp += 8;
+    } else if h == H_CMP_SINGLE {
+      // Single compares read through the double: exact, a single widens without rounding.
+      sp -= 8;
+      cfb = crt::get_float(stk, 1, 8 + sp, 0, true);
+      cfa = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+      cname = img.ops[op] ?? "";
+      set_bool(stk, sp - 8, cmp_float(if cname == "OpEqSingle" { 0 } else if cname == "OpNeSingle" { 1 } else if cname == "OpLtSingle" { 2 } else { 3 }, cfa, cfb));
+    } else if h == H_FORMAT_SINGLE {
+      // As `format_float`, the value a single.
+      fsp = u16_at(img.code, pc);
+      ftoken = img.code[pc + 2] ?? 32;
+      fplus = (img.code[pc + 3] ?? 0) == 1;
+      fdir = i8_at(img.code, pc + 4);
+      pc += 5;
+      fprecision = get(stk, sp - 8) ?? 0;
+      fwidth = get(stk, sp - 16) ?? 0;
+      fsv = crt::get_float(stk, 1, 8 + sp - 24, 0, true);
+      sp -= 24;
+      crt::slot_text_append(stk, sp - (fsp - 24), crt::format_float(fsv, fwidth, fprecision, ftoken, fplus, fdir, true));
+    } else if h == H_CONV_BOOL_FROM_SINGLE {
+      bsv = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+      set_bool(stk, sp - 8, bsv != null);
+    } else if h == H_CONV_BOOL_FROM_CHAR {
+      bcv = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
+      set_bool(stk, sp - 8, (bcv ?? 0) != 0);
+    } else if h == H_EQ_REF {
+      // Two null references are equal; a null and a record are not; two records are equal
+      // when they name the same store, record and position.
+      crt::slot_ref(io, stk, sp - 16);
+      ers = io[0] ?? NULL_STORE;
+      err = io[1] ?? 0;
+      erp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      ear = io[1] ?? 0;
+      set_bool(stk, sp, if ear == 0 || err == 0 { ear == 0 && err == 0 } else { (io[0] ?? NULL_STORE) == ers && ear == err && (io[2] ?? 0) == erp });
+      sp += 8;
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
