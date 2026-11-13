@@ -2088,11 +2088,17 @@ impl Scopes<'_> {
                 function.tp(v).base(),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
             )
+            // Only an OWNER: the displaced free runs for a local that owns its store, and a view
+            // (`code = got!`, deps `[got]`) is never freed by it, so the lift keeps its store.
+            // `LOFT_LIFT_LET_GO_VIEWS=1` lets a view's lift go too (the elaborator's `member`
+            // then leaked one `Node` per field read).
+            && (function.tp(v).depend().is_empty()
+                || crate::env_once!(std::env::var_os("LOFT_LIFT_LET_GO_VIEWS").is_some()))
             && !crate::env_once!(std::env::var_os("LOFT_NO_LIFT_LET_GO").is_some())
         {
             // The value reads `v` (`x = ex(x.code, x.tp)`), so `v` cannot let go before it is
-            // computed, and the code generator's displaced free releases what `v` held after
-            // the bind.  Where that is a lift's store, the LIFT lets go of it instead, so the
+            // computed, and the code generator's displaced free releases what the owner `v`
+            // held after the bind.  Where that is a lift's store, the LIFT lets go of it instead, so the
             // store is released once (loft#2477).  `LOFT_NO_LIFT_LET_GO=1` keeps both frees.
             let distinct = data.def_nr("OpDistinctStore");
             transition_free = Some(Value::Insert(
