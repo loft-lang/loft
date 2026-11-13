@@ -978,12 +978,7 @@ fn re_arm(
         && !matches!(value.unspan(), Value::Var(_))
         && crate::keys::join_own_enabled()
         && !function.is_view_elided(v)
-        && let Some(base) = choice_var_arm(data, d_nr, function, value, v).or_else(|| {
-            match crate::use_analysis::ownership_of(data, d_nr, value) {
-                crate::use_analysis::Own::Join { base } => Some(base),
-                _ => None,
-            }
-        })
+        && let Some(base) = join_base(data, d_nr, function, value, v)
         && base != u16::MAX
         && let Some(rec) = join_record(join_shape)
     {
@@ -1088,6 +1083,17 @@ fn re_arm(
 /// copies into, for a local of type `tp`: a heap record, or a heap enum, which the copy walks
 /// the same way (the C writer's `join_bind` takes both).  `None` for every other type, and for
 /// an enum under `LOFT_NO_ENUM_JOIN=1`, which deep-copies it at every bind as before.  @PLN220.
+/// The base a rebind joins on (R1): a choice's whole-variable arm ([`choice_var_arm`]), else
+/// the oracle's `Join` base.
+fn join_base(data: &Data, d_nr: u32, function: &Function, value: &Value, v: u16) -> Option<u16> {
+    choice_var_arm(data, d_nr, function, value, v).or_else(|| {
+        match crate::use_analysis::ownership_of(data, d_nr, value) {
+            crate::use_analysis::Own::Join { base } => Some(base),
+            _ => None,
+        }
+    })
+}
+
 /// `@FR-B-Copy` — the variable a CHOICE hands over whole on one of its arms
 /// (`class = bound ?? Owned`, `x = if c { y } else { mk() }`) while every other arm answers a
 /// store of its own or null.  Bound plainly, `v` named that variable's store beside it and the
