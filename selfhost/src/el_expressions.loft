@@ -2085,6 +2085,10 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   // A whole vector parameter at the tail is copied into the buffer (`copy_borrow_tail_into_
   // retbuf`); an `if` whose arms are literals (or, for `τ?`, nulls) delivers each literal into
   // it where it is built.
+  jo = jo_arm_delivery(e, vars, code, rb, result, ba);
+  if jo != null {
+    return jo!;
+  }
   delivered = arm_delivery(e, vars, code, rb, result, ba);
   if delivered != null {
     return delivered!;
@@ -2220,6 +2224,153 @@ fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::TypeT)
     e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
   }
   ir::NdBlock { block: [bl] }
+}
+
+// port: control.rs the `@PLN85 match_return` pre-pass (`jo_arm_skip`) — a return whose
+// candidates include a MARKED VECTOR BORROW (`_mv_items_1 = OpGetField(e, …)`: skip-free, a
+// vector, with deps) is not promoted onto the buffer, which would alias the caller's buffer onto
+// the subject: each arm COPIES its value into the buffer (`materialize_vector_arms_into`) and the
+// return is the buffer.  Null where no candidate is such a borrow.
+fn jo_arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT, ba: integer) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 || !(el_types::base(result) is TyVector) || result is TyOptional {
+    return null;
+  }
+  borrowed = false;
+  for c in el_types::deps(bl.result[0] ?? ir::TyVoid) {
+    if c != rb && marked_vector_borrow(vars, c) {
+      borrowed = true;
+    }
+  }
+  if !borrowed {
+    return null;
+  }
+  d = e.context;
+  // Finalised as the materialising delivery does: the return is the buffer.
+  e.b.data.definitions[d].returned = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [ba])];
+  if e.first_pass {
+    return code;
+  }
+  elem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
+  rec = element_content(e, elem);
+  if rec < 0 {
+    el::refuse(e, "a function returning a vector of this element type: {type_kind(elem)}");
+    return code;
+  }
+  consumed: vector<integer> = [];
+  bl.operators[-1] = vector_arms_into(e, vars, bl.operators[-1]!, rb, rec, consumed);
+  bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+  ir::NdBlock { block: [bl] }
+}
+
+// port: variables/mod.rs is_marked_vector_borrow — a skip-free vector binding with deps: a
+// borrowed view no ownership-derived free is emitted for.
+fn marked_vector_borrow(vars: el_vars::Vars, v: integer) -> boolean {
+  x = vars.vars[v];
+  x != null && x!.skip_free && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) > 0
+}
+
+// port: variables/mod.rs proxy_says_owned — a binding with no deps that is not skip-free owns
+// its store.  The guarded-backing half (`deps_are_guarded_backings`) is not carried: such a
+// binding reads as not owning, so no free is added for it.
+fn proxy_says_owned(vars: el_vars::Vars, v: integer) -> boolean {
+  x = vars.vars[v];
+  x != null && !x!.skip_free && len(el_types::deps(el_vars::tp(vars, v))) == 0
+}
+
+// port: control.rs materialize_vector_arms_collect — each arm of a vector return copies its value
+// into the buffer `rb` (`OpClearVector`, `OpAppendVector`, answering `rb`): a local, freeing the
+// backing it built (its own store when it is an owned work vector, else the deps that own their
+// store, never a parameter's), nothing for a borrowed view; a projection copied, nothing freed.
+// A branch frees a work vector one arm consumed on the arm that did not.  Any other arm keeps its
+// value, as the legs this port does not carry yet (a constant's view, a capture read, a call
+// rebinding the buffer) do.
+fn vector_arms_into(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, rec: integer, consumed: vector<integer>) -> ir::Node {
+  b = ir::NdVar { n: rb };
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: vector_arms_into(e, vars, inner, rb, rec, consumed) },
+    NdReturn { inner } => ir::NdReturn { inner: vector_arms_into(e, vars, inner, rb, rec, consumed) },
+    NdIf { cond, t, f } => {
+      ct: vector<integer> = [];
+      cf: vector<integer> = [];
+      nt = vector_arms_into(e, vars, t, rb, rec, ct);
+      nf = vector_arms_into(e, vars, f, rb, rec, cf);
+      for l in ct {
+        if !cf.contains(l) {
+          nf = push_arm_free(e, nf, l);
+        }
+      }
+      for l in cf {
+        if !ct.contains(l) {
+          nt = push_arm_free(e, nt, l);
+        }
+      }
+      consumed += ct;
+      consumed += cf;
+      ir::NdIf { cond: cond, t: nt, f: nf }
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return n;
+      }
+      bl.operators[-1] = vector_arms_into(e, vars, bl.operators[-1]!, rb, rec, consumed);
+      ir::NdBlock { block: [bl] }
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return n;
+      }
+      its = items;
+      its[-1] = vector_arms_into(e, vars, its[-1]!, rb, rec, consumed);
+      ir::NdInsert { items: its }
+    },
+    NdVar { n: v } => {
+      t = el_vars::tp(vars, v);
+      if v == rb || el_types::deps(t).contains(rb) || !(el_types::base(t) is TyVector) {
+        return n;
+      }
+      seq = [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, n, ir::NdInt { n: rec }])];
+      if !vars.vars[v]!.skip_free {
+        if proxy_says_owned(vars, v) && vars.work_refs.contains(v) && !vars.vars[v]!.argument {
+          seq += [el_ir::cl(e, "OpFreeRef", [n])];
+          consumed += [v];
+        } else {
+          for dp in el_types::deps(t) {
+            if vars.vars[dp] != null && !vars.vars[dp]!.argument && proxy_says_owned(vars, dp) {
+              seq += [el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: dp }])];
+            }
+          }
+        }
+      }
+      ir::NdInsert { items: seq + [b] }
+    },
+    NdTupleGet { var: _, idx: _ } => ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, n, ir::NdInt { n: rec }]), b] },
+    _ => n
+  }
+}
+
+// port: control.rs push_arm_free — `OpFreeRef(local)` placed before the arm's value.
+fn push_arm_free(e: el::El, arm: ir::Node, local: integer) -> ir::Node {
+  free = el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: local }]);
+  match arm {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: push_arm_free(e, inner, local) },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return ir::NdInsert { items: [free, arm] };
+      }
+      ir::NdInsert { items: items[..len(items) - 1] + [free, items[-1]!] }
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return ir::NdInsert { items: [free, arm] };
+      }
+      bl.operators = bl.operators[..len(bl.operators) - 1] + [free, bl.operators[-1]!];
+      ir::NdBlock { block: [bl] }
+    },
+    _ => ir::NdInsert { items: [free, arm] }
+  }
 }
 
 // The tail deliveries `vector_return` takes before its literal and local ones: a whole vector
