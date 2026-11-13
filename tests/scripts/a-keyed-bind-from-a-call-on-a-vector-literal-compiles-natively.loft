@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @catches: LOFT_KEYED_BRACKET_NAMES_INNER — the keyed bind's bracket protects the literal's own work variable before the literal is built, which the Rust writer names out of its scope
+//
+// A keyed local bound from a call (`seen = mkset(["c", "a", "b", "a"])`) copies the answer with
+// `OpReplaceKeyed`, inside a bracket that protects the call's argument stores BEFORE the call
+// runs.  An argument that is a block is named by its tail after the call — here the vector
+// literal's `_vec_1` — and that name does not exist before the literal is built: the Rust
+// writer protected it out of its scope (E0425, script 0.4.0's suite on `--native`).  The
+// bracket names only stores that exist before the value runs.
+//
+// Expected, by hand: 3 distinct texts, then 2 (`q` and `z{k}`), four passes: 4 * 302 = 1208.
+//
+// @falsified-at: pending
+// CHANNEL: the native compile (E0425) and the printed value.
+// ARMED: none — the Rust writer refuses to compile.
+// WITNESS: `cannot find value var__vec_1 in this scope` on `--native` with the switch.
+// HOLDS: the interpreter and the C backend print 1208 either way, with no leak.
+
+struct W { key: text }
+fn mkset(items: vector<text>) -> sorted<W[key]> {
+  out: sorted<W[key]> = [];
+  for i in items { if out[i] == null { out += [W { key: i }]; } }
+  out
+}
+fn count(extra: text) -> integer {
+  s = mkset(["q", extra, "q"]);
+  len(s)
+}
+fn main() {
+  t = 0;
+  for k in 0..4 {
+    seen = mkset(["c", "a", "b", "a"]);
+    t += len(seen) * 100 + count("z{k}");
+  }
+  assert(t == 1208, "{t}");
+  println("{t}");
+}

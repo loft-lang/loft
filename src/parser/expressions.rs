@@ -8530,13 +8530,29 @@ use a separate collection or add after the loop"
             };
             // A JOIN's witnesses are its ARMS' — `protectable_ref_args` reads a call's
             // arguments and a join has none of its own (loft#1154).
-            let guarded: Vec<u16> = if tp_val & 0x8000 == 0 {
+            let mut guarded: Vec<u16> = if tp_val & 0x8000 == 0 {
                 Vec::new()
             } else if let Some(w) = join_witnesses {
                 w
             } else {
                 crate::use_analysis::protectable_ref_args(&self.data, self.context, code).0
             };
+            // This bracket is set BEFORE the value runs, so it names only stores that exist
+            // then: a block argument's root is its tail, bound by the value itself
+            // (`set(["c", "a"])` names the literal's `_vec_1`), and protecting that before the
+            // block ran read a stale slot on the interpreter and a variable out of scope in the
+            // Rust writer (E0425, script 0.4.0).  `LOFT_KEYED_BRACKET_NAMES_INNER=1` keeps them.
+            if !crate::env_once!(std::env::var_os("LOFT_KEYED_BRACKET_NAMES_INNER").is_some()) {
+                fn bound_in(node: &Value, out: &mut Vec<u16>) {
+                    if let Value::Set(v, _) = node.unspan() {
+                        out.push(*v);
+                    }
+                    node.for_each_child(&mut |c| bound_in(c, out));
+                }
+                let mut inner = Vec::new();
+                bound_in(code, &mut inner);
+                guarded.retain(|v| !inner.contains(v));
+            }
             for av in &guarded {
                 seq.push(self.cl("n_protect_store_frees", &[Value::Var(*av)]));
             }
