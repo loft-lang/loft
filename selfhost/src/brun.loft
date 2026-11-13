@@ -13,6 +13,7 @@
 // name where it is reached.
 use ir;
 use crt;
+use types;
 
 // The null reference's store (`DbRef::NULL`).
 NULL_STORE = 65535;
@@ -56,6 +57,12 @@ H_NOT = 35;
 H_CONV_BOOL_FROM_INT = 36;
 H_INT2 = 37;
 H_NEGATE_INT = 38;
+H_DATABASE = 39;
+H_VAR_REF = 40;
+H_PUT_TEXT = 41;
+H_PUT_BOOL = 42;
+H_CONST_FLOAT = 43;
+H_CONST_SINGLE = 44;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -110,6 +117,14 @@ pub fn handler(name: text) -> integer {
     "OpLandInt" => H_INT2,
     "OpLorInt" => H_INT2,
     "OpMinSingleInt" => H_NEGATE_INT,
+    "OpDatabase" => H_DATABASE,
+    "OpDatabaseNP" => H_DATABASE,
+    "OpVarRef" => H_VAR_REF,
+    "OpVarVector" => H_VAR_REF,
+    "OpPutText" => H_PUT_TEXT,
+    "OpPutBool" => H_PUT_BOOL,
+    "OpConstFloat" => H_CONST_FLOAT,
+    "OpConstSingle" => H_CONST_SINGLE,
     _ => -1
   }
 }
@@ -147,6 +162,12 @@ fn layout_of(h: integer) -> text {
     29 => "hcb",
     31 => "h",
     32 => "hh",
+    39 => "hh",
+    40 => "h",
+    41 => "h",
+    42 => "h",
+    43 => "f",
+    44 => "g",
     _ => ""
   }
 }
@@ -236,6 +257,19 @@ fn cmp_kind(kind: integer, a: integer?, b: integer?) -> boolean {
   if kind == 0 { d == 0 } else if kind == 1 { d != 0 } else if kind == 2 { d < 0 } else if kind == 3 { d <= 0 } else if kind == 4 { d > 0 } else { d >= 0 }
 }
 
+// The program's types loaded into the C runtime's table, as `run.loft`'s `load_table` loads
+// them: what a vector wrapper's release walks.
+fn load_table(ts: vector<ir::DbType>) {
+  rows: vector<types::Row> = [];
+  for tp in 0..len(ts) {
+    if len(ts[tp]!.parts) > 0 {
+      rows += [types::row(ts, tp)];
+    }
+  }
+  n = crt::load_types(types::flat(rows), len(ts));
+  assert(n == len(rows), "the type table loads: {n} rows of {len(rows)}");
+}
+
 // What a run answers: the operator it stopped at when it refused one, and how many it ran.
 pub struct Outcome {
   pub refused: text,
@@ -251,6 +285,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, stk: integer, entry: integer)
   cap = 0;
   depth = 0;
   steps = 0;
+  table_loaded = false;
+  io: vector<integer> = [NULL_STORE, 0, 0];
   while true {
     if sp + 1024 > cap {
       cap = sp + 65536;
@@ -461,6 +497,46 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, stk: integer, entry: integer)
     } else if h == H_NEGATE_INT {
       a = get(stk, sp - 8);
       set(stk, sp - 8, if a == null { null } else { -a! });
+    } else if h == H_DATABASE {
+      // `OpDatabase` / `OpDatabaseNP` as today's runner does it: the slot's reference, a store
+      // made (or made again where it names one) with a zeroed root of the type's size — an
+      // enum variant's its parent's — and the reference written back.
+      at2 = sp - u16_at(img.code, pc);
+      tp = u16_at(img.code, pc + 2);
+      pc += 4;
+      crt::slot_ref(io, stk, at2);
+      bytes = types::enum_parent_size(img.types, tp);
+      if types::is_vector_wrapper(img.types, tp) {
+        if !table_loaded {
+          load_table(img.types);
+          table_loaded = true;
+        }
+        crt::database_wrapper(io, bytes, tp);
+      } else {
+        crt::database(io, bytes, tp);
+      }
+      crt::set_slot_ref(stk, at2, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else if h == H_VAR_REF {
+      // `get_var::<DbRef>`: the 12-byte reference pushed in a 16-byte step.
+      crt::stack_move(stk, sp - u16_at(img.code, pc), sp, 12);
+      pc += 2;
+      sp += 16;
+    } else if h == H_PUT_TEXT {
+      // `put_text`: the view popped, written at `stack_pos + 16 - pos`.
+      p = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 16;
+      crt::stack_move(stk, sp, sp + 16 - p, 16);
+    } else if h == H_PUT_BOOL {
+      p = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 8;
+      set_bool(stk, sp + 8 - p, get_bool(stk, sp));
+    } else if h == H_CONST_FLOAT || h == H_CONST_SINGLE {
+      n = if h == H_CONST_FLOAT { 8 } else { 4 };
+      crt::stack_code_bytes(stk, sp, img.code, pc, n);
+      pc += n;
+      sp += 8;
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };

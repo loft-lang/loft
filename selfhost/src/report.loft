@@ -779,7 +779,7 @@ pub fn slots_report(b: ir::Bundle) -> text {
 pub fn ctable(b: ir::Bundle) -> text {
   r = "";
   for tp in 0..len(b.types) {
-    r += types::render(types::row(b, tp)) + "\n";
+    r += types::render(types::row(b.types, tp)) + "\n";
   }
   r
 }

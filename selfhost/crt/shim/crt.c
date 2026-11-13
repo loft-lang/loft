@@ -219,6 +219,12 @@ void loft_crt_stack_text_append_str(int64_t store, int64_t at, int64_t src) {
     loft_text_concat((loft_text *) loft_crt_slot_at(store, at), *(loft_str *) loft_crt_slot_at(store, src));
 }
 
+/* `OpConstFloat` and its kin: `n` bytes of the image's code at `from` copied onto the stack at
+ * `at` as they stand — a constant's bits, which the runner does not reinterpret. */
+void loft_crt_stack_code_bytes(int64_t store, int64_t at, const char *code, int64_t from, int64_t n) {
+    memcpy(loft_crt_slot_at(store, at), code + from, (size_t) n);
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

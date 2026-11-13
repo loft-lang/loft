@@ -1668,7 +1668,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     raw = literal(l, args[2]!);
     tp = raw & 16383;
     flags = (if raw & 32768 != 0 { 1 } else { 0 })
-      + (if types::holds_no_stored_refs(b, tp) { 2 } else { 0 })
+      + (if types::holds_no_stored_refs(b.types, tp) { 2 } else { 0 })
       + (if raw & 16384 != 0 { 4 } else { 0 });
     emit(l, CopyRecord, KRef, tp, flags);
   } else if name == "OpLengthVector" {
@@ -1809,7 +1809,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     value(l, b, args[0]!, KRef);
     value(l, b, args[2]!, KInt);
-    mode = if et!.linked { 2 } else if types::owns_heap(b, tp) { 1 } else { 0 };
+    mode = if et!.linked { 2 } else if types::owns_heap(b.types, tp) { 1 } else { 0 };
     emit(l, VecRemove, KInt, tp, mode);
   } else if name == "OpVectorIsNull" {
     value(l, b, args[0]!, KRef);
@@ -1846,13 +1846,13 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       NdVar { n: host } => {
         kt = root_type(b, fvar(b, l.def_nr, host).type_def[0] ?? ir::TypeT.TyVoid);
         if kt != null {
-          elem = types::root_vector_element(b, kt!);
+          elem = types::root_vector_element(b.types, kt!);
           foreign = elem != null && elem != tp;
         }
       }
       _ => {}
     }
-    emit(l, PlaceRecord, KRef, tp, types::enum_parent_size(b, tp) * 2 + (if foreign { 1 } else { 0 }));
+    emit(l, PlaceRecord, KRef, tp, types::enum_parent_size(b.types, tp) * 2 + (if foreign { 1 } else { 0 }));
   } else if name == "OpMoveVector" || name == "OpReplaceVector" || name == "OpMoveField" || name == "OpMoveRecord" {
     // The two references in the operator's order, the element or record type last.
     value(l, b, args[0]!, KRef);
@@ -1873,7 +1873,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // A plain enum's name (`Stores::enum_val`): the names are the function's text constants.
     value(l, b, args[0]!, KInt);
     tp = literal(l, args[1]!);
-    names = types::enum_names(b, tp);
+    names = types::enum_names(b.types, tp);
     if names == null {
       refuse(l, "an enum name of a type that is no plain enum");
     } else {
@@ -1896,7 +1896,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     raw = literal(l, args[1]!);
     tp = raw & 32767;
     view = raw & 32768 != 0;
-    if view && !types::is_keyed(b, tp) {
+    if view && !types::is_keyed(b.types, tp) {
       refuse(l, "a keyed view clear of a type that is not a keyed collection");
     } else {
       emit(l, ClearKeyed, KRef, tp, if view { 1 } else { 0 });
@@ -1908,17 +1908,17 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[1]!, KRef);
     raw = literal(l, args[2]!);
     tp = raw & 32767;
-    if !types::is_keyed(b, tp) {
+    if !types::is_keyed(b.types, tp) {
       refuse(l, "a keyed replace of a type that is not a keyed collection");
     } else {
-      flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(b, tp) { 2 } else { 0 });
+      flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(b.types, tp) { 2 } else { 0 });
       emit(l, ReplaceKeyed, KRef, tp, flags);
     }
   } else if name == "OpAppendCopy" {
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KInt);
     tp = literal(l, args[2]!);
-    ctp = types::content_of(b, tp);
+    ctp = types::content_of(b.types, tp);
     if ctp == null || (b.types[ctp!]?.linked ?? false) {
       // A repeat of a linked element is refused as the C backend refuses it.
       refuse(l, "a repeat of an element type the interpreter does not carry");
@@ -2453,11 +2453,11 @@ pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
     // S4: `Stores::sorted` / `Stores::index` name theirs `sorted<{content}[{key},-{key}…]>` and
     // `index<…>`, a descending key marked `-`; a sorted of linked records is laid out as an
     // `ordered<…>` of the same tail.
-    TySorted { n, keys, dep: _ } => types::named(b, "sorted<" + key_tail(b, n, keys)) ?? types::named(b, "ordered<" + key_tail(b, n, keys)),
-    TyIndex { n, keys, dep: _ } => types::named(b, "index<" + key_tail(b, n, keys)),
+    TySorted { n, keys, dep: _ } => types::named(b.types, "sorted<" + key_tail(b, n, keys)) ?? types::named(b.types, "ordered<" + key_tail(b, n, keys)),
+    TyIndex { n, keys, dep: _ } => types::named(b.types, "index<" + key_tail(b, n, keys)),
     // `Stores::spatial` and `Stores::trie`: `spatial<{content}[{field},…]>`, `trie<{content}[{field}]>`.
-    TyRadix { n, names, dep: _ } => types::named(b, "spatial<{b.types[b.data.definitions[n]!.known_type]!.name}[{names_joined(names)}]>"),
-    TyTrie { n, key, dep: _ } => types::named(b, "trie<{b.types[b.data.definitions[n]!.known_type]!.name}[{key}]>"),
+    TyRadix { n, names, dep: _ } => types::named(b.types, "spatial<{b.types[b.data.definitions[n]!.known_type]!.name}[{names_joined(names)}]>"),
+    TyTrie { n, key, dep: _ } => types::named(b.types, "trie<{b.types[b.data.definitions[n]!.known_type]!.name}[{key}]>"),
     _ => null,
   }
 }
@@ -3161,7 +3161,7 @@ fn init_ref(l: Lowering, slot: integer) {
 fn copy_operand(b: ir::Bundle, raw: integer) -> integer {
   tp = raw & 16383;
   tp + 65536 * ((if raw & 32768 != 0 { 1 } else { 0 })
-    + (if types::holds_no_stored_refs(b, tp) { 2 } else { 0 })
+    + (if types::holds_no_stored_refs(b.types, tp) { 2 } else { 0 })
     + (if raw & 16384 != 0 { 4 } else { 0 }))
 }
 

@@ -140,7 +140,7 @@ fn load_table(b: ir::Bundle) {
   for tp in 0..len(b.types) {
     t = b.types[tp]!;
     if len(t.parts) > 0 {
-      rows += [types::row(b, tp)];
+      rows += [types::row(b.types, tp)];
     }
   }
   n = crt::load_types(types::flat(rows), len(b.types));
@@ -166,7 +166,7 @@ fn image_of(b: ir::Bundle, images: vector<vector<u8>>, imaged: vector<boolean>, 
     imaged += [false];
   }
   if !(imaged[tp] ?? false) {
-    images[tp] = types::default_image(b, tp);
+    images[tp] = types::default_image(b.types, tp);
     imaged[tp] = true;
   }
   images[tp]!
@@ -915,9 +915,9 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
             crt::vec_clear(bs, br, bp);
           }
           if bs == NULL_STORE || br == 0 {
-            wrapper = types::named(b, "main_vector<text>") ?? 0;
+            wrapper = types::named(b.types, "main_vector<text>") ?? 0;
             vio: vector<integer> = [bs, br, bp];
-            crt::database(vio, types::enum_parent_size(b, wrapper), wrapper);
+            crt::database(vio, types::enum_parent_size(b.types, wrapper), wrapper);
             bs = vio[0] ?? NULL_STORE;
             br = vio[1] ?? 0;
             bp = vio[2] ?? 0;
@@ -987,9 +987,9 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
             crt::vec_clear(bs, br, bp);
           }
           if bs == NULL_STORE || br == 0 {
-            wrapper = types::named(b, "main_vector<text>") ?? 0;
+            wrapper = types::named(b.types, "main_vector<text>") ?? 0;
             vio: vector<integer> = [bs, br, bp];
-            crt::database(vio, types::enum_parent_size(b, wrapper), wrapper);
+            crt::database(vio, types::enum_parent_size(b.types, wrapper), wrapper);
             bs = vio[0] ?? NULL_STORE;
             br = vio[1] ?? 0;
             bp = vio[2] ?? 0;
@@ -1372,8 +1372,8 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
       Database => {
         at = base + op.a;
         crt::slot_ref(io, stk, at);
-        bytes = types::enum_parent_size(b, op.b);
-        if types::is_vector_wrapper(b, op.b) {
+        bytes = types::enum_parent_size(b.types, op.b);
+        if types::is_vector_wrapper(b.types, op.b) {
           // A place's collection is released through the type table.
           if !table_loaded {
             load_table(b);
@@ -1435,7 +1435,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           }
           tp = op.b % 65536;
           crt::slot_ref(io, stk, at);
-          crt::database(io, types::enum_parent_size(b, tp), tp);
+          crt::database(io, types::enum_parent_size(b.types, tp), tp);
           crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
           crt::copy_record(rs, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tp, op.b / 65536);
         } else {
@@ -1550,7 +1550,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         // absent: a struct takes its default image over the runtime's zero fill, so a nullable
         // field reads null (`Stores::copy_null_into`, loft#2414, `@C137`).
         d_store = ints[sp_int + 3] ?? NULL_STORE;
-        if (ints[sp_int] ?? NULL_STORE) == NULL_STORE && d_store != NULL_STORE && op.b & 4 != 0 && types::is_struct(b, op.a) {
+        if (ints[sp_int] ?? NULL_STORE) == NULL_STORE && d_store != NULL_STORE && op.b & 4 != 0 && types::is_struct(b.types, op.a) {
           crt::fill(d_store, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, image_of(b, images, imaged, op.a));
         }
       }
@@ -1807,7 +1807,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           table_loaded = true;
         }
         sp_int -= 6;
-        crt::hash_remove(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b, op.a) ?? 0, op.a, op.b == 1);
+        crt::hash_remove(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b.types, op.a) ?? 0, op.a, op.b == 1);
       }
       SetKeyed => {
         if !table_loaded {
@@ -1816,7 +1816,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         }
         sp_int -= 6;
         tp = op.a % 32768;
-        crt::set_keyed(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b, tp) ?? 0, tp, op.b % 256, op.a >= 32768, op.b / 256);
+        crt::set_keyed(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b.types, tp) ?? 0, tp, op.b % 256, op.a >= 32768, op.b / 256);
       }
       HashInsert => {
         if !table_loaded {
@@ -1862,7 +1862,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           table_loaded = true;
         }
         sp_int -= 3;
-        crt::keyed_entry(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, types::content_of(b, op.a) ?? 0, op.a, op.b);
+        crt::keyed_entry(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, types::content_of(b.types, op.a) ?? 0, op.a, op.b);
         ref_out(io, ints, sp_int);
         sp_int += 3;
       }
@@ -2046,7 +2046,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         sp_int -= 3;
         reset = false;
         if op.b == 1 {
-          reset = crt::reset_pool_root(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, types::enum_parent_size(b, op.a), image_of(b, images, imaged, op.a));
+          reset = crt::reset_pool_root(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, types::enum_parent_size(b.types, op.a), image_of(b, images, imaged, op.a));
         }
         if !reset {
           crt::clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
