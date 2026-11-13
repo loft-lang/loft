@@ -7830,6 +7830,13 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     el::refuse(e, "a method call: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // `T.parse(text)` on a struct, a record variant or a struct enum (`parse_var`'s type arm).
+  if call && name == "parse" {
+    pd = parse_target(e, vars, re!);
+    if pd >= 0 {
+      return type_parse(e, vars, pd, args);
+    }
+  }
   if call || len(args) > 0 {
     return method_call(e, vars, at, re!, name, args);
   }
@@ -7883,14 +7890,14 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     return if e.first_pass || (f.code is NdNull) { f } else { ex(ir::NdSpan { pos: el::pos_at(e, at), inner: f.code }, f.tp) };
   }
   if !literal_def(e, d) {
-    kind = if d >= 0 { "definition type {el::def(e, d).def_type}" } else { type_kind(x.tp) };
+    kind = if d >= 0 { "`{el::def(e, d).name}`, {el::def_type_name(el::def(e, d).def_type)}" } else { type_kind(x.tp) };
     refuse_known(e, x.tp, "a field of something other than a plain struct: {kind}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   def = el::def(e, d);
   a = attr_nr(def, name);
   if a < 0 {
-    el::refuse(e, "a field the struct does not declare");
+    el::refuse(e, "a field the struct does not declare: `{name}` of `{def.name}`");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   t = def.attributes[a]!.typedef[0];
@@ -9279,6 +9286,76 @@ fn hinted_literal(e: el::El, d: integer, args: vector<integer>, first: integer, 
 // `Parser::parse_method` for `x.name(args)`: the method the receiver's type selects
 // (`find_fn`'s rungs over the receiver), called with the receiver first, as the same call
 // spelled `name(x, args)` is; wrapped on the second pass in the `.`'s position (`wrap_chain`).
+// port: none — `parse_var` reads the name and then the `.parse` after it; here the `.parse(…)` is
+// the node and the name its receiver.  The definition a bare type name `T` in `T.parse(…)`
+// names: a struct or a record variant (not a plain enum's value), or a struct enum; -1 for
+// anything else, a local of that name included.
+fn parse_target(e: el::El, vars: el_vars::Vars, re: integer) -> integer {
+  match e.p.nodes[re] {
+    SName { name: tn, member: tm } => {
+      if tm != "" || el_vars::var(vars, tn) >= 0 {
+        return -1;
+      }
+      d = el::def_nr(e, tn);
+      if d < 0 {
+        return -1;
+      }
+      df = el::def(e, d);
+      plain_enum = match df.returned[0] ?? ir::TyVoid { TyEnum { is_ref } => !is_ref, _ => false };
+      if (df.def_type == el::DT_STRUCT || df.def_type == el::DT_ENUM_VALUE) && !plain_enum {
+        return d;
+      }
+      struct_enum = match df.returned[0] ?? ir::TyVoid { TyEnum { is_ref } => is_ref, _ => false };
+      if df.def_type == el::DT_ENUM && struct_enum {
+        return d;
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+// port: objects.rs parse_type_parse
+// `T.parse(x)`: a `JsonValue` argument walks into a `T` (`n_struct_from_jsonvalue`), anything
+// else is read as text by the lenient parse (`OpCastVectorFromText`, plain JSON or loft's bare
+// keys).  Answers a `T` in its own spelling: a struct enum as its enum.  The refusal of a type
+// the parse can leave a field of unfilled (`parse_unfillable`, an error) is not ported: the Rust
+// front end answers no image for such a program.
+fn type_parse(e: el::El, vars: el_vars::Vars, d: integer, args: vector<integer>) -> Ex {
+  arg_n: integer? = null;
+  if len(args) == 1 {
+    arg_n = match e.p.nodes[args[0]!] { SArg { name: an, e: ae } => if an == "" { ae } else { null }, _ => null };
+  }
+  if arg_n == null {
+    el::refuse(e, "a `T.parse` with other than one plain argument");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  arg = expression(e, vars, arg_n!);
+  rt = if el::def(e, d).def_type == el::DT_ENUM { ir::TyEnum { n: d, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  kt = el::def(e, d).known_type;
+  is_json = match arg.tp {
+    TyReference { n } => el::def(e, n).name == "JsonValue",
+    TyEnum { n, is_ref } => is_ref && el::def(e, n).name == "JsonValue",
+    _ => false
+  };
+  if is_json {
+    return ex(ir::NdCall { def_nr: el::def_nr(e, "n_struct_from_jsonvalue"), args: [arg.code, ir::NdInt { n: kt }] }, rt);
+  }
+  text_code = arg.code;
+  if !(arg.tp is TyText) {
+    c = el_convert::convert(e, vars, arg.code, arg.tp, ir::TyText { dep: [] }, false);
+    if c == null {
+      el::refuse(e, "a `T.parse` argument that does not convert to text: {type_kind(arg.tp)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    text_code = c!;
+  }
+  ex(el_ir::cl(e, "OpCastVectorFromText", [text_code, ir::NdInt { n: kt }]), rt)
+}
+
 fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: text, args: vector<integer>) -> Ex {
   x = expression(e, vars, re);
   list: vector<ir::Node> = [x.code];
