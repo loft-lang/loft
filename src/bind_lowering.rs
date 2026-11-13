@@ -547,9 +547,39 @@ fn reads_var_unless_exiting(value: &Value, v: u16) -> bool {
 /// until after it, and runs only when the stores differ (`DisplacedFree::Stash`): `x = m(x)`
 /// where `x` views a lift temp that owns each delivery.  `rhs_reads_v` is syntactic and sees
 /// only `v` itself.
+///
+/// A view of a view is one too: `bl = block[0]` out of a match capture `_mv_block_1` of `b`
+/// names `_mv_block_1`, whose deps name `b`, so `b = ex(NdBlock { block: [bl] })` copies out of
+/// the store a pre-free had already released (a silent wrong answer on the interpreter, the
+/// self-hosted elaborator's `parse_code`).  The views are closed over their dep chains;
+/// `LOFT_NO_TRANSITIVE_VIEW_READ=1` asks the direct deps alone again.
 fn rhs_reads_a_view_of(function: &Function, value: &Value, v: u16) -> bool {
-    (0..function.count())
-        .any(|w| w != v && function.tp(w).depend().contains(&v) && value.reads_var(w))
+    if crate::keys::transitive_view_read_off() {
+        return (0..function.count())
+            .any(|w| w != v && function.tp(w).depend().contains(&v) && value.reads_var(w));
+    }
+    let n = function.count();
+    let mut views = vec![false; usize::from(n)];
+    if usize::from(v) < views.len() {
+        views[usize::from(v)] = true;
+    }
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for w in 0..n {
+            if !views[usize::from(w)]
+                && function
+                    .tp(w)
+                    .depend()
+                    .iter()
+                    .any(|&d| views.get(usize::from(d)).copied().unwrap_or(false))
+            {
+                views[usize::from(w)] = true;
+                grew = true;
+            }
+        }
+    }
+    (0..n).any(|w| w != v && views[usize::from(w)] && value.reads_var(w))
 }
 
 /// The facts a reassignment `v = value` in function `d_nr` is lowered on, and the lowering;

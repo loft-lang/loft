@@ -3644,6 +3644,16 @@ pub fn lift_temp_view_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
 }
 
+/// `LOFT_NO_TRANSITIVE_VIEW_READ=1` — a reassignment whose value reads a view of a view of the
+/// local (`bl` out of a match capture of `b`) frees the displaced store BEFORE the value again
+/// (`bind_lowering::rhs_reads_a_view_of` asks the direct deps alone), so the value copies out of
+/// a released store.
+#[must_use]
+pub fn transitive_view_read_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_TRANSITIVE_VIEW_READ"))
+}
+
 /// `LOFT_NO_NCR_TEMP_VIEW=1` — a bind of a discharged projection (`def(e, n).attrs[i]!.t`, its
 /// `_ncr_N` viewing a compiler temporary) is read as a mint by the owner-witness census again
 /// (`scopes::witness::held_by_compiler_temp`): the local is never mixed, takes no witness, and
