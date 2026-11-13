@@ -23628,6 +23628,10 @@ impl Parser {
             }
         }
         self.last_called = u32::MAX;
+        if self.first_pass {
+            let def = format!("n_{name}");
+            self.last_forward_call = (self.data.def_nr(&def) == u32::MAX).then_some(def);
+        }
         // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
         if std::mem::take(&mut self.unhinted_set_refused) {
             return Type::Never;

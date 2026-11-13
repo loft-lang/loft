@@ -1046,6 +1046,15 @@ pub struct Parser {
     /// the file.  Consumed by `promote_late_text_buffers` between the passes, where the
     /// callee exists — the same late-derivation slot `reserve_late_return_buffers` uses.
     late_text_tails: Vec<(u32, u16)>,
+    /// `@FR-N-Join` — pass 1's binds of an INFERRED local from a call whose callee was not yet
+    /// declared, `(function, local, callee, line)`: its return type was unknown there, so a `τ?`
+    /// answer did not widen the local.  `widen_late_call_joins` widens it between the passes,
+    /// so pass 2 reads every use against the join, whatever order the two functions are in.
+    late_call_joins: Vec<(u32, u16, String, u32)>,
+    /// Pass 1: the definition name of the last call parsed, when no such function was declared
+    /// yet (`parse_call`); `None` after a call to a known one.  Taken by the assignment whose
+    /// value it was (`note_late_call_join`).
+    pub(crate) last_forward_call: Option<String>,
     /// loft#945 — every short `|x|` lambda whose return type is to be read off its own
     /// BODY, because nothing else names it: no `-> τ` (the short form forbids one) and no
     /// return in the hint that placed it (`map`'s callback, whose `U` is free).
@@ -2177,6 +2186,8 @@ impl Parser {
             par_deferred: Vec::new(),
             par_replay_body: None,
             late_text_tails: Vec::new(),
+            late_call_joins: Vec::new(),
+            last_forward_call: None,
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),

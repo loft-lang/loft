@@ -4545,6 +4545,7 @@ use a separate collection or add after the loop"
         // @PLN187 — the place's abstract alias (its read settled it) against the value's.
         let place_fact = std::mem::take(&mut self.operand_fact);
         let outer_snapshot = self.tuple_self_snapshot.take();
+        self.last_forward_call = None;
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
         if op == "=" {
             self.fix_place_before_value(code, to);
@@ -4568,6 +4569,7 @@ use a separate collection or add after the loop"
             let (dst, rhs) = (*dst, rhs.clone());
             self.mark_const_view(dst, &rhs, false);
         }
+        self.note_late_call_join(op, to);
         self.rebind_local_heap_param(code, op, to, var_nr);
         self.rebind_param_through_link(code, op, to, var_nr);
         self.rebind_lowered = already;
@@ -4693,6 +4695,27 @@ use a separate collection or add after the loop"
     /// caller's VALUE either way — which is what made the gap easy to read as covered — while
     /// the store the callee minted had no owner: forty calls, forty leaked records.  A
     /// nullable parameter is still a parameter (loft#1295).
+    /// Pass 1: an inferred local bound from a call whose return type is not known yet — a
+    /// callee declared further down — is recorded for [`Self::widen_late_call_joins`].
+    fn note_late_call_join(&mut self, op: &str, to: &Value) {
+        if !self.first_pass
+            || op != "="
+            || crate::env_once!(std::env::var_os("LOFT_NO_LATE_CALL_JOIN").is_some())
+        {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        if self.vars.is_declared(*v) || self.vars.is_argument(*v) {
+            return;
+        }
+        if let Some(callee) = self.last_forward_call.take() {
+            self.late_call_joins
+                .push((self.context, *v, callee, self.lexer.at().0));
+        }
+    }
+
     fn rebind_local_heap_param(&mut self, code: &mut Value, op: &str, to: &Value, var_nr: u16) {
         if self.first_pass
             || op != "="
