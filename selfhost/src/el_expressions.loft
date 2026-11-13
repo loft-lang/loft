@@ -4282,7 +4282,7 @@ fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) -> E
       return unit_variant(e, vars, pd, d);
     }
   }
-  kind = if d < 0 { "unknown" } else { "definition type {el::def(e, d).def_type}" };
+  kind = if d < 0 { "`{name}` is not declared" } else { "`{name}` is {el::def_type_name(el::def(e, d).def_type)}" };
   // A constant: its value inlined (a scalar's or a text's).
   if d >= 0 && el::def(e, d).def_type == el::DT_CONSTANT && len(el::def(e, d).code) > 0 {
     ct = el::def(e, d).returned[0];
