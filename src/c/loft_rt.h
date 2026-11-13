@@ -1435,7 +1435,10 @@ static uint8_t loft_get_store_lock(loft_ref r) {
  * at exit is named by its site, not only its type (`loft_leak_report`).  It keeps the frames
  * (`LOFT_CALL_CHAIN`); the driver builds with it when `LOFT_LEAK_SITES` is set. */
 #ifdef LOFT_LEAK_SITES
-typedef struct { const char *fn, *file; uint32_t line; } loft_leak_site;
+/* The caller's function and line beside the maker's: a store a callee makes into a buffer its
+ * caller handed it (a hidden return buffer) is the caller's to release, so the caller is where
+ * a leak of it is decided. */
+typedef struct { const char *fn, *file; uint32_t line; const char *cfn; uint32_t cline; } loft_leak_site;
 static LOFT_TLS loft_leak_site *loft_sites = 0;
 static LOFT_TLS uint32_t loft_nsites = 0;
 static void loft_note_site(uint32_t nr) {
@@ -1453,10 +1456,20 @@ static void loft_note_site(uint32_t nr) {
         w->fn = f->fn;
         w->file = f->file;
         w->line = f->site ? f->site : f->decl;
+        if (loft_nframes > 1) {
+            const loft_frame *c = &loft_frames[loft_nframes - 2];
+            w->cfn = c->fn;
+            w->cline = c->site ? c->site : c->decl;
+        } else {
+            w->cfn = 0;
+            w->cline = 0;
+        }
     } else {
         w->fn = 0;
         w->file = 0;
         w->line = 0;
+        w->cfn = 0;
+        w->cline = 0;
     }
 }
 #endif
