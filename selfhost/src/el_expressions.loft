@@ -11685,7 +11685,9 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     // `@FR-B-Ref-Uniform`: a link is passed where its referent is taken, as it is — the callee
     // reads through it.
     referent = match at { TyRefVar { inner } => inner, _ => ir::TyVoid };
-    if !(pt is TyRefVar) && !(referent is TyVoid) && el_types::is_equal(e, el_types::without_deps(el_types::base(pt)), el_types::without_deps(referent)) {
+    // A parameter that takes the referent with no conversion op (a bare `vector`, a bare keyed
+    // kind) takes the link too: `len(v)` on a `v: &vector<T>`.
+    if !(pt is TyRefVar) && !(referent is TyVoid) && (el_types::is_equal(e, el_types::without_deps(el_types::base(pt)), el_types::without_deps(referent)) || takes(e, el_types::base(pt), el_types::base(referent))) {
       conv += [arg];
       continue;
     }
@@ -15788,6 +15790,8 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       return slice_for(e, vars, h, x);
     }
   }
+  // `@FR-B-Ref-Uniform`: a `&vector` walks as the vector it links (`peel_link`).
+  x = ex(x.code, linked_vector(x.tp));
   if rev && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
     el::refuse(e, "a reversed walk of this source: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -16251,7 +16255,11 @@ fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       ops += [it];
     }
   }
-  if len(items) > 3 && items[-1] is NdLoop {
+  // A start of one statement (a constant range's index) stands alone, as Rust's `create_iter`
+  // is that statement; a longer one is grouped.
+  if len(items) == 5 && items[-1] is NdLoop {
+    ops += [items[3]!, items[-1]];
+  } else if len(items) > 3 && items[-1] is NdLoop {
     ops += [ir::NdInsert { items: items[3..-1] }, items[-1]];
   }
   ops += [ir::NdVar { n: v }];
@@ -20529,6 +20537,15 @@ fn slice_block_value(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
 // position.  An index that does not provably fit (`index_provably_fit`: a constant, an active
 // loop variable, arithmetic over those) types the element `τ?`, which is refused by name here, as
 // are a range, a key list and a container that is not a vector.
+// `Type::peel_link` asked of a vector: a `&vector<T>` link reads as the `vector<T>` it names
+// (`@FR-B-Ref-Uniform`); any other type is answered as it is.
+fn linked_vector(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyRefVar { inner } => match el_types::base(inner) { TyVector { inner: _ } => inner, _ => t },
+    _ => t
+  }
+}
+
 fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<integer>, ranged: boolean, hi: vector<integer> = [], limit: integer? = null) -> Ex {
   if c == null || len(keys) == 0 {
     el::refuse(e, "an index that is a range, a key list or a limit");
@@ -20537,6 +20554,8 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   // A literal indexed where it stands has no context for its element type: its element temp
   // keeps the bare reference (`unique_elm_var`'s `was`), as a literal a `for` walks does.
   x = if e.p.nodes[c!] is SVecLit && match e.p.nodes[c!] { SVecLit { items } => len(items) > 0, _ => false } { vector_value(e, vars, c!, hinted: false).x } else { expression(e, vars, c!) };
+  // `@FR-B-Ref-Uniform`: a `&vector` is indexed as the vector it links (`peel_link`).
+  x = ex(x.code, linked_vector(x.tp));
   if ranged && (x.tp is TyTrie || x.tp is TyRadix) {
     return keyed_slice(e, vars, x, keys, hi, limit);
   }
