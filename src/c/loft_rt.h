@@ -1583,7 +1583,14 @@ static void loft_note_double_free(uint32_t nr) {
     const loft_free_site *w = loft_freed_site(nr);
     loft_free_site here = loft_site_here();
     if (loft_same_site(w, &here)) {
-        loft_df_same++;
+        /* Named too: a free run again on a slot it already released (a loop that frees a
+         * reference it never reset) is as much a compiler defect as one from elsewhere, and
+         * without the site it could only be counted. */
+        if (loft_df_same++ < 20) {
+            fflush(stdout);
+            fprintf(stderr, "[double-free] store #%u freed again at the SAME site, in fn %s() at %s:%u\n",
+                    (unsigned) nr, here.fn ? here.fn : "?", here.file ? here.file : "?", (unsigned) here.line);
+        }
         return;
     }
     {

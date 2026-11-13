@@ -357,12 +357,8 @@ fn the_collision_no_longer_breaks_the_build() {
     )
     .unwrap();
 
-    let mut bin = std::env::current_exe().expect("test binary path");
-    bin.pop();
-    if bin.ends_with("deps") {
-        bin.pop();
-    }
-    let out = loft::platform::process::harness_command(bin.join("loft"))
+    let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    let out = loft::platform::process::harness_command(&bin)
         .arg("test")
         .current_dir(&top)
         .env("LOFT_TIMEOUT", "300")
@@ -483,12 +479,8 @@ fn use_self_tree(tag: &str, dep_entry: &str) -> String {
     )
     .unwrap();
 
-    let mut bin = std::env::current_exe().expect("test binary path");
-    bin.pop();
-    if bin.ends_with("deps") {
-        bin.pop();
-    }
-    let out = loft::platform::process::harness_command(bin.join("loft"))
+    let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    let out = loft::platform::process::harness_command(&bin)
         .arg("test")
         .current_dir(&top)
         .env("LOFT_TIMEOUT", "300")
@@ -610,12 +602,8 @@ fn two_packages_same_named_self_modules_both_stay_reachable() {
     )
     .unwrap();
 
-    let mut bin = std::env::current_exe().expect("test binary path");
-    bin.pop();
-    if bin.ends_with("deps") {
-        bin.pop();
-    }
-    let out = loft::platform::process::harness_command(bin.join("loft"))
+    let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    let out = loft::platform::process::harness_command(&bin)
         .arg("test")
         .current_dir(&top)
         .env("LOFT_TIMEOUT", "300")
@@ -860,12 +848,8 @@ fn the_clash_advice_outside_a_package_does_not_prescribe_self() {
     // dir_a, which is what `--lib` sets up and what an in-process `Parser` has no
     // search path for.  Without it the `use` binds dir_b's own file, there is no
     // clash, and the test would assert nothing — which is how it first failed.
-    let mut bin = std::env::current_exe().expect("test binary path");
-    bin.pop();
-    if bin.ends_with("deps") {
-        bin.pop();
-    }
-    let out = loft::platform::process::harness_command(bin.join("loft"))
+    let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    let out = loft::platform::process::harness_command(&bin)
         .args(["--interpret", "--path", env!("CARGO_MANIFEST_DIR"), "--lib"])
         .arg(&a)
         .arg(b.join("bare.loft"))
