@@ -2956,10 +2956,6 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     refuse(l, "a record bound from a call through a function value");
     return;
   }
-  if arm == "R1" && binds::base(binds::tp(f, jb!)) is TyTuple {
-    refuse(l, "a join witnessed by a tuple's members");
-    return;
-  }
   // B2 — the displaced store: stashed past the assignment, or freed before it.
   slot = slot_of(l, var);
   if stash {
@@ -2988,8 +2984,9 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
       init_ref(l, slot);
     }
     value(l, b, x, KRef);
-    emit(l, Load, KRef, slot_of(l, jb!), 0);
+    rest = push_join_witness(l, b, jb!);
     emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, join_rec!)));
+    recheck_join_witnesses(l, b, slot, jb!, rest, copy_operand(b, known_type(b, join_rec!)));
   } else if arm == "R2b" {
     rebind_call_copy(l, b, var, x, hd!, rb);
   } else if arm == "R2c" {
@@ -3236,9 +3233,10 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     if binds::join_record(shape) != null && !v.view_elided && jb != null {
       note_first(l, b, f, var, x, "base={trace_var(f, jb)}", "F9a");
       value(l, b, x, KRef);
-      emit(l, Load, KRef, slot_of(l, jb!), 0);
+      rest = push_join_witness(l, b, jb!);
       init_ref_under(l, slot);
       emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, sd2!)));
+      recheck_join_witnesses(l, b, slot, jb!, rest, copy_operand(b, known_type(b, sd2!)));
     } else if binds::return_adopts_fresh_store(binds::def(b, callee!)) || v.view_elided || binds::adopts_minted_at_bind(b, l.own_ops, f, var, x) {
       note_first(l, b, f, var, x, "", "F9b");
       value(l, b, x, KRef);
@@ -3288,6 +3286,52 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
 }
 
 // `OpInitRefSentinel` of the slot while a value is on the stack: the stores above leave it.
+// port: use_analysis.rs join_witness_members — the members of a TUPLE join base that hold a
+// record of their own, each a witness (loft#2471); null for a base that is no tuple, and no
+// members for one with a nested tuple member.
+fn join_witness_members(b: ir::Bundle, l: Lowering, base: integer) -> vector<integer>? {
+  elems = match binds::tp(fn_of(b, l.def_nr), base) {
+    TyTuple { elems: es } => es,
+    TyOptional { inner } => match inner { TyTuple { elems: es } => es, _ => { return null; } },
+    _ => { return null; }
+  };
+  found: vector<integer> = [];
+  for e in elems {
+    if binds::heap_leaves(e) == 0 {
+      continue;
+    }
+    if binds::base(e) is TyTuple {
+      return [];
+    }
+    found += [e#index];
+  }
+  found
+}
+
+// port: codegen.rs push_join_witness — the join's witness on the stack: the base itself, or for
+// a tuple base its first heap member; answers the further members to recheck after the bind.
+fn push_join_witness(l: Lowering, b: ir::Bundle, base: integer) -> vector<integer> {
+  m = join_witness_members(b, l, base);
+  if m != null && len(m!) > 0 {
+    value(l, b, ir::NdTupleGet { var: base, idx: m![0]! }, KRef);
+    return m![1..];
+  }
+  emit(l, Load, KRef, slot_of(l, base), 0);
+  []
+}
+
+// port: codegen.rs recheck_join_witnesses — a tuple base with several heap members (loft#2472):
+// each further member compared with what the slot now holds, by the same op, so a store equal
+// to ANY member is copied and a minted answer is re-bound to itself.
+fn recheck_join_witnesses(l: Lowering, b: ir::Bundle, slot: integer, base: integer, rest: vector<integer>, tp: integer) {
+  for i in rest {
+    emit(l, Load, KRef, slot, 0);
+    value(l, b, ir::NdTupleGet { var: base, idx: i }, KRef);
+    init_ref_under(l, slot);
+    emit(l, BindOrCopy, KRef, slot, tp);
+  }
+}
+
 fn init_ref_under(l: Lowering, slot: integer) {
   init_ref(l, slot);
 }

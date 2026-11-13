@@ -316,10 +316,22 @@ def schema_layer(file, img, reports):
 
 
 def bind_rows(path):
-    """A `LOFT_TRACE_BIND` file as {function: [row, …]}, rows in the order they were written."""
+    """A `LOFT_TRACE_BIND` file as {function: [[row, …], …]}: each run of rows one function's
+    lowering wrote, in order.  Two definitions may share a name — a library's own `main` beside
+    the program's — and each is lowered once, so a name with two runs is two functions."""
     by_fn = {}
+    last = None
+    in_prologue = False
     for line in open(path, encoding="utf-8").read().splitlines():
-        by_fn.setdefault(line.split("\t", 1)[0], []).append(line)
+        name = line.split("\t", 1)[0]
+        # A row on line 0 is a bind before the function's first line marker, its prologue: one
+        # after a body row starts the next definition of the same name, lowered right after.
+        prologue = line.split("\t")[2:4] == ["first", "L0"]
+        if name != last or (prologue and not in_prologue):
+            by_fn.setdefault(name, []).append([])
+            last = name
+        in_prologue = prologue
+        by_fn[name][-1].append(line)
     return by_fn
 
 
@@ -333,8 +345,15 @@ def binds_layer(rbinds, lbinds):
     rust, loft = bind_rows(rbinds), bind_rows(lbinds)
     r, l = [], []
     for name in sorted(loft):
-        r += rust.get(name, [f"{name}\t(not lowered)"])
-        l += loft[name]
+        mine = [row for run in loft[name] for row in run]
+        # A loft function lowered once may still read as several runs (its prologue rows
+        # follow a nested set's): compare the whole of what it wrote.
+        runs = rust.get(name, [[f"{name}\t(not lowered)"]])
+        # Of the Rust definitions of that name, the one the loft lowering is (equal rows), else
+        # the first: the difference is then read against it.
+        whole = [row for run in runs for row in run]
+        r += next((run for run in runs + [whole] if run == mine), runs[0])
+        l += mine
     return differ("binds", r, l)
 
 
