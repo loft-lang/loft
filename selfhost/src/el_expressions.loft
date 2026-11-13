@@ -15114,15 +15114,15 @@ fn arm_expectation(t: ir::TypeT) -> ir::TypeT {
 // in each arm — the local set empty first, then each arm's tail written into it
 // (`push_text_arms_into`), every arm block typed void.  False where an arm does not end in a
 // value (`if_tail_yields_text`).
-// `if_tail_yields_text` with `push_text_arms`: a text `if`, or a `??` coalesce (`ncc`, and
-// `?? return`'s `ncr`) whose selecting `if` is its tail, delivered per arm into `c` — the
+// `if_tail_yields_text` with `push_text_arms`: a text `if`, a `??` coalesce (`ncc`, and
+// `?? return`'s `ncr`) or a `match` holding its subject, whose selecting `if` is its tail, delivered per arm into `c` — the
 // coalesce block keeping its preamble and answering nothing.  Null for any other value.
 fn text_branch_into(c: integer, code: ir::Node) -> ir::Node? {
   match code {
     NdIf { cond: _ } => text_arms_into(c, code),
     NdBlock { block } => {
       bl = block[0];
-      if (bl.name != "ncc" && bl.name != "ncr") || len(bl.operators) == 0 {
+      if (bl.name != "ncc" && bl.name != "ncr" && bl.name != "match" && bl.name != "scalar_match") || len(bl.operators) == 0 {
         return null;
       }
       tail = text_arms_into(c, el_ir::unspan(bl.operators[-1] ?? ir::NdNull));
@@ -17469,12 +17469,8 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     return ex(ir::NdNull, result);
   }
   // A text answer is a value like any other — at a tail its arms take the per-arm accumulator, as
-  // an operand it is read as it stands — except bound to a local, where Rust writes each arm into
-  // the destination: not carried yet.
-  if el_types::base(result) is TyText && at_bind {
-    el::refuse(e, "a match answering a text bound to a local");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-  }
+  // an operand it is read as it stands; bound to a local each arm is written into it
+  // (`text_branch_into`, at the bind).
   // `type_null_arms`: an arm that answers a written `null` answers the result's null.
   rbase = el_types::base(result);
   if !(rbase is TyVoid) && !(rbase is TyNull) {
