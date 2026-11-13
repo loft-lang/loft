@@ -432,7 +432,12 @@ scope pass detaches it in the IR first, so that free acted on the sentinel, and 
 never emitted it (`LOFT_ARG_DISPLACED_FREE=1` emits it again).  A nullable local, whose
 displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
-store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  A copied call result's bracket
+protects the stores the reference arguments hold AFTER the call (`@FR-O-Move`), as the C
+writer compares against them: a callee that re-points a `&` argument and answers its old
+store hands that store to the copy, and one that answers the new store hands over a store the
+argument still holds.  `LOFT_NO_PROTECT_AFTER_CALL=1` brackets the call itself again, which
+leaks the first and frees the second while the argument holds it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
 on one writer (`--writer c|native`) and lists the arms the two decide differently.  Every row
 names its source line, so the census pairs by site; an interpreter row carries the facts its
 lowering read and a C row the arm `bind_lowering` decides beside its own (`lowering=R1/b2=stash

@@ -1765,7 +1765,14 @@ impl Output<'_> {
             // bare name, so a call reached a `fn` that had been emitted under another —
             // rustc E0425 "cannot find function `n_defaulted` in this scope", from a package
             // whose test file happened to name a helper the way the library did (loft#878).
-            write!(w, "{{ let _dst = var_{name}; {protect}let _src = ")?;
+            // `@FR-O-Move` — the arguments' stores AFTER the call (`keys::protect_after_call`):
+            // a `&` argument the callee re-points no longer holds the store it answers.
+            let (protect_before, protect_after) = if crate::keys::protect_after_call() {
+                (String::new(), protect)
+            } else {
+                (protect, String::new())
+            };
+            write!(w, "{{ let _dst = var_{name}; {protect_before}let _src = ")?;
             if let Value::Call(_, args) = to_unspanned {
                 // @PLN157 § V-p — the TWIN form here too (`@FR-R-Inputs`): this site spells
                 // the call itself, so it asks the same question `user_fn_call_body` does.
@@ -1972,7 +1979,7 @@ impl Output<'_> {
             };
             write!(
                 w,
-                "; if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
+                "; {protect_after}if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
             )?;
             // Adopted or copied, the local now holds its own store — unless the bind is an
             // elided VIEW, which aliases on purpose, or the adopt arm is the unconditional
