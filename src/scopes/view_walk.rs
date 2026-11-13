@@ -597,6 +597,26 @@ impl ViewWalk<'_> {
                 ) =>
             {
                 self.note_binding_depth(stmt);
+                // A `match` payload binding (`_mv_<field>_N`) bound in an arm of this value
+                // belongs to the block that holds the statement, not to the arm: a value read
+                // through it leaves the arm (`bl = match code { V { block } => block[0], … }`),
+                // so its view must still be open when `bl` is recorded, or `bl` names no root
+                // and a reassignment of `code` leaves it reading the freed store
+                // (`LOFT_NO_PAYLOAD_VIEW_FRAME=1`).
+                if !crate::env_once!(std::env::var_os("LOFT_NO_PAYLOAD_VIEW_FRAME").is_some()) {
+                    let depth = self.open.len();
+                    let mut payloads = Vec::new();
+                    rhs.walk(&mut |n| {
+                        if let Value::Set(p, _) = n
+                            && self.function.name(*p).starts_with("_mv_")
+                        {
+                            payloads.push(*p);
+                        }
+                    });
+                    for p in payloads {
+                        self.bound_at.entry(p).or_insert(depth);
+                    }
+                }
                 self.walk_stmt(rhs);
                 // The TARGET's own establishment comes after its value, because that is when
                 // the slot is written — and it is read off the whole statement, since a
