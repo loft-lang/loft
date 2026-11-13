@@ -35,7 +35,9 @@ script or suite cell.  `FILE` runs `main`; `FILE::test_name` runs that one test 
 **Strict:** the exit code is 0 only when every selected layer of every entry is `EQUAL`.
 `MISSING` is a failure, not a skip; `--layers out,alloc` selects layers for a run that wants
 fewer, and the selection is printed with the verdict.  No normalisation exists but the ones
-written in the table below; a new one is a design change here first.
+written in the table below; a new one is a design change here first.  Both sides run with one
+fixed `LOFT_HASH_SEED` (the caller's, else a constant): a hash's seed is otherwise drawn per
+table, and its walk and teardown order would differ between two runs of the same side.
 
 ## The layers
 
