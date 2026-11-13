@@ -92,6 +92,18 @@ pub(crate) fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
     }
 }
 
+/// Is `<profile>/deps/` debris: the profile's uplifted `libloft.rlib` is a per-unit output (a
+/// hard link into `build/<crate>/<hash>/out/`), so the per-unit layout built it and a `deps/`
+/// beside it was left by an older cargo or toolchain (loft#2033)?
+#[must_use]
+pub fn classic_deps_is_debris(profile_dir: &std::path::Path) -> bool {
+    let rlib = profile_dir.join("libloft.rlib");
+    crate::file_access::exists(&rlib)
+        && per_unit_dep_dirs(profile_dir)
+            .iter()
+            .any(|d| crate::file_access::same_file_identity(d.join("libloft.rlib"), &rlib))
+}
+
 /// The dependency search dir for a [`loft_lib_dir`] result: `lib_dir` itself
 /// when it already IS `deps/` (the preferred deps-first resolution, #304/#307),
 /// else `lib_dir/deps`.  Appending "deps" unconditionally yields an invalid
@@ -115,18 +127,6 @@ pub(crate) fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
 /// Ordered so the classic layout stays a single `-L` (the common case is unchanged) and
 /// the fallback engages only when `deps/` is genuinely absent.
 #[must_use]
-/// Is `<profile>/deps/` debris: the profile's uplifted `libloft.rlib` is a per-unit output (a
-/// hard link into `build/<crate>/<hash>/out/`), so the per-unit layout built it and a `deps/`
-/// beside it was left by an older cargo or toolchain (loft#2033)?
-#[must_use]
-pub fn classic_deps_is_debris(profile_dir: &std::path::Path) -> bool {
-    let rlib = profile_dir.join("libloft.rlib");
-    crate::file_access::exists(&rlib)
-        && per_unit_dep_dirs(profile_dir)
-            .iter()
-            .any(|d| crate::file_access::same_file_identity(d.join("libloft.rlib"), &rlib))
-}
-
 pub fn dependency_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let classic = deps_dir_of(lib_dir);
     let per_unit = per_unit_dep_dirs(lib_dir);

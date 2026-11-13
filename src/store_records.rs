@@ -1266,6 +1266,10 @@ impl Run<'_> {
     }
 
     /// [`Self::end`], limited to the stores in `only` when it is given.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one re-free condition per path shape the records tell apart"
+    )]
     fn end_only(
         &mut self,
         st: &mut State,
@@ -5200,16 +5204,16 @@ impl Run<'_> {
                     // The parameter itself, not a place in it (`OpPlaceRecord(sc)`, never null).
                     && let Some(Value::Var(x)) = args.get(i as usize).map(Value::unspan)
                     && v.pts.contains(&Pt::Param(*x))
-                    && let Some(j) = self.params.iter().position(|q| q == x)
+                    && let Some(param_at) = self.params.iter().position(|q| q == x)
                 {
-                    let site = self.site(node, Origin::MintInto(j as u16));
-                    let k = Self::fresh(&mut s, site);
-                    if let Some(info) = s.stores.get_mut(&k) {
+                    let site = self.site(node, Origin::MintInto(param_at as u16));
+                    let minted = Self::fresh(&mut s, site);
+                    if let Some(info) = s.stores.get_mut(&minted) {
                         info.status = LIVE | ABSENT;
                     }
-                    pts.insert(Pt::Store(k));
+                    pts.insert(Pt::Store(minted));
                     // The answer owns what the callee minted, as on the `OpDatabase` path.
-                    corr.insert(k);
+                    corr.insert(minted);
                 }
                 Val { pts, corr }
             }

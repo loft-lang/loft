@@ -975,6 +975,10 @@ fn opaque_call_destination(
 }
 
 /// The arm of a reassignment, given its facts: the tests in the order the old chain took them.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one test per arm, in the order the chain decides them"
+)]
 fn re_arm(
     data: &Data,
     d_nr: u32,
