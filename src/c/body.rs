@@ -5652,8 +5652,14 @@ impl<'a> FnWriter<'a> {
     fn element_copy(&self, v: u16, x: &Value) -> Option<u16> {
         let tp = self.vars.tp(v);
         let d = tp.base().heap_def_nr()?;
+        // Not into a local the frame never frees (`skip_free`: a literal field's temporary,
+        // `__ref_N = __lift.code`, which the bytecode writer binds as the view it is): the copy
+        // had no owner and leaked one record per bind (the self-hosted elaborator's
+        // `sink_ncc`; C only).  `LOFT_C_SKIPFREE_ELEMENT_COPY=1` copies there too.
         (tp.depend().is_empty()
             && self.vars.owner_witness(v).is_none()
+            && (!self.vars.is_skip_free(v)
+                || crate::env_once!(std::env::var_os("LOFT_C_SKIPFREE_ELEMENT_COPY").is_some()))
             && crate::use_analysis::projection_container_var(self.cx.data, x).is_some())
         .then(|| self.cx.data.def(d).known_type())
     }
