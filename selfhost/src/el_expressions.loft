@@ -18946,7 +18946,26 @@ fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT)
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.p.nodes[body!] is SBlock {
-    return parse_block(e, vars, body!, "match_arm", expected);
+    b = parse_block(e, vars, body!, "match_arm", expected);
+    // A block arm converts at its tail to the type its siblings settled on, as a block `else`
+    // does (`@FR-C-Num`'s widening: `{ n }` beside `1.5`).
+    if !e.first_pass && el_convert::plain_scalar(b.tp) && el_convert::plain_scalar(expected) && !el_types::is_unknown(expected) && !el_types::is_equal(e, b.tp, expected) && !(b.tp is TyOptional) {
+      match b.code {
+        NdBlock { block } => {
+          if len(block[0].operators) > 0 {
+            c = el_convert::convert_admitting(e, vars, block[0].operators[-1]!, b.tp, expected);
+            if c != null {
+              fixed = retail(b.code, c!, expected);
+              if fixed != null {
+                return ex(fixed!, expected);
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+    return b;
   }
   x = expression(e, vars, body!);
   // An arm answering a call that may hand back an argument, in a bind's value: its copy.
