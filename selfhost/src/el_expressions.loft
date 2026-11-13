@@ -6958,6 +6958,10 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   // `parse_assign_op`'s `change_var`: the local borrows what the value borrows.
   if el_types::is_equal(e, declared!, x.tp) || (declared! is TyOptional && el_types::is_equal(e, el_types::base(declared!), el_types::base(x.tp))) {
     el_vars::change_var_type(e, vars, v, x.tp);
+  } else if x.tp is TyOptional && !(declared! is TyOptional) && el_types::is_heap_record(el_types::base(declared!)) && el_types::is_equal(e, declared!, el_types::base(x.tp)) {
+    // A nullable record stored into its dense declared twin (`k: K = h.all[3]`) keeps the
+    // declared shape and the value's borrows: the local is a view of what the lookup read.
+    el_vars::change_var_type(e, vars, v, el_types::with_deps(declared!, el_types::deps(el_types::base(x.tp))));
   }
   el_vars::drop_use(vars, v);
   // The annotated local is the assignment's store (`narrow_store_checks`, then
