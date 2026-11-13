@@ -100,6 +100,12 @@ counted them.
    working tree, waiting on a rustc-native run.  The Heavy duration gate (four
    `rust_writer::html_debug_*` tests, ~260 s → ~410 s since `c89a8b1f4`) runs on dispatch and
    nightly only.
+4. **The rustc writer and the choice join** (from the laptop side; not re-measured on this tree): `generation/dispatch.rs` joins only a CALL's answer
+   (`call_bind_taken`), so a rebind `re_bind` joins on a choice (`class = bound ?? Owned`) is
+   bound plainly on `--native` alone, and `class` and `bound` free one record twice (the
+   interpreter and C are right).  Repro: the suite cell
+   `rules/binding/B-Copy/a-branch-handing-back-a-local-copies-it-into-a-binding-assigned-before.loft`
+   under `--native`.  The C writer's `join_stmt` is the model.
 
 ## The next PR
 

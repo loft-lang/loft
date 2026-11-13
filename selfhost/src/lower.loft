@@ -2914,14 +2914,17 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   // The arm (`re_arm`), in the order its tests are taken.
   callee = binds::callee_of(b, l.defs, x);
   is_call = (u is NdCall) || (u is NdCallRef);
-  jb = own::named_join_base(own);
+  jb = binds::join_base(b, l.own_ops, l.def_nr, f, x, var);
   join_rec = binds::join_record(binds::first_bind_shape(t));
   hd = own::heap_def_nr(t);
   src = match u { NdVar { n } => n, _ => null };
   arm = "R3";
-  if (owned_ref || buffer_kept) && !s1
-      && (!stash || (!reads_v && is_call && callee != null))
-      && !(u is NdVar) && !v.view_elided && jb != null && join_rec != null {
+  // The S1 join (`@FR-O-Move`): a call handed `v` itself as its buffer whose answer may be an
+  // argument's store joins on that argument, its stashed free after.
+  s1_join = s1 && stash && (u is NdCall) && callee != null;
+  if (owned_ref || buffer_kept) && (!s1 || s1_join)
+      && (!stash || s1_join || (!reads_v && is_call && callee != null))
+      && !(u is NdVar) && !v.view_elided && jb != null && jb! != var && join_rec != null {
     arm = "R1";
   } else if (owned_ref || witnessed || buffer_kept) && !s1 {
     cd = binds::def(b, callee ?? l.def_nr);
