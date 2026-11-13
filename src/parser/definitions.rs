@@ -1015,7 +1015,9 @@ impl Parser {
                 let num_variants = self.data.def(d_nr).attributes().len();
                 for a_nr in 0..num_variants {
                     let v_name = self.data.def(d_nr).attributes()[a_nr].name.clone();
-                    let v_nr = self.data.def_nr(&v_name);
+                    // This enum's own variant: the bare name is first-wins, and an earlier
+                    // enum's variant of the same name (the stdlib's, in a REPL) is not ours.
+                    let v_nr = self.data.variant_of(d_nr, &v_name);
                     if v_nr != u32::MAX {
                         self.data.definitions[v_nr as usize].returned = parent_returned.clone();
                     }
@@ -5887,6 +5889,19 @@ impl Parser {
         };
         #[allow(clippy::cast_possible_truncation)]
         if spec.range_fits_width(width as u8, nullable) {
+            if !spec.has_width_encoding(width as u8) {
+                // `@FR-L-Narrow-Enc`: four bytes hold the count but neither 4-byte encoding
+                // holds both signs past `i32::MAX`.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`size(4)` stores a range inside -2147483647..2147483647 or one from 0 to \
+                     4294967295, and `limit({}, {})` is neither — drop the `size(…)`, which \
+                     stores it in 8 bytes, or narrow the limit",
+                    spec.min,
+                    spec.max
+                );
+            }
             return;
         }
         let codes = 1i64 << (8 * width);

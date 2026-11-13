@@ -58,7 +58,7 @@ LAYERS: list[tuple[str, list[str]]] = [
     ("core", [
         "api_diff", "api_surface", "arena", "base64", "bound_append", "btree", "build_phase",
         "byte_copy", "c_libs", "c_shim", "c_signature", "cache", "cache_gc", "calc",
-        "call_frames", "codegen_runtime", "compact", "components", "const_eval",
+        "call_frames", "cargo_layout", "codegen_runtime", "compact", "components", "const_eval",
         "coroutine_layout", "crash_report", "data", "data_ref", "data_store", "database",
         "diagnostic_render", "diagnostics", "doc_catalogue", "doc_construct", "doc_render",
         "documentation", "engine_host", "exit_record", "exit_vector", "fault_log", "ffi_deliver",
@@ -83,11 +83,10 @@ LAYERS: list[tuple[str, list[str]]] = [
     ]),
     ("front", [
         "bind_lowering", "const_fn", "const_literal", "copy_manifest", "copy_view",
-        "discharge_into", "forward_walk", "host_result", "host_store", "in_range", "ir_node",
-        "ir_read", "ir_store", "lease", "literal_host", "ownership_cfg", "parser", "place_result",
-        "rebind_place", "same_read", "scopes", "single_use", "spent", "store_records",
-        "tail_frame", "typedef", "use_analysis",
-        "empty_slot", "slice_into",
+        "discharge_into", "empty_slot", "forward_walk", "host_result", "host_store", "in_range",
+        "ir_node", "ir_read", "ir_store", "lease", "literal_host", "ownership_cfg", "parser",
+        "place_result", "rebind_place", "same_read", "scopes", "single_use", "slice_into",
+        "spent", "store_records", "tail_frame", "typedef", "use_analysis",
     ]),
     ("opt", [
         "ctor_literal", "exp_pow", "leaf_inline", "lib_ids", "native_gate", "opt", "self_replace",
@@ -139,16 +138,16 @@ BUDGET: dict[tuple[str, str], int] = {
 # (and `lib`'s macros); every reference out of the set is counted against RUNTIME_BUDGET, a
 # ratchet that only falls.  A module leaves the set only when nothing in the set names it.
 RUNTIME: list[str] = [
-    "arena", "base64", "btree", "c_libs", "cache", "calc", "call_frames", "codegen_runtime",
-    "crash_report", "database", "diagnostic_render", "diagnostics", "engine_host", "fault_log",
-    "file_access", "fxhash", "git_query", "hash", "host_abi", "integrity", "json", "keys",
-    "ledger", "lexer", "limits", "live_control", "live_rebuild", "lockfile", "log_config",
-    "logger", "loop_kernels", "mmap_file", "narrow", "native", "native_bind", "net",
-    "net_profile", "op_census", "ops", "page_metrics", "paged_reader", "par_pool", "placement",
-    "platform", "png_store", "process_run", "radix_db", "radix_tree", "resolution_scope",
-    "rewrite_census", "runtime_abi", "runtime_error", "schema_sidecar", "siphash", "stack_verify",
-    "store", "store_budget", "store_census", "store_trace", "timeout", "tls", "trie_db", "vector",
-    "wasm", "wasm_assets", "web_browser", "web_bytes", "ws_handshake",
+    "arena", "base64", "btree", "c_libs", "cache", "calc", "call_frames", "cargo_layout",
+    "codegen_runtime", "crash_report", "database", "diagnostic_render", "diagnostics",
+    "engine_host", "fault_log", "file_access", "fxhash", "git_query", "hash", "host_abi",
+    "integrity", "json", "keys", "ledger", "lexer", "limits", "live_control", "live_rebuild",
+    "lockfile", "log_config", "logger", "loop_kernels", "mmap_file", "narrow", "native",
+    "native_bind", "net", "net_profile", "op_census", "ops", "page_metrics", "paged_reader",
+    "par_pool", "placement", "platform", "png_store", "process_run", "radix_db", "radix_tree",
+    "resolution_scope", "rewrite_census", "runtime_abi", "runtime_error", "schema_sidecar",
+    "siphash", "stack_verify", "store", "store_budget", "store_census", "store_trace", "timeout",
+    "tls", "trie_db", "vector", "wasm", "wasm_assets", "web_browser", "web_bytes", "ws_handshake",
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.

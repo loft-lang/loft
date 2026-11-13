@@ -692,10 +692,12 @@ impl Output<'_> {
                         write!(w, "{{ ")?;
                     }
                     let prev_elem = std::mem::replace(&mut self.tuple_text_elem, elem_is_text);
+                    // Asked only of a function member: `fn_number_code` takes a table slot
+                    // for the number, and an integer member's value is no function.
                     match e
                         .native()
-                        .and_then(|v| self.fn_number_code(v))
                         .filter(|_| needs_fn_pair)
+                        .and_then(|v| self.fn_number_code(v))
                     {
                         Some(code) => write!(w, "{code}")?,
                         None => self.output_code_node(w, e)?,
@@ -3462,16 +3464,17 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let (k, g) = (site.k, site.g);
         let vec = self.expr_string(&site.vector)?;
-        let etp = site.elem_tp;
+        // A type id goes through `type_lit_u16`, so a library artifact reads it from its table.
+        let etp = self.type_lit_u16(site.elem_tp);
         // `@FR-R-Apart` instance 4 — an apart source rotates in from its parts.
         let rotate = match site.src.unspan() {
             Value::Var(p) if self.apr_parts(*p).is_some() => format!(
-                "stores.rotate_from_parts(&({vec}), {}, {etp}_u16, {k}_i64)",
+                "stores.rotate_from_parts(&({vec}), {}, {etp}, {k}_i64)",
                 self.apr_parts(*p).unwrap_or_default()
             ),
             _ => {
                 let src = self.expr_string(site.src)?;
-                format!("stores.rotate_into(&({vec}), &({src}), {etp}_u16, {k}_i64)")
+                format!("stores.rotate_into(&({vec}), &({src}), {etp}, {k}_i64)")
             }
         };
         self.indent(w)?;

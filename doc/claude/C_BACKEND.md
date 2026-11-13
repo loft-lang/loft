@@ -367,7 +367,10 @@ once and nothing is read back.  A counted
 loop that is ONE fill over a held vector (`hoist::fill_loop`, `@FR-R-Fill`, its guarded clause
 included) is one range test and one store run through the header (`loft_vh_fill_*`), the loop
 its fallback and the counters left as the loop leaves them; `LOFT_NO_FILL_HOIST=1` and
-`LOFT_NO_GUARDED_FILL=1` turn it off, as on native.  A record copy of a type that owns no heap,
+`LOFT_NO_GUARDED_FILL=1` turn it off, as on native.  A `u32` element run fills here
+(`loft_vh_fill_u32`) and stays the loop on native, which has no 4-byte unsigned fill; a single
+`u32` element write through a held header is one 4-byte store (`loft_vh_set_u32*`), as an
+8-byte one is.  A record copy of a type that owns no heap,
 its source kept (`hoist::flat_copy`, `@FR-R-FlatCopy`), is `loft_copy_flat`: its bytes, a null
 end and a parse result's root taking the general copy.  A function of one integer the compiler
 can evaluate for every byte (`opt::tabulate`, `@FR-R-Tabulate`) answers a byte argument from a

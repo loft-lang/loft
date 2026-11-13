@@ -91,10 +91,11 @@ impl FnWriter<'_> {
                 let text = self.cx.stores.is_text_type(tp);
                 let size = self.cx.stores.size(tp);
                 let float = i32::from(tp == 2 || tp == 3);
+                let unsigned = i32::from(self.cx.stores.sorts_unsigned(tp));
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_vec_sort({}, {size}, {float}, {})",
+                        "loft_vec_sort({}, {size}, {float}, {}, {unsigned})",
                         as_ref(v)?,
                         i32::from(text)
                     ),

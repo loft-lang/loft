@@ -2813,7 +2813,12 @@ impl<'a> FnWriter<'a> {
                 let proof = self.held_proof(vec, &held);
                 Ok(Some(E::new(format!("({proof}, {code})"), K::Void)))
             }
-            ("OpSetInt" | "OpSetFloat", [inner, fld, val]) => {
+            // A 4-byte unsigned element (`u32`) is the same write through the held header, four
+            // bytes wide; `@FR-R-Version`'s fast twin has no such kind, so it keeps its own path.
+            ("OpSetInt" | "OpSetFloat" | "OpSetInt4Raw", [inner, fld, val]) => {
+                if name == "OpSetInt4Raw" && self.version_raw(args) {
+                    return Ok(None);
+                }
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
@@ -2834,18 +2839,13 @@ impl<'a> FnWriter<'a> {
                         version::version_access(name, &held, size, fld, &index, Some(&value));
                     return Ok(Some(E::new(code, K::Void)));
                 }
-                let (f, value) = if name == "OpSetInt" {
-                    ("loft_vh_set_int", as_int(value)?)
-                } else {
-                    ("loft_vh_set_float", as_float(value)?)
+                let (f, put, value) = match name {
+                    "OpSetInt" => ("loft_vh_set_int", "loft_vh_put_int", as_int(value)?),
+                    "OpSetInt4Raw" => ("loft_vh_set_u32", "loft_vh_put_u32", as_int(value)?),
+                    _ => ("loft_vh_set_float", "loft_vh_put_float", as_float(value)?),
                 };
                 let guard = self.guard_index(idx);
                 if guard == Some(true) {
-                    let put = if name == "OpSetInt" {
-                        "loft_vh_put_int"
-                    } else {
-                        "loft_vh_put_float"
-                    };
                     let index = as_int(index)?;
                     let proof = self.held_proof(vec, &held);
                     return Ok(Some(E::new(
@@ -5251,6 +5251,7 @@ impl<'a> FnWriter<'a> {
             "i64" => ("loft_vh_fill_i64", as_int(val)?),
             "f64" => ("loft_vh_fill_f64", as_float(val)?),
             "f32" => ("loft_vh_fill_f32", as_single(val)?),
+            "u32" => ("loft_vh_fill_u32", as_int(val)?),
             _ => return Ok(None),
         };
         let bound = match f.bound {
@@ -6134,16 +6135,33 @@ impl<'a> FnWriter<'a> {
     /// the two writers' choices can be compared row by row (STORE_RECORDS.md § Phases, 2).
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         let first = !self.bound[var as usize];
+        let line = self.cur_line;
         self.bind_arm.push("");
         let r = self.set_stmt_arms(var, x, ind);
         let arm = self.bind_arm.pop().unwrap_or("");
-        if r.is_ok() {
+        if r.is_ok() && crate::bind_lowering::trace_enabled("LOFT_TRACE_BIND_C") {
+            // Beside the arm this writer took, the one `bind_lowering` decides for the same
+            // assignment (`lowering=`), so a row shows its own disagreement (@PLN220).
+            let lowering = if first {
+                crate::bind_lowering::first_arm(self.cx.data, self.d, self.vars, var, x)
+                    .trace_name()
+                    .to_string()
+            } else {
+                let rb = crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x);
+                let b2 = match rb.free {
+                    crate::bind_lowering::DisplacedFree::Stash => "stash",
+                    crate::bind_lowering::DisplacedFree::Pre { .. } => "pre",
+                    crate::bind_lowering::DisplacedFree::None => "none",
+                };
+                format!("{}/b2={b2}", rb.arm.trace_name())
+            };
             crate::bind_lowering::trace_row(
                 "LOFT_TRACE_BIND_C",
                 self.cx.data.def(self.d).name(),
                 self.vars.name(var),
                 first,
-                arm,
+                line,
+                &format!("lowering={lowering} {arm}"),
             );
         }
         r
@@ -6248,7 +6266,21 @@ impl<'a> FnWriter<'a> {
             self.set_arm("join");
             return Ok(());
         }
-        if let Some((tp, frees)) = self.call_copy(var, x) {
+        // A REBIND copies a call's answer into the variable's own store only where
+        // `bind_lowering::re_bind` copies (`ReArm::CallCopy`, arm R2b) or joins (`ReArm::Join`,
+        // R1: a join `join_stmt` above declined, for a variable that is kept rather than owned,
+        // is copied — adopting or copying, the copy is never wrong for a join's answer).  Any
+        // other variable — a lift temporary carrying a call's answer to its place — binds it as
+        // it is, and the displaced store, if any, is released by `displacing_rebind`.  @PLN220.
+        // `LOFT_C_OWN_CALL_COPY=1` copies wherever `call_copy` says.
+        let rebind_copies = first
+            || crate::keys::c_own_call_copy()
+            || matches!(
+                crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm,
+                crate::bind_lowering::ReArm::CallCopy { .. }
+                    | crate::bind_lowering::ReArm::Join { .. }
+            );
+        if rebind_copies && let Some((tp, frees)) = self.call_copy(var, x) {
             self.set_arm(if frees { "call-copy-free" } else { "call-copy" });
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
@@ -6649,6 +6681,16 @@ impl<'a> FnWriter<'a> {
                     | Value::If(..)
             )
             || !self.vars.owns_displaced_store(var, x, self.cx.data)
+        {
+            return Ok(false);
+        }
+        // Whether the displaced store is freed at all is `bind_lowering::re_bind`'s answer, the
+        // one the bytecode writer and the store records read: a compiler temporary reset to
+        // null has released or handed over its store already (`DisplacedFree::None`), so a
+        // free here could only release that store a second time (`@FR-H-FreeTwice`).  @PLN220.
+        if !crate::keys::c_own_displaced_free()
+            && crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).free
+                == crate::bind_lowering::DisplacedFree::None
         {
             return Ok(false);
         }

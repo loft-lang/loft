@@ -3787,7 +3787,7 @@ mod tuple_stack_layout_tests {
             max: match bits {
                 1 => 255,
                 2 => 65535,
-                _ => 4_294_967_294,
+                _ => 4_294_967_295,
             },
             not_null: false,
             forced_size: std::num::NonZeroU8::new(bits),
@@ -6614,8 +6614,7 @@ impl Data {
             // One home for the width→Part decision, shared with the struct-field mint
             // and keyed on the same `NarrowIntKind` the element's read and write ops
             // come from.  `narrow_vec` is true here — that is what this site IS — which
-            // at 2 bytes selects the direct encoding for a non-null element and at 4
-            // bytes selects the sentinel-reserving unsigned kind.
+            // at 2 bytes selects the direct encoding for a non-null element.
             return NarrowIntKind::of(n, nullable, true, spec.unsigned_wide())
                 .part(database, m, nullable);
         }
@@ -10689,14 +10688,9 @@ impl Data {
                 // a swept type is no longer unresolved.  That silently produced an
                 // unpromoted `-> (integer, ref(Q))` — which the interpreter tolerated and
                 // `--native` read back as 0.  Sweep only what pass 2 does NOT recompute.
-                let n_attrs = self.definitions[d_nr].attributes.len();
-                for a_nr in 0..n_attrs {
-                    if let Some(new_ty) = Self::rewrite_type_opt(
-                        &self.definitions[d_nr].attributes[a_nr].typedef,
-                        stub_nr,
-                        &target,
-                    ) {
-                        self.definitions[d_nr].attributes[a_nr].typedef = new_ty;
+                for attr in &mut self.definitions[d_nr].attributes {
+                    if let Some(new_ty) = Self::rewrite_type_opt(&attr.typedef, stub_nr, &target) {
+                        attr.typedef = new_ty;
                     }
                 }
                 // …and the function's variable table, which the two-pass parser
@@ -13754,14 +13748,9 @@ impl Data {
             {
                 self.definitions[d_nr].returned = new_ret;
             }
-            let n_attrs = self.definitions[d_nr].attributes.len();
-            for a_nr in 0..n_attrs {
-                if let Some(new_ty) = Self::rewrite_type_opt(
-                    &self.definitions[d_nr].attributes[a_nr].typedef,
-                    stub_nr,
-                    &target_type,
-                ) {
-                    self.definitions[d_nr].attributes[a_nr].typedef = new_ty;
+            for attr in &mut self.definitions[d_nr].attributes {
+                if let Some(new_ty) = Self::rewrite_type_opt(&attr.typedef, stub_nr, &target_type) {
+                    attr.typedef = new_ty;
                 }
             }
         }
@@ -14377,7 +14366,7 @@ impl Data {
             (-128, 127) => Some("i8"),
             (0, 65535) => Some("u16"),
             (-32768, 32767) => Some("i16"),
-            (0, 4_294_967_294) => Some("u32"),
+            (0, 4_294_967_295) => Some("u32"),
             _ if s.is_signed32_template() => Some("i32"),
             _ => None,
         };

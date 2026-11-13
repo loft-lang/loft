@@ -3343,6 +3343,41 @@ pub fn view_temp_transition_guard() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_TRANSITION_GUARD"))
 }
 
+/// `LOFT_NO_GUARDED_FREE_RESET=1` — the interpreter leaves a variable a guarded free released
+/// naming its freed slot (`OpFreeRefIfDistinct` in `state/codegen.rs`), where C resets it.
+#[must_use]
+pub fn guarded_free_reset_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_GUARDED_FREE_RESET"))
+}
+
+/// `LOFT_NO_ELEMENT_VIEW_ABSENT=1` — a return copy of a record local that views a collection's
+/// element reads it present, as it did before (`record_local_may_be_absent`): a constant index
+/// past the end answered a default record from a `-> S?`.
+#[must_use]
+pub fn element_view_present() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_ELEMENT_VIEW_ABSENT"))
+}
+
+/// `LOFT_ARM_FREES_PARAM_DEPS=1` — a vector arm delivered into the return buffer frees a
+/// PARAMETER its local depends on, as it did before (`materialize_vector_arms_collect`): the
+/// caller's store, freed again by the caller.
+#[must_use]
+pub fn arm_frees_param_deps() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
+}
+
+/// `LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD=1` — a joined local's scope-end free
+/// (`OpFreeRefIfDistinct(v, witness)`) runs while `v` still names the backing an earlier bind
+/// viewed, which the backing frees too.
+#[must_use]
+pub fn view_temp_scope_end_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD"))
+}
+
 /// `LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS=1` — a staying record keeps owning a capture the loop
 /// reassigns from a call buffer the frame releases (`capture_adoption`): its cascade and the
 /// frame's buffer release free the same store.
@@ -3368,6 +3403,64 @@ pub fn fdisp_keep_temp() -> bool {
 pub fn record_release_detach() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_RECORD_RELEASE_DETACH"))
+}
+
+/// `LOFT_NO_STAYING_RECORD_TAKES_BACKING=1` — a frame backing whose store a staying closure
+/// record's capture slot still holds after the loop that rebuilt it keeps that store
+/// (`rebound_captures`): the frame frees it and the record's cascade frees it again.
+#[must_use]
+pub fn staying_record_takes_backing() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STAYING_RECORD_TAKES_BACKING"))
+}
+
+/// `LOFT_NO_CONFINED_RECORD_STAND_DOWN=1` — in a frame whose fn-refs are released by store
+/// identity (`closure_keep`), a pass-scoped fn-ref releases its pass-confined record at the pass
+/// end without asking whether that record's own local, which the frame frees at its end, still
+/// names it: the record is freed twice.
+#[must_use]
+pub fn confined_record_stand_down() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CONFINED_RECORD_STAND_DOWN"))
+}
+
+/// `LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS=1` — a capture the frame rotates through its call
+/// buffers (`OpPutRef(__ref_N, c)`) is still released by the rebound-capture let-go points as if
+/// its record owned it, though the record borrows it: a rebuild frees a store a buffer still
+/// holds, and the next call reads it (the C backend reports it; `rebound_captures`).
+#[must_use]
+pub fn rotated_capture_left_to_buffers() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS"))
+}
+
+/// `LOFT_NO_CALL_BUFFER_REBIND_DETACH=1` — a vector local rebound in a loop from a call
+/// (`a = f(…)`, delivered into the hidden buffer `__ref_N`) refills that buffer in place while a
+/// closure record built earlier holds its store (`rebound_captures`, `capture_adoption`): the
+/// record answers the new value instead of its build-time one.
+#[must_use]
+pub fn call_buffer_rebind_detach() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CALL_BUFFER_REBIND_DETACH"))
+}
+
+/// `LOFT_NO_PLAIN_REBIND_KEEP=1` — a fn-ref bound to one closure record and re-bound to a lambda
+/// that captures nothing is not decided by store identity (`closure_keep`): the frame takes the
+/// record as leaving with the fn-ref whatever it holds, and a re-bound run leaks the record and
+/// its captures.
+#[must_use]
+pub fn plain_rebind_keep() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PLAIN_REBIND_KEEP"))
+}
+
+/// `LOFT_NO_SNAPSHOT_KEEPS_REFILL=1` — a closure record rebuilt through a snapshot (a capture
+/// type with a drop hook) keeps an old slot naming the store its new fill names: the snapshot's
+/// cascade then releases the capture the rebuilt record holds again (`vectors.rs`).
+#[must_use]
+pub fn snapshot_keeps_refill() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SNAPSHOT_KEEPS_REFILL"))
 }
 
 /// `LOFT_NO_RECORD_SNAPSHOT_RELEASES=1` — a closure build releases a displaced capture slot
@@ -3500,6 +3593,69 @@ pub fn unbox_yield_handover_off() -> bool {
 pub fn c_own_tuple_member_bind() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| env_set("LOFT_C_OWN_TUPLE_MEMBER_BIND"))
+}
+
+/// `LOFT_NO_STASHED_JOIN=1` — a reassignment whose displaced free is stashed (a nullable local,
+/// or a value that reads it) deep-copies a join call's answer again instead of joining it at run
+/// time (`bind_lowering`'s R1 arm; @PLN220's A/B).
+#[must_use]
+pub fn stashed_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_STASHED_JOIN"))
+}
+
+/// `LOFT_NO_ENUM_JOIN=1` — a heap-enum local bound from a call that answers a fresh record on
+/// one path and a view of an argument on another is deep-copied at every bind again, instead of
+/// joined at run time (`bind_lowering`'s F9a / R1 arms; @PLN220's A/B).
+#[must_use]
+pub fn enum_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_ENUM_JOIN"))
+}
+
+/// `LOFT_NO_REBIND_ADOPTS_MINTED=1` — a reassignment from a call whose answer is the store it
+/// minted in its buffer is copied into the local's own store again, as only a deferred first
+/// bind adopted it before (`bind_lowering::re_bind`, arm R2b; @PLN220's A/B).
+#[must_use]
+pub fn rebind_adopts_minted_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_REBIND_ADOPTS_MINTED"))
+}
+
+/// `LOFT_NULL_LETGO_FREES=1` — a bare `null` written to a local displaces the store it held
+/// again (`Function::owns_displaced_store`), so a let-go after an adoption, and a compiler
+/// temporary's null reset after its store was handed on, free that store a second time: the
+/// defect `(R-HostStore)`'s let-go rule cured, restored for the checker's control.
+#[must_use]
+pub fn null_letgo_frees() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NULL_LETGO_FREES"))
+}
+
+/// `LOFT_C_OWN_CALL_COPY=1` — the C writer copies a rebind's call answer into the variable's own
+/// store wherever its own `call_copy` says, instead of only where `bind_lowering::re_bind`
+/// answers `ReArm::CallCopy` (@PLN220's A/B).
+#[must_use]
+pub fn c_own_call_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_CALL_COPY"))
+}
+
+/// `LOFT_ARG_DISPLACED_FREE=1` — a rebound argument without an entry witness frees the store it
+/// displaces again in `bind_lowering::re_bind` (a free on the sentinel the scope pass's detach
+/// left; @PLN220's A/B).
+#[must_use]
+pub fn arg_displaced_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_ARG_DISPLACED_FREE"))
+}
+
+/// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
+/// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
+#[must_use]
+pub fn c_own_displaced_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_DISPLACED_FREE"))
 }
 
 /// `LOFT_C_OWN_VECTOR_NULL=1` — the C writer decides a vector local's first null-init mint by

@@ -2307,3 +2307,33 @@ fn a_hash_session_variable_keeps_its_changes() {
     assert_eq!(fa::read_to_string(&path).expect("session file"), before);
     let _ = fa::remove_file(&path);
 }
+
+/// An enum declared in the session whose record variant shares its name with a stdlib one
+/// (`FileResult.Other`) leaves the stdlib's variant its own type.  A variant's bare name is
+/// the first declared, so a cast that names it reads the stdlib's plain value and is refused
+/// as such — what a file declaring two such enums answers — never a crash in the cast.
+/// @falsified-at: the variant-type sync looking the name up flat (`def_nr`), which wrote
+///   `Op`'s type onto `FileResult.Other`: the cast indexed its empty field list and panicked.
+#[test]
+fn a_variant_named_like_a_stdlib_one_leaves_the_stdlib_variant_its_type() {
+    let mut s = session();
+    assert!(matches!(
+        s.eval("enum Op { Block { length: integer }, Other { n: integer } }"),
+        Eval::Ran
+    ));
+    let Eval::Error(diags) = s.eval("fn f(e: Op) -> integer { (e as Other?).n ?? -1 }") else {
+        panic!("the cast of a bare variant name the stdlib declared first is not refused");
+    };
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("a value of the plain enum 'FileResult'")),
+        "the refusal names another cause: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    assert!(matches!(s.eval("y: Op = Other { n: 6 }"), Eval::Ran));
+    assert!(matches!(
+        s.eval("assert(match y { Other { n } => n, Block { length } => length } == 6, \"y\")"),
+        Eval::Ran
+    ));
+}

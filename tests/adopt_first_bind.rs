@@ -216,7 +216,10 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // return-branch sink narrowed and wide, so the three fixes are not the movers.
     // 2026-11-05: `(R-LoopRecord)` moved into the IR keeps a loop's record store on the
     // interpreter too: 104/154 → 94/144, ten in each arm; `LOFT_NO_LOOP_RECORD=1` gives back
-    // 104/154.
+    // 104/154.  A rebind from a call whose answer is its minted buffer store adopts it as
+    // the first bind does (`@FR-O-Move`, `bind_lowering::re_bind`): 94 → 80 in the ON arm,
+    // the OFF arm unchanged since its switch turns every adopt off;
+    // `LOFT_NO_REBIND_ADOPTS_MINTED=1` gives back 94/144.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -225,7 +228,7 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         i_on < i_off,
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
-    assert_eq!((i_on, i_off), (94, 144), "interpret mints (on, off)");
+    assert_eq!((i_on, i_off), (80, 144), "interpret mints (on, off)");
     let (n_on, n_off) = (
         store_mints("--native-rust", &[]),
         store_mints("--native-rust", OFF),

@@ -1,12 +1,13 @@
 diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
+index 6babd94c7..629f0ee63 100644
 --- a/src/bind_lowering.rs
 +++ b/src/bind_lowering.rs
-@@ -649,7 +649,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
-     // temp owns what the arm displaces — the sentinel its pre-init put there.
+@@ -765,7 +765,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
+     // it is what the copy arms' fresh-store choice reads (#360).
      let owned_ref = (function.owns_displaced_store(v, value, data)
          || is_return_temp_owning_its_arms(data, d_nr, function, v))
 -        && (!is_hidden_buf_arg || entry_w.is_some());
 +        && !is_hidden_buf_arg;
+     let frees_displaced = owned_ref
+         && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
      // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
-     // container's backing store (a vector element / nested field), so
-     // the new value can land in the SAME store as v's old value —

@@ -1,16 +1,17 @@
 diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
+index 6babd94c7..4c7a69e28 100644
 --- a/src/bind_lowering.rs
 +++ b/src/bind_lowering.rs
-@@ -648,7 +648,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
-     // arm's bind copies into the temp (that is what the write-out is for), so the
-     // temp owns what the arm displaces — the sentinel its pre-init put there.
+@@ -764,7 +764,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
+     // does, and a stashed free (the value reads the parameter, or it is nullable) still runs —
+     // it is what the copy arms' fresh-store choice reads (#360).
      let owned_ref = (function.owns_displaced_store(v, value, data)
 -        || is_return_temp_owning_its_arms(data, d_nr, function, v))
 +        || (false && is_return_temp_owning_its_arms(data, d_nr, function, v)))
          && (!is_hidden_buf_arg || entry_w.is_some());
-     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
-     // container's backing store (a vector element / nested field), so
-@@ -806,7 +806,8 @@ fn re_arm(
+     let frees_displaced = owned_ref
+         && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
+@@ -940,7 +940,8 @@ fn re_arm(
              // answered — a view into another store its exit release then freed
              // (`@FR-H-FreeTwice`, O-Buffer's `class = pick(class, c)`).
              // `LOFT_NO_BUFFER_FRESH_COPY=1` keeps the plain bind.
@@ -21,6 +22,7 @@ diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
                      || (rb.copies_into_fresh() && !crate::keys::buffer_fresh_copy_off()))))
          && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
+index a78d0ddba..9682b36ca 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
 @@ -15,7 +15,7 @@ use super::insert_free::{
@@ -41,6 +43,15 @@ diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
              let distinct = data.def_nr("OpDistinctStore");
              let join_arm_dropped = &join_arm_dropped;
              // The sweep's frees go FIRST: they name the returned local as their WITNESS (its
+@@ -718,7 +718,7 @@ impl Scopes<'_> {
+             // comes back as the return value.  The sweep freed it unconditionally, so the
+             // caller read a released store (poison: `null`; the C runtime reused it first).
+             // Freed only when it is not the store returned.
+-            if matches!(tp.base(), Type::Reference(_, _) | Type::Enum(_, true, _)) {
++            if false && matches!(tp.base(), Type::Reference(_, _) | Type::Enum(_, true, _)) {
+                 let free_nr = data.def_nr("OpFreeRef");
+                 let free_distinct = data.def_nr("OpFreeRefIfDistinct");
+                 for op in &mut ls {
 @@ -893,7 +893,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
@@ -278,9 +289,10 @@ diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
  
  /// loft#2282 — `tp`, a definition's declared return type, with a dep on its hidden TEXT
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
+index 5868cb31a..cf86ff8b5 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -7236,46 +7236,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
+@@ -7284,46 +7284,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
      })
  }
  

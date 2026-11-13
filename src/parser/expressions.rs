@@ -11605,8 +11605,8 @@ use a separate collection or add after the loop"
         if lo > 0 || hi < 1 {
             return None;
         }
-        // The bit length of `hi + 1`, less one: `u8` (255) answers 255, `u32` (4294967294,
-        // one code kept back) answers 2147483647.
+        // The bit length of `hi + 1`, less one: `u8` (255) answers 255, `u32` (4294967295)
+        // answers 4294967295, `limit(0, 300)` answers 255.
         let bits = 63 - hi.checked_add(1)?.leading_zeros();
         Some((1_i64 << bits) - 1)
     }

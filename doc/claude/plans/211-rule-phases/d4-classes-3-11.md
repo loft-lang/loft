@@ -24,10 +24,37 @@ and built only where both compilers gain.
 | 8 keyed | gridmesh `field_add_cell` | the re-lookup is already only on the insert path; the rest is the hash runtime | — | a runtime project |
 | 9 char walk | time `parse` | the size test per step, after the fast step proved it | +41.0 / −22.6 % | not built: gcc loses |
 | 10 runtime | glb `save_glb` | a vector of singles serialised element by element | −43.5 / −45.2 % | **BUILT** (`67fb02fd3`): a vector whose element's written bytes are its stored bytes is one block; −43.0 / −44.3 % |
-| 11 width | graphics `canvas`, `clear` | 8 bytes a pixel where the twin writes 4 | — | parked: needs a library change |
+| 11 width | graphics `canvas`, `clear` | 8 bytes a pixel where the twin writes 4 | — | **BUILT** (2026-11-12, § Class 11): graphics 0.12 stores `vector<u32>`; `canvas` 2.14 → 0.98x, `clear` 2.01 → 1.00x |
 
 The guards: `tests/scripts/a-text-walks-loop-variable-returned-is-copied-out-and-borrowed.loft`,
 `tests/scripts/a-vector-of-raw-scalars-is-written-as-one-block.loft`, the `c_driver` unit test
 `a_release_unit_compiles_its_shims_from_their_sources`, and the `c_emit` test
 `an_integer_literal_fallback_is_unmarked_and_a_float_one_keeps_its_cold_path` — each with its
 falsification receipt.
+
+## Class 11 — the pixel width (2026-11-12)
+
+`u32` now holds all 32 bits (`c1a1fa1cf`), so graphics' `Canvas.data` became a `vector<u32>`
+(loft-libs-graphics branch `u32-pixels`: graphics 0.12, drawing 0.5, stage 0.20).  The library
+change alone made every per-pixel WRITE slower on the C: a `u32` element was written through a
+record reference and a store lookup, and `(R-Fill)` admitted 8-byte and `f32` elements only.
+`60b40f7ff` gives the C writer the held 4-byte store (`loft_vh_set_u32*`) and `hoist::fill_loop`
+the fill kind `u32` (C only; the Rust writer declines it).  C ship lane against the Rust twin,
+min of 7, hashes equal:
+
+| routine | `vector<integer>` | `vector<u32>` | + the store and the fill |
+|---|--:|--:|--:|
+| canvas | 2.14 | 1.00 | **0.98** |
+| clear | 2.01 | 4.72 | **1.00** |
+| fill_rect | 1.54 | 4.44 | **0.94** |
+| fill_polygon | 2.18 | 4.88 | **2.05** |
+| fill_triangle | 0.75 | 1.64 | **0.65** |
+| blend_pixel | 1.22 | 1.45 | 1.35 |
+| draw_line | 0.87 | 1.02 | 0.95 |
+| draw_bezier | 1.95 | 1.91 | 1.94 |
+| median | 1.74 | 1.78 | **0.99** |
+
+Open: `blend_pixel` +10 % and `draw_line` +9 % against the 8-byte build.  Its `?? 0` read
+reaches the C as the reporting accessor (`OpGetVector`, where `u8` and `integer` take
+`OpGetVectorNullable`); a hand swap to the plain accessor priced 1.004, so that is not the
+cost.  Not chased further: both stay under 1.4x.

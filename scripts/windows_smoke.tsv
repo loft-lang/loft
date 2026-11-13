@@ -23,11 +23,13 @@ doc/claude/plans/85-store-lifetime-retirement/fuzz/ownership_fuzz.py	--help
 doc/claude/presentations/par/build_par_slides.sh	--help
 scripts/after.py	--help
 scripts/audit-stale-plans.sh	--help
+scripts/bind_census.py	--help
 scripts/bug-review.py	--help
 scripts/c_alloc_diff.py	--help
 scripts/c_lint_census.py	--help
 scripts/c_sweep.py	--help
 scripts/campaign_review.py	--help
+scripts/cargo_dep_files.sh	--help
 scripts/check-release-published.py	--help
 scripts/ci_shards.py	--help
 scripts/claim.py	--help
@@ -65,6 +67,7 @@ scripts/native_call_census.py	--help
 scripts/native_ratio.sh	--help
 scripts/nullable_road.py	--help
 scripts/op_census.py	--help
+scripts/own_sweep.py	--help
 scripts/parser_state.py	--help
 scripts/perf_check.py	--help
 scripts/perf_trend.py	--help
@@ -93,6 +96,7 @@ scripts/skills-review.py	--help
 scripts/smoke-components.sh	--help
 scripts/stability_read.py	--help
 scripts/steering_rate.py	--help
+scripts/store_why.py	--help
 scripts/sweep_ignored.sh	--help
 scripts/sweep_scratch.sh	--help
 scripts/tanmatsu_log.py	--help
@@ -118,6 +122,3 @@ tools/audience-demo/run-demo.sh	--help
 tools/indexer/fix_broken_links.py	--help
 tools/indexer/migrate.py	--help
 tools/indexer/rewrite_links.py	--help
-scripts/store_why.py	--help
-scripts/own_sweep.py	--help
-scripts/bind_census.py	--help

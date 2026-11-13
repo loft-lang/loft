@@ -113,7 +113,7 @@ fn loft_type_name(kind: &str) -> String {
         "i16" => "integer(-32768, 32767)".into(),
         "i32" | "integer" => "integer".into(),
         "text" => "text".into(),
-        "u32" => "integer(0, 4294967294)".into(),
+        "u32" => "integer(0, 4294967295)".into(),
         other => other.into(),
     }
 }
@@ -157,7 +157,7 @@ fn kind_type(kind: &str) -> Type {
         "u16" => int(0, 65535, Some(2)),
         "i16" => int(-32768, 32767, Some(2)),
         "i32" => int(i32::MIN + 1, i32::MAX as u32, Some(4)),
-        "u32" => int(0, 4_294_967_294, Some(4)),
+        "u32" => int(0, 4_294_967_295, Some(4)),
         "integer" => int(i32::MIN + 1, i32::MAX as u32, None),
         "float" => Type::Float,
         "single" => Type::Single,

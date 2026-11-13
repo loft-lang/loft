@@ -1008,13 +1008,17 @@ impl WorkerStores {
     /// `src/parallel.rs::StoreRebase`).
     pub fn take_all_owned(&mut self, parent_store_count: u16) -> Vec<(u16, Store)> {
         let mut out = Vec::new();
-        let total = self.stores.allocations.len();
-        for nr in (parent_store_count as usize)..total {
-            if self.stores.allocations[nr].free {
+        for (nr, slot) in self
+            .stores
+            .allocations
+            .iter_mut()
+            .enumerate()
+            .skip(parent_store_count as usize)
+        {
+            if slot.free {
                 continue;
             }
-            let sentinel = crate::store::Store::new_freed_sentinel();
-            let s = std::mem::replace(&mut self.stores.allocations[nr], sentinel);
+            let s = std::mem::replace(slot, crate::store::Store::new_freed_sentinel());
             out.push((nr as u16, s));
         }
         out
@@ -1308,13 +1312,16 @@ impl Stores {
         parent_store_count: u16,
     ) -> StoreRebase {
         let mut rebase = StoreRebase::with_parent_count(parent_store_count);
-        let total = worker.allocations.len();
-        for nr in (parent_store_count as usize)..total {
-            if worker.allocations[nr].free {
+        for (nr, slot) in worker
+            .allocations
+            .iter_mut()
+            .enumerate()
+            .skip(parent_store_count as usize)
+        {
+            if slot.free {
                 continue;
             }
-            let sentinel = crate::store::Store::new_freed_sentinel();
-            let s = std::mem::replace(&mut worker.allocations[nr], sentinel);
+            let s = std::mem::replace(slot, crate::store::Store::new_freed_sentinel());
             let parent_nr = self.adopt_store(s);
             rebase.add(nr as u16, parent_nr);
         }

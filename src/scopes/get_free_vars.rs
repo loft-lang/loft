@@ -249,7 +249,14 @@ impl Scopes<'_> {
         let link_delivered = link_written_closure_records(data, function, self.d_nr);
         let exited: std::collections::HashSet<u16> = vars.iter().copied().collect();
         for v in vars {
-            if v == ret_var || suppress_source(function, v) {
+            // A closure record the frame decides by store identity (`closure_keep`) is released
+            // even where the return value may hold it: the stand-down below lets go of it
+            // first wherever the returned fn-ref does, so a run that re-bound the fn-ref to
+            // another value releases the record it displaced (`@FR-L-CapOwn`).
+            let gated_record = crate::keys::plain_rebind_keep()
+                && self.closure_keep.plain_rebound
+                && self.closure_keep.records.contains(&v);
+            if v == ret_var || (suppress_source(function, v) && !gated_record) {
                 continue;
             }
             // `@FR-L-CapKeep` — a closure record another live fn-ref still names is that
@@ -494,6 +501,11 @@ impl Scopes<'_> {
                     // statement about `@FR-L-CapOwn` and not a new suppression for every
                     // reference local.  One predicate, asked by `check_ref_leaks` too.
                     || closure_record_leaves_frame(data, function, self.d_nr, v);
+                // A record the frame decides by store identity (`closure_keep`, gated) stood
+                // down above wherever the returned fn-ref holds it, as one a link delivers
+                // does: it is released here on the runs that did not hand it out — a fn-ref
+                // re-bound to a lambda that captures nothing displaced it (`@FR-L-CapOwn`).
+                let leaves_frame = leaves_frame && !gated_record;
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),
@@ -790,10 +802,33 @@ impl Scopes<'_> {
                         if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped)) {
                             ls.push(hook);
                         }
-                        ls.push(Value::Call(
+                        let free = Value::Call(
                             data.def_nr("OpFreeRefIfDistinct"),
                             vec![Value::Var(v), Value::Var(jw)],
-                        ));
+                        );
+                        // `@FR-H-FreeTwice` — a store a frame temporary owns (the backing an
+                        // earlier bind of `v` viewed) is that temporary's to release, here as at
+                        // the rebind (`scan_set`'s transition guard): `x: vector<T> = [..]`
+                        // never rebound from a forwarding fn-ref was freed by `x` and by
+                        // `__vdb_N`.  `LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD=1`.
+                        let free = if crate::keys::view_temp_scope_end_guard() {
+                            let distinct = data.def_nr("OpDistinctStore");
+                            self.view_temps
+                                .get(&v)
+                                .into_iter()
+                                .flatten()
+                                .filter(|&&t| t != v && t != jw && !function.is_skip_free(t))
+                                .fold(free, |inner, &t| {
+                                    v_if(
+                                        Value::Call(distinct, vec![Value::Var(v), Value::Var(t)]),
+                                        inner,
+                                        Value::Null,
+                                    )
+                                })
+                        } else {
+                            free
+                        };
+                        ls.push(free);
                     } else if is_work_ref && let Some(&witness) = self.paired_witness.get(&v) {
                         // `OpFreeRefIfDistinct` declines where the two alias, so it is
                         // sound only where somebody ELSE releases the store then: the

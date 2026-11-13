@@ -1889,14 +1889,7 @@ pub fn OpSetKeyed(
 /// Bytecode equivalent: `sort_vector` in `src/fill.rs:1835`.
 pub fn OpSortVector(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, db_tp: i32) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
-    let db_tp = db_tp as u16;
-    if stores.is_text_type(db_tp) {
-        vector::sort_text_vector(&data, &mut stores.allocations);
-        return;
-    }
-    let elem_size = stores.size(db_tp);
-    let is_float = db_tp == 2 || db_tp == 3;
-    vector::sort_vector(&data, elem_size, is_float, &mut stores.allocations);
+    stores.sort_vector(&data, db_tp as u16);
 }
 
 /// Insert a new default-valued element at `index` in a vector, shifting later elements right.
@@ -7201,7 +7194,7 @@ std::thread_local! {
         const { std::cell::Cell::new(std::ptr::null_mut()) };
 }
 
-unsafe extern "C" fn _ffi_claim(ctx: loft_ffi::LoftStoreCtx, words: u32) -> u32 {
+unsafe extern "C" fn ffi_claim(ctx: loft_ffi::LoftStoreCtx, words: u32) -> u32 {
     let store_nr = ctx._opaque as usize as u16;
     CODEGEN_STORES.with(|c| {
         let stores = unsafe { &mut *c.get() };
@@ -7209,7 +7202,7 @@ unsafe extern "C" fn _ffi_claim(ctx: loft_ffi::LoftStoreCtx, words: u32) -> u32 
     })
 }
 
-unsafe extern "C" fn _ffi_reload(
+unsafe extern "C" fn ffi_reload(
     ctx: loft_ffi::LoftStoreCtx,
     out_ptr: *mut *mut u8,
     out_size: *mut u32,
@@ -7225,7 +7218,7 @@ unsafe extern "C" fn _ffi_reload(
     });
 }
 
-unsafe extern "C" fn _ffi_resize(ctx: loft_ffi::LoftStoreCtx, rec: u32, words: u32) -> u32 {
+unsafe extern "C" fn ffi_resize(ctx: loft_ffi::LoftStoreCtx, rec: u32, words: u32) -> u32 {
     let store_nr = ctx._opaque as usize as u16;
     CODEGEN_STORES.with(|c| {
         let stores = unsafe { &mut *c.get() };
@@ -7266,18 +7259,18 @@ pub fn make_loft_store(stores: &mut Stores, store_nr: u16) -> loft_ffi::LoftStor
         ctx: loft_ffi::LoftStoreCtx {
             _opaque: store_nr as usize as *mut (),
         },
-        claim_fn: Some(_ffi_claim),
-        reload_fn: Some(_ffi_reload),
-        resize_fn: Some(_ffi_resize),
+        claim_fn: Some(ffi_claim),
+        reload_fn: Some(ffi_reload),
+        resize_fn: Some(ffi_resize),
         // A caller here names an existing store (an argument's), never one minted for a
         // return; the generated cdylib call builds its handle through `native_call`.
-        foreign_fn: Some(_ffi_foreign),
+        foreign_fn: Some(ffi_foreign),
     }
 }
 
 /// @PLN174 F5 — the foreign-vector callback over `CODEGEN_STORES`, the twin of
 /// `native_call::ffi_foreign_pub` for a handle built here.
-unsafe extern "C" fn _ffi_foreign(
+unsafe extern "C" fn ffi_foreign(
     ctx: loft_ffi::LoftStoreCtx,
     ptr: *mut u8,
     len: usize,

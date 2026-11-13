@@ -280,6 +280,9 @@ LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records
 | patches11–12 | 80 → 72 | 5 | 1 (5 below) |
 | patches13 | 69 → 53 (base took loft3-c1's closure batch) | 3 | 0 (+ two checker MISSes for loft-c9 now CAUGHT) |
 | patches14 | 53 → 50 | 1 | 1 (6 below) |
+| series 2026-11-12 (8 commits on 91-self-host 8f7c1c9e0) | 50 → 36 | 6 | 2 (7, 8 below) |
+| series 2026-11-12, continued (loft2 and loft3-c1, on 91-self-host 7e2d72225 + the snapshot patch) | 36 → 6 | 17 (the 16 store_records.rs fixes 15caa3c50..7e2d72225, and the snapshot patch) | 3 (9–11 below) |
+| loop fixes 2026-11-12 (91-self-host f1df5b9a6 + B + D) | 6 → 5 (1643 runs; 4 new cells) | 1 (stale names, loft3-c1) | 4 (12–15 below) |
 
 The real defects the checker found first:
 
@@ -313,6 +316,65 @@ The real defects the checker found first:
    rule's own or names no argument's store (`LOFT_NO_SUBRULE_OWNED_ANSWER`,
    `LOFT_NO_SUBRULE_STOP_FREE`); suite cell P-Rule/a-sub-rule-run-releases…  The rustc-native
    backend still re-frees the run's temporary through its own `_own_store_` shadow (loft-c9).
+7. **A vector local a forwarding fn-ref may rebind was freed twice where it never was** —
+   `x: vector<integer> = [5, 6]; for _ in 0..n { x = fwd(q) }` with `fwd` a lambda forwarding to
+   another: the scope-end free `OpFreeRefIfDistinct(x, q)` (loft#1257's join witness) ran while
+   `x` still named its literal backing, which freed it too.  Latent on main, both backends.  The
+   scope-end free takes the rebind's view-temp guard (`LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD`); suite
+   cell O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.
+8. **A binding arm answering the subject freed the caller's vector** —
+   `match v { [h, ..t] => t, whole => whole }` delivered `whole` into the return buffer and freed
+   its dependency, the parameter `v`.  Latent on main, both backends, every element type.  The
+   arm delivery skips a parameter dependency (`LOFT_ARM_FREES_PARAM_DEPS`); suite cell
+   P-Rest/a-binding-arm-answering-the-subject-leaves-the-callers-vector.
+9. **An element read at a constant index past the end, returned as `-> D?`, answered a default
+   record** — `r = v[0]; r` on an empty vector: silent-wrong on both backends.  The local may be
+   absent, so the return answers null (`LOFT_NO_ELEMENT_VIEW_ABSENT`); suite cell
+   N-Road/a-returned-element-read-at-a-constant-index-past-the-end-is-null.
+10. **A work buffer handed null was read after its guarded free at each tail jump** — the
+   interpreter left a variable its `OpFreeRefIfDistinct` released naming the freed store, where
+   C resets it; `(R-TailSelf)` then cleared it in place on the next pass.  The interpreter now
+   resets it as C does (`LOFT_NO_GUARDED_FREE_RESET`); suite cell
+   R-WorkBuffer/a-work-buffer-handed-null-is-reset-at-each-tail-jump.
+11. **A closure rebuilt through a snapshot released a capture it takes again** — a capture type
+   with a drop hook rebuilds the record through `__disp_N`, whose cascade releases every slot; a
+   leaving closure rebuilt twice in a loop over the frame's `e` freed `e` twice, both backends.
+   The build detaches an old slot naming its new fill first (`LOFT_NO_SNAPSHOT_KEEPS_REFILL`);
+   suite cell L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.  Found only once the
+   records modelled the snapshot's `OpCopyRecord`.
+12. **A staying record rebuilt in one pass freed its capture twice** — after exactly one pass of
+   `for … { g = fn() {..a..}; a = [i] }` the declaration's backing still named the record's
+   capture, and the frame's end freed both.  Let-go point 5 hands the backing's store to a record
+   whose live cascade frees it (`LOFT_NO_STAYING_RECORD_TAKES_BACKING`); suite cell
+   L-CapKeep/a-staying-record-rebuilt-in-one-pass-frees-its-capture-once.  L-Apply's three
+   findings and 2357's `after_local` / `after_in_frame` were this.
+13. **A pass-scoped fn-ref beside a kept one freed its record twice** — a second loop keeping a
+   fn-ref gates the frame (`closure_keep`), and the pass-scoped fn-ref then released its confined
+   record too (`LOFT_NO_CONFINED_RECORD_STAND_DOWN`); suite cell
+   L-CapKeep/a-pass-scoped-fn-ref-beside-a-kept-one-frees-its-record-once.  L-CapRebind
+   vector's findings were this and 12.
+14. **A call rebind in a loop refilled the vector a closure captured** — `a = mkv(i)` after the
+   build answered the value assigned after it: silent-wrong, both backends.  The call's buffer is
+   a backing the rebind detaches (`LOFT_NO_CALL_BUFFER_REBIND_DETACH`); suite cell
+   L-CapRebind/a-call-rebind-in-a-loop-leaves-the-record-its-build-time-vector.  Not a lifetime
+   fault, so the records cannot report it; found by the over-reach probe beside 12.
+15. **A capture rotated through call buffers was freed under a buffer** — `v = bump(v)` with a
+   kept closure: a use after free on the C backend at three passes.  Such a capture is the
+   buffers' to release (`LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS`); suite cell
+   L-CapRebind/a-capture-rotated-through-call-buffers-is-the-buffers-to-release.
+
+16. **A closure re-bound to a plain lambda leaked the record it displaced** — a fn-ref holding a
+   frame-built record, re-bound on a branch to a lambda that captures nothing, then returned: the
+   frame took the record as leaving on every run, so the re-bound run released neither the record
+   nor its captures, and skipped their hooks; both backends.  Such a frame is decided by store
+   identity (`LOFT_NO_PLAIN_REBIND_KEEP`); suite cell
+   L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.  Found probing
+   L-CapOne/2281's `lv` with the closure built on one branch only.
+
+**A loop finding is re-run at 0, 1, 2 and 3 passes before it is called false.**  A suite cell's
+loop runs a fixed count, and 12, 13 and a leak a first version of 12's cure introduced showed
+only at ONE pass: at two or more the stores rotate apart, at none nothing is built.  The records
+walk every path; the cell's run walks one.
 
 The gaps fixed, by the representation they corrected:
 
@@ -338,18 +400,49 @@ The gaps fixed, by the representation they corrected:
   stored-reference read answers its referent, not the holder's store; a tuple-literal argument
   is read, not handed on, and a tuple parameter's member is the caller's store; a nested member
   moved out of another tuple is that member; a put into a local tuple's member assigns it.
+- **Who holds a store, path by path** — a store may be held by one of several names on different
+  paths (a two-buffer rotation): beside its must-holders it keeps ALTERNATIVES, name sets of
+  which one holds it wherever it is live; a free or a narrowing on a name drops the alternatives
+  naming it, and a copy (`OpPutRef`, `x = y`, `OpRefAlias`, a call answering its buffer or
+  argument) adds its destination where its source holds.  A loop head that joins a pass which
+  freed a buffer and reset it keeps that site's store as the buffer's; an `OpDatabase` re-init
+  keeps a maybe-ended store the variable must-holds; `x = f(…, x)` answering `x`'s own store
+  keeps `x` its holder.  `LOFT_STORE_TRACE=<fn>` prints the state after each statement.
+- **Guards with a single witness** — the DISTINCT arm of `OpDistinctStore(v, w)` rules out a store
+  `w` alone must-holds (where it cannot have ended), and an arm left with nothing cannot run: the
+  join of arms answering different buffers closes with it.
 - **Owners a stored reference leaves in place** — a compiler temporary the function frees keeps
   the record a `reference<T>` field names, and a holder handed to a call reads those records.
+- **Closure records' slots** — a capture slot holds a store; an owner slot (`__own_x`) makes the
+  record a holder of it, and an identity test of a slot (`OpDistinctStore(OpGetDbRef(w, off), x)`)
+  narrows the slot on each arm.  A record's cascade (`<record>_OpDropAll`, `OpDropFnRef`) ends
+  only the slots its type's drop frees, follows a record a slot holds, and is typed by any holder
+  of a `__closure_*` type, a rebuild snapshot (`__disp_N`) included.  `OpCopyRecord` gives the
+  snapshot the source record's slots.  A join ignores the slots of a record that does not exist
+  on one side.  `LOFT_STORE_TRACE` prints the slots.
+- **A fn-ref's closure as an operand** — `OpDistinctStore(OpFnRefClosure(g), w)` narrows and
+  equates `g` itself, as a plain variable operand does: the stand-downs that hand the frame's
+  closure record to a fn-ref read right.
+- **Host stores and guarded frees of a capture** — `R-HostStore`'s result clause
+  (`OpReleaseRecIfDistinct` a guarded free, `OpStoreBufOnly` may be null, a minting callee never
+  answers null); a guarded free of a capture slot leaves the store live exactly where the witness
+  names it.
 
-Open, each wanting more than a local fix:
-
-- **A value joined from arms answering different buffers** (O-Complete/157-join-witness,
-  C-Var/2315, O-Complete/2386, O-Latest/1323, F-Ret/2188, H-Alloc): the closing guard
-  `if OpDistinctStore(v, a) if OpDistinctStore(v, b) OpFreeRef(v)` is a no-op at runtime, but
-  after the join the records no longer know which buffer `v` came from on each path.  Deriving it
-  from the guard alone, without the variable must-holding the store, made seven cells worse.
-- **A two-buffer rotation** (`__ref_1 ← __ref_3; __ref_3 ← v`: H-RootExtent, B-Copy keyed
-  rebind): each store is held by one of two names, never the same one on every path.
-- **A caller-minted buffer parameter** (R-TailSelf/vec_local): the records follow a null path
-  every caller rules out by minting the buffer first.
-
+Open (four cells, all records gaps; every function in them is runtime-clean at 0..3 passes on
+both backends):
+- **One key for every earlier pass.**  A site minting each pass keeps its current store and ONE
+  older generation, so the stores of passes 1..n-1 merge: a slot's correlation with the store it
+  holds cannot survive (C's cell `one_loop`, 2357 `after_returned_fn`'s older store), and the
+  zero-pass path's "this store exists only where the record does" is lost at the loop's exit
+  (2357 `record`).  15's records MISS was the same shape; the first three passes are now analysed
+  one by one, which caught it.  Owner: loft3-c1's pass design.
+- **A liveness test of a capture slot** (C's cell `two_loops`, its `#0`): a let-go point frees a
+  slot's store behind `OpStoreLive(OpGetDbRef(w, off))`, and the records narrowed that test only
+  for a plain variable, so a store the frame had already freed stayed in the slot.  Both backends
+  reset a freed variable, so the identity test beside it is no witness; the liveness test is what
+  keeps them clean.  Fixed by loft3-c1's cl-patches13 (the slot narrowed on the live arm).
+- **A store's existence correlated with a record variable across a branch join** (L-CapOne/2281
+  `lv`: `h` names the second record exactly where it was built; the frame end's stand-downs walk
+  an arm where `h` names it and its record variable is null).  Same relation as 2357 `record`.
+  Owner: loft3-c1's design.
+- L-CapKeep/1636: loft3-c1's.

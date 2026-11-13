@@ -371,7 +371,14 @@ impl Scopes<'_> {
                 }),
         );
         let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(v)]);
-        for &r in &self.closure_keep.records {
+        // A pass-confined record is a name released after this one too: the frame frees its
+        // local at the frame's end, so a fn-ref still holding it lets go (`@FR-H-FreeTwice`).
+        let confined: &[u16] = if crate::keys::confined_record_stand_down() {
+            &self.closure_keep.confined_records
+        } else {
+            &[]
+        };
+        for &r in self.closure_keep.records.iter().chain(confined) {
             out.push(v_if(
                 Value::Call(
                     data.def_nr("OpDistinctStore"),
@@ -631,6 +638,13 @@ impl Scopes<'_> {
 pub(crate) struct ClosureKeep {
     pub(super) gated: bool,
     pub(super) records: Vec<u16>,
+    /// Gated because a fn-ref bound to a record build is re-bound to a lambda that captures
+    /// nothing: the frame's records are then released even where the return may hold one,
+    /// behind their stand-down against the returned fn-ref (`get_free_vars`).
+    pub(super) plain_rebound: bool,
+    /// The `___clos_N` locals confined to one pass: the frame frees each at its end, so a
+    /// fn-ref holding one's record stands down against it (`closure_keep_stand_down`).
+    confined_records: Vec<u16>,
     pub(super) holders: Vec<u16>,
     owning: HashSet<u16>,
     /// Every capture a build writes: `(record, offset, captured local)`.
@@ -667,10 +681,12 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
         }
         match function.tp(v).base() {
             Type::Function(..) if !function.is_compiler_generated(v) => out.holders.push(v),
-            Type::Reference(r, _)
-                if function.name(v).starts_with("___clos_") && !confined.contains(r) =>
-            {
-                out.records.push(v);
+            Type::Reference(r, _) if function.name(v).starts_with("___clos_") => {
+                if confined.contains(r) {
+                    out.confined_records.push(v);
+                } else {
+                    out.records.push(v);
+                }
             }
             _ => {}
         }
@@ -752,7 +768,19 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
     let loop_or_shared =
         (built_in_loop && !out.records.is_empty()) || (shared && !out.holders.is_empty());
     // A fn-ref bound to two records needs two: the walk below is skipped for every other frame.
-    if !loop_or_shared && out.records.len() < 2 {
+    // A holder ever re-bound to a lambda that captures nothing (`h = <fn number>`).
+    let mut plain_holder = false;
+    if crate::keys::plain_rebind_keep() {
+        code.walk(&mut |n| {
+            if let Value::Set(x, rhs) = n.unspan()
+                && out.holders.contains(x)
+                && matches!(rhs.unspan(), Value::Int(_))
+            {
+                plain_holder = true;
+            }
+        });
+    }
+    if !loop_or_shared && out.records.len() < 2 && !plain_holder {
         return ClosureKeep::default();
     }
     let mut targets: HashMap<u16, Vec<u16>> = HashMap::default();
@@ -783,7 +811,23 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
         }
     }
     let multi_bound = bound_to.values().any(|rs| rs.len() > 1);
-    out.gated = loop_or_shared || multi_bound;
+    // …or bound to one record build and also re-bound to a lambda that captures nothing
+    // (`h = <fn number>`): which of the two it holds at the end is a run-time fact as well.
+    let plain_rebound = plain_holder
+        && bound_to.keys().any(|h| {
+            let mut plain = false;
+            code.walk(&mut |n| {
+                if let Value::Set(x, rhs) = n.unspan()
+                    && x == h
+                    && matches!(rhs.unspan(), Value::Int(_))
+                {
+                    plain = true;
+                }
+            });
+            plain
+        });
+    out.gated = loop_or_shared || multi_bound || plain_rebound;
+    out.plain_rebound = plain_rebound;
     if !out.gated {
         return ClosureKeep::default();
     }

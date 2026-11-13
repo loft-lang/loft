@@ -261,88 +261,12 @@ fn rmeta_by_metadata_hash(rlib: &std::path::Path) -> Option<std::path::PathBuf> 
         .find(|p| rmeta_meta_header(p).is_some_and(|h| h.hash == Some(want)))
 }
 
-/// What a crate-metadata header says about the compile that wrote it: the crate's metadata
-/// hash (format 11 on; `None` before it) and the rustc version string.  Read from the `rust`
-/// blob rustc writes at the head of every `lib.rmeta` and `.rmeta`: the magic and a format
-/// version, the offsets, from format 11 the 16-byte hash, then the version as a
-/// length-prefixed string.
-#[derive(PartialEq, Eq, Debug)]
-struct MetaHeader {
-    hash: Option<[u8; 16]>,
-    rustc: String,
-}
-
-fn meta_header_of_blob(blob: &[u8]) -> Option<MetaHeader> {
-    const MAGIC: &[u8] = b"rust\0\0\0";
-    let at = blob.windows(MAGIC.len()).position(|w| w == MAGIC)?;
-    let format = *blob.get(at + 7)?;
-    // Format 10 puts the version string right after the root offset; 11 adds a second
-    // offset and the hash before it.
-    let len_at = at + if format >= 11 { 40 } else { 16 };
-    let hash = if format >= 11 {
-        Some(blob.get(at + 24..at + 40)?.try_into().ok()?)
-    } else {
-        None
-    };
-    let len = usize::from(*blob.get(len_at)?);
-    let rustc = std::str::from_utf8(blob.get(len_at + 1..len_at + 1 + len)?).ok()?;
-    rustc.starts_with("rustc ").then(|| MetaHeader {
-        hash,
-        rustc: rustc.to_string(),
-    })
-}
-
-/// The metadata header of an `.rmeta` file: its first few KiB, never the whole file (the full
-/// metadata of loft's own crate is tens of MB).
-fn rmeta_meta_header(rmeta: &std::path::Path) -> Option<MetaHeader> {
-    use std::io::Read;
-    let mut head = Vec::with_capacity(4096);
-    crate::file_access::open(rmeta)
-        .ok()?
-        .take(4096)
-        .read_to_end(&mut head)
-        .ok()?;
-    meta_header_of_blob(&head)
-}
-
-/// The metadata header of an rlib's `lib.rmeta` member.  The archive is walked by SEEKING past
-/// each member — a stable rlib opens with a symbol table of several MB, and the rlib itself is
-/// tens of MB — and only the member's first few KiB are read.
-fn rlib_meta_header(rlib: &std::path::Path) -> Option<MetaHeader> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut f = crate::file_access::open(rlib).ok()?;
-    let mut magic = [0u8; 8];
-    f.read_exact(&mut magic).ok()?;
-    if &magic != b"!<arch>\n" {
-        return None;
-    }
-    let mut header = [0u8; 60];
-    while f.read_exact(&mut header).is_ok() {
-        let name = std::str::from_utf8(&header[0..16]).ok()?.trim_end();
-        let size: u64 = std::str::from_utf8(&header[48..58])
-            .ok()?
-            .trim_end()
-            .parse()
-            .ok()?;
-        if name.strip_suffix('/').unwrap_or(name) == "lib.rmeta" {
-            let mut head = Vec::with_capacity(4096);
-            f.take(size.min(4096)).read_to_end(&mut head).ok()?;
-            return meta_header_of_blob(&head);
-        }
-        f.seek(SeekFrom::Current(i64::try_from(size + size % 2).ok()?))
-            .ok()?;
-    }
-    None
-}
-
-/// Was this rlib written by a rustc OTHER than the one that will compile against it?  `false`
-/// whenever either side is unknown, so an unreadable header keeps the old choice.
-fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
-    match (rlib_meta_header(rlib), rustc_version()) {
-        (Some(h), Some(current)) => h.rustc != current,
-        _ => false,
-    }
-}
+pub use crate::cargo_layout::{
+    build_units, current_runtime_profile_dir, dependency_dirs, deps_dir_of, runtime_profile_dir,
+};
+pub(crate) use crate::cargo_layout::{
+    per_unit_dep_dirs, rlib_from_other_rustc, rlib_meta_header, rmeta_meta_header,
+};
 
 /// Which of loft's runtime rlibs a build links: the `deps/` copy, then the uplifted one —
 /// UNLESS the `deps/` copy was written by another rustc and the uplifted one by this one.
@@ -354,6 +278,51 @@ fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
 /// compile would take the stale one again (loft#2033).  The rustc that wrote
 /// each candidate is read from its metadata, so the choice moves only on that evidence.  Asked by
 /// `native_utils::loft_lib_dir_for`, the lookup every `--native` compile links through.
+/// The `libloft` rlib a TEST binary was linked against, and the dirs rustc searches for its
+/// dependencies, for a test that drives `rustc` by hand over generated code.
+///
+/// Only the running binary's own build counts, so the rlib carries the features compiled into
+/// this test: a later `cargo build --no-default-features` writes another `libloft` whose
+/// png/random functions are stubs, and linking that one answered wrong values in silence
+/// (S33).  Classic layout: the newest `libloft*.rlib` in the binary's own `deps/`.  Per-unit
+/// layout (cargo 1.100): the binary runs from `build/<crate>/<hash>/out/` and the runtime is a
+/// sibling unit `build/loft/<hash>/out/libloft.rlib`; of those, the newest one not built after
+/// this binary — the one it was linked against — never a later build's.
+#[must_use]
+pub fn linked_runtime() -> Option<(std::path::PathBuf, Vec<std::path::PathBuf>)> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?.to_path_buf();
+    let modified = |p: &std::path::Path| {
+        crate::file_access::symlink_metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+    };
+    if crate::file_access::file_name(&exe_dir).is_some_and(|n| n == "deps") {
+        let rlib = crate::file_access::read_dir(&exe_dir)
+            .ok()?
+            .into_iter()
+            .filter(|e| {
+                let n = crate::file_access::file_name(e).unwrap_or_default();
+                (n.starts_with("libloft-") || n == "libloft.rlib") && has_rlib_ext(&n)
+            })
+            .max_by_key(|e| modified(&e.os_spelling()))?
+            .os_spelling();
+        return Some((rlib, vec![exe_dir]));
+    }
+    let profile = runtime_profile_dir(&exe_dir);
+    let linked_by = modified(&exe);
+    let rlib = crate::file_access::read_dir(profile.join("build").join("loft"))
+        .ok()?
+        .into_iter()
+        .map(|u| u.os_spelling().join("out").join("libloft.rlib"))
+        .filter(|r| crate::file_access::exists(r))
+        .filter(|r| linked_by.is_none() || modified(r) <= linked_by)
+        .max_by_key(|r| modified(r))?;
+    // A binary running from a per-unit dir was linked against per-unit dependencies: a
+    // `deps/` beside them is another toolchain's debris (a restored cache, loft#2033).
+    Some((rlib, per_unit_dep_dirs(&profile)))
+}
+
 pub fn preferred_runtime_rlib(
     deps: &std::path::Path,
     uplifted: &std::path::Path,
@@ -1431,12 +1400,13 @@ pub use crate::toolchain::{
 /// `--extern name=path` flags for the optional feature-dep rlibs (random/png/…) in
 /// `deps` that the generated stdlib code may reference — every `libX-<hash>.rlib`
 /// except `libloft*` (which is passed explicitly as `--extern loft=`).
-fn extra_externs(deps: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
+fn extra_externs(deps: &[std::path::PathBuf]) -> Vec<(String, std::path::PathBuf)> {
     let mut out = Vec::new();
-    let Ok(entries) = crate::file_access::read_dir(deps) else {
-        return out;
-    };
-    for e in entries {
+    for e in deps
+        .iter()
+        .filter_map(|d| crate::file_access::read_dir(d).ok())
+        .flatten()
+    {
         let n = e.file_name().unwrap_or_default();
         if !n.starts_with("lib") || !has_rlib_ext(n) || n.starts_with("libloft") {
             continue;
@@ -1479,13 +1449,18 @@ fn extra_externs(deps: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
 /// two-or-more copies coexist; the common single-copy case takes the fast path.
 pub fn loft_ffi_for_libloft(
     libloft: &std::path::Path,
-    deps: &std::path::Path,
+    deps: &[std::path::PathBuf],
 ) -> Option<std::path::PathBuf> {
     let anchor = crate::file_access::metadata(libloft)
         .and_then(|m| m.modified())
         .ok();
     let mut candidates: Vec<(std::path::PathBuf, std::time::Duration)> = Vec::new();
-    for e in crate::file_access::read_dir(deps).ok()? {
+    let entries: Vec<_> = deps
+        .iter()
+        .filter_map(|d| crate::file_access::read_dir(d).ok())
+        .flatten()
+        .collect();
+    for e in entries {
         let n = e.file_name().unwrap_or_default();
         if !n.starts_with("libloft_ffi-") || !has_rlib_ext(n) {
             continue;
@@ -1534,7 +1509,7 @@ pub fn loft_ffi_for_libloft(
 fn loft_ffi_candidate_links(
     libloft: &std::path::Path,
     cand: &std::path::Path,
-    deps: &std::path::Path,
+    deps: &[std::path::PathBuf],
 ) -> bool {
     let Some(stem) = crate::file_access::file_stem(cand) else {
         return false;
@@ -1556,8 +1531,10 @@ fn loft_ffi_candidate_links(
             .args(crate::native_lib::loft_extern_args(libloft))
             .arg("--extern")
             .arg(format!("loft_ffi={}", cand.display()))
-            .arg("-L")
-            .arg(format!("dependency={}", deps.display()))
+            .args(
+                deps.iter()
+                    .flat_map(|d| ["-L".to_string(), format!("dependency={}", d.display())]),
+            )
             .arg(&src)
             .run(b"")
             .is_ok_and(|o| o.status.success());
@@ -1697,10 +1674,7 @@ fn build_keyed_cdylib(
     // full gate: it surfaces as several unrelated-looking native tests failing ~9
     // minutes in, each naming a file that is present when you go and look.
     // The per-unit layout's rlib, put where the lookup reads it (`refresh_runtime_uplift`).
-    if let Some(exe_dir) = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-    {
+    if let Some(exe_dir) = current_runtime_profile_dir() {
         for (dir, _) in crate::toolchain::rlib_search_dirs(&exe_dir) {
             refresh_runtime_uplift(&dir);
         }
@@ -1740,7 +1714,9 @@ fn build_keyed_cdylib(
     // shipped binary (`src/native_release_args.txt`).
     args.extend(crate::cache::release_rustc_args());
     args.extend(crate::native_lib::loft_extern_args(&rlib));
-    args.extend(["-L".to_string(), deps.display().to_string()]);
+    for d in &deps {
+        args.extend(["-L".to_string(), d.display().to_string()]);
+    }
     // macOS records the `-o` path inside the Mach-O as its INSTALL NAME, and the
     // rename below moves the file without touching it — so this cdylib claimed to
     // live at `<stem>.building`, in an absolute build directory. Harmless only for
@@ -2085,7 +2061,8 @@ mod rmeta_pairing_tests {
 
 #[cfg(test)]
 mod rmeta_identity_tests {
-    use super::{MetaHeader, meta_header_of_blob, rlib_meta_header, rmeta_by_metadata_hash};
+    use super::{rlib_meta_header, rmeta_by_metadata_hash};
+    use crate::cargo_layout::{MetaHeader, meta_header_of_blob};
 
     /// A metadata blob in the shape rustc writes: magic, format version, two offsets, the
     /// 16-byte hash, then the rustc version as a length-prefixed string.

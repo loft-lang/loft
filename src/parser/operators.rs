@@ -5519,8 +5519,8 @@ impl Parser {
             return tp.clone();
         };
         // `spec.max` is a u32 and the bound is compared at `integer` (i64) width, so it
-        // must be widened, never truncated: `u32`'s max is 4_294_967_294, and `as i32`
-        // wrapped that to -2.  The emitted guard became `v <= -2`, which no legal value
+        // must be widened, never truncated: `u32`'s max is 4_294_967_295, and `as i32`
+        // wrapped that to -1.  The emitted guard became `v <= -2`, which no legal value
         // satisfies, so EVERY `x as u32?` on a runtime operand returned null — silently,
         // because the idiomatic `?? 0` then supplied a plausible zero.  A constant operand
         // hid it by const-folding before this runs.  u8/u16/i8/i16/i32 were unaffected:

@@ -99,6 +99,72 @@ impl FirstArm {
     }
 }
 
+/// A variable's name in a bind trace row: `-` for none, `args` for the base that names one of
+/// several arguments (`u16::MAX`).
+fn trace_var(function: &Function, v: Option<u16>) -> String {
+    match v {
+        None => "-".to_string(),
+        Some(u16::MAX) => "args".to_string(),
+        Some(v) if v < function.count() => function.name(v).to_string(),
+        Some(v) => format!("#{v}"),
+    }
+}
+
+/// The facts of `v = value` every bind row names: the callee (a loft-defined function the value
+/// calls) and whether the bind adopts the store that callee minted in its buffer
+/// (`adopts_minted_at_bind`).  Empty for a value that is not such a call.
+fn trace_call_facts(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    value: &Value,
+) -> Vec<String> {
+    let Some(callee) = crate::use_analysis::callee_of(data, d_nr, value)
+        .filter(|&c| data.def(c).is_loft_defined())
+    else {
+        return Vec::new();
+    };
+    vec![
+        format!("callee={}", data.def(callee).name()),
+        format!(
+            "adopt={}",
+            u8::from(crate::use_analysis::adopts_minted_at_bind(
+                data, function, v, value
+            ))
+        ),
+    ]
+}
+
+impl FirstArm {
+    /// The facts a first bind's lowering acted on, for `LOFT_TRACE_BIND`: the join's base, the
+    /// copy's source, and the callee's facts (`trace_call_facts`).  Empty when there are none.
+    #[must_use]
+    pub fn trace_facts(
+        self,
+        data: &Data,
+        d_nr: u32,
+        function: &Function,
+        v: u16,
+        value: &Value,
+    ) -> String {
+        let mut facts = Vec::new();
+        match self {
+            FirstArm::CallRefJoin { base, .. }
+            | FirstArm::NullableCallJoin { base, .. }
+            | FirstArm::CallJoin { base, .. } => {
+                facts.push(format!("base={}", trace_var(function, Some(base))));
+            }
+            FirstArm::RecordVarCopy { src, .. } => {
+                facts.push(format!("src={}", trace_var(function, Some(src))));
+            }
+            _ => {}
+        }
+        facts.extend(trace_call_facts(data, d_nr, function, v, value));
+        facts.join(" ")
+    }
+}
+
 /// The lowering of the first assignment `v = value` in function `d_nr`; the reason for each
 /// test is beside it.  `state::codegen::gen_set_first_at_tos` emits the answer.
 #[must_use]
@@ -195,7 +261,7 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
         && data.def(fn_nr).is_loft_defined()
     {
         if crate::keys::join_own_enabled()
-            && let Type::Reference(join_d_nr, _) = crate::use_analysis::first_bind_shape(tp).clone()
+            && let Some(join_d_nr) = join_record(crate::use_analysis::first_bind_shape(tp))
             && !function.is_view_elided(v)
             && let crate::use_analysis::Own::Join { base } =
                 crate::use_analysis::ownership_of(data, d_nr, value)
@@ -340,6 +406,45 @@ pub struct ReBind {
 }
 
 impl ReBind {
+    /// Every fact this reassignment's lowering read, for `LOFT_TRACE_BIND`: the displaced free
+    /// (`b2`) and the facts behind it, then the value's oracle base, whether it may name `v`'s
+    /// own store, the copy's source and the callee's facts (`trace_call_facts`).  The arm itself
+    /// is the writer's note: it names the arm it emitted.
+    #[must_use]
+    pub fn trace_facts(
+        &self,
+        data: &Data,
+        d_nr: u32,
+        function: &Function,
+        v: u16,
+        value: &Value,
+    ) -> String {
+        let b2 = match self.free {
+            DisplacedFree::Stash => "stash",
+            DisplacedFree::Pre { .. } => "pre",
+            DisplacedFree::None => "none",
+        };
+        let mut facts = vec![format!(
+            "b2={b2} owned_ref={} s1={} reads_v={} witnessed={} entry_w={} buffer_w={} \
+             nullable={} kept={} base={} alias_v={}",
+            u8::from(self.owned_ref),
+            u8::from(self.s1_substituted),
+            u8::from(self.rhs_reads_v),
+            u8::from(self.witnessed),
+            u8::from(self.entry_w.is_some()),
+            u8::from(self.buffer_witness.is_some()),
+            u8::from(self.nullable_local),
+            u8::from(self.buffer_kept),
+            trace_var(function, self.rhs_base),
+            u8::from(self.rhs_may_alias_v),
+        )];
+        if let ReArm::VarCopy { src, .. } = self.arm {
+            facts.push(format!("src={}", trace_var(function, Some(src))));
+        }
+        facts.extend(trace_call_facts(data, d_nr, function, v, value));
+        facts.join(" ")
+    }
+
     /// Does a copying reassignment (`ReArm::CallCopy`) land in a FRESH store, rather than
     /// re-initialise `v`'s own store in place?  The ONE answer the interpreter's code generator
     /// emits (`Codegen::generate_set_inner`, arm R2b) and the store records read: a witnessed
@@ -647,9 +752,22 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // names the hidden return buffer, which the proxy reads as a borrow, while each
     // arm's bind copies into the temp (that is what the write-out is for), so the
     // temp owns what the arm displaces — the sentinel its pre-init put there.
+    // An ARGUMENT frees what it displaces only with an entry witness, which tells the caller's
+    // store from one this frame minted (`@FR-O-Buffer`).  Without one the release is the scope
+    // pass's own: a rebound by-value parameter is detached in the IR before each rebind
+    // (`OpFreeRefIfDistinct(p, snapshot)` and its reset to the sentinel), so a free here would
+    // act on the sentinel — the C writer's `displacing_rebind` frees no such argument either.
+    // @PLN220.  `LOFT_ARG_DISPLACED_FREE=1` keeps the free for every argument but the hidden
+    // buffer, as before.
+    // Only the free BEFORE the bind is the scope pass's: `owned_ref` still decides the copy arms
+    // below, since a rebound parameter that owns its binding copies a call's answer as any owner
+    // does, and a stashed free (the value reads the parameter, or it is nullable) still runs —
+    // it is what the copy arms' fresh-store choice reads (#360).
     let owned_ref = (function.owns_displaced_store(v, value, data)
         || is_return_temp_owning_its_arms(data, d_nr, function, v))
         && (!is_hidden_buf_arg || entry_w.is_some());
+    let frees_displaced = owned_ref
+        && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
     // container's backing store (a vector element / nested field), so
     // the new value can land in the SAME store as v's old value —
@@ -729,7 +847,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
             || rhs_reads_a_view_of(function, value, v))
     {
         DisplacedFree::Stash
-    } else if owned_ref && !s1_substituted {
+    } else if frees_displaced && !s1_substituted {
         let witness = if crate::keys::displaced_witness_enabled() {
             crate::use_analysis::projection_container_var(data, value)
         } else {
@@ -774,18 +892,34 @@ fn re_arm(
         return ReArm::KeyedNull;
     }
     let stashed = rb.free == DisplacedFree::Stash;
+    // A stashed displaced free (a nullable local) runs after the join as it runs after a copy,
+    // and a `τ?` local joins as its `τ` twin does (`first_bind_shape`) — the C writer's
+    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there: a call handed `v`
+    // may answer `v`'s own store, which the copy arm would refill under it (#360), and the
+    // join's "fresh" test is a call's — a `??` block's stored-reference arm names a store
+    // neither `v` nor the base owns.  `LOFT_NO_STASHED_JOIN=1` copies them instead.  @PLN220.
+    let stashed_join = !crate::keys::stashed_join_off();
+    let join_shape = if stashed_join {
+        crate::use_analysis::first_bind_shape(tp)
+    } else {
+        tp
+    };
     if (rb.owned_ref || rb.buffer_kept)
         && !rb.s1_substituted
-        && !stashed
+        && (!stashed
+            || (stashed_join
+                && !rb.rhs_reads_v
+                && matches!(value.unspan(), Value::Call(..))
+                && crate::use_analysis::callee_of(data, d_nr, value).is_some()))
         && !matches!(value.unspan(), Value::Var(_))
         && crate::keys::join_own_enabled()
         && !function.is_view_elided(v)
         && let crate::use_analysis::Own::Join { base } =
             crate::use_analysis::ownership_of(data, d_nr, value)
         && base != u16::MAX
-        && let Type::Reference(rec, _) = tp
+        && let Some(rec) = join_record(join_shape)
     {
-        return ReArm::Join { d_nr: *rec, base };
+        return ReArm::Join { d_nr: rec, base };
     }
     if !((rb.owned_ref || rb.witnessed || rb.buffer_kept) && !rb.s1_substituted) {
         return ReArm::Plain;
@@ -835,7 +969,12 @@ fn re_arm(
             // `LOFT_NO_FRESH_COPY_OF_VIEW=1`.
             && !(!rb.rhs_may_alias_v && !crate::keys::fresh_copy_of_view_off()))
         && !function.is_view_elided(v)
-        && !(function.is_deferred_first_bind(v)
+        // `@FR-O-Move` — an answer the callee minted in the buffer it was handed transfers to
+        // the binding at every bind, as the first-bind arm and the C writer take it: the
+        // displaced free is witnessed by that buffer (`buffer_witness`), and the scope pass
+        // pairs the local with it.  `LOFT_NO_REBIND_ADOPTS_MINTED=1` adopts at a deferred first
+        // bind only and copies at a rebind.  @PLN220.
+        && !((function.is_deferred_first_bind(v) || !crate::keys::rebind_adopts_minted_off())
             && crate::use_analysis::adopts_minted_at_bind(data, function, v, value))
     {
         return ReArm::CallCopy { d_nr: rec, fn_nr };
@@ -875,6 +1014,21 @@ fn re_arm(
         return ReArm::ElementCopy { d_nr: rec };
     }
     ReArm::Plain
+}
+
+/// The record a runtime JOIN bind (`OpBindOrCopy`: adopt a fresh answer, copy a borrowed one)
+/// copies into, for a local of type `tp`: a heap record, or a heap enum, which the copy walks
+/// the same way (the C writer's `join_bind` takes both).  `None` for every other type, and for
+/// an enum under `LOFT_NO_ENUM_JOIN=1`, which deep-copies it at every bind as before.  @PLN220.
+fn join_record(tp: &Type) -> Option<u32> {
+    match tp {
+        Type::Reference(rec, _) => Some(*rec),
+        Type::Enum(rec, true, _) if !crate::keys::enum_join_off() => Some(*rec),
+        // A nullable local is joined only where its caller peeled it (`first_bind_shape`, under
+        // `nullable_ret_buffer`): the nullability is the caller's question, not this one's.
+        Type::Optional(_) => None,
+        _ => None,
+    }
 }
 
 /// Is `value` a null — `null`, or the sentinel a reference reset writes?
@@ -955,11 +1109,20 @@ pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
         )
 }
 
+/// Is the bind trace the environment variable `env` names switched on?  A writer asks it before
+/// computing what only the trace prints.
+#[must_use]
+pub fn trace_enabled(env: &str) -> bool {
+    std::env::var_os(env).is_some_and(|p| !p.is_empty())
+}
+
 /// The lowering census (STORE_RECORDS.md § Phases, 2): one row per assignment a writer lowers,
-/// `function⇥variable⇥first|re⇥arm`, appended to the file the environment variable `env` names
-/// (`LOFT_TRACE_BIND_C`, `LOFT_TRACE_BIND_NATIVE`; the interpreter's own is `LOFT_TRACE_BIND`).
-/// A no-op when it is unset.  Rows from one process go to one file, in emission order.
-pub fn trace_row(env: &str, function: &str, var: &str, first: bool, arm: &str) {
+/// `function⇥variable⇥first|re⇥L<line>⇥arm`, appended to the file the environment variable
+/// `env` names (`LOFT_TRACE_BIND_C`, `LOFT_TRACE_BIND_NATIVE`; the interpreter's own is
+/// `LOFT_TRACE_BIND`).  `line` is the source line of the assignment, so rows pair by site even
+/// where a writer emits one assignment more than once (an unrolled loop, a guarded twin).  A
+/// no-op when it is unset.  Rows from one process go to one file, in emission order.
+pub fn trace_row(env: &str, function: &str, var: &str, first: bool, line: u32, arm: &str) {
     use std::io::Write as _;
     use std::sync::Mutex;
     static SINKS: Mutex<Vec<(String, crate::file_access::File)>> = Mutex::new(Vec::new());
@@ -979,6 +1142,6 @@ pub fn trace_row(env: &str, function: &str, var: &str, first: bool, arm: &str) {
     }
     if let Some((_, f)) = sinks.iter_mut().find(|(e, _)| e == env) {
         let kind = if first { "first" } else { "re" };
-        let _ = writeln!(f, "{function}\t{var}\t{kind}\t{arm}");
+        let _ = writeln!(f, "{function}\t{var}\t{kind}\tL{line}\t{arm}");
     }
 }

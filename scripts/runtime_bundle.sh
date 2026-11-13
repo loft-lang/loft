@@ -41,19 +41,20 @@ cp "$rel/$exe" "$stage/bin/$exe"
 cp -r default "$stage/share/loft/"
 cp "$rel/libloft.rlib" "$stage/share/loft/"
 [ -f "$rel/libloft.rmeta" ] && cp "$rel/libloft.rmeta" "$stage/share/loft/"
-cp "$rel"/deps/*.rlib "$stage/share/loft/deps/"
+# Every dependency rlib, under either cargo layout (`deps/`, or cargo 1.100's per-unit dirs).
+scripts/cargo_dep_files.sh "$rel" '*.rlib' | while read -r f; do cp "$f" "$stage/share/loft/deps/"; done
 # Proc-macro crates are HOST dynamic libraries, and a `--target` build keeps host code apart:
-# in `target/install-lib/release/deps/`, not the triple's directory.  A package's native build
+# in `target/install-lib/release/`, not the triple's directory.  A package's native build
 # loads them, so they come too — which is why a cross-built leg cannot ship a runtime.
-host="target/install-lib/release/deps"
-for dir in "$rel/deps" "$host"; do
+host="target/install-lib/release"
+for dir in "$rel" "$host"; do
   for ext in so dylib dll; do
-    if ls "$dir"/*."$ext" >/dev/null 2>&1; then cp "$dir"/*."$ext" "$stage/share/loft/deps/"; fi
+    scripts/cargo_dep_files.sh "$dir" "*.$ext" | while read -r f; do cp "$f" "$stage/share/loft/deps/"; done
   done
 done
 # Only the newest loft_ffi rlib: an older one beside it is a second candidate for one crate.
 # Judged in the build directory: the copies all carry the time of the copy.
-for old in $(ls -t "$rel"/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2 || true); do
+for old in $(scripts/cargo_dep_files.sh "$rel" 'libloft_ffi-*.rlib' | xargs -r ls -t | tail -n +2 || true); do
   rm -f "$stage/share/loft/deps/$(basename "$old")"
 done
 rustc -vV > "$stage/share/loft/RUSTC"

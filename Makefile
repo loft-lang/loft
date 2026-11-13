@@ -126,6 +126,12 @@ endif
 # Linux; a Windows Python defaults to cp1252 and misreads any non-ASCII byte.
 export PYTHONUTF8 := 1
 
+# Cargo 1.100's build-dir layout has no target/<profile>/deps/, which the native toolchain
+# (src/toolchain.rs), make-release.sh and the cdylib builds read: keep the old layout until
+# they read the new one (cargo's temporary opt-out, removed one release later).  The CI
+# workflows set the same variable.
+export __CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT := 1
+
 # macOS: cc-rs invocations (notably `ring`'s build script) need the SDK path
 # on -isysroot.  When `xcode-select -p` points at the bare Command Line Tools,
 # plain `cc` does not auto-detect it and the build fails with
@@ -256,7 +262,7 @@ install-artifacts: check-targets all wasm-html-mt-lib
 	@cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random
 	@cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
 	@scripts/lean_build.sh --lib --bin loft
-	@stale=$$(ls -t target/install-lib/release/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2); \
+	@stale=$$(scripts/cargo_dep_files.sh target/install-lib/release 'libloft_ffi-*.rlib' | xargs -r ls -t | tail -n +2); \
 	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
 
 # Native-only artifacts: the same install-lib rlib, but WITHOUT the two wasm target
@@ -265,7 +271,7 @@ install-artifacts: check-targets all wasm-html-mt-lib
 # need.  Same stale-loft_ffi prune as the full target.
 install-artifacts-native: all
 	@scripts/lean_build.sh --lib --bin loft
-	@stale=$$(ls -t target/install-lib/release/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2); \
+	@stale=$$(scripts/cargo_dep_files.sh target/install-lib/release 'libloft_ffi-*.rlib' | xargs -r ls -t | tail -n +2); \
 	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
 
 install:
@@ -286,17 +292,18 @@ install:
 	@$(SUDO) cp -r default $(PREFIX)/share/loft/
 	@$(SUDO) install -m 644 target/install-lib/release/libloft.rlib $(PREFIX)/share/loft/
 	@$(SUDO) rm -f $(PREFIX)/share/loft/deps/*.rlib $(PREFIX)/share/loft/deps/*.so $(PREFIX)/share/loft/deps/*.dylib
-	@$(SUDO) cp target/install-lib/release/deps/*.rlib $(PREFIX)/share/loft/deps/
-	@if ls target/install-lib/release/deps/*.so >/dev/null 2>&1; then \
-		$(SUDO) cp target/install-lib/release/deps/*.so $(PREFIX)/share/loft/deps/ || { \
+	@# Every dependency, under either cargo layout (`deps/`, or cargo 1.100's per-unit dirs).
+	@scripts/cargo_dep_files.sh target/install-lib/release '*.rlib' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/
+	@if [ -n "$$(scripts/cargo_dep_files.sh target/install-lib/release '*.so')" ]; then \
+		scripts/cargo_dep_files.sh target/install-lib/release '*.so' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/ || { \
 			echo "ERROR: failed to install dependency .so files (rights?)."; exit 1; }; \
 	fi
 	@# Proc-macro deps (e.g. displaydoc) are host dylibs — `.dylib` on macOS,
 	@# `.so` on Linux (copied above).  A cdylib's `extern crate loft;` needs them,
 	@# so omitting the macOS `.dylib` broke every library native build with
 	@# E0463 "can't find crate for displaydoc" (see plans/user-local-install).
-	@if ls target/install-lib/release/deps/*.dylib >/dev/null 2>&1; then \
-		$(SUDO) cp target/install-lib/release/deps/*.dylib $(PREFIX)/share/loft/deps/ || { \
+	@if [ -n "$$(scripts/cargo_dep_files.sh target/install-lib/release '*.dylib')" ]; then \
+		scripts/cargo_dep_files.sh target/install-lib/release '*.dylib' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/ || { \
 			echo "ERROR: failed to install dependency .dylib files (rights?)."; exit 1; }; \
 	fi
 	@if [ -n "$(NATIVE_ONLY)" ]; then \

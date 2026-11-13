@@ -5359,7 +5359,6 @@ use #count instead"
 
     // Desugar `for a in vec par(b = worker(a), N) { body }` into an
     // index-based loop over the `parallel_for` result vector.
-    #[allow(clippy::too_many_arguments)]
     /// `elem_var` is the name this loop BINDS, `src_elem_var` the name the program wrote
     /// — they differ from the second loop over a name onward (loft#915).
     #[allow(clippy::too_many_arguments)]
@@ -7780,6 +7779,13 @@ use #count instead"
             let inner_row = Value::Int(self.append_elem_tp(inner));
             let field = self.cl("OpGetField", &[Value::Var(tmp), Value::Int(0), db_tp]);
             self.cl("OpAppendVector", &[field, elem, inner_row])
+        } else if let Some(narrow) =
+            crate::parser::vectors::narrow_elm_write(&elm_tp, Value::Var(tmp), &elem, &self.data)
+        {
+            // A narrow integer element takes the element write every vector build takes — a
+            // `τ?` its null code and offset — not a field's (`set_element` wrote `i8?`'s 7 with
+            // the non-null offset, read back as 8).
+            narrow
         } else {
             self.set_element(&elm_tp, 0, Value::Var(tmp), elem)
         };

@@ -9577,7 +9577,6 @@ impl Parser {
     /// (Phase 4.3 step 5).  Reads from the subject SOURCE var `v` (not the `_match_subj` copy),
     /// matching the `x = v[lo..hi]` path.  Pushes the materialisation into `bindings`.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn materialize_named_rest(
         &mut self,
         v: u16,
@@ -10040,7 +10039,6 @@ impl Parser {
     /// lexer is at the `(`; consumes through `]`.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    #[allow(clippy::too_many_arguments)]
     fn parse_slice_repetition(
         &mut self,
         e_nr: u32,
@@ -10674,7 +10672,6 @@ impl Parser {
     /// Phase 4.3 step 5 (deferred here with a diagnostic).
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    #[allow(clippy::too_many_arguments)]
     fn parse_multi_element_alternation(
         &mut self,
         e_nr: u32,
@@ -19292,8 +19289,12 @@ impl Parser {
     /// One typed dense may too (`@FR-N-Store`), where a null can have reached it: a record
     /// PARAMETER holds the `null` it was handed; an OWNED local (no dep) is a copy of some
     /// value or the result of a call, either of which may be nothing; and a local that views
-    /// another RECORD is what that record is.  A local that views a COLLECTION is a bound
-    /// element, which is there; a literal's own buffer is asked by nobody
+    /// another RECORD is what that record is.  A local that views a COLLECTION is an element
+    /// read, absent where the element is not there: `(N-Index)` types a CONSTANT index
+    /// non-null by contract, and an overrun is still null at run time (`@C80`), so
+    /// `r = v[0]; r` in a `-> S?` answers null for an empty `v` (`@FR-N-Road`).
+    /// `LOFT_NO_ELEMENT_VIEW_ABSENT=1` answers present again.  A literal's own buffer is
+    /// asked by nobody
     /// ([`Self::branch_has_nullable_leaf`] and the copy stop at an `Object` block).  A local
     /// typed by a template's TYPE VARIABLE is asked only where it is written `T?`: its
     /// instance may be a tuple, whose test is not the record's.
@@ -19305,6 +19306,15 @@ impl Parser {
             }
             let record = matches!(tp.base(), Type::Reference(d, _)
                 if !p.data.is_type_var_placeholder(*d) && tp.heap_def_nr().is_some());
+            // A view of a collection's element may be absent (`r = v[0]` past the end) —
+            // except a loop's own element, which the loop only binds to one that exists.
+            if !seen.is_empty()
+                && crate::parser::vectors::is_collection(tp.base())
+                && !crate::keys::element_view_present()
+                && !seen.first().is_some_and(|&root| p.vars.was_loop_var(root))
+            {
+                return true;
+            }
             if !record || seen.contains(&v) {
                 return false;
             }
@@ -20769,6 +20779,14 @@ impl Parser {
                             // store a second time (`@FR-H-FreeTwice`).
                             // `LOFT_ARM_FREES_VIEW_DEPS=1` frees every dep.
                             // @FR-O-Proxy asks free — `proxy_says_owned` carries @FR-O-Override's veto.
+                            // A PARAMETER is the caller's store, whatever its proxy says: an
+                            // arm answering a binding of the subject (`match v { [h, ..t] => t,
+                            // whole => whole }`) copied it into `w` and freed the caller's
+                            // vector — a double free on both backends.
+                            // `LOFT_ARM_FREES_PARAM_DEPS=1` frees it again.
+                            if self.vars.is_argument(d) && !crate::keys::arm_frees_param_deps() {
+                                continue;
+                            }
                             if self.vars.proxy_says_owned(d) || arm_frees_view_deps() {
                                 seq.push(self.cl("OpFreeRef", &[Value::Var(d)]));
                             }

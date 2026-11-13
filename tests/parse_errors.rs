@@ -5462,6 +5462,23 @@ fn unrepresentable_limit_with_size_reports_the_bound_and_not_the_size() {
         );
 }
 
+/// `@FR-L-Narrow-Enc`: four bytes hold the COUNT of `limit(-5, 3000000000)` but neither 4-byte
+/// encoding holds both signs past `i32::MAX` — the field read 3000000000 back as -1294967296.
+/// Refused at the declaration, with the 8-byte cure; the two ranges each encoding holds pass.
+#[test]
+fn a_four_byte_range_with_both_signs_past_the_signed_maximum_is_refused() {
+    code!("type Mid32 = integer limit(-5, 3000000000) size(4);\nfn test() { x: Mid32 = 5; print(\"{x}\"); }")
+        .error(
+            "`size(4)` stores a range inside -2147483647..2147483647 or one from 0 to 4294967295, \
+             and `limit(-5, 3000000000)` is neither — drop the `size(…)`, which stores it in 8 \
+             bytes, or narrow the limit at \
+             a_four_byte_range_with_both_signs_past_the_signed_maximum_is_refused:1:51",
+        );
+    code!(
+        "type Top32 = integer limit(0, 4294967295) size(4);\ntype Neg32 = integer limit(-5, 2147483647) size(4);\nfn test() { a: Top32 = 4294967295; b: Neg32 = -5; assert(a == 4294967295 && b == -5, \"{a} {b}\"); }"
+    );
+}
+
 /// The CONTROL, and the reason the branch guarded above is not removable: a `size(n)` with no
 /// `limit(…)` at all still reports exactly that message. A fix that silenced the size check
 /// whenever the spec read as a plain `integer` would pass both tests above and lose this one.

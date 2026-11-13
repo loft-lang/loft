@@ -2597,11 +2597,23 @@ impl State {
             return self.generate_set_inner(stack, v, value);
         }
         let first = !stack.function.is_stack_allocated(v);
+        // The source line the assignment stands on: the last line marker generated before it.
+        let line = self
+            .line_numbers
+            .range(..=self.code_pos)
+            .next_back()
+            .map_or(0, |(_, l)| *l);
         BIND_NOTES.with(|n| n.borrow_mut().push(Vec::new()));
         self.generate_set_inner(stack, v, value);
-        let notes = BIND_NOTES.with(|n| n.borrow_mut().pop().unwrap_or_default());
+        let mut notes = BIND_NOTES.with(|n| n.borrow_mut().pop().unwrap_or_default());
+        // `decided=<arm>` stays only where the emitted arm (the last note) is another one.
+        if let Some(i) = notes.iter().position(|n| n.starts_with("decided="))
+            && notes.last().map(String::as_str) == Some(&notes[i]["decided=".len()..])
+        {
+            notes.remove(i);
+        }
         bind_trace_write(&format!(
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\tL{line}\t{}",
             stack.data.def(stack.def_nr).name(),
             stack.function.name(v),
             if first { "first" } else { "re" },
@@ -2710,22 +2722,11 @@ impl State {
             } = rb;
             let mut stash_old_for_post_free = false;
             if bind_trace_on() {
-                // The free the code below emits (`rb.free`), not a recomputation of it: a
-                // compiler temporary's null reset is `None` whatever the facts say.
-                let b2 = match rb.free {
-                    DisplacedFree::Stash => "stash",
-                    DisplacedFree::Pre { .. } => "pre",
-                    DisplacedFree::None => "none",
-                };
-                note_bind(&format!(
-                    "b2={b2} owned_ref={} s1={} reads_v={} witnessed={} entry_w={} buffer_w={}",
-                    u8::from(owned_ref),
-                    u8::from(s1_substituted),
-                    u8::from(rhs_reads_v),
-                    u8::from(witnessed),
-                    u8::from(entry_w.is_some()),
-                    u8::from(buffer_witness.is_some())
-                ));
+                // The facts the decision read and the arm it decided (`rb`), not a
+                // recomputation: the arm this writer emits is noted where it emits it, and a
+                // row whose two differ says so (`generate_set`).
+                note_bind(&rb.trace_facts(stack.data, stack.def_nr, &stack.function, v, value));
+                note_bind(&format!("decided={}", rb.arm.trace_name()));
             }
             if rb.free == DisplacedFree::Stash {
                 let free_pos = stack.var_pos(v);
@@ -2800,6 +2801,15 @@ impl State {
             if let ReArm::Join { d_nr, base } = rb.arm {
                 let tp_nr = stack.data.def(d_nr).known_type();
                 note_bind("R1");
+                // A stashed rebind still names its old store, which the copy arm's allocation
+                // would refill in place — the store may be a view into another record.  Reset
+                // to the sentinel, the copy mints a store of its own, as the C writer's join
+                // does; the stash on the stack keeps the old store for its free after.
+                if stash_old_for_post_free {
+                    let pos = stack.var_pos(v);
+                    stack.add_op("OpInitRefSentinel", self);
+                    self.code_add(pos);
+                }
                 // The DISPLACED old store is already released — or, for a `buffer_kept` local,
                 // is the construction buffer's, which that buffer releases: this branch is
                 // reached only past the plain owned-reassign free above (`owned_ref &&
@@ -2822,6 +2832,11 @@ impl State {
                 self.code_add(stack.var_pos(v));
                 self.code_add(tp_nr);
                 self.recheck_join_witnesses(stack, v, base, &rest, tp_nr);
+                // A nullable local, or one the value reads, waits for its stashed free: after
+                // the bind, and only where the new value names another store.
+                if stash_old_for_post_free {
+                    self.free_stashed(stack, v, entry_w, buffer_witness);
+                }
                 return;
             }
             if (owned_ref || witnessed || buffer_kept) && !s1_substituted {
@@ -3490,6 +3505,12 @@ impl State {
         // test lives; the store records read the same answer.  This emits it.
         let arm =
             crate::bind_lowering::first_arm(stack.data, stack.def_nr, &stack.function, v, value);
+        if bind_trace_on() {
+            let facts = arm.trace_facts(stack.data, stack.def_nr, &stack.function, v, value);
+            if !facts.is_empty() {
+                note_bind(&facts);
+            }
+        }
         note_bind(arm.trace_name());
         match arm {
             FirstArm::Text => self.gen_set_first_text(stack, v, value),
@@ -4478,6 +4499,33 @@ impl State {
             stack.add_op("OpFreeRefIfDistinct", self);
             stack.add_op("OpInitRefSentinel", self);
             self.code_add(var_pos);
+            return Type::Void;
+        }
+        // `@FR-O-NoDiverge` — every other variable a guarded free releases is reset where the
+        // free ran, as C's `loft_free_var_distinct` resets it: where it named another store than
+        // the witness.  Left naming its freed slot, a loop's next pass read it as live: a
+        // work-buffer parameter handed null, rewritten into a loop by `(R-TailSelf)`, cleared
+        // the store its tail jump had freed (`LOFT_WORK_BUFFER_NULL=1`, strict stores).
+        // `LOFT_NO_GUARDED_FREE_RESET=1` leaves it naming the freed slot.
+        if stack.data.def(op).name() == "OpFreeRefIfDistinct"
+            && let [Value::Var(v), Value::Var(w)] = parameters
+            && !crate::keys::guarded_free_reset_off()
+        {
+            self.push_var_ref(stack, *v);
+            self.push_var_ref(stack, *w);
+            stack.add_op("OpFreeRefIfDistinct", self);
+            let reset = Value::If(
+                Box::new(Value::Call(
+                    stack.data.def_nr("OpDistinctStore"),
+                    vec![Value::Var(*v), Value::Var(*w)],
+                )),
+                Box::new(Value::Call(
+                    stack.data.def_nr("OpInitRefSentinel"),
+                    vec![Value::Var(*v)],
+                )),
+                Box::new(Value::Null),
+            );
+            self.generate(&reset, stack, false);
             return Type::Void;
         }
         // try destination-passing optimisation for text-producing natives.

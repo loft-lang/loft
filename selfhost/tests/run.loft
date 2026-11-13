@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // The run loop (@PLN91 S1.2) against values computed outside this code: the Fibonacci numbers,
-// and `fib(25)` as `loft --interpret` prints it for `kernels/fib.loft`.
+// and `fib(20)` as `loft --interpret` prints it for `kernels/fib.loft`.
 use load;
 use lower;
 use run;
@@ -24,11 +24,13 @@ fn test_fib_answers_what_the_interpreter_answers() {
     got += "{o.value} ";
   }
   assert(got == "0 1 1 2 3 5 8 13 21 34 55 ", "fib(0..10): {got}");
-  // PF5: 242785 calls deep and wide, each frame given back — the base and the evaluation
-  // stacks where the entry found them.
-  o = run::run(b, fib, [25]);
-  assert(o.value == 75025, "fib(25): {o.value} {o.refused}");
-  assert(o.stack_left == 0, "fib(25) left {o.stack_left} on the stack");
+  // PF5: 21891 calls deep and wide, each frame given back — the base and the evaluation
+  // stacks where the entry found them.  fib(20), not fib(25): this test shares one 120 s
+  // deadline with every kernel, and fib(25)'s 242785 calls were a fifth of this file's work
+  // while testing nothing the smaller tree does not.
+  o = run::run(b, fib, [20]);
+  assert(o.value == 6765, "fib(20): {o.value} {o.refused}");
+  assert(o.stack_left == 0, "fib(20) left {o.stack_left} on the stack");
 }
 
 fn test_an_entry_given_the_wrong_arguments_is_refused() {

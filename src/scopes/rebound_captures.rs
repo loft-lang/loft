@@ -51,7 +51,6 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
         return None;
     }
     let database = data.def_nr("OpDatabase");
-    let get_field = data.def_nr("OpGetField");
     let mut slots: HashMap<u16, Vec<Slot>> = HashMap::default();
     let mut backings: HashMap<u16, Vec<u16>> = HashMap::default();
     let mut owners: HashMap<(u16, u16), i32> = HashMap::default();
@@ -89,12 +88,14 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
             // `c = OpGetField(__vdb_N, 0, …)`: a collection local backed by a literal buffer;
             // `c = { OpDatabase(__ref_N, …); …; __ref_N }`: a record built in a work-ref.
             Value::Set(c, rhs) if rebound.contains(c) => {
-                if let Some(b) = built_backing(rhs, database, get_field) {
+                let (backing, backed) = assigned_backing(code, rhs, *c, vars, data);
+                if let Some(b) = backing {
                     let e = backings.entry(*c).or_default();
                     if !e.contains(&b) {
                         e.push(b);
                     }
-                } else {
+                }
+                if !backed {
                     unbacked.insert(*c);
                 }
             }
@@ -132,6 +133,11 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
             !is_confined || keep
         });
     }
+    // A capture the frame ROTATES through its call buffers is the buffers' to release: its record
+    // borrows it (`capture_adoption`), so no let-go point here may free or detach its store.
+    if crate::keys::rotated_capture_left_to_buffers() {
+        slots.retain(|c, _| !super::backings::rotated_through_buffers(code, data, *c));
+    }
     slots.retain(|c, ss| !ss.is_empty() && backings.contains_key(c));
     if slots.is_empty() {
         return None;
@@ -143,6 +149,33 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
         confined,
         unbacked,
     })
+}
+
+/// The backing `c = rhs` binds `c` to, and whether a backing minted the value: a literal buffer
+/// or a work-ref ([`built_backing`]) is one; a call delivering into its hidden buffer
+/// (`c = f(…, __ref_N)`) names that buffer as a backing too — refilled in place on the next
+/// pass, it is detached first wherever a record holds its store (`@FR-L-CapRebind`) — but its
+/// value may be a store of the callee's own, so `c` also counts as unbacked.  A capture the
+/// frame rotates through its buffers gets no buffer backing: the buffers release it.
+fn assigned_backing(
+    code: &Value,
+    rhs: &Value,
+    c: u16,
+    vars: &Function,
+    data: &Data,
+) -> (Option<u16>, bool) {
+    let (database, get_field) = (data.def_nr("OpDatabase"), data.def_nr("OpGetField"));
+    if let Some(b) = built_backing(rhs, database, get_field) {
+        return (Some(b), true);
+    }
+    let buffer = if crate::keys::call_buffer_rebind_detach()
+        && !super::backings::rotated_through_buffers(code, data, c)
+    {
+        super::backings::call_buffer_of(rhs, vars)
+    } else {
+        None
+    };
+    (buffer, false)
 }
 
 /// The backing local an assignment's right-hand side mints into: a collection's literal buffer
@@ -233,8 +266,6 @@ fn slot_read(s: Slot, data: &Data) -> Value {
 /// at its build).  The model is `@FR-G-Arg-Rebind`'s `detach_if_frame_held`.
 fn detach_held_backing(code: &mut Value, facts: &Rebound, data: &Data) {
     let database = data.def_nr("OpDatabase");
-    let sentinel = data.def_nr("OpNullRefSentinel");
-    let distinct = data.def_nr("OpDistinctStore");
     // backing -> every slot that can hold its store, with the local it captures.
     let mut held_by: HashMap<u16, Vec<(Slot, u16)>> = HashMap::default();
     for (c, bs) in &facts.backings {
@@ -257,29 +288,161 @@ fn detach_held_backing(code: &mut Value, facts: &Rebound, data: &Data) {
         let Some(slots) = held_by.get(&b) else {
             return Vec::new();
         };
-        let b = &b;
         slots
             .iter()
-            .map(|&(s, c)| {
-                let same = Value::Call(distinct, vec![Value::Var(*b), slot_read(s, data)]);
-                let mut detach = v_set(*b, Value::Call(sentinel, Vec::new()));
-                // A record capture with an OWNER slot takes the store over there, so its
-                // cascade releases it and the frame's own name is cleared (`@FR-L-CapOwn`).
-                if let Some(&own) = facts.owners.get(&(s.record, c)) {
-                    let take = Value::Call(
-                        data.def_nr("OpSetDbRef"),
-                        vec![Value::Var(s.record), Value::Int(own), slot_read(s, data)],
-                    );
-                    detach = Value::Insert(vec![take, detach]);
-                }
-                v_if(
-                    record_live(s.record, data),
-                    v_if(same, Value::Null, detach),
-                    Value::Null,
-                )
-            })
+            .map(|&(s, c)| detach_if_held(b, s, c, facts, data))
             .collect()
     });
+}
+
+/// `b` lets go of its store where the live record's slot `s` holds it: the record keeps the
+/// store, and `b` is reset to the sentinel.  A record capture with an OWNER slot takes the store
+/// over there, so its cascade releases it and the frame's own name is cleared (`@FR-L-CapOwn`).
+fn detach_if_held(b: u16, s: Slot, c: u16, facts: &Rebound, data: &Data) -> Value {
+    let same = Value::Call(
+        data.def_nr("OpDistinctStore"),
+        vec![Value::Var(b), slot_read(s, data)],
+    );
+    let mut detach = v_set(b, Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new()));
+    if let Some(&own) = facts.owners.get(&(s.record, c)) {
+        let take = Value::Call(
+            data.def_nr("OpSetDbRef"),
+            vec![Value::Var(s.record), Value::Int(own), slot_read(s, data)],
+        );
+        detach = Value::Insert(vec![take, detach]);
+    }
+    v_if(
+        record_live(s.record, data),
+        v_if(same, Value::Null, detach),
+        Value::Null,
+    )
+}
+
+/// Let-go point 5 — the EXIT of the loop that rebuilds a record that STAYS in the frame (not
+/// pass-confined, not leaving): the record owns what it captured and releases it at its death,
+/// and a frame backing (`__vdb_N`) whose store its slot still holds lets go of it here, where
+/// the record is certainly live.  Without it a loop that ran once leaves the declaration's
+/// backing naming the store the record captured, and the frame end frees it twice — in either
+/// order (`@FR-L-CapOwn`, `@FR-H-FreeTwice`).  A backing that is the captured local itself
+/// stays: the local is read after the loop.
+fn detach_backings_at_loop_exit(
+    code: &mut Value,
+    facts: &Rebound,
+    leaving: &HashSet<u16>,
+    vars: &Function,
+    data: &Data,
+) {
+    let mut held: Vec<(u16, Slot, u16)> = Vec::new();
+    for (c, ss) in &facts.slots {
+        for s in ss {
+            if leaving.contains(&s.record)
+                || facts.confined.contains(s)
+                || !cascade_frees_slot(data, vars, *s)
+            {
+                continue;
+            }
+            for b in facts.backings.get(c).into_iter().flatten() {
+                if *b != *c && !held.contains(&(*b, *s, *c)) {
+                    held.push((*b, *s, *c));
+                }
+            }
+        }
+    }
+    if held.is_empty() {
+        return;
+    }
+    let set_dbref = data.def_nr("OpSetDbRef");
+    after_outer_loops(code, &mut |lp| {
+        // Only after a loop that builds the record: its slot is written inside.
+        let builds = |s: Slot| {
+            lp.any_node(&mut |n| {
+                matches!(n.unspan(), Value::Call(d, a) if *d == set_dbref
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if *w == s.record)
+                    && matches!(a.get(1).map(Value::unspan), Some(Value::Int(o)) if *o == s.off))
+            })
+        };
+        held.iter()
+            .filter(|&&(_, s, _)| builds(s))
+            .map(|&(b, s, c)| detach_if_held(b, s, c, facts, data))
+            .collect()
+    });
+}
+
+/// Does the record `s.record` names release the store its slot holds, at its death?  Read off
+/// its type's live drop cascade (`OpFreeRef(OpGetDbRef(self, off))`): a record that BORROWS the
+/// capture (`mark_borrowed_captures`) has that walk stripped or its cascade retired, and handing
+/// it a store would leave the store to nobody.
+fn cascade_frees_slot(data: &Data, vars: &Function, s: Slot) -> bool {
+    let crate::data::Type::Reference(d, _) = vars.tp(s.record).base() else {
+        return false;
+    };
+    let name = data.def(*d).name();
+    let drop = data.def_nr(&format!("t_{}{name}_OpDropAll", name.len()));
+    if drop == u32::MAX {
+        return false;
+    }
+    let (free, get) = (data.def_nr("OpFreeRef"), data.def_nr("OpGetDbRef"));
+    let mut frees = false;
+    data.def(drop).code().walk(&mut |n| {
+        if let Value::Call(op, a) = n.unspan()
+            && *op == free
+            && let [inner] = a.as_slice()
+            && let Value::Call(g, b) = inner.unspan()
+            && *g == get
+            && let [_, off] = b.as_slice()
+            && matches!(off.unspan(), Value::Int(o) if *o == s.off)
+        {
+            frees = true;
+        }
+    });
+    frees
+}
+
+/// Let-go point 5 over every function: run after `mark_borrowed_captures`, which settles which
+/// records own their captures (`cascade_frees_slot` reads its verdict off the cascades).
+pub(super) fn detach_staying_record_backings(data: &mut Data, fresh: &[u32]) {
+    if !crate::keys::staying_record_takes_backing()
+        || crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_CAPTURES").is_some())
+    {
+        return;
+    }
+    for &d_nr in fresh {
+        if !matches!(data.def(d_nr).def_type, DefType::Function) {
+            continue;
+        }
+        let Some(facts) = rebound_facts(data.def(d_nr).code(), data.def(d_nr).variables(), data)
+        else {
+            continue;
+        };
+        let mut code = data.def(d_nr).code.clone();
+        let leaving = leaving_records(&code, data.def(d_nr).variables(), data);
+        detach_backings_at_loop_exit(
+            &mut code,
+            &facts,
+            &leaving,
+            data.def(d_nr).variables(),
+            data,
+        );
+        data.definitions[d_nr as usize].code = code;
+    }
+}
+
+/// Insert, after every `Loop` statement no other `Loop` encloses, the statements `pick` answers.
+fn after_outer_loops(code: &mut Value, pick: &mut dyn FnMut(&Value) -> Vec<Value>) {
+    if matches!(code.unspan(), Value::Loop(_)) {
+        return;
+    }
+    if let Value::Block(bl) = code.unspan_mut() {
+        let mut out = Vec::with_capacity(bl.operators.len());
+        for op in std::mem::take(&mut bl.operators) {
+            let is_loop = matches!(op.unspan(), Value::Loop(_));
+            let extra = if is_loop { pick(&op) } else { Vec::new() };
+            out.push(op);
+            out.extend(extra);
+        }
+        bl.operators = out;
+    }
+    code.for_each_child_mut(&mut |ch| after_outer_loops(ch, pick));
 }
 
 /// The capture slots a BUILD statement writes: a fn-ref local's build

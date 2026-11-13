@@ -975,6 +975,8 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // verdict is the same `owns` fact `get_free_vars` uses, and that fact is only
     // final once the call-result rewrites (`make_independent`) have run.
     mark_borrowed_captures(data, database);
+    // loft#2357's let-go point 5, once the borrow verdicts above are in the cascades.
+    rebound_captures::detach_staying_record_backings(data, &fresh);
     // `(H-Copy-Lease)` — every copy of a type that declares `OpCopy` runs it on the new structure.
     crate::use_analysis::lease_calls(data, &fresh);
     // `@FR-H-TextReplace` — an assignment to a text field releases the text it replaces only

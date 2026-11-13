@@ -3254,6 +3254,10 @@ impl Output<'_> {
         let Some(f) = hoist::fill_loop(lp, self.data) else {
             return Ok(false);
         };
+        // `stores.fill_hoisted` has no 4-byte unsigned form: a `u32` fill stays the loop here.
+        if f.rust_type == "u32" {
+            return Ok(false);
+        }
         if f.bound.is_some() && self.switches.guarded_fill_disabled {
             return Ok(false);
         }
@@ -10596,7 +10600,7 @@ extern crate loft;"
     /// Dispatches on the field's `typedef` to produce the correct `db.*` call.
     /// `s_var` is the Rust variable holding the parent struct's runtime id
     /// (e.g. `t59` for `known_type=59`).
-    #[allow(clippy::too_many_arguments)]
+    ///
     /// Register one field in the generated `init()`, then — @PLN127 arc D —
     /// replay the nullability deposit beside it.
     ///

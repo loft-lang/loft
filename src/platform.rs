@@ -2524,7 +2524,8 @@ pub fn bridge_import_lib(dir: &std::path::Path, libname: &str) -> ImportLib {
 /// as `-L` paths on Windows MSVC (`windows.0.48.5.lib` from `windows-sys`): cargo adds them
 /// through `cargo:rustc-link-search`, and a `rustc` loft drives itself does not, so a cdylib
 /// link fails `LNK1181`.  `rlib` is `target/<profile>/libloft.rlib` or
-/// `target/<profile>/deps/libloft-*.rlib`; the scan reads `build/<crate>-<hash>/` beside it.
+/// `target/<profile>/deps/libloft-*.rlib`, or the per-unit `build/loft/<hash>/out/libloft.rlib`;
+/// the scan reads every build unit of that profile ([`crate::cargo_layout::build_units`]).
 /// Empty off Windows, where no import library exists.
 #[must_use]
 pub fn import_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -2540,14 +2541,10 @@ pub fn import_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf>
     }) else {
         return Vec::new();
     };
-    let Ok(entries) = crate::file_access::read_dir(profile_dir.join("build")) else {
-        return Vec::new();
-    };
+    let profile_dir = crate::cargo_layout::runtime_profile_dir(profile_dir);
     let mut dirs = Vec::new();
-    for entry in entries {
-        let build_entry = entry.os_spelling();
+    for (out, output) in crate::cargo_layout::build_units(&profile_dir) {
         // `out/` and its immediate subdirs (some crates emit into `out/<target>/`).
-        let out = build_entry.join("out");
         if crate::file_access::is_dir(&out) {
             dirs.push(out.clone());
             if let Ok(subs) = crate::file_access::read_dir(&out) {
@@ -2558,9 +2555,10 @@ pub fn import_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf>
                 );
             }
         }
-        // `cargo:rustc-link-search` directives cached in `build/<crate>-<hash>/output`
-        // (e.g. `windows_x86_64_msvc` ships its `.lib` inside the registry package).
-        if let Ok(content) = crate::file_access::read_to_string(build_entry.join("output")) {
+        // `cargo:rustc-link-search` directives the build script printed (classic
+        // `build/<crate>-<hash>/output`, per-unit `build/<crate>/<hash>/run/stdout`): e.g.
+        // `windows_x86_64_msvc` ships its `.lib` inside the registry package.
+        if let Some(content) = output.and_then(|o| crate::file_access::read_to_string(o).ok()) {
             for line in content.lines() {
                 if let Some(p) = line
                     .strip_prefix("cargo:rustc-link-search=native=")

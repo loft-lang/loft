@@ -124,10 +124,41 @@ A tuple held from a record's unbox (a call's tuple returned or appended) borrows
 the unbox binds (`unboxed_member_types`); `LOFT_NO_UNBOX_MEMBER_DEPS=1` leaves its members owning.  A `(R-HostStore)` result is let
 go after a field adopts it as a detach (`OpNullRefSentinel`), not a free of the store the node
 was built in; the records see the free as a use after end of the node
-(`LOFT_HOST_LETGO_FREES=1` restores it).  A whole write through a `&` link to a plain parameter
+(`LOFT_HOST_LETGO_FREES=1` restores it); a bare `null` written to a local displaces nothing
+it owns (`Function::owns_displaced_store`), so a let-go or a compiler temporary's null reset after
+its store was handed on frees nothing (`LOFT_NULL_LETGO_FREES=1` restores the second free).  A
+whole write through a `&` link to a plain parameter
 releases nothing it displaces (`Function::link_write_releases`, `@FR-F-ParamRebind`); the
 records follow a link installed on one variable as a write to that variable, and a release of
 a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).
+A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
+link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
+`old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through
+the link gives a closure the frame wrote there before back to the frame, which releases it
+(`LOFT_RECORDS_NO_LINK_TAKE_BACK=1`).
+A fn-ref's `OpDropFnRef` runs its record's cascade (`LOFT_RECORDS_NO_DROP_FNREF_CASCADE=1`): it ends
+the capture slots the record type's live `_OpDropAll` frees (none for a retired one), except under the
+emitter's stand-down guard (`if OpDistinctStore(OpFnRefClosure(f), …)`) or while another name may hold the
+record (a `___clos_N` the frame releases, or a copy `k = h`), where that release, or the detach, decides it.
+A local `&fn` link (`pd: &fn() = &g`) is followed like a link to a record (`LOFT_RECORDS_NO_FN_LINK_INSTALL=1`).
+An identity test of a capture slot against a variable that names one store
+(`if OpDistinctStore(OpGetDbRef(___clos_1, 0), __vdb_1)`, a loop rebuild's guarded free of the old
+capture) narrows the slot on each arm, as it narrows a variable (`LOFT_RECORDS_NO_SLOT_NARROW=1`).  The shared detach also nulls a copy (`k = h`)
+wherever both names must-hold every store they name.
+A store keeps `ended` (the names pointing into it on EVERY path where it is freed) and its MAY twin
+`stale` (on SOME such path); a re-free through a name that only MAY name the store needs the name in
+`stale` — a name rebound or reset on the paths that freed it is no second free.  An alias made
+after the end enters `stale`; unknown is every name (`LOFT_RECORDS_NO_STALE_NAMES=1`).
+A loop's first three passes are analysed one by one, each from the state the pass before
+left, before its head joins them (`LOFT_RECORDS_PEEL=<n>`; 1 joins after the first pass): a
+buffer rotated through two passes and freed on the third is a use after end only there.  The two
+arms of a branch start from one state, so where one arm minted at a site and the other did not,
+the other's current store is renamed older before they join, and a current key names one
+generation on both sides (`LOFT_RECORDS_NO_GENERATION_ALIGN=1`); a loop's head and its exits
+are not renamed, as on each path the current key already names the latest store.
+Where `OpStoreLive(OpGetDbRef(w, off))` holds (the frame end's let-go of a capture), the slot
+names none of its stores freed on every path or never made: the free it guards cannot reach one
+(`LOFT_RECORDS_NO_SLOT_LIVE_NARROW=1`).
 A tuple member's free retires every work-ref an assignment made that member's claimant, where
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
 `LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.  A collection a fn-ref call delivers into
@@ -284,6 +315,12 @@ The closure records' releases, each switch bringing back one second free (doc st
 - `LOFT_NO_PASS_END_BACKING_DETACH` — a pass-end record release leaves the frame backing in place.
 - `LOFT_NO_ARM_WRITTEN_JOIN` — a written-out branch is not read as a join of its arms' stores.
 - `LOFT_NO_RECORD_SNAPSHOT_RELEASES` — a build releases a displaced slot the snapshot also releases.
+- `LOFT_NO_SNAPSHOT_KEEPS_REFILL` — a snapshot rebuild releases a capture the record takes again.
+- `LOFT_NO_STAYING_RECORD_TAKES_BACKING` — after one pass a backing and a staying record both free it.
+- `LOFT_NO_CONFINED_RECORD_STAND_DOWN` — a pass-scoped fn-ref frees the confined record the frame frees.
+- `LOFT_NO_CALL_BUFFER_REBIND_DETACH` — a call rebind refills the buffer a record captured (a wrong value).
+- `LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS` — a rebuild frees a rotated capture a buffer still holds.
+- `LOFT_NO_PLAIN_REBIND_KEEP` — a record displaced by a plain lambda is released by nobody.
 - `LOFT_NO_RECORD_RELEASE_DETACH` — a record's release leaves a local naming its capture's store.
 - `LOFT_NO_FDISP_KEEP_TEMP` — a displaced fn-ref snapshot reads as a value use after the scope pass.
 - `LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS` — a staying record owns a capture rebound from a call buffer.
@@ -377,6 +414,29 @@ The store abstraction therefore has two halves: the records, and **the lowering 
 into the IR** — each assignment says, in the IR, whether it binds, copies, adopts or moves,
 decided once and read by all three code generators and by the records.  Until then the
 records can only read the choice the interpreter's code generator made.
+
+The C writer already reads `bind_lowering` for four of these choices, each with a switch that
+gives it back its own test: whether a rebind copies a call's answer into the variable's own
+store (only where `re_bind` copies or joins; `LOFT_C_OWN_CALL_COPY=1`), a vector local's first null-init mint (`LOFT_C_OWN_VECTOR_NULL=1`),
+a tuple member's first bind (`LOFT_C_OWN_TUPLE_MEMBER_BIND=1`), and whether a reassignment frees
+the store it displaces at all (`re_bind`'s `DisplacedFree`; `LOFT_C_OWN_DISPLACED_FREE=1` frees a
+compiler temporary's null reset again, a second free the writer's same-store guard makes a
+no-op).  Where the two disagreed and the rules side with the C writer, the decision itself
+moved: a rebind from a call whose answer is the store it minted in its buffer adopts that store
+at every bind, as the first bind and C do (`@FR-O-Move`); `LOFT_NO_REBIND_ADOPTS_MINTED=1` copies
+it into the local's own store again (the interpreter's arm R2b).  And a heap-enum local bound
+from a call that answers fresh on one path and a view of an argument on another is joined at
+run time as a record local is (F9a / R1, `OpBindOrCopy`); `LOFT_NO_ENUM_JOIN=1` deep-copies it at
+every bind.  A rebound argument with no entry witness frees nothing before the bind: the
+scope pass detaches it in the IR first, so that free acted on the sentinel, and the C writer
+never emitted it (`LOFT_ARG_DISPLACED_FREE=1` emits it again).  A nullable local, whose
+displaced free waits until after the bind, joins too when
+the value is a call that does not read it, with its slot reset first so the copy arm mints a
+store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+on one writer (`--writer c|native`) and lists the arms the two decide differently.  Every row
+names its source line, so the census pairs by site; an interpreter row carries the facts its
+lowering read and a C row the arm `bind_lowering` decides beside its own (`lowering=R1/b2=stash
+join`).
 
 ## Phases
 

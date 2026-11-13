@@ -155,7 +155,8 @@ on their own branches at the same time: no step waits on them, and none touches 
    Windows step), not with a full gate.  A probe that cannot fail proves nothing: check that
    its filter selects the test.
 4. **Open the PR** on the joined branch, current on `origin/main` (CLAUDE.md § Branch policy
-   rule 6), and arm `gh pr merge --auto --squash`.
+   rule 6), and arm `gh pr merge --auto --squash`.  Then dispatch the PR-head nightly
+   (§ The PR-head nightly below), so its reds join run 1's.
 5. **Start the next branch** (`<host>-pr<N>-next`) on the PR's tip, and fix the PR run's red
    steps there, each checked with its own probe as in step 3.  **Work each red job as it
    ends, not when the run does**: `scripts/pr_watch.py <N>` in the background looks every
@@ -189,6 +190,35 @@ auto-merge from landing the PR: its fix stays on the next branch and goes with t
 as does any fix left there at the merge: fixed, just not on `main` yet.  The same holds when
 the FIRST run already has every required check green, which is rare: auto-merge lands it
 then, and the discovery fixes wait on the next branch the same way, at most a day.
+
+### The PR-head nightly
+
+A pull request's own run of the nightly workflow (`miri.yml`) skips its heavy jobs: the
+platform C sweeps (macOS, MinGW, MSVC), the poison and release-gate sweeps, valgrind, the
+toolchain matrix.  Those reds then surfaced only in `main`'s next nightly, after the merge, and
+the next PR fixed them while bringing its own.  So the nightly runs on the PR's head as well:
+
+```bash
+gh workflow run miri.yml --ref <pr-branch> -f pr_head=true
+```
+
+`pr_head` runs only the jobs a pull_request run skips (the rest ran in the PR's CI on the same
+commit).  When they finish, its `pr-head-report` job sets the commit status `nightly / PR head`
+on that commit and rewrites the PR's `Nightly health` comment
+(`.github/scripts/nightly-health.js`, the PR job's own script), which then reports this run
+instead of `main`'s.  A push moves the head, and the comment falls back to `main`'s run until
+the nightly is dispatched again.
+
+It never blocks the PR: neither the status nor `Nightly health` is a required check, so
+auto-merge does not wait for it.  Dispatched with the PR (step 4) it runs beside run 1, about
+1 h 20 min, and its reds are fixed on the next branch with run 1's: the aim is a green nightly
+on `main` the night after the merge.  It costs about one nightly's runner time per PR (about
+1150 runner-minutes, most of them on macOS and Windows).
+
+It competes for runners with the PR's own run, so dispatch it on a head that already carries
+every known fix, and not while that run's CI or revalidate-libs jobs are still queued (`gh run
+list --status queued`).  One dispatched on a head a push was about to replace left the
+library revalidation running 2 jobs at a time; cancelled, it ran 10 or more.
 
 A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
 it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the

@@ -69,8 +69,17 @@ pub(super) fn mark_borrowed_captures(data: &mut Data, database: &crate::database
                     // frame's own release stands for it (`backs_an_adopted_capture` declines a
                     // capture rebound in a loop), so the record that stays only borrows it
                     // (O-Witness `test_a_vector_capture_in_a_loop`).
+                    // …unless the rebind detaches the buffer from under the record
+                    // (`rebound_captures`, `LOFT_NO_CALL_BUFFER_REBIND_DETACH`): the record then
+                    // keeps a store no frame name holds, and owns it.
                     let borrows = borrows
                         || (crate::keys::loop_buffer_capture_borrows()
+                            && (!crate::keys::call_buffer_rebind_detach()
+                                || super::backings::rotated_through_buffers(
+                                    data.def(d_nr).code(),
+                                    data,
+                                    c,
+                                ))
                             && c != u16::MAX
                             && stays
                             && builds.rebound_in_loop.contains(&c)

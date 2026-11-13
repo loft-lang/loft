@@ -36,7 +36,7 @@ pub(crate) fn loft_lib_dir_for_shaped(
     target: Option<&str>,
     shape_subdir: Option<&str>,
 ) -> Option<std::path::PathBuf> {
-    let exe_dir = env::current_exe().ok()?.parent()?.to_path_buf();
+    let exe_dir = loft::native_lib::current_runtime_profile_dir()?;
     // Dev layout: <project>/target/release/loft  or  <project>/target/debug/loft
     // The wasm rlib lives at <project>/target/wasm32-wasip2/release/
     if let Some(triple) = target {
@@ -110,10 +110,7 @@ pub(crate) fn loft_lib_dir() -> Option<std::path::PathBuf> {
 /// (`preferred_runtime_rlib`).  For a key that must move whenever the linked runtime could
 /// have: hashing all the candidates moves it as surely, and costs no process.
 pub(crate) fn runtime_rlib_candidates() -> Vec<std::path::PathBuf> {
-    let Some(exe_dir) = env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-    else {
+    let Some(exe_dir) = loft::native_lib::current_runtime_profile_dir() else {
         return Vec::new();
     };
     let mut out = vec![
@@ -745,93 +742,15 @@ fn copy_sibling_rmeta(rlib: &std::path::Path, lib_dir: &std::path::Path) -> std:
     Ok(())
 }
 
-/// The dependency search dir for a [`loft_lib_dir`] result: `lib_dir` itself
-/// when it already IS `deps/` (the preferred deps-first resolution, #304/#307),
-/// else `lib_dir/deps`.  Appending "deps" unconditionally yields an invalid
-/// `…/deps/deps` path that rustc can't search — E0463 "can't find crate" for
-/// every transitive dep of libloft (sha2, rand_core, …).
-/// Every directory rustc must search to resolve loft's transitive rlibs.
-///
-/// Two cargo layouts, and a `--native` compile has to work under whichever the user's
-/// toolchain produces:
-///
-/// * **classic** — one `<profile>/deps/` holding every rlib.  One search dir.
-/// * **per-unit** (cargo 1.99.0-nightly 2026-07-29 and later) — each crate gets its own
-///   `<profile>/build/<crate>/<hash>/out/`, and `deps/` does not exist at all.  ~107
-///   search dirs for loft.
-///
-/// The per-unit layout broke `--native` outright: `-L dependency=<profile>/deps` named a
-/// directory that was not there, and rustc reported `E0463: can't find crate for sha2
-/// which loft depends on` — a message that points at a missing dependency rather than at
-/// a moved one, which is why the nightly ASan gate read as a loft bug for a week.
-///
-/// Ordered so the classic layout stays a single `-L` (the common case is unchanged) and
-/// the fallback engages only when `deps/` is genuinely absent.
+/// [`loft::native_lib::dependency_dirs`]: every directory rustc must search for loft's
+/// transitive rlibs, under either cargo layout.
 pub(crate) fn dep_search_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let classic = deps_dir_of(lib_dir);
-    let per_unit = per_unit_dep_dirs(lib_dir);
-    // A `deps/` beside a per-unit tree is debris when the rlib being linked IS a per-unit
-    // output (cargo uplifts it as a hard link): a cache restored from an older toolchain put
-    // it there, and searching it resolved loft's dependencies against that toolchain's
-    // rlibs (loft#2033).  Otherwise `deps/` is the layout, as before.
-    let rlib = lib_dir.join("libloft.rlib");
-    let linked_is_per_unit = per_unit
-        .iter()
-        .any(|d| loft::native_lib::same_file(&d.join("libloft.rlib"), &rlib));
-    if crate::file_access::is_dir(&classic) && !linked_is_per_unit {
-        return vec![classic];
-    }
-    if per_unit.is_empty() {
-        // Name the place it was expected, so the diagnostic stays actionable.
-        return vec![classic];
-    }
-    per_unit
+    loft::native_lib::dependency_dirs(lib_dir)
 }
 
-/// The per-unit layout's search dirs: every `<profile>/build/<crate>/<hash>/out/` that holds a
-/// linkable crate, sorted.  Empty under the classic layout.
-fn per_unit_dep_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    // Per-unit: <profile>/build/<crate>/<hash>/out/.  Only directories that actually
-    // hold a linkable crate are worth passing — build-script `out` dirs sit in the same
-    // tree and carry generated sources, not libraries.
-    //
-    // Both rlibs AND dylibs count: a proc-macro compiles to `.so`/`.dylib`/`.dll`, never
-    // `.rlib`, so an rlib-only filter drops every derive crate.  Filtering on rlibs alone
-    // moved the failure from `sha2` to `curve25519_dalek_derive` and no further — the
-    // same error one crate later, which reads like the fix not working at all.
-    let build_root = lib_dir.join("build");
-    let mut dirs = Vec::new();
-    if let Ok(crates) = crate::file_access::read_dir(&build_root) {
-        for c in crates {
-            let Ok(hashes) = crate::file_access::read_dir(&c) else {
-                continue;
-            };
-            for h in hashes {
-                let out = h.os_spelling().join("out");
-                if crate::file_access::read_dir(&out).is_ok_and(|rd| {
-                    rd.iter().any(|f| {
-                        f.extension().is_some_and(|e| {
-                            ["rlib", "so", "dylib", "dll"]
-                                .iter()
-                                .any(|k| e.eq_ignore_ascii_case(k))
-                        })
-                    })
-                }) {
-                    dirs.push(out);
-                }
-            }
-        }
-    }
-    dirs.sort();
-    dirs
-}
-
+/// [`loft::native_lib::deps_dir_of`].
 pub(crate) fn deps_dir_of(lib_dir: &std::path::Path) -> std::path::PathBuf {
-    if crate::file_access::file_name(lib_dir).is_some_and(|n| n == "deps") {
-        lib_dir.to_path_buf()
-    } else {
-        lib_dir.join("deps")
-    }
+    loft::native_lib::deps_dir_of(lib_dir)
 }
 
 /// Parse every `target/<profile>/build/*/output` file and extract
@@ -859,14 +778,12 @@ pub(crate) fn build_script_native_lib_dirs(lib_dir: &std::path::Path) -> Vec<std
     } else {
         lib_dir
     };
-    let build_root = target_profile.join("build");
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut out = Vec::new();
-    let Ok(entries) = crate::file_access::read_dir(&build_root) else {
-        return out;
-    };
-    for entry in entries {
-        let output_path = entry.os_spelling().join("output");
+    for (_, output_path) in loft::native_lib::build_units(target_profile) {
+        let Some(output_path) = output_path else {
+            continue;
+        };
         let Ok(text) = crate::file_access::read_to_string(&output_path) else {
             continue;
         };
@@ -1739,6 +1656,31 @@ pub(crate) fn sweep_cached_binaries(
 /// so a nightly-toolchain leg linked main's week-old `libloft` and the generated Rust
 /// named an op it did not have (`E0425 op_pow_int`).  The newest file by modification
 /// time is the one the build that is running produced.
+/// [`rlibs_in_dir`] over several dirs (cargo's per-unit layout: one per crate), the newest copy
+/// of each crate across all of them.
+pub(crate) fn rlibs_in_dirs(
+    dirs: &[std::path::PathBuf],
+) -> std::collections::HashMap<String, std::path::PathBuf> {
+    let modified = |p: &std::path::Path| {
+        crate::file_access::metadata(p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH)
+    };
+    let mut out: std::collections::HashMap<String, std::path::PathBuf> =
+        std::collections::HashMap::new();
+    for d in dirs {
+        for (name, path) in rlibs_in_dir(d) {
+            if out
+                .get(&name)
+                .is_none_or(|seen| modified(seen) < modified(&path))
+            {
+                out.insert(name, path);
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn rlibs_in_dir(
     dir: &std::path::Path,
 ) -> std::collections::HashMap<String, std::path::PathBuf> {
@@ -2143,13 +2085,22 @@ pub(crate) fn add_c_library_flags(cmd: &mut Spawn, data: &crate::data::Data) {
     }
 }
 
+/// `-L dependency=<dir>` for each existing dir: a crate's dependencies, under either cargo
+/// layout (`loft::native_lib::dependency_dirs`).
+fn push_dependency_dirs(cmd: &mut Spawn, dirs: &[std::path::PathBuf]) {
+    for d in dirs.iter().filter(|d| crate::file_access::is_dir(d)) {
+        cmd.push_arg("-L")
+            .push_arg(format!("dependency={}", d.display()));
+    }
+}
+
 pub(crate) fn add_native_extern_flags(
     cmd: &mut Spawn,
     data: &crate::data::Data,
     target: Option<&str>,
-    loft_deps_dir: Option<&std::path::Path>,
+    loft_deps_dirs: &[std::path::PathBuf],
 ) {
-    let loft_rlibs = loft_deps_dir.map(rlibs_in_dir).unwrap_or_default();
+    let loft_rlibs = rlibs_in_dirs(loft_deps_dirs);
 
     for (crate_name, pkg_dir) in &data.native_packages {
         // Host-native C-ABI link (NATIVE_ARTIFACT_IDENTITY.md § Resolution: separate the API id
@@ -2282,14 +2233,17 @@ pub(crate) fn add_native_extern_flags(
             // Add the native crate's deps directory so transitive deps (GL, glutin, etc.)
             // resolve. Use `dependency` search scope so these crates are only found as
             // transitive deps of the native crate, not as direct deps.
-            let deps_dir = rlib_path.parent().unwrap().join("deps");
-            if crate::file_access::is_dir(&deps_dir) {
-                cmd.push_arg("-L")
-                    .push_arg(format!("dependency={}", deps_dir.display()));
+            let pkg_dirs: Vec<std::path::PathBuf> =
+                loft::native_lib::dependency_dirs(rlib_path.parent().unwrap())
+                    .into_iter()
+                    .filter(|d| crate::file_access::is_dir(d))
+                    .collect();
+            if !pkg_dirs.is_empty() {
+                push_dependency_dirs(cmd, &pkg_dirs);
                 // Pin any crate that also exists in loft's deps to loft's copy,
                 // preventing StableCrateId collisions from duplicate rlibs.
                 if !loft_rlibs.is_empty() {
-                    let pkg_crates = rlibs_in_dir(&deps_dir);
+                    let pkg_crates = rlibs_in_dirs(&pkg_dirs);
                     for (dep_name, loft_path) in &loft_rlibs {
                         if pkg_crates.contains_key(dep_name) {
                             cmd.push_arg("--extern").push_arg(format!(
@@ -2309,15 +2263,11 @@ pub(crate) fn add_native_extern_flags(
             // proc-macro (E0463) without this.  rustc filters by target, so the host
             // loft-ffi rlib that also lives here is ignored in favour of the wasm one.
             if target.is_some() {
-                let host_deps = std::path::PathBuf::from(pkg_dir)
+                let host_release = std::path::PathBuf::from(pkg_dir)
                     .join("native")
                     .join("target")
-                    .join("release")
-                    .join("deps");
-                if crate::file_access::is_dir(&host_deps) {
-                    cmd.push_arg("-L")
-                        .push_arg(format!("dependency={}", host_deps.display()));
-                }
+                    .join("release");
+                push_dependency_dirs(cmd, &loft::native_lib::dependency_dirs(&host_release));
             }
             // @P229 (G2): harvest build-script `rustc-link-search` dirs from
             // THIS native package's own target tree, not just the top-level

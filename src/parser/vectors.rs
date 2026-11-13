@@ -2687,6 +2687,32 @@ or build a local and use that."
                         let has_store = self.cl("OpConvBoolFromRef", &[Value::Var(w)]);
                         let exists = crate::data::v_if(is_null, Value::Boolean(false), has_store);
                         displaced.push(crate::data::v_if(exists, release, Value::Null));
+                    } else if v_nr != u16::MAX
+                        && self.assign_target != v_nr
+                        && snapshot_releases
+                        && crate::keys::snapshot_keeps_refill()
+                        && matches!(
+                            self.data.attr_type(closure_rec_d, aid).base(),
+                            Type::Reference(_, _) | Type::Enum(_, true, _)
+                        )
+                    {
+                        // `@FR-L-CapOwn` — the record's snapshot releases what the rebuild
+                        // DISPLACES, and a slot naming the store it is filled with again is not
+                        // displaced: the old slot lets go of it first, so the snapshot's cascade
+                        // skips it, as `OpFreeRefIfDistinct` does on the route without one.
+                        let pos = self
+                            .database
+                            .position(self.data.def(closure_rec_d).known_type(), &slot_name);
+                        let at = Value::Int(i32::from(pos));
+                        let held = self.cl("OpGetDbRef", &[Value::Var(w), at.clone()]);
+                        let same = self.cl("OpDistinctStore", &[held, fill.clone()]);
+                        let null = self.cl("OpNullRefSentinel", &[]);
+                        let detach = self.cl("OpSetDbRef", &[Value::Var(w), at, null]);
+                        let keep = crate::data::v_if(same, Value::Null, detach);
+                        let is_null = self.cl("OpRefIsNull", &[Value::Var(w)]);
+                        let has_store = self.cl("OpConvBoolFromRef", &[Value::Var(w)]);
+                        let exists = crate::data::v_if(is_null, Value::Boolean(false), has_store);
+                        displaced.push(crate::data::v_if(exists, keep, Value::Null));
                     }
                     alloc_steps.push(self.set_field_no_check(
                         closure_rec_d,

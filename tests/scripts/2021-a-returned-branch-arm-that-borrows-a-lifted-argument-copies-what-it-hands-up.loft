@@ -19,8 +19,10 @@
 // @falsified-by: tests/falsified/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.patch
 //   — the fix reversed on both sites: the return temp's branch bound whole again
 //   (`bind_return_temp`), and the interpreter's copy arm excluding the promoted buffer and
-//   reading the temp's buffer dep as a borrow.  Scored by hand on the fixing commit's parent,
-//   both backends; the `--patch` run is owed on a runner.
+//   reading the temp's buffer dep as a borrow; and loft#2295's `(O-Derived)` guard off too —
+//   it frees a record local at the return only where it is not the store returned, which
+//   protects `__lift_1` here by itself.  Either cure alone keeps every cell green; with both
+//   off, `if_null` reads the poison word on both backends (scored at the 2474 join, by hand).
 // CHANNEL: assertions — `dense` fails plainly on both backends (`dense 4 4`, the next call's
 //   record); `if_null` fails under poison on both (the poison word for `v.a`).  The first
 //   failing assertion stops a run, so the other cells were taken one at a time in the

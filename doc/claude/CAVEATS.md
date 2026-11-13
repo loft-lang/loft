@@ -232,14 +232,6 @@ its arm exactly when the step did not fit, without storing anything (`@FR-H-Writ
 (`@FR-E-Uncomp-Seen`). Since @C127 the step also says so — `advice[narrow-fallback]` names the
 default it took.
 
-**#1031 — `u32` is one short of its name, by construction.** The local and the field agree
-now. `u32 = 4294967295` is still refused: `default/01_code.loft` declares `u32` as
-`integer limit(0, 4294967294) size(4)`, keeping the top code back — and per the table above
-that reserved code is the one no non-null read tests for, so it buys the refusal without
-buying a null — and since @C127 no declared range buys one, whichever end its spare code
-sits at. The 2026-08 changelog line "`u32` finally holding every `u32`" overstated the
-fix, and is corrected.
-
 The lesson the rows leave behind: a closed issue is a claim about a build, and the build has
 moved. The rows below are kept for their repros; every issue is closed.
 

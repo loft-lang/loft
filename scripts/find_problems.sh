@@ -116,12 +116,12 @@ ffi_toolchain_guard() {
   local active rlib built cleaned=0
   active=$(rustc -vV | sed -n 's/^release: //p')
   [[ -n "$active" ]] || return 0
-  for rlib in "$REPO_ROOT"/target/release/deps/libloft_ffi-*.rlib; do
+  for rlib in $("$REPO_ROOT"/scripts/cargo_dep_files.sh "$REPO_ROOT"/target/release 'libloft_ffi-*.rlib'); do
     [[ -e "$rlib" ]] || continue
     built=$(strings "$rlib" 2>/dev/null | grep -oiE 'rustc [0-9]+\.[0-9]+\.[0-9]+(-nightly)?' | head -1 | sed 's/^rustc //I')
     if [[ -n "$built" && "$built" != "$active" ]]; then
       echo "ffi-guard: libloft_ffi built by rustc $built ≠ active $active — removing stale rlib(s) so cargo rebuilds. Use scripts/asan.sh (isolated target dir) to avoid this." >&2
-      rm -f "$REPO_ROOT"/target/release/deps/libloft_ffi-*.rlib
+      "$REPO_ROOT"/scripts/cargo_dep_files.sh "$REPO_ROOT"/target/release 'libloft_ffi-*.rlib' | xargs -r rm -f
       cleaned=1
       break
     fi

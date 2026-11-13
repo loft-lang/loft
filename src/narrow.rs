@@ -495,9 +495,9 @@ impl IntegerSpec {
     /// into an `i: integer` field reads null with nothing reported (@C85), and the lint called
     /// the only test that sees it always false.  The width families above are the whole answer.
     ///
-    /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  `u32` keeps one
-    /// too — `limit(0, 4294967294) size(4)`, at the top of its range, which is what refuses
-    /// `u32 = 4294967295` — and it is in clause 2.  The reason `i32` is in clause 1 is that
+    /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  A declared range can
+    /// keep one too (`limit(-100, 100) size(1)` leaves 55 codes spare) and is in clause 2.
+    /// The reason `i32` is in clause 1 is that
     /// the owner allowed the exemption on COST (one value in 2^32, for the only narrow type
     /// whose overflow is detectable), so this boundary moves by decision and not by a fact
     /// about representations (C127 § Decision; `tests/scripts/1615-…`'s `templates()` row
@@ -539,10 +539,12 @@ impl IntegerSpec {
         // Only a FIXED-width (`forced_size`) field can't widen to make room — an
         // un-annotated `limit(...)` instead widens via `range_to_width(+nullable)`,
         // so it never reaches here needing a sacrifice.  Reduce iff the range fills
-        // the fixed 1- or 2-byte width (256 / 65536 codes).
+        // the fixed 1-, 2- or 4-byte width (256 / 65536 / 2^32 codes): `u32?` keeps the top
+        // code for null as `u8?` does.
         match self.forced_size.map(NonZeroU8::get) {
             Some(1) => self.range() == 256,
             Some(2) => self.range() == 65_536,
+            Some(4) => self.range() == 1i64 << 32,
             _ => false,
         }
     }
@@ -652,6 +654,16 @@ impl IntegerSpec {
         self.range() + i64::from(nullable) <= 1i64 << (8 * u32::from(width))
     }
 
+    /// Has `width` bytes an ENCODING for this range? — `@FR-L-Narrow-Enc`.  One and two bytes
+    /// store the offset `value - min`, so any range that fits the count has one.  Four bytes
+    /// store the value itself, two's-complement or unsigned, so a range running both below
+    /// zero and past `i32::MAX` has none however few values it holds: `limit(-5, 3000000000)
+    /// size(4)` stored 3000000000 as -1294967296.
+    #[must_use]
+    pub fn has_width_encoding(&self, width: u8) -> bool {
+        width != 4 || self.min >= 0 || self.max <= i64::from(i32::MAX)
+    }
+
     /// True when this is the I32 template (plain `integer` post-2c).
     #[must_use]
     pub fn is_signed32_template(&self) -> bool {
@@ -732,11 +744,10 @@ pub enum NarrowIntKind {
     /// 4-byte raw, SIGNED — `i32` and any `size(4)` range inside `i32`'s bounds.
     /// `i32::MIN` is the null sentinel.
     Int4,
-    /// 4-byte UNSIGNED with the reserved `u32::MAX` null sentinel — a nullable slot, or
-    /// a narrow-vector element, of a type whose range runs past `i32::MAX` (`u32`).  The
-    /// 4-byte twin of `ShortRaw`.
+    /// 4-byte UNSIGNED with the reserved `u32::MAX` null sentinel — a NULLABLE slot (field
+    /// or element) of a type whose range runs past `i32::MAX` (`u32?`).
     Int4Raw,
-    /// 4-byte UNSIGNED, NO sentinel — a NOT-NULL field of such a type, so the full 2^32
+    /// 4-byte UNSIGNED, NO sentinel — a NOT-NULL field or element of such a type, so the full 2^32
     /// round-trips.  Read via `OpGetInt4Full`; the write reuses `OpSetInt4Raw` (same
     /// unsigned store).  The 4-byte twin of `ShortFull`.
     Int4Full,
@@ -760,11 +771,13 @@ impl NarrowIntKind {
             2 if nullable => NarrowIntKind::Short,
             2 if narrow_vec => NarrowIntKind::ShortRaw,
             2 => NarrowIntKind::ShortFull,
-            // The 4-byte split mirrors the 2-byte one directly above, but applies ONLY
-            // to a range that runs past `i32::MAX` (`unsigned_wide`).  Everything else
+            // A range that runs past `i32::MAX` (`unsigned_wide`) stores unsigned, and only
+            // its `?` form reserves the top code (`@FR-L-Narrow-Spare`): a non-null field AND
+            // a non-null element read every code as a value.  The 2-byte raw element read
+            // decodes the same way (`get_i16_raw` is `get_short_full`).  Everything else
             // 4-byte — `i32` above all — stays on the signed `Int4` pair, whose stored
             // bytes are two's complement and are relied on beyond this module.
-            4 if unsigned_wide && (nullable || narrow_vec) => NarrowIntKind::Int4Raw,
+            4 if unsigned_wide && nullable => NarrowIntKind::Int4Raw,
             4 if unsigned_wide => NarrowIntKind::Int4Full,
             4 => NarrowIntKind::Int4,
             _ => NarrowIntKind::Int,
