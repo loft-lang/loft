@@ -6292,6 +6292,19 @@ impl<'a> FnWriter<'a> {
                 name.clone()
             };
             self.fresh_unless_owned(var, x, first, &name, ind);
+            // `@FR-O-Buffer` — a local promoted onto the return buffer may still hold the store
+            // its CALLER handed in (the entry witness).  A null answer binds null there and
+            // releases nothing: `loft_bind_copy` frees what the destination held, which was the
+            // caller's buffer, and the caller read it afterwards (the self-hosted elaborator's
+            // `rewrite_unknown`, recursing into `r = rewrite_unknown(inner, …)`).  The bytecode
+            // and Rust writers already decline there.  `LOFT_C_NULL_FREES_ENTRY=1` frees it.
+            let null_keeps_entry = match self.vars.entry_witness(var) {
+                Some(w) if !crate::keys::c_null_frees_entry() => format!(
+                    "if ({r}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {}.store_nr) {name} = loft_ref_null(); else ",
+                    self.var(w)
+                ),
+                _ => String::new(),
+            };
             if frees {
                 // The stores of the call's reference arguments are protected, as the bytecode
                 // writer protects them (`protectable_ref_args`): a result that is a view into
@@ -6316,7 +6329,7 @@ impl<'a> FnWriter<'a> {
                     self.line(
                         ind,
                         &format!(
-                            "if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ \
+                            "{null_keeps_entry}if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ \
                              loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
                              if ({keep}) loft_free_ref({r}); }}"
                         ),
@@ -6324,14 +6337,18 @@ impl<'a> FnWriter<'a> {
                 } else {
                     self.line(
                         ind,
-                        &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+                        &format!(
+                            "{null_keeps_entry}{{ loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
+                             if ({keep}) loft_free_ref({r}); }}"
+                        ),
                     );
-                    self.line(ind, &format!("if ({keep}) loft_free_ref({r});"));
                 }
             } else {
                 self.line(
                     ind,
-                    &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+                    &format!(
+                        "{null_keeps_entry}loft_bind_copy(loft_types, {bytes}, &{name}, {r});"
+                    ),
                 );
             }
             self.flush(ind);
