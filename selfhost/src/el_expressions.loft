@@ -17208,7 +17208,11 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   // `match h.sh`) is read in place by every arm's test; any other subject (a call's answer) is
   // held in `_match_subj_N` first, inside a `match` block.
   held_set: ir::Node? = null;
-  if sd >= 0 && !(el_ir::unspan(x.code) is NdVar) && !getter_place(e, x.code) {
+  // A plain struct is held the same way (`parse_match`'s `_match_subj_N` for any record subject
+  // that is not a place), so a call is made once, not once per binding and test.
+  pd0 = struct_ref(e, el_types::base(st));
+  plain_struct = !scalar_subject && !enum_subject && sd < 0 && pd0 >= 0 && el::def(e, pd0).def_type == el::DT_STRUCT && !(st is TyOptional);
+  if (sd >= 0 || plain_struct) && !(el_ir::unspan(x.code) is NdVar) && !getter_place(e, x.code) {
     held = el_vars::create_unique(vars, "match_subj", el_types::without_deps(st));
     el_vars::set_defined(vars, held);
     held_set = el_ir::v_set(held, x.code);
@@ -17216,14 +17220,19 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   }
   pd = struct_ref(e, el_types::base(st));
   if !scalar_subject && !enum_subject && sd < 0 && pd >= 0 && el::def(e, pd).def_type == el::DT_STRUCT && !(st is TyOptional) {
+    // A text answer bound to a local is written into it arm by arm (`text_branch_into`).
     sm = struct_match(e, vars, x, pd, arms);
-    // A text answer bound to a local is written into the destination arm by arm in Rust — not
-    // carried, as for the other subjects: refused by name.
-    if !e.first_pass && at_bind && el_types::base(sm.tp) is TyText {
-      el::refuse(e, "a match answering a text bound to a local");
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    if held_set == null || e.first_pass {
+      return sm;
     }
-    return sm;
+    return match sm.code {
+      NdBlock { block } => {
+        hb = block[0];
+        hb.operators = [held_set!] + hb.operators;
+        ex(ir::NdBlock { block: [hb] }, sm.tp)
+      },
+      _ => ex(el_ir::v_block([held_set!, sm.code], sm.tp, "match"), sm.tp)
+    };
   }
   if st is TyVector {
     return vector_match(e, vars, x, arms);
