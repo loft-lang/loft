@@ -5448,7 +5448,10 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
       w!
     ] }, ir::TyVoid);
   }
-  x = expression(e, vars, rhs);
+  // A pointer field's `&` annotates the store itself (`l.to = &x` sets `x`'s record), as a struct
+  // literal's field does: the value is the operand.
+  amp_operand = match e.p.nodes[rhs] { SUnary { op: aop, e: ue } => if aop == "&" { ue } else { null }, _ => null };
+  x = expression(e, vars, if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetDbRef") && amp_operand != null { amp_operand! } else { rhs });
   pt = p.tp;
   // `o.v += w` of two vectors appends `w`'s elements into the place (`OpAppendVector`, the
   // element's row), as a local's `v += w` does.
@@ -7185,7 +7188,11 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           found += [fname];
           continue;
         }
-        x = expression(e, vars, fe!);
+        // A `reference<T>` field's `&` annotates the field store itself (`to: &far` stores
+        // `far`'s record), as `parse_object` consumes `amp_pending` at the field: the value is the
+        // operand.
+        amp_operand = match e.p.nodes[fe!] { SUnary { op, e: ue } => if op == "&" { ue } else { null }, _ => null };
+        x = expression(e, vars, if el_types::is_pointer(at) && amp_operand != null { amp_operand! } else { fe! });
         fc: ir::Node? = null;
         if el_types::is_pointer(at) {
           // A pointer field names the record given, or nothing.
