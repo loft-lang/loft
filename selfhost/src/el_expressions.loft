@@ -7781,6 +7781,23 @@ fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fn
 // The literal `n` written into field `fname` of the record `v` under construction (place `r`,
 // definition `d`): a vector field, or a keyed one (`hash`, `sorted`, `index`) whose records are
 // added through the record itself.
+// A literal item of a type that declares a drop hook is built apart in a store of its own and
+// copied into its element (the copy's free-source bit releasing the temporary) — not carried:
+// refused by name rather than built in place.
+fn refuses_hooked_items(e: el::El, items: vector<integer>) -> boolean {
+  if e.first_pass {
+    return false;
+  }
+  for it in items {
+    sd = struct_literal_def(e, it);
+    if sd >= 0 && el_types::hook_of(e, sd, "OpDrop") >= 0 {
+      el::refuse(e, "a vector literal item of a type with a drop hook");
+      return true;
+    }
+  }
+  false
+}
+
 fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, n: integer) -> vector<ir::Node>? {
   def = el::def(e, d);
   // A `vector<T>?` field is built as its dense twin.
@@ -7791,6 +7808,9 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
     _ => {}
+  }
+  if refuses_hooked_items(e, items) {
+    return null;
   }
   elm = -1;
   if len(items) > 0 {
@@ -19661,6 +19681,9 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
     _ => {}
+  }
+  if refuses_hooked_items(e, items) {
+    return Built { x: ex(ir::NdNull, ir::TyUnknown { n: 0 }), items: [], elem: ir::TyUnknown { n: 0 } };
   }
   // An empty `[]` into a local returns before `unique_elm_var`; otherwise the element local is
   // `Reference(type_def_nr(parent_tp.content()))` borrowing the destination, and a bind's
