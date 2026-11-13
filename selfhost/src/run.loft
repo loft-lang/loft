@@ -1220,7 +1220,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           crt::ser_write(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
         } else {
           sp_int -= 6;
-          files::write(b, stack_pos(ints, sp_int), stack_pos(ints, sp_int + 3), op.a);
+          files::write(b.types, stack_pos(ints, sp_int), stack_pos(ints, sp_int + 3), op.a);
         }
       }
       ReadFile => {
@@ -1233,7 +1233,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           }
         } else {
           sp_int -= 6;
-          files::read(b, stack_pos(ints, sp_int), stack_pos(ints, sp_int + 3), rn, op.a);
+          files::read(b.types, stack_pos(ints, sp_int), stack_pos(ints, sp_int + 3), rn, op.a);
         }
       }
       FsOp => {

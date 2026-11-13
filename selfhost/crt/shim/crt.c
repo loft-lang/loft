@@ -1202,6 +1202,12 @@ void loft_crt_ser_slot_text(int64_t stk, int64_t at) {
     loft_text_append(&loft_crt_wbuf, loft_view((loft_text *) loft_crt_slot_at(stk, at)));
 }
 
+/* The run image's runner (step 3): a text reached through a reference rather than a frame byte. */
+void loft_crt_ser_ref_text(int64_t s, int64_t r, int64_t p) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
+    if (t) loft_text_append(&loft_crt_wbuf, loft_view(t));
+}
+
 /* OpWriteFile: the gathered bytes at the File's next position; the buffer emptied. */
 void loft_crt_ser_write(int64_t store, int64_t rec, int64_t pos) {
     loft_write_file(loft_crt_ref(store, rec, pos), &loft_crt_wbuf);
@@ -1224,6 +1230,17 @@ int64_t loft_crt_read_file(int64_t store, int64_t rec, int64_t pos, int64_t n, i
 void loft_crt_de_slot_text(int64_t stk, int64_t at) {
     loft_text_set((loft_text *) loft_crt_slot_at(stk, at),
                   loft_lit((const char *) loft_crt_rbuf, (size_t) (loft_crt_rlen < 0 ? 0 : loft_crt_rlen)));
+}
+
+void loft_crt_de_ref_text(int64_t s, int64_t r, int64_t p) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
+    if (t) loft_text_set(t, loft_lit((const char *) loft_crt_rbuf, (size_t) (loft_crt_rlen < 0 ? 0 : loft_crt_rlen)));
+}
+
+/* `OpGetFileText`: the file's text into the text the reference `(ts, tr, tp)` names. */
+void loft_crt_file_text_ref(int64_t store, int64_t rec, int64_t pos, int64_t ts, int64_t tr, int64_t tp) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(ts, tr, tp), 0);
+    if (t) loft_get_file_text(loft_crt_ref(store, rec, pos), t);
 }
 
 /* The read bytes `off..off+n` as a text field. */

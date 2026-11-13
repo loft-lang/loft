@@ -15,6 +15,7 @@
 use ir;
 use crt;
 use types;
+use files;
 
 // The null reference's store (`DbRef::NULL`).
 NULL_STORE = 65535;
@@ -162,6 +163,12 @@ H_NE_BOOL = 139;
 H_REM_INT_NULLABLE = 140;
 H_GET_DB_REF = 141;
 H_CONV_INT_FROM_CHAR = 142;
+H_GET_FILE = 143;
+H_GET_FILE_TEXT = 144;
+H_WRITE_FILE = 145;
+H_READ_FILE = 146;
+H_FS_OP = 147;
+H_FILE_OP = 148;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -345,6 +352,19 @@ pub fn handler(name: text) -> integer {
     "OpGetDbRef" => H_GET_DB_REF,
     "OpVecGetInt" => H_VEC_GET_INT,
     "OpConvIntFromCharacter" => H_CONV_INT_FROM_CHAR,
+    "OpGetFile" => H_GET_FILE,
+    "OpGetFileText" => H_GET_FILE_TEXT,
+    "OpWriteFile" => H_WRITE_FILE,
+    "OpReadFile" => H_READ_FILE,
+    "OpDelete" => H_FS_OP,
+    "OpMoveFile" => H_FS_OP,
+    "OpMkdir" => H_FS_OP,
+    "OpMkdirAll" => H_FS_OP,
+    "OpRmdir" => H_FS_OP,
+    "OpSizeFile" => H_FILE_OP,
+    "OpSeekFile" => H_FILE_OP,
+    "OpTruncateFile" => H_FILE_OP,
+    "OpSyncFile" => H_FILE_OP,
     _ => -1
   }
 }
@@ -488,6 +508,8 @@ fn layout_of(h: integer) -> text {
     136 => "h",
     137 => "h",
     141 => "h",
+    145 => "h",
+    146 => "h",
     _ => ""
   }
 }
@@ -497,7 +519,7 @@ fn layout_of(h: integer) -> text {
 // here, beside the handlers, so an operator added later is listed where it is added.  The one
 // exception is `OpDatabase`, which needs it only for a vector wrapper and loads it there.
 fn needs_table(h: integer) -> boolean {
-  h == H_CLEAR_VECTOR || h == H_FINISH_RECORD || h == H_COPY_RECORD || h == H_BIND_OR_COPY || h == H_COPY_REF_OR_NULL || h == H_REMOVE_VECTOR || h == H_APPEND_VECTOR || h == H_APPEND_COPY || h == H_CLEAR || h == H_KEEP_VECTOR_RANGE
+  h == H_WRITE_FILE || h == H_READ_FILE || h == H_CLEAR_VECTOR || h == H_FINISH_RECORD || h == H_COPY_RECORD || h == H_BIND_OR_COPY || h == H_COPY_REF_OR_NULL || h == H_REMOVE_VECTOR || h == H_APPEND_VECTOR || h == H_APPEND_COPY || h == H_CLEAR || h == H_KEEP_VECTOR_RANGE
 }
 
 // Per opcode of the image: does its operator need the type table (`needs_table`)?
@@ -1842,6 +1864,85 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     } else if h == H_CONV_INT_FROM_CHAR {
       cc = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
       set(stk, sp - 8, if cc == 0 { null } else { cc });
+    } else if h == H_GET_FILE {
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      set_bool(stk, sp, crt::get_file(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+      sp += 8;
+    } else if h == H_GET_FILE_TEXT {
+      // The file's text into the text the `&text` reference names; both popped.
+      crt::slot_ref(io, stk, sp - 16);
+      gts = io[0] ?? NULL_STORE;
+      gtr = io[1] ?? 0;
+      gtp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      crt::file_text_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gts, gtr, gtp);
+    } else if h == H_WRITE_FILE {
+      // A value written at the File's next position: a text's bytes as they are, any other
+      // value in its binary form (`files::write`); the value's reference and the File popped.
+      wtp = u16_at(img.code, pc);
+      pc += 2;
+      crt::slot_ref(io, stk, sp - 16);
+      wvs = io[0] ?? NULL_STORE;
+      wvr = io[1] ?? 0;
+      wvp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      if wtp == 5 {
+        crt::ser_ref_text(wvs, wvr, wvp);
+        crt::ser_write(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+      } else {
+        files::write(img.types, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, crt::Pos { s: wvs, r: wvr, p: wvp }, wtp);
+      }
+    } else if h == H_READ_FILE {
+      // `bytes` read from the File's next position into the value: a text's as they are, any
+      // other value decoded from its binary form (`files::read`).
+      rtp3 = u16_at(img.code, pc);
+      pc += 2;
+      rn = get(stk, sp - 8) ?? 0;
+      crt::slot_ref(io, stk, sp - 24);
+      rvs = io[0] ?? NULL_STORE;
+      rvr = io[1] ?? 0;
+      rvp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 40);
+      sp -= 40;
+      if rtp3 == 5 {
+        if crt::read_file(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rn, true, 0) >= 0 {
+          crt::de_ref_text(rvs, rvr, rvp);
+        }
+      } else {
+        files::read(img.types, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, crt::Pos { s: rvs, r: rvr, p: rvp }, rn, rtp3);
+      }
+    } else if h == H_FS_OP {
+      // A path operation on one path, or `OpMoveFile` on two; answers the runtime's code.
+      fname = img.ops[op] ?? "";
+      fwhich = if fname == "OpDelete" { 0 } else if fname == "OpMoveFile" { 1 } else if fname == "OpMkdir" { 2 } else if fname == "OpMkdirAll" { 3 } else { 4 };
+      fto: text? = null;
+      if fwhich == 1 {
+        fto = crt::stack_str(stk, sp - 16);
+        sp -= 16;
+      }
+      ffrom = crt::stack_str(stk, sp - 16);
+      sp -= 16;
+      set(stk, sp, crt::fs_op(fwhich, ffrom, fto));
+      sp += 8;
+    } else if h == H_FILE_OP {
+      // `OpSizeFile`, `OpSeekFile(pos)`, `OpTruncateFile(size)`, `OpSyncFile` on the File.
+      oname = img.ops[op] ?? "";
+      owhich = if oname == "OpSizeFile" { 0 } else if oname == "OpSeekFile" { 1 } else if oname == "OpTruncateFile" { 2 } else { 3 };
+      oarg = 0;
+      if owhich == 1 || owhich == 2 {
+        oarg = get(stk, sp - 8) ?? 0;
+        sp -= 8;
+      }
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      oans = crt::file_op(owhich, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, oarg);
+      if owhich != 1 {
+        set(stk, sp, oans);
+        sp += 8;
+      }
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };

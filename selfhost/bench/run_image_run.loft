@@ -22,6 +22,9 @@ fn main() {
     exit(3);
   }
   r = img!;
+  // Relative paths resolve against the working directory: the runner is not where the program
+  // lives, so it is run from the program's directory, as the program itself is.
+  crt::fs_anchor(false);
   hs = brun::bind_ops(r);
   ns = brun::bind_natives(r);
   entry = run_image::entry(r);
