@@ -13129,6 +13129,72 @@ fn forget_facts(vars: el_vars::Vars, m: FactMark) {
   vars.bounded = vars.bounded[0..m.bounded];
 }
 
+// `x ?? return v` / `?? break` / `?? continue`: the subject held in an `_ncr_N` (a local tested
+// where it stands), its presence tested — and where it is absent the jump runs — then answered,
+// as a `!` answers it with a panic in the jump's place (`handle_present`).
+fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, r: integer) -> Ex {
+  b = el_types::base(x.tp);
+  record = struct_ref(e, b) >= 0 && !starts_with(el::def(e, struct_ref(e, b)).name, "__tuple<");
+  vec = b is TyVector;
+  if !record && !vec && !el_convert::plain_scalar(b) {
+    el::refuse(e, "a `??` that returns, breaks or continues, over this type: {display_type_name(e, b)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  j = expression(e, vars, r);
+  if e.first_pass {
+    return ex(ir::NdNull, b);
+  }
+  code = if record { nullable_getter(e, x.code) } else if vec { x.code } else { nullable_arith(e, x.code, true) };
+  held = -1;
+  subject = code;
+  match code {
+    NdVar { n: _ } => {},
+    _ => {
+      held = el_vars::create_unique(vars, "ncr", b);
+      subject = ir::NdVar { n: held };
+    }
+  }
+  check = present_check(e, vars, subject, b, record, vec);
+  if check == null {
+    el::refuse(e, "a `??` that returns, breaks or continues, over this type: {display_type_name(e, b)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  test = el_ir::v_if(el_ir::cl(e, "OpNot", [check!]), j.code, ir::NdNull);
+  ops: vector<ir::Node> = [];
+  if held >= 0 {
+    ops += [el_ir::v_set(held, code)];
+  }
+  ops += [test, subject];
+  ex(el_ir::v_block(ops, b, "ncr"), b)
+}
+
+// An element read with the nullable getter (`OpGetVectorNullable` / `OpVectorRefNullable`), for a
+// form that answers the element's absence itself (`!`, `?? return`); any other read as it is.
+fn nullable_getter(e: el::El, code: ir::Node) -> ir::Node {
+  match el_ir::unspan(code) {
+    NdCall { def_nr, args } => {
+      gn = el::def(e, def_nr).name;
+      if gn == "OpGetVector" || gn == "OpVectorRef" { el_ir::cl(e, "{gn}Nullable", args) } else { code }
+    },
+    _ => code
+  }
+}
+
+// `handle_present`'s presence test of a value of base type `b`: a record's reference, a vector's
+// emptiness of store, a scalar's distinction from its null.
+fn present_check(e: el::El, vars: el_vars::Vars, subject: ir::Node, b: ir::TypeT, record: boolean, vec: boolean) -> ir::Node? {
+  if b is TyBoolean {
+    return el_ir::cl(e, "OpNeBool", [subject, el_ir::cl(e, "OpConvBoolFromNull", [])]);
+  }
+  if record {
+    return el_ir::cl(e, "OpConvBoolFromRef", [subject]);
+  }
+  if vec {
+    return el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [subject])]);
+  }
+  el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean)
+}
+
 // `handle_null_coalesce` / `build_null_coalesce_default` for a plain scalar subject: the subject
 // read as its base, the default converted to the result (the base; the full integer where an
 // integer default does not fit a narrower one), and the subject's null test (`coalesce_not_null`:
@@ -13151,8 +13217,7 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     x = rx!;
   }
   if e.p.nodes[r] is SJump {
-    el::refuse(e, "a `??` that returns, breaks or continues");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    return coalesce_jump(e, vars, x, r);
   }
   // A field's view as the subject: its literal default is built against the subject's type,
   // which names the record it borrows — no store of its own (`build_null_coalesce_default`).
@@ -14058,15 +14123,7 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
   code = if record || vec { x.code } else { nullable_arith(e, x.code, true) };
   // An element under `!` is read with the nullable getter: the `!` answers its absence.
   if record {
-    match el_ir::unspan(code) {
-      NdCall { def_nr, args } => {
-        gn = el::def(e, def_nr).name;
-        if gn == "OpGetVector" || gn == "OpVectorRef" {
-          code = el_ir::cl(e, "{gn}Nullable", args);
-        }
-      },
-      _ => {}
-    }
+    code = nullable_getter(e, code);
   }
   held = -1;
   subject = code;
@@ -14077,10 +14134,7 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
       subject = ir::NdVar { n: held };
     }
   }
-  check = if record { el_ir::cl(e, "OpConvBoolFromRef", [subject]) } else if vec { el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [subject])]) } else { el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean) };
-  if b is TyBoolean {
-    check = el_ir::cl(e, "OpNeBool", [subject, el_ir::cl(e, "OpConvBoolFromNull", [])]);
-  }
+  check = present_check(e, vars, subject, b, record, vec);
   if check == null {
     el::refuse(e, "a `!` on this type: {type_kind(b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
