@@ -14024,7 +14024,6 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
   }
   // An `S?` slot is read as the `S?` it holds first (`handle_present`'s `read_through_tag`).
   // On pass 1 the field still has its declared `S?` type: `fill_all` tags it at the pass's end.
-  slot = is_nullable_wrapper(e, x.tp) || e.first_pass && x.tp is TyOptional;
   rx = read_through_tag(e, vars, x);
   if rx == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -14037,10 +14036,8 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
   // subject is refused by name.
   record = struct_ref(e, b) >= 0 && !starts_with(el::def(e, struct_ref(e, b)).name, "__tuple<");
   if record {
-    if !slot && !(el_ir::unspan(x.code) is NdVar) {
-      el::refuse(e, "a `!` on a record that is not a local");
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-    }
+    // Any record subject — a local, a slot, a call's answer, a field or an element — is tested
+    // where it stands or held in an `_ncr_N` first (below), as `handle_present`'s record arm does.
   } else if !el_convert::plain_scalar(b) && !(b is TyVector) {
     el::refuse(e, "a `!` on this type: {type_kind(b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -14051,6 +14048,18 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
   // A vector is tested with `OpVectorIsNull` (`handle_present`'s collection arm), held as read.
   vec = b is TyVector;
   code = if record || vec { x.code } else { nullable_arith(e, x.code, true) };
+  // An element under `!` is read with the nullable getter: the `!` answers its absence.
+  if record {
+    match el_ir::unspan(code) {
+      NdCall { def_nr, args } => {
+        gn = el::def(e, def_nr).name;
+        if gn == "OpGetVector" || gn == "OpVectorRef" {
+          code = el_ir::cl(e, "{gn}Nullable", args);
+        }
+      },
+      _ => {}
+    }
+  }
   held = -1;
   subject = code;
   match code {
