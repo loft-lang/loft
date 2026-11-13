@@ -351,7 +351,11 @@ pub(super) fn owner_witness_locals(
                     minted.insert(*t);
                     // A local the parser typed as a view (`tail = if … { unspan(…) } else {
                     // NdNull }`, deps naming the buffer) frees nothing itself: mixed already.
-                    if !function.tp(*t).depend().is_empty() {
+                    // And the choice may view storage on an arm, as `Other` reads it
+                    // (`member`'s `x` views a lift on one arm).
+                    if !function.tp(*t).depend().is_empty()
+                        || is_view_of_storage(val, function, data, d_nr)
+                    {
                         viewed.insert(*t);
                     }
                 }
