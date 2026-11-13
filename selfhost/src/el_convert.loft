@@ -597,8 +597,9 @@ fn implicit_checked_narrow(e: el::El, vars: el_vars::Vars, code: ir::Node, src: 
     return code;
   }
   // `convert` guards the value against the slot's declared range at its entry, before the
-  // nullable arm casts it: the guard is the cast's operand.
-  guarded = guard_range(e, code, should, src, true);
+  // nullable arm casts it: the guard is the cast's operand.  The assignment seam reaches the cast
+  // without that entry, so its operand is the value as it is.
+  guarded = if vars.assign_seam { code } else { guard_range(e, code, should, src, true) };
   dn4_cast(e, vars, guarded, el_types::base(src), el_types::base(inner))
 }
 
