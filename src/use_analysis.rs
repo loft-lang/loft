@@ -3509,6 +3509,21 @@ pub fn view_root_slots(data: &Data, arg: &Value) -> Option<Vec<u16>> {
         // arms this way. A block with construction ops in it is a MINT, not a view,
         // and falls through to `None` above.
         Value::Block(bl) if bl.operators.len() == 1 => view_root_slots(data, &bl.operators[0]),
+        // A join arm's owning call bound into its buffer (`{#join-arm-owner __ref_N = f(…,
+        // __ref_N); __ref_N }`, `Parser::materialise_owned_call`): its value lies in that
+        // frame buffer's store, which the bracket names.  Read as a mint it left the set
+        // incomplete, and a copy of a call taking it kept every store the callee made (the
+        // self-hosted elaborator's `place_assignment`, `guard_compound(…, if h { pt } else {
+        // base(pt) }, …)`).  `LOFT_NO_NCR_ARG_ROOT=1` reads it as a mint again.
+        Value::Block(bl)
+            if bl.name == crate::parser::Parser::JOIN_ARM_OWNER
+                && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_ARG_ROOT").is_some()) =>
+        {
+            match bl.operators.last().map(Value::unspan) {
+                Some(Value::Var(buf)) => Some(vec![*buf]),
+                _ => None,
+            }
+        }
         // The `!` unwrap's block (`{#ncr _ncr_N = <projection>; <null check>; _ncr_N }`): its
         // value is the projection it bound, checked and handed on — a view of the same roots.
         // Read as a mint it left the witness set incomplete, and the copy of a call taking it
