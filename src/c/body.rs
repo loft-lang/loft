@@ -5604,7 +5604,7 @@ impl<'a> FnWriter<'a> {
 
     /// `v = f(…)` where the callee's result is fresh on one arm and a view of `base` on the
     /// other (`Own::Join`): the record type and `base`, the witness `OpBindOrCopy` tests.
-    fn join_bind(&self, v: u16, x: &Value) -> Option<(u16, u16)> {
+    fn join_bind(&self, v: u16, x: &Value, first: bool) -> Option<(u16, u16)> {
         use crate::data::Type;
         use crate::use_analysis as ua;
         let data = self.cx.data;
@@ -5622,9 +5622,20 @@ impl<'a> FnWriter<'a> {
         }
         // `@FR-B-Copy` — a choice that hands another heap variable over whole on one arm
         // joins on that variable, as `bind_lowering::re_bind` decides for the bytecode writer.
+        // A FIRST bind joins only into a local that owns what it binds
+        // (`bind_lowering::first_bind_choice_join`, the bytecode writer's question): a copy into
+        // a view the exits never free leaked one record per run (`call_args`' `last_t = if n > 0
+        // { def.attributes[-1].typedef[0] ?? TyVoid } else { TyVoid }`, which keeps `def`'s
+        // borrow).  `LOFT_C_FIRST_CHOICE_JOIN_ANY=1` joins any first bind as before.
         let Some(f) = ua::callee_of(data, self.d, x) else {
-            return crate::bind_lowering::choice_var_arm(data, self.d, self.vars, x, v)
-                .map(|base| (data.def(d).known_type(), base));
+            let base = if first
+                && !crate::env_once!(std::env::var_os("LOFT_C_FIRST_CHOICE_JOIN_ANY").is_some())
+            {
+                crate::bind_lowering::first_bind_choice_join(data, self.d, self.vars, v, x)
+            } else {
+                crate::bind_lowering::choice_var_arm(data, self.d, self.vars, x, v)
+            };
+            return base.map(|base| (data.def(d).known_type(), base));
         };
         if !data.def(f).is_loft_defined() {
             return None;
@@ -5674,7 +5685,7 @@ impl<'a> FnWriter<'a> {
         name: &str,
         ind: usize,
     ) -> Result<bool, String> {
-        let join = self.join_bind(var, x);
+        let join = self.join_bind(var, x, first);
         // A rebind releases the store it displaces when the variable owns it, as the bytecode
         // writer's owned reassignment does — never the base's, nor a store the call was handed.
         let rebind_owned = !first
