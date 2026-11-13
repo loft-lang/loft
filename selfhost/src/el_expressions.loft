@@ -237,16 +237,6 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         t = if len(block[0].operators) > 0 { el_ir::unspan(block[0].operators[-1]) } else { ir::NdNull };
         if t is NdCall && !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") < 0 {
           el::refuse(e, "a mid-body `return` of a parameter beside a tail call the return buffer was renamed onto");
-        } else if t is NdCall {
-          pa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, vars.mid_params[0]));
-          r0 = el::def(e, e.context).returned[0];
-          kept: vector<integer> = [];
-          for x in el_types::deps(r0) {
-            if x != pa {
-              kept += [x];
-            }
-          }
-          e.b.data.definitions[e.context].returned = [el_types::with_deps(r0, kept)];
         }
       },
       _ => {}
@@ -15452,7 +15442,27 @@ fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node? 
     return null;
   }
   ret = el::def(e, d).returned[0];
-  e.b.data.definitions[d].returned = [el_types::with_deps(ret, attrs)];
+  // `ref_return`'s prune: a hidden attribute (the buffer) and a parameter a mid-body `return`
+  // merged stay; then the call's parameters join.
+  kept: vector<integer> = [];
+  for x in el_types::deps(ret) {
+    at = el::def(e, d).attributes[x];
+    merged = false;
+    for mp in vars.mid_params {
+      if attr_nr(el::def(e, d), el_vars::name_of(vars, mp)) == x {
+        merged = true;
+      }
+    }
+    if (at != null && at!.hidden) || merged {
+      kept += [x];
+    }
+  }
+  for a in attrs {
+    if !kept.contains(a) {
+      kept += [a];
+    }
+  }
+  e.b.data.definitions[d].returned = [el_types::with_deps(ret, kept)];
   ir::NdBlock { block: [bl] }
 }
 
