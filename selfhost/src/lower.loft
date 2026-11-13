@@ -2593,8 +2593,9 @@ fn set(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   }
   at = len(l.notes);
   first = !(fvar(b, l.def_nr, var)).stack_allocated;
-  // The line the assignment stands on, read before its value is lowered.
-  line = l.line;
+  // The line the assignment stands on, read before its value is lowered: the value's own
+  // position where it is spanned, else the last line marker (`bind_lowering::row_line`).
+  line = binds::row_line(x, l.line);
   set_inner(l, b, var, x);
   bind_row(l, b, var, first, at, line);
 }
@@ -2883,7 +2884,7 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   rhs_base = own::base_of(own);
   rhs_may_alias_v = binds::rhs_may_alias_v(b, l.own_ops, l.def_nr, f, var, x);
   entry_w = binds::entry_witness(f, var);
-  owned_ref = binds::owned_ref(b, l.def_nr, f, var, x);
+  owned_ref = binds::owned_ref(b, l.own_ops, l.def_nr, f, var, x);
   // An ARGUMENT frees what it displaces only with an entry witness (`@FR-O-Buffer`): a rebound
   // by-value parameter is detached in the IR first, and a renamed return buffer holds its
   // caller's store (`LOFT_ARG_DISPLACED_FREE` unset).
@@ -3749,29 +3750,49 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   }
 }
 
-// Does `n` release something — a free, a drop cascade, or the guarded release `if <holds>
-// <release> else null` — as the C generator's `is_free` reads it?
+// src/op_sets.rs fn is_release_statement — does `n` release something: a free, a drop cascade,
+// the guarded release `if <holds> <release> else null`, or a release with its reset
+// (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner witness's)?  The one reading the C and
+// rustc writers and the store records share of which statement of a block is no value.
 fn is_free(b: ir::Bundle, n: ir::Node) -> boolean {
   at = unspan(n);
+  // The guarded release's arm, followed as a loop: a tail call on a part of `unspan(n)` stays a
+  // call.
   while true {
     match at {
-      NdCall { def_nr, args: _ } => {
-        name = b.data.definitions[def_nr]!.name;
-        return name.starts_with("OpFree")
-          || name == "OpDropFnRef"
-          || (name.starts_with("t_") && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll")))
-          || name == "n_set_store_lock";
-      }
       NdIf { cond: _, t, f } => {
         if !(unspan(f) is NdNull) {
           return false;
         }
         at = unspan(t);
-      }
-      _ => { return false; }
+      },
+      _ => { break; }
     }
   }
-  false
+  match at {
+    NdCall { def_nr, args: _ } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      name = b.data.definitions[def_nr]!.name;
+      name.starts_with("OpFree")
+        || name == "OpDropFnRef"
+        || (name.starts_with("t_") && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll")))
+        || name == "n_set_store_lock"
+    },
+    NdInsert { items } => {
+      any = false;
+      for i in items {
+        if is_free(b, i) {
+          any = true;
+        } else if !(unspan(i) is NdSet) && !(unspan(i) is NdLine) {
+          return false;
+        }
+      }
+      any
+    },
+    _ => false
+  }
 }
 
 // The position of the last operator of `ops` that is not a line, or -1.
@@ -3914,7 +3935,7 @@ fn adopted_bind(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) -> boolea
       rebound[0] = buf;
       at = len(l.notes);
       first = !(fvar(b, l.def_nr, var)).stack_allocated;
-      line = l.line;
+      line = binds::row_line(ir::NdCall { def_nr: def_nr, args: rebound }, l.line);
       set_inner(l, b, var, ir::NdCall { def_nr: def_nr, args: rebound });
       bind_row(l, b, var, first, at, line);
       true
