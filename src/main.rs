@@ -10583,7 +10583,7 @@ fn main() {
     // signature the compiled code calls.  The IR value-record pass rewrites signatures
     // (a by-value record parameter becomes a tuple), which took such a function out of the
     // live tier's dispatch table — `--html --debug` flipped one function where it had two
-    // (html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm).  Each path's
+    // (`html_debug_tier_runs_on_wasm`).  Each path's
     // live-tier decision is the one its `Output::emit_live` makes below; `--interpret`,
     // `--lean` and `--ship` ship none and keep the pass.
     if ships_live_tier {

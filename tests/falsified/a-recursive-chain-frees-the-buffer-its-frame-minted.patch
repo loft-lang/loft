@@ -1,13 +1,13 @@
 diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
-index 6babd94c7..629f0ee63 100644
+index 41c85498d..c9fc2789c 100644
 --- a/src/bind_lowering.rs
 +++ b/src/bind_lowering.rs
-@@ -765,7 +765,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
-     // it is what the copy arms' fresh-store choice reads (#360).
+@@ -841,7 +841,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
+         && only_null_or_borrowed(data, d_nr, v);
      let owned_ref = (function.owns_displaced_store(v, value, data)
          || is_return_temp_owning_its_arms(data, d_nr, function, v))
--        && (!is_hidden_buf_arg || entry_w.is_some());
-+        && !is_hidden_buf_arg;
+-        && (!is_hidden_buf_arg || entry_w.is_some())
++        && !is_hidden_buf_arg
+         && !keyed_view;
      let frees_displaced = owned_ref
          && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
-     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing

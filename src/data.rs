@@ -1855,6 +1855,19 @@ impl Type {
         tp
     }
 
+    /// `@FR-N-Shape`'s NULLABILITY question asked through a `&` link: is this `τ?`, or a link to
+    /// one?  [`Type::peel_link`] answers the SHAPE and reads through the `?`, so a site that
+    /// accepts the shape and must refuse the `?` (`rev()` over a `sorted<…>?`, `@FR-I-NullSrc`)
+    /// asks this first.
+    #[must_use]
+    pub fn link_nullable(&self) -> bool {
+        match self {
+            Type::Optional(_) => true,
+            Type::RefVar(inner) | Type::Rewritten(inner) => inner.link_nullable(),
+            _ => false,
+        }
+    }
+
     /// Is this a `&` parameter whose whole-value write-back INSTALLS a store the callee
     /// minted and DISPLACES whatever the caller's binding named?
     ///

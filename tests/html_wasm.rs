@@ -2338,19 +2338,42 @@ fn the_c_page_answers_what_the_rust_page_answers() {
 mod rust_writer {
     use super::*;
 
-    // @PLN98 P3.4 — the live/debug tier's core primitive verified IN THE BROWSER WASM
-    // RUNTIME (headless node): a `--debug` client bootstraps the parked interpreter
-    // from the EMBEDDED source (P3.1, no filesystem), flips its fns to the interpreter,
-    // and the compiled `main` DISPATCHES a call into the interpreter running over the
-    // SHARED store — producing the correct result. This is "the interpreter over the
-    // shared live store" (the whole tier's one primitive) proven on wasm32.
+    // @PLN98 P3.4 — the live/debug tier on the BROWSER WASM runtime (headless node), every
+    // property read off ONE `--html --debug` page: a debug page links the full engine, and its
+    // `--asyncify` pass over that 16 MB module is the cost of the build, so four pages built for
+    // four properties made four tests that each waited out the others' (400 s on the runner,
+    // past the duration gate).  The one page answers all of them:
+    //
+    // - the client bootstraps the parked interpreter from the EMBEDDED source (P3.1, no
+    //   filesystem), flips its functions to it, and the compiled `main` DISPATCHES each call
+    //   into the interpreter over the SHARED store: five functions flip (all but `main`), and
+    //   `main`'s four calls into them dispatch;
+    // - sharing is ONE heap (Probe 2): `main` writes `w.a = 777` (compiled) and the
+    //   interpreted `reader` reads it; the interpreted `writer` writes `w.b = 999` and `main`
+    //   reads it — both directions agree;
+    // - the COOPERATIVE debug cycle (P3.2): `loft_debug_selftest` sets a breakpoint, runs to it,
+    //   reads the paused frame, steps and resumes, as the native build does;
+    // - the INTERACTIVE client: `D!:` control frames relayed over `host_input`
+    //   (bp -> run -> eval -> resume) answer `D:` replies over host output, with no threads,
+    //   sockets or native `debug_cmd_dispatch` — the client half of the server->browser relay.
     #[test]
-    fn html_debug_client_dispatches_to_the_interpreter_on_wasm() {
-        let source = "fn addup(a: integer, b: integer) -> integer {\n  a + b\n}\n\
+    fn html_debug_tier_runs_on_wasm() {
+        let source = "struct W { a: integer, b: integer }\n\
+                      fn addup(a: integer, b: integer) -> integer {\n  a + b\n}\n\
                       fn triple(x: integer) -> integer {\n  addup(x, addup(x, x))\n}\n\
-                      fn main() {\n  print(\"triple(14)={triple(14)}\")\n}\n";
+                      fn reader(w: W) -> integer { w.a }\n\
+                      fn writer(w: W) { w.b = 999; }\n\
+                      fn compute(n: integer) -> integer {\n  m = n + 2;\n  m\n}\n\
+                      fn main() {\n  \
+                        w = W { a: 0, b: 0 };\n  \
+                        w.a = 777;\n  \
+                        r = reader(w);\n  \
+                        writer(w);\n  \
+                        c = compute(40);\n  \
+                        print(\"triple(14)={triple(14)} r={r} b={w.b} c={c}\")\n}\n";
+        let name = "p98_debug_tier";
         let Some((stdout, stderr, ok)) = run_rust_html_wasm_full(
-            "p98_debug_dispatch",
+            name,
             source,
             &[],
             &[],
@@ -2361,140 +2384,52 @@ mod rust_writer {
         };
         let all = format!("{stdout}{stderr}");
         assert!(ok, "the --debug wasm client trapped.\n{all}");
-        // The parked interpreter switched on and flipped the dispatchable fns.
         assert!(
-            all.contains("flipped 2 fn(s) to the interpreter"),
-            "the debug client flipped its fns to the interpreter: {all}"
+            all.contains("flipped 5 fn(s) to the interpreter"),
+            "the debug client flipped every function but main to the interpreter: {all}"
         );
-        // A compiled call dispatched INTO the interpreter over the shared store.
         assert!(
-            all.contains("dispatched 1 interp call(s) over the shared store"),
-            "a compiled call dispatched into the interpreter on wasm: {all}"
+            all.contains("dispatched 4 interp call(s) over the shared store"),
+            "each of main's calls dispatched into the interpreter: {all}"
         );
-        // And it computed the right answer over that shared store.
         assert!(
-            all.contains("triple(14)=42"),
-            "the interpreted dispatch produced the correct result: {all}"
+            all.contains("triple(14)=42 r=777 b=999 c=42"),
+            "the interpreted calls answered over one shared heap, both directions: {all}"
         );
-    }
-
-    // @PLN98 P3.4 — the interpreter's COOPERATIVE DEBUG CYCLE (breakpoint pause +
-    // frame read + resume, P3.2) verified IN THE BROWSER WASM RUNTIME (headless node).
-    // The `--debug` build exports `loft_debug_selftest`, which runs the exact cycle
-    // (set a breakpoint, run — `execute_argv` returns at the breakpoint, read the
-    // paused frame's local, step, resume) and reports the outcome; identical to the
-    // native result. This proves the make-or-break browser pause works on wasm32.
-    #[test]
-    fn html_debug_cooperative_pause_cycle_runs_on_wasm() {
-        let Some((stdout, stderr, ok)) = run_rust_html_wasm_full(
-            "p98_debug_selftest",
-            "fn main() { print(\"x\") }\n",
-            &[],
-            &[],
-            &["--debug=alice"],
-            "tools/wasm_debug_selftest.mjs",
-        ) else {
-            return;
+        let wasm = extracted_wasm(name);
+        let node = |harness: &str| {
+            let out = loft::platform::process::harness_command("node")
+                .arg(repo_root().join(harness))
+                .arg(&wasm)
+                .output()
+                .expect("invoke node harness");
+            let all = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            (all, out.status.success())
         };
-        let all = format!("{stdout}{stderr}");
+        let (all, ok) = node("tools/wasm_debug_selftest.mjs");
         assert!(ok, "the debug-selftest harness failed: {all}");
         assert!(
-            all.contains("PAUSE n=40 STEP m=42 DONE=true"),
+            all.contains("PAUSE n=40 STEP m=42 DONE=true") && all.contains("RETURN=1"),
             "the cooperative debug cycle ran on wasm: {all}"
         );
-        assert!(
-            all.contains("RETURN=1"),
-            "the selftest reported success: {all}"
-        );
-    }
-
-    // @PLN98 P3.4 — the INTERACTIVE browser debug CLIENT on wasm: the `--html --debug`
-    // build applies `D!:` control frames relayed over host_input (bp -> run -> eval ->
-    // resume) and returns `D:` replies over host output, entirely in the wasm runtime
-    // (no threads / sockets / native debug_cmd_dispatch). This is the client half of
-    // the server->browser debug relay, verified headlessly via node.
-    #[test]
-    fn html_debug_client_applies_relayed_control_frames_on_wasm() {
-        let source = "fn compute(n: integer) -> integer {\n  m = n + 2;\n  m\n}\n\
-                      fn main() { compute(40); }\n";
-        let Some((stdout, stderr, ok)) = run_rust_html_wasm_full(
-            "p98_debug_client",
-            source,
-            &[],
-            &[],
-            &["--debug=alice"],
-            "tools/wasm_debug_client.mjs",
-        ) else {
-            return;
-        };
-        let all = format!("{stdout}{stderr}");
+        let (all, ok) = node("tools/wasm_debug_client.mjs");
         assert!(ok, "the debug-client driver failed: {all}");
-        assert!(
-            all.contains("D:ok bp compute"),
-            "breakpoint set over host_input: {all}"
-        );
-        assert!(
-            all.contains("D:hit compute") && all.contains("n=40"),
-            "the client PAUSED at the breakpoint with the live frame (n=40): {all}"
-        );
-        assert!(
-            all.contains("D:eval n=40"),
-            "read a live frame local over the relay: {all}"
-        );
-        assert!(
-            all.contains("D:eval n + 2=42"),
-            "FULL-EXPRESSION eval over the relayed control channel: {all}"
-        );
-        assert!(
-            all.contains("D:terminated"),
-            "resume ran to completion: {all}"
-        );
-    }
-
-    // @PLN98 Probe 2 — "sharing is ONE heap on wasm too": a COMPILED write and an
-    // INTERPRETED read of the same variable must AGREE (and vice versa), or the
-    // live-dispatch swap didn't carry the world. In the `--html --debug` build,
-    // `flip_all` flips `reader`+`writer` to the interpreter while `main` stays
-    // compiled, so: main writes `w.a=777` (compiled) -> `reader` reads it
-    // (interpreted); `writer` writes `w.b=999` (interpreted) -> main reads it
-    // (compiled). Both must round-trip over the one shared store.
-    #[test]
-    fn html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm() {
-        let source = "struct W { a: integer, b: integer }\n\
-                      fn reader(w: W) -> integer { w.a }\n\
-                      fn writer(w: W) { w.b = 999; }\n\
-                      fn main() {\n  \
-                        w = W { a: 0, b: 0 };\n  \
-                        w.a = 777;\n  \
-                        r = reader(w);\n  \
-                        writer(w);\n  \
-                        print(\"r={r} b={w.b}\")\n}\n";
-        let Some((stdout, stderr, ok)) = run_rust_html_wasm_full(
-            "p98_one_heap",
-            source,
-            &[],
-            &[],
-            &["--debug=alice"],
-            "tools/wasm_repro.mjs",
-        ) else {
-            return;
-        };
-        let all = format!("{stdout}{stderr}");
-        assert!(ok, "the one-heap wasm client trapped: {all}");
-        assert!(
-            all.contains("flipped 2 fn(s) to the interpreter"),
-            "reader + writer flipped to the interpreter: {all}"
-        );
-        // The load-bearing assertion: compiled write -> interpreted read (r=777) AND
-        // interpreted write -> compiled read (b=999) both agree over ONE heap.
-        assert!(
-            all.contains("r=777 b=999"),
-            "compiled and interpreted share one heap (both directions): {all}"
-        );
-        assert!(
-            all.contains("dispatched 2 interp call(s) over the shared store"),
-            "both flipped fns dispatched over the shared store: {all}"
-        );
+        for reply in [
+            "D:ok bp compute",
+            "D:hit compute n=40",
+            "D:eval n=40",
+            "D:eval n + 2=42",
+            "D:terminated",
+        ] {
+            assert!(
+                all.contains(reply),
+                "the relayed control frames answered {reply:?}: {all}"
+            );
+        }
     }
 
     /// #623 — a `#native` symbol with no `[wasm.bridge].routes` entry must produce

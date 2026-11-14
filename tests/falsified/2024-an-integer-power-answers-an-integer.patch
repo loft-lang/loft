@@ -1,14 +1,15 @@
 diff --git a/default/01_code.loft b/default/01_code.loft
-index bcad6981b..cc0ad51ad 100644
+index 40959b490..4b21a5d9b 100644
 --- a/default/01_code.loft
 +++ b/default/01_code.loft
-@@ -521,17 +521,6 @@ pub fn log(self: single, v2: single) -> single? {
+@@ -589,18 +589,6 @@ pub fn log(self: single, v2: single) -> single? {
  }
  #pure
  
 -fn OpPowInt(v1: __word, v2: __word) -> __word;
 -#cold
 -#rust"ops::op_pow_int(@v1, @v2)"
+-#loft"if v1 == null || v2 == null || v2 < 0 {{ null }} else {{ v1.pow(v2) }}"
 -/// Raises the integer to the power given second: `pow(3, 4)` is 81, and `3 ** 20` is
 -/// 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the
 -/// answer does not fit an integer (`pow(2, 63)`), as `*` answers null past the range.
@@ -21,10 +22,10 @@ index bcad6981b..cc0ad51ad 100644
  #cold
  #rust"@v1.powf(@v2)"
 diff --git a/src/fill.rs b/src/fill.rs
-index 6c760d3ad..a4db4b15e 100644
+index 22806c8b3..979a613b8 100644
 --- a/src/fill.rs
 +++ b/src/fill.rs
-@@ -300,7 +300,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
+@@ -311,7 +311,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
      rem_single_nullable::<false>,
      math_func_single::<false>,
      math_func2_single::<false>,
@@ -32,7 +33,7 @@ index 6c760d3ad..a4db4b15e 100644
      pow_single::<false>,
      format_single::<false>,
      format_stack_single::<false>,
-@@ -656,7 +655,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
+@@ -682,7 +681,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
      rem_single_nullable::<true>,
      math_func_single::<true>,
      math_func2_single::<true>,
@@ -40,7 +41,7 @@ index 6c760d3ad..a4db4b15e 100644
      pow_single::<true>,
      format_single::<true>,
      format_stack_single::<true>,
-@@ -1012,7 +1010,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
+@@ -1053,7 +1051,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
      rem_single_nullable_r,
      math_func_single_r,
      math_func2_single_r,
@@ -48,7 +49,7 @@ index 6c760d3ad..a4db4b15e 100644
      pow_single_r,
      format_single_r,
      format_stack_single_r,
-@@ -2430,20 +2427,6 @@ fn math_func2_single_r(s: &mut State, r: Regs) -> Regs {
+@@ -2476,20 +2473,6 @@ fn math_func2_single_r(s: &mut State, r: Regs) -> Regs {
      s.regs_out()
  }
  
@@ -70,10 +71,10 @@ index 6c760d3ad..a4db4b15e 100644
  fn pow_single<const F: bool>(s: &mut State) {
      let v_v2 = s.get_stack_m::<F, f32>();
 diff --git a/src/op_layout.rs b/src/op_layout.rs
-index 336ed8440..ac220373e 100644
+index f954efd4d..feba9bd7e 100644
 --- a/src/op_layout.rs
 +++ b/src/op_layout.rs
-@@ -281,7 +281,6 @@ pub const OPERATOR_NAMES: &[&str] = &[
+@@ -292,7 +292,6 @@ pub const OPERATOR_NAMES: &[&str] = &[
      "OpRemSingleNullable",
      "OpMathFuncSingle",
      "OpMathFunc2Single",
@@ -82,7 +83,7 @@ index 336ed8440..ac220373e 100644
      "OpFormatSingle",
      "OpFormatStackSingle",
 diff --git a/src/ops.rs b/src/ops.rs
-index f0288b608..1431daec3 100644
+index 953b9ecd9..991d8ef1c 100644
 --- a/src/ops.rs
 +++ b/src/ops.rs
 @@ -368,20 +368,6 @@ pub fn op_mul_long(v1: i64, v2: i64) -> i64 {

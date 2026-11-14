@@ -3654,11 +3654,55 @@ impl Parser {
                     self.vars.mark_used(v);
                 }
             }
+            // `@FR-F-ParamTuple` — a by-value tuple parameter with a heap member is the callee's
+            // own value: it takes an owned shadow (`__tp_<name>`) from the start of PASS 1, so
+            // both passes parse the body against the same local and agree on the signature
+            // its returns imply.  Seeded at entry: a copy, or the parameter itself where the
+            // finished body only reads (`passes::MemberWalk::only_read`).
+            // `LOFT_NO_TUPLE_PARAM_COPY=1` leaves the parameter the caller's tuple.
+            if self.first_pass
+                && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_PARAM_COPY").is_some())
+            {
+                for v in 0..self.vars.count() {
+                    if self.vars.is_argument(v)
+                        && !self.vars.name(v).starts_with("__")
+                        && !matches!(self.vars.tp(v), Type::RefVar(_))
+                        && Self::tuple_carries_heap(self.vars.tp(v))
+                    {
+                        let name = self.vars.name(v).to_string();
+                        let tp = self.vars.tp(v).clone();
+                        let shadow =
+                            self.vars
+                                .add_variable(&format!("__tp_{name}"), &tp, &mut self.lexer);
+                        self.vars.set_promoted_from(shadow, v);
+                        if self.vars.is_value_const(v) {
+                            self.vars.set_value_const(shadow);
+                        }
+                        if self.vars.is_const_binding(v) {
+                            self.vars.set_const_binding(shadow);
+                        }
+                        self.vars.remap_name(&name, shadow);
+                        self.vars.defined(shadow);
+                    }
+                }
+            }
             // re-apply name remaps for promoted text arguments in second pass.
             if !self.first_pass {
+                self.tuple_param_seeds.clear();
                 for (shadow, original) in self.vars.promoted_text_args() {
                     let orig_name = self.vars.name(original).to_string();
                     self.vars.remap_name(&orig_name, shadow);
+                    // `@FR-F-ParamTuple` — a tuple shadow with a heap member is seeded with the
+                    // whole-tuple bind's copy, and takes that copy's type BEFORE the body is
+                    // read, as a user's `u = t` would: the members then name the frame-local
+                    // backings that own them, and nothing frees them twice.
+                    if let Type::Tuple(elems) = self.vars.tp(original).base().clone()
+                        && Self::tuple_carries_heap(self.vars.tp(original))
+                    {
+                        let (seed, owned) = self.tuple_whole_bind_copy(original, &elems);
+                        self.vars.set_type(shadow, owned);
+                        self.tuple_param_seeds.push((shadow, seed));
+                    }
                     // The shadow is seeded from the parameter at function entry (the
                     // preamble in `expressions.rs`), so it holds a value from the first
                     // statement on.  Without this a read BEFORE the promoting write — the
@@ -3994,7 +4038,7 @@ impl Parser {
             let link = self.lexer.link();
             self.lexer.has_token("#");
             let id = self.lexer.has_identifier();
-            if id == Some("native".to_string()) {
+            if id.as_deref() == Some("native") {
                 // Capture the cstring's position BEFORE consuming it — once
                 // `has_cstring()` returns, the lexer has advanced past the
                 // closing quote onto the next token, so a diagnostic at the
@@ -4033,19 +4077,19 @@ impl Parser {
                     self.data.definitions[self.context as usize].native = default_sym;
                 }
                 self.record_native_answer_type();
-            } else if self.default && id == Some("rust".to_string()) {
+            } else if self.default && id.as_deref() == Some("rust") {
                 if let Some(c) = self.lexer.has_cstring() {
                     self.data.definitions[self.context as usize].rust = c;
                 } else {
                     diagnostic!(self.lexer, Level::Error, "Expect rust string");
                 }
-            } else if self.default && id == Some("loft".to_string()) {
+            } else if self.default && id.as_deref() == Some("loft") {
                 // An operator's `#loft"…"` template: the loft runner's body for it, read by the
                 // loft generator of `fill.loft` (@PLN91); the Rust compiler skips it.
                 if self.lexer.has_cstring().is_none() {
                     diagnostic!(self.lexer, Level::Error, "Expect loft string");
                 }
-            } else if self.default && id == Some("iterator".to_string()) {
+            } else if self.default && id.as_deref() == Some("iterator") {
                 if let Some(init) = self.lexer.has_cstring() {
                     self.data.definitions[self.context as usize].rust = init;
                 } else {
@@ -4058,7 +4102,7 @@ impl Parser {
                     diagnostic!(self.lexer, Level::Error, "Expect rust next string");
                 }
             } else if !self.default
-                && (id == Some("rust".to_string()) || id == Some("iterator".to_string()))
+                && (id.as_deref() == Some("rust") || id.as_deref() == Some("iterator"))
             {
                 // @C87 — `#rust` / `#iterator` are the standard library's templates for its own
                 // operators, compiled into loft itself; a library's Rust goes through
@@ -4075,7 +4119,7 @@ impl Parser {
                      bind Rust with a bare `#native` and implement the function in the \
                      package's native crate (PACKAGES.md § Function binding model)"
                 );
-            } else if id == Some("c".to_string()) {
+            } else if id.as_deref() == Some("c") {
                 // @PLN24 arc A — `#c "<symbol>" "<c-signature>"` binds this
                 // declaration straight to a C symbol.  Both strings are
                 // required, and the SIGNATURE is the load-bearing one: the
@@ -4100,7 +4144,7 @@ impl Parser {
                     );
                 }
                 self.parse_c_binding();
-            } else if id == Some("c_twin".to_string()) {
+            } else if id.as_deref() == Some("c_twin") {
                 // `#c_twin "<symbol>" "<c-signature>"` (@C-twin): the C backend calls this C
                 // routine in place of the function's loft body, which every other backend runs
                 // and which states what the routine must answer.  The routine comes from the
@@ -4140,13 +4184,13 @@ impl Parser {
                 } else {
                     self.data.definitions[d_nr as usize].op_priority = priority;
                 }
-            } else if id == Some("null_safe".to_string()) {
+            } else if id.as_deref() == Some("null_safe") {
                 // @PLN46 W2 — `#null_safe` asserts every nullable parameter
                 // tolerates null and yields a defined result, so a fault-prone
                 // expression (`s[i]`) passed DIRECTLY as an argument is not flagged
                 // at the call site (the possible-null is the callee's contract).
                 self.data.definitions[self.context as usize].null_safe = true;
-            } else if id == Some("builtin".to_string()) {
+            } else if id.as_deref() == Some("builtin") {
                 // @PLN165 arc E — `#builtin`: the declaration above is a built-in's signature,
                 // and a call selecting it — the method spelling included — lowers through the
                 // compiler's special form of its name.  The standard library's alone: a
@@ -4160,7 +4204,7 @@ impl Parser {
                         "#builtin marks a standard-library declaration the compiler lowers itself; a program's function is its own body"
                     );
                 }
-            } else if id == Some("superseded".to_string()) {
+            } else if id.as_deref() == Some("superseded") {
                 // @PLN102 arc C — `#superseded "Y"` marks this callable as
                 // superseded by the successor symbol Y (a bare name, e.g.
                 // `write_through`).  Step 1 only PARSES + STORES the name;
@@ -4176,12 +4220,12 @@ impl Parser {
                         "Expect #superseded successor name string, e.g. #superseded \"write_through\""
                     );
                 }
-            } else if id == Some("pure".to_string()) {
+            } else if id.as_deref() == Some("pure") {
                 // Plan-06 phase 5a (DESIGN.md D8.1): `#pure`
                 // declares "no observable side effects, no
                 // parent-store writes".  Always par-safe.
                 self.data.definitions[self.context as usize].purity = crate::data::Purity::Pure;
-            } else if id == Some("impure".to_string()) {
+            } else if id.as_deref() == Some("impure") {
                 // Plan-06 phase 5a (DESIGN.md D8.1):
                 // `#impure(category)` classifies the side effect.
                 // Five categories: host_io, prng, io, parent_write,

@@ -115,6 +115,10 @@ LOFT_STDLIB_CACHE=1 check_one interp "$OUT/cold-stdlib.loft" > "$OUT/results.tsv
 ls "$XDG_CACHE_HOME"/loft/stdlib-*.store >/dev/null 2>&1 \
   || { echo "the cold run wrote no stdlib bundle — every run would parse cold; not sweeping"; exit 2; }
 export LOFT_STDLIB_CACHE=1
+# No run asks the registry for a package it does not find: a cell that names an absent
+# package on purpose (the F-Surface refusals) otherwise opens a TLS connection, and memcheck
+# reports ring's and rustls's own buffers as this sweep's invalid accesses.
+export LOFT_NO_AUTO_INSTALL=1
 
 # The PLAN: every interpreter file runs once WITHOUT memcheck first — a median file takes
 # 0.04 s — which gives two facts the memcheck runs are then arranged by:

@@ -5278,10 +5278,15 @@ impl Parser {
                 }
                 // rev() wrapping a bare collection (not a range subscript).
                 // `@FR-B-Ref-Uniform`: a `&` collection parameter reverses as the collection.
-                if matches!(
-                    in_type.peel_link(),
-                    Type::Sorted(_, _, _) | Type::Index(_, _, _) | Type::Vector(_, _)
-                ) {
+                // `peel_link` reads through `?` as well (it starts from `base()`), so the
+                // nullability is asked of the link-peeled type before it: a `sorted<…>?`, or a
+                // `&` to one, is refused below with the `?` named (`@FR-I-NullSrc`).
+                if !in_type.link_nullable()
+                    && matches!(
+                        in_type.peel_link(),
+                        Type::Sorted(_, _, _) | Type::Index(_, _, _) | Type::Vector(_, _)
+                    )
+                {
                     // reverse_iterator stays set; consumed and reset by iterator()
                 } else if !matches!(in_type, Type::Null)
                     // A local bound from a function declared further down is typed only on

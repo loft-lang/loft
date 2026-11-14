@@ -1051,6 +1051,9 @@ pub struct Parser {
     /// answer did not widen the local.  `widen_late_call_joins` widens it between the passes,
     /// so pass 2 reads every use against the join, whatever order the two functions are in.
     late_call_joins: Vec<(u32, u16, String, u32)>,
+    /// `@FR-F-ParamTuple` — the entry seed of each tuple parameter shadow with a heap member in
+    /// the function pass 2 is reading: the shadow and its whole-tuple bind copy.
+    tuple_param_seeds: Vec<(u16, Value)>,
     /// Pass 1: the definition name of the last call parsed, when no such function was declared
     /// yet (`parse_call`); `None` after a call to a known one.  Taken by the assignment whose
     /// value it was (`note_late_call_join`).
@@ -2195,6 +2198,7 @@ impl Parser {
             par_replay_body: None,
             late_text_tails: Vec::new(),
             late_call_joins: Vec::new(),
+            tuple_param_seeds: Vec::new(),
             last_forward_call: None,
             call_def_name: String::new(),
             infer_ret_defs: std::collections::HashSet::new(),

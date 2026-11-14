@@ -181,13 +181,13 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c · `/wrap-select` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
-| `(R-BufferReturn)` | `R-BufferReturn` c · `/bind` c |
+| `(R-BufferReturn)` | counted; admitted on no bench program |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
 | `(R-CallLine)` | not counted — executor: a frame's line derived from its call position |
 | `(R-Callee)` | `R-Callee` c, native |
 | `(R-CharWalk)` | `R-CharWalk` c, native |
 | `(R-CodeBase)` | not counted — executor: bytecode reads through a cached base |
-| `(R-Cold)` | `/loft` c (the runtime helpers' half is their own shape, not counted) |
+| `(R-Cold)` | counted; admitted on no bench program |
 | `(R-Compact)` | `R-Compact` ir · `/prepend` ir |
 | `(R-CompleteWrite)` | `R-CompleteWrite` ir |
 | `(R-Const)` | `R-Const` ir · `/fn` parse |

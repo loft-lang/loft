@@ -921,7 +921,8 @@ impl ViewWalk<'_> {
         });
         let grown = grown_containers(stmt, self.data, self.function, self.database);
         let reshaped = reshaped_containers(stmt, self.data, self.function);
-        for (place, at) in grown.into_iter().chain(reshaped) {
+        // By reference, as `disturb_parts` walks the same map.
+        for (&place, &at) in grown.iter().chain(reshaped.iter()) {
             out.push((place, at.depth, at.index, 1, false));
         }
         out
@@ -968,7 +969,10 @@ impl ViewWalk<'_> {
         // literal-index one (loft#2161).
         let mut whole: HashSet<(u16, u32)> = HashSet::default();
         let released = released_children(stmt, self.data);
-        for (place, at) in reshaped_containers(stmt, self.data, self.function) {
+        // Walked by reference: the map's by-value iterator, dropped half-built for an empty map,
+        // is a branch memcheck cannot follow through optimised code (the release Valgrind sweep).
+        let reshaped = reshaped_containers(stmt, self.data, self.function);
+        for (&place, &at) in &reshaped {
             if released.contains_key(&place) {
                 self.shake_deeper_through_views(place, at.depth, None, ViewCause::Released);
                 continue;

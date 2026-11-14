@@ -1,8 +1,8 @@
 diff --git a/default/01_code.loft b/default/01_code.loft
-index bcad6981b..9e09d6393 100644
+index 40959b490..1963a516b 100644
 --- a/default/01_code.loft
 +++ b/default/01_code.loft
-@@ -864,21 +864,6 @@ pub fn then(self: Ordering, next: Ordering) -> Ordering {
+@@ -1003,21 +1003,6 @@ pub fn then(self: Ordering, next: Ordering) -> Ordering {
  }
  #pure
  
@@ -24,9 +24,9 @@ index bcad6981b..9e09d6393 100644
  /// `+` as the method `Addable` names: `a.plus(b)` is `a + b`.
  pub operator plus(self: integer, other: integer) -> integer { self + other }
  #pure
-@@ -1027,16 +1012,6 @@ fn OpAppendCharacter(pos: const u16, v1: character);
- fn OpConvIntFromCharacter(v1: character) -> i32;
+@@ -1179,16 +1164,6 @@ fn OpConvIntFromCharacter(v1: character) -> i32;
  #rust"if @v1 == char::from(0) {{ i64::MIN }} else {{ i64::from(@v1 as u32) }}"
+ #loft"if v1 == 0 {{ null }} else {{ v1 }}"
  // `compare` for text and character sits here, after the operators `<` reads for them.
 -/// Where `self` stands against `other`, in the order `<` uses: by bytes, as `<` compares text.
 -pub operator compare(self: text, other: text) -> Ordering {

@@ -1,7 +1,8 @@
 diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
+index 41c85498d..ee55f4f93 100644
 --- a/src/bind_lowering.rs
 +++ b/src/bind_lowering.rs
-@@ -146,7 +146,7 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
+@@ -212,7 +212,7 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
      // (@FR-O-Witness, loft#1336): its deps are empty only because a later copy stripped them.
      // Through `heap_def_nr` and `base()`, so a struct-enum or nullable element view
      // materialises too (loft#1693, loft#1456).
@@ -10,10 +11,10 @@ diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
          && tp.depend().is_empty()
          && function.owner_witness(v).is_none()
          && crate::use_analysis::projection_container_var(data, value).is_some()
-@@ -853,7 +853,7 @@ fn re_arm(
-     }
-     let reads_v_on_exit_only = rb.rhs_reads_v && stashed && !reads_var_unless_exiting(value, v);
-     if rb.owned_ref
+@@ -1114,7 +1114,7 @@ fn re_arm(
+     // would have no owner.
+     let kept_copies = rb.buffer_kept && tp.depend().is_empty() && crate::keys::kept_element_copy();
+     if (rb.owned_ref || kept_copies)
 -        && let Some(rec) = tp.base().heap_def_nr()
 +        && let Type::Reference(rec, _) = tp.base().clone()
          && (!rb.rhs_reads_v || reads_v_on_exit_only)

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! `@FR-R-Cold`'s loft clause: an early exit that builds a text is written as a cold helper.
 //!
 //! A guard that reports and leaves — `if pos + n > len(code) { fault = "…{pos}…"; return
