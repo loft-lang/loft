@@ -377,7 +377,22 @@ fn ignored_tests_baseline_is_current() {
         let src = fa::read_to_string(file).unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
         let lines: Vec<&str> = src.lines().collect();
         for (i, line) in lines.iter().enumerate() {
-            let t = line.trim_start();
+            // rustfmt writes a `cfg_attr` with a reason over several lines: read it as one.
+            let joined: String;
+            let t = if line.trim() == "#[cfg_attr(" {
+                let mut whole = line.trim().to_string();
+                for next in lines.iter().skip(i + 1).take(5) {
+                    whole.push(' ');
+                    whole.push_str(next.trim());
+                    if next.trim() == ")]" {
+                        break;
+                    }
+                }
+                joined = whole.replace("( ", "(").replace(" )]", ")]");
+                joined.as_str()
+            } else {
+                line.trim_start()
+            };
             // `#[ignore…]` or `#[cfg_attr(<cfg>, ignore…)]` — both carry a reason the same way.
             let rest = if let Some(r) = t.strip_prefix("#[ignore") {
                 r

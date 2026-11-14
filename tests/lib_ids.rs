@@ -209,7 +209,7 @@ fn library_code_does_not_name_the_programs_numbers_in_a_sample() {
 
 /// The whole corpus, every program in turn in this one process — the nightly's run.
 #[test]
-#[ignore = "the whole corpus — runs nightly in miri.yml's release-gate job; the per-commit run checks a sample"]
+#[ignore = "the whole corpus — runs nightly in miri.yml's `release-gate-sweeps` job; the per-commit run checks a sample"]
 fn library_code_does_not_name_the_programs_numbers_in_the_whole_corpus() {
     check_shard(0, 1);
 }

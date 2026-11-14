@@ -9259,7 +9259,7 @@ mod p318_hash_deepcopy {
     // it under DA (where the fail-fast is the correct behavior), run it otherwise.
     #[cfg_attr(
         debug_assertions,
-        ignore = "graceful dangling-walk is release-mode; DA addr() fail-fasts first"
+        ignore = "a release-mode walk: --release, or --ignored"
     )]
     fn verify_graph_catches_a_dangling_pointer() {
         let mut stores = Stores::new();

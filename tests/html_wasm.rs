@@ -895,13 +895,7 @@ fn parallel_html_builds_do_not_cross_contaminate() {
 /// no wasm target offers.  An entry states the facility, which gates still run
 /// the package, and what would remove it (TESTING.md § Every skip says why, how
 /// it runs instead, and when it ends).
-const LIB_PKGS_WASM_SKIP: &[&str] = &[
-    // server: its tests bind a socket and accept connections.  A browser page
-    // and a WASI guest have no listen/accept — the sandbox forbids it — so the
-    // limit is the platform's, by construction, and has no end condition.  The
-    // package's tests run on the interpreter and `--native` gates.
-    "server",
-];
+const LIB_PKGS_WASM_SKIP: &[&str] = &[];
 
 /// Individual `<pkg>/<file>.loft` lib tests skipped for the WASM gate.
 const LIB_TESTS_WASM_SKIP: &[&str] = &[
@@ -920,34 +914,13 @@ const LIB_TESTS_WASM_SKIP: &[&str] = &[
 /// Still run on wasmtime (wasip2) which has a working WASI FS via `--dir`.
 /// Use this for libraries that genuinely need the filesystem — the browser
 /// has none by construction (correct platform behaviour, not a bug to fix).
-const LIB_PKGS_NODE_SKIP: &[&str] = &[
-    // hex_world: its tests save and load a binary world file.  The browser has
-    // no filesystem without a JS host bridge; wasmtime has one (`--dir <tmp>`),
-    // so the package runs on the wasmtime path and on the interpreter and
-    // `--native` gates.  Ends when a JS-host VirtFS bridge ships.
-    "hex_world",
-];
+const LIB_PKGS_NODE_SKIP: &[&str] = &[];
 
 /// Packages skipped ONLY on the wasmtime (wasip2) path.  Use this for
 /// libraries whose host bridge depends on a browser-only API (Canvas,
 /// createImageBitmap, etc.) — wasmtime has no canvas / image codec; the
 /// browser does.
-const LIB_PKGS_WASMTIME_SKIP: &[&str] = &[
-    // imaging: its PNG decode is the browser's (`createImageBitmap` + canvas
-    // `getImageData`, through `lib/imaging/wasm/{src/lib.rs, host.js}` and
-    // `doc/loft-gl-wasm.js`).  Wasmtime has no canvas or image codec, so the
-    // bridge call answers false and `assert(img.width == 256)` fails for a
-    // reason that is not loft's.  The package runs on the browser path and on
-    // the interpreter and `--native` gates.  Ends when the wasm bridge carries
-    // a pure-wasm PNG decoder, so wasmtime decodes without a host canvas.
-    "imaging",
-    // input: it depends on `graphics`, whose native crate is not in the
-    // wasmtime (wasip2) sysroot, so the `--html` build fails at library
-    // resolution (E0463) before any test runs — a packaging limit, not a
-    // language one.  The package runs on the interpreter, `--native` and the
-    // browser path.  Ends when the graphics crate is built for wasip2.
-    "input",
-];
+const LIB_PKGS_WASMTIME_SKIP: &[&str] = &[];
 
 /// Collect every `lib/<pkg>/tests/*.loft`, sorted.
 fn collect_lib_wasm_tests() -> Vec<PathBuf> {

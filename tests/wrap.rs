@@ -401,7 +401,7 @@ fn wasm_dir() -> std::io::Result<()> {
 /// 650-760 s on the Windows runner, and the duration gate allows a test half its 600 s limit.
 /// What a chunk gives up is the WHOLE-corpus interaction — one script corrupting shared state
 /// that a later, innocent script dies of (how loft#920 was found) — so that run is kept as
-/// [`loft_suite_whole_corpus`], `#[ignore]`d and run by the nightly release-gate job.
+/// [`loft_suite_whole_corpus`], `#[ignore]`d and run by miri.yml's nightly `release-gate-sweeps` job.
 fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut files: Vec<PathBuf> = fa::read_dir("tests/scripts")?
@@ -496,7 +496,7 @@ fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
 /// `// @FRAME_LIMIT:`), in milliseconds; compiling a program 300 levels deep costs time that
 /// grows with the square of the depth.  Nightly, beside [`loft_suite_whole_corpus`].
 #[test]
-#[ignore = "the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored"]
+#[ignore = "the limit guards at the real 300 / 64 KiB — miri.yml's nightly `release-gate-sweeps` job; run with --ignored"]
 fn limits_at_full_size() -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut files: Vec<PathBuf> = fa::read_dir("tests/limits_full")?
@@ -580,7 +580,7 @@ fn loft_suite_chunks_cover_the_corpus() {
 /// The whole corpus in ONE process, in order — the interaction coverage the chunks give up, and
 /// the run `LOFT_SCRIPT_FIRST` / `LOFT_SCRIPT_LAST` bisect over.
 #[test]
-#[ignore = "the whole tests/scripts corpus in one process — the nightly release-gate job (miri.yml); run with --ignored"]
+#[ignore = "the whole tests/scripts corpus in one process — miri.yml's nightly `release-gate-sweeps` job; run with --ignored"]
 fn loft_suite_whole_corpus() -> std::io::Result<()> {
     loft_suite_run(None)
 }

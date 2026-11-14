@@ -9,6 +9,7 @@
 # `make release-checklist`'s A-ignores reads this file, so a test ignored WITHOUT a
 # reason is a release finding, not just a lint.
 # Regenerate with: `python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline`
+src/database/allocation.rs::verify_graph_catches_a_dangling_pointer	a release-mode walk: --release, or --ignored
 src/database/spans.rs::record_spans_across_the_generator_matrix	a design measurement: reads a layout and PRINTS, rather than defending an invariant — run with --release --lib --ignored --nocapture
 src/fuzz_keyed.rs::f26_wide_poison_sweep	F2.6 wide poison sweep — heavy; runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --lib fuzz_keyed::tests::f26_wide_poison_sweep -- --ignored`
 src/fuzz_oracle.rs::seed_corpus_replay	F1 seed-corpus replay — heavy; runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --lib fuzz_oracle::tests::seed_corpus_replay -- --ignored`
@@ -36,18 +37,19 @@ tests/format_width_is_bounded.rs::a_width_below_zero_pads_nothing	no `ulimit -v`
 tests/frontend_counts.rs::front_end_allocations_do_not_grow	advisory: ci.yml's `front-end allocation pins (ubuntu, advisory)` job runs it with `--ignored` (both rows); a moved count shows red there, never failing a test leg or the merge
 tests/fuzz_differential.rs::keyed_generated_agree_across_backends	F3 differential (rustc per program) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --features fuzzing --test fuzz_differential -- --ignored`
 tests/host_call.rs::measure_call_cost	a measurement, not a gate — run with --test host_call measure_call_cost -- --ignored --nocapture
+tests/issues.rs::p122_long_running_struct_loop	P122 stress, 10 min in debug: --release, or --ignored
 tests/issues.rs::regen_fill_rs	maintenance: regenerates src/fill.rs — run manually when default/*.loft changes
 tests/leak_cases.rs::leak_cases_native	heavy (rustc per case) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cases leak_cases_native -- --ignored`
 tests/leak_cross_mode.rs::issue1369_nullable_rebind_absent_source_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
 tests/leak_cross_mode.rs::p297_nested_call_arg_temp_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
 tests/leak_cross_mode.rs::p298_const_struct_arg_call_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
 tests/leak_cross_mode.rs::plain_call_to_loop_local_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
-tests/lib_ids.rs::library_code_does_not_name_the_programs_numbers_in_the_whole_corpus	the whole corpus — runs nightly in miri.yml's release-gate job; the per-commit run checks a sample
-tests/native.rs::a_c_shim_links_into_the_wasm_target	a wasm32 build of a whole program, 128 s in the serial native group — runs nightly in miri.yml's release-gate job
-tests/native.rs::native_limits_at_full_size	the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored
-tests/native.rs::two_c_shims_link_into_the_wasm_target	a wasm32 build of a whole program, the per-commit suite's only wasip2 rlib user — runs nightly in miri.yml's release-gate job
+tests/lib_ids.rs::library_code_does_not_name_the_programs_numbers_in_the_whole_corpus	the whole corpus — runs nightly in miri.yml's `release-gate-sweeps` job; the per-commit run checks a sample
+tests/native.rs::a_c_shim_links_into_the_wasm_target	a wasm32 build of a whole program, 128 s in the serial native group — runs nightly in miri.yml's `release-gate-sweeps` job
+tests/native.rs::native_limits_at_full_size	the limit guards at the real 300 / 64 KiB — miri.yml's nightly `release-gate-sweeps` job; run with --ignored
+tests/native.rs::two_c_shims_link_into_the_wasm_target	a wasm32 build of a whole program, the per-commit suite's only wasip2 rlib user — runs nightly in miri.yml's `release-gate-sweeps` job
 tests/ownership_fuzz_gate.rs::fuzz_gate_map54_full_replay	full both-backends replay (rustc per cell) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_fuzz_gate fuzz_gate_map54_full_replay -- --ignored`
 tests/ownership_oracle.rs::oracle_fact_is_backend_identical_si2	native backend needs rustc per run — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored`
 tests/ownership_oracle.rs::oracle_leak_scan_ratchet	sweeps tests/scripts under check-leak — runs on every PR in ci.yml's advisory `leak-scan` job; by hand: `cargo test --release --test ownership_oracle oracle_leak_scan_ratchet -- --ignored`
-tests/wrap.rs::limits_at_full_size	the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored
-tests/wrap.rs::loft_suite_whole_corpus	the whole tests/scripts corpus in one process — the nightly release-gate job (miri.yml); run with --ignored
+tests/wrap.rs::limits_at_full_size	the limit guards at the real 300 / 64 KiB — miri.yml's nightly `release-gate-sweeps` job; run with --ignored
+tests/wrap.rs::loft_suite_whole_corpus	the whole tests/scripts corpus in one process — miri.yml's nightly `release-gate-sweeps` job; run with --ignored

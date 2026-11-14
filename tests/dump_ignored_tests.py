@@ -29,6 +29,13 @@ def scan(path):
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     for i, line in enumerate(lines):
+        # rustfmt writes a `cfg_attr` with a reason over several lines: read it as one.
+        if line.strip() == "#[cfg_attr(":
+            for j in range(i + 1, min(i + 6, len(lines))):
+                line += " " + lines[j].strip()
+                if lines[j].strip() == ")]":
+                    break
+            line = line.replace("( ", "(").replace(" )]", ")]")
         m = IGNORE.match(line)
         reason = None
         if m:
