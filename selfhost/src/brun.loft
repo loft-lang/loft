@@ -203,6 +203,12 @@ H_CLEAR_KEYED = 179;
 H_REPLACE_KEYED = 180;
 H_APPEND_CHARACTER = 181;
 H_CONV_FLOAT_FROM_NULL = 182;
+H_INT4_RAW = 183;
+H_VECTOR_REF = 184;
+H_INDEX_LEN = 185;
+H_SET_STACK_REF = 186;
+H_NEGATE_SINGLE = 187;
+H_ABS_FLOAT = 188;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -448,6 +454,19 @@ pub fn handler(name: text) -> integer {
     "OpAppendCharacter" => H_APPEND_CHARACTER,
     "OpAppendStackCharacter" => H_APPEND_CHARACTER,
     "OpConvFloatFromNull" => H_CONV_FLOAT_FROM_NULL,
+    "OpConvCharacterFromNull" => H_CONV_FLOAT_FROM_NULL,
+    "OpGetInt4Raw" => H_INT4_RAW,
+    "OpSetInt4Raw" => H_INT4_RAW,
+    "OpVectorRef" => H_VECTOR_REF,
+    "OpVectorRefNullable" => H_VECTOR_REF,
+    "OpLengthIndex" => H_INDEX_LEN,
+    "OpSizeIndex" => H_INDEX_LEN,
+    "OpLengthSpatial" => H_INDEX_LEN,
+    "OpLengthTrie" => H_INDEX_LEN,
+    "OpSizeSpatial" => H_INDEX_LEN,
+    "OpSetStackRef" => H_SET_STACK_REF,
+    "OpMinSingleSingle" => H_NEGATE_SINGLE,
+    "OpAbsFloat" => H_ABS_FLOAT,
     _ => -1
   }
 }
@@ -639,6 +658,7 @@ fn layout_of(h: integer) -> text {
     179 => "h",
     180 => "h",
     181 => "h",
+    183 => "h",
     _ => ""
   }
 }
@@ -1050,6 +1070,583 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
   sp
 }
 
+// The operators this runner added after its first slice (handler numbers from `H_PUT_SINGLE`
+// on): one dispatch of their own, as `call_native` is, so `run` stays inside the compiler's
+// limit on one function's variables.  The stack top and the code position come in and go back
+// in `regs` (`[sp, pc]`); answers 0, or -1 with the reason in `why[0]` when the runner does not
+// carry the operator or this use of it.
+fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, io: vector<integer>, tl: vector<boolean>, images: vector<vector<u8>>, imaged: vector<boolean>, step_io: vector<integer>, why: vector<text>) -> integer {
+  sp = regs[0] ?? 0;
+  pc = regs[1] ?? 0;
+  if h == H_PUT_SINGLE {
+    psp = u16_at(img.code, pc);
+    pc += 2;
+    sp -= 8;
+    crt::stack_move(stk, sp, sp + 8 - psp, 4);
+  } else if h == H_VAR_SINGLE {
+    crt::stack_move(stk, sp - u16_at(img.code, pc), sp, 4);
+    pc += 2;
+    sp += 8;
+  } else if h == H_SINGLE2 {
+    // Single precision through the double: for + - * / on single operands the double's result
+    // rounded to single is the single-precision result.
+    sp -= 8;
+    sb = crt::get_float(stk, 1, 8 + sp, 0, true);
+    sa = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    sname = img.ops[op] ?? "";
+    crt::set_float(stk, 1, 8 + sp - 8, 0, if sname == "OpAddSingle" { sa + sb } else if sname == "OpMinSingle" { sa - sb } else if sname == "OpMulSingle" { sa * sb } else { sa / sb }, true);
+  } else if h == H_NE_BOOL {
+    sp -= 8;
+    nb = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp, 0, 0) ?? 255;
+    na = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp - 8, 0, 0) ?? 255;
+    set_bool(stk, sp - 8, na != nb);
+  } else if h == H_REM_INT_NULLABLE {
+    sp -= 8;
+    rb2 = get(stk, sp);
+    set(stk, sp - 8, if rb2 == 0 { null } else { get(stk, sp - 8) % rb2 });
+  } else if h == H_GET_DB_REF {
+    // The reference a record's field stores (`Stores::get_db_ref`): null when it names a
+    // removed record (`@FR-H-Removed`).
+    gdf = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    crt::get_dbref(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gdf);
+    crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  } else if h == H_CONV_INT_FROM_CHAR {
+    cc = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
+    set(stk, sp - 8, if cc == 0 { null } else { cc });
+  } else if h == H_GET_FILE {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set_bool(stk, sp, crt::get_file(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    sp += 8;
+  } else if h == H_GET_FILE_TEXT {
+    // The file's text into the text the `&text` reference names; both popped.
+    crt::slot_ref(io, stk, sp - 16);
+    gts = io[0] ?? NULL_STORE;
+    gtr = io[1] ?? 0;
+    gtp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    crt::file_text_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gts, gtr, gtp);
+  } else if h == H_WRITE_FILE {
+    // A value written at the File's next position: a text's bytes as they are, any other
+    // value in its binary form (`files::write`); the value's reference and the File popped.
+    wtp = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    wvs = io[0] ?? NULL_STORE;
+    wvr = io[1] ?? 0;
+    wvp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    if wtp == 5 {
+      crt::ser_ref_text(wvs, wvr, wvp);
+      crt::ser_write(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else {
+      files::write(img.types, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, crt::Pos { s: wvs, r: wvr, p: wvp }, wtp);
+    }
+  } else if h == H_READ_FILE {
+    // `bytes` read from the File's next position into the value: a text's as they are, any
+    // other value decoded from its binary form (`files::read`).
+    rtp3 = u16_at(img.code, pc);
+    pc += 2;
+    rn = get(stk, sp - 8) ?? 0;
+    crt::slot_ref(io, stk, sp - 24);
+    rvs = io[0] ?? NULL_STORE;
+    rvr = io[1] ?? 0;
+    rvp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 40);
+    sp -= 40;
+    if rtp3 == 5 {
+      if crt::read_file(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rn, true, 0) >= 0 {
+        crt::de_ref_text(rvs, rvr, rvp);
+      }
+    } else {
+      files::read(img.types, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, crt::Pos { s: rvs, r: rvr, p: rvp }, rn, rtp3);
+    }
+  } else if h == H_FS_OP {
+    // A path operation on one path, or `OpMoveFile` on two; answers the runtime's code.
+    fname = img.ops[op] ?? "";
+    fwhich = if fname == "OpDelete" { 0 } else if fname == "OpMoveFile" { 1 } else if fname == "OpMkdir" { 2 } else if fname == "OpMkdirAll" { 3 } else { 4 };
+    fto: text? = null;
+    if fwhich == 1 {
+      fto = crt::stack_str(stk, sp - 16);
+      sp -= 16;
+    }
+    ffrom = crt::stack_str(stk, sp - 16);
+    sp -= 16;
+    set(stk, sp, crt::fs_op(fwhich, ffrom, fto));
+    sp += 8;
+  } else if h == H_FILE_OP {
+    // `OpSizeFile`, `OpSeekFile(pos)`, `OpTruncateFile(size)`, `OpSyncFile` on the File.
+    oname = img.ops[op] ?? "";
+    owhich = if oname == "OpSizeFile" { 0 } else if oname == "OpSeekFile" { 1 } else if oname == "OpTruncateFile" { 2 } else { 3 };
+    oarg = 0;
+    if owhich == 1 || owhich == 2 {
+      oarg = get(stk, sp - 8) ?? 0;
+      sp -= 8;
+    }
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    oans = crt::file_op(owhich, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, oarg);
+    if owhich != 1 {
+      set(stk, sp, oans);
+      sp += 8;
+    }
+  } else if h == H_GET_RECORD {
+    // `get_record`: the key parts and then the collection popped; a hash's entry, or a
+    // sorted's or an index's record, found under them (`hash_find` / `keyed_find`).
+    ensure_table(img.types, tl);
+    gtp2 = u16_at(img.code, pc);
+    gn = img.code[pc + 2] ?? 0;
+    pc += 3;
+    gkind = types::keyed_kind(img.types, gtp2) ?? 0;
+    if types::hash_element(img.types, gtp2) == null && gkind == 0 {
+      why[0] = "a lookup in a collection the runner does not look up in: OpGetRecord";
+      return -1;
+    }
+    gbytes = push_keys(img.types, stk, gtp2, gn, sp);
+    if gbytes < 0 {
+      why[0] = "a lookup in {img.types[gtp2]?.name ?? "type {gtp2}"} whose key the runner cannot read: OpGetRecord";
+      return -1;
+    }
+    sp -= gbytes + 16;
+    crt::slot_ref(io, stk, sp);
+    if gkind != 0 {
+      crt::keyed_find(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gkind, gtp2, gn);
+    } else {
+      crt::hash_find(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gtp2, gn);
+    }
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if h == H_SET_SHORT {
+    // The value popped, then the reference; a 2-byte field or a nullable byte, `min` its
+    // offset.
+    sfld = u16_at(img.code, pc);
+    smn = i32_at(img.code, pc + 2);
+    pc += 6;
+    sv = get(stk, sp - 8);
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    sop = img.ops[op] ?? "";
+    crt::set_w(if sop == "OpSetShortRaw" { crt::W_SHORT_RAW } else if sop == "OpSetByteNullable" { crt::W_BYTE_NULLABLE } else { crt::W_SHORT }, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, sfld, smn, sv);
+  } else if h == H_STORE_LIVE {
+    // A reference to a record (not null, not the stack's) in a store not freed.
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    lst = io[0] ?? NULL_STORE;
+    set_bool(stk, sp, (io[1] ?? 0) != 0 && lst != NULL_STORE && crt::store_live(lst));
+    sp += 8;
+  } else if h == H_LENGTH_HASH {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set(stk, sp, crt::hash_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    sp += 8;
+  } else if h == H_CMP_SINGLE {
+    // Single compares read through the double: exact, a single widens without rounding.
+    sp -= 8;
+    cfb = crt::get_float(stk, 1, 8 + sp, 0, true);
+    cfa = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    cname = img.ops[op] ?? "";
+    set_bool(stk, sp - 8, cmp_float(if cname == "OpEqSingle" { 0 } else if cname == "OpNeSingle" { 1 } else if cname == "OpLtSingle" { 2 } else { 3 }, cfa, cfb));
+  } else if h == H_FORMAT_SINGLE {
+    // As `format_float`, the value a single.
+    fsp = u16_at(img.code, pc);
+    ftoken = img.code[pc + 2] ?? 32;
+    fplus = (img.code[pc + 3] ?? 0) == 1;
+    fdir = i8_at(img.code, pc + 4);
+    pc += 5;
+    fprecision = get(stk, sp - 8) ?? 0;
+    fwidth = get(stk, sp - 16) ?? 0;
+    fsv = crt::get_float(stk, 1, 8 + sp - 24, 0, true);
+    sp -= 24;
+    crt::slot_text_append(stk, sp - (fsp - 24), crt::format_float(fsv, fwidth, fprecision, ftoken, fplus, fdir, true));
+  } else if h == H_CONV_BOOL_FROM_SINGLE {
+    bsv = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    set_bool(stk, sp - 8, bsv != null);
+  } else if h == H_CONV_BOOL_FROM_CHAR {
+    bcv = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
+    set_bool(stk, sp - 8, (bcv ?? 0) != 0);
+  } else if h == H_EQ_REF {
+    // Two null references are equal; a null and a record are not; two records are equal
+    // when they name the same store, record and position.
+    crt::slot_ref(io, stk, sp - 16);
+    ers = io[0] ?? NULL_STORE;
+    err = io[1] ?? 0;
+    erp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    ear = io[1] ?? 0;
+    set_bool(stk, sp, if ear == 0 || err == 0 { ear == 0 && err == 0 } else { (io[0] ?? NULL_STORE) == ers && ear == err && (io[2] ?? 0) == erp });
+    sp += 8;
+  } else if h == H_PLACE_RECORD {
+    // `@FR-R-Place` (`Stores::place_record_prefilled`): a call's return buffer claimed in the
+    // store of the record its result lands in, prefilled with its type's defaults; in a fresh
+    // store when the host names none.  A record that is not an element of the host store's
+    // root vector is noted foreign (`@FR-H-RootExtent`), the root read off the store's type.
+    ptp = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    phs = io[0] ?? NULL_STORE;
+    pfresh = phs == NULL_STORE || (io[1] ?? 0) == 0 || !crt::store_live(phs);
+    pelem = if pfresh { null } else { types::root_vector_element(img.types, crt::store_known(phs)) };
+    default_of(img.types, images, imaged, ptp);
+    pimg = images[ptp] ?? [];
+    crt::place_record(io, phs, io[1] ?? 0, io[2] ?? 0, ptp, types::enum_parent_size(img.types, ptp), pimg, pelem != null && pelem != ptp);
+    if pfresh {
+      crt::set_store_known(io[0] ?? NULL_STORE, ptp);
+    }
+    crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  } else if h == H_MOVE_VECTOR || h == H_MOVE_FIELD || h == H_HASH_REMOVE {
+    // Two references popped — the operator's first argument the deeper — and the type; the
+    // placement family (`@FR-R-Place`) and a hash's removal, through the C runtime.
+    ensure_table(img.types, tl);
+    mraw = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    m2s = io[0] ?? NULL_STORE;
+    m2r = io[1] ?? 0;
+    m2p = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    m1s = io[0] ?? NULL_STORE;
+    m1r = io[1] ?? 0;
+    m1p = io[2] ?? 0;
+    mname = img.ops[op] ?? "";
+    if h == H_MOVE_VECTOR {
+      mlinked = img.types[mraw]?.linked ?? false;
+      if mname == "OpMoveVector" {
+        crt::move_vector(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mlinked);
+      } else {
+        crt::vec_replace(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mlinked);
+      }
+    } else if h == H_MOVE_FIELD {
+      crt::move_field(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mname == "OpMoveRecord");
+    } else if m2r != 0 {
+      // The type's top bit (`CLEAR_KEYED_VIEW`) marks a linked group's view member, which
+      // only unlinks; a sorted or an index removes through `keyed_remove`.
+      mtp = mraw & 32767;
+      mkelem = types::keyed_element(img.types, mtp);
+      if mkelem != null {
+        crt::keyed_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::keyed_kind(img.types, mtp) ?? 0, mkelem!, mtp, mraw & 32768 != 0);
+      } else if types::hash_element(img.types, mtp) != null {
+        crt::hash_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::content_of(img.types, mtp) ?? 0, mtp, mraw & 32768 != 0);
+      } else {
+        why[0] = "a removal from a collection the runner does not remove from: OpHashRemove";
+        return -1;
+      }
+    }
+  } else if h == H_SET_KEYED {
+    // `c[k…] = v`: the key parts, the value and the collection popped; the type's top bit
+    // releases the value after (`Stores::set_keyed`).
+    ensure_table(img.types, tl);
+    kraw = u16_at(img.code, pc);
+    kn2 = img.code[pc + 2] ?? 0;
+    pc += 3;
+    ktp = kraw & 32767;
+    kkind = types::keyed_kind(img.types, ktp) ?? 0;
+    if types::hash_element(img.types, ktp) == null && kkind == 0 {
+      why[0] = "a keyed write into a collection the runner does not write into: OpSetKeyed";
+      return -1;
+    }
+    kbytes = push_keys(img.types, stk, ktp, kn2, sp);
+    if kbytes < 0 {
+      why[0] = "a keyed write into {img.types[ktp]?.name ?? "type {ktp}"} whose key the runner cannot read ({kn2} parts): OpSetKeyed";
+      return -1;
+    }
+    sp -= kbytes;
+    crt::slot_ref(io, stk, sp - 16);
+    kvs = io[0] ?? NULL_STORE;
+    kvr = io[1] ?? 0;
+    kvp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    crt::set_keyed(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, kvs, kvr, kvp, types::content_of(img.types, ktp) ?? 0, ktp, kn2, kraw >= 32768, kkind);
+  } else if h == H_ITERATE {
+    // A walk's start (`State::iterate`): the key list and the bounds' sizes from the code,
+    // then the till bound, the from bound and the collection popped; the walk's state pushed.
+    // The state is the C runtime's cursor — only `OpStep` and `OpRemove` read it, both here.
+    // A snapshot (kind 4) walks without bounds; an index (1), a sorted (2) or an ordered (3)
+    // through `keyed_iterate`; a spatial walk is refused.
+    ion = img.code[pc] ?? 0;
+    iarg = u16_at(img.code, pc + 1);
+    ink = img.code[pc + 3] ?? 0;
+    pc += 4;
+    ikt: vector<integer> = [];
+    for _ in 0..ink {
+      it = i8_at(img.code, pc);
+      ikt += [it.abs()];
+      crt::walk_key(it, u16_at(img.code, pc + 1), i32_at(img.code, pc + 3));
+      pc += 7;
+    }
+    infrom = img.code[pc] ?? 0;
+    intill = img.code[pc + 1] ?? 0;
+    pc += 2;
+    ikind = ion & 63;
+    if ikind < 1 || ikind > 4 || (ikind == 4 && (infrom != 0 || intill != 0)) {
+      why[0] = "a walk the runner does not carry: OpIterate";
+      return -1;
+    }
+    itill = walk_bound_bytes(ikt, intill);
+    push_walk_bound(stk, ikt, infrom, sp - itill);
+    push_walk_bound(stk, ikt, intill, sp);
+    sp -= itill + walk_bound_bytes(ikt, infrom) + 16;
+    crt::slot_ref(io, stk, sp);
+    if ikind == 4 {
+      set(stk, sp, crt::scratch_iterate(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    } else {
+      ensure_table(img.types, tl);
+      set(stk, sp, crt::keyed_iterate(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ion, iarg, infrom, intill));
+    }
+    sp += 8;
+  } else if h == H_STEP || h == H_WALK_REMOVE {
+    // A walk's next record (`State::step`), or the current one removed (`State::remove`):
+    // the state at its variable, read and written before the collection is popped.
+    wst = u16_at(img.code, pc);
+    won = img.code[pc + 2] ?? 0;
+    warg = u16_at(img.code, pc + 3);
+    pc += 5;
+    wstate = get(stk, sp - wst) ?? 0;
+    crt::slot_ref(io, stk, sp - 16);
+    wkind = won & 63;
+    if h == H_WALK_REMOVE {
+      if wkind < 1 || wkind > 3 {
+        why[0] = "a removal in a walk the runner does not carry: OpRemove";
+        return -1;
+      }
+      ensure_table(img.types, tl);
+      set(stk, sp - wst, crt::walk_remove(wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won, warg));
+      sp -= 16;
+    } else {
+      if wkind == 4 {
+        crt::scratch_step(step_io, wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won & 64 != 0);
+      } else if wkind >= 1 && wkind <= 3 {
+        ensure_table(img.types, tl);
+        crt::keyed_step(step_io, wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won, warg);
+      } else {
+        why[0] = "a walk the runner does not carry: OpStep";
+        return -1;
+      }
+      set(stk, sp - wst, step_io[3]);
+      crt::set_slot_ref(stk, sp - 16, step_io[0] ?? NULL_STORE, step_io[1] ?? 0, step_io[2] ?? 0);
+    }
+  } else if h == H_FREE_SCRATCH {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::free_scratch(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  } else if h == H_FREE_RECORD_IN {
+    // What the `tp` record owns released, the record itself left (`Stores::free_record_in`).
+    ensure_table(img.types, tl);
+    frtp = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::free_record_in(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, frtp);
+  } else if h == H_CAST_SINGLE_FROM_FLOAT {
+    crt::set_float(stk, 1, 8 + sp - 8, 0, get_f(stk, sp - 8), true);
+  } else if h == H_CONV_FLOAT_FROM_SINGLE {
+    cfs = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    crt::set_float(stk, 1, 8 + sp - 8, 0, cfs, false);
+  } else if h == H_GET_TEXT_SUB {
+    // `t[from..till]`: the bounds popped, the view below them replaced by its slice.
+    sp -= 16;
+    crt::stack_text_sub(stk, sp - 16);
+  } else if h == H_TEXT_CHARACTER {
+    // `t[i]`: the index and the view popped, the character pushed (null out of range; Rust
+    // raises a recoverable error there, which only its logger sees).
+    tch = crt::stack_text_char(stk, sp - 24);
+    sp -= 24;
+    set(stk, sp, tch);
+    sp += 8;
+  } else if h == H_TEXT_WALK_STEP {
+    crt::text_walk_step(stk, sp, u16_at(img.code, pc), u16_at(img.code, pc + 2), u16_at(img.code, pc + 4), u16_at(img.code, pc + 6), img.code[pc + 8] ?? 0);
+    pc += 9;
+  } else if h == H_TEXT_END_JUMP {
+    // A text walk's loop test: on while the text is longer than the index.
+    tes = u16_at(img.code, pc);
+    tea = img.code[pc + 2] ?? 0;
+    tei = u16_at(img.code, pc + 3);
+    ted = i32_at(img.code, pc + 5);
+    pc += 9;
+    if crt::local_text_len(stk, sp - tes, tea) > (get(stk, sp - tei) ?? (-9223372036854775807 - 1)) {
+      pc += ted;
+    }
+  } else if h == H_CAST_FROM_TEXT {
+    // `t as integer` / `t as float` (Rust's `parse`): null when it does not parse.
+    cts = crt::stack_str(stk, sp - 16);
+    sp -= 16;
+    if (img.ops[op] ?? "") == "OpCastIntFromText" {
+      set(stk, sp, if cts == null { null } else { cts! as integer? });
+    } else {
+      crt::set_float(stk, 1, 8 + sp, 0, if cts == null { null } else { cts! as float? }, false);
+    }
+    sp += 8;
+  } else if h == H_RANGE_DEFAULT {
+    // A value checked against its declared range: null takes the default (when there is
+    // one), out of range the default (Rust raises a recoverable error, which only its
+    // logger sees).
+    rlo = i64_at(img.code, pc);
+    rhi = i64_at(img.code, pc + 8);
+    rdf = i64_at(img.code, pc + 16);
+    pc += 24;
+    rv = get(stk, sp - 8);
+    set(stk, sp - 8, if rv == null { if rdf == null { rv } else { rdf } } else if rv! >= (rlo ?? 0) && rv! <= (rhi ?? 0) { rv } else { rdf });
+  } else if h == H_FORMAT_DATABASE {
+    // `"{v}"` of a store value, rendered by `show::render` (bit 1 of the format pretty, bit 2
+    // JSON) and appended to the destination: the text local `pos` back from the stack top
+    // before the value is popped, or for the stack form the text that local's reference
+    // names (`State::format_database` / `format_stack_database`).
+    fdp = u16_at(img.code, pc);
+    fdtp = u16_at(img.code, pc + 2);
+    fdfmt = img.code[pc + 4] ?? 0;
+    pc += 5;
+    fdwhy = show::refusal(img.types, fdtp, []);
+    if fdwhy != "" {
+      why[0] = "{fdwhy}: {img.ops[op] ?? ""}";
+      return -1;
+    }
+    ensure_table(img.types, tl);
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    fdpiece = "";
+    show::render(img.types, fdtp, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, fdfmt, 0, fdpiece);
+    if (img.ops[op] ?? "") == "OpFormatStackDatabase" {
+      crt::slot_ref(io, stk, sp - (fdp - 16));
+      crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fdpiece);
+    } else {
+      crt::slot_text_append(stk, sp - (fdp - 16), fdpiece);
+    }
+  } else if h == H_SLICE_VECTOR {
+    // `v = src[lo..hi]` of scalar elements (the parser emits it for no other): the bounds,
+    // the source and the destination popped; a copy, or for `OpSliceView` a view.
+    svtp = u16_at(img.code, pc);
+    pc += 2;
+    svhi = get(stk, sp - 8) ?? 0;
+    svlo = get(stk, sp - 16) ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    svs = io[0] ?? NULL_STORE;
+    svr = io[1] ?? 0;
+    svp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 48);
+    sp -= 48;
+    crt::vec_slice(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, svs, svr, svp, svlo, svhi, img.types[svtp]?.size ?? 0, (img.ops[op] ?? "") == "OpSliceView");
+  } else if h == H_CLEAR_KEYED {
+    // `s.h = []` of a field (`Stores::remove_claims_keyed`); a linked group's secondary view
+    // (`CLEAR_KEYED_VIEW`, the type's top bit) drops only its own route.
+    ensure_table(img.types, tl);
+    ckraw = u16_at(img.code, pc);
+    pc += 2;
+    cktp = ckraw & 32767;
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    if ckraw & 32768 != 0 {
+      if !types::is_keyed(img.types, cktp) {
+        why[0] = "a keyed view clear of a type that is not a keyed collection: OpClearKeyed";
+        return -1;
+      }
+      crt::clear_view(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, cktp);
+    } else {
+      crt::clear(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, cktp);
+    }
+  } else if h == H_REPLACE_KEYED {
+    // A keyed local rebound from a call (`h = f()`): `dest` filled again from `src`; the
+    // flags the operator's own bit and whether the element tree may move whole.
+    ensure_table(img.types, tl);
+    rkraw = u16_at(img.code, pc);
+    pc += 2;
+    rktp = rkraw & 32767;
+    if !types::is_keyed(img.types, rktp) {
+      why[0] = "a keyed replace of a type that is not a keyed collection: OpReplaceKeyed";
+      return -1;
+    }
+    crt::slot_ref(io, stk, sp - 16);
+    rkds = io[0] ?? NULL_STORE;
+    rkdr = io[1] ?? 0;
+    rkdp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    crt::replace_keyed(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rkds, rkdr, rkdp, rktp, (if rkraw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(img.types, rktp) { 2 } else { 0 }));
+  } else if h == H_APPEND_CHARACTER {
+    // A character popped and appended to the text local `pos` back from the stack top before
+    // the pop (or the text its reference names); the null character appends nothing
+    // (`@FR-F-Render`).
+    acp = u16_at(img.code, pc);
+    pc += 2;
+    acc = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0) ?? 0;
+    sp -= 8;
+    if acc != 0 {
+      acs = "{acc as character}";
+      if (img.ops[op] ?? "") == "OpAppendStackCharacter" {
+        crt::slot_ref(io, stk, sp - (acp - 8));
+        crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acs);
+      } else {
+        crt::slot_text_append(stk, sp - (acp - 8), acs);
+      }
+    }
+  } else if h == H_CONV_FLOAT_FROM_NULL {
+    // A null float (NaN) or the null character (0) pushed.
+    if (img.ops[op] ?? "") == "OpConvCharacterFromNull" {
+      set(stk, sp, 0);
+    } else {
+      crt::set_float(stk, 1, 8 + sp, 0, null, false);
+    }
+    sp += 8;
+  } else if h == H_INT4_RAW {
+    // A raw 4-byte unsigned field (`u32`, null its all-ones): read, or written with the value
+    // popped first.
+    i4fld = u16_at(img.code, pc);
+    pc += 2;
+    if (img.ops[op] ?? "") == "OpSetInt4Raw" {
+      i4v = get(stk, sp - 8);
+      crt::slot_ref(io, stk, sp - 24);
+      sp -= 24;
+      crt::set_w(8, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, i4fld, 0, i4v);
+    } else {
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      set(stk, sp, crt::get_w(8, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, i4fld, 0));
+      sp += 8;
+    }
+  } else if h == H_VECTOR_REF {
+    // An array's element: the record its slot names (the raising twin's report only logs).
+    vridx = get(stk, sp - 8);
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    crt::array_get(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, vridx);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if h == H_INDEX_LEN {
+    // An index's length or size, a spatial's or a trie's length, a spatial's size.
+    ilname = img.ops[op] ?? "";
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set(stk, sp, crt::index_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if ilname == "OpSizeIndex" { 1 } else if ilname == "OpSizeSpatial" { 3 } else if ilname == "OpLengthIndex" { 0 } else { 2 }));
+    sp += 8;
+  } else if h == H_SET_STACK_REF {
+    // A reference written raw at the place another names (`State::set_stack_ref`).
+    crt::slot_ref(io, stk, sp - 16);
+    ssvs = io[0] ?? NULL_STORE;
+    ssvr = io[1] ?? 0;
+    ssvp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    crt::set_place_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ssvs, ssvr, ssvp);
+  } else if h == H_NEGATE_SINGLE {
+    nsv = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    crt::set_float(stk, 1, 8 + sp - 8, 0, if nsv == null { null } else { -nsv! }, true);
+  } else if h == H_ABS_FLOAT {
+    afv = get_f(stk, sp - 8);
+    crt::set_float(stk, 1, 8 + sp - 8, 0, if afv == null { null } else { afv!.abs() }, false);
+  } else {
+    why[0] = "an operator the runner does not carry: {img.ops[op] ?? "op {op}"}";
+    return -1;
+  }
+  regs[0] = sp;
+  regs[1] = pc;
+  0
+}
+
 // What a run answers: the operator it stopped at when it refused one, and how many it ran.
 pub struct Outcome {
   pub refused: text,
@@ -1105,6 +1702,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   images: vector<vector<u8>> = [];
   // Why a native was refused (`call_native`).
   nwhy: vector<text> = [""];
+  // The stack top and the code position handed to `exec_more` and back.
+  mregs: vector<integer> = [0, 0];
   // A walk step's answer: the record's reference and the walk's next state.
   step_io: vector<integer> = [0, 0, 0, 0];
   imaged: vector<boolean> = [];
@@ -2160,504 +2759,14 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       if (io[1] ?? 0) == 0 || (io[0] ?? NULL_STORE) == nst {
         crt::set_slot_ref(stk, sp - (ofv - 8), NULL_STORE, 0, 0);
       }
-    } else if h == H_PUT_SINGLE {
-      psp = u16_at(img.code, pc);
-      pc += 2;
-      sp -= 8;
-      crt::stack_move(stk, sp, sp + 8 - psp, 4);
-    } else if h == H_VAR_SINGLE {
-      crt::stack_move(stk, sp - u16_at(img.code, pc), sp, 4);
-      pc += 2;
-      sp += 8;
-    } else if h == H_SINGLE2 {
-      // Single precision through the double: for + - * / on single operands the double's result
-      // rounded to single is the single-precision result.
-      sp -= 8;
-      sb = crt::get_float(stk, 1, 8 + sp, 0, true);
-      sa = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
-      sname = img.ops[op] ?? "";
-      crt::set_float(stk, 1, 8 + sp - 8, 0, if sname == "OpAddSingle" { sa + sb } else if sname == "OpMinSingle" { sa - sb } else if sname == "OpMulSingle" { sa * sb } else { sa / sb }, true);
-    } else if h == H_NE_BOOL {
-      sp -= 8;
-      nb = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp, 0, 0) ?? 255;
-      na = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp - 8, 0, 0) ?? 255;
-      set_bool(stk, sp - 8, na != nb);
-    } else if h == H_REM_INT_NULLABLE {
-      sp -= 8;
-      rb2 = get(stk, sp);
-      set(stk, sp - 8, if rb2 == 0 { null } else { get(stk, sp - 8) % rb2 });
-    } else if h == H_GET_DB_REF {
-      // The reference a record's field stores (`Stores::get_db_ref`): null when it names a
-      // removed record (`@FR-H-Removed`).
-      gdf = u16_at(img.code, pc);
-      pc += 2;
-      crt::slot_ref(io, stk, sp - 16);
-      crt::get_dbref(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gdf);
-      crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    } else if h == H_CONV_INT_FROM_CHAR {
-      cc = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
-      set(stk, sp - 8, if cc == 0 { null } else { cc });
-    } else if h == H_GET_FILE {
-      crt::slot_ref(io, stk, sp - 16);
-      sp -= 16;
-      set_bool(stk, sp, crt::get_file(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
-      sp += 8;
-    } else if h == H_GET_FILE_TEXT {
-      // The file's text into the text the `&text` reference names; both popped.
-      crt::slot_ref(io, stk, sp - 16);
-      gts = io[0] ?? NULL_STORE;
-      gtr = io[1] ?? 0;
-      gtp = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 32);
-      sp -= 32;
-      crt::file_text_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gts, gtr, gtp);
-    } else if h == H_WRITE_FILE {
-      // A value written at the File's next position: a text's bytes as they are, any other
-      // value in its binary form (`files::write`); the value's reference and the File popped.
-      wtp = u16_at(img.code, pc);
-      pc += 2;
-      crt::slot_ref(io, stk, sp - 16);
-      wvs = io[0] ?? NULL_STORE;
-      wvr = io[1] ?? 0;
-      wvp = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 32);
-      sp -= 32;
-      if wtp == 5 {
-        crt::ser_ref_text(wvs, wvr, wvp);
-        crt::ser_write(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-      } else {
-        files::write(img.types, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, crt::Pos { s: wvs, r: wvr, p: wvp }, wtp);
+    } else if h >= H_PUT_SINGLE {
+      mregs[0] = sp;
+      mregs[1] = pc;
+      if exec_more(h, op, img, stk, mregs, io, tl, images, imaged, step_io, nwhy) < 0 {
+        return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
       }
-    } else if h == H_READ_FILE {
-      // `bytes` read from the File's next position into the value: a text's as they are, any
-      // other value decoded from its binary form (`files::read`).
-      rtp3 = u16_at(img.code, pc);
-      pc += 2;
-      rn = get(stk, sp - 8) ?? 0;
-      crt::slot_ref(io, stk, sp - 24);
-      rvs = io[0] ?? NULL_STORE;
-      rvr = io[1] ?? 0;
-      rvp = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 40);
-      sp -= 40;
-      if rtp3 == 5 {
-        if crt::read_file(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rn, true, 0) >= 0 {
-          crt::de_ref_text(rvs, rvr, rvp);
-        }
-      } else {
-        files::read(img.types, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, crt::Pos { s: rvs, r: rvr, p: rvp }, rn, rtp3);
-      }
-    } else if h == H_FS_OP {
-      // A path operation on one path, or `OpMoveFile` on two; answers the runtime's code.
-      fname = img.ops[op] ?? "";
-      fwhich = if fname == "OpDelete" { 0 } else if fname == "OpMoveFile" { 1 } else if fname == "OpMkdir" { 2 } else if fname == "OpMkdirAll" { 3 } else { 4 };
-      fto: text? = null;
-      if fwhich == 1 {
-        fto = crt::stack_str(stk, sp - 16);
-        sp -= 16;
-      }
-      ffrom = crt::stack_str(stk, sp - 16);
-      sp -= 16;
-      set(stk, sp, crt::fs_op(fwhich, ffrom, fto));
-      sp += 8;
-    } else if h == H_FILE_OP {
-      // `OpSizeFile`, `OpSeekFile(pos)`, `OpTruncateFile(size)`, `OpSyncFile` on the File.
-      oname = img.ops[op] ?? "";
-      owhich = if oname == "OpSizeFile" { 0 } else if oname == "OpSeekFile" { 1 } else if oname == "OpTruncateFile" { 2 } else { 3 };
-      oarg = 0;
-      if owhich == 1 || owhich == 2 {
-        oarg = get(stk, sp - 8) ?? 0;
-        sp -= 8;
-      }
-      crt::slot_ref(io, stk, sp - 16);
-      sp -= 16;
-      oans = crt::file_op(owhich, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, oarg);
-      if owhich != 1 {
-        set(stk, sp, oans);
-        sp += 8;
-      }
-    } else if h == H_GET_RECORD {
-      // `get_record`: the key parts and then the collection popped; a hash's entry, or a
-      // sorted's or an index's record, found under them (`hash_find` / `keyed_find`).
-      ensure_table(img.types, tl);
-      gtp2 = u16_at(img.code, pc);
-      gn = img.code[pc + 2] ?? 0;
-      pc += 3;
-      gkind = types::keyed_kind(img.types, gtp2) ?? 0;
-      if types::hash_element(img.types, gtp2) == null && gkind == 0 {
-        return Outcome { refused: "a lookup in a collection the runner does not look up in: OpGetRecord at {at}", steps: steps };
-      }
-      gbytes = push_keys(img.types, stk, gtp2, gn, sp);
-      if gbytes < 0 {
-        return Outcome { refused: "a lookup in {img.types[gtp2]?.name ?? "type {gtp2}"} whose key the runner cannot read: OpGetRecord at {at}", steps: steps };
-      }
-      sp -= gbytes + 16;
-      crt::slot_ref(io, stk, sp);
-      if gkind != 0 {
-        crt::keyed_find(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gkind, gtp2, gn);
-      } else {
-        crt::hash_find(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gtp2, gn);
-      }
-      crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-      sp += 16;
-    } else if h == H_SET_SHORT {
-      // The value popped, then the reference; a 2-byte field or a nullable byte, `min` its
-      // offset.
-      sfld = u16_at(img.code, pc);
-      smn = i32_at(img.code, pc + 2);
-      pc += 6;
-      sv = get(stk, sp - 8);
-      crt::slot_ref(io, stk, sp - 24);
-      sp -= 24;
-      sop = img.ops[op] ?? "";
-      crt::set_w(if sop == "OpSetShortRaw" { crt::W_SHORT_RAW } else if sop == "OpSetByteNullable" { crt::W_BYTE_NULLABLE } else { crt::W_SHORT }, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, sfld, smn, sv);
-    } else if h == H_STORE_LIVE {
-      // A reference to a record (not null, not the stack's) in a store not freed.
-      crt::slot_ref(io, stk, sp - 16);
-      sp -= 16;
-      lst = io[0] ?? NULL_STORE;
-      set_bool(stk, sp, (io[1] ?? 0) != 0 && lst != NULL_STORE && crt::store_live(lst));
-      sp += 8;
-    } else if h == H_LENGTH_HASH {
-      crt::slot_ref(io, stk, sp - 16);
-      sp -= 16;
-      set(stk, sp, crt::hash_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
-      sp += 8;
-    } else if h == H_CMP_SINGLE {
-      // Single compares read through the double: exact, a single widens without rounding.
-      sp -= 8;
-      cfb = crt::get_float(stk, 1, 8 + sp, 0, true);
-      cfa = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
-      cname = img.ops[op] ?? "";
-      set_bool(stk, sp - 8, cmp_float(if cname == "OpEqSingle" { 0 } else if cname == "OpNeSingle" { 1 } else if cname == "OpLtSingle" { 2 } else { 3 }, cfa, cfb));
-    } else if h == H_FORMAT_SINGLE {
-      // As `format_float`, the value a single.
-      fsp = u16_at(img.code, pc);
-      ftoken = img.code[pc + 2] ?? 32;
-      fplus = (img.code[pc + 3] ?? 0) == 1;
-      fdir = i8_at(img.code, pc + 4);
-      pc += 5;
-      fprecision = get(stk, sp - 8) ?? 0;
-      fwidth = get(stk, sp - 16) ?? 0;
-      fsv = crt::get_float(stk, 1, 8 + sp - 24, 0, true);
-      sp -= 24;
-      crt::slot_text_append(stk, sp - (fsp - 24), crt::format_float(fsv, fwidth, fprecision, ftoken, fplus, fdir, true));
-    } else if h == H_CONV_BOOL_FROM_SINGLE {
-      bsv = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
-      set_bool(stk, sp - 8, bsv != null);
-    } else if h == H_CONV_BOOL_FROM_CHAR {
-      bcv = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
-      set_bool(stk, sp - 8, (bcv ?? 0) != 0);
-    } else if h == H_EQ_REF {
-      // Two null references are equal; a null and a record are not; two records are equal
-      // when they name the same store, record and position.
-      crt::slot_ref(io, stk, sp - 16);
-      ers = io[0] ?? NULL_STORE;
-      err = io[1] ?? 0;
-      erp = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 32);
-      sp -= 32;
-      ear = io[1] ?? 0;
-      set_bool(stk, sp, if ear == 0 || err == 0 { ear == 0 && err == 0 } else { (io[0] ?? NULL_STORE) == ers && ear == err && (io[2] ?? 0) == erp });
-      sp += 8;
-    } else if h == H_PLACE_RECORD {
-      // `@FR-R-Place` (`Stores::place_record_prefilled`): a call's return buffer claimed in the
-      // store of the record its result lands in, prefilled with its type's defaults; in a fresh
-      // store when the host names none.  A record that is not an element of the host store's
-      // root vector is noted foreign (`@FR-H-RootExtent`), the root read off the store's type.
-      ptp = u16_at(img.code, pc);
-      pc += 2;
-      crt::slot_ref(io, stk, sp - 16);
-      phs = io[0] ?? NULL_STORE;
-      pfresh = phs == NULL_STORE || (io[1] ?? 0) == 0 || !crt::store_live(phs);
-      pelem = if pfresh { null } else { types::root_vector_element(img.types, crt::store_known(phs)) };
-      default_of(img.types, images, imaged, ptp);
-      pimg = images[ptp] ?? [];
-      crt::place_record(io, phs, io[1] ?? 0, io[2] ?? 0, ptp, types::enum_parent_size(img.types, ptp), pimg, pelem != null && pelem != ptp);
-      if pfresh {
-        crt::set_store_known(io[0] ?? NULL_STORE, ptp);
-      }
-      crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    } else if h == H_MOVE_VECTOR || h == H_MOVE_FIELD || h == H_HASH_REMOVE {
-      // Two references popped — the operator's first argument the deeper — and the type; the
-      // placement family (`@FR-R-Place`) and a hash's removal, through the C runtime.
-      ensure_table(img.types, tl);
-      mraw = u16_at(img.code, pc);
-      pc += 2;
-      crt::slot_ref(io, stk, sp - 16);
-      m2s = io[0] ?? NULL_STORE;
-      m2r = io[1] ?? 0;
-      m2p = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 32);
-      sp -= 32;
-      m1s = io[0] ?? NULL_STORE;
-      m1r = io[1] ?? 0;
-      m1p = io[2] ?? 0;
-      mname = img.ops[op] ?? "";
-      if h == H_MOVE_VECTOR {
-        mlinked = img.types[mraw]?.linked ?? false;
-        if mname == "OpMoveVector" {
-          crt::move_vector(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mlinked);
-        } else {
-          crt::vec_replace(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mlinked);
-        }
-      } else if h == H_MOVE_FIELD {
-        crt::move_field(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mname == "OpMoveRecord");
-      } else if m2r != 0 {
-        // The type's top bit (`CLEAR_KEYED_VIEW`) marks a linked group's view member, which
-        // only unlinks; a sorted or an index removes through `keyed_remove`.
-        mtp = mraw & 32767;
-        mkelem = types::keyed_element(img.types, mtp);
-        if mkelem != null {
-          crt::keyed_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::keyed_kind(img.types, mtp) ?? 0, mkelem!, mtp, mraw & 32768 != 0);
-        } else if types::hash_element(img.types, mtp) != null {
-          crt::hash_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::content_of(img.types, mtp) ?? 0, mtp, mraw & 32768 != 0);
-        } else {
-          return Outcome { refused: "a removal from a collection the runner does not remove from: OpHashRemove at {at}", steps: steps };
-        }
-      }
-    } else if h == H_SET_KEYED {
-      // `c[k…] = v`: the key parts, the value and the collection popped; the type's top bit
-      // releases the value after (`Stores::set_keyed`).
-      ensure_table(img.types, tl);
-      kraw = u16_at(img.code, pc);
-      kn2 = img.code[pc + 2] ?? 0;
-      pc += 3;
-      ktp = kraw & 32767;
-      kkind = types::keyed_kind(img.types, ktp) ?? 0;
-      if types::hash_element(img.types, ktp) == null && kkind == 0 {
-        return Outcome { refused: "a keyed write into a collection the runner does not write into: OpSetKeyed at {at}", steps: steps };
-      }
-      kbytes = push_keys(img.types, stk, ktp, kn2, sp);
-      if kbytes < 0 {
-        return Outcome { refused: "a keyed write into {img.types[ktp]?.name ?? "type {ktp}"} whose key the runner cannot read ({kn2} parts): OpSetKeyed at {at}", steps: steps };
-      }
-      sp -= kbytes;
-      crt::slot_ref(io, stk, sp - 16);
-      kvs = io[0] ?? NULL_STORE;
-      kvr = io[1] ?? 0;
-      kvp = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 32);
-      sp -= 32;
-      crt::set_keyed(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, kvs, kvr, kvp, types::content_of(img.types, ktp) ?? 0, ktp, kn2, kraw >= 32768, kkind);
-    } else if h == H_ITERATE {
-      // A walk's start (`State::iterate`): the key list and the bounds' sizes from the code,
-      // then the till bound, the from bound and the collection popped; the walk's state pushed.
-      // The state is the C runtime's cursor — only `OpStep` and `OpRemove` read it, both here.
-      // A snapshot (kind 4) walks without bounds; an index (1), a sorted (2) or an ordered (3)
-      // through `keyed_iterate`; a spatial walk is refused.
-      ion = img.code[pc] ?? 0;
-      iarg = u16_at(img.code, pc + 1);
-      ink = img.code[pc + 3] ?? 0;
-      pc += 4;
-      ikt: vector<integer> = [];
-      for _ in 0..ink {
-        it = i8_at(img.code, pc);
-        ikt += [it.abs()];
-        crt::walk_key(it, u16_at(img.code, pc + 1), i32_at(img.code, pc + 3));
-        pc += 7;
-      }
-      infrom = img.code[pc] ?? 0;
-      intill = img.code[pc + 1] ?? 0;
-      pc += 2;
-      ikind = ion & 63;
-      if ikind < 1 || ikind > 4 || (ikind == 4 && (infrom != 0 || intill != 0)) {
-        return Outcome { refused: "a walk the runner does not carry: OpIterate at {at}", steps: steps };
-      }
-      itill = walk_bound_bytes(ikt, intill);
-      push_walk_bound(stk, ikt, infrom, sp - itill);
-      push_walk_bound(stk, ikt, intill, sp);
-      sp -= itill + walk_bound_bytes(ikt, infrom) + 16;
-      crt::slot_ref(io, stk, sp);
-      if ikind == 4 {
-        set(stk, sp, crt::scratch_iterate(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
-      } else {
-        ensure_table(img.types, tl);
-        set(stk, sp, crt::keyed_iterate(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ion, iarg, infrom, intill));
-      }
-      sp += 8;
-    } else if h == H_STEP || h == H_WALK_REMOVE {
-      // A walk's next record (`State::step`), or the current one removed (`State::remove`):
-      // the state at its variable, read and written before the collection is popped.
-      wst = u16_at(img.code, pc);
-      won = img.code[pc + 2] ?? 0;
-      warg = u16_at(img.code, pc + 3);
-      pc += 5;
-      wstate = get(stk, sp - wst) ?? 0;
-      crt::slot_ref(io, stk, sp - 16);
-      wkind = won & 63;
-      if h == H_WALK_REMOVE {
-        if wkind < 1 || wkind > 3 {
-          return Outcome { refused: "a removal in a walk the runner does not carry: OpRemove at {at}", steps: steps };
-        }
-        ensure_table(img.types, tl);
-        set(stk, sp - wst, crt::walk_remove(wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won, warg));
-        sp -= 16;
-      } else {
-        if wkind == 4 {
-          crt::scratch_step(step_io, wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won & 64 != 0);
-        } else if wkind >= 1 && wkind <= 3 {
-          ensure_table(img.types, tl);
-          crt::keyed_step(step_io, wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won, warg);
-        } else {
-          return Outcome { refused: "a walk the runner does not carry: OpStep at {at}", steps: steps };
-        }
-        set(stk, sp - wst, step_io[3]);
-        crt::set_slot_ref(stk, sp - 16, step_io[0] ?? NULL_STORE, step_io[1] ?? 0, step_io[2] ?? 0);
-      }
-    } else if h == H_FREE_SCRATCH {
-      crt::slot_ref(io, stk, sp - 16);
-      sp -= 16;
-      crt::free_scratch(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    } else if h == H_FREE_RECORD_IN {
-      // What the `tp` record owns released, the record itself left (`Stores::free_record_in`).
-      ensure_table(img.types, tl);
-      frtp = u16_at(img.code, pc);
-      pc += 2;
-      crt::slot_ref(io, stk, sp - 16);
-      sp -= 16;
-      crt::free_record_in(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, frtp);
-    } else if h == H_CAST_SINGLE_FROM_FLOAT {
-      crt::set_float(stk, 1, 8 + sp - 8, 0, get_f(stk, sp - 8), true);
-    } else if h == H_CONV_FLOAT_FROM_SINGLE {
-      cfs = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
-      crt::set_float(stk, 1, 8 + sp - 8, 0, cfs, false);
-    } else if h == H_GET_TEXT_SUB {
-      // `t[from..till]`: the bounds popped, the view below them replaced by its slice.
-      sp -= 16;
-      crt::stack_text_sub(stk, sp - 16);
-    } else if h == H_TEXT_CHARACTER {
-      // `t[i]`: the index and the view popped, the character pushed (null out of range; Rust
-      // raises a recoverable error there, which only its logger sees).
-      tch = crt::stack_text_char(stk, sp - 24);
-      sp -= 24;
-      set(stk, sp, tch);
-      sp += 8;
-    } else if h == H_TEXT_WALK_STEP {
-      crt::text_walk_step(stk, sp, u16_at(img.code, pc), u16_at(img.code, pc + 2), u16_at(img.code, pc + 4), u16_at(img.code, pc + 6), img.code[pc + 8] ?? 0);
-      pc += 9;
-    } else if h == H_TEXT_END_JUMP {
-      // A text walk's loop test: on while the text is longer than the index.
-      tes = u16_at(img.code, pc);
-      tea = img.code[pc + 2] ?? 0;
-      tei = u16_at(img.code, pc + 3);
-      ted = i32_at(img.code, pc + 5);
-      pc += 9;
-      if crt::local_text_len(stk, sp - tes, tea) > (get(stk, sp - tei) ?? (-9223372036854775807 - 1)) {
-        pc += ted;
-      }
-    } else if h == H_CAST_FROM_TEXT {
-      // `t as integer` / `t as float` (Rust's `parse`): null when it does not parse.
-      cts = crt::stack_str(stk, sp - 16);
-      sp -= 16;
-      if (img.ops[op] ?? "") == "OpCastIntFromText" {
-        set(stk, sp, if cts == null { null } else { cts! as integer? });
-      } else {
-        crt::set_float(stk, 1, 8 + sp, 0, if cts == null { null } else { cts! as float? }, false);
-      }
-      sp += 8;
-    } else if h == H_RANGE_DEFAULT {
-      // A value checked against its declared range: null takes the default (when there is
-      // one), out of range the default (Rust raises a recoverable error, which only its
-      // logger sees).
-      rlo = i64_at(img.code, pc);
-      rhi = i64_at(img.code, pc + 8);
-      rdf = i64_at(img.code, pc + 16);
-      pc += 24;
-      rv = get(stk, sp - 8);
-      set(stk, sp - 8, if rv == null { if rdf == null { rv } else { rdf } } else if rv! >= (rlo ?? 0) && rv! <= (rhi ?? 0) { rv } else { rdf });
-    } else if h == H_FORMAT_DATABASE {
-      // `"{v}"` of a store value, rendered by `show::render` (bit 1 of the format pretty, bit 2
-      // JSON) and appended to the destination: the text local `pos` back from the stack top
-      // before the value is popped, or for the stack form the text that local's reference
-      // names (`State::format_database` / `format_stack_database`).
-      fdp = u16_at(img.code, pc);
-      fdtp = u16_at(img.code, pc + 2);
-      fdfmt = img.code[pc + 4] ?? 0;
-      pc += 5;
-      fdwhy = show::refusal(img.types, fdtp, []);
-      if fdwhy != "" {
-        return Outcome { refused: "{fdwhy}: {img.ops[op] ?? ""} at {at}", steps: steps };
-      }
-      ensure_table(img.types, tl);
-      crt::slot_ref(io, stk, sp - 16);
-      sp -= 16;
-      fdpiece = "";
-      show::render(img.types, fdtp, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, fdfmt, 0, fdpiece);
-      if (img.ops[op] ?? "") == "OpFormatStackDatabase" {
-        crt::slot_ref(io, stk, sp - (fdp - 16));
-        crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fdpiece);
-      } else {
-        crt::slot_text_append(stk, sp - (fdp - 16), fdpiece);
-      }
-    } else if h == H_SLICE_VECTOR {
-      // `v = src[lo..hi]` of scalar elements (the parser emits it for no other): the bounds,
-      // the source and the destination popped; a copy, or for `OpSliceView` a view.
-      svtp = u16_at(img.code, pc);
-      pc += 2;
-      svhi = get(stk, sp - 8) ?? 0;
-      svlo = get(stk, sp - 16) ?? 0;
-      crt::slot_ref(io, stk, sp - 32);
-      svs = io[0] ?? NULL_STORE;
-      svr = io[1] ?? 0;
-      svp = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 48);
-      sp -= 48;
-      crt::vec_slice(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, svs, svr, svp, svlo, svhi, img.types[svtp]?.size ?? 0, (img.ops[op] ?? "") == "OpSliceView");
-    } else if h == H_CLEAR_KEYED {
-      // `s.h = []` of a field (`Stores::remove_claims_keyed`); a linked group's secondary view
-      // (`CLEAR_KEYED_VIEW`, the type's top bit) drops only its own route.
-      ensure_table(img.types, tl);
-      ckraw = u16_at(img.code, pc);
-      pc += 2;
-      cktp = ckraw & 32767;
-      crt::slot_ref(io, stk, sp - 16);
-      sp -= 16;
-      if ckraw & 32768 != 0 {
-        if !types::is_keyed(img.types, cktp) {
-          return Outcome { refused: "a keyed view clear of a type that is not a keyed collection: OpClearKeyed at {at}", steps: steps };
-        }
-        crt::clear_view(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, cktp);
-      } else {
-        crt::clear(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, cktp);
-      }
-    } else if h == H_REPLACE_KEYED {
-      // A keyed local rebound from a call (`h = f()`): `dest` filled again from `src`; the
-      // flags the operator's own bit and whether the element tree may move whole.
-      ensure_table(img.types, tl);
-      rkraw = u16_at(img.code, pc);
-      pc += 2;
-      rktp = rkraw & 32767;
-      if !types::is_keyed(img.types, rktp) {
-        return Outcome { refused: "a keyed replace of a type that is not a keyed collection: OpReplaceKeyed at {at}", steps: steps };
-      }
-      crt::slot_ref(io, stk, sp - 16);
-      rkds = io[0] ?? NULL_STORE;
-      rkdr = io[1] ?? 0;
-      rkdp = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 32);
-      sp -= 32;
-      crt::replace_keyed(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rkds, rkdr, rkdp, rktp, (if rkraw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(img.types, rktp) { 2 } else { 0 }));
-    } else if h == H_APPEND_CHARACTER {
-      // A character popped and appended to the text local `pos` back from the stack top before
-      // the pop (or the text its reference names); the null character appends nothing
-      // (`@FR-F-Render`).
-      acp = u16_at(img.code, pc);
-      pc += 2;
-      acc = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0) ?? 0;
-      sp -= 8;
-      if acc != 0 {
-        acs = "{acc as character}";
-        if (img.ops[op] ?? "") == "OpAppendStackCharacter" {
-          crt::slot_ref(io, stk, sp - (acp - 8));
-          crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acs);
-        } else {
-          crt::slot_text_append(stk, sp - (acp - 8), acs);
-        }
-      }
-    } else if h == H_CONV_FLOAT_FROM_NULL {
-      crt::set_float(stk, 1, 8 + sp, 0, null, false);
-      sp += 8;
+      sp = mregs[0] ?? 0;
+      pc = mregs[1] ?? 0;
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
