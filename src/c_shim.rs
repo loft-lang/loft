@@ -67,12 +67,12 @@ fn wants_bodies(paths: &[std::path::PathBuf]) -> bool {
 fn bodies_text() -> &'static str {
     static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     TEXT.get_or_init(|| {
-        let stubs = "int64_t loft_body_find(const char *name, int64_t len) { (void) name; (void) len; return -1; }\n\
-                     int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) { (void) entry; (void) stk; (void) sp; return -1; }\n";
+        let stubs = crate::c::bodies::STUBS;
         let Ok(exe) = std::env::current_exe() else {
             return stubs.to_string();
         };
-        let dir = crate::platform::scratch_dir().join(format!("loft_bodies_{}", std::process::id()));
+        let dir =
+            crate::platform::scratch_dir().join(format!("loft_bodies_{}", std::process::id()));
         if crate::file_access::create_dir_all(&dir).is_err() {
             return stubs.to_string();
         }
@@ -80,7 +80,9 @@ fn bodies_text() -> &'static str {
         let out = dir.join(BODIES);
         let ran = if crate::file_access::write(&stub, "fn main() {\n}\n").is_ok() {
             let mut cmd = Spawn::new(Program::os(&exe)).env("LOFT_NO_WARNINGS", "1");
-            cmd.push_arg("--emit-c-bodies").push_arg(&out).push_arg(&stub);
+            cmd.push_arg("--emit-c-bodies")
+                .push_arg(&out)
+                .push_arg(&stub);
             cmd.run(b"").ok()
         } else {
             None
@@ -92,7 +94,8 @@ fn bodies_text() -> &'static str {
             eprintln!(
                 "loft: the compiled standard-library bodies were not written ({}); the loft \
                  runner runs their loft bodies",
-                why.filter(|w| !w.is_empty()).unwrap_or_else(|| "no output".to_string())
+                why.filter(|w| !w.is_empty())
+                    .unwrap_or_else(|| "no output".to_string())
             );
         }
         let text = if written {

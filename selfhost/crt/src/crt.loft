@@ -465,10 +465,6 @@ pub fn bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: inte
 }
 
 // The run image's runner (@PLN91 run image, step 3): the Rust stack image at its positions.
-fn c_body_find(name: text, bytes: integer) -> integer;
-#c "loft_body_find" "int64_t(const char*, int64_t)"
-fn c_body_call(entry: integer, store: integer, sp: integer) -> integer;
-#c "loft_body_call" "int64_t(int64_t, int64_t, int64_t)"
 fn c_hold_bytes(b: const vector<u8>) -> integer;
 #c "loft_crt_hold_bytes" "int64_t(const uint8_t*, int64_t)"
 fn c_stack_str_held(store: integer, at: integer, base: integer, from: integer, len: integer);
@@ -655,20 +651,6 @@ fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
 #c "loft_crt_stack_str" "int64_t(char*, int64_t, int64_t, int64_t)"
 
 // `OpConstText`: a view of `len` bytes of the image's `code` at `from`, pushed at `at`.
-// The compiled body of the standard-library function `name` (with or without its
-// `loft_shared_` prefix), as an entry number; -1 where the build carries none, or with
-// `LOFT_NO_COMPILED_BODIES=1`.
-pub fn body_find(name: text) -> integer {
-  c_body_find(name, bytes_of(name))
-}
-
-// Compiled body `entry` called on the stack store with its arguments under `sp`, as the
-// bytecode's call leaves them: the new top, its answer at the arguments' base; negative where
-// the body is not run (the loft body is to run).
-pub fn body_call(entry: integer, store: integer, sp: integer) -> integer {
-  c_body_call(entry, store, sp)
-}
-
 // Bytes held for a run's text views — the code, the constant store's texts — in memory of their
 // own, which no store's growth moves: its address.  Held for the program's life.
 pub fn hold_bytes(b: const vector<u8>) -> integer {
@@ -2300,4 +2282,35 @@ pub fn lex(source: text) -> vector<u8> {
     c_lex(buf, source, size(source));
   }
   buf
+}
+
+// ── Compiled standard-library bodies (`src/c/bodies.rs`, compiled into the shim) ──
+
+fn c_body_find(name: text, bytes: integer) -> integer;
+#c "loft_body_find" "int64_t(const char*, int64_t)"
+
+fn c_body_call(entry: integer, stk: integer, sp: integer) -> integer;
+#c "loft_body_call" "int64_t(int64_t, int64_t, int64_t)"
+
+fn c_body_call_dest(entry: integer, stk: integer, sp: integer, s: integer, r: integer, p: integer) -> integer;
+#c "loft_body_call_dest" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// The entry of the compiled body of definition `name` (with or without `loft_shared_`), or -1:
+// looked up once per native when an image loads, never per call.
+pub fn body_find(name: text) -> integer {
+  c_body_find(name, size(name))
+}
+
+// Entry `entry` run on the stack store `stk` whose top is `sp`, the arguments in their slots
+// just below it: the new top, the answer at the arguments' base — or negative, and nothing was
+// touched: the caller runs the loft body.  A body that works on records answers negative until
+// the type table is loaded (`load_types`).
+pub fn body_call(entry: integer, stk: integer, sp: integer) -> integer {
+  c_body_call(entry, stk, sp)
+}
+
+// The destination form of a body that answers a text (`loft_shared_<fn>#dest`): the answer
+// appended to the text `(s, r, p)` names, nothing pushed; the new top is the arguments' base.
+pub fn body_call_dest(entry: integer, stk: integer, sp: integer, s: integer, r: integer, p: integer) -> integer {
+  c_body_call_dest(entry, stk, sp, s, r, p)
 }
