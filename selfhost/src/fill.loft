@@ -1331,6 +1331,10 @@ pub fn op_bind_or_copy(s: state::State) {
   s.bind_or_copy();
 }
 
+pub fn op_set_keyed(s: state::State) {
+  s.set_keyed();
+}
+
 pub fn op_static_call(s: state::State) {
   s.static_call();
 }
@@ -1345,6 +1349,10 @@ pub fn op_get_stack_text(s: state::State) {
 
 pub fn op_get_stack_ref(s: state::State) {
   s.get_stack_ref();
+}
+
+pub fn op_set_stack_ref(s: state::State) {
+  s.set_stack_ref();
 }
 
 pub fn op_drop_fn_ref(s: state::State) {
@@ -1712,6 +1720,10 @@ pub fn op_copy_record(s: state::State) {
   s.copy_record();
 }
 
+pub fn op_replace_keyed(s: state::State) {
+  s.replace_keyed();
+}
+
 pub fn op_clear_keyed(s: state::State) {
   tp = s.code_u16();
   dest = s.get_stack_dbref();
@@ -2029,10 +2041,12 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     221 => op_free_record_in(s),
     229 => op_copy_ref_or_null(s),
     230 => op_bind_or_copy(s),
+    233 => op_set_keyed(s),
     234 => op_static_call(s),
     236 => op_init_create_stack(s),
     237 => op_get_stack_text(s),
     238 => op_get_stack_ref(s),
+    239 => op_set_stack_ref(s),
     245 => op_drop_fn_ref(s),
     246 => op_fn_ref_closure(s),
     247 => op_append_stack_text(s),
@@ -2096,6 +2110,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     324 => op_remove(s),
     325 => op_clear(s),
     326 => op_copy_record(s),
+    328 => op_replace_keyed(s),
     329 => op_clear_keyed(s),
     331 => op_length_spatial(s),
     332 => op_size_spatial(s),

@@ -1861,3 +1861,49 @@ pub fn remove(self: State) {
   crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, crt::walk_remove(cursor, data.store_nr, data.rec, data.pos, on, arg));
   self.stack_pos -= 16;
 }
+
+// `State::set_keyed` (`c[k…] = v`): the key parts, the value and the collection popped; the
+// type's top bit releases the value after.
+pub fn set_keyed(self: State) {
+  raw = self.code_u16();
+  no_keys = self.code_u8();
+  tp = raw & 32767;
+  self.load_table();
+  kind = types::keyed_kind(self.types, tp) ?? 0;
+  if types::hash_element(self.types, tp) == null && kind == 0 {
+    self.stop("not carried: a keyed write into {self.types[tp]?.name ?? "a collection"}");
+    return;
+  }
+  bytes = brun::push_keys(self.types, self.stk, tp, no_keys, self.stack_pos);
+  if bytes < 0 || !self.can_pop(bytes + 32) {
+    self.stop("not carried: a keyed write whose key does not resolve");
+    return;
+  }
+  self.stack_pos -= bytes;
+  value = self.get_stack_dbref();
+  coll = self.get_stack_dbref();
+  crt::set_keyed(coll.store_nr, coll.rec, coll.pos, value.store_nr, value.rec, value.pos, types::content_of(self.types, tp) ?? 0, tp, no_keys, raw >= 32768, kind);
+}
+
+// `State::replace_keyed`: a keyed local rebound from a call (`h = f()`) — `dest`, popped
+// first, filled again from `src`; the flags the operator's own bit and whether the element
+// tree may move whole.
+pub fn replace_keyed(self: State) {
+  raw = self.code_u16();
+  tp = raw & 32767;
+  if !types::is_keyed(self.types, tp) {
+    self.stop("not carried: a keyed replace of a type that is not a keyed collection");
+    return;
+  }
+  self.load_table();
+  dest = self.get_stack_dbref();
+  src = self.get_stack_dbref();
+  crt::replace_keyed(src.store_nr, src.rec, src.pos, dest.store_nr, dest.rec, dest.pos, tp, (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(self.types, tp) { 2 } else { 0 }));
+}
+
+// `State::set_stack_ref`: a reference, popped first, written raw at the place another names.
+pub fn set_stack_ref(self: State) {
+  v1 = self.get_stack_dbref();
+  r = self.get_stack_dbref();
+  crt::set_place_ref(r.store_nr, r.rec, r.pos, v1.store_nr, v1.rec, v1.pos);
+}
