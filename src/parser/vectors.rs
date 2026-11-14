@@ -3966,7 +3966,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             in_type = in_type.depending(vec_var);
             fill = v_set(vec_var, expr);
             expr = Value::Var(vec_var);
-        } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, false) {
+        } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &mut in_type, false) {
             // A keyed source is walked through its ordered snapshot, as a `for` walks it.
             fill = snapshot;
         }

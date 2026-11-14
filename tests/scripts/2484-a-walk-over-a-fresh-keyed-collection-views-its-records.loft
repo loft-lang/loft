@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2484 — `for c in mk()` over a keyed collection a CALL answers: the walk's variable is a view of a
+// record (`@FR-B-View`), never its owner, whatever the source is.  With no place to depend on,
+// `c` read as an owner and was released at the end of every round — the collection's own store,
+// freed again by the next round or by the temporary that holds the collection.  Each cell is
+// hand-computed; the collection is { a: 1, B: 2 }, walked in key order (B, a).
+//
+// @falsified-at: 4fc5b305f — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the asserts, and the run's own report (a store freed twice stops the test; a store
+// left at exit is a leak).
+// WITNESS: each assert message prints the value it read.
+// HOLDS: every way out of the walk (its end, `break`, `return` on a hit and on a miss), a
+// nested walk, a write through the view, an empty collection, the comprehension and the
+// format walk — and the sources that always worked as controls: a local, a vector, a sorted.
+
+struct C { name: text, n: integer }
+
+fn mk() -> hash<C[name]> { h: hash<C[name]> = []; h += [C { name: "a", n: 1 }, C { name: "B", n: 2 }]; h }
+fn mk_empty() -> hash<C[name]> { h: hash<C[name]> = []; h }
+fn mk_vector() -> vector<C> { [C { name: "a", n: 1 }, C { name: "B", n: 2 }] }
+fn mk_sorted() -> sorted<C[name]> { h: sorted<C[name]> = []; h += [C { name: "a", n: 1 }, C { name: "B", n: 2 }]; h }
+
+fn h_ret(stop: text) -> integer { for c in mk() { if c.name == stop { return c.n; } } 0 }
+fn h_brk(stop: text) -> integer { r = 0; for c in mk() { if c.name == stop { r = c.n; break; } } r }
+fn h_all() -> integer { r = 0; for c in mk() { r += c.n; } r }
+fn h_bool(stop: text) -> boolean { for c in mk() { if c.name == stop { return false; } } true }
+fn h_names() -> text { o = ""; for c in mk() { o += c.name; } o }
+fn h_nested() -> integer { r = 0; for c in mk() { for d in mk() { r += c.n * d.n; } } r }
+fn h_write() -> integer { r = 0; for c in mk() { c.n += 5; r += c.n; } r }
+fn h_empty() -> integer { r = 0; for c in mk_empty() { r += c.n; } r }
+fn h_local(stop: text) -> integer { m = mk(); for c in m { if c.name == stop { return c.n; } } 0 }
+fn v_ret(stop: text) -> integer { for c in mk_vector() { if c.name == stop { return c.n; } } 0 }
+fn s_ret(stop: text) -> integer { for c in mk_sorted() { if c.name == stop { return c.n; } } 0 }
+fn cmp_sum() -> integer { r = 0; for n in [for c in mk() { c.n * 10 }] { r += n; } r }
+fn fmt_all() -> text { "{for c in mk() { c.n }}" }
+
+fn test_every_way_out_of_the_walk() {
+  assert(h_all() == 3, "to its end: {h_all()}");
+  assert(h_ret("a") == 1, "return on a hit: {h_ret("a")}");
+  assert(h_ret("z") == 0, "return on a miss: {h_ret("z")}");
+  assert(h_brk("B") == 2, "break: {h_brk("B")}");
+  assert(!h_bool("a") && h_bool("z"), "a boolean answer");
+}
+
+fn test_the_view_reads_and_writes_its_record() {
+  assert(h_names() == "Ba", "key order: {h_names()}");
+  assert(h_nested() == 9, "nested, (1 + 2) * (1 + 2): {h_nested()}");
+  assert(h_write() == 13, "written through, (2 + 5) + (1 + 5): {h_write()}");
+  assert(h_empty() == 0, "empty: {h_empty()}");
+}
+
+fn test_the_comprehension_and_the_format_walk() {
+  assert(cmp_sum() == 30, "comprehension, 20 + 10: {cmp_sum()}");
+  assert(fmt_all() == "[2,1]", "format walk: {fmt_all()}");
+}
+
+fn test_the_sources_that_name_a_place_or_another_kind() {
+  assert(h_local("B") == 2, "a local hash: {h_local("B")}");
+  assert(v_ret("B") == 2, "a vector: {v_ret("B")}");
+  assert(s_ret("B") == 2, "a sorted: {s_ret("B")}");
+}

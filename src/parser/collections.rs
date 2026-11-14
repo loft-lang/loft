@@ -3933,7 +3933,7 @@ use #count instead"
     pub(crate) fn keyed_snapshot(
         &mut self,
         expr: &mut Value,
-        in_type: &Type,
+        in_type: &mut Type,
         is_par: bool,
     ) -> Option<(u16, Value)> {
         let mut fill = Value::Null;
@@ -3957,6 +3957,14 @@ use #count instead"
             let is_radix = matches!(in_type.base(), Type::Radix(_, _, _) | Type::Trie(_, _, _));
             let scratch_tp = Type::Reference(content, dep.clone());
             let scratch_var = self.create_unique("hash_scratch", &scratch_tp);
+            // The walk's variable is a VIEW of a record of the collection (`@FR-B-View`).  A
+            // source that names a place says so by its dependency; a fresh collection — a
+            // call's answer — names none, and its variable then read as the OWNER of each
+            // record: released at the end of every round, which is the collection's store.
+            // Such a walk's variable depends on the snapshot it steps through.
+            if dep.is_empty() {
+                *in_type = in_type.depending(scratch_var);
+            }
             let hash_tp_id = self.get_type(in_type);
             let tp_arg = if hash_tp_id == u16::MAX {
                 0
@@ -4419,7 +4427,7 @@ use #count instead"
             // (`OpFreeScratch`, a no-op when co-located).  u16::MAX = not on=4.
             let is_par = matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
             let mut hash_scratch_var: u16 = u16::MAX;
-            if let Some((scratch_var, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, is_par)
+            if let Some((scratch_var, snapshot)) = self.keyed_snapshot(&mut expr, &mut in_type, is_par)
             {
                 hash_scratch_var = scratch_var;
                 fill = snapshot;
