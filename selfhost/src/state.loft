@@ -30,9 +30,11 @@ pub struct State {
   pub stk: integer,
   pub stack_pos: integer,
   pub stack_cap: integer,
-  // The frames on the stack (`State::call_stack`), innermost last, and why the run stopped, if
-  // it did.
-  pub frames: vector<CallFrame>,
+  // The frames on the stack (`State::call_stack`), innermost last: `depth` of them, each
+  // `FRAME_BYTES` of held memory at `fbase` (`push_frame`, `frame_at`), which the dispatch
+  // loop writes through its own locals; and why the run stopped, if it did.
+  pub fbase: integer,
+  pub depth: integer,
   pub fault: text,
   // `(R-DispatchStop)` — set with `fault` (`stop`): what the dispatch loop tests each step.
   pub stopped: boolean,
@@ -178,12 +180,45 @@ pub fn stop(self: State, why: text) {
 // `State::MAX_CALL_DEPTH`.
 pub MAX_CALL_DEPTH = 10000;
 
+// A frame's bytes in the frame list — four words: `d_nr`, `call_pos`, `args_base`, `args_size`
+// — and the frames the list holds past the depth a call may reach, for the frames entered
+// without a call (`enter`, a `par` block's arm).
+pub FRAME_BYTES = 32;
+FRAME_SPARE = 64;
+
+// A frame recorded as the innermost; past the list's room the run stops.
+pub fn push_frame(self: State, d_nr: integer, call_pos: integer, args_base: integer, args_size: integer) {
+  if self.depth >= MAX_CALL_DEPTH + FRAME_SPARE {
+    self.stop("stack overflow in definition {d_nr}");
+    return;
+  }
+  at = self.depth * FRAME_BYTES;
+  crt::poke_i64(self.fbase, at, d_nr);
+  crt::poke_i64(self.fbase, at + 8, call_pos);
+  crt::poke_i64(self.fbase, at + 16, args_base);
+  crt::poke_i64(self.fbase, at + 24, args_size);
+  self.depth += 1;
+}
+
+// Frame `k` of the list (0: the outermost); `k` is below `depth`.
+pub fn frame_at(self: State, k: integer) -> CallFrame {
+  at = k * FRAME_BYTES;
+  CallFrame { d_nr: crt::peek_i64(self.fbase, at), call_pos: crt::peek_i64(self.fbase, at + 8), args_base: crt::peek_i64(self.fbase, at + 16), args_size: crt::peek_i64(self.fbase, at + 24) }
+}
+
+// Is a return a plain one: no buffer of a call through a reference to release, no
+// destination-form call, `par` worker or `par` arm that could be the one returning?  The
+// dispatch loop runs a plain return in its own arm.
+pub fn plain_return(self: State) -> boolean {
+  len(self.fn_bufs) == 0 && len(self.fn_calls) == 0 && len(self.dest_calls) == 0 && len(self.par_depths) == 0 && self.arm_depth < 0
+}
+
 // A state over the image's code and types with a stack store of `size` bytes, both positions
 // at 0.
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [] };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
@@ -607,7 +642,7 @@ pub fn put_var_f64(self: State, pos: integer, v: float) {
 // `State::fn_call`: the position after the call pushed as the return position, the code moved
 // to the callee at `to`; past `MAX_CALL_DEPTH` frames the run stops with a stack overflow.
 pub fn fn_call(self: State, d_nr: integer, args_size: integer, to: integer) {
-  if len(self.frames) >= MAX_CALL_DEPTH {
+  if self.depth >= MAX_CALL_DEPTH {
     self.stop("stack overflow in definition {d_nr} ({args_size} bytes of arguments)");
     return;
   }
@@ -615,7 +650,7 @@ pub fn fn_call(self: State, d_nr: integer, args_size: integer, to: integer) {
   // inside the stack.
   args_base = self.stack_pos - args_size;
   self.ensure_stack(FRAME_HEADROOM);
-  self.frames += [CallFrame { d_nr: d_nr, call_pos: self.code_pos, args_base: args_base, args_size: args_size }];
+  self.push_frame(d_nr, self.code_pos, args_base, args_size);
   crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, self.code_pos);
   self.stack_pos += 8;
   self.code_pos = to;
@@ -645,21 +680,21 @@ pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
     // A destination-form call returning: the text the body answered, on top of the stack,
     // appended to the destination and popped, as the native does.
     last = len(self.dest_calls) - 1;
-    if self.dest_calls[last]!.depth == len(self.frames) {
+    if self.dest_calls[last]!.depth == self.depth {
       dest = self.dest_calls[last]!.at;
       crt::ref_text_append(dest.store_nr, dest.rec, dest.pos, crt::stack_str(self.stk, self.stack_pos - 16));
       self.stack_pos -= 16;
       self.dest_calls.remove(last);
     }
   }
-  if len(self.par_depths) > 0 && (self.par_depths[len(self.par_depths) - 1] ?? -1) == len(self.frames) {
+  if len(self.par_depths) > 0 && (self.par_depths[len(self.par_depths) - 1] ?? -1) == self.depth {
     self.native = PAR_RETURNED;
   }
-  if self.arm_depth == len(self.frames) {
+  if self.arm_depth == self.depth {
     self.native = PAR_ARM_DONE;
   }
-  if len(self.frames) > 0 {
-    self.frames.remove(len(self.frames) - 1);
+  if self.depth > 0 {
+    self.depth -= 1;
   }
 }
 
@@ -667,7 +702,7 @@ pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
 // the frame recorded and its height kept in reach, as `fn_call` does.
 pub fn enter(self: State, d_nr: integer, call_pos: integer) {
   self.ensure_stack(FRAME_HEADROOM);
-  self.frames += [CallFrame { d_nr: d_nr, call_pos: call_pos, args_base: self.stack_pos, args_size: 0 }];
+  self.push_frame(d_nr, call_pos, self.stack_pos, 0);
 }
 
 // `State::reserve_frame`: the frame's locals reserved above the top, at their 8-aligned size.
@@ -946,7 +981,7 @@ pub fn static_call(self: State) {
         return;
       }
     }
-    self.dest_calls += [FnBuf { depth: len(self.frames) + 1, at: dest }];
+    self.dest_calls += [FnBuf { depth: self.depth + 1, at: dest }];
   }
   if d >= 0 && d + 1 < len(self.starts) {
     // A compiled standard-library function: its loft body run as bytecode in its place.
@@ -1473,8 +1508,8 @@ pub fn vec_slice(self: State, r: DbRef, src: DbRef, lo: integer?, hi: integer?, 
 // when its operator runs inline in the dispatch loop (`fill.loft`'s `run`), whose locals are
 // the stack store, its base and capacity and the stack top. ──
 
-pub fn rget_bool(stk: integer, base: integer, cap: integer, sp: integer, pos: integer) -> boolean? {
-  b = crt::fget_u8(stk, base, cap, sp - pos);
+pub fn rget_bool(base: integer, sp: integer, pos: integer) -> boolean? {
+  b = crt::peek_u8(base, sp - pos);
   if b == 255 { null } else { b == 1 }
 }
 
@@ -1794,7 +1829,7 @@ pub fn fn_call_ref(self: State, fn_var: integer, arg_size: integer) {
     self.stop("a call through a reference that names no function");
     return;
   }
-  depth = len(self.frames) + 1;
+  depth = self.depth + 1;
   top = self.stack_pos;
   i = self.fnref_of[d] ?? -1;
   if i >= 0 {
@@ -1827,7 +1862,7 @@ pub fn fn_call_ref(self: State, fn_var: integer, arg_size: integer) {
 // (`fn_borrowed`, which `bind_fn_ref_result` copies).  Then the buffers held at this depth are
 // freed, except the one returned, which the caller's frame now holds.
 fn release_fnref_bufs(self: State, fn_stack: integer, value: integer) {
-  depth = len(self.frames);
+  depth = self.depth;
   ret = DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
   if value == 12 {
     ret = self.slot_dbref(fn_stack);
@@ -1897,7 +1932,7 @@ pub fn bind_fn_ref_result(self: State) {
     return;
   }
   if src.store_nr != NULL_STORE {
-    depth = len(self.frames);
+    depth = self.depth;
     k = len(self.fn_bufs) - 1;
     found = -1;
     while k >= 0 && (self.fn_bufs[k]?.depth ?? -1) >= depth && found < 0 {

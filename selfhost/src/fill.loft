@@ -2610,30 +2610,33 @@ pub fn execute(s: state::State, op: integer) -> boolean {
 // The dispatch loop: `s` run from its code position until that is `end`, the run stops, or
 // a native is to be called (`s.native`).  The positions are locals; the `State` holds them
 // whenever an operator runs through it.
-pub fn run(s: state::State, code: const vector<u8>, end: integer) {
+pub fn run(s: state::State, end: integer) {
   stk = s.stk;
   ip = s.code_pos;
   sp = s.stack_pos;
   cap = s.stack_cap;
   base = crt::stack_base(stk);
-  clen = len(code);
-  cbase = crt::code_base(code);
+  cbase = s.code_held;
+  fbase = s.fbase;
+  fd = s.depth;
+  rp = -1;
   top = cap - 8;
-  safe = clen - 32;
+  safe = len(s.code) - 32;
   while ip != end {
-    match crt::cget_u8(code, cbase, clen, ip) {
+    if ip >= 0 && ip <= safe && sp >= 0 && sp <= top {
+      match crt::peek_u8(cbase, ip) {
     0 => {
-      step_0 = crt::cget_i32(code, cbase, clen, ip + 1);
-      if ip <= safe {
+      step_0 = crt::peek_i32(cbase, ip + 1);
+      if true {
         ip += 5;
         ip += step_0;
         continue;
       }
     }
     1 => {
-      step_1 = crt::cget_i32(code, cbase, clen, ip + 1);
-      if ip <= safe && sp >= 8 {
-        if_false_1 = crt::fget_u8(stk, base, cap, sp - 8);
+      step_1 = crt::peek_i32(cbase, ip + 1);
+      if sp >= 8 {
+        if_false_1 = crt::peek_u8(base, sp - 8);
         sp -= 8;
         ip += 5;
         if if_false_1 != 1 { ip += step_1; }
@@ -2641,399 +2644,399 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
       }
     }
     2 => {
-      if ip <= safe && sp <= top {
+      if true {
         ip += 1;
         nv_2: boolean? = true;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_2));
+        crt::poke_u8(base, sp, state::bool_byte(nv_2));
         sp += 8;
         continue;
       }
     }
     3 => {
-      if ip <= safe && sp <= top {
+      if true {
         ip += 1;
         nv_3: boolean? = false;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_3));
+        crt::poke_u8(base, sp, state::bool_byte(nv_3));
         sp += 8;
         continue;
       }
     }
     4 => {
-      pos_4 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top && pos_4 >= 8 && pos_4 <= sp {
+      pos_4 = crt::peek_u16(cbase, ip + 1);
+      if pos_4 >= 8 && pos_4 <= sp {
         ip += 3;
-        nv_4: boolean? = state::rget_bool(stk, base, cap, sp, pos_4);
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_4));
+        nv_4: boolean? = state::rget_bool(base, sp, pos_4);
+        crt::poke_u8(base, sp, state::bool_byte(nv_4));
         sp += 8;
         continue;
       }
     }
     5 => {
-      val_5 = crt::cget_i64(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top {
+      val_5 = crt::peek_i64(cbase, ip + 1);
+      if true {
         ip += 9;
         nv_5: integer? = val_5;
-        crt::fput_i64(stk, base, cap, sp, nv_5);
+        crt::poke_i64(base, sp, nv_5);
         sp += 8;
         continue;
       }
     }
     6 => {
-      pos_6 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top && pos_6 >= 8 && pos_6 <= sp {
+      pos_6 = crt::peek_u16(cbase, ip + 1);
+      if pos_6 >= 8 && pos_6 <= sp {
         ip += 3;
-        nv_6: integer? = crt::fget_i64(stk, base, cap, sp - pos_6);
-        crt::fput_i64(stk, base, cap, sp, nv_6);
+        nv_6: integer? = crt::peek_i64(base, sp - pos_6);
+        crt::poke_i64(base, sp, nv_6);
         sp += 8;
         continue;
       }
     }
     7 => {
-      pos_7 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp >= 8 && pos_7 >= 8 && pos_7 <= sp - 8 {
-        value_7 = crt::fget_i64(stk, base, cap, sp - 8);
+      pos_7 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 8 && pos_7 >= 8 && pos_7 <= sp - 8 {
+        value_7 = crt::peek_i64(base, sp - 8);
         sp -= 8;
         ip += 3;
-        crt::fput_i64(stk, base, cap, sp + 8 - pos_7, value_7);
+        crt::poke_i64(base, sp + 8 - pos_7, value_7);
         continue;
       }
     }
     8 => {
-      if ip <= safe && sp >= 8 {
-        v1_8 = crt::fget_i64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_8 = crt::peek_i64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_8: float? = v1_8 as float;
-        crt::fput_f64(stk, base, cap, sp, nv_8);
+        crt::poke_f64(base, sp, nv_8);
         sp += 8;
         continue;
       }
     }
     9 => {
-      if ip <= safe && sp >= 16 {
-        v2_9 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_9 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_9 = crt::peek_i64(base, sp - 8);
+        v1_9 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_9: integer? = v1_9 + v2_9;
-        crt::fput_i64(stk, base, cap, sp, nv_9);
+        crt::poke_i64(base, sp, nv_9);
         sp += 8;
         continue;
       }
     }
     10 => {
-      if ip <= safe && sp >= 16 {
-        v2_10 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_10 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_10 = crt::peek_i64(base, sp - 8);
+        v1_10 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_10: integer? = v1_10 - v2_10;
-        crt::fput_i64(stk, base, cap, sp, nv_10);
+        crt::poke_i64(base, sp, nv_10);
         sp += 8;
         continue;
       }
     }
     11 => {
-      if ip <= safe && sp >= 16 {
-        v2_11 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_11 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_11 = crt::peek_i64(base, sp - 8);
+        v1_11 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_11: integer? = v1_11 * v2_11;
-        crt::fput_i64(stk, base, cap, sp, nv_11);
+        crt::poke_i64(base, sp, nv_11);
         sp += 8;
         continue;
       }
     }
     12 => {
-      if ip <= safe && sp >= 16 {
-        v2_12 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_12 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_12 = crt::peek_i64(base, sp - 8);
+        v1_12 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_12: integer? = if v2_12 == 0 { s.raise_recoverable("division by zero"); null } else { v1_12 / v2_12 };
-        crt::fput_i64(stk, base, cap, sp, nv_12);
+        crt::poke_i64(base, sp, nv_12);
         sp += 8;
         continue;
       }
     }
     13 => {
-      if ip <= safe && sp >= 16 {
-        v2_13 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_13 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_13 = crt::peek_i64(base, sp - 8);
+        v1_13 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_13: integer? = if v2_13 == 0 { s.raise_recoverable("division by zero"); null } else { v1_13 % v2_13 };
-        crt::fput_i64(stk, base, cap, sp, nv_13);
+        crt::poke_i64(base, sp, nv_13);
         sp += 8;
         continue;
       }
     }
     14 => {
-      if ip <= safe && sp >= 16 {
-        v2_14 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_14 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_14 = crt::peek_i64(base, sp - 8);
+        v1_14 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_14: integer? = v1_14 & v2_14;
-        crt::fput_i64(stk, base, cap, sp, nv_14);
+        crt::poke_i64(base, sp, nv_14);
         sp += 8;
         continue;
       }
     }
     15 => {
-      if ip <= safe && sp >= 16 {
-        v2_15 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_15 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_15 = crt::peek_i64(base, sp - 8);
+        v1_15 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_15: boolean? = v1_15 == v2_15;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_15));
+        crt::poke_u8(base, sp, state::bool_byte(nv_15));
         sp += 8;
         continue;
       }
     }
     16 => {
-      if ip <= safe && sp >= 16 {
-        v2_16 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_16 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_16 = crt::peek_i64(base, sp - 8);
+        v1_16 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_16: boolean? = v1_16 < v2_16;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_16));
+        crt::poke_u8(base, sp, state::bool_byte(nv_16));
         sp += 8;
         continue;
       }
     }
     17 => {
-      if ip <= safe && sp >= 16 {
-        v2_17 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_17 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_17 = crt::peek_i64(base, sp - 8);
+        v1_17 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_17: boolean? = v1_17 <= v2_17;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_17));
+        crt::poke_u8(base, sp, state::bool_byte(nv_17));
         sp += 8;
         continue;
       }
     }
     18 => {
-      val_18 = crt::cget_f64(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top {
+      val_18 = crt::peek_f64(cbase, ip + 1);
+      if true {
         ip += 9;
         nv_18: float? = val_18;
-        crt::fput_f64(stk, base, cap, sp, nv_18);
+        crt::poke_f64(base, sp, nv_18);
         sp += 8;
         continue;
       }
     }
     19 => {
-      pos_19 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top && pos_19 >= 8 && pos_19 <= sp {
+      pos_19 = crt::peek_u16(cbase, ip + 1);
+      if pos_19 >= 8 && pos_19 <= sp {
         ip += 3;
-        nv_19: float? = crt::fget_f64(stk, base, cap, sp - pos_19);
-        crt::fput_f64(stk, base, cap, sp, nv_19);
+        nv_19: float? = crt::peek_f64(base, sp - pos_19);
+        crt::poke_f64(base, sp, nv_19);
         sp += 8;
         continue;
       }
     }
     20 => {
-      pos_20 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp >= 8 && pos_20 >= 8 && pos_20 <= sp - 8 {
-        value_20 = crt::fget_f64(stk, base, cap, sp - 8);
+      pos_20 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 8 && pos_20 >= 8 && pos_20 <= sp - 8 {
+        value_20 = crt::peek_f64(base, sp - 8);
         sp -= 8;
         ip += 3;
-        crt::fput_f64(stk, base, cap, sp + 8 - pos_20, value_20);
+        crt::poke_f64(base, sp + 8 - pos_20, value_20);
         continue;
       }
     }
     21 => {
-      if ip <= safe && sp >= 8 {
-        v1_21 = crt::fget_f64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_21 = crt::peek_f64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_21: boolean? = v1_21 != null;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_21));
+        crt::poke_u8(base, sp, state::bool_byte(nv_21));
         sp += 8;
         continue;
       }
     }
     22 => {
-      if ip <= safe && sp >= 16 {
-        v2_22 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_22 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_22 = crt::peek_f64(base, sp - 8);
+        v1_22 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_22: float? = v1_22 + v2_22;
-        crt::fput_f64(stk, base, cap, sp, nv_22);
+        crt::poke_f64(base, sp, nv_22);
         sp += 8;
         continue;
       }
     }
     23 => {
-      if ip <= safe && sp >= 16 {
-        v2_23 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_23 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_23 = crt::peek_f64(base, sp - 8);
+        v1_23 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_23: float? = v1_23 - v2_23;
-        crt::fput_f64(stk, base, cap, sp, nv_23);
+        crt::poke_f64(base, sp, nv_23);
         sp += 8;
         continue;
       }
     }
     24 => {
-      if ip <= safe && sp >= 16 {
-        v2_24 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_24 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_24 = crt::peek_f64(base, sp - 8);
+        v1_24 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_24: float? = v1_24 * v2_24;
-        crt::fput_f64(stk, base, cap, sp, nv_24);
+        crt::poke_f64(base, sp, nv_24);
         sp += 8;
         continue;
       }
     }
     25 => {
-      if ip <= safe && sp >= 16 {
-        v2_25 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_25 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_25 = crt::peek_f64(base, sp - 8);
+        v1_25 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_25: float? = if v2_25 == 0.0 { s.raise_recoverable("division by zero"); v1_25 / v2_25 } else { v1_25 / v2_25 };
-        crt::fput_f64(stk, base, cap, sp, nv_25);
+        crt::poke_f64(base, sp, nv_25);
         sp += 8;
         continue;
       }
     }
     26 => {
-      if ip <= safe && sp >= 16 {
-        v2_26 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_26 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_26 = crt::peek_f64(base, sp - 8);
+        v1_26 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_26: float? = v1_26 / v2_26;
-        crt::fput_f64(stk, base, cap, sp, nv_26);
+        crt::poke_f64(base, sp, nv_26);
         sp += 8;
         continue;
       }
     }
     27 => {
-      if ip <= safe && sp >= 16 {
-        v2_27 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_27 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_27 = crt::peek_f64(base, sp - 8);
+        v1_27 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_27: boolean? = ops::cmp_float(2, v1_27, v2_27);
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_27));
+        crt::poke_u8(base, sp, state::bool_byte(nv_27));
         sp += 8;
         continue;
       }
     }
     28 => {
-      kind_28 = crt::cget_u8(code, cbase, clen, ip + 1);
-      a_28 = crt::cget_u16(code, cbase, clen, ip + 2);
-      b_28 = crt::cget_u16(code, cbase, clen, ip + 4);
-      if ip <= safe && sp <= top && a_28 >= 8 && a_28 <= sp && b_28 >= 8 && b_28 <= sp {
+      kind_28 = crt::peek_u8(cbase, ip + 1);
+      a_28 = crt::peek_u16(cbase, ip + 2);
+      b_28 = crt::peek_u16(cbase, ip + 4);
+      if a_28 >= 8 && a_28 <= sp && b_28 >= 8 && b_28 <= sp {
         ip += 6;
-        nv_28: integer? = ops::fused_int(kind_28, crt::fget_i64(stk, base, cap, sp - a_28), crt::fget_i64(stk, base, cap, sp - b_28));
-        crt::fput_i64(stk, base, cap, sp, nv_28);
+        nv_28: integer? = ops::fused_int(kind_28, crt::peek_i64(base, sp - a_28), crt::peek_i64(base, sp - b_28));
+        crt::poke_i64(base, sp, nv_28);
         sp += 8;
         continue;
       }
     }
     29 => {
-      kind_29 = crt::cget_u8(code, cbase, clen, ip + 1);
-      a_29 = crt::cget_u16(code, cbase, clen, ip + 2);
-      c_29 = crt::cget_i64(code, cbase, clen, ip + 4);
-      if ip <= safe && sp <= top && a_29 >= 8 && a_29 <= sp {
+      kind_29 = crt::peek_u8(cbase, ip + 1);
+      a_29 = crt::peek_u16(cbase, ip + 2);
+      c_29 = crt::peek_i64(cbase, ip + 4);
+      if a_29 >= 8 && a_29 <= sp {
         ip += 12;
-        nv_29: integer? = ops::fused_int(kind_29, crt::fget_i64(stk, base, cap, sp - a_29), c_29);
-        crt::fput_i64(stk, base, cap, sp, nv_29);
+        nv_29: integer? = ops::fused_int(kind_29, crt::peek_i64(base, sp - a_29), c_29);
+        crt::poke_i64(base, sp, nv_29);
         sp += 8;
         continue;
       }
     }
     30 => {
-      kind_30 = crt::cget_u8(code, cbase, clen, ip + 1);
-      a_30 = crt::cget_u16(code, cbase, clen, ip + 2);
-      b_30 = crt::cget_u16(code, cbase, clen, ip + 4);
-      if ip <= safe && sp <= top && a_30 >= 8 && a_30 <= sp && b_30 >= 8 && b_30 <= sp {
+      kind_30 = crt::peek_u8(cbase, ip + 1);
+      a_30 = crt::peek_u16(cbase, ip + 2);
+      b_30 = crt::peek_u16(cbase, ip + 4);
+      if a_30 >= 8 && a_30 <= sp && b_30 >= 8 && b_30 <= sp {
         ip += 6;
-        nv_30: boolean? = ops::fused_cmp(kind_30, crt::fget_i64(stk, base, cap, sp - a_30), crt::fget_i64(stk, base, cap, sp - b_30));
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_30));
+        nv_30: boolean? = ops::fused_cmp(kind_30, crt::peek_i64(base, sp - a_30), crt::peek_i64(base, sp - b_30));
+        crt::poke_u8(base, sp, state::bool_byte(nv_30));
         sp += 8;
         continue;
       }
     }
     31 => {
-      kind_31 = crt::cget_u8(code, cbase, clen, ip + 1);
-      a_31 = crt::cget_u16(code, cbase, clen, ip + 2);
-      c_31 = crt::cget_i64(code, cbase, clen, ip + 4);
-      if ip <= safe && sp <= top && a_31 >= 8 && a_31 <= sp {
+      kind_31 = crt::peek_u8(cbase, ip + 1);
+      a_31 = crt::peek_u16(cbase, ip + 2);
+      c_31 = crt::peek_i64(cbase, ip + 4);
+      if a_31 >= 8 && a_31 <= sp {
         ip += 12;
-        nv_31: boolean? = ops::fused_cmp(kind_31, crt::fget_i64(stk, base, cap, sp - a_31), c_31);
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_31));
+        nv_31: boolean? = ops::fused_cmp(kind_31, crt::peek_i64(base, sp - a_31), c_31);
+        crt::poke_u8(base, sp, state::bool_byte(nv_31));
         sp += 8;
         continue;
       }
     }
     32 => {
-      kind_32 = crt::cget_u8(code, cbase, clen, ip + 1);
-      dst_32 = crt::cget_u16(code, cbase, clen, ip + 2);
-      a_32 = crt::cget_u16(code, cbase, clen, ip + 4);
-      b_32 = crt::cget_u16(code, cbase, clen, ip + 6);
-      if ip <= safe && dst_32 >= 8 && dst_32 <= sp && a_32 >= 8 && a_32 <= sp && b_32 >= 8 && b_32 <= sp {
+      kind_32 = crt::peek_u8(cbase, ip + 1);
+      dst_32 = crt::peek_u16(cbase, ip + 2);
+      a_32 = crt::peek_u16(cbase, ip + 4);
+      b_32 = crt::peek_u16(cbase, ip + 6);
+      if dst_32 >= 8 && dst_32 <= sp && a_32 >= 8 && a_32 <= sp && b_32 >= 8 && b_32 <= sp {
         ip += 8;
-        crt::fput_i64(stk, base, cap, sp + 8 - dst_32, ops::fused_int(kind_32, crt::fget_i64(stk, base, cap, sp - a_32), crt::fget_i64(stk, base, cap, sp - b_32)));
+        crt::poke_i64(base, sp + 8 - dst_32, ops::fused_int(kind_32, crt::peek_i64(base, sp - a_32), crt::peek_i64(base, sp - b_32)));
         continue;
       }
     }
     33 => {
-      kind_33 = crt::cget_u8(code, cbase, clen, ip + 1);
-      dst_33 = crt::cget_u16(code, cbase, clen, ip + 2);
-      a_33 = crt::cget_u16(code, cbase, clen, ip + 4);
-      c_33 = crt::cget_i64(code, cbase, clen, ip + 6);
-      if ip <= safe && dst_33 >= 8 && dst_33 <= sp && a_33 >= 8 && a_33 <= sp {
+      kind_33 = crt::peek_u8(cbase, ip + 1);
+      dst_33 = crt::peek_u16(cbase, ip + 2);
+      a_33 = crt::peek_u16(cbase, ip + 4);
+      c_33 = crt::peek_i64(cbase, ip + 6);
+      if dst_33 >= 8 && dst_33 <= sp && a_33 >= 8 && a_33 <= sp {
         ip += 14;
-        crt::fput_i64(stk, base, cap, sp + 8 - dst_33, ops::fused_int(kind_33, crt::fget_i64(stk, base, cap, sp - a_33), c_33));
+        crt::poke_i64(base, sp + 8 - dst_33, ops::fused_int(kind_33, crt::peek_i64(base, sp - a_33), c_33));
         continue;
       }
     }
     34 => {
-      kind_34 = crt::cget_u8(code, cbase, clen, ip + 1);
-      a_34 = crt::cget_u16(code, cbase, clen, ip + 2);
-      b_34 = crt::cget_u16(code, cbase, clen, ip + 4);
-      step_34 = crt::cget_i32(code, cbase, clen, ip + 6);
-      if ip <= safe && a_34 >= 8 && a_34 <= sp && b_34 >= 8 && b_34 <= sp {
+      kind_34 = crt::peek_u8(cbase, ip + 1);
+      a_34 = crt::peek_u16(cbase, ip + 2);
+      b_34 = crt::peek_u16(cbase, ip + 4);
+      step_34 = crt::peek_i32(cbase, ip + 6);
+      if a_34 >= 8 && a_34 <= sp && b_34 >= 8 && b_34 <= sp {
         ip += 10;
-        if !ops::fused_cmp(kind_34, crt::fget_i64(stk, base, cap, sp - a_34), crt::fget_i64(stk, base, cap, sp - b_34)) { ip += step_34; }
+        if !ops::fused_cmp(kind_34, crt::peek_i64(base, sp - a_34), crt::peek_i64(base, sp - b_34)) { ip += step_34; }
         continue;
       }
     }
     35 => {
-      kind_35 = crt::cget_u8(code, cbase, clen, ip + 1);
-      a_35 = crt::cget_u16(code, cbase, clen, ip + 2);
-      c_35 = crt::cget_i64(code, cbase, clen, ip + 4);
-      step_35 = crt::cget_i32(code, cbase, clen, ip + 12);
-      if ip <= safe && a_35 >= 8 && a_35 <= sp {
+      kind_35 = crt::peek_u8(cbase, ip + 1);
+      a_35 = crt::peek_u16(cbase, ip + 2);
+      c_35 = crt::peek_i64(cbase, ip + 4);
+      step_35 = crt::peek_i32(cbase, ip + 12);
+      if a_35 >= 8 && a_35 <= sp {
         ip += 16;
-        if !ops::fused_cmp(kind_35, crt::fget_i64(stk, base, cap, sp - a_35), c_35) { ip += step_35; }
+        if !ops::fused_cmp(kind_35, crt::peek_i64(base, sp - a_35), c_35) { ip += step_35; }
         continue;
       }
     }
     36 => {
-      step_36 = crt::cget_i8(code, cbase, clen, ip + 1);
-      if ip <= safe {
+      step_36 = crt::peek_i8(cbase, ip + 1);
+      if true {
         ip += 2;
         ip += step_36;
         continue;
       }
     }
     37 => {
-      step_37 = crt::cget_i8(code, cbase, clen, ip + 1);
-      if ip <= safe && sp >= 8 {
-        if_false_37 = crt::fget_u8(stk, base, cap, sp - 8);
+      step_37 = crt::peek_i8(cbase, ip + 1);
+      if sp >= 8 {
+        if_false_37 = crt::peek_u8(base, sp - 8);
         sp -= 8;
         ip += 2;
         if if_false_37 != 1 { ip += step_37; }
@@ -3041,52 +3044,52 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
       }
     }
     38 => {
-      d_nr_38 = crt::cget_i64(code, cbase, clen, ip + 1);
-      args_size_38 = crt::cget_u16(code, cbase, clen, ip + 9);
-      to_38 = crt::cget_i64(code, cbase, clen, ip + 11);
-      if ip <= safe {
+      d_nr_38 = crt::peek_i64(cbase, ip + 1);
+      args_size_38 = crt::peek_u16(cbase, ip + 9);
+      to_38 = crt::peek_i64(cbase, ip + 11);
+      if fd < state::MAX_CALL_DEPTH && sp + state::FRAME_HEADROOM <= cap {
         ip += 19;
-        s.code_pos = ip;
-        s.stack_pos = sp;
-        s.fn_call(d_nr_38, args_size_38, to_38);
-        if s.stopped || s.native >= 0 {
-          return;
-        }
-        ip = s.code_pos;
-        sp = s.stack_pos;
-        cap = s.stack_cap;
-        top = cap - 8;
-        base = crt::stack_base(stk);
+        at_38 = fd * state::FRAME_BYTES;
+        crt::poke_i64(fbase, at_38, d_nr_38);
+        crt::poke_i64(fbase, at_38 + 8, ip);
+        crt::poke_i64(fbase, at_38 + 16, sp - args_size_38);
+        crt::poke_i64(fbase, at_38 + 24, args_size_38);
+        fd += 1;
+        crt::poke_u32(base, sp, ip);
+        sp += 8;
+        ip = to_38;
         continue;
       }
     }
     39 => {
-      ret_39 = crt::cget_u16(code, cbase, clen, ip + 1);
-      value_39 = crt::cget_u16(code, cbase, clen, ip + 3);
-      discard_39 = crt::cget_u16(code, cbase, clen, ip + 5);
-      if ip <= safe {
-        ip += 7;
-        s.code_pos = ip;
-        s.stack_pos = sp;
-        s.fn_return(ret_39, value_39, discard_39);
-        if s.stopped || s.native >= 0 {
-          return;
+      ret_39 = crt::peek_u16(cbase, ip + 1);
+      value_39 = crt::peek_u16(cbase, ip + 3);
+      discard_39 = crt::peek_u16(cbase, ip + 5);
+      if rp < 0 {
+        rp = if s.plain_return() { 1 } else { 0 };
+      }
+      step_39 = (value_39 + 7) / 8 * 8;
+      fn_stack_39 = sp - discard_39;
+      if rp == 1 && fd > 0 && discard_39 <= sp && step_39 <= discard_39 && fn_stack_39 + ret_39 <= top {
+        ip = crt::peek_u32(base, fn_stack_39 + ret_39);
+        if value_39 == 8 {
+          crt::poke_i64(base, fn_stack_39, crt::peek_i64(base, sp - 8));
+        } else if value_39 > 0 {
+          crt::move_bytes(base, sp - step_39, fn_stack_39, value_39);
         }
-        ip = s.code_pos;
-        sp = s.stack_pos;
-        cap = s.stack_cap;
-        top = cap - 8;
-        base = crt::stack_base(stk);
+        sp = fn_stack_39 + step_39;
+        fd -= 1;
         continue;
       }
     }
     40 => {
-      value_40 = crt::cget_u16(code, cbase, clen, ip + 1);
-      discard_40 = crt::cget_u16(code, cbase, clen, ip + 3);
-      if ip <= safe {
+      value_40 = crt::peek_u16(cbase, ip + 1);
+      discard_40 = crt::peek_u16(cbase, ip + 3);
+      if true {
         ip += 5;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.free_stack(value_40, discard_40);
         if s.stopped || s.native >= 0 {
           return;
@@ -3096,15 +3099,18 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     41 => {
-      size_41 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe {
+      size_41 = crt::peek_u16(cbase, ip + 1);
+      if true {
         ip += 3;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.reserve_frame(size_41);
         if s.stopped || s.native >= 0 {
           return;
@@ -3114,58 +3120,61 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     42 => {
-      var_42 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp >= 8 && var_42 >= 8 && var_42 <= sp - 8 {
-        value_42 = crt::fget_u8(stk, base, cap, sp - 8);
+      var_42 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 8 && var_42 >= 8 && var_42 <= sp - 8 {
+        value_42 = crt::peek_u8(base, sp - 8);
         sp -= 8;
         ip += 3;
-        crt::fput_u8(stk, base, cap, sp + 8 - var_42, value_42);
+        crt::poke_u8(base, sp + 8 - var_42, value_42);
         continue;
       }
     }
     43 => {
-      if ip <= safe && sp >= 8 {
-        v1_43 = crt::fget_u8(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_43 = crt::peek_u8(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_43: boolean? = v1_43 != 1;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_43));
+        crt::poke_u8(base, sp, state::bool_byte(nv_43));
         sp += 8;
         continue;
       }
     }
     44 => {
-      val_44 = crt::cget_i16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top {
+      val_44 = crt::peek_i16(cbase, ip + 1);
+      if true {
         ip += 3;
         nv_44: integer? = val_44;
-        crt::fput_i64(stk, base, cap, sp, nv_44);
+        crt::poke_i64(base, sp, nv_44);
         sp += 8;
         continue;
       }
     }
     45 => {
-      val_45 = crt::cget_i8(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top {
+      val_45 = crt::peek_i8(cbase, ip + 1);
+      if true {
         ip += 2;
         nv_45: integer? = val_45;
-        crt::fput_i64(stk, base, cap, sp, nv_45);
+        crt::poke_i64(base, sp, nv_45);
         sp += 8;
         continue;
       }
     }
     47 => {
-      pos_47 = crt::cget_u16(code, cbase, clen, ip + 1);
-      min_47 = crt::cget_i32(code, cbase, clen, ip + 3);
-      kind_47 = crt::cget_u8(code, cbase, clen, ip + 7);
-      if ip <= safe && sp <= top {
+      pos_47 = crt::peek_u16(cbase, ip + 1);
+      min_47 = crt::peek_i32(cbase, ip + 3);
+      kind_47 = crt::peek_u8(cbase, ip + 7);
+      if true {
         ip += 8;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         nv_47: integer? = s.var_narrow(pos_47, min_47, kind_47);
         s.put_stack_i64(nv_47);
         if s.stopped || s.native >= 0 {
@@ -3176,19 +3185,22 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     48 => {
-      pos_48 = crt::cget_u16(code, cbase, clen, ip + 1);
-      min_48 = crt::cget_i32(code, cbase, clen, ip + 3);
-      kind_48 = crt::cget_u8(code, cbase, clen, ip + 7);
-      if ip <= safe && sp >= 8 {
-        value_48 = crt::fget_i64(stk, base, cap, sp - 8);
+      pos_48 = crt::peek_u16(cbase, ip + 1);
+      min_48 = crt::peek_i32(cbase, ip + 3);
+      kind_48 = crt::peek_u8(cbase, ip + 7);
+      if sp >= 8 {
+        value_48 = crt::peek_i64(base, sp - 8);
         sp -= 8;
         ip += 8;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.put_narrow(pos_48, min_48, kind_48, value_48);
         if s.stopped || s.native >= 0 {
           return;
@@ -3198,323 +3210,326 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     50 => {
-      if ip <= safe && sp <= top {
+      if true {
         ip += 1;
         nv_50: integer? = null;
-        crt::fput_i64(stk, base, cap, sp, nv_50);
+        crt::poke_i64(base, sp, nv_50);
         sp += 8;
         continue;
       }
     }
     51 => {
-      if ip <= safe && sp <= top {
+      if true {
         ip += 1;
         nv_51: boolean? = null;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_51));
+        crt::poke_u8(base, sp, state::bool_byte(nv_51));
         sp += 8;
         continue;
       }
     }
     53 => {
-      if ip <= safe && sp >= 8 {
-        v1_53 = crt::fget_i64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_53 = crt::peek_i64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_53: integer? = if v1_53 == null { null } else { v1_53.abs() };
-        crt::fput_i64(stk, base, cap, sp, nv_53);
+        crt::poke_i64(base, sp, nv_53);
         sp += 8;
         continue;
       }
     }
     54 => {
-      if ip <= safe && sp >= 8 {
-        v1_54 = crt::fget_i64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_54 = crt::peek_i64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_54: integer? = -v1_54;
-        crt::fput_i64(stk, base, cap, sp, nv_54);
+        crt::poke_i64(base, sp, nv_54);
         sp += 8;
         continue;
       }
     }
     55 => {
-      if ip <= safe && sp >= 8 {
-        v1_55 = crt::fget_i64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_55 = crt::peek_i64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_55: integer? = if v1_55 == null { 9223372036854775807 } else { -v1_55 - 1 };
-        crt::fput_i64(stk, base, cap, sp, nv_55);
+        crt::poke_i64(base, sp, nv_55);
         sp += 8;
         continue;
       }
     }
     57 => {
-      if ip <= safe && sp >= 8 {
-        v1_57 = crt::fget_i64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_57 = crt::peek_i64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_57: boolean? = v1_57 != null;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_57));
+        crt::poke_u8(base, sp, state::bool_byte(nv_57));
         sp += 8;
         continue;
       }
     }
     58 => {
-      if ip <= safe && sp >= 16 {
-        v2_58 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_58 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_58 = crt::peek_i64(base, sp - 8);
+        v1_58 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_58: integer? = (v1_58 + v2_58) ?? null;
-        crt::fput_i64(stk, base, cap, sp, nv_58);
+        crt::poke_i64(base, sp, nv_58);
         sp += 8;
         continue;
       }
     }
     59 => {
-      if ip <= safe && sp >= 16 {
-        v2_59 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_59 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_59 = crt::peek_i64(base, sp - 8);
+        v1_59 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_59: integer? = (v1_59 - v2_59) ?? null;
-        crt::fput_i64(stk, base, cap, sp, nv_59);
+        crt::poke_i64(base, sp, nv_59);
         sp += 8;
         continue;
       }
     }
     60 => {
-      if ip <= safe && sp >= 16 {
-        v2_60 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_60 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_60 = crt::peek_i64(base, sp - 8);
+        v1_60 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_60: integer? = (v1_60 * v2_60) ?? null;
-        crt::fput_i64(stk, base, cap, sp, nv_60);
+        crt::poke_i64(base, sp, nv_60);
         sp += 8;
         continue;
       }
     }
     61 => {
-      if ip <= safe && sp >= 16 {
-        v2_61 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_61 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_61 = crt::peek_i64(base, sp - 8);
+        v1_61 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_61: integer? = if v2_61 == 0 { null } else { (v1_61 / v2_61) ?? null };
-        crt::fput_i64(stk, base, cap, sp, nv_61);
+        crt::poke_i64(base, sp, nv_61);
         sp += 8;
         continue;
       }
     }
     62 => {
-      if ip <= safe && sp >= 16 {
-        v2_62 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_62 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_62 = crt::peek_i64(base, sp - 8);
+        v1_62 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_62: integer? = if v2_62 == 0 { null } else { (v1_62 % v2_62) ?? null };
-        crt::fput_i64(stk, base, cap, sp, nv_62);
+        crt::poke_i64(base, sp, nv_62);
         sp += 8;
         continue;
       }
     }
     63 => {
-      if ip <= safe && sp >= 16 {
-        v2_63 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_63 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_63 = crt::peek_i64(base, sp - 8);
+        v1_63 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_63: integer? = v1_63 | v2_63;
-        crt::fput_i64(stk, base, cap, sp, nv_63);
+        crt::poke_i64(base, sp, nv_63);
         sp += 8;
         continue;
       }
     }
     64 => {
-      if ip <= safe && sp >= 16 {
-        v2_64 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_64 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_64 = crt::peek_i64(base, sp - 8);
+        v1_64 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_64: integer? = v1_64 ^ v2_64;
-        crt::fput_i64(stk, base, cap, sp, nv_64);
+        crt::poke_i64(base, sp, nv_64);
         sp += 8;
         continue;
       }
     }
     65 => {
-      if ip <= safe && sp >= 16 {
-        v2_65 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_65 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_65 = crt::peek_i64(base, sp - 8);
+        v1_65 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_65: integer? = if v1_65 == null || v2_65 == null { null } else if v2_65 < 0 || v2_65 >= 64 { s.raise_recoverable("a shift outside 0..64"); null } else { v1_65 << v2_65 };
-        crt::fput_i64(stk, base, cap, sp, nv_65);
+        crt::poke_i64(base, sp, nv_65);
         sp += 8;
         continue;
       }
     }
     66 => {
-      if ip <= safe && sp >= 16 {
-        v2_66 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_66 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_66 = crt::peek_i64(base, sp - 8);
+        v1_66 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_66: integer? = if v1_66 == null || v2_66 == null { null } else if v2_66 < 0 || v2_66 >= 64 { s.raise_recoverable("a shift outside 0..64"); null } else { v1_66 >> v2_66 };
-        crt::fput_i64(stk, base, cap, sp, nv_66);
+        crt::poke_i64(base, sp, nv_66);
         sp += 8;
         continue;
       }
     }
     67 => {
-      if ip <= safe && sp >= 16 {
-        v2_67 = crt::fget_i64(stk, base, cap, sp - 8);
-        v1_67 = crt::fget_i64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_67 = crt::peek_i64(base, sp - 8);
+        v1_67 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_67: boolean? = v1_67 != v2_67;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_67));
+        crt::poke_u8(base, sp, state::bool_byte(nv_67));
         sp += 8;
         continue;
       }
     }
     86 => {
-      if ip <= safe && sp <= top {
+      if true {
         ip += 1;
         nv_86: float? = null;
-        crt::fput_f64(stk, base, cap, sp, nv_86);
+        crt::poke_f64(base, sp, nv_86);
         sp += 8;
         continue;
       }
     }
     87 => {
-      if ip <= safe && sp >= 8 {
-        v1_87 = crt::fget_f64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_87 = crt::peek_f64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_87: float? = v1_87.abs();
-        crt::fput_f64(stk, base, cap, sp, nv_87);
+        crt::poke_f64(base, sp, nv_87);
         sp += 8;
         continue;
       }
     }
     88 => {
-      fn_id_88 = crt::cget_i8(code, cbase, clen, ip + 1);
-      if ip <= safe && sp >= 8 {
-        v1_88 = crt::fget_f64(stk, base, cap, sp - 8);
+      fn_id_88 = crt::peek_i8(cbase, ip + 1);
+      if sp >= 8 {
+        v1_88 = crt::peek_f64(base, sp - 8);
         sp -= 8;
         ip += 2;
         nv_88: float? = ops::math_func(fn_id_88, v1_88);
-        crt::fput_f64(stk, base, cap, sp, nv_88);
+        crt::poke_f64(base, sp, nv_88);
         sp += 8;
         continue;
       }
     }
     89 => {
-      fn_id_89 = crt::cget_i8(code, cbase, clen, ip + 1);
-      if ip <= safe && sp >= 16 {
-        v2_89 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_89 = crt::fget_f64(stk, base, cap, sp - 16);
+      fn_id_89 = crt::peek_i8(cbase, ip + 1);
+      if sp >= 16 {
+        v2_89 = crt::peek_f64(base, sp - 8);
+        v1_89 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 2;
         nv_89: float? = ops::math_func2(fn_id_89, v1_89, v2_89);
-        crt::fput_f64(stk, base, cap, sp, nv_89);
+        crt::poke_f64(base, sp, nv_89);
         sp += 8;
         continue;
       }
     }
     90 => {
-      if ip <= safe && sp >= 16 {
-        v2_90 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_90 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_90 = crt::peek_f64(base, sp - 8);
+        v1_90 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_90: float? = v1_90.pow(v2_90);
-        crt::fput_f64(stk, base, cap, sp, nv_90);
+        crt::poke_f64(base, sp, nv_90);
         sp += 8;
         continue;
       }
     }
     91 => {
-      if ip <= safe && sp >= 8 {
-        v1_91 = crt::fget_f64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_91 = crt::peek_f64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_91: float? = if v1_91 == null { null } else { -v1_91 };
-        crt::fput_f64(stk, base, cap, sp, nv_91);
+        crt::poke_f64(base, sp, nv_91);
         sp += 8;
         continue;
       }
     }
     93 => {
-      if ip <= safe && sp >= 8 {
-        v1_93 = crt::fget_f64(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_93 = crt::peek_f64(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_93: integer? = v1_93 as integer;
-        crt::fput_i64(stk, base, cap, sp, nv_93);
+        crt::poke_i64(base, sp, nv_93);
         sp += 8;
         continue;
       }
     }
     94 => {
-      if ip <= safe && sp >= 16 {
-        v2_94 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_94 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_94 = crt::peek_f64(base, sp - 8);
+        v1_94 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_94: float? = if v2_94 == 0.0 { s.raise_recoverable("division by zero"); v1_94 % v2_94 } else { v1_94 % v2_94 };
-        crt::fput_f64(stk, base, cap, sp, nv_94);
+        crt::poke_f64(base, sp, nv_94);
         sp += 8;
         continue;
       }
     }
     95 => {
-      if ip <= safe && sp >= 16 {
-        v2_95 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_95 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_95 = crt::peek_f64(base, sp - 8);
+        v1_95 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_95: boolean? = ops::cmp_float(0, v1_95, v2_95);
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_95));
+        crt::poke_u8(base, sp, state::bool_byte(nv_95));
         sp += 8;
         continue;
       }
     }
     96 => {
-      if ip <= safe && sp >= 16 {
-        v2_96 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_96 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_96 = crt::peek_f64(base, sp - 8);
+        v1_96 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_96: boolean? = ops::cmp_float(1, v1_96, v2_96);
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_96));
+        crt::poke_u8(base, sp, state::bool_byte(nv_96));
         sp += 8;
         continue;
       }
     }
     97 => {
-      if ip <= safe && sp >= 16 {
-        v2_97 = crt::fget_f64(stk, base, cap, sp - 8);
-        v1_97 = crt::fget_f64(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_97 = crt::peek_f64(base, sp - 8);
+        v1_97 = crt::peek_f64(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_97: boolean? = ops::cmp_float(3, v1_97, v2_97);
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_97));
+        crt::poke_u8(base, sp, state::bool_byte(nv_97));
         sp += 8;
         continue;
       }
     }
     102 => {
-      if ip <= safe {
+      if true {
         ip += 1;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.string_from_code();
         if s.stopped || s.native >= 0 {
           return;
@@ -3524,14 +3539,17 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     103 => {
-      if ip <= safe {
+      if true {
         ip += 1;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.push_null_text();
         if s.stopped || s.native >= 0 {
           return;
@@ -3541,92 +3559,95 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     124 => {
-      pos_124 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top && pos_124 >= 8 && pos_124 <= sp {
+      pos_124 = crt::peek_u16(cbase, ip + 1);
+      if pos_124 >= 8 && pos_124 <= sp {
         ip += 3;
-        nv_124: integer? = crt::fget_u8(stk, base, cap, sp - pos_124);
-        crt::fput_u8(stk, base, cap, sp, nv_124 ?? 255);
+        nv_124: integer? = crt::peek_u8(base, sp - pos_124);
+        crt::poke_u8(base, sp, nv_124 ?? 255);
         sp += 8;
         continue;
       }
     }
     125 => {
-      val_125 = crt::cget_u8(code, cbase, clen, ip + 1);
-      if ip <= safe && sp <= top {
+      val_125 = crt::peek_u8(cbase, ip + 1);
+      if true {
         ip += 2;
         nv_125: integer? = val_125;
-        crt::fput_u8(stk, base, cap, sp, nv_125 ?? 255);
+        crt::poke_u8(base, sp, nv_125 ?? 255);
         sp += 8;
         continue;
       }
     }
     126 => {
-      pos_126 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe && sp >= 8 && pos_126 >= 8 && pos_126 <= sp - 8 {
-        value_126 = crt::fget_u8(stk, base, cap, sp - 8);
+      pos_126 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 8 && pos_126 >= 8 && pos_126 <= sp - 8 {
+        value_126 = crt::peek_u8(base, sp - 8);
         sp -= 8;
         ip += 3;
-        crt::fput_u8(stk, base, cap, sp + 8 - pos_126, value_126);
+        crt::poke_u8(base, sp + 8 - pos_126, value_126);
         continue;
       }
     }
     127 => {
-      if ip <= safe && sp >= 8 {
-        v1_127 = crt::fget_u8(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_127 = crt::peek_u8(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_127: boolean? = v1_127 != 255 && v1_127 != 0;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_127));
+        crt::poke_u8(base, sp, state::bool_byte(nv_127));
         sp += 8;
         continue;
       }
     }
     128 => {
-      if ip <= safe && sp >= 8 {
-        v1_128 = crt::fget_u8(stk, base, cap, sp - 8);
+      if sp >= 8 {
+        v1_128 = crt::peek_u8(base, sp - 8);
         sp -= 8;
         ip += 1;
         nv_128: integer? = if v1_128 == 255 { null } else { v1_128 };
-        crt::fput_i64(stk, base, cap, sp, nv_128);
+        crt::poke_i64(base, sp, nv_128);
         sp += 8;
         continue;
       }
     }
     212 => {
-      if ip <= safe && sp >= 16 {
-        v2_212 = crt::fget_u8(stk, base, cap, sp - 8);
-        v1_212 = crt::fget_u8(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_212 = crt::peek_u8(base, sp - 8);
+        v1_212 = crt::peek_u8(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_212: boolean? = v1_212 == v2_212;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_212));
+        crt::poke_u8(base, sp, state::bool_byte(nv_212));
         sp += 8;
         continue;
       }
     }
     213 => {
-      if ip <= safe && sp >= 16 {
-        v2_213 = crt::fget_u8(stk, base, cap, sp - 8);
-        v1_213 = crt::fget_u8(stk, base, cap, sp - 16);
+      if sp >= 16 {
+        v2_213 = crt::peek_u8(base, sp - 8);
+        v1_213 = crt::peek_u8(base, sp - 16);
         sp -= 16;
         ip += 1;
         nv_213: boolean? = v1_213 != v2_213;
-        crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_213));
+        crt::poke_u8(base, sp, state::bool_byte(nv_213));
         sp += 8;
         continue;
       }
     }
     250 => {
-      fn_var_250 = crt::cget_u16(code, cbase, clen, ip + 1);
-      arg_size_250 = crt::cget_u16(code, cbase, clen, ip + 3);
-      if ip <= safe {
+      fn_var_250 = crt::peek_u16(cbase, ip + 1);
+      arg_size_250 = crt::peek_u16(cbase, ip + 3);
+      if true {
         ip += 5;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.fn_call_ref(fn_var_250, arg_size_250);
         if s.stopped || s.native >= 0 {
           return;
@@ -3636,15 +3657,18 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     251 => {
-      value_size_251 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe {
+      value_size_251 = crt::peek_u16(cbase, ip + 1);
+      if true {
         ip += 3;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.coroutine_next(value_size_251);
         if s.stopped || s.native >= 0 {
           return;
@@ -3654,15 +3678,18 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     252 => {
-      value_size_252 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe {
+      value_size_252 = crt::peek_u16(cbase, ip + 1);
+      if true {
         ip += 3;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.coroutine_yield(value_size_252);
         if s.stopped || s.native >= 0 {
           return;
@@ -3672,15 +3699,18 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     253 => {
-      pos_253 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe {
+      pos_253 = crt::peek_u16(cbase, ip + 1);
+      if true {
         ip += 3;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.var_fn_ref(pos_253);
         if s.stopped || s.native >= 0 {
           return;
@@ -3690,15 +3720,18 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
     254 => {
-      pos_254 = crt::cget_u16(code, cbase, clen, ip + 1);
-      if ip <= safe {
+      pos_254 = crt::peek_u16(cbase, ip + 1);
+      if true {
         ip += 3;
         s.code_pos = ip;
         s.stack_pos = sp;
+        s.depth = fd;
         s.put_fn_ref(pos_254);
         if s.stopped || s.native >= 0 {
           return;
@@ -3708,13 +3741,17 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }
       _ => {}
+      }
     }
     s.code_pos = ip;
     s.stack_pos = sp;
+    s.depth = fd;
     op = s.code_u8();
     if op == 255 {
       op = 255 + s.code_u8();
@@ -3731,7 +3768,10 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
     cap = s.stack_cap;
     top = cap - 8;
     base = crt::stack_base(stk);
+    fd = s.depth;
+    rp = -1;
   }
   s.code_pos = ip;
   s.stack_pos = sp;
+  s.depth = fd;
 }

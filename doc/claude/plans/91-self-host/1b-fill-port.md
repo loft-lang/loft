@@ -134,20 +134,23 @@ The dispatch loop is generated (`fill.loft`'s `run`) by the Rust interpreter's e
 
 | rule | in the runner |
 |---|---|
-| `(R-RegisterTable)` | the code position, the stack top and the stack's capacity are locals of `run`; an operator whose template needs no more of the `State` is an arm of it, any other templated operator with scalar operands an arm that writes the positions to the `State`, runs, and reads them back |
-| `(R-CodeBase)` | operands are read through the code's address (`crt::code_base`, `crt::cget_*`), taken once: `run` is given the run image's code, whose store nothing grows during a run (the `State`'s copy lies in a store the frame list grows) |
-| `(R-OperandSpan)` | one test, `ip <= safe`, covers an arm's whole operand span |
-| `(R-StackBase)` | a slot is read through the stack store's base (`crt::stack_base`, `crt::fget_*` / `fput_*`) |
-| `(R-DispatchStop)` | `State.stopped`, set with `fault` by `State::stop` |
-| `(R-FrameHeadroom)` | `fn_call` grows the stack by the default headroom; an arm tests one compare against the capacity |
+| `(R-RegisterTable)` | the code position, the stack top, the stack's capacity and the frame depth are locals of `run`; an operator whose template needs no more of the `State` is an arm of it, any other templated operator with scalar operands an arm that writes the positions to the `State`, runs, and reads them back |
+| `(R-CodeBase)` | operands are read through the address of the code the `State` holds for the run (`State.code_held`, memory of its own that no store's growth moves) by `crt::peek_*`: one load, no vector and no store looked up |
+| `(R-OperandSpan)` | one test at the loop's head, `0 <= ip <= safe`, covers a step's opcode and whole operand span |
+| `(R-StackBase)` | a slot is read and written through the stack store's base (`crt::stack_base`, `crt::peek_*` / `poke_*`); the head's test `0 <= sp <= top` covers the top and a push, an arm's guard what it pops and each frame slot it names |
+| `(R-DispatchStop)` | `State.stopped`, set with `fault` by `State::stop`, tested only after an operator that ran on the `State` |
+| `(R-FrameHeadroom)` | `OpCall` and a plain `OpReturn` are arms (`create.loft`'s `call_arm`, `return_arm`): the frame list is held memory (`State.fbase`, four words a frame) written at the local depth; a call tests the depth and the default headroom under the capacity, and only one that fails runs `fn_call`, which grows the stack |
 
-Every check the accessors make is a compare in the arm's guard; an arm whose guard fails
-leaves the step to the operator's function, which reports it.  An operator with a text or
-reference argument runs through `execute`.
+Every check the accessors make is a compare at the loop's head or in the arm's guard; a step
+whose test fails is left to the operator's function, which reports it.  An operator with a text
+or reference argument runs through `execute`.  A return that is not plain — a buffer of a call
+through a reference to release, a destination-form call, a `par` worker or arm — runs
+`fn_return` (`State::plain_return`, asked once after each operator that ran on the `State`).
 
 Measure with `selfhost/bench/fill_speed.sh` (the generated runner against `loft --interpret`
-on the integer kernels); `selfhost/bench/hand/` holds the step loop written by hand in C, the
-target.  The gate is the generated runner at the
-Rust interpreter's time on the integer kernels; it takes 1.1 to 1.7 times as long.  What is
-left is in the emitted C: checked arithmetic on the positions, and calls and returns through
-the `State`'s fields (the frame list).
+on the integer kernels) and `selfhost/bench/bench_speed.py` (every routine of the benchmark
+suite, `bench/NN_*`, each timed by the program itself).  Compare builds by user-mode
+instruction counts (`perf stat -e instructions:u`, a large run less a tiny one): on a busy
+machine the times and the cycle counts move by a factor of two, the instruction counts not at
+all.  The gate is the generated runner at the Rust interpreter's time; on the integer kernels
+it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles).

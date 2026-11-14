@@ -21,6 +21,38 @@ struct CharWalk {
   next: integer,
   result: integer,
   src: integer,
+  // The loop's scope (`char_walks` keys its map by it), where the walk's null test stands
+  // among the loop's statements, and whether that test may be asked once before the loop:
+  // no statement of the loop writes the text (`text_written`).
+  scope: integer,
+  null_test: integer,
+  hoist_null: boolean,
+}
+
+// `opt::char_walk::text_written`: does the node write text local `v` anywhere — a set of
+// it, or a call that takes it first and builds, appends to, clears or formats into it?
+fn text_written(b: ir::Bundle, n: ir::Node, v: integer) -> boolean {
+  here = match n {
+    NdSet { var, inner: _ } => var == v,
+    NdCall { def_nr, args } => {
+      name = b.data.definitions[def_nr]?.name ?? "";
+      first = len(args) > 0 && match binds::unspan_node(args[0]!) {
+        NdVar { n: w } => w == v,
+        _ => false,
+      };
+      first && (name == "OpCreateStack" || name.starts_with("OpAppend") || name.starts_with("OpClear") || name.starts_with("OpFormat"))
+    }
+    _ => false,
+  };
+  if here {
+    return true;
+  }
+  for c in ret_adopt::children(n) {
+    if text_written(b, c, v) {
+      return true;
+    }
+  }
+  false
 }
 
 // `opt::char_walk::char_walks`, for one loop: the parser's lowering of `for c in T` matched
@@ -85,7 +117,13 @@ fn char_walk(b: ir::Bundle, d_nr: integer, lp: ir::Block) -> CharWalk? {
   if !null_test_shape(b, lp.operators[1]!, src!) {
     return null;
   }
-  CharWalk { loop_var: loop_var, index: index!, next: next!, result: res!, src: src! }
+  hoist = true;
+  for st in lp.operators {
+    if st#index >= 1 && text_written(b, st, src!) {
+      hoist = false;
+    }
+  }
+  CharWalk { loop_var: loop_var, index: index!, next: next!, result: res!, src: src!, scope: lp.scope, null_test: 1, hoist_null: hoist }
 }
 
 // The variable a `Set` writes, its value, a variable read's number, a call's operands when it

@@ -67,6 +67,13 @@ def main():
             sys.exit(f"the checker did not build:\n{p.stderr[-2000:]}")
         files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
                                                            [], o.scripts_only) if census.plain(f)]
+        # The compiler keeps a warm cache that does not know `LOFT_NO_TEXT_BORROW`: the first
+        # emission after the switch changed reads what the other setting left.  One emission
+        # of each kind first, so every program's two images come from one setting.
+        if files:
+            for flag in ("--emit-image", "--emit-run-image"):
+                subprocess.run([loft, flag, os.path.join(tmp, "warm"), files[0]], capture_output=True,
+                               text=True, env=env, timeout=300)
         state = {}            # function name -> verdict, the first program's
         differ = []
         reasons = collections.Counter()
