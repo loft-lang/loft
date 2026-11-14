@@ -9578,7 +9578,7 @@ impl State {
     pub unsafe fn execute_at_raw_to(
         &mut self,
         fn_pos: u32,
-        arg: &DbRef,
+        arg: WorkerArg,
         extra_args: &[u64],
         return_size: u32,
         dst: *mut u8,
@@ -9598,10 +9598,10 @@ impl State {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
-            args_size: 12,
+            args_size: self.worker_arg_size(&arg),
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
-        self.put_stack(*arg);
+        self.push_worker_arg(arg);
         for &extra in extra_args {
             self.put_stack(extra as i64);
         }

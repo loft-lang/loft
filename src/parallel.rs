@@ -1193,6 +1193,8 @@ pub fn run_parallel_queue_fn(
     element_size: u32,
     n_threads: usize,
     extra_args: &[u64],
+    primitive_input_size: u32,
+    tuple_input_types: Option<&[crate::data::Type]>,
 ) -> Vec<u8> {
     const FN_REF_SIZE: usize = 20;
     let n_rows = vector::length_vector(input, &stores.allocations) as usize;
@@ -1219,9 +1221,18 @@ pub fn run_parallel_queue_fn(
             // (start..end ranges from `parallel_workers` are
             // non-overlapping), so concurrent writes via raw
             // pointer are safe.
+            // The row reaches the worker as every queue hands it (`worker_row_arg`): a
+            // primitive as its value, never the element's reference.
+            let arg = worker_row_arg(
+                &state.database,
+                &row_ref,
+                primitive_input_size,
+                element_size,
+                tuple_input_types,
+            );
             unsafe {
                 let dst = buf_ptr.0.add(row_idx * FN_REF_SIZE);
-                state.execute_at_raw_to(fn_pos, &row_ref, &extras, FN_REF_SIZE as u32, dst);
+                state.execute_at_raw_to(fn_pos, arg, &extras, FN_REF_SIZE as u32, dst);
             }
         }
     });

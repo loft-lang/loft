@@ -425,6 +425,8 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
                 element_size,
                 n_threads,
                 &extra_args,
+                primitive_input_size,
+                tuple_input_types.as_deref(),
             );
             let n = (buf.len() / 20) as i64;
             stores.par_fn_buffer_stack.push(buf);
