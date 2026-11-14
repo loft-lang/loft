@@ -9570,6 +9570,7 @@ impl<'a> FnWriter<'a> {
         }
         match (name, args) {
             ("OpConvFloatFromNull", []) => Ok(E::new("(double) NAN", K::Float)),
+            ("OpConvSingleFromNull", []) => Ok(E::new("(float) NAN", K::Single)),
             ("OpConvFloatFromInt" | "OpConvFloatFromLong", [_]) => {
                 let a = self.one(name, args, ind)?;
                 Ok(E::new(format!("loft_i2f({})", as_int(a)?), K::Float))

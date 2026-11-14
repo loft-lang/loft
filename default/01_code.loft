@@ -1016,6 +1016,7 @@ fn OpVarText(pos: const u16) -> text;
 fn OpArgText(pos: const u16) -> text;
 fn OpConstText(_value: const text) -> text;
 #rust"s.string_from_code();"
+#loft"s.string_from_code();"
 fn OpConvTextFromNull() -> text;
 #rust"Str::new(crate::state::STRING_NULL)"
 // @FR-L-Null-Text — the absent text is stored as the `STRING_NULL` bytes, and a reader tests

@@ -76,6 +76,20 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
             "emit-image {stem}: {}",
             String::from_utf8_lossy(&emitted.stderr)
         );
+        // The Rust compiler's bytecode for the same program, which the generated operator table
+        // runs (`selfhost/tests/fill.loft`, @PLN91 1b-fill-port.md).
+        let run_image = loft::platform::process::harness_command(loft())
+            .arg("--emit-run-image")
+            .arg(kernels.join(format!("{stem}.run")))
+            .arg(&source)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft --emit-run-image");
+        assert!(
+            run_image.status.success(),
+            "emit-run-image {stem}: {}",
+            String::from_utf8_lossy(&run_image.stderr)
+        );
         // The Rust interpreter's frame for the same program — every variable's slot as the
         // compiler laid it out: the oracle `selfhost/tests/frame.loft` compares with (@PLN91
         // F-1 probe PF1).

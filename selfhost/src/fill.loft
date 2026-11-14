@@ -277,6 +277,34 @@ pub fn conv_bool_from_int(s: state::State) {
   s.put_stack_bool(new_value);
 }
 
+pub fn var_text(s: state::State) {
+  s.var_text();
+}
+
+pub fn arg_text(s: state::State) {
+  s.arg_text();
+}
+
+pub fn const_text(s: state::State) {
+  s.string_from_code();
+}
+
+pub fn init_text(s: state::State) {
+  s.init_text();
+}
+
+pub fn append_text(s: state::State) {
+  s.append_text();
+}
+
+pub fn clear_text(s: state::State) {
+  s.clear_text();
+}
+
+pub fn free_text(s: state::State) {
+  s.free_text();
+}
+
 // The operator in slot `op` run on `s`; false for an operator without a `#loft` template.
 pub fn execute(s: state::State, op: integer) -> boolean {
   match op {
@@ -321,6 +349,13 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     43 => not(s),
     50 => conv_int_from_null(s),
     57 => conv_bool_from_int(s),
+    100 => var_text(s),
+    101 => arg_text(s),
+    102 => const_text(s),
+    107 => init_text(s),
+    108 => append_text(s),
+    114 => clear_text(s),
+    115 => free_text(s),
     _ => return false,
   }
   true
