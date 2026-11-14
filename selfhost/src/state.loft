@@ -958,7 +958,7 @@ pub fn append_stack_text(self: State) {
   pos = self.code_u16();
   val = self.get_stack_str();
   r = self.get_var_dbref(pos - 16);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, val ?? "");
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, val);
 }
 
 // `State::get_stack_ref`: the reference on top replaced by the one stored at its field `fld`.
@@ -1015,4 +1015,87 @@ pub fn db_ref(v1: DbRef, fld: integer) -> DbRef {
   io: vector<integer> = [NULL_STORE, 0, 0];
   crt::get_dbref(io, v1.store_nr, v1.rec, v1.pos, fld);
   DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `State::free_stack`: `discard` bytes dropped, the `value` bytes that were on top kept there.
+pub fn free_stack(self: State, value: integer, discard: integer) {
+  pos = self.stack_pos;
+  if !self.can_pop(discard) {
+    return;
+  }
+  self.stack_pos -= discard;
+  step = (value + 7) / 8 * 8;
+  if value > 0 {
+    crt::stack_move(self.stk, pos - step, self.stack_pos, value);
+  }
+  self.stack_pos += step;
+}
+
+// The length of the vector the frame slot at `vec` names.
+pub fn local_vec_len(self: State, vec: integer) -> integer {
+  r = self.get_var_dbref(vec);
+  crt::vec_len(r.store_nr, r.rec, r.pos) ?? 0
+}
+
+// `OpVecSetInt`: the integer field `fld` of element `idx` (a local) of the vector local `vec`
+// written; an index outside the vector is reported and nothing is written.
+pub fn vec_set_int(self: State, vec: integer, size: integer, idx: integer, fld: integer, val: integer?) {
+  r = self.get_var_dbref(vec);
+  db = self.vec_get_or_raise(r, size, self.get_var_i64(idx));
+  if db.rec != 0 {
+    crt::set_int(db.store_nr, db.rec, db.pos, fld, val);
+  }
+}
+
+// The null text pushed as a view (`OpConvTextFromNull`), and a boolean's text — `true`,
+// `false`, or the null text for a null boolean (`OpCastTextFromBool`).
+pub fn push_null_text(self: State) {
+  self.ensure_stack(16);
+  crt::stack_str_null(self.stk, self.stack_pos);
+  self.stack_pos += 16;
+}
+
+pub fn push_bool_text(self: State, v: integer) {
+  self.ensure_stack(16);
+  crt::stack_str_bool(self.stk, self.stack_pos, v);
+  self.stack_pos += 16;
+}
+
+// `State::format_stack_int`: as `format_int`, into the text the reference in the frame slot
+// at `pos` names.
+pub fn format_stack_int(self: State) {
+  pos = self.code_u16();
+  radix = self.code_u8();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  note = self.code_u8() == 1;
+  dir = self.code_i8();
+  width = self.get_stack_i64();
+  val = self.get_stack_i64();
+  r = self.get_var_dbref(pos - 16);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_int(val, radix, width, token, plus, note, dir));
+}
+
+// `State::format_stack_text`: as `format_text`, into the text the slot's reference names.
+pub fn format_stack_text(self: State) {
+  pos = self.code_u16();
+  dir = self.code_i8();
+  token = self.code_u8();
+  width = self.get_stack_i64();
+  val = self.get_stack_str();
+  r = self.get_var_dbref(pos - 24);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_text(val, width, dir, token));
+}
+
+// `State::format_float`: the precision, the width and then the value popped, the value
+// formatted and appended to the local text at `pos`.
+pub fn format_float(self: State) {
+  pos = self.code_u16();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  dir = self.code_i8();
+  precision = self.get_stack_i64();
+  width = self.get_stack_i64();
+  val = self.get_stack_f64();
+  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val, width, precision, token, plus, dir, false));
 }

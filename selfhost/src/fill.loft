@@ -263,6 +263,12 @@ pub fn op_return(s: state::State) {
   s.fn_return(ret, value, discard);
 }
 
+pub fn op_free_stack(s: state::State) {
+  value = s.code_u16();
+  discard = s.code_u16();
+  s.free_stack(value, discard);
+}
+
 pub fn op_reserve_frame(s: state::State) {
   size = s.code_u16();
   s.reserve_frame(size);
@@ -395,6 +401,10 @@ pub fn op_format_int(s: state::State) {
   s.format_int();
 }
 
+pub fn op_format_stack_int(s: state::State) {
+  s.format_stack_int();
+}
+
 pub fn op_const_single(s: state::State) {
   val = s.code_f32();
   new_value: single? = val;
@@ -434,6 +444,10 @@ pub fn op_le_float(s: state::State) {
   s.put_stack_bool(new_value);
 }
 
+pub fn op_format_float(s: state::State) {
+  s.format_float();
+}
+
 pub fn op_var_text(s: state::State) {
   s.var_text();
 }
@@ -446,10 +460,20 @@ pub fn op_const_text(s: state::State) {
   s.string_from_code();
 }
 
+pub fn op_conv_text_from_null(s: state::State) {
+  s.push_null_text();
+}
+
 pub fn op_length_text(s: state::State) {
   v1 = s.get_stack_str();
   new_value: integer? = if v1 == null { 0 } else { len(v1!) };
   s.put_stack_i64(new_value);
+}
+
+pub fn op_conv_bool_from_text(s: state::State) {
+  v1 = s.get_stack_str();
+  new_value: boolean? = v1 != null;
+  s.put_stack_bool(new_value);
 }
 
 pub fn op_init_text(s: state::State) {
@@ -504,6 +528,10 @@ pub fn op_format_text(s: state::State) {
   s.format_text();
 }
 
+pub fn op_format_stack_text(s: state::State) {
+  s.format_stack_text();
+}
+
 pub fn op_var_enum(s: state::State) {
   pos = s.code_u16();
   new_value: integer? = s.get_var_u8(pos);
@@ -551,6 +579,13 @@ pub fn op_free_ref_if_distinct(s: state::State) {
   s.load_table(); crt::free_displaced(placeholder.store_nr, placeholder.rec, placeholder.pos, witness.store_nr, witness.rec, witness.pos);
 }
 
+pub fn op_free_ref_unless_entry(s: state::State) {
+  entry = s.get_stack_dbref();
+  witness = s.get_stack_dbref();
+  placeholder = s.get_stack_dbref();
+  if placeholder.store_nr != entry.store_nr { s.load_table(); crt::free_displaced(placeholder.store_nr, placeholder.rec, placeholder.pos, witness.store_nr, witness.rec, witness.pos); }
+}
+
 pub fn op_var_ref(s: state::State) {
   pos = s.code_u16();
   new_value: state::DbRef? = s.get_var_dbref(pos);
@@ -596,6 +631,21 @@ pub fn op_get_float(s: state::State) {
   v1 = s.get_stack_dbref();
   new_value: float? = if v1.rec == 0 { null } else { crt::get_float(v1.store_nr, v1.rec, v1.pos, fld, false) };
   s.put_stack_f64(new_value);
+}
+
+pub fn op_get_byte(s: state::State) {
+  fld = s.code_u16();
+  min = s.code_i32();
+  v1 = s.get_stack_dbref();
+  new_value: integer? = if v1.rec == 0 { null } else { crt::get_w(crt::W_BYTE, v1.store_nr, v1.rec, v1.pos, fld, min) };
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_get_enum(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: integer? = if v1.rec == 0 { 0 } else { crt::get_w(crt::W_ENUM, v1.store_nr, v1.rec, v1.pos, fld, 0) ?? 255 };
+  s.put_stack_u8(new_value);
 }
 
 pub fn op_set_enum(s: state::State) {
@@ -864,6 +914,22 @@ pub fn op_vec_get_int_nullable(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn op_vec_set_int(s: state::State) {
+  vec = s.code_u16();
+  size = s.code_u16();
+  idx = s.code_u16();
+  fld = s.code_u16();
+  val = s.get_stack_i64();
+  s.vec_set_int(vec, size, idx, fld, val);
+}
+
+pub fn op_vec_end_jump(s: state::State) {
+  vec = s.code_u16();
+  idx = s.code_u16();
+  step = s.code_i32();
+  if ops::fused_cmp(ops::LT, s.get_var_i64(idx), s.local_vec_len(vec)) { s.code_pos += step; }
+}
+
 pub fn op_tag_v_c_jump(s: state::State) {
   of = s.code_u8();
   a = s.code_u16();
@@ -874,6 +940,11 @@ pub fn op_tag_v_c_jump(s: state::State) {
 
 pub fn op_new_record_n_p(s: state::State) {
   s.new_record_n_p();
+}
+
+pub fn op_cast_text_from_bool(s: state::State) {
+  v1 = s.get_stack_u8();
+  s.push_bool_text(v1);
 }
 
 pub fn op_range_default(s: state::State) {
@@ -968,6 +1039,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     35 => op_cmp_int_v_c_jump(s),
     38 => op_call(s),
     39 => op_return(s),
+    40 => op_free_stack(s),
     41 => op_reserve_frame(s),
     42 => op_put_bool(s),
     43 => op_not(s),
@@ -989,16 +1061,20 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     66 => op_s_right_int(s),
     67 => op_ne_int(s),
     68 => op_format_int(s),
+    69 => op_format_stack_int(s),
     70 => op_const_single(s),
     92 => op_cast_single_from_float(s),
     93 => op_cast_int_from_float(s),
     95 => op_eq_float(s),
     96 => op_ne_float(s),
     97 => op_le_float(s),
+    98 => op_format_float(s),
     100 => op_var_text(s),
     101 => op_arg_text(s),
     102 => op_const_text(s),
+    103 => op_conv_text_from_null(s),
     104 => op_length_text(s),
+    106 => op_conv_bool_from_text(s),
     107 => op_init_text(s),
     108 => op_append_text(s),
     109 => op_put_text(s),
@@ -1009,6 +1085,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     118 => op_lt_text(s),
     119 => op_le_text(s),
     120 => op_format_text(s),
+    121 => op_format_stack_text(s),
     124 => op_var_enum(s),
     125 => op_const_enum(s),
     126 => op_put_enum(s),
@@ -1018,6 +1095,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     133 => op_init_ref_sentinel(s),
     134 => op_free_ref(s),
     135 => op_free_ref_if_distinct(s),
+    137 => op_free_ref_unless_entry(s),
     139 => op_var_ref(s),
     140 => op_put_ref(s),
     145 => op_set_db_ref(s),
@@ -1025,6 +1103,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     147 => op_get_field(s),
     148 => op_get_int(s),
     151 => op_get_float(s),
+    152 => op_get_byte(s),
+    154 => op_get_enum(s),
     155 => op_set_enum(s),
     156 => op_get_boolean(s),
     157 => op_set_boolean(s),
@@ -1068,8 +1148,11 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     260 => op_text_null_jump(s),
     262 => op_vec_get_int(s),
     263 => op_vec_get_int_nullable(s),
+    264 => op_vec_set_int(s),
+    265 => op_vec_end_jump(s),
     267 => op_tag_v_c_jump(s),
     268 => op_new_record_n_p(s),
+    269 => op_cast_text_from_bool(s),
     270 => op_range_default(s),
     272 => op_conv_character_from_null(s),
     283 => op_pow_int(s),

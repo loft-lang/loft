@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a null text stays null through an accumulator: an element past a vector of
+// texts reads null, is appended to the result buffer, and then takes its default.
+
+struct Bag { names: vector<text> }
+
+fn name(b: Bag, i: integer) -> text { b.names[i] ?? "none" }
+
+// "none", "ab", "none": their lengths as one number.
+fn defaults(n: integer) -> integer {
+  e = Bag { names: [] };
+  f = Bag { names: ["ab"] };
+  len(name(e, 0)) * 100 + len(name(f, 0)) * 10 + len(name(f, n))
+}
+
+fn main() {
+  println("{defaults(3)}");
+}

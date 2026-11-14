@@ -56,6 +56,12 @@ fn test_a_reused_record_starts_empty() {
   assert(r == 100200300400, "four passes: {r}");
 }
 
+// A null text appended to a result buffer leaves it null, so the `??` default is taken.
+fn test_a_null_text_takes_its_default() {
+  r = answer("nulltext", "n_defaults", [3]);
+  assert(r == 424, "none, ab, none: {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {
