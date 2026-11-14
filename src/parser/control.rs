@@ -22989,6 +22989,24 @@ impl Parser {
                                 // by the zero-trust consumer as a one-line accessor that
                                 // silently corrupted its result.
                                 || self.return_projects_into_local(&v)
+                                // The same view held in a LOCAL: a `match` arm binds a
+                                // vector field of its subject (`C { args } => … return args;`),
+                                // so the returned variable views a record this frame frees —
+                                // the subject, or the call result it was read from.  Returned
+                                // raw, the caller's vector pointed into the freed store: an
+                                // empty vector after its next call on the interpreter, a store
+                                // freed twice on both backends (loft#2486).  A local that OWNS
+                                // its vector depends on its own `__vdb_N` or work ref, never on
+                                // a record local.
+                                || (matches!(v.unspan(), Value::Var(_))
+                                    && dep.iter().any(|&d| {
+                                        d != bv
+                                            && !self.vars.is_argument(d)
+                                            && matches!(
+                                                self.vars.tp(d).base(),
+                                                Type::Reference(_, _) | Type::Enum(_, true, _)
+                                            )
+                                    }))
                                 // A vector LITERAL (`return []`, `return ["q"]`): its value is a
                                 // view of the record the literal minted (`__vdb_N`), which the
                                 // frame frees on this path, so it must reach the caller's buffer

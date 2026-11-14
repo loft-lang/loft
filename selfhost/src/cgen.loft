@@ -12,6 +12,7 @@ use cgen_tidy;
 use cgen_types;
 use opt_names;
 use loop_shape;
+use opt_iteration;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -167,7 +168,8 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
 // shape prints no line.  `reach` and `functions` (`LOFT_TRACE_REACH`): what the program's
 // `main` reaches, and the functions its unit writes in order; a program without a `main` (its
 // tests' unit) prints no line yet.  `counters` (`LOFT_TRACE_COUNTERS`): every counted loop of
-// every function with a body, as `loop_shape::range_counters` reads it.
+// every function with a body, as `loop_shape::range_counters` reads it; `iterations`: the
+// `#index` of every `for e in v` loop its own bound keeps from overflowing.
 pub fn layer(b: ir::Bundle, name: text) -> text? {
   if name == "reach" || name == "functions" {
     for d in b.data.definitions {
@@ -180,12 +182,16 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
     }
     return "";
   }
-  if name != "shapes" && name != "counters" {
+  if name != "shapes" && name != "counters" && name != "iterations" {
     return null;
   }
   out = "";
   for d in b.data.definitions {
     if len(d.code) == 0 || d.code[0] == NdNull {
+      continue;
+    }
+    if name == "iterations" {
+      out += "{opt_iteration::iterations_line(d, b.data.definitions)}\n";
       continue;
     }
     if name == "counters" {

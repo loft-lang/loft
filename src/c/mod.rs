@@ -3002,6 +3002,17 @@ fn trace_counters(cx: &Cx, d: u32) {
         }
     });
     eprintln!("[counters]\t{}\t{}", def.name(), row.join(" "));
+    // The `#index` of every `for e in v` loop its own bound keeps from overflowing
+    // (`opt::iteration::bounded_iteration_index`), in the same order: `[iterations]`.
+    let mut row: Vec<String> = Vec::new();
+    def.code().walk(&mut |v| {
+        if let Value::Loop(lp) = v
+            && let Some(ix) = crate::opt::iteration::bounded_iteration_index(lp, cx.data)
+        {
+            row.push(ix.to_string());
+        }
+    });
+    eprintln!("[iterations]\t{}\t{}", def.name(), row.join(" "));
 }
 
 /// `c` in a word, for a trace: a tuple by its members, since its number is the order tuples

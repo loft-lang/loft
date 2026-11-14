@@ -40,7 +40,7 @@ pub fn var_of(n: ir::Node) -> integer {
 }
 
 // Is `v` a `break` — bare, or a block whose only statement is one?
-fn is_break_block(v: ir::Node) -> boolean {
+pub fn is_break_block(v: ir::Node) -> boolean {
   match unspan(v) {
     NdBreak { n: _ } => true,
     NdBlock { block } => {
