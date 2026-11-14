@@ -254,6 +254,9 @@ H_LINK_RECORD = 229;
 H_REF_FROM_CHILD_REC = 230;
 H_INDEX_GROUP = 231;
 H_MOVE_CHILD_REC = 232;
+H_SLOT_TAG = 233;
+H_GET_SLOT_REF = 234;
+H_SLOT_WRITE = 235;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -561,6 +564,10 @@ pub fn handler(name: text) -> integer {
     "OpRefFromChildRec" => H_REF_FROM_CHILD_REC,
     "OpIndexGroup" => H_INDEX_GROUP,
     "OpMoveChildRec" => H_MOVE_CHILD_REC,
+    "OpSlotTag" => H_SLOT_TAG,
+    "OpGetSlotRef" => H_GET_SLOT_REF,
+    "OpMoveSlotRef" => H_SLOT_WRITE,
+    "OpSetSlotRef" => H_SLOT_WRITE,
     "OpCastSingleFromText" => H_CAST_FROM_TEXT,
     "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
@@ -838,6 +845,8 @@ fn layout_of(h: integer) -> text {
     229 => "hh",
     231 => "hhh",
     232 => "h",
+    234 => "h",
+    235 => "h",
     _ => ""
   }
 }
@@ -2612,6 +2621,37 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       return -1;
     }
     crt::index_group(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, iggm![0] ?? 0, ignull, igvpos, igvkind, igtp, igkeyed);
+  } else if h == H_SLOT_TAG {
+    // A field's address as a slot cell names it (`keys::slot_tag`): its position tagged with
+    // `SLOT_FIELD_BIT`; the null reference for none.
+    crt::slot_ref(io, stk, sp - 16);
+    if (io[0] ?? NULL_STORE) == NULL_STORE || (io[1] ?? 0) == 0 {
+      crt::set_slot_ref(stk, sp - 16, NULL_STORE, 0, 0);
+    } else {
+      crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) | 1073741824);
+    }
+  } else if h == H_GET_SLOT_REF {
+    gsfld = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    crt::slot_get(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gsfld);
+    crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  } else if h == H_SLOT_WRITE {
+    // `OpMoveSlotRef` / `OpSetSlotRef`: the value popped, then the cell's place.
+    ensure_table(img.types, tl);
+    swraw = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    sws = io[0] ?? NULL_STORE;
+    swr = io[1] ?? 0;
+    swp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    if (img.ops[op] ?? "") == "OpMoveSlotRef" {
+      crt::slot_move(swraw, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, sws, swr, swp);
+    } else {
+      crt::slot_set(swraw, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, sws, swr, swp);
+    }
   } else if h == H_MOVE_CHILD_REC {
     ensure_table(img.types, tl);
     mctp = u16_at(img.code, pc);

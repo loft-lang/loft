@@ -1765,6 +1765,54 @@ void loft_crt_move_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int
     loft_move_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(fs, fr, fp), loft_crt_ref(ss, sr, sp));
 }
 
+/* The slot cells (`@FR-F-ParamRef`): a reference cell that names either a value or, tagged, a
+ * field whose child it stands for. */
+
+/* A cell's reference read and written raw, as Rust's slot operators do (`read::<DbRef>`). */
+static loft_ref loft_crt_cell_get(loft_ref at, uint32_t fld) {
+    loft_ref x = loft_ref_null();
+    if (at.rec == 0 || at.store_nr >= loft_nstores) return x;
+    loft_store_t *s = loft_store_of(at);
+    x.store_nr = (uint16_t) loft_u32(s, at.rec, at.pos + fld);
+    x.rec = loft_u32(s, at.rec, at.pos + fld + 4);
+    x.pos = loft_u32(s, at.rec, at.pos + fld + 8);
+    return x;
+}
+
+static void loft_crt_cell_set(loft_ref at, loft_ref x) {
+    if (at.rec == 0 || at.store_nr >= loft_nstores) return;
+    loft_store_t *s = loft_store_of(at);
+    loft_set_u32(s, at.rec, at.pos, x.store_nr);
+    loft_set_u32(s, at.rec, at.pos + 4, x.rec);
+    loft_set_u32(s, at.rec, at.pos + 8, x.pos);
+}
+
+/* OpGetSlotRef: what the cell at field `fld` of `(s, r, p)` reads as (`slot_read`). */
+int64_t loft_crt_slot_get(int64_t *out, int64_t no, int64_t s, int64_t r, int64_t p, int64_t fld) {
+    loft_crt_put_ref(out, no, loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld)));
+    return 0;
+}
+
+/* OpMoveSlotRef: `slot = slot.f` through the cell at `(s, r, p)` (`slot_move`). */
+void loft_crt_slot_move(int64_t tp, int64_t s, int64_t r, int64_t p, int64_t ss, int64_t sr, int64_t sp) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_ref at = loft_crt_ref(s, r, p);
+    loft_ref cell = loft_crt_cell_get(at, 0);
+    loft_slot_move(loft_crt_types, (uint16_t) tp, &cell, loft_crt_ref(ss, sr, sp));
+    loft_crt_cell_set(at, cell);
+}
+
+/* OpSetSlotRef: a whole write through the cell at `(s, r, p)` (`slot_write`); the type's top bit
+ * frees the source after. */
+void loft_crt_slot_set(int64_t raw, int64_t s, int64_t r, int64_t p, int64_t vs, int64_t vr, int64_t vp) {
+    int64_t tp = raw & 0x3FFF;
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_ref at = loft_crt_ref(s, r, p);
+    loft_ref cell = loft_crt_cell_get(at, 0);
+    loft_slot_write(loft_crt_types, (uint16_t) tp, &cell, loft_crt_ref(vs, vr, vp), (raw & 0x8000) != 0);
+    loft_crt_cell_set(at, cell);
+}
+
 /* A walk's key list (`OpIterate`'s `Keys`), one part at a time, for the iterate that follows. */
 static loft_key loft_crt_wkeys[LOFT_CRT_KEYS];
 static int loft_crt_nwkeys = 0;

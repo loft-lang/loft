@@ -406,6 +406,12 @@ fn c_index_group(ps: integer, pr: integer, pp: integer, prim: integer, nullable:
 #c "loft_crt_index_group" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
 fn c_move_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer);
 #c "loft_crt_move_child_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_slot_get(out: vector<integer>, s: integer, r: integer, p: integer, fld: integer) -> integer;
+#c "loft_crt_slot_get" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_slot_move(tp: integer, s: integer, r: integer, p: integer, ss: integer, sr: integer, sp: integer);
+#c "loft_crt_slot_move" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_slot_set(raw: integer, s: integer, r: integer, p: integer, vs: integer, vr: integer, vp: integer);
+#c "loft_crt_slot_set" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -644,6 +650,21 @@ pub fn index_group(ps: integer, pr: integer, pp: integer, prim: integer, nullabl
 // `OpMoveChildRec`: the source record moved into the field's child.
 pub fn move_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer) {
   c_move_child_rec(tp, fs, fr, fp, ss, sr, sp);
+}
+
+// `OpGetSlotRef`: what the slot cell at field `fld` reads as; in `out`.
+pub fn slot_get(out: vector<integer>, s: integer, r: integer, p: integer, fld: integer) {
+  c_slot_get(out, s, r, p, fld);
+}
+
+// `OpMoveSlotRef`: `slot = slot.f` through the cell at `(s, r, p)`.
+pub fn slot_move(tp: integer, s: integer, r: integer, p: integer, ss: integer, sr: integer, sp: integer) {
+  c_slot_move(tp, s, r, p, ss, sr, sp);
+}
+
+// `OpSetSlotRef`: a whole write through the cell at `(s, r, p)`.
+pub fn slot_set(raw: integer, s: integer, r: integer, p: integer, vs: integer, vr: integer, vp: integer) {
+  c_slot_set(raw, s, r, p, vs, vr, vp);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
