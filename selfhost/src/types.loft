@@ -649,7 +649,8 @@ fn default_into(ts: vector<ir::DbType>, tp: integer, nullable: boolean, out: vec
     PtEnumValue { value: _, fields } => fields_into(ts, tp, fields, out, at),
     PtEnum { values: _ } => {
       // `@FR-D-Json`: a non-null `JsonValue` defaults to its `JNull` tag, 1.
-      if !nullable && schema(ts, tp)!.name == "JsonValue" {
+      // Indexed directly: `schema(ts, tp)!.name` leaks a store per call (loft#2481).
+      if !nullable && ts[tp]!.name == "JsonValue" {
         put_bytes(out, at, [1]);
       }
     }
