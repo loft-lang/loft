@@ -550,11 +550,15 @@ pub struct RunImage {
   pub bridge: text,
   // The program's own directory as `source_dir()` answers it (`file_access::given`).
   pub source: text,
+  // The store instances of the functions that take a `&text` (`OpCallRefStore`), as triples:
+  // the function's definition, the mask of its parameters given a stored text, and the
+  // instance minted for that mask (`Data::store_text_instance`).
+  pub store_insts: vector<integer>,
   pub main: integer,
   pub cwd: boolean,
 }
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], sidecars: [], oldest: "", bridge: "", source: "", main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], sidecars: [], oldest: "", bridge: "", source: "", store_insts: [], main: 0, cwd: false }
 }

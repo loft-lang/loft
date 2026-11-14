@@ -926,6 +926,7 @@ fn materialize_run_image(
     fnrefs: &[RunFnRefShape],
     gens: &[RunGenShape],
     shared: &[i64],
+    store_insts: &[i64],
     workers: &[RunWorkerShape],
     sidecars: &[RunSidecarShape],
     release: (&str, &str, &str),
@@ -1023,6 +1024,17 @@ fn materialize_run_image(
         shared,
         workers,
     );
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_STORE_INSTS),
+        count(store_insts.len()),
+        8,
+        &mut stores.allocations,
+    );
+    let siv = rec.field_recvec(ds::RUNIMG_STORE_INSTS, 8);
+    for &v in store_insts {
+        let e = siv.push(stores);
+        e.set_field_int(stores, 0, v);
+    }
     materialize_run_sidecars(stores, &rec, &slot(ds::RUNIMG_SIDECARS), sidecars);
     rec.set_field_str(stores, ds::RUNIMG_OLDEST, release.0);
     rec.set_field_str(stores, ds::RUNIMG_BRIDGE, release.1);
@@ -1339,6 +1351,32 @@ pub fn run_image_shared(
             let nr = data.def_nr(def);
             if nr != u32::MAX {
                 out[i] = i64::from(nr);
+            }
+        }
+    }
+    out
+}
+
+/// The store instances of the program (`parser/store_text.rs`), as triples of the function's
+/// definition, the mask and the instance: what `OpCallRefStore` resolves at run time
+/// (`Data::store_text_instance`), since a run image carries no definition names.
+#[must_use]
+pub fn run_image_store_insts(data: &Data) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !def.is_store_text_instance() {
+            continue;
+        }
+        let Some((base, mask)) = def.name.rsplit_once("@st") else {
+            continue;
+        };
+        let Ok(mask) = mask.parse::<u64>() else {
+            continue;
+        };
+        for b in 0..data.definitions() {
+            if data.def(b).name == base && data.store_text_instance(b, mask) == d {
+                out.extend([i64::from(b), mask.cast_signed(), i64::from(d)]);
             }
         }
     }
@@ -1761,6 +1799,7 @@ pub fn save_run_image(
             &run_image_fnrefs(data, program),
             &run_image_gens(data),
             &run_image_shared(data, library_names),
+            &run_image_store_insts(data),
             &run_image_workers(data, program),
             &run_image_sidecars(data, program),
             (

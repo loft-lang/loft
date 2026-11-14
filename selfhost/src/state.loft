@@ -91,6 +91,11 @@ pub struct State {
   // (`crt::hold_bytes`): a text view names bytes there, never in this record's own vectors.
   pub code_held: integer,
   pub texts_held: integer,
+  // The store instances (`RunImage.store_insts`: definition, mask, instance each), and the
+  // instance the next call through a reference enters in place of the definition its slot
+  // names (`fn_call_ref_store`; -1: none).
+  pub store_insts: vector<integer>,
+  pub call_target: integer,
 }
 
 // `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
@@ -174,7 +179,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0 };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1 };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
@@ -1752,6 +1757,10 @@ pub fn fn_call_ref(self: State, fn_var: integer, arg_size: integer) {
   fv = fn_var;
   asz = arg_size;
   d = self.get_var_i64(fv) ?? -1;
+  if d >= 0 && self.call_target >= 0 {
+    d = self.call_target;
+  }
+  self.call_target = -1;
   if d < 0 || d + 1 >= len(self.starts) {
     self.stop("a call through a reference that names no function");
     return;

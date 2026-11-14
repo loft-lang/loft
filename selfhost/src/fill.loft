@@ -1592,6 +1592,13 @@ pub fn op_const_store_text(s: state::State) {
   s.string_from_const_store(rec);
 }
 
+pub fn op_call_ref_store(s: state::State) {
+  fn_var = s.code_u16();
+  arg_size = s.code_u16();
+  mask = s.code_i64();
+  s.fn_call_ref_store(fn_var, arg_size, mask);
+}
+
 pub fn op_bind_fn_ref_result(s: state::State) {
   s.bind_fn_ref_result();
 }
@@ -2486,6 +2493,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     254 => op_put_fn_ref(s),
     255 => op_const_ref(s),
     256 => op_const_store_text(s),
+    257 => op_call_ref_store(s),
     258 => op_bind_fn_ref_result(s),
     259 => op_text_walk_step(s),
     260 => op_text_null_jump(s),

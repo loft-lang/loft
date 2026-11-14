@@ -233,3 +233,26 @@ pub fn string_from_const_store(self: state::State, rec: integer) {
   crt::stack_str_held(self.stk, self.stack_pos - 16, self.texts_held, rec * 8 + 8, crt::held_u32(self.texts_held, rec * 8 + 4));
 }
 
+// `State::fn_call_ref_store`: a call through a reference whose `&text` parameters in `mask`
+// are given a stored text — the store instance minted for that mask is entered in place of
+// the function the slot names.
+pub fn fn_call_ref_store(self: state::State, fn_var: integer, arg_size: integer, mask: integer) {
+  d = self.get_var_i64(fn_var) ?? -1;
+  if d >= 0 {
+    inst = -1;
+    k = 0;
+    while k + 2 < len(self.store_insts) {
+      if (self.store_insts[k] ?? -1) == d && (self.store_insts[k + 1] ?? -1) == mask {
+        inst = self.store_insts[k + 2] ?? -1;
+      }
+      k += 3;
+    }
+    if inst < 0 {
+      self.stop("a text field or element cannot be linked through this function's `&text` parameter — it has no loft body");
+      return;
+    }
+    self.call_target = inst;
+  }
+  self.fn_call_ref(fn_var, arg_size);
+}
+

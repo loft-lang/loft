@@ -91,8 +91,8 @@ The first two are run by hand; neither is a test yet.
 
 | Part | State |
 |---|---|
-| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: the `OpParallel*` operators (a `par` block of arms; a `par` loop runs), the slot-reference family (`OpGetSlotRef`, …), the store-buffer family (`OpStoreBuf`, …) |
-| natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own |
+| operator templates and `State` methods | every operator is carried (`create.loft` prints the count; `--missing` lists none).  The `State`'s methods are in `state.loft` and `state_ops.loft`.  Operators no program of the corpus runs are checked by the build only: the child-record and store-buffer families beyond `OpStoreBuf`, `OpEvacuate`, `OpAdoptVector`, `OpCopyClosure`, the slot-cell writes, the store tags |
+| natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own.  Not ported there, and what still stops corpus programs: `file_map`, `stack_trace`, a C-library native |
 | `par` | a queue's or a fold's workers run one after another by the hand-built runner's scheduler (`brun::par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return |
 | compiled library code | not built: every library function runs as bytecode (difference 9).  To build: the standard library's and each `use`d library's compiled bodies linked into the runner and called at `OpStaticCall`, as Rust calls its bridges |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
@@ -119,6 +119,8 @@ with the top just above it.  The differences:
 | 7 | **One dispatch.**  Rust has three tables (checked, direct, register); the runner has one loop, `run`, whose arms are the register table and whose fallback, `execute`, is the checked one. | see Speed |
 | 8 | **No instruments.**  Rust's stack verifier, poison of a reserved frame, and text-position tracking have no counterpart. | only if the runner is to host those sweeps |
 | 9 | **The standard library is interpreted.**  Rust calls a standard-library function it compiled into its binary through a bridge (`loft_shared_<def>`, `src/compiled_stdlib.rs`), and interprets the loft body only where the program's type table does not start as the compiled one does.  The runner always runs the loft body as bytecode (`State::static_call`), which is Rust under `LOFT_NO_COMPILED_STDLIB=1`: the same answers, slower. | compiled standard-library bodies linked into the runner, if its speed on library-heavy programs matters |
+| 10 | **A `par` block's arms share the stores.**  Rust runs each arm of a `par` block on a thread with a copy of the stores, so what an arm writes to a store is not seen after it; the runner runs the arms one after another on the program's own stores (`fill_run.loft` `par_block`), each from the stack as the block found it. | the stores copied per arm, if a program observes an arm's writes |
+| 11 | **Store tags are not kept.**  `OpStoreTag` / `OpFreeRefTag` (Rust's `LOFT_STORE_TAG` testing gate) read their operands and mark and compare nothing: the C runtime's stores carry no owner tag. | a tag in the C runtime's store header, if the gate is to run here |
 
 ## Speed
 
