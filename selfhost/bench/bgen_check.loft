@@ -18,6 +18,9 @@ fn main() {
     println("usage: bgen_check <program image> <run image>");
     exit(2);
   }
+  // `--names`: a line per function (`same`, `differs` or `unwritten` with its reason), for
+  // `bgen_survey.py` to count each function once over a corpus.
+  names = (a[2] ?? "") == "--names";
   why: vector<text> = [""];
   reasons: vector<text> = [];
   counts: vector<integer> = [];
@@ -33,6 +36,9 @@ fn main() {
     bytes = bgen::function(b!, d, img!.starts, img!.natives, why);
     if bytes == null {
       unwritten += 1;
+      if names {
+        println("unwritten\t{bgen::name_of(b!, d)}\t{why[0] ?? ""}");
+      }
       // The reason, counted: what to port next.
       at = -1;
       for r in reasons {
@@ -54,9 +60,25 @@ fn main() {
         equal = equal && bytes![i] == img!.code[from + i];
       }
     }
+    if names {
+      println("{if equal { "same" } else { "differs" }}\t{bgen::name_of(b!, d)}");
+    }
+    // `--dump <function>`: the bytes written and the image's, to see where they part.
+    if (a[2] ?? "") == "--dump" && bgen::name_of(b!, d) == (a[3] ?? "") {
+      mine = "";
+      for x in bytes! {
+        mine += " {x}";
+      }
+      theirs = "";
+      for i in from..till {
+        theirs += " {img!.code[i] ?? 0}";
+      }
+      println("written:{mine}");
+      println("image:  {theirs}");
+    }
     if equal {
       same += 1;
-    } else {
+    } else if !names {
       differ += 1;
       println("differs: {bgen::name_of(b!, d)} ({len(bytes!)} bytes written, {till - from} in the image)");
     }
