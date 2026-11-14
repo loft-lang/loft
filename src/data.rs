@@ -6816,6 +6816,23 @@ impl Data {
         !self.wide_instances.contains(&d) && self.width32_source(self.def(d).source)
     }
 
+    /// @PLN204 — the regime restored from what an image stores per definition
+    /// ([`Self::body_width32`], one answer each, in definition order): a source with a 32-bit
+    /// body is under the regime, and a body of such a source that is not 32-bit is a wide
+    /// instance.  [`Self::body_width32`] then answers for every definition as it did when the
+    /// image was written.
+    pub fn restore_body_width32(&mut self, bodies: &[bool]) {
+        for (d, _) in bodies.iter().enumerate().filter(|(_, on)| **on) {
+            let src = self.def(d as u32).source;
+            self.width32_sources.insert(src);
+        }
+        for (d, _) in bodies.iter().enumerate().filter(|(_, on)| !**on) {
+            if self.width32_source(self.def(d as u32).source) {
+                self.wide_instances.insert(d as u32);
+            }
+        }
+    }
+
     /// @PLN204 — the sources under the 32-bit regime and the instances minted from a 64-bit
     /// template: parse-time state the IR bundle does not carry, so the program cache's
     /// manifest writes it and a warm load replays it (`startup_cache`).

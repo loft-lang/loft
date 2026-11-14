@@ -424,10 +424,13 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
     let mut data = Data::new();
     data.source = r.field_int(stores, ds::DATA_SOURCE) as u16;
     let defs = r.field_recvec(ds::DATA_DEFINITIONS, ds::DEFINITION_STRIDE);
+    let mut width32 = Vec::new();
     for i in 0..defs.len(stores) {
-        data.definitions
-            .push(read_definition(stores, defs.get(i, stores), bodies));
+        let dr = defs.get(i, stores);
+        width32.push(dr.field_bool(stores, ds::DEF_WIDTH32));
+        data.definitions.push(read_definition(stores, dr, bodies));
     }
+    data.restore_body_width32(&width32);
     // The import tables go in BEFORE the rebuild: `rebuild_indices` replays
     // them to recreate the cross-source `def_names` bindings (loft#1359).
     let imports = r.field_recvec(ds::DATA_IMPORTS, ds::IMPORT_STRIDE);

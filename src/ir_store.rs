@@ -416,7 +416,8 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
 
 /// Write one native `Definition` into the already-allocated record `r` (the
 /// 23-field store subset — the same set the @PLAN28 codec serialises).
-fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
+fn write_definition(stores: &mut Stores, r: &Record, d: &Definition, width32: bool) {
+    r.set_field_bool(stores, ds::DEF_WIDTH32, width32); // @PLN204
     r.set_field_str(stores, ds::DEF_NAME, &d.name);
     r.set_field_int(stores, ds::DEF_SOURCE, i64::from(d.source));
     r.set_field_int(stores, ds::DEF_DEF_TYPE, def_type_code(&d.def_type));
@@ -529,9 +530,9 @@ pub fn materialize_data_at(stores: &mut Stores, root: DbRef, data: &Data) {
     let r = Record::new(root);
     r.set_field_int(stores, ds::DATA_SOURCE, i64::from(data.source));
     let defs = r.field_recvec(ds::DATA_DEFINITIONS, ds::DEFINITION_STRIDE);
-    for d in &data.definitions {
+    for (nr, d) in data.definitions.iter().enumerate() {
         let dr = defs.push(stores);
-        write_definition(stores, &dr, d);
+        write_definition(stores, &dr, d, data.body_width32(nr as u32));
     }
     // The import tables: `rebuild_indices` reconstructs `def_names` under each
     // definition's OWN source and then REPLAYS these, so an image without them

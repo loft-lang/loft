@@ -293,6 +293,7 @@ struct Definition {
   op_hot: boolean, // `#hot`: a standard-library operator numbered in the first class (`Data::op_code`)
   op_cold: boolean, // `#cold`: one numbered in the last class; neither = the class between
   no_prefill: text, // @FR-R-CompleteWrite the mints whose literal writes every field; "" = none
+  width32: boolean, // @PLN204 the body is under the 32-bit regime (`Data::body_width32`)
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

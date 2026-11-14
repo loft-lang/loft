@@ -139,11 +139,11 @@ The order inside G-2 follows the survey's ranking, not this list, once the ranki
 
 | step | number | command |
 |---|---|---|
-| G-0, image against memory | 1074 of 1075 units agree | `python3 selfhost/bench/cgen_survey.py` |
+| G-0, image against memory | 1075 of 1075 units agree (1 program has no unit) | `python3 selfhost/bench/cgen_survey.py` |
 
-The one unit that differs is a `#width 32` file: the image does not carry which bodies are
-32-bit (`Data::body_width32`).  It is added to the stored `Definition`; until then that program
-is out of the port's reach.
+The image carries per definition whether its body is under the 32-bit regime
+(`Definition.width32` in `ir.loft`, `Data::body_width32`): without it a `#width 32` file's unit
+came out 64-bit from the image.
 
 ## Open questions, answered by the first probes
 
