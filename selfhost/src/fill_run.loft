@@ -135,6 +135,9 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
     } else if s.native >= 0 {
       idx = s.native;
       s.native = -1;
+      if trace {
+        eprintln("at {s.code_pos} sp {s.stack_pos} native {img.natives[idx] ?? ""}");
+      }
       pk = ptab[idx] ?? 0;
       if natives::par_is_job(pk) {
         // A queue's or a fold's native: its first worker entered as a call, or with no rows
@@ -157,7 +160,7 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       } else {
         // The natives are the hand-built runner's ports, over the same stack store.
         tl[0] = s.table_loaded;
-        sp = natives::call_native(natives::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
+        sp = natives::call_native(s.handlers[idx] ?? -1, idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
         s.table_loaded = tl[0] ?? false;
         if sp < 0 {
           s.stop("not carried: {img.natives[idx] ?? "native {idx}"}");

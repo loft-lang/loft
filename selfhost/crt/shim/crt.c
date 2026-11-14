@@ -301,6 +301,36 @@ void loft_crt_poke_f64(int64_t base, int64_t at, const double *v, int64_t n) {
     memcpy(LOFT_AT(base, at), &d, 8);
 }
 
+/* A reference in a frame slot, by address: written, copied, and the two reads that answer one
+ * (`loft_crt_vec_get`, `loft_crt_get_dbref`) writing it in place; a null index reads null. */
+typedef struct { uint32_t store, rec, pos; } loft_crt_slot_ref;
+extern void loft_twin_poke_ref(int64_t to, int64_t store, int64_t rec, int64_t pos);
+extern void loft_twin_copy_ref(int64_t from, int64_t to);
+LOFT_STEP_FN void loft_twin_poke_ref(int64_t to, int64_t store, int64_t rec, int64_t pos) {
+    loft_crt_slot_ref v = { (uint32_t) store, (uint32_t) rec, (uint32_t) pos };
+    memcpy(LOFT_AT(to, 0), &v, 12);
+}
+LOFT_STEP_FN void loft_twin_copy_ref(int64_t from, int64_t to) {
+    memmove(LOFT_AT(to, 0), LOFT_AT(from, 0), 12);
+}
+static int64_t loft_crt_slot_part(loft_ref r, int64_t part) {
+    return part == 0 ? (int64_t) r.store_nr : part == 1 ? (int64_t) r.rec : (int64_t) r.pos;
+}
+int64_t loft_crt_vec_get_part(int64_t part, int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t idx) {
+    return loft_crt_slot_part(loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx), part);
+}
+int64_t loft_crt_get_dbref_part(int64_t part, int64_t store, int64_t rec, int64_t pos, int64_t fld) {
+    return loft_crt_slot_part(loft_get_dbref(loft_crt_ref(store, rec, pos), (uint32_t) fld), part);
+}
+void loft_twin_vec_get_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t idx) {
+    loft_ref r = idx == INT64_MIN ? loft_ref_null() : loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx);
+    loft_twin_poke_ref(to, r.store_nr, r.rec, r.pos);
+}
+void loft_twin_get_dbref_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t fld) {
+    loft_ref r = loft_get_dbref(loft_crt_ref(store, rec, pos), (uint32_t) fld);
+    loft_twin_poke_ref(to, r.store_nr, r.rec, r.pos);
+}
+
 /* The text a slot holds — a local's (`arg` 0) or an argument's (1) — copied into `out` when it
  * fits: its length, or -1 for the null text. */
 int64_t loft_crt_slot_text(char *out, int64_t cap, int64_t store, int64_t at, int64_t arg) {
@@ -548,6 +578,52 @@ int64_t loft_crt_local_text_len(int64_t store, int64_t at, int64_t arg) {
 /* OpTextNullJump: is the text at `at` the null text? */
 int64_t loft_crt_local_text_null(int64_t store, int64_t at, int64_t arg) {
     return loft_str_is_null(loft_crt_local_text(store, at, arg)) ? 1 : 0;
+}
+
+/* A text view in its frame slot at `at`, measured and compared in place — what an arm of the
+ * dispatch loop answers `OpSizeText` (`which` 0: bytes), `OpLengthText` (1: characters) and
+ * `OpConvBoolFromText` (2: is it a text at all) with, and `OpEqText`, `OpLtText`, `OpLeText`
+ * (`which` 0, 1, 2) for the views at `a` and `b`; the character holding byte `idx` of one. */
+int64_t loft_crt_view_measure(int64_t which, int64_t store, int64_t at) {
+    loft_str v = *(loft_str *) loft_crt_slot_at(store, at);
+    return which == 0 ? loft_text_size(v) : which == 1 ? loft_text_length(v) : !loft_str_is_null(v);
+}
+int64_t loft_crt_view_compare(int64_t which, int64_t store, int64_t a, int64_t b) {
+    loft_str x = *(loft_str *) loft_crt_slot_at(store, a), y = *(loft_str *) loft_crt_slot_at(store, b);
+    return which == 0 ? loft_str_eq(x, y) : which == 1 ? loft_text_lt(x, y) : loft_text_le(x, y);
+}
+int64_t loft_crt_view_char(int64_t store, int64_t at, int64_t idx) {
+    loft_str v = *(loft_str *) loft_crt_slot_at(store, at);
+    return loft_str_is_null(v) ? 0 : (int64_t) loft_text_char(v, idx);
+}
+/* The text natives on the views in their slots, no text copied out: `find` (`which` 0) and
+ * `rfind` (1) of the view at `val` in the one at `self`, whether that one starts (2) or ends
+ * (3) with it; the null text reads as the empty one, as the natives' loft ports read it. */
+int64_t loft_crt_view_search(int64_t which, int64_t store, int64_t self, int64_t val) {
+    loft_str s = *(loft_str *) loft_crt_slot_at(store, self), v = *(loft_str *) loft_crt_slot_at(store, val);
+    if (loft_str_is_null(s)) s = loft_lit("", 0);
+    if (loft_str_is_null(v)) v = loft_lit("", 0);
+    return which == 0 ? loft_find(s, v) : which == 1 ? loft_rfind(s, v)
+         : which == 2 ? (int64_t) loft_starts_with(s, v) : (int64_t) loft_ends_with(s, v);
+}
+/* `text.byte_at(i)` of the view at `at`: 0 out of range. */
+int64_t loft_crt_view_byte(int64_t store, int64_t at, int64_t i) {
+    loft_str s = *(loft_str *) loft_crt_slot_at(store, at);
+    return loft_str_is_null(s) ? 0 : loft_byte_at(s, i);
+}
+/* `OpSetText` / `OpSetTextReplace` (`refill`) of the view in the slot at `at`, and that view
+ * appended to the text a reference names (`loft_crt_ref_text_append`): no copy of the text
+ * is made on the way. */
+void loft_crt_set_text_view(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t stk, int64_t at,
+                            int64_t refill) {
+    loft_str v = *(loft_str *) loft_crt_slot_at(stk, at);
+    if (refill) loft_refill_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
+    else loft_set_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
+}
+void loft_crt_ref_text_append_view(int64_t s, int64_t r, int64_t p, int64_t stk, int64_t at) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
+    loft_str v = *(loft_str *) loft_crt_slot_at(stk, at);
+    if (t) loft_text_concat(t, v);
 }
 
 /* `text.trim()` / `trim_start()` / `trim_end()` (`which` 0, 1, 2) on the view at `at`: the
@@ -983,6 +1059,10 @@ void loft_crt_set_float(int64_t store, int64_t rec, int64_t pos, int64_t fld, co
     else loft_set_float(r, (uint32_t) fld, v);
 }
 
+/* `set_float` and `vec_push_float` with the value itself: NaN is the null float. */
+void loft_twin_set_float(int64_t store, int64_t rec, int64_t pos, int64_t fld, double v, int64_t single) {
+    loft_crt_set_float(store, rec, pos, fld, &v, 1, 0, single);
+}
 /* OpGetField: the reference to an embedded record, `loft_field` — the position moved past the
  * field's offset.  Answers the new position; the store and record are the host's. */
 int64_t loft_crt_field_pos(int64_t store, int64_t rec, int64_t pos, int64_t fld) {
@@ -1004,6 +1084,18 @@ int64_t loft_crt_vec_get(int64_t *out, int64_t n, int64_t store, int64_t rec, in
                          int64_t size, int64_t idx) {
     loft_crt_put_ref(out, n, loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx));
     return 0;
+}
+
+/* The integer field `fld` of element `idx` (`size` bytes each) of a vector, read and written
+ * in one step: null where there is no such element, and no write to one. */
+int64_t loft_crt_vec_elem_int(int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t idx, int64_t fld) {
+    loft_ref e = loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx);
+    return e.rec == 0 ? LOFT_NULL : loft_get_int(e, (uint32_t) fld);
+}
+void loft_crt_vec_elem_set_int(int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t idx, int64_t fld,
+                               int64_t v, int64_t is_null) {
+    loft_ref e = loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx);
+    if (e.rec != 0) loft_set_int(e, (uint32_t) fld, is_null ? LOFT_NULL : v);
 }
 
 /* OpPreAllocVector: room for `count` more elements of `size` bytes. */
@@ -1036,6 +1128,10 @@ void loft_crt_vec_push_float(int64_t store, int64_t rec, int64_t pos, const doub
     double v = is_null || n < 1 ? (double) NAN : val[0];
     if (single) loft_vec_push_single(r, (float) v);
     else loft_vec_push_float(r, v);
+}
+
+void loft_twin_vec_push_float(int64_t store, int64_t rec, int64_t pos, double v, int64_t single) {
+    loft_crt_vec_push_float(store, rec, pos, &v, 1, 0, single);
 }
 
 /* OpNewRecord on a vector: a new element of `size` bytes at its end, written into `out`. */

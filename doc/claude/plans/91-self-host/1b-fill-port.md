@@ -67,6 +67,17 @@ fn OpAddInt(v1: __word, v2: __word) -> __word;
   text value is not a view into a store or the code.  The generated function is named
   `op_<operator>`, so none takes a standard-library name.
 - The answer local is typed and nullable, so a template may answer `null`.
+- **A second form behind ` #arm `** is the operator's arm of the dispatch loop, where the first
+  form cannot be one (it names a whole reference or text, or it is a `State` method):
+  `#loft"s.put_var_dbref(pos, value); #arm slots: crt::copy_ref(value_at, base + sp + 16 - pos);"`.
+  An operator with no `#rust` template carries only the arm form (`#loft" #arm …"`).  In an arm
+  a reference argument is read in its slot — `r.store_nr`, `r.rec`, `r.pos` are scalar locals,
+  `r_at` the slot's address, `r_pos` its position — and a text argument is its view's slot
+  (`v1_at`, `v1_pos`), read in place by `crt::view_*`; `out_at` is the address a reference
+  answer is written at; `base`, `stk`, `sp` (the top after the pops), `ip` (past the
+  operands) and `tmp0`… are the loop's.  Before the form: `slots:` (every `u16` operand is a
+  frame slot the guard tests), `slots(a, b):` (those alone), `guard(<test>):`.  The whole
+  contract is `create.loft`'s `inline_arm`.
 
 Two language features exist for the port:
 
@@ -142,15 +153,30 @@ The dispatch loop is generated (`fill.loft`'s `run`) by the Rust interpreter's e
 | `(R-FrameHeadroom)` | `OpCall` and a plain `OpReturn` are arms (`create.loft`'s `call_arm`, `return_arm`): the frame list is held memory (`State.fbase`, four words a frame) written at the local depth; a call tests the depth and the default headroom under the capacity, and only one that fails runs `fn_call`, which grows the stack |
 
 Every check the accessors make is a compare at the loop's head or in the arm's guard; a step
-whose test fails is left to the operator's function, which reports it.  An operator with a text
-or reference argument runs through `execute`.  A return that is not plain — a buffer of a call
-through a reference to release, a destination-form call, a `par` worker or arm — runs
-`fn_return` (`State::plain_return`, asked once after each operator that ran on the `State`).
+whose test fails is left to the operator's function, which reports it.  A reference or text
+operator is an arm where its template reads the reference's fields or gives an ` #arm ` form
+(What a template is); every other one runs through `execute`.  An operator in a slot past 254
+— two bytes in the code — is an arm of a second `match` under slot 255.  A return that is not
+plain — a buffer of a call through a reference to release, a destination-form call, a `par`
+worker or arm — runs `fn_return` (`State::plain_return`, asked once after each operator that
+ran on the `State`).  A function binds at most 300 variables, so an arm's locals come from a
+pool by type (`ri0`…, `rf0`…, `rb0`…).
+
+What an operator outside the arms costs: a `state::DbRef` it takes or answers is a record in
+a store of its own and the vector its parts are read into another, so each such operator
+mints two stores — 5 to 18 times the Rust interpreter's time on record and vector programs.
+The C writer's `(R-ValueRecord)` declines `DbRef` (`LOFT_TRACE_VALUEREC=1`); until it admits
+it, the cure for a hot operator is an arm.  A native that takes a text copies it out
+(`crt::stack_str`, which also validates it); the ones a loop calls read their views in place
+(`crt::view_find`, `view_starts`, `view_byte`).
 
 Measure with `selfhost/bench/fill_speed.sh` (the generated runner against `loft --interpret`
 on the integer kernels) and `selfhost/bench/bench_speed.py` (every routine of the benchmark
 suite, `bench/NN_*`, each timed by the program itself).  Compare builds by user-mode
 instruction counts (`perf stat -e instructions:u`, a large run less a tiny one): on a busy
 machine the times and the cycle counts move by a factor of two, the instruction counts not at
-all.  The gate is the generated runner at the Rust interpreter's time; on the integer kernels
-it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles).
+all.  The gate is the generated runner at the Rust interpreter's time.  On the integer kernels
+it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles); over the
+benchmark suite's 94 routines the geometric mean is 2.1 times the Rust interpreter's time,
+the worst 13.7 — the routines over 3 are the worklist, by what their operators and natives
+are (`LOFT_FILL_TRACE=1` prints each operator and each native the run reaches).

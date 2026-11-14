@@ -79,6 +79,8 @@ pub struct State {
   // Per native: the definition whose loft body stands for it — a standard-library function
   // the Rust build compiled (`loft_shared_<def>`) — or -1; the same for its destination form
   // (`…#dest`); and the destinations such calls in flight append their answer to.
+  // Per native: its handler in the natives' table (`natives::native_handler`), -1 for none.
+  pub handlers: vector<integer>,
   pub shared: vector<integer>,
   pub shared_dest: vector<integer>,
   pub dest_calls: vector<FnBuf>,
@@ -218,11 +220,13 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [] };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
-    carried = natives::native_handler(name) >= 0;
+    handler = natives::native_handler(name);
+    s.handlers += [handler];
+    carried = handler >= 0;
     s.shared += [if carried { -1 } else { img.shared[i] ?? -1 }];
     dest_form = name.ends_with("#dest");
     s.bodies += [if carried || dest_form { -1 } else { crt::body_find(name) }];
@@ -1005,7 +1009,7 @@ pub fn text_null_jump(self: State) {
   src = self.code_u16();
   arg = self.code_u8() == 1;
   step = self.code_i32();
-  if crt::slot_text(self.stk, self.stack_pos - src, arg) != null {
+  if !crt::local_text_null(self.stk, self.stack_pos - src, if arg { 1 } else { 0 }) {
     self.code_pos += step;
   }
 }
@@ -1029,20 +1033,33 @@ pub fn vec_get(r: DbRef, size: integer, index: integer?) -> DbRef {
   DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
 }
 
+// Is `index` an element of the vector — or null, which reads as null without a report?  A
+// negative one counts from the end.
+pub fn vec_has(store: integer, rec: integer, pos: integer, index: integer?) -> boolean {
+  if index == null {
+    return true;
+  }
+  n = crt::vec_len(store, rec, pos) ?? 0;
+  at = if index! < 0 { index! + n } else { index! };
+  at >= 0 && at < n
+}
+
+// The report of an index `vec_has` refused.
+pub fn raise_vec_index(self: State, store: integer, rec: integer, pos: integer, index: integer?) {
+  n = crt::vec_len(store, rec, pos) ?? 0;
+  if (index ?? 0) + n < 0 {
+    self.raise_recoverable("a negative index {index ?? 0}");
+  } else {
+    self.raise_recoverable("index {index ?? 0} outside a vector of {n}");
+  }
+}
+
 // `State::vec_get_or_raise`: the same element, an index outside the vector reported (a negative
 // one counts from the end).
 pub fn vec_get_or_raise(self: State, r: DbRef, size: integer, index: integer?) -> DbRef {
-  if index != null {
-    n = crt::vec_len(r.store_nr, r.rec, r.pos) ?? 0;
-    at = if index! < 0 { index! + n } else { index! };
-    if at < 0 {
-      self.raise_recoverable("a negative index {index!}");
-      return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
-    }
-    if at >= n {
-      self.raise_recoverable("index {index!} outside a vector of {n}");
-      return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
-    }
+  if !vec_has(r.store_nr, r.rec, r.pos, index) {
+    self.raise_vec_index(r.store_nr, r.rec, r.pos, index);
+    return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
   }
   vec_get(r, size, index)
 }
@@ -1511,6 +1528,47 @@ pub fn vec_slice(self: State, r: DbRef, src: DbRef, lo: integer?, hi: integer?, 
 pub fn rget_bool(base: integer, sp: integer, pos: integer) -> boolean? {
   b = crt::peek_u8(base, sp - pos);
   if b == 255 { null } else { b == 1 }
+}
+
+// A reference in the frame slot `pos` under the top `sp`, read by an arm through the stack's
+// base: its store, its record and its position.
+pub fn rref_s(base: integer, sp: integer, pos: integer) -> integer {
+  crt::peek_u32(base, sp - pos)
+}
+
+pub fn rref_r(base: integer, sp: integer, pos: integer) -> integer {
+  crt::peek_u32(base, sp - pos + 4)
+}
+
+pub fn rref_p(base: integer, sp: integer, pos: integer) -> integer {
+  crt::peek_u32(base, sp - pos + 8)
+}
+
+// `State::local_vec_len`, `vec_get_int` and `vec_set_int` on those locals: the length of the
+// vector local `vec`, whether its local index `idx` names an element (`vec_has`), and the
+// integer field `fld` of that element read and written.
+pub fn rvec_len(base: integer, sp: integer, vec: integer) -> integer {
+  crt::vec_len(rref_s(base, sp, vec), rref_r(base, sp, vec), rref_p(base, sp, vec))
+}
+
+pub fn rvec_has(base: integer, sp: integer, vec: integer, idx: integer) -> boolean {
+  vec_has(rref_s(base, sp, vec), rref_r(base, sp, vec), rref_p(base, sp, vec), crt::peek_i64(base, sp - idx))
+}
+
+pub fn rvec_int(base: integer, sp: integer, vec: integer, size: integer, idx: integer, fld: integer) -> integer? {
+  crt::vec_elem_int(rref_s(base, sp, vec), rref_r(base, sp, vec), rref_p(base, sp, vec), size, crt::peek_i64(base, sp - idx), fld)
+}
+
+pub fn rvec_set_int(base: integer, sp: integer, vec: integer, size: integer, idx: integer, fld: integer, val: integer?) {
+  crt::vec_elem_set_int(rref_s(base, sp, vec), rref_r(base, sp, vec), rref_p(base, sp, vec), size, crt::peek_i64(base, sp - idx), fld, val);
+}
+
+// `State::local_tag` on the loop's locals.
+pub fn rtag(stk: integer, base: integer, sp: integer, of: integer, a: integer) -> integer? {
+  if of == 0 {
+    return crt::get_w(crt::W_ENUM, stk, 1, 8 + sp - a, 0, 0);
+  }
+  if rref_r(base, sp, a) == 0 { 0 } else { crt::get_w(crt::W_ENUM, rref_s(base, sp, a), rref_r(base, sp, a), rref_p(base, sp, a), 0, 0) }
 }
 
 // A boolean answer as its stack byte: 1, 0, or 255 for null.

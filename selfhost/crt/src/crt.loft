@@ -643,6 +643,44 @@ pub fn hold_room(bytes: integer) -> integer {
   c_hold_room(bytes)
 }
 
+// A reference as a frame slot holds it — its store, record and position, four bytes each —
+// written at the address `to`, and one copied from the address `from`: what an arm of the
+// dispatch loop answers a reference with, in place.
+pub fn poke_ref(to: integer, store: integer, rec: integer, pos: integer) {
+  c_poke(SW_U32, to, 0, store, false);
+  c_poke(SW_U32, to, 4, rec, false);
+  c_poke(SW_U32, to, 8, pos, false);
+}
+#c_twin "loft_twin_poke_ref" "void(int64_t, int64_t, int64_t, int64_t)"
+
+pub fn copy_ref(from: integer, to: integer) {
+  c_move(0, from, to, 12);
+}
+#c_twin "loft_twin_copy_ref" "void(int64_t, int64_t)"
+
+fn c_vec_get_part(part: integer, store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> integer;
+#c "loft_crt_vec_get_part" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_get_dbref_part(part: integer, store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_get_dbref_part" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `OpGetVector`'s element and `OpGetDbRef`'s field, the reference written at the address
+// `to` where `vec_get` and `get_dbref` write it into a vector.  (The bodies read the answer
+// a part at a time — 0 its store, 1 its record, 2 its position: a twin's body binds no
+// vector of its own.)
+pub fn vec_get_to(to: integer, store: integer, rec: integer, pos: integer, size: integer, idx: integer?) {
+  if idx == null {
+    poke_ref(to, 65535, 0, 0);
+  } else {
+    poke_ref(to, c_vec_get_part(0, store, rec, pos, size, idx!), c_vec_get_part(1, store, rec, pos, size, idx!), c_vec_get_part(2, store, rec, pos, size, idx!));
+  }
+}
+#c_twin "loft_twin_vec_get_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn get_dbref_to(to: integer, store: integer, rec: integer, pos: integer, fld: integer) {
+  poke_ref(to, c_get_dbref_part(0, store, rec, pos, fld), c_get_dbref_part(1, store, rec, pos, fld), c_get_dbref_part(2, store, rec, pos, fld));
+}
+#c_twin "loft_twin_get_dbref_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 // `n` bytes moved from byte `from` to byte `to` of the address `base`, with no test of the
 // positions, as `peek_*` reads.
 pub fn move_bytes(base: integer, from: integer, to: integer, n: integer) {
@@ -692,6 +730,79 @@ pub fn stack_str_of_field(store: integer, at: integer, s: integer, r: integer, p
 // A `*_dest` native's write: `val` appended to the text the reference `(s, r, p)` names.
 pub fn ref_text_append(s: integer, r: integer, p: integer, val: text?) {
   c_ref_text_append(s, r, p, val ?? "", bytes_of(val));
+}
+
+fn c_view_measure(which: integer, store: integer, at: integer) -> integer;
+#c "loft_crt_view_measure" "int64_t(int64_t, int64_t, int64_t)"
+fn c_view_compare(which: integer, store: integer, a: integer, b: integer) -> integer;
+#c "loft_crt_view_compare" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+fn c_view_char(store: integer, at: integer, idx: integer) -> integer;
+#c "loft_crt_view_char" "int64_t(int64_t, int64_t, int64_t)"
+fn c_set_text_view(store: integer, rec: integer, pos: integer, fld: integer, stk: integer, at: integer, refill: boolean);
+#c "loft_crt_set_text_view" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_ref_text_append_view(s: integer, r: integer, p: integer, stk: integer, at: integer);
+#c "loft_crt_ref_text_append_view" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// A text view in its frame slot at `at` of the stack store, read in place (no text is copied
+// out): its bytes, its characters and whether it is a text at all — 0 and false for the null
+// text; two views compared; the character holding byte `idx` (0: none).
+pub fn view_size(store: integer, at: integer) -> integer {
+  c_view_measure(0, store, at)
+}
+
+pub fn view_length(store: integer, at: integer) -> integer {
+  c_view_measure(1, store, at)
+}
+
+pub fn view_some(store: integer, at: integer) -> boolean {
+  c_view_measure(2, store, at) != 0
+}
+
+pub fn view_eq(store: integer, a: integer, b: integer) -> boolean {
+  c_view_compare(0, store, a, b) != 0
+}
+
+pub fn view_lt(store: integer, a: integer, b: integer) -> boolean {
+  c_view_compare(1, store, a, b) != 0
+}
+
+pub fn view_le(store: integer, a: integer, b: integer) -> boolean {
+  c_view_compare(2, store, a, b) != 0
+}
+
+pub fn view_char(store: integer, at: integer, idx: integer?) -> integer {
+  if idx == null { 0 } else { c_view_char(store, at, idx!) }
+}
+
+fn c_view_search(which: integer, store: integer, at: integer, val: integer) -> integer;
+#c "loft_crt_view_search" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+fn c_view_byte(store: integer, at: integer, i: integer) -> integer;
+#c "loft_crt_view_byte" "int64_t(int64_t, int64_t, int64_t)"
+
+// The text natives on the views in their slots (`at`: the text, `val`: what is looked for):
+// the byte position of the first or (`last`) the last `val`, null for none; whether the text
+// starts or (`ends`) ends with it; the byte at `i`, 0 out of range.  A null text reads as the
+// empty one.
+pub fn view_find(store: integer, at: integer, val: integer, last: boolean) -> integer? {
+  c_view_search(if last { 1 } else { 0 }, store, at, val)
+}
+
+pub fn view_starts(store: integer, at: integer, val: integer, ends: boolean) -> boolean {
+  c_view_search(if ends { 3 } else { 2 }, store, at, val) != 0
+}
+
+pub fn view_byte(store: integer, at: integer, i: integer) -> integer {
+  c_view_byte(store, at, i)
+}
+
+// `OpSetText` (`refill`: `OpSetTextReplace`) of the view in the stack slot at `at`, and that
+// view appended to the text the reference `(s, r, p)` names.
+pub fn set_text_view(store: integer, rec: integer, pos: integer, fld: integer, stk: integer, at: integer, refill: boolean) {
+  c_set_text_view(store, rec, pos, fld, stk, at, refill);
+}
+
+pub fn ref_text_append_view(s: integer, r: integer, p: integer, stk: integer, at: integer) {
+  c_ref_text_append_view(s, r, p, stk, at);
 }
 
 // `OpClearStackText`: the text the reference `(s, r, p)` names emptied.
@@ -1386,6 +1497,7 @@ pub fn get_float(store: integer, rec: integer, pos: integer, fld: integer, singl
 pub fn set_float(store: integer, rec: integer, pos: integer, fld: integer, v: float?, single: boolean) {
   c_set_float(store, rec, pos, fld, [v ?? 0.0], v == null, single);
 }
+#c_twin "loft_twin_set_float" "void(int64_t, int64_t, int64_t, int64_t, double, int64_t)"
 
 // `OpGetField`: the position of the record embedded at byte `fld` (`loft_field`); its store and
 // record are the host's own.
@@ -1702,10 +1814,28 @@ pub fn vec_push(which: integer, store: integer, rec: integer, pos: integer, min:
   c_vec_push(which, store, rec, pos, min, v ?? 0, v == null);
 }
 
+fn c_vec_elem_int(store: integer, rec: integer, pos: integer, size: integer, idx: integer, fld: integer) -> integer;
+#c "loft_crt_vec_elem_int" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_vec_elem_set_int(store: integer, rec: integer, pos: integer, size: integer, idx: integer, fld: integer, v: integer, is_null: boolean);
+#c "loft_crt_vec_elem_set_int" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// The integer field `fld` of element `idx` (`size` bytes each) of a vector, read and written
+// in one step: null where there is no such element or `idx` is null, and no write to one.
+pub fn vec_elem_int(store: integer, rec: integer, pos: integer, size: integer, idx: integer?, fld: integer) -> integer? {
+  if idx == null { null } else { c_vec_elem_int(store, rec, pos, size, idx!, fld) }
+}
+
+pub fn vec_elem_set_int(store: integer, rec: integer, pos: integer, size: integer, idx: integer?, fld: integer, v: integer?) {
+  if idx != null {
+    c_vec_elem_set_int(store, rec, pos, size, idx!, fld, v ?? 0, v == null);
+  }
+}
+
 // `OpPushFloat`, or with `single` `OpPushSingle`.
 pub fn vec_push_float(store: integer, rec: integer, pos: integer, v: float?, single: boolean) {
   c_vec_push_float(store, rec, pos, [v ?? 0.0], v == null, single);
 }
+#c_twin "loft_twin_vec_push_float" "void(int64_t, int64_t, int64_t, double, int64_t)"
 
 // `OpNewRecord` on a vector: a new element of `size` bytes at its end, into `out[0..3]`.
 pub fn vec_append(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer) {

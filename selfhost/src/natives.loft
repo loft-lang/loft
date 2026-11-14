@@ -551,17 +551,13 @@ pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, s
     // The frame-yield flag only a host's frame loop reads; a run from an image has none.
     sp = sp;
   } else if nh == N_TEXT_RFIND {
-    rfv = crt::stack_str(stk, sp - 16) ?? "";
-    rfs = crt::stack_str(stk, sp - 32) ?? "";
     sp -= 32;
-    set(stk, sp, rfs.rfind(rfv));
+    set(stk, sp, crt::view_find(stk, sp, sp + 16, true));
     sp += 8;
   } else if nh == N_TEXT_FIND {
     // The byte position of the first `value` in `self`, null when there is none.
-    fval = crt::stack_str(stk, sp - 16) ?? "";
-    fself = crt::stack_str(stk, sp - 32) ?? "";
     sp -= 32;
-    set(stk, sp, fself.find(fval));
+    set(stk, sp, crt::view_find(stk, sp, sp + 16, false));
     sp += 8;
   } else if nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END {
     // A view of the same text, narrowed in place (Rust's `str::trim*`).
@@ -582,9 +578,8 @@ pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, s
   } else if nh == N_TEXT_BYTE_AT {
     // The byte at `i` (from the end when negative), 0 out of range (`text_byte_at_native`).
     bai = get(stk, sp - 8) ?? 0;
-    bas = crt::stack_str(stk, sp - 24) ?? "";
     sp -= 24;
-    set(stk, sp, bas.byte_at(bai));
+    set(stk, sp, crt::view_byte(stk, sp, bai));
     sp += 8;
   } else if nh == N_TEXT_REPLACE_DEST {
     // `self.replace(value, with)` appended to the destination.
@@ -595,10 +590,8 @@ pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, s
     sp -= 64;
     crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rself.replace(rval, rwith));
   } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
-    nv = crt::stack_str(stk, sp - 16) ?? "";
-    ns2 = crt::stack_str(stk, sp - 32) ?? "";
     sp -= 32;
-    set_bool(stk, sp, if nh == N_STARTS_WITH { ns2.starts_with(nv) } else { ns2.ends_with(nv) });
+    set_bool(stk, sp, crt::view_starts(stk, sp, sp + 16, nh == N_ENDS_WITH));
     sp += 8;
   } else if nh == N_WRITE_BYTES {
     // The byte vector popped, then the path; answers whether it was written.
