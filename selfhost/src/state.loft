@@ -17,6 +17,8 @@ use types;
 use brun;
 use show;
 use files;
+use eq;
+use ptypes;
 
 pub struct State {
   // The bytecode (`State::code_base` / `code_len`) and the position of the next byte to read.
@@ -67,6 +69,11 @@ pub struct State {
   pub co_active: vector<integer>,
   pub co_generation: integer,
   pub gens: vector<ir::RunGen>,
+  // What the C runtime's text parser has been told of the schema (`ptypes::prepare`), shared
+  // with the natives; and the enum names viewed so far, as triples of a key (type * 256 +
+  // variant), the interned text and its length.
+  pub ptold: vector<boolean>,
+  pub interned: vector<integer>,
 }
 
 // A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
@@ -144,7 +151,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [] };
   for f in s.fnrefs {
     s.fnref_of[f.def] = f#index;
   }
@@ -2210,4 +2217,140 @@ pub fn coroutine_retain(self: State, gen: DbRef) -> DbRef {
     self.cos[gen.rec].holds += 1;
   }
   gen
+}
+
+// ── Casts between a text and a value; narrow locals. ──────────────────────────────────────
+
+// `State::db_from_text` (`t as vector<T>`): the C runtime's parser over the parse table the
+// schema gives, a new store holding the value.
+pub fn db_from_text(self: State, val: text?, tp: integer) -> DbRef {
+  self.load_table();
+  ptypes::prepare(self.types, tp, self.ptold);
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::record_from_text(io, val ?? "", tp);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `Stores::to_enum`: the variant of enum type `tp` the text names, 1-based; 0 when none is.
+pub fn to_enum(self: State, tp: integer, name: text?) -> integer {
+  match self.types[tp]?.parts[0] {
+    PtEnum { values } => {
+      for vi in 0..len(values) {
+        if (values[vi]?.name ?? "") == (name ?? "") {
+          return vi + 1;
+        }
+      }
+    }
+    _ => {}
+  }
+  0
+}
+
+// `OpCastTextFromEnum`: a variant's name pushed as a view of an interned copy (as Rust views
+// its type table); the null text for 0 or 255.
+pub fn push_enum_text(self: State, v: integer, tp: integer) {
+  name: text? = null;
+  if v > 0 && v != 255 {
+    match self.types[tp]?.parts[0] {
+      PtEnum { values } => {
+        name = values[v - 1]?.name;
+      }
+      _ => {}
+    }
+  }
+  if name == null {
+    self.push_null_text();
+    return;
+  }
+  key = tp * 256 + v;
+  at = -1;
+  k = 0;
+  while k + 2 < len(self.interned) && at < 0 {
+    if (self.interned[k] ?? -1) == key {
+      at = k;
+    }
+    k += 3;
+  }
+  if at < 0 {
+    at = len(self.interned);
+    self.interned += [key, crt::intern_text(name!), name!.size()];
+  }
+  self.ensure_stack(16);
+  crt::stack_str_interned(self.stk, self.stack_pos, self.interned[at + 1] ?? 0, self.interned[at + 2] ?? 0);
+  self.stack_pos += 16;
+}
+
+// `State::var_narrow` / `put_narrow`: a narrow local read from, or written at, its slot's low
+// bytes, by its kind's width and null code.
+pub fn var_narrow(self: State, pos: integer, min: integer, kind: integer) -> integer? {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return null;
+  }
+  w = brun::narrow_width(kind);
+  bytes = crt::stack_read_bytes(self.stk, self.stack_pos - pos, w);
+  bits = 0;
+  for b in 0..w {
+    bits += (bytes[b] ?? 0) << (8 * b);
+  }
+  brun::narrow_decode(kind, min, bits)
+}
+
+pub fn put_narrow(self: State, pos: integer, min: integer, kind: integer, value: integer?) {
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  w = brun::narrow_width(kind);
+  bits = brun::narrow_encode(kind, min, value);
+  crt::stack_code_bytes(self.stk, self.stack_pos + 8 - pos, [for b in 0..w { ((bits >> (8 * b)) & 255) as u8 }], 0, w);
+}
+
+// `State::insert_vector`: the index and the vector popped; a new element at the index, filled
+// with its type's defaults; its reference pushed.
+pub fn insert_vector(self: State) {
+  size = self.code_u16();
+  tp = self.code_u16();
+  index = self.get_stack_i64() ?? 0;
+  r = self.get_stack_dbref();
+  linked = self.types[tp]?.linked ?? false;
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::vec_insert(io, r.store_nr, r.rec, r.pos, if linked { self.types[tp]?.size ?? size } else { size }, index, linked);
+  crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(tp));
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+// `Stores::eq_content`: two values of type `tp` compared field by field.
+pub fn eq_content(self: State, v1: DbRef, v2: DbRef, tp: integer) -> boolean {
+  self.load_table();
+  eq::eq_content(self.types, crt::Pos { s: v1.store_nr, r: v1.rec, p: v1.pos }, crt::Pos { s: v2.store_nr, r: v2.rec, p: v2.pos }, tp)
+}
+
+// `Stores::sort_vector`: a primitive vector sorted in place by `<` on its elements.
+pub fn sort_vector(self: State, r: DbRef, tp: integer) {
+  raw = match self.types[tp]?.parts[0] {
+    PtIntRaw { start: _, nullable: _ } => true,
+    _ => false,
+  };
+  crt::vec_sort(r.store_nr, r.rec, r.pos, self.types[tp]?.size ?? 8, tp == 2 || tp == 3, tp == 5, raw);
+}
+
+// `Stores::prepend_vector`: `g`'s elements in front of `r`'s; whether any were.
+pub fn vec_prepend(self: State, r: DbRef, g: DbRef, tp: integer) -> boolean {
+  self.load_table();
+  crt::vec_prepend(r.store_nr, r.rec, r.pos, g.store_nr, g.rec, g.pos, tp, self.types[tp]?.linked ?? false)
+}
+
+// `Stores::child_rec_in_place`: the field's child record of type `tp`, made with its defaults
+// where it has none.
+pub fn child_rec_in_place(self: State, field: DbRef, tp: integer) -> DbRef {
+  self.load_table();
+  io: vector<integer> = [field.store_nr, field.rec, field.pos];
+  crt::child_rec_in_place(io, tp, field.store_nr, field.rec, field.pos, self.default_of(tp));
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `Stores::set_child_rec`: the field's child record set from `data` (the type's top bit frees
+// the source).
+pub fn set_child_rec(self: State, field: DbRef, data: DbRef, raw: integer) {
+  self.load_table();
+  crt::set_child_rec(raw & 16383, field.store_nr, field.rec, field.pos, data.store_nr, data.rec, data.pos, raw & 32768 != 0);
 }

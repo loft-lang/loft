@@ -138,9 +138,11 @@ fn OpDeliver(tag: __word, val: reference, db_tp: const u16) fs#update;
 fn OpExpose(tag: __word, val: reference, db_tp: const u16) fs#update;
 #cold
 #rust"stores.expose_value(@tag, @val, @db_tp);"
+#loft"crt::store_lock(val.store_nr, val.rec, val.pos, true);"
 fn OpRelease(tag: __word, val: reference, db_tp: const u16) fs#update;
 #cold
 #rust"stores.release_value(@tag, @val, @db_tp);"
+#loft"crt::store_lock(val.store_nr, val.rec, val.pos, false);"
 // Dynamic dispatch through a runtime function reference (fn-ref variable).
 // Placed here — after all file-I/O operators — so that it receives op_code 252 without
 // renumbering the operators defined earlier in this file.  Logically it beintegers near
@@ -1065,9 +1067,11 @@ pub fn store_memory() -> text;
 fn OpReverseVector(r: vector, size: const u16);
 #cold
 #rust"vector::reverse_vector(&@r, u32::from(@size), &mut s.database.allocations);"
+#loft"crt::vec_reverse(r.store_nr, r.rec, r.pos, size);"
 fn OpSortVector(r: vector, db_tp: const u16);
 #cold
 #rust"{{ stores.sort_vector(&@r, @db_tp); }}"
+#loft"s.sort_vector(r, db_tp);"
 
 // CO1.2: Coroutine opcodes
 fn OpCoroutineCreate(d_nr: const __word, args_size: const u16, to: const __word);
@@ -1238,6 +1242,7 @@ fn OpTagVCJump(of: const u8, a: const u16, c: const __word, step: const i32);
 fn OpSetChildRec(field: reference, data: reference, tp: const u16);
 #cold
 #rust"s.database.set_child_rec(&@field, &@data, @tp);"
+#loft"s.set_child_rec(field, data, tp);"
 #impure(parent_write)
 // `@FR-R-CompleteWrite` — `OpDatabase` without the default prefill: the same store, clear,
 // claim, zeroed root and type tag, and no `set_default_value`.  Only for a mint whose literal

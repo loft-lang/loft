@@ -82,7 +82,6 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
   trace = env_variable("LOFT_FILL_TRACE") == "1";
   io: vector<integer> = [0, 0, 0];
   tl: vector<boolean> = [false];
-  ptold: vector<boolean> = [false, false];
   why: vector<text> = [""];
   // The C runtime's index of each image sidecar, made at the first persistence native and kept.
   sidecar_ix: vector<integer> = [];
@@ -112,7 +111,7 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       idx = s.native;
       s.native = -1;
       tl[0] = s.table_loaded;
-      sp = brun::call_native(brun::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, ptold, why);
+      sp = brun::call_native(brun::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
       s.table_loaded = tl[0] ?? false;
       if sp < 0 {
         s.stop("not carried: {img.natives[idx] ?? "native {idx}"}");

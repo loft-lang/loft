@@ -168,7 +168,9 @@ fn operator_fn(def: ir::Definition, body: text) -> text {
   out = "\npub fn {fn_name(def.name)}(s: state::State) {{\n";
   for a in def.attributes {
     if !a.name.starts_with("_") && !a.mutable {
-      out += "  {a.name} = s.code_{width(a.typedef[0] ?? ir::TyVoid)}();\n";
+      // An operand its template does not name is read unbound.
+      named = if body.contains(a.name) { "{a.name} = " } else { "" };
+      out += "  {named}s.code_{width(a.typedef[0] ?? ir::TyVoid)}();\n";
     }
   }
   k = len(def.attributes) - 1;
@@ -331,6 +333,10 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
         return "";
       }
       names += [a.name];
+      if !template.contains(a.name) {
+        span += n;
+        continue;
+      }
       reads += "      {a.name}{sfx} = crt::cget_{if w == "bool" { "u8" } else { w }}(code, cbase, clen, ip + {span}){if w == "bool" { " == 1" } else { "" }};\n";
       span += n;
       if uses_slots && w == "u16" {

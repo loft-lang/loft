@@ -116,3 +116,8 @@ pub fn cmp_single(kind: integer, a: single?, b: single?) -> boolean {
   if kind == 0 { d == 0 } else if kind == 1 { d != 0 } else if kind == 2 { d < 0 } else { d <= 0 }
 }
 
+// `ops::op_narrow32`: a value that does not fit a 32-bit integer becomes null.
+pub fn narrow32(v: integer?) -> integer? {
+  if v != null && v! > -2147483648 && v! <= 2147483647 { v } else { null }
+}
+

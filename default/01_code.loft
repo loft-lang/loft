@@ -245,6 +245,7 @@ fn OpRangeDefault(val: __word, lo: const __word, hi: const __word, dflt: const _
 fn OpNarrow32(val: __word) -> __word;
 #cold
 #rust"ops::op_narrow32(@val)"
+#loft"ops::narrow32(val)"
 fn OpConstInt(val: const __word) -> __word;
 #hot
 #rust"@val"
@@ -271,8 +272,10 @@ fn OpPutInt(pos: const u16, value: __word);
 // one home for that encoding on both backends.  `min` and `kind` are the slot's.
 fn OpVarNarrow(pos: const u16, min: const i32, kind: const u8) -> __word;
 #rust"s.var_narrow(@pos, @min, @kind)"
+#loft"s.var_narrow(pos, min, kind)"
 fn OpPutNarrow(pos: const u16, min: const i32, kind: const u8, value: __word);
 #rust"s.put_narrow(@pos, @min, @kind, @value);"
+#loft"s.put_narrow(pos, min, kind, value);"
 fn OpPutCharacter(pos: const u16, value: character);
 #rust"s.put_var(@pos, @value);"
 #loft"s.put_var_char(pos, value);"
@@ -1210,9 +1213,11 @@ fn OpConvBoolFromEnum(v1: enumerate) -> boolean;
 fn OpCastTextFromEnum(v1: enumerate, enum_tp: const u16) -> text;
 #cold
 #rust"Str::new(if @v1 == 0 || @v1 == 255 {{\"\\0\"}} else {{s.database.enum_val(@enum_tp, @v1)}})"
+#loft"s.push_enum_text(v1, enum_tp);"
 fn OpCastEnumFromText(v1: text, enum_tp: const u16) -> enumerate;
 #cold
 #rust"s.database.to_enum(@enum_tp, @v1)"
+#loft"s.to_enum(enum_tp, v1)"
 fn OpConvIntFromEnum(v1: enumerate) -> __word;
 #rust"if @v1 == 255 {{ i64::MIN }} else {{ i64::from(@v1) }}"
 #loft"if v1 == 255 {{ null }} else {{ v1 }}"
@@ -1323,9 +1328,11 @@ fn OpNeRef(v1: reference, v2: reference) -> boolean;
 fn OpEqContent(v1: reference, v2: reference, tp: const u16) -> boolean;
 #cold
 #rust"stores.eq_content(&@v1, &@v2, @tp)"
+#loft"s.eq_content(v1, v2, tp)"
 fn OpNeContent(v1: reference, v2: reference, tp: const u16) -> boolean;
 #cold
 #rust"!stores.eq_content(&@v1, &@v2, @tp)"
+#loft"!s.eq_content(v1, v2, tp)"
 // Can be used to get another record within the same database
 fn OpGetRef(v1: reference, fld: const u16) -> reference[v1];
 #rust"stores.get_ref(&@v1, u32::from(@fld))"
@@ -1672,6 +1679,7 @@ fn OpVectorRefNullable(r: vector, index: __word) -> reference[r];
 fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
 #cold
 #rust"s.db_from_text(@val, @db_tp)"
+#loft"s.db_from_text(val, db_tp)"
 // Plan-06 phase 5a: collection-mutation opcodes are #impure(parent_write).
 // par-safety analyser rejects calls to these from worker fns when the
 // first arg (the collection) is non-local (D8 R1 — full check still
@@ -1703,6 +1711,7 @@ fn OpKeepVectorRange(r: vector, tp: const u16, lo: __word, hi: __word);
 // element type: the rewrite that emits it keeps the written-out statements as the fallback.
 fn OpPrependVector(r: vector, g: vector, tp: const u16) -> boolean;
 #rust"s.database.prepend_vector(&@r, &@g, @tp)"
+#loft"s.vec_prepend(r, g, tp)"
 #impure(parent_write)
 // Append the bytes [lo, hi) of a text to a byte vector as ONE copy — what
 // `for i in lo..hi { v += [t.byte_at(i) as u8] }` builds (`@FR-R-ByteCopy`).
@@ -1919,6 +1928,7 @@ pub fn len(self: const hash) -> integer {
 fn OpReserveHash(r: hash, count: __word, db_tp: const u16);
 #cold
 #rust"s.database.reserve_hash(&@r, @count, @db_tp);"
+#loft"s.load_table(); crt::hash_reserve(r.store_nr, r.rec, r.pos, db_tp, count ?? 0);"
 fn OpSizeHash(r: hash) -> __word;
 #cold
 #rust"i64::from(hash::table_bytes(&@r, &s.database.allocations))"
@@ -2146,6 +2156,7 @@ fn OpReleaseRecIfDistinct(rec: reference, answer: reference, tp: const u16);
 #impure(parent_write)
 fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
 #rust"stores.child_rec_in_place(&@field, @tp)"
+#loft"s.child_rec_in_place(field, tp)"
 #impure(parent_write)
 // ABI-B caller path for `v = call()` (heap-param callee returning struct-OR-null):
 // pops the call result `src`; `pos` is the destination var's slot (already holding
