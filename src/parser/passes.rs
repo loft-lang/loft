@@ -587,18 +587,30 @@ impl Parser {
             if callee == u32::MAX {
                 continue;
             }
-            let Type::Optional(_) = self.data.def(callee).returned() else {
+            let Type::Optional(inner) = self.data.def(callee).returned().clone() else {
                 continue;
             };
             let vars = &mut self.data.definitions[f as usize].variables;
-            if !vars.exists(v) {
+            if !vars.exists(v) || vars.is_declared(v) {
                 continue;
             }
+            // The arm `change_var_type` widens with on a bind (@FR-N-Join's nullable half), and
+            // nothing wider: a link (`RefVar` — a text local's pass-1 `&text`) keeps its own
+            // peel, and the callee's `τ` must be the local's own, so `o_t = fwd() -> text?`
+            // over a `&text` local stays for pass 2 to join (attic 918).
             let cur = vars.tp(v).clone();
-            if cur.is_unknown() || matches!(cur, Type::Optional(_)) {
+            if matches!(cur, Type::Optional(_) | Type::Null | Type::RefVar(_))
+                || cur.is_unknown()
+                || !inner.is_equal(&cur)
+            {
                 continue;
             }
-            vars.set_type(v, Type::Optional(Box::new(cur)));
+            let wider = matches!((&cur, &*inner), (Type::Integer(c), Type::Integer(n))
+                if n.byte_width(true) > c.byte_width(true));
+            vars.set_type(
+                v,
+                Type::optional(if wider { (*inner).clone() } else { cur }),
+            );
             vars.note_nullable_line(v, line);
         }
     }
