@@ -367,8 +367,7 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
       bgen::init_slot(g, v, "OpClearStackText");
       return;
     }
-    if bgen::dest_call(g, value) {
-      bgen::stop(g, "not written yet: a text call that answers into its destination");
+    if bgen::set_text_call(g, v, value, "OpClearStackText") {
       return;
     }
     bgen::init_slot(g, v, "OpClearStackText");
