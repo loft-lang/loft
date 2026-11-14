@@ -3255,6 +3255,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if mask == 0 {
         trace_shapes(cx, d, &shapes);
         trace_counters(cx, d);
+        body::trace_texts(cx, d);
     }
     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
     // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
