@@ -833,10 +833,10 @@ differently and only a cell could ever have caught the claim.
 | chapter source | reviewed through | commit |
 |---|---|---|
 | `default` | 2026-11-14 | `9701f0e64` |
-| `doc/00-vs-python.html` | 2026-10-01 | `a80e26737` |
-| `doc/00-vs-rust.html` | 2026-11-14 | `7ab6b9677` |
+| `doc/00-vs-python.html` | 2026-11-14 | `1783f48fc` |
+| `doc/00-vs-rust.html` | 2026-11-14 | `1783f48fc` |
 | `doc/install.html` | 2026-11-14 | `096397bba` |
-| `doc/roadmap.html` | 2026-11-02 | `11f767b68` |
+| `doc/roadmap.html` | 2026-11-14 | `1783f48fc` |
 | `tests/docs/01-keywords.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/02-text.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/03-integer.loft` | 2026-10-16 | `3de09bdee` |
