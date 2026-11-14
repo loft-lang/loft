@@ -349,7 +349,7 @@ slice of bytes.  `LOFT_TRACE_SLICE_TEXT=1` names each site taken and each kept w
 keeps `t = T { … }; v += [t]` as a record minted for `t`, copied into the element and freed —
 with it off, the literal is built in the element, as `v += [T { … }]` is — and is the first
 bisect step for a wrong field in an element appended from a bound literal.
-`LOFT_TRACE_LITERAL_APPEND=1` names each rewrite.
+`LOFT_TRACE_LITERAL_APPEND=1` names each rewrite.  **`LOFT_NO_RET_ARM_COPY=1`** (`@FR-O-Complete`, default-ON, parse time, BOTH backends) copies a tail branch that can `return` from inside an arm WHOLE through a `_ret_src_N` local again, where each arm is otherwise copied into the return buffer where it ends: the first bisect step for a record freed twice, or left unfreed, at the exit of a function whose tail `match` has an early `return`.
 
 ## Lowering: adopting and minting call buffers
 

@@ -2496,17 +2496,76 @@ impl Run<'_> {
                 FirstArm::CallRefJoin { .. }
                 | FirstArm::NullableCallJoin { .. }
                 | FirstArm::CallJoin { .. }
-                | FirstArm::OpaqueCallRef { .. } => {
-                    self.tuple_witness(&s, arm, &value);
-                    Self::consume(&mut s, &value);
-                    self.copied(&mut s, node)
-                }
+                | FirstArm::OpaqueCallRef { .. } => self.join_bound(&mut s, arm, x, node, &value),
                 FirstArm::CallAdopt | FirstArm::Plain => value,
             };
             self.bind(&mut s, x, &bound);
             return Some((s, Val::null()));
         }
         self.reassign(node, x, val, st)
+    }
+
+    /// What a runtime-join bind leaves in `x`: its own copy, and beside it every store the
+    /// join adopted while another variable held it ([`Self::join_adopts_held`]).
+    fn join_bound(
+        &mut self,
+        s: &mut State,
+        arm: crate::bind_lowering::FirstArm,
+        x: u16,
+        node: &Value,
+        value: &Val,
+    ) -> Val {
+        self.tuple_witness(s, arm, value);
+        let held = Self::join_adopts_held(s, arm, x, value);
+        let mut owned = value.clone();
+        owned.corr.retain(|k| !held.contains(k));
+        Self::consume(s, &owned);
+        let mut bound = self.copied(s, node);
+        // Adopted on the paths where the value names them, so they stay correlated with the
+        // bound value as they were with the source.
+        bound
+            .corr
+            .extend(held.iter().copied().filter(|k| value.corr.contains(k)));
+        bound.pts.extend(held.into_iter().map(Pt::Store));
+        bound
+    }
+
+    /// A runtime join copies only what lies in its witness's store and ADOPTS everything
+    /// else.  A store the value names that ANOTHER variable holds (a branch arm's call that
+    /// answered into the frame's own buffer) is therefore `x`'s as well from here on, not a
+    /// store consumed into `x`'s copy: the two holders' frees are one store's, which is the
+    /// fault to report.  Answers those stores.
+    /// `LOFT_RECORDS_NO_JOIN_ADOPT_HELD=1` reads every join as a copy.
+    fn join_adopts_held(
+        s: &State,
+        arm: crate::bind_lowering::FirstArm,
+        x: u16,
+        value: &Val,
+    ) -> Vec<SKey> {
+        use crate::bind_lowering::FirstArm;
+        let (FirstArm::CallRefJoin { base, .. }
+        | FirstArm::NullableCallJoin { base, .. }
+        | FirstArm::CallJoin { base, .. }) = arm
+        else {
+            return Vec::new();
+        };
+        if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_ADOPT_HELD").is_some()) {
+            return Vec::new();
+        }
+        let witness = if base == u16::MAX {
+            Pts::new()
+        } else {
+            Self::pts(s, base)
+        };
+        Self::stores_of(&value.pts)
+            .into_iter()
+            .filter(|k| {
+                !witness.contains(&Pt::Store(*k))
+                    && s.vars
+                        .iter()
+                        .any(|(&w, p)| w != x && w != base && p.contains(&Pt::Store(*k)))
+            })
+            .collect()
     }
 
     /// A join whose witness is a TUPLE slot (`use_analysis::join_witness_members` names no

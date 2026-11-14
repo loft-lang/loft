@@ -19093,7 +19093,30 @@ impl Parser {
         // with `p: Pt?`): the whole copy filled `w` where `p` held nothing, so a `-> Pt?`
         // answered a record for an absent field once it took the buffer (loft#1934); per
         // arm, that leaf takes the present-only copy below.
-        if self.arms_yield_null(tail) || self.branch_has_nullable_leaf(tail) {
+        // So is a branch that can LEAVE the function from inside an arm (a `return` of its
+        // own): copied whole, its source had to be bound to a local first so that the buffer
+        // was minted only on the path that copies (loft#2384), and no one answer fits that
+        // local — an arm ending in a literal or in a call hands it a buffer the frame frees,
+        // an arm ending in a view hands it the caller's record.  Freed, it freed a call's
+        // buffer twice; not freed, its guarded copy of a view was nobody's.  Per arm, each
+        // leaf is copied where it stands, by the lowering its own kind already has, and the
+        // buffer is minted after the arm's statements.  `LOFT_NO_RET_ARM_COPY=1` copies such
+        // a branch whole.
+        let leaving_branch = matches!(
+            tail.unspan(),
+            Value::If(_, _, _) | Value::Block(_) | Value::Insert(_)
+        ) && !matches!(tail.unspan(), Value::Block(bl) if bl.name == "Object")
+            && {
+                let mut leaves = false;
+                tail.walk(&mut |n| {
+                    if matches!(n, Value::Return(_)) {
+                        leaves = true;
+                    }
+                });
+                leaves
+            }
+            && !crate::env_once!(std::env::var_os("LOFT_NO_RET_ARM_COPY").is_some());
+        if leaving_branch || self.arms_yield_null(tail) || self.branch_has_nullable_leaf(tail) {
             match tail {
                 Value::Span(b) => self.materialize_return_into(td, &mut b.1, w),
                 Value::If(_, t, f) => {
@@ -19422,7 +19445,8 @@ impl Parser {
     /// (`@FR-R-Reuse`) hid it: the mint then refilled the caller's own store.  The source is
     /// read into a local (`_ret_src_N`) and the copy reads that, so only the path that copies
     /// mints.  A source with deps is a view, never freed (its owner releases what it views);
-    /// one without owns its store, which the frame's exit releases.
+    /// one without owns its store, which the frame's exit releases.  A BRANCH that can leave
+    /// is not bound here: `materialize_return_into` copies it arm by arm.
     fn bind_leaving_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
         if self.first_pass
             || matches!(self.data.def(self.context).def_type(), DefType::Generic)
