@@ -43,6 +43,38 @@ fn generate(dir: &std::path::Path) {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 }
 
+/// What both harnesses read their texts with: the fields of a file, each ended by the byte
+/// 0x1F.  A command line carries no text outside the code page on Windows, and a text of the
+/// matrix may be empty or a tab, so neither arguments nor lines can hold them.
+const FIELDS: &str = r#"#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static char **loft_fields(const char *path, int *n) {
+    FILE *f = fopen(path, "rb");
+    *n = 0;
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *all = (char *) malloc((size_t) size + 1);
+    if (fread(all, 1, (size_t) size, f) != (size_t) size) size = 0;
+    fclose(f);
+    all[size] = 0;
+    int count = 0;
+    for (long i = 0; i < size; i++) count += all[i] == 0x1F;
+    char **out = (char **) malloc(sizeof(char *) * (size_t) (count + 1));
+    char *at = all;
+    for (long i = 0; i < size; i++) {
+        if (all[i] == 0x1F) {
+            all[i] = 0;
+            out[(*n)++] = at;
+            at = all + i + 1;
+        }
+    }
+    return out;
+}
+"#;
+
 /// The harness: a stack store, a 40-byte frame below the argument, each text as a view in the
 /// argument's slot, every predicate's entry called, its answer byte (or `-` where none answers,
 /// or the wrong top) printed.  The texts are its arguments, or with `sweep`, every 7th code
@@ -86,7 +118,9 @@ int main(int argc, char **argv) {
             line(b, utf8(c, b));
         }
     } else {
-        for (int i = 1; i < argc; i++) line(argv[i], (int64_t) strlen(argv[i]));
+        int n = 0;
+        char **t = argc == 2 ? loft_fields(argv[1], &n) : 0;
+        for (int i = 0; i < n; i++) line(t[i], (int64_t) strlen(t[i]));
     }
     printf("unknown %lld\n", (long long) loft_body_find("t_4File_lines", 13));
     return 0;
@@ -128,7 +162,7 @@ fn harness_of(dir: &std::path::Path, defines: &[&str], harness: &str) -> std::pa
         String::from_utf8_lossy(&cc.stderr)
     );
     let src = dir.join("harness.c");
-    fa::write(&src, harness).expect("write the harness");
+    fa::write(&src, format!("{FIELDS}{harness}")).expect("write the harness");
     let exe = dir.join("harness");
     let link = harness_command("cc")
         .args(["-std=c99", "-w", "-O2"])
@@ -152,13 +186,28 @@ fn done(dir: &std::path::Path) {
     let _ = fa::remove_dir_all(dir);
 }
 
+/// The harness run on `args`, its output with the host's line ends as `\n`.  The texts go to
+/// it in a file (`FIELDS`), never on the command line; `sweep` alone is a word of its own.
 fn run(exe: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> String {
     let mut c = harness_command(exe);
-    c.args(args);
+    if args == ["sweep"] {
+        c.args(args);
+    } else {
+        let fields = exe
+            .parent()
+            .expect("the harness has a directory")
+            .join("fields.bin");
+        let bytes: Vec<u8> = args
+            .iter()
+            .flat_map(|a| a.bytes().chain(std::iter::once(0x1F)))
+            .collect();
+        fa::write(&fields, bytes).expect("write the fields");
+        c.arg(&fields);
+    }
     for (k, v) in env {
         c.env(k, v);
     }
-    String::from_utf8_lossy(&c.output().expect("run the harness").stdout).into_owned()
+    String::from_utf8_lossy(&c.output().expect("run the harness").stdout).replace("\r\n", "\n")
 }
 
 /// The interpreter's answers for `main`'s body.
@@ -179,7 +228,7 @@ fn interpret(dir: &std::path::Path, program: &str) -> String {
         .output()
         .expect("run the interpreter");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
-    String::from_utf8_lossy(&r.stdout).into_owned()
+    String::from_utf8_lossy(&r.stdout).replace("\r\n", "\n")
 }
 
 #[test]
@@ -303,8 +352,10 @@ int main(int argc, char **argv) {
     loft_crt_slot_text_init(stk, 0);
     loft_crt_slot_text_init(stk, 24);
     loft_crt_slot_text_init(stk, 48);
-    for (int i = 1; i + 3 < argc; i += 4) {
-        a = argv[i]; b = argv[i + 1]; from = atoll(argv[i + 2]); to = atoll(argv[i + 3]);
+    int n = 0;
+    char **t = argc == 2 ? loft_fields(argv[1], &n) : 0;
+    for (int i = 0; i + 3 < n; i += 4) {
+        a = t[i]; b = t[i + 1]; from = atoll(t[i + 2]); to = atoll(t[i + 3]);
         for (int fn = 0; fn < 4; fn++) {
             int64_t e = loft_body_find(FNS[fn], (int64_t) strlen(FNS[fn]));
             loft_crt_set_slot_text(stk, 0, "<", 1);
