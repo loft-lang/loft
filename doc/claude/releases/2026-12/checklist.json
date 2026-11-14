@@ -9,6 +9,11 @@
     "commit": "d242b2a4937d4faa21567f91f2c8ab54321ec35a",
     "note": "make falsify-review at d242b2a49: worklist 0 of 1403 receipts unscored, none with an unreachable control. Eight patch receipts went stale in the #2482 join and were re-derived (0f65e006a, 32df480a0), scored by receipts.yml."
   },
+  "M-liveness": {
+    "at": "2026-11-14 18:15",
+    "commit": "1eed8ab0b08c6126f791c89acf6956fabb9bf370",
+    "note": "make release-liveness at 1eed8ab0b: 54 suppressions, none cites an issue (nothing stale to re-justify). CHRONIC on main: miri.yml Release-gate sweeps (red 10 of 14) and the C poison shards \u2014 both GREEN on PR #2482's head (PR-head nightly 43606691124); repro-build's Windows/macOS rebuilds (7 of 14 since August) \u2014 its latest weekly run, 2026-11-13, is green. revalidate-libs' audio leg: cured by audio 0.2.3 (registry 157fefb). Still red and not this cycle's yet: consumer-main-health dryopea (4 of 14), lib-main-health loft-libs-net (4 of 14). NEVER RUN in any recorded cycle: M-vscode \u2014 to run once or retire (owner)."
+  },
   "M-monthly-bugs": {
     "at": "2026-11-14 18:09",
     "commit": "d242b2a4937d4faa21567f91f2c8ab54321ec35a",
