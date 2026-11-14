@@ -72,7 +72,7 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
     want, got, img = stem + ".want.c", stem + ".layer", stem + ".store"
     switch = {"shapes": "LOFT_TRACE_SHAPES", "reach": "LOFT_TRACE_REACH", "functions": "LOFT_TRACE_REACH",
-              "counters": "LOFT_TRACE_COUNTERS", "iterations": "LOFT_TRACE_COUNTERS", "nn": "LOFT_TRACE_FACTS", "ranges": "LOFT_TRACE_FACTS", "bodies": "LOFT_TRACE_BODIES"}[layer]
+              "counters": "LOFT_TRACE_COUNTERS", "iterations": "LOFT_TRACE_COUNTERS", "nn": "LOFT_TRACE_FACTS", "ranges": "LOFT_TRACE_FACTS", "bodies": "LOFT_TRACE_BODIES", "texts": "LOFT_TRACE_TEXTS"}[layer]
     try:
         rc, err = proc([loft, "--emit-c", want, f], {**env, switch: "1"}, timeout, cwd=os.path.dirname(f))
         if rc != 0:
@@ -110,6 +110,18 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
                 detail = (f"{n} line {k}\n    oracle: {(a[k] if k < len(a) else '(end)')[:170]}"
                           f"\n    other:  {(b[k] if k < len(b) else '(end)')[:170]}")
             return f, "differ" if wrong else "agree", (len(rust), len(equal), len(wrong), refused, detail)
+        if layer == "texts":
+            # A FIELD comparison: the generator prints the `key=value` fields it derives so
+            # far, and each must be the oracle's; a field it does not print is not compared.
+            for name, line in sorted(rust.items()):
+                fields = dict(c.split("=", 1) for c in line.split("\t")[2:])
+                held = dict(c.split("=", 1) for c in (mine.get(name) or "").split("\t")[2:] if "=" in c)
+                if name not in mine:
+                    return f, "differ", f"{name}\n    oracle: {line[:160]}\n    other:  (no line)"
+                for k, v in held.items():
+                    if fields.get(k) != v:
+                        return f, "differ", f"{name} field {k}\n    oracle: {fields.get(k)}\n    other:  {v}"
+            return f, "agree", str(len(rust))
         for name, line in sorted(rust.items()):
             if mine.get(name) != line:
                 return f, "differ", f"{name}\n    oracle: {line[:160]}\n    other:  {(mine.get(name) or '(no line)')[:160]}"
@@ -157,7 +169,7 @@ def main():
     ap.add_argument("--cgen", action="store_true", help="build selfhost/front/cgen.loft and use it")
     ap.add_argument("--form", choices=["program", "debug"], default="program",
                     help="which unit: the program's, or the debug tier's with its #line marks")
-    ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges", "bodies"], default=None,
+    ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges", "bodies", "texts"], default=None,
                     help="compare what an analysis derived instead of the unit")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")

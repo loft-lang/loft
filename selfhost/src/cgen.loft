@@ -17,6 +17,8 @@ use opt_iteration;
 use opt_non_sentinel;
 use opt_range;
 use cgen_fn;
+use opt_lazy_split;
+use opt_split_table;
 use cgen_w;
 use cgen_names;
 
@@ -215,6 +217,33 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
           asked = cgen_names::copy_twin(cx.twins[written]!);
           out += body_line(cx, asked);
           written += 1;
+        }
+      }
+    }
+    return out;
+  }
+  if name == "texts" {
+    // `LOFT_TRACE_TEXTS`: what the text analyses decided per function the unit writes — the
+    // fields this generator derives so far, for every function with a body (the survey reads
+    // the ones the unit wrote).
+    out = "";
+    for def in b.data.definitions {
+      if def.def_type == 1 && len(def.code) > 0 && def.code[0] != NdNull {
+        {
+          f = def#index;
+          lazy: vector<text> = [];
+          for ls in opt_lazy_split::lazy_splits(b, f) {
+            lazy += ["{ls.vec}:{ls.separator}:{if ls.dead { "{ls.buf}" } else { "-" }}"];
+          }
+          tabs: vector<text> = [];
+          for st in opt_split_table::split_tables(b, f) {
+            aliases: vector<text> = [];
+            for a in st.aliases {
+              aliases += ["{a}"];
+            }
+            tabs += ["{st.var}:{st.separator}:{if st.dead { "{st.buf}" } else { "-" }}:{aliases.join("+")}"];
+          }
+          out += "[texts]\t{def.name}\tlazy={lazy.join(",")}\ttabs={tabs.join(",")}\n";
         }
       }
     }
