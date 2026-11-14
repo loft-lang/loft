@@ -224,6 +224,9 @@ H_POW_FLOAT = 200;
 H_NULL_REF_SENTINEL = 201;
 H_ABS_INT = 202;
 H_BIND_FN_REF_RESULT = 203;
+H_MATH_PI = 204;
+H_SIZE_VECTOR = 205;
+H_CAST_ENUM_FROM_TEXT = 206;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -498,6 +501,9 @@ pub fn handler(name: text) -> integer {
     "OpNullRefSentinel" => H_NULL_REF_SENTINEL,
     "OpAbsInt" => H_ABS_INT,
     "OpBindFnRefResult" => H_BIND_FN_REF_RESULT,
+    "OpMathPiFloat" => H_MATH_PI,
+    "OpSizeVector" => H_SIZE_VECTOR,
+    "OpCastEnumFromText" => H_CAST_ENUM_FROM_TEXT,
     "OpGetShortFull" => H_GET_W,
     "OpGetShortSpare" => H_GET_W,
     "OpConvSingleFromNull" => H_CONV_FLOAT_FROM_NULL,
@@ -536,6 +542,9 @@ N_TEXT_TRIM_END = 24;
 N_TO_UPPERCASE_DEST = 25;
 N_TO_LOWERCASE_DEST = 26;
 N_WRITE_TEXT_RAW = 27;
+N_TEXT_BYTE_AT = 28;
+N_TEXT_REPLACE_DEST = 29;
+N_TEXT_RFIND = 30;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -566,6 +575,9 @@ pub fn native_handler(name: text) -> integer {
     "t_4text_to_uppercase_dest" => N_TO_UPPERCASE_DEST,
     "t_4text_to_lowercase_dest" => N_TO_LOWERCASE_DEST,
     "n_write_text_raw" => N_WRITE_TEXT_RAW,
+    "t_4text_byte_at" => N_TEXT_BYTE_AT,
+    "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
+    "t_4text_rfind" => N_TEXT_RFIND,
     _ => -1
   }
 }
@@ -710,6 +722,8 @@ fn layout_of(h: integer) -> text {
     195 => "h",
     198 => "hib",
     203 => "hh",
+    205 => "h",
+    206 => "h",
     _ => ""
   }
 }
@@ -1174,6 +1188,12 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     sp -= 16;
     crt::slot_ref(io, stk, sp);
     crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
+  } else if nh == N_TEXT_RFIND {
+    rfv = crt::stack_str(stk, sp - 16) ?? "";
+    rfs = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    set(stk, sp, rfs.rfind(rfv));
+    sp += 8;
   } else if nh == N_TEXT_FIND {
     // The byte position of the first `value` in `self`, null when there is none.
     fval = crt::stack_str(stk, sp - 16) ?? "";
@@ -1197,6 +1217,21 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     sp -= 32;
     set_bool(stk, sp, wtr);
     sp += 8;
+  } else if nh == N_TEXT_BYTE_AT {
+    // The byte at `i` (from the end when negative), 0 out of range (`text_byte_at_native`).
+    bai = get(stk, sp - 8) ?? 0;
+    bas = crt::stack_str(stk, sp - 24) ?? "";
+    sp -= 24;
+    set(stk, sp, bas.byte_at(bai));
+    sp += 8;
+  } else if nh == N_TEXT_REPLACE_DEST {
+    // `self.replace(value, with)` appended to the destination.
+    crt::slot_ref(io, stk, sp - 16);
+    rwith = crt::stack_str(stk, sp - 32) ?? "";
+    rval = crt::stack_str(stk, sp - 48) ?? "";
+    rself = crt::stack_str(stk, sp - 64) ?? "";
+    sp -= 64;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rself.replace(rval, rwith));
   } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
     nv = crt::stack_str(stk, sp - 16) ?? "";
     ns2 = crt::stack_str(stk, sp - 32) ?? "";
@@ -2086,6 +2121,36 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
   } else if h == H_ABS_INT {
     aiv = get(stk, sp - 8);
     set(stk, sp - 8, if aiv == null { null } else if aiv! < 0 { -aiv! } else { aiv });
+  } else if h == H_MATH_PI {
+    crt::set_float(stk, 1, 8 + sp, 0, PI, false);
+    sp += 8;
+  } else if h == H_SIZE_VECTOR {
+    // A vector's size in bytes: its length times the element stride the operand carries.
+    svs = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set(stk, sp, crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0) * svs);
+    sp += 8;
+  } else if h == H_CAST_ENUM_FROM_TEXT {
+    // The variant named by the text, 1-based; 0 when none is (`Stores::to_enum`).
+    cetp = u16_at(img.code, pc);
+    pc += 2;
+    cen = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    cev = 0;
+    match img.types[cetp]?.parts[0] {
+      PtEnum { values } => {
+        for vi in 0..len(values) {
+          if cev == 0 && (values[vi]?.name ?? "") == cen {
+            cev = vi + 1;
+          }
+        }
+      }
+      _ => {}
+    }
+    set(stk, sp, cev);
+    sp += 8;
   } else if h == H_NULL_REF_SENTINEL {
     crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
     sp += 16;
