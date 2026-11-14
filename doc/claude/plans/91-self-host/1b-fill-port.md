@@ -75,16 +75,18 @@ Two language features exist for the port:
 | each templated operator reads what `fill.rs` reads (names, order, widths) | `create.loft … --reads` against the reads in `src/fill.rs` |
 | a twin's body and its C routine agree | `tests/c_emit.rs::a_c_twin_runs_its_body_and_the_c_backend_its_routine` |
 | a function answers what the Rust interpreter answers | `selfhost/bench/run_fill.loft <program image> <run image> <function> <args…>` against `loft --interpret` |
+| no kernel function differs from the IR runner; the integer kernels' hand-computed answers | `selfhost/tests/fill.loft`, run by `tests/selfhost.rs` |
+| which operator stops each kernel function (the worklist) | `selfhost/bench/fill_census.loft <program image> <run image>` |
 | where the top is after an operator | `LOFT_LOG=full loft --interpret` prints each operator with the top before it; `LOFT_FILL_TRACE=1` prints the runner's |
 
-The first two are run by hand today; neither is a test yet.
+The first two are run by hand; neither is a test yet.
 
 ## What is still to build
 
 | Part | State |
 |---|---|
-| operator templates | the integer and float arithmetic, comparisons, locals, jumps, fused integer operators, calls, returns, frames, `OpConstText`; the rest listed by `--missing` |
-| `State` methods | `fn_call`, `fn_return`, `reserve_frame`, and the text methods `string_from_code`, `var_text`, `arg_text`, `append_text`, `init_text`, `clear_text`, `free_text`; about 65 more (formatting, text walks, coroutines, `par`, keyed walks) |
+| operator templates | arithmetic, comparisons, shifts, casts, locals of every scalar type, jumps, the fused integer operators, calls and frames, reference locals, and the field reads and writes of every width; the rest listed by `--missing` |
+| `State` methods | calls (`fn_call`, `fn_return`, `reserve_frame`), texts (`string_from_code`, `var_text`, `arg_text`, `append_text`, `put_text`, `init_text`, `clear_text`, `free_text`), references and stores (`init_ref`, `init_ref_sentinel`, `database`, `free_ref`, `init_create_stack`); the rest (record and vector building, formatting, text walks, coroutines, `par`, keyed walks) listed by `--missing` as `(State)` |
 | natives (`OpStaticCall`) | none; the hand-built runner `brun.loft` holds ports of about 110 natives over the same `crt` routines, to be moved under `State::static_call` |
 | running a program's `main` | needs the natives and the text operators; today one integer function is called directly |
 | records, vectors, keyed collections | no operator carried; each is a template calling the `crt` routine the C backend calls for it |
@@ -103,13 +105,13 @@ with the top just above it.  The differences:
 
 | # | Difference | What closing it takes |
 |---|---|---|
-| 1 | **No frame headroom.**  Rust grows the stack at every call to cover the callee's whole frame plus a margin (`push_frame`, `frame_headroom`), so a slot above the top is always inside the stack.  The runner grows only on a push or a `reserve_frame`, and writes through an unchecked pointer: a write above the capacity corrupts memory. | the frame height per definition in the run image, and `fn_call` growing to it |
-| 2 | **No bounds checks.**  Rust checks each operand read against the code's length and each pop against underflow, and raises a runtime error.  The runner's code read answers 0 out of range; its stack access is unchecked. | the checks in `State`'s accessors, setting `fault` |
+| 1 | **Frame headroom is the default for every definition.**  Rust grows the stack at each call to the callee's own frame height plus a margin (`frame_headroom`); the runner grows to Rust's default, 65,536 bytes, which covers any frame (a frame position is a `u16`). | the frame height per definition in the run image, if the stack's size matters |
+| 2 | **Faults stop the run with a text.**  Each operand read, pop and frame slot is checked as in Rust; where Rust raises a typed runtime error with a position, the runner sets `State.fault` and stops. | Rust's error kinds and positions, when a program's diagnostics are compared |
 | 3 | **The store layer is the C runtime's.**  The buffer layout is the same; the allocator's choices differ where STORE_MODEL.md lists an open divergence, the store table is the C one, and Rust's store instruments are absent.  Store numbers can differ, which `store_memory()` shows. | nothing here: STORE_MODEL.md closes divergences on its own terms |
 | 4 | **The stack's address.**  Rust's `stack_cur` is a reference with its own record and position; the runner's frame area is the stack store's primary record at offset 8. | a `stack_cur` in `State`, if a program can observe the numbers |
-| 5 | **No call frames.**  Rust keeps a `call_stack` of frames (definition, call position, arguments' base and size) for stack traces, coroutines and the fn-ref buffers a return releases.  The runner counts depth only, and its `fn_return` releases no fn-ref buffer. | a frame vector in `State`; needed before `stack_trace`, coroutines and fn-refs |
+| 5 | **`fn_return` releases no fn-ref buffer.**  The frames are kept as Rust keeps them (definition, call position, arguments' base and size); the buffers a returning frame releases (`release_fnref_bufs`) are not, as no fn-ref operator is carried. | with the fn-ref operators |
 | 6 | **Texts.**  A local text is a Rust `String` in its 24-byte slot in Rust, a C-runtime text of the same size here; the 16-byte view is the same.  A text popped as a template's argument is copied into a loft text. | nothing, unless a program observes capacity |
-| 7 | **Arithmetic by loft's operators.**  A template writes `v1 + v2`, compiled to the C runtime's routine, where Rust calls `ops::op_add_int`.  The two are specified alike; only the kernels compare them. | the corpus survey, once `main` runs |
+| 7 | **Arithmetic by loft's operators, reports as texts.**  A template writes `v1 + v2`, compiled to the C runtime's routine, where Rust calls `ops::op_add_int`; the kernels compare the values.  What Rust reports through `raise_recoverable` (a division by zero, a dropped write, an overflow) is recorded as a text in `State.reported`, and an overflow's report comes from the C runtime, not from the template. | the corpus survey, once `main` runs; Rust's error kinds when diagnostics are compared |
 | 8 | **One dispatch.**  Rust has three tables (checked, direct, register) and inlines the `#hot` operators; the runner has one `execute`. | see Speed |
 | 9 | **No instruments.**  Rust's stack verifier, poison of a reserved frame, and text-position tracking have no counterpart. | only if the runner is to host those sweeps |
 

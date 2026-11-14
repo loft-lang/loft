@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the generated operator table (`src/fill.loft`, from the `#loft` templates) on the
+// loft `State`, against the kernels' run images (1b-fill-port.md).  Hand-computed answers for
+// the integer kernels, and one rule over every kernel: a function the table runs to its end
+// answers what the IR runner answers (which `tests/run.loft` holds to the Rust interpreter).
+
+use ir;
+use load;
+use run;
+use state;
+use fill_run;
+
+fn images(name: text) -> (ir::Bundle, ir::RunImage) {
+  dir = env_variable("LOFT_SELFHOST_KERNELS");
+  b = load::load("{dir}/{name}.store");
+  img = load::load_run("{dir}/{name}.run");
+  assert(b != null && img != null, "the {name} kernel's images open");
+  (b!, img!)
+}
+
+fn answer(name: text, function: text, args: vector<integer>) -> integer? {
+  (b, img) = images(name);
+  d = fill_run::def_named(b, function);
+  assert(d >= 0, "{name} has {function}");
+  s = state::new_state(img, 1 << 16);
+  r = fill_run::call(img, d, args, s);
+  assert(s.fault == "", "{function} stopped: {s.fault}");
+  assert(s.stack_pos == 0, "{function} left {s.stack_pos} bytes on the stack");
+  r
+}
+
+fn test_fib_runs_through_the_generated_table() {
+  got = "";
+  for n in 0..11 {
+    got += "{answer("fib", "n_fib", [n])} ";
+  }
+  assert(got == "0 1 1 2 3 5 8 13 21 34 55 ", "fib(0..10): {got}");
+}
+
+fn test_mix_and_collatz_answer_as_the_rust_interpreter() {
+  // `loft --interpret kernels/mix.loft` and `collatz.loft` print these for the same arguments.
+  m = answer("mix", "n_mix", [5000, 1]);
+  c = answer("collatz", "n_longest", [1, 1000]);
+  (b, _i) = images("mix");
+  want_m = run::run(b, fill_run::def_named(b, "n_mix"), [5000, 1]).value;
+  (b2, _j) = images("collatz");
+  want_c = run::run(b2, fill_run::def_named(b2, "n_longest"), [1, 1000]).value;
+  assert(m == want_m && c == want_c, "mix {m} (want {want_m}), collatz {c} (want {want_c})");
+}
+
+// Every integer function of these kernels: where the table runs it to its end, its answer is
+// the IR runner's.  A function stopped at an operator not carried yet is not judged.
+fn test_no_kernel_function_differs() {
+  judged = 0;
+  for name in ["fib", "mix", "collatz", "small_ops", "frames", "repeats", "records", "structs", "refs"] {
+    (b, img) = images(name);
+    for d in fill_run::integer_functions(b) {
+      args: vector<integer> = [for _ in 0..fill_run::arity(b, d) { 3 }];
+      want = run::run(b, d, args);
+      if want.refused != "" {
+        continue;
+      }
+      s = state::new_state(img, 1 << 16);
+      got = fill_run::call(img, d, args, s);
+      if s.fault == "" {
+        assert(got == want.value, "{name} {fill_run::name_of(b, d)}: the table {got}, the IR runner {want.value}");
+        judged += 1;
+      }
+    }
+  }
+  assert(judged >= 10, "only {judged} functions ran to their end");
+}
