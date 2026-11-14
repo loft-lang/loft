@@ -85,6 +85,13 @@ pub(crate) fn loft_lib_dir_for_shaped(
     // The order itself — and when a stale `deps/` copy yields — is `preferred_runtime_rlib`'s.
     let deps = exe_dir.join("deps");
     loft::native_lib::refresh_runtime_uplift(&exe_dir);
+    // A `deps/` the per-unit layout left behind is another build's runtime (`E0514` against
+    // its dependencies): the uplifted rlib is the one (`cargo_layout::classic_deps_is_debris`).
+    if loft::cargo_layout::classic_deps_is_debris(&exe_dir)
+        && std::env::var_os("LOFT_NATIVE_CLASSIC_DEPS_FIRST").is_none()
+    {
+        return Some(exe_dir);
+    }
     if let Some(rlib) = loft::native_lib::preferred_runtime_rlib(
         &deps.join("libloft.rlib"),
         &exe_dir.join("libloft.rlib"),

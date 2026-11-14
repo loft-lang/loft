@@ -151,6 +151,11 @@ struct State {
     /// Pairs of variables one a plain copy of the other (`k = h`, smaller number first): the
     /// same value until either is bound again, so a test that narrows one narrows both.
     copies: BTreeSet<(u16, u16)>,
+    /// `(x, w)`: `x` names the store `w` names, or none of the stores `w` may name — `x` bound
+    /// from a projection rooted at `w` (`x = __lift.code`), kept across a join whose other side
+    /// has `w` null or `x` apart from `w`.  An identity test of the two then settles which side they are on: distinct
+    /// only where `w` is null (`OpDistinctStore(x, __lift)` guarding `x`'s free).
+    views: BTreeSet<(u16, u16)>,
     /// The function's closure-record variables (`___clos_N`), the same on every path: the
     /// `live_some` candidates of a store no record captures (`live_some_candidates`).
     records: BTreeSet<u16>,
@@ -593,6 +598,42 @@ fn join_copies(a: &State, b: &State) -> BTreeSet<(u16, u16)> {
         .collect()
 }
 
+/// The stores `v` may name on a path.
+fn stores_named(st: &State, v: u16) -> Vec<SKey> {
+    st.vars
+        .get(&v)
+        .map(|p| {
+            p.iter()
+                .filter_map(|x| if let Pt::Store(k) = x { Some(*k) } else { None })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A view pair survives a join where, on each side, it was kept, its base is null there, or
+/// the view names none of the base's stores there.
+fn join_views(a: &State, b: &State) -> BTreeSet<(u16, u16)> {
+    let null = |st: &State, v: u16| {
+        st.vars
+            .get(&v)
+            .is_none_or(|p| p.iter().all(|x| *x == Pt::Null))
+    };
+    // The pair's claim, as the identity test reads it: `x` names `w`'s store, or none of the
+    // stores `w` may name.  A side whose `x` shares no store with `w` (`x` rebound to a fresh
+    // answer there) keeps it, as does a side where `w` is null.
+    let disjoint = |st: &State, p: &(u16, u16)| {
+        let w = stores_named(st, p.1);
+        stores_named(st, p.0).iter().all(|k| !w.contains(k))
+    };
+    let holds =
+        |st: &State, p: &(u16, u16)| st.views.contains(p) || null(st, p.1) || disjoint(st, p);
+    a.views
+        .union(&b.views)
+        .filter(|p| holds(a, p) && holds(b, p))
+        .copied()
+        .collect()
+}
+
 fn join_state(a: &State, b: &State) -> State {
     let null: Pts = [Pt::Null].into();
     let mut vars = BTreeMap::new();
@@ -675,6 +716,7 @@ fn join_state(a: &State, b: &State) -> State {
         points,
         nonnull: a.nonnull.intersection(&b.nonnull).copied().collect(),
         copies: join_copies(a, b),
+        views: join_views(a, b),
         records: a.records.union(&b.records).copied().collect(),
         mints: a.mints.clone(),
     }
@@ -1124,6 +1166,7 @@ impl Run<'_> {
     /// Bind `v` to `val`.  A live store only `v` named is left unreachable: a leak.
     fn bind(&mut self, st: &mut State, v: u16, val: &Val) {
         st.copies.retain(|&(a, b)| a != v && b != v);
+        st.views.retain(|&(a, b)| a != v && b != v);
         for k in Self::stores_of(&Self::pts(st, v)) {
             let info = info_of(st, k);
             if info.has(LIVE)
@@ -1266,6 +1309,10 @@ impl Run<'_> {
     }
 
     /// [`Self::end`], limited to the stores in `only` when it is given.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one re-free condition per path shape the records tell apart"
+    )]
     fn end_only(
         &mut self,
         st: &mut State,
@@ -1301,9 +1348,10 @@ impl Run<'_> {
             // (`__ref_N = f(x, __ref_N)` answering `x`, freed with `x`'s owner — loft#2474's
             // elaborator, `arm_delivery`).  A null beside them is a path that frees nothing, as
             // for `only_this`.  `LOFT_RECORDS_NO_JOIN_REFREE=1` leaves it unreported.
-            let join_path =
-                !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_REFREE").is_some())
+            let join_path = !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_REFREE").is_some())
                     && pts.len() > 1
+                    // Not a capture: a store a closure record holds ends by the closure rules.
+                    && info.captured_by.is_empty()
                     && pts.iter().all(|p| match p {
                         Pt::Store(o) if *o == k => true,
                         Pt::Store(o) => st.stores.get(o).is_some_and(|i| i.status & ABSENT != 0),
@@ -1316,10 +1364,33 @@ impl Run<'_> {
                 && info.has(LIVE)
                 && !info.ended.is_empty()
                 && !info.ended.contains(&v);
+            // …and a variable naming the store wherever it exists (`live`; its other answer is
+            // null, where the store was never made), after another holder ended it on some
+            // path: freed again on that path (`__ncc_N` after `chain`'s displaced free released
+            // the store `chain` was bound to — loft#2474's elaborator, `enum_field`).
+            // `LOFT_RECORDS_NO_LIVE_NAME_REFREE=1` leaves it unreported.
+            let named_where_live = !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_LIVE_NAME_REFREE").is_some())
+                    && info.has(LIVE)
+                    && info.live.contains(&v)
+                    && !info.ended.contains(&v)
+                    // Known to name it where it ended (`stale`): a store ended where the names
+                    // are not followed (`None`, a loop's earlier pass) says nothing about `v`.
+                    && info.stale.as_ref().is_some_and(|s| s.contains(&v))
+                    // A record variable: a closure's fn-ref is released through the guards
+                    // the closure rules follow, not this one.
+                    && v < MEMBER_BASE
+                    && v < self.data.def(self.d_nr).variables.count()
+                    && self.data.def(self.d_nr).variables.tp(v).base().heap_def_nr().is_some()
+                    // A null beside it is where the store was never made (ABSENT), not where a
+                    // rebind (a link write-back) replaced it.
+                    && pts.iter().all(|p| {
+                        (*p == Pt::Null && info.has(ABSENT)) || *p == Pt::Store(k)
+                    });
             if report
                 && info.has(ENDED)
                 && (info.ended.contains(&v)
-                    || (((only_this && !info.has(LIVE)) || weakly_ended) && maybe_stale(&info, v))
+                    || (((only_this && !info.has(LIVE)) || weakly_ended || named_where_live)
+                        && maybe_stale(&info, v))
                     || (join_path && !info.has(LIVE)))
             {
                 // Every end here is a free, which the runtime refuses on a free slot
@@ -1931,8 +2002,32 @@ impl Run<'_> {
         if self.traced {
             self.trace(&Value::Text(format!("exit: {how}")), st);
         }
+        // A store a HIDDEN buffer parameter holds (`OpDatabase(__retbuf)`, `Origin::MintInto`)
+        // goes back to the caller through that buffer, which the caller releases: no leak of
+        // this frame's.  Without this, minting there read as a leak at every exit where the
+        // answer was not followed into the return (`LOFT_RECORDS_NO_HIDDEN_PARAM_MINT`'s mint;
+        // `pc(x) -> Node?` answering a literal arm's copy).  `LOFT_RECORDS_NO_BUFFER_HANDS_BACK=1`
+        // reports it.
+        let buffer_params: Vec<u16> =
+            if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_BUFFER_HANDS_BACK").is_some()) {
+                Vec::new()
+            } else {
+                let attrs = self.data.def(self.d_nr).attributes();
+                self.params
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| attrs.get(*i).is_some_and(|a| a.hidden))
+                    .map(|(_, p)| *p)
+                    .collect()
+            };
         for (k, info) in &st.stores {
             if !info.has(LIVE) || !info.live.is_disjoint(&info.handed_by) {
+                continue;
+            }
+            if buffer_params
+                .iter()
+                .any(|b| st.vars.get(b).is_some_and(|p| p.contains(&Pt::Store(*k))))
+            {
                 continue;
             }
             let holders: Vec<String> = st
@@ -2015,6 +2110,31 @@ impl Run<'_> {
                 {
                     Self::give_back_field_captures(&mut st, *x);
                 }
+                // The bases `x` will be a view pair of: a tail of the value projecting `w`, where
+                // `w` is null before the value runs and no other tail's path sets it — so where
+                // the value is not that projection, `w` is still null.
+                let view_bases: Vec<u16> = if views_enabled() {
+                    let mut tails = Vec::new();
+                    value_tails(self.data, val, &mut tails);
+                    let mut out = Vec::new();
+                    for (i, (_, t)) in tails.iter().enumerate() {
+                        if let Value::Call(op, pargs) = t.unspan()
+                            && crate::use_analysis::is_projection_op(self.data, *op)
+                            && let Some(Value::Var(w)) =
+                                pargs.first().map(|a| Self::projection_root(self.data, a))
+                            && Self::pts(&st, *w).iter().all(|p| *p == Pt::Null)
+                            && !tails
+                                .iter()
+                                .enumerate()
+                                .any(|(j, (arm, _))| j != i && sets_var(arm, *w))
+                        {
+                            out.push(*w);
+                        }
+                    }
+                    out
+                } else {
+                    Vec::new()
+                };
                 let copied = self.copied_from(val);
                 // `x = f(…, x)` answering `x`'s own store (a value operator writing its result
                 // into the buffer `x` hands it): `x` still names, and must-holds, what it did.
@@ -2038,6 +2158,13 @@ impl Run<'_> {
                     && copy_alias()
                 {
                     st.copies.insert(((*src).min(*x), (*src).max(*x)));
+                }
+                if views_enabled() {
+                    for w in view_bases {
+                        if w != *x {
+                            st.views.insert((*x, w));
+                        }
+                    }
                 }
                 if let Some(src) = copied
                     && src != *x
@@ -2677,7 +2804,20 @@ impl Run<'_> {
             .into_iter()
             .filter(|p| *p != Pt::Null)
             .collect();
-        !held.is_empty() && held == named
+        if held.is_empty() {
+            return false;
+        }
+        // …or every store `x` holds is one `w` names wherever it is live (`live`): a buffer
+        // refilled in place across a loop's passes names this pass's store or the one an earlier
+        // pass left, and `x` bound from it last pass names that one — the same store on every
+        // path where it exists (tuple_match's `mc`).  `LOFT_RECORDS_NO_LIVE_WITNESS=1` asks for
+        // the two sets to be equal.
+        held == named
+            || (!crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_LIVE_WITNESS").is_some())
+                && held.iter().all(|p| match p {
+                    Pt::Store(k) => named.contains(p) && info_of(st, *k).live.contains(&w),
+                    _ => false,
+                }))
     }
 
     fn reassign(&mut self, node: &Value, x: u16, val: &Value, st: State) -> Option<(State, Val)> {
@@ -2783,6 +2923,33 @@ impl Run<'_> {
     /// The stashed old reference of a reassignment, freed unless the new value names the
     /// same store, with `x` bound to the new value.
     fn stashed_free(&mut self, s: &mut State, x: u16, old: &Pts, bound: &Val) {
+        // `@FR-F-ParamRebind` — a visible parameter that still names the caller's store, rebound
+        // to a value that cannot be that store: the guard (`OpFreeRefIfDistinct(old, new)`) is
+        // distinct on every path, so the stashed free releases the caller's store.  The rebind's
+        // own detach (`rebind_local_heap_param`) nulls the slot first; this is the rebind that
+        // lost it.  `LOFT_RECORDS_NO_STASHED_PARAM_END=1` leaves it unreported.
+        if old.len() == 1
+            && let Some(Pt::Param(p)) = old.iter().next()
+            && !bound.pts.contains(&Pt::Param(*p))
+            && !bound.pts.iter().any(|q| matches!(q, Pt::Unknown))
+            && self.params.iter().position(|q| *q == *p).is_some_and(|i| {
+                self.data
+                    .def(self.d_nr)
+                    .attributes()
+                    .get(i)
+                    .is_some_and(|a| {
+                        !a.hidden && !matches!(a.typedef, crate::data::Type::RefVar(_))
+                    })
+            })
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_STASHED_PARAM_END").is_some())
+        {
+            let name = self.var_name(x);
+            self.find(
+                "wrong-end",
+                u32::MAX,
+                format!("`{name}` is rebound, and the stashed free releases the caller's store"),
+            );
+        }
         let tmp = u16::MAX;
         s.vars.insert(tmp, old.clone());
         for k in Self::stores_of(old) {
@@ -2878,7 +3045,7 @@ impl Run<'_> {
     /// copy bracket protects it: a store of the answer that no protectable argument names
     /// (`use_analysis::protectable_ref_args`, the code generator's own list) ends here.  The
     /// arguments are read after the call (`@FR-O-Move`: a `&` argument the callee re-points
-    /// no longer holds the store it answers), or before it where `pre` says the bracket is
+    /// holds another store than the one it answers), or before it where `pre` says the bracket is
     /// set around the call.
     fn unprotected_source_free(
         &mut self,
@@ -2917,6 +3084,10 @@ impl Run<'_> {
     /// The states the two arms of an `if` on `cond` start from, as (then, else); `None` is
     /// an arm the test rules out.  A test the records cannot read keeps both arms with the
     /// state unchanged, which is sound: narrowing only ever removes paths a test excludes.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per test shape the records can read; the split is release work (M-file-split)"
+    )]
     fn decide(&self, cond: &Value, st: State) -> (Option<State>, Option<State>) {
         let both = |st: State| (Some(st.clone()), Some(st));
         match cond.unspan() {
@@ -2939,6 +3110,53 @@ impl Run<'_> {
                 let (tt, tf) = ct.map_or((None, None), |s| self.decide(t, s));
                 let (et, ef) = cf.map_or((None, None), |s| self.decide(e, s));
                 (join_opt_arms(tt, et), join_opt_arms(tf, ef))
+            }
+            // `OpEqInt(OpGetInt4(x, 0), 0)`: a nullable struct-enum's absent tag, the second half
+            // of its null test (`x == null` is `OpRefIsNull(x) || tag(x) == 0`).  No local OWNS a
+            // tag-0 COPY — copying an absent field answers null — so the absent side drops `x`'s copies.  Without it
+            // the `x == null` arm kept `x`'s copy and a rebind there read as a leak (`cond =
+            // mc.cond` under `if cond == null`).  OPT-IN (`LOFT_RECORDS_TAG_NULL_TEST=1`): a MINTED record
+            // can carry a non-absent variant the records do not know, so the absent side keeps it,
+            // and suite B-Copy/a-branch-handing-back-… then reads one false finding where the
+            // default reads none — the precise answer needs the variant a mint writes.
+            Value::Call(op, a)
+                if a.len() == 2
+                    && self.data.def(*op).name() == "OpEqInt"
+                    && matches!(a[1].unspan(), Value::Int(0))
+                    && crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_TAG_NULL_TEST").is_some()
+                    )
+                    && let Value::Call(g, ga) = a[0].unspan()
+                    && self.data.def(*g).name() == "OpGetInt4"
+                    && matches!(ga.get(1).map(Value::unspan), Some(Value::Int(0)))
+                    && let Some(Value::Var(x)) = ga.first().map(Value::unspan)
+                    && *x < self.data.def(self.d_nr).variables.count()
+                    && matches!(
+                        self.data.def(self.d_nr).variables.tp(*x),
+                        crate::data::Type::Optional(inner) if matches!(inner.base(), crate::data::Type::Enum(_, true, _))
+                    ) =>
+            {
+                // The absent side: `x` is null, or a record with the absent tag — never a COPY
+                // (copying an absent field answers null), but a call's answer through a buffer can
+                // be one (`fold(n) -> Own?` answering its buffer marked absent).  So only the copies
+                // leave `x` there.  The present side names a store.
+                let (_, present) = Self::null_test(*x, st.clone());
+                let mut absent = st;
+                let keep: Pts = Self::pts(&absent, *x)
+                    .into_iter()
+                    .filter(|p| match p {
+                        Pt::Store(k) => {
+                            !matches!(self.sites[k.site as usize].origin, Some(Origin::Copy))
+                        }
+                        _ => true,
+                    })
+                    .collect();
+                if keep.is_empty() {
+                    (None, present)
+                } else {
+                    Self::narrow(&mut absent, *x, keep);
+                    (Some(absent), present)
+                }
             }
             Value::Call(op, a) if *op == self.ops.distinct => {
                 let (distinct, mut same) = self.decide_distinct(a, st);
@@ -3275,6 +3493,18 @@ impl Run<'_> {
         }
     }
 
+    /// The variable a projection chain starts from (`a.b[0].c` → `a`), through spans.
+    fn projection_root<'v>(data: &Data, v: &'v Value) -> &'v Value {
+        match v.unspan() {
+            Value::Call(op, a)
+                if crate::use_analysis::is_projection_op(data, *op) && !a.is_empty() =>
+            {
+                Self::projection_root(data, &a[0])
+            }
+            other => other,
+        }
+    }
+
     /// The variable an `OpDistinctStore` operand names a store through: the variable itself,
     /// or a fn-ref whose closure record it is (`OpFnRefClosure(g)`).
     fn operand_var(&self, v: Option<&Value>) -> Option<u16> {
@@ -3291,6 +3521,59 @@ impl Run<'_> {
     /// both arms.  An operand may be a variable, a closure's record (`OpFnRefClosure`) or a
     /// capture slot read out of a record that stays in this frame (`OpGetDbRef`).
     fn decide_distinct(&self, args: &[Value], st: State) -> (Option<State>, Option<State>) {
+        // A view pair narrows `x` further on both sides of what the rest decides (`view_pair_arms`).
+        if let Some((x, w)) = Self::view_pair(args, &st) {
+            let wp = Self::pts(&st, w);
+            let (distinct, same) = self.decide_distinct_plain(args, st);
+            let distinct = distinct.and_then(|mut d| {
+                let xp: Pts = Self::pts(&d, x)
+                    .into_iter()
+                    .filter(|p| !matches!(p, Pt::Store(k) if wp.contains(&Pt::Store(*k))))
+                    .collect();
+                if xp.is_empty() {
+                    return None;
+                }
+                Self::narrow(&mut d, x, xp);
+                Some(d)
+            });
+            let same = same.and_then(|mut sm| {
+                let xp = Self::pts(&sm, x);
+                let keep: Pts = xp.iter().copied().filter(|p| wp.contains(p)).collect();
+                if keep.is_empty() {
+                    return None;
+                }
+                if keep != xp {
+                    Self::narrow(&mut sm, x, keep);
+                }
+                Some(sm)
+            });
+            return (distinct, same);
+        }
+        self.decide_distinct_plain(args, st)
+    }
+
+    /// The view pair (`State::views`) an identity test of two variables reads, as `(view, base)`.
+    fn view_pair(args: &[Value], st: &State) -> Option<(u16, u16)> {
+        if !views_enabled() {
+            return None;
+        }
+        let (Some(Value::Var(x)), Some(Value::Var(w))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
+            return None;
+        };
+        if st.views.contains(&(*x, *w)) {
+            Some((*x, *w))
+        } else if st.views.contains(&(*w, *x)) {
+            Some((*w, *x))
+        } else {
+            None
+        }
+    }
+
+    /// `OpDistinctStore` without the view pairs: the identity test as the stores alone decide it.
+    fn decide_distinct_plain(&self, args: &[Value], st: State) -> (Option<State>, Option<State>) {
         let operand = |v: &Value| -> Option<Pts> {
             match v.unspan() {
                 Value::Var(x) => Some(Self::pts(&st, *x)),
@@ -3419,9 +3702,43 @@ impl Run<'_> {
         if distinct_pts.is_empty() {
             return None;
         }
+        // The same for the witness: a store both name on every path where it is live is named
+        // by neither where they are distinct (`if OpDistinctStore(x, __lift) null else __lift =
+        // null`, loft#2477: the lift does not hold `x`'s store on the arm that keeps it).  Read
+        // before `x` is narrowed, which leaves that store not live here.
+        // `LOFT_RECORDS_NO_DISTINCT_WITNESS_NARROW=1` narrows `x` alone.
+        let w_keep: Option<(u16, Pts)> = w
+            .filter(|&w| {
+                w != x
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_NO_DISTINCT_WITNESS_NARROW").is_some()
+                    )
+                    && matches!(args.get(1).map(Value::unspan), Some(Value::Var(v)) if *v == w)
+            })
+            .and_then(|w| {
+                let wp = Self::pts(&st, w);
+                let keep: Pts = wp
+                    .iter()
+                    .copied()
+                    .filter(|p| match p {
+                        Pt::Store(k) => {
+                            let info = info_of(&st, *k);
+                            !(info.has(LIVE) && info.live.contains(&w) && info.live.contains(&x))
+                        }
+                        _ => true,
+                    })
+                    .collect();
+                (keep != wp).then_some((w, keep))
+            });
         let mut distinct = st;
         if distinct_pts != *a {
             Self::narrow(&mut distinct, x, distinct_pts);
+        }
+        if let Some((w, keep)) = w_keep {
+            if keep.is_empty() {
+                return None;
+            }
+            Self::narrow(&mut distinct, w, keep);
         }
         Some(distinct)
     }
@@ -3737,6 +4054,12 @@ impl Run<'_> {
                 })
                 .collect();
             let _ = write!(o, " {}={{{}}}", self.var_name(*v), pts.join(","));
+        }
+        if !st.views.is_empty() {
+            o.push_str("\n    views:");
+            for (x, w) in &st.views {
+                let _ = write!(o, " {}~{}", self.var_name(*x), self.var_name(*w));
+            }
         }
         o.push_str("\n    stores:");
         for (k, i) in &st.stores {
@@ -4568,7 +4891,27 @@ impl Run<'_> {
                 self.bind(&mut st, x, &val);
                 return Some((st, Val::null()));
             }
-            let val = if !kept.is_empty() && kept.len() == cur.len() {
+            // A HIDDEN buffer parameter is null where the caller handed the sentinel, and this
+            // `OpDatabase` mints there (`Origin::MintInto`): read as re-initialised only, the
+            // function answered the parameter alone (`Arg`), and a caller handing null lost the
+            // store it made (`tail = if … { unspan(…) } else { NdNull }`).
+            // `LOFT_RECORDS_NO_HIDDEN_PARAM_MINT=1` reads it as re-initialised.
+            let hidden_param = !crate::env_once!(
+                std::env::var_os("LOFT_RECORDS_NO_HIDDEN_PARAM_MINT").is_some()
+            ) && cur.contains(&Pt::Param(x))
+                // A RECORD return's buffer: a collection's is minted by the caller before the
+                // call (`@FR-O-LazyBuffer`), so the callee never meets its null.
+                && !crate::parser::vectors::is_collection(
+                    self.data.def(self.d_nr).returned().base(),
+                )
+                && self.params.iter().position(|q| *q == x).is_some_and(|i| {
+                    self.data
+                        .def(self.d_nr)
+                        .attributes()
+                        .get(i)
+                        .is_some_and(|a| a.hidden)
+                });
+            let val = if !kept.is_empty() && kept.len() == cur.len() && !hidden_param {
                 Val {
                     corr: Self::stores_of(&kept).into_iter().collect(),
                     pts: kept,
@@ -5131,10 +5474,30 @@ impl Run<'_> {
                 }) =>
             {
                 let v = &vals[i as usize];
-                Val {
-                    pts: v.pts.clone(),
-                    corr: BTreeSet::new(),
+                let mut pts = v.pts.clone();
+                let mut corr = BTreeSet::new();
+                // A PARAMETER buffer is null where this function's caller handed null: the
+                // callee mints there, into the parameter, as `OpDatabase` on it does — this
+                // function then answers `Buf` of that parameter, not `Arg` (`field_get` filling
+                // its hidden buffer through `cl`).  Read as `Arg`, a caller handing a null
+                // buffer saw a null answer and lost the store.
+                // `LOFT_RECORDS_NO_PARAM_BUF_MINT=1` answers the parameter alone.
+                if !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_PARAM_BUF_MINT").is_some())
+                    // The parameter itself, not a place in it (`OpPlaceRecord(sc)`, never null).
+                    && let Some(Value::Var(x)) = args.get(i as usize).map(Value::unspan)
+                    && v.pts.contains(&Pt::Param(*x))
+                    && let Some(param_at) = self.params.iter().position(|q| q == x)
+                {
+                    let site = self.site(node, Origin::MintInto(param_at as u16));
+                    let minted = Self::fresh(&mut s, site);
+                    if let Some(info) = s.stores.get_mut(&minted) {
+                        info.status = LIVE | ABSENT;
+                    }
+                    pts.insert(Pt::Store(minted));
+                    // The answer owns what the callee minted, as on the `OpDatabase` path.
+                    corr.insert(minted);
                 }
+                Val { pts, corr }
             }
             Summary::Join(i) | Summary::Buf(i) => {
                 let viewed = vals.get(i as usize).cloned().unwrap_or_else(Val::unknown);
@@ -5845,6 +6208,61 @@ fn null_init_mints(
 
 /// The records driven from a hand-built function body: a shape no source spelling reaches
 /// (no loft source frees) can still be checked to be reported, and each rule gets a unit test.
+/// The view relation (`State::views`).  `LOFT_RECORDS_NO_VIEW_PAIRS=1` leaves it out.
+fn views_enabled() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_VIEW_PAIRS").is_some())
+}
+
+/// The paths a value can end on, as `(arm, tail)`: the arms of an `if`, and in a block its last
+/// statement, through spans.  `arm` is the whole arm, for asking what that path sets.
+fn value_tails<'v>(data: &Data, v: &'v Value, out: &mut Vec<(&'v Value, &'v Value)>) {
+    // A block's value is its last statement that is not a free: the frees the scan appends
+    // after the value answer nothing (`{ __lift = f(); __lift.x; OpFreeRef(__lift_1) }`).
+    fn is_free(data: &Data, op: &Value) -> bool {
+        matches!(op.unspan(), Value::Call(d, _)
+            if matches!(data.def(*d).name(),
+                "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefUnlessEntry" | "OpFreeText"))
+    }
+    fn last_value<'v>(data: &Data, ops: &'v [Value]) -> Option<&'v Value> {
+        ops.iter().rev().find(|op| !is_free(data, op))
+    }
+    fn tail<'v>(data: &Data, v: &'v Value) -> &'v Value {
+        match v.unspan() {
+            Value::Block(bl) if !bl.operators.is_empty() => {
+                last_value(data, &bl.operators).map_or(v.unspan(), |l| tail(data, l))
+            }
+            other => other,
+        }
+    }
+    match v.unspan() {
+        Value::If(_, t, e) => {
+            value_tails(data, t, out);
+            value_tails(data, e, out);
+        }
+        Value::Block(bl) if !bl.operators.is_empty() => {
+            let last =
+                last_value(data, &bl.operators).unwrap_or_else(|| bl.operators.last().unwrap());
+            if matches!(last.unspan(), Value::If(..)) {
+                value_tails(data, last, out);
+            } else {
+                out.push((v, tail(data, v)));
+            }
+        }
+        _ => out.push((v, v)),
+    }
+}
+
+/// Does `v` assign `w` anywhere inside it?
+fn sets_var(v: &Value, w: u16) -> bool {
+    let mut found = false;
+    v.walk(&mut |n| {
+        if matches!(n, Value::Set(x, _) if *x == w) {
+            found = true;
+        }
+    });
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

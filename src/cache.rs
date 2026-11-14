@@ -671,8 +671,12 @@ pub fn file_hash(path: &str) -> Option<[u8; 32]> {
 fn loft_rlib_path() -> Option<std::path::PathBuf> {
     let exe_dir = crate::cargo_layout::current_runtime_profile_dir()?;
     let exe_dir = exe_dir.as_path();
+    // The same debris rule `toolchain::find_loft_rlib` applies (#304: both name one rlib).
+    let debris = crate::cargo_layout::classic_deps_is_debris(exe_dir)
+        && !crate::env_once!(std::env::var_os("LOFT_NATIVE_CLASSIC_DEPS_FIRST").is_some());
     if let Some(found) = rlib_candidates(exe_dir)
         .into_iter()
+        .skip(usize::from(debris))
         .find(|c| crate::file_access::exists(c))
     {
         return Some(found);
@@ -1371,10 +1375,17 @@ fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration
 /// a cold parse of `default/`, then written again.
 pub const KEEP_STDLIB_IMAGES: usize = 16;
 
+/// How many stdlib fingerprint stamps ([`stdlib_fingerprint`]) the cache keeps.  A stamp is
+/// one per configuration — a build, the directory it parses, the counting `LOFT_*`
+/// environment — so a test that hands its program a fresh `LOFT_*` value per run writes one
+/// per run.  A stamp dropped while wanted costs one hash of `default/`, then is written again.
+pub const KEEP_STDLIB_STAMPS: usize = 64;
+
 /// After writing a stdlib image: keep the [`KEEP_STDLIB_IMAGES`] most recently USED (a warm
-/// load bumps an image's mtime) and remove the rest.  Each build writes one image and none
-/// reads another's, so without this the directory only grows.  A process that still maps a
-/// removed image keeps reading it; one that has yet to open it parses cold.
+/// load bumps an image's mtime) and remove the rest; the same for the fingerprint stamps,
+/// newest [`KEEP_STDLIB_STAMPS`] by when each was written.  Each build writes one image and
+/// none reads another's, so without this the directory only grows.  A process that still maps
+/// a removed image keeps reading it; one that has yet to open it parses cold.
 pub fn prune_stdlib_images() {
     prune_stdlib_dir(&cache_base_dir(), KEEP_STDLIB_IMAGES);
 }
@@ -1413,8 +1424,8 @@ fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
         stem.strip_prefix("stdlib-")
             .is_some_and(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))
     });
-    let mut images: Vec<(std::time::SystemTime, fa::PathText)> = entries
-        .into_iter()
+    let images: Vec<fa::PathText> = entries
+        .iter()
         .filter(|p| {
             p.parts().last().is_some_and(|n| {
                 n.strip_prefix("stdlib-")
@@ -1422,22 +1433,44 @@ fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
                     .is_some_and(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))
             })
         })
+        .cloned()
+        .collect();
+    let stamps = newest_first(
+        entries
+            .iter()
+            .filter(|p| {
+                p.parts().last().is_some_and(|n| {
+                    n.strip_prefix("stdlib-fingerprint-")
+                        .and_then(|r| r.strip_suffix(".stamp"))
+                        .is_some_and(|k| k.len() == 16 && k.bytes().all(|b| b.is_ascii_hexdigit()))
+                })
+            })
+            .cloned()
+            .collect(),
+    );
+    for path in stamps.iter().skip(KEEP_STDLIB_STAMPS) {
+        let _ = fa::remove_file(path);
+    }
+    for path in newest_first(images).iter().skip(keep) {
+        let _ = fa::remove_file(path);
+        // The image's layout sidecar goes with it (`save_bundle` writes one beside it).
+        let _ = fa::remove_file(crate::schema_sidecar::dschema_path(&path.os_spelling()));
+    }
+}
+
+/// `paths` by modification time, newest first; an unreadable time sorts last.
+fn newest_first(paths: Vec<crate::file_access::PathText>) -> Vec<crate::file_access::PathText> {
+    let mut dated: Vec<(std::time::SystemTime, crate::file_access::PathText)> = paths
+        .into_iter()
         .map(|p| {
-            let at = fa::metadata(&p)
+            let at = crate::file_access::metadata(&p)
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::UNIX_EPOCH);
             (at, p)
         })
         .collect();
-    if images.len() <= keep {
-        return;
-    }
-    images.sort_by_key(|i| std::cmp::Reverse(i.0)); // newest first
-    for (_, path) in &images[keep..] {
-        let _ = fa::remove_file(path);
-        // The image's layout sidecar goes with it (`save_bundle` writes one beside it).
-        let _ = fa::remove_file(crate::schema_sidecar::dschema_path(&path.os_spelling()));
-    }
+    dated.sort_by_key(|d| std::cmp::Reverse(d.0));
+    dated.into_iter().map(|d| d.1).collect()
 }
 
 #[cfg(test)]
@@ -2073,6 +2106,51 @@ mod tests {
         assert!(
             fa::exists(root.join("program-aaa.store")),
             "a program bundle is left alone"
+        );
+        let _ = fa::remove_dir_all(&root);
+    }
+
+    /// The fingerprint stamps are bounded like the images: the newest [`KEEP_STDLIB_STAMPS`]
+    /// stay, the older go, and a name that is not a stamp is left alone.
+    /// @falsified-at: hand-measured (089c5a96c + this change) — with the stamp removal taken
+    /// out, `older stamp 0 removed` fails.
+    #[test]
+    fn stdlib_stamps_keep_the_newest_and_nothing_else() {
+        use crate::file_access as fa;
+        use std::time::{Duration, SystemTime};
+        let dir = std::env::temp_dir().join(format!("loft_stamp_prune_{}", std::process::id()));
+        let root = fa::PathText::from_os(&dir);
+        let _ = fa::remove_dir_all(&root);
+        fa::create_dir_all(&root).unwrap();
+        let name = |i: usize| format!("stdlib-fingerprint-{i:016x}.stamp");
+        let count = KEEP_STDLIB_STAMPS + 3;
+        for i in 0..count {
+            let p = root.join(&name(i));
+            fa::write(&p, b"stamp").unwrap();
+            // Stamp i is older than stamp i + 1.
+            let when = SystemTime::now() - Duration::from_secs(10_000 - i as u64 * 10);
+            fa::open_read_write(&p).unwrap().set_modified(when).unwrap();
+        }
+        for other in [
+            "stdlib-fingerprint-zz.stamp",
+            "stdlib-fingerprint-0000000000000000.tmp1",
+        ] {
+            fa::write(root.join(other), b"keepme").unwrap();
+        }
+        prune_stdlib_dir(&dir, KEEP_STDLIB_IMAGES);
+        for i in 0..3 {
+            assert!(!fa::exists(root.join(&name(i))), "older stamp {i} removed");
+        }
+        for i in 3..count {
+            assert!(fa::exists(root.join(&name(i))), "newer stamp {i} kept");
+        }
+        assert!(
+            fa::exists(root.join("stdlib-fingerprint-zz.stamp")),
+            "a foreign name stays"
+        );
+        assert!(
+            fa::exists(root.join("stdlib-fingerprint-0000000000000000.tmp1")),
+            "a stamp being written stays"
         );
         let _ = fa::remove_dir_all(&root);
     }

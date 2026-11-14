@@ -54,6 +54,27 @@ fn lift_view_deps(arg: &Value, data: &Data) -> Option<Vec<u16>> {
     }
 }
 
+/// May evaluating `v` write variable `x`: an assignment of it, a call through a function value,
+/// or `x` handed to a parameter that does not take a `text` by value — a `&` parameter, or an
+/// operator's stack position (`OpAppendText(pos, …)`)?
+pub(crate) fn writes_var(v: &Value, x: u16, data: &Data) -> bool {
+    v.any_node(&mut |n| match n {
+        Value::Set(y, _) => *y == x,
+        Value::CallRef(..) => true,
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let def = data.def(*d);
+            args.iter().enumerate().any(|(k, a)| {
+                matches!(a.unspan(), Value::Var(y) if *y == x)
+                    && !def
+                        .attributes
+                        .get(k)
+                        .is_some_and(|p| matches!(p.typedef.base(), Type::Text(_)))
+            })
+        }
+        _ => false,
+    })
+}
+
 /// The argument whose store `outer_call` frees for itself (`OpSets::freed_source_arg`): a
 /// source that is an inline call the scope pass lifts into a `__lift_N` is a store that temp
 /// also owns, and its scope-exit `OpFreeRef` would be a second release — silent while the
@@ -676,6 +697,9 @@ impl Scopes<'_> {
             self.keep_operand_order(&mut preamble, &hoisted_from, &mut ls, function, data);
         }
         if outer_call != u32::MAX && ls.len() == args.len() {
+            self.copy_written_text_operands(outer_call, &mut preamble, &mut ls, function, data);
+        }
+        if outer_call != u32::MAX && ls.len() == args.len() {
             self.keep_viewed_displaced(
                 outer_call,
                 &ls,
@@ -858,6 +882,49 @@ impl Scopes<'_> {
                 }
             }
             preamble.extend(ops.iter().cloned());
+        }
+    }
+
+    /// `@FR-E-Left` for a text operand: a text variable passed by VALUE (its parameter a
+    /// `text`) is read by reference by the interpreter and the Rust backend, so a LATER operand
+    /// that writes the variable — assigns it, or hands it to a parameter that is not a `text`
+    /// value (a `&text`, an operator's stack position) — would change what the earlier operand
+    /// reads.  Such an operand takes its value into a temp first: `t[overwrite(t)]` reads the
+    /// text `t` held before `overwrite` ran.  A later operand that only reads `t`
+    /// (`t[len(t) - 1]`) leaves it in place.  `LOFT_NO_COPY_WRITTEN_TEXT=1` leaves every one.
+    fn copy_written_text_operands(
+        &mut self,
+        callee: u32,
+        preamble: &mut Vec<Value>,
+        ls: &mut [Value],
+        function: &mut Function,
+        data: &Data,
+    ) {
+        if ls.len() < 2
+            || (callee as usize) >= data.definitions.len()
+            || std::env::var("LOFT_NO_COPY_WRITTEN_TEXT").is_ok_and(|v| v != "0")
+        {
+            return;
+        }
+        let def = data.def(callee);
+        for j in 0..ls.len() - 1 {
+            let Value::Var(x) = ls[j].unspan() else {
+                continue;
+            };
+            let x = *x;
+            let by_value = def
+                .attributes
+                .get(j)
+                .is_some_and(|a| matches!(a.typedef.base(), Type::Text(_)));
+            if !by_value
+                || !matches!(function.tp(x).base(), Type::Text(_))
+                || !ls[j + 1..].iter().any(|later| writes_var(later, x, data))
+            {
+                continue;
+            }
+            let tmp = self.new_lift_var(function, &Type::Text(Deps::none()));
+            preamble.push(v_set(tmp, Value::Var(x)));
+            ls[j] = Value::Var(tmp);
         }
     }
 

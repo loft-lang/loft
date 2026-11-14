@@ -5286,7 +5286,7 @@ impl Parser {
                 } else if !matches!(in_type, Type::Null)
                     // A local bound from a function declared further down is typed only on
                     // the second pass, which decides it; the first knows nothing to refuse.
-                    && !(self.first_pass && in_type.is_unknown())
+                    && (!self.first_pass || !in_type.is_unknown())
                 {
                     self.reverse_iterator = false;
                     // A NULLABLE collection is refused — `@FR-I-NullSrc` draws the line
@@ -6761,6 +6761,10 @@ impl Parser {
         let mut list = Vec::new();
         let mut new_object = false;
         let mut in_place_var: Option<u16> = None;
+        // The parameter whose rebind this literal detaches IN PLACE: told to `parse_assign_op`
+        // (`rebind_lowered`) only once the in-place construction is kept, never by an attempt a
+        // retry abandons for a construction built apart.
+        let mut param_detached: Option<u16> = None;
         // @FR-R-InPlaceLiteral's staging clause — the variable a field initialiser must be
         // hoisted for, which is NOT `in_place_var`: that one also drives the retry below
         // (`*code = Value::Var(v_nr)`), which is only meaningful for a whole-variable
@@ -6930,7 +6934,10 @@ impl Parser {
                     // the construction's own ops.  Tell `parse_assign_op` — which carries
                     // the same lowering for every OTHER right-hand side — that this
                     // statement already has one (loft#1290).
-                    self.rebind_lowered = *v_nr;
+                    param_detached = Some(*v_nr);
+                    if crate::env_once!(std::env::var_os("LOFT_REBIND_FLAG_EARLY").is_some()) {
+                        self.rebind_lowered = *v_nr;
+                    }
                 } else if !self.vars.is_argument(*v_nr) {
                     // A non-arg local OWNS its store; the `Set(Null)` lets the
                     // allocator reuse-or-fresh it in place (pre-existing).  A
@@ -7268,6 +7275,13 @@ impl Parser {
                     ));
                 }
             }
+        }
+        // The in-place construction is kept: its detach is in `list` (`param_detached`).  A
+        // retry above built the literal apart and returned without one, so the assignment's own
+        // lowering (`rebind_local_heap_param`) supplies it — left claimed, the rebind freed the
+        // caller's store (`LOFT_REBIND_FLAG_EARLY=1`).
+        if let Some(v) = param_detached {
+            self.rebind_lowered = v;
         }
         if new_object && let Value::Var(v) = code {
             list.push(Value::Var(*v));

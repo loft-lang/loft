@@ -70,6 +70,14 @@ jobs:
           # which needs the release tags.
           fetch-tags: true
 
+      # The manylinux leg runs as root on a checkout the runner's user owns, and git refuses
+      # such a tree ("dubious ownership") once actions/checkout's temporary safe.directory is
+      # gone.  `build.rs` then cannot read the commit: a daily answers the bare release version
+      # instead of `<release>.<yyyymmdd>`, and BUILD-INFO says `commit = unknown`.
+      - name: Trust the checkout (container)
+        if: matrix.container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
       - uses: ./.github/actions/windows-gcc
 

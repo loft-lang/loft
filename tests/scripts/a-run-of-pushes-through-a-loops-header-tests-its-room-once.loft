@@ -1,0 +1,148 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-PushFill`'s held-run clause on the C backend: a straight-line run of two or more scalar
+// pushes onto a vector whose push header an enclosing loop already holds is written as one room
+// test, the run's elements and one length bump; a run the header has no room for pushes one
+// element at a time, each growing the vector as before.  Every element, every length and every
+// value read after the run is what the pushes alone give.  The cells hold the runs the clause
+// meets — a stack cut back and refilled (the graphics library's `draw_bezier`), runs that outgrow
+// their room inside the loop, every element width, two vectors filled in turn — and one it must
+// decline, whose values read the vector's own length.  Values hand-computed; value AND length.
+// `LOFT_NO_HELD_PUSH_RUN=1` is the same-build oracle.
+//
+// h1, h3, h4 and h6's outer run reach the clause (h4's vectors grow from empty, so some of its
+// runs find no room); h2 and h6's inner runs (a counted loop's push window takes them) and h5
+// (its values read the vector) hold the same values without it.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipt is a defect
+//   planted (2026-11-13) in `loft_ph_put<w>_run`: a run that fits but bumps the length by one
+//   less than it stored fails h1, h3 and h4; a clause that takes a run an inner loop's window
+//   serves fails h6.
+//   CHANNEL: an assertion.
+
+// h1: a stack of 4-element segments, popped and pushed twice per split, as `draw_bezier` keeps
+// it.  Segment s = [s, s, s, s] on both stacks; a split of s > 1 pushes s - 1 twice (xs) and
+// 10 * (s - 1) twice (ys).  Starting from 3: pops 3, 2, 1, 1, 2, 1, 1 — seven pops, lines at the
+// four 1s, the stacks empty at the end; the x pops sum 3 + 2 + 1 + 1 + 2 + 1 + 1 = 11.
+fn test_a_stack_cut_back_and_refilled() {
+  xs: vector<integer> = [3, 3, 3, 3];
+  ys: vector<integer> = [30, 30, 30, 30];
+  top = 4;
+  pops = 0;
+  lines = 0;
+  sum = 0;
+  for _ in 0..100 {
+    if top == 0 { break; }
+    s = xs[top - 1] ?? 0;
+    t = ys[top - 1] ?? 0;
+    top -= 4;
+    pops += 1;
+    sum += s;
+    if s <= 1 {
+      lines += 1;
+    } else {
+      xs = xs[0..top];
+      ys = ys[0..top];
+      xs += [s - 1, s - 1, s - 1, s - 1];
+      ys += [t - 10, t - 10, t - 10, t - 10];
+      top += 4;
+      xs += [s - 1, s - 1, s - 1, s - 1];
+      ys += [t - 10, t - 10, t - 10, t - 10];
+      top += 4;
+    }
+  }
+  assert(pops == 7 && lines == 4 && sum == 11, "h1 pops {pops} lines {lines} sum {sum}");
+  assert(top == 0, "h1 top {top}");
+}
+
+// h2: three pushes per step from empty, 50 steps — the vector passes several capacities, so
+// some runs find no room.  Length 150; element 3i + j is i * 10 + j: sum
+// 30 * (0 + … + 49) + 50 * (0 + 1 + 2) = 36750 + 150 = 36900; v[149] = 492.
+fn test_runs_that_outgrow_their_room() {
+  v: vector<integer> = [];
+  for i in 0..50 {
+    v += [i * 10, i * 10 + 1, i * 10 + 2];
+  }
+  t = 0;
+  for x in v { t += x; }
+  assert(len(v) == 150 && t == 36900, "h2 len {len(v)} sum {t}");
+  assert(v[0] == 0 && v[4] == 11 && v[149] == 492, "h2 {v[0]} {v[4]} {v[149]}");
+}
+
+// h3: every width — floats (8 bytes), singles (4), bytes with a bias (1), booleans (1), two
+// pushes per step, 20 steps: 40 each.  Floats i + 0.5 and i + 0.25: sum 2 * 190 + 20 * 0.75 =
+// 395.0.  Singles i and 2i: 190 + 380 = 570.  Bytes i % 7 and 6 - i % 7: sum 20 * 6 = 120.
+// Booleans i % 2 == 0 and true: 10 + 20 = 30 true.
+fn test_every_width() {
+  f: vector<float> = [];
+  g: vector<single> = [];
+  b: vector<u8> = [];
+  q: vector<boolean> = [];
+  for i in 0..20 {
+    f += [i as float + 0.5, i as float + 0.25];
+    g += [i as single, (2 * i) as single];
+    b += [(i % 7) & 7, (6 - i % 7) & 7];
+    q += [i % 2 == 0, true];
+  }
+  fs = 0.0;
+  for x in f { fs += x; }
+  gs = 0.0;
+  for x in g { gs += x as float; }
+  bs = 0;
+  for x in b { bs += x; }
+  qs = 0;
+  for x in q { if x { qs += 1; } }
+  assert(len(f) == 40 && fs == 395.0, "h3 floats {len(f)} {fs}");
+  assert(len(g) == 40 && gs == 570.0, "h3 singles {len(g)} {gs}");
+  assert(len(b) == 40 && bs == 120, "h3 bytes {len(b)} {bs}");
+  assert(len(q) == 40 && qs == 30, "h3 booleans {len(q)} {qs}");
+}
+
+// h4: two vectors filled in turn, a run each per step, 30 steps: a gets [i, -i], c gets
+// [i, i, i].  len(a) 60 with sum 0; len(c) 90 with sum 3 * 435 = 1305.
+fn test_two_vectors_in_turn() {
+  a: vector<integer> = [];
+  c: vector<integer> = [];
+  for i in 0..30 {
+    a += [i, -i];
+    c += [i, i, i];
+  }
+  sa = 0;
+  for x in a { sa += x; }
+  sc = 0;
+  for x in c { sc += x; }
+  assert(len(a) == 60 && sa == 0, "h4 a {len(a)} {sa}");
+  assert(len(c) == 90 && sc == 1305, "h4 c {len(c)} {sc}");
+  assert(a[59] == -29 && c[89] == 29, "h4 {a[59]} {c[89]}");
+}
+
+// h5: values that read the vector's own length — the clause must decline.  Each push sees the
+// length the previous one left: from [7], step one pushes 1 then 2, step two 3 then 4: [7, 1, 2,
+// 3, 4].
+fn test_values_read_the_vector() {
+  v: vector<integer> = [7];
+  for _ in 0..2 {
+    v += [len(v)];
+    v += [len(v)];
+  }
+  assert(len(v) == 5, "h5 len {len(v)}");
+  assert(v[1] == 1 && v[2] == 2 && v[3] == 3 && v[4] == 4, "h5 {v}");
+}
+
+// h6: an outer loop pushes a run through its header while an inner loop pushes runs through a
+// window of its own — the inner runs are the window's, and each length read between them is
+// current.  Per outer step h: [h, -h] then six [h, t, 1]: 20 elements, so len 400 and seen
+// 20 * (1 + … + 20) = 4200; sum 0 + 6 * 190 + 20 * 15 + 120 = 1560.
+fn test_an_inner_loops_window_keeps_its_runs() {
+  v: vector<integer> = [];
+  seen = 0;
+  for h in 0..20 {
+    v += [h, -h];
+    for t in 0..6 { v += [h, t, 1]; }
+    seen += len(v);
+  }
+  s = 0;
+  for x in v { s += x; }
+  assert(len(v) == 400 && seen == 4200 && s == 1560, "h6 len {len(v)} seen {seen} sum {s}");
+}

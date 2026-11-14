@@ -157,6 +157,9 @@ impl State {
         let _defs_memo = crate::use_analysis::defs_memo_scope(data, def_nr);
         // The rewrite census credits what the bytecode generator admits to the `interp` phase.
         let _census_body = crate::rewrite_census::InBody::enter("interp", data.def(def_nr).name());
+        if bind_trace_on() {
+            BIND_FN_START.with(|s| s.set(self.code_pos));
+        }
         // `@FR-R-LoopSlot`: the loop variables this frame places in their range index's slot.
         crate::rewrite_census::fired("R-LoopSlot", super::slot_aliases(data, def_nr).len());
         let logging =
@@ -4224,7 +4227,7 @@ impl State {
         let protect_fn = stack.data.def_nr("n_protect_store_frees");
         let unprotect_fn = stack.data.def_nr("n_unprotect_store_frees");
         // `@FR-O-Move` — the stores the arguments hold once the call returns (a `&` argument
-        // the callee re-points no longer holds the store it answers): `keys::protect_after_call`.
+        // the callee re-points holds another store than the one it answers): `keys::protect_after_call`.
         let after_call = crate::keys::protect_after_call();
         if !after_call {
             for av in &ref_args {

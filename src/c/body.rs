@@ -11,6 +11,7 @@
 mod apart;
 mod apart_value;
 mod chain;
+pub(crate) mod cold;
 mod deferred;
 mod files;
 mod generator;
@@ -183,6 +184,9 @@ pub(crate) struct FnWriter<'a> {
     verify_temps: std::collections::HashSet<String>,
     /// The owned text temporaries the current statement made.
     pending: Vec<String>,
+    /// `@FR-R-BufferReturn`'s bind clause: the work buffers a `__wr` call of the current statement
+    /// filled that were made for that call alone, so a text target may take their buffer.
+    pending_work: Vec<String>,
     /// The label number of each enclosing loop, innermost last.
     loops: Vec<u32>,
     labels: u32,
@@ -322,6 +326,16 @@ pub(crate) struct FnWriter<'a> {
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
     wr_call: Option<usize>,
+    /// `@FR-R-Cold`'s loft clause: whether this body may outline its cold exits, the arms it
+    /// outlined (by node address, with the helper's name), and the variables only those arms
+    /// use — which this body neither declares nor initialises, holds or frees.
+    cold_on: bool,
+    cold_arms: std::collections::HashMap<usize, (String, Value)>,
+    undeclared: std::collections::HashSet<u16>,
+    /// The helpers the plan made, written once the body has called them: (name, arm, the
+    /// arm's own variables, the helper's parameter list, its shapes, whether a call was
+    /// written).
+    cold_pending: Vec<cold::Pending<'a>>,
     /// The guards written so far, which numbers each one's flag.
     chain_guards: u32,
     /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
@@ -397,6 +411,9 @@ pub(crate) struct FnWriter<'a> {
     /// text locals a walk binds to an element it only READS, under a loop that writes no store —
     /// each a `loft_str` view of the element, as a text parameter is, never a copy.
     borrowed: Vec<bool>,
+    /// The borrowed text locals every bind of which is a literal: a view of bytes nothing
+    /// rewrites, which `@FR-E-Left`'s operand rule reads in place (`may_write_var`).
+    literal_views: std::collections::HashSet<u16>,
     /// `@FR-R-TextBorrow`'s tested clause: the borrowed locals that view a parameter's text only
     /// while each root parameter's store is not the return buffer's, with those roots.
     tested: std::collections::HashMap<u16, Vec<u16>>,
@@ -446,6 +463,26 @@ struct WindowLoop<'b> {
     inclusive: bool,
     pushes: u32,
     size: u32,
+}
+
+/// The borrowed text locals of `code` that only ever hold a literal: every `Set` of each binds
+/// a text literal.
+fn literal_views(code: &Value, borrowed: &[bool]) -> std::collections::HashSet<u16> {
+    let mut lit = std::collections::HashSet::new();
+    let mut other = std::collections::HashSet::new();
+    code.walk(&mut |n| {
+        if let Value::Set(x, v) = n
+            && borrowed.get(*x as usize).copied().unwrap_or(false)
+        {
+            if matches!(v.unspan(), Value::Text(_)) {
+                lit.insert(*x);
+            } else {
+                other.insert(*x);
+            }
+        }
+    });
+    lit.retain(|x| !other.contains(x));
+    lit
 }
 
 /// `@FR-R-TextBorrow` — the text locals of function `d` the C holds as a `loft_str` view rather
@@ -762,6 +799,7 @@ impl<'a> FnWriter<'a> {
             temps: Vec::new(),
             verify_temps: std::collections::HashSet::new(),
             pending: Vec::new(),
+            pending_work: Vec::new(),
             loops: Vec::new(),
             labels: 0,
             headers: Vec::new(),
@@ -821,6 +859,10 @@ impl<'a> FnWriter<'a> {
             guarded: None,
             work_ret: None,
             wr_call: None,
+            cold_on: false,
+            cold_arms: std::collections::HashMap::new(),
+            undeclared: std::collections::HashSet::new(),
+            cold_pending: Vec::new(),
             chain_guards: 0,
             rec_ptrs: Vec::new(),
             text_ptrs: std::collections::HashSet::new(),
@@ -848,6 +890,7 @@ impl<'a> FnWriter<'a> {
             in_delivery: 0,
             windows: Vec::new(),
             file_holds: Vec::new(),
+            literal_views: literal_views(def.code(), &borrowed),
             borrowed,
             tested,
             slice_borrows,
@@ -1118,6 +1161,7 @@ impl<'a> FnWriter<'a> {
             fired("R-RetAdopt", usize::from(self.adopt.is_some()));
         }
         let code = self.code;
+        self.cold_plan();
         self.dc = self.deferred_plan();
         let mut flags: Vec<u16> = self.dc.vars.keys().copied().collect();
         flags.sort_unstable();
@@ -1156,7 +1200,11 @@ impl<'a> FnWriter<'a> {
         }
         let mut out = String::new();
         // An apart record and a push group's element are no records (`apart.rs`).
-        for v in (0..self.shapes.len()).filter(|v| !self.params[*v] && !self.apr_holds(*v as u16)) {
+        for v in (0..self.shapes.len()).filter(|v| {
+            !self.params[*v]
+                && !self.apr_holds(*v as u16)
+                && !self.undeclared.contains(&(*v as u16))
+        }) {
             let c = self.shapes[v];
             if self.store_links[v] {
                 let name = var_name(self.vars.name(v as u16), v as u16);
@@ -1194,6 +1242,7 @@ impl<'a> FnWriter<'a> {
         if self.marked_line != 0 {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
+        self.cold_finish(&out)?;
         Ok((self.park_work_texts(out), statements))
     }
 
@@ -1328,6 +1377,7 @@ impl<'a> FnWriter<'a> {
 
     /// Free the owned text temporaries the statement just finished made.
     fn flush(&mut self, ind: usize) {
+        self.pending_work.clear();
         for t in std::mem::take(&mut self.pending) {
             self.line(ind, &format!("loft_text_free(&{t});"));
         }
@@ -1412,6 +1462,7 @@ impl<'a> FnWriter<'a> {
                     && !self.links[v]
                     && !self.borrowed[v]
                     && self.shapes[v] == CType::Text
+                    && !self.undeclared.contains(&(v as u16))
             })
             .map(|v| self.var(v as u16))
             .collect();
@@ -1795,6 +1846,48 @@ impl<'a> FnWriter<'a> {
             .map(|(_, h, size, based)| (h.clone(), *size, *based))
     }
 
+    /// A fused push's element as the bits a push header stores, and the header's put for its
+    /// width: `None` for a kind no header put carries.
+    fn push_bits(
+        &mut self,
+        fp: &crate::opt::writes::FusedPush,
+        ind: usize,
+    ) -> Result<Option<(&'static str, String)>, String> {
+        let val = self.expr(fp.val, ind)?;
+        Ok(Some(match fp.op {
+            "OpPushInt" => ("loft_ph_put8", format!("(uint64_t) {}", as_int(val)?)),
+            "OpPushFloat" => ("loft_ph_put8", format!("loft_f64_bits({})", as_float(val)?)),
+            "OpPushSingle" => (
+                "loft_ph_put4",
+                format!("loft_f32_bits({})", as_single(val)?),
+            ),
+            "OpPushInt4" => ("loft_ph_put4", format!("loft_i4_bits({})", as_int(val)?)),
+            "OpPushCharacter" => ("loft_ph_put4", format!("(uint32_t) {}", as_char(val)?)),
+            "OpPushBoolean" => ("loft_ph_put1", format!("(uint8_t) {}", as_bool(val)?)),
+            "OpPushEnum" => ("loft_ph_put1", format!("(uint8_t) {}", as_enum(val)?)),
+            "OpPushByte" => {
+                let min = Self::literal(
+                    fp.bias.ok_or("a byte push without its minimum")?,
+                    "byte minimum",
+                )?;
+                (
+                    "loft_ph_put1",
+                    format!("loft_byte_raw({min}, {})", as_int(val)?),
+                )
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    /// The C type of the bits a push header's put stores.
+    fn put_bits_type(put: &str) -> &'static str {
+        match put {
+            "loft_ph_put8" => "uint64_t",
+            "loft_ph_put4" => "uint32_t",
+            _ => "uint8_t",
+        }
+    }
+
     /// A mint, a finish or a length of a path a record push header serves.
     fn pushed_mint(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
         let data = self.cx.data;
@@ -1818,29 +1911,8 @@ impl<'a> FnWriter<'a> {
             && let Some((h, size, based)) = self.push_head_based(&fp.path)
             && size == fp.size
         {
-            let val = self.expr(fp.val, ind)?;
-            let (put, bits) = match name {
-                "OpPushInt" => ("loft_ph_put8", format!("(uint64_t) {}", as_int(val)?)),
-                "OpPushFloat" => ("loft_ph_put8", format!("loft_f64_bits({})", as_float(val)?)),
-                "OpPushSingle" => (
-                    "loft_ph_put4",
-                    format!("loft_f32_bits({})", as_single(val)?),
-                ),
-                "OpPushInt4" => ("loft_ph_put4", format!("loft_i4_bits({})", as_int(val)?)),
-                "OpPushCharacter" => ("loft_ph_put4", format!("(uint32_t) {}", as_char(val)?)),
-                "OpPushBoolean" => ("loft_ph_put1", format!("(uint8_t) {}", as_bool(val)?)),
-                "OpPushEnum" => ("loft_ph_put1", format!("(uint8_t) {}", as_enum(val)?)),
-                "OpPushByte" => {
-                    let min = Self::literal(
-                        fp.bias.ok_or("a byte push without its minimum")?,
-                        "byte minimum",
-                    )?;
-                    (
-                        "loft_ph_put1",
-                        format!("loft_byte_raw({min}, {})", as_int(val)?),
-                    )
-                }
-                _ => return Ok(None),
+            let Some((put, bits)) = self.push_bits(&fp, ind)? else {
+                return Ok(None);
             };
             let proof_at = format!("{}:{h}", data.def(self.d).original_name());
             let (same, put) = if based {
@@ -2565,6 +2637,23 @@ impl<'a> FnWriter<'a> {
             })
     }
 
+    /// The header an element READ of `v` goes through: a held vector header, or — `@FR-R-Push`'s
+    /// read clause — the push header an enclosing loop holds for the path, seen as one
+    /// (`loft_ph_vh`: the record and length it keeps current, the base derived from the record).
+    /// Only reads take the push header: a write, a length or a clause that asks whether a path
+    /// is held keeps `held_vector`.  `LOFT_NO_PUSH_HEADER_READ=1` reads the plain way.
+    fn read_header(&self, v: &Value) -> Option<String> {
+        if let Some(h) = self.held_vector(v) {
+            return Some(h);
+        }
+        if std::env::var("LOFT_NO_PUSH_HEADER_READ").is_ok_and(|x| x != "0") {
+            return None;
+        }
+        let path = crate::opt::writes::vector_path(self.cx.data, v)?;
+        let (h, _) = self.push_head(&path)?;
+        Some(format!("loft_ph_vh(&{h})"))
+    }
+
     /// The reader of a field at a known address (`loft_pa_*`) for a store getter: a narrow
     /// read's encoding is decoded by the reader its store getter uses, the null address
     /// answering null.
@@ -2625,7 +2714,7 @@ impl<'a> FnWriter<'a> {
         };
         match (name, args) {
             ("OpGetVector" | "OpGetVectorNullable", [v, size, idx]) => {
-                let Some(h) = self.held_vector(v) else {
+                let Some(h) = self.read_header(v) else {
                     return Ok(None);
                 };
                 let size = Self::literal(size, "element size")?;
@@ -2666,7 +2755,7 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(vec) else {
+                let Some(held) = self.read_header(vec) else {
                     return Ok(None);
                 };
                 let size = Self::literal(size, "element size")?;
@@ -2736,6 +2825,21 @@ impl<'a> FnWriter<'a> {
                 } else {
                     self.index_arg(idx, as_int(index)?)
                 };
+                // The plain read through a loop's push header takes the header itself
+                // (`loft_ph_get_*`), not a view built per read.
+                if at.is_empty()
+                    && nn.is_empty()
+                    && let Some(ph) = held
+                        .strip_prefix("loft_ph_vh(&")
+                        .and_then(|r| r.strip_suffix(')'))
+                {
+                    let f = f.replacen("loft_vh_", "loft_ph_", 1);
+                    crate::rewrite_census::fired("R-Push/read", 1);
+                    return Ok(Some(E::new(
+                        format!("({proof}, {f}(&{ph}, {size}, {index}, {fld}))"),
+                        k,
+                    )));
+                }
                 Ok(Some(E::new(
                     format!("({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}{tail}))"),
                     k,
@@ -2757,7 +2861,7 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(vec) else {
+                let Some(held) = self.read_header(vec) else {
                     return Ok(None);
                 };
                 let Some((f, k)) = Self::pa_reader(name) else {
@@ -2814,11 +2918,8 @@ impl<'a> FnWriter<'a> {
                 Ok(Some(E::new(format!("({proof}, {code})"), K::Void)))
             }
             // A 4-byte unsigned element (`u32`) is the same write through the held header, four
-            // bytes wide; `@FR-R-Version`'s fast twin has no such kind, so it keeps its own path.
+            // bytes wide.
             ("OpSetInt" | "OpSetFloat" | "OpSetInt4Raw", [inner, fld, val]) => {
-                if name == "OpSetInt4Raw" && self.version_raw(args) {
-                    return Ok(None);
-                }
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
@@ -2830,10 +2931,10 @@ impl<'a> FnWriter<'a> {
                 let (index, value) = self.two(name, &[idx, val], ind)?;
                 if self.version_raw(args) {
                     let index = as_int(index)?;
-                    let value = if name == "OpSetInt" {
-                        as_int(value)?
-                    } else {
+                    let value = if name == "OpSetFloat" {
                         as_float(value)?
+                    } else {
+                        as_int(value)?
                     };
                     let code =
                         version::version_access(name, &held, size, fld, &index, Some(&value));
@@ -2896,6 +2997,13 @@ impl<'a> FnWriter<'a> {
                 if self.work_ret.is_some()
                     && matches!(v.unspan(), Value::Var(p) if Some(*p) == self.work_ret) =>
             {
+                self.epilogue(ind);
+                self.line(ind, "return;");
+            }
+            // `@FR-R-BufferReturn`: a null answer is the null text in the caller's buffer.
+            (CType::Void, Some(v)) if self.work_ret.is_some() && is_null_text(self.cx.data, v) => {
+                let w = self.text_dest(&Value::Var(self.work_ret.unwrap_or_default()))?;
+                self.line(ind, &format!("loft_text_set(&{w}, loft_null_text());"));
                 self.epilogue(ind);
                 self.line(ind, "return;");
             }
@@ -3024,6 +3132,15 @@ impl<'a> FnWriter<'a> {
             if run_head && i >= run_end {
                 self.push_heads.pop();
                 run_head = false;
+            }
+            if i >= run_end
+                && let Some(end) = self.held_push_run(ops, i, ind)?
+            {
+                ops[i..end]
+                    .iter()
+                    .for_each(|o| self.refresh_grown_header(o, ind));
+                i = end;
+                continue;
             }
             if i >= run_end
                 && let Some((end, head)) = self.reserve_push_run(ops, i, ind)?
@@ -3221,11 +3338,7 @@ impl<'a> FnWriter<'a> {
             return Ok(None);
         }
         let v = as_ref(self.expr(first.vector, ind)?)?;
-        self.line(
-            ind,
-            &format!("loft_vec_reserve_run({v}, INT64_C({k}), {});", first.size),
-        );
-        crate::rewrite_census::fired("R-PushFill/run", 1);
+        let reserve = format!("loft_vec_reserve_run({v}, INT64_C({k}), {});", first.size);
         // The header clause: values computed from scalars and operators cannot move the store,
         // and the run's one growth is the reservation above — so its pushes write through one
         // header and its held record address (`loft_ph_putb*`), the growth step left as the
@@ -3236,17 +3349,130 @@ impl<'a> FnWriter<'a> {
             && vals.iter().all(|val| {
                 crate::opt::hoist::run_value_plain(self.cx.data, self.vars, first.path.0, val)
             });
+        crate::rewrite_census::fired("R-PushFill/run", 1);
         if header {
+            // The header first: a vector that already has room for the run — one cleared and
+            // refilled, a record buffer reused — takes no reservation call, only the header's
+            // own room test; one without room reserves and derives the header again.
             let h = format!("ph{}", self.decls.len() + 1);
             self.decls.push(format!(
                 "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
-            self.line(ind, &format!("{h} = loft_ph_of({v}, {});", first.size));
+            let size = first.size;
+            self.line(ind, &format!("{h} = loft_ph_of({v}, {size});"));
+            self.line(
+                ind,
+                &format!(
+                    "if (LOFT_UNLIKELY({h}.cap < {k} || {h}.len > {h}.cap - {k})) {h} = loft_ph_reserved({h}, INT64_C({k}), {size});"
+                ),
+            );
             self.push_heads
                 .push(vec![(first.path.clone(), h, first.size, true)]);
             crate::rewrite_census::fired("R-PushFill/run-header", 1);
+        } else {
+            self.line(ind, &reserve);
         }
         Ok(Some((end, header)))
+    }
+
+    /// `@FR-R-PushFill`'s held-run clause on the C: a run of `k >= 2` scalar pushes onto one
+    /// path (consecutive statements, each a push of the same element size; a line marker ends
+    /// it) where an enclosing loop already holds that path's push header, and every value is
+    /// plain (`hoist::run_value_plain`).  The run is one `loft_ph_put<w>_run` call: ONE room
+    /// test for all `k`, the `k` elements stored at one record address and one length bump,
+    /// where each push tested the room, resolved the store and wrote the length on its own.
+    /// The values are computed first: a plain value reads neither the vector nor anything that
+    /// can reach it, so the order is unobservable.  A run the header has no room for pushes one
+    /// call at a time, each taking its own growth step — a refused push refuses where it did.
+    /// Answers the index after the run.
+    /// `LOFT_NO_HELD_PUSH_RUN=1` pushes one call at a time.
+    fn held_push_run(
+        &mut self,
+        ops: &[Value],
+        at: usize,
+        ind: usize,
+    ) -> Result<Option<usize>, String> {
+        if self.gen_elem.is_some()
+            || self.lean()
+            || self.av_any()
+            || std::env::var("LOFT_NO_HELD_PUSH_RUN").is_ok_and(|v| v != "0")
+        {
+            return Ok(None);
+        }
+        let Some((first, mut end)) = self.push_at(ops, at) else {
+            return Ok(None);
+        };
+        let Some((h, size, based)) = self.push_head_based(&first.path) else {
+            return Ok(None);
+        };
+        // A path an inner loop's push window serves takes its pushes there (`operator` asks
+        // `windowed` before the header), and one a value held apart or a deferred copy serves
+        // is left to it, as the reservation clause leaves it.
+        if size != first.size
+            || self.windows.iter().any(|(p, _, _, _)| *p == first.path)
+            || self.apr_holds(first.path.0)
+            || self.dc_root(first.path.0)
+        {
+            return Ok(None);
+        }
+        let mut run = vec![first];
+        while let Some((p, after)) = self.push_at(ops, end) {
+            if p.path != run[0].path
+                || p.size != size
+                || p.vector.unspan() != run[0].vector.unspan()
+            {
+                break;
+            }
+            run.push(p);
+            end = after;
+        }
+        let data = self.cx.data;
+        if run.len() < 2
+            || !run
+                .iter()
+                .all(|p| crate::opt::hoist::run_value_plain(data, self.vars, p.path.0, p.val))
+        {
+            return Ok(None);
+        }
+        // The values are computed into temporaries first, in the run's order: an array
+        // initialiser's elements are not sequenced, and a checked operator's fault is.
+        let mut temps = Vec::with_capacity(run.len());
+        let mut put = "";
+        for p in &run {
+            let Some((each, bits)) = self.push_bits(p, ind)? else {
+                return Ok(None);
+            };
+            put = each;
+            let t = format!("pb{}", self.decls.len() + 1);
+            self.decls
+                .push(format!("{} {t} = 0;", Self::put_bits_type(put)));
+            self.line(ind, &format!("{t} = {bits};"));
+            temps.push(t);
+        }
+        let (same, run_put) = if based {
+            (
+                "loft_phb_same",
+                put.replacen("loft_ph_put", "loft_ph_putb", 1),
+            )
+        } else {
+            ("loft_ph_same", put.to_string())
+        };
+        let proof_at = format!("{}:{h}", data.def(self.d).original_name());
+        self.line(
+            ind,
+            &format!("LOFT_PROVED({same}({h}, {size}), {});", c_string(&proof_at)),
+        );
+        self.line(
+            ind,
+            &format!(
+                "{run_put}_run(&{h}, {}, (const {}[]) {{ {} }});",
+                temps.len(),
+                Self::put_bits_type(put),
+                temps.join(", ")
+            ),
+        );
+        crate::rewrite_census::fired("R-PushFill/held-run", 1);
+        Ok(Some(end))
     }
 
     /// `@FR-R-View` (@PLN157 § V-n, rustc's `bind_view_header`): statement `at` bound a vector
@@ -3846,9 +4072,50 @@ impl<'a> FnWriter<'a> {
         None
     }
 
+    /// `@FR-H-ClearRelease` with nothing to release: a vector whose elements own no heap — a
+    /// local `vector<τ>` of a scalar `τ`, or a record's field whose vector type
+    /// (`OpGetField`'s third operand) holds elements that own none.  Its clear is the length
+    /// set to 0 — what `loft_vec_clear_release` comes to after walking the type descriptors to
+    /// learn the same at run time (for a record that is its store's root, a search of its
+    /// fields per clear) — so the C writes `loft_vec_clear`.  `LOFT_NO_PLAIN_CLEAR=1` writes
+    /// the walk.
+    fn clear_releases_nothing(&self, v: &Value) -> bool {
+        if std::env::var("LOFT_NO_PLAIN_CLEAR").is_ok_and(|x| x != "0") {
+            return false;
+        }
+        match v.unspan() {
+            Value::Var(x) => matches!(
+                self.vars.tp(*x).base(),
+                crate::data::Type::Vector(elem, _) if crate::data::is_scalar(elem)
+            ),
+            Value::Call(d, args)
+                if (*d as usize) < self.cx.data.definitions.len()
+                    && self.cx.data.def(*d).name() == "OpGetField" =>
+            {
+                let Some(Value::Int(content)) = args.get(2).map(Value::unspan) else {
+                    return false;
+                };
+                let Ok(tp) = u16::try_from(*content) else {
+                    return false;
+                };
+                let stores = self.cx.stores;
+                if !stores.is_plain_vector(tp) {
+                    return false;
+                }
+                let elem = stores.content(tp);
+                elem != u16::MAX && !stores.type_owns_heap(elem) && !stores.is_linked(elem)
+            }
+            _ => false,
+        }
+    }
+
     /// The index `idx` names when it is proven inside the held vector `h` (`counters_in_range`):
     /// a counter, or a counter wrapped at a local holding `h`'s length
-    /// (`loop_shape::wrapped_counter`: `(i + c) % n` is in `[0, n)` there).
+    /// (`loop_shape::wrapped_counter`: `(i + c) % n` is in `[0, n)` there).  A step of 1 is
+    /// written as a compare (`i == n - 1 ? 0 : i + 1`, the same value since `0 <= i < n`): gcc
+    /// divides for the `%` on every turn, a 64-bit division clang and rustc already turn into
+    /// a wrapping counter, which this spelling leaves clang free to keep.
+    /// `LOFT_NO_WRAP_SELECT=1` writes the `%`.
     fn counter_index(&self, idx: &Value, held: &str) -> Option<String> {
         let ours = |ctr: u16| self.in_range.iter().any(|(c, hh)| *c == ctr && hh == held);
         if let Value::Var(ctr) = idx.unspan() {
@@ -3866,14 +4133,14 @@ impl<'a> FnWriter<'a> {
         {
             return None;
         }
+        let (i, n) = (self.var(ctr), self.var(*len));
         Some(if step == 0 {
-            self.var(ctr)
+            i
+        } else if step == 1 && !std::env::var("LOFT_NO_WRAP_SELECT").is_ok_and(|v| v != "0") {
+            crate::rewrite_census::fired("R-Base/wrap-select", 1);
+            format!("({i} == {n} - INT64_C(1) ? INT64_C(0) : {i} + INT64_C(1))")
         } else {
-            format!(
-                "(({} + INT64_C({step})) % {})",
-                self.var(ctr),
-                self.var(*len)
-            )
+            format!("(({i} + INT64_C({step})) % {n})")
         })
     }
 
@@ -5403,6 +5670,10 @@ impl<'a> FnWriter<'a> {
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => {
+                // `@FR-R-Cold`'s loft clause: an outlined arm's own variable is initialised there.
+                if self.undeclared.contains(var) {
+                    return Ok(());
+                }
                 // `@FR-R-Transient`: a lifted text argument served by the transient text it
                 // copies is not bound at all.
                 if self.tr.is_some() && self.tr_text_lift(*var).is_some() {
@@ -5458,6 +5729,21 @@ impl<'a> FnWriter<'a> {
                 self.stmt(arm, ind)?;
                 self.flush(ind);
                 Ok(())
+            }
+            // `@FR-R-Cold`'s loft clause: a variable only an outlined arm uses is the arm's own —
+            // its frees here go with it.
+            Value::Call(..)
+                if cold::text_free(v, self.cx.data)
+                    .is_some_and(|w| self.undeclared.contains(&w)) =>
+            {
+                Ok(())
+            }
+            Value::If(cond, then_arm, else_arm)
+                if self
+                    .cold_arms
+                    .contains_key(&(&raw const **then_arm as usize)) =>
+            {
+                self.cold_if(cond, then_arm, else_arm, ind)
             }
             Value::If(cond, then_arm, else_arm) => {
                 let null_test = self.null_test(cond);
@@ -5604,7 +5890,7 @@ impl<'a> FnWriter<'a> {
 
     /// `v = f(…)` where the callee's result is fresh on one arm and a view of `base` on the
     /// other (`Own::Join`): the record type and `base`, the witness `OpBindOrCopy` tests.
-    fn join_bind(&self, v: u16, x: &Value) -> Option<(u16, u16)> {
+    fn join_bind(&self, v: u16, x: &Value, first: bool) -> Option<(u16, u16)> {
         use crate::data::Type;
         use crate::use_analysis as ua;
         let data = self.cx.data;
@@ -5622,9 +5908,20 @@ impl<'a> FnWriter<'a> {
         }
         // `@FR-B-Copy` — a choice that hands another heap variable over whole on one arm
         // joins on that variable, as `bind_lowering::re_bind` decides for the bytecode writer.
+        // A FIRST bind joins only into a local that owns what it binds
+        // (`bind_lowering::first_bind_choice_join`, the bytecode writer's question): a copy into
+        // a view the exits never free leaked one record per run (`call_args`' `last_t = if n > 0
+        // { def.attributes[-1].typedef[0] ?? TyVoid } else { TyVoid }`, which keeps `def`'s
+        // borrow).  `LOFT_C_FIRST_CHOICE_JOIN_ANY=1` joins any first bind as before.
         let Some(f) = ua::callee_of(data, self.d, x) else {
-            return crate::bind_lowering::choice_var_arm(data, self.d, self.vars, x, v)
-                .map(|base| (data.def(d).known_type(), base));
+            let base = if first
+                && !crate::env_once!(std::env::var_os("LOFT_C_FIRST_CHOICE_JOIN_ANY").is_some())
+            {
+                crate::bind_lowering::first_bind_choice_join(data, self.d, self.vars, v, x)
+            } else {
+                crate::bind_lowering::choice_var_arm(data, self.d, self.vars, x, v)
+            };
+            return base.map(|base| (data.def(d).known_type(), base));
         };
         if !data.def(f).is_loft_defined() {
             return None;
@@ -5641,8 +5938,14 @@ impl<'a> FnWriter<'a> {
     fn element_copy(&self, v: u16, x: &Value) -> Option<u16> {
         let tp = self.vars.tp(v);
         let d = tp.base().heap_def_nr()?;
+        // Not into a local the frame never frees (`skip_free`: a literal field's temporary,
+        // `__ref_N = __lift.code`, which the bytecode writer binds as the view it is): the copy
+        // had no owner and leaked one record per bind (the self-hosted elaborator's
+        // `sink_ncc`; C only).  `LOFT_C_SKIPFREE_ELEMENT_COPY=1` copies there too.
         (tp.depend().is_empty()
             && self.vars.owner_witness(v).is_none()
+            && (!self.vars.is_skip_free(v)
+                || crate::env_once!(std::env::var_os("LOFT_C_SKIPFREE_ELEMENT_COPY").is_some()))
             && crate::use_analysis::projection_container_var(self.cx.data, x).is_some())
         .then(|| self.cx.data.def(d).known_type())
     }
@@ -5674,7 +5977,7 @@ impl<'a> FnWriter<'a> {
         name: &str,
         ind: usize,
     ) -> Result<bool, String> {
-        let join = self.join_bind(var, x);
+        let join = self.join_bind(var, x, first);
         // A rebind releases the store it displaces when the variable owns it, as the bytecode
         // writer's owned reassignment does — never the base's, nor a store the call was handed.
         let rebind_owned = !first
@@ -6314,7 +6617,19 @@ impl<'a> FnWriter<'a> {
                 // The stores of the call's reference arguments are protected, as the bytecode
                 // writer protects them (`protectable_ref_args`): a result that is a view into
                 // one of them is not the callee's to give away.
-                let mut keep = vec![format!("{r}.store_nr != {held}.store_nr")];
+                // The store the destination held is compared only where the value reads it: an
+                // answer that does not reach the destination cannot be its store, and its number
+                // may be stale — a local first bound in a loop, released at the end of each pass
+                // by its owner witness, still names that freed slot, and the allocator hands it
+                // to the next answer.  The copy then kept the answer and skipped its free (the
+                // self-hosted elaborator's `fill_instance`, `t = substitute_var(…)`; C only).
+                // `LOFT_C_STALE_HELD_KEEP=1` compares it always.
+                let mut keep = Vec::new();
+                if x.reads_var(var)
+                    || crate::env_once!(std::env::var_os("LOFT_C_STALE_HELD_KEEP").is_some())
+                {
+                    keep.push(format!("{r}.store_nr != {held}.store_nr"));
+                }
                 for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
                     // `@FR-R-Transient`: an argument held in the arena has no store for the
                     // result to share — a pointer, where `.store_nr` is not even C.
@@ -6325,7 +6640,11 @@ impl<'a> FnWriter<'a> {
                     keep.push(format!("{r}.store_nr != {arg}.store_nr"));
                 }
                 keep.dedup();
-                let keep = keep.join(" && ");
+                let keep = if keep.is_empty() {
+                    "1".to_string()
+                } else {
+                    keep.join(" && ")
+                };
                 // `@FR-H-SwapRebind`: a result the bind gives up is exchanged into the
                 // destination where the store allows; a fn-ref call's result may be a store it
                 // borrowed, and a type whose tree holds a stored reference keeps the copy.
@@ -6855,10 +7174,16 @@ impl<'a> FnWriter<'a> {
             self.store_operator("OpDatabase", &[Value::Var(a.buf), Value::Int(a.db_tp)], ind)?;
         self.cx.name_types();
         let buf = self.var(a.buf);
+        let clear = if self.clear_releases_nothing(&Value::Var(a.buf)) {
+            crate::rewrite_census::fired("H-ClearRelease/plain", 1);
+            format!("loft_vec_clear({buf})")
+        } else {
+            format!("loft_vec_clear_release(loft_types, loft_ntypes, {buf})")
+        };
         self.line(
             ind,
             &format!(
-                "if ({buf}.store_nr == 0xFFFF || {buf}.rec == 0) {{ {}; }} else {{ loft_vec_clear_release(loft_types, loft_ntypes, {buf}); }}",
+                "if ({buf}.store_nr == 0xFFFF || {buf}.rec == 0) {{ {}; }} else {{ {clear}; }}",
                 mint.code
             ),
         );
@@ -7014,6 +7339,20 @@ impl<'a> FnWriter<'a> {
                     && let Some(t) = self.pending_text_temp(&e.code)
                 {
                     self.line(ind, &format!("loft_text_move(&{target}, &{t});"));
+                    return Ok(());
+                }
+                // `@FR-R-BufferReturn`'s bind clause: the target takes the call site's own buffer;
+                // the next call at the site starts that buffer empty either way.
+                if c == CType::Text
+                    && let Some(w) = e
+                        .code
+                        .strip_prefix("loft_view(&")
+                        .and_then(|r| r.strip_suffix(')'))
+                    && self.pending_work.iter().any(|p| p == w)
+                    && w != target
+                {
+                    self.line(ind, &format!("loft_text_move(&{target}, &{w});"));
+                    crate::rewrite_census::fired("R-BufferReturn/bind", 1);
                     return Ok(());
                 }
                 let s = match c {
@@ -7713,10 +8052,43 @@ impl<'a> FnWriter<'a> {
     /// Operand `i` of `args`, evaluated in order: a value a later operand may change is held
     /// in a temporary.
     fn arg<V: Borrow<Value>>(&mut self, args: &[V], i: usize, ind: usize) -> Result<E, String> {
-        let later_writes = args[i + 1..]
-            .iter()
-            .any(|later| self.may_write(later.borrow()));
-        self.arg_with(args[i].borrow(), later_writes, ind)
+        let operand = args[i].borrow();
+        let later_writes = args[i + 1..].iter().any(|later| match operand.unspan() {
+            Value::Var(x) => self.may_write_var(later.borrow(), *x),
+            _ => self.may_write(later.borrow()),
+        });
+        self.arg_with(operand, later_writes, ind)
+    }
+
+    /// May evaluating `v` write variable `x`?  `@FR-E-Left` asks it of each variable operand:
+    /// a later operand that never names `x` — a `??` block binding its own temporaries, a call
+    /// `x` is not handed to — cannot write a local of this frame, which no other name reaches.
+    /// A parameter may share what it names with another reference, a borrowed text views
+    /// bytes another name may rewrite (unless it only ever holds a literal), and a call
+    /// through a function value may reach a captured `x`; each keeps `may_write`'s answer.
+    /// `LOFT_NO_OPERAND_VAR_WRITE=1` asks `may_write` for every operand.
+    fn may_write_var(&self, v: &Value, x: u16) -> bool {
+        if !self.may_write(v) {
+            return false;
+        }
+        // A borrowed text is a view of bytes another name may rewrite — unless every bind of
+        // it is a literal.
+        if self.vars.is_argument(x)
+            || (self.borrowed.get(x as usize).copied().unwrap_or(false)
+                && !self.literal_views.contains(&x))
+            || std::env::var("LOFT_NO_OPERAND_VAR_WRITE").is_ok_and(|s| s != "0")
+        {
+            return true;
+        }
+        let mut hit = false;
+        v.walk(&mut |n| {
+            if matches!(n, Value::Var(y) | Value::Set(y, _) if *y == x)
+                || matches!(n, Value::CallRef(..))
+            {
+                hit = true;
+            }
+        });
+        hit
     }
 
     /// Operand `operand`, evaluated as `arg` does; `later_writes` says whether an operand after
@@ -8117,6 +8489,27 @@ impl<'a> FnWriter<'a> {
         }
         if wr {
             return Ok(E::new(call, K::Void));
+        }
+        // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
+        // through its `__wr` twin, and the call's value is a view of that buffer — what the
+        // interpreter's text return is — not a copy of it taken on the way out.
+        if ret == CType::Text
+            && mask == 0
+            && !tr_named
+            && !native
+            && !crate::env_once!(std::env::var("LOFT_NO_BUFFER_RETURN").is_ok_and(|v| v != "0"))
+            && let Some(p) = cx.answers_work(d, true)
+            && xs.get(p).is_some_and(|x| plain_place(x))
+            && let Some(twin) = cx.work_twin(d)
+        {
+            self.line(ind, &format!("{twin}({});", xs.join(", ")));
+            crate::rewrite_census::fired("R-BufferReturn", 1);
+            if call_site_buffer(&args[p])
+                && let Some(w) = xs[p].strip_prefix('&')
+            {
+                self.pending_work.push(w.to_string());
+            }
+            return Ok(E::new(format!("loft_view({})", xs[p]), K::View));
         }
         Ok(match ret {
             CType::Text => {
@@ -8603,7 +8996,7 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(e);
         }
-        if !self.headers.is_empty()
+        if (!self.headers.is_empty() || self.push_heads.iter().any(|f| !f.is_empty()))
             && let Some(e) = self.held_access(name, args, ind)?
         {
             return Ok(e);
@@ -10495,6 +10888,11 @@ impl<'a> FnWriter<'a> {
             ("OpClearVector", [Value::Var(x)]) if self.ap_views.contains(x) => {
                 Ok(E::new("((void) 0)", K::Void))
             }
+            ("OpClearVector", [v]) if self.clear_releases_nothing(v) => {
+                let v = self.expr(v, ind)?;
+                crate::rewrite_census::fired("H-ClearRelease/plain", 1);
+                Ok(E::new(format!("loft_vec_clear({})", as_ref(v)?), K::Void))
+            }
             ("OpClearVector", [v]) => {
                 self.cx.name_types();
                 let v = self.expr(v, ind)?;
@@ -11121,6 +11519,43 @@ fn as_fn(e: E) -> Result<String, String> {
         K::Fn => Ok(e.code),
         k => Err(format!("a function value expected, a {k:?} found")),
     }
+}
+
+/// Is `v` the null text — `OpConvTextFromNull()`, what `return null` is in a text function?
+pub(crate) fn is_null_text(data: &crate::data::Data, v: &Value) -> bool {
+    matches!(v.unspan(), Value::Call(op, a)
+        if a.is_empty()
+            && (*op as usize) < data.definitions.len()
+            && data.def(*op).name() == "OpConvTextFromNull")
+}
+
+/// Is `arg` a work buffer made for this one call — the IR's default reference
+/// `{ w = ""; ref(w) }` — rather than a buffer the caller was handed or reads again?
+fn call_site_buffer(arg: &Value) -> bool {
+    let Value::Block(b) = arg.unspan() else {
+        return false;
+    };
+    matches!(
+        b.operators.as_slice(),
+        [Value::Set(w, x), Value::Call(_, r)]
+            if matches!(x.unspan(), Value::Text(t) if t.is_empty())
+                && matches!(r.as_slice(), [Value::Var(v)] if v == w)
+    )
+}
+
+/// Is `x` a C place that reads the same twice and does nothing else — `name`, `&name`,
+/// `(*name)` — so a call may take it and the caller name it again after?  Anything longer
+/// may compute or write, and is not repeated.
+fn plain_place(x: &str) -> bool {
+    let inner = x
+        .strip_prefix("&(*")
+        .and_then(|r| r.strip_suffix(')'))
+        .or_else(|| x.strip_prefix('&'))
+        .unwrap_or(x);
+    !inner.is_empty()
+        && inner
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn as_view(e: E) -> Result<String, String> {

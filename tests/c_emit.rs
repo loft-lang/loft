@@ -8354,6 +8354,102 @@ fn an_integer_literal_fallback_is_unmarked_and_a_float_one_keeps_its_cold_path()
     assert_eq!(String::from_utf8_lossy(&out.stdout), "60 1.5\n");
 }
 
+/// `@FR-R-Version` over narrow elements: a leaf that reads a `u32` and a `u8` element and
+/// writes the `u32` back — graphics' `blend_pixel` shape — gets its fast twin, whose accesses
+/// are the plain ones (`loft_vh_at_addr`, `loft_vh_put_u32`) and whose range tests the loop
+/// asks once.  Without it the `u32` canvas's blend checked every pixel's bounds (`blend_pixel`
+/// 1.22x → 1.35x its Rust twin).  Values hand-computed: 4294967290 + i + 1 over 32 elements,
+/// masked to 32 bits — 4294967291, 4294967295, then 0 at i = 5, 26 at i = 31.
+/// @falsified-at cc122f1df + this change: `opt::version` not admitting `OpSetInt4Raw` fails the
+/// fast-twin assertion.
+#[test]
+fn a_leaf_over_narrow_elements_gets_its_fast_twin() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("narrow_version");
+    let file = dir.join("narrow.loft");
+    fa::write(
+        &file,
+        "struct C { w: integer, h: integer, d: vector<u32>, m: vector<u8> }\n\
+         fn bl(self: C, x: integer, y: integer, k: integer) {\n\
+           if x >= 0 and x < self.w and y >= 0 and y < self.h {\n\
+             i = y * self.w + x;\n\
+             d = &self.d;\n\
+             if i < len(d) { d[i] = ((d[i] ?? 0) + (self.m[i] ?? 0) + k) & 4294967295; }\n\
+           }\n\
+         }\n\
+         fn sweep(c: C, k: integer) { for y in 0..2 { for x in 0..16 { c.bl(x, y, k); } } }\n\
+         fn main() {\n\
+           mm: vector<u8> = [];\n\
+           for i in 0..32 { mm += [(i & 255) as u8]; }\n\
+           c = C { w: 16, h: 2, d: [4294967290 as u32; 32], m: mm };\n\
+           sweep(c, 1);\n\
+           println(\"{c.d[0]} {c.d[4]} {c.d[5]} {c.d[31]} {len(c.d)}\");\n\
+         }\n",
+    )
+    .expect("write program");
+    let c = dir.join("narrow.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let start = text
+        .split_inclusive('\n')
+        .scan(0, |pos, line| {
+            let at = *pos;
+            *pos += line.len();
+            Some((at, line))
+        })
+        .find(|(_, line)| {
+            line.contains(" t_1C_bl__")
+                && line.contains("__vf__fr(")
+                && line.trim_end().ends_with('{')
+        })
+        .map(|(at, _)| at);
+    let Some(start) = start else {
+        panic!("`bl` has no fast twin:\n{text}");
+    };
+    let end = text[start..]
+        .find("\n}\n")
+        .map_or(text.len(), |e| start + e);
+    let fast = &text[start..end];
+    assert!(
+        fast.contains("loft_vh_put_u32(") && fast.matches("loft_vh_at_addr(").count() == 2,
+        "the fast twin's u32 write and its two narrow reads are the plain forms:\n{fast}"
+    );
+    let exe = dir.join("narrow");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "4294967291 4294967295 0 26 32\n"
+    );
+}
+
 /// A `u32` element written through a held vector header is one 4-byte store
 /// (`loft_vh_set_u32*`), and a counted loop writing one value over a run of them is one fill
 /// (`loft_vh_fill_u32`, `@FR-R-Fill`'s guarded clause here) — the forms an 8-byte integer
@@ -8442,5 +8538,161 @@ fn a_u32_element_write_is_a_held_store_and_a_run_of_them_is_one_fill() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "0 4294967295 4294967295 12 [0,1500000000,3000000000,205032704]\n"
+    );
+}
+
+/// `@FR-R-BufferReturn`: a call to a function that answers its `&text` work buffer goes to the
+/// callee's `__wr` twin and is read from the buffer — no copy on the way out — and a text local
+/// bound from it takes the call site's buffer.
+#[test]
+fn a_text_call_result_is_read_from_its_work_buffer() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("buffer_return");
+    let file = dir.join("br.loft");
+    fa::write(
+        &file,
+        "fn built(s: text) -> text { s + \"!\" }\n\
+         fn keep(s: text) -> integer { t = built(s); len(t) }\n\
+         fn pass(s: text) -> integer { len(built(s)) }\n\
+         fn main() { println(\"{keep(\"ab\")} {pass(\"abc\")} {built(\"x\")}\"); }\n",
+    )
+    .expect("write program");
+    let c = dir.join("br.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let body = |name: &str| -> String {
+        let mut at = None;
+        let mut pos = 0;
+        for line in text.split_inclusive('\n') {
+            if line.contains(&format!(" {name}__fr(")) && line.trim_end().ends_with('{') {
+                at = Some(pos);
+                break;
+            }
+            pos += line.len();
+        }
+        let at = at.unwrap_or_else(|| panic!("{name} has no body"));
+        let end = text[at..].find("\n}\n").map_or(text.len(), |e| at + e);
+        text[at..end].to_string()
+    };
+    let keep = body("n_keep");
+    assert!(
+        keep.contains("n_built__wr(") && keep.contains("loft_text_move(&v1_t, &"),
+        "a bound result takes the call site's buffer:\n{keep}"
+    );
+    let pass = body("n_pass");
+    assert!(
+        pass.contains("n_built__wr(") && !pass.contains("= n_built("),
+        "a result read in place is the buffer:\n{pass}"
+    );
+    let exe = dir.join("br");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3 4 x!\n");
+}
+
+/// `@FR-R-Cold`'s loft clause: an `if` arm that builds a text and returns a literal is written
+/// as a `LOFT_NOINLINE LOFT_COLD` helper, and the function keeps no work text of its own.
+#[test]
+fn an_early_exit_that_builds_a_text_is_a_cold_helper() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("cold_exit");
+    let file = dir.join("cold.loft");
+    fa::write(
+        &file,
+        "struct S { pos: integer, fault: text }\n\
+         fn has(s: S, n: integer) -> boolean {\n\
+           if s.pos < 0 || s.pos + n > 10 {\n\
+             if s.fault == \"\" { s.fault = \"position {s.pos} past 10\"; }\n\
+             return false;\n\
+           }\n\
+           true\n\
+         }\n\
+         fn main() { s = S { pos: 4, fault: \"\" }; a = has(s, 2); s.pos = 9;\n\
+           println(\"{a} {has(s, 3)} {s.fault}\"); }\n",
+    )
+    .expect("write program");
+    let c = dir.join("cold.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let mut at = None;
+    let mut pos = 0;
+    for line in text.split_inclusive('\n') {
+        if line.contains(" n_has__fr(") && line.trim_end().ends_with('{') {
+            at = Some(pos);
+            break;
+        }
+        pos += line.len();
+    }
+    let at = at.expect("n_has has no body");
+    let end = text[at..].find("\n}\n").map_or(text.len(), |e| at + e);
+    let body = &text[at..end];
+    assert!(
+        body.contains("n_has__cold0(") && !body.contains("loft_wpark_take"),
+        "the arm is a helper and the function holds no work text:\n{body}"
+    );
+    assert!(
+        text.contains("static LOFT_NOINLINE LOFT_COLD void n_has__cold0("),
+        "the helper is cold and never inlined"
+    );
+    let exe = dir.join("cold");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true false position 9 past 10\n"
     );
 }

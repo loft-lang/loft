@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Transient`: in a function with transient sites, a text local bound from a call that
+// answers the caller's work buffer may be read from that buffer — but only while every later
+// use READS it.  A local written after its bind (`x += "!"`, a `&text` argument) keeps its own
+// text, so the write is what the next read sees.  Values hand-computed.
+//
+// @falsified-at: none — the receipt is the defect itself, reproduced on this build with the
+//   admission's write check removed (2026-11-13): w1 and w2 fail, w3 holds.
+//   CHANNEL: an assertion.
+
+enum Sh { Ci { r: integer }, Sq { w: integer } }
+K = "kc";
+
+fn make(n: integer) -> Sh { if n > 2 { Sq { w: n } } else { Ci { r: n } } }
+fn shape(e: Sh) -> integer { match e { Ci { r } => r, Sq { w } => w * 100 } }
+fn word() -> text { K }
+fn mark(s: &text) { s += "?"; }
+
+// w1: an append after the bind.
+fn test_an_append_after_the_bind() {
+  n = shape(make(1)) + shape(make(5));
+  x = word();
+  x += "!";
+  assert(n == 501 && x == "kc!", "w1 {n} {x}");
+}
+
+// w2: the local handed to a `&text` parameter after the bind.
+fn test_a_reference_argument_after_the_bind() {
+  n = shape(make(3));
+  x = word();
+  mark(x);
+  assert(n == 300 && x == "kc?", "w2 {n} {x}");
+}
+
+// w3: a local only read after its bind is still right (the buffer serves it).
+fn test_a_local_only_read() {
+  n = shape(make(2));
+  x = word();
+  assert(n == 2 && x == "kc" && len(x) == 2, "w3 {n} {x}");
+}

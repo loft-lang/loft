@@ -226,18 +226,25 @@ impl FnWriter<'_> {
                 let es = self.args(&[v, lo, hi], ind)?;
                 let [v, lo, hi] = <[E; 3]>::try_from(es)
                     .map_err(|_| "a kept range without three operands".to_string())?;
-                let keep = format!(
-                    "loft_vec_keep_range({}, {}, {}, {size})",
-                    as_ref(v)?,
-                    as_int(lo)?,
-                    as_int(hi)?
-                );
+                let (lo, hi) = (as_int(lo)?, as_int(hi)?);
                 Ok(E::new(
                     match held {
-                        Some((h, hs)) => {
-                            format!("((void) ({keep}, {h} = loft_ph_of({h}.v, {hs})))")
+                        // The header takes the cut itself (`loft_ph_keep`: a range from 0 is the
+                        // length set at the header and the record, any other the runtime's move
+                        // and the header derived again).  `LOFT_NO_PUSH_HEADER_KEEP=1` moves and
+                        // derives every time.
+                        Some((h, hs))
+                            if !std::env::var("LOFT_NO_PUSH_HEADER_KEEP")
+                                .is_ok_and(|x| x != "0") =>
+                        {
+                            crate::rewrite_census::fired("R-Refresh/keep-header", 1);
+                            format!("loft_ph_keep(&{h}, {lo}, {hi}, {hs})")
                         }
-                        None => keep,
+                        Some((h, hs)) => format!(
+                            "((void) (loft_vec_keep_range({}, {lo}, {hi}, {size}), {h} = loft_ph_of({h}.v, {hs})))",
+                            as_ref(v)?
+                        ),
+                        None => format!("loft_vec_keep_range({}, {lo}, {hi}, {size})", as_ref(v)?),
                     },
                     K::Void,
                 ))

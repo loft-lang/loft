@@ -3,7 +3,10 @@
 //! `@FR-R-RebindBuffer`, PINNED on its cells (`tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft`):
 //! which rebinds hand the displaced store to the call's hidden buffer, that both switch states
 //! answer the same and leave no store behind on `--native`, and that strict stores see no
-//! reference into a released store.
+//! reference into a released store.  The hand-over is part of a rebind's copy-or-adopt arm;
+//! the rustc writer takes that arm only where `bind_lowering::re_bind` copies or joins and binds
+//! these cells' rebinds plainly, so the sites are counted on the arm itself:
+//! `LOFT_NATIVE_OWN_CALL_BIND=1` gives every reassignment the copy-or-adopt.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
@@ -34,7 +37,8 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
         .env("LOFT_NO_CACHE", "1")
         .env_remove("LOFT_NO_REBIND_BUFFER")
         .env_remove("LOFT_NO_SWAP_REBIND")
-        .env_remove("LOFT_NO_REFILL_BUFFER");
+        .env_remove("LOFT_NO_REFILL_BUFFER")
+        .env_remove("LOFT_NATIVE_OWN_CALL_BIND");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -73,7 +77,7 @@ fn the_rebinds_that_hand_the_store_on() {
             &rs.to_string_lossy(),
             &cells(),
         ],
-        &[],
+        &[("LOFT_NATIVE_OWN_CALL_BIND", "1")],
     );
     assert!(ok, "emit failed:\n{err}");
     let src = fa::read_to_string(&rs).expect("emitted source");
@@ -96,6 +100,10 @@ fn the_cells_answer_the_same_and_free_every_store() {
             ("LOFT_NO_REBIND_BUFFER", "1"),
         ][..],
         &[("LOFT_STRICT_STORES", "1"), ("LOFT_POISON", "1")][..],
+        &[
+            ("LOFT_NATIVE_LEAK_CHECK", "1"),
+            ("LOFT_NATIVE_OWN_CALL_BIND", "1"),
+        ][..],
     ] {
         let (out, err, ok) = loft(&["--native", &cells()], env);
         assert!(ok, "{env:?}:\n{out}\n{err}");

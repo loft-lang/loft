@@ -573,6 +573,34 @@ impl Parser {
         self.refresh_bound_method_stubs();
         self.promote_late_text_buffers();
         self.reserve_late_return_buffers();
+        self.widen_late_call_joins();
+    }
+
+    /// `@FR-N-Join` — an inferred local is the join of every value bound to it, optional iff
+    /// one is.  A bind from a callee declared further down had no type on pass 1, so a `τ?`
+    /// answer left the local dense there, and pass 2 read the uses before that bind against
+    /// the dense type: `return r.n` warned only when the callee was declared above (loft#2478).
+    /// Every signature is known here, so the local is widened before pass 2 reads it.
+    pub(super) fn widen_late_call_joins(&mut self) {
+        for (f, v, callee, line) in std::mem::take(&mut self.late_call_joins) {
+            let callee = self.data.def_nr(&callee);
+            if callee == u32::MAX {
+                continue;
+            }
+            let Type::Optional(_) = self.data.def(callee).returned() else {
+                continue;
+            };
+            let vars = &mut self.data.definitions[f as usize].variables;
+            if !vars.exists(v) {
+                continue;
+            }
+            let cur = vars.tp(v).clone();
+            if cur.is_unknown() || matches!(cur, Type::Optional(_)) {
+                continue;
+            }
+            vars.set_type(v, Type::Optional(Box::new(cur)));
+            vars.note_nullable_line(v, line);
+        }
     }
 
     /// @PLN165 D7 — a return type naming a generic struct declared below was a stub on pass

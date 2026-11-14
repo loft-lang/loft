@@ -305,6 +305,17 @@ impl Parser {
         // type must carry the ADOPTED store's dep so `change_var` re-points `a` to
         // what it truly owns (else the orphaned backing leaks on escape — N).
         let mut adopt_dep: Option<u16> = None;
+        // A first operand that READS `v` (`out = out[0..at] + [g] + …`) is no store `v` adopts:
+        // `create_vector` materialises it into a temp and appends that into `v`'s own store.
+        // Typed with the operand's deps, `v` named the slice's scratch store (`__vdb_N`) as its
+        // own, and the exit never freed that store, one per call (the self-hosted elaborator's
+        // `sorted_groups`; main, both backends).  `v` keeps the deps it has.
+        // `LOFT_NO_SELF_SLICE_DEPS=1` takes the operand's deps again.
+        let self_slice_keep: Option<Vec<u16>> = (orig_var != u16::MAX
+            && !matches!(code.unspan(), Value::Var(v) if *v == orig_var)
+            && code.reads_var(orig_var)
+            && !crate::env_once!(std::env::var_os("LOFT_NO_SELF_SLICE_DEPS").is_some()))
+        .then(|| self.vars.tp(orig_var).depend());
         let rec_tp = if let Type::Vector(cont, _) = tp {
             // @P314 — narrow-aware element type (see `append_elem_tp`).
             let cont = (**cont).clone();
@@ -405,6 +416,12 @@ impl Parser {
                     .first()
                     .copied();
             }
+            // A first operand that READS `v` (`out = out[0..at] + [g] + …`) is no store `v`
+            // adopts: `create_vector` materialises it into a temp and appends that into `v`'s
+            // own store.  Typed with the operand's deps, `v` named the slice's scratch store
+            // (`__vdb_N`) as its own, and the exit never freed that store, one per call (the
+            // self-hosted elaborator's `sorted_groups`; main, both backends).  `v` keeps the
+            // deps it has.  `LOFT_NO_SELF_SLICE_DEPS=1` takes the operand's deps again.
             ls.push(v_set(orig_var, code.clone()));
             orig_var
         };
@@ -422,6 +439,9 @@ impl Parser {
             return res;
         }
         *code = Value::Insert(ls);
+        if let Some(keep) = self_slice_keep {
+            return Type::Rewritten(Box::new(tp.with_deps(&crate::data::Deps::frame(keep))));
+        }
         match adopt_dep {
             Some(dep) => Type::Rewritten(Box::new(tp.depending(dep))),
             None => Type::Rewritten(Box::new(tp.clone())),
@@ -4577,13 +4597,23 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // nothing, so an answer the callee MINTED on one of its paths leaked per element
         // (`@FR-F-Ret`, `@FR-O-Complete`; loft#2467's family).  A heap RECORD element only: a
         // scalar or a collection slot has no copy-or-adopt to reach.
+        // A line marker (`Value::Line`, written where the body starts a new source line) is no
+        // operator: `{ [7] f(a) }` is the same one call.  Counted as one, a body written inside a
+        // function spanning several lines kept its block and leaked as above (the self-hosted
+        // elaborator's `with_deps` on a tuple type).  `LOFT_NO_COMP_LINE_PEEL=1` counts it.
+        let peel_lines = !crate::env_once!(std::env::var_os("LOFT_NO_COMP_LINE_PEEL").is_some());
         let body = match body.unspan() {
             Value::Block(bl)
-                if matches!(in_t.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
-                    && bl.operators.len() == 1
-                    && matches!(bl.operators[0].unspan(), Value::Call(_, _)) =>
+                if matches!(in_t.base(), Type::Reference(_, _) | Type::Enum(_, true, _)) =>
             {
-                bl.operators[0].clone()
+                let mut ops = bl
+                    .operators
+                    .iter()
+                    .filter(|op| !(peel_lines && matches!(op.unspan(), Value::Line(_))));
+                match (ops.next(), ops.next()) {
+                    (Some(op), None) if matches!(op.unspan(), Value::Call(_, _)) => op.clone(),
+                    _ => body,
+                }
             }
             _ => body,
         };

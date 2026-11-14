@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `t[i]` is the character holding byte `i` of `t`: a negative `i` counts from the end, a byte
+// inside a character snaps back to that character's first byte, and a byte outside the text
+// reads null (the `??` default).  The C reads an ASCII byte inline and decodes any other
+// character out of line (`loft_text_char` / `loft_text_char_wide`); the cells read every byte
+// position of a text holding a character of each UTF-8 length.  Values hand-computed.
+//
+// `"aé€😀"` is 1 + 2 + 3 + 4 = 10 bytes: 'a' at 0, 'é' at 1-2, '€' at 3-5, '😀' at 6-9.
+//
+// @falsified-at: none — the split has no earlier build to catch, so the receipts are defects
+//   planted (2026-11-13) in the runtime: an ASCII fast path answering the next byte value fails
+//   x1 and x3, and a wide decode answering 0 fails x2 and x3.
+//   CHANNEL: an assertion.
+
+// x1: the ASCII characters of a mixed text, and of an all-ASCII one.
+fn test_ascii_bytes() {
+  t = "aé€😀";
+  assert(t[0] == 'a', "x1 0 {t[0]}");
+  s = "loft";
+  assert(s[0] == 'l' && s[1] == 'o' && s[2] == 'f' && s[3] == 't', "x1 loft");
+}
+
+// x2: every byte of each wider character reads that character.
+fn test_wide_characters_from_any_of_their_bytes() {
+  t = "aé€😀";
+  assert(t[1] == 'é' && t[2] == 'é', "x2 é {t[1]} {t[2]}");
+  assert(t[3] == '€' && t[4] == '€' && t[5] == '€', "x2 €");
+  assert(t[6] == '😀' && t[7] == '😀' && t[8] == '😀' && t[9] == '😀', "x2 😀");
+}
+
+// x3: negative positions count from the end, and a byte outside reads the default.
+fn test_from_the_end_and_outside() {
+  t = "aé€😀";
+  assert(t[-1] == '😀' && t[-4] == '😀' && t[-5] == '€' && t[-10] == 'a', "x3 negative");
+  s = "abc";
+  assert(s[-1] == 'c', "x3 abc {s[-1]}");
+  assert((t[10] ?? 'z') == 'z' && (t[-11] ?? 'z') == 'z', "x3 outside");
+}

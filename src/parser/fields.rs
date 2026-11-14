@@ -103,7 +103,6 @@ impl Parser {
         receivers.iter().any(|r| r == "vector") && !receivers.iter().any(|r| r == "iterator")
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// The loft spelling of a member another language gives a vector or a text, for a name that
     /// resolved to nothing: `v.push(x)` is `v += [x]`, `s.length` is `len(s)`.
     fn foreign_member_cure(t: &Type, field: &str) -> Option<&'static str> {
@@ -119,6 +118,7 @@ impl Parser {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn field(&mut self, code: &mut Value, tp: Type) -> Type {
         // @PLN102 — a field access can't be MORE non-null than its receiver: if the
         // receiver is nullable (`s: S? = null`, `w.inner` where `inner: Inner?`),

@@ -3656,6 +3656,22 @@ pub fn lift_temp_view_off() -> bool {
 /// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
 /// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
 /// before `@FR-O-Buffer` was asked there.
+/// `LOFT_NO_LATE_OWNER_DISARM=1` — a literal buffer whose adopter is a late owner keeps its
+/// guarded exit free (`Scopes::pair_literal_buffers`).
+#[must_use]
+pub fn late_owner_disarm_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_LATE_OWNER_DISARM"))
+}
+
+/// `LOFT_NO_NCC_CHOICE_JOIN=1` — a choice whose arm is a `??` (its temp `__ncc_N` handed over
+/// whole) binds plainly again (`bind_lowering::choice_var_arm`).
+#[must_use]
+pub fn ncc_choice_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_NCC_CHOICE_JOIN"))
+}
+
 /// `LOFT_NO_S1_JOIN=1` — a rebind from a call handed the variable itself as its buffer, whose
 /// answer may be an argument's store, binds plainly again (`bind_lowering::re_arm`'s S1 join).
 #[must_use]
@@ -5071,4 +5087,14 @@ mod p355_large_str {
 #[must_use]
 pub fn width32_all() -> bool {
     std::env::var("LOFT_WIDTH").is_ok_and(|v| v.trim() == "32")
+}
+
+/// `@FR-B-Copy` — a projection rebound into a KEPT local (loft#1522's veto) is copied as into an
+/// owner, and the kept local's rebind releases a copy it displaces (`scopes`'s
+/// `kept_displaced_free`).  **DEFAULT ON**; `LOFT_NO_KEPT_ELEMENT_COPY=1` binds the projection
+/// plainly and drops nothing extra.
+#[must_use]
+pub fn kept_element_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEPT_ELEMENT_COPY"))
 }

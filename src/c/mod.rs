@@ -3262,9 +3262,12 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             }
         }
     });
-    let body = match tried {
-        Some(b) => b,
-        None => body::FnWriter::new(cx, d, shapes, ret)
+    // `@FR-R-Cold`'s loft clause: the ordinary body only — a twin's carries what its call site
+    // set up.
+    let cold = mask == 0 && places == 0 && inputs.is_empty() && scalar_inputs.is_empty() && !kept;
+    let ordinary = |cold: bool, shapes: Vec<CType>, inputs, scalar_inputs| {
+        body::FnWriter::new(cx, d, shapes, ret)
+            .cold_exits(cold)
             .places(places)
             .inputs(inputs)
             .scalar_inputs(scalar_inputs)
@@ -3277,7 +3280,18 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .append_twin(mask & AP_BIT != 0)
             .destination(mask & DS_BIT != 0)
             .version_fast(mask & VF_BIT != 0)?
-            .write()?,
+            .write()
+    };
+    let body = match tried {
+        Some(b) => b,
+        // `@FR-R-Cold`'s loft clause refused its own plan: the function as written.
+        None if cold => match ordinary(true, shapes.clone(), Vec::new(), Vec::new()) {
+            Err(e) if e == body::cold::COLD_ESCAPED => {
+                ordinary(false, shapes, inputs, scalar_inputs)?
+            }
+            r => r?,
+        },
+        None => ordinary(false, shapes, inputs, scalar_inputs)?,
     };
     let (body, statements) = body;
     let body = tabulated(cx, d, ret, &params, body);
@@ -3371,10 +3385,18 @@ fn inv_inputs(
 /// shapes, and an admitted function's return buffer is no parameter: answers the attribute
 /// the signature drops.
 fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Option<usize> {
+    let n = value_local_shapes(cx, d, shapes);
+    crate::rewrite_census::fired("R-ValueLocal", n);
+    vr_key.and_then(|_| crate::opt::attrs::ret_buffer_attr(cx.data.def(d)))
+}
+
+/// `d`'s value locals — its tuple and value-record parameters among them — given their struct
+/// shapes: the shapes every body of `d` is written with, a twin's too.  Answers how many.
+pub(crate) fn value_local_shapes(cx: &Cx, d: u32, shapes: &mut [CType]) -> usize {
     // In variable order: `vr_ctype` numbers a tuple type the first time it is asked.
     let mut locals: Vec<(u16, u16)> = cx.vr_locals(d).into_iter().collect();
     locals.sort_unstable();
-    crate::rewrite_census::fired("R-ValueLocal", locals.len());
+    let n = locals.len();
     for (v, key) in locals {
         if let Some(c) = cx.vr_ctype(key)
             && (v as usize) < shapes.len()
@@ -3382,7 +3404,7 @@ fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Opti
             shapes[v as usize] = c;
         }
     }
-    vr_key.and_then(|_| crate::opt::attrs::ret_buffer_attr(cx.data.def(d)))
+    n
 }
 
 /// A `#c` binding (`c_signature`, `c_call`): a wrapper declaring the callee by the author's own

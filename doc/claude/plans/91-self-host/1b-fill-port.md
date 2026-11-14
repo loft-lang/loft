@@ -116,6 +116,7 @@ with the top just above it.  The differences:
 | 6 | **Arithmetic by loft's operators, reports as texts.**  A template writes `v1 + v2`, compiled to the C runtime's routine, where Rust calls `ops::op_add_int`; the kernels compare the values.  What Rust reports through `raise_recoverable` (a division by zero, a dropped write, an overflow) is recorded as a text in `State.reported`, and an overflow's report comes from the C runtime, not from the template. | the corpus survey, once `main` runs; Rust's error kinds when diagnostics are compared |
 | 7 | **One dispatch.**  Rust has three tables (checked, direct, register); the runner has one loop, `run`, whose arms are the register table and whose fallback, `execute`, is the checked one. | see Speed |
 | 8 | **No instruments.**  Rust's stack verifier, poison of a reserved frame, and text-position tracking have no counterpart. | only if the runner is to host those sweeps |
+| 9 | **The standard library is interpreted.**  Rust calls a standard-library function it compiled into its binary through a bridge (`loft_shared_<def>`, `src/compiled_stdlib.rs`), and interprets the loft body only where the program's type table does not start as the compiled one does.  The runner always runs the loft body as bytecode (`State::static_call`), which is Rust under `LOFT_NO_COMPILED_STDLIB=1`: the same answers, slower. | compiled standard-library bodies linked into the runner, if its speed on library-heavy programs matters |
 
 ## Speed
 

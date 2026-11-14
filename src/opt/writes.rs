@@ -308,6 +308,8 @@ pub fn push_operands<'a>(
 
 /// A push the emitter can route through a hoisted [`crate::vector::PushHeader`].
 pub struct FusedPush<'a> {
+    /// The push op's name, one of [`FUSABLE_PUSHES`].
+    pub op: &'static str,
     /// The pushed path's key.
     pub path: PathKey,
     /// The vector operand, emitted for the growth step's runtime append.
@@ -355,10 +357,11 @@ pub fn keep_range_path(data: &Data, op: &str, args: &[Value]) -> Option<PathKey>
 /// emitter.  Shape only; the caller confirms the loop hoisted a push header for the path.
 #[must_use]
 pub fn fused_push<'a>(data: &Data, op: &str, args: &'a [Value]) -> Option<FusedPush<'a>> {
-    let (_, rust_type, size) = FUSABLE_PUSHES.iter().find(|(n, _, _)| *n == op)?;
+    let (name, rust_type, size) = FUSABLE_PUSHES.iter().find(|(n, _, _)| *n == op)?;
     let (vector, bias, val) = push_operands(op, args)?;
     let path = vector_path(data, vector)?;
     Some(FusedPush {
+        op: name,
         path,
         vector,
         val,

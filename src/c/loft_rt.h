@@ -1136,20 +1136,30 @@ static int64_t loft_char_len(uint32_t c) {
     return c == 0 ? 0 : c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
 }
 
-/* ops::text_character: the character holding byte `from` (negative counts from the end); an
- * index inside a character snaps back to its first byte; out of range is the null character. */
-static uint32_t loft_text_char(loft_str t, int64_t from) {
+/* The decode of a character that is not ASCII, the byte at `i` inside the text: snapped back to
+ * its first byte.  Out of line: `loft_text_char` answers an ASCII byte itself. */
+static uint32_t loft_text_char_wide(loft_str t, int64_t i) {
     int64_t len = (int64_t) t.len;
-    int64_t i = from < 0 ? from + len : from;
-    if (from == LOFT_NULL || i < 0 || i >= len) return 0;
     const unsigned char *b = (const unsigned char *) t.p;
-    if (b[i] < 0x80) return b[i];
     while (i > 0 && (b[i] & 0xC0) == 0x80) i--;
     uint32_t c = b[i];
     int n = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1;
     c &= n == 3 ? 0x07 : n == 2 ? 0x0F : 0x1F;
     for (int k = 1; k <= n && i + k < len; k++) c = (c << 6) | (b[i + k] & 0x3F);
     return c;
+}
+
+/* ops::text_character: the character holding byte `from` (negative counts from the end); an
+ * index inside a character snaps back to its first byte; out of range is the null character.
+ * Inline, so an ASCII byte — every character of an ASCII alphabet a loop indexes — is one load
+ * and one test; gcc left the whole decode out of line and called it per character. */
+LOFT_HOT_INLINE uint32_t loft_text_char(loft_str t, int64_t from) {
+    int64_t len = (int64_t) t.len;
+    int64_t i = from < 0 ? from + len : from;
+    if (from == LOFT_NULL || i < 0 || i >= len) return 0;
+    const unsigned char *b = (const unsigned char *) t.p;
+    if (LOFT_LIKELY(b[i] < 0x80)) return b[i];
+    return loft_text_char_wide(t, i);
 }
 
 /* OpAppendCharacter: the null character appends nothing.  An ASCII character into a buffer with
@@ -1435,7 +1445,10 @@ static uint8_t loft_get_store_lock(loft_ref r) {
  * at exit is named by its site, not only its type (`loft_leak_report`).  It keeps the frames
  * (`LOFT_CALL_CHAIN`); the driver builds with it when `LOFT_LEAK_SITES` is set. */
 #ifdef LOFT_LEAK_SITES
-typedef struct { const char *fn, *file; uint32_t line; } loft_leak_site;
+/* The caller's function and line beside the maker's: a store a callee makes into a buffer its
+ * caller handed it (a hidden return buffer) is the caller's to release, so the caller is where
+ * a leak of it is decided. */
+typedef struct { const char *fn, *file; uint32_t line; const char *cfn; uint32_t cline; } loft_leak_site;
 static LOFT_TLS loft_leak_site *loft_sites = 0;
 static LOFT_TLS uint32_t loft_nsites = 0;
 static void loft_note_site(uint32_t nr) {
@@ -1453,10 +1466,20 @@ static void loft_note_site(uint32_t nr) {
         w->fn = f->fn;
         w->file = f->file;
         w->line = f->site ? f->site : f->decl;
+        if (loft_nframes > 1) {
+            const loft_frame *c = &loft_frames[loft_nframes - 2];
+            w->cfn = c->fn;
+            w->cline = c->site ? c->site : c->decl;
+        } else {
+            w->cfn = 0;
+            w->cline = 0;
+        }
     } else {
         w->fn = 0;
         w->file = 0;
         w->line = 0;
+        w->cfn = 0;
+        w->cline = 0;
     }
 }
 #endif
@@ -4050,6 +4073,91 @@ LOFT_PH_PUT(1, uint8_t)
 LOFT_PH_PUTB(8, uint64_t)
 LOFT_PH_PUTB(4, uint32_t)
 LOFT_PH_PUTB(1, uint8_t)
+
+/* `@FR-R-PushFill`'s run clause through its header: the writer tests the header's room for the
+ * run's `k` elements inline, and a header without it takes this — the reservation
+ * (`loft_vec_reserve_run`, capacity only) and the header derived again.  One with room — a
+ * vector cleared and refilled, a reused record buffer's field — takes no call. */
+LOFT_HOT_INLINE loft_ph loft_ph_reserved(loft_ph h, int64_t k, uint32_t size) {
+    loft_vec_reserve_run(h.v, k, size);
+    return loft_ph_of(h.v, size);
+}
+
+/* A loop's push header read as a held vector header: its record and length are current — every
+ * growth and cut of the path inside the loop goes through it (`loft_ph_keep` below) — and the
+ * element base is derived from the record, as `loft_vh_fresh` derives it, since a growth may
+ * have moved the store's memory.  The `loft_vh` accessors then read an element exactly as they
+ * read a held one: a negative index from the end, a missing element null. */
+LOFT_HOT_INLINE loft_vh loft_ph_vh(const loft_ph *h) {
+    loft_vh r;
+    r.store_nr = h->v.store_nr;
+    r.rec = h->rec;
+    r.len = h->len;
+    r.base = h->rec != 0 ? loft_elem_base(&loft_stores[h->v.store_nr], h->rec) : 0;
+    return r;
+}
+
+/* The plain element reads through a push header — `loft_vh_get_int` and `loft_vh_get_float` on
+ * `loft_ph_vh`, without building the view: a negative index from the end, null (NaN for a float)
+ * outside the vector. */
+LOFT_HOT_INLINE int64_t loft_ph_get_int(const loft_ph *h, uint32_t size, int64_t from, uint32_t fld) {
+    int64_t f = from < 0 ? from + (int64_t) h->len : from;
+    if (LOFT_UNLIKELY((uint64_t) f >= h->len)) return LOFT_NULL;
+    int64_t v;
+    memcpy(&v, loft_at(&loft_stores[h->v.store_nr], h->rec, 8 + (uint32_t) f * size + fld), 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_ph_get_float(const loft_ph *h, uint32_t size, int64_t from, uint32_t fld) {
+    int64_t f = from < 0 ? from + (int64_t) h->len : from;
+    if (LOFT_UNLIKELY((uint64_t) f >= h->len)) return (double) NAN;
+    double v;
+    memcpy(&v, loft_at(&loft_stores[h->v.store_nr], h->rec, 8 + (uint32_t) f * size + fld), 8);
+    return v;
+}
+
+/* `@FR-R-Refresh`'s keep-range clause through a push header: `v = v[lo..hi]` with `lo` 0 — the
+ * truncate — cuts the length at the header and the record, clamped as `loft_vec_keep_range`
+ * clamps it; any other range moves its span there and derives the header again. */
+static void loft_vec_keep_range(loft_ref v, int64_t lo, int64_t hi, uint32_t size);
+LOFT_HOT_INLINE void loft_ph_keep(loft_ph *h, int64_t lo, int64_t hi, uint32_t size) {
+#ifndef LOFT_FOREIGN
+    if (lo == 0 && h->rec != 0) {
+        if (hi < 0) hi = 0;
+        if ((uint64_t) hi < h->len) {
+            h->len = (uint32_t) hi;
+            memcpy(loft_at(&loft_stores[h->v.store_nr], h->rec, 4), &h->len, 4);
+        }
+        return;
+    }
+#endif
+    loft_vec_keep_range(h->v, lo, hi, size);
+    *h = loft_ph_of(h->v, size);
+}
+
+/* `@FR-R-PushFill`'s held-run clause: a run of `k` pushes through a header a loop already holds.
+ * When all `k` elements fit (`len + k <= cap`, so the record is present and its store unlocked)
+ * they are stored past the length at one record address and the length is bumped once, in the
+ * header and the record; else the run pushes one call at a time, each taking its own growth
+ * step, exactly as without the clause.  `_runb` is the sole-growth form: the address the header
+ * holds. */
+#define LOFT_PH_RUN(W, T, B, AT)                                                            \
+    LOFT_HOT_INLINE void loft_ph_put##B##W##_run(loft_ph *h, uint32_t k, const T *bits) {   \
+        if (LOFT_LIKELY(h->cap >= k && h->len <= h->cap - k)) {                             \
+            uint8_t *r = (AT);                                                              \
+            uint8_t *s = r + 8 + (size_t) h->len * W;                                       \
+            for (uint32_t i = 0; i < k; i++) memcpy(s + (size_t) i * W, &bits[i], W);       \
+            h->len += k;                                                                    \
+            memcpy(r + 4, &h->len, 4);                                                      \
+            return;                                                                         \
+        }                                                                                   \
+        for (uint32_t i = 0; i < k; i++) loft_ph_put##B##W(h, bits[i]);                     \
+    }
+LOFT_PH_RUN(8, uint64_t, , loft_at(&loft_stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(4, uint32_t, , loft_at(&loft_stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(1, uint8_t, , loft_at(&loft_stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(8, uint64_t, b, h->base)
+LOFT_PH_RUN(4, uint32_t, b, h->base)
+LOFT_PH_RUN(1, uint8_t, b, h->base)
 
 /* `LOFT_VERIFY`'s proof for a push header: a fresh derivation answers its record, length and room. */
 static int loft_ph_same(loft_ph h, uint32_t size) {
@@ -7640,7 +7748,7 @@ LOFT_HOT_INLINE void loft_vh_set_u32_at_lt(loft_vh h, uint32_t size, int64_t fro
 }
 
 /* `t[i]` (`State::text_char_or_raise`): a byte index naming no byte of the text. */
-static uint32_t loft_text_char_at(loft_str t, int64_t from, const char *file, uint32_t line) {
+LOFT_HOT_INLINE uint32_t loft_text_char_at(loft_str t, int64_t from, const char *file, uint32_t line) {
     int64_t len = (int64_t) t.len, i = from < 0 ? from + len : from;
     if (LOFT_UNLIKELY(i < 0 || i >= len)) loft_index_miss(from, len, file, line);
     return loft_text_char(t, from);

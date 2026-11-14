@@ -582,6 +582,7 @@ impl Scopes<'_> {
                 if viewer_now {
                     self.skipped_viewers.insert(v);
                 }
+                // @FR-O-Proxy asks free — the sweep's free; the override is read below.
                 let owns = (function.proxy_says_owned(v)
                     || self.late_owners.contains(&v)
                     || self.lift_join_witness.contains_key(&v)
@@ -1436,8 +1437,14 @@ impl Scopes<'_> {
             // releases at exit what the caller did not hand it.
             // @FR-O-Proxy asks free — whether the buffer's free is the store's release;
             // `proxy_says_owned` carries @FR-O-Override's veto.
+            // …or one the sweep frees as a LATE owner (a later bind made it one, and the rescan
+            // reads it so from the start): the same owner the sweep released above, so an early
+            // `return` disarms the buffer as the tail does (the self-hosted elaborator's
+            // `tuple_match`: `result = TyVoid; … return …; … result = b.tp`).
+            // `LOFT_NO_LATE_OWNER_DISARM=1` reads the proxy alone.
             let owner = function.proxy_says_owned(w)
-                || (function.is_argument(w) && rebound_params.contains(&w));
+                || (function.is_argument(w) && rebound_params.contains(&w))
+                || (self.late_owners.contains(&w) && !crate::keys::late_owner_disarm_off());
             if multi && owner && !rebound_adopter_disarm_off() {
                 self.adopter_released.insert(b);
                 continue;

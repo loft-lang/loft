@@ -66,109 +66,115 @@ impl Drop for Guard {
     }
 }
 
-// @speed 6.0
-#[test]
-fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
-    if !have("node") || !wasm32_installed() {
-        eprintln!("SKIP: node or wasm32-unknown-unknown target missing");
-        return;
-    }
-    let root = repo_root();
-    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
-    if !fa::exists(&loft) {
-        eprintln!("SKIP: target/release/loft not built");
-        return;
-    }
-    let e2e = root.join("tools/wasm_debug_e2e.mjs");
-    if !fa::exists(&e2e) {
-        eprintln!("SKIP: tools/wasm_debug_e2e.mjs missing");
-        return;
-    }
-    let tmp = std::env::temp_dir();
-    let port: u16 = common::bind_port(19322);
+// The relay drives the Rust writer's `--html --debug` page: it runs in the nightly, never per
+// change (TESTING.md § The compiled backend a test runs on; scripts/ci_test_filter.py).
+mod rust_writer {
+    use super::*;
 
-    // 1. Build the browser CLIENT: `--html --debug` with a breakpointable fn.
-    let client_src = tmp.join("p98_relay_client.loft");
-    fa::write(
+    // @speed 6.0
+    #[test]
+    fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
+        if !have("node") || !wasm32_installed() {
+            eprintln!("SKIP: node or wasm32-unknown-unknown target missing");
+            return;
+        }
+        let root = repo_root();
+        let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+        if !fa::exists(&loft) {
+            eprintln!("SKIP: target/release/loft not built");
+            return;
+        }
+        let e2e = root.join("tools/wasm_debug_e2e.mjs");
+        if !fa::exists(&e2e) {
+            eprintln!("SKIP: tools/wasm_debug_e2e.mjs missing");
+            return;
+        }
+        let tmp = std::env::temp_dir();
+        let port: u16 = common::bind_port(19322);
+
+        // 1. Build the browser CLIENT: `--html --debug` with a breakpointable fn.
+        let client_src = tmp.join("p98_relay_client.loft");
+        fa::write(
         &client_src,
         "fn compute(n: integer) -> integer {\n  m = n + 2;\n  m\n}\nfn main() { compute(40); }\n",
     )
     .unwrap();
-    let client_html = tmp.join("p98_relay_client.html");
-    let built = loft::platform::process::harness_command(&loft)
-        .args([
-            "--native-rust",
-            "--html",
-            client_html.to_str().unwrap(),
-            "--path",
-        ])
-        .arg(format!("{}/", root.display()))
-        .args(["--debug=alice"])
-        .arg(client_src.to_str().unwrap())
-        .status()
-        .expect("run loft --html --debug");
-    assert!(built.success(), "client --html --debug build failed");
+        let client_html = tmp.join("p98_relay_client.html");
+        let built = loft::platform::process::harness_command(&loft)
+            .args([
+                "--native-rust",
+                "--html",
+                client_html.to_str().unwrap(),
+                "--path",
+            ])
+            .arg(format!("{}/", root.display()))
+            .args(["--debug=alice"])
+            .arg(client_src.to_str().unwrap())
+            .status()
+            .expect("run loft --html --debug");
+        assert!(built.success(), "client --html --debug build failed");
 
-    // 2. Spawn the SERVER: an engine_host kernel with the debug relay on.
-    let server_src = tmp.join("p98_relay_server.loft");
-    fa::write(
-        &server_src,
-        format!(
-            "use engine_host;\nstruct W {{ ticks: integer not null }}\nfn main() {{\n  \
+        // 2. Spawn the SERVER: an engine_host kernel with the debug relay on.
+        let server_src = tmp.join("p98_relay_server.loft");
+        fa::write(
+            &server_src,
+            format!(
+                "use engine_host;\nstruct W {{ ticks: integer not null }}\nfn main() {{\n  \
              w = W {{ ticks: 0 }};\n  engine_host::run({port}, 100000,\n    \
              fn(ev: engine_host::Event) {{ if ev.kind != 1 {{ return; }} }},\n    \
              fn() {{ w.ticks = w.ticks + 1; }});\n}}\n"
-        ),
-    )
-    .unwrap();
-    let server = loft::platform::process::harness_command(&loft)
-        .env("LOFT_OFFLINE", "1")
-        .env("LOFT_DEBUG_CONTROL", "1")
-        .arg("--no-warnings")
-        .arg("--lib")
-        .arg(root.join("lib"))
-        .arg(&server_src)
-        .current_dir(&root)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0) // own group, so the Guard's killpg reaps the --native grandchild
-        .spawn()
-        .expect("spawn server");
-    let _guard = Guard(Some(server));
-    // Wait for the server to accept.
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
-        assert!(Instant::now() < deadline, "server never started on {port}");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+            ),
+        )
+        .unwrap();
+        let server = loft::platform::process::harness_command(&loft)
+            .env("LOFT_OFFLINE", "1")
+            .env("LOFT_DEBUG_CONTROL", "1")
+            .arg("--no-warnings")
+            .arg("--lib")
+            .arg(root.join("lib"))
+            .arg(&server_src)
+            .current_dir(&root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0) // own group, so the Guard's killpg reaps the --native grandchild
+            .spawn()
+            .expect("spawn server");
+        let _guard = Guard(Some(server));
+        // Wait for the server to accept.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "server never started on {port}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
 
-    // 3. Run the AGENT+CLIENT node driver against the relay.
-    let out = loft::platform::process::harness_command("node")
-        .arg(&e2e)
-        .arg(&client_html)
-        .arg(port.to_string())
-        .output()
-        .expect("run node e2e driver");
-    let all = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-
-    // The agent must have received the CLIENT's replies, relayed by the server.
-    for needle in [
-        "D:ok bp compute", // breakpoint set on the browser client
-        "D:hit compute",   // the client PAUSED at it
-        "n=40",            // with the live frame local
-        "D:eval n=40",     // read a live frame local over the paused client
-        "D:eval n + 2=42", // FULL-EXPRESSION eval over the paused client
-        "D:terminated",    // resume ran to completion
-    ] {
-        assert!(
-            all.contains(needle),
-            "agent did not receive {needle:?} over the relay.\n{all}"
+        // 3. Run the AGENT+CLIENT node driver against the relay.
+        let out = loft::platform::process::harness_command("node")
+            .arg(&e2e)
+            .arg(&client_html)
+            .arg(port.to_string())
+            .output()
+            .expect("run node e2e driver");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
         );
+
+        // The agent must have received the CLIENT's replies, relayed by the server.
+        for needle in [
+            "D:ok bp compute", // breakpoint set on the browser client
+            "D:hit compute",   // the client PAUSED at it
+            "n=40",            // with the live frame local
+            "D:eval n=40",     // read a live frame local over the paused client
+            "D:eval n + 2=42", // FULL-EXPRESSION eval over the paused client
+            "D:terminated",    // resume ran to completion
+        ] {
+            assert!(
+                all.contains(needle),
+                "agent did not receive {needle:?} over the relay.\n{all}"
+            );
+        }
+        let _ = fa::remove_file(&client_src);
+        let _ = fa::remove_file(&server_src);
     }
-    let _ = fa::remove_file(&client_src);
-    let _ = fa::remove_file(&server_src);
 }

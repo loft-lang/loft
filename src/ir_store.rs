@@ -900,7 +900,7 @@ pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result
     )
 }
 
-/// The RUN image (@PLN91, doc/claude/plans/91-self-host/handoff-2026-11-13-run-image.md): the
+/// The RUN image (the run-image handoff under doc/claude/plans/91-self-host/): the
 /// bytecode the Rust writer produced (`compile::byte_code`), stored as it was written so the
 /// loft runner executes it in place — no IR, no lowering on the run path.
 ///

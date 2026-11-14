@@ -2081,6 +2081,41 @@ impl Scopes<'_> {
                     })
                     .collect(),
             ));
+        } else if transition_free.is_none()
+            && was_in_scope
+            && !lifts.is_empty()
+            && matches!(
+                function.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            // Only an OWNER: the displaced free runs for a local that owns its store, and a view
+            // (`code = got!`, deps `[got]`) is never freed by it, so the lift keeps its store.
+            // `LOFT_LIFT_LET_GO_VIEWS=1` lets a view's lift go too (the elaborator's `member`
+            // then leaked one `Node` per field read).
+            // @FR-O-Proxy asks free — whether the displaced free releases the lift's store; a
+            // never-free local (`@FR-O-Override`) releases nothing, so its lift keeps the store.
+            && !function.is_skip_free(v)
+            && (function.tp(v).depend().is_empty()
+                || crate::env_once!(std::env::var_os("LOFT_LIFT_LET_GO_VIEWS").is_some()))
+            && !crate::env_once!(std::env::var_os("LOFT_NO_LIFT_LET_GO").is_some())
+        {
+            // The value reads `v` (`x = ex(x.code, x.tp)`), so `v` cannot let go before it is
+            // computed, and the code generator's displaced free releases what the owner `v`
+            // held after the bind.  Where that is a lift's store, the LIFT lets go of it instead, so the
+            // store is released once (loft#2477).  `LOFT_NO_LIFT_LET_GO=1` keeps both frees.
+            let distinct = data.def_nr("OpDistinctStore");
+            transition_free = Some(Value::Insert(
+                lifts
+                    .iter()
+                    .map(|&l| {
+                        v_if(
+                            Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
+                            Value::Null,
+                            v_set(l, Value::Null),
+                        )
+                    })
+                    .collect(),
+            ));
         } else if !lifts.is_empty()
             && let Some(free) = transition_free.take()
         {
@@ -2419,6 +2454,25 @@ impl Scopes<'_> {
                     witness_ops.push(witness_points_at(w, v, data));
                 }
                 WitnessSet::Other => witness_ops.push(guarded_release),
+                // The witness takes the store only where no temp of the choice holds it: the
+                // call made it into a null buffer, and the local is its one name (the
+                // self-hosted elaborator's `member`, `x = match … { … expression(…) … }`).
+                WitnessSet::MintUnless(temps) => {
+                    witness_ops.push(guarded_release);
+                    let distinct = data.def_nr("OpDistinctStore");
+                    let cond = temps
+                        .iter()
+                        .map(|&t| Value::Call(distinct, vec![Value::Var(v), Value::Var(t)]))
+                        .reduce(|a, b| v_if(a, b, Value::Boolean(false)))
+                        .unwrap_or(Value::Boolean(true));
+                    let not_null =
+                        Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+                    witness_ops.push(v_if(
+                        v_if(not_null, cond, Value::Boolean(false)),
+                        witness_points_at(w, v, data),
+                        Value::Null,
+                    ));
+                }
             }
         }
         // `@FR-B-View` — a local bound ONCE to a projection of a lifted call result
@@ -2438,6 +2492,24 @@ impl Scopes<'_> {
         {
             function.depend(v, root);
         }
+        // A KEPT local (loft#1522's veto: it adopted a construction buffer's store, which the
+        // buffer releases) frees nothing at a rebind.  Since a projection rebound into it is
+        // copied (`bind_lowering`'s kept copy), it can also hold a store of its own, and a
+        // rebind dropped that copy (`cond = mc.cond` then `cond = NdIf { a: cond!, … }`).  The
+        // store it held is released after the new value lands, unless it is the buffer's or
+        // the one the local holds now.  `LOFT_NO_KEPT_DISPLACED_FREE=1` drops it as before.
+        let displaced = match (
+            displaced,
+            self.kept_displaced_free(v, was_in_scope, &set_value, function, data),
+        ) {
+            (d, None) => d,
+            (None, Some((pre, post))) => Some((pre, post)),
+            (Some((mut pre, mut post)), Some((p2, q2))) => {
+                pre.extend(p2);
+                post.extend(q2);
+                Some((pre, post))
+            }
+        };
         if prefix.is_empty()
             && ls.is_empty()
             && witness_update.is_none()
@@ -2684,5 +2756,69 @@ fn ends_in_branch(value: &Value) -> bool {
         Value::If(..) => true,
         Value::Block(b) => b.operators.last().is_some_and(ends_in_branch),
         _ => false,
+    }
+}
+
+impl Scopes<'_> {
+    /// The pre/post pair releasing what a KEPT local held before a rebind (see the call site):
+    /// a snapshot ahead of the bind, and after it a free of the snapshot unless it names the
+    /// construction buffer's store or the store the local holds now.  `None` when `v` is not
+    /// kept or has no paired buffer.
+    fn kept_displaced_free(
+        &mut self,
+        v: u16,
+        was_in_scope: bool,
+        value: &Value,
+        function: &mut Function,
+        data: &Data,
+    ) -> Option<(Vec<Value>, Vec<Value>)> {
+        if !was_in_scope
+            || matches!(value, Value::Null)
+            || !function.rebind_keeps_displaced(v)
+            // A kept local with deps is a VIEW on some path (`k = h.u; k = S { … }`): what it
+            // displaces is another's store, never its own copy.  A never-free local
+            // (`@FR-O-Override`) releases nothing either.
+            // @FR-O-Proxy asks free — a free follows, so the override is consulted beside it.
+            || !function.tp(v).depend().is_empty()
+            || function.is_skip_free(v)
+            || !crate::keys::kept_element_copy()
+            || crate::env_once!(std::env::var_os("LOFT_NO_KEPT_DISPLACED_FREE").is_some())
+        {
+            return None;
+        }
+        // The buffer: the literal this bind adopts (`{#Object … __ref_p2_N }`), else the one the
+        // scan paired the local with.
+        let from_literal = match value.unspan() {
+            Value::Block(bl) if bl.name == "Object" => match bl.operators.last().map(Value::unspan)
+            {
+                Some(Value::Var(w)) => Some(*w),
+                _ => None,
+            },
+            _ => None,
+        };
+        let av = from_literal.or_else(|| {
+            self.literal_buffer
+                .iter()
+                .find_map(|(&b, &w)| (w == v).then_some(b))
+        })?;
+        let tp = function.tp(v).clone();
+        let snap = self.new_lift_var(function, &tp.without_deps());
+        function.set_skip_free(snap);
+        let distinct = data.def_nr("OpDistinctStore");
+        let pre = vec![v_set(
+            snap,
+            Value::Call(data.def_nr("OpRefAlias"), vec![Value::Var(v)]),
+        )];
+        // The identity-guarded free, not a plain `OpFreeRef`: the bytecode writer drops a plain
+        // free of a `skip_free` temporary.
+        let free = v_if(
+            Value::Call(distinct, vec![Value::Var(snap), Value::Var(av)]),
+            Value::Call(
+                data.def_nr("OpFreeRefIfDistinct"),
+                vec![Value::Var(snap), Value::Var(v)],
+            ),
+            Value::Null,
+        );
+        Some((pre, vec![free]))
     }
 }

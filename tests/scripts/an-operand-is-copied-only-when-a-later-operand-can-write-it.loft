@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-E-Left` on the C backend, per variable: an operand is read before a later operand
+// writes, and a variable operand is held in a temporary only when a later operand may write
+// THAT variable — one that names it, assigns it or calls through a function value.  A later
+// operand that never names it (a `??` block binding its own temporaries) leaves it read in
+// place; for a text that saves a copy of the whole text per read, as `out += chars[i ?? 0]` in a
+// base64 encoder did.  A parameter, and a borrowed text other than a literal's view, keep the
+// copy.  Values hand-computed; `LOFT_NO_OPERAND_VAR_WRITE=1` is the same-build oracle.
+//
+// e1 reaches the read in place; e2 (a later operand that assigns the variable) and e4 (a
+// parameter) keep the temporary.  A later operand that hands the variable to a call by
+// reference keeps it too: `a-text-operand-is-read-before-a-later-operand-writes-it.loft`.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipt is a defect
+//   planted (2026-11-13) in the writer: `may_write_var` answering false for every variable
+//   fails e2 (it reads 'y' from the text the index block assigned).
+//   CHANNEL: an assertion.
+
+// e1: the alphabet read by a computed index whose `??` blocks bind temporaries: "fooba" in
+// base64 is "Zm9vYmE=".
+fn enc(bytes: const vector<u8>) -> text {
+  chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  out = "";
+  n = len(bytes);
+  i = 0;
+  while i < n {
+    b0 = bytes[i] ?? 0;
+    b1 = if i + 1 < n { bytes[i + 1] ?? 0 } else { 0 };
+    b2 = if i + 2 < n { bytes[i + 2] ?? 0 } else { 0 };
+    v = b0 * 65536 + b1 * 256 + b2;
+    out += chars[(v / 262144 ?? 0) % 64 ?? 0];
+    out += chars[(v / 4096 ?? 0) % 64 ?? 0];
+    out += if i + 1 < n { chars[(v / 64 ?? 0) % 64 ?? 0] } else { '=' };
+    out += if i + 2 < n { chars[v % 64 ?? 0] } else { '=' };
+    i += 3;
+  }
+  out
+}
+
+fn test_a_literal_read_beside_discharge_blocks() {
+  b: vector<u8> = [102, 111, 111, 98, 97];
+  assert(enc(b) == "Zm9vYmE=", "e1 {enc(b)}");
+}
+
+// e2: the index block assigns the text after it is read: t[1] of the OLD "abc" is 'b', and t
+// holds "xyz" afterwards.
+fn test_a_later_operand_assigns_it() {
+  t = "abc";
+  c = t[{ t = "xyz"; 1 }];
+  assert(c == 'b', "e2 {c}");
+  assert(t == "xyz", "e2 t {t}");
+}
+
+// e4: a parameter read beside a discharge block: "hello"[(7 / 2 ?? 0) % 5 ?? 0] = "hello"[3] = 'l'.
+fn pick(s: text, k: integer) -> character {
+  s[(k / 2 ?? 0) % 5 ?? 0]
+}
+
+fn test_a_parameter() {
+  assert(pick("hello", 7) == 'l', "e4 {pick(\"hello\", 7)}");
+}

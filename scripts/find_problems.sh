@@ -223,12 +223,19 @@ test_runner_cmd() {
     # run says what it spent where (`=== Slowest test binaries ===` in the summary and
     # $TEST_TIMES_FILE) — a run that hits the cap names its slow tests itself, with no second
     # run to find them (CI_BUDGET.md § the 20-minute cap).
+    # Two passes in ONE run, as the gate's (`make ci`): everything but the starvation victims —
+    # the networked tests a rustc storm starves — with the storm makers six wide
+    # (.config/nextest.toml's default profile), then the victims alone under `ci-victims`, once
+    # every storm has ended.  The set is the profile's (`ci_test_filter.py victims`).
     local base="cargo nextest run --no-fail-fast --status-level pass"
-    if [[ -n "${TEST_SELECT:-}" ]]; then
-      echo "$base -E '$TEST_SELECT'"
-    else
-      echo "$base"
+    local victims
+    victims=$(python3 "$REPO_ROOT/scripts/ci_test_filter.py" victims 2>/dev/null)
+    if [[ -z "$victims" ]]; then
+      if [[ -n "${TEST_SELECT:-}" ]]; then echo "$base -E '$TEST_SELECT'"; else echo "$base"; fi
+      return
     fi
+    local sel="${TEST_SELECT:-all()}"
+    echo "$base -E '($sel) & not ($victims)'; $base --no-tests=pass --profile ci-victims -E '($sel) & ($victims)'"
   else
     # No filterset support in plain `cargo test` — it runs everything, which is
     # the safe direction to fall back in.
@@ -280,14 +287,21 @@ rebuild_one() {
 # @PLN159 phase I — what the current selection needs beyond the dev build.
 # Sets NEED_RELEASE (a selected binary spawns `target/release/loft`) and NEED_WASM
 # (a selected binary is a wasm/html one, or drives `--html` / `--native-wasm`).
-# The curated and full runs select those binaries, so they need everything; only a
-# `--subject` / `--changed` selection can skip, and it skips by READING the selected
-# sources, not by guessing from the subject's name.
+# The full run needs everything.  The curated run needs the release rlib and NOT the wasm
+# rlibs: it leaves out the heavy page builders and every `mod rust_writer` test, so its
+# `--html` / `--native-wasm` tests are the C backend's (clang, no loft rlib), and a Rust-writer
+# page test belongs in `mod rust_writer` (TESTING.md § The compiled backend a test runs on).
+# A `--subject` / `--changed` selection skips by READING the selected sources, not by
+# guessing from the subject's name.
 NEED_RELEASE=1
 NEED_WASM=1
 selection_needs() {
   NEED_RELEASE=1; NEED_WASM=1
-  case "${SELECT_LABEL:-curated}" in subject:*|changed:*) ;; *) return 0 ;; esac
+  case "${SELECT_LABEL:-curated}" in
+    subject:*|changed:*) ;;
+    curated) NEED_WASM=0; return 0 ;;
+    *) return 0 ;;
+  esac
   local b src
   NEED_RELEASE=0; NEED_WASM=0
   for b in $(grep -oE 'binary\([a-z0-9_]+\)' <<<"${TEST_SELECT:-}" | sed -E 's/binary\((.*)\)/\1/' | sort -u); do
@@ -396,8 +410,8 @@ rebuild_native_cdylibs() {
   # (`CARGO_BIN_EXE_loft`), which resolves its rlib beside itself in target/debug;
   # the release rlib serves only the binaries that spawn `target/release/loft`,
   # and the wasm rlibs only the html/wasm suites.  `selection_needs` reads the
-  # selected binaries' sources for exactly those two facts; the curated and full
-  # runs keep everything.
+  # selected binaries' sources for exactly those two facts; the curated run needs
+  # the release rlib only, the full run everything.
   selection_needs
 
   # 3. The wasm32-unknown-unknown rlib used by the html_wasm suite.
@@ -405,7 +419,7 @@ rebuild_native_cdylibs() {
   #    first run lets the --html driver build it so we don't impose a
   #    wasm-target install on developers who never touch the HTML gate.
   if [[ "$NEED_WASM" == 0 ]]; then
-    printf '  %-44s %s\n' "wasm rlibs" "skipped — no wasm/html binary in the selection" >&2
+    printf '  %-44s %s\n' "wasm rlibs" "skipped — the selection has no Rust-writer wasm/html test" >&2
   fi
   if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/loft/html/wasm32-unknown-unknown" ]]; then
     echo "== rebuild wasm32-unknown-unknown rlib (the --html shape) ==" >> "$log"
@@ -523,7 +537,8 @@ test_times() {
       if (st != "SLOW") printf "%s\t%s\t%s\t%s\n", st, t, bin, test
     }' "$log" > "$TEST_TIMES_FILE" 2>/dev/null || true
   local started reached
-  started=$(grep -aoE "Starting [0-9]+ tests" "$log" | tail -1 | grep -oE "[0-9]+")
+  # Summed over the passes: the main one and the starvation victims' (test_runner_cmd).
+  started=$(grep -aoE "Starting [0-9]+ tests" "$log" | grep -oE "[0-9]+" | awk '{s+=$1} END{if (NR) print s}')
   reached=$(wc -l < "$TEST_TIMES_FILE" 2>/dev/null || echo 0)
   echo "=== Slowest test binaries (this run; every test in $TEST_TIMES_FILE) ==="
   echo "reached ${reached:-0} of ${started:-?} selected tests"

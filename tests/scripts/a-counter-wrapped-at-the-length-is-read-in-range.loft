@@ -16,7 +16,9 @@
 // @falsified-at: 770ce57ff — by hand: with both phases taking ANY divisor for the length
 //   (`Counter::is_length` true for every variable, `counter_index` without its length check),
 //   cm5 answers null on `--interpret` and fails on `--native-c`; the `-DLOFT_VERIFY` build
-//   (`LOFT_CC` a wrapper adding the flag) stops on "R-Base counter: element".
+//   (`LOFT_CC` a wrapper adding the flag) stops on "R-Base counter: element".  The C's step-1
+//   spelling (`i == n - 1 ? 0 : i + 1`, 2026-11-13): planted to answer 1 at the wrap, it fails
+//   `main` on `--native-c` (6898 for 6086).
 // CHANNEL: the asserts, and the `LOFT_VERIFY` build of the C, which stops on the accessor's own
 // proof ("a proven index") where a read lies past the length.
 // ARMED: LOFT_VERIFY for the C counter clause; the interpreter's asserts need no instrument.

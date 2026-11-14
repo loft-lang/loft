@@ -756,7 +756,19 @@ impl Scopes<'_> {
                         }
                     }
                     Some(ArmBind::CopyVector { tp, elem }) => {
-                        let tmp = self.new_buffer_var(function, &tp);
+                        // The binding's materialise buffer where the pass before the scan made
+                        // one: that buffer is in every exit's frees, where one made here is
+                        // missing from each exit the scan already placed — an early `return`
+                        // before the bind leaked the entry-allocated store
+                        // (`LOFT_ARM_COPY_FRESH_BUFFER=1`).
+                        let tmp = if bound != u16::MAX
+                            && !crate::env_once!(
+                                std::env::var_os("LOFT_ARM_COPY_FRESH_BUFFER").is_some()
+                            ) {
+                            self.materialise_buffer(function, &tp, bound)
+                        } else {
+                            self.new_buffer_var(function, &tp)
+                        };
                         let tail = std::mem::replace(node, Value::Null);
                         *node = Value::Insert(vec![
                             Value::Call(
