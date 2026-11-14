@@ -1,0 +1,284 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the records and vectors of the function writer: `store_operator`,
+// `free_operator`, `database_operator`, `ref_operator`, `field_operator`, `narrow_operator`
+// and the plain arms of `vector_operator` of `src/c/body.rs`.
+//
+// Written with the rules of `cgen_w::PLAIN_SWITCHES` off: what a rule would write in their
+// place is not carried.
+
+use ir;
+use loop_shape;
+use cgen_fn;
+use cgen_w::*;
+
+// A program write as its `_at` setter (`set_at`): `f(args…, file, line)`.
+fn set_at(w: W, f: text, args: vector<text>) -> E {
+  E { code: "{f}({args.join(", ")}, {cgen_fn::site(w)})", kind: K_VOID }
+}
+
+// The size a record of type `tp` is allotted with (`Stores::enum_parent_size`): a variant's
+// is its enum's.
+pub fn enum_parent_size(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return 0;
+  }
+  own = b.types[tp].size;
+  for t in b.types {
+    match t.parts[0] {
+      PtEnum { values } => {
+        for v in values {
+          if v.nr == tp && t.size > own {
+            return t.size;
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  own
+}
+
+// `Stores::is_vector_wrapper`: the record a vector local's store is rooted in.
+pub fn is_vector_wrapper(b: ir::Bundle, tp: integer) -> boolean {
+  tp >= 0 && tp < len(b.types) && b.types[tp].name.starts_with("main_vector<")
+}
+
+// The operators over a record or a vector; `done` says whether `name` is one of them.
+pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpFreeRef" && count == 1 {
+    v = loop_shape::var_of(loop_shape::unspan(args[0]));
+    if v >= 0 && (w.shapes[v] ?? "") == "ref" {
+      return E { code: "loft_free_var(&{w.names[v]!})", kind: K_VOID };
+    }
+    if v >= 0 {
+      refuse(w, "a release of a variable of shape {w.shapes[v] ?? ""}");
+      return none();
+    }
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_free_ref({as_ref(w, r)})", kind: K_VOID };
+  }
+  if name == "OpFreeRefIfDistinct" && count == 2 {
+    v = loop_shape::var_of(loop_shape::unspan(args[0]));
+    if v >= 0 && (w.shapes[v] ?? "") == "ref" {
+      other = cgen_fn::expr(x, w, args[1], ind);
+      return E { code: "loft_free_var_distinct(&{w.names[v]!}, {as_ref(w, other)})", kind: K_VOID };
+    }
+  }
+  if (name == "OpFreeRefIfDistinct" || name == "OpFreeRefOrHandUp") && count == 2 {
+    p = cgen_fn::arg(x, w, args, 0, ind);
+    other = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "loft_free_displaced({as_ref(w, p)}, {as_ref(w, other)})", kind: K_VOID };
+  }
+  if (name == "OpDatabase" || name == "OpDatabaseNP") && count == 2 {
+    v = loop_shape::var_of(args[0]);
+    if v < 0 {
+      refuse(w, "{name} of no variable");
+      return none();
+    }
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    if tp < 0 || tp > 65535 {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    size = enum_parent_size(x.b, tp);
+    if is_vector_wrapper(x.b, tp) {
+      return E { code: "loft_database_room(loft_types, loft_ntypes, &{w.names[v]!}, {size}, {tp})", kind: K_VOID };
+    }
+    return E { code: "loft_database_typed(&{w.names[v]!}, {size}, {tp})", kind: K_VOID };
+  }
+  if name == "OpRefIsNull" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "({as_ref(w, r)}.store_nr == 0xFFFF)", kind: K_COND };
+  }
+  if name == "OpNullRefSentinel" && count == 0 {
+    return E { code: "loft_ref_null()", kind: K_REF };
+  }
+  if name == "OpConvBoolFromRef" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "({as_ref(w, r)}.rec != 0)", kind: K_COND };
+  }
+  if name == "OpRefAlias" && count == 1 {
+    return cgen_fn::expr(x, w, args[0], ind);
+  }
+  if name == "OpGetInt" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_int({as_ref(w, r)}, {fld})", kind: K_INT };
+  }
+  if (name == "OpSetInt" || name == "OpSetInt4" || name == "OpSetInt4Raw") && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    f = if name == "OpSetInt" { "loft_set_int_at" } else if name == "OpSetInt4" { "loft_set_int4_at" } else { "loft_set_int4_raw_at" };
+    return set_at(w, f, [as_ref(w, r), "{fld}", as_int(w, val)]);
+  }
+  if (name == "OpGetField" && (count == 2 || count == 3)) {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_field({as_ref(w, r)}, {fld})", kind: K_REF };
+  }
+  if name == "OpGetDbRef" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_dbref({as_ref(w, r)}, {fld})", kind: K_REF };
+  }
+  if name == "OpSetDbRef" && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, "loft_set_dbref_at", [as_ref(w, r), "{fld}", as_ref(w, val)]);
+  }
+  if name == "OpPutRef" && count == 2 {
+    v = loop_shape::var_of(args[0]);
+    if v >= 0 {
+      val = cgen_fn::expr(x, w, args[1], ind);
+      return E { code: "{w.names[v]!} = {as_ref(w, val)}", kind: K_VOID };
+    }
+  }
+  if name == "OpStoreLive" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_store_live({as_ref(w, r)})", kind: K_COND };
+  }
+  if name == "OpDistinctStore" && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "({as_ref(w, a)}.store_nr != {as_ref(w, b)}.store_nr)", kind: K_COND };
+  }
+  if name == "OpGetEnum" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_enum({as_ref(w, r)}, {fld})", kind: K_ENUM };
+  }
+  if name == "OpSetEnum" && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, "loft_set_byte_at", [as_ref(w, r), "{fld}", as_enum(w, val)]);
+  }
+  if name == "OpGetText" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    view = w.field_view;
+    w.field_view = false;
+    r = cgen_fn::expr(x, w, args[0], ind);
+    code = as_ref(w, r);
+    if view {
+      at = code;
+      if !cgen_fn::identifier(code) {
+        at = temp(w, "ref");
+        line(w, ind, "{at} = {code};");
+      }
+      return E { code: "loft_get_text({at}, {fld})", kind: K_VIEW };
+    }
+    t = temp(w, "text");
+    line(w, ind, "loft_text_free(&{t});");
+    line(w, ind, "{t} = loft_text_own(loft_get_text({code}, {fld}));");
+    return held_value(w, t, "text");
+  }
+  if (name == "OpSetText" || name == "OpSetTextReplace") && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    f = if name == "OpSetText" { "loft_set_text_at" } else { "loft_refill_text_at" };
+    return set_at(w, f, [as_ref(w, r), "{fld}", as_view(w, val)]);
+  }
+  if (name == "OpGetFloat" || name == "OpGetSingle") && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    if name == "OpGetFloat" {
+      return E { code: "loft_get_float({as_ref(w, r)}, {fld})", kind: K_FLOAT };
+    }
+    return E { code: "loft_get_single({as_ref(w, r)}, {fld})", kind: K_SINGLE };
+  }
+  if (name == "OpSetFloat" || name == "OpSetSingle") && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    if name == "OpSetFloat" {
+      return set_at(w, "loft_set_float_at", [as_ref(w, r), "{fld}", as_float(w, val)]);
+    }
+    return set_at(w, "loft_set_single_at", [as_ref(w, r), "{fld}", as_single(w, val)]);
+  }
+  if (name == "OpPushBoolean" || name == "OpPushFloat" || name == "OpPushSingle" || name == "OpPushInt4" || name == "OpPushEnum" || name == "OpPushInt") && count == 2 {
+    v = cgen_fn::arg(x, w, args, 0, ind);
+    val = cgen_fn::arg(x, w, args, 1, ind);
+    if name == "OpPushBoolean" {
+      return E { code: "loft_vec_push_byte({as_ref(w, v)}, {as_bool(w, val)})", kind: K_VOID };
+    }
+    if name == "OpPushEnum" {
+      return E { code: "loft_vec_push_byte({as_ref(w, v)}, {as_enum(w, val)})", kind: K_VOID };
+    }
+    if name == "OpPushFloat" {
+      return E { code: "loft_vec_push_float({as_ref(w, v)}, {as_float(w, val)})", kind: K_VOID };
+    }
+    if name == "OpPushSingle" {
+      return E { code: "loft_vec_push_single({as_ref(w, v)}, {as_single(w, val)})", kind: K_VOID };
+    }
+    f = if name == "OpPushInt4" { "loft_vec_push_int4" } else { "loft_vec_push_int" };
+    return E { code: "{f}({as_ref(w, v)}, {as_int(w, val)})", kind: K_VOID };
+  }
+  if (name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull") && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
+    f = if name == "OpGetByte" { "loft_get_byte" } else if name == "OpGetByteNullable" { "loft_get_byte_nullable" } else if name == "OpGetShort" { "loft_get_short" } else { "loft_get_short_raw" };
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "{f}({as_ref(w, r)}, {fld}, {c_long(min)})", kind: K_INT };
+  }
+  if (name == "OpSetByte" || name == "OpSetByteNullable" || name == "OpSetShort" || name == "OpSetShortRaw") && count == 4 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
+    f = if name == "OpSetByte" { "loft_set_byte_v_at" } else if name == "OpSetByteNullable" { "loft_set_byte_nullable_at" } else if name == "OpSetShort" { "loft_set_short_at" } else { "loft_set_short_raw_at" };
+    pair = [args[0], args[3]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, f, [as_ref(w, r), "{fld}", c_long(min), as_int(w, val)]);
+  }
+  if (name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full") && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    f = if name == "OpGetInt4" { "loft_get_int4" } else if name == "OpGetInt4Raw" { "loft_get_int4_raw" } else { "loft_get_int4_full" };
+    return E { code: "{f}({as_ref(w, r)}, {fld})", kind: K_INT };
+  }
+  if name == "OpSizeVector" && count == 2 {
+    stride = cgen_fn::literal(w, args[1], "stride") ?? return none();
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "(loft_vec_len({as_ref(w, v)}) * {stride})", kind: K_INT };
+  }
+  if name == "OpInitRefSentinel" && count == 1 {
+    v = loop_shape::var_of(args[0]);
+    if v >= 0 && (w.shapes[v] ?? "") == "ref" {
+      return E { code: "{w.names[v]!} = loft_ref_null()", kind: K_VOID };
+    }
+  }
+  if name == "OpLengthVector" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_len({as_ref(w, v)})", kind: K_INT };
+  }
+  if name == "OpPreAllocVector" && count == 3 {
+    n = cgen_fn::literal(w, args[1], "count") ?? return none();
+    size = cgen_fn::literal(w, args[2], "element size") ?? return none();
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_prealloc({as_ref(w, v)}, {n}, {size})", kind: K_VOID };
+  }
+  if (name == "OpGetVector" || name == "OpGetVectorNullable") && count == 3 {
+    size = cgen_fn::literal(w, args[1], "element size") ?? return none();
+    pair = [args[0], args[2]];
+    v = cgen_fn::arg(x, w, pair, 0, ind);
+    idx = cgen_fn::arg(x, w, pair, 1, ind);
+    if name == "OpGetVector" {
+      return E { code: "loft_vec_get_at({as_ref(w, v)}, {size}, {as_int(w, idx)}, {cgen_fn::site(w)})", kind: K_REF };
+    }
+    return E { code: "loft_vec_get({as_ref(w, v)}, {size}, {as_int(w, idx)})", kind: K_REF };
+  }
+  done = false;
+  none()
+}

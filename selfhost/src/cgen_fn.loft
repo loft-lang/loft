@@ -20,9 +20,11 @@ use cgen_types;
 use cgen_w::*;
 use cgen_loop;
 use cgen_text;
+use cgen_ref;
 use cgen_texts;
 use cgen_natives;
 use opt_names;
+use opt_writes;
 use char_walk;
 use opt_frame_calls;
 use opt_ranged_call;
@@ -357,6 +359,11 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   texted = cgen_text::text_operator(x, w, plain, args, ind, is_text_op);
   if is_text_op {
     return texted;
+  }
+  is_ref_op = false;
+  stored = cgen_ref::ref_operator(x, w, name, args, ind, is_ref_op);
+  if is_ref_op {
+    return stored;
   }
   scalar_operator(x, w, name, args, ind)
 }
@@ -801,23 +808,16 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       xs[i] = if shapes[i]! == "text" { "loft_null_text()" } else { "(({held(shapes[i]!)}) {initial(shapes[i]!)})" };
       continue;
     }
-    match loop_shape::unspan(a) {
-      NdCall { def_nr, args: _ } => {
-        // A text field handed to a callee that writes no store is read in place: not carried.
-        if def_name(x.b, def_nr) == "OpGetText" {
-          refuse(w, "a text read out of a store");
-          return none();
-        }
-      },
-      _ => {},
-    }
     later_writes = false;
     for j in i + 1..len(args) {
       if !linked[j]! && loop_shape::unspan(args[j]!) != NdNull && may_write(x.b, args[j]!) {
         later_writes = true;
       }
     }
-    xs[i] = as_shape(w, arg_with(x, w, a, later_writes, ind), shapes[i]!);
+    // A text field handed to a callee that writes no store is read in place.
+    reads = !opt_writes::call_writes_store(x.b, x.writes, d);
+    value = if reads { cgen_text::text_read(x, w, a, later_writes, ind) } else { arg_with(x, w, a, later_writes, ind) };
+    xs[i] = as_shape(w, value, shapes[i]!);
     if w.why != "" {
       return none();
     }
@@ -1368,6 +1368,8 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
     line(w, ind, "{target} = 0;");
   } else if shape == "text" {
     line(w, ind, "loft_text_set(&{target}, loft_null_text());");
+  } else if shape == "ref" {
+    line(w, ind, "{target} = loft_ref_null();");
   } else if shape != "void" {
     refuse(w, "a null of shape {shape}");
   }
@@ -1839,6 +1841,10 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
         refuse(w, "assigns a text parameter");
         return;
       }
+      if shape == "ref" {
+        refuse(w, "binds a record or a vector");
+        return;
+      }
       assign(x, w, inner, w.names[var]!, shape, ind);
       flush(w, ind);
     },
@@ -1950,7 +1956,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
   ret = if work_ret >= 0 { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
-  if held(ret) == "" {
+  if held(ret) == "" || (ret == "ref" && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
   params: vector<text> = [];
@@ -1969,6 +1975,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
     };
     if v.store_text_link {
       return Written { text: "", refused: "a link to a text in a store" };
+    }
+    if shape == "ref" && (!plain_rules() || !v.argument) {
+      return Written { text: "", refused: "a variable of shape ref" };
     }
     own = var_name(v.name, v#index);
     raw += [own];
@@ -2053,6 +2062,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
     bound: is_param,
     pending_work: [],
     work_ret: work_ret,
+    field_view: false,
   };
   code = d.code[0]!;
   if ret == "void" {

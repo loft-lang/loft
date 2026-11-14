@@ -171,6 +171,9 @@ def main():
                     help="which unit: the program's, or the debug tier's with its #line marks")
     ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges", "bodies", "texts", "writes"], default=None,
                     help="compare what an analysis derived instead of the unit")
+    ap.add_argument("--plain", action="store_true",
+                    help="both sides under the switches of cgen_w.loft's PLAIN_SWITCHES: the rules "
+                         "the loft writer does not carry yet, off")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
@@ -183,6 +186,11 @@ def main():
     loft = o.loft or os.path.join(root, "target", "release", "loft")
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
+    if o.plain:
+        with open(os.path.join(root, "selfhost", "src", "cgen_w.loft"), encoding="utf-8") as fh:
+            row = re.search(r"^PLAIN_SWITCHES = \[(.*)\];$", fh.read(), re.M)
+        for name in re.findall(r'"(LOFT_NO_[A-Z0-9_]+)"', row.group(1)):
+            env[name] = "1"
     tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
     if (o.form == "debug" or o.layer) and not (o.cgen or o.generator):
         sys.exit("--form debug and --layer compare a generator's output: give --cgen or --generator")

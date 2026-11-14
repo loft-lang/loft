@@ -15,6 +15,7 @@ use loop_shape;
 use opt_frame_calls;
 use opt_non_sentinel;
 use opt_range;
+use opt_writes;
 use opt_ranged_call;
 
 // The shape of a C expression's value (`K`).
@@ -28,6 +29,7 @@ K_FLOAT = 6;
 K_SINGLE = 7;
 K_CHAR = 8;
 K_VIEW = 9;
+K_REF = 10;
 
 // A C expression and the shape of its value (`E`).
 struct E {
@@ -102,6 +104,8 @@ pub struct Cx {
   // not carried by this writer (`why_work` says why).
   pub work_twins: vector<integer>,
   pub why_work: text,
+  // The memo of the store-write question (`Cx::hoist_memo.stores_written`).
+  pub writes: opt_writes::Writes,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -115,6 +119,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     twins: [],
     work_twins: [for _ in 0..len(b.data.definitions) { 0 }],
     why_work: "",
+    writes: opt_writes::new_writes(b),
   }
 }
 
@@ -195,6 +200,8 @@ struct W {
   pending_work: vector<text>,
   // A `__wr` twin: the `&text` parameter it answers, -1 for any other body.
   work_ret: integer,
+  // The next text field read is a view of the field in place (`field_view`).
+  field_view: boolean,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -344,11 +351,29 @@ fn held(shape: text) -> text {
     "uint32_t"
   } else if shape == "text" {
     "loft_text"
+  } else if shape == "ref" {
+    "loft_ref"
   } else if shape == "void" {
     "void"
   } else {
     ""
   }
+}
+
+// The rules of the Rust writer this one does not carry yet, each by the switch that turns it
+// off.  A function that holds a record or a vector is written only with every one of them
+// set — the same switches the oracle is then run under — and refused by name otherwise, so
+// what is written is the Rust writer's under the same switches.
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_RECORD_PTR", "LOFT_NO_VECTOR_HOIST", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_RETBUF_ADOPT"];
+
+// Is every rule of `PLAIN_SWITCHES` switched off?
+pub fn plain_rules() -> boolean {
+  for s in PLAIN_SWITCHES {
+    if (env_variable(s) ?? "0") == "0" {
+      return false;
+    }
+  }
+  true
 }
 
 // The C type a parameter of `shape` is passed as (`passed`): a text as a borrowed view.
@@ -370,6 +395,8 @@ fn initial(shape: text) -> text {
     "(float) NAN"
   } else if shape == "text" {
     "{{ 0, 0, 0 }}"
+  } else if shape == "ref" {
+    "{{ 0xFFFF, 0, 0, 0 }}"
   } else {
     "0"
   }
@@ -390,6 +417,8 @@ fn kind_of(shape: text) -> integer {
     K_CHAR
   } else if shape == "text" {
     K_VIEW
+  } else if shape == "ref" {
+    K_REF
   } else {
     K_VOID
   }
@@ -410,6 +439,8 @@ fn shape_of_kind(k: integer) -> text {
     "char"
   } else if k == K_VIEW {
     "text"
+  } else if k == K_REF {
+    "ref"
   } else {
     "bool"
   }
@@ -435,6 +466,8 @@ fn kind_name(k: integer) -> text {
     "Char"
   } else if k == K_VIEW {
     "View"
+  } else if k == K_REF {
+    "Ref"
   } else {
     "Void"
   }
@@ -598,6 +631,14 @@ fn as_view(w: W, e: E) -> text {
   ""
 }
 
+fn as_ref(w: W, e: E) -> text {
+  if e.kind == K_REF {
+    return e.code;
+  }
+  refuse(w, "a reference expected, a {kind_name(e.kind)} found");
+  ""
+}
+
 fn as_shape(w: W, e: E, shape: text) -> text {
   if shape == "int" {
     as_int(w, e)
@@ -613,6 +654,8 @@ fn as_shape(w: W, e: E, shape: text) -> text {
     as_char(w, e)
   } else if shape == "text" {
     as_view(w, e)
+  } else if shape == "ref" {
+    as_ref(w, e)
   } else {
     refuse(w, "a value of shape {shape}");
     ""

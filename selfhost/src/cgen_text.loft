@@ -17,10 +17,20 @@ use opt_non_sentinel;
 use cgen_fn;
 use cgen_w::*;
 
-// One operand of a text VALUE operator (`text_read`): evaluated as `arg_with` does.  A text
-// field read in place is not carried.
-fn text_read(x: Cx, w: W, a: ir::Node, later_writes: boolean, ind: integer) -> E {
-  cgen_fn::arg_with(x, w, a, later_writes, ind)
+// One operand read as a text (`text_read`): a text field with nothing written after it is a
+// view of the field in place; anything else is evaluated as `arg_with` does.
+pub fn text_read(x: Cx, w: W, a: ir::Node, later_writes: boolean, ind: integer) -> E {
+  field = match loop_shape::unspan(a) {
+    NdCall { def_nr, args } => len(args) == 2 && cgen_fn::def_name(x.b, def_nr) == "OpGetText",
+    _ => false,
+  };
+  if !field || later_writes || (env_variable("LOFT_NO_FIELD_VIEW") ?? "0") != "0" {
+    return cgen_fn::arg_with(x, w, a, later_writes, ind);
+  }
+  w.field_view = true;
+  e = cgen_fn::expr(x, w, a, ind);
+  w.field_view = false;
+  e
 }
 
 // Operand `i` of a text VALUE operator's operands (`text_reads`).
