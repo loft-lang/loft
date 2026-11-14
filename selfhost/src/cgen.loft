@@ -16,6 +16,7 @@ use opt_iteration;
 use opt_non_sentinel;
 use opt_range;
 use cgen_fn;
+use cgen_names;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -165,6 +166,16 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
   Unit { code: cgen_tidy::drop_unnamed(out, RUNTIME_END), refused: "" }
 }
 
+// One function body's line of the `bodies` layer.
+fn body_line(cx: cgen_fn::Cx, t: cgen_names::Twin) -> text {
+  name = cgen_names::twin_name(cx.b, cx.dups, t);
+  wr = cgen_fn::write_function(cx, t);
+  if wr.refused != "" {
+    return "[refused]\t{name}\t{wr.refused}\n";
+  }
+  "[bodies]\t{name}\t{wr.text.replace("\\", "\\\\").replace("\n", "\\n")}\n"
+}
+
 // A LAYER of the program in `b`: what an analysis derived, one line per function, in the
 // format the Rust generator traces it in — or null for a layer this generator does not print.
 // `shapes` (`LOFT_TRACE_SHAPES`): every function with a body; one a variable of which has no
@@ -194,13 +205,14 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
       if d.name == "n_main" {
         cx = cgen_fn::new_cx(b);
         for f in opt_names::written_functions(b, d#index) {
-          fname = b.data.definitions[f]!.name;
-          wr = cgen_fn::write_function(cx, f);
-          if wr.refused != "" {
-            out += "[refused]\t{fname}\t{wr.refused}\n";
-          } else {
-            out += "[bodies]\t{fname}\t{wr.text.replace("\\", "\\\\").replace("\n", "\\n")}\n";
-          }
+          out += body_line(cx, cgen_names::plain(f));
+        }
+        // The twins the bodies asked for; a twin's body can ask for more (`write_twins`).
+        written = 0;
+        while written < len(cx.twins) {
+          asked = cgen_names::copy_twin(cx.twins[written]!);
+          out += body_line(cx, asked);
+          written += 1;
         }
       }
     }

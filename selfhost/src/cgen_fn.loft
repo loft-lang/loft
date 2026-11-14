@@ -13,7 +13,12 @@
 // call of a function and every other shape are refused by name.
 
 use ir;
+use binds;
+use cgen_names;
 use cgen_types;
+use opt_frame_calls;
+use opt_ranged_call;
+use opt_tabulate;
 use loop_shape;
 use opt_non_sentinel;
 use opt_range;
@@ -43,10 +48,35 @@ pub struct Cx {
   pub b: ir::Bundle,
   pub p: opt_non_sentinel::Proof,
   pub c: opt_range::Calls,
+  // Per definition: is its name one two functions share (`duplicate_fn_names`)?
+  pub dups: vector<boolean>,
+  // `@FR-R-RangedCall`'s gain verdicts and `@FR-R-GuardFree`'s.
+  pub gains: opt_ranged_call::Gains,
+  pub guard: opt_frame_calls::GuardFree,
+  // The twins a call site asked for, in the order they were first asked (`Cx::twins`).
+  pub twins: vector<cgen_names::Twin>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
-  Cx { b: b, p: opt_non_sentinel::new_proof(b), c: opt_range::new_calls() }
+  Cx {
+    b: b,
+    p: opt_non_sentinel::new_proof(b),
+    c: opt_range::new_calls(),
+    dups: cgen_names::duplicate_fn_names(b),
+    gains: opt_ranged_call::new_gains(b),
+    guard: opt_frame_calls::new_guard_free(b),
+    twins: [],
+  }
+}
+
+// The place twin `t` is called: it is written with the unit (`request_twin`).
+fn request_twin(x: Cx, t: cgen_names::Twin) {
+  for known in x.twins {
+    if cgen_names::same_twin(known, t) {
+      return;
+    }
+  }
+  x.twins += [t];
 }
 
 // One function's writer (`FnWriter`): what it has written and where a fault reports.
@@ -369,6 +399,13 @@ fn arg(x: Cx, w: W, args: vector<ir::Node>, i: integer, ind: integer) -> E {
       later_writes = true;
     }
   }
+  arg_with(x, w, operand, later_writes, ind)
+}
+
+// Operand `operand`, evaluated as `arg` does (`arg_with`); `later_writes` says whether an
+// operand after it may write.
+fn arg_with(x: Cx, w: W, operand: ir::Node, later_writes: boolean, ind: integer) -> E {
+  bare_operand = loop_shape::unspan(operand);
   value = expr(x, w, operand, ind);
   if w.why != "" {
     return value;
@@ -526,6 +563,157 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   none()
 }
 
+// Does `f`'s own body divide or take a remainder by a literal?
+fn divides(b: ir::Bundle, f: integer) -> boolean {
+  def = b.data.definitions[f]!;
+  if len(def.code) == 0 {
+    return false;
+  }
+  hit = [false];
+  opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if (name == "OpRemInt" || name == "OpDivInt") && len(args) > 1 {
+          match loop_shape::unspan(args[1]) {
+            NdInt { n: _ } => hit[0] = true,
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `nn_twin_bits`: the bit set of `d`'s parameters this call's arguments prove non-sentinel
+// that the program-wide fact does not — only for a callee where the seed can buy a plain
+// operator: one that divides or takes a remainder by a literal, itself or in a function it
+// calls directly.
+fn nn_twin_bits(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> integer {
+  if (env_variable("LOFT_NO_NN_TWINS") ?? "0") != "0" {
+    return 0;
+  }
+  cand = opt_non_sentinel::candidate_params(x.b, d);
+  if len(cand) == 0 {
+    return 0;
+  }
+  worth = divides(x.b, d);
+  if !worth {
+    callees: vector<integer> = [];
+    opt_non_sentinel::walk(x.b.data.definitions[d]!.code[0]!, fn(n: ir::Node) {
+      match n {
+        NdCall { def_nr, args: _ } => {
+          if def_nr >= 0 && def_nr < len(x.b.data.definitions) && opt_non_sentinel::has_body(x.b.data.definitions[def_nr]!) {
+            callees += [def_nr];
+          }
+        },
+        _ => {},
+      }
+    });
+    for f in callees {
+      if divides(x.b, f) {
+        worth = true;
+        break;
+      }
+    }
+  }
+  if !worth {
+    return 0;
+  }
+  global = opt_non_sentinel::proven_param_flags(x.b, x.p, d);
+  bits = 0;
+  for a in args {
+    i = a#index;
+    if i >= 23 {
+      break;
+    }
+    if (cand[i] ?? false) && !(global[i] ?? false) && opt_non_sentinel::non_sentinel(x.b, x.p, w.nn, a) {
+      bits = bits | (1 << i);
+    }
+  }
+  bits
+}
+
+// `ranged_call`: may this call of `d` take its `__rg` twin — the rule is on, `d` is a loft
+// function whose ranged variant gains, and every integer argument is proven within `[-L, L]`
+// under this body's facts.
+fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
+  if (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+    return false;
+  }
+  if !cgen_names::is_loft_defined(x.b, d) || !opt_ranged_call::variant_gains(x.b, x.p, x.c, x.gains, d, 0) {
+    return false;
+  }
+  opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, w.rv, d, args)
+}
+
+// A call of function `d` (`call`): its arguments evaluated in order, then the function or the
+// twin this site's facts admit.  A callee this writer does not carry is refused by name.
+fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
+  def = x.b.data.definitions[d]!;
+  if cgen_names::runtime_name(x.b, d) != "" {
+    refuse(w, "a call of the standard library");
+    return none();
+  }
+  if !binds::is_loft_defined(def) || def.c_symbol != "" {
+    refuse(w, "a call of a function without a loft body");
+    return none();
+  }
+  ret = if len(def.returned) == 0 { "" } else { cgen_types::ctype(def.returned[0]!) ?? "" };
+  if held(ret) == "" {
+    refuse(w, "a call returning shape {ret}");
+    return none();
+  }
+  if len(def.attributes) != len(args) {
+    refuse(w, "a call whose arguments do not match its parameters");
+    return none();
+  }
+  shapes: vector<text> = [];
+  for a in def.attributes {
+    link = match cgen_types::base(a.typedef[0]!) {
+      TyRefVar { inner: _ } => true,
+      _ => false,
+    };
+    shape = cgen_types::ctype(a.typedef[0]!) ?? "";
+    if link || (shape != "int" && shape != "bool") {
+      refuse(w, "a call with a parameter of shape {if link { "&" } else { shape }}");
+      return none();
+    }
+    shapes += [shape];
+  }
+  xs: vector<text> = [];
+  for a in args {
+    i = a#index;
+    if loop_shape::unspan(a) == NdNull {
+      xs += ["(({held(shapes[i]!)}) {initial(shapes[i]!)})"];
+      continue;
+    }
+    later_writes = false;
+    for j in i + 1..len(args) {
+      if loop_shape::unspan(args[j]!) != NdNull && may_write(x.b, args[j]!) {
+        later_writes = true;
+      }
+    }
+    xs += [as_shape(w, arg_with(x, w, a, later_writes, ind), shapes[i]!)];
+    if w.why != "" {
+      return none();
+    }
+  }
+  t = cgen_names::plain(d);
+  if len(args) <= 23 {
+    t.nn = nn_twin_bits(x, w, d, args);
+  }
+  t.rg = ranged_call(x, w, d, args);
+  name = cgen_names::c_name(x.b, x.dups, d);
+  if !cgen_names::is_plain(t) {
+    request_twin(x, t);
+    name = cgen_names::twin_name(x.b, x.dups, t);
+  }
+  E { code: "{name}({xs.join(", ")})", kind: kind_of(ret) }
+}
+
 // The C shape a compound evaluates to (`shape_of`), for the compounds carried; "" refuses.
 fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
   match loop_shape::unspan(v) {
@@ -584,8 +772,7 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     NdCall { def_nr, args } => {
       name = def_name(x.b, def_nr);
       if !name.starts_with("Op") {
-        refuse(w, "a call of a function");
-        return none();
+        return call(x, w, def_nr, args, ind);
       }
       op_call(x, w, name, args, ind)
     },
@@ -853,10 +1040,26 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   w.span_line = saved_line;
 }
 
+// `note_site`: a line marker sets the line the statements after it come from; a statement
+// that calls into a frame first records that line as its frame's call site.
+fn note_site(x: Cx, w: W, v: ir::Node, ind: integer) {
+  match loop_shape::unspan(v) {
+    NdLine { n } => w.cur_line = n,
+    NdBlock { block: _ } => {},
+    NdInsert { items: _ } => {},
+    _ => {
+      if w.cur_line != 0 && opt_frame_calls::calls_a_frame(x.b, v) {
+        line(w, ind, "loft_frame_site({w.cur_line});");
+      }
+    },
+  }
+}
+
 fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
+  note_site(x, w, v, ind);
   match v {
     NdNull => {},
-    NdLine { n } => w.cur_line = n,
+    NdLine { n: _ } => {},
     NdVar { n: _ } => {},
     NdInt { n: _ } => {},
     NdLong { n: _ } => {},
@@ -963,7 +1166,8 @@ fn statement_count(body: text) -> integer {
 // The C definition of `d`'s body, `<name>__fr` (`function`, `FnWriter::write` and the whole
 // form of `framed`), or the first construct that is not carried.  `index` is `d`'s definition
 // number; `p` and `c` are the program's proof and call memo.
-pub fn write_function(x: Cx, index: integer) -> Written {
+pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
+  index = twin.d;
   d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
     return Written { text: "", refused: "a function without a loft body" };
@@ -998,14 +1202,26 @@ pub fn write_function(x: Cx, index: integer) -> Written {
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  nn = opt_non_sentinel::non_sentinel_vars(x.b, x.p, index);
+  if twin.places != 0 || twin.inv || twin.nk || twin.apr || twin.apv || twin.kh || twin.ap || twin.ds || twin.vf {
+    return Written { text: "", refused: "a twin of a rule that is not carried" };
+  }
+  // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
+  // parameters within `[-L, L]`.
+  seeded: vector<integer> = [];
+  for i in 0..26 {
+    if twin.nn & (1 << i) != 0 {
+      seeded += [i];
+    }
+  }
+  nn = opt_non_sentinel::non_sentinel_vars_seeded(x.b, x.p, index, seeded);
+  seeds = if twin.rg { opt_ranged_call::param_seeds(x.b, index) } else { opt_range::empty_ranges(len(d.variables.variables)) };
   w = W {
     index: index,
     name: d.name,
     names: names,
     params: is_param,
     nn: nn,
-    rv: opt_range::range_vars(x.b, x.p, x.c, index, nn, opt_range::walks_of(x.b, index)),
+    rv: opt_range::range_vars_seeded(x.b, x.p, x.c, index, nn, opt_range::walks_of(x.b, index), seeds),
     file: d.position.file,
     line: d.position.line,
     shapes: shapes,
@@ -1040,15 +1256,29 @@ pub fn write_function(x: Cx, index: integer) -> Written {
   }
   out += w.body;
   statements = statement_count(w.body);
+  // `@FR-R-Tabulate`: a classifier of a byte reads its answer from the table the compiler
+  // evaluated when its one parameter is in the table's range, and runs its body otherwise.
+  if len(params) == 1 && params[0].starts_with("int64_t ") && ret == "int" {
+    tab = opt_tabulate::table(x.b, index);
+    if len(tab) > 0 {
+      entries: vector<text> = [];
+      for v in tab {
+        entries += ["INT64_C({v})"];
+      }
+      pname = params[0][8..params[0].size()];
+      out = "    static const int64_t loft_tab[{opt_tabulate::DOMAIN}] = {{ {entries.join(", ")} }}; /* @FR-R-Tabulate */\n    if ((uint64_t) {pname} < {opt_tabulate::DOMAIN}) return loft_tab[{pname}];\n{out}";
+    }
+  }
   // `@FR-R-Inline`: a small function's body is always inlined into its frame wrapper; a
   // larger one up to the helper size is decided once the twins are written.
   storage = if statements <= 12 {
     "LOFT_HOT_INLINE"
-  } else if statements <= 80 {
+  } else if statements <= 80 && twin.nn == 0 {
     "static /*loft_hot_body:{index}*/"
   } else {
     "static"
   };
   list = if len(params) == 0 { "void" } else { params.join(", ") };
-  Written { text: "{storage} {held(ret)} {d.name}__fr({list}) {{\n{out}}}\n", refused: "" }
+  name = cgen_names::twin_name(x.b, x.dups, twin);
+  Written { text: "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n", refused: "" }
 }

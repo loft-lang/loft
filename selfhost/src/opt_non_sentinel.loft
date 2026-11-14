@@ -295,7 +295,7 @@ fn scalar_number(t: ir::TypeT) -> boolean {
 
 // `candidate_params`: the parameters of `d` the proof may seed — a scalar parameter of a loft
 // body that the body never rebinds and never lends.  Empty where there is none.
-fn candidate_params(b: ir::Bundle, d: integer) -> vector<boolean> {
+pub fn candidate_params(b: ir::Bundle, d: integer) -> vector<boolean> {
   def = b.data.definitions[d]!;
   if !has_body(def) {
     return [];
@@ -406,6 +406,12 @@ fn index_writes(code: ir::Node, ix: integer) -> vector<integer> {
 // where EVERY direct call in the program passes an argument proven non-sentinel.  A greatest
 // fixpoint: every candidate is assumed, each round drops a parameter one call site does not
 // prove under the round's assumption, until nothing drops.  `LOFT_NO_NN_PARAMS=1` proves none.
+// `proven_param_flags`: the program-wide proven parameters of `d` (empty: none).
+pub fn proven_param_flags(b: ir::Bundle, p: Proof, d: integer) -> vector<boolean> {
+  proven_params(b, p);
+  p.params[d]!.flags
+}
+
 fn proven_params(b: ir::Bundle, p: Proof) {
   if p.params_state != 0 {
     return;
@@ -576,6 +582,12 @@ fn def_nr(b: ir::Bundle, name: text) -> integer {
 // it.  A parameter is never proven by shape; the program-wide fact seeds the ones every call
 // proves.  Pessimistic start, re-walked to a fixpoint.
 pub fn non_sentinel_vars(b: ir::Bundle, p: Proof, d: integer) -> vector<boolean> {
+  non_sentinel_vars_seeded(b, p, d, [])
+}
+
+// `non_sentinel_vars_seeded`: the same with the parameters `extra` seeded as proven — the ones
+// a call site's arguments prove, for the twin that site calls.
+pub fn non_sentinel_vars_seeded(b: ir::Bundle, p: Proof, d: integer, extra: vector<integer>) -> vector<boolean> {
   def = b.data.definitions[d]!;
   count = len(def.variables.variables);
   vars: vector<boolean> = [for _ in 0..count { false }];
@@ -587,6 +599,11 @@ pub fn non_sentinel_vars(b: ir::Bundle, p: Proof, d: integer) -> vector<boolean>
   collect_escapes(b, code, escaped);
   seed_range_counters(b, code, vars);
   seed_iteration_indexes(b, code, escaped, vars);
+  for e in extra {
+    if e < count {
+      vars[e] = true;
+    }
+  }
   // `@FR-R-NonSentinelParam`: the parameters every call proves — for a function its own name
   // finds (`Data::def_nr`), as the Rust proof asks: an instance or a twin a name lookup of
   // the program's source does not reach is seeded nothing.

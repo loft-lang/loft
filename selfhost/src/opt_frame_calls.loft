@@ -1,0 +1,146 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/frame_calls.rs`: which IR makes a FRAME.  The call-site line a
+// compiled target records (`loft_frame_site`) and the frame's buffer guard (`@FR-R-GuardFree`)
+// ask it.
+
+use ir;
+use binds;
+use opt_names;
+use opt_non_sentinel;
+
+// `is_store_bracket`: the natives the compiler writes around a call's reference arguments.
+fn is_store_bracket(name: text) -> boolean {
+  name == "n_set_store_lock" || name == "n_protect_store_frees" || name == "n_unprotect_store_frees"
+}
+
+// `is_store_entry`: `@FR-R-KeyedEntry`'s probe, a store call that calls no loft code.
+fn is_store_entry(name: text) -> boolean {
+  name == "n_keyed_entry_ints" || name == "n_keyed_entry_text"
+}
+
+// `calls_a_frame`: does `code` make a call that can enter a frame — a user function, a method
+// or free overload with a loft body, a call through a function value, `parallel` or a `yield`?
+pub fn calls_a_frame(b: ir::Bundle, code: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        callee = b.data.definitions[def_nr]!;
+        name = callee.name;
+        if !is_store_bracket(name) && !is_store_entry(name) {
+          kind = binds::split_key_kind(name);
+          if name.starts_with("n_") || kind == binds::KEY_FREE_OVERLOAD || ((name.starts_with("t_") || kind == binds::KEY_INSTANCE) && opt_non_sentinel::has_body(callee)) {
+            hit[0] = true;
+          }
+        }
+      },
+      NdCallRef { var: _, args: _ } => { hit[0] = true; },
+      NdParallel { arms: _ } => { hit[0] = true; },
+      NdYield { inner: _ } => { hit[0] = true; },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `@FR-R-GuardFree`'s verdicts per definition (`GuardFree`): 0 not asked, 1 no, 2 yes.
+pub struct GuardFree {
+  free: vector<integer>,
+  registers: vector<integer>,
+}
+
+pub fn new_guard_free(b: ir::Bundle) -> GuardFree {
+  count = len(b.data.definitions);
+  GuardFree { free: [for _ in 0..count { 0 }], registers: [for _ in 0..count { 0 }] }
+}
+
+// `registers_buffers`: does this definition's own body register a store against the running
+// frame's function-value buffer list, or run something whose registrations are not visible?
+fn registers_buffers(b: ir::Bundle, g: GuardFree, d: integer) -> boolean {
+  known = g.registers[d] ?? 0;
+  if known != 0 {
+    return known == 2;
+  }
+  def = b.data.definitions[d]!;
+  hit = [false];
+  if len(def.code) > 0 {
+    opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+      match n {
+        NdCall { def_nr, args: _ } => {
+          callee = b.data.definitions[def_nr]!;
+          name = callee.name;
+          user_fn = name.starts_with("n_") || name.starts_with("t_");
+          takes_fn = false;
+          for a in callee.attributes {
+            match opt_non_sentinel::cgen_base(a.typedef[0]!) {
+              TyFunction { args: _, result: _, dep: _, consts: _ } => takes_fn = true,
+              _ => {},
+            }
+          }
+          opaque = user_fn && !opt_non_sentinel::has_body(callee) && (!opt_names::is_stdlib(callee) || takes_fn);
+          if name == "OpFreeRefOrHandUp" || opaque {
+            hit[0] = true;
+          }
+        },
+        NdCallRef { var: _, args: _ } => { hit[0] = true; },
+        NdParallel { arms: _ } => { hit[0] = true; },
+        NdYield { inner: _ } => { hit[0] = true; },
+        _ => {},
+      }
+    });
+  }
+  g.registers[d] = if hit[0]! { 2 } else { 1 };
+  hit[0]!
+}
+
+// The loft-bodied callees of `d`'s own body.
+fn bodied_callees(b: ir::Bundle, d: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  def = b.data.definitions[d]!;
+  if len(def.code) > 0 {
+    opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+      match n {
+        NdCall { def_nr, args: _ } => {
+          if opt_non_sentinel::has_body(b.data.definitions[def_nr]!) {
+            out += [def_nr];
+          }
+        },
+        _ => {},
+      }
+    });
+  }
+  out
+}
+
+// `is_guard_free`: is nothing that registers a function-value buffer reachable from this
+// definition, over the closure of its call graph?  Then its frame carries no guard.
+pub fn is_guard_free(b: ir::Bundle, g: GuardFree, d: integer) -> boolean {
+  known = g.free[d] ?? 0;
+  if known != 0 {
+    return known == 2;
+  }
+  seen: vector<boolean> = [for _ in 0..len(b.data.definitions) { false }];
+  todo = [d];
+  free = true;
+  while len(todo) > 0 && free {
+    f = todo[len(todo) - 1];
+    todo = todo[0..len(todo) - 1];
+    if seen[f]! {
+      continue;
+    }
+    seen[f] = true;
+    if registers_buffers(b, g, f) {
+      free = false;
+    } else {
+      for c in bodied_callees(b, f) {
+        if !seen[c]! {
+          todo += [c];
+        }
+      }
+    }
+  }
+  g.free[d] = if free { 2 } else { 1 };
+  free
+}

@@ -94,7 +94,7 @@ CALL_DEPTH = 3;
 U32_MAX = 4294967295;
 I64_MAX = 9223372036854775807;
 
-fn empty_ranges(count: integer) -> Ranges {
+pub fn empty_ranges(count: integer) -> Ranges {
   Ranges { vars: [for _ in 0..count { Held { has: false, lo: 0, hi: 0 } }], elems: [], bodies: [], steps: [for _ in 0..count { false }] }
 }
 
@@ -105,7 +105,7 @@ fn var_range(rv: Ranges, v: integer) -> Range? {
   Range { lo: rv.vars[v]!.lo, hi: rv.vars[v]!.hi }
 }
 
-fn set_var(rv: Ranges, v: integer, r: Range) {
+pub fn set_var(rv: Ranges, v: integer, r: Range) {
   if v >= 0 && v < len(rv.vars) {
     rv.vars[v]!.has = true;
     rv.vars[v]!.lo = r.lo;
@@ -275,6 +275,27 @@ fn masked(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolea
   null
 }
 
+// `plain_form`: the plain form of an operator the range proof may write — `wrapping_*` for the
+// four arithmetic operators, `/` and `%` for a division whose range excludes a zero divisor;
+// "" for every other operator.
+pub fn plain_form(name: text, count: integer) -> text {
+  if count == 2 && (name == "OpAddInt" || name == "OpAddIntNullable") {
+    "wrapping_add"
+  } else if count == 2 && (name == "OpMinInt" || name == "OpMinIntNullable") {
+    "wrapping_sub"
+  } else if count == 2 && (name == "OpMulInt" || name == "OpMulIntNullable") {
+    "wrapping_mul"
+  } else if count == 1 && name == "OpMinSingleInt" {
+    "wrapping_neg"
+  } else if count == 2 && (name == "OpDivInt" || name == "OpDivIntNullable") {
+    "/"
+  } else if count == 2 && (name == "OpRemInt" || name == "OpRemIntNullable") {
+    "%"
+  } else {
+    ""
+  }
+}
+
 // `op_range`: the range of operator `name` over `args`, where its result cannot leave the
 // type.
 // What a writer asks at the integer operator it is about to write (`op_range_at_site`):
@@ -294,7 +315,7 @@ pub fn op_range_at_site(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn:
   op_range(b, p, c, nn, rv, name, args, 0)
 }
 
-fn op_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, name: text, args: vector<ir::Node>, depth: integer) -> Range? {
+pub fn op_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, name: text, args: vector<ir::Node>, depth: integer) -> Range? {
   n = len(args);
   if (name == "OpSizeText" || name == "OpLengthText" || name == "OpLengthVector" || name == "t_4text_size" || name == "t_4text_len" || name == "t_6vector_len") && n == 1 {
     return Range { lo: 0, hi: U32_MAX };
@@ -1354,7 +1375,7 @@ pub fn range_vars(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: intege
   range_vars_seeded(b, p, c, d, nn, walks, empty_ranges(count))
 }
 
-fn range_vars_seeded(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, nn: vector<boolean>, walks: vector<Walk>, seeds: Ranges) -> Ranges {
+pub fn range_vars_seeded(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, nn: vector<boolean>, walks: vector<Walk>, seeds: Ranges) -> Ranges {
   def = b.data.definitions[d]!;
   vars = def.variables.variables;
   count = len(vars);

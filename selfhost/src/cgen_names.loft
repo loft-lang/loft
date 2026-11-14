@@ -1,0 +1,194 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the names the C generator writes a definition under: `c_name`,
+// `runtime_name`, `twin_name` and `is_operator` of `src/c/mod.rs`, with the identifier rule of
+// `src/opt/names.rs` (`duplicate_fn_names`, `disambiguated_fn_ident`, `rust_fn_ident`).
+
+use ir;
+use binds;
+use opt_names;
+
+const FUNCTION = 1;
+const DYNAMIC = 2;
+const GENERIC = 9;
+
+// How often a name is defined as a function.
+struct Seen {
+  name: text,
+  count: integer,
+}
+
+struct SeenTable {
+  names: hash<Seen[name]>,
+}
+
+// A twin of a function (`mask` in `src/c/mod.rs`): the `&` parameters handed a store place
+// (bit i for parameter i), the parameters a `__nn` twin seeds, and one flag per other rule.
+pub struct Twin {
+  pub d: integer,
+  pub places: integer,
+  pub nn: integer,
+  pub inv: boolean,
+  pub nk: boolean,
+  pub apr: boolean,
+  pub apv: boolean,
+  pub kh: boolean,
+  pub ap: boolean,
+  pub ds: boolean,
+  pub vf: boolean,
+  pub rg: boolean,
+}
+
+// The plain function `d`: no twin.
+pub fn plain(d: integer) -> Twin {
+  Twin { d: d, places: 0, nn: 0, inv: false, nk: false, apr: false, apv: false, kh: false, ap: false, ds: false, vf: false, rg: false }
+}
+
+// A twin record of its own, equal to `t`.
+pub fn copy_twin(t: Twin) -> Twin {
+  Twin { d: t.d, places: t.places, nn: t.nn, inv: t.inv, nk: t.nk, apr: t.apr, apv: t.apv, kh: t.kh, ap: t.ap, ds: t.ds, vf: t.vf, rg: t.rg }
+}
+
+// Is twin `t` the function itself (`mask == 0`)?
+pub fn is_plain(t: Twin) -> boolean {
+  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf && !t.rg
+}
+
+pub fn same_twin(a: Twin, b: Twin) -> boolean {
+  a.d == b.d && a.places == b.places && a.nn == b.nn && a.inv == b.inv && a.nk == b.nk && a.apr == b.apr && a.apv == b.apv && a.kh == b.kh && a.ap == b.ap && a.ds == b.ds && a.vf == b.vf && a.rg == b.rg
+}
+
+// Is `d` an operator, which a call site writes rather than a function it calls?
+pub fn is_operator(b: ir::Bundle, d: integer) -> boolean {
+  d >= 0 && d < len(b.data.definitions) && b.data.definitions[d]!.name.starts_with("Op")
+}
+
+// The name a runtime routine answers definition `d` by (`runtime_name`): its own for a
+// standard-library definition, the empty name for any other.
+pub fn runtime_name(b: ir::Bundle, d: integer) -> text {
+  def = b.data.definitions[d]!;
+  if opt_names::is_stdlib(def) { def.name } else { "" }
+}
+
+// `Definition::is_loft_defined`: a function with a body the program or a library wrote.
+pub fn is_loft_defined(b: ir::Bundle, d: integer) -> boolean {
+  d >= 0 && d < len(b.data.definitions) && binds::is_loft_defined(b.data.definitions[d]!)
+}
+
+// `duplicate_fn_names`, per definition: is its name one two functions are defined under?
+pub fn duplicate_fn_names(b: ir::Bundle) -> vector<boolean> {
+  seen = SeenTable { names: [] };
+  for d in b.data.definitions {
+    if d.def_type != FUNCTION && d.def_type != DYNAMIC {
+      continue;
+    }
+    known = seen.names[d.name];
+    if known == null {
+      seen.names += [Seen { name: d.name, count: 1 }];
+    } else {
+      known.count += 1;
+    }
+  }
+  out: vector<boolean> = [];
+  for d in b.data.definitions {
+    known = seen.names[d.name];
+    out += [known != null && known.count > 1];
+  }
+  out
+}
+
+// `rust_fn_ident`: a definition's name as an identifier, every character that is no ASCII
+// letter, digit or underscore an underscore.
+pub fn rust_fn_ident(name: text) -> text {
+  out = "";
+  for ch in name {
+    code = ch as integer;
+    if (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code == 95 {
+      out += "{ch}";
+    } else {
+      out += "_";
+    }
+  }
+  out
+}
+
+// The C name of function `d` (`c_name`, `disambiguated_fn_ident`): its own, or with a hash of
+// its defining file where two functions share the name.  A standard-library definition without
+// a body is the runtime's and keeps its bare name.
+pub fn c_name(b: ir::Bundle, dups: vector<boolean>, d: integer) -> text {
+  def = b.data.definitions[d]!;
+  runtime_provided = !binds::has_code(def) && opt_names::is_stdlib(def);
+  if !(dups[d] ?? false) || runtime_provided {
+    return rust_fn_ident(def.name);
+  }
+  // FNV-1a over the defining file's path.
+  h = 2166136261;
+  file = def.position.file;
+  for i in 0..file.size() {
+    h = h ^ file.byte_at(i);
+    h = (h * 16777619) & 4294967295;
+  }
+  rust_fn_ident("{def.name}_m{h:08x}")
+}
+
+// The C name of twin `t` (`twin_name`).
+pub fn twin_name(b: ir::Bundle, dups: vector<boolean>, t: Twin) -> text {
+  out = c_name(b, dups, t.d);
+  if t.places != 0 {
+    out += "_pl{t.places}";
+  }
+  if t.inv { out += "__inv"; }
+  if t.nk { out += "__nk"; }
+  if t.apr { out += "__apr"; }
+  if t.apv { out += "__apv"; }
+  if t.kh { out += "__kh"; }
+  if t.nn != 0 { out += "__nn{t.nn:x}"; }
+  if t.ap { out += "__ap"; }
+  if t.ds { out += "__d"; }
+  if t.vf { out += "__vf"; }
+  if t.rg { out += "__rg"; }
+  out
+}
+
+// The name a function's author wrote (`Definition::original_name`, `source_name_of_key`).
+pub fn original_name(d: ir::Definition) -> text {
+  if d.def_type != FUNCTION && d.def_type != GENERIC {
+    return d.name;
+  }
+  source_name_of_key(d.name)
+}
+
+fn source_name_of_key(name: text) -> text {
+  key = name;
+  // An instance's key holds its template's key, decoded in turn.
+  for _ in 0..name.size() {
+    if key.starts_with("n_") {
+      rest = key[2..key.size()];
+      at = rest.find("@");
+      if at != null {
+        return rest[0..at];
+      }
+    }
+    kind = binds::split_key_kind(key);
+    if kind == binds::KEY_NONE {
+      return if key.size() >= 2 { key[2..key.size()] } else { key };
+    }
+    // `<k>_<LEN><spelling>_<rest>`: the name after the spelling.
+    body = key[2..key.size()];
+    digits = 0;
+    for ch in body {
+      if ch < '0' || ch > '9' {
+        break;
+      }
+      digits += 1;
+    }
+    n = body[0..digits] as integer ?? 0;
+    rest = body[digits + n + 1..body.size()];
+    if kind != binds::KEY_INSTANCE {
+      return rest;
+    }
+    key = rest;
+  }
+  key
+}
