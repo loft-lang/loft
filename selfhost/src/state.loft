@@ -14,7 +14,7 @@
 use crt;
 use ir;
 use types;
-use brun;
+use natives;
 use show;
 use files;
 use eq;
@@ -185,7 +185,7 @@ pub fn new_state(img: ir::RunImage, size: integer) -> State {
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
-    carried = brun::native_handler(name) >= 0;
+    carried = natives::native_handler(name) >= 0;
     s.shared += [if carried { -1 } else { img.shared[i] ?? -1 }];
     s.bodies += [if carried { -1 } else { crt::body_find(name) }];
     twin = -1;
@@ -1392,7 +1392,7 @@ pub fn get_record(self: State) {
     return;
   }
   // The key parts read off the stack as the old runner reads them (`stack_keys`).
-  bytes = brun::push_keys(self.types, self.stk, db_tp, no_keys, self.stack_pos);
+  bytes = natives::push_keys(self.types, self.stk, db_tp, no_keys, self.stack_pos);
   if bytes < 0 || !self.can_pop(bytes + 16) {
     self.stop("not carried: a lookup whose key does not resolve");
     return;
@@ -1957,13 +1957,13 @@ pub fn iterate(self: State) {
     self.stop("not carried: a walk of kind {kind}");
     return;
   }
-  till_bytes = brun::walk_bound_bytes(kinds, till);
-  from_bytes = brun::walk_bound_bytes(kinds, from);
+  till_bytes = natives::walk_bound_bytes(kinds, till);
+  from_bytes = natives::walk_bound_bytes(kinds, from);
   if !self.can_pop(till_bytes + from_bytes + 16) {
     return;
   }
-  brun::push_walk_bound(self.stk, kinds, from, self.stack_pos - till_bytes);
-  brun::push_walk_bound(self.stk, kinds, till, self.stack_pos);
+  natives::push_walk_bound(self.stk, kinds, from, self.stack_pos - till_bytes);
+  natives::push_walk_bound(self.stk, kinds, till, self.stack_pos);
   self.stack_pos -= till_bytes + from_bytes;
   data = self.get_stack_dbref();
   if kind == 4 {
@@ -2026,7 +2026,7 @@ pub fn set_keyed(self: State) {
     self.stop("not carried: a keyed write into {self.types[tp]?.name ?? "a collection"}");
     return;
   }
-  bytes = brun::push_keys(self.types, self.stk, tp, no_keys, self.stack_pos);
+  bytes = natives::push_keys(self.types, self.stk, tp, no_keys, self.stack_pos);
   if bytes < 0 || !self.can_pop(bytes + 32) {
     self.stop("not carried: a keyed write whose key does not resolve");
     return;
@@ -2391,21 +2391,21 @@ pub fn var_narrow(self: State, pos: integer, min: integer, kind: integer) -> int
   if !self.slot_ok(self.stack_pos - pos) {
     return null;
   }
-  w = brun::narrow_width(kind);
+  w = natives::narrow_width(kind);
   bytes = crt::stack_read_bytes(self.stk, self.stack_pos - pos, w);
   bits = 0;
   for b in 0..w {
     bits += (bytes[b] ?? 0) << (8 * b);
   }
-  brun::narrow_decode(kind, min, bits)
+  natives::narrow_decode(kind, min, bits)
 }
 
 pub fn put_narrow(self: State, pos: integer, min: integer, kind: integer, value: integer?) {
   if !self.slot_ok(self.stack_pos + 8 - pos) {
     return;
   }
-  w = brun::narrow_width(kind);
-  bits = brun::narrow_encode(kind, min, value);
+  w = natives::narrow_width(kind);
+  bits = natives::narrow_encode(kind, min, value);
   crt::stack_code_bytes(self.stk, self.stack_pos + 8 - pos, [for b in 0..w { ((bits >> (8 * b)) & 255) as u8 }], 0, w);
 }
 

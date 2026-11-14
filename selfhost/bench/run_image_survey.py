@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Which programs the run-image runner runs, and which operator stops the rest.
+"""Which programs the loft bytecode runner runs, and what stops the rest.
 
-@PLN91, doc/claude/plans/91-self-host/handoff-2026-11-13-run-image.md step 3.  For every plain
-program of the coverage census's corpus (`selfhost/cover/census.py`): its run image is written
-(`loft --emit-run-image`), run on the runner built `--native-c --ship` from
+@PLN91, doc/claude/plans/91-self-host/1b-fill-port.md.  For every plain program of the coverage
+census's corpus (`selfhost/cover/census.py`: tests/scripts and the language suite): its run
+image is written (`loft --emit-run-image`), run on the runner built `--native-c --ship` from
 selfhost/bench/run_image_run.loft, and its standard output compared with `loft --interpret`'s.
-A program is counted as `agree`, `differ` (the runner printed something else), `leak` (the same
-output, but a different count of stores left at exit than the interpreter reports), `refused`
-(an operator it does not carry, named in the ranking) or `crash`.  The ranking is the order to add
-operators in.
+A program is counted as `agree`; `stores` (equal but for a `store_memory()` report: the store
+table is the C runtime's); `leak` (the same output, another count of stores left at exit than
+the interpreter reports); `differ`; `stopped` (an operator or native not carried, named in the
+ranking); `fault` (the run stopped for another reason, or crashed); `noimage`.
 
     python3 selfhost/bench/run_image_survey.py [--scripts-only] [--jobs N] [--top 30]
 """
@@ -39,20 +39,26 @@ def one(f, loft, runner, tmp, env, timeout):
     # own report does: the two counts are compared too.
     rc2, got, err2 = proc([runner, img], {**env, "LOFT_NATIVE_LEAK_CHECK": "1"}, timeout,
                           cwd=os.path.dirname(f))
-    m = re.search(r"refused: (.*): (.+?) at \d+", err2)
-    if rc2 == 3 and m:
-        # An operator or a native by name; a collection the runner does not add to by its kind.
-        what = m.group(2) if re.fullmatch(r"[\w#]+", m.group(2)) else m.group(1)
-        return f, "refused", [what]
-    if rc2 not in (0, 1) and rc2 != rc:
-        return f, "crash", [f"exit {rc2}"]
+    m = re.search(r"stopped: not carried: (\S+)", err2)
+    if m:
+        return f, "stopped", [m.group(1)]
+    if rc2 == -9:
+        return f, "fault", ["timeout"]
+    if rc2 not in (0, rc):
+        m = re.search(r"stopped: (.*)", err2)
+        return f, "fault", [(m.group(1) if m else f"exit {rc2}")[:90]]
     if got != want:
+        if STORE_REPORT.sub("", got) == STORE_REPORT.sub("", want):
+            return f, "stores", [""]
         return f, "differ", [""]
     leaked = [int(m.group(1)) if m else 0
               for m in (re.search(r"(\d+) stores not freed at program exit", e) for e in (err, err2))]
     if leaked[0] != leaked[1]:
         return f, "leak", [f"interpreter {leaked[0]}, runner {leaked[1]}"]
     return f, "agree", [""]
+
+
+STORE_REPORT = re.compile(r"^(stores: \d+ live|  #\d+ ).*\n", re.M)
 
 
 def main():
@@ -64,7 +70,7 @@ def main():
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--timeout", type=int, default=60)
     ap.add_argument("--show", action="append", default=[],
-                    help="list the programs of a verdict (agree, differ, leak, refused, crash; repeatable)")
+                    help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage; repeatable)")
     o = ap.parse_args()
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = o.loft or os.path.join(root, "target", "release", "loft")
@@ -94,14 +100,14 @@ def main():
                 counts[verdict] += 1
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what[0]}")
-                if verdict == "refused":
+                if verdict == "stopped":
                     ops[what[0]] += 1
         print(f"{counts['agree']} of {len(files)} programs agree; " +
-              ", ".join(f"{counts[k]} {k}" for k in ("refused", "differ", "leak", "crash", "noimage") if counts[k]))
+              ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "differ", "fault", "noimage") if counts[k]))
         for line in sorted(shown):
             print(line)
         if ops:
-            print("first operator not carried, by programs it stops:")
+            print("first operator or native not carried, by programs it stops:")
             for name, n in ops.most_common(o.top):
                 print(f"  {n:5d}  {name}")
     finally:

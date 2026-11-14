@@ -31,7 +31,7 @@ closed or left as the need arises.
 | `src/ops.rs` helpers (`fused_int`, `fused_cmp`) | `selfhost/src/ops.loft`, the same names |
 | `Stores` (`src/store.rs`, `src/database/`) | the C runtime's store routines, through `selfhost/crt` (STORE_MODEL.md: the C model is the standard) |
 | the dispatch loop | generated: `fill.loft`'s `run`; `selfhost/src/fill_run.loft` drives it (`call` for one function, `run_main` for a program) and calls the natives |
-| the library functions `static_call` reaches | the hand-built runner's native ports (`brun::call_native`), over the same stack store |
+| the library functions `static_call` reaches | `selfhost/src/natives.loft` (`natives::call_native`): each native over the same stack store, through the C runtime's routines |
 
 Regenerate the table after changing a template or porting a `State` method:
 
@@ -82,7 +82,7 @@ Two language features exist for the port:
 | a function answers what the Rust interpreter answers | `selfhost/bench/run_fill.loft <program image> <run image> <function> <args…>` against `loft --interpret` |
 | no kernel function differs from the IR runner; the integer kernels' hand-computed answers | `selfhost/tests/fill.loft`, run by `tests/selfhost.rs` |
 | which operator stops each kernel function | `selfhost/bench/fill_census.loft <program image> <run image>` |
-| the corpus: each plain program of `tests/scripts` against `loft --interpret` (`stores`: equal but for the `store_memory()` report, difference 3), and the operator that stops each one not run to its end (the worklist) | `python3 selfhost/bench/fill_survey.py` |
+| the corpus: each plain program of `tests/scripts` and the language suite against `loft --interpret` (`stores`: equal but for the `store_memory()` report, difference 3; `leak`: another count of stores left at exit), and what stops each one not run to its end (the worklist) | `python3 selfhost/bench/run_image_survey.py` (`--scripts-only` for `tests/scripts` alone), over `selfhost/bench/run_image_run.loft` |
 | where the top is after an operator | `LOFT_LOG=full loft --interpret` prints each operator with the top before it; `LOFT_FILL_TRACE=1` prints the runner's |
 
 The first two are run by hand; neither is a test yet.
@@ -92,14 +92,14 @@ The first two are run by hand; neither is a test yet.
 | Part | State |
 |---|---|
 | operator templates and `State` methods | every operator is carried (`create.loft` prints the count; `--missing` lists none).  The `State`'s methods are in `state.loft` and `state_ops.loft`.  Operators no program of the corpus runs are checked by the build only: the child-record and store-buffer families beyond `OpStoreBuf`, `OpEvacuate`, `OpAdoptVector`, `OpCopyClosure`, the slot-cell writes, the store tags |
-| natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own.  Not ported there, and what still stops corpus programs: `file_map`, `stack_trace`, a C-library native |
-| `par` | a queue's or a fold's workers run one after another by the hand-built runner's scheduler (`brun::par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return |
+| natives (`OpStaticCall`) | `natives.loft`.  Not ported, and what still stops corpus programs: `file_map`, `stack_trace`, the store-lock pair, `type_named`, a C-library native |
+| `par` | a queue's or a fold's workers run one after another by `natives.loft`'s scheduler (`par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return |
 | compiled library code | not built: every library function runs as bytecode (difference 9).  To build: the standard library's and each `use`d library's compiled bodies linked into the runner and called at `OpStaticCall`, as Rust calls its bridges |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |
 
-The hand-built runner (`selfhost/src/brun.loft`) stays until this one runs the corpus; it
-is the source of the `crt` calls each operator needs, not a design to follow.
+This is the one bytecode runner: the hand-built runner it replaced is gone, and what it
+held of natives, the `par` scheduler and the key and bound readers is `natives.loft`.
 
 ## Differences from the Rust interpreter
 
