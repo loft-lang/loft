@@ -189,7 +189,7 @@ came out 64-bit from the image.
 | `selfhost/src/cgen_types.loft` | `src/c/mod.rs` (`CType`, `Cx::ctype`, `local_ctype`, `variable_shapes`) | whole, a shape held as its word; a build under `--width 32` is not asked (the image does not say it) |
 | `selfhost/src/opt_names.loft` | `src/opt/names.rs` | `reachable_functions` with its walks (`collect_calls`, `collect_fn_ref_literals`, `collect_int_fn_refs`, `collect_tuple_fn_refs`), the store instances and a closure record's drop cascade; a unit's lazy drivers are not roots yet; `written_functions` (the unit's list: no operator, no native the runtime implements, the root first) |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
-| `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach`; exit 3 with `not carried: <what>` |
+| `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at
 run time, in the order `RUNTIME` embeds them.
