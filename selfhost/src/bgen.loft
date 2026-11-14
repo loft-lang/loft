@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
@@ -14,6 +15,8 @@ use own;
 use binds;
 use lower;
 use ret_adopt;
+use bgen_set;
+use bgen_loop;
 
 // The bytes of one function while they are written.
 pub struct Out {
@@ -103,6 +106,8 @@ pub struct Gen {
   // The ownership oracle's operator table (once per image) and this function's def table.
   ops: own::Ops,
   defs: own::Defs,
+  // The locals a reassignment released the old store of (`Stack::owned_reassigned`).
+  owned_reassigned: vector<integer>,
   why: text,
 }
 
@@ -399,109 +404,6 @@ fn clear_stack(g: Gen, nr: integer) {
     put_u16(g.o, g.position - at);
     g.position = at;
   }
-}
-
-// `exit_test`: the condition of `if c { break }` with no else; null for any other node.
-fn exit_test(n: ir::Node, found: vector<boolean>) -> ir::Node {
-  found[0] = false;
-  match unspan(n) {
-    NdIf { cond, t, f } => {
-      brk = match unspan(t) {
-        NdBreak { n: nr } => nr == 0,
-        NdBlock { block: bl } => {
-          ops = bl[0]?.operators ?? [];
-          len(ops) == 1 && match unspan(ops[0]!) {
-            NdBreak { n: nr } => nr == 0,
-            _ => false,
-          }
-        }
-        _ => false,
-      };
-      none = match unspan(f) {
-        NdNull => true,
-        _ => false,
-      };
-      found[0] = brk && none;
-      cond
-    }
-    _ => ir::NdNull,
-  }
-}
-
-// `State::gen_loop`: a loop whose first statement is its exit test is tested at its bottom
-// (`@FR-R-Rotate`); any other runs its body and jumps back.
-fn loop_of(g: Gen, bl: ir::Block) -> ir::TypeT {
-  ops = bl.operators;
-  found: vector<boolean> = [false];
-  test = if len(ops) > 0 { exit_test(ops[0]!, found) } else { ir::NdNull };
-  rotated = found[0] ?? false;
-  if !rotated && len(ops) > 0 {
-    range = match unspan(ops[0]!) {
-      NdSet { var: _, inner } => match unspan(inner) {
-        NdBlock { block: b } => (b[0]?.name ?? "") == "Iter range",
-        _ => false,
-      },
-      _ => false,
-    };
-    if range {
-      stop(g, "not written yet: a range loop");
-      return ir::TyVoid;
-    }
-  }
-  g.loop_start += [len(g.o.code)];
-  g.loop_stack += [g.position];
-  g.loop_rotated += [rotated];
-  me = len(g.loop_start) - 1;
-  start = len(g.o.code);
-  if rotated {
-    add_op(g, "OpGotoWord");
-    entry = len(g.o.code);
-    put_i32(g.o, 0);
-    body = len(g.o.code);
-    for n in ops {
-      if n#index > 0 {
-        generate(g, n, false);
-      }
-    }
-    clear_stack(g, 0);
-    patch_i32(g.o, entry, len(g.o.code) - entry - 4);
-    k = 0;
-    while k + 1 < len(g.continues) {
-      if g.continues[k] == me {
-        c = g.continues[k + 1] ?? 0;
-        patch_i32(g.o, c, len(g.o.code) - c - 4);
-        g.continues.remove(k + 1);
-        g.continues.remove(k);
-      } else {
-        k += 2;
-      }
-    }
-    step = if_test(g, test);
-    patch_i32(g.o, step, body - len(g.o.code));
-    clear_stack(g, 0);
-  } else {
-    for n in ops {
-      generate(g, n, false);
-    }
-    clear_stack(g, 0);
-    add_op(g, "OpGotoWord");
-    put_i32(g.o, start - len(g.o.code) - 4);
-  }
-  k = 0;
-  while k + 1 < len(g.breaks) {
-    if g.breaks[k] == me {
-      at = g.breaks[k + 1] ?? 0;
-      patch_i32(g.o, at, len(g.o.code) - at - 4);
-      g.breaks.remove(k + 1);
-      g.breaks.remove(k);
-    } else {
-      k += 2;
-    }
-  }
-  g.loop_start.remove(me);
-  g.loop_stack.remove(me);
-  g.loop_rotated.remove(me);
-  ir::TyVoid
 }
 
 // `gen_break` and `gen_continue`: the stack the loop left dropped, then the jump — its step
@@ -810,7 +712,7 @@ fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
 // The operators and natives `generate_call` writes in a way of their own, which this writer
 // does not write yet.
 fn special_call(name: text) -> boolean {
-  name == "OpSetInt4" || name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpGetRecord" || name == "OpSetKeyed" || name == "OpStart" || name == "OpNext" || name == "OpIterate" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+  name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpGetRecord" || name == "OpSetKeyed" || name == "OpStart" || name == "OpNext" || name == "OpIterate" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpCreateStack" || name.starts_with("n_parallel_")
 }
 
 // Is `n` in the list a `NoPrefill` fact keeps under `tag` (`l` locals, `m` mints;
@@ -939,7 +841,7 @@ fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
   }
   if name == "OpFreeRefIfDistinct" && len(args) == 2 && first >= 0 {
     w = plain_var(args[1]!);
-    if var_of(g, first).name.starts_with("__lift_") {
+    if var_of(g, first).name.starts_with("__lift_") || own::has(g.owned_reassigned, first) {
       // A lifted call's temp: released unless it is the buffer's store, and reset either way.
       at = var_pos(g, first);
       generate(g, args[0]!, false);
@@ -961,6 +863,18 @@ fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
       };
       generate(g, reset, false);
       return true;
+    }
+    return false;
+  }
+  if name == "OpSetInt4" {
+    for a in args {
+      member = match unspan(a) {
+        NdTupleGet { var: _, idx: _ } => true,
+        _ => false,
+      };
+      if member {
+        stop(g, "not written yet: a tuple member written through OpSetInt4");
+      }
     }
     return false;
   }
@@ -1201,6 +1115,51 @@ fn record_like(t: ir::TypeT) -> boolean {
   }
 }
 
+// `gen_owned_vector_store`: the local's own wrapper record, its one field zeroed.
+fn owned_vector_store(g: Gen, v: integer) {
+  known = lower::main_vector_of(g.b, var_of(g, v).type_def);
+  if known == null {
+    stop(g, "an owned vector whose wrapper type the image does not name");
+    return;
+  }
+  at = var_pos(g, v);
+  add_op(g, "OpDatabase");
+  put_u16(g.o, at);
+  put_u16(g.o, known!);
+  init_slot(g, v, "OpVarRef");
+  add_op(g, "OpConstInt");
+  put_i64(g.o, 0);
+  add_op(g, "OpSetInt4");
+  put_u16(g.o, 0);
+}
+
+// `gen_keyed_null`: a keyed collection's null — its own empty store, unless it borrows an
+// outer one or is overwritten by its view (`keyed_null_mints`).
+fn keyed_null(g: Gen, v: integer, first: boolean) {
+  f = def_of(g, g.d).variables;
+  if first {
+    reserve_ref_slot(g, v);
+  }
+  if binds::is_inline_ref(f, v) || binds::is_overwritten_view(f, v) {
+    if first {
+      init_slot(g, v, "OpInitRefSentinel");
+    }
+    return;
+  }
+  known = lower::hash_type_of(g.b, var_of(g, v).type_def);
+  if known == null {
+    stop(g, "a keyed collection whose type the image does not name");
+    return;
+  }
+  if first {
+    init_slot(g, v, "OpInitRef");
+  }
+  at = var_pos(g, v);
+  add_op(g, "OpDatabase");
+  put_u16(g.o, at);
+  put_u16(g.o, known!);
+}
+
 // `gen_set_first_at_tos`: a first bind of a value that is no scalar and no text, by the arm
 // `bind_lowering::first_arm` decides, in its order.  An arm not ported yet stops the function
 // under its name.
@@ -1325,27 +1284,14 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     reserve_ref_slot(g, v);
     if vector_dep == 0 && !(var.skip_free || binds::is_inline_ref(f, v) || var.lazy_buffer) {
       init_slot(g, v, "OpInitRef");
-      known = lower::main_vector_of(g.b, var.type_def);
-      if known == null {
-        stop(g, "an owned vector whose wrapper type the image does not name");
-        return;
-      }
-      at = var_pos(g, v);
-      add_op(g, "OpDatabase");
-      put_u16(g.o, at);
-      put_u16(g.o, known!);
-      init_slot(g, v, "OpVarRef");
-      add_op(g, "OpConstInt");
-      put_i64(g.o, 0);
-      add_op(g, "OpSetInt4");
-      put_u16(g.o, 0);
+      owned_vector_store(g, v);
     } else {
       init_slot(g, v, "OpInitRefSentinel");
     }
     return;
   }
   if null_value && binds::owns_keyed_store(tp) {
-    stop(g, "not written yet: a keyed collection's first null");
+    keyed_null(g, v, true);
     return;
   }
   ref_var = match tp {
@@ -1377,7 +1323,7 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     _ => false,
   };
   if !put_ref {
-    stop(g, "not written yet: a first bind of a tuple or a function value");
+    stop(g, "not written yet: a first bind of {shape_name(tp)}");
     return;
   }
   before = g.position;
@@ -1386,6 +1332,18 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     return;
   }
   init_slot(g, v, "OpPutRef");
+}
+
+// What a type the writer does not store yet is, for the count of what is left.
+fn shape_name(t: ir::TypeT) -> text {
+  match base(t) {
+    TyTuple { elems: _ } => "a tuple",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "a function value",
+    TyRefVar { inner: _ } => "a link",
+    TyText { dep: _ } => "a text link",
+    TyInteger { spec: _ } => "a linked narrow integer",
+    _ => "another shape",
+  }
 }
 
 fn optional_shape(t: ir::TypeT) -> boolean {
@@ -1401,6 +1359,9 @@ fn optional_shape(t: ir::TypeT) -> boolean {
 fn assign(g: Gen, v: integer, value: ir::Node) {
   var = var_of(g, v);
   tp = var.type_def[0] ?? ir::TyVoid;
+  if bgen_loop::loop_slot(g, v, value) {
+    return;
+  }
   text = match base(tp) {
     TyText { dep: _ } => true,
     _ => false,
@@ -1414,14 +1375,8 @@ fn assign(g: Gen, v: integer, value: ir::Node) {
     return;
   }
   if put_op_of(tp) == "" && !var.linked_narrow && (g.slots[v] ?? 65535) != 65535 {
-    range = match unspan(value) {
-      NdBlock { block: bl } => (bl[0]?.name ?? "") == "Iter range",
-      _ => false,
-    };
-    if range {
-      stop(g, "not written yet: a range loop");
-    } else if g.allocated[v] ?? false {
-      stop(g, "not written yet: a rebind of a value that is no scalar");
+    if g.allocated[v] ?? false {
+      bgen_set::rebind(g, v, value);
     } else {
       g.allocated[v] = true;
       first_bind(g, v, value);
@@ -1433,8 +1388,13 @@ fn assign(g: Gen, v: integer, value: ir::Node) {
     NdBlock { block: _ } => true,
     _ => false,
   };
-  if put == "" || var.linked_narrow || block || (g.slots[v] ?? 65535) == 65535 {
-    stop(g, "not written yet: an assignment of {if block { "a block" } else { "a value that is no scalar" }}");
+  // A character bound from a block may be a text walk's step (`emit_walk_step`).
+  walk = block && match base(tp) {
+    TyCharacter => true,
+    _ => false,
+  };
+  if put == "" || var.linked_narrow || walk || (g.slots[v] ?? 65535) == 65535 {
+    stop(g, "not written yet: an assignment of {if walk { "a character from a block" } else { "a value that is no scalar" }}");
     return;
   }
   if !(g.allocated[v] ?? false) {
@@ -1648,7 +1608,7 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
       ir::TyVoid
     }
     NdIf { cond, t, f } => branch(g, cond, t, f),
-    NdLoop { block: bl } => loop_of(g, bl[0]!),
+    NdLoop { block: bl } => bgen_loop::loop_of(g, bl[0]!),
     NdBreak { n } => leave(g, n, true),
     NdContinue { n } => leave(g, n, false),
     NdDrop { inner: _ } => unwritten(g, "a dropped value"),
@@ -1687,7 +1647,7 @@ pub fn oracle(b: ir::Bundle) -> own::Ops {
 pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
   def = b.data.definitions[d]!;
   ret = def.returned[0] ?? ir::TyVoid;
-  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), why: "" };
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), owned_reassigned: [], why: "" };
   if !body_null(def) {
     g.defs = own::function_defs(b, d, ops);
     if ret_adopt::ret_adopt(b, d).v >= 0 {

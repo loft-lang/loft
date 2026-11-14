@@ -1,0 +1,260 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The bytecode writer in loft, its reassignments (@PLN91,
+// doc/claude/plans/91-self-host/rust-dependencies.md step 1): the port of
+// `State::generate_set_inner`'s branch for a local that already holds a value
+// (`src/state/codegen.rs`), on the decision `bind_lowering::re_bind` makes.  The facts are
+// `binds.loft`'s and the oracle `own.loft`'s, each a port of the Rust fact of its name; the
+// order they are read in, and the arms, are the Rust's.
+//
+// An arm not written yet stops the function under its name, so the function is counted as not
+// written and never written wrong.
+use ir;
+use own;
+use binds;
+use bgen;
+
+// `bind_lowering::ReBind`: the facts one reassignment is decided on.
+struct ReBind {
+  // `ReArm::trace_name`: B0, R1, R2a, R2b, R2c, R2d or R3.
+  arm: text,
+  // `DisplacedFree`: "none", "stash" or "pre"; `pre_witness` is the pre free's (-1 none).
+  free: text,
+  pre_witness: integer,
+  s1: boolean,
+  reads_v: boolean,
+  rhs_base: integer?,
+  alias_v: boolean,
+  entry_w: integer?,
+  owned_ref: boolean,
+  new_record: boolean,
+  witnessed: boolean,
+  buffer_kept: boolean,
+  buffer_w: integer?,
+  // The arm's record (R1, R2a–R2d), its join base (R1) and its source (R2c); -1 for none.
+  rec: integer,
+  base: integer,
+  src: integer,
+}
+
+fn is_call(n: ir::Node, through_value: boolean) -> boolean {
+  match bgen::unspan(n) {
+    NdCall { def_nr: _, args: _ } => true,
+    NdCallRef { var: _, args: _ } => through_value,
+    _ => false,
+  }
+}
+
+// `bind_lowering::re_bind`, every switch at its default.
+fn re_bind(g: bgen::Gen, v: integer, value: ir::Node) -> ReBind {
+  b = g.b;
+  d = g.d;
+  f = b.data.definitions[d]!.variables;
+  var = f.variables[v]!;
+  tp = var.type_def[0] ?? ir::TyVoid;
+  s1 = binds::s1_substituted(b, v, value);
+  reads_v = binds::reads_var(value, v);
+  rhs_base = own::base_of(own::ownership_of(b, g.ops, d, value));
+  alias_v = binds::rhs_may_alias_v(b, g.ops, d, f, v, value);
+  entry_w = binds::entry_witness(f, v);
+  owned_ref = binds::owned_ref(b, g.ops, d, f, v, value);
+  frees_displaced = owned_ref && (!var.argument || entry_w != null);
+  new_record = binds::rhs_is_new_record(b, value);
+  nullable_local = binds::nullable_local(f, v);
+  witnessed = binds::owner_witness(f, v) != null;
+  buffer_kept = !reads_v && binds::rebind_keeps_displaced(f, v) && binds::owns_its_binding(b, f, v, value);
+  buffer_w = binds::displaced_buffer_witness(b, f, v, value);
+  temp_null_reset = binds::is_compiler_generated(f, v) && binds::is_null_value(b, value);
+  free = "none";
+  pre_witness = -1;
+  if temp_null_reset {
+    free = "none";
+  } else if owned_ref && (reads_v || new_record || nullable_local || binds::rhs_reads_a_view_of(f, value, v)) {
+    free = "stash";
+  } else if frees_displaced && !s1 {
+    free = "pre";
+    pre_witness = binds::projection_container_var(b, value) ?? (buffer_w ?? -1);
+  }
+  rb = ReBind {
+    arm: "R3", free: free, pre_witness: pre_witness, s1: s1, reads_v: reads_v, rhs_base: rhs_base,
+    alias_v: alias_v, entry_w: entry_w, owned_ref: owned_ref, new_record: new_record,
+    witnessed: witnessed, buffer_kept: buffer_kept, buffer_w: buffer_w, rec: -1, base: -1, src: -1
+  };
+  // `re_arm`, one test per arm in the order the chain decides them.
+  if binds::owns_keyed_store(tp) && bgen::raw_null(value) {
+    rb.arm = "B0";
+    return rb;
+  }
+  stashed = free == "stash";
+  shape = binds::first_bind_shape(tp);
+  callee = binds::callee_of(b, g.defs, value);
+  s1_join = s1 && stashed && is_call(value, false) && callee != null;
+  plain_source = match bgen::unspan(value) {
+    NdVar { n: _ } => true,
+    _ => false,
+  };
+  if (owned_ref || buffer_kept) && (!s1 || s1_join)
+      && (!stashed || s1_join || (!reads_v && is_call(value, true) && callee != null))
+      && !plain_source && !var.view_elided {
+    jb = binds::join_base(b, g.ops, d, f, value, v);
+    rec = binds::join_record(shape);
+    if jb != null && jb! != own::MAX && jb! != v && rec != null {
+      rb.arm = "R1";
+      rb.rec = rec!;
+      rb.base = jb!;
+      return rb;
+    }
+  }
+  if !((owned_ref || witnessed || buffer_kept) && !s1) {
+    return rb;
+  }
+  promoted = binds::is_promoted_return_buffer(b, d, f, v);
+  if owned_ref && !witnessed && (!var.argument || (promoted && entry_w != null)) && !var.view_elided {
+    opaque = binds::opaque_callref_bind(b, g.defs, tp, value);
+    if opaque != null {
+      rb.arm = "R2a";
+      rb.rec = opaque!;
+      return rb;
+    }
+  }
+  fresh = (witnessed && reads_v) || (stashed && (alias_v || !reads_v));
+  record = match bgen::base(tp) {
+    TyReference { n, dep: _ } => n,
+    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+    _ => -1,
+  };
+  if record >= 0 && (!var.argument || (promoted && (!reads_v || fresh))) && is_call(value, true)
+      && callee != null && binds::is_loft_defined(b.data.definitions[callee!]!) {
+    cd = b.data.definitions[callee!]!;
+    if !binds::return_adopts_fresh_store(cd)
+        && !(reads_v && !witnessed && own::returns_borrowed_view(cd)
+             && !(rhs_base == own::MAX && stashed) && alias_v)
+        && !var.view_elided
+        && !binds::adopts_minted_at_bind(b, g.ops, f, v, value) {
+      rb.arm = "R2b";
+      rb.rec = record;
+      return rb;
+    }
+  }
+  hd = own::heap_def_nr(tp);
+  src = match bgen::unspan(value) {
+    NdVar { n } => n,
+    _ => -1,
+  };
+  if hd != null && src >= 0 && src != v {
+    sd = own::record_copy_source(b, f, v, src);
+    if sd != null && own::copies_as(b, hd!, sd!) {
+      rb.arm = "R2c";
+      rb.rec = hd!;
+      rb.src = src;
+      return rb;
+    }
+  }
+  on_exit_only = reads_v && stashed && !binds::reads_var_unless_exiting(value, v);
+  kept_copies = buffer_kept && binds::has_no_deps(tp);
+  if (owned_ref || kept_copies) && hd != null && (!reads_v || on_exit_only) && !new_record
+      && binds::projection_container_var(b, value) != null {
+    rb.arm = "R2d";
+    rb.rec = hd!;
+    return rb;
+  }
+  if owned_ref && stashed && reads_v && !new_record && hd != null
+      && binds::answers_a_view_to_copy(b, g.ops, d, value) {
+    rb.arm = "R2d";
+    rb.rec = hd!;
+  }
+  rb
+}
+
+// `free_stashed`: the displaced value the stash left under the assignment, released now
+// unless it is the new value's store (or the entry's, or the buffer's).
+fn free_stashed(g: bgen::Gen, v: integer, rb: ReBind) {
+  bgen::init_slot(g, v, "OpVarRef");
+  keep = rb.entry_w ?? rb.buffer_w;
+  if keep != null {
+    bgen::init_slot(g, keep!, "OpVarRef");
+    bgen::add_op(g, "OpFreeRefUnlessEntry");
+  } else {
+    bgen::add_op(g, "OpFreeRefIfDistinct");
+  }
+}
+
+// `State::generate_set_inner` for a local that holds a value and is no scalar and no text:
+// the displaced store released before the value (`pre`) or kept under it and released after
+// (`stash`), then the arm.
+pub fn rebind(g: bgen::Gen, v: integer, value: ir::Node) {
+  var = bgen::var_of(g, v);
+  tp = var.type_def[0] ?? ir::TyVoid;
+  rb = re_bind(g, v, value);
+  if rb.arm == "B0" {
+    bgen::keyed_null(g, v, false);
+    return;
+  }
+  stash = rb.free == "stash";
+  if stash {
+    bgen::init_slot(g, v, "OpVarRef");
+  } else if rb.free == "pre" {
+    bgen::init_slot(g, v, "OpVarRef");
+    if rb.pre_witness >= 0 && rb.entry_w != null {
+      bgen::init_slot(g, rb.pre_witness, "OpVarRef");
+      bgen::init_slot(g, rb.entry_w!, "OpVarRef");
+      bgen::add_op(g, "OpFreeRefUnlessEntry");
+    } else if rb.pre_witness >= 0 || rb.entry_w != null {
+      bgen::init_slot(g, if rb.pre_witness >= 0 { rb.pre_witness } else { rb.entry_w! }, "OpVarRef");
+      bgen::add_op(g, "OpFreeRefIfDistinct");
+    } else {
+      bgen::add_op(g, "OpFreeRef");
+    }
+    g.owned_reassigned += [v];
+  }
+  if rb.arm != "R3" {
+    bgen::stop(g, "not written yet: a rebind's arm {rb.arm}");
+    return;
+  }
+  set_var(g, v, value);
+  if stash {
+    free_stashed(g, v, rb);
+  }
+}
+
+// `State::set_var` for a reference-shaped local: the value, then its store into the slot.
+fn set_var(g: bgen::Gen, v: integer, value: ir::Node) {
+  var = bgen::var_of(g, v);
+  tp = var.type_def[0] ?? ir::TyVoid;
+  null_value = match bgen::unspan(value) {
+    NdNull => true,
+    _ => false,
+  };
+  owned_vector = match tp {
+    TyVector { inner: _, dep } => len(dep) == 0,
+    _ => false,
+  };
+  if null_value && var.lazy_buffer && owned_vector {
+    bgen::owned_vector_store(g, v);
+    return;
+  }
+  put_ref = match bgen::base(tp) {
+    TyVector { inner: _, dep: _ } => true,
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TyIterator { step: _, inner: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    _ => false,
+  };
+  if !put_ref {
+    bgen::stop(g, "not written yet: a set of {bgen::shape_name(tp)}");
+    return;
+  }
+  before = g.position;
+  bgen::generate(g, value, false);
+  if g.position == before && null_value {
+    bgen::push_sentinel(g);
+  }
+  bgen::init_slot(g, v, "OpPutRef");
+}
