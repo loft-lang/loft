@@ -405,6 +405,17 @@ void loft_crt_release_frame_hold(int64_t s, int64_t r, int64_t p) {
     loft_release_frame_hold(loft_crt_ref(s, r, p));
 }
 
+/* The allocation count as it stands (`Stores::stores_allocated`), and store `nr`'s stamp
+ * (`Store::alloc_serial`), 0 for none: a call through a function value tells a store it minted
+ * from one already there by them (loft#1185, `State::release_fnref_bufs`). */
+int64_t loft_crt_serial_now(void) {
+    return (int64_t) loft_stores_allocated;
+}
+
+int64_t loft_crt_store_serial(int64_t nr) {
+    return nr >= 0 && nr < loft_nstores ? (int64_t) loft_stores[nr].serial : 0;
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);
