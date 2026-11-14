@@ -1339,7 +1339,7 @@ fn apply_annotations(e: el::El, d: integer, annots: vector<integer>) -> boolean 
           e.b.data.definitions[d].rust = "{args[0] ?? ""}#{args[1] ?? ""}";
         } else if name == "native" {
           e.b.data.definitions[d].native = if len(args) > 0 { args[0] ?? "" } else { el::def(e, d).name };
-        } else if name == "c" {
+        } else if name == "c" || name == "c_twin" {
           e.b.data.definitions[d].c_symbol = args[0] ?? "";
           e.b.data.definitions[d].c_sig = args[1] ?? "";
         } else if name == "hot" {

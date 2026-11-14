@@ -485,14 +485,18 @@ pub struct RunGen {
 
 // A `par` worker (`parallel_natives::parallel_queue_dispatch`): its definition, how it takes
 // its row — 0 a reference to the row, -1 a text, `n` a primitive of `n` bytes, `1000 + n` a
-// tuple of `n` bytes — the byte size of its answer as an argument, and its hidden text work
-// buffers and return destinations (`parallel_natives::worker_hidden_counts`).
+// tuple of `n` bytes — the byte size of its answer as an argument, its hidden text work
+// buffers and return destinations (`parallel_natives::worker_hidden_counts`), and for a tuple
+// row how each element moves from the row to the argument (`parallel::tuple_row_plan`): per
+// element its offset in the row, its stored width, its argument width and its kind (0 copied,
+// 1 a text inflated to a `Str`, 2 a function number widened to a fn-ref with no closure).
 pub struct RunWorker {
   pub def: integer,
   pub input: integer,
   pub ret: integer,
   pub texts: integer,
   pub dests: integer,
+  pub row: vector<integer>,
 }
 
 // A persisted root type's sidecar (`schema_sidecar::LayoutIdentity`, as the C backend's

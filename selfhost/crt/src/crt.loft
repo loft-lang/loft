@@ -382,6 +382,8 @@ fn c_par_row(store: integer, rec: integer, pos: integer, esize: integer, stk: in
 #c "loft_crt_par_row" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_par_row_wide(store: integer, rec: integer, pos: integer, stk: integer, at: integer, n: integer);
 #c "loft_crt_par_row_wide" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_par_row_tuple(store: integer, rec: integer, pos: integer, stk: integer, at: integer, plan: vector<integer>);
+#c "loft_crt_par_row_tuple" "void(int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
 fn c_group_finish(elem: integer, held: integer, nullable: integer, ps: integer, pr: integer, pp: integer, rs: integer, rr: integer, rp: integer, m: vector<integer>);
 #c "loft_crt_group_finish" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
 fn c_vec_sort(store: integer, rec: integer, pos: integer, size: integer, is_float: integer, is_text: integer, is_unsigned: integer);
@@ -637,6 +639,12 @@ pub fn par_row_wide(store: integer, rec: integer, pos: integer, stk: integer, at
   c_par_row_wide(store, rec, pos, stk, at, n);
 }
 
+// A tuple row re-laid out for a worker taking the tuple, by the image's plan
+// (`RunWorker.row`, four numbers per element).
+pub fn par_row_tuple(store: integer, rec: integer, pos: integer, stk: integer, at: integer, plan: vector<integer>) {
+  c_par_row_tuple(store, rec, pos, stk, at, plan);
+}
+
 // `OpFinishRecord` in a linked group: the record `(rs, rr, rp)` filed into every member of the
 // struct `(ps, pr, pp)`; `members` holds `(position, kind, type)` per member.
 pub fn group_finish(elem: integer, held: boolean, nullable: boolean, ps: integer, pr: integer, pp: integer, rs: integer, rr: integer, rp: integer, members: vector<integer>) {
@@ -849,6 +857,141 @@ pub fn jv_text(which: integer, s: integer, r: integer, p: integer) -> text {
 pub fn deliver(tag: integer, s: integer, r: integer, p: integer, tp: integer, name: text) {
   c_deliver(tag, s, r, p, tp, name, name.size());
 }
+
+// ── Typed reads and writes of a byte vector at a byte offset, little-endian: the loft runner's
+// code and stack accessors (`State::code` / `get_stack` / `put_stack` in src/state).  Each body
+// says what it answers; its `#c_twin` is the C backend's single load or store.  Outside the
+// vector a read answers 0 and a write does nothing, in the body and in the twin alike.
+
+pub fn get_u8(b: const vector<u8>, at: integer) -> integer {
+  if at < 0 || at >= len(b) {
+    return 0;
+  }
+  b[at] ?? 0
+}
+#c_twin "loft_twin_get_u8" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_i8(b: const vector<u8>, at: integer) -> integer {
+  v = get_u8(b, at);
+  if v >= 128 { v - 256 } else { v }
+}
+#c_twin "loft_twin_get_i8" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_u16(b: const vector<u8>, at: integer) -> integer {
+  if at < 0 || at + 2 > len(b) {
+    return 0;
+  }
+  (b[at] ?? 0) + (b[at + 1] ?? 0) * 256
+}
+#c_twin "loft_twin_get_u16" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_i16(b: const vector<u8>, at: integer) -> integer {
+  v = get_u16(b, at);
+  if v >= 32768 { v - 65536 } else { v }
+}
+#c_twin "loft_twin_get_i16" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_u32(b: const vector<u8>, at: integer) -> integer {
+  if at < 0 || at + 4 > len(b) {
+    return 0;
+  }
+  (b[at] ?? 0) + (b[at + 1] ?? 0) * 256 + (b[at + 2] ?? 0) * 65536 + (b[at + 3] ?? 0) * 16777216
+}
+#c_twin "loft_twin_get_u32" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_i32(b: const vector<u8>, at: integer) -> integer {
+  v = get_u32(b, at);
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+#c_twin "loft_twin_get_i32" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+// The two's complement of the eight bytes; the pattern of the integer null reads as null.
+pub fn get_i64(b: const vector<u8>, at: integer) -> integer {
+  if at < 0 || at + 8 > len(b) {
+    return 0;
+  }
+  lo = get_u32(b, at);
+  hi = get_u32(b, at + 4);
+  if hi < 2147483648 {
+    hi * 4294967296 + lo
+  } else {
+    // The complement, which fits: `-(~v) - 1`.
+    -((4294967295 - hi) * 4294967296 + (4294967295 - lo)) - 1
+  }
+}
+#c_twin "loft_twin_get_i64" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_f32(b: const vector<u8>, at: integer) -> single {
+  single_from_bits(get_i32(b, at))
+}
+#c_twin "loft_twin_get_f32" "float(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_f64(b: const vector<u8>, at: integer) -> float {
+  float_from_bits(get_i64(b, at))
+}
+#c_twin "loft_twin_get_f64" "double(const uint8_t*, int64_t, int64_t)"
+
+// The `n` low bytes of `v`, least significant first.
+fn put_bytes(b: vector<u8>, at: integer, n: integer, v: integer) {
+  if at < 0 || at + n > len(b) {
+    return;
+  }
+  if v == null {
+    // The integer null's pattern: the top bit alone.
+    for k in 0..n {
+      b[at + k] = if k == 7 { 128 as u8 } else { 0 as u8 };
+    }
+    return;
+  }
+  for k in 0..n {
+    b[at + k] = ((v >> (8 * k)) & 255) as u8;
+  }
+}
+
+pub fn put_u8(b: vector<u8>, at: integer, v: integer) {
+  put_bytes(b, at, 1, v);
+}
+#c_twin "loft_twin_put_u8" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_i8(b: vector<u8>, at: integer, v: integer) {
+  put_bytes(b, at, 1, v);
+}
+#c_twin "loft_twin_put_i8" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_u16(b: vector<u8>, at: integer, v: integer) {
+  put_bytes(b, at, 2, v);
+}
+#c_twin "loft_twin_put_u16" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_i16(b: vector<u8>, at: integer, v: integer) {
+  put_bytes(b, at, 2, v);
+}
+#c_twin "loft_twin_put_i16" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_u32(b: vector<u8>, at: integer, v: integer) {
+  put_bytes(b, at, 4, v);
+}
+#c_twin "loft_twin_put_u32" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_i32(b: vector<u8>, at: integer, v: integer) {
+  put_bytes(b, at, 4, v);
+}
+#c_twin "loft_twin_put_i32" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_i64(b: vector<u8>, at: integer, v: integer) {
+  put_bytes(b, at, 8, v);
+}
+#c_twin "loft_twin_put_i64" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_f32(b: vector<u8>, at: integer, v: single) {
+  put_bytes(b, at, 4, v.bits());
+}
+#c_twin "loft_twin_put_f32" "void(uint8_t*, int64_t, int64_t, float)"
+
+pub fn put_f64(b: vector<u8>, at: integer, v: float) {
+  put_bytes(b, at, 8, v.bits());
+}
+#c_twin "loft_twin_put_f64" "void(uint8_t*, int64_t, int64_t, double)"
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
 pub fn store_known(nr: integer) -> integer {

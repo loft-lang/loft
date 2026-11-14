@@ -1,0 +1,271 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the loft runner's state, the counterpart of `src/state/mod.rs::State` that the
+// generated operator table (`fill.loft`, from the `#loft` templates) runs on: the bytecode, the
+// single stack, and their positions.  The accessors are named and stepped as the Rust ones the
+// `#rust` templates call (`s.code::<u16>()` is `s.code_u16()` here, `s.get_stack::<i64>()` is
+// `s.get_stack_i64()`), over the typed byte reads and writes of `crt` — each a loft body with a
+// `#c_twin`, one load or store in the compiled runner.
+//
+// A value on the stack takes its width rounded up to 8 bytes (`aligned_stack_step`): every
+// basic type here takes 8.
+
+use crt;
+
+pub struct State {
+  // The bytecode (`State::code_base` / `code_len`) and the position of the next byte to read.
+  pub code: vector<u8>,
+  pub code_pos: integer,
+  // The single stack and its top (`State::stack_pos`), a byte offset into it.
+  pub stack: vector<u8>,
+  pub stack_pos: integer,
+}
+
+// A state over `code` with a stack of `size` bytes, both positions at 0.
+pub fn new_state(code: vector<u8>, size: integer) -> State {
+  State { code: code, code_pos: 0, stack: [for _ in 0..size { 0 as u8 }], stack_pos: 0 }
+}
+
+// `State::ensure_stack`: room for `step` more bytes above the top, the stack doubled when it has
+// none.
+fn ensure_stack(self: State, step: integer) {
+  if self.stack_pos + step > len(self.stack) {
+    more = len(self.stack) + step;
+    for _ in 0..more {
+      self.stack += [0 as u8];
+    }
+  }
+}
+
+// ── `State::code::<T>`: an operand read from the code, the position stepped past it. ──────
+
+pub fn code_u8(self: State) -> integer {
+  v = crt::get_u8(self.code, self.code_pos);
+  self.code_pos += 1;
+  v
+}
+
+pub fn code_i8(self: State) -> integer {
+  v = crt::get_i8(self.code, self.code_pos);
+  self.code_pos += 1;
+  v
+}
+
+pub fn code_u16(self: State) -> integer {
+  v = crt::get_u16(self.code, self.code_pos);
+  self.code_pos += 2;
+  v
+}
+
+pub fn code_i16(self: State) -> integer {
+  v = crt::get_i16(self.code, self.code_pos);
+  self.code_pos += 2;
+  v
+}
+
+pub fn code_u32(self: State) -> integer {
+  v = crt::get_u32(self.code, self.code_pos);
+  self.code_pos += 4;
+  v
+}
+
+pub fn code_i32(self: State) -> integer {
+  v = crt::get_i32(self.code, self.code_pos);
+  self.code_pos += 4;
+  v
+}
+
+pub fn code_i64(self: State) -> integer {
+  v = crt::get_i64(self.code, self.code_pos);
+  self.code_pos += 8;
+  v
+}
+
+pub fn code_f32(self: State) -> single {
+  v = crt::get_f32(self.code, self.code_pos);
+  self.code_pos += 4;
+  v
+}
+
+pub fn code_f64(self: State) -> float {
+  v = crt::get_f64(self.code, self.code_pos);
+  self.code_pos += 8;
+  v
+}
+
+// A boolean operand: its byte (`s.code::<bool>()` reads one byte).
+pub fn code_bool(self: State) -> boolean {
+  v = crt::get_u8(self.code, self.code_pos);
+  self.code_pos += 1;
+  v == 1
+}
+
+// ── `State::get_stack::<T>`: the top value popped, the top stepped down by its width. ─────
+
+pub fn get_stack_u8(self: State) -> integer {
+  self.stack_pos -= 8;
+  crt::get_u8(self.stack, self.stack_pos)
+}
+
+pub fn get_stack_i8(self: State) -> integer {
+  self.stack_pos -= 8;
+  crt::get_i8(self.stack, self.stack_pos)
+}
+
+pub fn get_stack_u16(self: State) -> integer {
+  self.stack_pos -= 8;
+  crt::get_u16(self.stack, self.stack_pos)
+}
+
+pub fn get_stack_i16(self: State) -> integer {
+  self.stack_pos -= 8;
+  crt::get_i16(self.stack, self.stack_pos)
+}
+
+pub fn get_stack_u32(self: State) -> integer {
+  self.stack_pos -= 8;
+  crt::get_u32(self.stack, self.stack_pos)
+}
+
+pub fn get_stack_i32(self: State) -> integer {
+  self.stack_pos -= 8;
+  crt::get_i32(self.stack, self.stack_pos)
+}
+
+pub fn get_stack_i64(self: State) -> integer {
+  self.stack_pos -= 8;
+  crt::get_i64(self.stack, self.stack_pos)
+}
+
+pub fn get_stack_f32(self: State) -> single {
+  self.stack_pos -= 8;
+  crt::get_f32(self.stack, self.stack_pos)
+}
+
+pub fn get_stack_f64(self: State) -> float {
+  self.stack_pos -= 8;
+  crt::get_f64(self.stack, self.stack_pos)
+}
+
+// ── `State::put_stack`: a value pushed, the top stepped up by its width. ──────────────────
+
+pub fn put_stack_u8(self: State, v: integer) {
+  self.ensure_stack(8);
+  crt::put_u8(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_i8(self: State, v: integer) {
+  self.ensure_stack(8);
+  crt::put_i8(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_u16(self: State, v: integer) {
+  self.ensure_stack(8);
+  crt::put_u16(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_i16(self: State, v: integer) {
+  self.ensure_stack(8);
+  crt::put_i16(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_u32(self: State, v: integer) {
+  self.ensure_stack(8);
+  crt::put_u32(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_i32(self: State, v: integer) {
+  self.ensure_stack(8);
+  crt::put_i32(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_i64(self: State, v: integer) {
+  self.ensure_stack(8);
+  crt::put_i64(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_f32(self: State, v: single) {
+  self.ensure_stack(8);
+  crt::put_f32(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_f64(self: State, v: float) {
+  self.ensure_stack(8);
+  crt::put_f64(self.stack, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+// A boolean answer: its byte — 1, 0, or 255 for null (a boolean is tri-state on the stack).
+pub fn put_stack_bool(self: State, v: boolean?) {
+  self.ensure_stack(8);
+  crt::put_u8(self.stack, self.stack_pos, if v == null { 255 } else if v! { 1 } else { 0 });
+  self.stack_pos += 8;
+}
+
+// ── `State::get_var::<T>(pos)`: a frame slot read at `stack_pos - pos`. ───────────────────
+
+pub fn get_var_u8(self: State, pos: integer) -> integer {
+  crt::get_u8(self.stack, self.stack_pos - pos)
+}
+
+// A boolean frame slot: 1 true, 0 false, 255 null.
+pub fn get_var_bool(self: State, pos: integer) -> boolean? {
+  b = crt::get_u8(self.stack, self.stack_pos - pos);
+  if b == 255 { null } else { b == 1 }
+}
+
+pub fn get_var_u16(self: State, pos: integer) -> integer {
+  crt::get_u16(self.stack, self.stack_pos - pos)
+}
+
+pub fn get_var_i32(self: State, pos: integer) -> integer {
+  crt::get_i32(self.stack, self.stack_pos - pos)
+}
+
+pub fn get_var_i64(self: State, pos: integer) -> integer {
+  crt::get_i64(self.stack, self.stack_pos - pos)
+}
+
+pub fn get_var_f32(self: State, pos: integer) -> single {
+  crt::get_f32(self.stack, self.stack_pos - pos)
+}
+
+pub fn get_var_f64(self: State, pos: integer) -> float {
+  crt::get_f64(self.stack, self.stack_pos - pos)
+}
+
+// ── `State::put_var(pos, v)`: a frame slot written at `stack_pos + step - pos`, the value's
+// 8-byte step counted as Rust's `put_var` counts it (the value was popped before the write). ──
+
+pub fn put_var_u8(self: State, pos: integer, v: integer) {
+  crt::put_u8(self.stack, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_u16(self: State, pos: integer, v: integer) {
+  crt::put_u16(self.stack, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_i32(self: State, pos: integer, v: integer) {
+  crt::put_i32(self.stack, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_i64(self: State, pos: integer, v: integer) {
+  crt::put_i64(self.stack, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_f32(self: State, pos: integer, v: single) {
+  crt::put_f32(self.stack, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_f64(self: State, pos: integer, v: float) {
+  crt::put_f64(self.stack, self.stack_pos + 8 - pos, v);
+}

@@ -492,6 +492,38 @@ void loft_crt_par_row_wide(int64_t store, int64_t rec, int64_t pos, int64_t stk,
     if (p) memcpy(d, p, (size_t) n);
 }
 
+/* A tuple row for a worker taking the tuple (`read_tuple_at_wide`): each element moved by the
+ * image's plan (`parallel::tuple_row_plan`), four numbers per element — its offset in the row,
+ * its stored width, its argument width and its kind: 0 copied, 1 a text record as a `Str`, 2 a
+ * function number as a fn-ref whose closure is the null sentinel. */
+void loft_crt_par_row_tuple(int64_t store, int64_t rec, int64_t pos, int64_t stk, int64_t at, const int64_t *plan,
+                            int64_t n) {
+    loft_ref row = loft_crt_ref(store, rec, pos);
+    const uint8_t *p = (const uint8_t *) loft_place(row, 0);
+    int64_t width = 0;
+    for (int64_t k = 0; k + 3 < n; k += 4) width += plan[k + 2];
+    uint8_t *d = loft_crt_slot_at(stk, at);
+    memset(d, 0, (size_t) ((width + 7) / 8 * 8));
+    if (!p) return;
+    int64_t off = 0;
+    for (int64_t k = 0; k + 3 < n; k += 4) {
+        int64_t in = plan[k], stored = plan[k + 1], arg = plan[k + 2], kind = plan[k + 3];
+        if (kind == 1) {
+            *(loft_str *) (d + off) = loft_get_text(row, (uint32_t) in);
+        } else if (kind == 2) {
+            uint32_t fn;
+            memcpy(&fn, p + in, 4);
+            int64_t f64 = fn;
+            memcpy(d + off, &f64, 8);
+            loft_ref none = loft_ref_null();
+            memcpy(d + off + 8, &none, 12);
+        } else {
+            memcpy(d + off, p + in, (size_t) (stored < arg ? stored : arg));
+        }
+        off += arg;
+    }
+}
+
 /* `log_info` … `log_fatal` (`sev` 0 … 3): the C runtime's logger, configured as a compiled
  * program's is (`log.conf`). */
 void loft_crt_log(int64_t sev, const char *m, int64_t mlen, const char *f, int64_t flen, int64_t line) {
@@ -500,6 +532,92 @@ void loft_crt_log(int64_t sev, const char *m, int64_t mlen, const char *f, int64
     else if (sev == 1) loft_log_warn(ms, fs, line);
     else if (sev == 2) loft_log_error(ms, fs, line);
     else loft_log_fatal(ms, fs, line);
+}
+
+/* ── The `#c_twin` routines of crt.loft's typed byte reads and writes: each loads or stores
+ * its width at `at` in the `n` bytes of `b`, little-endian as the host is; outside the bytes a
+ * read answers 0 and a write does nothing, as each loft body says.  A fixed-size `memcpy` is a
+ * single load or store with no alignment or aliasing assumption (an operand of the code sits at
+ * any byte). */
+#define LOFT_TWIN_IN(n, at, w) ((at) >= 0 && (at) <= (n) - (w))
+int64_t loft_twin_get_u8(const uint8_t *b, int64_t n, int64_t at) {
+    uint8_t v = 0;
+    if (LOFT_TWIN_IN(n, at, 1)) memcpy(&v, b + at, 1);
+    return (int64_t) v;
+}
+void loft_twin_put_u8(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    uint8_t w = (uint8_t) v;
+    if (LOFT_TWIN_IN(n, at, 1)) memcpy(b + at, &w, 1);
+}
+int64_t loft_twin_get_i8(const uint8_t *b, int64_t n, int64_t at) {
+    int8_t v = 0;
+    if (LOFT_TWIN_IN(n, at, 1)) memcpy(&v, b + at, 1);
+    return (int64_t) v;
+}
+void loft_twin_put_i8(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    int8_t w = (int8_t) v;
+    if (LOFT_TWIN_IN(n, at, 1)) memcpy(b + at, &w, 1);
+}
+int64_t loft_twin_get_u16(const uint8_t *b, int64_t n, int64_t at) {
+    uint16_t v = 0;
+    if (LOFT_TWIN_IN(n, at, 2)) memcpy(&v, b + at, 2);
+    return (int64_t) v;
+}
+void loft_twin_put_u16(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    uint16_t w = (uint16_t) v;
+    if (LOFT_TWIN_IN(n, at, 2)) memcpy(b + at, &w, 2);
+}
+int64_t loft_twin_get_i16(const uint8_t *b, int64_t n, int64_t at) {
+    int16_t v = 0;
+    if (LOFT_TWIN_IN(n, at, 2)) memcpy(&v, b + at, 2);
+    return (int64_t) v;
+}
+void loft_twin_put_i16(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    int16_t w = (int16_t) v;
+    if (LOFT_TWIN_IN(n, at, 2)) memcpy(b + at, &w, 2);
+}
+int64_t loft_twin_get_u32(const uint8_t *b, int64_t n, int64_t at) {
+    uint32_t v = 0;
+    if (LOFT_TWIN_IN(n, at, 4)) memcpy(&v, b + at, 4);
+    return (int64_t) v;
+}
+void loft_twin_put_u32(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    uint32_t w = (uint32_t) v;
+    if (LOFT_TWIN_IN(n, at, 4)) memcpy(b + at, &w, 4);
+}
+int64_t loft_twin_get_i32(const uint8_t *b, int64_t n, int64_t at) {
+    int32_t v = 0;
+    if (LOFT_TWIN_IN(n, at, 4)) memcpy(&v, b + at, 4);
+    return (int64_t) v;
+}
+void loft_twin_put_i32(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    int32_t w = (int32_t) v;
+    if (LOFT_TWIN_IN(n, at, 4)) memcpy(b + at, &w, 4);
+}
+int64_t loft_twin_get_i64(const uint8_t *b, int64_t n, int64_t at) {
+    int64_t v = 0;
+    if (LOFT_TWIN_IN(n, at, 8)) memcpy(&v, b + at, 8);
+    return (int64_t) v;
+}
+void loft_twin_put_i64(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    int64_t w = (int64_t) v;
+    if (LOFT_TWIN_IN(n, at, 8)) memcpy(b + at, &w, 8);
+}
+float loft_twin_get_f32(const uint8_t *b, int64_t n, int64_t at) {
+    float v = 0.0f;
+    if (LOFT_TWIN_IN(n, at, 4)) memcpy(&v, b + at, 4);
+    return v;
+}
+void loft_twin_put_f32(uint8_t *b, int64_t n, int64_t at, float v) {
+    if (LOFT_TWIN_IN(n, at, 4)) memcpy(b + at, &v, 4);
+}
+double loft_twin_get_f64(const uint8_t *b, int64_t n, int64_t at) {
+    double v = 0.0;
+    if (LOFT_TWIN_IN(n, at, 8)) memcpy(&v, b + at, 8);
+    return v;
+}
+void loft_twin_put_f64(uint8_t *b, int64_t n, int64_t at, double v) {
+    if (LOFT_TWIN_IN(n, at, 8)) memcpy(b + at, &v, 8);
 }
 
 /* `expose` / `release` off the browser (`Stores::expose_value`): the value's store locked

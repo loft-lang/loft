@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 // @PLN91 — writes the loft runner's operator table from the standard library's `#loft`
-// templates: `create <default dir> <fill.loft> [--missing | --slots | --reads | --refused]`.
+// templates: `create <default dir> <state.loft> <fill.loft> [--missing | --slots | --reads |
+// --refused]` — `state.loft` says which `State` methods are ported.
 // Prints how many operators are carried; `--missing` lists the `#rust` templates without a
 // `#loft` one, `--slots` the operators in slot order, `--reads` each one's operand and stack
 // reads (compared with `src/fill.rs` by a check), `--refused` what the front end refused.
@@ -16,10 +17,11 @@ use create;
 
 fn main() {
   args = arguments();
-  if len(args) < 2 {
-    eprintln("usage: create <default dir> <fill.loft> [--missing]");
+  if len(args) < 3 {
+    eprintln("usage: create <default dir> <state.loft> <fill.loft> [--missing | --slots | --reads | --refused]");
     exit(2);
   }
+  state_src = file(args[1]).content() ?? "";
   e = el::new_el(syntax::prepare(lex::lex("")), "", true);
   for n in ["01_code.loft", "02_files.loft", "03_text.loft", "04_stacktrace.loft", "05_coroutine.loft", "06_json.loft", "07_reflect.loft"] {
     f = "{args[0]}/{n}";
@@ -34,27 +36,27 @@ fn main() {
     e.first_pass = true;
     el_definitions::elab_file(e, tree ?? 0);
   }
-  out = file(args[1]);
-  out.write(create::generate(e));
-  gone = create::missing(e);
+  out = file(args[2]);
+  out.write(create::generate(e, state_src));
+  gone = create::missing(e, state_src);
   total = len(create::slots(e));
-  println("{total - len(gone)} of {total} operators carried; {len(gone)} #rust templates without a #loft one");
-  if (args[2] ?? "") == "--slots" {
+  println("{total - len(gone)} of {total} operators carried");
+  if (args[3] ?? "") == "--slots" {
     for n in create::slot_names(e) {
       println(n);
     }
   }
-  if (args[2] ?? "") == "--reads" {
+  if (args[3] ?? "") == "--reads" {
     for r in create::reads(e) {
       println(r);
     }
   }
-  if (args[2] ?? "") == "--refused" {
+  if (args[3] ?? "") == "--refused" {
     for r in e.refused {
       println("refused: {r}");
     }
   }
-  if (args[2] ?? "") == "--missing" {
+  if (args[3] ?? "") == "--missing" {
     for m in gone {
       println("  {m}");
     }
