@@ -222,6 +222,7 @@ H_NARROW = 198;
 H_NARROW32 = 199;
 H_POW_FLOAT = 200;
 H_NULL_REF_SENTINEL = 201;
+H_ABS_INT = 202;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -494,6 +495,9 @@ pub fn handler(name: text) -> integer {
     "OpNarrow32" => H_NARROW32,
     "OpPowFloat" => H_POW_FLOAT,
     "OpNullRefSentinel" => H_NULL_REF_SENTINEL,
+    "OpAbsInt" => H_ABS_INT,
+    "OpGetShortFull" => H_GET_W,
+    "OpGetShortSpare" => H_GET_W,
     "OpConvSingleFromNull" => H_CONV_FLOAT_FROM_NULL,
     "OpDivFloatNullable" => H_FLOAT2,
     "OpRemFloatNullable" => H_FLOAT2,
@@ -529,6 +533,7 @@ N_TEXT_TRIM_START = 23;
 N_TEXT_TRIM_END = 24;
 N_TO_UPPERCASE_DEST = 25;
 N_TO_LOWERCASE_DEST = 26;
+N_WRITE_TEXT_RAW = 27;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -558,6 +563,7 @@ pub fn native_handler(name: text) -> integer {
     "t_4text_trim_end" => N_TEXT_TRIM_END,
     "t_4text_to_uppercase_dest" => N_TO_UPPERCASE_DEST,
     "t_4text_to_lowercase_dest" => N_TO_LOWERCASE_DEST,
+    "n_write_text_raw" => N_WRITE_TEXT_RAW,
     _ => -1
   }
 }
@@ -724,7 +730,7 @@ pub fn bind_ops(img: ir::RunImage) -> vector<integer> {
   hs: vector<integer> = [];
   for name in img.ops {
     h = handler(name);
-    want = if name == "OpPushByte" { "i" } else if name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" { "hi" } else { layout_of(h) };
+    want = if name == "OpPushByte" { "i" } else if name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetShortSpare" { "hi" } else { layout_of(h) };
     if h > 0 && (img.layouts[len(hs)] ?? "") != want {
       h = -2;
     }
@@ -1000,6 +1006,13 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     ucv = crt::stack_str(stk, sp - 32) ?? "";
     sp -= 32;
     crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if nh == N_TO_UPPERCASE_DEST { ucv.to_uppercase() } else { ucv.to_lowercase() });
+  } else if nh == N_WRITE_TEXT_RAW {
+    // The text popped, then the File; whether it was written.
+    crt::slot_ref(io, stk, sp - 32);
+    wtr = crt::write_text_raw(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::stack_str(stk, sp - 16));
+    sp -= 32;
+    set_bool(stk, sp, wtr);
+    sp += 8;
   } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
     nv = crt::stack_str(stk, sp - 16) ?? "";
     ns2 = crt::stack_str(stk, sp - 32) ?? "";
@@ -1886,6 +1899,9 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
     pwa = get_f(stk, sp - 16);
     sp -= 8;
     crt::set_float(stk, 1, 8 + sp - 8, 0, if pwa == null || pwb == null { null } else { pwa!.pow(pwb!) }, false);
+  } else if h == H_ABS_INT {
+    aiv = get(stk, sp - 8);
+    set(stk, sp - 8, if aiv == null { null } else if aiv! < 0 { -aiv! } else { aiv });
   } else if h == H_NULL_REF_SENTINEL {
     crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
     sp += 16;
@@ -2690,15 +2706,19 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       fld = u16_at(img.code, pc);
       mn = 0;
       pc += 2;
-      if name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" {
+      if name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetShortSpare" {
         mn = i32_at(img.code, pc);
         pc += 4;
       }
       sp -= 16;
       crt::slot_ref(io, stk, sp);
-      w = if name == "OpGetByte" { crt::W_BYTE } else if name == "OpGetByteNullable" { crt::W_BYTE_NULLABLE } else if name == "OpGetShort" { crt::W_SHORT } else if name == "OpGetShortRaw" { crt::W_SHORT_RAW } else if name == "OpGetEnum" { crt::W_ENUM } else { crt::W_BOOLEAN };
+      w = if name == "OpGetByte" { crt::W_BYTE } else if name == "OpGetByteNullable" { crt::W_BYTE_NULLABLE } else if name == "OpGetShort" { crt::W_SHORT } else if name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetShortSpare" { crt::W_SHORT_RAW } else if name == "OpGetEnum" { crt::W_ENUM } else { crt::W_BOOLEAN };
       v = crt::get_w(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld, mn);
-      // A boolean or an enum stays its byte on the stack, 255 for null.
+      // A boolean or an enum stays its byte on the stack, 255 for null.  A spare short reads as
+      // the raw one (65535 null); a full one has no null code, so 65535 is a value.
+      if name == "OpGetShortFull" && v == null && io[1] != 0 {
+        v = 65535 + mn;
+      }
       set(stk, sp, if w == crt::W_ENUM || w == crt::W_BOOLEAN { v ?? 255 } else { v });
       sp += 8;
     } else if h == H_GET_FLOAT {
