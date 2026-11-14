@@ -29,6 +29,10 @@ K_INT32 = 1;
 K_COND = 2;
 K_BOOL = 3;
 K_VOID = 4;
+K_ENUM = 5;
+K_FLOAT = 6;
+K_SINGLE = 7;
+K_CHAR = 8;
 
 // A C expression and the shape of its value (`E`).
 struct E {
@@ -163,6 +167,14 @@ fn held(shape: text) -> text {
     "int64_t"
   } else if shape == "bool" {
     "uint8_t"
+  } else if shape == "enum" {
+    "uint8_t"
+  } else if shape == "float" {
+    "double"
+  } else if shape == "single" {
+    "float"
+  } else if shape == "char" {
+    "uint32_t"
   } else if shape == "void" {
     "void"
   } else {
@@ -172,7 +184,19 @@ fn held(shape: text) -> text {
 
 // The initial value of a local of `shape`: its null (`Cx::initial`).
 fn initial(shape: text) -> text {
-  if shape == "int" { "LOFT_NULL" } else { "LOFT_BOOL_NULL" }
+  if shape == "int" {
+    "LOFT_NULL"
+  } else if shape == "bool" {
+    "LOFT_BOOL_NULL"
+  } else if shape == "enum" {
+    "255"
+  } else if shape == "float" {
+    "(double) NAN"
+  } else if shape == "single" {
+    "(float) NAN"
+  } else {
+    "0"
+  }
 }
 
 fn kind_of(shape: text) -> integer {
@@ -180,9 +204,63 @@ fn kind_of(shape: text) -> integer {
     K_INT
   } else if shape == "bool" {
     K_BOOL
+  } else if shape == "enum" {
+    K_ENUM
+  } else if shape == "float" {
+    K_FLOAT
+  } else if shape == "single" {
+    K_SINGLE
+  } else if shape == "char" {
+    K_CHAR
   } else {
     K_VOID
   }
+}
+
+// The shape a value of kind `k` is held in (`arg_with`'s temporaries): a condition as a
+// boolean.
+fn shape_of_kind(k: integer) -> text {
+  if k == K_INT {
+    "int"
+  } else if k == K_ENUM {
+    "enum"
+  } else if k == K_FLOAT {
+    "float"
+  } else if k == K_SINGLE {
+    "single"
+  } else if k == K_CHAR {
+    "char"
+  } else {
+    "bool"
+  }
+}
+
+// The name of kind `k` as the Rust writer's refusals spell it.
+fn kind_name(k: integer) -> text {
+  if k == K_INT {
+    "Int"
+  } else if k == K_INT32 {
+    "Int32"
+  } else if k == K_COND {
+    "Cond"
+  } else if k == K_BOOL {
+    "Bool"
+  } else if k == K_ENUM {
+    "Enum"
+  } else if k == K_FLOAT {
+    "Float"
+  } else if k == K_SINGLE {
+    "Single"
+  } else if k == K_CHAR {
+    "Char"
+  } else {
+    "Void"
+  }
+}
+
+// `n` as a C `int64_t` constant (`c_long`): the null as `LOFT_NULL`.
+fn c_long(n: integer?) -> text {
+  if n == null { "LOFT_NULL" } else { "INT64_C({n})" }
 }
 
 fn line(w: W, ind: integer, s: text) {
@@ -233,10 +311,47 @@ fn as_int(w: W, e: E) -> text {
     e.code
   } else if e.kind == K_INT32 {
     "loft_w64({e.code})"
-  } else if e.kind == K_BOOL {
+  } else if e.kind == K_BOOL || e.kind == K_CHAR {
     "((int64_t) ({e.code}))"
   } else {
-    refuse(w, "an integer expected");
+    refuse(w, "an integer expected, a {kind_name(e.kind)} found");
+    ""
+  }
+}
+
+fn as_enum(w: W, e: E) -> text {
+  if e.kind == K_ENUM {
+    return e.code;
+  }
+  refuse(w, "an enum value expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_float(w: W, e: E) -> text {
+  if e.kind == K_FLOAT {
+    return e.code;
+  }
+  refuse(w, "a float expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_single(w: W, e: E) -> text {
+  if e.kind == K_SINGLE {
+    return e.code;
+  }
+  refuse(w, "a single expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_char(w: W, e: E) -> text {
+  if e.kind == K_CHAR {
+    e.code
+  } else if e.kind == K_INT {
+    "((uint32_t) ({e.code}))"
+  } else if e.kind == K_INT32 {
+    "((uint32_t) loft_w64({e.code}))"
+  } else {
+    refuse(w, "a character expected, a {kind_name(e.kind)} found");
     ""
   }
 }
@@ -268,6 +383,14 @@ fn as_shape(w: W, e: E, shape: text) -> text {
     as_int(w, e)
   } else if shape == "bool" {
     as_bool(w, e)
+  } else if shape == "enum" {
+    as_enum(w, e)
+  } else if shape == "float" {
+    as_float(w, e)
+  } else if shape == "single" {
+    as_single(w, e)
+  } else if shape == "char" {
+    as_char(w, e)
   } else {
     refuse(w, "a value of shape {shape}");
     ""
@@ -415,17 +538,18 @@ fn arg_with(x: Cx, w: W, operand: ir::Node, later_writes: boolean, ind: integer)
     NdInt { n: _ } => true,
     NdLong { n: _ } => true,
     NdBoolean { b: _ } => true,
+    NdText { s: _ } => true,
     _ => false,
   };
   if simple || value.kind == K_VOID || is_temp(w, value.code) {
     return value;
   }
-  shape = if value.kind == K_INT { "int" } else { "bool" };
+  shape = shape_of_kind(value.kind);
   if value.kind == K_INT32 {
     refuse(w, "a 32-bit operand");
     return value;
   }
-  code = if value.kind == K_INT { value.code } else { as_bool(w, value) };
+  code = if shape == "bool" { as_bool(w, value) } else { value.code };
   t = temp(w, shape);
   line(w, ind, "{t} = {code};");
   E { code: t, kind: kind_of(shape) }
@@ -559,8 +683,282 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   if (name == "OpConvIntFromNull" || name == "OpConvLongFromNull") && count == 0 {
     return E { code: "LOFT_NULL", kind: K_INT };
   }
+  scalar_operator(x, w, name, args, ind)
+}
+
+// An integer literal operand of an operator (`literal`): a field offset, a size, a type
+// number; null where it is computed.
+fn literal(w: W, v: ir::Node, what: text) -> integer? {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n,
+    NdLong { n } => n,
+    _ => {
+      refuse(w, "a computed {what}");
+      null
+    },
+  }
+}
+
+// The one operand of a unary operator, evaluated (`one`).
+fn one(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  if len(args) != 1 {
+    refuse(w, "{name} without one operand");
+    return none();
+  }
+  arg(x, w, args, 0, ind)
+}
+
+// The conversions and the enum operators (`scalar_operator`).
+fn scalar_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  count = len(args);
+  if name == "OpRangeDefault" {
+    if count != 4 {
+      refuse(w, "OpRangeDefault with an unexpected operand list");
+      return none();
+    }
+    lo = literal(w, args[1], "range bound");
+    hi = literal(w, args[2], "range bound");
+    dflt = literal(w, args[3], "range default");
+    v = expr(x, w, args[0], ind);
+    return E { code: "loft_range_default_at({as_int(w, v)}, {c_long(lo)}, {c_long(hi)}, {c_long(dflt)}, {site(w)})", kind: K_INT };
+  }
+  if name == "OpConvEnumFromNull" {
+    return E { code: "(uint8_t) 255", kind: K_ENUM };
+  }
+  if name == "OpConstEnum" {
+    if count == 0 {
+      refuse(w, "OpConstEnum without a value");
+      return none();
+    }
+    return expr(x, w, args[0], ind);
+  }
+  if name == "OpConvIntFromEnum" {
+    a = as_enum(w, one(x, w, name, args, ind));
+    return E { code: "({a} == 255 ? LOFT_NULL : (int64_t) {a})", kind: K_INT };
+  }
+  if name == "OpCastEnumFromInt" {
+    a = as_int(w, one(x, w, name, args, ind));
+    return E { code: "({a} == LOFT_NULL ? (uint8_t) 255 : (uint8_t) {a})", kind: K_ENUM };
+  }
+  if name == "OpConvBoolFromEnum" {
+    a = as_enum(w, one(x, w, name, args, ind));
+    return E { code: "({a} != 255 && {a} != 0)", kind: K_COND };
+  }
+  float_operator(x, w, name, args, ind)
+}
+
+// An operand as a float or a single.
+fn as_fp(w: W, e: E, single: boolean) -> text {
+  if single { as_single(w, e) } else { as_float(w, e) }
+}
+
+// The float and single operators (`float_operator`): `Float` names a double, `Single` a float.
+fn float_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  single = name.ends_with("Single") || name == "OpDivSingleNullable" || name == "OpRemSingleNullable";
+  k = if single { K_SINGLE } else { K_FLOAT };
+  // The unguarded division and remainder report a zero divisor.
+  div = if name == "OpDivFloat" {
+    "loft_fdiv_at"
+  } else if name == "OpRemFloat" {
+    "loft_frem_at"
+  } else if name == "OpDivSingle" {
+    "loft_sdiv_at"
+  } else if name == "OpRemSingle" {
+    "loft_srem_at"
+  } else {
+    ""
+  };
+  if div != "" {
+    a = arg(x, w, args, 0, ind);
+    b = arg(x, w, args, 1, ind);
+    return E { code: "{div}({as_fp(w, a, single)}, {as_fp(w, b, single)}, {site(w)})", kind: k };
+  }
+  infix = if name == "OpAddFloat" || name == "OpAddSingle" {
+    "+"
+  } else if name == "OpMinFloat" || name == "OpMinSingle" {
+    "-"
+  } else if name == "OpMulFloat" || name == "OpMulSingle" {
+    "*"
+  } else if name == "OpDivFloatNullable" || name == "OpDivSingleNullable" {
+    "/"
+  } else {
+    ""
+  };
+  if infix != "" {
+    a = arg(x, w, args, 0, ind);
+    b = arg(x, w, args, 1, ind);
+    return E { code: "({as_fp(w, a, single)} {infix} {as_fp(w, b, single)})", kind: k };
+  }
+  call2 = if name == "OpRemFloatNullable" {
+    "fmod"
+  } else if name == "OpPowFloat" {
+    "pow"
+  } else if name == "OpRemSingleNullable" {
+    "fmodf"
+  } else if name == "OpPowSingle" {
+    "powf"
+  } else {
+    ""
+  };
+  if call2 != "" {
+    a = arg(x, w, args, 0, ind);
+    b = arg(x, w, args, 1, ind);
+    return E { code: "{call2}({as_fp(w, a, single)}, {as_fp(w, b, single)})", kind: k };
+  }
+  cmp = if name == "OpEqFloat" || name == "OpEqSingle" {
+    "loft_feq"
+  } else if name == "OpNeFloat" || name == "OpNeSingle" {
+    "!loft_feq"
+  } else if name == "OpLtFloat" || name == "OpLtSingle" {
+    "loft_flt"
+  } else if name == "OpLeFloat" || name == "OpLeSingle" {
+    "loft_fle"
+  } else {
+    ""
+  };
+  if cmp != "" {
+    a = arg(x, w, args, 0, ind);
+    b = arg(x, w, args, 1, ind);
+    return E { code: "{cmp}({as_fp(w, a, single)}, {as_fp(w, b, single)})", kind: K_COND };
+  }
+  unary = if name == "OpMinSingleFloat" || name == "OpMinSingleSingle" {
+    "-"
+  } else if name == "OpAbsFloat" {
+    "fabs"
+  } else if name == "OpAbsSingle" {
+    "fabsf"
+  } else {
+    ""
+  };
+  if unary != "" {
+    a = one(x, w, name, args, ind);
+    return E { code: "({unary}({as_fp(w, a, single)}))", kind: k };
+  }
+  float_conversion(x, w, name, args, ind)
+}
+
+// The conversions to and from floats and their math functions (`float_bits`,
+// `float_conversion`).
+fn float_conversion(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  count = len(args);
+  if name == "OpFloatBits" {
+    return E { code: "loft_f2bits({as_float(w, one(x, w, name, args, ind))})", kind: K_INT };
+  }
+  if name == "OpFloatFromBits" {
+    return E { code: "loft_bits2f({as_int(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
+  }
+  if name == "OpSingleBits" {
+    return E { code: "loft_s2bits({as_single(w, one(x, w, name, args, ind))})", kind: K_INT };
+  }
+  if name == "OpSingleFromBits" {
+    return E { code: "loft_bits2s({as_int(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
+  }
+  if name == "OpConvFloatFromNull" && count == 0 {
+    return E { code: "(double) NAN", kind: K_FLOAT };
+  }
+  if name == "OpConvSingleFromNull" && count == 0 {
+    return E { code: "(float) NAN", kind: K_SINGLE };
+  }
+  if (name == "OpConvFloatFromInt" || name == "OpConvFloatFromLong") && count == 1 {
+    return E { code: "loft_i2f({as_int(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
+  }
+  if name == "OpConvSingleFromInt" && count == 1 {
+    return E { code: "loft_i2s({as_int(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
+  }
+  if name == "OpCastIntFromFloat" && count == 1 {
+    a = as_float(w, one(x, w, name, args, ind));
+    return E { code: "loft_f2i_at({a}, {site(w)})", kind: K_INT };
+  }
+  if name == "OpCastIntFromSingle" && count == 1 {
+    a = as_single(w, one(x, w, name, args, ind));
+    return E { code: "loft_f2i_at((double) {a}, {site(w)})", kind: K_INT };
+  }
+  if name == "OpConvBoolFromFloat" && count == 1 {
+    return E { code: "(!isnan({as_float(w, one(x, w, name, args, ind))}))", kind: K_COND };
+  }
+  if name == "OpConvBoolFromSingle" && count == 1 {
+    return E { code: "(!isnan({as_single(w, one(x, w, name, args, ind))}))", kind: K_COND };
+  }
+  if name == "OpCastSingleFromFloat" && count == 1 {
+    return E { code: "((float) {as_float(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
+  }
+  if name == "OpConvFloatFromSingle" && count == 1 {
+    return E { code: "((double) {as_single(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
+  }
+  // The constants as the shortest literals that round-trip.
+  if name == "OpMathPiFloat" && count == 0 {
+    return E { code: "3.141592653589793", kind: K_FLOAT };
+  }
+  if name == "OpMathEFloat" && count == 0 {
+    return E { code: "2.718281828459045", kind: K_FLOAT };
+  }
+  if (name == "OpMathFuncFloat" || name == "OpMathFuncSingle") && count == 2 {
+    id = literal(w, args[0], "math function") ?? 0;
+    a = expr(x, w, args[1], ind);
+    if name.ends_with("Single") {
+      return E { code: "loft_math1s({id}, {as_single(w, a)})", kind: K_SINGLE };
+    }
+    return E { code: "loft_math1({id}, {as_float(w, a)})", kind: K_FLOAT };
+  }
+  if (name == "OpMathFunc2Float" || name == "OpMathFunc2Single") && count == 3 {
+    id = literal(w, args[0], "math function") ?? 0;
+    pair = [args[1], args[2]];
+    a = arg(x, w, pair, 0, ind);
+    b = arg(x, w, pair, 1, ind);
+    if name.ends_with("Single") {
+      return E { code: "loft_math2s({id}, {as_single(w, a)}, {as_single(w, b)})", kind: K_SINGLE };
+    }
+    return E { code: "loft_math2({id}, {as_float(w, a)}, {as_float(w, b)})", kind: K_FLOAT };
+  }
+  char_operator(x, w, name, args, ind)
+}
+
+// The character operators that touch no text and no store (`char_operator`).
+fn char_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  count = len(args);
+  if name == "OpConvCharacterFromInt" && count == 1 {
+    v = expr(x, w, args[0], ind);
+    return E { code: "loft_char_of_at({as_int(w, v)}, {site(w)})", kind: K_CHAR };
+  }
+  if name == "OpConvIntFromCharacter" && count == 1 {
+    v = expr(x, w, args[0], ind);
+    return E { code: "loft_char_int({as_char(w, v)})", kind: K_INT };
+  }
+  if name == "OpConvBoolFromCharacter" && count == 1 {
+    v = expr(x, w, args[0], ind);
+    return E { code: "({as_char(w, v)} != 0)", kind: K_COND };
+  }
+  if name == "OpLengthCharacter" && count == 1 {
+    v = expr(x, w, args[0], ind);
+    return E { code: "loft_char_len({as_char(w, v)})", kind: K_INT };
+  }
   refuse(w, "operator {name}");
   none()
+}
+
+// The C shape an operator's value is held in (`op_shape`), for the operators carried; "" for
+// any other.
+fn op_shape(name: text) -> text {
+  ints = ["OpAddInt", "OpAddLong", "OpMinInt", "OpMinLong", "OpMulInt", "OpMulLong", "OpDivInt", "OpDivLong", "OpRemInt", "OpRemLong", "OpGetInt", "OpLengthVector", "OpLengthText", "OpSizeText", "OpMinSingleInt", "OpBitNotSingleInt", "OpSizeStruct", "OpSizeHash", "OpMinSingleLong", "OpConvIntFromNull", "OpConvLongFromNull", "OpConvIntFromEnum", "OpLengthSorted", "OpRangeDefault", "OpGetByte", "OpGetByteNullable", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetInt4", "OpLandInt", "OpLandLong", "OpLorInt", "OpLorLong", "OpEorInt", "OpEorLong", "OpSLeftInt", "OpSLeftLong", "OpSRightInt", "OpSRightLong", "OpConvIntFromCharacter", "OpLengthCharacter", "OpAddIntNullable", "OpMinIntNullable", "OpMulIntNullable", "OpDivIntNullable", "OpRemIntNullable", "OpCastIntFromText", "OpCastLongFromText", "OpCastIntFromFloat", "OpCastIntFromSingle", "OpFloatBits", "OpSingleBits"];
+  bools = ["OpEqInt", "OpEqLong", "OpNeInt", "OpNeLong", "OpLtInt", "OpLtLong", "OpLeInt", "OpLeLong", "OpEqBool", "OpNeBool", "OpNot", "OpEqText", "OpNeText", "OpRefIsNull", "OpConvBoolFromInt", "OpConvBoolFromLong", "OpConvBoolFromEnum", "OpConvBoolFromRef", "OpGetBoolean", "OpVectorIsNull", "OpDistinctStore", "OpConvBoolFromText", "OpConvBoolFromCharacter", "OpConvBoolFromNull", "OpRemoveVector", "OpStoreLive", "OpEqContent", "OpNeContent", "OpEqRef", "OpNeRef", "OpEqFloat", "OpNeFloat", "OpLtFloat", "OpLeFloat", "OpEqSingle", "OpNeSingle", "OpLtSingle", "OpLeSingle", "OpConvBoolFromFloat", "OpConvBoolFromSingle"];
+  refs = ["OpPlaceRecord", "OpConstRef", "OpGetDbRef", "OpGetField", "OpGetVector", "OpGetVectorNullable", "OpNullRefSentinel", "OpInsertVector", "OpRefFromChildRec", "OpSlotTag", "OpStoreBuf", "OpStoreBufOnly", "OpChildRecInPlace", "OpChildRec", "OpCopyClosure", "OpCoroutineRetain"];
+  enums = ["OpGetEnum", "OpCastEnumFromInt", "OpConvEnumFromNull", "OpConstEnum"];
+  texts = ["OpGetText", "OpCastTextFromEnum", "OpCastEnumFromText", "OpCastVectorFromText", "OpConvTextFromNull", "OpCastTextFromBool", "OpGetTextSub"];
+  floats = ["OpFloatFromBits", "OpAddFloat", "OpMinFloat", "OpMulFloat", "OpDivFloat", "OpDivFloatNullable", "OpRemFloat", "OpRemFloatNullable", "OpPowFloat", "OpMinSingleFloat", "OpAbsFloat", "OpConvFloatFromNull", "OpConvFloatFromInt", "OpConvFloatFromLong", "OpConvFloatFromSingle", "OpMathPiFloat", "OpMathEFloat", "OpMathFuncFloat", "OpMathFunc2Float", "OpGetFloat"];
+  singles = ["OpSingleFromBits", "OpAddSingle", "OpMinSingle", "OpMulSingle", "OpDivSingle", "OpDivSingleNullable", "OpRemSingle", "OpRemSingleNullable", "OpPowSingle", "OpMinSingleSingle", "OpAbsSingle", "OpConvSingleFromNull", "OpConvSingleFromInt", "OpCastSingleFromFloat", "OpMathFuncSingle", "OpMathFunc2Single", "OpGetSingle"];
+  chars = ["OpConvCharacterFromInt", "OpConvCharacterFromNull", "OpTextCharacter", "OpTextCharacterNullable", "OpGetCharacter"];
+  if name == "OpNarrow32" {
+    return "int32";
+  }
+  for n in ints { if n == name { return "int"; } }
+  for n in bools { if n == name { return "bool"; } }
+  for n in refs { if n == name { return "ref"; } }
+  for n in enums { if n == name { return "enum"; } }
+  for n in texts { if n == name { return "text"; } }
+  for n in floats { if n == name { return "float"; } }
+  for n in singles { if n == name { return "single"; } }
+  for n in chars { if n == name { return "char"; } }
+  ""
 }
 
 // Does `f`'s own body divide or take a remainder by a literal?
@@ -677,7 +1075,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       _ => false,
     };
     shape = cgen_types::ctype(a.typedef[0]!) ?? "";
-    if link || (shape != "int" && shape != "bool") {
+    if link || held(shape) == "" || shape == "void" {
       refuse(w, "a call with a parameter of shape {if link { "&" } else { shape }}");
       return none();
     }
@@ -731,9 +1129,30 @@ fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
     NdInt { n: _ } => "int",
     NdLong { n: _ } => "int",
     NdBoolean { b: _ } => "bool",
+    NdEnum { ord: _, tp: _ } => "enum",
+    NdFloat { f: _ } => "float",
+    NdSingle { f: _ } => "single",
+    NdText { s: _ } => "text",
     NdVar { n } => w.shapes[n] ?? "",
+    NdCall { def_nr, args: _ } => {
+      def = b.data.definitions[def_nr]!;
+      if def.name.starts_with("Op") {
+        return op_shape(def.name);
+      }
+      if len(def.returned) == 0 { "" } else { cgen_types::ctype(def.returned[0]!) ?? "" }
+    },
     _ => "",
   }
+}
+
+// A float literal's bit pattern as hexadecimal digits (`f64::to_bits`).  A loft float holds
+// one NaN, its null, and `bits()` answers null for the pattern of `-0.0`.
+fn float_bits(f: float) -> text {
+  if f == null {
+    return "7ff8000000000000";
+  }
+  bits = f.bits();
+  if bits == null { "8000000000000000" } else { "{bits:x}" }
 }
 
 // A C expression for `v`'s value (`expr`); the statements it needs are written first.
@@ -761,6 +1180,9 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     NdInt { n } => E { code: "INT64_C({n})", kind: K_INT },
     NdLong { n } => if n == null { E { code: "LOFT_NULL", kind: K_INT } } else { E { code: "INT64_C({n})", kind: K_INT } },
     NdBoolean { b: on } => E { code: if on { "1" } else { "0" }, kind: K_COND },
+    NdEnum { ord, tp: _ } => E { code: "(uint8_t) {ord}", kind: K_ENUM },
+    NdFloat { f } => E { code: "loft_f64(UINT64_C(0x{float_bits(f)}))", kind: K_FLOAT },
+    NdSingle { f } => E { code: "loft_f32(UINT32_C({if f == null { "0x7fc00000" } else { "{f.bits():#x}" }}))", kind: K_SINGLE },
     NdVar { n } => {
       shape = w.shapes[n] ?? "";
       if held(shape) == "" || shape == "void" {
@@ -892,6 +1314,14 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
     line(w, ind, "{target} = LOFT_NULL;");
   } else if shape == "bool" {
     line(w, ind, "{target} = LOFT_BOOL_NULL;");
+  } else if shape == "enum" {
+    line(w, ind, "{target} = 255;");
+  } else if shape == "float" {
+    line(w, ind, "{target} = (double) NAN;");
+  } else if shape == "single" {
+    line(w, ind, "{target} = (float) NAN;");
+  } else if shape == "char" {
+    line(w, ind, "{target} = 0;");
   } else if shape != "void" {
     refuse(w, "a null of shape {shape}");
   }
@@ -1064,6 +1494,10 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdInt { n: _ } => {},
     NdLong { n: _ } => {},
     NdBoolean { b: _ } => {},
+    NdFloat { f: _ } => {},
+    NdSingle { f: _ } => {},
+    NdEnum { ord: _, tp: _ } => {},
+    NdText { s: _ } => {},
     NdSpan { pos, inner } => {
       saved_file = w.span_file;
       saved_line = w.span_line;
@@ -1095,7 +1529,7 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     },
     NdSet { var, inner } => {
       shape = w.shapes[var] ?? "";
-      if shape != "int" && shape != "bool" {
+      if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
         return;
       }
