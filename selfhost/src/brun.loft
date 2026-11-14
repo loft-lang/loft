@@ -882,6 +882,43 @@ fn default_of(ts: vector<ir::DbType>, images: vector<vector<u8>>, imaged: vector
   }
 }
 
+// Per native: for a compiled standard-library function's destination form
+// (`loft_shared_<def>#dest`, which pops a destination text above the body's arguments, appends
+// its answer there and pushes nothing), the definition its plain twin names in `img.shared`;
+// -1 for every other native.
+fn shared_dest(img: ir::RunImage) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..len(img.natives) {
+    d = -1;
+    nm = img.natives[i] ?? "";
+    if nm.starts_with("loft_shared_") && nm.ends_with("#dest") {
+      plain = nm[0..len(nm) - 5];
+      for j in 0..len(img.natives) {
+        if (img.natives[j] ?? "") == plain {
+          d = img.shared[j] ?? -1;
+        }
+      }
+    }
+    out += [d];
+  }
+  out
+}
+
+// A destination-form call returning (`dest`, its quadruple `[depth, store, rec, pos]` last in
+// `dpx`): the text the body answered, on top of the stack, appended to the destination and
+// popped, as the native does.  Answers the stack top; unchanged for any other return.
+fn dest_return(stk: integer, sp: integer, dpx: vector<integer>, depth: integer) -> integer {
+  k = len(dpx) - 4;
+  if k < 0 || (dpx[k] ?? -1) != depth {
+    return sp;
+  }
+  crt::ref_text_append(dpx[k + 1] ?? NULL_STORE, dpx[k + 2] ?? 0, dpx[k + 3] ?? 0, crt::stack_str(stk, sp - 16));
+  for _ in 0..4 {
+    dpx.remove(len(dpx) - 1);
+  }
+  sp - 16
+}
+
 // A call's hidden return buffers (`RunFnRef.hidden`, `State::fn_call_ref_to`) pushed at `sp`
 // and registered to be released when the call at `at_depth` returns (`release_fnref_bufs`): a
 // record's buffer a store with no root (`Stores::null()`), a vector's a store of its
@@ -2190,6 +2227,10 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   images: vector<vector<u8>> = [];
   // Why a native was refused (`call_native`).
   nwhy: vector<text> = [""];
+  // The compiled standard library's destination forms, and their destinations while their
+  // bodies run (`shared_dest`, `dest_return`).
+  sdest = shared_dest(img);
+  dpx: vector<integer> = [];
   // The generators' frames (slot 0 unused), the running ones innermost last, and the next
   // frame's generation.
   cos: vector<CoFrame> = [co_empty()];
@@ -2337,6 +2378,9 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       }
       if depth == 0 {
         return Outcome { refused: "", steps: steps };
+      }
+      if len(dpx) > 0 {
+        sp = dest_return(stk, sp, dpx, depth);
       }
       depth -= 1;
       pc = back;
@@ -2592,6 +2636,14 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       idx = u16_at(img.code, pc);
       pc += 2;
       shd = img.shared[idx] ?? -1;
+      if (ns[idx] ?? -1) < 0 && shd < 0 && (sdest[idx] ?? -1) >= 0 {
+        // The destination form: the destination parked until the body returns
+        // (`dest_return`), then the body called as the plain form is.
+        shd = sdest[idx] ?? -1;
+        crt::slot_ref(io, stk, sp - 16);
+        sp -= 16;
+        dpx += [depth + 1, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0];
+      }
       if (ns[idx] ?? -1) < 0 && shd >= 0 && shd + 1 < len(img.starts) {
         // A compiled standard-library function (`loft_shared_<def>`): its loft body run as
         // bytecode in its place.  The native takes exactly the body's arguments — its hidden
