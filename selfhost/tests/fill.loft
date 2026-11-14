@@ -50,11 +50,60 @@ fn test_mix_and_collatz_answer_as_the_rust_interpreter() {
   assert(m == want_m && c == want_c, "mix {m} (want {want_m}), collatz {c} (want {want_c})");
 }
 
+// A record rebuilt in a loop starts each pass with empty vectors: 1, 2, 3 and 4 elements.
+fn test_a_reused_record_starts_empty() {
+  r = answer("reuse", "n_loop_record", [4]);
+  assert(r == 100200300400, "four passes: {r}");
+}
+
+// A null text appended to a result buffer leaves it null, so the `??` default is taken.
+fn test_a_null_text_takes_its_default() {
+  r = answer("nulltext", "n_defaults", [3]);
+  assert(r == 424, "none, ab, none: {r}");
+}
+
+// Records filed in a hash under a narrow key are found under it, and an absent key is not.
+fn test_a_hash_finds_what_was_filed() {
+  r = answer("keyedfind", "n_found", [5]);
+  assert(r == 1230, "the values under -100, 7, 100 and 5: {r}");
+}
+
+// A recursion 5000 deep: the frame list grows under the loop, and the code is still read
+// where it lies.
+fn test_a_deep_recursion_returns() {
+  r = answer("deep", "n_depth", [5000]);
+  assert(r == 5000, "depth(5000): {r}");
+}
+
+// A character's code point, and null for NUL — a word's null, which `??` replaces.
+fn test_a_nul_character_is_a_null_integer() {
+  r = answer("charcode", "n_codes", [0]);
+  assert(r == 655, "'A' and NUL as integers: {r}");
+}
+
+// A function called through a reference held in a parameter.
+fn test_a_call_through_a_reference() {
+  r = answer("fnref", "n_apply", [4]);
+  assert(r == 636, "inc twice and triple twice of 4: {r}");
+}
+
+// A walk visits every record of a hash once, and a sorted collection's in key order.
+fn test_a_walk_visits_every_record() {
+  r = answer("walk", "n_walked", [0]);
+  assert(r == 42123, "the hash's sum and the sorted order: {r}");
+}
+
+// A generator keeps its locals across its yields, and a walk over it ends at its return.
+fn test_a_generator_yields_and_ends() {
+  r = answer("gen", "n_walked", [4]);
+  assert(r == 145, "the squares below 4 summed, and five values counted: {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {
   judged = 0;
-  for name in ["fib", "mix", "collatz", "small_ops", "frames", "repeats", "records", "structs", "refs"] {
+  for name in ["fib", "mix", "collatz", "small_ops", "frames", "repeats", "records", "structs", "refs", "reuse"] {
     (b, img) = images(name);
     for d in fill_run::integer_functions(b) {
       args: vector<integer> = [for _ in 0..fill_run::arity(b, d) { 3 }];

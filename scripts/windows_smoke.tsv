@@ -111,6 +111,9 @@ scripts/width64_census.py	--help
 scripts/windows_parity.py	--help
 scripts/work-issues.sh	--help
 scripts/worst.py	--help
+selfhost/bench/fill_speed.sh	--help
+selfhost/bench/fill_survey.py	--help
+selfhost/bench/hand/build.sh	--help
 selfhost/bench/measure.py	--help
 selfhost/bench/run_image_bytecode.py	--help
 selfhost/bench/run_image_survey.py	--help

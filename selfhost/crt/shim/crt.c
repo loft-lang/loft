@@ -209,6 +209,87 @@ void loft_crt_stack_put_float(int64_t store, int64_t at, const double *v, int64_
     if (single) { float f = (float) d; memcpy(p, &f, 4); }
     else memcpy(p, &d, 8);
 }
+/* `(R-StackBase)` — the frame area's address for the run's dispatch loop, as an integer a loft
+ * local holds; taken again after anything that can grow the stack store. */
+int64_t loft_crt_stack_base(int64_t store) {
+    return (int64_t) (uintptr_t) loft_crt_slot_at(store, 0);
+}
+/* A routine the dispatch loop calls at every step: a shipped program's link-time optimisation
+ * takes it into the caller whatever the caller's size (`extern` keeps the definition for a
+ * build that links the shim as a library). */
+#if defined(__GNUC__)
+#define LOFT_STEP_FN __attribute__((always_inline)) inline
+#else
+#define LOFT_STEP_FN
+#endif
+/* A frame slot read or written through that base: one compare against the stack's capacity
+ * and one load or store; outside the stack a read answers 0 and a write does nothing. */
+#define LOFT_FSLOT(base, at) ((uint8_t *) (uintptr_t) (base) + (at))
+extern int64_t loft_twin_fget_i64(int64_t stk, int64_t base, int64_t cap, int64_t at);
+extern void loft_twin_fput_i64(int64_t stk, int64_t base, int64_t cap, int64_t at, int64_t v);
+extern int64_t loft_twin_fget_u8(int64_t stk, int64_t base, int64_t cap, int64_t at);
+extern void loft_twin_fput_u8(int64_t stk, int64_t base, int64_t cap, int64_t at, int64_t v);
+extern double loft_twin_fget_f64(int64_t stk, int64_t base, int64_t cap, int64_t at);
+extern void loft_twin_fput_f64(int64_t stk, int64_t base, int64_t cap, int64_t at, double v);
+LOFT_STEP_FN int64_t loft_twin_fget_i64(int64_t stk, int64_t base, int64_t cap, int64_t at) {
+    int64_t v = 0;
+    (void) stk;
+    if (at >= 0 && at <= cap - 8) memcpy(&v, LOFT_FSLOT(base, at), 8);
+    return v;
+}
+LOFT_STEP_FN void loft_twin_fput_i64(int64_t stk, int64_t base, int64_t cap, int64_t at, int64_t v) {
+    (void) stk;
+    if (at >= 0 && at <= cap - 8) memcpy(LOFT_FSLOT(base, at), &v, 8);
+}
+LOFT_STEP_FN int64_t loft_twin_fget_u8(int64_t stk, int64_t base, int64_t cap, int64_t at) {
+    (void) stk;
+    return at >= 0 && at < cap ? *LOFT_FSLOT(base, at) : 0;
+}
+LOFT_STEP_FN void loft_twin_fput_u8(int64_t stk, int64_t base, int64_t cap, int64_t at, int64_t v) {
+    (void) stk;
+    if (at >= 0 && at < cap) *LOFT_FSLOT(base, at) = (uint8_t) v;
+}
+LOFT_STEP_FN double loft_twin_fget_f64(int64_t stk, int64_t base, int64_t cap, int64_t at) {
+    double v = 0.0;
+    (void) stk;
+    if (at >= 0 && at <= cap - 8) memcpy(&v, LOFT_FSLOT(base, at), 8);
+    return v;
+}
+LOFT_STEP_FN void loft_twin_fput_f64(int64_t stk, int64_t base, int64_t cap, int64_t at, double v) {
+    (void) stk;
+    if (at >= 0 && at <= cap - 8) memcpy(LOFT_FSLOT(base, at), &v, 8);
+}
+
+/* `(R-CodeBase)` — the bytecode's address, as an integer a loft local holds until its store
+ * can have grown, and an operand read through it: `b` and `n` are the
+ * vector the loft body reads, unused here. */
+int64_t loft_crt_code_base(const uint8_t *b, int64_t n) {
+    (void) n;
+    return (int64_t) (uintptr_t) b;
+}
+#define LOFT_CODE_GET(name, ctype) \
+    extern int64_t loft_twin_cget_##name(const uint8_t *b, int64_t n, int64_t base, int64_t len, int64_t at); \
+    LOFT_STEP_FN int64_t loft_twin_cget_##name(const uint8_t *b, int64_t n, int64_t base, int64_t len, int64_t at) { \
+        ctype v = 0; \
+        (void) b; (void) n; \
+        if (at >= 0 && at <= len - (int64_t) sizeof v) memcpy(&v, (const uint8_t *) (uintptr_t) base + at, sizeof v); \
+        return (int64_t) v; \
+    }
+LOFT_CODE_GET(u8, uint8_t)
+LOFT_CODE_GET(i8, int8_t)
+LOFT_CODE_GET(u16, uint16_t)
+LOFT_CODE_GET(i16, int16_t)
+LOFT_CODE_GET(u32, uint32_t)
+LOFT_CODE_GET(i32, int32_t)
+LOFT_CODE_GET(i64, int64_t)
+extern double loft_twin_cget_f64(const uint8_t *b, int64_t n, int64_t base, int64_t len, int64_t at);
+LOFT_STEP_FN double loft_twin_cget_f64(const uint8_t *b, int64_t n, int64_t base, int64_t len, int64_t at) {
+    double v = 0.0;
+    (void) b; (void) n;
+    if (at >= 0 && at <= len - 8) memcpy(&v, (const uint8_t *) (uintptr_t) base + at, 8);
+    return v;
+}
+
 /* The text a slot holds — a local's (`arg` 0) or an argument's (1) — copied into `out` when it
  * fits: its length, or -1 for the null text. */
 int64_t loft_crt_slot_text(char *out, int64_t cap, int64_t store, int64_t at, int64_t arg) {

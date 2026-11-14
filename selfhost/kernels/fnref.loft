@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a function called through a reference held in a parameter, twice in a row.
+
+fn inc(x: integer) -> integer {
+  x + 1
+}
+
+fn triple(x: integer) -> integer {
+  x * 3
+}
+
+fn twice(f: fn(integer) -> integer, x: integer) -> integer {
+  f(f(x))
+}
+
+// For 4: inc twice is 6, triple twice is 36: 6 * 100 + 36.
+fn apply(n: integer) -> integer {
+  twice(inc, n) * 100 + twice(triple, n)
+}
+
+fn main() {
+  println("{apply(4)}");
+}

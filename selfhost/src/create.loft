@@ -35,6 +35,13 @@ pub fn operator_name(op: text) -> text {
   if out == "return" { "op_return" } else { out }
 }
 
+// The generated function of an operator: its `operator_name` behind `op_`, so that none takes a
+// standard-library function's name (`print`, `abs`).
+fn fn_name(op: text) -> text {
+  n = operator_name(op);
+  if n.starts_with("op_") { n } else { "op_{n}" }
+}
+
 // `Data::rust_type` in the argument context, as the suffix of the `state::State` accessor that
 // reads or writes a value of that width: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `i64`, `bool`,
 // `f64`, `f32`, `char`, `str`, `dbref`, `keys`; "" for a type no operator takes.
@@ -91,6 +98,14 @@ fn carried(e: el::El, d: integer, state_src: text) -> boolean {
   } else {
     template(e, d) != null
   }
+}
+
+// The width an answer of type `t` is pushed at.  `fill.rs` pushes the value its template
+// computes, and an integer template computes an `i64` whatever size the operator declares
+// (`OpConvIntFromCharacter` declares `i32` and pushes a word, its null the word's).
+fn answer_width(t: ir::TypeT) -> text {
+  w = width(t);
+  if w == "i32" { "i64" } else { w }
 }
 
 // The loft type a template's answer of accessor width `w` is bound as: nullable, as an
@@ -150,11 +165,12 @@ pub fn slots(e: el::El) -> vector<integer> {
 // One operator's function: the operands read, the arguments popped, the template, the answer
 // pushed (`create.rs`'s body for one operator).
 fn operator_fn(def: ir::Definition, body: text) -> text {
-  name = operator_name(def.name);
-  out = "\npub fn {name}(s: state::State) {{\n";
+  out = "\npub fn {fn_name(def.name)}(s: state::State) {{\n";
   for a in def.attributes {
     if !a.name.starts_with("_") && !a.mutable {
-      out += "  {a.name} = s.code_{width(a.typedef[0] ?? ir::TyVoid)}();\n";
+      // An operand its template does not name is read unbound.
+      named = if body.contains(a.name) { "{a.name} = " } else { "" };
+      out += "  {named}s.code_{width(a.typedef[0] ?? ir::TyVoid)}();\n";
     }
   }
   k = len(def.attributes) - 1;
@@ -163,7 +179,9 @@ fn operator_fn(def: ir::Definition, body: text) -> text {
     if !a.name.starts_with("_") && a.mutable {
       w = width(a.typedef[0] ?? ir::TyVoid);
       // A boolean is tri-state on the stack (0, 1, 255 for null): read as its byte.
-      out += "  {a.name} = s.get_stack_{if w == "bool" { "u8" } else { w }}();\n";
+      // An argument its template does not name is popped unbound (`let _ = @r` in `#rust`).
+      bind = if body.contains(a.name) { "{a.name} = " } else { "" };
+      out += "  {bind}s.get_stack_{if w == "bool" { "u8" } else { w }}();\n";
     }
     k -= 1;
   }
@@ -176,12 +194,261 @@ fn operator_fn(def: ir::Definition, body: text) -> text {
     TyText { dep: _ } => true,
     _ => false,
   };
-  if void || (is_text && def.name.starts_with("OpConst")) {
+  // A text answer is a view the template pushes itself (`OpConstText`'s rule in `create.rs`,
+  // for every text here: a loft text value is not a view into a store or the code).
+  if void || is_text {
     out += "  {body}\n";
   } else {
-    out += "  new_value: {answer_type(width(ret))} = {body};\n  s.put_stack_{width(ret)}(new_value);\n";
+    out += "  new_value: {answer_type(answer_width(ret))} = {body};\n  s.put_stack_{answer_width(ret)}(new_value);\n";
   }
   out + "}}\n"
+}
+
+// ── The dispatch loop (`run`): the Rust interpreter's executor rules, generated. ──────────
+//
+// `(R-RegisterTable)`: the code position `ip`, the stack top `sp` and the stack's capacity
+// `cap` are locals of ONE function, and an operator whose template needs no more of the
+// `State` than those runs as an arm of it.  `(R-CodeBase)`: the code is a parameter, read at
+// `ip`.  `(R-OperandSpan)`: one test covers an operator's whole operand span.
+// `(R-StackBase)`: a slot is read through the stack store's base.  Both bases are taken again
+// after an operator that ran on the `State`: it can grow the stack, and the store that holds
+// the code.  `(R-DispatchStop)`: only
+// an operator run through the `State` can stop the run, and one flag says so.  Every check
+// the accessors make is one compare in the arm's guard; where it fails the operator runs
+// through its function, which reports it.
+
+// The bytes an operator and its operands take at most, for an arm of `run`: one test of the
+// position against the code's length less this covers every operand read.
+OPERAND_SPAN = 32;
+
+// May `c` be part of a name?
+fn name_char(c: character) -> boolean {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// `body` with each of `names` — as a whole word outside a text literal, and not a member
+// (`x.name`, `m::name`) — given `suffix`: every arm's locals are the function's, so each
+// operator's are named apart.
+fn respell(body: text, names: vector<text>, suffix: text) -> text {
+  out = "";
+  word = "";
+  before = ' ';
+  quoted = false;
+  for c in "{body} " {
+    if !quoted && name_char(c) {
+      word += "{c}";
+      continue;
+    }
+    if word != "" {
+      hit = false;
+      if before != '.' && before != ':' {
+        for n in names {
+          hit = hit || n == word;
+        }
+      }
+      out += if hit { "{word}{suffix}" } else { word };
+      before = ' ';
+      word = "";
+    }
+    if c == '"' {
+      quoted = !quoted;
+    }
+    out += "{c}";
+    before = c;
+  }
+  out.trim()
+}
+
+// Does `body` name the state `s` itself?
+fn names_state(body: text) -> boolean {
+  word = "";
+  before = ' ';
+  quoted = false;
+  for c in "{body} " {
+    if !quoted && name_char(c) {
+      word += "{c}";
+      continue;
+    }
+    if word == "s" && before != '.' && before != ':' {
+      return true;
+    }
+    if word != "" {
+      before = ' ';
+    }
+    word = "";
+    if c == '"' {
+      quoted = !quoted;
+    }
+    before = c;
+  }
+  false
+}
+
+// The bytes an operand of accessor width `w` takes in the code; 0 for one `run` does not read.
+fn operand_bytes(w: text) -> integer {
+  match w {
+    "u8" => 1,
+    "i8" => 1,
+    "bool" => 1,
+    "u16" => 2,
+    "i16" => 2,
+    "u32" => 4,
+    "i32" => 4,
+    "i64" => 8,
+    "f64" => 8,
+    _ => 0,
+  }
+}
+
+// The slot accessor `run` reads or writes a stack value of width `w` through: "" for a
+// width that stays with the `State`.
+fn slot_width(w: text) -> text {
+  match w {
+    "i64" => "i64",
+    "f64" => "f64",
+    "bool" => "u8",
+    "u8" => "u8",
+    _ => "",
+  }
+}
+
+// Operator `d` in slot `slot` as an arm of `run`, or "" where its template needs the `State`:
+// an operand `run` does not read, a stack value wider than a slot's scalar, or a method that
+// moves the positions.
+fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
+  if slot >= 255 || template.contains("DbRef") {
+    return "";
+  }
+  sfx = "_{slot}";
+  names: vector<text> = [];
+  reads = "";
+  span = 1;
+  slots_guard = "";
+  uses_slots = template.contains("_var_");
+  for a in def.attributes {
+    if !a.name.starts_with("_") && !a.mutable {
+      w = width(a.typedef[0] ?? ir::TyVoid);
+      n = operand_bytes(w);
+      if n == 0 {
+        return "";
+      }
+      names += [a.name];
+      if !template.contains(a.name) {
+        span += n;
+        continue;
+      }
+      reads += "      {a.name}{sfx} = crt::cget_{if w == "bool" { "u8" } else { w }}(code, cbase, clen, ip + {span}){if w == "bool" { " == 1" } else { "" }};\n";
+      span += n;
+      if uses_slots && w == "u16" {
+        // A frame slot a step or more under the top lies inside the stack, read or written.
+        slots_guard += " && {a.name}{sfx} >= 8 && {a.name}{sfx} <= POPPED";
+      }
+    }
+  }
+  pops = "";
+  popped = 0;
+  k = len(def.attributes) - 1;
+  while k >= 0 {
+    a = def.attributes[k]!;
+    if !a.name.starts_with("_") && a.mutable {
+      w = slot_width(width(a.typedef[0] ?? ir::TyVoid));
+      if w == "" {
+        return "";
+      }
+      popped += 8;
+      names += [a.name];
+      if template.contains(a.name) {
+        pops += "        {a.name}{sfx} = crt::fget_{w}(stk, base, cap, sp - {popped});\n";
+      }
+    }
+    k -= 1;
+  }
+  ret = def.returned[0] ?? ir::TyVoid;
+  void = match ret {
+    TyVoid => true,
+    _ => false,
+  };
+  rw = if void { "" } else { answer_width(ret) };
+  // A text answer is a view its template pushes itself.
+  if !void && rw != "str" && slot_width(rw) == "" {
+    return "";
+  }
+  body = respell(template, names, sfx);
+  body = body.replace("s.code_pos", "ip");
+  // A frame slot: `get_var` reads at the top less its position, `put_var` writes a step above.
+  for w in ["i64", "f64", "u8"] {
+    body = body.replace("s.get_var_{w}(", "crt::fget_{w}(stk, base, cap, sp - ");
+    body = body.replace("s.put_var_{w}(", "crt::fput_{w}(stk, base, cap, sp + 8 - ");
+  }
+  body = body.replace("s.get_var_bool(", "state::rget_bool(stk, base, cap, sp, ");
+  // A template that needs more of the `State` runs on it: the positions written first and
+  // read back after, as the register table's `regs_out` / `regs_in` bracket such an operator.
+  through = names_state(body.replace("s.raise_recoverable(", "raise("));
+  if through {
+    body = respell(template, names, sfx);
+  }
+  // `(R-OperandSpan)`: `safe` is the last position a whole operand span of any arm fits at.
+  if span > OPERAND_SPAN {
+    return "";
+  }
+  guard = "ip <= safe";
+  if popped > 0 {
+    guard += " && sp >= {popped}";
+  } else if !void && rw != "str" {
+    // A push with nothing popped needs a free step; one that pops lands where a value was.
+    guard += " && sp <= top";
+  }
+  guard += slots_guard.replace("POPPED", if popped > 0 { "sp - {popped}" } else { "sp" });
+  out = "    {slot} => {{\n{reads}      if {guard} {{\n{pops}";
+  if popped > 0 {
+    out += "        sp -= {popped};\n";
+  }
+  out += "        ip += {span};\n";
+  if through {
+    out += "        s.code_pos = ip;\n        s.stack_pos = sp;\n";
+    if void || rw == "str" {
+      out += "        {body}\n";
+    } else {
+      out += "        nv{sfx}: {answer_type(rw)} = {body};\n        s.put_stack_{rw}(nv{sfx});\n";
+    }
+    out += "        if s.stopped || s.native >= 0 {{\n          return;\n        }}\n";
+    out += "        ip = s.code_pos;\n        sp = s.stack_pos;\n        cap = s.stack_cap;\n        top = cap - 8;\n        base = crt::stack_base(stk);\n        cbase = crt::code_base(code);\n";
+    return out + "        continue;\n      }}\n    }}\n";
+  }
+  if void {
+    out += "        {body}\n";
+  } else {
+    out += "        nv{sfx}: {answer_type(rw)} = {body};\n";
+    put = if rw == "bool" {
+      "crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv{sfx}))"
+    } else if rw == "u8" {
+      "crt::fput_u8(stk, base, cap, sp, nv{sfx} ?? 255)"
+    } else {
+      "crt::fput_{rw}(stk, base, cap, sp, nv{sfx})"
+    };
+    out += "        {put};\n        sp += 8;\n";
+  }
+  out + "        continue;\n      }}\n    }}\n"
+}
+
+// `run`: the dispatch loop over the arms, and under them the step every other operator — and
+// every arm whose guard fails — takes through the `State`.
+fn run_fn(arms: text) -> text {
+  out = "\n// The dispatch loop: `s` run from its code position until that is `end`, the run stops, or\n";
+  out += "// a native is to be called (`s.native`).  The positions are locals; the `State` holds them\n";
+  out += "// whenever an operator runs through it.\n";
+  out += "pub fn run(s: state::State, code: const vector<u8>, end: integer) {{\n";
+  out += "  stk = s.stk;\n  ip = s.code_pos;\n  sp = s.stack_pos;\n  cap = s.stack_cap;\n";
+  out += "  base = crt::stack_base(stk);\n  clen = len(code);\n  cbase = crt::code_base(code);\n";
+  out += "  top = cap - 8;\n  safe = clen - {OPERAND_SPAN};\n";
+  out += "  while ip != end {{\n    match crt::cget_u8(code, cbase, clen, ip) {{\n{arms}      _ => {{}}\n    }}\n";
+  out += "    s.code_pos = ip;\n    s.stack_pos = sp;\n    op = s.code_u8();\n";
+  out += "    if op == 255 {{\n      op = 255 + s.code_u8();\n    }}\n";
+  out += "    if !execute(s, op) {{\n      s.unknown = op;\n      s.stop(\"not carried: slot {{op}}\");\n    }}\n";
+  out += "    if s.stopped || s.native >= 0 {{\n      return;\n    }}\n";
+  out += "    ip = s.code_pos;\n    sp = s.stack_pos;\n    cap = s.stack_cap;\n    top = cap - 8;\n    base = crt::stack_base(stk);\n    cbase = crt::code_base(code);\n  }}\n";
+  out += "  s.code_pos = ip;\n  s.stack_pos = sp;\n}}\n";
+  out
 }
 
 // `fill.loft`: every operator that has a template, and every one that is a `State` method, as a
@@ -198,7 +465,7 @@ pub fn generate(e: el::El, state_src: text) -> text {
       // No template: a `State` method of the operator's name reads its own operands, as
       // `create.rs` calls `s.{name}()` (the loft `State` holds its port).
       if has_method(e, d, state_src) {
-        out += "\npub fn {operator_name(def.name)}(s: state::State) {{\n  s.{operator_name(def.name)}();\n}}\n";
+        out += "\npub fn {fn_name(def.name)}(s: state::State) {{\n  s.{operator_name(def.name)}();\n}}\n";
       }
     } else {
       body = template(e, d);
@@ -212,11 +479,20 @@ pub fn generate(e: el::El, state_src: text) -> text {
   for slot in 0..len(order) {
     d = order[slot] ?? 0;
     if carried(e, d, state_src) {
-      out += "    {slot} => {operator_name(e.b.data.definitions[d]!.name)}(s),\n";
+      out += "    {slot} => {fn_name(e.b.data.definitions[d]!.name)}(s),\n";
     }
   }
   out += "    _ => return false,\n  }}\n  true\n}}\n";
-  out
+  arms = "";
+  for slot in 0..len(order) {
+    d = order[slot] ?? 0;
+    def = e.b.data.definitions[d]!;
+    body = if def.rust == "" { null } else { template(e, d) };
+    if body != null {
+      arms += inline_arm(def, slot, body!);
+    }
+  }
+  out + run_fn(arms)
 }
 
 // Each operator's reads, one line in slot order: its name, then `code name:width` for each
