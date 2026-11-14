@@ -229,6 +229,7 @@ H_SIZE_VECTOR = 205;
 H_CAST_ENUM_FROM_TEXT = 206;
 H_CAST_TEXT_FROM_ENUM = 207;
 H_MATH_FUNC_SINGLE = 208;
+H_POW_SINGLE = 209;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -508,6 +509,8 @@ pub fn handler(name: text) -> integer {
     "OpCastEnumFromText" => H_CAST_ENUM_FROM_TEXT,
     "OpCastTextFromEnum" => H_CAST_TEXT_FROM_ENUM,
     "OpMathFuncSingle" => H_MATH_FUNC_SINGLE,
+    "OpPowSingle" => H_POW_SINGLE,
+    "OpTextCharacterNullable" => H_TEXT_CHARACTER,
     "OpGetShortFull" => H_GET_W,
     "OpGetShortSpare" => H_GET_W,
     "OpConvSingleFromNull" => H_CONV_FLOAT_FROM_NULL,
@@ -2200,6 +2203,17 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       msr = if r1 == null { null } else { r1! as float };
     }
     crt::set_float(stk, 1, 8 + sp - 8, 0, msr, true);
+  } else if h == H_POW_SINGLE {
+    // Single precision through loft's own `pow` on singles (this operator, compiled).
+    psb = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    psa = crt::get_float(stk, 1, 8 + sp - 16, 0, true);
+    sp -= 8;
+    psr: float? = null;
+    if psa != null && psb != null {
+      psv = (psa! as single).pow(psb! as single);
+      psr = if psv == null { null } else { psv! as float };
+    }
+    crt::set_float(stk, 1, 8 + sp - 8, 0, psr, true);
   } else if h == H_CAST_ENUM_FROM_TEXT {
     // The variant named by the text, 1-based; 0 when none is (`Stores::to_enum`).
     cetp = u16_at(img.code, pc);
