@@ -1584,7 +1584,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpEqContent" || name == "OpNeContent" {
     // Two values equal by content (`eq.loft`, `Stores::eq_content`): `a` the type, `b` 1 for `!=`.
     tp = literal(l, args[2]!);
-    if eq::holds_unwalked(b, tp, []) {
+    if eq::holds_unwalked(b.types, tp, []) {
       refuse(l, "an equality of a type holding a collection the interpreter does not walk yet: {b.types[tp]?.name ?? "?"}");
       return true;
     }

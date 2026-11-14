@@ -25,29 +25,29 @@ struct EqState {
 
 // Does the type graph under `tp` hold a kind this port does not walk yet (an array, or a keyed
 // collection other than a hash)?  The lowering refuses such an equality by name.
-pub fn holds_unwalked(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
+pub fn holds_unwalked(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
   if tp <= 6 || seen.contains(tp) {
     return false;
   }
   seen += [tp];
-  t = b.types[tp];
+  t = ts[tp];
   if t == null {
     return true;
   }
   match t.parts[0]! {
-    PtStruct { fields } => fields_unwalked(b, fields, seen),
-    PtEnumValue { value: _, fields } => fields_unwalked(b, fields, seen),
+    PtStruct { fields } => fields_unwalked(ts, fields, seen),
+    PtEnumValue { value: _, fields } => fields_unwalked(ts, fields, seen),
     PtEnum { values } => {
       for v in values {
-        if holds_unwalked(b, v.nr, seen) {
+        if holds_unwalked(ts, v.nr, seen) {
           return true;
         }
       }
       false
     }
-    PtVector { content } => holds_unwalked(b, content, seen),
-    PtHash { content, fields: _ } => holds_unwalked(b, content, seen),
-    PtChildRec { content } => holds_unwalked(b, content, seen),
+    PtVector { content } => holds_unwalked(ts, content, seen),
+    PtHash { content, fields: _ } => holds_unwalked(ts, content, seen),
+    PtChildRec { content } => holds_unwalked(ts, content, seen),
     PtArray { content: _ } => true,
     PtSorted { content: _, keys: _ } => true,
     PtOrdered { content: _, keys: _ } => true,
@@ -58,13 +58,13 @@ pub fn holds_unwalked(b: ir::Bundle, tp: integer, seen: vector<integer>) -> bool
   }
 }
 
-fn fields_unwalked(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+fn fields_unwalked(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
   for f in fields {
     if f.target != 65535 {
-      if holds_unwalked(b, f.target, seen) {
+      if holds_unwalked(ts, f.target, seen) {
         return true;
       }
-    } else if holds_unwalked(b, f.content, seen) {
+    } else if holds_unwalked(ts, f.content, seen) {
       return true;
     }
   }
@@ -86,16 +86,16 @@ fn same_float(x: float?, y: float?) -> boolean {
   x! == y!
 }
 
-pub fn eq_content(b: ir::Bundle, x: crt::Pos, y: crt::Pos, tp: integer) -> boolean {
+pub fn eq_content(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, tp: integer) -> boolean {
   st = EqState { kids: [], pairs: [] };
-  if !walk(b, x, y, tp, st) {
+  if !walk(ts, x, y, tp, st) {
     return false;
   }
   while len(st.kids) > 0 {
     last = len(st.kids) - 1;
     k = st.kids[last]!;
     st.kids.remove(last);
-    if !walk(b, k.x, k.y, k.tp, st) {
+    if !walk(ts, k.x, k.y, k.tp, st) {
       return false;
     }
   }
@@ -126,7 +126,7 @@ fn word(w: integer, at: crt::Pos, start: integer) -> integer? {
   crt::get_w(w, at.s, at.r, at.p, 0, start)
 }
 
-fn walk(b: ir::Bundle, x: crt::Pos, y: crt::Pos, tp: integer, st: EqState) -> boolean {
+fn walk(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, tp: integer, st: EqState) -> boolean {
   if x == y {
     return true;
   }
@@ -136,10 +136,10 @@ fn walk(b: ir::Bundle, x: crt::Pos, y: crt::Pos, tp: integer, st: EqState) -> bo
   if tp <= 6 {
     return base(x, y, tp);
   }
-  t = b.types[tp]!;
+  t = ts[tp]!;
   match t.parts[0]! {
-    PtStruct { fields } => fields_eq(b, x, y, fields, st),
-    PtEnumValue { value: _, fields } => fields_eq(b, x, y, fields, st),
+    PtStruct { fields } => fields_eq(ts, x, y, fields, st),
+    PtEnumValue { value: _, fields } => fields_eq(ts, x, y, fields, st),
     PtEnum { values } => {
       va = word(1, x, 0) ?? -1;
       vb = word(1, y, 0) ?? -1;
@@ -149,8 +149,8 @@ fn walk(b: ir::Bundle, x: crt::Pos, y: crt::Pos, tp: integer, st: EqState) -> bo
       if va < 1 || va > len(values) {
         return true;
       }
-      match b.types[values[va - 1]!.nr]!.parts[0]! {
-        PtEnumValue { value: _, fields } => fields_eq(b, x, y, fields, st),
+      match ts[values[va - 1]!.nr]!.parts[0]! {
+        PtEnumValue { value: _, fields } => fields_eq(ts, x, y, fields, st),
         _ => true,
       }
     }
@@ -178,9 +178,9 @@ fn walk(b: ir::Bundle, x: crt::Pos, y: crt::Pos, tp: integer, st: EqState) -> bo
       if n != crt::vec_len(y.s, y.r, y.p) {
         return false;
       }
-      size = b.types[content]!.size;
+      size = ts[content]!.size;
       for i in 0..n {
-        if !walk(b, element(x, size, i), element(y, size, i), content, st) {
+        if !walk(ts, element(x, size, i), element(y, size, i), content, st) {
           return false;
         }
       }
@@ -198,7 +198,7 @@ fn walk(b: ir::Bundle, x: crt::Pos, y: crt::Pos, tp: integer, st: EqState) -> bo
         return false;
       }
       for i in 0..len(xa) / 3 {
-        if !walk(b, listed(xa, i), listed(xb, i), content, st) {
+        if !walk(ts, listed(xa, i), listed(xb, i), content, st) {
           return false;
         }
       }
@@ -232,7 +232,7 @@ fn base(x: crt::Pos, y: crt::Pos, tp: integer) -> boolean {
 
 // `eq_fields`: each field at its position — a hidden (`#`) field and a linked group's view member
 // skipped, a plain enum by its byte, a stored reference followed (`eq_reference`).
-fn fields_eq(b: ir::Bundle, x: crt::Pos, y: crt::Pos, fields: vector<ir::DbField>, st: EqState) -> boolean {
+fn fields_eq(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, fields: vector<ir::DbField>, st: EqState) -> boolean {
   for f in fields {
     if f.name.starts_with("#") || (f.other_indexes[0] ?? -1) == 65535 {
       continue;
@@ -244,10 +244,10 @@ fn fields_eq(b: ir::Bundle, x: crt::Pos, y: crt::Pos, fields: vector<ir::DbField
         return false;
       }
     } else if f.target != 65535 {
-      if !reference(b, a, c, f.target, st) {
+      if !reference(ts, a, c, f.target, st) {
         return false;
       }
-    } else if !walk(b, a, c, f.content, st) {
+    } else if !walk(ts, a, c, f.content, st) {
       return false;
     }
   }
@@ -255,7 +255,7 @@ fn fields_eq(b: ir::Bundle, x: crt::Pos, y: crt::Pos, fields: vector<ir::DbField
 }
 
 // `eq_reference`: the records two stored references name, compared once per pair.
-fn reference(b: ir::Bundle, x: crt::Pos, y: crt::Pos, target: integer, st: EqState) -> boolean {
+fn reference(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, target: integer, st: EqState) -> boolean {
   a = followed(x);
   c = followed(y);
   if a.r == 0 || c.r == 0 {
@@ -267,5 +267,5 @@ fn reference(b: ir::Bundle, x: crt::Pos, y: crt::Pos, target: integer, st: EqSta
     }
   }
   st.pairs += [Pair { x: a, y: c, tp: target }];
-  walk(b, a, c, target, st)
+  walk(ts, a, c, target, st)
 }

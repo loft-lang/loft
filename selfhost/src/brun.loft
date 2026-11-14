@@ -17,6 +17,7 @@ use crt;
 use types;
 use files;
 use show;
+use eq;
 
 // The null reference's store (`DbRef::NULL`).
 NULL_STORE = 65535;
@@ -233,6 +234,15 @@ H_POW_SINGLE = 209;
 H_CAST_ENUM_FROM_INT = 210;
 H_LENGTH_CHARACTER = 211;
 H_ABS_SINGLE = 212;
+H_APPEND_TEXT_BYTES = 213;
+H_REM_SINGLE = 214;
+H_CAST_INT_FROM_SINGLE = 215;
+H_SIZE_HASH = 216;
+H_MATH_E = 217;
+H_POW_INT = 218;
+H_CMP_TEXT = 219;
+H_EQ_CONTENT = 220;
+H_PREPEND_VECTOR = 221;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -516,6 +526,19 @@ pub fn handler(name: text) -> integer {
     "OpCastEnumFromInt" => H_CAST_ENUM_FROM_INT,
     "OpLengthCharacter" => H_LENGTH_CHARACTER,
     "OpAbsSingle" => H_ABS_SINGLE,
+    "OpAppendTextBytes" => H_APPEND_TEXT_BYTES,
+    "OpRemSingle" => H_REM_SINGLE,
+    "OpRemSingleNullable" => H_REM_SINGLE,
+    "OpCastIntFromSingle" => H_CAST_INT_FROM_SINGLE,
+    "OpNeRef" => H_EQ_REF,
+    "OpSizeHash" => H_SIZE_HASH,
+    "OpMathEFloat" => H_MATH_E,
+    "OpPowInt" => H_POW_INT,
+    "OpLtText" => H_CMP_TEXT,
+    "OpLeText" => H_CMP_TEXT,
+    "OpGetInt4Full" => H_GET_W,
+    "OpEqContent" => H_EQ_CONTENT,
+    "OpPrependVector" => H_PREPEND_VECTOR,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
     "OpGetShortFull" => H_GET_W,
     "OpGetShortSpare" => H_GET_W,
@@ -747,6 +770,8 @@ fn layout_of(h: integer) -> text {
     206 => "h",
     207 => "h",
     208 => "c",
+    220 => "h",
+    221 => "h",
     _ => ""
   }
 }
@@ -1588,7 +1613,8 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
     crt::slot_ref(io, stk, sp - 32);
     sp -= 32;
     ear = io[1] ?? 0;
-    set_bool(stk, sp, if ear == 0 || err == 0 { ear == 0 && err == 0 } else { (io[0] ?? NULL_STORE) == ers && ear == err && (io[2] ?? 0) == erp });
+    ereq = if ear == 0 || err == 0 { ear == 0 && err == 0 } else { (io[0] ?? NULL_STORE) == ers && ear == err && (io[2] ?? 0) == erp };
+    set_bool(stk, sp, if (img.ops[op] ?? "") == "OpNeRef" { !ereq } else { ereq });
     sp += 8;
   } else if h == H_PLACE_RECORD {
     // `@FR-R-Place` (`Stores::place_record_prefilled`): a call's return buffer claimed in the
@@ -2220,6 +2246,73 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
   } else if h == H_ABS_SINGLE {
     asv = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
     crt::set_float(stk, 1, 8 + sp - 8, 0, if asv == null { null } else { asv!.abs() }, true);
+  } else if h == H_APPEND_TEXT_BYTES {
+    // A text's bytes `lo..hi` appended to a byte vector (`append_text_bytes`).
+    athi = get(stk, sp - 8);
+    atlo = get(stk, sp - 16);
+    att = crt::stack_str(stk, sp - 32);
+    crt::slot_ref(io, stk, sp - 48);
+    sp -= 48;
+    crt::append_text_bytes(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, att, atlo, athi);
+  } else if h == H_REM_SINGLE {
+    // Single precision through loft's own `%` on singles (this operator, compiled).
+    rsb = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    rsa = crt::get_float(stk, 1, 8 + sp - 16, 0, true);
+    sp -= 8;
+    rsr: float? = null;
+    if rsa != null && rsb != null {
+      rsv = (rsa! as single) % (rsb! as single);
+      rsr = if rsv == null { null } else { rsv! as float };
+    }
+    crt::set_float(stk, 1, 8 + sp - 8, 0, rsr, true);
+  } else if h == H_CAST_INT_FROM_SINGLE {
+    cis = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    set(stk, sp - 8, if cis == null { null } else { (cis! as single) as integer });
+  } else if h == H_SIZE_HASH {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set(stk, sp, crt::hash_bytes(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    sp += 8;
+  } else if h == H_MATH_E {
+    crt::set_float(stk, 1, 8 + sp, 0, 2.718281828459045, false);
+    sp += 8;
+  } else if h == H_POW_INT {
+    pib = get(stk, sp - 8);
+    pia = get(stk, sp - 16);
+    sp -= 8;
+    set(stk, sp - 8, if pia == null || pib == null { null } else { pia!.pow(pib!) });
+  } else if h == H_CMP_TEXT {
+    // `<` / `<=` on texts; a null text is below every other (`op_lt_text`, `op_le_text`).
+    ctb = crt::stack_str(stk, sp - 16);
+    cta = crt::stack_str(stk, sp - 32);
+    sp -= 32;
+    ctle = (img.ops[op] ?? "") == "OpLeText";
+    set_bool(stk, sp, if cta == null || ctb == null { if ctle { cta == null } else { cta == null && ctb != null } } else if ctle { cta! <= ctb! } else { cta! < ctb! });
+    sp += 8;
+  } else if h == H_EQ_CONTENT {
+    // Two values compared field by field (`Stores::eq_content`, `eq::eq_content`).
+    ensure_table(img.types, tl);
+    ectp = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    ecy = crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 };
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    set_bool(stk, sp, eq::eq_content(img.types, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, ecy, ectp));
+    sp += 8;
+  } else if h == H_PREPEND_VECTOR {
+    // `g`'s elements in front of `r`'s; whether any were.
+    ensure_table(img.types, tl);
+    pvtp = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    pgs = io[0] ?? NULL_STORE;
+    pgr = io[1] ?? 0;
+    pgp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    set_bool(stk, sp, crt::vec_prepend(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, pgs, pgr, pgp, pvtp, img.types[pvtp]?.linked ?? false));
+    sp += 8;
   } else if h == H_POW_SINGLE {
     // Single precision through loft's own `pow` on singles (this operator, compiled).
     psb = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
@@ -3545,7 +3638,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       }
       sp -= 16;
       crt::slot_ref(io, stk, sp);
-      w = if name == "OpGetByte" { crt::W_BYTE } else if name == "OpGetByteNullable" { crt::W_BYTE_NULLABLE } else if name == "OpGetShort" { crt::W_SHORT } else if name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetShortSpare" { crt::W_SHORT_RAW } else if name == "OpGetEnum" { crt::W_ENUM } else { crt::W_BOOLEAN };
+      w = if name == "OpGetInt4Full" { 9 } else if name == "OpGetByte" { crt::W_BYTE } else if name == "OpGetByteNullable" { crt::W_BYTE_NULLABLE } else if name == "OpGetShort" { crt::W_SHORT } else if name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetShortSpare" { crt::W_SHORT_RAW } else if name == "OpGetEnum" { crt::W_ENUM } else { crt::W_BOOLEAN };
       v = crt::get_w(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld, mn);
       // A boolean or an enum stays its byte on the stack, 255 for null.  A spare short reads as
       // the raw one (65535 null); a full one has no null code, so 65535 is a value.
