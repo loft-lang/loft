@@ -2991,11 +2991,7 @@ script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (A
 	@cargo build --release --bin loft -q
 	@if [ "$(ARGS)" = "--count" ]; then target/release/loft --interpret scripts/script_reasons --count; else target/release/loft --interpret scripts/script_reasons > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
 
-.PHONY: compiled-stdlib crt-bodies
-crt-bodies:  ## @PLN91 regenerate selfhost/crt/shim/loft_bodies.c — the stdlib bodies the loft runner's C shim compiles (after changing default/*.loft or src/c)
-	cargo build --release --bin loft -q
-	scripts/gen_crt_bodies.sh
-
+.PHONY: compiled-stdlib
 compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdlib's compiled loft bodies (run after changing default/*.loft)
 	@out=$$(cargo run --release -q --bin loft-stdlib-gen) || exit 1; echo "$$out"; \
 	case "$$out" in *regenerated*) cargo build --release --bin loft -q ;; esac
