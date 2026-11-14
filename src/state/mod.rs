@@ -6,7 +6,6 @@
 
 pub(crate) mod codegen;
 pub mod debug;
-pub mod gen_facts;
 mod io;
 mod text;
 pub use text::text_timeline_summary;
@@ -2075,10 +2074,10 @@ impl State {
         let Some(def) = data.definitions.get(d_nr as usize) else {
             return owned;
         };
-        // Which locals: `gen_facts::owned_store_local_slots` — a heap local or an iterator
+        // Which locals: `crate::gen_facts::owned_store_local_slots` — a heap local or an iterator
         // that owns its store, not the caller's arguments (a generator handle excepted,
         // `(G-Hold)`, loft#1708) nor a local a closure record adopted (`@FR-L-CapOwn`).
-        for slot in gen_facts::owned_store_local_slots(def) {
+        for slot in crate::gen_facts::owned_store_local_slots(def) {
             let off = slot as usize;
             if off + std::mem::size_of::<DbRef>() > bytes.len() {
                 continue; // local beyond the yield snapshot — never assigned
@@ -2115,7 +2114,7 @@ impl State {
         };
         data.definitions
             .get(d_nr as usize)
-            .map_or(0, gen_facts::zone2_size)
+            .map_or(0, crate::gen_facts::zone2_size)
     }
 
     /// S25.3 (C24): drop `String` objects embedded at text-local slots in a
@@ -2140,7 +2139,7 @@ impl State {
         let Some(def) = data.definitions.get(d_nr as usize) else {
             return;
         };
-        for slot in gen_facts::text_local_slots(def) {
+        for slot in crate::gen_facts::text_local_slots(def) {
             let off = slot as usize;
             if off + std::mem::size_of::<String>() > bytes.len() {
                 continue; // text local beyond yield snapshot — never assigned
@@ -2216,7 +2215,7 @@ impl State {
             return Vec::new();
         };
         let mut held = Vec::new();
-        for off in gen_facts::ref_arg_offsets(def) {
+        for off in crate::gen_facts::ref_arg_offsets(def) {
             let byte_offset = off as usize;
             if byte_offset >= args_size as usize {
                 break;
@@ -2251,7 +2250,7 @@ impl State {
         }
         let def = &data.definitions[d_nr as usize];
         let mut text_owned: Vec<(u32, String)> = Vec::new();
-        for off in gen_facts::text_arg_offsets(def) {
+        for off in crate::gen_facts::text_arg_offsets(def) {
             let byte_offset = off as usize;
             if byte_offset >= args_size as usize {
                 break; // only scan the arg region
@@ -2623,11 +2622,11 @@ impl State {
     fn yield_tuple_of(&self, d_nr: u32) -> Option<Vec<Type>> {
         let handle = &self.data_ptr;
         let data = handle.get()?;
-        gen_facts::yield_tuple(data.definitions.get(d_nr as usize)?)
+        crate::gen_facts::yield_tuple(data.definitions.get(d_nr as usize)?)
     }
 
     fn null_tuple_refs(&mut self, base: u32, elems: &[Type]) {
-        for off in gen_facts::tuple_ref_offsets(elems) {
+        for off in crate::gen_facts::tuple_ref_offsets(elems) {
             let dst = self.database.store_mut(&self.stack_cur).addr_span_mut(
                 self.stack_cur.rec,
                 self.stack_cur.pos + base + off,

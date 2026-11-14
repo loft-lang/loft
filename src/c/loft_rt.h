@@ -4991,6 +4991,13 @@ static int loft_fle(double a, double b) { return isnan(a) || (!isnan(b) && a <= 
 
 /* op_conv_float_from_long: null becomes NaN. */
 static double loft_i2f(int64_t v) { return v == LOFT_NULL ? (double) NAN : (double) v; }
+/* `f.bits()` / `float_from_bits(v)` and the `single` pair: the IEEE-754 pattern moved as it
+ * is, no conversion (`f64::to_bits` / `from_bits`); a single's 32 bits as a signed 32-bit
+ * value. */
+static int64_t loft_f2bits(double f) { int64_t v; memcpy(&v, &f, 8); return v; }
+static double loft_bits2f(int64_t v) { double f; memcpy(&f, &v, 8); return f; }
+static int64_t loft_s2bits(float f) { int32_t v; memcpy(&v, &f, 4); return v; }
+static float loft_bits2s(int64_t v) { int32_t w = (int32_t) v; float f; memcpy(&f, &w, 4); return f; }
 static float loft_i2s(int64_t v) { return v == LOFT_NULL ? (float) NAN : (float) v; }
 
 /* OpCastIntFromFloat: NaN and a value outside i64 are null; else truncated toward zero. */

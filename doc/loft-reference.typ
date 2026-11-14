@@ -8262,6 +8262,30 @@ pub fn abs(self: f64) -> f64
 Absolute value for double-precision floats.
 
 ```rust
+pub fn bits(self: f64) -> i64
+```
+
+The 64 bits of a double as they are stored (IEEE-754 binary64), moved, not converted: what a byte format writes for it.  `float\_from\_bits` takes them back.  `-0.0`'s pattern is the integer null's, so `(-0.0).bits()` reads as null and still comes back as `-0.0`.
+
+```rust
+pub fn float_from_bits(v: i64) -> f64
+```
+
+The double whose stored bits are `v` (IEEE-754 binary64): `bits()` taken back.
+
+```rust
+pub fn bits(self: single) -> integer
+```
+
+The 32 bits of a single as they are stored (IEEE-754 binary32), as a signed 32-bit value.
+
+```rust
+pub fn single_from_bits(v: integer) -> single
+```
+
+The single whose stored bits are `v` (IEEE-754 binary32): `bits()` taken back.
+
+```rust
 pub PI = OpMathPiFloat() as float
 ```
 

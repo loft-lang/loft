@@ -1,0 +1,9 @@
+// `#c_twin` is a C version of a loft body, which the other backends run; a declaration without
+// one has nothing for them.  The refusal names `#c`, which binds a C symbol as the whole
+// function.
+fn absolute(x: integer) -> integer;
+#c_twin "llabs" "long long(long long)"
+
+fn main() {
+  println("{absolute(-21)}");
+}

@@ -5679,6 +5679,67 @@ fn main() {\n\
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
 
+/// `#c_twin`: the interpreter runs a twin's loft body and the C backend calls its C routine, and
+/// the two answer the same — a vector crossing with its count, a float crossing as itself.  The
+/// C calls the routines rather than compiling the bodies.  Hand-computed: `[10, 20, 30]` weighed
+/// from 2 is 10*2 + 20*3 + 30*4 = 200; 1.25 scaled by 6 is 7.5.  A guard that could pass having
+/// called no routine is none, so the arguments are known only at run time.
+#[test]
+fn a_c_twin_runs_its_body_and_the_c_backend_its_routine() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    // The weight comes from the run (`ticks()` is never negative), so no call is folded at
+    // compile time: the routine itself runs.
+    let src = "use lcshim::*;\n\
+fn main() {\n\
+  k = if ticks() >= 0 { 2 } else { 3 };\n\
+  v = [10, 20, 30];\n\
+  println(\"{twin_weigh(v, k)} {twin_scale(1.25, k * 3)}\");\n\
+}\n";
+    let want = "200 7.5\n";
+    let libdir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = scratch("twin");
+    let file = dir.join("twin.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    for mode in ["--interpret", "--native-c"] {
+        let out = loft::platform::process::harness_command(loft)
+            .arg(mode)
+            .arg("--lib")
+            .arg(&libdir)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let c = dir.join("twin.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    assert!(
+        unit.contains("lcs_twin_weigh") && unit.contains("lcs_twin_scale"),
+        "the C calls the twins' routines"
+    );
+}
+
 /// `@C158` — a library declares no C compile or link flags: a `[c]` section's `cflags` and
 /// `ldflags` reach neither its shim's compile nor the unit's link.  The package declares a flag
 /// that would stop its second shim source at `#error` and a link of a library that does not

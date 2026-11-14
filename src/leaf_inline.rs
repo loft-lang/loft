@@ -450,6 +450,11 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
     let Value::Block(b) = def.code() else {
         return Err("no loft body");
     };
+    // A `#c_twin`'s call is how the C backend reaches its C routine: inlined, the body would
+    // run there instead (`Data::with_c_twins_bound`).
+    if def.is_c_twin() {
+        return Err("a #c_twin, whose C routine the C backend calls");
+    }
     // `@FR-R-InlineLeaf`'s tuple clause: a result that is a tuple of scalars, built by
     // tuple literals, travels as the inlined block's value like a scalar does.
     let tuple_of_scalars = match &def.returned {

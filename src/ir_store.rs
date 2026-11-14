@@ -926,7 +926,7 @@ fn materialize_run_image(
     fnrefs: &[RunFnRefShape],
     gens: &[RunGenShape],
     shared: &[i64],
-    workers: &[[i64; 5]],
+    workers: &[RunWorkerShape],
     sidecars: &[RunSidecarShape],
     release: (&str, &str, &str),
     library_names: &crate::fxhash::FxHashMap<String, u16>,
@@ -1077,7 +1077,7 @@ fn materialize_run_tables(
     shared_slot: &DbRef,
     workers_slot: &DbRef,
     shared: &[i64],
-    workers: &[[i64; 5]],
+    workers: &[RunWorkerShape],
 ) {
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     crate::vector::pre_alloc_vector(shared_slot, count(shared.len()), 8, &mut stores.allocations);
@@ -1095,11 +1095,21 @@ fn materialize_run_tables(
     let wv = rec.field_recvec(ds::RUNIMG_WORKERS, ds::RUNWORKER_STRIDE);
     for w in workers {
         let e = wv.push(stores);
-        e.set_field_int(stores, ds::RUNWORKER_DEF, w[0]);
-        e.set_field_int(stores, ds::RUNWORKER_INPUT, w[1]);
-        e.set_field_int(stores, ds::RUNWORKER_RET, w[2]);
-        e.set_field_int(stores, ds::RUNWORKER_TEXTS, w[3]);
-        e.set_field_int(stores, ds::RUNWORKER_DESTS, w[4]);
+        e.set_field_int(stores, ds::RUNWORKER_DEF, w.def);
+        e.set_field_int(stores, ds::RUNWORKER_INPUT, w.input);
+        e.set_field_int(stores, ds::RUNWORKER_RET, w.ret);
+        e.set_field_int(stores, ds::RUNWORKER_TEXTS, w.texts);
+        e.set_field_int(stores, ds::RUNWORKER_DESTS, w.dests);
+        let lv = DbRef {
+            pos: e.db_ref().pos + ds::RUNWORKER_ROW,
+            ..e.db_ref()
+        };
+        crate::vector::pre_alloc_vector(&lv, count(w.row.len()), 8, &mut stores.allocations);
+        let lr = RecVector::new(lv, 8);
+        for &x in &w.row {
+            let y = lr.push(stores);
+            y.set_field_int(stores, 0, x);
+        }
     }
 }
 
@@ -1139,7 +1149,7 @@ fn materialize_run_sidecars(
     }
 }
 
-/// The run image's generator rows (`RunGen`, `state::gen_facts`): each generator's frame facts,
+/// The run image's generator rows (`RunGen`, `gen_facts`): each generator's frame facts,
 /// into the root's `gens` vector at `slot`.
 #[cfg(feature = "mmap")]
 fn materialize_run_gens(stores: &mut Stores, rec: &Record, slot: &DbRef, gens: &[RunGenShape]) {
@@ -1304,7 +1314,7 @@ pub fn run_image_shared(
 /// Every `par` worker of the program, found where the IR names it — the `func` literal of a
 /// `parallel_*` call — with how it takes its row and its answer's size (`RunWorker`).
 #[must_use]
-pub fn run_image_workers(data: &Data) -> Vec<[i64; 5]> {
+pub fn run_image_workers(data: &Data, program: &Stores) -> Vec<RunWorkerShape> {
     let mut defs: Vec<u32> = Vec::new();
     for d in 0..data.definitions() {
         data.def(d).code.walk(&mut |v| {
@@ -1334,19 +1344,48 @@ pub fn run_image_workers(data: &Data) -> Vec<[i64; 5]> {
     defs.into_iter()
         .map(|w| {
             let def = data.def(w);
-            let (texts, dests) = crate::parallel_natives::worker_hidden_counts(def);
-            [
-                i64::from(w),
-                crate::parallel_natives::worker_input_code(def),
-                i64::from(crate::variables::size(
+            let (texts, dests) = crate::par_facts::worker_hidden_counts(def);
+            // A tuple row's plan, as `read_tuple_at_wide` reads it.
+            let row = crate::par_facts::tuple_first_arg_types(def)
+                .filter(|_| crate::par_facts::worker_input_code(def) >= 1000)
+                .map(|elems| {
+                    crate::par_facts::tuple_row_plan(Some(data), program, &elems)
+                        .iter()
+                        .flat_map(|m| {
+                            let kind = match m.kind {
+                                crate::par_facts::TupleMove::Copy => 0,
+                                crate::par_facts::TupleMove::Text => 1,
+                                crate::par_facts::TupleMove::FnRef => 2,
+                            };
+                            [m.at as i64, m.stored as i64, m.arg as i64, kind]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            RunWorkerShape {
+                def: i64::from(w),
+                input: crate::par_facts::worker_input_code(def),
+                ret: i64::from(crate::variables::size(
                     &def.returned,
                     &crate::data::Context::Argument,
                 )),
-                i64::try_from(texts).unwrap_or(0),
-                i64::try_from(dests).unwrap_or(0),
-            ]
+                texts: i64::try_from(texts).unwrap_or(0),
+                dests: i64::try_from(dests).unwrap_or(0),
+                row,
+            }
         })
         .collect()
+}
+
+/// A `par` worker's row of the run image (`RunWorker`).
+pub struct RunWorkerShape {
+    pub def: i64,
+    pub input: i64,
+    pub ret: i64,
+    pub texts: i64,
+    pub dests: i64,
+    /// A tuple row's plan, four numbers per element (`parallel::tuple_row_plan`).
+    pub row: Vec<i64>,
 }
 
 /// A persisted root type's sidecar, as the C backend's `sidecar_table` writes it.
@@ -1416,8 +1455,7 @@ pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape>
                         s.max = 0;
                         s
                     });
-                    crate::c::keyed_local_type_in(data, sc, program.types.len(), other)
-                        .unwrap_or(u16::MAX)
+                    keyed_local_type_in(data, sc, program.types.len(), other).unwrap_or(u16::MAX)
                 }
             };
             if tp != u16::MAX && !tps.contains(&tp) {
@@ -1484,16 +1522,17 @@ fn sidecar_shape(program: &Stores, tp: u16) -> RunSidecarShape {
         pboxrefusal,
         prangecontent,
         prangerefusal,
-        walks: crate::c::holds_stored_refs_in(program, tp) || crate::c::holds_trie_in(program, tp),
-        refs: crate::c::holds_stored_refs_in(program, tp),
-        rekey: crate::c::needs_rekey_in(program, tp),
+        walks: crate::schema_sidecar::holds_stored_refs_in(program, tp)
+            || crate::schema_sidecar::holds_trie_in(program, tp),
+        refs: crate::schema_sidecar::holds_stored_refs_in(program, tp),
+        rekey: crate::schema_sidecar::needs_rekey_in(program, tp),
         before: before.to_string(),
         after: after.to_string(),
         dump: id.dump.clone(),
     }
 }
 
-/// A generator's frame facts for the run image (`RunGen`), from `state::gen_facts` — the same
+/// A generator's frame facts for the run image (`RunGen`), from `gen_facts` — the same
 /// reads the interpreter's coroutine operators make.
 pub struct RunGenShape {
     pub def: u32,
@@ -1508,7 +1547,7 @@ pub struct RunGenShape {
 /// Every generator of the program: a function with a body whose result is an iterator.
 #[must_use]
 pub fn run_image_gens(data: &Data) -> Vec<RunGenShape> {
-    use crate::state::gen_facts as gf;
+    use crate::gen_facts as gf;
     let mut out = Vec::new();
     for d in 0..data.definitions() {
         let def = data.def(d);
@@ -1688,7 +1727,7 @@ pub fn save_run_image(
             &run_image_fnrefs(data, program),
             &run_image_gens(data),
             &run_image_shared(data, library_names),
-            &run_image_workers(data),
+            &run_image_workers(data, program),
             &run_image_sidecars(data, program),
             (
                 &program.release().oldest,
@@ -1880,6 +1919,28 @@ fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {
             );
         }
     }
+}
+
+/// the C backend\'s `keyed_local_type`: the collection type a keyed local's store is minted as, looked up in
+/// `scratch` (a clone of the program's stores, where the lookup may number a type), or `None`
+/// for one past the program's own `limit` types — for a reader without the C backend's context too (the run
+/// image's sidecars, @PLN91).
+pub(crate) fn keyed_local_type_in(
+    data: &crate::data::Data,
+    scratch: &mut crate::database::Stores,
+    limit: usize,
+    tp: &crate::data::Type,
+) -> Option<u16> {
+    let known = |td: u32| data.def(td).known_type();
+    let nr = match tp.base() {
+        crate::data::Type::Sorted(td, key, _) => scratch.sorted(known(*td), key),
+        crate::data::Type::Hash(td, key, _) => scratch.hash(known(*td), key),
+        crate::data::Type::Index(td, key, _) => scratch.index(known(*td), key),
+        crate::data::Type::Radix(td, key, _) => scratch.spatial(known(*td), key),
+        crate::data::Type::Trie(td, key, _) => scratch.trie(known(*td), key),
+        _ => return None,
+    };
+    (usize::from(nr) < limit).then_some(nr)
 }
 
 #[cfg(test)]

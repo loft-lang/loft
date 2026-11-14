@@ -946,6 +946,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t116, "ret", 0);
     db.field(t116, "texts", 0);
     db.field(t116, "dests", 0);
+    let vec_row = db.vector(t0);
+    db.field(t116, "row", vec_row);
     db.field(t117, "tp", 0);
     db.field(t117, "hash", 0);
     db.field(t117, "pcoll", 0);

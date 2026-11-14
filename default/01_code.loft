@@ -585,6 +585,41 @@ pub fn abs(self: f64) -> f64 {
 }
 #pure
 
+fn OpFloatBits(v1: __fword) -> i64;
+#cold
+#rust"@v1.to_bits() as i64"
+fn OpFloatFromBits(v1: i64) -> __fword;
+#cold
+#rust"f64::from_bits(@v1 as u64)"
+fn OpSingleBits(v1: single) -> __word;
+#cold
+#rust"i64::from(@v1.to_bits() as i32)"
+fn OpSingleFromBits(v1: __word) -> single;
+#cold
+#rust"f32::from_bits(@v1 as i32 as u32)"
+/// The 64 bits of a double as they are stored (IEEE-754 binary64), moved, not converted: what
+/// a byte format writes for it.  `float_from_bits` takes them back.  `-0.0`'s pattern is the
+/// integer null's, so `(-0.0).bits()` reads as null and still comes back as `-0.0`.
+pub fn bits(self: f64) -> i64 {
+  OpFloatBits(self)
+}
+#pure
+/// The double whose stored bits are `v` (IEEE-754 binary64): `bits()` taken back.
+pub fn float_from_bits(v: i64) -> f64 {
+  OpFloatFromBits(v)
+}
+#pure
+/// The 32 bits of a single as they are stored (IEEE-754 binary32), as a signed 32-bit value.
+pub fn bits(self: single) -> integer {
+  OpSingleBits(self)
+}
+#pure
+/// The single whose stored bits are `v` (IEEE-754 binary32): `bits()` taken back.
+pub fn single_from_bits(v: integer) -> single {
+  OpSingleFromBits(v)
+}
+#pure
+
 fn OpMathPiFloat() -> __fword;
 #cold
 #rust"std::f64::consts::PI"

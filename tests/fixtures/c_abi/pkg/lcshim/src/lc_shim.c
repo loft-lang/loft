@@ -82,3 +82,16 @@ int64_t lcs_shim_rgb_sum(const void *p, int64_t n) {
   for (i = 0; i < n; i++) { s += 65536 * b[3 * i] + 256 * b[3 * i + 1] + b[3 * i + 2]; }
   return s;
 }
+
+/* `#c_twin` routines: the C versions of `twin_weigh` and `twin_scale`, answering what their loft
+ * bodies answer. */
+int64_t lcs_twin_weigh(const int64_t *p, int64_t n, int64_t k);
+int64_t lcs_twin_weigh(const int64_t *p, int64_t n, int64_t k) {
+  int64_t i, s = 0;
+  for (i = 0; i < n; i++) { s += p[i] * (i + k); }
+  return s;
+}
+double lcs_twin_scale(double x, int64_t by);
+double lcs_twin_scale(double x, int64_t by) {
+  return x * (double) by;
+}

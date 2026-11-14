@@ -3569,7 +3569,8 @@ impl Parser {
                     Type::Enum(*ret_nr, true, crate::data::Deps::attrs(vec![0]));
             }
         }
-        if !self.lexer.has_token(";") {
+        self.fn_has_body = !self.lexer.has_token(";");
+        if self.fn_has_body {
             for (a_nr, a) in arguments.iter().enumerate() {
                 if self.first_pass {
                     let v_nr = self.create_var(&a.name, &a.typedef);
@@ -3956,7 +3957,10 @@ impl Parser {
             .collect();
         let ret = def.returned().clone();
         let void_return = matches!(ret, crate::data::Type::Void);
-        for problem in crate::c_signature::check(&self.data, &sig, &params, &ret, void_return) {
+        let twin = self.fn_has_body;
+        for problem in
+            crate::c_signature::check_for(&self.data, &sig, &params, &ret, void_return, twin)
+        {
             diagnostic_at!(self.lexer, &at, Level::Error, "#c \"{symbol}\": {problem}");
         }
     }
@@ -4083,6 +4087,32 @@ impl Parser {
                 // Arc A lands INERT: this parses, checks and stores.  Nothing
                 // calls a `#c` function yet, and `native` is deliberately left
                 // empty so the Rust dispatch path does not pick it up.
+                //
+                // A binding IS the implementation, so it has no loft body; one written after a
+                // body was ignored on every backend, and is a `#c_twin` misspelled.
+                if self.fn_has_body {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a `#c` binding has no body — the C symbol is the function; for a C \
+                         version of a loft body, which the C backend calls instead, write \
+                         `#c_twin`"
+                    );
+                }
+                self.parse_c_binding();
+            } else if id == Some("c_twin".to_string()) {
+                // `#c_twin "<symbol>" "<c-signature>"` (@C-twin): the C backend calls this C
+                // routine in place of the function's loft body, which every other backend runs
+                // and which states what the routine must answer.  The routine comes from the
+                // package's `[c] shim`, bound as a `#c` binding is (`parse_c_binding`).
+                if !self.fn_has_body {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a `#c_twin` is a C version of a loft body, and this function has none — \
+                         to bind a C symbol as the whole function, write `#c`"
+                    );
+                }
                 self.parse_c_binding();
             } else if matches!(id.as_deref(), Some("hot" | "cold")) {
                 // `#hot` / `#cold` — the dispatch priority of a standard-library operator: a hot

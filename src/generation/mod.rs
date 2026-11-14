@@ -1474,7 +1474,9 @@ pub(crate) fn def_returns_owned_text(def: &crate::data::Definition) -> bool {
 /// both the wrapper signature (`output_function`) and any caller that must adapt
 /// to it (the shared-store bridge in `native_lib::bridge_write_ret`).  Three
 /// disjoint owned-`String` producers:
-/// - the curated `codegen_runtime` set (`native_returns_owned_string`);
+/// - the curated `codegen_runtime` set (`native_returns_owned_string`): the standard
+///   library's body-less natives of those names, never a library function with a body that
+///   shares one (its wrapper is an ordinary loft function's);
 /// - an FFI-direct text native — `output_native_direct_call` returns the copied
 ///   `LoftStr` bytes as an owned `String` (N2).  This path is taken ONLY when the
 ///   body is `Null` (no inlined `Block`), so gate on `code() == Null` to stay
@@ -1488,9 +1490,9 @@ pub(crate) fn def_returns_owned_text(def: &crate::data::Definition) -> bool {
 pub(crate) fn returns_owned_string(def: &crate::data::Definition) -> bool {
     // @PLN25 slice (b): peel `Optional` — a `text?` return uses the same owned-String ABI.
     matches!(def.returned().base(), Type::Text(_))
-        && (native_returns_owned_string(def.name())
+        && ((*def.code() == Value::Null && native_returns_owned_string(def.name()))
             || (*def.code() == Value::Null && !def.native().is_empty())
-            || (*def.code() == Value::Null && !def.c_sig.is_empty())
+            || def.is_c_binding()
             || def_returns_owned_text(def))
 }
 
