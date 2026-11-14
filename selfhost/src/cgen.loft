@@ -192,11 +192,10 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
     out = "";
     for d in b.data.definitions {
       if d.name == "n_main" {
-        proof = opt_non_sentinel::new_proof(b);
-        calls = opt_range::new_calls();
+        cx = cgen_fn::new_cx(b);
         for f in opt_names::written_functions(b, d#index) {
           fname = b.data.definitions[f]!.name;
-          wr = cgen_fn::write_function(b, proof, calls, f);
+          wr = cgen_fn::write_function(cx, f);
           if wr.refused != "" {
             out += "[refused]\t{fname}\t{wr.refused}\n";
           } else {
@@ -216,9 +215,7 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
         if name == "nn" {
           facts += "{opt_non_sentinel::nn_line(b, proof, d#index)}\n";
         } else {
-          // The character walks are not handed over yet: a function whose accumulator steps
-          // under a walk shows as a difference.
-          facts += "{opt_range::ranges_line(b, proof, calls, d#index, [])}\n";
+          facts += "{opt_range::ranges_line(b, proof, calls, d#index, opt_range::walks_of(b, d#index))}\n";
         }
       }
     }

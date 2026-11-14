@@ -37,9 +37,29 @@ struct Temp {
   shape: text,
 }
 
+// What every function of a unit is written under (`Cx`): the program, the program-wide
+// parameter proof and the call memo of the range analysis.
+pub struct Cx {
+  pub b: ir::Bundle,
+  pub p: opt_non_sentinel::Proof,
+  pub c: opt_range::Calls,
+}
+
+pub fn new_cx(b: ir::Bundle) -> Cx {
+  Cx { b: b, p: opt_non_sentinel::new_proof(b), c: opt_range::new_calls() }
+}
+
 // One function's writer (`FnWriter`): what it has written and where a fault reports.
 struct W {
+  // The function's definition number and name.
+  index: integer,
   name: text,
+  // Per variable: its C name, and whether it is a parameter.
+  names: vector<text>,
+  params: vector<boolean>,
+  // The function's facts as `opt_range` reads them.
+  nn: vector<boolean>,
+  rv: opt_range::Ranges,
   file: text,
   line: integer,
   shapes: vector<text>,
@@ -322,35 +342,34 @@ fn names_var(v: ir::Node, x: integer) -> boolean {
 }
 
 // `may_write_var`: may evaluating `v` write variable `x`?  A parameter may share what it names.
-fn may_write_var(b: ir::Bundle, d: ir::Definition, v: ir::Node, x: integer) -> boolean {
+fn may_write_var(b: ir::Bundle, w: W, v: ir::Node, x: integer) -> boolean {
   if !may_write(b, v) {
     return false;
   }
-  if d.variables.variables[x]!.argument {
+  if w.params[x]! {
     return true;
   }
   names_var(v, x)
 }
 
-// The first two fixed parameters of every routine below are the program and the function
-// being written; `p`, `c`, `nn` and `rv` are that function's facts as `opt_range` reads them.
+// Every routine below takes the unit's context `x` and the function's writer `w` first.
 
 // Operand `i` of `args`, evaluated in order (`arg`): a value a later operand may change is
 // held in a temporary.
-fn arg(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, args: vector<ir::Node>, i: integer, ind: integer) -> E {
+fn arg(x: Cx, w: W, args: vector<ir::Node>, i: integer, ind: integer) -> E {
   operand = args[i]!;
   bare_operand = loop_shape::unspan(operand);
   later_writes = false;
   for j in i + 1..len(args) {
     hit = match bare_operand {
-      NdVar { n } => may_write_var(b, d, args[j]!, n),
-      _ => may_write(b, args[j]!),
+      NdVar { n } => may_write_var(x.b, w, args[j]!, n),
+      _ => may_write(x.b, args[j]!),
     };
     if hit {
       later_writes = true;
     }
   }
-  value = expr(b, d, p, c, nn, rv, w, operand, ind);
+  value = expr(x, w, operand, ind);
   if w.why != "" {
     return value;
   }
@@ -449,7 +468,7 @@ fn literal32(v: ir::Node, e: E) -> E {
 
 // An operator call (`operator`): the plain form where the range proof holds, else the checked
 // helper; a comparison; the boolean operators.
-fn op_call(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   for a in args {
     if loop_shape::unspan(a) == NdNull {
       refuse(w, "a null operand of {name}");
@@ -458,46 +477,46 @@ fn op_call(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_
   }
   count = len(args);
   plain = plain_macro(name, count);
-  if plain != "" && opt_range::op_range_at_site(b, p, c, nn, rv, name, args) != null {
+  if plain != "" && opt_range::op_range_at_site(x.b, x.p, x.c, w.nn, w.rv, name, args) != null {
     where = "\"R-Range:{w.name}\"";
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
+    first = arg(x, w, args, 0, ind);
     if count == 1 {
       return E { code: "{plain}({as_int(w, first)}, {where})", kind: K_INT };
     }
-    second = arg(b, d, p, c, nn, rv, w, args, 1, ind);
+    second = arg(x, w, args, 1, ind);
     return E { code: "{plain}({as_int(w, first)}, {as_int(w, second)}, {where})", kind: K_INT };
   }
   helper = checked(name);
   if helper != "" && count == 2 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
-    second = arg(b, d, p, c, nn, rv, w, args, 1, ind);
+    first = arg(x, w, args, 0, ind);
+    second = arg(x, w, args, 1, ind);
     at = if helper.ends_with("_at") { ", {site(w)}" } else { "" };
     return E { code: "{helper}({as_int(w, first)}, {as_int(w, second)}{at})", kind: K_INT };
   }
   op = comparison(name);
   if op != "" && count == 2 {
-    first = literal32(args[0]!, arg(b, d, p, c, nn, rv, w, args, 0, ind));
-    second = literal32(args[1]!, arg(b, d, p, c, nn, rv, w, args, 1, ind));
+    first = literal32(args[0]!, arg(x, w, args, 0, ind));
+    second = literal32(args[1]!, arg(x, w, args, 1, ind));
     if first.kind == K_INT32 && second.kind == K_INT32 {
       return compared(first.code, op, second.code);
     }
     return compared(as_int(w, first), op, as_int(w, second));
   }
   if (name == "OpEqBool" || name == "OpNeBool") && count == 2 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
-    second = arg(b, d, p, c, nn, rv, w, args, 1, ind);
+    first = arg(x, w, args, 0, ind);
+    second = arg(x, w, args, 1, ind);
     return compared(as_bool(w, first), if name == "OpEqBool" { "==" } else { "!=" }, as_bool(w, second));
   }
   if name == "OpNot" && count == 1 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
+    first = arg(x, w, args, 0, ind);
     return E { code: "(!{as_cond(w, first)})", kind: K_COND };
   }
   if (name == "OpMinSingleInt" || name == "OpMinSingleLong") && count == 1 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
+    first = arg(x, w, args, 0, ind);
     return E { code: "loft_neg({as_int(w, first)})", kind: K_INT };
   }
   if (name == "OpConvBoolFromInt" || name == "OpConvBoolFromLong") && count == 1 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
+    first = arg(x, w, args, 0, ind);
     return E { code: "({as_int(w, first)} != LOFT_NULL)", kind: K_COND };
   }
   if (name == "OpConvIntFromNull" || name == "OpConvLongFromNull") && count == 0 {
@@ -530,25 +549,25 @@ fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
 }
 
 // A C expression for `v`'s value (`expr`); the statements it needs are written first.
-fn expr(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) -> E {
+fn expr(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
   if w.why != "" {
     return none();
   }
   at = innermost_span(v);
   if at == null {
-    return expr_value(b, d, p, c, nn, rv, w, v, ind);
+    return expr_value(x, w, v, ind);
   }
   saved_file = w.span_file;
   saved_line = w.span_line;
   w.span_file = c_string(at.file);
   w.span_line = at.line;
-  value = expr_value(b, d, p, c, nn, rv, w, v, ind);
+  value = expr_value(x, w, v, ind);
   w.span_file = saved_file;
   w.span_line = saved_line;
   value
 }
 
-fn expr_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) -> E {
+fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
   node = loop_shape::unspan(v);
   match node {
     NdInt { n } => E { code: "INT64_C({n})", kind: K_INT },
@@ -560,19 +579,19 @@ fn expr_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: o
         refuse(w, "a variable of shape {shape}");
         return none();
       }
-      E { code: var_name(d.variables.variables[n]!.name, n), kind: kind_of(shape) }
+      E { code: w.names[n]!, kind: kind_of(shape) }
     },
     NdCall { def_nr, args } => {
-      name = def_name(b, def_nr);
+      name = def_name(x.b, def_nr);
       if !name.starts_with("Op") {
         refuse(w, "a call of a function");
         return none();
       }
-      op_call(b, d, p, c, nn, rv, w, name, args, ind)
+      op_call(x, w, name, args, ind)
     },
-    NdBlock { block: _ } => compound(b, d, p, c, nn, rv, w, node, ind),
-    NdInsert { items: _ } => compound(b, d, p, c, nn, rv, w, node, ind),
-    NdIf { cond: _, t: _, f: _ } => compound(b, d, p, c, nn, rv, w, node, ind),
+    NdBlock { block: _ } => compound(x, w, node, ind),
+    NdInsert { items: _ } => compound(x, w, node, ind),
+    NdIf { cond: _, t: _, f: _ } => compound(x, w, node, ind),
     NdNull => {
       refuse(w, "a null without a type");
       none()
@@ -585,10 +604,10 @@ fn expr_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: o
 }
 
 // A compound read as a value: held in a temporary its statements assign.
-fn compound(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, node: ir::Node, ind: integer) -> E {
-  shape = shape_of(b, w, node);
+fn compound(x: Cx, w: W, node: ir::Node, ind: integer) -> E {
+  shape = shape_of(x.b, w, node);
   if shape == "void" {
-    stmt(b, d, p, c, nn, rv, w, node, ind);
+    stmt(x, w, node, ind);
     return E { code: "(void) 0", kind: K_VOID };
   }
   if held(shape) == "" {
@@ -596,7 +615,7 @@ fn compound(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt
     return none();
   }
   t = temp(w, shape);
-  assign(b, d, p, c, nn, rv, w, node, t, shape, ind);
+  assign(x, w, node, t, shape, ind);
   E { code: t, kind: kind_of(shape) }
 }
 
@@ -692,45 +711,45 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
 }
 
 // Write the statements `v` needs and put its value in `target`, of `shape` (`assign`).
-fn assign(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
+fn assign(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
   if w.why != "" {
     return;
   }
   at = innermost_span(v);
   if at == null {
-    assign_value(b, d, p, c, nn, rv, w, v, target, shape, ind);
+    assign_value(x, w, v, target, shape, ind);
     return;
   }
   saved_file = w.span_file;
   saved_line = w.span_line;
   w.span_file = c_string(at.file);
   w.span_line = at.line;
-  assign_value(b, d, p, c, nn, rv, w, v, target, shape, ind);
+  assign_value(x, w, v, target, shape, ind);
   w.span_file = saved_file;
   w.span_line = saved_line;
 }
 
-fn assign_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
+fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
   node = loop_shape::unspan(v);
   match node {
     NdNull => null_into(w, target, shape, ind),
-    NdBlock { block } => assign_seq(b, d, p, c, nn, rv, w, block[0].operators, target, shape, ind),
-    NdInsert { items } => assign_seq(b, d, p, c, nn, rv, w, items, target, shape, ind),
+    NdBlock { block } => assign_seq(x, w, block[0].operators, target, shape, ind),
+    NdInsert { items } => assign_seq(x, w, items, target, shape, ind),
     NdIf { cond, t, f } => {
-      cold = null_test(b, cond) && !int_literal_fallback_value(b, cond, f);
-      test = as_cond(w, expr(b, d, p, c, nn, rv, w, cond, ind));
+      cold = null_test(x.b, cond) && !int_literal_fallback_value(x.b, cond, f);
+      test = as_cond(w, expr(x, w, cond, ind));
       line(w, ind, "if ({bare(test)}) {{");
-      assign(b, d, p, c, nn, rv, w, t, target, shape, ind + 1);
+      assign(x, w, t, target, shape, ind + 1);
       line(w, ind, "}} else {{");
       if cold {
         line(w, ind + 1, "LOFT_COLD_PATH();");
       }
-      assign(b, d, p, c, nn, rv, w, f, target, shape, ind + 1);
+      assign(x, w, f, target, shape, ind + 1);
       line(w, ind, "}}");
     },
-    NdReturn { inner: _ } => stmt(b, d, p, c, nn, rv, w, node, ind),
+    NdReturn { inner: _ } => stmt(x, w, node, ind),
     _ => {
-      value = as_shape(w, expr(b, d, p, c, nn, rv, w, node, ind), shape);
+      value = as_shape(w, expr(x, w, node, ind), shape);
       // An arm that keeps the value assigns the target to itself: nothing to write.
       if w.why == "" && value != target {
         line(w, ind, "{target} = {value};");
@@ -741,8 +760,8 @@ fn assign_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c:
 
 // A value block (`assign_seq`): the value is the last operator that is neither a line marker,
 // an assignment nor a free; what follows it runs once it is taken.
-fn assign_seq(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, ops: vector<ir::Node>, target: text, shape: text, ind: integer) {
-  if tail_captured(b, w, ops) {
+fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind: integer) {
+  if tail_captured(x.b, w, ops) {
     refuse(w, "a value the bytecode leaves on its stack before a return");
     return;
   }
@@ -751,7 +770,7 @@ fn assign_seq(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: o
     value = match loop_shape::unspan(o) {
       NdLine { n: _ } => false,
       NdSet { var: _, inner: _ } => false,
-      _ => !is_free(b, o),
+      _ => !is_free(x.b, o),
     };
     if value {
       at = o#index;
@@ -763,11 +782,11 @@ fn assign_seq(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: o
   }
   for o in ops {
     if o#index < at {
-      stmt(b, d, p, c, nn, rv, w, o, ind);
+      stmt(x, w, o, ind);
     } else if o#index == at {
-      assign(b, d, p, c, nn, rv, w, o, target, shape, ind);
+      assign(x, w, o, target, shape, ind);
     } else {
-      stmt(b, d, p, c, nn, rv, w, o, ind);
+      stmt(x, w, o, ind);
     }
   }
 }
@@ -792,11 +811,11 @@ fn tail_captured(b: ir::Bundle, w: W, ops: vector<ir::Node>) -> boolean {
 }
 
 // Return `v`'s value, or nothing (`ret_value`).
-fn ret_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) {
+fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
   absent = loop_shape::unspan(v) == NdNull;
   if w.ret == "void" {
     if !absent {
-      stmt(b, d, p, c, nn, rv, w, v, ind);
+      stmt(x, w, v, ind);
     }
     line(w, ind, "return;");
     return;
@@ -805,13 +824,13 @@ fn ret_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: op
   if absent {
     null_into(w, r, w.ret, ind);
   } else {
-    assign(b, d, p, c, nn, rv, w, v, r, w.ret, ind);
+    assign(x, w, v, r, w.ret, ind);
   }
   line(w, ind, "return {r};");
 }
 
 // Write `v` for its effect (`stmt`, `stmt_inner`, `stmt_kind`).
-fn stmt(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) {
+fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   if w.why != "" {
     return;
   }
@@ -822,19 +841,19 @@ fn stmt(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_ran
     _ => null,
   };
   if at == null {
-    stmt_kind(b, d, p, c, nn, rv, w, v, ind);
+    stmt_kind(x, w, v, ind);
     return;
   }
   saved_file = w.span_file;
   saved_line = w.span_line;
   w.span_file = c_string(at.file);
   w.span_line = at.line;
-  stmt_kind(b, d, p, c, nn, rv, w, v, ind);
+  stmt_kind(x, w, v, ind);
   w.span_file = saved_file;
   w.span_line = saved_line;
 }
 
-fn stmt_kind(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) {
+fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
   match v {
     NdNull => {},
     NdLine { n } => w.cur_line = n,
@@ -849,7 +868,7 @@ fn stmt_kind(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: op
         w.span_file = c_string(pos.file);
         w.span_line = pos.line;
       }
-      stmt(b, d, p, c, nn, rv, w, inner, ind);
+      stmt(x, w, inner, ind);
       w.span_file = saved_file;
       w.span_line = saved_line;
     },
@@ -858,17 +877,17 @@ fn stmt_kind(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: op
         refuse(w, "a loop");
         return;
       }
-      if tail_captured(b, w, block[0].operators) {
+      if tail_captured(x.b, w, block[0].operators) {
         refuse(w, "a value the bytecode leaves on its stack before a return");
         return;
       }
       for o in block[0].operators {
-        stmt(b, d, p, c, nn, rv, w, o, ind);
+        stmt(x, w, o, ind);
       }
     },
     NdInsert { items } => {
       for o in items {
-        stmt(b, d, p, c, nn, rv, w, o, ind);
+        stmt(x, w, o, ind);
       }
     },
     NdSet { var, inner } => {
@@ -877,23 +896,23 @@ fn stmt_kind(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: op
         refuse(w, "a variable of shape {shape}");
         return;
       }
-      assign(b, d, p, c, nn, rv, w, inner, var_name(d.variables.variables[var]!.name, var), shape, ind);
+      assign(x, w, inner, w.names[var]!, shape, ind);
     },
     NdIf { cond, t, f } => {
-      cold = null_test(b, cond) && !int_literal_fallback(b, cond, f);
-      test = as_cond(w, expr(b, d, p, c, nn, rv, w, cond, ind));
+      cold = null_test(x.b, cond) && !int_literal_fallback(x.b, cond, f);
+      test = as_cond(w, expr(x, w, cond, ind));
       line(w, ind, "if ({bare(test)}) {{");
-      stmt(b, d, p, c, nn, rv, w, t, ind + 1);
+      stmt(x, w, t, ind + 1);
       if loop_shape::unspan(f) != NdNull {
         line(w, ind, "}} else {{");
         if cold {
           line(w, ind + 1, "LOFT_COLD_PATH();");
         }
-        stmt(b, d, p, c, nn, rv, w, f, ind + 1);
+        stmt(x, w, f, ind + 1);
       }
       line(w, ind, "}}");
     },
-    NdReturn { inner } => ret_value(b, d, p, c, nn, rv, w, inner, ind),
+    NdReturn { inner } => ret_value(x, w, inner, ind),
     NdDrop { inner } => {
       whole = match loop_shape::unspan(inner) {
         NdIf { cond: _, t: _, f: _ } => true,
@@ -902,19 +921,19 @@ fn stmt_kind(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: op
         _ => false,
       };
       if whole {
-        stmt(b, d, p, c, nn, rv, w, inner, ind);
+        stmt(x, w, inner, ind);
       } else {
-        dropped(b, d, p, c, nn, rv, w, inner, ind);
+        dropped(x, w, inner, ind);
       }
     },
-    NdCall { def_nr: _, args: _ } => dropped(b, d, p, c, nn, rv, w, v, ind),
+    NdCall { def_nr: _, args: _ } => dropped(x, w, v, ind),
     _ => refuse(w, "the construct {construct(v)}"),
   }
 }
 
 // A value computed and dropped: `(void) e;`, or the bare call of one that answers nothing.
-fn dropped(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) {
-  e = expr(b, d, p, c, nn, rv, w, v, ind);
+fn dropped(x: Cx, w: W, v: ir::Node, ind: integer) {
+  e = expr(x, w, v, ind);
   if w.why != "" {
     return;
   }
@@ -944,8 +963,8 @@ fn statement_count(body: text) -> integer {
 // The C definition of `d`'s body, `<name>__fr` (`function`, `FnWriter::write` and the whole
 // form of `framed`), or the first construct that is not carried.  `index` is `d`'s definition
 // number; `p` and `c` are the program's proof and call memo.
-pub fn write_function(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, index: integer) -> Written {
-  d = b.data.definitions[index]!;
+pub fn write_function(x: Cx, index: integer) -> Written {
+  d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
     return Written { text: "", refused: "a function without a loft body" };
   }
@@ -956,7 +975,11 @@ pub fn write_function(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::C
     return Written { text: "", refused: "a result of shape {ret}" };
   }
   params: vector<text> = [];
+  names: vector<text> = [];
+  is_param: vector<boolean> = [];
   for v in d.variables.variables {
+    names += [var_name(v.name, v#index)];
+    is_param += [v.argument];
     shape = shapes[v#index]!;
     if held(shape) == "" || shape == "void" {
       return Written { text: "", refused: "a variable of shape {shape}" };
@@ -975,10 +998,14 @@ pub fn write_function(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::C
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  nn = opt_non_sentinel::non_sentinel_vars(b, p, index);
-  rv = opt_range::range_vars(b, p, c, index, nn, []);
+  nn = opt_non_sentinel::non_sentinel_vars(x.b, x.p, index);
   w = W {
+    index: index,
     name: d.name,
+    names: names,
+    params: is_param,
+    nn: nn,
+    rv: opt_range::range_vars(x.b, x.p, x.c, index, nn, opt_range::walks_of(x.b, index)),
     file: d.position.file,
     line: d.position.line,
     shapes: shapes,
@@ -992,10 +1019,10 @@ pub fn write_function(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::C
   };
   code = d.code[0]!;
   if ret == "void" {
-    stmt(b, d, p, c, nn, rv, w, code, 1);
+    stmt(x, w, code, 1);
   } else {
     r = temp(w, ret);
-    assign(b, d, p, c, nn, rv, w, code, r, ret, 1);
+    assign(x, w, code, r, ret, 1);
     line(w, 1, "return {r};");
   }
   if w.why != "" {

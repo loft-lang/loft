@@ -12,6 +12,7 @@
 use ir;
 use loop_shape;
 use opt_non_sentinel;
+use char_walk;
 
 // An inclusive range of values; the sentinel is never inside.
 pub struct Range {
@@ -76,6 +77,15 @@ pub fn new_calls() -> Calls {
 pub struct Walk {
   pub scope: integer,
   pub hoist_null: boolean,
+}
+
+// The character walks of function `d` (`char_walk::walks`) as this analysis reads them.
+pub fn walks_of(b: ir::Bundle, d: integer) -> vector<Walk> {
+  out: vector<Walk> = [];
+  for w in char_walk::walks(b, d) {
+    out += [Walk { scope: w.scope, hoist_null: w.hoist_null }];
+  }
+  out
 }
 
 // A callee is evaluated over its arguments' facts at most this many calls deep.
