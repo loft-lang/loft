@@ -18,6 +18,7 @@ use ret_adopt;
 use bgen_set;
 use bgen_loop;
 use bgen_tuple;
+use bgen_text;
 
 // The bytes of one function while they are written.
 pub struct Out {
@@ -814,7 +815,7 @@ fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
 // The operators and natives `generate_call` writes in a way of their own, which this writer
 // does not write yet.
 fn special_call(name: text) -> boolean {
-  name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+  name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpCreateStack"
 }
 
 // Is `n` in the list a `NoPrefill` fact keeps under `tag` (`l` locals, `m` mints;
@@ -1088,7 +1089,7 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   if fused_vec(g, op, args) {
     return ret;
   }
-  if def.name == "OpAppendText" && len(args) >= 2 && text_dest_pass(g, args) {
+  if def.name == "OpAppendText" && len(args) >= 2 && bgen_text::text_dest_pass(g, args) {
     return ret;
   }
   if g.adopt.v >= 0 && len(args) > 0 && (def.name == "OpDatabase" || def.name == "OpSetInt4") {
@@ -1148,6 +1149,19 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
       }
       if g.position - before != pushed(at) {
         stop(g, "an argument that does not take its parameter's bytes in a call of {def.name}");
+      }
+    }
+  }
+  // A `par` call's arguments past the declared ones are written after them, a word each.
+  par_call = def.name == "n_parallel_for" || def.name == "n_parallel_for_light" || def.name == "n_parallel_discard"
+    || def.name == "n_parallel_queue" || def.name == "n_parallel_queue_text" || def.name == "n_parallel_queue_ref"
+    || def.name == "n_parallel_queue_narrow" || def.name == "n_parallel_queue_fn" || def.name == "n_parallel_fold";
+  extras = 0;
+  if par_call {
+    for a in args {
+      if a#index >= len(def.attributes) {
+        generate(g, a, false);
+        extras += 1;
       }
     }
   }
@@ -1221,6 +1235,7 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   if lib >= 0 {
     add_op(g, "OpStaticCall");
     put_u16(g.o, lib);
+    size += extras * 8;
   } else {
     add_op(g, if generator { "OpCoroutineCreate" } else { "OpCall" });
     put_i64(g.o, op);
@@ -1242,193 +1257,6 @@ fn put_op_of(t: ir::TypeT) -> text {
     TyFloat => "OpPutFloat",
     TyEnum { n: _, is_ref, dep: _ } => if is_ref { "" } else { "OpPutEnum" },
     _ => "",
-  }
-}
-
-// `is_text_dest_native`: the natives that write their text into a destination.
-fn text_dest_native(name: text) -> boolean {
-  name == "t_4text_replace" || name == "t_4text_to_lowercase" || name == "t_4text_to_uppercase"
-    || name == "n_source_dir" || name == "n_directory" || name == "n_user_directory"
-    || name == "n_program_directory" || name == "n_os_temp_dir" || name == "n_os_cache_dir"
-    || name == "n_kernel_event_payload" || name == "n_kernel_sync_payload"
-    || name == "n_kernel_client_event_payload" || name == "n_kernel_client_sync_payload"
-    || name == "n_kernel_default_host" || name == "n_kernel_rebuild_artifact" || name == "n_json_errors"
-    || name == "t_9JsonValue_kind" || name == "t_9JsonValue_to_json" || name == "t_9JsonValue_to_json_pretty"
-    || name == "n_ymd_days_ago" || name == "n_store_memory" || name == "n_store_lazy_error"
-    || name == "n_struct_to_json" || name == "n_struct_to_json_pretty" || name == "n_parallel_buf_get_text"
-    || name == "t_9JsonValue_as_text" || name == "n_env_variable" || name == "n_host_input"
-    || name == "n_text_from_bytes" || name == "n_text_from_byte_range"
-}
-
-// A native's number in the image's table; -1 where it holds none of that name.
-fn native_nr(g: Gen, name: text) -> integer {
-  for n in g.natives {
-    if n == name {
-      return n#index;
-    }
-  }
-  -1
-}
-
-// The three ways a call answers its text into a destination, each with the native it runs
-// (-1: not that way).  `is_c_text_call`, `is_cdylib_text_call`, `is_text_dest_def`.
-fn c_text_lib(g: Gen, op: integer) -> integer {
-  def = def_of(g, op);
-  text = match base(def.returned[0] ?? ir::TyVoid) {
-    TyText { dep: _ } => true,
-    _ => false,
-  };
-  if def.c_sig != "" && text { native_nr(g, def.name) } else { -1 }
-}
-
-fn library_text_lib(g: Gen, op: integer) -> integer {
-  def = def_of(g, op);
-  text = match def.returned[0] ?? ir::TyVoid {
-    TyText { dep: _ } => true,
-    _ => false,
-  };
-  if def.native != "" && text { native_nr(g, def.native) } else { -1 }
-}
-
-fn dest_text_lib(g: Gen, op: integer) -> integer {
-  def = def_of(g, op);
-  file = def.position.file;
-  stdlib = file.starts_with("default/") || file.contains("/default/");
-  if text_dest_native(def.name) && (def.native != "" || stdlib) { native_nr(g, def.name + "_dest") } else { -1 }
-}
-
-// `gen_dest_call_args`: the call's arguments, an untyped null as its parameter's.
-fn dest_call_args(g: Gen, op: integer, args: vector<ir::Node>) {
-  def = def_of(g, op);
-  for a in args {
-    before = g.position;
-    generate(g, a, false);
-    null_arg = match unspan(a) {
-      NdNull => true,
-      _ => false,
-    };
-    at = def.attributes[a#index];
-    if null_arg && g.position == before && at != null {
-      typed_null(g, at.typedef[0] ?? ir::TyVoid);
-    }
-  }
-}
-
-// The stack the call's arguments took, given back.
-fn pop_dest_args(g: Gen, op: integer) {
-  for a in def_of(g, op).attributes {
-    g.position -= pushed(a.typedef[0] ?? ir::TyVoid);
-  }
-}
-
-// The destination pushed: the link itself, or a stack reference to the local.
-fn push_dest(g: Gen, v: integer, link_aware: boolean) {
-  link = link_aware && match var_of(g, v).type_def[0] ?? ir::TyVoid {
-    TyRefVar { inner: _ } => true,
-    _ => false,
-  };
-  if link {
-    init_slot(g, v, "OpVarRef");
-  } else {
-    push_create_stack(g, var_pos(g, v));
-  }
-}
-
-// `gen_text_dest_call`: the native's `_dest` twin, handed the arguments and the destination.
-fn text_dest_call(g: Gen, v: integer, op: integer, args: vector<ir::Node>, lib: integer, link_aware: boolean) {
-  dest_call_args(g, op, args);
-  push_dest(g, v, link_aware);
-  add_op(g, "OpStaticCall");
-  put_u16(g.o, lib);
-  pop_dest_args(g, op);
-  g.position -= 16;
-}
-
-// `gen_cdylib_text_dest_call`: a library's or a C binding's text call — by its own
-// destination-taking entry where the image holds one, else with the destination stashed
-// first (`n_set_bridge_dest`).
-fn library_text_call(g: Gen, v: integer, op: integer, args: vector<ir::Node>, lib: integer) {
-  dest_lib = native_nr(g, def_of(g, op).native + "#dest");
-  set_dest = native_nr(g, "n_set_bridge_dest");
-  if set_dest < 0 {
-    stop(g, "the image holds no destination bridge");
-    return;
-  }
-  dest_call_args(g, op, args);
-  push_dest(g, v, true);
-  if dest_lib >= 0 {
-    add_op(g, "OpStaticCall");
-    put_u16(g.o, dest_lib);
-    g.position -= 16;
-    pop_dest_args(g, op);
-    return;
-  }
-  add_op(g, "OpStaticCall");
-  put_u16(g.o, set_dest);
-  g.position -= 16;
-  add_op(g, "OpStaticCall");
-  put_u16(g.o, lib);
-  pop_dest_args(g, op);
-}
-
-// `set_var`'s text calls, in its order: the `_dest` twin, a library's, a C binding's.  True
-// when the value was such a call and was written into `v`.
-fn set_text_call(g: Gen, v: integer, value: ir::Node, clear: text) -> boolean {
-  match unspan(value) {
-    NdCall { def_nr, args } => {
-      lib = dest_text_lib(g, def_nr);
-      if lib >= 0 {
-        if clear != "" {
-          init_slot(g, v, clear);
-        }
-        text_dest_call(g, v, def_nr, args, lib, true);
-        return true;
-      }
-      lib = library_text_lib(g, def_nr);
-      if lib < 0 {
-        lib = c_text_lib(g, def_nr);
-      }
-      if lib >= 0 {
-        if clear != "" {
-          init_slot(g, v, clear);
-        }
-        library_text_call(g, v, def_nr, args, lib);
-        return true;
-      }
-      false
-    }
-    _ => false,
-  }
-}
-
-// `try_text_dest_pass`: `OpAppendText(dest, call)` where the call can write into `dest`
-// itself — a C binding's, a library's, then the `_dest` twin.  True when it was written.
-fn text_dest_pass(g: Gen, args: vector<ir::Node>) -> boolean {
-  dest = match unspan(args[0] ?? ir::NdNull) {
-    NdVar { n } => n,
-    _ => -1,
-  };
-  if dest < 0 {
-    return false;
-  }
-  match unspan(args[1] ?? ir::NdNull) {
-    NdCall { def_nr, args: inner } => {
-      lib = c_text_lib(g, def_nr);
-      if lib < 0 {
-        lib = library_text_lib(g, def_nr);
-      }
-      if lib >= 0 {
-        library_text_call(g, dest, def_nr, inner, lib);
-        return true;
-      }
-      lib = dest_text_lib(g, def_nr);
-      if lib < 0 {
-        return false;
-      }
-      text_dest_call(g, dest, def_nr, inner, lib, false);
-      true
-    }
-    _ => false,
   }
 }
 
@@ -1463,7 +1291,7 @@ fn assign_text(g: Gen, v: integer, value: ir::Node) {
     add_op(g, "OpClearText");
     put_u16(g.o, g.position - pos);
   }
-  if set_text_call(g, v, value, "") {
+  if bgen_text::set_text_call(g, v, value, "") {
     return;
   }
   empty = match value {
@@ -1866,14 +1694,8 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     TyOptional { inner: _ } => true,
     _ => false,
   };
-  direct = match u {
-    NdCall { def_nr, args: _ } => def_nr,
-    _ => -1,
-  };
-  if optional && record_like(bs) && direct >= 0 && binds::is_loft_defined(def_of(g, direct)) && own::returns_borrowed_view(def_of(g, direct)) {
-    stop(g, "not written yet: a nullable first bind from a call that may answer a view");
-    return;
-  }
+  // `nullable_join_first_bind` answers none while a nullable answer has its return buffer
+  // (`LOFT_NO_NULLABLE_RETBUF` unset), so a nullable local takes the arms below.
   opaque = binds::opaque_callref_bind(g.b, g.defs, tp, value);
   if opaque != null {
     reserve_ref_slot(g, v);

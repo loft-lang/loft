@@ -16,6 +16,7 @@ use own;
 use binds;
 use bgen;
 use bgen_tuple;
+use bgen_text;
 
 // `bind_lowering::ReBind`: the facts one reassignment is decided on.
 struct ReBind {
@@ -189,8 +190,6 @@ fn free_stashed(g: bgen::Gen, v: integer, rb: ReBind) {
 // the displaced store released before the value (`pre`) or kept under it and released after
 // (`stash`), then the arm.
 pub fn rebind(g: bgen::Gen, v: integer, value: ir::Node) {
-  var = bgen::var_of(g, v);
-  tp = var.type_def[0] ?? ir::TyVoid;
   rb = re_bind(g, v, value);
   if rb.arm == "B0" {
     bgen::keyed_null(g, v, false);
@@ -375,7 +374,7 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
       bgen::init_slot(g, v, "OpClearStackText");
       return;
     }
-    if bgen::set_text_call(g, v, value, "OpClearStackText") {
+    if bgen_text::set_text_call(g, v, value, "OpClearStackText") {
       return;
     }
     bgen::init_slot(g, v, "OpClearStackText");
