@@ -27,6 +27,7 @@ K_ENUM = 5;
 K_FLOAT = 6;
 K_SINGLE = 7;
 K_CHAR = 8;
+K_VIEW = 9;
 
 // A C expression and the shape of its value (`E`).
 struct E {
@@ -168,6 +169,88 @@ struct W {
   peel_seeds: vector<Seed>,
   // The scopes of this function's character walks.
   walk_scopes: vector<integer>,
+  // `@FR-R-TextBorrow`: the text locals held as a `loft_str` view, and the ones every bind of
+  // which is a literal.
+  borrowed: vector<boolean>,
+  literal_views: vector<boolean>,
+  // The owned text temporaries the current statement made, freed at its end (`flush`).
+  pending: vector<text>,
+  // A formatted value's work text written straight into the text it is appended to
+  // (`format_into_dest`): the work variable (-1: none) and the destination's C name.
+  work_alias: integer,
+  work_dest: text,
+}
+
+// A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
+// no C statement can be, replaced by the frees when the function is assembled.
+EPILOGUE_MARK = "@@loft-epilogue@@";
+
+// A text variable this function holds as a `loft_text` (`text_held`): a local that is no view.
+fn text_held(w: W, v: integer) -> boolean {
+  (w.shapes[v] ?? "") == "text" && !(w.params[v] ?? true) && !(w.borrowed[v] ?? false)
+}
+
+// A value held in temporary `t` (`held`): a text as a view of it, freed at the statement's end.
+fn held_value(w: W, t: text, shape: text) -> E {
+  if shape == "text" {
+    w.pending += [t];
+    return E { code: "loft_view(&{t})", kind: K_VIEW };
+  }
+  if shape == "void" {
+    return E { code: "(void) 0", kind: K_VOID };
+  }
+  E { code: t, kind: kind_of(shape) }
+}
+
+// Free the owned text temporaries the statement just finished made (`flush`).
+fn flush(w: W, ind: integer) {
+  for t in w.pending {
+    line(w, ind, "loft_text_free(&{t});");
+  }
+  w.pending = [];
+}
+
+// Free every text the function holds (`epilogue`): written as a marker, expanded with the
+// function's full list when it is assembled.
+fn epilogue(w: W, ind: integer) {
+  line(w, ind, EPILOGUE_MARK);
+}
+
+// The text temporary a view `loft_view(&t)` reads, when the current statement made it and may
+// hand its buffer on (`pending_text_temp`); "" for any other code.
+fn pending_text_temp(w: W, code: text) -> text {
+  if !code.starts_with("loft_view(&") || !code.ends_with(")") || (env_variable("LOFT_NO_C_TEXT_MOVE") ?? "0") != "0" {
+    return "";
+  }
+  t = code[11..code.size() - 1];
+  made = false;
+  for p in w.pending {
+    if p == t {
+      made = true;
+    }
+  }
+  if !made {
+    return "";
+  }
+  for k in w.temps {
+    if k.name == t && k.shape == "text" {
+      return t;
+    }
+  }
+  ""
+}
+
+// The C place a text operator writes into (`text_dest`), "" with a refusal for any other.
+fn text_dest(w: W, v: ir::Node) -> text {
+  n = loop_shape::var_of(loop_shape::unspan(v));
+  if n >= 0 && n == w.work_alias {
+    return w.work_dest;
+  }
+  if n >= 0 && text_held(w, n) {
+    return w.names[n]!;
+  }
+  refuse(w, "a text operator writing into what is no text local");
+  ""
 }
 
 // A function's body as C, or why it was not written (`refused` is "" for a written one).
@@ -237,11 +320,18 @@ fn held(shape: text) -> text {
     "float"
   } else if shape == "char" {
     "uint32_t"
+  } else if shape == "text" {
+    "loft_text"
   } else if shape == "void" {
     "void"
   } else {
     ""
   }
+}
+
+// The C type a parameter of `shape` is passed as (`passed`): a text as a borrowed view.
+fn passed(shape: text) -> text {
+  if shape == "text" { "loft_str" } else { held(shape) }
 }
 
 // The initial value of a local of `shape`: its null (`Cx::initial`).
@@ -256,6 +346,8 @@ fn initial(shape: text) -> text {
     "(double) NAN"
   } else if shape == "single" {
     "(float) NAN"
+  } else if shape == "text" {
+    "{{ 0, 0, 0 }}"
   } else {
     "0"
   }
@@ -274,6 +366,8 @@ fn kind_of(shape: text) -> integer {
     K_SINGLE
   } else if shape == "char" {
     K_CHAR
+  } else if shape == "text" {
+    K_VIEW
   } else {
     K_VOID
   }
@@ -292,6 +386,8 @@ fn shape_of_kind(k: integer) -> text {
     "single"
   } else if k == K_CHAR {
     "char"
+  } else if k == K_VIEW {
+    "text"
   } else {
     "bool"
   }
@@ -315,6 +411,8 @@ fn kind_name(k: integer) -> text {
     "Single"
   } else if k == K_CHAR {
     "Char"
+  } else if k == K_VIEW {
+    "View"
   } else {
     "Void"
   }
@@ -470,6 +568,14 @@ fn as_bool(w: W, e: E) -> text {
   }
 }
 
+fn as_view(w: W, e: E) -> text {
+  if e.kind == K_VIEW {
+    return e.code;
+  }
+  refuse(w, "a text expected, a {kind_name(e.kind)} found");
+  ""
+}
+
 fn as_shape(w: W, e: E, shape: text) -> text {
   if shape == "int" {
     as_int(w, e)
@@ -483,6 +589,8 @@ fn as_shape(w: W, e: E, shape: text) -> text {
     as_single(w, e)
   } else if shape == "char" {
     as_char(w, e)
+  } else if shape == "text" {
+    as_view(w, e)
   } else {
     refuse(w, "a value of shape {shape}");
     ""

@@ -22,6 +22,7 @@ use opt_non_sentinel;
 use opt_range;
 use opt_ranged_call;
 use cgen_fn;
+use cgen_text;
 use cgen_w::*;
 
 // The trips a peeled loop may have, and the IR nodes its copies may hold together.
@@ -1245,6 +1246,7 @@ fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
   }
   lo = if rc.next >= 0 { w.names[rc.next]! } else { "loft_gc_add({w.names[rc.index]!}, INT64_C(1), &loft_gc_ok)" };
   hi = as_int(w, cgen_fn::expr(x, w, rc.hi, ind));
+  flush(w, ind);
   w.chain_guards += 1;
   guard = "loft_gc{w.chain_guards}";
   w.decls += ["int {guard} = 0;"];
@@ -1559,6 +1561,12 @@ fn loop_core(x: Cx, w: W, lp: ir::Block, ind: integer) {
 // it (`loop_copy`).  The holds of a vector, a record scalar, a push or a file are not asked: a
 // body with one is not carried.
 pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  // `@FR-R-PushFill`'s text clause opens a push window for a text the loop pushes into: not
+  // carried.
+  if cgen_text::pushes_text(x, lp.operators) {
+    refuse(w, "a text push window");
+    return;
+  }
   pushed = false;
   if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") == "0" {
     narrowed = if len(w.over) > 0 { opt_range::body_facts(w.over[len(w.over) - 1]!, lp.scope) } else { opt_range::body_facts(w.rv, lp.scope) };

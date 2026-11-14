@@ -19,6 +19,10 @@ use cgen_names;
 use cgen_types;
 use cgen_w::*;
 use cgen_loop;
+use cgen_text;
+use cgen_texts;
+use cgen_natives;
+use opt_names;
 use char_walk;
 use opt_frame_calls;
 use opt_ranged_call;
@@ -129,7 +133,9 @@ fn may_write_var(b: ir::Bundle, w: W, v: ir::Node, x: integer) -> boolean {
   if !may_write(b, v) {
     return false;
   }
-  if w.params[x]! {
+  // A borrowed text is a view of bytes another name may rewrite — unless every bind of it
+  // is a literal.
+  if w.params[x]! || ((w.borrowed[x] ?? false) && !(w.literal_views[x] ?? false)) {
     return true;
   }
   names_var(v, x)
@@ -163,6 +169,17 @@ fn arg_with(x: Cx, w: W, operand: ir::Node, later_writes: boolean, ind: integer)
   if w.why != "" {
     return value;
   }
+  // A text block's tail view reads a local, as a variable operand does.
+  reads_local = match bare_operand {
+    NdVar { n: _ } => true,
+    NdBlock { block: _ } => value.kind == K_VIEW && pending_text_temp(w, value.code) == "",
+    _ => false,
+  };
+  if later_writes && reads_local && value.kind == K_VIEW {
+    held = temp(w, "text");
+    line(w, ind, "loft_text_set(&{held}, {value.code});");
+    return held_value(w, held, "text");
+  }
   simple = match bare_operand {
     NdVar { n: _ } => !later_writes,
     NdInt { n: _ } => true,
@@ -171,7 +188,7 @@ fn arg_with(x: Cx, w: W, operand: ir::Node, later_writes: boolean, ind: integer)
     NdText { s: _ } => true,
     _ => false,
   };
-  if simple || value.kind == K_VOID || is_temp(w, value.code) {
+  if simple || value.kind == K_VIEW || value.kind == K_VOID || is_temp(w, value.code) {
     return value;
   }
   shape = shape_of_kind(value.kind);
@@ -320,6 +337,27 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   if (name == "OpConvIntFromNull" || name == "OpConvLongFromNull") && count == 0 {
     return E { code: "LOFT_NULL", kind: K_INT };
   }
+  is_text_op = false;
+  // The text writes through a `&` parameter name the caller's text the same way.
+  plain = if name == "OpAppendStackText" {
+    "OpAppendText"
+  } else if name == "OpClearStackText" {
+    "OpClearText"
+  } else if name == "OpFormatStackInt" {
+    "OpFormatInt"
+  } else if name == "OpFormatStackFloat" {
+    "OpFormatFloat"
+  } else if name == "OpFormatStackSingle" {
+    "OpFormatSingle"
+  } else if name == "OpFormatStackText" {
+    "OpFormatText"
+  } else {
+    name
+  };
+  texted = cgen_text::text_operator(x, w, plain, args, ind, is_text_op);
+  if is_text_op {
+    return texted;
+  }
   scalar_operator(x, w, name, args, ind)
 }
 
@@ -333,6 +371,15 @@ fn literal(w: W, v: ir::Node, what: text) -> integer? {
       refuse(w, "a computed {what}");
       null
     },
+  }
+}
+
+// An integer literal operand, null for a computed one.
+fn int_literal(v: ir::Node) -> integer? {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n,
+    NdLong { n } => n,
+    _ => null,
   }
 }
 
@@ -691,11 +738,22 @@ fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
 // twin this site's facts admit.  A callee this writer does not carry is refused by name.
 fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   def = x.b.data.definitions[d]!;
-  if cgen_names::runtime_name(x.b, d) != "" {
-    refuse(w, "a call of the standard library");
+  // Every route below is keyed by the callee's name, and only a standard-library definition
+  // is answered by one.
+  route = cgen_names::runtime_name(x.b, d);
+  // The store's memory report names each type by the unit's type-name table.
+  if route == "n_store_memory" && len(args) == 0 {
+    report = temp(w, "text");
+    line(w, ind, "loft_text_free(&{report});");
+    line(w, ind, "{report} = loft_store_memory(loft_tnames, loft_ntnames);");
+    return held_value(w, report, "text");
+  }
+  if route.starts_with("n_store_") || route == "n_spatial_range" || route == "n_trie_prefix" || route == "t_4hash_len" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase" || route == "n_env_variables" || route == "t_6vector_len" || def.native == "n_swap_world" {
+    refuse(w, "a call the runtime answers by its name");
     return none();
   }
-  if !binds::is_loft_defined(def) || def.c_symbol != "" {
+  native = if route == "" { "" } else { cgen_natives::native_c(route) ?? "" };
+  if native == "" && (!binds::is_loft_defined(def) || def.c_symbol != "") {
     refuse(w, "a call of a function without a loft body");
     return none();
   }
@@ -725,8 +783,18 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   for a in args {
     i = a#index;
     if loop_shape::unspan(a) == NdNull {
-      xs += ["(({held(shapes[i]!)}) {initial(shapes[i]!)})"];
+      xs += [if shapes[i]! == "text" { "loft_null_text()" } else { "(({held(shapes[i]!)}) {initial(shapes[i]!)})" }];
       continue;
+    }
+    match loop_shape::unspan(a) {
+      NdCall { def_nr, args: _ } => {
+        // A text field handed to a callee that writes no store is read in place: not carried.
+        if def_name(x.b, def_nr) == "OpGetText" {
+          refuse(w, "a text read out of a store");
+          return none();
+        }
+      },
+      _ => {},
     }
     later_writes = false;
     for j in i + 1..len(args) {
@@ -740,16 +808,25 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     }
   }
   t = cgen_names::plain(d);
-  if len(args) <= 23 {
-    t.nn = nn_twin_bits(x, w, d, args);
+  if native == "" {
+    if len(args) <= 23 {
+      t.nn = nn_twin_bits(x, w, d, args);
+    }
+    t.rg = ranged_call(x, w, d, args);
   }
-  t.rg = ranged_call(x, w, d, args);
-  name = cgen_names::c_name(x.b, x.dups, d);
+  name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
   if !cgen_names::is_plain(t) {
     request_twin(x, t);
     name = cgen_names::twin_name(x.b, x.dups, t);
   }
-  E { code: "{name}({xs.join(", ")})", kind: kind_of(ret) }
+  code = "{name}({xs.join(", ")})";
+  if ret == "text" {
+    held = temp(w, "text");
+    line(w, ind, "loft_text_free(&{held});");
+    line(w, ind, "{held} = {code};");
+    return held_value(w, held, "text");
+  }
+  E { code: code, kind: kind_of(ret) }
 }
 
 // The C shape a compound evaluates to (`shape_of`), for the compounds carried; "" refuses.
@@ -833,11 +910,15 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     NdEnum { ord, tp: _ } => E { code: "(uint8_t) {ord}", kind: K_ENUM },
     NdFloat { f } => E { code: "loft_f64(UINT64_C(0x{float_bits(f)}))", kind: K_FLOAT },
     NdSingle { f } => E { code: "loft_f32(UINT32_C({if f == null { "0x7fc00000" } else { "{f.bits():#x}" }}))", kind: K_SINGLE },
+    NdText { s: literal } => E { code: "loft_lit({c_string(literal)}, {literal.size()})", kind: K_VIEW },
     NdVar { n } => {
       shape = w.shapes[n] ?? "";
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
         return none();
+      }
+      if text_held(w, n) {
+        return E { code: "loft_view(&{w.names[n]!})", kind: K_VIEW };
       }
       E { code: w.names[n]!, kind: kind_of(shape) }
     },
@@ -864,7 +945,32 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
 
 // A compound read as a value: held in a temporary its statements assign.
 fn compound(x: Cx, w: W, node: ir::Node, ind: integer) -> E {
+  chosen = false;
+  view = cgen_text::view_choice(x, w, node, ind, chosen);
+  if chosen {
+    return view;
+  }
   shape = shape_of(x.b, w, node);
+  // What the compound's own statements leave pending is this statement's (`nested`).
+  outer = w.pending;
+  w.pending = [];
+  value = compound_value(x, w, node, shape, ind);
+  inner = w.pending;
+  w.pending = outer;
+  for t in inner {
+    w.pending += [t];
+  }
+  value
+}
+
+fn compound_value(x: Cx, w: W, node: ir::Node, shape: text, ind: integer) -> E {
+  if shape == "text" {
+    tailed = false;
+    tail = cgen_text::text_tail_view(x, w, node, ind, tailed);
+    if tailed {
+      return tail;
+    }
+  }
   if shape == "void" {
     stmt(x, w, node, ind);
     return E { code: "(void) 0", kind: K_VOID };
@@ -875,7 +981,7 @@ fn compound(x: Cx, w: W, node: ir::Node, ind: integer) -> E {
   }
   t = temp(w, shape);
   assign(x, w, node, t, shape, ind);
-  E { code: t, kind: kind_of(shape) }
+  held_value(w, t, shape)
 }
 
 // The first word of a node, for a refusal.
@@ -998,6 +1104,8 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
     line(w, ind, "{target} = (float) NAN;");
   } else if shape == "char" {
     line(w, ind, "{target} = 0;");
+  } else if shape == "text" {
+    line(w, ind, "loft_text_set(&{target}, loft_null_text());");
   } else if shape != "void" {
     refuse(w, "a null of shape {shape}");
   }
@@ -1053,7 +1161,25 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
         stmt(x, w, node, ind);
         return;
       }
-      value = as_shape(w, expr(x, w, node, ind), shape);
+      e = expr(x, w, node, ind);
+      if w.why != "" {
+        return;
+      }
+      if shape == "text" {
+        // A text held in a statement temporary moves into the target: nothing else names it.
+        moved = pending_text_temp(w, e.code);
+        if moved != "" {
+          line(w, ind, "loft_text_move(&{target}, &{moved});");
+        } else {
+          line(w, ind, "loft_text_set(&{target}, {as_view(w, e)});");
+        }
+        return;
+      }
+      if shape == "void" {
+        line(w, ind, "{e.code};");
+        return;
+      }
+      value = as_shape(w, e, shape);
       // An arm that keeps the value assigns the target to itself: nothing to write.
       if w.why == "" && value != target {
         line(w, ind, "{target} = {value};");
@@ -1086,6 +1212,7 @@ fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind
   }
   stmts_upto(x, w, ops, at, ind);
   assign(x, w, ops[at]!, target, shape, ind);
+  flush(w, ind);
   for o in ops {
     if o#index > at {
       stmt(x, w, o, ind);
@@ -1150,6 +1277,7 @@ fn ops_stmt(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
   stmts_upto(x, w, ops, at, ind);
   r = temp(w, w.ret);
   assign(x, w, ops[at]!, r, w.ret, ind);
+  flush(w, ind);
   for o in ops {
     if o#index > at && o#index < ret {
       stmt(x, w, o, ind);
@@ -1159,6 +1287,20 @@ fn ops_stmt(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
     NdReturn { inner } => stmt(x, w, inner, ind),
     _ => {},
   }
+  ret_held(w, r, ind);
+}
+
+// Return the value temporary `r` already holds (`ret_held`): a text result's buffer moves out
+// before the epilogue frees every text the function holds.
+fn ret_held(w: W, r: text, ind: integer) {
+  if w.ret == "text" {
+    line(w, ind, "loft_text {r}_out = {r};");
+    line(w, ind, "{r}.p = 0;");
+    epilogue(w, ind);
+    line(w, ind, "return {r}_out;");
+    return;
+  }
+  epilogue(w, ind);
   line(w, ind, "return {r};");
 }
 
@@ -1195,6 +1337,7 @@ fn block_stmt(x: Cx, w: W, node: ir::Node, name: text, ops: vector<ir::Node>, in
     facts: vector<opt_range::Ranges> = [];
     test = cgen_loop::range_guard(x, w, node, ops, facts);
     if test != "" {
+      flush(w, ind);
       line(w, ind, "if ({test}) {{");
       w.in_range_copy = true;
       w.over += [facts[0]!];
@@ -1227,6 +1370,7 @@ fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
     if !absent {
       stmt(x, w, v, ind);
     }
+    epilogue(w, ind);
     line(w, ind, "return;");
     return;
   }
@@ -1236,7 +1380,7 @@ fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
   } else {
     assign(x, w, v, r, w.ret, ind);
   }
-  line(w, ind, "return {r};");
+  ret_held(w, r, ind);
 }
 
 // Write `v` for its effect (`stmt`, `stmt_inner`, `stmt_kind`).
@@ -1306,10 +1450,12 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdLoop { block } => cgen_loop::loop_stmt(x, w, block[0], ind),
     NdBreak { n } => {
       l = label(w, n);
+      flush(w, ind);
       line(w, ind, "goto brk_{l};");
     },
     NdContinue { n } => {
       l = label(w, n);
+      flush(w, ind);
       line(w, ind, "goto cont_{l};");
     },
     NdInsert { items } => {
@@ -1323,10 +1469,19 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
         refuse(w, "a variable of shape {shape}");
         return;
       }
+      if shape == "text" && (w.borrowed[var] ?? false) {
+        cgen_text::borrowed_bind(x, w, var, inner, ind);
+        return;
+      }
       if shape == "int" && (cgen_loop::sticky_update(x, w, var, inner, ind) || cgen_loop::spec_chain(x, w, var, inner, ind)) {
         return;
       }
+      if shape == "text" && !text_held(w, var) {
+        refuse(w, "assigns a text parameter");
+        return;
+      }
       assign(x, w, inner, w.names[var]!, shape, ind);
+      flush(w, ind);
     },
     NdIf { cond, t, f } => {
       cold = null_test(x.b, cond) && !int_literal_fallback(x.b, cond, f);
@@ -1341,6 +1496,7 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
         stmt(x, w, f, ind + 1);
       }
       line(w, ind, "}}");
+      flush(w, ind);
     },
     NdReturn { inner } => ret_value(x, w, inner, ind),
     NdDrop { inner } => {
@@ -1372,6 +1528,7 @@ fn dropped(x: Cx, w: W, v: ir::Node, ind: integer) {
   } else {
     line(w, ind, "(void) {e.code};");
   }
+  flush(w, ind);
 }
 
 // `statement_count`: the body's own lines, without the blank ones and the bare braces.
@@ -1423,7 +1580,7 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
       return Written { text: "", refused: "a `&` variable" };
     }
     if v.argument {
-      params += ["{held(shape)} {var_name(v.name, v#index)}"];
+      params += ["{passed(shape)} {var_name(v.name, v#index)}"];
     }
   }
   if len(params) != len(d.attributes) {
@@ -1439,6 +1596,18 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
     if twin.nn & (1 << i) != 0 {
       seeded += [i];
     }
+  }
+  // The text facts the body is set up with (`FnWriter::new`).
+  texts = cgen_texts::borrowed_texts(x.b, index);
+  if len(texts.lazy) > 0 || len(texts.tables) > 0 {
+    return Written { text: "", refused: "a lazy split or a split table" };
+  }
+  if len(texts.tested) > 0 {
+    return Written { text: "", refused: "a tested text borrow" };
+  }
+  // `@FR-R-Cold`'s loft clause outlines an early exit that builds a text: not carried.
+  if cgen_names::is_plain(twin) && (env_variable("LOFT_NO_COLD_EXIT") ?? "0") == "0" && cgen_text::may_outline(d, d.code[0]!) {
+    return Written { text: "", refused: "a cold exit that builds a text" };
   }
   nn = opt_non_sentinel::non_sentinel_vars_seeded(x.b, x.p, index, seeded);
   seeds = if twin.rg { opt_ranged_call::param_seeds(x.b, index) } else { opt_range::empty_ranges(len(d.variables.variables)) };
@@ -1474,14 +1643,18 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
     in_range_copy: false,
     peel_seeds: [],
     walk_scopes: [for cw in char_walk::walks(x.b, index) { cw.scope }],
+    borrowed: texts.borrowed,
+    literal_views: cgen_texts::literal_views(x.b, index, texts.borrowed),
+    pending: [],
+    work_alias: -1,
+    work_dest: "",
   };
   code = d.code[0]!;
   if ret == "void" {
     stmt(x, w, code, 1);
+    epilogue(w, 1);
   } else {
-    r = temp(w, ret);
-    assign(x, w, code, r, ret, 1);
-    line(w, 1, "return {r};");
+    ret_value(x, w, code, 1);
   }
   if w.why != "" {
     return Written { text: "", refused: w.why };
@@ -1490,14 +1663,23 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   for v in d.variables.variables {
     if !v.argument {
       shape = shapes[v#index]!;
-      out += "    {held(shape)} {var_name(v.name, v#index)} = {initial(shape)};\n";
+      if shape == "text" && w.borrowed[v#index]! {
+        out += "    loft_str {var_name(v.name, v#index)} = {{ 0, 0 }};\n";
+      } else {
+        out += "    {held(shape)} {var_name(v.name, v#index)} = {initial(shape)};\n";
+      }
     }
   }
+  // A temporary of a plain type takes no initial value; one that owns something keeps it.
   for t in w.temps {
     if t.verify {
       out += "#ifdef LOFT_VERIFY\n";
     }
-    out += "    {held(t.shape)} {t.name};\n";
+    if t.shape == "text" {
+      out += "    {held(t.shape)} {t.name} = {initial(t.shape)};\n";
+    } else {
+      out += "    {held(t.shape)} {t.name};\n";
+    }
     if t.verify {
       out += "#endif\n";
     }
@@ -1505,8 +1687,11 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   for decl in w.decls {
     out += "    {decl}\n";
   }
-  out += w.body;
-  statements = statement_count(w.body);
+  out += cgen_text::hold_line(w);
+  body = cgen_text::expand_epilogues(w);
+  statements = statement_count(body);
+  out += body;
+  out = cgen_text::park_work_texts(w, d, out);
   // `@FR-R-Tabulate`: a classifier of a byte reads its answer from the table the compiler
   // evaluated when its one parameter is in the table's range, and runs its body otherwise.
   if len(params) == 1 && params[0].starts_with("int64_t ") && ret == "int" {
@@ -1529,6 +1714,11 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   } else {
     "static"
   };
+  // `(R-CSplit)` writes a body over its budget of call sites in parts: not carried.  Every
+  // call site opens a parenthesis, so a body with no more of those than the budget is whole.
+  if storage != "LOFT_HOT_INLINE" && len(out.split('(')) > 300 {
+    return Written { text: "", refused: "a body the writer may split" };
+  }
   list = if len(params) == 0 { "void" } else { params.join(", ") };
   name = cgen_names::twin_name(x.b, x.dups, twin);
   Written { text: "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n", refused: "" }

@@ -1,0 +1,681 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the texts of the function writer: `text_operator`, `format_long`, the
+// text arms of `scalar_operator`, `slot_operator`, `char_operator` and `misc_operator`,
+// `text_reads`, `view_choice`, `text_tail_view`, `format_into_dest`, `borrowed_bind`,
+// `held_texts`, `expand_epilogues` and `park_work_texts` of `src/c/body.rs`.
+//
+// Not carried yet, each refused by name: a text read out of a store (`OpGetText`), a `&text`
+// parameter and the work buffer a call fills (`@FR-R-BufferReturn`), a tested borrow, a lazy
+// split or a split table, a text push window, a cold exit.
+
+use ir;
+use loop_shape;
+use opt_non_sentinel;
+use cgen_fn;
+use cgen_w::*;
+
+// One operand of a text VALUE operator (`text_read`): evaluated as `arg_with` does.  A text
+// field read in place is not carried.
+fn text_read(x: Cx, w: W, a: ir::Node, later_writes: boolean, ind: integer) -> E {
+  cgen_fn::arg_with(x, w, a, later_writes, ind)
+}
+
+// Operand `i` of a text VALUE operator's operands (`text_reads`).
+fn text_operand(x: Cx, w: W, args: vector<ir::Node>, i: integer, ind: integer) -> E {
+  later_writes = false;
+  for j in i + 1..len(args) {
+    if cgen_fn::may_write(x.b, args[j]!) {
+      later_writes = true;
+    }
+  }
+  text_read(x, w, args[i]!, later_writes, ind)
+}
+
+// A statement's operators without its line markers.
+fn statements(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => { out += [o]; },
+    }
+  }
+  out
+}
+
+// Does `node` read variable `v`, or one of `others`, as a `Var`?
+fn reads_any(node: ir::Node, v: integer, others: vector<integer>) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdVar { n: y } => {
+        if y == v {
+          hit[0] = true;
+        }
+        for o in others {
+          if o == y {
+            hit[0] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `format_into_dest`: `dest += "{…}"` whose formatted value is a block `{ w = ""; writes…; w }`
+// — the writes go straight into `dest`, the work text never filled.  Answers whether it wrote
+// the statement.
+fn format_into_dest(x: Cx, w: W, dest: ir::Node, val: ir::Node, ind: integer) -> boolean {
+  if (env_variable("LOFT_NO_FORMAT_INTO") ?? "0") != "0" {
+    return false;
+  }
+  ops = match loop_shape::unspan(val) {
+    NdBlock { block } => statements(block[0].operators),
+    _ => return false,
+  };
+  if len(ops) < 3 {
+    return false;
+  }
+  work = loop_shape::var_of(loop_shape::unspan(ops[len(ops) - 1]));
+  if work < 0 || (w.shapes[work] ?? "") != "text" {
+    return false;
+  }
+  cleared = match loop_shape::unspan(ops[0]) {
+    NdSet { var, inner } => var == work && loop_shape::unspan(inner) == NdText { s: "" },
+    _ => false,
+  };
+  if !cleared {
+    return false;
+  }
+  dest_vars: vector<integer> = [];
+  opt_non_sentinel::walk(dest, fn(n: ir::Node) {
+    match n {
+      NdVar { n: y } => { dest_vars += [y]; },
+      _ => {},
+    }
+  });
+  for y in dest_vars {
+    if y == work {
+      return false;
+    }
+  }
+  for op in ops {
+    if op#index == 0 || op#index == len(ops) - 1 {
+      continue;
+    }
+    fits = match loop_shape::unspan(op) {
+      NdCall { def_nr, args } => {
+        name = cgen_fn::def_name(x.b, def_nr);
+        ok = (name.starts_with("OpFormat") || name.starts_with("OpAppend")) && len(args) > 0 && loop_shape::var_of(loop_shape::unspan(args[0])) == work;
+        for a in args {
+          if a#index > 0 && reads_any(a, work, dest_vars) {
+            ok = false;
+          }
+        }
+        ok
+      },
+      _ => false,
+    };
+    if !fits {
+      return false;
+    }
+  }
+  target = text_dest(w, dest);
+  if w.why != "" {
+    return true;
+  }
+  w.work_alias = work;
+  w.work_dest = target;
+  for op in ops {
+    if op#index > 0 && op#index < len(ops) - 1 {
+      cgen_fn::stmt(x, w, op, ind);
+    }
+  }
+  w.work_alias = -1;
+  w.work_dest = "";
+  true
+}
+
+// The boolean value of a literal operand, -1 for a computed one.
+fn bool_literal(v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdBoolean { b } => if b { 1 } else { 0 },
+    _ => -1,
+  }
+}
+
+// An integer into a format string (`format_long`).
+fn format_long(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  if len(args) != 8 {
+    refuse(w, "{name} with an unexpected operand list");
+    return none();
+  }
+  dest = text_dest(w, args[0]);
+  radix = cgen_fn::int_literal(args[2]);
+  token = cgen_fn::int_literal(args[4]);
+  plus = bool_literal(args[5]);
+  note = bool_literal(args[6]);
+  dir = cgen_fn::int_literal(args[7]);
+  if radix == null || token == null || dir == null || plus < 0 || note < 0 {
+    refuse(w, "{name} with a computed format");
+    return none();
+  }
+  pair = [args[1], args[3]];
+  val = cgen_fn::arg(x, w, pair, 0, ind);
+  width = cgen_fn::arg(x, w, pair, 1, ind);
+  E { code: "loft_format_long(&{dest}, {as_int(w, val)}, {radix}, {as_int(w, width)}, {token}, {plus}, {note}, {dir})", kind: K_VOID }
+}
+
+// The text operators and printing (`text_operator` and the text arms after it); `done` says
+// whether `name` is one of them.
+pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if (name == "OpEqText" || name == "OpNeText" || name == "OpLtText" || name == "OpLeText") && count == 2 {
+    a = text_operand(x, w, args, 0, ind);
+    b = text_operand(x, w, args, 1, ind);
+    f = if name == "OpEqText" {
+      "loft_str_eq"
+    } else if name == "OpNeText" {
+      "!loft_str_eq"
+    } else if name == "OpLtText" {
+      "loft_text_lt"
+    } else {
+      "loft_text_le"
+    };
+    return E { code: "{f}({as_view(w, a)}, {as_view(w, b)})", kind: K_COND };
+  }
+  if name == "OpAppendText" {
+    if count != 2 {
+      refuse(w, "OpAppendText without two operands");
+      return none();
+    }
+    if format_into_dest(x, w, args[0], args[1], ind) {
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+    dest = text_dest(w, args[0]);
+    // A formatted value — `{ __work = ""; …; __work }` — is appended from its work buffer
+    // itself.
+    match loop_shape::unspan(args[1]) {
+      NdBlock { block } => {
+        ops = block[0].operators;
+        if len(ops) > 0 {
+          last = loop_shape::var_of(loop_shape::unspan(ops[len(ops) - 1]));
+          if last >= 0 && (w.shapes[last] ?? "") == "text" && w.names[last]! != dest {
+            outer = w.pending;
+            w.pending = [];
+            for o in ops {
+              if o#index < len(ops) - 1 {
+                cgen_fn::stmt(x, w, o, ind);
+              }
+            }
+            inner = w.pending;
+            w.pending = outer;
+            for t in inner {
+              w.pending += [t];
+            }
+            val = cgen_fn::expr(x, w, ops[len(ops) - 1], ind);
+            return E { code: "loft_text_concat(&{dest}, {as_view(w, val)})", kind: K_VOID };
+          }
+        }
+      },
+      _ => {},
+    }
+    val = text_read(x, w, args[1], false, ind);
+    return E { code: "loft_text_concat(&{dest}, {as_view(w, val)})", kind: K_VOID };
+  }
+  if name == "OpFormatInt" || name == "OpFormatLong" {
+    return format_long(x, w, name, args, ind);
+  }
+  if name == "OpFormatText" {
+    if count != 5 {
+      refuse(w, "OpFormatText with an unexpected operand list");
+      return none();
+    }
+    dest = text_dest(w, args[0]);
+    dir = cgen_fn::int_literal(args[3]);
+    token = cgen_fn::int_literal(args[4]);
+    if dir == null || token == null {
+      refuse(w, "OpFormatText with a computed format");
+      return none();
+    }
+    pair = [args[1], args[2]];
+    val = text_operand(x, w, pair, 0, ind);
+    width = text_operand(x, w, pair, 1, ind);
+    return E { code: "loft_format_text(&{dest}, {as_view(w, val)}, {as_int(w, width)}, {dir}, {token})", kind: K_VOID };
+  }
+  if (name == "OpFormatFloat" || name == "OpFormatSingle") && count == 7 {
+    dest = text_dest(w, args[0]);
+    token = cgen_fn::int_literal(args[4]);
+    plus = bool_literal(args[5]);
+    if token == null || plus < 0 {
+      refuse(w, "{name} with a computed format");
+      return none();
+    }
+    four = [args[1], args[2], args[3], args[6]];
+    val = cgen_fn::arg(x, w, four, 0, ind);
+    width = cgen_fn::arg(x, w, four, 1, ind);
+    prec = cgen_fn::arg(x, w, four, 2, ind);
+    dir = cgen_fn::arg(x, w, four, 3, ind);
+    value = if name == "OpFormatSingle" { "(double) {as_single(w, val)}" } else { as_float(w, val) };
+    single = if name == "OpFormatSingle" { 1 } else { 0 };
+    return E { code: "loft_format_float(&{dest}, {value}, {as_int(w, width)}, {as_int(w, prec)}, {token}, {plus}, (int) {as_int(w, dir)}, {single})", kind: K_VOID };
+  }
+  if name == "OpFreeText" {
+    if count != 1 {
+      refuse(w, "OpFreeText without one operand");
+      return none();
+    }
+    // A borrowed walk variable views the element: its release frees nothing.
+    v = loop_shape::var_of(loop_shape::unspan(args[0]));
+    if v >= 0 && (w.borrowed[v] ?? false) {
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+    dest = text_dest(w, args[0]);
+    return E { code: "loft_text_free(&{dest})", kind: K_VOID };
+  }
+  if name == "OpPrint" {
+    if count != 1 {
+      refuse(w, "OpPrint without one operand");
+      return none();
+    }
+    a = text_operand(x, w, args, 0, ind);
+    return E { code: "loft_print({as_view(w, a)})", kind: K_VOID };
+  }
+  if (name == "OpLengthText" || name == "OpSizeText") && count == 1 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    f = if name == "OpLengthText" { "loft_text_length" } else { "loft_text_size" };
+    return E { code: "{f}({as_view(w, a)})", kind: K_INT };
+  }
+  if name == "OpClearText" && count == 1 {
+    dest = text_dest(w, args[0]);
+    return E { code: "{dest}.len = 0", kind: K_VOID };
+  }
+  if name == "OpConvTextFromNull" && count == 0 {
+    return E { code: "loft_null_text()", kind: K_VIEW };
+  }
+  if name == "OpConvBoolFromNull" && count == 0 {
+    return E { code: "LOFT_BOOL_NULL", kind: K_BOOL };
+  }
+  if (name == "OpCastIntFromText" || name == "OpCastLongFromText") && count == 1 {
+    t = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_int_of_text_at({as_view(w, t)}, {cgen_fn::site(w)})", kind: K_INT };
+  }
+  if name == "OpGetTextSub" && count == 3 {
+    t = cgen_fn::arg(x, w, args, 0, ind);
+    from = cgen_fn::arg(x, w, args, 1, ind);
+    till = cgen_fn::arg(x, w, args, 2, ind);
+    return E { code: "loft_text_sub({as_view(w, t)}, {as_int(w, from)}, {as_int(w, till)})", kind: K_VIEW };
+  }
+  if name == "OpConvCharacterFromNull" && count == 0 {
+    return E { code: "((uint32_t) 0)", kind: K_CHAR };
+  }
+  if (name == "OpTextCharacter" || name == "OpTextCharacterNullable") && count == 2 {
+    t = cgen_fn::arg(x, w, args, 0, ind);
+    i = cgen_fn::arg(x, w, args, 1, ind);
+    if name == "OpTextCharacter" {
+      return E { code: "loft_text_char_at({as_view(w, t)}, {as_int(w, i)}, {cgen_fn::site(w)})", kind: K_CHAR };
+    }
+    return E { code: "loft_text_char({as_view(w, t)}, {as_int(w, i)})", kind: K_CHAR };
+  }
+  if (name == "OpAppendCharacter" || name == "OpAppendStackCharacter") && count == 2 {
+    dest = text_dest(w, args[0]);
+    c = cgen_fn::expr(x, w, args[1], ind);
+    return E { code: "loft_push_code(&{dest}, {as_char(w, c)})", kind: K_VOID };
+  }
+  if name == "OpCastTextFromBool" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_bool_text({as_bool(w, v)})", kind: K_VIEW };
+  }
+  if name == "OpConvBoolFromText" && count == 1 {
+    t = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "(!loft_str_is_null({as_view(w, t)}))", kind: K_COND };
+  }
+  if name == "OpCastFloatFromText" && count == 1 {
+    t = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_float_of_text({as_view(w, t)})", kind: K_FLOAT };
+  }
+  if name == "OpCastSingleFromText" && count == 1 {
+    t = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_single_of_text({as_view(w, t)})", kind: K_SINGLE };
+  }
+  done = false;
+  none()
+}
+
+// A block's one statement that is no line marker (`arm_value`), else the arm itself.
+fn arm_value(arm: ir::Node) -> ir::Node {
+  match loop_shape::unspan(arm) {
+    NdBlock { block } => {
+      ops = statements(block[0].operators);
+      if len(ops) == 1 { ops[0] } else { arm }
+    },
+    _ => arm,
+  }
+}
+
+// `viewable_arm`: an arm of a text choice that is a view — a literal, a borrowed text
+// variable, or a slice of one of those or of a plain text parameter.
+fn viewable_arm(x: Cx, w: W, arm: ir::Node, slices: boolean) -> boolean {
+  match loop_shape::unspan(arm) {
+    NdText { s: _ } => true,
+    NdVar { n } => (w.shapes[n] ?? "") == "text" && (w.borrowed[n] ?? false),
+    NdCall { def_nr, args } => {
+      if !slices || cgen_fn::def_name(x.b, def_nr) != "OpGetTextSub" || len(args) != 3 {
+        return false;
+      }
+      match loop_shape::unspan(args[0]) {
+        NdText { s: _ } => true,
+        NdVar { n } => (w.shapes[n] ?? "") == "text" && ((w.borrowed[n] ?? false) || (w.params[n] ?? false)),
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+// `view_choice`: a text choice between views — `if c { a } else { b }` — is the view it picks,
+// each arm written in its own branch.  `done` says whether `node` is one.
+pub fn view_choice(x: Cx, w: W, node: ir::Node, ind: integer, done: &boolean) -> E {
+  done = false;
+  pre: vector<ir::Node> = [];
+  last = node;
+  match loop_shape::unspan(node) {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        return none();
+      }
+      last = ops[len(ops) - 1];
+      pre = ops[0..len(ops) - 1];
+    },
+    _ => {},
+  }
+  match loop_shape::unspan(last) {
+    NdIf { cond, t, f } => {
+      slices = (env_variable("LOFT_NO_VIEW_CHOICE_SLICE") ?? "0") == "0";
+      then = arm_value(t);
+      other = arm_value(f);
+      if !viewable_arm(x, w, then, slices) || !viewable_arm(x, w, other, slices) {
+        return none();
+      }
+      done = true;
+      // The block's own statements first — the discharge's bind of the variable it tests.
+      for op in pre {
+        cgen_fn::stmt(x, w, op, ind);
+      }
+      test = as_cond(w, cgen_fn::expr(x, w, cond, ind));
+      view = "tv{len(w.decls) + 1}";
+      w.decls += ["loft_str {view} = {{ 0, 0 }};"];
+      line(w, ind, "if ({bare(test)}) {{");
+      a = cgen_fn::expr(x, w, then, ind + 1);
+      line(w, ind + 1, "{view} = {as_view(w, a)};");
+      line(w, ind, "}} else {{");
+      b = cgen_fn::expr(x, w, other, ind + 1);
+      line(w, ind + 1, "{view} = {as_view(w, b)};");
+      line(w, ind, "}}");
+      E { code: view, kind: K_VIEW }
+    },
+    _ => none(),
+  }
+}
+
+// `text_tail_view`: a text block whose value is a text local this function holds is read as a
+// view of that local, once the block's statements ran.  `done` says whether `node` is one.
+pub fn text_tail_view(x: Cx, w: W, node: ir::Node, ind: integer, done: &boolean) -> E {
+  done = false;
+  ops = match loop_shape::unspan(node) {
+    NdBlock { block } => block[0].operators,
+    _ => return none(),
+  };
+  if (env_variable("LOFT_NO_C_TAIL_VIEW") ?? "0") != "0" || cgen_fn::tail_capture(x.b, w, ops) >= 0 {
+    return none();
+  }
+  at = -1;
+  for o in ops {
+    value = match loop_shape::unspan(o) {
+      NdLine { n: _ } => false,
+      NdSet { var: _, inner: _ } => false,
+      _ => !cgen_fn::is_free(x.b, o),
+    };
+    if value {
+      at = o#index;
+    }
+  }
+  if at < 0 {
+    return none();
+  }
+  work = loop_shape::var_of(loop_shape::unspan(ops[at]!));
+  if work < 0 || !text_held(w, work) {
+    return none();
+  }
+  for o in ops {
+    if o#index > at && reads_any(o, work, []) {
+      return none();
+    }
+  }
+  done = true;
+  for o in ops {
+    if o#index < at {
+      cgen_fn::stmt(x, w, o, ind);
+    }
+  }
+  tail = cgen_fn::expr(x, w, ops[at]!, ind);
+  flush(w, ind);
+  for o in ops {
+    if o#index > at {
+      cgen_fn::stmt(x, w, o, ind);
+    }
+  }
+  if tail.kind != K_VIEW {
+    refuse(w, "a text block's tail read as no view");
+  }
+  tail
+}
+
+// `borrowed_bind`: `var = value` for a borrowed text local — the view of what it reads.
+pub fn borrowed_bind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
+  // A block (the walk's `iter next` step): its statements run, its value is bound.
+  match loop_shape::unspan(value) {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      at = -1;
+      for o in ops {
+        match loop_shape::unspan(o) {
+          NdLine { n: _ } => {},
+          _ => at = o#index,
+        }
+      }
+      if at >= 0 {
+        for o in ops {
+          if o#index < at {
+            cgen_fn::stmt(x, w, o, ind);
+          }
+        }
+        flush(w, ind);
+        borrowed_bind(x, w, var, ops[at]!, ind);
+        return;
+      }
+    },
+    NdCall { def_nr, args: _ } => {
+      if cgen_fn::def_name(x.b, def_nr) == "OpGetText" {
+        refuse(w, "a text read out of a store");
+        return;
+      }
+    },
+    _ => {},
+  }
+  before = len(w.pending);
+  e = cgen_fn::expr(x, w, value, ind);
+  if w.why != "" {
+    return;
+  }
+  if len(w.pending) != before {
+    refuse(w, "a borrowed text would view a temporary");
+    return;
+  }
+  line(w, ind, "{w.names[var]!} = {as_view(w, e)};");
+}
+
+// `held_texts`: the texts the function holds, each freed by its epilogue — its text locals,
+// then its text temporaries.
+fn held_texts(w: W) -> vector<text> {
+  texts: vector<text> = [];
+  for s in w.shapes {
+    v = s#index;
+    if s == "text" && !w.params[v]! && !w.borrowed[v]! {
+      texts += [w.names[v]!];
+    }
+  }
+  for t in w.temps {
+    if t.shape == "text" {
+      texts += [t.name];
+    }
+  }
+  texts
+}
+
+// The `LOFT_HOLD` line of a function that holds texts, "" for one that holds none.
+pub fn hold_line(w: W) -> text {
+  slots: vector<text> = [];
+  for t in held_texts(w) {
+    slots += ["&{t}"];
+  }
+  if len(slots) == 0 { "" } else { "    LOFT_HOLD({len(slots)}, {slots.join(", ")});\n" }
+}
+
+// `expand_epilogues`: the body with each epilogue marker replaced by the frees of every text
+// the function holds, at the marker's indentation.
+pub fn expand_epilogues(w: W) -> text {
+  if !w.body.contains(EPILOGUE_MARK) {
+    return w.body;
+  }
+  texts = held_texts(w);
+  out = "";
+  lines = w.body.split('\n');
+  for l in lines {
+    // The body ends in a newline: the piece after it is no line.
+    if l#index == len(lines) - 1 && l == "" {
+      continue;
+    }
+    if l.trim() == EPILOGUE_MARK {
+      indent = l[0..l.size() - EPILOGUE_MARK.size()];
+      for t in texts {
+        out += "{indent}loft_text_free(&{t});\n";
+      }
+      continue;
+    }
+    out += "{l}\n";
+  }
+  out
+}
+
+// How often `part` occurs in `whole`.
+fn occurrences(whole: text, part: text) -> integer {
+  count = 0;
+  rest = whole;
+  for _ in 0..whole.size() {
+    at = rest.find(part) ?? break;
+    count += 1;
+    rest = rest[at + part.size()..rest.size()];
+  }
+  count
+}
+
+// `park_work_texts` (`@FR-R-WorkPark`): a frame's work texts keep their room between its
+// calls — each taken from a slot of its own at entry and parked there at each release.
+pub fn park_work_texts(w: W, d: ir::Definition, body: text) -> text {
+  if (env_variable("LOFT_NO_WORK_PARK") ?? "0") != "0" {
+    return body;
+  }
+  out = body;
+  for s in w.shapes {
+    v = s#index;
+    if w.params[v]! || s != "text" || !d.variables.variables[v]!.name.starts_with("__work") {
+      continue;
+    }
+    name = w.names[v]!;
+    decl = "    loft_text {name} = {{ 0, 0, 0 }};\n";
+    if occurrences(out, decl) != 1 {
+      continue;
+    }
+    slot = "loft_wp{w.index}_{v}";
+    at = out.find(decl) ?? continue;
+    out = "{out[0..at]}    static LOFT_TLS loft_text {slot} = {{ 0, 0, 0 }};\n    loft_text {name} = loft_wpark_take(&{slot});\n{out[at + decl.size()..out.size()]}";
+    out = out.replace("loft_text_free(&{name});", "loft_wpark_put(&{slot}, &{name});");
+  }
+  out
+}
+
+// Does a statement `if` of `code` hold a then-arm that builds a text in a work text — the
+// only arms `@FR-R-Cold`'s loft clause may outline?
+pub fn may_outline(d: ir::Definition, code: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdBlock { block } => {
+        for op in block[0].operators {
+          match loop_shape::unspan(op) {
+            NdIf { cond: _, t, f: _ } => {
+              if builds_text(d, t) {
+                hit[0] = true;
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn builds_text(d: ir::Definition, arm: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(arm, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => {
+        if d.variables.variables[var]!.name.starts_with("__work") {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// Does a statement of `ops`, at any depth outside a nested loop's own count, push a character
+// into a text — what a loop's text push window is opened for?
+pub fn pushes_text(x: Cx, ops: vector<ir::Node>) -> boolean {
+  hit = [false];
+  for op in ops {
+    if hit[0]! {
+      break;
+    }
+    hit[0] = pushes(x, op);
+  }
+  hit[0]!
+}
+
+fn pushes(x: Cx, node: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        name = cgen_fn::def_name(x.b, def_nr);
+        if name == "OpAppendCharacter" || name == "OpAppendStackCharacter" {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
