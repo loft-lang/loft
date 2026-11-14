@@ -4,7 +4,7 @@
 [![CI](https://github.com/loft-lang/loft/actions/workflows/ci.yml/badge.svg)](https://github.com/loft-lang/loft/actions/workflows/ci.yml)
 [![License: LGPL-3.0](https://img.shields.io/badge/License-LGPL_v3-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/release/loft-lang/loft?label=version&color=blue)](https://github.com/loft-lang/loft/releases)
-[![Libraries](https://img.shields.io/badge/registry-42_libraries-brightgreen)](https://loft-lang.org/loft/)
+[![Libraries](https://img.shields.io/badge/registry-49_libraries-brightgreen)](https://loft-lang.org/loft/)
 [![Gallery](https://img.shields.io/badge/gallery-live-brightgreen)](https://loft-lang.org/loft/gallery.html)
 
 [**▶ Try it in the browser**](https://loft-lang.org/loft/playground.html) · [**📘 Docs**](https://loft-lang.org/loft/) · [**🎮 Play Brick Buster**](https://loft-lang.org/loft/brick-buster.html) · [**🖼 Gallery**](https://loft-lang.org/loft/gallery.html) · [**✍ Blog**](https://loft-lang.org/blog/)
@@ -14,7 +14,7 @@
 **loft is a statically typed language with almost no type annotations.** The same source
 compiles to a native binary through rustc, to WebAssembly for the browser, or runs on a
 tree-walking interpreter for instant startup. It ships as a **distribution**: the compiler,
-a standard library, and **42 libraries** in a registry — graphics and 3D, an HTTP server and
+a standard library, and **49 libraries** in a registry — graphics and 3D, an HTTP server and
 client, cryptography, text engines, geometry — each one itself written in loft, so they read,
 debug and ship like your own code.
 
@@ -123,7 +123,7 @@ Then:
 
 - **[Learn loft in 30 minutes](doc/learn-loft.md)** — a guided tour with runnable code for
   every concept.
-- **[`examples/`](examples)** — seven self-contained programs: hello-world, fibonacci,
+- **[`examples/`](examples)** — eight self-contained programs: hello-world, fibonacci,
   fizzbuzz, structs, collections, pattern matching, file I/O.
 - **[VS Code extension](editors/vscode)** — highlighting and snippets. The
   [TextMate grammar](syntaxes/loft.tmLanguage.json) works in Sublime Text and anything else
@@ -202,7 +202,7 @@ breaking change needs a documented reason and a migration
 What that means in practice today:
 
 - **The language and the standard library are stable in normal use** — thousands of tests run
-  every change on both backends, and the 42 published libraries are recompiled against every
+  every change on both backends, and the 49 published libraries are recompiled against every
   change that reaches `main`.
 - **The libraries version independently** and declare their own compatibility floors.
 - **The edges are still moving**: some diagnostics, some newer library APIs, and the
@@ -220,7 +220,7 @@ Full reference, tutorial, feature catalogue and a printable PDF at
   ones every code example is executed as a test on both backends, so what you read is what
   runs; the two comparison pages are hand-written and each claim on them runs as a test
   program, and the performance page is hand-written and checked by hand.
-- **[Feature catalogue](https://loft-lang.org/loft/33-features.html)** — 123 entries: what
+- **[Feature catalogue](https://loft-lang.org/loft/33-features.html)** — 126 entries: what
   each feature is, how it helps, and a runnable example.
 - **`loft doc <package>`** — render any installed library's guide and API reference as HTML.
 
@@ -231,7 +231,7 @@ and open `doc/index.html`.
 
 loft is developed almost entirely by AI coding agents, steered by one person who put
 **documentation and tooling above writing code**. So everything needed to work on loft is in
-this public repository: the full source, over 350,000 lines of documentation, and twelve
+this public repository: the full source, over 350,000 lines of documentation, and thirteen
 **executable skills** that teach an agent *how* to fix a bug, change code generation, or ship
 a library. Point any capable coding agent at the repo, let it load the skills, and it can
 continue the work — investigate, fix, verify on both backends, and land through `make ci`.
@@ -243,7 +243,7 @@ effectively zero**:
 
 Highest-impact areas today:
 
-- **Library guides** — most of the 42 libraries have a solid API and no introduction. One
+- **Library guides** — most of the 49 libraries have a solid API and no introduction. One
   runnable getting-started page is the highest-value thing you can write
   ([USER_DOCS.md](doc/claude/USER_DOCS.md)).
 - **Example programs** — small playable games and demos that show the language off.

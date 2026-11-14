@@ -441,7 +441,7 @@ let k = take_min(&amp;mut t.right);</code></pre>
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> The code reads as the textbook algorithm: no <code>take()</code>, no <code>unwrap()</code>, no <code>as_mut()</code>, and about a third shorter.  A field is a place: handed to a <code>&amp;</code> parameter, a whole write in the callee writes that field, so a user's own tree, trie or list is built and taken apart without an index arena.</p>
-<p class="down"><strong>Downside</strong> Only the <code>&amp;</code> tells a walk from a write: <code>slot = &amp;slot.left</code> steps down, <code>slot = slot.left</code> replaces the field with its child.  Rust's types catch a forgotten <code>&amp;mut</code>; loft does not yet warn.  The call <code>take_min(t.right)</code> does not show that it writes, and the unlink copies the subtree into the field where Rust's <code>take()</code> moves a pointer.</p>
+<p class="down"><strong>Downside</strong> Only the <code>&amp;</code> tells a walk from a write: <code>slot = &amp;slot.left</code> steps down, <code>slot = slot.left</code> replaces the field with its child.  Rust's types catch a forgotten <code>&amp;mut</code>; loft warns (<code>walk-or-write</code>) where a walk writes the field it stands on.  The call <code>take_min(t.right)</code> does not show that it writes, and the unlink copies the subtree into the field where Rust's <code>take()</code> moves a pointer.</p>
 </div>
 
 </article>
