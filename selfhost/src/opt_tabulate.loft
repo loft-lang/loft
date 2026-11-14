@@ -58,10 +58,6 @@ fn return_out(v: integer) -> Out? {
   Out { kind: OUT_RETURN, value: v, on: false }
 }
 
-fn wrap(o: Out) -> Out? {
-  Out { kind: o.kind, value: o.value, on: o.on }
-}
-
 fn bool_out(on: boolean) -> Out? {
   Out { kind: OUT_BOOL, value: 0, on: on }
 }
@@ -112,10 +108,10 @@ fn eval(defs: vector<ir::Definition>, v: ir::Node, env: Env) -> Out? {
         step = eval(defs, op, env) ?? return null;
         last = step;
         if last.kind == OUT_RETURN {
-          return wrap(last);
+          return last;
         }
       }
-      wrap(last)
+      last
     },
     NdCall { def_nr, args } => {
       if def_nr < 0 || def_nr >= len(defs) {

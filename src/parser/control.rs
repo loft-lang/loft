@@ -18054,6 +18054,11 @@ impl Parser {
     /// (loft#2315).
     fn match_arms_unify(&self, result: &Type, arm: &Type) -> bool {
         match_arm_types_unify(result, arm)
+            // `@FR-N-Join`: an optional result meets a present arm of its base — a block arm
+            // whose value is a local, which no expected type converted (loft#2493).
+            || (matches!(result, Type::Optional(_))
+                && !matches!(arm, Type::Optional(_))
+                && match_arm_types_unify(result.base(), arm))
             || matches!(
                 (self.variant_parent_enum(arm), result.base()),
                 (Some(Type::Enum(a, _, _)), Type::Enum(b, _, _)) if a == *b
