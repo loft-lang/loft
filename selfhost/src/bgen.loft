@@ -88,6 +88,14 @@ pub struct Gen {
   // Whether each variable has been given its value yet (`is_stack_allocated`): an argument
   // from the start, a local from its first assignment.
   allocated: vector<boolean>,
+  // The loops being written, innermost last (`Stack::loops`): where each starts, the
+  // evaluation position it runs at, whether it tests at its bottom; and the jumps out of and
+  // on in them still to be given their step, as pairs of loop and code position.
+  loop_start: vector<integer>,
+  loop_stack: vector<integer>,
+  loop_rotated: vector<boolean>,
+  breaks: vector<integer>,
+  continues: vector<integer>,
   why: text,
 }
 
@@ -357,6 +365,161 @@ fn call_args(n: ir::Node) -> vector<ir::Node> {
   }
 }
 
+// `vector_local`: the vector local a node reads, where it can be read at its slot; -1 otherwise.
+fn vector_local(g: Gen, n: ir::Node) -> integer {
+  v = match unspan(n) {
+    NdVar { n: nr } => nr,
+    _ => -1,
+  };
+  if v < 0 {
+    return -1;
+  }
+  vector = match base(var_of(g, v).type_def[0] ?? ir::TyVoid) {
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  };
+  slot = g.slots[v] ?? 65535;
+  if vector && (g.allocated[v] ?? false) && slot != 65535 && slot <= g.position { v } else { -1 }
+}
+
+// `State::clear_stack`: what the loop `nr` out left on the evaluation stack dropped.
+fn clear_stack(g: Gen, nr: integer) {
+  at = g.loop_stack[len(g.loop_stack) - 1 - nr] ?? 0;
+  if g.position > at {
+    add_op(g, "OpFreeStack");
+    put_u16(g.o, 0);
+    put_u16(g.o, g.position - at);
+    g.position = at;
+  }
+}
+
+// `exit_test`: the condition of `if c { break }` with no else; null for any other node.
+fn exit_test(n: ir::Node, found: vector<boolean>) -> ir::Node {
+  found[0] = false;
+  match unspan(n) {
+    NdIf { cond, t, f } => {
+      brk = match unspan(t) {
+        NdBreak { n: nr } => nr == 0,
+        NdBlock { block: bl } => {
+          ops = bl[0]?.operators ?? [];
+          len(ops) == 1 && match unspan(ops[0]!) {
+            NdBreak { n: nr } => nr == 0,
+            _ => false,
+          }
+        }
+        _ => false,
+      };
+      none = match unspan(f) {
+        NdNull => true,
+        _ => false,
+      };
+      found[0] = brk && none;
+      cond
+    }
+    _ => ir::NdNull,
+  }
+}
+
+// `State::gen_loop`: a loop whose first statement is its exit test is tested at its bottom
+// (`@FR-R-Rotate`); any other runs its body and jumps back.
+fn loop_of(g: Gen, bl: ir::Block) -> ir::TypeT {
+  ops = bl.operators;
+  found: vector<boolean> = [false];
+  test = if len(ops) > 0 { exit_test(ops[0]!, found) } else { ir::NdNull };
+  rotated = found[0] ?? false;
+  if !rotated && len(ops) > 0 {
+    range = match unspan(ops[0]!) {
+      NdSet { var: _, inner } => match unspan(inner) {
+        NdBlock { block: b } => (b[0]?.name ?? "") == "Iter range",
+        _ => false,
+      },
+      _ => false,
+    };
+    if range {
+      stop(g, "not written yet: a range loop");
+      return ir::TyVoid;
+    }
+  }
+  g.loop_start += [len(g.o.code)];
+  g.loop_stack += [g.position];
+  g.loop_rotated += [rotated];
+  me = len(g.loop_start) - 1;
+  start = len(g.o.code);
+  if rotated {
+    add_op(g, "OpGotoWord");
+    entry = len(g.o.code);
+    put_i32(g.o, 0);
+    body = len(g.o.code);
+    for n in ops {
+      if n#index > 0 {
+        generate(g, n, false);
+      }
+    }
+    clear_stack(g, 0);
+    patch_i32(g.o, entry, len(g.o.code) - entry - 4);
+    k = 0;
+    while k + 1 < len(g.continues) {
+      if g.continues[k] == me {
+        c = g.continues[k + 1] ?? 0;
+        patch_i32(g.o, c, len(g.o.code) - c - 4);
+        g.continues.remove(k + 1);
+        g.continues.remove(k);
+      } else {
+        k += 2;
+      }
+    }
+    step = if_test(g, test);
+    patch_i32(g.o, step, body - len(g.o.code));
+    clear_stack(g, 0);
+  } else {
+    for n in ops {
+      generate(g, n, false);
+    }
+    clear_stack(g, 0);
+    add_op(g, "OpGotoWord");
+    put_i32(g.o, start - len(g.o.code) - 4);
+  }
+  k = 0;
+  while k + 1 < len(g.breaks) {
+    if g.breaks[k] == me {
+      at = g.breaks[k + 1] ?? 0;
+      patch_i32(g.o, at, len(g.o.code) - at - 4);
+      g.breaks.remove(k + 1);
+      g.breaks.remove(k);
+    } else {
+      k += 2;
+    }
+  }
+  g.loop_start.remove(me);
+  g.loop_stack.remove(me);
+  g.loop_rotated.remove(me);
+  ir::TyVoid
+}
+
+// `gen_break` and `gen_continue`: the stack the loop left dropped, then the jump — its step
+// written when the loop's end, or its bottom test, is.
+fn leave(g: Gen, nr: integer, out: boolean) -> ir::TypeT {
+  if nr >= len(g.loop_start) {
+    stop(g, "a break or continue outside its loop");
+    return ir::TyVoid;
+  }
+  old = g.position;
+  clear_stack(g, nr);
+  add_op(g, "OpGotoWord");
+  target = len(g.loop_start) - 1 - nr;
+  if out {
+    g.breaks += [target, len(g.o.code)];
+    put_i32(g.o, 0);
+  } else if g.loop_rotated[target] ?? false {
+    g.continues += [target, len(g.o.code)];
+    put_i32(g.o, 0);
+  } else {
+    put_i32(g.o, (g.loop_start[target] ?? 0) - len(g.o.code) - 4);
+  }
+  g.position = old;
+  ir::TyVoid
+}
+
 // `gen_if_test`: the test and its jump over the true arm; answers where the jump's step is
 // to be written.
 fn if_test(g: Gen, test: ir::Node) -> integer {
@@ -365,11 +528,80 @@ fn if_test(g: Gen, test: ir::Node) -> integer {
   if name == "OpNot" && called(g, args[0] ?? ir::NdNull) == "OpConvBoolFromText" {
     stop(g, "not written yet: a text's end test");
   }
-  if name == "OpLeInt" && (called(g, args[0] ?? ir::NdNull) == "OpSizeText" || called(g, args[0] ?? ir::NdNull) == "OpLengthVector") {
-    stop(g, "not written yet: a length test");
+  if name == "OpLeInt" && called(g, args[0] ?? ir::NdNull) == "OpSizeText" {
+    stop(g, "not written yet: a text's length test");
+  }
+  if name == "OpLeInt" && called(g, args[0] ?? ir::NdNull) == "OpLengthVector" {
+    // A walk's end (`OpVecEndJump`): the vector's length against an index, both locals.
+    vec = vector_local(g, call_args(args[0]!)[0] ?? ir::NdNull);
+    idx = int_local(g, args[1] ?? ir::NdNull);
+    if vec >= 0 && idx >= 0 {
+      vp = var_pos(g, vec);
+      ip = var_pos(g, idx);
+      add_op(g, "OpVecEndJump");
+      put_u16(g.o, vp);
+      put_u16(g.o, ip);
+      at = len(g.o.code);
+      put_i32(g.o, 0);
+      return at;
+    }
   }
   if name == "OpEqInt" && called(g, args[0] ?? ir::NdNull) == "OpConvIntFromEnum" {
-    stop(g, "not written yet: a tag test");
+    // A tag against a constant (`OpTagVCJump`): a plain enum local, or the tag of the record
+    // a local names.
+    found: vector<boolean> = [false];
+    c = match unspan(args[1] ?? ir::NdNull) {
+      NdInt { n } => {
+        found[0] = true;
+        n
+      }
+      _ => 0,
+    };
+    read = call_args(args[0]!)[0] ?? ir::NdNull;
+    of = -1;
+    local = -1;
+    match unspan(read) {
+      NdVar { n } => {
+        of = 0;
+        local = n;
+      }
+      NdCall { def_nr, args: ga } => {
+        if def_of(g, def_nr).name == "OpGetEnum" && len(ga) == 2 {
+          zero = match unspan(ga[1]!) {
+            NdInt { n } => n == 0,
+            _ => false,
+          };
+          match unspan(ga[0]!) {
+            NdVar { n } => {
+              if zero {
+                of = 1;
+                local = n;
+              }
+            }
+            _ => {}
+          }
+        }
+      }
+      _ => {}
+    }
+    if (found[0] ?? false) && local >= 0 {
+      fits = match base(var_of(g, local).type_def[0] ?? ir::TyVoid) {
+        TyEnum { n: _, is_ref, dep: _ } => if is_ref { of == 1 } else { of == 0 },
+        TyReference { n: _, dep: _ } => of == 1,
+        _ => false,
+      };
+      slot = g.slots[local] ?? 65535;
+      if fits && (g.allocated[local] ?? false) && slot != 65535 && slot <= g.position {
+        a = var_pos(g, local);
+        add_op(g, "OpTagVCJump");
+        put_u8(g.o, of);
+        put_u16(g.o, a);
+        put_i64(g.o, c);
+        at = len(g.o.code);
+        put_i32(g.o, 0);
+        return at;
+      }
+    }
   }
   fused = no_fuse();
   if name == "OpEqInt" || name == "OpNeInt" || name == "OpLtInt" || name == "OpLeInt" {
@@ -826,9 +1058,9 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
       ir::TyVoid
     }
     NdIf { cond, t, f } => branch(g, cond, t, f),
-    NdLoop { block: _ } => unwritten(g, "a loop"),
-    NdBreak { n: _ } => unwritten(g, "a break"),
-    NdContinue { n: _ } => unwritten(g, "a continue"),
+    NdLoop { block: bl } => loop_of(g, bl[0]!),
+    NdBreak { n } => leave(g, n, true),
+    NdContinue { n } => leave(g, n, false),
     NdDrop { inner: _ } => unwritten(g, "a dropped value"),
     NdEnum { ord, tp: _ } => {
       add_op(g, "OpConstEnum");
@@ -860,7 +1092,7 @@ fn unwritten(g: Gen, what: text) -> ir::TypeT {
 pub fn function(b: ir::Bundle, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
   def = b.data.definitions[d]!;
   ret = def.returned[0] ?? ir::TyVoid;
-  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], why: "" };
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], why: "" };
   if body_null(def) {
     // No body: the arguments, the return slot, and a return of the declared size.
     g.arguments = arguments_size(def);
