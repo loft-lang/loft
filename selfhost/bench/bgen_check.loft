@@ -89,6 +89,17 @@ fn main() {
     if wrong == "" && mine.main != img!.main {
       wrong = "main";
     }
+    mine.gens = bgen_image::gens(b!);
+    if wrong == "" && len(mine.gens) != len(img!.gens) {
+      wrong = "the generators' count ({len(mine.gens)} against {len(img!.gens)})";
+    }
+    for x in mine.gens {
+      y = img!.gens[x#index];
+      if wrong == "" && y != null && (x.def != y.def || x.zone2 != y.zone2 || "{x.text_args}" != "{y.text_args}" || "{x.ref_args}" != "{y.ref_args}"
+          || "{x.text_locals}" != "{y.text_locals}" || "{x.owned_locals}" != "{y.owned_locals}" || "{x.tuple_refs}" != "{y.tuple_refs}") {
+        wrong = "generator {bgen::name_of(b!, x.def)}: {x} against {y!}";
+      }
+    }
     if wrong != "" {
       println("stream\ttables\t{wrong}");
       return;
