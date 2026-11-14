@@ -5313,6 +5313,9 @@ use a separate collection or add after the loop"
         // program compiles today and keeps its binding (and its loop-record admission).
         // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
         // A loop's VARIABLE is never that body local: its binding ended with its own loop.
+        // The same note before that filter: the per-loop split asks it too, of a bind that
+        // differs from the ended one only in absence.
+        let ended_any = self.bind_after_end.map(|(v, _)| v);
         let ended_bind = self
             .bind_after_end
             .take()
@@ -5513,9 +5516,14 @@ use a separate collection or add after the loop"
             && ended_bind == Some(var_nr)
             && (ended_loop_var
                 || (!s_type.is_unknown()
-                    && self
+                    && (self
                         .vars
-                        .retype_would_be_refused(var_nr, &s_type, &self.data)))
+                        .retype_would_be_refused(var_nr, &s_type, &self.data)
+                        // `@FR-N-Join` joins the writes of ONE binding.  Asked of a binding
+                        // that has ended, it widened the ended one's variable: every read in
+                        // the block that bound it non-null then stored "a nullable" value,
+                        // and a later block's non-null bind stayed nullable.
+                        || self.vars.rebind_differs_in_absence(var_nr, &s_type))))
         {
             var_nr = self.rebind_after_block(var_nr, &s_type);
             new_binding = Value::Var(var_nr);
@@ -7202,9 +7210,18 @@ use a separate collection or add after the loop"
             && cur_loop != u16::MAX
             && born_in != u16::MAX
             && born_in != cur_loop
-            && self
+            && (self
                 .vars
                 .retype_would_be_refused(var_nr, &s_type, &self.data)
+                // The other loop's binding has ENDED (`@FR-B-Scope`: its body local cannot
+                // be read here), so a bind that differs from it in absence starts a binding
+                // too: `@FR-N-Join` joins the writes of one binding, not of two loops.  Asked
+                // of a binding the name's own resolution saw ended (`bind_after_end`): a loop
+                // NUMBER is not the same on both passes, so `born_in` alone also holds for
+                // the live binding of this very loop, whose non-null write into its `τ?` is
+                // the join itself.
+                || (ended_any == Some(var_nr)
+                    && self.vars.rebind_differs_in_absence(var_nr, &s_type)))
         {
             // The SOURCE spelling, not the bound one.  A variable already split once is
             // named `e#b1`, and registering the next split under that would key the third
@@ -7216,6 +7233,10 @@ use a separate collection or add after the loop"
             var_nr = self
                 .vars
                 .body_local_binding(&name, var_nr, &s_type, &mut self.lexer);
+            // Bound HERE, in this loop's body (`@FR-B-Scope`): without the record the new
+            // binding never ended, and a later loop could not take the spelling for its
+            // variable ("shadows a local still in scope").
+            self.record_binding(var_nr);
             rebound_to = Value::Var(var_nr);
             &rebound_to
         } else {

@@ -19374,6 +19374,14 @@ impl Parser {
         }
     }
 
+    /// Is local `d` a record or a record enum, read through `τ?` (`@FR-N-Shape`)?
+    fn names_a_record(&self, d: u16) -> bool {
+        matches!(
+            self.vars.tp(d).base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _)
+        )
+    }
+
     /// loft#2006 — read a return copy's SOURCE once, where a user call in it forbids the
     /// re-read its test would be: a read path whose ROOT is a user call binds that call to an
     /// owned local first (`_ret_root_N = f(x)`, the spelling `d = f(x); return d.inner`),
@@ -23013,6 +23021,28 @@ impl Parser {
                                 // by the zero-trust consumer as a one-line accessor that
                                 // silently corrupted its result.
                                 || self.return_projects_into_local(&v)
+                                // The same view held in a LOCAL: a `match` arm binds a
+                                // vector field of its subject (`C { args } => … return args;`),
+                                // so the returned variable views a record this frame frees —
+                                // the subject, or the call result it was read from.  Returned
+                                // raw, the caller's vector pointed into the freed store: an
+                                // empty vector after its next call on the interpreter, a store
+                                // freed twice on both backends (loft#2486).  A local that OWNS
+                                // its vector depends on its own `__vdb_N` or work ref, never on
+                                // a record local.
+                                || matches!(v.unspan(), Value::Var(x)
+                                    if self.vars.tp(*x).depend().iter().any(|&d| {
+                                        // A vector's own backing (`__vdb_N`) and a
+                                        // call's work ref are records too, and the local
+                                        // that depends on one OWNS the vector.
+                                        let own = self.vars.name(d);
+                                        d != bv
+                                            && !self.vars.is_argument(d)
+                                            && !own.starts_with("__vdb_")
+                                            && !own.starts_with("__ref_")
+                                            && !own.starts_with("__rref_")
+                                            && self.names_a_record(d)
+                                    }))
                                 // A vector LITERAL (`return []`, `return ["q"]`): its value is a
                                 // view of the record the literal minted (`__vdb_N`), which the
                                 // frame frees on this path, so it must reach the caller's buffer

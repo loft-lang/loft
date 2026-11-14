@@ -75,8 +75,225 @@ fn nl(o: &text, ind: integer) {
   }
 }
 
-// The value of type `tp` at `at`, appended to `o` (`loft_show{tp}`).
+// One render's state (`RefRender`, `RENDER_TAIL` and `RENDER_CLOSERS` of `database/format.rs`).
+// `on`: the value can reach a stored reference, so every reference is written as a pointer
+// (`@FR-F-Render-Ref`): `path` is where the walk is, `at_*` the pointer of every record it has
+// written (the first one wins), `targets` every reference it met as store, record, position and
+// type.  A chain of out-of-line children is a loop, not a recursion (`@FR-L-OutOfLine`): the last
+// field's child waits in `tail_*` for `write`'s loop, and the closing text of every frame it
+// leaves waits in `closers` until the chain ends.
+struct Ctx {
+  on: boolean,
+  path: vector<text>,
+  at_key: vector<integer>,
+  at_ptr: vector<text>,
+  targets: vector<integer>,
+  tail_rec: integer,
+  tail_tp: integer,
+  tail_ind: integer,
+  tail_path: vector<text>,
+  tail_pathed: boolean,
+  closers: vector<text>,
+}
+
+// A reference's place in the text until its target's pointer is known: a marker no rendered
+// value holds, with the reference's number in `targets`.
+fn mark_open() -> text {
+  "{1 as character}{2 as character}R"
+}
+
+fn mark_close() -> text {
+  "{2 as character}"
+}
+
+// `json_pointer`: the path as an RFC 6901 pointer.
+fn pointer(path: vector<text>) -> text {
+  out = "#";
+  for seg in path {
+    out += "/{seg.replace("~", "~0").replace("/", "~1")}";
+  }
+  out
+}
+
+// `Stores::reaches_reference`: can a value of type `tp` hold a stored reference?
+fn reaches_reference(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
+  t = ts[tp];
+  if t == null {
+    return false;
+  }
+  for d in seen {
+    if d == tp {
+      return false;
+    }
+  }
+  seen += [tp];
+  match t.parts[0]! {
+    PtDbRef => true,
+    PtStruct { fields } => fields_reach(ts, fields, seen),
+    PtEnumValue { value: _, fields } => fields_reach(ts, fields, seen),
+    PtEnum { values } => {
+      for v in values {
+        if reaches_reference(ts, v.nr, seen) {
+          return true;
+        }
+      }
+      false
+    }
+    PtVector { content } => reaches_reference(ts, content, seen),
+    PtArray { content } => reaches_reference(ts, content, seen),
+    PtSorted { content, keys: _ } => reaches_reference(ts, content, seen),
+    PtOrdered { content, keys: _ } => reaches_reference(ts, content, seen),
+    PtHash { content, fields: _ } => reaches_reference(ts, content, seen),
+    PtIndex { content, keys: _ } => reaches_reference(ts, content, seen),
+    PtRadix { content, fields: _ } => reaches_reference(ts, content, seen),
+    PtTrie { content, key: _ } => reaches_reference(ts, content, seen),
+    PtChildRec { content } => reaches_reference(ts, content, seen),
+    _ => false,
+  }
+}
+
+fn fields_reach(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  for f in fields {
+    if reaches_reference(ts, f.content, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+// The pointer the walk wrote record `(s, r, p)` at; null for a record it has not written.
+fn place_of(c: Ctx, s: integer, r: integer, p: integer) -> text? {
+  k = 0;
+  while k + 2 < len(c.at_key) {
+    if c.at_key[k] == s && c.at_key[k + 1] == r && c.at_key[k + 2] == p {
+      return c.at_ptr[k / 3];
+    }
+    k += 3;
+  }
+  null
+}
+
+// The value of type `tp` at `at`, appended to `o` (`Stores::render_top`): every reference as a
+// pointer to its target, `{"$ref":"#/leaves/1"}`, and the targets the value does not reach
+// under `$refs` — an object gains it as its last member, any other value is wrapped as
+// `{"$value": …, "$refs": […]}`.  A value that reaches no reference renders as it is.
 pub fn render(ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+  c = Ctx { on: reaches_reference(ts, tp, []), path: [], at_key: [], at_ptr: [], targets: [], tail_rec: 0, tail_tp: 0, tail_ind: 0, tail_path: [], tail_pathed: false, closers: [] };
+  if !c.on {
+    write(c, ts, tp, at, fmt, ind, o);
+    return;
+  }
+  pretty = fmt & 1 != 0;
+  body = "";
+  write(c, ts, tp, at, fmt, 0, body);
+  list = "";
+  nrefs = 0;
+  k = 0;
+  while k + 3 < len(c.targets) {
+    ts_nr = c.targets[k] ?? 65535;
+    tr = c.targets[k + 1] ?? 0;
+    tpos = c.targets[k + 2] ?? 0;
+    ttp = c.targets[k + 3] ?? 65535;
+    k += 4;
+    if ttp == 65535 || place_of(c, ts_nr, tr, tpos) != null {
+      continue;
+    }
+    c.path = ["$refs", "{nrefs}"];
+    c.at_key += [ts_nr, tr, tpos];
+    c.at_ptr += [pointer(c.path)];
+    if nrefs > 0 {
+      list += ",";
+    }
+    write(c, ts, ttp, crt::Pos { s: ts_nr, r: tr, p: tpos }, fmt, 1, list);
+    nrefs += 1;
+  }
+  wrapped = false;
+  if nrefs > 0 {
+    colon = if pretty { ": " } else { ":" };
+    refs = "\"$refs\"{colon}[{list}]";
+    trimmed = body.trim_end();
+    if trimmed.ends_with("}}") {
+      open = trimmed[0..trimmed.size() - 1].trim_end();
+      sep = if open.ends_with("{{") { "" } else { "," };
+      body = "{open}{sep}{if pretty { "\n  " } else { "" }}{refs}{if pretty { "\n" } else { "" }}}}";
+    } else {
+      wrapped = true;
+      body = "{{\"$value\"{colon}{body},{refs}}}";
+    }
+  }
+  // Every marker patched with its target's pointer.
+  rest = body;
+  open_mark = mark_open();
+  close_mark = mark_close();
+  for _ in 0..len(c.targets) / 4 + 1 {
+    at_mark = rest.find(open_mark);
+    if at_mark == null {
+      break;
+    }
+    o += rest[0..at_mark!];
+    after = rest[at_mark! + open_mark.size()..rest.size()];
+    end = after.find(close_mark) ?? after.size();
+    n = (after[0..end] as integer?) ?? -1;
+    ptr: text? = null;
+    if n >= 0 && 4 * n + 2 < len(c.targets) {
+      ptr = place_of(c, c.targets[4 * n] ?? 65535, c.targets[4 * n + 1] ?? 0, c.targets[4 * n + 2] ?? 0);
+    }
+    if ptr == null {
+      o += "null";
+    } else if wrapped && !ptr!.starts_with("#/$refs/") {
+      // Under the `$value` wrapper a place inside the value is one level down.
+      o += "{{\"$ref\":\"#/$value{ptr![1..ptr!.size()]}\"}}";
+    } else {
+      o += "{{\"$ref\":\"{ptr!}\"}}";
+    }
+    rest = if end + close_mark.size() <= after.size() { after[end + close_mark.size()..after.size()] } else { "" };
+  }
+  o += rest;
+}
+
+// `ShowDb::write`: the value, and then every out-of-line child its last fields chained to — a
+// loop, so a chain of any length takes no call per link — and the closing texts that waited.
+fn write(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+  mark = len(c.closers);
+  saved: vector<text> = [];
+  if c.on {
+    for seg in c.path {
+      saved += [seg];
+    }
+  }
+  write_one(c, ts, tp, at, fmt, ind, o);
+  while c.tail_rec != 0 {
+    rec = c.tail_rec;
+    ttp = c.tail_tp;
+    tind = c.tail_ind;
+    c.tail_rec = 0;
+    if c.on && c.tail_pathed {
+      // A chained child is written at the path its field had.
+      c.path = c.tail_path;
+      c.tail_pathed = false;
+    }
+    write_one(c, ts, ttp, crt::Pos { s: at.s, r: rec, p: 8 }, fmt, tind, o);
+  }
+  while len(c.closers) > mark {
+    o += c.closers[len(c.closers) - 1] ?? "";
+    c.closers.remove(len(c.closers) - 1);
+  }
+  if c.on {
+    c.path = saved;
+  }
+}
+
+// `write_close`: a frame's closing text — at once, or after the chain its last field started.
+fn close(c: Ctx, o: &text, closing: text) {
+  if c.tail_rec != 0 {
+    c.closers += [closing];
+  } else {
+    o += closing;
+  }
+}
+
+// One value (`ShowDb::write_one`, `loft_show{tp}`).
+fn write_one(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
   s = at.s;
   r = at.r;
   p = at.p;
@@ -90,30 +307,43 @@ pub fn render(ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, i
   }
   t = ts[tp]!;
   complex = t.complex;
+  if c.on {
+    // A record's pointer is the path the walk wrote it at, the first one wins.
+    record = match t.parts[0]! {
+      PtStruct { fields: _ } => true,
+      PtEnumValue { value: _, fields: _ } => true,
+      PtEnum { values: _ } => true,
+      _ => false,
+    };
+    if record && place_of(c, s, r, p) == null {
+      c.at_key += [s, r, p];
+      c.at_ptr += [pointer(c.path)];
+    }
+  }
   match t.parts[0]! {
-    PtStruct { fields } => show_fields(ts, fields, at, fmt, ind, complex, o),
+    PtStruct { fields } => show_fields(c, ts, fields, at, fmt, ind, complex, o),
     PtEnumValue { value: _, fields } => {
       if fmt & 2 != 0 {
         o += "{{\"{t.name}\":";
-        show_fields(ts, fields, at, fmt, ind, complex, o);
-        o += "}}";
+        show_fields(c, ts, fields, at, fmt, ind, complex, o);
+        close(c, o, "}}");
       } else {
-        show_fields(ts, fields, at, fmt, ind, complex, o);
+        show_fields(c, ts, fields, at, fmt, ind, complex, o);
       }
     }
-    PtEnum { values: _ } => show_enum(ts, t, at, fmt, ind, o),
+    PtEnum { values: _ } => show_enum(c, ts, t, at, fmt, ind, o),
     PtVector { content } => {
       if crt::vec_absent(s, r, p) {
         o += "null";
       } else {
-        show_list(ts, content, at, fmt, ind, o);
+        show_list(c, ts, content, at, fmt, ind, o);
       }
     }
     PtHash { content, fields: _ } => {
       if crt::vec_absent(s, r, p) {
         o += "null";
       } else {
-        show_hash(ts, tp, content, at, fmt, ind, o);
+        show_hash(c, ts, tp, content, at, fmt, ind, o);
       }
     }
     PtByte { start, nullable } => { o += crt::show_leaf(crt::SHOW_BYTE, s, r, p, fmt, start, nullable); }
@@ -122,15 +352,45 @@ pub fn render(ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, i
     PtInt { start: _, nullable } => { o += crt::show_leaf(crt::SHOW_INT4, s, r, p, fmt, 0, nullable); }
     PtIntRaw { start: _, nullable } => { o += crt::show_leaf(crt::SHOW_INT_RAW, s, r, p, fmt, 0, nullable); }
     PtDbRef => { o += crt::show_leaf(crt::SHOW_DBREF, s, r, p, fmt, 0, false); }
-    PtChildRec { content: _ } => { o += crt::show_leaf(crt::SHOW_CHILD, s, r, p, fmt, 0, false); }
+    PtChildRec { content } => {
+      child = crt::get_w(8, s, r, p, 0, 0) ?? 0;
+      if child != 0 && child_is_value(ts, content) {
+        // An out-of-line child that is a value of its own: the record it names.
+        write(c, ts, content, crt::Pos { s: s, r: child, p: 8 }, fmt, ind, o);
+      } else {
+        o += crt::show_leaf(crt::SHOW_CHILD, s, r, p, fmt, 0, false);
+      }
+    }
     _ => panic("a format the lowering refuses"),
   }
+}
+
+// `Stores::child_rec_is_value`: a child record of a type the program names, not a closure's.
+fn child_is_value(ts: vector<ir::DbType>, content: integer) -> boolean {
+  t = ts[content];
+  t != null && !t!.name.starts_with("__")
+}
+
+// A reference field as a marker its target's pointer replaces at the end of the render
+// (`write_reference_marker`); false for a null one, which renders as any reference does.
+fn reference_marker(c: Ctx, at: crt::Pos, target: integer, o: &text) -> boolean {
+  store_nr = (crt::get_w(8, at.s, at.r, at.p, 0, 0) ?? 65535) & 65535;
+  rec = crt::get_w(8, at.s, at.r, at.p, 4, 0) ?? 0;
+  pos = crt::get_w(8, at.s, at.r, at.p, 8, 0) ?? 0;
+  // A null reference, a generator's handle and a reference to a removed record render as any
+  // reference does (`null`, `iterator`).
+  if rec == 0 || store_nr >= 65534 || crt::ref_removed(store_nr, rec) {
+    return false;
+  }
+  c.targets += [store_nr, rec, pos, target];
+  o += "{mark_open()}{len(c.targets) / 4 - 1}{mark_close()}";
+  true
 }
 
 // `write_struct` over `fields` (`loft_showf{tp}`): the fields `show.rs` keeps — not the enum tag,
 // not a hidden `#` field, not a link — framed as `loft_show_open`, `_sep`, `_name` and `_close`
 // frame them.  `complex` is the rendered type's.
-fn show_fields(ts: vector<ir::DbType>, fields: vector<ir::DbField>, at: crt::Pos, fmt: integer, ind: integer, complex: boolean, o: &text) {
+fn show_fields(c: Ctx, ts: vector<ir::DbType>, fields: vector<ir::DbField>, at: crt::Pos, fmt: integer, ind: integer, complex: boolean, o: &text) {
   shown: vector<ir::DbField> = [];
   for f in fields {
     if f.name != "enum" && !f.name.starts_with("#") && (f.other_indexes[0] ?? 0) != 65535 {
@@ -140,9 +400,9 @@ fn show_fields(ts: vector<ir::DbType>, fields: vector<ir::DbField>, at: crt::Pos
   any = len(shown) > 0;
   pretty = fmt & 1 != 0;
   json = fmt & 2 != 0;
-  c = pretty && (json || complex);
+  lines = pretty && (json || complex);
   o += "{{";
-  if c && json && any {
+  if lines && json && any {
     nl(o, ind + 1);
   } else if pretty {
     o += " ";
@@ -151,7 +411,7 @@ fn show_fields(ts: vector<ir::DbType>, fields: vector<ir::DbField>, at: crt::Pos
   for f in shown {
     if !first {
       o += ",";
-      if c {
+      if lines {
         nl(o, ind + 1);
       } else if pretty {
         o += " ";
@@ -162,20 +422,63 @@ fn show_fields(ts: vector<ir::DbType>, fields: vector<ir::DbField>, at: crt::Pos
     if pretty {
       o += " ";
     }
-    render(ts, f.content, crt::moved(at, f.position), fmt, ind + 1, o);
+    // The field's name is its segment of the path.
+    if c.on {
+      c.path += [f.name];
+      is_ref = match ts[f.content]?.parts[0] {
+        PtDbRef => true,
+        _ => false,
+      };
+      if is_ref && reference_marker(c, crt::moved(at, f.position), f.target, o) {
+        c.path.remove(len(c.path) - 1);
+        continue;
+      }
+    }
+    // The LAST field's out-of-line child is rendered by `write`'s loop.
+    if f#index == len(shown) - 1 {
+      content = match ts[f.content]?.parts[0] {
+        PtChildRec { content: ct } => ct,
+        _ => -1,
+      };
+      if content >= 0 && child_is_value(ts, content) {
+        child = crt::get_w(8, at.s, at.r, at.p + f.position, 0, 0) ?? 0;
+        if child != 0 {
+          c.tail_rec = child;
+          c.tail_tp = content;
+          c.tail_ind = ind + 1;
+          if c.on {
+            c.tail_path = [];
+            for seg in c.path {
+              c.tail_path += [seg];
+            }
+            c.tail_pathed = true;
+            c.path.remove(len(c.path) - 1);
+          }
+          continue;
+        }
+      }
+    }
+    write(c, ts, f.content, crt::moved(at, f.position), fmt, ind + 1, o);
+    if c.on {
+      c.path.remove(len(c.path) - 1);
+    }
   }
-  if c && any {
-    nl(o, ind);
-  } else if pretty && !c {
-    o += " ";
+  closing = "";
+  if lines && any {
+    closing += "\n";
+    for _ in 0..ind {
+      closing += "  ";
+    }
+  } else if pretty && !lines {
+    closing += " ";
   }
-  o += "}}";
+  close(c, o, "{closing}}}");
 }
 
 // An enum `t` by its tag byte: the variant's name, and a struct variant's fields after it; JSON
 // wraps a variant as `{"Name": …}`.  A `__nullable<S>` renders the value its present variant
 // carries.
-fn show_enum(ts: vector<ir::DbType>, t: ir::DbType, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+fn show_enum(c: Ctx, ts: vector<ir::DbType>, t: ir::DbType, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
   name = t.name;
   complex = t.complex;
   values = match t.parts[0]! { PtEnum { values: vs } => vs, _ => [] };
@@ -191,7 +494,7 @@ fn show_enum(ts: vector<ir::DbType>, t: ir::DbType, at: crt::Pos, fmt: integer, 
         PtEnumValue { value: _, fields } => {
           for f in fields {
             if f.name == "payload" {
-              render(ts, f.content, crt::moved(at, f.position), fmt, ind, o);
+              write(c, ts, f.content, crt::moved(at, f.position), fmt, ind, o);
             }
           }
         }
@@ -219,16 +522,16 @@ fn show_enum(ts: vector<ir::DbType>, t: ir::DbType, at: crt::Pos, fmt: integer, 
   if fmt & 2 != 0 {
     o += "{{\"{vt.name}\":";
     if payload {
-      show_fields(ts, fields, at, fmt, ind, complex, o);
+      show_fields(c, ts, fields, at, fmt, ind, complex, o);
+      close(c, o, "}}");
     } else {
-      o += "{{}}";
+      o += "{{}}}}";
     }
-    o += "}}";
   } else {
     o += vt.name;
     if payload {
       o += " ";
-      show_fields(ts, fields, at, fmt, ind, complex, o);
+      show_fields(c, ts, fields, at, fmt, ind, complex, o);
     }
   }
 }
@@ -269,7 +572,7 @@ fn is_struct(ts: vector<ir::DbType>, tp: integer) -> boolean {
   }
 }
 
-fn show_list(ts: vector<ir::DbType>, elem: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+fn show_list(c: Ctx, ts: vector<ir::DbType>, elem: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
   e = ts[elem]!;
   complex_elem = fmt & 1 != 0 && e.complex;
   struct_elem = is_struct(ts, elem);
@@ -278,7 +581,13 @@ fn show_list(ts: vector<ir::DbType>, elem: integer, at: crt::Pos, fmt: integer, 
   for i in 0..crt::vec_len(at.s, at.r, at.p) {
     open_element(i, fmt, complex_elem, struct_elem, ind, o);
     crt::vec_get(got, at.s, at.r, at.p, e.size, i);
-    render(ts, elem, crt::Pos { s: got[0] ?? 65535, r: got[1] ?? 0, p: got[2] ?? 0 }, fmt, ind + 1, o);
+    if c.on {
+      c.path += ["{i}"];
+    }
+    write(c, ts, elem, crt::Pos { s: got[0] ?? 65535, r: got[1] ?? 0, p: got[2] ?? 0 }, fmt, ind + 1, o);
+    if c.on {
+      c.path.remove(len(c.path) - 1);
+    }
   }
   if fmt & 1 != 0 {
     o += " ";
@@ -288,7 +597,7 @@ fn show_list(ts: vector<ir::DbType>, elem: integer, at: crt::Pos, fmt: integer, 
 
 // A hash in key order (`hash::records_sorted`), its entries held outside the store, as the Rust
 // renderer holds them.
-fn show_hash(ts: vector<ir::DbType>, tp: integer, elem: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+fn show_hash(c: Ctx, ts: vector<ir::DbType>, tp: integer, elem: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
   e = ts[elem]!;
   complex_elem = fmt & 1 != 0 && e.complex;
   struct_elem = is_struct(ts, elem);
@@ -296,7 +605,13 @@ fn show_hash(ts: vector<ir::DbType>, tp: integer, elem: integer, at: crt::Pos, f
   refs = crt::hash_refs(at.s, at.r, at.p, tp);
   for i in 0..len(refs) / 3 {
     open_element(i, fmt, complex_elem, struct_elem, ind, o);
-    render(ts, elem, crt::Pos { s: refs[3 * i] ?? 65535, r: refs[3 * i + 1] ?? 0, p: refs[3 * i + 2] ?? 0 }, fmt, ind + 1, o);
+    if c.on {
+      c.path += ["{i}"];
+    }
+    write(c, ts, elem, crt::Pos { s: refs[3 * i] ?? 65535, r: refs[3 * i + 1] ?? 0, p: refs[3 * i + 2] ?? 0 }, fmt, ind + 1, o);
+    if c.on {
+      c.path.remove(len(c.path) - 1);
+    }
   }
   if fmt & 1 != 0 {
     o += " ";

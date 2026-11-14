@@ -1,0 +1,222 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft: the shape of a `for e in v` loop as the parser
+// lowers it (src/opt/iteration.rs): its head and the index a step cannot overflow.
+
+use ir;
+use loop_shape;
+
+// The head of a vector iteration, as the parser lowers `for e in v`: the loop variable, the
+// `#index` it steps, the vector operand, the element size, and the constant the head adds to
+// the element's position (what `OpGetField(element, off, _)` wrappers sum to).
+pub struct VectorIteration {
+  pub loop_var: integer,
+  pub index: integer,
+  pub vector: ir::Node,
+  pub size: integer,
+  pub offset: integer,
+}
+
+// The value of an `Int` literal, or null for any other node.
+fn int_of(n: ir::Node) -> integer? {
+  match loop_shape::unspan(n) {
+    NdInt { n: value } => value,
+    _ => null,
+  }
+}
+
+// The arguments of a call of the definition named `name` with `arity` arguments, or null.
+fn call_args(defs: vector<ir::Definition>, n: ir::Node, name: text, arity: integer) -> vector<ir::Node>? {
+  match loop_shape::unspan(n) {
+    NdCall { def_nr, args } => {
+      if def_nr < len(defs) && defs[def_nr]!.name == name && len(args) == arity {
+        return args;
+      }
+      null
+    },
+    _ => null,
+  }
+}
+
+// The element read of a vector walk: `OpGetVectorNullable(vec, size, idx)`, possibly behind
+// `OpGetField(element, const off, _)` wrappers.
+fn element_read(loop_var: integer, from: ir::Node, defs: vector<ir::Definition>) -> VectorIteration? {
+  read = from;
+  offset = 0;
+  for _ in 0..1000 {
+    field = call_args(defs, read, "OpGetField", 3) ?? break;
+    off = int_of(field[1]) ?? break;
+    offset += off;
+    read = field[0];
+  }
+  rargs = call_args(defs, read, "OpGetVectorNullable", 3) ?? return null;
+  index = loop_shape::var_of(rargs[2]);
+  size = int_of(rargs[1]) ?? return null;
+  if index < 0 || size < 0 || offset < 0 {
+    return null;
+  }
+  VectorIteration { loop_var: loop_var, index: index, vector: rargs[0], size: size, offset: offset }
+}
+
+// The statements of a block that are no line marks.
+fn statements(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    match o {
+      NdLine { n: _ } => {},
+      _ => { out += [o]; },
+    }
+  }
+  out
+}
+
+// The binding `e = { idx = idx + 1; OpGetVectorNullable(vec, size, idx) }` — the first
+// statement of a `for e in v` loop — as its head.  Shape only: anything else answers null.
+pub fn iteration_head(stmt: ir::Node, defs: vector<ir::Definition>) -> VectorIteration? {
+  loop_var = -1;
+  iter: ir::Node = NdNull;
+  match loop_shape::unspan(stmt) {
+    NdSet { var, inner } => {
+      loop_var = var;
+      iter = inner;
+    },
+    _ => return null,
+  }
+  ops = match loop_shape::unspan(iter) {
+    NdBlock { block } => statements(block[0].operators),
+    _ => return null,
+  };
+  if len(ops) != 2 {
+    return null;
+  }
+  index = -1;
+  stepped: ir::Node = NdNull;
+  match loop_shape::unspan(ops[0]) {
+    NdSet { var, inner } => {
+      index = var;
+      stepped = inner;
+    },
+    _ => return null,
+  }
+  sargs = call_args(defs, stepped, "OpAddInt", 2) ?? return null;
+  if loop_shape::var_of(sargs[0]) != index || int_of(sargs[1]) != 1 {
+    return null;
+  }
+  head = element_read(loop_var, ops[1], defs) ?? return null;
+  if head.index != index {
+    return null;
+  }
+  head
+}
+
+// How many nodes of `node` assign variable `v` — a `Set` or a tuple member's write.
+fn sets_of(node: ir::Node, v: integer) -> integer {
+  match node {
+    NdSpan { pos: _, inner } => sets_of(inner, v),
+    NdSet { var, inner } => (if var == v { 1 } else { 0 }) + sets_of(inner, v),
+    NdTuplePut { var, idx: _, inner } => (if var == v { 1 } else { 0 }) + sets_of(inner, v),
+    NdBlock { block } => sets_in(block[0].operators, v),
+    NdLoop { block } => sets_in(block[0].operators, v),
+    NdCall { def_nr: _, args } => sets_in(args, v),
+    NdCallRef { var: _, args } => sets_in(args, v),
+    NdInsert { items } => sets_in(items, v),
+    NdTuple { items } => sets_in(items, v),
+    NdParallel { arms } => sets_in(arms, v),
+    NdReturn { inner } => sets_of(inner, v),
+    NdDrop { inner } => sets_of(inner, v),
+    NdYield { inner } => sets_of(inner, v),
+    NdIf { cond, t, f } => sets_of(cond, v) + sets_of(t, v) + sets_of(f, v),
+    NdIter { var: _, create, next, init } => sets_of(create, v) + sets_of(next, v) + sets_of(init, v),
+    _ => 0,
+  }
+}
+
+fn sets_in(nodes: vector<ir::Node>, v: integer) -> integer {
+  n = 0;
+  for a in nodes {
+    n += sets_of(a, v);
+  }
+  n
+}
+
+// `@FR-R-Counter`'s iteration clause — the `#index` of a `for e in v` loop whose step cannot
+// overflow: the loop's first statement is the head, its second the parser's own bound
+// `if len(vec) <= index { break }` over the SAME vector operand, and nothing else in the loop
+// assigns the index.  Answers the index variable, or null.
+pub fn bounded_iteration_index(lp: ir::Block, defs: vector<ir::Definition>) -> integer? {
+  stmts = statements(lp.operators);
+  if len(stmts) < 2 {
+    return null;
+  }
+  head = iteration_head(stmts[0], defs) ?? return null;
+  cond: ir::Node = NdNull;
+  match loop_shape::unspan(stmts[1]) {
+    NdIf { cond: c, t, f: _ } => {
+      if !loop_shape::is_break_block(t) {
+        return null;
+      }
+      cond = c;
+    },
+    _ => return null,
+  }
+  cargs = call_args(defs, cond, "OpLeInt", 2) ?? return null;
+  if loop_shape::var_of(cargs[1]) != head.index {
+    return null;
+  }
+  largs = call_args(defs, cargs[0], "OpLengthVector", 1) ?? return null;
+  if loop_shape::unspan(largs[0]) != loop_shape::unspan(head.vector) {
+    return null;
+  }
+  // Any assignment to the index besides the head's own step voids the bound.
+  if sets_in(lp.operators, head.index) != 1 {
+    return null;
+  }
+  head.index
+}
+
+// The bounded iteration indexes of `node` in the order a walk meets its loops — the row of
+// `LOFT_TRACE_COUNTERS`' `[iterations]` line.
+fn iterations_of(node: ir::Node, defs: vector<ir::Definition>, row: vector<text>) {
+  match node {
+    NdSpan { pos: _, inner } => iterations_of(inner, defs, row),
+    NdLoop { block } => {
+      ix = bounded_iteration_index(block[0], defs);
+      if ix != null {
+        row += ["{ix}"];
+      }
+      for a in block[0].operators { iterations_of(a, defs, row); }
+    },
+    NdBlock { block } => { for a in block[0].operators { iterations_of(a, defs, row); } },
+    NdCall { def_nr: _, args } => { for a in args { iterations_of(a, defs, row); } },
+    NdCallRef { var: _, args } => { for a in args { iterations_of(a, defs, row); } },
+    NdInsert { items } => { for a in items { iterations_of(a, defs, row); } },
+    NdTuple { items } => { for a in items { iterations_of(a, defs, row); } },
+    NdParallel { arms } => { for a in arms { iterations_of(a, defs, row); } },
+    NdSet { var: _, inner } => iterations_of(inner, defs, row),
+    NdReturn { inner } => iterations_of(inner, defs, row),
+    NdDrop { inner } => iterations_of(inner, defs, row),
+    NdYield { inner } => iterations_of(inner, defs, row),
+    NdTuplePut { var: _, idx: _, inner } => iterations_of(inner, defs, row),
+    NdIf { cond, t, f } => {
+      iterations_of(cond, defs, row);
+      iterations_of(t, defs, row);
+      iterations_of(f, defs, row);
+    },
+    NdIter { var: _, create, next, init } => {
+      iterations_of(create, defs, row);
+      iterations_of(next, defs, row);
+      iterations_of(init, defs, row);
+    },
+    _ => {},
+  }
+}
+
+// The trace line of `d`'s bounded iteration indexes.
+pub fn iterations_line(d: ir::Definition, defs: vector<ir::Definition>) -> text {
+  row: vector<text> = [];
+  if len(d.code) > 0 {
+    iterations_of(d.code[0], defs, row);
+  }
+  "[iterations]\t{d.name}\t{row.join(" ")}"
+}

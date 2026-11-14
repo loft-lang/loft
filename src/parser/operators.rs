@@ -4234,6 +4234,11 @@ impl Parser {
             // and is asked at the site.
             if t == Type::Null {
                 self.n_store_violation(&t, &r_type, "the return value", Some(&ret_pos));
+                // The written `null` is the return type's null, as `parse_return` makes it:
+                // left a bare `Value::Null`, the bytecode returned a value nothing had pushed.
+                if !self.first_pass {
+                    ret_val = self.null_value(&r_type);
+                }
             }
             if t != Type::Null
                 && !self.convert_store(

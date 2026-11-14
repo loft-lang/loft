@@ -318,7 +318,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 208; // loft#2227 — +8 for native_answer_tp; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact; @FR-R-CompleteWrite — no_prefill in the 4 bytes left
+pub(crate) const DEFINITION_STRIDE: u32 = 216; // @PLN204 — +8 for width32; loft#2227 — +8 for native_answer_tp; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact; @FR-R-CompleteWrite — no_prefill in the 4 bytes left
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
@@ -358,6 +358,7 @@ pub(crate) const DEF_INSTANCE_OF: u32 = 88; // @PLN165 D3 the template; -1 = not
 pub(crate) const DEF_RETURNED_FACT: u32 = 192; // @PLN187 text: where the declared result names an alias
 pub(crate) const DEF_NO_PREFILL: u32 = 196; // @FR-R-CompleteWrite text: `NoPrefill::encode`
 pub(crate) const DEF_INSTANCE_ARGS: u32 = 188; // @PLN165 D3 vector<TypeT>
+pub(crate) const DEF_WIDTH32: u32 = 208; // @PLN204 the body is under the 32-bit regime
 
 /// `Data` record (the root).
 pub(crate) const DATA_SOURCE: u32 = 0;
@@ -1708,6 +1709,7 @@ mod tests {
         );
         assert_eq!(pos(ids.definition, "op_hot"), DEF_OP_HOT);
         assert_eq!(pos(ids.definition, "op_cold"), DEF_OP_COLD);
+        assert_eq!(pos(ids.definition, "width32"), DEF_WIDTH32);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

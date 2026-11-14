@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — rendering a value: a stored reference is written as a pointer to its target,
+// which is brought along under `$refs` when the value does not reach it, and a chain of
+// out-of-line children renders link after link however long it is.
+
+struct Leaf { name: text }
+struct Link { label: text, to: reference<Leaf> }
+struct Node { v: integer, next: Node? }
+
+// The text of a chain `n` long, as a render writes one.
+fn chain_text(n: integer) -> text {
+  s = "";
+  for i in 0..n {
+    s += "{{v:{i},next:";
+  }
+  s += "null";
+  for _ in 0..n {
+    s += "}}";
+  }
+  s
+}
+
+// 100 for the reference written as a pointer with its target under `$refs`, 10 for a
+// three-link chain's exact text, 1 for a chain of 20 000 links read back at its full length.
+fn rendered(k: integer) -> integer {
+  far = Leaf { name: "far" };
+  link = Link { label: "x", to: &far };
+  doc = "{link:j}";
+  refs = if doc == "{{\"label\":\"x\",\"to\":{{\"$ref\":\"#/$refs/0\"}},\"$refs\":[{{\"name\":\"far\"}}]}}" { 100 } else { 0 };
+  short = Node { v: 0, next: Node { v: 1, next: Node { v: 2, next: null } } };
+  three = if "{short}" == chain_text(3) { 10 } else { 0 };
+  long = chain_text(20000);
+  deep = Node.parse(long);
+  all = if len("{deep}") == len(long) { 1 } else { 0 };
+  refs + three + all + k - k
+}
+
+fn main() {
+  println("{rendered(0)}");
+}

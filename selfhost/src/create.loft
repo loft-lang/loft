@@ -211,16 +211,20 @@ fn operator_fn(def: ir::Definition, body: text) -> text {
 // `cap` are locals of ONE function, and an operator whose template needs no more of the
 // `State` than those runs as an arm of it.  `(R-CodeBase)`: the code is a parameter, read at
 // `ip`.  `(R-OperandSpan)`: one test covers an operator's whole operand span.
+// `(R-FrameHeadroom)`: a call and a plain return are arms too, on the frame list's base and
+// the depth `fd`, another local.
 // `(R-StackBase)`: a slot is read through the stack store's base, taken again after an operator
-// that ran on the `State`, which can grow the stack.  The code's base is taken once: `run` is
-// given the run image's code, in a store nothing grows while it runs — never the `State`'s
-// copy, whose store the frame list grows.  `(R-DispatchStop)`: only
+// that ran on the `State`, which can grow the stack.  The code's base is taken once: it is
+// the address of the copy the `State` holds for the run (`code_held`), which no store's growth
+// moves.  One test at the loop's head covers a step's reads of the code and the top it
+// pushes at, so an arm reads and writes through the bases with no test of its own
+// (`crt::peek_*`, `crt::poke_*`).  `(R-DispatchStop)`: only
 // an operator run through the `State` can stop the run, and one flag says so.  Every check
 // the accessors make is one compare in the arm's guard; where it fails the operator runs
 // through its function, which reports it.
 
-// The bytes an operator and its operands take at most, for an arm of `run`: one test of the
-// position against the code's length less this covers every operand read.
+// The bytes an operator and its operands take at most, for an arm of `run`: the loop's test of
+// the position against the code's length less this covers every operand read.
 OPERAND_SPAN = 32;
 
 // May `c` be part of a name?
@@ -314,12 +318,67 @@ fn slot_width(w: text) -> text {
   }
 }
 
+// `OpCall` as an arm of `run` — `State::fn_call` on the loop's locals: the frame recorded at
+// the depth `fd` in the frame list, the return position pushed, the position moved to the
+// callee.  Its guard is `fn_call`'s two tests (the depth, the frame's headroom under the
+// capacity); where one fails the call runs through the `State`, which grows the stack or
+// stops.  The operands are read as the generated function reads them (`--reads`).
+fn call_arm(slot: integer) -> text {
+  out = "    {slot} => {{\n";
+  out += "      d_nr_{slot} = crt::peek_i64(cbase, ip + 1);\n";
+  out += "      args_size_{slot} = crt::peek_u16(cbase, ip + 9);\n";
+  out += "      to_{slot} = crt::peek_i64(cbase, ip + 11);\n";
+  out += "      if fd < state::MAX_CALL_DEPTH && sp + state::FRAME_HEADROOM <= cap {{\n";
+  out += "        ip += 19;\n";
+  out += "        at_{slot} = fd * state::FRAME_BYTES;\n";
+  out += "        crt::poke_i64(fbase, at_{slot}, d_nr_{slot});\n";
+  out += "        crt::poke_i64(fbase, at_{slot} + 8, ip);\n";
+  out += "        crt::poke_i64(fbase, at_{slot} + 16, sp - args_size_{slot});\n";
+  out += "        crt::poke_i64(fbase, at_{slot} + 24, args_size_{slot});\n";
+  out += "        fd += 1;\n";
+  out += "        crt::poke_u32(base, sp, ip);\n";
+  out += "        sp += 8;\n";
+  out += "        ip = to_{slot};\n";
+  out + "        continue;\n      }}\n    }}\n"
+}
+
+// `OpReturn` as an arm of `run` — `State::fn_return` where the return is a plain one
+// (`State::plain_return`, asked once after each operator that ran on the `State`): the
+// answer moved down to the arguments' base, the top just above it, the position the call
+// pushed taken back, the frame dropped.  The guard keeps every byte it reads and writes
+// inside the stack; any other return runs through the `State`.
+fn return_arm(slot: integer) -> text {
+  out = "    {slot} => {{\n";
+  out += "      ret_{slot} = crt::peek_u16(cbase, ip + 1);\n";
+  out += "      value_{slot} = crt::peek_u16(cbase, ip + 3);\n";
+  out += "      discard_{slot} = crt::peek_u16(cbase, ip + 5);\n";
+  out += "      if rp < 0 {{\n        rp = if s.plain_return() {{ 1 }} else {{ 0 }};\n      }}\n";
+  out += "      step_{slot} = (value_{slot} + 7) / 8 * 8;\n";
+  out += "      fn_stack_{slot} = sp - discard_{slot};\n";
+  out += "      if rp == 1 && fd > 0 && discard_{slot} <= sp && step_{slot} <= discard_{slot} && fn_stack_{slot} + ret_{slot} <= top {{\n";
+  out += "        ip = crt::peek_u32(base, fn_stack_{slot} + ret_{slot});\n";
+  out += "        if value_{slot} == 8 {{\n";
+  out += "          crt::poke_i64(base, fn_stack_{slot}, crt::peek_i64(base, sp - 8));\n";
+  out += "        }} else if value_{slot} > 0 {{\n";
+  out += "          crt::move_bytes(base, sp - step_{slot}, fn_stack_{slot}, value_{slot});\n";
+  out += "        }}\n";
+  out += "        sp = fn_stack_{slot} + step_{slot};\n";
+  out += "        fd -= 1;\n";
+  out + "        continue;\n      }}\n    }}\n"
+}
+
 // Operator `d` in slot `slot` as an arm of `run`, or "" where its template needs the `State`:
 // an operand `run` does not read, a stack value wider than a slot's scalar, or a method that
 // moves the positions.
 fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
   if slot >= 255 || template.contains("DbRef") {
     return "";
+  }
+  if def.name == "OpCall" {
+    return call_arm(slot);
+  }
+  if def.name == "OpReturn" {
+    return return_arm(slot);
   }
   sfx = "_{slot}";
   names: vector<text> = [];
@@ -339,7 +398,7 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
         span += n;
         continue;
       }
-      reads += "      {a.name}{sfx} = crt::cget_{if w == "bool" { "u8" } else { w }}(code, cbase, clen, ip + {span}){if w == "bool" { " == 1" } else { "" }};\n";
+      reads += "      {a.name}{sfx} = crt::peek_{if w == "bool" { "u8" } else { w }}(cbase, ip + {span}){if w == "bool" { " == 1" } else { "" }};\n";
       span += n;
       if uses_slots && w == "u16" {
         // A frame slot a step or more under the top lies inside the stack, read or written.
@@ -360,7 +419,7 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
       popped += 8;
       names += [a.name];
       if template.contains(a.name) {
-        pops += "        {a.name}{sfx} = crt::fget_{w}(stk, base, cap, sp - {popped});\n";
+        pops += "        {a.name}{sfx} = crt::peek_{w}(base, sp - {popped});\n";
       }
     }
     k -= 1;
@@ -379,10 +438,10 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
   body = body.replace("s.code_pos", "ip");
   // A frame slot: `get_var` reads at the top less its position, `put_var` writes a step above.
   for w in ["i64", "f64", "u8"] {
-    body = body.replace("s.get_var_{w}(", "crt::fget_{w}(stk, base, cap, sp - ");
-    body = body.replace("s.put_var_{w}(", "crt::fput_{w}(stk, base, cap, sp + 8 - ");
+    body = body.replace("s.get_var_{w}(", "crt::peek_{w}(base, sp - ");
+    body = body.replace("s.put_var_{w}(", "crt::poke_{w}(base, sp + 8 - ");
   }
-  body = body.replace("s.get_var_bool(", "state::rget_bool(stk, base, cap, sp, ");
+  body = body.replace("s.get_var_bool(", "state::rget_bool(base, sp, ");
   // A template that needs more of the `State` runs on it: the positions written first and
   // read back after, as the register table's `regs_out` / `regs_in` bracket such an operator.
   through = names_state(body.replace("s.raise_recoverable(", "raise("));
@@ -393,28 +452,27 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
   if span > OPERAND_SPAN {
     return "";
   }
-  guard = "ip <= safe";
-  if popped > 0 {
-    guard += " && sp >= {popped}";
-  } else if !void && rw != "str" {
-    // A push with nothing popped needs a free step; one that pops lands where a value was.
-    guard += " && sp <= top";
-  }
+  // The loop's head has tested the code position and the top (a free step above it): an arm
+  // tests what it pops and the frame slots it names.
+  guard = if popped > 0 { "sp >= {popped}" } else { "true" };
   guard += slots_guard.replace("POPPED", if popped > 0 { "sp - {popped}" } else { "sp" });
+  if guard.starts_with("true && ") {
+    guard = guard[8..len(guard)];
+  }
   out = "    {slot} => {{\n{reads}      if {guard} {{\n{pops}";
   if popped > 0 {
     out += "        sp -= {popped};\n";
   }
   out += "        ip += {span};\n";
   if through {
-    out += "        s.code_pos = ip;\n        s.stack_pos = sp;\n";
+    out += "        s.code_pos = ip;\n        s.stack_pos = sp;\n        s.depth = fd;\n";
     if void || rw == "str" {
       out += "        {body}\n";
     } else {
       out += "        nv{sfx}: {answer_type(rw)} = {body};\n        s.put_stack_{rw}(nv{sfx});\n";
     }
     out += "        if s.stopped || s.native >= 0 {{\n          return;\n        }}\n";
-    out += "        ip = s.code_pos;\n        sp = s.stack_pos;\n        cap = s.stack_cap;\n        top = cap - 8;\n        base = crt::stack_base(stk);\n";
+    out += "        ip = s.code_pos;\n        sp = s.stack_pos;\n        cap = s.stack_cap;\n        top = cap - 8;\n        base = crt::stack_base(stk);\n        fd = s.depth;\n        rp = -1;\n";
     return out + "        continue;\n      }}\n    }}\n";
   }
   if void {
@@ -422,11 +480,11 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
   } else {
     out += "        nv{sfx}: {answer_type(rw)} = {body};\n";
     put = if rw == "bool" {
-      "crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv{sfx}))"
+      "crt::poke_u8(base, sp, state::bool_byte(nv{sfx}))"
     } else if rw == "u8" {
-      "crt::fput_u8(stk, base, cap, sp, nv{sfx} ?? 255)"
+      "crt::poke_u8(base, sp, nv{sfx} ?? 255)"
     } else {
-      "crt::fput_{rw}(stk, base, cap, sp, nv{sfx})"
+      "crt::poke_{rw}(base, sp, nv{sfx})"
     };
     out += "        {put};\n        sp += 8;\n";
   }
@@ -439,17 +497,18 @@ fn run_fn(arms: text) -> text {
   out = "\n// The dispatch loop: `s` run from its code position until that is `end`, the run stops, or\n";
   out += "// a native is to be called (`s.native`).  The positions are locals; the `State` holds them\n";
   out += "// whenever an operator runs through it.\n";
-  out += "pub fn run(s: state::State, code: const vector<u8>, end: integer) {{\n";
+  out += "pub fn run(s: state::State, end: integer) {{\n";
   out += "  stk = s.stk;\n  ip = s.code_pos;\n  sp = s.stack_pos;\n  cap = s.stack_cap;\n";
-  out += "  base = crt::stack_base(stk);\n  clen = len(code);\n  cbase = crt::code_base(code);\n";
-  out += "  top = cap - 8;\n  safe = clen - {OPERAND_SPAN};\n";
-  out += "  while ip != end {{\n    match crt::cget_u8(code, cbase, clen, ip) {{\n{arms}      _ => {{}}\n    }}\n";
-  out += "    s.code_pos = ip;\n    s.stack_pos = sp;\n    op = s.code_u8();\n";
+  out += "  base = crt::stack_base(stk);\n  cbase = s.code_held;\n  fbase = s.fbase;\n  fd = s.depth;\n  rp = -1;\n";
+  out += "  top = cap - 8;\n  safe = len(s.code) - {OPERAND_SPAN};\n";
+  out += "  while ip != end {{\n    if ip >= 0 && ip <= safe && sp >= 0 && sp <= top {{\n";
+  out += "      match crt::peek_u8(cbase, ip) {{\n{arms}      _ => {{}}\n      }}\n    }}\n";
+  out += "    s.code_pos = ip;\n    s.stack_pos = sp;\n    s.depth = fd;\n    op = s.code_u8();\n";
   out += "    if op == 255 {{\n      op = 255 + s.code_u8();\n    }}\n";
   out += "    if !execute(s, op) {{\n      s.unknown = op;\n      s.stop(\"not carried: slot {{op}}\");\n    }}\n";
   out += "    if s.stopped || s.native >= 0 {{\n      return;\n    }}\n";
-  out += "    ip = s.code_pos;\n    sp = s.stack_pos;\n    cap = s.stack_cap;\n    top = cap - 8;\n    base = crt::stack_base(stk);\n  }}\n";
-  out += "  s.code_pos = ip;\n  s.stack_pos = sp;\n}}\n";
+  out += "    ip = s.code_pos;\n    sp = s.stack_pos;\n    cap = s.stack_cap;\n    top = cap - 8;\n    base = crt::stack_base(stk);\n    fd = s.depth;\n    rp = -1;\n  }}\n";
+  out += "  s.code_pos = ip;\n  s.stack_pos = sp;\n  s.depth = fd;\n}}\n";
   out
 }
 

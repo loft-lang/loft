@@ -2592,8 +2592,8 @@ impl Run<'_> {
             // own helpers do), and a private one may answer a buffer the runtime keeps.
             let holds_no_store = def.pub_visible
                 && def.attributes.iter().all(|a| {
-                    let b = a.typedef.base();
-                    crate::data::is_scalar(b) || matches!(b, crate::data::Type::Text(_))
+                    crate::data::is_scalar(a.typedef.base())
+                        || matches!(a.typedef.base(), crate::data::Type::Text(_))
                 });
             if !deps.is_empty() || !holds_no_store {
                 return Val::unknown();
