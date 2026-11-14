@@ -210,9 +210,10 @@ fn operator_fn(def: ir::Definition, body: text) -> text {
 // `cap` are locals of ONE function, and an operator whose template needs no more of the
 // `State` than those runs as an arm of it.  `(R-CodeBase)`: the code is a parameter, read at
 // `ip`.  `(R-OperandSpan)`: one test covers an operator's whole operand span.
-// `(R-StackBase)`: a slot is read through the stack store's base.  Both bases are taken again
-// after an operator that ran on the `State`: it can grow the stack, and the store that holds
-// the code.  `(R-DispatchStop)`: only
+// `(R-StackBase)`: a slot is read through the stack store's base, taken again after an operator
+// that ran on the `State`, which can grow the stack.  The code's base is taken once: `run` is
+// given the run image's code, in a store nothing grows while it runs — never the `State`'s
+// copy, whose store the frame list grows.  `(R-DispatchStop)`: only
 // an operator run through the `State` can stop the run, and one flag says so.  Every check
 // the accessors make is one compare in the arm's guard; where it fails the operator runs
 // through its function, which reports it.
@@ -412,7 +413,7 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
       out += "        nv{sfx}: {answer_type(rw)} = {body};\n        s.put_stack_{rw}(nv{sfx});\n";
     }
     out += "        if s.stopped || s.native >= 0 {{\n          return;\n        }}\n";
-    out += "        ip = s.code_pos;\n        sp = s.stack_pos;\n        cap = s.stack_cap;\n        top = cap - 8;\n        base = crt::stack_base(stk);\n        cbase = crt::code_base(code);\n";
+    out += "        ip = s.code_pos;\n        sp = s.stack_pos;\n        cap = s.stack_cap;\n        top = cap - 8;\n        base = crt::stack_base(stk);\n";
     return out + "        continue;\n      }}\n    }}\n";
   }
   if void {
@@ -446,7 +447,7 @@ fn run_fn(arms: text) -> text {
   out += "    if op == 255 {{\n      op = 255 + s.code_u8();\n    }}\n";
   out += "    if !execute(s, op) {{\n      s.unknown = op;\n      s.stop(\"not carried: slot {{op}}\");\n    }}\n";
   out += "    if s.stopped || s.native >= 0 {{\n      return;\n    }}\n";
-  out += "    ip = s.code_pos;\n    sp = s.stack_pos;\n    cap = s.stack_cap;\n    top = cap - 8;\n    base = crt::stack_base(stk);\n    cbase = crt::code_base(code);\n  }}\n";
+  out += "    ip = s.code_pos;\n    sp = s.stack_pos;\n    cap = s.stack_cap;\n    top = cap - 8;\n    base = crt::stack_base(stk);\n  }}\n";
   out += "  s.code_pos = ip;\n  s.stack_pos = sp;\n}}\n";
   out
 }

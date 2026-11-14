@@ -227,8 +227,8 @@ pub fn stack_put_float(store: integer, at: integer, v: float?, single: boolean) 
 fn c_code_base(b: const vector<u8>) -> integer;
 #c "loft_crt_code_base" "int64_t(const uint8_t*, int64_t)"
 
-// `(R-CodeBase)` — the bytecode's address for a run's dispatch loop to hold in a local, taken
-// again after anything that can grow the store the code lies in.
+// `(R-CodeBase)` — the bytecode's address for a run's dispatch loop to hold in a local: valid
+// while nothing grows the store the code lies in.
 pub fn code_base(b: const vector<u8>) -> integer {
   c_code_base(b)
 }

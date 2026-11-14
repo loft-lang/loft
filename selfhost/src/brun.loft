@@ -3164,10 +3164,10 @@ fn par_buf_kind(pk: integer) -> integer {
 
 // The row's argument pushed at `at` as `push_worker_arg` pushes it: a reference to the row, its
 // primitive read at the row's width and passed at the worker's, a wide value's bytes as they lie,
-// or a view of its text.  A function queue always passes the reference.  Answers the stack top.
+// or a view of its text.  Answers the stack top.
 fn par_row_arg(stk: integer, at: integer, job: ParJob, io: vector<integer>) -> integer {
   crt::vec_get(io, job.in_s, job.in_r, job.in_p, job.esize, job.row);
-  if job.input == 0 || job.kind == PAR_QUEUE_FN {
+  if job.input == 0 {
     crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     return at + 16;
   }

@@ -128,7 +128,7 @@ The dispatch loop is generated (`fill.loft`'s `run`) by the Rust interpreter's e
 | rule | in the runner |
 |---|---|
 | `(R-RegisterTable)` | the code position, the stack top and the stack's capacity are locals of `run`; an operator whose template needs no more of the `State` is an arm of it, any other templated operator with scalar operands an arm that writes the positions to the `State`, runs, and reads them back |
-| `(R-CodeBase)` | operands are read through the code's address (`crt::code_base`, `crt::cget_*`), taken again after an operator that ran on the `State` |
+| `(R-CodeBase)` | operands are read through the code's address (`crt::code_base`, `crt::cget_*`), taken once: `run` is given the run image's code, whose store nothing grows during a run (the `State`'s copy lies in a store the frame list grows) |
 | `(R-OperandSpan)` | one test, `ip <= safe`, covers an arm's whole operand span |
 | `(R-StackBase)` | a slot is read through the stack store's base (`crt::stack_base`, `crt::fget_*` / `fput_*`) |
 | `(R-DispatchStop)` | `State.stopped`, set with `fault` by `State::stop` |

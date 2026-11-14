@@ -104,7 +104,8 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
         s.stop("not carried");
       }
     } else {
-      fill::run(s, s.code, end);
+      // The image's code, not the State's copy: `run` holds its address (`(R-CodeBase)`).
+      fill::run(s, img.code, end);
     }
     if s.unknown >= 0 {
       // The reason names the operator: the table knows only its slot.
