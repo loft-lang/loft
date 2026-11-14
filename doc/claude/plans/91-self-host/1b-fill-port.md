@@ -30,7 +30,8 @@ closed or left as the need arises.
 | `State` methods for operators with no template (`fn_call`, `var_text`, …) | methods of the same name in `state.loft` |
 | `src/ops.rs` helpers (`fused_int`, `fused_cmp`) | `selfhost/src/ops.loft`, the same names |
 | `Stores` (`src/store.rs`, `src/database/`) | the C runtime's store routines, through `selfhost/crt` (STORE_MODEL.md: the C model is the standard) |
-| the dispatch loop | `selfhost/src/fill_run.loft::call` |
+| the dispatch loop | `selfhost/src/fill_run.loft` (`call` for one function, `run_main` for a program) |
+| the library functions `static_call` reaches | the hand-built runner's native ports (`brun::call_native`), over the same stack store |
 
 Regenerate the table after changing a template or porting a `State` method:
 
@@ -57,7 +58,11 @@ fn OpAddInt(v1: __word, v2: __word) -> __word;
 - `s` is the `State`.  Braces are doubled, as in `#rust` (`{{ … }}`).
 - An operator with NO `#rust` template is a `State` method that reads its own operands;
   the generator emits it once `state.loft` declares `pub fn <name>(self: State`.
-- A stack boolean arrives as its byte (0, 1, 255 for null), as in `fill.rs`.
+- A stack boolean or enum arrives as its byte (0, 1, 255 for null), as in `fill.rs`; a
+  character as its code point; a reference as a `state::DbRef`.
+- A text answer is a view the template pushes itself (`s.put_field_text(v1, fld);`): a loft
+  text value is not a view into a store or the code.  The generated function is named
+  `op_<operator>`, so none takes a standard-library name.
 - The answer local is typed and nullable, so a template may answer `null`.
 
 Two language features exist for the port:
@@ -76,7 +81,8 @@ Two language features exist for the port:
 | a twin's body and its C routine agree | `tests/c_emit.rs::a_c_twin_runs_its_body_and_the_c_backend_its_routine` |
 | a function answers what the Rust interpreter answers | `selfhost/bench/run_fill.loft <program image> <run image> <function> <args…>` against `loft --interpret` |
 | no kernel function differs from the IR runner; the integer kernels' hand-computed answers | `selfhost/tests/fill.loft`, run by `tests/selfhost.rs` |
-| which operator stops each kernel function (the worklist) | `selfhost/bench/fill_census.loft <program image> <run image>` |
+| which operator stops each kernel function | `selfhost/bench/fill_census.loft <program image> <run image>` |
+| the corpus: each plain program of `tests/scripts` against `loft --interpret`, and the operator that stops each one not run to its end (the worklist) | `python3 selfhost/bench/fill_survey.py` |
 | where the top is after an operator | `LOFT_LOG=full loft --interpret` prints each operator with the top before it; `LOFT_FILL_TRACE=1` prints the runner's |
 
 The first two are run by hand; neither is a test yet.
@@ -85,12 +91,9 @@ The first two are run by hand; neither is a test yet.
 
 | Part | State |
 |---|---|
-| operator templates | arithmetic, comparisons, shifts, casts, locals of every scalar type, jumps, the fused integer operators, calls and frames, reference locals, and the field reads and writes of every width; the rest listed by `--missing` |
-| `State` methods | calls (`fn_call`, `fn_return`, `reserve_frame`), texts (`string_from_code`, `var_text`, `arg_text`, `append_text`, `put_text`, `init_text`, `clear_text`, `free_text`), references and stores (`init_ref`, `init_ref_sentinel`, `database`, `free_ref`, `init_create_stack`); the rest (record and vector building, formatting, text walks, coroutines, `par`, keyed walks) listed by `--missing` as `(State)` |
-| natives (`OpStaticCall`) | none; the hand-built runner `brun.loft` holds ports of about 110 natives over the same `crt` routines, to be moved under `State::static_call` |
-| running a program's `main` | needs the natives and the text operators; today one integer function is called directly |
-| records, vectors, keyed collections | no operator carried; each is a template calling the `crt` routine the C backend calls for it |
-| a survey over the corpus | `selfhost/bench/run_image_survey.py` drives the hand-built runner; it needs a mode for this one |
+| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: file access, constants (`OpConstRef`), fn-refs and closures, keyed lookups and walks, iteration, coroutines, `par` |
+| natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own |
+| a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |
 
 The hand-built runner (`selfhost/src/brun.loft`) stays until this one runs the corpus; it
