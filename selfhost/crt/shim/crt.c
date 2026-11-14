@@ -904,6 +904,14 @@ int64_t loft_crt_child_rec_in_place(int64_t *out, int64_t no, int64_t tp, int64_
     return 0;
 }
 
+/* OpSetChildRec (`Stores::set_child_rec`): the child record the field names set from `src` as a
+ * `tp` record, the source freed after when `free_source`. */
+void loft_crt_set_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int64_t ss, int64_t sr, int64_t sp,
+                            int64_t free_source) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_set_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(fs, fr, fp), loft_crt_ref(ss, sr, sp), (int) free_source);
+}
+
 /* OpMoveVector (Stores::move_vector): `src`'s elements moved onto `dst`, `linked` an element
  * type of a linked group. */
 void loft_crt_move_vector(int64_t d_store, int64_t d_rec, int64_t d_pos, int64_t s_store, int64_t s_rec,

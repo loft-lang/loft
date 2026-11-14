@@ -249,6 +249,8 @@ H_CHILD_REC_IN_PLACE = 224;
 H_RESERVE_HASH = 225;
 H_MATH_FUNC2_SINGLE = 226;
 H_REVERSE_VECTOR = 227;
+H_SET_CHILD_REC = 228;
+H_LINK_RECORD = 229;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -551,6 +553,8 @@ pub fn handler(name: text) -> integer {
     "OpReserveHash" => H_RESERVE_HASH,
     "OpMathFunc2Single" => H_MATH_FUNC2_SINGLE,
     "OpReverseVector" => H_REVERSE_VECTOR,
+    "OpSetChildRec" => H_SET_CHILD_REC,
+    "OpLinkRecord" => H_LINK_RECORD,
     "OpCastSingleFromText" => H_CAST_FROM_TEXT,
     "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
@@ -594,6 +598,7 @@ N_TO_LOWERCASE_DEST = 26;
 N_WRITE_TEXT_RAW = 27;
 N_IS_DIR = 32;
 N_YIELD_FRAME = 33;
+N_IS_FILE = 34;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -630,6 +635,7 @@ pub fn native_handler(name: text) -> integer {
     "n_write_text_raw" => N_WRITE_TEXT_RAW,
     "n_is_dir" => N_IS_DIR,
     "n_yield_frame" => N_YIELD_FRAME,
+    "n_is_file" => N_IS_FILE,
     "t_4text_byte_at" => N_TEXT_BYTE_AT,
     "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
     "t_4text_rfind" => N_TEXT_RFIND,
@@ -796,6 +802,8 @@ fn layout_of(h: integer) -> text {
     225 => "h",
     226 => "c",
     227 => "h",
+    228 => "h",
+    229 => "hh",
     _ => ""
   }
 }
@@ -1267,10 +1275,10 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     sp -= 8;
     set_bool(stk, sp, if cpn.ends_with("is_lowercase") { cpc.is_lowercase() } else if cpn.ends_with("is_uppercase") { cpc.is_uppercase() } else if cpn.ends_with("is_numeric") { cpc.is_numeric() } else if cpn.ends_with("is_alphanumeric") { cpc.is_alphanumeric() } else if cpn.ends_with("is_alphabetic") { cpc.is_alphabetic() } else if cpn.ends_with("is_whitespace") { cpc.is_whitespace() } else { cpc.is_control() });
     sp += 8;
-  } else if nh == N_IS_DIR {
+  } else if nh == N_IS_DIR || nh == N_IS_FILE {
     idp = crt::stack_str(stk, sp - 16) ?? "";
     sp -= 16;
-    set_bool(stk, sp, is_dir(idp));
+    set_bool(stk, sp, if nh == N_IS_DIR { is_dir(idp) } else { is_file(idp) });
     sp += 8;
   } else if nh == N_YIELD_FRAME {
     // The frame-yield flag only a host's frame loop reads; a run from an image has none.
@@ -2402,6 +2410,52 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       m2sr = if m2sv == null { null } else { m2sv! as float };
     }
     crt::set_float(stk, 1, 8 + sp - 8, 0, m2sr, true);
+  } else if h == H_SET_CHILD_REC {
+    // The field's child record set from the source (the type's top bit frees the source).
+    ensure_table(img.types, tl);
+    scraw = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    scs = io[0] ?? NULL_STORE;
+    scr = io[1] ?? 0;
+    scp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    crt::set_child_rec(scraw & 16383, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, scs, scr, scp, scraw & 32768 != 0);
+  } else if h == H_LINK_RECORD {
+    // A record the vector member holds handed to its group's other members after an element
+    // write (`link_record_siblings`, the C backend's `OpLinkRecord`).
+    ensure_table(img.types, tl);
+    lptp = u16_at(img.code, pc);
+    lfld = u16_at(img.code, pc + 2);
+    pc += 4;
+    crt::slot_ref(io, stk, sp - 16);
+    lrs = io[0] ?? NULL_STORE;
+    lrr = io[1] ?? 0;
+    lrp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    lgm = types::group_members(img.types, lptp, lfld);
+    if lgm == null {
+      why[0] = "a linked group the runner cannot file into: OpLinkRecord";
+      return -1;
+    }
+    if len(lgm!) >= 6 {
+      // The siblings: every member but the field itself (the first row), which holds it.
+      lsib: vector<integer> = [];
+      for li in 3..len(lgm!) {
+        lsib += [lgm![li] ?? 0];
+      }
+      lheld = false;
+      lnull = false;
+      lk = 0;
+      while lk + 2 < len(lgm!) {
+        lheld = lheld || (lgm![lk + 1] ?? -1) == 0;
+        lnull = lnull || types::nullable_element(img.types, lgm![lk + 2] ?? 0);
+        lk += 3;
+      }
+      crt::group_finish(types::content_of(img.types, lgm![2] ?? 0) ?? 0, lheld, lnull, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lrs, lrr, lrp, lsib);
+    }
   } else if h == H_REVERSE_VECTOR {
     rvsize = u16_at(img.code, pc);
     pc += 2;
