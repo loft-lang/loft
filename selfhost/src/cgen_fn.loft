@@ -23,6 +23,7 @@ use cgen_text;
 use cgen_ref;
 use cgen_bind;
 use cgen_cold;
+use cgen_split;
 use own;
 use cgen_texts;
 use cgen_natives;
@@ -2246,12 +2247,11 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   } else {
     "static"
   };
-  // `(R-CSplit)` writes a body over its budget of call sites in parts: not carried.  Every
-  // call site opens a parenthesis, so a body with no more of those than the budget is whole.
-  if storage != "LOFT_HOT_INLINE" && len(out.split('(')) > 300 {
-    return Written { text: "", refused: "a body the writer may split" };
-  }
   list = if len(params) == 0 { "void" } else { params.join(", ") };
+  // `(R-CSplit)` writes a body over its budget of call sites in parts: not carried.
+  if cgen_split::over_budget(storage, list, out) {
+    return Written { text: "", refused: "a body the writer splits" };
+  }
   name = cgen_names::twin_name(x.b, x.dups, twin);
   Written { text: "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n", refused: "" }
 }
