@@ -2794,3 +2794,28 @@ int64_t loft_crt_lex(char *out, int64_t cap, const char *src, int64_t bytes) {
     free(e.p);
     return n;
 }
+
+/* ── Compiled standard-library bodies (@PLN91; src/c/bodies.rs) ─────────────────────────────
+ * `loft_bodies.c` is the C writer's code for the standard-library functions the Rust build also
+ * compiles, with one entry each that reads its arguments from the runner's stack as the
+ * bytecode's call leaves them.  It is compiled here because the program's stores and types are
+ * this unit's: every runtime global is private to its C unit.  loft writes it into the
+ * directory this shim compiles in, from the building binary (`c_shim::put_bodies`), so it is
+ * never a file of this package: angle brackets, so a stray copy beside this file cannot shadow
+ * it.  `-DLOFT_CRT_NO_BODIES` leaves it out (a compile outside loft): every lookup then answers
+ * -1 and the runner runs each function's loft body. */
+#ifndef LOFT_CRT_NO_BODIES
+#include <loft_bodies.c>
+#else
+int64_t loft_body_find(const char *name, int64_t len) {
+    (void) name;
+    (void) len;
+    return -1;
+}
+int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) {
+    (void) entry;
+    (void) stk;
+    (void) sp;
+    return -1;
+}
+#endif

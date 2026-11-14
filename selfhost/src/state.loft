@@ -96,6 +96,8 @@ pub struct State {
   // names (`fn_call_ref_store`; -1: none).
   pub store_insts: vector<integer>,
   pub call_target: integer,
+  // Per native: the compiled body the build carries for it (`crt::body_find`), -1 for none.
+  pub bodies: vector<integer>,
 }
 
 // `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
@@ -179,12 +181,13 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1 };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [] };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
     carried = brun::native_handler(name) >= 0;
     s.shared += [if carried { -1 } else { img.shared[i] ?? -1 }];
+    s.bodies += [if carried { -1 } else { crt::body_find(name) }];
     twin = -1;
     if !carried && name.starts_with("loft_shared_") && name.ends_with("#dest") {
       plain = name[0..len(name) - 5];
@@ -910,6 +913,16 @@ pub fn init_create_stack(self: State) {
 // which holds the natives' table.
 pub fn static_call(self: State) {
   idx = self.code_u16();
+  body = self.bodies[idx] ?? -1;
+  if body >= 0 {
+    // A compiled body, called on the frame the bytecode's call would use; a negative answer
+    // leaves the stack as it was and the loft body runs.
+    top = crt::body_call(body, self.stk, self.stack_pos);
+    if top >= 0 {
+      self.stack_pos = top;
+      return;
+    }
+  }
   d = self.shared[idx] ?? -1;
   if d < 0 && (self.shared_dest[idx] ?? -1) >= 0 {
     // The destination form: the destination parked until the body returns (`fn_return`),
