@@ -1,8 +1,8 @@
 diff --git a/src/scopes/args.rs b/src/scopes/args.rs
-index 2cb33b147..2a931b523 100644
+index eada78143..37d57e7ae 100644
 --- a/src/scopes/args.rs
 +++ b/src/scopes/args.rs
-@@ -218,16 +218,8 @@ impl Scopes<'_> {
+@@ -311,16 +311,8 @@ impl Scopes<'_> {
                  if *d == create_stack_nr
                      && matches!(cargs.first().map(Value::unspan), Some(Value::Var(_))))
          });
@@ -19,7 +19,7 @@ index 2cb33b147..2a931b523 100644
              // loft#1320 — a branch VALUE consumed by this call (`total(if c { g(a) } else { g(n) })`)
              // never reaches `scan_set`, so its arms get their owners here, homed in this statement's
              // scope: the call reads the temp and the scope's exit frees it by identity.
-@@ -602,11 +594,6 @@ impl Scopes<'_> {
+@@ -691,11 +683,6 @@ impl Scopes<'_> {
                  ls.push(scanned);
              }
          }
@@ -29,9 +29,9 @@ index 2cb33b147..2a931b523 100644
 -            self.keep_operand_order(&mut preamble, &hoisted_from, &mut ls, function, data);
 -        }
          if outer_call != u32::MAX && ls.len() == args.len() {
-             self.keep_viewed_displaced(
-                 outer_call,
-@@ -738,143 +725,6 @@ impl Scopes<'_> {
+             self.copy_written_text_operands(outer_call, &mut preamble, &mut ls, function, data);
+         }
+@@ -830,61 +817,6 @@ impl Scopes<'_> {
          }
      }
  
@@ -90,6 +90,13 @@ index 2cb33b147..2a931b523 100644
 -        }
 -    }
 -
+     /// `@FR-E-Left` for a text operand: a text variable passed by VALUE (its parameter a
+     /// `text`) is read by reference by the interpreter and the Rust backend, so a LATER operand
+     /// that writes the variable — assigns it, or hands it to a parameter that is not a `text`
+@@ -928,88 +860,6 @@ impl Scopes<'_> {
+         }
+     }
+ 
 -    /// Does `operand` answer the same whenever it is evaluated relative to `hoisted`: a
 -    /// constant, a variable `hoisted` does not write, a `&` reference to one, or an operator
 -    /// over such values that takes and answers values only (arithmetic, comparison,
