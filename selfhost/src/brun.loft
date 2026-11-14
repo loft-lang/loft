@@ -193,6 +193,9 @@ H_CONV_FLOAT_FROM_SINGLE = 169;
 H_GET_TEXT_SUB = 170;
 H_TEXT_CHARACTER = 171;
 H_TEXT_WALK_STEP = 172;
+H_TEXT_END_JUMP = 173;
+H_CAST_FROM_TEXT = 175;
+H_RANGE_DEFAULT = 176;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -424,6 +427,11 @@ pub fn handler(name: text) -> integer {
     "OpGetTextSub" => H_GET_TEXT_SUB,
     "OpTextCharacter" => H_TEXT_CHARACTER,
     "OpTextWalkStep" => H_TEXT_WALK_STEP,
+    "OpTextEndJump" => H_TEXT_END_JUMP,
+    "OpCastIntFromText" => H_CAST_FROM_TEXT,
+    "OpCastFloatFromText" => H_CAST_FROM_TEXT,
+    "OpRangeDefault" => H_RANGE_DEFAULT,
+    "OpLengthSorted" => H_LENGTH_VECTOR,
     _ => -1
   }
 }
@@ -602,6 +610,8 @@ fn layout_of(h: integer) -> text {
     165 => "hbh",
     167 => "h",
     172 => "hhhhb",
+    173 => "hbhi",
+    176 => "qqq",
     _ => ""
   }
 }
@@ -854,6 +864,162 @@ fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
   b
 }
 
+// A native `OpStaticCall` names, by the runner's number for it (`native_handler`): its
+// arguments popped and its result pushed on the stack store `stk` at `sp0`, as Rust's native
+// does.  Answers the new stack top, or -1 with the reason in `why[0]` when the runner does not
+// carry it.
+fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, why: vector<text>) -> integer {
+  sp = sp0;
+  if nh == N_ASSERT {
+    line = get(stk, sp - 8);
+    file = crt::stack_str(stk, sp - 24);
+    message = crt::stack_str(stk, sp - 40);
+    test = get_bool(stk, sp - 48);
+    sp -= 48;
+    assert(test, message ?? "", file ?? "", line ?? 0);
+  } else if nh == N_ENV_VARIABLE_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    vname = crt::stack_str(stk, sp - 32);
+    sp -= 32;
+    // An unset variable is Rust's null text appended (`Stores::os_variable`), not an empty one.
+    ev = env_variable(vname ?? "");
+    if ev == null {
+      crt::ref_text_append_null(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else {
+      crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ev);
+    }
+  } else if nh == N_NOW || nh == N_TICKS {
+    set(stk, sp, if nh == N_NOW { now() } else { ticks() });
+    sp += 8;
+  } else if nh == N_PROTECT || nh == N_UNPROTECT {
+    sp -= 16;
+    crt::slot_ref(io, stk, sp);
+    crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
+  } else if nh == N_TEXT_FIND {
+    // The byte position of the first `value` in `self`, null when there is none.
+    fval = crt::stack_str(stk, sp - 16) ?? "";
+    fself = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    set(stk, sp, fself.find(fval));
+    sp += 8;
+  } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
+    nv = crt::stack_str(stk, sp - 16) ?? "";
+    ns2 = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    set_bool(stk, sp, if nh == N_STARTS_WITH { ns2.starts_with(nv) } else { ns2.ends_with(nv) });
+    sp += 8;
+  } else if nh == N_WRITE_BYTES {
+    // The byte vector popped, then the path; answers whether it was written.
+    crt::slot_ref(io, stk, sp - 16);
+    wpath = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    set_bool(stk, sp, crt::write_bytes(wpath, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    sp += 8;
+  } else if nh == N_VECTOR_SUM_INT {
+    acc = get(stk, sp - 8);
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    set(stk, sp, crt::vector_sum_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acc));
+    sp += 8;
+  } else if nh == N_OS_TEMP_DIR_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_temp_dir());
+  } else if nh == N_KEYED_ENTRY_INTS {
+    // `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` — the entry under
+    // the key in the hash `record_collection` names, found or filed with its key written.
+    if !(tl[0] ?? false) {
+      ensure_table(img.types, tl);
+    }
+    kptp = get(stk, sp - 48) ?? 0;
+    kfld = get(stk, sp - 40) ?? 0;
+    krc = types::record_collection(img.types, kptp, kfld);
+    if (krc.fld != 65535 && krc.at == null) || types::hash_element(img.types, krc.tp) == null {
+      why[0] = "a keyed entry in a collection that is not a hash: n_keyed_entry_ints";
+      return -1;
+    }
+    kkeys = len(img.types[krc.tp]!.keys);
+    kn = if kkeys < 1 { 1 } else if kkeys > 4 { 4 } else { kkeys };
+    for ki in 0..kn {
+      crt::key_int(get(stk, sp - 32 + ki * 8));
+    }
+    crt::slot_ref(io, stk, sp - 64);
+    sp -= 64;
+    crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (krc.at ?? 0), types::content_of(img.types, krc.tp) ?? 0, krc.tp, kn);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_KEYED_ENTRY_TEXT {
+    // `keyed_entry_text(data, parent_tp, fld, key)`: as the integer form, one text key.
+    ensure_table(img.types, tl);
+    tptp = get(stk, sp - 32) ?? 0;
+    tfld = get(stk, sp - 24) ?? 0;
+    trc = types::record_collection(img.types, tptp, tfld);
+    if (trc.fld != 65535 && trc.at == null) || types::hash_element(img.types, trc.tp) == null {
+      why[0] = "a keyed entry in a collection that is not a hash: n_keyed_entry_text";
+      return -1;
+    }
+    crt::key_text(crt::stack_str(stk, sp - 16));
+    crt::slot_ref(io, stk, sp - 48);
+    sp -= 48;
+    crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (trc.at ?? 0), types::content_of(img.types, trc.tp) ?? 0, trc.tp, 1);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_READ_BYTES {
+    // The file's bytes, a vector in a store of its own (the C runtime's `read_bytes`).
+    rpath = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    crt::read_bytes(io, rpath);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_ARGUMENTS {
+    crt::arguments_into(io);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_STORE_MEMORY_DEST {
+    // The C runtime's report, its types named as the image names them, into the text the
+    // destination reference names.
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::type_names([for tn in img.types { tn.name }]);
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::store_memory());
+  } else if nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST {
+    // The bytes `lo..hi` of a byte vector — the whole of it for `text_from_bytes` — as a
+    // text into the destination.
+    crt::slot_ref(io, stk, sp - 16);
+    tds = io[0] ?? NULL_STORE;
+    tdr = io[1] ?? 0;
+    tdp = io[2] ?? 0;
+    sp -= 16;
+    tlo: integer? = 0;
+    thi: integer? = 0;
+    if nh == N_TEXT_FROM_BYTE_RANGE_DEST {
+      thi = get(stk, sp - 8);
+      tlo = get(stk, sp - 16);
+      sp -= 16;
+    }
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    if nh == N_TEXT_FROM_BYTES_DEST {
+      thi = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    }
+    crt::ref_text_append(tds, tdr, tdp, crt::vec_text_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tlo, thi));
+  } else if nh == N_HASH_SORTED || nh == N_HASH_UNSORTED {
+    // A hash's records as a vector, in key order or the hash's own (a scratch vector).
+    ensure_table(img.types, tl);
+    htp = get(stk, sp - 8) ?? 0;
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    crt::hash_sorted(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, htp, nh == N_HASH_UNSORTED);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else {
+    nname = img.natives[idx] ?? "native {idx}";
+    why[0] = "a native the runner does not carry: {nname}";
+    return -1;
+  }
+  sp
+}
+
 // What a run answers: the operator it stopped at when it refused one, and how many it ran.
 pub struct Outcome {
   pub refused: text,
@@ -907,6 +1073,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   trace = env_variable("LOFT_BRUN_TRACE") != null;
   // Each element type's default image, derived on first use (`types::default_image`).
   images: vector<vector<u8>> = [];
+  // Why a native was refused (`call_native`).
+  nwhy: vector<text> = [""];
   // A walk step's answer: the record's reference and the walk's next state.
   step_io: vector<integer> = [0, 0, 0, 0];
   imaged: vector<boolean> = [];
@@ -1296,145 +1464,11 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       // and pushes its result on this stack.
       idx = u16_at(img.code, pc);
       pc += 2;
-      nh = ns[idx] ?? -1;
-      if nh == N_ASSERT {
-        line = get(stk, sp - 8);
-        file = crt::stack_str(stk, sp - 24);
-        message = crt::stack_str(stk, sp - 40);
-        test = get_bool(stk, sp - 48);
-        sp -= 48;
-        assert(test, message ?? "", file ?? "", line ?? 0);
-      } else if nh == N_ENV_VARIABLE_DEST {
-        crt::slot_ref(io, stk, sp - 16);
-        vname = crt::stack_str(stk, sp - 32);
-        sp -= 32;
-        crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, env_variable(vname ?? "") ?? "");
-      } else if nh == N_NOW || nh == N_TICKS {
-        set(stk, sp, if nh == N_NOW { now() } else { ticks() });
-        sp += 8;
-      } else if nh == N_PROTECT || nh == N_UNPROTECT {
-        sp -= 16;
-        crt::slot_ref(io, stk, sp);
-        crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
-      } else if nh == N_TEXT_FIND {
-        // The byte position of the first `value` in `self`, null when there is none.
-        fval = crt::stack_str(stk, sp - 16) ?? "";
-        fself = crt::stack_str(stk, sp - 32) ?? "";
-        sp -= 32;
-        set(stk, sp, fself.find(fval));
-        sp += 8;
-      } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
-        nv = crt::stack_str(stk, sp - 16) ?? "";
-        ns2 = crt::stack_str(stk, sp - 32) ?? "";
-        sp -= 32;
-        set_bool(stk, sp, if nh == N_STARTS_WITH { ns2.starts_with(nv) } else { ns2.ends_with(nv) });
-        sp += 8;
-      } else if nh == N_WRITE_BYTES {
-        // The byte vector popped, then the path; answers whether it was written.
-        crt::slot_ref(io, stk, sp - 16);
-        wpath = crt::stack_str(stk, sp - 32) ?? "";
-        sp -= 32;
-        set_bool(stk, sp, crt::write_bytes(wpath, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
-        sp += 8;
-      } else if nh == N_VECTOR_SUM_INT {
-        acc = get(stk, sp - 8);
-        crt::slot_ref(io, stk, sp - 24);
-        sp -= 24;
-        set(stk, sp, crt::vector_sum_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acc));
-        sp += 8;
-      } else if nh == N_OS_TEMP_DIR_DEST {
-        crt::slot_ref(io, stk, sp - 16);
-        sp -= 16;
-        crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_temp_dir());
-      } else if nh == N_KEYED_ENTRY_INTS {
-        // `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` — the entry under
-        // the key in the hash `record_collection` names, found or filed with its key written.
-        if !(tl[0] ?? false) {
-          ensure_table(img.types, tl);
-        }
-        kptp = get(stk, sp - 48) ?? 0;
-        kfld = get(stk, sp - 40) ?? 0;
-        krc = types::record_collection(img.types, kptp, kfld);
-        if (krc.fld != 65535 && krc.at == null) || types::hash_element(img.types, krc.tp) == null {
-          return Outcome { refused: "a keyed entry in a collection that is not a hash: n_keyed_entry_ints at {at}", steps: steps };
-        }
-        kkeys = len(img.types[krc.tp]!.keys);
-        kn = if kkeys < 1 { 1 } else if kkeys > 4 { 4 } else { kkeys };
-        for ki in 0..kn {
-          crt::key_int(get(stk, sp - 32 + ki * 8));
-        }
-        crt::slot_ref(io, stk, sp - 64);
-        sp -= 64;
-        crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (krc.at ?? 0), types::content_of(img.types, krc.tp) ?? 0, krc.tp, kn);
-        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-        sp += 16;
-      } else if nh == N_KEYED_ENTRY_TEXT {
-        // `keyed_entry_text(data, parent_tp, fld, key)`: as the integer form, one text key.
-        ensure_table(img.types, tl);
-        tptp = get(stk, sp - 32) ?? 0;
-        tfld = get(stk, sp - 24) ?? 0;
-        trc = types::record_collection(img.types, tptp, tfld);
-        if (trc.fld != 65535 && trc.at == null) || types::hash_element(img.types, trc.tp) == null {
-          return Outcome { refused: "a keyed entry in a collection that is not a hash: n_keyed_entry_text at {at}", steps: steps };
-        }
-        crt::key_text(crt::stack_str(stk, sp - 16));
-        crt::slot_ref(io, stk, sp - 48);
-        sp -= 48;
-        crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (trc.at ?? 0), types::content_of(img.types, trc.tp) ?? 0, trc.tp, 1);
-        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-        sp += 16;
-      } else if nh == N_READ_BYTES {
-        // The file's bytes, a vector in a store of its own (the C runtime's `read_bytes`).
-        rpath = crt::stack_str(stk, sp - 16) ?? "";
-        sp -= 16;
-        crt::read_bytes(io, rpath);
-        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-        sp += 16;
-      } else if nh == N_ARGUMENTS {
-        crt::arguments_into(io);
-        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-        sp += 16;
-      } else if nh == N_STORE_MEMORY_DEST {
-        // The C runtime's report, its types named as the image names them, into the text the
-        // destination reference names.
-        crt::slot_ref(io, stk, sp - 16);
-        sp -= 16;
-        crt::type_names([for tn in img.types { tn.name }]);
-        crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::store_memory());
-      } else if nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST {
-        // The bytes `lo..hi` of a byte vector — the whole of it for `text_from_bytes` — as a
-        // text into the destination.
-        crt::slot_ref(io, stk, sp - 16);
-        tds = io[0] ?? NULL_STORE;
-        tdr = io[1] ?? 0;
-        tdp = io[2] ?? 0;
-        sp -= 16;
-        tlo: integer? = 0;
-        thi: integer? = 0;
-        if nh == N_TEXT_FROM_BYTE_RANGE_DEST {
-          thi = get(stk, sp - 8);
-          tlo = get(stk, sp - 16);
-          sp -= 16;
-        }
-        crt::slot_ref(io, stk, sp - 16);
-        sp -= 16;
-        if nh == N_TEXT_FROM_BYTES_DEST {
-          thi = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-        }
-        crt::ref_text_append(tds, tdr, tdp, crt::vec_text_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tlo, thi));
-      } else if nh == N_HASH_SORTED || nh == N_HASH_UNSORTED {
-        // A hash's records as a vector, in key order or the hash's own (a scratch vector).
-        ensure_table(img.types, tl);
-        htp = get(stk, sp - 8) ?? 0;
-        crt::slot_ref(io, stk, sp - 24);
-        sp -= 24;
-        crt::hash_sorted(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, htp, nh == N_HASH_UNSORTED);
-        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-        sp += 16;
-      } else {
-        nname = img.natives[idx] ?? "native {idx}";
-        return Outcome { refused: "a native the runner does not carry: {nname} at {at}", steps: steps };
+      nsp = call_native(ns[idx] ?? -1, idx, img, stk, sp, io, tl, nwhy);
+      if nsp < 0 {
+        return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
       }
+      sp = nsp;
     } else if h == H_PREALLOC_VECTOR {
       sp -= 16;
       crt::slot_ref(io, stk, sp);
@@ -2469,6 +2503,36 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     } else if h == H_TEXT_WALK_STEP {
       crt::text_walk_step(stk, sp, u16_at(img.code, pc), u16_at(img.code, pc + 2), u16_at(img.code, pc + 4), u16_at(img.code, pc + 6), img.code[pc + 8] ?? 0);
       pc += 9;
+    } else if h == H_TEXT_END_JUMP {
+      // A text walk's loop test: on while the text is longer than the index.
+      tes = u16_at(img.code, pc);
+      tea = img.code[pc + 2] ?? 0;
+      tei = u16_at(img.code, pc + 3);
+      ted = i32_at(img.code, pc + 5);
+      pc += 9;
+      if crt::local_text_len(stk, sp - tes, tea) > (get(stk, sp - tei) ?? (-9223372036854775807 - 1)) {
+        pc += ted;
+      }
+    } else if h == H_CAST_FROM_TEXT {
+      // `t as integer` / `t as float` (Rust's `parse`): null when it does not parse.
+      cts = crt::stack_str(stk, sp - 16);
+      sp -= 16;
+      if (img.ops[op] ?? "") == "OpCastIntFromText" {
+        set(stk, sp, if cts == null { null } else { cts! as integer? });
+      } else {
+        crt::set_float(stk, 1, 8 + sp, 0, if cts == null { null } else { cts! as float? }, false);
+      }
+      sp += 8;
+    } else if h == H_RANGE_DEFAULT {
+      // A value checked against its declared range: null takes the default (when there is
+      // one), out of range the default (Rust raises a recoverable error, which only its
+      // logger sees).
+      rlo = i64_at(img.code, pc);
+      rhi = i64_at(img.code, pc + 8);
+      rdf = i64_at(img.code, pc + 16);
+      pc += 24;
+      rv = get(stk, sp - 8);
+      set(stk, sp - 8, if rv == null { if rdf == null { rv } else { rdf } } else if rv! >= (rlo ?? 0) && rv! <= (rhi ?? 0) { rv } else { rdf });
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };

@@ -244,6 +244,14 @@ void loft_crt_ref_text_append(int64_t s, int64_t r, int64_t p, const char *val, 
     if (t) loft_text_concat(t, loft_crt_str(val, bytes));
 }
 
+/* The null text's one byte appended to the text the reference names: what a Rust native's
+ * destination form writes for an absent answer (`STRING_NULL`), so an empty destination reads
+ * back as null. */
+void loft_crt_ref_text_append_null(int64_t s, int64_t r, int64_t p) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
+    if (t) loft_text_concat(t, loft_lit("", 1));
+}
+
 /* `OpClearStackText`: the text the reference `(s, r, p)` names emptied, its buffer kept. */
 void loft_crt_ref_text_clear(int64_t s, int64_t r, int64_t p) {
     loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
@@ -328,6 +336,25 @@ void loft_crt_text_walk_step(int64_t store, int64_t sp, int64_t c, int64_t index
     *(int64_t *) loft_crt_slot_at(store, sp - index) = at;
     *nx = moved;
     *(uint32_t *) loft_crt_slot_at(store, sp - c) = ch;
+}
+
+/* The text a frame slot holds — a local's (`arg` 0) or a view (1) — as `State::local_text`. */
+static loft_str loft_crt_local_text(int64_t store, int64_t at, int64_t arg) {
+    if (arg) {
+        loft_str *a = (loft_str *) loft_crt_slot_at(store, at);
+        return a->p ? *a : loft_lit("", 0);
+    }
+    return loft_view((loft_text *) loft_crt_slot_at(store, at));
+}
+
+/* OpTextEndJump's size: the byte length of the text at `at`, the null text's one byte included. */
+int64_t loft_crt_local_text_len(int64_t store, int64_t at, int64_t arg) {
+    return (int64_t) loft_crt_local_text(store, at, arg).len;
+}
+
+/* OpTextNullJump: is the text at `at` the null text? */
+int64_t loft_crt_local_text_null(int64_t store, int64_t at, int64_t arg) {
+    return loft_str_is_null(loft_crt_local_text(store, at, arg)) ? 1 : 0;
 }
 
 /* `copy_result`: `n` bytes moved within the stack. */

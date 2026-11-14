@@ -350,6 +350,12 @@ fn c_stack_text_char(store: integer, at: integer) -> integer;
 #c "loft_crt_stack_text_char" "int64_t(int64_t, int64_t)"
 fn c_text_walk_step(store: integer, sp: integer, c: integer, index: integer, next: integer, src: integer, arg: integer);
 #c "loft_crt_text_walk_step" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_local_text_len(store: integer, at: integer, arg: integer) -> integer;
+#c "loft_crt_local_text_len" "int64_t(int64_t, int64_t, int64_t)"
+fn c_local_text_null(store: integer, at: integer, arg: integer) -> integer;
+#c "loft_crt_local_text_null" "int64_t(int64_t, int64_t, int64_t)"
+fn c_ref_text_append_null(s: integer, r: integer, p: integer);
+#c "loft_crt_ref_text_append_null" "void(int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -441,6 +447,23 @@ pub fn stack_text_char(store: integer, at: integer) -> integer {
 // `OpTextWalkStep`: one step of `for c in t`, its frame slots addressed from the stack top.
 pub fn text_walk_step(store: integer, sp: integer, c: integer, index: integer, next: integer, src: integer, arg: integer) {
   c_text_walk_step(store, sp, c, index, next, src, arg);
+}
+
+// The byte length of the text a frame byte holds — a local's (`arg` 0) or a view — the null
+// text's one byte included (`State::text_end_jump`).
+pub fn local_text_len(store: integer, at: integer, arg: integer) -> integer {
+  c_local_text_len(store, at, arg)
+}
+
+// Is the text a frame byte holds — a local's (`arg` 0) or a view — the null text?
+pub fn local_text_null(store: integer, at: integer, arg: integer) -> boolean {
+  c_local_text_null(store, at, arg) != 0
+}
+
+// The null text's byte appended to the text the reference names — a destination native's
+// absent answer, which reads back as null.
+pub fn ref_text_append_null(s: integer, r: integer, p: integer) {
+  c_ref_text_append_null(s, r, p);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
