@@ -260,6 +260,7 @@ H_GET_SLOT_REF = 234;
 H_SLOT_WRITE = 235;
 H_EXPOSE = 236;
 H_CAST_VECTOR_FROM_TEXT = 237;
+H_DELIVER = 238;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -574,6 +575,7 @@ pub fn handler(name: text) -> integer {
     "OpExpose" => H_EXPOSE,
     "OpRelease" => H_EXPOSE,
     "OpCastVectorFromText" => H_CAST_VECTOR_FROM_TEXT,
+    "OpDeliver" => H_DELIVER,
     "OpCastSingleFromText" => H_CAST_FROM_TEXT,
     "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
@@ -898,6 +900,7 @@ fn layout_of(h: integer) -> text {
     235 => "h",
     236 => "h",
     237 => "h",
+    238 => "h",
     _ => ""
   }
 }
@@ -2877,6 +2880,17 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
     crt::record_from_text(io, cvt, cvtp);
     crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     sp += 16;
+  } else if h == H_DELIVER {
+    // `deliver(tag, value)`: the value popped, then the tag; its bytes printed by the loopback
+    // host, walked over the parse table's rows (ptypes.loft).
+    ensure_table(img.types, tl);
+    dtp = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    dtag = get(stk, sp - 24) ?? 0;
+    sp -= 24;
+    ptypes::prepare(img.types, dtp, ptold);
+    crt::deliver(dtag, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, dtp, img.types[dtp]?.name ?? "#{dtp}");
   } else if h == H_EXPOSE {
     // The value and the tag popped; the value's store locked (`expose`) or unlocked (`release`).
     pc += 2;

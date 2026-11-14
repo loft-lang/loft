@@ -1301,6 +1301,76 @@ int64_t loft_crt_jv(int64_t which, int64_t *ro, int64_t nro, int64_t s, int64_t 
     return loft_crt_out(&o, out, cap);
 }
 
+/* `deliver(tag, value)` off the browser: the value's bytes, walked over the parse table's rows
+ * as the C backend's per-type walkers (`src/c/deliver.rs`, `deliver_body`) walk them — a base
+ * value or a narrow integer as its bytes, a record's data fields in order, a vector's or an
+ * array's elements — or why the layout cannot carry them. */
+static const char *loft_crt_dlv_walk(loft_text *o, uint16_t tp, loft_ref r) {
+    static char why[256];
+    if (tp <= 6) {
+        if (tp == 2 || tp == 6) loft_dlv_raw(o, r, 4);
+        else if (tp == 4) loft_dlv_raw(o, r, 1);
+        else if (tp == 5) loft_dlv_text(o, r);
+        else loft_dlv_raw(o, r, 8);
+        return 0;
+    }
+    if ((uint32_t) tp >= loft_crt_nptypes || !loft_crt_ptypes[tp].name) {
+        snprintf(why, sizeof why, "type %u not in descriptor", tp);
+        return why;
+    }
+    const loft_ptype *P = &loft_crt_ptypes[tp];
+    switch (P->kind) {
+    case LOFT_P_BYTE:
+    case LOFT_P_ENUM: loft_dlv_raw(o, r, 1); return 0;
+    case LOFT_P_SHORT: loft_dlv_short(o, r, 0, 1); return 0;
+    case LOFT_P_SHORTRAW: loft_dlv_short(o, r, P->min, 0); return 0;
+    case LOFT_P_NINT:
+    case LOFT_P_NINTRAW: loft_dlv_raw(o, r, 4); return 0;
+    case LOFT_P_RECORD:
+        for (uint16_t k = 0; k < P->n; k++) {
+            const loft_pfield *f = &P->fields[k];
+            /* `LayoutField::is_data`: the enum discriminant, an absent field and a `#` synthetic
+             * are not data. */
+            if (strcmp(f->name, "enum") == 0 || f->pos == 0xFFFF || f->name[0] == '#') continue;
+            const char *e = loft_crt_dlv_walk(o, f->content, loft_field(r, f->pos));
+            if (e) return e;
+        }
+        return 0;
+    case LOFT_P_VECTOR: {
+        uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;
+        uint32_t size = P->elem < loft_crt_nptypes ? loft_crt_ptypes[P->elem].size : 0;
+        for (uint32_t i = 0; i < n; i++) {
+            loft_ref x = { r.store_nr, v, 8 + size * i, 0 };
+            const char *e = loft_crt_dlv_walk(o, P->elem, x);
+            if (e) return e;
+        }
+        return 0;
+    }
+    default:
+        if (P->kind == LOFT_P_KEYED && P->keyed == LOFT_P_ARRAY) {
+            uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;
+            for (uint32_t i = 0; i < n; i++) {
+                loft_ref x = { r.store_nr, loft_u32(loft_store_of(r), v, 8 + 4 * i), 8, 0 };
+                const char *e = loft_crt_dlv_walk(o, P->elem, x);
+                if (e) return e;
+            }
+            return 0;
+        }
+        snprintf(why, sizeof why,
+                 "type %u (%s) is a store-internal kind — not in the serializable subset (cursor-walked in a later phase)",
+                 tp, P->name);
+        return why;
+    }
+}
+
+void loft_crt_deliver(int64_t tag, int64_t s, int64_t r, int64_t p, int64_t tp, const char *name, int64_t nlen) {
+    loft_text o = { 0, 0, 0 };
+    const char *e = loft_crt_dlv_walk(&o, (uint16_t) tp, loft_crt_ref(s, r, p));
+    if (e) printf("deliver tag=%lld type=%.*s error=%s\n", (long long) tag, (int) nlen, name, e);
+    else printf("deliver tag=%lld type=%.*s bytes=%.*s\n", (long long) tag, (int) nlen, name, (int) o.len, o.p ? o.p : "");
+    loft_text_free(&o);
+}
+
 /* `LOFT_CRT_PTYPES=1`: the parse table's rows on standard error, in the emitter's spelling of
  * `loft_ptypes`, to compare with a `--native-c --native-emit` of the same program. */
 static void loft_crt_ptypes_dump(void) {
