@@ -22,6 +22,7 @@ use opt_non_sentinel;
 use opt_range;
 use opt_ranged_call;
 use cgen_fn;
+use cgen_w::*;
 
 // The trips a peeled loop may have, and the IR nodes its copies may hold together.
 const MAX_TRIPS = 8;
@@ -127,7 +128,7 @@ fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boole
 
 // `collect_chains`, pre-order: a node that is a chain is recorded whole and not descended
 // into; a nested loop is left to its own pass; any other node's children are walked.
-fn collect_chains(b: ir::Bundle, v: ir::Node, banned: vector<boolean>, out: vector<cgen_fn::Memo>) {
+fn collect_chains(b: ir::Bundle, v: ir::Node, banned: vector<boolean>, out: vector<Memo>) {
   node = loop_shape::unspan(v);
   match node {
     NdLoop { block: _ } => { return; },
@@ -143,7 +144,7 @@ fn collect_chains(b: ir::Bundle, v: ir::Node, banned: vector<boolean>, out: vect
         return;
       }
     }
-    out += [cgen_fn::Memo { name: "", chain: node, hoisted: false }];
+    out += [Memo { name: "", chain: node, hoisted: false }];
     return;
   }
   match node {
@@ -188,8 +189,8 @@ fn holds_opaque(v: ir::Node, refs: boolean) -> boolean {
 
 // `invariant_chains`: the maximal invariant integer chains of loop `lp`, in first-appearance
 // order.
-fn invariant_chains(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block) -> vector<cgen_fn::Memo> {
-  out: vector<cgen_fn::Memo> = [];
+fn invariant_chains(x: Cx, w: W, lp: ir::Block) -> vector<Memo> {
+  out: vector<Memo> = [];
   for op in lp.operators {
     if holds_opaque(op, false) {
       return out;
@@ -231,24 +232,24 @@ fn silent_chain(b: ir::Bundle, v: ir::Node) -> boolean {
 
 // `hold_invariants`: before loop `lp`, a memo for each invariant chain it spells — evaluated
 // here when the chain is silent, else at its first use.  Always opens the loop's frame.
-fn hold_invariants(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) {
-  frame = cgen_fn::MemoFrame { memos: [] };
+fn hold_invariants(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  frame = MemoFrame { memos: [] };
   if (env_variable("LOFT_NO_INVARIANT_HOIST") ?? "0") == "0" {
     for ch in invariant_chains(x, w, lp) {
       name = "ia{len(w.decls) + 1}";
       // One entry, two lines: the memo and its flag each stand alone.
       w.decls += ["int64_t {name} = LOFT_NULL;\n    int {name}_set = 0;"];
-      cgen_fn::line(w, ind, "{name}_set = 0;");
+      line(w, ind, "{name}_set = 0;");
       hoisted = false;
       if (env_variable("LOFT_NO_MEMO_HOIST") ?? "0") == "0" && silent_chain(x.b, ch.chain) {
         w.no_memo += 1;
         e = cgen_fn::expr(x, w, ch.chain, ind);
         w.no_memo -= 1;
-        cgen_fn::line(w, ind, "{name} = {cgen_fn::as_int(w, e)};");
-        cgen_fn::line(w, ind, "{name}_set = 1;");
+        line(w, ind, "{name} = {as_int(w, e)};");
+        line(w, ind, "{name}_set = 1;");
         hoisted = true;
       }
-      frame.memos += [cgen_fn::Memo { name: name, chain: ch.chain, hoisted: hoisted }];
+      frame.memos += [Memo { name: name, chain: ch.chain, hoisted: hoisted }];
     }
   }
   w.memos += [frame];
@@ -256,7 +257,7 @@ fn hold_invariants(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) {
 
 // `invariant_of`: the memo the loop being written keeps for the chain `v` spells, as its
 // place in that loop's frame; -1 for none.
-pub fn invariant_of(w: cgen_fn::W, v: ir::Node) -> integer {
+pub fn invariant_of(w: W, v: ir::Node) -> integer {
   if w.no_memo > 0 || len(w.memos) == 0 {
     return -1;
   }
@@ -279,19 +280,19 @@ pub fn invariant_of(w: cgen_fn::W, v: ir::Node) -> integer {
 // `invariant_use`: a memoised chain's use — the first use evaluates the chain where it stands
 // and records it; every use answers the memo.  Under `LOFT_VERIFY` every use evaluates the
 // chain again and the proof asserts the memo agrees.
-pub fn invariant_use(x: cgen_fn::Cx, w: cgen_fn::W, at: integer, ind: integer) -> cgen_fn::E {
+pub fn invariant_use(x: Cx, w: W, at: integer, ind: integer) -> E {
   top = w.memos[len(w.memos) - 1];
-  held = cgen_fn::Memo { name: top.memos[at]!.name, chain: top.memos[at]!.chain, hoisted: top.memos[at]!.hoisted };
+  held = Memo { name: top.memos[at]!.name, chain: top.memos[at]!.chain, hoisted: top.memos[at]!.hoisted };
   name = held.name;
   w.no_memo += 1;
   if !held.hoisted {
-    cgen_fn::line(w, ind, "if (!{name}_set) {{");
+    line(w, ind, "if (!{name}_set) {{");
     e = cgen_fn::expr(x, w, held.chain, ind + 1);
-    cgen_fn::line(w, ind + 1, "{name} = {cgen_fn::as_int(w, e)};");
-    cgen_fn::line(w, ind + 1, "{name}_set = 1;");
-    cgen_fn::line(w, ind, "}}");
+    line(w, ind + 1, "{name} = {as_int(w, e)};");
+    line(w, ind + 1, "{name}_set = 1;");
+    line(w, ind, "}}");
   }
-  cgen_fn::line(w, ind, "#ifdef LOFT_VERIFY");
+  line(w, ind, "#ifdef LOFT_VERIFY");
   before = len(w.temps);
   fresh = cgen_fn::expr(x, w, held.chain, ind);
   w.no_memo -= 1;
@@ -301,9 +302,9 @@ pub fn invariant_use(x: cgen_fn::Cx, w: cgen_fn::W, at: integer, ind: integer) -
       t.verify = true;
     }
   }
-  cgen_fn::line(w, ind, "LOFT_PROVED({cgen_fn::as_int(w, fresh)} == {name}, \"R-Invariant:{name}\");");
-  cgen_fn::line(w, ind, "#endif");
-  cgen_fn::E { code: name, kind: cgen_fn::K_INT }
+  line(w, ind, "LOFT_PROVED({as_int(w, fresh)} == {name}, \"R-Invariant:{name}\");");
+  line(w, ind, "#endif");
+  E { code: name, kind: K_INT }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -524,7 +525,7 @@ fn all_sum_ok(b: ir::Bundle, code: ir::Node, lp: ir::Block, nodes: vector<ir::No
 }
 
 // `sum_ranged`: does `(R-Range)` prove every update of `v` in the loop plain?
-fn sum_ranged(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, v: integer) -> boolean {
+fn sum_ranged(x: Cx, w: W, lp: ir::Block, v: integer) -> boolean {
   count = [0];
   open = [0];
   walk_all(lp.operators, fn(n: ir::Node) {
@@ -536,7 +537,7 @@ fn sum_ranged(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, v: integer) -> boole
               name = x.b.data.definitions[def_nr]!.name;
               as_sum = if name == "OpAddInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable" { name } else { "OpMinInt" };
               count[0] = count[0]! + 1;
-              if !cgen_fn::range_proves(x, w, as_sum, args) {
+              if !range_proves(x, w, as_sum, args) {
                 open[0] = open[0]! + 1;
               }
             },
@@ -552,8 +553,8 @@ fn sum_ranged(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, v: integer) -> boole
 
 // `open_sticky_sums`: the sums loop `lp` takes, each with a fresh flag set before the loop.
 // Answers how many entries of `w.sticky` are this loop's.
-fn open_sticky_sums(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) -> vector<cgen_fn::Sum> {
-  out: vector<cgen_fn::Sum> = [];
+fn open_sticky_sums(x: Cx, w: W, lp: ir::Block, ind: integer) -> vector<Sum> {
+  out: vector<Sum> = [];
   if (env_variable("LOFT_NO_STICKY_SUM") ?? "0") != "0" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" {
     return out;
   }
@@ -579,7 +580,7 @@ fn open_sticky_sums(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) 
   });
   code = x.b.data.definitions[w.index]!.code[0]!;
   for v in cands {
-    if (w.shapes[v] ?? "") != "int" || cgen_fn::sticky_flag(w, v) != "" || sum_ranged(x, w, lp, v) {
+    if (w.shapes[v] ?? "") != "int" || sticky_flag(w, v) != "" || sum_ranged(x, w, lp, v) {
       continue;
     }
     s = Sums { updates: 0, temps: [] };
@@ -597,15 +598,15 @@ fn open_sticky_sums(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) 
     }
     flag = "ss{len(w.decls) + 1}";
     w.decls += ["int {flag} = 0;"];
-    cgen_fn::line(w, ind, "{flag} = ({w.names[v]!} == LOFT_NULL);");
-    w.sticky += [cgen_fn::Sum { var: v, flag: flag }];
-    out += [cgen_fn::Sum { var: v, flag: flag }];
+    line(w, ind, "{flag} = ({w.names[v]!} == LOFT_NULL);");
+    w.sticky += [Sum { var: v, flag: flag }];
+    out += [Sum { var: v, flag: flag }];
     for t in s.temps {
       tflag = "ss{len(w.decls) + 1}";
       w.decls += ["int {tflag} = 0;"];
-      w.sticky += [cgen_fn::Sum { var: t, flag: tflag }];
-      w.sticky_temps += [cgen_fn::Staged { temp: t, sum: v }];
-      out += [cgen_fn::Sum { var: t, flag: tflag }];
+      w.sticky += [Sum { var: t, flag: tflag }];
+      w.sticky_temps += [Staged { temp: t, sum: v }];
+      out += [Sum { var: t, flag: tflag }];
     }
   }
   out
@@ -613,20 +614,20 @@ fn open_sticky_sums(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) 
 
 // `close_sticky_sums`: after the loop's exit label, each sum the loop took answers null where
 // its flag is set.
-fn close_sticky_sums(w: cgen_fn::W, sums: vector<cgen_fn::Sum>, ind: integer) {
+fn close_sticky_sums(w: W, sums: vector<Sum>, ind: integer) {
   for s in sums {
-    cgen_fn::line(w, ind, "if ({s.flag}) {w.names[s.var]!} = LOFT_NULL;");
-    kept: vector<cgen_fn::Sum> = [];
+    line(w, ind, "if ({s.flag}) {w.names[s.var]!} = LOFT_NULL;");
+    kept: vector<Sum> = [];
     for k in w.sticky {
       if k.var != s.var {
-        kept += [cgen_fn::Sum { var: k.var, flag: k.flag }];
+        kept += [Sum { var: k.var, flag: k.flag }];
       }
     }
     w.sticky = kept;
-    staged: vector<cgen_fn::Staged> = [];
+    staged: vector<Staged> = [];
     for k in w.sticky_temps {
       if k.temp != s.var {
-        staged += [cgen_fn::Staged { temp: k.temp, sum: k.sum }];
+        staged += [Staged { temp: k.temp, sum: k.sum }];
       }
     }
     w.sticky_temps = staged;
@@ -634,14 +635,14 @@ fn close_sticky_sums(w: cgen_fn::W, sums: vector<cgen_fn::Sum>, ind: integer) {
 }
 
 // `never_null`: is `v` never null under this function's facts — ranged, or non-sentinel?
-fn never_null(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node) -> boolean {
-  cgen_fn::ranged(x, w, v) || opt_non_sentinel::non_sentinel(x.b, x.p, w.nn, v)
+fn never_null(x: Cx, w: W, v: ir::Node) -> boolean {
+  ranged(x, w, v) || opt_non_sentinel::non_sentinel(x.b, x.p, w.nn, v)
 }
 
 // `sticky_update`: `var = x` for a sum an enclosing loop took — the plain operator, its events
 // into the loop's flag.  Answers whether it wrote it.
-pub fn sticky_update(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Node, ind: integer) -> boolean {
-  flag = cgen_fn::sticky_flag(w, var);
+pub fn sticky_update(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) -> boolean {
+  flag = sticky_flag(w, var);
   if flag == "" {
     return false;
   }
@@ -650,10 +651,10 @@ pub fn sticky_update(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Nod
   if from >= 0 {
     for st in w.sticky_temps {
       if st.temp == from && st.sum == var {
-        tflag = cgen_fn::sticky_flag(w, from);
+        tflag = sticky_flag(w, from);
         if tflag != "" {
-          cgen_fn::line(w, ind, "{flag} = {tflag};");
-          cgen_fn::line(w, ind, "{w.names[var]!} = {w.names[from]!};");
+          line(w, ind, "{flag} = {tflag};");
+          line(w, ind, "{w.names[var]!} = {w.names[from]!};");
           return true;
         }
       }
@@ -670,7 +671,7 @@ pub fn sticky_update(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Nod
         return false
       };
       // An update `(R-Range)` proves cannot fault is that rule's: plain, no flag.
-      if cgen_fn::range_proves(x, w, name, args) {
+      if range_proves(x, w, name, args) {
         return false;
       }
       // A staged temp's step reads the sum's raw value and starts from the sum's flag.
@@ -679,9 +680,9 @@ pub fn sticky_update(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Nod
       for st in w.sticky_temps {
         if st.temp == var && start == "" {
           source = st.sum;
-          start = cgen_fn::sticky_flag(w, st.sum);
+          start = sticky_flag(w, st.sum);
           if start == "" {
-            cgen_fn::refuse(w, "a staged temp without its sum");
+            refuse(w, "a staged temp without its sum");
             return true;
           }
         }
@@ -690,17 +691,17 @@ pub fn sticky_update(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Nod
         return false;
       }
       e = cgen_fn::expr(x, w, args[1], ind);
-      t = cgen_fn::temp(w, "int");
-      cgen_fn::line(w, ind, "{t} = {cgen_fn::as_int(w, e)};");
+      t = temp(w, "int");
+      line(w, ind, "{t} = {as_int(w, e)};");
       if start != "" {
-        cgen_fn::line(w, ind, "{flag} = {start};");
+        line(w, ind, "{flag} = {start};");
       }
       if !never_null(x, w, args[1]) {
-        cgen_fn::line(w, ind, "{flag} |= ({t} == LOFT_NULL);");
+        line(w, ind, "{flag} |= ({t} == LOFT_NULL);");
       }
       acc = w.names[var]!;
-      cgen_fn::line(w, ind, "{flag} |= {ovf}({w.names[source]!}, {t}, &{acc});");
-      cgen_fn::line(w, ind, "{flag} |= ({acc} == LOFT_NULL);");
+      line(w, ind, "{flag} |= {ovf}({w.names[source]!}, {t}, &{acc});");
+      line(w, ind, "{flag} |= ({acc} == LOFT_NULL);");
       true
     },
     _ => false,
@@ -756,7 +757,7 @@ fn call_args(v: ir::Node) -> vector<ir::Node> {
 }
 
 // `chain_census`: the operators of the chain under `v` and the ones no proof writes plain.
-fn chain_census(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node, c: Census) {
+fn chain_census(x: Cx, w: W, v: ir::Node, c: Census) {
   if invariant_of(w, v) >= 0 {
     return;
   }
@@ -766,7 +767,7 @@ fn chain_census(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node, c: Census) {
   }
   args = call_args(v);
   c.ops += 1;
-  if bitwise(name) || !cgen_fn::range_proves(x, w, name, args) {
+  if bitwise(name) || !range_proves(x, w, name, args) {
     c.open += 1;
   }
   chain_census(x, w, args[0], c);
@@ -775,12 +776,12 @@ fn chain_census(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node, c: Census) {
 
 // `chain_nodes`: post-order nodes of the chain under `v`, each leaf evaluated into a temp in
 // the checked chain's order; answers `v`'s node.
-fn chain_nodes(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node, nodes: vector<SpecNode>, ind: integer) -> integer {
+fn chain_nodes(x: Cx, w: W, v: ir::Node, nodes: vector<SpecNode>, ind: integer) -> integer {
   name = if invariant_of(w, v) >= 0 { "" } else { chain_call(x.b, v) };
   if name != "" {
     args = call_args(v);
-    proven = !bitwise(name) && cgen_fn::range_proves(x, w, name, args);
-    bounded = bitwise(name) && cgen_fn::ranged(x, w, v);
+    proven = !bitwise(name) && range_proves(x, w, name, args);
+    bounded = bitwise(name) && ranged(x, w, v);
     lhs = chain_nodes(x, w, args[0], nodes, ind);
     rhs = chain_nodes(x, w, args[1], nodes, ind);
     nodes += [SpecNode { leaf: false, code: "", may_be_null: false, name: name, lhs: lhs, rhs: rhs, proven: proven, bounded: bounded }];
@@ -795,8 +796,8 @@ fn chain_nodes(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node, nodes: vector<SpecNod
     return len(nodes) - 1;
   }
   e = cgen_fn::expr(x, w, v, ind);
-  t = cgen_fn::temp(w, "int");
-  cgen_fn::line(w, ind, "{t} = {cgen_fn::as_int(w, e)};");
+  t = temp(w, "int");
+  line(w, ind, "{t} = {as_int(w, e)};");
   nodes += [SpecNode { leaf: true, code: t, may_be_null: !never_null(x, w, v), name: "", lhs: 0, rhs: 0, proven: false, bounded: false }];
   len(nodes) - 1
 }
@@ -824,7 +825,7 @@ fn checked_chain(nodes: vector<SpecNode>, at: integer) -> text {
 }
 
 // `chain_admitted`: does `(R-GuardedChain)` own an operator of the chain under `v`?
-fn chain_admitted(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node) -> boolean {
+fn chain_admitted(x: Cx, w: W, v: ir::Node) -> boolean {
   if len(w.chains) == 0 {
     return false;
   }
@@ -845,7 +846,7 @@ fn chain_admitted(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node) -> boolean {
 // `spec_chain`: `var = value` for an integer local and a chain of at least two operators not
 // all proven plain, inside a loop — the processor's operators, every event the checked chain
 // would answer null for gathered in one flag.  Answers whether it wrote it.
-pub fn spec_chain(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Node, ind: integer) -> boolean {
+pub fn spec_chain(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) -> boolean {
   if (env_variable("LOFT_NO_SPEC_CHAIN") ?? "0") != "0" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" || len(w.loops) == 0 {
     return false;
   }
@@ -867,11 +868,11 @@ pub fn spec_chain(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Node, 
   }
   nodes: vector<SpecNode> = [];
   root = chain_nodes(x, w, value, nodes, ind);
-  bad = cgen_fn::temp(w, "int");
-  cgen_fn::line(w, ind, "{bad} = 0;");
+  bad = temp(w, "int");
+  line(w, ind, "{bad} = 0;");
   for n in nodes {
     if n.leaf && n.may_be_null {
-      cgen_fn::line(w, ind, "{bad} |= ({n.code} == LOFT_NULL);");
+      line(w, ind, "{bad} |= ({n.code} == LOFT_NULL);");
     }
   }
   vals: vector<text> = [];
@@ -883,11 +884,11 @@ pub fn spec_chain(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Node, 
     }
     a = vals[n.lhs]!;
     b = vals[n.rhs]!;
-    r = cgen_fn::temp(w, "int");
+    r = temp(w, "int");
     // A product by a literal keeps `loft_mul`, whose bounds fold against the constant.
     if n.name == "OpMulInt" && !n.proven && (a.starts_with("INT64_C(") || b.starts_with("INT64_C(")) {
-      cgen_fn::line(w, ind, "{r} = loft_mul({a}, {b});");
-      cgen_fn::line(w, ind, "{bad} |= ({r} == LOFT_NULL);");
+      line(w, ind, "{r} = loft_mul({a}, {b});");
+      line(w, ind, "{bad} |= ({r} == LOFT_NULL);");
       vals += [r];
       continue;
     }
@@ -910,19 +911,19 @@ pub fn spec_chain(x: cgen_fn::Cx, w: cgen_fn::W, var: integer, value: ir::Node, 
     } else {
       "{r} = ({a}) ^ ({b});"
     };
-    cgen_fn::line(w, ind, code);
+    line(w, ind, code);
     // An inner result equal to the sentinel reads as null to the operator above.
     if n#index != root && !n.proven && !n.bounded {
-      cgen_fn::line(w, ind, "{bad} |= ({r} == LOFT_NULL);");
+      line(w, ind, "{bad} |= ({r} == LOFT_NULL);");
     }
     vals += [r];
   }
   name = w.names[var]!;
-  cgen_fn::line(w, ind, "if (LOFT_UNLIKELY({bad})) {{");
-  cgen_fn::line(w, ind + 1, "{name} = {checked_chain(nodes, root)};");
-  cgen_fn::line(w, ind, "}} else {{");
-  cgen_fn::line(w, ind + 1, "{name} = {vals[root]!};");
-  cgen_fn::line(w, ind, "}}");
+  line(w, ind, "if (LOFT_UNLIKELY({bad})) {{");
+  line(w, ind + 1, "{name} = {checked_chain(nodes, root)};");
+  line(w, ind, "}} else {{");
+  line(w, ind + 1, "{name} = {vals[root]!};");
+  line(w, ind, "}}");
   true
 }
 
@@ -946,7 +947,7 @@ fn magnitude(n: integer) -> integer {
 // summing and `*` multiplying — or "" where a leaf is none of these.  `counters` is false
 // while bounding a nested loop's own seed and end.  A record scalar an enclosing frame holds
 // is no leaf yet: no body that reads one is carried.
-fn chain_bound(x: cgen_fn::Cx, f: cgen_fn::ChainFrame, v: ir::Node, counters: boolean, inv: vector<integer>) -> text {
+fn chain_bound(x: Cx, f: ChainFrame, v: ir::Node, counters: boolean, inv: vector<integer>) -> text {
   match loop_shape::unspan(v) {
     NdInt { n } => "INT64_C({magnitude(n)})",
     NdLong { n } => if n == null { "" } else { "INT64_C({magnitude(n)})" },
@@ -1005,13 +1006,13 @@ struct Gathered {
 }
 
 // Every chain operator under `v` counted (`collect_ops`), an index offset left out.
-fn count_ops(x: cgen_fn::Cx, w: cgen_fn::W, v: ir::Node, offset: boolean, g: Gathered) {
+fn count_ops(x: Cx, w: W, v: ir::Node, offset: boolean, g: Gathered) {
   match loop_shape::unspan(v) {
     NdCall { def_nr, args } => {
       name = x.b.data.definitions[def_nr]!.name;
       if chain_op(name, len(args)) && !offset {
         g.admitted += 1;
-        if !cgen_fn::range_proves(x, w, name, args) {
+        if !range_proves(x, w, name, args) {
           g.open += 1;
         }
       }
@@ -1051,7 +1052,7 @@ fn offset_shape(b: ir::Bundle, v: ir::Node) -> boolean {
 // The guard's walk: last statement first and a node's children last first, as the Rust walk
 // takes them off its stack.  A chain operator whose whole subtree bounds is admitted whole;
 // one that does not is descended for smaller ones; a nested loop guards its own chains.
-fn gather(x: cgen_fn::Cx, w: cgen_fn::W, f: cgen_fn::ChainFrame, v: ir::Node, offset: boolean, inv: vector<integer>, g: Gathered) {
+fn gather(x: Cx, w: W, f: ChainFrame, v: ir::Node, offset: boolean, inv: vector<integer>, g: Gathered) {
   node = loop_shape::unspan(v);
   match node {
     NdLoop { block: _ } => { return; },
@@ -1182,12 +1183,12 @@ fn nested_counted_loops(b: ir::Bundle, lp: ir::Block) -> vector<Nested> {
 struct Guard {
   name: text,
   twice: boolean,
-  frame: cgen_fn::ChainFrame,
+  frame: ChainFrame,
 }
 
 // `chain_guard`: the guard of counted loop `lp`, written before it — or null: no chain, one
 // admitted operator, a nested loop whose seed or end is not a leaf, or the release-pass probe.
-fn chain_guard(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) -> Guard? {
+fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
   if (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" || (env_variable("LOFT_NO_GUARDED_CHAIN") ?? "0") != "0" {
     return null;
   }
@@ -1218,7 +1219,7 @@ fn chain_guard(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) -> Gu
       _ => {},
     }
   });
-  frame = cgen_fn::ChainFrame { d: w.index, depth: len(w.memos), guard: "", own: own, nested: nest, written: written, escaped: escaped };
+  frame = ChainFrame { d: w.index, depth: len(w.memos), guard: "", own: own, nested: nest, written: written, escaped: escaped };
   inv: vector<integer> = [];
   g = Gathered { chains: [], admitted: 0, open: 0 };
   for i in rev(1..len(lp.operators)) {
@@ -1243,33 +1244,33 @@ fn chain_guard(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) -> Gu
     ends += [h];
   }
   lo = if rc.next >= 0 { w.names[rc.next]! } else { "loft_gc_add({w.names[rc.index]!}, INT64_C(1), &loft_gc_ok)" };
-  hi = cgen_fn::as_int(w, cgen_fn::expr(x, w, rc.hi, ind));
+  hi = as_int(w, cgen_fn::expr(x, w, rc.hi, ind));
   w.chain_guards += 1;
   guard = "loft_gc{w.chain_guards}";
   w.decls += ["int {guard} = 0;"];
-  cgen_fn::line(w, ind, "{{");
-  cgen_fn::line(w, ind + 1, "int loft_gc_ok = 1;");
-  cgen_fn::line(w, ind + 1, "int64_t loft_gc_lo = {lo}, loft_gc_hi = {hi};");
-  cgen_fn::line(w, ind + 1, "if (loft_gc_lo == LOFT_NULL || loft_gc_hi == LOFT_NULL) loft_gc_ok = 0;");
-  cgen_fn::line(w, ind + 1, "int64_t loft_gc_cb = loft_gc_add(loft_gc_max(loft_gc_abs(loft_gc_lo, &loft_gc_ok), loft_gc_abs(loft_gc_hi, &loft_gc_ok)), INT64_C(1), &loft_gc_ok);");
+  line(w, ind, "{{");
+  line(w, ind + 1, "int loft_gc_ok = 1;");
+  line(w, ind + 1, "int64_t loft_gc_lo = {lo}, loft_gc_hi = {hi};");
+  line(w, ind + 1, "if (loft_gc_lo == LOFT_NULL || loft_gc_hi == LOFT_NULL) loft_gc_ok = 0;");
+  line(w, ind + 1, "int64_t loft_gc_cb = loft_gc_add(loft_gc_max(loft_gc_abs(loft_gc_lo, &loft_gc_ok), loft_gc_abs(loft_gc_hi, &loft_gc_ok)), INT64_C(1), &loft_gc_ok);");
   for v in inv {
-    cgen_fn::line(w, ind + 1, "int64_t loft_gc_v{v#index} = loft_gc_abs({w.names[v]!}, &loft_gc_ok);");
+    line(w, ind + 1, "int64_t loft_gc_v{v#index} = loft_gc_abs({w.names[v]!}, &loft_gc_ok);");
   }
   for s in seeds {
-    cgen_fn::line(w, ind + 1, "int64_t loft_gc_nc{s#index} = loft_gc_add(loft_gc_max({s}, {ends[s#index]!}), INT64_C(1), &loft_gc_ok);");
+    line(w, ind + 1, "int64_t loft_gc_nc{s#index} = loft_gc_add(loft_gc_max({s}, {ends[s#index]!}), INT64_C(1), &loft_gc_ok);");
   }
   for c in g.chains {
-    cgen_fn::line(w, ind + 1, "(void) {c};");
+    line(w, ind + 1, "(void) {c};");
   }
-  cgen_fn::line(w, ind + 1, "(void) loft_gc_cb;");
+  line(w, ind + 1, "(void) loft_gc_cb;");
   for v in inv {
-    cgen_fn::line(w, ind + 1, "(void) loft_gc_v{v#index};");
+    line(w, ind + 1, "(void) loft_gc_v{v#index};");
   }
   for s in seeds {
-    cgen_fn::line(w, ind + 1, "(void) loft_gc_nc{s#index};");
+    line(w, ind + 1, "(void) loft_gc_nc{s#index};");
   }
-  cgen_fn::line(w, ind + 1, "{guard} = loft_gc_ok;");
-  cgen_fn::line(w, ind, "}}");
+  line(w, ind + 1, "{guard} = loft_gc_ok;");
+  line(w, ind, "}}");
   // A body that must not run twice — a yield, parallel arms, a call through a function value,
   // a loop inside, a call of a function with a body — is written once and branches per
   // operator.
@@ -1294,7 +1295,7 @@ fn chain_guard(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) -> Gu
 
 // The guarded frame that admits operator `name` over `args` for the loop being written: its
 // place in `w.chains`, -1 for none.
-fn admitted_at(x: cgen_fn::Cx, w: cgen_fn::W, name: text, args: vector<ir::Node>) -> integer {
+fn admitted_at(x: Cx, w: W, name: text, args: vector<ir::Node>) -> integer {
   if !chain_op(name, len(args)) {
     return -1;
   }
@@ -1303,7 +1304,9 @@ fn admitted_at(x: cgen_fn::Cx, w: cgen_fn::W, name: text, args: vector<ir::Node>
     if f.depth != len(w.memos) {
       continue;
     }
-    if w.in_iter > 0 {
+    // The iterator's operators are no guard's, and neither is a chain evaluated for its
+    // memo: the Rust writer evaluates the memo's own copy, whose nodes no guard admitted.
+    if w.in_iter > 0 || w.no_memo > 0 {
       return -1;
     }
     scratch: vector<integer> = [];
@@ -1319,28 +1322,28 @@ fn admitted_at(x: cgen_fn::Cx, w: cgen_fn::W, name: text, args: vector<ir::Node>
 
 // `chain_operator`: an admitted chain operator — C's plain operator in a guarded loop's plain
 // copy, or `guard ? plain : checked` in a loop written once.  `done` says whether it wrote it.
-pub fn chain_operator(x: cgen_fn::Cx, w: cgen_fn::W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> cgen_fn::E {
+pub fn chain_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = false;
-  if len(w.chains) == 0 || !chain_op(name, len(args)) || cgen_fn::range_proves(x, w, name, args) {
-    return cgen_fn::none();
+  if len(w.chains) == 0 || !chain_op(name, len(args)) || range_proves(x, w, name, args) {
+    return none();
   }
   at = admitted_at(x, w, name, args);
   if at < 0 {
-    return cgen_fn::none();
+    return none();
   }
   guard = w.chains[at]!.guard;
   done = true;
   plain = "";
   checked = "";
   if len(args) == 1 {
-    a = cgen_fn::as_int(w, cgen_fn::arg(x, w, args, 0, ind));
+    a = as_int(w, cgen_fn::arg(x, w, args, 0, ind));
     plain = "(-({a}))";
     checked = "loft_neg({a})";
   } else {
     first = cgen_fn::arg(x, w, args, 0, ind);
     second = cgen_fn::arg(x, w, args, 1, ind);
-    a = cgen_fn::as_int(w, first);
-    b = cgen_fn::as_int(w, second);
+    a = as_int(w, first);
+    b = as_int(w, second);
     if name.starts_with("OpAdd") {
       plain = "(({a}) + ({b}))";
       checked = "loft_add({a}, {b})";
@@ -1352,31 +1355,31 @@ pub fn chain_operator(x: cgen_fn::Cx, w: cgen_fn::W, name: text, args: vector<ir
       checked = "loft_mul({a}, {b})";
     }
   }
-  cgen_fn::E { code: if guard == "" { plain } else { "({guard} ? {plain} : {checked})" }, kind: cgen_fn::K_INT }
+  E { code: if guard == "" { plain } else { "({guard} ? {plain} : {checked})" }, kind: K_INT }
 }
 
 // A copy of frame `f` under `guard` ("": every admitted operator is plain).
-fn framed(f: cgen_fn::ChainFrame, guard: text) -> cgen_fn::ChainFrame {
-  cgen_fn::ChainFrame { d: f.d, depth: f.depth, guard: guard, own: f.own, nested: f.nested, written: f.written, escaped: f.escaped }
+fn framed(f: ChainFrame, guard: text) -> ChainFrame {
+  ChainFrame { d: f.d, depth: f.depth, guard: guard, own: f.own, nested: f.nested, written: f.written, escaped: f.escaped }
 }
 
 // `guarded_copies`: loop `lp` as its chain guard writes it — an innermost loop twice (the
 // plain copy under the guard, the checked loop as the `else`), any other guarded loop once
 // with each admitted operator branching on the guard.
-fn guarded_copies(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) {
+fn guarded_copies(x: Cx, w: W, lp: ir::Block, ind: integer) {
   guard = chain_guard(x, w, lp, ind);
   if guard == null {
     loop_core(x, w, lp, ind);
     return;
   }
   if guard.twice {
-    cgen_fn::line(w, ind, "if ({guard.name}) {{");
+    line(w, ind, "if ({guard.name}) {{");
     w.chains += [framed(guard.frame, "")];
     loop_core(x, w, lp, ind + 1);
     w.chains = w.chains[0..len(w.chains) - 1];
-    cgen_fn::line(w, ind, "}} else {{");
+    line(w, ind, "}} else {{");
     loop_core(x, w, lp, ind + 1);
-    cgen_fn::line(w, ind, "}}");
+    line(w, ind, "}}");
     return;
   }
   w.chains += [framed(guard.frame, guard.name)];
@@ -1398,8 +1401,8 @@ struct Peel {
 
 // `peel::seeds`: the counter seeds the (at most two) statements before `ops[i]` set to a
 // constant, when `ops[i]` is a loop.
-pub fn peel_seeds(ops: vector<ir::Node>, i: integer) -> vector<cgen_fn::Seed> {
-  out: vector<cgen_fn::Seed> = [];
+pub fn peel_seeds(ops: vector<ir::Node>, i: integer) -> vector<Seed> {
+  out: vector<Seed> = [];
   match loop_shape::unspan(ops[i]!) {
     NdLoop { block: _ } => {},
     _ => { return out; },
@@ -1409,8 +1412,8 @@ pub fn peel_seeds(ops: vector<ir::Node>, i: integer) -> vector<cgen_fn::Seed> {
     match loop_shape::unspan(ops[k]!) {
       NdSet { var, inner } => {
         match loop_shape::unspan(inner) {
-          NdInt { n } => { out += [cgen_fn::Seed { var: var, value: n }]; },
-          NdLong { n } => { if n != null { out += [cgen_fn::Seed { var: var, value: n }]; } },
+          NdInt { n } => { out += [Seed { var: var, value: n }]; },
+          NdLong { n } => { if n != null { out += [Seed { var: var, value: n }]; } },
           _ => {},
         }
       },
@@ -1421,7 +1424,7 @@ pub fn peel_seeds(ops: vector<ir::Node>, i: integer) -> vector<cgen_fn::Seed> {
 }
 
 // `peel_plan`: a counted loop of a few trips with constant bounds, written once per trip.
-fn peel_plan(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block) -> Peel? {
+fn peel_plan(x: Cx, w: W, lp: ir::Block) -> Peel? {
   if (env_variable("LOFT_NO_PEEL") ?? "0") != "0" {
     return null;
   }
@@ -1480,7 +1483,7 @@ fn peel_plan(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block) -> Peel? {
 
 // `peel_loop`: the copies — per trip a block setting the counters to the trip's value, then
 // the body.  Each copy is a loop of its own to the body's `break` and `continue`.
-fn peel_loop(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, p: Peel, ind: integer) {
+fn peel_loop(x: Cx, w: W, lp: ir::Block, p: Peel, ind: integer) {
   idx = w.names[p.index]!;
   var = w.names[p.loop_var]!;
   next = if p.next >= 0 { w.names[p.next]! } else { "" };
@@ -1491,27 +1494,27 @@ fn peel_loop(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, p: Peel, ind: integer
     m = w.labels;
     labels += [m];
     w.loops += [m];
-    cgen_fn::line(w, ind, "{{");
+    line(w, ind, "{{");
     if next != "" {
-      cgen_fn::line(w, ind + 1, "{idx} = INT64_C({k}); {var} = INT64_C({k}); {next} = INT64_C({k + 1});");
+      line(w, ind + 1, "{idx} = INT64_C({k}); {var} = INT64_C({k}); {next} = INT64_C({k + 1});");
     } else {
-      cgen_fn::line(w, ind + 1, "{idx} = INT64_C({k}); {var} = INT64_C({k});");
+      line(w, ind + 1, "{idx} = INT64_C({k}); {var} = INT64_C({k});");
     }
     cgen_fn::stmts(x, w, body, ind + 1);
     w.loops = w.loops[0..len(w.loops) - 1];
-    cgen_fn::line(w, ind + 1, "cont_{m}:;");
-    cgen_fn::line(w, ind, "}}");
+    line(w, ind + 1, "cont_{m}:;");
+    line(w, ind, "}}");
   }
   // As the whole range leaves them: the index at the last value yielded and the counter that
   // steps one past it.
   last = p.hi - 1;
   if next != "" {
-    cgen_fn::line(w, ind, "{idx} = INT64_C({last}); {next} = INT64_C({last + 1});");
+    line(w, ind, "{idx} = INT64_C({last}); {next} = INT64_C({last + 1});");
   } else {
-    cgen_fn::line(w, ind, "{idx} = INT64_C({last + 1});");
+    line(w, ind, "{idx} = INT64_C({last + 1});");
   }
   for m in labels {
-    cgen_fn::line(w, ind, "brk_{m}:;");
+    line(w, ind, "brk_{m}:;");
   }
 }
 
@@ -1519,13 +1522,13 @@ fn peel_loop(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, p: Peel, ind: integer
 // The loop
 
 // `loop_core`: the loop itself — its labels, its `for (;;)` and its body.
-fn loop_core(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) {
+fn loop_core(x: Cx, w: W, lp: ir::Block, ind: integer) {
   if w.why != "" {
     return;
   }
   for s in w.walk_scopes {
     if s == lp.scope {
-      cgen_fn::refuse(w, "a character walk");
+      refuse(w, "a character walk");
       return;
     }
   }
@@ -1539,14 +1542,14 @@ fn loop_core(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) {
   }
   w.loops += [l];
   sums = open_sticky_sums(x, w, lp, ind);
-  cgen_fn::line(w, ind, "for (;;) {{");
+  line(w, ind, "for (;;) {{");
   // The iterator — the loop's first statement — steps its counters outside every guard.
   w.iter_pending = true;
   cgen_fn::ops_stmt(x, w, lp.operators, ind + 1);
   w.iter_pending = false;
-  cgen_fn::line(w, ind, "cont_{l}:;");
-  cgen_fn::line(w, ind, "}}");
-  cgen_fn::line(w, ind, "brk_{l}:;");
+  line(w, ind, "cont_{l}:;");
+  line(w, ind, "}}");
+  line(w, ind, "brk_{l}:;");
   close_sticky_sums(w, sums, ind);
   w.loops = w.loops[0..len(w.loops) - 1];
 }
@@ -1555,7 +1558,7 @@ fn loop_core(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) {
 // facts its statements are written under (`body_facts`); the memos it holds are bound before
 // it (`loop_copy`).  The holds of a vector, a record scalar, a push or a file are not asked: a
 // body with one is not carried.
-pub fn loop_stmt(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) {
+pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   pushed = false;
   if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") == "0" {
     narrowed = if len(w.over) > 0 { opt_range::body_facts(w.over[len(w.over) - 1]!, lp.scope) } else { opt_range::body_facts(w.rv, lp.scope) };
@@ -1575,7 +1578,7 @@ pub fn loop_stmt(x: cgen_fn::Cx, w: cgen_fn::W, lp: ir::Block, ind: integer) {
 // `range_guard`: `@FR-R-RangedCall`'s guarded copy for the `For` block `node` — the test
 // (`|x| <= G` for each leaf, spelled so that a null fails it) and the facts the copy runs
 // under; "" where the plan declines.
-pub fn range_guard(x: cgen_fn::Cx, w: cgen_fn::W, node: ir::Node, ops: vector<ir::Node>, facts: vector<opt_range::Ranges>) -> text {
+pub fn range_guard(x: Cx, w: W, node: ir::Node, ops: vector<ir::Node>, facts: vector<opt_range::Ranges>) -> text {
   if (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
     return "";
   }

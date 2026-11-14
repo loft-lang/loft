@@ -17,6 +17,7 @@ use opt_iteration;
 use opt_non_sentinel;
 use opt_range;
 use cgen_fn;
+use cgen_w;
 use cgen_names;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
@@ -168,7 +169,7 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
 }
 
 // One function body's line of the `bodies` layer.
-fn body_line(cx: cgen_fn::Cx, t: cgen_names::Twin) -> text {
+fn body_line(cx: cgen_w::Cx, t: cgen_names::Twin) -> text {
   name = cgen_names::twin_name(cx.b, cx.dups, t);
   wr = cgen_fn::write_function(cx, t);
   if wr.refused != "" {
@@ -204,7 +205,7 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
     out = "";
     for d in b.data.definitions {
       if d.name == "n_main" {
-        cx = cgen_fn::new_cx(b);
+        cx = cgen_w::new_cx(b);
         for f in opt_names::written_functions(b, d#index) {
           out += body_line(cx, cgen_names::plain(f));
         }

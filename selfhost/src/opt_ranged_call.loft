@@ -185,6 +185,13 @@ fn gained_ops(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, d:
   total
 }
 
+// `f` on every node of every one of `nodes`.
+fn walk_each(nodes: vector<ir::Node>, f: fn(ir::Node)) {
+  for n in nodes {
+    opt_non_sentinel::walk(n, f);
+  }
+}
+
 // The bound a guarded copy tests each leaf against (`G`).
 pub const G = 1048576;
 
@@ -224,28 +231,26 @@ fn variable_leaves(b: ir::Bundle, f: integer, known: opt_range::Ranges, block: i
   escaped: vector<boolean> = [for _ in 0..count { false }];
   opt_non_sentinel::collect_escapes(b, def.code[0]!, escaped);
   leaves: vector<integer> = [];
-  for e in bounds {
-    opt_non_sentinel::walk(e, fn(n: ir::Node) {
-      match n {
-        NdVar { n: v } => {
-          if v < count && is_integer(vars[v]!.type_def[0]!) && !written[v]! && !escaped[v]! {
-            r = opt_range::var_range(known, v);
-            bounded = r != null && r.lo >= -G && r.hi <= G;
-            seen = false;
-            for l in leaves {
-              if l == v {
-                seen = true;
-              }
-            }
-            if !bounded && !seen {
-              leaves += [v];
+  walk_each(bounds, fn(n: ir::Node) {
+    match n {
+      NdVar { n: v } => {
+        if v < count && is_integer(vars[v]!.type_def[0]!) && !written[v]! && !escaped[v]! {
+          r = opt_range::var_range(known, v);
+          bounded = r != null && r.lo >= -G && r.hi <= G;
+          seen = false;
+          for l in leaves {
+            if l == v {
+              seen = true;
             }
           }
-        },
-        _ => {},
-      }
-    });
-  }
+          if !bounded && !seen {
+            leaves += [v];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
   leaves
 }
 
