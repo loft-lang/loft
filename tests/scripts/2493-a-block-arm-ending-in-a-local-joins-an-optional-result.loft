@@ -6,6 +6,7 @@
 // refused (`cannot unify: Out? and Out`), for a record, an integer, a text and a vector alike.
 // Each cell is hand-computed; the `B` arm answers null through its call.
 //
+// @falsified-at: 0de1794d4 — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: the asserts; before the fix the file does not parse.
 struct Out { kind: integer, value: integer }
 struct Other { kind: integer }
