@@ -248,6 +248,7 @@ H_INSERT_VECTOR = 223;
 H_CHILD_REC_IN_PLACE = 224;
 H_RESERVE_HASH = 225;
 H_MATH_FUNC2_SINGLE = 226;
+H_REVERSE_VECTOR = 227;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -549,6 +550,8 @@ pub fn handler(name: text) -> integer {
     "OpChildRecInPlace" => H_CHILD_REC_IN_PLACE,
     "OpReserveHash" => H_RESERVE_HASH,
     "OpMathFunc2Single" => H_MATH_FUNC2_SINGLE,
+    "OpReverseVector" => H_REVERSE_VECTOR,
+    "OpCastSingleFromText" => H_CAST_FROM_TEXT,
     "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
     "OpGetShortFull" => H_GET_W,
@@ -589,6 +592,8 @@ N_TEXT_TRIM_END = 24;
 N_TO_UPPERCASE_DEST = 25;
 N_TO_LOWERCASE_DEST = 26;
 N_WRITE_TEXT_RAW = 27;
+N_IS_DIR = 32;
+N_YIELD_FRAME = 33;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -623,6 +628,8 @@ pub fn native_handler(name: text) -> integer {
     "t_4text_to_uppercase_dest" => N_TO_UPPERCASE_DEST,
     "t_4text_to_lowercase_dest" => N_TO_LOWERCASE_DEST,
     "n_write_text_raw" => N_WRITE_TEXT_RAW,
+    "n_is_dir" => N_IS_DIR,
+    "n_yield_frame" => N_YIELD_FRAME,
     "t_4text_byte_at" => N_TEXT_BYTE_AT,
     "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
     "t_4text_rfind" => N_TEXT_RFIND,
@@ -788,6 +795,7 @@ fn layout_of(h: integer) -> text {
     224 => "h",
     225 => "h",
     226 => "c",
+    227 => "h",
     _ => ""
   }
 }
@@ -1259,6 +1267,14 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     sp -= 8;
     set_bool(stk, sp, if cpn.ends_with("is_lowercase") { cpc.is_lowercase() } else if cpn.ends_with("is_uppercase") { cpc.is_uppercase() } else if cpn.ends_with("is_numeric") { cpc.is_numeric() } else if cpn.ends_with("is_alphanumeric") { cpc.is_alphanumeric() } else if cpn.ends_with("is_alphabetic") { cpc.is_alphabetic() } else if cpn.ends_with("is_whitespace") { cpc.is_whitespace() } else { cpc.is_control() });
     sp += 8;
+  } else if nh == N_IS_DIR {
+    idp = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    set_bool(stk, sp, is_dir(idp));
+    sp += 8;
+  } else if nh == N_YIELD_FRAME {
+    // The frame-yield flag only a host's frame loop reads; a run from an image has none.
+    sp = sp;
   } else if nh == N_TEXT_RFIND {
     rfv = crt::stack_str(stk, sp - 16) ?? "";
     rfs = crt::stack_str(stk, sp - 32) ?? "";
@@ -1825,11 +1841,15 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       pc += ted;
     }
   } else if h == H_CAST_FROM_TEXT {
-    // `t as integer` / `t as float` (Rust's `parse`): null when it does not parse.
+    // `t as integer` / `as float` / `as single` (Rust's `parse`): null when it does not parse.
     cts = crt::stack_str(stk, sp - 16);
     sp -= 16;
-    if (img.ops[op] ?? "") == "OpCastIntFromText" {
+    ctop = img.ops[op] ?? "";
+    if ctop == "OpCastIntFromText" {
       set(stk, sp, if cts == null { null } else { cts! as integer? });
+    } else if ctop == "OpCastSingleFromText" {
+      csv = if cts == null { null } else { cts! as single? };
+      crt::set_float(stk, 1, 8 + sp, 0, if csv == null { null } else { csv! as float }, true);
     } else {
       crt::set_float(stk, 1, 8 + sp, 0, if cts == null { null } else { cts! as float? }, false);
     }
@@ -2382,6 +2402,12 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       m2sr = if m2sv == null { null } else { m2sv! as float };
     }
     crt::set_float(stk, 1, 8 + sp - 8, 0, m2sr, true);
+  } else if h == H_REVERSE_VECTOR {
+    rvsize = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::vec_reverse(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rvsize);
   } else if h == H_POW_SINGLE {
     // Single precision through loft's own `pow` on singles (this operator, compiled).
     psb = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
