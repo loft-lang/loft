@@ -820,6 +820,10 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   if fused_vec(g, op, args) {
     return ret;
   }
+  if def.name == "OpAppendText" && len(args) >= 2 && dest_call(g, args[1]!) {
+    stop(g, "not written yet: a text call that answers into its destination");
+    return ret;
+  }
   if special_call(def.name) || len(args) < len(def.attributes) {
     stop(g, "a call the writer does not write yet: {def.name}");
     return ret;
@@ -899,12 +903,91 @@ fn put_op_of(t: ir::TypeT) -> text {
   }
 }
 
+// Does a call answer its text through a destination the caller hands it (`is_text_dest_def`,
+// a C or library text call)?  Those are written by a path of their own.
+fn dest_call(g: Gen, n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdCall { def_nr, args: _ } => {
+      def = def_of(g, def_nr);
+      text = match base(def.returned[0] ?? ir::TyVoid) {
+        TyText { dep: _ } => true,
+        _ => false,
+      };
+      text && !def.name.starts_with("Op") && (def.native != "" || def.c_symbol != "" || body_null(def))
+    }
+    _ => false,
+  }
+}
+
+// `gen_set_first_text` and a text local's later assignments (`set_var`): its slot made a
+// text at its first value, emptied before a later one, and the value appended.  Written for
+// the writer's `LOFT_NO_TEXT_BORROW=1` form: no text local is a view.
+fn assign_text(g: Gen, v: integer, value: ir::Node) {
+  pos = g.slots[v] ?? 65535;
+  if pos == 65535 {
+    stop(g, "a text without a slot");
+    return;
+  }
+  if !(g.allocated[v] ?? false) {
+    g.allocated[v] = true;
+    slot_end = pos + 24;
+    if g.position < slot_end {
+      advance = frame::stepped(slot_end) - g.position;
+      add_op(g, "OpReserveFrame");
+      put_u16(g.o, advance);
+      g.position += advance;
+    }
+    add_op(g, "OpInitText");
+    put_u16(g.o, g.position - pos);
+    empty = match value {
+      NdText { s: t } => t == "",
+      _ => false,
+    };
+    if empty {
+      return;
+    }
+  } else {
+    add_op(g, "OpClearText");
+    put_u16(g.o, g.position - pos);
+  }
+  if dest_call(g, value) {
+    stop(g, "not written yet: a text call that answers into its destination");
+    return;
+  }
+  empty = match value {
+    NdText { s: t } => t == "",
+    _ => false,
+  };
+  if empty {
+    return;
+  }
+  before = g.position;
+  generate(g, value, false);
+  if g.position == before {
+    match unspan(value) {
+      NdNull => typed_null(g, ir::TyText { dep: [] }),
+      _ => {}
+    }
+  }
+  at = var_pos(g, v);
+  add_op(g, "OpAppendText");
+  put_u16(g.o, at);
+}
+
 // `State::generate_set` for a scalar local: its first value written where it is pushed and
 // stored (`FirstArm::Plain`), a later one through `set_var` — an integer operator over locals
 // stored by the operator itself (`OpIntVVPut` / `OpIntVCPut`).
 fn assign(g: Gen, v: integer, value: ir::Node) {
   var = var_of(g, v);
   tp = var.type_def[0] ?? ir::TyVoid;
+  text = match base(tp) {
+    TyText { dep: _ } => true,
+    _ => false,
+  };
+  if text && !var.store_text_link {
+    assign_text(g, v, value);
+    return;
+  }
   put = put_op_of(tp);
   block = match unspan(value) {
     NdBlock { block: _ } => true,
@@ -985,7 +1068,7 @@ fn variable(g: Gen, v: integer) -> ir::TypeT {
     TySorted { n: _, keys: _, dep: _ } => "OpVarVector",
     TyHash { n: _, names: _, dep: _ } => "OpVarVector",
     TyIndex { n: _, keys: _, dep: _ } => "OpVarVector",
-    TyText { dep: _ } => if var.argument { "OpArgText" } else { "" },
+    TyText { dep: _ } => if var.argument { "OpArgText" } else { "OpVarText" },
     _ => "",
   };
   if name == "" {
@@ -1182,8 +1265,8 @@ pub fn function(b: ir::Bundle, d: integer, starts: vector<u32>, natives: vector<
           hwm = end;
         }
       }
-      if v.name.starts_with("__vdb") || (v.argument && v.linked_narrow) {
-        stop(g, "a prologue the writer does not write yet");
+      if v.argument && v.linked_narrow {
+        stop(g, "not written yet: a linked narrow argument");
       }
       tuple = match base(t) {
         TyTuple { elems: _ } => v.argument,
@@ -1207,6 +1290,14 @@ pub fn function(b: ir::Bundle, d: integer, starts: vector<u32>, natives: vector<
       add_op(g, "OpReserveFrame");
       put_u16(g.o, hwm - g.position);
       g.position = hwm;
+    }
+    // A record a literal is built in (`__vdb…`) starts as the sentinel null.
+    for v in def.variables.variables {
+      if !v.argument && v.name.starts_with("__vdb") && v.stack_pos != 65535 {
+        at = var_pos(g, v#index);
+        add_op(g, "OpInitRefSentinel");
+        put_u16(g.o, at);
+      }
     }
     generate(g, def.code[0]!, true);
   }

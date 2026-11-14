@@ -42,7 +42,10 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = os.path.join(root, "target", "release", "loft")
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
-    env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
+    # The Rust writer's rewrites the loft writer does not make yet are switched off on the
+    # Rust side, each by its own switch, so the bytes compared are one named form of the
+    # writer: no text local is a view (`LOFT_NO_TEXT_BORROW`).
+    env = {**os.environ, "LOFT_NO_WARNINGS": "1", "LOFT_NO_TEXT_BORROW": "1"}
     tmp = tempfile.mkdtemp(prefix="loft-bgen-", dir=os.environ.get("TMPDIR"))
     try:
         out = os.path.join(tmp, "checker")
