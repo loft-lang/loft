@@ -27,7 +27,12 @@ pub struct State {
   // it did.
   pub frames: vector<CallFrame>,
   pub fault: text,
+  // What `raise_recoverable` was told: the run goes on, as Rust's does in production mode.
+  pub reported: vector<text>,
 }
+
+// `DbRef::NULL`'s store number.
+pub NULL_STORE = 65535;
 
 // `CallFrame`: the definition a frame runs, the code position its call returns to, and where
 // its arguments start and how many bytes they take.
@@ -49,7 +54,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(code: vector<u8>, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  State { code: code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "" }
+  State { code: code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", reported: [] }
 }
 
 // `State::ensure_stack`: room for `step` more bytes above the top, the stack store doubled
@@ -532,4 +537,64 @@ pub fn clear_text(self: State) {
 pub fn free_text(self: State) {
   pos = self.code_u16();
   crt::slot_text_free(self.stk, self.stack_pos - pos);
+}
+
+// `State::put_text`: the view on top popped into the frame slot at `pos` (addressed from the
+// top before the pop).
+pub fn put_text(self: State) {
+  pos = self.code_u16();
+  if !self.can_pop(16) {
+    return;
+  }
+  self.stack_pos -= 16;
+  crt::stack_move(self.stk, self.stack_pos, self.stack_pos + 16 - pos, 16);
+}
+
+// A text popped for a template (`State::string`): the view's text, null for the null text.
+pub fn get_stack_str(self: State) -> text? {
+  if !self.can_pop(16) {
+    return null;
+  }
+  self.stack_pos -= 16;
+  crt::stack_str(self.stk, self.stack_pos)
+}
+
+// ── Characters: a code point in a 4-byte slot, 0 for null. ────────────────────────────────
+
+pub fn get_stack_char(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos)
+}
+
+pub fn put_stack_char(self: State, v: character?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, if v == null { 0 } else { v! as integer });
+  self.stack_pos += 8;
+}
+
+// ── References: a 12-byte reference in a 16-byte slot. ────────────────────────────────────
+
+// `State::init_ref`: the null reference written into the frame slot at `pos`.
+pub fn init_ref(self: State) {
+  pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
+  }
+}
+
+// `State::init_ref_sentinel`: the same null reference, written the same way.
+pub fn init_ref_sentinel(self: State) {
+  pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
+  }
+}
+
+// `State::raise_recoverable`: a fault the run survives (a division by zero, a value outside its
+// range): recorded, and the operator answers its null or default.
+pub fn raise_recoverable(self: State, what: text) {
+  self.reported += [what];
 }

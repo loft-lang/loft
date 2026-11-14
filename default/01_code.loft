@@ -190,6 +190,7 @@ fn OpVarBool(pos: const u16) -> boolean;
 #loft"s.get_var_bool(pos)"
 fn OpPutBool(var: const u16, value: boolean);
 #rust"s.put_var(@var, @value);"
+#loft"s.put_var_u8(var, value);"
 fn OpNot(v1: boolean) -> boolean;
 #rust"@v1 != 1"
 #loft"v1 != 1"
@@ -232,6 +233,7 @@ fn OpNot(v1: boolean) -> boolean;
 fn OpRangeDefault(val: __word, lo: const __word, hi: const __word, dflt: const __word) -> __word;
 #cold
 #rust"{{ let _rv = @val; if _rv == i64::MIN {{ if @dflt == i64::MIN {{ _rv }} else {{ @dflt }} }} else if _rv >= @lo && _rv <= @hi {{ _rv }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::RangeDefaulted {{ value: _rv, lo: @lo, hi: @hi }}); @dflt }} }}"
+#loft"if val == null {{ if dflt == null {{ val }} else {{ dflt }} }} else if val >= lo && val <= hi {{ val }} else {{ s.raise_recoverable(\"a value outside its range took the default\"); dflt }}"
 // @PLN204 — the 32-bit regime's arithmetic: a result that leaves the `i32` range reads null,
 // as a 64-bit overflow does (C85), and silently, as that does.  The parser wraps every
 // integer operation of a `#width 32` file whose operands are 32-bit in one; the C backend
@@ -274,6 +276,7 @@ fn OpConvBoolFromNull() -> boolean;
 fn OpConvCharacterFromNull() -> character;
 #cold
 #rust"char::from(0)"
+#loft"null"
 fn OpConvCharacterFromInt(v1: __word) -> character;
 #rust"if @v1 == i64::MIN {{ char::from(0) }} else if let Some(c) = char::from_u32((@v1) as u32) {{ c }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); char::from(0) }}"
 fn OpConstLongText(start: const __word, size: const __word) -> text;
@@ -290,6 +293,7 @@ fn OpCastFloatFromText(v1: text) -> __fword;
 #rust"@v1.parse().unwrap_or(f64::NAN)"
 fn OpAbsInt(v1: __word) -> __word;
 #rust"ops::op_abs_int(@v1)"
+#loft"if v1 == null {{ null }} else {{ v1.abs() }}"
 /// Absolute value. Removes the sign from a negative integer.
 pub fn abs(self: integer) -> integer {
   OpAbsInt(self)
@@ -298,6 +302,7 @@ pub fn abs(self: integer) -> integer {
 
 fn OpMinSingleInt(v1: __word) -> __word;
 #rust"ops::op_negate_int(@v1)"
+#loft"-v1"
 fn OpBitNotSingleInt(v1: __word) -> __word;
 #rust"!@v1"
 fn OpConvFloatFromInt(v1: __word) -> __fword;
@@ -324,23 +329,26 @@ fn OpMulInt(v1: __word, v2: __word) -> __word;
 fn OpDivInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"if @v2 == 0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); i64::MIN }} else {{ ops::op_div_int(@v1, @v2) }}"
-#loft"v1 / v2"
+#loft"if v2 == 0 {{ s.raise_recoverable(\"division by zero\"); null }} else {{ v1 / v2 }}"
 fn OpRemInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"if @v2 == 0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); i64::MIN }} else {{ ops::op_rem_int(@v1, @v2) }}"
-#loft"v1 % v2"
+#loft"if v2 == 0 {{ s.raise_recoverable(\"division by zero\"); null }} else {{ v1 % v2 }}"
 // C54.G-hybrid — nullable integer arithmetic.  Emitted only when the op's
 // result is the immediate LHS of `??` so `??` can discharge the null.
 fn OpAddIntNullable(v1: __word, v2: __word) -> __word;
 #rust"ops::op_add_int_nullable(@v1, @v2)"
+#loft"(v1 + v2) ?? null"
 fn OpMinIntNullable(v1: __word, v2: __word) -> __word;
 #rust"ops::op_min_int_nullable(@v1, @v2)"
 fn OpMulIntNullable(v1: __word, v2: __word) -> __word;
 #rust"ops::op_mul_int_nullable(@v1, @v2)"
 fn OpDivIntNullable(v1: __word, v2: __word) -> __word;
 #rust"ops::op_div_int_nullable(@v1, @v2)"
+#loft"if v2 == 0 {{ null }} else {{ (v1 / v2) ?? null }}"
 fn OpRemIntNullable(v1: __word, v2: __word) -> __word;
 #rust"ops::op_rem_int_nullable(@v1, @v2)"
+#loft"if v2 == 0 {{ null }} else {{ (v1 % v2) ?? null }}"
 fn OpLandInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"ops::op_logical_and_int(@v1, @v2)"
@@ -839,6 +847,7 @@ fn OpMulFloat(v1: __fword, v2: __fword) -> __fword;
 fn OpDivFloat(v1: __fword, v2: __fword) -> __fword;
 #hot
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 / @v2 }}"
+#loft"if v2 == 0.0 {{ s.raise_recoverable(\"division by zero\"); v1 / v2 }} else {{ v1 / v2 }}"
 fn OpRemFloat(v1: __fword, v2: __fword) -> __fword;
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 % @v2 }}"
 // IEEE-behaviour peers — emitted only when defended.
@@ -1023,6 +1032,7 @@ fn OpConvTextFromNull() -> text;
 // the content: it has no characters, as `for c in t` over it makes no trips (loft#1795).
 fn OpLengthText(v1: text) -> __word;
 #rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
+#loft"if v1 == null {{ 0 }} else {{ len(v1!) }}"
 /// Number of characters (Unicode code points) in the text — the human
 /// count, as in every mainstream language. For a byte length (bounds checks, the
 /// limit of byte-positioned indexing / slicing) use `size`.
@@ -1103,6 +1113,7 @@ fn OpVarEnum(pos: const u16) -> enumerate;
 #rust"s.get_var::<u8>(@pos)"
 fn OpConstEnum(val: const enumerate) -> enumerate;
 #rust"@val"
+#loft"val"
 fn OpPutEnum(pos: const u16, value: enumerate);
 #rust"s.put_var(@pos, @value);"
 // "This enum holds a value" — the ONE predicate every null test over an enum

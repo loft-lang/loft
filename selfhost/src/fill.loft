@@ -79,14 +79,14 @@ pub fn mul_int(s: state::State) {
 pub fn div_int(s: state::State) {
   v2 = s.get_stack_i64();
   v1 = s.get_stack_i64();
-  new_value: integer? = v1 / v2;
+  new_value: integer? = if v2 == 0 { s.raise_recoverable("division by zero"); null } else { v1 / v2 };
   s.put_stack_i64(new_value);
 }
 
 pub fn rem_int(s: state::State) {
   v2 = s.get_stack_i64();
   v1 = s.get_stack_i64();
-  new_value: integer? = v1 % v2;
+  new_value: integer? = if v2 == 0 { s.raise_recoverable("division by zero"); null } else { v1 % v2 };
   s.put_stack_i64(new_value);
 }
 
@@ -160,6 +160,13 @@ pub fn mul_float(s: state::State) {
   v2 = s.get_stack_f64();
   v1 = s.get_stack_f64();
   new_value: float? = v1 * v2;
+  s.put_stack_f64(new_value);
+}
+
+pub fn div_float(s: state::State) {
+  v2 = s.get_stack_f64();
+  v1 = s.get_stack_f64();
+  new_value: float? = if v2 == 0.0 { s.raise_recoverable("division by zero"); v1 / v2 } else { v1 / v2 };
   s.put_stack_f64(new_value);
 }
 
@@ -260,6 +267,12 @@ pub fn reserve_frame(s: state::State) {
   s.reserve_frame(size);
 }
 
+pub fn put_bool(s: state::State) {
+  var = s.code_u16();
+  value = s.get_stack_u8();
+  s.put_var_u8(var, value);
+}
+
 pub fn not(s: state::State) {
   v1 = s.get_stack_u8();
   new_value: boolean? = v1 != 1;
@@ -271,10 +284,43 @@ pub fn conv_int_from_null(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn abs_int(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v1 == null { null } else { v1.abs() };
+  s.put_stack_i64(new_value);
+}
+
+pub fn min_single_int(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: integer? = -v1;
+  s.put_stack_i64(new_value);
+}
+
 pub fn conv_bool_from_int(s: state::State) {
   v1 = s.get_stack_i64();
   new_value: boolean? = v1 != null;
   s.put_stack_bool(new_value);
+}
+
+pub fn add_int_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = (v1 + v2) ?? null;
+  s.put_stack_i64(new_value);
+}
+
+pub fn div_int_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v2 == 0 { null } else { (v1 / v2) ?? null };
+  s.put_stack_i64(new_value);
+}
+
+pub fn rem_int_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v2 == 0 { null } else { (v1 % v2) ?? null };
+  s.put_stack_i64(new_value);
 }
 
 pub fn var_text(s: state::State) {
@@ -289,6 +335,12 @@ pub fn const_text(s: state::State) {
   s.string_from_code();
 }
 
+pub fn length_text(s: state::State) {
+  v1 = s.get_stack_str();
+  new_value: integer? = if v1 == null { 0 } else { len(v1!) };
+  s.put_stack_i64(new_value);
+}
+
 pub fn init_text(s: state::State) {
   s.init_text();
 }
@@ -297,12 +349,44 @@ pub fn append_text(s: state::State) {
   s.append_text();
 }
 
+pub fn put_text(s: state::State) {
+  s.put_text();
+}
+
 pub fn clear_text(s: state::State) {
   s.clear_text();
 }
 
 pub fn free_text(s: state::State) {
   s.free_text();
+}
+
+pub fn const_enum(s: state::State) {
+  val = s.code_u8();
+  new_value: integer? = val;
+  s.put_stack_u8(new_value);
+}
+
+pub fn init_ref(s: state::State) {
+  s.init_ref();
+}
+
+pub fn init_ref_sentinel(s: state::State) {
+  s.init_ref_sentinel();
+}
+
+pub fn range_default(s: state::State) {
+  lo = s.code_i64();
+  hi = s.code_i64();
+  dflt = s.code_i64();
+  val = s.get_stack_i64();
+  new_value: integer? = if val == null { if dflt == null { val } else { dflt } } else if val >= lo && val <= hi { val } else { s.raise_recoverable("a value outside its range took the default"); dflt };
+  s.put_stack_i64(new_value);
+}
+
+pub fn conv_character_from_null(s: state::State) {
+  new_value: character? = null;
+  s.put_stack_char(new_value);
 }
 
 // The operator in slot `op` run on `s`; false for an operator without a `#loft` template.
@@ -333,6 +417,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     22 => add_float(s),
     23 => min_float(s),
     24 => mul_float(s),
+    25 => div_float(s),
     26 => div_float_nullable(s),
     27 => lt_float(s),
     28 => int_v_v(s),
@@ -346,16 +431,29 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     38 => call(s),
     39 => op_return(s),
     41 => reserve_frame(s),
+    42 => put_bool(s),
     43 => not(s),
     50 => conv_int_from_null(s),
+    53 => abs_int(s),
+    54 => min_single_int(s),
     57 => conv_bool_from_int(s),
+    58 => add_int_nullable(s),
+    61 => div_int_nullable(s),
+    62 => rem_int_nullable(s),
     100 => var_text(s),
     101 => arg_text(s),
     102 => const_text(s),
+    104 => length_text(s),
     107 => init_text(s),
     108 => append_text(s),
+    109 => put_text(s),
     114 => clear_text(s),
     115 => free_text(s),
+    125 => const_enum(s),
+    131 => init_ref(s),
+    133 => init_ref_sentinel(s),
+    270 => range_default(s),
+    272 => conv_character_from_null(s),
     _ => return false,
   }
   true
