@@ -80,7 +80,13 @@ pub struct State {
   pub shared: vector<integer>,
   pub shared_dest: vector<integer>,
   pub dest_calls: vector<FnBuf>,
+  // The frame depth each `par` job in flight runs its workers at, innermost last: a return
+  // at that depth hands the run back (`native` is `PAR_RETURNED`) for the job's next worker.
+  pub par_depths: vector<integer>,
 }
+
+// `State.native` when a `par` worker returned.
+pub PAR_RETURNED = 1000000;
 
 // A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
 // running, where it resumes, where its caller's stack and code continue, the copies of its
@@ -157,7 +163,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [] };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
@@ -618,9 +624,19 @@ pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
       self.dest_calls.remove(last);
     }
   }
+  if len(self.par_depths) > 0 && (self.par_depths[len(self.par_depths) - 1] ?? -1) == len(self.frames) {
+    self.native = PAR_RETURNED;
+  }
   if len(self.frames) > 0 {
     self.frames.remove(len(self.frames) - 1);
   }
+}
+
+// A frame entered whose arguments and return slot are on the stack already (a `par` worker's):
+// the frame recorded and its height kept in reach, as `fn_call` does.
+pub fn enter(self: State, d_nr: integer, call_pos: integer) {
+  self.ensure_stack(FRAME_HEADROOM);
+  self.frames += [CallFrame { d_nr: d_nr, call_pos: call_pos, args_base: self.stack_pos, args_size: 0 }];
 }
 
 // `State::reserve_frame`: the frame's locals reserved above the top, at their 8-aligned size.

@@ -91,8 +91,10 @@ The first two are run by hand; neither is a test yet.
 
 | Part | State |
 |---|---|
-| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: `par` (its operators and the `parallel_*` natives), the child-record and slot-reference families, narrow locals |
+| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: the `OpParallel*` operators (a `par` block of arms; a `par` loop runs), the slot-reference family (`OpGetSlotRef`, …), the store-buffer family (`OpStoreBuf`, …) |
 | natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own |
+| `par` | a queue's or a fold's workers run one after another by the hand-built runner's scheduler (`brun::par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return |
+| compiled library code | not built: every library function runs as bytecode (difference 9).  To build: the standard library's and each `use`d library's compiled bodies linked into the runner and called at `OpStaticCall`, as Rust calls its bridges |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |
 
