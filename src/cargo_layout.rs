@@ -115,7 +115,7 @@ pub fn classic_deps_is_debris(profile_dir: &std::path::Path) -> bool {
 /// toolchain produces:
 ///
 /// * **classic** — one `<profile>/deps/` holding every rlib.  One search dir.
-/// * **per-unit** (cargo 1.99.0-nightly 2026-07-29 and later) — each crate gets its own
+/// * **per-unit** (cargo 1.99 nightlies and later) — each crate gets its own
 ///   `<profile>/build/<crate>/<hash>/out/`, and `deps/` does not exist at all.  ~107
 ///   search dirs for loft.
 ///

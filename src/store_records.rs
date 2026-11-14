@@ -318,7 +318,7 @@ fn normal_alts(mut alts: Vec<BTreeSet<u16>>, live: &BTreeSet<u16>) -> Vec<BTreeS
     }
 }
 
-/// `v` names the store no more: no longer a must-holder, nor in any alternative (one left
+/// `v` stops naming the store: it is not a must-holder, nor in any alternative (one left
 /// empty leaves nothing known).
 fn forget_holder(info: &mut SInfo, v: u16) {
     info.live.remove(&v);
@@ -1639,7 +1639,7 @@ impl Run<'_> {
                 }
             }
             if strong {
-                // The slot no longer holds what it held: `w` is no holder of that any more.
+                // The slot holds another value from here: `w` is not a holder of the one it held.
                 let before: Vec<SKey> = st
                     .slots
                     .get(&k)
@@ -3743,11 +3743,11 @@ impl Run<'_> {
         Some(distinct)
     }
 
-    /// On a path where `x` is known to name only `to`: a store it no longer names, and that
+    /// On a path where `x` is known to name only `to`: a store it does not name there, and that
     /// is live only where `x` names it, is not live on this path.
     /// Keep, in the slot `off` of every record `w` names, only the stores `keep` admits — a
     /// path-sensitive refinement of what the slot holds on one arm of an identity test.  Its
-    /// `corr` follows: a store dropped from the slot is no longer live through it.
+    /// `corr` follows: a store dropped from the slot is not live through it.
     /// `OpDistinctStore(OpGetDbRef(w, off), v)` where `v` names one store `y` and the slot may
     /// hold `y` or others (a loop rebuild's guarded free of the record's old capture): where
     /// DISTINCT, the slot does not hold `y`; where SAME, only `y` — as a variable first operand

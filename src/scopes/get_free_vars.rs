@@ -1521,7 +1521,7 @@ fn fnref_stand_down(
             _ => end,
         };
         // Asked BEFORE the record's own free: a free resets the variable it names, so after it
-        // the record no longer names the store the fn-ref's closure is compared with.
+        // the record does not name the store the fn-ref's closure is compared with.
         // A record's release is its hook (`if <live> <cascade>(r)`) and then its free: the
         // guard goes ahead of the pair, never between them.
         let hook_of = |st: &Value, r: u16| {

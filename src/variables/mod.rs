@@ -5962,7 +5962,7 @@ impl Function {
 
     /// `@FR-O-Override`'s second admissible free: the IDENTITY-GUARDED release a pass places for
     /// a never-free binding it made — `OpFreeRefIfDistinct(v, witness)`, which releases `v`'s
-    /// store only when it is no longer the one the witness holds.  Four passes place one: the
+    /// store only when it is not the one the witness holds.  Four passes place one: the
     /// owner witness (`__own_<v>`, `@FR-O-Witness`), a rebind parameter (one with a
     /// `__rbw_<v>` witness), the call-site snapshot of a local a `&` parameter may rebind (`__lift_N`,
     /// loft#2195) and the write-back of a call's result into an out-of-line field

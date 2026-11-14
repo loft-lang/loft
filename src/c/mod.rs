@@ -197,7 +197,7 @@ pub(crate) fn passed(c: CType) -> String {
 /// structs the unit's functions name.
 pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
-    /// The `#c_twin`s, whose bodies `data` no longer holds (`Data::with_c_twins_bound`).
+    /// The `#c_twin`s, whose bodies `data` does not hold (`Data::with_c_twins_bound`).
     pub(crate) c_twins: Vec<u32>,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,

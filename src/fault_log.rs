@@ -6,9 +6,8 @@
 //! per line, appended, beside the human message the reporter prints anyway.
 //!
 //! A sweep, a test or a falsify run that asks "did this run fault, and how?" reads the kinds
-//! from here instead of matching the reporters' prose, which each consumer used to do with a
-//! pattern of its own — and a message that changed, or a fault reached through a different
-//! reporter, then read as a clean run.  The C runtime writes the same lines (`loft_log.h`'s
+//! from here, never by matching the reporters' prose: a pattern per consumer reads a message
+//! that changed, or a fault reached through a different reporter, as a clean run.  The C runtime writes the same lines (`loft_log.h`'s
 //! `loft_fault_log`), so the three backends answer in one format.
 //!
 //! Each line: `{"kind": …, "backend": …, …}` with `kind` one of

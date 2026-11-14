@@ -243,8 +243,8 @@ impl<'a> FnWriter<'a> {
 
     /// Find the cold exits and write their helpers.  An arm is outlined when every variable
     /// it names, besides the parameters, is named nowhere else in the body but by an empty
-    /// initialisation: those variables become the helper's own, and this body no longer
-    /// declares them.  `LOFT_NO_COLD_EXIT=1` writes every arm in place.
+    /// initialisation: those variables are the helper's own, and this body does not
+    /// declare them.  `LOFT_NO_COLD_EXIT=1` writes every arm in place.
     #[expect(
         clippy::too_many_lines,
         reason = "one plan: the arms, each one's verdict and its trace, the helpers' signature"
