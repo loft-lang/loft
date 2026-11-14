@@ -113,6 +113,8 @@ pub struct Gen {
   // bind that asks.
   walks: vector<lower::CharWalk>,
   walks_known: boolean,
+  // `@FR-R-RetAdopt`: the local that is built in the caller's buffer (`v` -1: none).
+  adopt: ret_adopt::RetAdopt,
   why: text,
 }
 
@@ -1088,6 +1090,16 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   }
   if def.name == "OpAppendText" && len(args) >= 2 && text_dest_pass(g, args) {
     return ret;
+  }
+  if g.adopt.v >= 0 && len(args) > 0 && (def.name == "OpDatabase" || def.name == "OpSetInt4") {
+    // The adopted local's witness is never minted, nor zeroed.
+    witness = match unspan(args[0]!) {
+      NdVar { n } => n,
+      _ => -1,
+    };
+    if witness == g.adopt.vdb {
+      return ir::TyVoid;
+    }
   }
   if own_way(g, op, args) {
     return ret;
@@ -2233,9 +2245,14 @@ fn block(g: Gen, bl: ir::Block, top: boolean) -> ir::TypeT {
   to = g.position;
   tp: ir::TypeT = ir::TyVoid;
   returned = false;
+  // The adopted local is already in the buffer: its delivery is not written.
+  delivery = ret_adopt::delivery(g.b, g.adopt, bl.operators);
   for n in bl.operators {
     if g.why != "" {
       return tp;
+    }
+    if own::has(delivery, n#index) {
+      continue;
     }
     match unspan(n) {
       NdReturn { inner } => {
@@ -2318,7 +2335,9 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
       ir::TyVoid
     }
     NdSet { var, inner } => {
-      assign(g, var, inner);
+      if !adopted_bind(g, var, inner) {
+        assign(g, var, inner);
+      }
       ir::TyVoid
     }
     NdIf { cond, t, f } => branch(g, cond, t, f),
@@ -2571,17 +2590,83 @@ pub fn oracle(b: ir::Bundle) -> own::Ops {
   own::ops_of(b)
 }
 
+// `retbuf_adopt`'s clause: is the adopted local bound to its witness's field somewhere?
+fn adopt_bound(g: Gen, n: ir::Node, a: ret_adopt::RetAdopt) -> boolean {
+  here = match n {
+    NdSet { var, inner } => var == a.v && match unspan(inner) {
+      NdCall { def_nr, args } => {
+        ints = len(args) == 3 && match args[1]! { NdInt { n: _ } => true, _ => false }
+          && match args[2]! { NdInt { n: _ } => true, _ => false };
+        witness = len(args) == 3 && match unspan(args[0]!) { NdVar { n: w } => w == a.vdb, _ => false };
+        def_of(g, def_nr).name == "OpGetField" && ints && witness
+      }
+      _ => false,
+    },
+    _ => false,
+  };
+  if here {
+    return true;
+  }
+  for c in ret_adopt::children(n) {
+    if adopt_bound(g, c, a) {
+      return true;
+    }
+  }
+  false
+}
+
+// `adopted_bind`: the adopted local bound to the caller's buffer instead of its own witness
+// — the buffer minted where it is null, cleared where it is not.  True when that was written.
+fn adopted_bind(g: Gen, v: integer, value: ir::Node) -> boolean {
+  a = g.adopt;
+  if a.v < 0 || v != a.v {
+    return false;
+  }
+  match value {
+    NdCall { def_nr, args } => {
+      witness = len(args) > 0 && match unspan(args[0]!) { NdVar { n: w } => w == a.vdb, _ => false };
+      if !witness {
+        return false;
+      }
+      buf = ir::NdVar { n: a.buf };
+      mint = ir::NdBlock { block: [ir::Block {
+        name: "adopted buffer",
+        operators: [
+          ir::NdCall { def_nr: op_named(g.b, "OpDatabase"), args: [buf, ir::NdInt { n: a.db_tp }] },
+          ir::NdCall { def_nr: op_named(g.b, "OpSetInt4"), args: [buf, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }] }
+        ],
+        result: [ir::TyVoid], scope: 65535, var_size: 0
+      }] };
+      reuse = ir::NdIf {
+        cond: ir::NdCall { def_nr: op_named(g.b, "OpRefIsNull"), args: [buf] },
+        t: mint,
+        f: ir::NdCall { def_nr: op_named(g.b, "OpClearVector"), args: [buf] }
+      };
+      generate(g, reuse, false);
+      rest: vector<ir::Node> = [buf];
+      for x in args {
+        if x#index > 0 {
+          rest += [x];
+        }
+      }
+      assign(g, v, ir::NdCall { def_nr: def_nr, args: rest });
+      true
+    }
+    _ => false,
+  }
+}
+
 // `State::def_code` for definition `d`: its bytes, or null for a function this writer does
 // not write yet (`why[0]` says what stopped it).  `starts` and `natives` are the image's.
 pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
   def = b.data.definitions[d]!;
   ret = def.returned[0] ?? ir::TyVoid;
-  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), owned_reassigned: [], walks: [], walks_known: false, why: "" };
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), owned_reassigned: [], walks: [], walks_known: false, adopt: ret_adopt::RetAdopt {}, why: "" };
   if !body_null(def) {
     g.defs = own::function_defs(b, d, ops);
-    if ret_adopt::ret_adopt(b, d).v >= 0 {
-      why[0] = "not written yet: a function that adopts its return buffer";
-      return null;
+    a = ret_adopt::ret_adopt(b, d);
+    if a.v >= 0 && def.code[0] != null && adopt_bound(g, def.code[0]!, a) {
+      g.adopt = a;
     }
   }
   if body_null(def) {
