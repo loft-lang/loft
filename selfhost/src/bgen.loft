@@ -207,12 +207,26 @@ fn int_local(g: Gen, n: ir::Node) -> integer {
   if whole && !var.linked_narrow && var.stack_allocated && slot != 65535 && slot <= g.position { v } else { -1 }
 }
 
-// `fusable_int` and `emit_fused_int` (`@FR-R-Fuse`) for a value that is not stored: an integer
-// operator over a local and a local or a literal is one operator reading the frame.  True when
-// it was written.
-fn fused_int(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
+// A fused integer operator (`FusedInt`): `kind` among the arithmetic or the comparison kinds
+// of `ops::fused`, the local `a`, and a second local `b` or — `b` -1 — the literal `c`.
+struct Fused {
+  ok: boolean,
+  compare: boolean,
+  kind: integer,
+  a: integer,
+  b: integer,
+  c: integer?,
+}
+
+fn no_fuse() -> Fused {
+  Fused { ok: false, compare: false, kind: 0, a: -1, b: -1, c: null }
+}
+
+// `fusable_int` (`@FR-R-Fuse`): an integer operator over a local and a local or a literal can
+// be one operator reading the frame.
+fn fusable(g: Gen, op: integer, args: vector<ir::Node>) -> Fused {
   if len(args) != 2 {
-    return false;
+    return no_fuse();
   }
   name = def_of(g, op).name;
   kind = match name {
@@ -229,49 +243,208 @@ fn fused_int(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
     _ => -1,
   };
   if kind < 0 {
-    return false;
+    return no_fuse();
   }
   compare = name == "OpEqInt" || name == "OpNeInt" || name == "OpLtInt" || name == "OpLeInt";
   found: vector<boolean> = [false];
   first = literal(args[0]!, found);
-  first_literal = found[0] ?? false;
-  if compare && first_literal {
+  if compare && (found[0] ?? false) {
     a = int_local(g, args[1]!);
     if a >= 0 {
       // The operands change sides: less becomes greater.
-      flipped = if kind == 2 { 4 } else if kind == 3 { 5 } else { kind };
-      at = var_pos(g, a);
-      add_op(g, "OpCmpIntVC");
-      put_u8(g.o, flipped);
-      put_u16(g.o, at);
-      put_i64(g.o, first);
-      return true;
+      return Fused { ok: true, compare: true, kind: if kind == 2 { 4 } else if kind == 3 { 5 } else { kind }, a: a, b: -1, c: first };
     }
   }
   a = int_local(g, args[0]!);
   if a < 0 {
-    return false;
+    return no_fuse();
   }
   second = literal(args[1]!, found);
   if found[0] ?? false {
-    at = var_pos(g, a);
-    add_op(g, if compare { "OpCmpIntVC" } else { "OpIntVC" });
-    put_u8(g.o, kind);
-    put_u16(g.o, at);
-    put_i64(g.o, second);
-    return true;
+    return Fused { ok: true, compare: compare, kind: kind, a: a, b: -1, c: second };
   }
   b = int_local(g, args[1]!);
   if b < 0 {
-    return false;
+    return no_fuse();
   }
-  at = var_pos(g, a);
-  bt = var_pos(g, b);
-  add_op(g, if compare { "OpCmpIntVV" } else { "OpIntVV" });
-  put_u8(g.o, kind);
+  Fused { ok: true, compare: compare, kind: kind, a: a, b: b, c: null }
+}
+
+// `emit_fused_int` for a value that is pushed, or — `jump` — the test of a branch
+// (`OpCmpIntVVJump` / `OpCmpIntVCJump`, whose step the caller writes after it).
+fn put_fused(g: Gen, f: Fused, jump: boolean) {
+  at = var_pos(g, f.a);
+  bt = if f.b >= 0 { var_pos(g, f.b) } else { 0 };
+  stem = if f.compare { "OpCmpInt" } else { "OpInt" };
+  add_op(g, "{stem}{if f.b >= 0 { "VV" } else { "VC" }}{if jump { "Jump" } else { "" }}");
+  put_u8(g.o, f.kind);
   put_u16(g.o, at);
-  put_u16(g.o, bt);
-  true
+  if f.b >= 0 {
+    put_u16(g.o, bt);
+  } else {
+    put_i64(g.o, f.c);
+  }
+}
+
+// `State::code_put`: a jump's 4-byte step written where its place was kept.
+fn patch_i32(o: Out, at: integer, v: integer) {
+  w = v & 4294967295;
+  o.code[at] = (w & 255) as u8;
+  o.code[at + 1] = ((w >> 8) & 255) as u8;
+  o.code[at + 2] = ((w >> 16) & 255) as u8;
+  o.code[at + 3] = ((w >> 24) & 255) as u8;
+}
+
+// `emit_push_sentinel`: a reference slot reserved above the top and made the sentinel null.
+fn push_sentinel(g: Gen) {
+  add_op(g, "OpReserveFrame");
+  put_u16(g.o, 16);
+  g.position += 16;
+  add_op(g, "OpInitRefSentinel");
+  put_u16(g.o, 16);
+}
+
+// `emit_typed_null`: the null of a type pushed.
+fn typed_null(g: Gen, tp: ir::TypeT) {
+  match base(tp) {
+    TyText { dep: _ } => add_op(g, "OpConvTextFromNull"),
+    TyInteger { spec: _ } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, null);
+    }
+    TyCharacter => add_op(g, "OpConvCharacterFromNull"),
+    TyBoolean => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, 255);
+    }
+    TyFloat => stop(g, "not written yet: a null float"),
+    TySingle => stop(g, "not written yet: a null single"),
+    TyFunction { args: _, result: _, dep: _, consts: _ } => stop(g, "not written yet: a null function"),
+    _ => push_sentinel(g),
+  }
+}
+
+// `is_divergent`: does the node leave by a return, a break or a continue?
+fn divergent(n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdReturn { inner: _ } => true,
+    NdBreak { n: _ } => true,
+    NdContinue { n: _ } => true,
+    NdInsert { items } => len(items) > 0 && divergent(items[len(items) - 1]!),
+    NdBlock { block: bl } => {
+      ops = bl[0]?.operators ?? [];
+      len(ops) > 0 && divergent(ops[len(ops) - 1]!)
+    }
+    _ => false,
+  }
+}
+
+// The name of the operator a node calls, "" for any other node.
+fn called(g: Gen, n: ir::Node) -> text {
+  match unspan(n) {
+    NdCall { def_nr, args: _ } => def_of(g, def_nr).name,
+    _ => "",
+  }
+}
+
+fn call_args(n: ir::Node) -> vector<ir::Node> {
+  match unspan(n) {
+    NdCall { def_nr: _, args } => args,
+    _ => [],
+  }
+}
+
+// `gen_if_test`: the test and its jump over the true arm; answers where the jump's step is
+// to be written.
+fn if_test(g: Gen, test: ir::Node) -> integer {
+  name = called(g, test);
+  args = call_args(test);
+  if name == "OpNot" && called(g, args[0] ?? ir::NdNull) == "OpConvBoolFromText" {
+    stop(g, "not written yet: a text's end test");
+  }
+  if name == "OpLeInt" && (called(g, args[0] ?? ir::NdNull) == "OpSizeText" || called(g, args[0] ?? ir::NdNull) == "OpLengthVector") {
+    stop(g, "not written yet: a length test");
+  }
+  if name == "OpEqInt" && called(g, args[0] ?? ir::NdNull) == "OpConvIntFromEnum" {
+    stop(g, "not written yet: a tag test");
+  }
+  fused = no_fuse();
+  if name == "OpEqInt" || name == "OpNeInt" || name == "OpLtInt" || name == "OpLeInt" {
+    match unspan(test) {
+      NdCall { def_nr, args: a } => {
+        fused = fusable(g, def_nr, a);
+      }
+      _ => {}
+    }
+  }
+  if fused.ok && fused.compare {
+    put_fused(g, fused, true);
+  } else {
+    generate(g, test, false);
+    add_op(g, "OpGotoFalseWord");
+  }
+  at = len(g.o.code);
+  put_i32(g.o, 0);
+  at
+}
+
+// `State::gen_if`.
+fn branch(g: Gen, test: ir::Node, t_val: ir::Node, f_val: ir::Node) -> ir::TypeT {
+  step_at = if_test(g, test);
+  true_pos = len(g.o.code);
+  before = g.position;
+  tp = generate(g, t_val, false);
+  true_stack = g.position;
+  no_else = match unspan(f_val) {
+    NdNull => true,
+    _ => false,
+  };
+  void = match tp {
+    TyVoid => true,
+    TyNever => true,
+    _ => false,
+  };
+  null_else = no_else && !divergent(t_val) && !void && true_stack != before;
+  if no_else && !null_else {
+    patch_i32(g.o, step_at, len(g.o.code) - true_pos);
+    if divergent(t_val) {
+      g.position = before;
+    }
+    return tp;
+  }
+  add_op(g, "OpGotoWord");
+  end_at = len(g.o.code);
+  put_i32(g.o, 0);
+  false_pos = len(g.o.code);
+  patch_i32(g.o, step_at, len(g.o.code) - true_pos);
+  g.position = before;
+  if null_else {
+    typed_null(g, tp);
+    patch_i32(g.o, end_at, len(g.o.code) - false_pos);
+    g.position = true_stack;
+    return tp;
+  }
+  fp = generate(g, f_val, false);
+  false_stack = g.position;
+  if !divergent(f_val) && g.position == before && true_stack > before && !void {
+    typed_null(g, tp);
+    g.position = true_stack;
+    false_stack = true_stack;
+  }
+  if !divergent(t_val) && !divergent(f_val) && true_stack != false_stack {
+    stop(g, "not written yet: an if whose arms leave different heights");
+    return tp;
+  }
+  patch_i32(g.o, end_at, len(g.o.code) - false_pos);
+  if divergent(t_val) {
+    g.position = false_stack;
+  } else if divergent(f_val) {
+    g.position = true_stack;
+  }
+  match tp {
+    TyNever => fp,
+    _ => tp,
+  }
 }
 
 // `State::add_const`: a constant operand, at the width its parameter declares.
@@ -354,7 +527,9 @@ fn special_call(name: text) -> boolean {
 fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   def = def_of(g, op);
   ret = def.returned[0] ?? ir::TyVoid;
-  if fused_int(g, op, args) {
+  fused = fusable(g, op, args);
+  if fused.ok {
+    put_fused(g, fused, false);
     return ret;
   }
   if special_call(def.name) || len(args) < len(def.attributes) {
@@ -565,14 +740,26 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
       ir::TyVoid
     }
     NdSet { var: _, inner: _ } => unwritten(g, "an assignment"),
-    NdIf { cond: _, t: _, f: _ } => unwritten(g, "an if"),
+    NdIf { cond, t, f } => branch(g, cond, t, f),
     NdLoop { block: _ } => unwritten(g, "a loop"),
     NdBreak { n: _ } => unwritten(g, "a break"),
     NdContinue { n: _ } => unwritten(g, "a continue"),
     NdDrop { inner: _ } => unwritten(g, "a dropped value"),
-    NdEnum { ord: _, tp: _ } => unwritten(g, "an enum constant"),
-    NdFloat { f: _ } => unwritten(g, "a float constant"),
-    NdSingle { f: _ } => unwritten(g, "a single constant"),
+    NdEnum { ord, tp: _ } => {
+      add_op(g, "OpConstEnum");
+      put_u8(g.o, ord);
+      ir::TyEnum { n: 0, is_ref: false, dep: [] }
+    }
+    NdFloat { f } => {
+      add_op(g, "OpConstFloat");
+      put_i64(g.o, f.bits());
+      ir::TyFloat
+    }
+    NdSingle { f } => {
+      add_op(g, "OpConstSingle");
+      put_i32(g.o, f.bits() & 4294967295);
+      ir::TySingle
+    }
     NdCallRef { var: _, args: _ } => unwritten(g, "a call through a reference"),
     _ => unwritten(g, "a node of another kind"),
   }
