@@ -10,6 +10,7 @@ use ir;
 use load;
 use cgen_tidy;
 use cgen_types;
+use opt_names;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -162,8 +163,17 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
 // A LAYER of the program in `b`: what an analysis derived, one line per function, in the
 // format the Rust generator traces it in — or null for a layer this generator does not print.
 // `shapes` (`LOFT_TRACE_SHAPES`): every function with a body; one a variable of which has no
-// shape prints no line.
+// shape prints no line.  `reach` (`LOFT_TRACE_REACH`): what the program's `main` reaches; a
+// program without one (its tests' unit) prints no line yet.
 pub fn layer(b: ir::Bundle, name: text) -> text? {
+  if name == "reach" {
+    for d in b.data.definitions {
+      if d.name == "n_main" {
+        return "{opt_names::reach_line(b, d#index)}\n";
+      }
+    }
+    return "";
+  }
   if name != "shapes" {
     return null;
   }

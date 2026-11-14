@@ -1,0 +1,408 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft: which definitions a unit reaches
+// (`reachable_functions` and its walks in src/opt/names.rs), function for function.
+//
+// A set of definitions is a vector of marks, one per definition of the program.
+
+use ir;
+use cgen_types;
+
+// No definition (`u32::MAX`, as the image stores it).
+NONE = 4294967295;
+
+// `Definition.def_type` ordinals (`DefType`).
+FUNCTION = 1;
+ENUM_VALUE = 4;
+
+fn mark(calls: vector<boolean>, d: integer) {
+  if d >= 0 && d < len(calls) {
+    calls[d] = true;
+  }
+}
+
+// Is `t` a function type, as written — no `τ?` peeled?
+fn function_type(t: ir::TypeT) -> boolean {
+  match t {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    TyRoutine { n: _ } => true,
+    _ => false,
+  }
+}
+
+// `Type::peel_link`: the type's data shape — its base with every `&` link peeled.
+fn peel_link(t: ir::TypeT) -> ir::TypeT {
+  match cgen_types::base(t) {
+    TyRefVar { inner } => peel_link(inner),
+    TyRewritten { inner } => peel_link(inner),
+    _ => cgen_types::base(t),
+  }
+}
+
+// `tuple_carries_fn_ref`: does a member of this type, at any depth, hold a function value?
+fn tuple_carries_fn_ref(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    TyTuple { elems } => any_carries(elems),
+    _ => false,
+  }
+}
+
+fn any_carries(elems: vector<ir::TypeT>) -> boolean {
+  for e in elems {
+    if tuple_carries_fn_ref(e) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Value::unspan`: the node under its source spans.
+fn unspan(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos: _, inner } => unspan(inner),
+    _ => n,
+  }
+}
+
+// `fnref::parallel_worker_arg`: where a parallel native takes its worker function, as
+// `argument * 16 + the least number of arguments`; 0 for every other definition.
+fn parallel_worker_arg(name: text) -> integer {
+  if name == "n_parallel_fold" {
+    return 2 * 16 + 4;
+  }
+  if name == "n_parallel_for" || name == "n_parallel_for_light" || name == "n_parallel_queue"
+    || name == "n_parallel_queue_text" || name == "n_parallel_queue_ref" || name == "n_parallel_queue_narrow"
+    || name == "n_parallel_queue_fn" || name == "n_parallel_discard" {
+    return 4 * 16 + 5;
+  }
+  0
+}
+
+// `collect_calls`: every definition `node` calls.  The parallel family passes its worker as an
+// integer literal, which is marked too.
+fn collect_calls(node: ir::Node, defs: vector<ir::Definition>, calls: vector<boolean>) {
+  match node {
+    NdCall { def_nr, args } => {
+      mark(calls, def_nr);
+      worker = parallel_worker_arg(defs[def_nr].name ?? "");
+      if worker != 0 && len(args) >= worker % 16 {
+        match args[worker / 16] {
+          NdInt { n } => mark(calls, n),
+          _ => {},
+        }
+      }
+      for a in args {
+        collect_calls(a, defs, calls);
+      }
+    },
+    NdCallRef { var: _, args } => { for a in args { collect_calls(a, defs, calls); } },
+    NdInsert { items } => { for a in items { collect_calls(a, defs, calls); } },
+    NdTuple { items } => { for a in items { collect_calls(a, defs, calls); } },
+    NdParallel { arms } => { for a in arms { collect_calls(a, defs, calls); } },
+    NdBlock { block } => { for a in block[0].operators { collect_calls(a, defs, calls); } },
+    NdLoop { block } => { for a in block[0].operators { collect_calls(a, defs, calls); } },
+    NdSet { var: _, inner } => collect_calls(inner, defs, calls),
+    NdReturn { inner } => collect_calls(inner, defs, calls),
+    NdDrop { inner } => collect_calls(inner, defs, calls),
+    NdYield { inner } => collect_calls(inner, defs, calls),
+    NdTuplePut { var: _, idx: _, inner } => collect_calls(inner, defs, calls),
+    NdSpan { pos: _, inner } => collect_calls(inner, defs, calls),
+    NdIf { cond, t, f } => {
+      collect_calls(cond, defs, calls);
+      collect_calls(t, defs, calls);
+      collect_calls(f, defs, calls);
+    },
+    NdIter { var: _, create, next, init } => {
+      collect_calls(create, defs, calls);
+      collect_calls(next, defs, calls);
+      collect_calls(init, defs, calls);
+    },
+    _ => {},
+  }
+}
+
+// `collect_int_fn_refs`: every integer literal of a tree known to PRODUCE a function value is
+// a candidate definition.  A call is the exception: the value is its result, and its
+// arguments are ordinary integers.
+fn collect_int_fn_refs(node: ir::Node, calls: vector<boolean>) {
+  match node {
+    NdInt { n } => mark(calls, n),
+    NdFnRef { def_nr, var: _, t: _ } => mark(calls, def_nr),
+    NdCall { def_nr: _, args: _ } => {},
+    NdCallRef { var: _, args: _ } => {},
+    NdInsert { items } => { for a in items { collect_int_fn_refs(a, calls); } },
+    NdTuple { items } => { for a in items { collect_int_fn_refs(a, calls); } },
+    NdParallel { arms } => { for a in arms { collect_int_fn_refs(a, calls); } },
+    NdBlock { block } => { for a in block[0].operators { collect_int_fn_refs(a, calls); } },
+    NdLoop { block } => { for a in block[0].operators { collect_int_fn_refs(a, calls); } },
+    NdSet { var: _, inner } => collect_int_fn_refs(inner, calls),
+    NdReturn { inner } => collect_int_fn_refs(inner, calls),
+    NdDrop { inner } => collect_int_fn_refs(inner, calls),
+    NdYield { inner } => collect_int_fn_refs(inner, calls),
+    NdTuplePut { var: _, idx: _, inner } => collect_int_fn_refs(inner, calls),
+    NdSpan { pos: _, inner } => collect_int_fn_refs(inner, calls),
+    NdIf { cond, t, f } => {
+      collect_int_fn_refs(cond, calls);
+      collect_int_fn_refs(t, calls);
+      collect_int_fn_refs(f, calls);
+    },
+    NdIter { var: _, create, next, init } => {
+      collect_int_fn_refs(create, calls);
+      collect_int_fn_refs(next, calls);
+      collect_int_fn_refs(init, calls);
+    },
+    _ => {},
+  }
+}
+
+// `collect_tuple_fn_refs`: the functions a tuple literal reaches through its `fn(…)` members,
+// at any depth; a value that is no literal of the same arity is scanned whole.
+fn collect_tuple_fn_refs(elems: vector<ir::TypeT>, inner: ir::Node, calls: vector<boolean>) {
+  match unspan(inner) {
+    NdTuple { items } => {
+      if len(items) != len(elems) {
+        collect_int_fn_refs(inner, calls);
+        return;
+      }
+      for e in elems {
+        match cgen_types::base(e) {
+          TyFunction { args: _, result: _, dep: _, consts: _ } => collect_int_fn_refs(items[e#index]!, calls),
+          TyTuple { elems: nested } => {
+            if any_carries(nested) {
+              collect_tuple_fn_refs(nested, items[e#index]!, calls);
+            }
+          },
+          _ => {},
+        }
+      }
+    },
+    _ => collect_int_fn_refs(inner, calls),
+  }
+}
+
+// `can_be_fn_value` and `fn_value_number`: is the integer `d`, met where a function value may
+// ride as a plain number, one — a function of this program, no operator, with something to
+// run (a body, a native, a `#c` binding)?
+fn fn_value_number(defs: vector<ir::Definition>, d: integer) -> boolean {
+  if d < 0 || d >= len(defs) {
+    return false;
+  }
+  def = defs[d];
+  runs = (len(def.code) > 0 && def.code[0] != NdNull) || def.native != "" || def.c_sig != "";
+  def.def_type == FUNCTION && !def.name.starts_with("Op") && runs
+}
+
+// The type of variable `var` of a function, as written.
+fn var_type(vars: vector<ir::Variable>, var: integer) -> ir::TypeT {
+  vars[var]!.type_def[0]!
+}
+
+// `collect_fn_ref_literals`: the function values a body names as plain numbers — a write to a
+// `fn(…)` slot, a tuple member, an argument of a `fn(…)` parameter, a returned or yielded one.
+fn collect_fn_ref_literals(val: ir::Node, defs: vector<ir::Definition>, vars: vector<ir::Variable>, calls: vector<boolean>, returns_fn: boolean) {
+  match val {
+    NdSet { var, inner } => {
+      if function_type(peel_link(var_type(vars, var))) {
+        collect_int_fn_refs(inner, calls);
+      }
+      match var_type(vars, var) {
+        TyTuple { elems } => {
+          if any_carries(elems) {
+            collect_tuple_fn_refs(elems, inner, calls);
+          }
+        },
+        _ => {},
+      }
+      collect_fn_ref_literals(inner, defs, vars, calls, returns_fn);
+    },
+    NdTuplePut { var, idx, inner } => {
+      match var_type(vars, var) {
+        TyTuple { elems } => {
+          if idx < len(elems) {
+            match cgen_types::base(elems[idx]) {
+              TyFunction { args: _, result: _, dep: _, consts: _ } => collect_int_fn_refs(inner, calls),
+              _ => {},
+            }
+          }
+        },
+        _ => {},
+      }
+      collect_fn_ref_literals(inner, defs, vars, calls, returns_fn);
+    },
+    NdCall { def_nr, args } => {
+      callee = defs[def_nr]!;
+      // A function value stored into a field, or pushed as an element, rides as a plain
+      // integer operand of the write.
+      operand = if callee.name == "OpSetInt4" { 2 } else if callee.name == "OpPushInt4" { 1 } else { -1 };
+      if operand >= 0 && operand < len(args) {
+        match unspan(args[operand]) {
+          NdInt { n } => {
+            if fn_value_number(defs, n) {
+              mark(calls, n);
+            }
+          },
+          _ => {},
+        }
+      }
+      for a in args {
+        if a#index < len(callee.attributes) && function_type(callee.attributes[a#index]!.typedef[0]!) {
+          collect_int_fn_refs(a, calls);
+        }
+      }
+      for a in args {
+        collect_fn_ref_literals(a, defs, vars, calls, returns_fn);
+      }
+    },
+    NdCallRef { var, args } => {
+      match var_type(vars, var) {
+        TyFunction { args: params, result: _, dep: _, consts: _ } => {
+          for a in args {
+            if a#index < len(params) && function_type(cgen_types::base(params[a#index])) {
+              collect_int_fn_refs(a, calls);
+            }
+          }
+        },
+        _ => {},
+      }
+      for a in args {
+        collect_fn_ref_literals(a, defs, vars, calls, returns_fn);
+      }
+    },
+    NdReturn { inner } => {
+      if returns_fn {
+        collect_int_fn_refs(inner, calls);
+      }
+      collect_fn_ref_literals(inner, defs, vars, calls, returns_fn);
+    },
+    NdFnRef { def_nr, var: _, t: _ } => mark(calls, def_nr),
+    NdYield { inner } => {
+      yielded: vector<boolean> = [for _ in 0..len(defs) { false }];
+      collect_int_fn_refs(inner, yielded);
+      for y in yielded {
+        if y && fn_value_number(defs, y#index) {
+          mark(calls, y#index);
+        }
+      }
+      collect_fn_ref_literals(inner, defs, vars, calls, returns_fn);
+    },
+    NdInsert { items } => { for a in items { collect_fn_ref_literals(a, defs, vars, calls, returns_fn); } },
+    NdTuple { items } => { for a in items { collect_fn_ref_literals(a, defs, vars, calls, returns_fn); } },
+    NdParallel { arms } => { for a in arms { collect_fn_ref_literals(a, defs, vars, calls, returns_fn); } },
+    NdBlock { block } => { for a in block[0].operators { collect_fn_ref_literals(a, defs, vars, calls, returns_fn); } },
+    NdLoop { block } => { for a in block[0].operators { collect_fn_ref_literals(a, defs, vars, calls, returns_fn); } },
+    NdDrop { inner } => collect_fn_ref_literals(inner, defs, vars, calls, returns_fn),
+    NdSpan { pos: _, inner } => collect_fn_ref_literals(inner, defs, vars, calls, returns_fn),
+    NdIf { cond, t, f } => {
+      collect_fn_ref_literals(cond, defs, vars, calls, returns_fn);
+      collect_fn_ref_literals(t, defs, vars, calls, returns_fn);
+      collect_fn_ref_literals(f, defs, vars, calls, returns_fn);
+    },
+    NdIter { var: _, create, next, init } => {
+      collect_fn_ref_literals(create, defs, vars, calls, returns_fn);
+      collect_fn_ref_literals(next, defs, vars, calls, returns_fn);
+      collect_fn_ref_literals(init, defs, vars, calls, returns_fn);
+    },
+    _ => {},
+  }
+}
+
+// The definition named `key` in source `source`, else the one of the program's own source or
+// of the standard library (`Data::source_nr`, then `Data::def_nr`); `NONE` for none.
+fn named(b: ir::Bundle, source: integer, key: text) -> integer {
+  fallback = NONE;
+  for d in b.data.definitions {
+    if d.name != key {
+      continue;
+    }
+    if d.source == source {
+      return d#index;
+    }
+    if d.source == b.data.source || d.source == 0 {
+      fallback = d#index;
+    }
+  }
+  fallback
+}
+
+// `Data::drop_cascade_nr`: the cascade that releases what a record of type `type_def` owns
+// (`t_<LEN><Type>_OpDropAll`), else the type's own drop hook (`…_OpDrop`); `NONE` for none.
+fn drop_cascade_nr(b: ir::Bundle, type_def: integer) -> integer {
+  if type_def == NONE || type_def < 0 || type_def >= len(b.data.definitions) {
+    return NONE;
+  }
+  def = b.data.definitions[type_def]!;
+  spelling = def.name;
+  if def.def_type == ENUM_VALUE && def.parent != NONE && def.parent < len(b.data.definitions) {
+    spelling = "{b.data.definitions[def.parent]!.name}::{def.name}";
+  }
+  nr = named(b, def.source, "t_{spelling.size()}{spelling}_OpDropAll");
+  if nr != NONE {
+    return nr;
+  }
+  named(b, def.source, "t_{def.name.size()}{def.name}_OpDrop")
+}
+
+// `reachable_functions`: every definition reachable from `roots` through calls and function
+// values, the roots included, as marks.
+pub fn reachable_functions(b: ir::Bundle, roots: vector<integer>) -> vector<boolean> {
+  defs = b.data.definitions;
+  reachable: vector<boolean> = [for _ in 0..len(defs) { false }];
+  // A function's store instances (`<key>@st<mask>`) are reachable with it.
+  instances: vector<integer> = [];
+  for d in defs {
+    if d.name.starts_with("n_") && d.name.contains("@") {
+      instances += [d#index];
+    }
+  }
+  queue: vector<integer> = [];
+  for r in roots {
+    queue += [r];
+  }
+  at = 0;
+  while at < len(queue) {
+    d = queue[at]!;
+    at += 1;
+    if d < 0 || d >= len(defs) || reachable[d] {
+      continue;
+    }
+    reachable[d] = true;
+    def = defs[d]!;
+    calls: vector<boolean> = [for _ in 0..len(defs) { false }];
+    if len(def.code) > 0 {
+      collect_calls(def.code[0], defs, calls);
+      returns_fn = len(def.returned) > 0 && function_type(def.returned[0]);
+      collect_fn_ref_literals(def.code[0], defs, def.variables.variables, calls, returns_fn);
+    }
+    // A reachable lambda's closure record can be released through a function value no local
+    // record names: its cascade is reachable with it.
+    mark(calls, drop_cascade_nr(b, def.closure_record));
+    for i in instances {
+      inst = defs[i];
+      cut = inst.name.find("@") ?? 0;
+      if inst.name[0..cut] == def.name && inst.source == def.source {
+        mark(calls, i);
+      }
+    }
+    for c in calls {
+      if c && !reachable[c#index] {
+        queue += [c#index];
+      }
+    }
+  }
+  reachable
+}
+
+// The trace line of what `root` reaches (`LOFT_TRACE_REACH`): `[reach]<TAB>root<TAB>names…`,
+// sorted by name.
+pub fn reach_line(b: ir::Bundle, root: integer) -> text {
+  names: vector<text> = [];
+  for r in reachable_functions(b, [root]) {
+    if r {
+      names += [b.data.definitions[r#index]!.name];
+    }
+  }
+  names.sort();
+  "[reach]\t{b.data.definitions[root].name}\t{names.join(" ")}"
+}

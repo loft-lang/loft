@@ -71,7 +71,7 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
     """One program's `layer`: each line the Rust generator traced against the generator's."""
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
     want, got, img = stem + ".want.c", stem + ".layer", stem + ".store"
-    switch = {"shapes": "LOFT_TRACE_SHAPES"}[layer]
+    switch = {"shapes": "LOFT_TRACE_SHAPES", "reach": "LOFT_TRACE_REACH"}[layer]
     try:
         rc, err = proc([loft, "--emit-c", want, f], {**env, switch: "1"}, timeout, cwd=os.path.dirname(f))
         if rc != 0:
@@ -137,7 +137,7 @@ def main():
     ap.add_argument("--cgen", action="store_true", help="build selfhost/front/cgen.loft and use it")
     ap.add_argument("--form", choices=["program", "debug"], default="program",
                     help="which unit: the program's, or the debug tier's with its #line marks")
-    ap.add_argument("--layer", choices=["shapes"], default=None,
+    ap.add_argument("--layer", choices=["shapes", "reach"], default=None,
                     help="compare what an analysis derived instead of the unit")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")

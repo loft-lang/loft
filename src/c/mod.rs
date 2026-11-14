@@ -2023,6 +2023,7 @@ pub fn emit_unit_for(
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
+    trace_reach(data, roots, &all, &fns);
     let mut cx = Cx::new(data, stores, browser);
     cx.c_twins = twins;
     cx.frames
@@ -2953,6 +2954,26 @@ pub(crate) fn variable_shapes(
         shapes.push(c);
     }
     Ok(shapes)
+}
+
+/// `LOFT_TRACE_REACH=1` — what a unit reaches and what it writes, two lines on standard error:
+/// `[reach]<TAB>root<TAB>names…`, every definition `opt::names::reachable_functions` finds from
+/// the unit's roots, sorted by name; and `[functions]<TAB>root<TAB>names…`, the functions the
+/// unit writes, in the order it writes them.  Layers of the loft-written generator's
+/// comparison (12-c-generator.md § The layers beside the unit).
+fn trace_reach(data: &Data, roots: &[u32], all: &[u32], fns: &[u32]) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_REACH").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let root = roots.first().map_or("", |d| data.def(*d).name());
+    let mut reach: Vec<&str> = crate::opt::names::reachable_functions(data, all)
+        .into_iter()
+        .map(|d| data.def(d).name())
+        .collect();
+    reach.sort_unstable();
+    eprintln!("[reach]\t{root}\t{}", reach.join(" "));
+    let written: Vec<&str> = fns.iter().map(|d| data.def(*d).name()).collect();
+    eprintln!("[functions]\t{root}\t{}", written.join(" "));
 }
 
 /// `c` in a word, for a trace: a tuple by its members, since its number is the order tuples

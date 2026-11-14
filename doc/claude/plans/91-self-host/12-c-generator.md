@@ -86,6 +86,8 @@ print it; `cgen_survey.py` gets a `--layer <name>` per row as it is built.
 | layer | what it shows | Rust side today |
 |---|---|---|
 | `shapes` | the C shape of every variable of a function (`variable_shapes`), parameters first | `LOFT_TRACE_SHAPES` — **compared**: `cgen_survey.py --cgen --layer shapes` |
+| `reach` | every definition a unit reaches from its roots (`opt::names::reachable_functions`), sorted | `LOFT_TRACE_REACH` — **compared**: `--layer reach` |
+| `functions` | the functions the unit writes, in the order it writes them | `LOFT_TRACE_REACH` (its second line); the loft side is next |
 | `ranges` | the range facts a body's operators were written under (`opt::range`) | to add |
 | `census` | each rewrite a function admitted, by rule (`make rewrite-census`) | `LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN` |
 | `declines` | each rewrite declined, with its reason (`make decline-census`) | the decline census |
@@ -171,6 +173,7 @@ The order inside G-2 follows the survey's ranking, not this list, once the ranki
 
 | corpus, loft generator | 0 of 1075 units (every one refused: `a function body`) | `cgen_survey.py --cgen` |
 | layer `shapes` | 13 263 function rows over 1075 programs, all equal | `cgen_survey.py --cgen --layer shapes` |
+| layer `reach` | 1075 programs, all equal | `cgen_survey.py --cgen --layer reach` |
 
 The image carries per definition whether its body is under the 32-bit regime
 (`Definition.width32` in `ir.loft`, `Data::body_width32`): without it a `#width 32` file's unit
@@ -183,7 +186,8 @@ came out 64-bit from the image.
 | `selfhost/src/cgen_tidy.loft` | `src/c/tidy.rs` | whole: `tidy`, `tidy_unit` (with `@FR-R-RefParam`), `drop_unnamed`; the census line `R-RefParam` is not counted yet |
 | `selfhost/src/cgen.loft` | `src/c/mod.rs` | the runtime's composition, `c_string`, the unit's assembly for a program whose `main` is empty; any other program is refused by name |
 | `selfhost/src/cgen_types.loft` | `src/c/mod.rs` (`CType`, `Cx::ctype`, `local_ctype`, `variable_shapes`) | whole, a shape held as its word; a build under `--width 32` is not asked (the image does not say it) |
-| `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes`; exit 3 with `not carried: <what>` |
+| `selfhost/src/opt_names.loft` | `src/opt/names.rs` | `reachable_functions` with its walks (`collect_calls`, `collect_fn_ref_literals`, `collect_int_fn_refs`, `collect_tuple_fn_refs`), the store instances and a closure record's drop cascade; a unit's lazy drivers are not roots yet |
+| `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at
 run time, in the order `RUNTIME` embeds them.
