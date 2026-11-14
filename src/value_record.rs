@@ -2788,7 +2788,13 @@ impl Exits<'_> {
                 Value::Call(op, a) if *op == ops.ref_alias
                     && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(b) if *b == buf))));
             let guard = matches!(o.unspan(), Value::If(cond, ..) if is_buffer_guard(o.unspan(), cond, buf, ops));
-            if alias || guard {
+            // The plain free of a delivery local: the local is retyped to the tuple below, and a
+            // tuple is never a store's record.  Its frees usually go with the caller-side plan
+            // of the same function; a local that is only a literal's buffer has no such plan,
+            // and its free then ran on a tuple (loft#2490: "refused to free the stack store").
+            let delivered_free = matches!(o.unspan(), Value::Call(op, a) if *op == ops.free_ref
+                && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(l) if self.c.delivered.contains(l))));
+            if alias || guard || delivered_free {
                 continue;
             }
             if tail && Some(i) == final_at && !matches!(o.unspan(), Value::Return(_)) {

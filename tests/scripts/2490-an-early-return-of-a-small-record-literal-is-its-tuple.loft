@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2490 — `if g(x) != null { return R { … }; } null` in a function answering a small
+// record `R?`: the literal ends in its own `return`, because the free of the condition's call
+// result stands between its fields and the exit.  `@FR-R-ValueRecord` carries such a function's
+// answer as its fields; this literal was left in its store form on a buffer the function no
+// longer held as a record, so the interpreter answered null (and reported a refused free).
+// Each cell is hand-computed; `mk(x)` is present for `x >= 0`.
+//
+// @falsified-at: 5330b3690 — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, interpret 101 stack-store free refusal(s) (BUG #306) -> 0, native exit 1 -> 0
+// CHANNEL: the asserts; a refused free is reported on standard error by the run itself.
+// ARMED: nothing to arm.
+// WITNESS: each assert message prints what was read.
+// HOLDS: the early literal after a call in the condition (the defect), with the call bound
+// first, behind a deeper call, under `||`, and in a loop; and the forms that always held as
+// controls — the literal as the arm's tail, an early return of a call, the `== null` guard,
+// a condition without a call.
+
+struct R { lo: integer, hi: integer }
+
+fn mk(x: integer) -> R? { if x < 0 { return null; } R { lo: x, hi: x } }
+fn deep(x: integer, d: integer) -> R? { if d > 0 { return deep(x, d - 1); } mk(x) }
+fn show(r: R?) -> text { if r == null { "null" } else { "{r.lo}..{r.hi}" } }
+
+fn early(x: integer) -> R? { if mk(x) != null { return R { lo: 0, hi: x }; } null }
+fn bound(x: integer) -> R? { r = mk(x); if r != null { return R { lo: 0, hi: x }; } null }
+fn nested(x: integer, y: boolean) -> R? { if y || deep(x, 2) != null { return R { lo: 0, hi: x }; } null }
+fn tail(x: integer) -> R? { if mk(x) != null { R { lo: 0, hi: x } } else { null } }
+fn forward(x: integer) -> R? { if mk(x) != null { return mk(x + 1); } null }
+fn guard(x: integer) -> R? { if mk(x) == null { return null; } R { lo: 0, hi: x } }
+fn plain(x: integer) -> R? { if x > 0 { return R { lo: 0, hi: x }; } null }
+
+fn test_the_early_literal_is_the_answer() {
+  assert(show(early(5)) == "0..5" && show(early(-5)) == "null", "early: {show(early(5))} {show(early(-5))}");
+  assert(show(bound(5)) == "0..5" && show(bound(-5)) == "null", "the call bound first: {show(bound(5))} {show(bound(-5))}");
+  assert(show(nested(5, false)) == "0..5" && show(nested(-5, false)) == "null", "a deeper call: {show(nested(5, false))} {show(nested(-5, false))}");
+  assert(show(nested(-5, true)) == "0..-5", "under `||`: {show(nested(-5, true))}");
+}
+
+// 200 calls, x from -100 to 99: present for 0..99, answering hi = x — the sum 0 + … + 99.
+fn test_it_holds_in_a_loop() {
+  t = 0;
+  for i in 0..200 {
+    r = early(i - 100);
+    if r != null { t += r.hi; }
+  }
+  assert(t == 4950, "summed: {t}");
+}
+
+fn test_the_forms_that_always_held() {
+  assert(show(tail(5)) == "0..5" && show(tail(-5)) == "null", "the arm's tail: {show(tail(5))}");
+  assert(show(forward(5)) == "6..6" && show(forward(-5)) == "null", "an early return of a call: {show(forward(5))}");
+  assert(show(guard(5)) == "0..5" && show(guard(-5)) == "null", "the `== null` guard: {show(guard(5))}");
+  assert(show(plain(5)) == "0..5" && show(plain(-5)) == "null", "no call in the condition: {show(plain(5))}");
+}

@@ -1,0 +1,789 @@
+diff --git b/src/c/bodies.rs a/src/c/bodies.rs
+index c065880bf..d7580098a 100644
+--- b/src/c/bodies.rs
++++ a/src/c/bodies.rs
+@@ -45,17 +45,12 @@
+ //! its code names a reporting call.  `LOFT_NO_COMPILED_BODIES=1` at run time makes every lookup
+ //! answer -1 (the A/B: the loft bodies, the same answers).
+ //!
+-//! The fragment is the unit's code after the runtime, so the unit's FACTS reach it in three ways:
+-//!
+-//! - a fact the runtime reads as a `#define` (`LOFT_NO_LOCKS`, `LOFT_NO_THREADS`,
+-//!   `LOFT_FRAMES`, `LOFT_PATH_FOLD`) is the SHIM's here, not the stub program's: the bodies'
+-//!   text is the same either way, and a body that writes a store (a vector answer filled in the
+-//!   destination record the caller pushed) meets the shim's lock test and its tables;
+-//! - the unit's TYPES are named by the bodies (`loft_types`, a type number): the fragment keeps
+-//!   its own table — the standard library's types — and an entry that works on records runs only
+-//!   once `loft_body_types_ok` has found each of them the same in the table the runner loaded;
+-//! - a fact that changes the bodies' TEXT (`Cx::lazy`: a keyed lookup's fetch on a miss) cannot
+-//!   be the program's: a body with a keyed lookup is refused.
++//! Every body carried today only READS the program's data and builds texts on the C heap; the
++//! one write into the program's data is the ENTRY's append to the destination text, which is the
++//! shim's own `loft_crt_ref_text_append` — what the runner does when the loft body returns.  A
++//! body that itself writes a store would be written against this unit's facts (no locks, no
++//! threads), which the shim does not hold for the program it runs; it is not carried until the
++//! shim states those facts itself.
+ //!
+ //! A function this fragment cannot carry has no entry, so the runner runs its loft body: slower,
+ //! never wrong.  The fragment says which and why in its header.
+@@ -76,9 +71,6 @@ enum Slot {
+     Bool,
+     /// A text, a 16-byte view (`loft_str`).
+     Text,
+-    /// A reference — a record, a vector, the destination record of a vector answer — 12 bytes
+-    /// of a 16-byte slot: store, record, position, 4 bytes each.
+-    Ref,
+     /// A text answer's work buffer: the 16-byte slot holds the reference of the caller's cell;
+     /// the body is handed a text of the entry's own.
+     Work,
+@@ -87,7 +79,7 @@ enum Slot {
+ impl Slot {
+     fn bytes(self) -> i64 {
+         match self {
+-            Slot::Text | Slot::Work | Slot::Ref => 16,
++            Slot::Text | Slot::Work => 16,
+             _ => 8,
+         }
+     }
+@@ -98,7 +90,6 @@ impl Slot {
+             Slot::Bool => "uint8_t",
+             Slot::Text => "loft_str",
+             Slot::Work => "loft_text",
+-            Slot::Ref => "loft_ref",
+         }
+     }
+ }
+@@ -109,13 +100,15 @@ impl Slot {
+ /// pushed.
+ fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
+     let def = data.def(d);
++    if def.hidden_return_buffer_attr().is_some() {
++        return Err("a hidden return buffer".into());
++    }
+     let slot = |tp: &Type, what: &str| -> Result<Slot, String> {
+         match tp.base() {
+             Type::Integer(..) | Type::Character => Ok(Slot::Int),
+             Type::Float => Ok(Slot::Float),
+             Type::Boolean => Ok(Slot::Bool),
+             Type::Text(_) => Ok(Slot::Text),
+-            Type::Vector(..) => Ok(Slot::Ref),
+             other => Err(format!("{what} of type {}", super::type_word(other))),
+         }
+     };
+@@ -124,7 +117,6 @@ fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
+     for a in def.attributes() {
+         match crate::native_gate::classify_bridge_attr(a, ret == Slot::Text) {
+             Some(BridgeAttrKind::WorkText) => args.push(Slot::Work),
+-            Some(BridgeAttrKind::HiddenDest) => args.push(Slot::Ref),
+             Some(BridgeAttrKind::Marshal) if !matches!(a.typedef.base(), Type::RefVar(_)) => {
+                 args.push(slot(&a.typedef, "argument")?);
+             }
+@@ -187,19 +179,7 @@ pub fn emit_bodies(
+     {
+         written.replace_range(s..s + e + 3, "\n");
+     }
+-    let typed = carried.iter().any(|(_, a, r)| needs_types(a, *r));
+-    // The check stands between the bodies' prototypes and the entries that call it; it reads
+-    // the unit's table, so a unit that describes no type cannot hold a body that needs one.
+     let mut entries = String::new();
+-    if typed {
+-        if !written.contains("static const uint32_t loft_ntypes =") {
+-            return Err(super::Refusal {
+-                function: "the compiled standard-library bodies".to_string(),
+-                why: "a body works on records and the unit describes no type".to_string(),
+-            });
+-        }
+-        entries.push_str(TYPES_OK);
+-    }
+     let mut names = Vec::new();
+     for (k, (d, args, ret)) in carried.iter().enumerate() {
+         entries.push_str(&entry(k, &c_name(data, *d), args, *ret));
+@@ -219,30 +199,6 @@ pub fn emit_bodies(
+             fragment = fragment.replace(&format!("\"{}", &file[..=at]), "\"");
+         }
+     }
+-    // The types a body names are tested where it is entered; a table nothing tests is a body
+-    // working on records the signature did not show.
+-    if !typed && fragment.contains("loft_types") {
+-        return Err(super::Refusal {
+-            function: "the compiled standard-library bodies".to_string(),
+-            why: "a body names the unit's types and no entry tests them".to_string(),
+-        });
+-    }
+-    // A keyed lookup is written for the unit's lazy-source fact (`Cx::lazy`), which is the
+-    // stub program's here, not the program's the runner runs.
+-    let keyed = crate::opt::names::reachable_functions(data, &roots)
+-        .into_iter()
+-        .find(|&d| {
+-            data.def(d).code.any_node(&mut |n| {
+-                matches!(n, crate::data::Value::Call(f, _) if data.def(*f).name() == "OpGetRecord")
+-            })
+-        });
+-    if let Some(d) = keyed {
+-        return Err(super::Refusal {
+-            function: data.def(d).name().to_string(),
+-            why: "a carried body looks a key up: written for this unit's lazy-source fact"
+-                .to_string(),
+-        });
+-    }
+     // A carried body never reports: the runner's reports live in its `State`.
+     for call in ["loft_panic(", "loft_assert(", "loft_fault_"] {
+         if fragment.contains(call) {
+@@ -256,52 +212,6 @@ pub fn emit_bodies(
+     Ok(out)
+ }
+ 
+-/// Does a function of this signature work on records — so the types its body names must be the
+-/// program's (`loft_body_types_ok`)?
+-fn needs_types(args: &[Slot], ret: Slot) -> bool {
+-    ret == Slot::Ref || args.contains(&Slot::Ref)
+-}
+-
+-/// The test that the types the bodies were written against are the program's: every type the
+-/// fragment's own table describes — the standard library's, numbered as in every program that
+-/// starts with the same library — is the same in the table the runner loaded into the shim
+-/// (`loft_crt_load_types`).  Until that table is loaded, and for a program built against
+-/// another library, a body that works on records does not answer and the loft body runs.
+-/// `file` is not compared: the runner's rows do not carry it.
+-const TYPES_OK: &str = "
+-static int loft_body_types_ok(void) {
+-    static uint32_t seen = 0;
+-    static int ok = 0;
+-    if (!loft_crt_types) return 0;
+-    if (seen == loft_crt_types_gen) return ok;
+-    seen = loft_crt_types_gen;
+-    ok = 0;
+-    if (loft_crt_ntypes < loft_ntypes) return 0;
+-    for (uint32_t t = 0; t < loft_ntypes; t++) {
+-        const loft_tdesc *a = &loft_types[t], *b = &loft_crt_types[t];
+-        if (!a->kind && !a->size && !a->n && !a->nk) continue;
+-        if (a->kind != b->kind || a->size != b->size || a->elem != b->elem || a->n != b->n
+-            || a->owns_heap != b->owns_heap || a->linked != b->linked || a->nk != b->nk)
+-            return 0;
+-        if ((a->fields != 0) != (b->fields != 0) || (a->variants != 0) != (b->variants != 0)) return 0;
+-        for (uint16_t i = 0; a->fields && i < a->n; i++) {
+-            const loft_fld *f = &a->fields[i], *g = &b->fields[i];
+-            if (f->pos != g->pos || f->type != g->type || f->view != g->view
+-                || f->hidden != g->hidden || f->group != g->group)
+-                return 0;
+-        }
+-        for (uint16_t i = 0; a->variants && i < a->n; i++)
+-            if (a->variants[i] != b->variants[i]) return 0;
+-        for (uint8_t i = 0; i < a->nk; i++) {
+-            const loft_key *f = &a->keys[i], *g = &b->keys[i];
+-            if (f->type != g->type || f->pos != g->pos || f->start != g->start) return 0;
+-        }
+-    }
+-    ok = 1;
+-    return 1;
+-}
+-";
+-
+ /// Entry `k`: the arguments read from their slots below `sp`, the body called, its answer
+ /// written at the arguments' base, the new top answered.  A text answer is appended to `dest`
+ /// (the destination form) or, with none, to the call's work cell, whose view is then pushed.
+@@ -312,9 +222,6 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
+          int64_t base = sp - {size};\n    \
+          if (base < 0) return -1;\n"
+     );
+-    if needs_types(args, ret) {
+-        e.push_str("    if (!loft_body_types_ok()) return -1;\n");
+-    }
+     if ret == Slot::Text {
+         // The plain form's destination: the first work buffer's cell.
+         e.push_str("    int plain = !dest;\n");
+@@ -344,13 +251,6 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
+         if *s == Slot::Work {
+             let _ = writeln!(e, "    loft_text a{i} = {{ 0, 0, 0 }};");
+             call.push(format!("&a{i}"));
+-        } else if *s == Slot::Ref {
+-            let _ = writeln!(
+-                e,
+-                "    uint32_t q{i}[3]; memcpy(q{i}, loft_crt_slot_at(stk, base + {off}), sizeof q{i});\n    \
+-                 loft_ref a{i} = loft_crt_ref(q{i}[0], q{i}[1], q{i}[2]);"
+-            );
+-            call.push(format!("a{i}"));
+         } else {
+             let _ = writeln!(
+                 e,
+@@ -378,13 +278,6 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
+         return e;
+     }
+     let _ = writeln!(e, "    {} r = {body}({});", ret.c(), call.join(", "));
+-    if ret == Slot::Ref {
+-        e.push_str(
+-            "    uint32_t q[4] = { r.store_nr, r.rec, r.pos, 0 };\n    \
+-             memcpy(loft_crt_slot_at(stk, base), q, sizeof q);\n    return base + 16;\n}\n",
+-        );
+-        return e;
+-    }
+     let _ = writeln!(
+         e,
+         "    memcpy(loft_crt_slot_at(stk, base), &r, sizeof r);\n    return base + {};\n}}",
+diff --git b/src/c/body.rs a/src/c/body.rs
+index 999ce42b9..3dc8671d7 100644
+--- b/src/c/body.rs
++++ a/src/c/body.rs
+@@ -9289,42 +9289,6 @@ impl<'a> FnWriter<'a> {
+         crate::opt::range::op_range_at_site(self.cx.data, &facts.0, ranges, name, args).is_some()
+     }
+ 
+-    /// `LOFT_TRACE_FACTS=1` — the non-sentinel and range facts a plain function's operators
+-    /// are written under, as they were derived: two lines on standard error,
+-    /// `[nn]<TAB>function<TAB>number=0|1 …` and `[ranges]<TAB>function<TAB>number=lo..hi …`,
+-    /// each sorted by variable number.  A twin's seeded facts are its caller's and print no
+-    /// line.  Layers of the loft-written generator's comparison (12-c-generator.md § The
+-    /// layers beside the unit); a function whose body asks no fact prints none.
+-    fn trace_facts(
+-        &self,
+-        nn: &std::collections::HashMap<u16, bool>,
+-        rv: &crate::opt::range::Ranges,
+-    ) {
+-        if !crate::env_once!(std::env::var("LOFT_TRACE_FACTS").is_ok_and(|v| v != "0"))
+-            || !self.nn_seed.is_empty()
+-            || !self.rg_seed.vars.is_empty()
+-            || !self.rg_seed.fields.is_empty()
+-        {
+-            return;
+-        }
+-        let name = self.cx.data.def(self.d).name();
+-        let mut held: Vec<(u16, bool)> = nn.iter().map(|(v, b)| (*v, *b)).collect();
+-        held.sort_unstable();
+-        let row: Vec<String> = held
+-            .iter()
+-            .map(|(v, b)| format!("{v}={}", u8::from(*b)))
+-            .collect();
+-        eprintln!("[nn]\t{name}\t{}", row.join(" "));
+-        let mut ranged: Vec<(u16, crate::opt::range::Range)> =
+-            rv.vars.iter().map(|(v, r)| (*v, *r)).collect();
+-        ranged.sort_unstable();
+-        let row: Vec<String> = ranged
+-            .iter()
+-            .map(|(v, (lo, hi))| format!("{v}={lo}..{hi}"))
+-            .collect();
+-        eprintln!("[ranges]\t{name}\t{}", row.join(" "));
+-    }
+-
+     /// This function's non-sentinel and range facts (`non_sentinel_vars`, `range_vars`), a
+     /// `__nn` twin's seeded parameters included; computed once.
+     fn nn_facts(
+@@ -9353,7 +9317,6 @@ impl<'a> FnWriter<'a> {
+                     &self.char_walks,
+                     &self.rg_seed,
+                 );
+-                self.trace_facts(&nn, &rv);
+                 let f = std::rc::Rc::new((nn, rv));
+                 self.range_facts = Some(f.clone());
+                 f
+diff --git b/src/c/mod.rs a/src/c/mod.rs
+index 3751e81d3..9a5952782 100644
+--- b/src/c/mod.rs
++++ a/src/c/mod.rs
+@@ -2023,7 +2023,6 @@ pub fn emit_unit_for(
+         .collect();
+     // The roots first, so a refusal names the function asked for before one it reaches.
+     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
+-    trace_reach(data, roots, &all, &fns);
+     let mut cx = Cx::new(data, stores, browser);
+     cx.c_twins = twins;
+     cx.frames
+@@ -2956,112 +2955,6 @@ pub(crate) fn variable_shapes(
+     Ok(shapes)
+ }
+ 
+-/// `LOFT_TRACE_REACH=1` — what a unit reaches and what it writes, two lines on standard error:
+-/// `[reach]<TAB>root<TAB>names…`, every definition `opt::names::reachable_functions` finds from
+-/// the unit's roots, sorted by name; and `[functions]<TAB>root<TAB>names…`, the functions the
+-/// unit writes, in the order it writes them.  Layers of the loft-written generator's
+-/// comparison (12-c-generator.md § The layers beside the unit).
+-fn trace_reach(data: &Data, roots: &[u32], all: &[u32], fns: &[u32]) {
+-    if !crate::env_once!(std::env::var("LOFT_TRACE_REACH").is_ok_and(|v| v != "0")) {
+-        return;
+-    }
+-    let root = roots.first().map_or("", |d| data.def(*d).name());
+-    let mut reach: Vec<&str> = crate::opt::names::reachable_functions(data, all)
+-        .into_iter()
+-        .map(|d| data.def(d).name())
+-        .collect();
+-    reach.sort_unstable();
+-    eprintln!("[reach]\t{root}\t{}", reach.join(" "));
+-    let written: Vec<&str> = fns.iter().map(|d| data.def(*d).name()).collect();
+-    eprintln!("[functions]\t{root}\t{}", written.join(" "));
+-}
+-
+-/// `LOFT_TRACE_COUNTERS=1` — every counted loop of function `d` as `loop_shape::range_counters`
+-/// reads it, in the order a walk of the body meets them: one line on standard error,
+-/// `[counters]<TAB>function<TAB>loop_var,index,next,inclusive …` (`next` is `-` in the
+-/// single-counter form, `inclusive` 0 or 1).  A function without one prints an empty row.  A
+-/// layer of the loft-written generator's comparison (12-c-generator.md § The layers beside the
+-/// unit).
+-fn trace_counters(cx: &Cx, d: u32) {
+-    if !crate::env_once!(std::env::var("LOFT_TRACE_COUNTERS").is_ok_and(|v| v != "0")) {
+-        return;
+-    }
+-    let def = cx.data.def(d);
+-    let mut row: Vec<String> = Vec::new();
+-    def.code().walk(&mut |v| {
+-        if let Value::Loop(lp) = v
+-            && let Ok(rc) = crate::loop_shape::range_counters(lp, cx.data)
+-        {
+-            row.push(format!(
+-                "{},{},{},{}",
+-                rc.loop_var,
+-                rc.index,
+-                rc.next.map_or("-".to_string(), |n| n.to_string()),
+-                u8::from(rc.inclusive)
+-            ));
+-        }
+-    });
+-    eprintln!("[counters]\t{}\t{}", def.name(), row.join(" "));
+-    // The `#index` of every `for e in v` loop its own bound keeps from overflowing
+-    // (`opt::iteration::bounded_iteration_index`), in the same order: `[iterations]`.
+-    let mut row: Vec<String> = Vec::new();
+-    def.code().walk(&mut |v| {
+-        if let Value::Loop(lp) = v
+-            && let Some(ix) = crate::opt::iteration::bounded_iteration_index(lp, cx.data)
+-        {
+-            row.push(ix.to_string());
+-        }
+-    });
+-    eprintln!("[iterations]\t{}\t{}", def.name(), row.join(" "));
+-}
+-
+-/// `c` in a word, for a trace: a tuple by its members, since its number is the order tuples
+-/// were first met in.
+-fn shape_word(cx: &Cx, c: CType) -> String {
+-    match c {
+-        CType::Int => "int".into(),
+-        CType::Int32 => "int32".into(),
+-        CType::Bool => "bool".into(),
+-        CType::Text => "text".into(),
+-        CType::Ref => "ref".into(),
+-        CType::Enum => "enum".into(),
+-        CType::Float => "float".into(),
+-        CType::Single => "single".into(),
+-        CType::Char => "char".into(),
+-        CType::Fn => "fn".into(),
+-        CType::Tuple(id) => format!(
+-            "tuple({})",
+-            cx.tuple_shapes(id)
+-                .into_iter()
+-                .map(|m| shape_word(cx, m))
+-                .collect::<Vec<_>>()
+-                .join(",")
+-        ),
+-        CType::Tr(g) => format!("tr{g}"),
+-        CType::TrVec => "trvec".into(),
+-        CType::Void => "void".into(),
+-    }
+-}
+-
+-/// `LOFT_TRACE_SHAPES=1` — the C shape of every variable of function `d` as
+-/// [`variable_shapes`] derived it, before a rewrite reshapes any: one line per function on
+-/// standard error, `[shapes]<TAB>function<TAB>number:name=shape …`.  The layer the loft-written
+-/// generator's own derivation is compared with (`selfhost/bench/cgen_survey.py --layer shapes`,
+-/// 12-c-generator.md § The layers beside the unit); its format is that comparison's contract.
+-fn trace_shapes(cx: &Cx, d: u32, shapes: &[CType]) {
+-    if !crate::env_once!(std::env::var("LOFT_TRACE_SHAPES").is_ok_and(|v| v != "0")) {
+-        return;
+-    }
+-    let def = cx.data.def(d);
+-    let vars = def.variables();
+-    let row: Vec<String> = shapes
+-        .iter()
+-        .enumerate()
+-        .map(|(v, c)| format!("{v}:{}={}", vars.name(v as u16), shape_word(cx, *c)))
+-        .collect();
+-    eprintln!("[shapes]\t{}\t{}", def.name(), row.join(" "));
+-}
+-
+ /// `@FR-R-Inline`: a function of at most twelve statements is declared `inline`.  The hint
+ /// raises the compiler's inlining budget for it, so a small helper called from a hot loop —
+ /// a push through `put`, an accessor — is taken into its caller, and the caller's locals stay
+@@ -3252,10 +3145,6 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
+         return Err("parameters that do not match their arguments".into());
+     }
+     let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
+-    if mask == 0 {
+-        trace_shapes(cx, d, &shapes);
+-        trace_counters(cx, d);
+-    }
+     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
+     // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
+     let apr_at = if mask & APR_BIT == 0 {
+diff --git b/src/data.rs a/src/data.rs
+index 5c15b54f7..934986d50 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -6829,23 +6829,6 @@ impl Data {
+         !self.wide_instances.contains(&d) && self.width32_source(self.def(d).source)
+     }
+ 
+-    /// @PLN204 — the regime restored from what an image stores per definition
+-    /// ([`Self::body_width32`], one answer each, in definition order): a source with a 32-bit
+-    /// body is under the regime, and a body of such a source that is not 32-bit is a wide
+-    /// instance.  [`Self::body_width32`] then answers for every definition as it did when the
+-    /// image was written.
+-    pub fn restore_body_width32(&mut self, bodies: &[bool]) {
+-        for (d, _) in bodies.iter().enumerate().filter(|(_, on)| **on) {
+-            let src = self.def(d as u32).source;
+-            self.width32_sources.insert(src);
+-        }
+-        for (d, _) in bodies.iter().enumerate().filter(|(_, on)| !**on) {
+-            if self.width32_source(self.def(d as u32).source) {
+-                self.wide_instances.insert(d as u32);
+-            }
+-        }
+-    }
+-
+     /// @PLN204 — the sources under the 32-bit regime and the instances minted from a 64-bit
+     /// template: parse-time state the IR bundle does not carry, so the program cache's
+     /// manifest writes it and a warm load replays it (`startup_cache`).
+diff --git b/src/data_store.rs a/src/data_store.rs
+index 92faaa8b0..83534f4a3 100644
+--- b/src/data_store.rs
++++ a/src/data_store.rs
+@@ -318,7 +318,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
+ /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
+ /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
+ /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
+-pub(crate) const DEFINITION_STRIDE: u32 = 216; // @PLN204 — +8 for width32; loft#2227 — +8 for native_answer_tp; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact; @FR-R-CompleteWrite — no_prefill in the 4 bytes left
++pub(crate) const DEFINITION_STRIDE: u32 = 208; // loft#2227 — +8 for native_answer_tp; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact; @FR-R-CompleteWrite — no_prefill in the 4 bytes left
+ pub(crate) const DEF_SOURCE: u32 = 0;
+ pub(crate) const DEF_DEF_TYPE: u32 = 8;
+ pub(crate) const DEF_PARENT: u32 = 16;
+@@ -358,7 +358,6 @@ pub(crate) const DEF_INSTANCE_OF: u32 = 88; // @PLN165 D3 the template; -1 = not
+ pub(crate) const DEF_RETURNED_FACT: u32 = 192; // @PLN187 text: where the declared result names an alias
+ pub(crate) const DEF_NO_PREFILL: u32 = 196; // @FR-R-CompleteWrite text: `NoPrefill::encode`
+ pub(crate) const DEF_INSTANCE_ARGS: u32 = 188; // @PLN165 D3 vector<TypeT>
+-pub(crate) const DEF_WIDTH32: u32 = 208; // @PLN204 the body is under the 32-bit regime
+ 
+ /// `Data` record (the root).
+ pub(crate) const DATA_SOURCE: u32 = 0;
+@@ -1709,7 +1708,6 @@ mod tests {
+         );
+         assert_eq!(pos(ids.definition, "op_hot"), DEF_OP_HOT);
+         assert_eq!(pos(ids.definition, "op_cold"), DEF_OP_COLD);
+-        assert_eq!(pos(ids.definition, "width32"), DEF_WIDTH32);
+ 
+         // Data record (root).
+         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);
+diff --git b/src/ir_read.rs a/src/ir_read.rs
+index 7c3a79dac..8b93d69dd 100644
+--- b/src/ir_read.rs
++++ a/src/ir_read.rs
+@@ -424,13 +424,10 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
+     let mut data = Data::new();
+     data.source = r.field_int(stores, ds::DATA_SOURCE) as u16;
+     let defs = r.field_recvec(ds::DATA_DEFINITIONS, ds::DEFINITION_STRIDE);
+-    let mut width32 = Vec::new();
+     for i in 0..defs.len(stores) {
+-        let dr = defs.get(i, stores);
+-        width32.push(dr.field_bool(stores, ds::DEF_WIDTH32));
+-        data.definitions.push(read_definition(stores, dr, bodies));
++        data.definitions
++            .push(read_definition(stores, defs.get(i, stores), bodies));
+     }
+-    data.restore_body_width32(&width32);
+     // The import tables go in BEFORE the rebuild: `rebuild_indices` replays
+     // them to recreate the cross-source `def_names` bindings (loft#1359).
+     let imports = r.field_recvec(ds::DATA_IMPORTS, ds::IMPORT_STRIDE);
+diff --git b/src/ir_schema_gen.rs a/src/ir_schema_gen.rs
+index f489797a1..54add69c9 100644
+--- b/src/ir_schema_gen.rs
++++ a/src/ir_schema_gen.rs
+@@ -757,7 +757,6 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
+     db.field(t80, "op_hot", t4);
+     db.field(t80, "op_cold", t4);
+     db.field(t80, "no_prefill", t5);
+-    db.field(t80, "width32", t4);
+     let t128 = db.vector(t76);
+     let _ = t128; // may be unused
+     let t129 = db.vector(t79);
+diff --git b/src/ir_store.rs a/src/ir_store.rs
+index 99382c386..bb2e532b9 100644
+--- b/src/ir_store.rs
++++ a/src/ir_store.rs
+@@ -416,8 +416,7 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
+ 
+ /// Write one native `Definition` into the already-allocated record `r` (the
+ /// 23-field store subset — the same set the @PLAN28 codec serialises).
+-fn write_definition(stores: &mut Stores, r: &Record, d: &Definition, width32: bool) {
+-    r.set_field_bool(stores, ds::DEF_WIDTH32, width32); // @PLN204
++fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
+     r.set_field_str(stores, ds::DEF_NAME, &d.name);
+     r.set_field_int(stores, ds::DEF_SOURCE, i64::from(d.source));
+     r.set_field_int(stores, ds::DEF_DEF_TYPE, def_type_code(&d.def_type));
+@@ -530,9 +529,9 @@ pub fn materialize_data_at(stores: &mut Stores, root: DbRef, data: &Data) {
+     let r = Record::new(root);
+     r.set_field_int(stores, ds::DATA_SOURCE, i64::from(data.source));
+     let defs = r.field_recvec(ds::DATA_DEFINITIONS, ds::DEFINITION_STRIDE);
+-    for (nr, d) in data.definitions.iter().enumerate() {
++    for d in &data.definitions {
+         let dr = defs.push(stores);
+-        write_definition(stores, &dr, d, data.body_width32(nr as u32));
++        write_definition(stores, &dr, d);
+     }
+     // The import tables: `rebuild_indices` reconstructs `def_names` under each
+     // definition's OWN source and then REPLAYS these, so an image without them
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index a7fe2361a..c51380edf 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3933,7 +3933,7 @@ use #count instead"
+     pub(crate) fn keyed_snapshot(
+         &mut self,
+         expr: &mut Value,
+-        in_type: &mut Type,
++        in_type: &Type,
+         is_par: bool,
+     ) -> Option<(u16, Value)> {
+         let mut fill = Value::Null;
+@@ -3957,14 +3957,6 @@ use #count instead"
+             let is_radix = matches!(in_type.base(), Type::Radix(_, _, _) | Type::Trie(_, _, _));
+             let scratch_tp = Type::Reference(content, dep.clone());
+             let scratch_var = self.create_unique("hash_scratch", &scratch_tp);
+-            // The walk's variable is a VIEW of a record of the collection (`@FR-B-View`).  A
+-            // source that names a place says so by its dependency; a fresh collection — a
+-            // call's answer — names none, and its variable then read as the OWNER of each
+-            // record: released at the end of every round, which is the collection's store.
+-            // Such a walk's variable depends on the snapshot it steps through.
+-            if dep.is_empty() {
+-                *in_type = in_type.depending(scratch_var);
+-            }
+             let hash_tp_id = self.get_type(in_type);
+             let tp_arg = if hash_tp_id == u16::MAX {
+                 0
+@@ -4427,8 +4419,7 @@ use #count instead"
+             // (`OpFreeScratch`, a no-op when co-located).  u16::MAX = not on=4.
+             let is_par = matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
+             let mut hash_scratch_var: u16 = u16::MAX;
+-            if let Some((scratch_var, snapshot)) =
+-                self.keyed_snapshot(&mut expr, &mut in_type, is_par)
++            if let Some((scratch_var, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, is_par)
+             {
+                 hash_scratch_var = scratch_var;
+                 fill = snapshot;
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 92e0629f0..27f987d4c 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -22989,31 +22989,6 @@ impl Parser {
+                                 // by the zero-trust consumer as a one-line accessor that
+                                 // silently corrupted its result.
+                                 || self.return_projects_into_local(&v)
+-                                // The same view held in a LOCAL: a `match` arm binds a
+-                                // vector field of its subject (`C { args } => … return args;`),
+-                                // so the returned variable views a record this frame frees —
+-                                // the subject, or the call result it was read from.  Returned
+-                                // raw, the caller's vector pointed into the freed store: an
+-                                // empty vector after its next call on the interpreter, a store
+-                                // freed twice on both backends (loft#2486).  A local that OWNS
+-                                // its vector depends on its own `__vdb_N` or work ref, never on
+-                                // a record local.
+-                                || matches!(v.unspan(), Value::Var(x)
+-                                    if self.vars.tp(*x).depend().iter().any(|&d| {
+-                                        // A vector's own backing (`__vdb_N`) and a
+-                                        // call's work ref are records too, and the local
+-                                        // that depends on one OWNS the vector.
+-                                        let own = self.vars.name(d);
+-                                        d != bv
+-                                            && !self.vars.is_argument(d)
+-                                            && !own.starts_with("__vdb_")
+-                                            && !own.starts_with("__ref_")
+-                                            && !own.starts_with("__rref_")
+-                                            && matches!(
+-                                                self.vars.tp(d).base(),
+-                                                Type::Reference(_, _) | Type::Enum(_, true, _)
+-                                            )
+-                                    }))
+                                 // A vector LITERAL (`return []`, `return ["q"]`): its value is a
+                                 // view of the record the literal minted (`__vdb_N`), which the
+                                 // frame frees on this path, so it must reach the caller's buffer
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index ee1125562..f856a3f98 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -5313,9 +5313,6 @@ use a separate collection or add after the loop"
+         // program compiles today and keeps its binding (and its loop-record admission).
+         // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
+         // A loop's VARIABLE is never that body local: its binding ended with its own loop.
+-        // The same note before that filter: the per-loop split asks it too, of a bind that
+-        // differs from the ended one only in absence.
+-        let ended_any = self.bind_after_end.map(|(v, _)| v);
+         let ended_bind = self
+             .bind_after_end
+             .take()
+@@ -5516,14 +5513,9 @@ use a separate collection or add after the loop"
+             && ended_bind == Some(var_nr)
+             && (ended_loop_var
+                 || (!s_type.is_unknown()
+-                    && (self
++                    && self
+                         .vars
+-                        .retype_would_be_refused(var_nr, &s_type, &self.data)
+-                        // `@FR-N-Join` joins the writes of ONE binding.  Asked of a binding
+-                        // that has ended, it widened the ended one's variable: every read in
+-                        // the block that bound it non-null then stored "a nullable" value,
+-                        // and a later block's non-null bind stayed nullable.
+-                        || self.vars.rebind_differs_in_absence(var_nr, &s_type))))
++                        .retype_would_be_refused(var_nr, &s_type, &self.data)))
+         {
+             var_nr = self.rebind_after_block(var_nr, &s_type);
+             new_binding = Value::Var(var_nr);
+@@ -7210,18 +7202,9 @@ use a separate collection or add after the loop"
+             && cur_loop != u16::MAX
+             && born_in != u16::MAX
+             && born_in != cur_loop
+-            && (self
++            && self
+                 .vars
+                 .retype_would_be_refused(var_nr, &s_type, &self.data)
+-                // The other loop's binding has ENDED (`@FR-B-Scope`: its body local cannot
+-                // be read here), so a bind that differs from it in absence starts a binding
+-                // too: `@FR-N-Join` joins the writes of one binding, not of two loops.  Asked
+-                // of a binding the name's own resolution saw ended (`bind_after_end`): a loop
+-                // NUMBER is not the same on both passes, so `born_in` alone also holds for
+-                // the live binding of this very loop, whose non-null write into its `τ?` is
+-                // the join itself.
+-                || (ended_any == Some(var_nr)
+-                    && self.vars.rebind_differs_in_absence(var_nr, &s_type)))
+         {
+             // The SOURCE spelling, not the bound one.  A variable already split once is
+             // named `e#b1`, and registering the next split under that would key the third
+@@ -7233,10 +7216,6 @@ use a separate collection or add after the loop"
+             var_nr = self
+                 .vars
+                 .body_local_binding(&name, var_nr, &s_type, &mut self.lexer);
+-            // Bound HERE, in this loop's body (`@FR-B-Scope`): without the record the new
+-            // binding never ended, and a later loop could not take the spelling for its
+-            // variable ("shadows a local still in scope").
+-            self.record_binding(var_nr);
+             rebound_to = Value::Var(var_nr);
+             &rebound_to
+         } else {
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 56503fa5b..957db2066 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -4422,14 +4422,14 @@ impl Parser {
+             self.lexer.token("in");
+             let loop_nr = self.vars.start_loop();
+             let mut expr = Value::Null;
+-            let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
++            let in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+             // A keyed source is walked through its snapshot here as in a `for` statement and a
+             // comprehension (`keyed_snapshot`, the one home).  Without it `"{for e in h {…}}"`
+             // walked the HASH as if it were a snapshot and read a record number out of its
+             // table header: a store panic on both backends.  The scope-exit release frees the
+             // scratch, as it does for a comprehension's.
+             let snapshot = self
+-                .keyed_snapshot(&mut expr, &mut in_type, false)
++                .keyed_snapshot(&mut expr, &in_type, false)
+                 .map(|(_, fill)| fill);
+             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
+             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 3135bc647..a42869577 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -4234,11 +4234,6 @@ impl Parser {
+             // and is asked at the site.
+             if t == Type::Null {
+                 self.n_store_violation(&t, &r_type, "the return value", Some(&ret_pos));
+-                // The written `null` is the return type's null, as `parse_return` makes it:
+-                // left a bare `Value::Null`, the bytecode returned a value nothing had pushed.
+-                if !self.first_pass {
+-                    ret_val = self.null_value(&r_type);
+-                }
+             }
+             if t != Type::Null
+                 && !self.convert_store(
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index d12dd9c61..16a9c4d7b 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3966,7 +3966,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             in_type = in_type.depending(vec_var);
+             fill = v_set(vec_var, expr);
+             expr = Value::Var(vec_var);
+-        } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &mut in_type, false) {
++        } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, false) {
+             // A keyed source is walked through its ordered snapshot, as a `for` walks it.
+             fill = snapshot;
+         }
+diff --git b/src/value_record.rs a/src/value_record.rs
+index e3048aa37..22382b1b6 100644
+--- b/src/value_record.rs
++++ a/src/value_record.rs
+@@ -2788,13 +2788,7 @@ impl Exits<'_> {
+                 Value::Call(op, a) if *op == ops.ref_alias
+                     && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(b) if *b == buf))));
+             let guard = matches!(o.unspan(), Value::If(cond, ..) if is_buffer_guard(o.unspan(), cond, buf, ops));
+-            // The plain free of a delivery local: the local is retyped to the tuple below, and a
+-            // tuple is never a store's record.  Its frees usually go with the caller-side plan
+-            // of the same function; a local that is only a literal's buffer has no such plan,
+-            // and its free then ran on a tuple (loft#2490: "refused to free the stack store").
+-            let delivered_free = matches!(o.unspan(), Value::Call(op, a) if *op == ops.free_ref
+-                && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(l) if self.c.delivered.contains(l))));
+-            if alias || guard || delivered_free {
++            if alias || guard {
+                 continue;
+             }
+             if tail && Some(i) == final_at && !matches!(o.unspan(), Value::Return(_)) {
+@@ -2820,19 +2814,6 @@ impl Exits<'_> {
+             self.mv(n.unspan_mut(), r, vars);
+             return;
+         }
+-        // A literal built into a LOCAL buffer that ends in its own `return` — the form it takes
+-        // when the frees of the frame's other locals stand between its fields and the exit
+-        // (`{ OpDatabase(b, tp); OpSetX(b, …); OpFreeRef(t); return b }`) — is an exit where it
+-        // stands, as the one a `return` wraps is (`value`).  Walked as an ordinary block, its
+-        // `return b` was read as the return of a tuple local and its mint and field writes
+-        // stayed, on a buffer the function no longer holds as a record (loft#2490).
+-        if let Some(lb) = literal_buffer(n.unspan(), ops)
+-            && lb != self.c.buf
+-            && literal(n.unspan(), lb, self.layout, ops).is_some_and(|l| l.returns)
+-        {
+-            literals_to_tuples(n.unspan_mut(), lb, self.layout, ops, vars, (&[], &mut 0));
+-            return;
+-        }
+         match n.unspan_mut() {
+             Value::Return(x) => self.value(x, vars),
+             Value::Set(l, e) if self.c.delivered.contains(l) => self.value(e, vars),
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 5b7ddf463..4b39f556b 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -2881,31 +2881,6 @@ impl Function {
+             .map_or(u16::MAX, |v| v.created_in_loop)
+     }
+ 
+-    /// Does a bind of `type_def` to the inferred `var_nr` differ from its type ONLY in
+-    /// absence — one of the two is `τ?`, the other `τ`?  `change_var_type` accepts both
+-    /// directions (`@FR-N-Join` widens the variable; a non-null write into a `τ?` keeps it),
+-    /// so this is a question about a retype that would be ACCEPTED: its caller asks it of a
+-    /// binding whose block has ended (`@FR-B-Scope`), where the write starts a new binding
+-    /// and must not move the ended one's type.
+-    #[must_use]
+-    pub fn rebind_differs_in_absence(&self, var_nr: u16, type_def: &Type) -> bool {
+-        let Some(v) = self.variables.get(var_nr as usize) else {
+-            return false;
+-        };
+-        if self.is_declared(var_nr) {
+-            return false;
+-        }
+-        match (&v.type_def, type_def) {
+-            (Type::Optional(_), Type::Optional(_)) => false,
+-            (Type::Optional(inner), other) | (other, Type::Optional(inner)) => {
+-                !matches!(other, Type::Null | Type::RefVar(_))
+-                    && !other.is_unknown()
+-                    && inner.is_equal(other)
+-            }
+-            _ => false,
+-        }
+-    }
+-
+     /// Would storing `type_def` into `var_nr` be REFUSED as a type change?
+     ///
+     /// Deliberately CONSERVATIVE: it answers `true` only where the two types stand in
