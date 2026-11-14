@@ -2814,6 +2814,19 @@ impl Exits<'_> {
             self.mv(n.unspan_mut(), r, vars);
             return;
         }
+        // A literal built into a LOCAL buffer that ends in its own `return` — the form it takes
+        // when the frees of the frame's other locals stand between its fields and the exit
+        // (`{ OpDatabase(b, tp); OpSetX(b, …); OpFreeRef(t); return b }`) — is an exit where it
+        // stands, as the one a `return` wraps is (`value`).  Walked as an ordinary block, its
+        // `return b` was read as the return of a tuple local and its mint and field writes
+        // stayed, on a buffer the function no longer holds as a record (loft#2490).
+        if let Some(lb) = literal_buffer(n.unspan(), ops)
+            && lb != self.c.buf
+            && literal(n.unspan(), lb, self.layout, ops).is_some_and(|l| l.returns)
+        {
+            literals_to_tuples(n.unspan_mut(), lb, self.layout, ops, vars, (&[], &mut 0));
+            return;
+        }
         match n.unspan_mut() {
             Value::Return(x) => self.value(x, vars),
             Value::Set(l, e) if self.c.delivered.contains(l) => self.value(e, vars),
