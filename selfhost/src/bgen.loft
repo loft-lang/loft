@@ -664,7 +664,33 @@ fn add_const(g: Gen, tp: ir::TypeT, p: ir::Node, before: integer) {
         _ => {}
       }
     }
-    _ => stop(g, "a constant operand of a type the writer does not write yet"),
+    TyFloat => {
+      match n {
+        NdFloat { f } => put_i64(g.o, f.bits()),
+        _ => {}
+      }
+    }
+    TySingle => {
+      match n {
+        NdSingle { f } => put_i32(g.o, f.bits() & 4294967295),
+        _ => {}
+      }
+    }
+    TyKeys => {
+      match n {
+        NdKeys { keys } => {
+          put_u8(g.o, len(keys));
+          for k in keys {
+            put_u8(g.o, k.type_nr & 255);
+            put_u16(g.o, k.position);
+            put_i32(g.o, k.start & 4294967295);
+          }
+        }
+        _ => {}
+      }
+    }
+    // Any other type takes no operand bytes, as in the Rust writer.
+    _ => {}
   }
 }
 
