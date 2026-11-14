@@ -1425,71 +1425,72 @@ pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape>
             }
         });
     }
-    let marker = format!("slot={}\n", u16::MAX);
     tps.into_iter()
-        .map(|tp| {
-            let id = crate::schema_sidecar::LayoutIdentity::of_store(program, u16::MAX, tp);
-            let text = id.to_sidecar();
-            let (before, after) = text.split_once(&marker).unwrap_or((&text, ""));
-            // `paged_plan`: the store's collection — a key load wants a hash or a trie, a box
-            // load a spatial index, each of copyable entries.
-            use crate::database::Parts;
-            let pcoll = program.collection_type_of_store(tp);
-            let parts = program.types.get(pcoll as usize).map(|t| &t.parts);
-            let content = match parts {
-                Some(Parts::Hash(c, _) | Parts::Trie(c, _) | Parts::Radix(c, _)) => Some(*c),
-                _ => None,
-            };
-            let refusal = |served: bool, want: &str| match content {
-                Some(c) if served && !program.is_copyable_entry(c) => {
-                    program.not_copyable_reason(c)
-                }
-                Some(_) if served => String::new(),
-                _ => program.wrong_collection_reason(tp, want),
-            };
-            let prefusal = refusal(
-                matches!(parts, Some(Parts::Hash(..) | Parts::Trie(..))),
-                "a hash or a trie",
-            );
-            let pboxrefusal = refusal(matches!(parts, Some(Parts::Radix(..))), "a spatial index");
-            // A range load reads the root type itself as the sorted collection.
-            let rparts = program.types.get(tp as usize).map(|t| &t.parts);
-            let rcontent = match rparts {
-                Some(Parts::Sorted(c, _) | Parts::Ordered(c, _)) => Some(*c),
-                _ => None,
-            };
-            let prangerefusal = match rcontent {
-                Some(c) if !program.is_copyable_entry(c) => program.not_copyable_reason(c),
-                Some(_) => String::new(),
-                None => program.wrong_collection_reason(tp, "a sorted collection"),
-            };
-            let prangecontent = rcontent.map_or(-1, i64::from);
-            let pcontent = content.map_or(-1, i64::from);
-            let pkind = match parts {
-                Some(Parts::Trie(..)) => 1,
-                Some(Parts::Radix(..)) => 2,
-                _ => 0,
-            };
-            RunSidecarShape {
-                tp,
-                hash: id.layout_hash,
-                pcoll,
-                pcontent,
-                pkind,
-                prefusal,
-                pboxrefusal,
-                prangecontent,
-                prangerefusal,
-                walks: crate::c::holds_stored_refs_in(program, tp)
-                    || crate::c::holds_trie_in(program, tp),
-                refs: crate::c::holds_stored_refs_in(program, tp),
-                rekey: crate::c::needs_rekey_in(program, tp),
-                before: before.to_string(),
-                after: after.to_string(),
-                dump: id.dump.clone(),
-            }
-        })
+        .map(|tp| sidecar_shape(program, tp))
         .collect()
+}
+
+/// One root type's sidecar row: the layout identity the C backend writes for it, and each paged
+/// load's plan (`paged_plan`).
+fn sidecar_shape(program: &Stores, tp: u16) -> RunSidecarShape {
+    let marker = format!("slot={}\n", u16::MAX);
+    let id = crate::schema_sidecar::LayoutIdentity::of_store(program, u16::MAX, tp);
+    let text = id.to_sidecar();
+    let (before, after) = text.split_once(&marker).unwrap_or((&text, ""));
+    // `paged_plan`: the store's collection — a key load wants a hash or a trie, a box
+    // load a spatial index, each of copyable entries.
+    use crate::database::Parts;
+    let pcoll = program.collection_type_of_store(tp);
+    let parts = program.types.get(pcoll as usize).map(|t| &t.parts);
+    let content = match parts {
+        Some(Parts::Hash(c, _) | Parts::Trie(c, _) | Parts::Radix(c, _)) => Some(*c),
+        _ => None,
+    };
+    let refusal = |served: bool, want: &str| match content {
+        Some(c) if served && !program.is_copyable_entry(c) => program.not_copyable_reason(c),
+        Some(_) if served => String::new(),
+        _ => program.wrong_collection_reason(tp, want),
+    };
+    let prefusal = refusal(
+        matches!(parts, Some(Parts::Hash(..) | Parts::Trie(..))),
+        "a hash or a trie",
+    );
+    let pboxrefusal = refusal(matches!(parts, Some(Parts::Radix(..))), "a spatial index");
+    // A range load reads the root type itself as the sorted collection.
+    let rparts = program.types.get(tp as usize).map(|t| &t.parts);
+    let rcontent = match rparts {
+        Some(Parts::Sorted(c, _) | Parts::Ordered(c, _)) => Some(*c),
+        _ => None,
+    };
+    let prangerefusal = match rcontent {
+        Some(c) if !program.is_copyable_entry(c) => program.not_copyable_reason(c),
+        Some(_) => String::new(),
+        None => program.wrong_collection_reason(tp, "a sorted collection"),
+    };
+    let prangecontent = rcontent.map_or(-1, i64::from);
+    let pcontent = content.map_or(-1, i64::from);
+    let pkind = match parts {
+        Some(Parts::Trie(..)) => 1,
+        Some(Parts::Radix(..)) => 2,
+        _ => 0,
+    };
+    RunSidecarShape {
+        tp,
+        hash: id.layout_hash,
+        pcoll,
+        pcontent,
+        pkind,
+        prefusal,
+        pboxrefusal,
+        prangecontent,
+        prangerefusal,
+        walks: crate::c::holds_stored_refs_in(program, tp) || crate::c::holds_trie_in(program, tp),
+        refs: crate::c::holds_stored_refs_in(program, tp),
+        rekey: crate::c::needs_rekey_in(program, tp),
+        before: before.to_string(),
+        after: after.to_string(),
+        dump: id.dump.clone(),
+    }
 }
 
 /// A generator's frame facts for the run image (`RunGen`), from `state::gen_facts` — the same
