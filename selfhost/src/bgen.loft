@@ -1695,6 +1695,16 @@ fn elem_copy(g: Gen, v: integer, value: ir::Node, rec: integer, value_first: boo
   put_u16(g.o, known);
 }
 
+// `gen_set_first_ref_fnref`: the record a call through an opaque function value answers,
+// bound into `v` (`OpBindFnRefResult`).
+fn fnref_bind(g: Gen, v: integer, value: ir::Node, rec: integer) {
+  generate(g, value, false);
+  init_slot(g, v, "OpInitRefSentinel");
+  add_op(g, "OpBindFnRefResult");
+  put_u16(g.o, var_pos(g, v));
+  put_u16(g.o, def_of(g, rec).known_type);
+}
+
 // `join_witness_members`: the members of a tuple join base that hold a record of their own;
 // none for a base that is no tuple or has a nested tuple member.
 fn join_witness_members(g: Gen, base_var: integer) -> vector<integer> {
@@ -1837,9 +1847,20 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     NdCallRef { var: _, args: _ } => true,
     _ => false,
   };
-  if call_ref && (record_like(bs) || hd != null) {
-    stop(g, "not written yet: a first bind from a call through a function value");
-    return;
+  if call_ref && record_like(bs) {
+    // `callref_join_first_bind`: a call through a function value that may answer one of
+    // its arguments' stores.
+    jb = own::named_join_base(own::ownership_of(g.b, g.ops, g.d, value));
+    rec = match bs {
+      TyReference { n, dep: _ } => n,
+      TyEnum { n, is_ref: _, dep: _ } => n,
+      _ => -1,
+    };
+    if jb != null && rec >= 0 {
+      reserve_ref_slot(g, v);
+      join_bind(g, v, value, rec, jb!, true);
+      return;
+    }
   }
   optional = match tp {
     TyOptional { inner: _ } => true,
@@ -1851,6 +1872,12 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
   };
   if optional && record_like(bs) && direct >= 0 && binds::is_loft_defined(def_of(g, direct)) && own::returns_borrowed_view(def_of(g, direct)) {
     stop(g, "not written yet: a nullable first bind from a call that may answer a view");
+    return;
+  }
+  opaque = binds::opaque_callref_bind(g.b, g.defs, tp, value);
+  if opaque != null {
+    reserve_ref_slot(g, v);
+    fnref_bind(g, v, value, opaque!);
     return;
   }
   shape = binds::first_bind_shape(tp);
@@ -2263,7 +2290,17 @@ fn block(g: Gen, bl: ir::Block, top: boolean) -> ir::TypeT {
       }
       NdLine { n: _ } => {}
       _ => {
-        returned = false;
+        // A release after a return leaves the block returned (`OpSets::frees`).
+        cleanup = match n {
+          NdCall { def_nr, args: _ } => {
+            nm = def_of(g, def_nr).name;
+            nm == "OpFreeRef" || nm == "OpFreeRefTag" || nm == "OpFreeRecordIn" || nm == "OpFreeRefIfDistinct" || nm == "OpFreeRefOrHandUp" || nm == "OpFreeText"
+          }
+          _ => false,
+        };
+        if !cleanup {
+          returned = false;
+        }
         tp = generate(g, n, false);
       }
     }
@@ -2277,12 +2314,31 @@ fn block(g: Gen, bl: ir::Block, top: boolean) -> ir::TypeT {
   result = bl.result[0] ?? ir::TyVoid;
   size = pushed(result);
   after = to + size;
+  if g.position < after {
+    // A block ending in a dropped local hands that local out as its value.
+    last = bl.operators[len(bl.operators) - 1]!;
+    match last {
+      NdDrop { inner } => {
+        match inner {
+          NdVar { n: _ } => { generate(g, inner, false); }
+          _ => {}
+        }
+      }
+      _ => {}
+    }
+  }
+  function = match result {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  };
   if g.position > after {
     add_op(g, "OpFreeStack");
     put_u16(g.o, size);
     put_u16(g.o, g.position - to);
-  } else if g.position < after {
-    stop(g, "a block that leaves less than its result");
+  } else if function && g.position < after {
+    push_sentinel(g);
+  } else if g.position == to && to < after {
+    typed_null(g, result);
   }
   g.position = after;
   tp

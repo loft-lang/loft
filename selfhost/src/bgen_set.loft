@@ -230,6 +230,14 @@ pub fn rebind(g: bgen::Gen, v: integer, value: ir::Node) {
     }
     return;
   }
+  if rb.arm == "R2a" {
+    bgen::reserve_ref_slot(g, v);
+    bgen::fnref_bind(g, v, value, rb.rec);
+    if stash {
+      free_stashed(g, v, rb);
+    }
+    return;
+  }
   if rb.arm == "R2b" {
     call_copy(g, v, value, rb, stash);
     return;
