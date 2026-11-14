@@ -8,6 +8,7 @@
 use state;
 use crt;
 use types;
+use natives;
 
 // A reference out of the three integers a `crt` routine answers.
 fn out_ref(io: vector<integer>) -> state::DbRef {
@@ -94,6 +95,16 @@ pub fn copy_closure(self: state::State, src: state::DbRef, tp: integer) -> state
   io: vector<integer> = [state::NULL_STORE, 0, 0];
   crt::copy_closure(io, tp, src.store_nr, src.rec, src.pos, owned);
   out_ref(io)
+}
+
+// A native `natives::light` carries, called by `OpStaticCall`'s arm on the stack as it stands.
+pub fn light_call(self: state::State, h: integer) {
+  sp = natives::light(h, self.stk, self.stack_pos, self.lio);
+  if sp < 0 {
+    self.stop("not carried: native handler {h}");
+  } else {
+    self.stack_pos = sp;
+  }
 }
 
 // `State::hash_add`: the record and then the hash popped; the record filed in the hash of

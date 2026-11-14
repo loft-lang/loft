@@ -118,6 +118,10 @@ pub struct State {
   // Each record target an `OpNewRecord` / `OpFinishRecord` names (`target_of`), by
   // `parent type * 65536 + field`.
   pub targets: hash<Target[key]>,
+  // Per native: its handler where `natives::light` carries it — the dispatch loop calls it from
+  // `OpStaticCall`'s arm (`State::light_call`) — else -1; and the scratch vector it passes.
+  pub lights: vector<integer>,
+  pub lio: vector<integer>,
 }
 
 // What `OpNewRecord` / `OpFinishRecord` file a record into, derived once per parent type and
@@ -274,12 +278,14 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0] };
+  ptab = natives::par_natives(img);
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
     handler = natives::native_handler(name);
     s.handlers += [handler];
+    s.lights += [if natives::is_light(handler) && (ptab[i] ?? 0) == 0 { handler } else { -1 }];
     carried = handler >= 0;
     s.shared += [if carried { -1 } else { img.shared[i] ?? -1 }];
     dest_form = name.ends_with("#dest");

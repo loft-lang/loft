@@ -5052,6 +5052,27 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    234 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if (s.lights[ri0] ?? -1) >= 0 {
+        ip += 3;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        s.light_call(s.lights[ri0] ?? -1);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
+        continue;
+      }
+    }
     240 => {
       ri0 = crt::peek_u16(cbase, ip + 1);
       if sp >= 16 {
