@@ -2976,6 +2976,34 @@ fn trace_reach(data: &Data, roots: &[u32], all: &[u32], fns: &[u32]) {
     eprintln!("[functions]\t{root}\t{}", written.join(" "));
 }
 
+/// `LOFT_TRACE_COUNTERS=1` — every counted loop of function `d` as `loop_shape::range_counters`
+/// reads it, in the order a walk of the body meets them: one line on standard error,
+/// `[counters]<TAB>function<TAB>loop_var,index,next,inclusive …` (`next` is `-` in the
+/// single-counter form, `inclusive` 0 or 1).  A function without one prints an empty row.  A
+/// layer of the loft-written generator's comparison (12-c-generator.md § The layers beside the
+/// unit).
+fn trace_counters(cx: &Cx, d: u32) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_COUNTERS").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let def = cx.data.def(d);
+    let mut row: Vec<String> = Vec::new();
+    def.code().walk(&mut |v| {
+        if let Value::Loop(lp) = v
+            && let Ok(rc) = crate::loop_shape::range_counters(lp, cx.data)
+        {
+            row.push(format!(
+                "{},{},{},{}",
+                rc.loop_var,
+                rc.index,
+                rc.next.map_or("-".to_string(), |n| n.to_string()),
+                u8::from(rc.inclusive)
+            ));
+        }
+    });
+    eprintln!("[counters]\t{}\t{}", def.name(), row.join(" "));
+}
+
 /// `c` in a word, for a trace: a tuple by its members, since its number is the order tuples
 /// were first met in.
 fn shape_word(cx: &Cx, c: CType) -> String {
@@ -3215,6 +3243,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
     if mask == 0 {
         trace_shapes(cx, d, &shapes);
+        trace_counters(cx, d);
     }
     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
     // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.

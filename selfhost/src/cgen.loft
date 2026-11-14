@@ -11,6 +11,7 @@ use load;
 use cgen_tidy;
 use cgen_types;
 use opt_names;
+use loop_shape;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -165,7 +166,8 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
 // `shapes` (`LOFT_TRACE_SHAPES`): every function with a body; one a variable of which has no
 // shape prints no line.  `reach` and `functions` (`LOFT_TRACE_REACH`): what the program's
 // `main` reaches, and the functions its unit writes in order; a program without a `main` (its
-// tests' unit) prints no line yet.
+// tests' unit) prints no line yet.  `counters` (`LOFT_TRACE_COUNTERS`): every counted loop of
+// every function with a body, as `loop_shape::range_counters` reads it.
 pub fn layer(b: ir::Bundle, name: text) -> text? {
   if name == "reach" || name == "functions" {
     for d in b.data.definitions {
@@ -178,12 +180,16 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
     }
     return "";
   }
-  if name != "shapes" {
+  if name != "shapes" && name != "counters" {
     return null;
   }
   out = "";
   for d in b.data.definitions {
     if len(d.code) == 0 || d.code[0] == NdNull {
+      continue;
+    }
+    if name == "counters" {
+      out += "{loop_shape::counters_line(d, b.data.definitions)}\n";
       continue;
     }
     line = cgen_types::shapes_line(d) ?? continue;

@@ -88,7 +88,9 @@ print it; `cgen_survey.py` gets a `--layer <name>` per row as it is built.
 | `shapes` | the C shape of every variable of a function (`variable_shapes`), parameters first | `LOFT_TRACE_SHAPES` — **compared**: `cgen_survey.py --cgen --layer shapes` |
 | `reach` | every definition a unit reaches from its roots (`opt::names::reachable_functions`), sorted | `LOFT_TRACE_REACH` — **compared**: `--layer reach` |
 | `functions` | the functions the unit writes, in the order it writes them | `LOFT_TRACE_REACH` (its second line) — **compared**: `--layer functions` |
-| `ranges` | the range facts a body's operators were written under (`opt::range`) | to add |
+| `counters` | every counted loop of a function as `loop_shape::range_counters` reads it | `LOFT_TRACE_COUNTERS` — **compared**: `--layer counters` |
+| `nn` | the non-sentinel facts a function's operators are written under (`opt::non_sentinel`) | `LOFT_TRACE_FACTS` (its `[nn]` line); the loft side is next |
+| `ranges` | the range facts a body's operators were written under (`opt::range`) | `LOFT_TRACE_FACTS` (its `[ranges]` line); the loft side follows `nn` |
 | `census` | each rewrite a function admitted, by rule (`make rewrite-census`) | `LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN` |
 | `declines` | each rewrite declined, with its reason (`make decline-census`) | the decline census |
 | `inline` | each function's statement count and its inline verdict | `LOFT_TRACE_INLINE` |
@@ -152,6 +154,17 @@ Each step ends with a number: how many programs of the corpus agree in the form 
 
 The order inside G-2 follows the survey's ranking, not this list, once the ranking exists.
 
+### The order of the next ports
+
+Each is a layer first (rule 6), then text.  The non-sentinel facts need, in this order:
+`opt/iteration.rs` (`bounded_iteration_index`), `opt/facts.rs` (`solve`, the least and
+greatest fixpoint), then `opt/non_sentinel.rs` — whose per-program memos (`RETURNS`,
+`PARAMS`) become a context record, and whose program-wide parameter proof is ON for the C
+writer (`begin_c_generation`).  The range facts need `opt/char_walk.rs` and `opt/range.rs`
+(its interval arithmetic in `i128` is written with the null an overflowing `integer`
+operation answers).  With both layers equal, the writer's core walk (`body.rs` `write`:
+declarations, temporaries, statements, calls, `if`) starts producing text.
+
 ## What decides a step is done
 
 - The survey's count for the step's form did not drop and rose by what the step named.
@@ -175,6 +188,7 @@ The order inside G-2 follows the survey's ranking, not this list, once the ranki
 | layer `shapes` | 13 263 function rows over 1075 programs, all equal | `cgen_survey.py --cgen --layer shapes` |
 | layer `reach` | 1075 programs, all equal | `cgen_survey.py --cgen --layer reach` |
 | layer `functions` | 1075 programs, all equal | `cgen_survey.py --cgen --layer functions` |
+| layer `counters` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer counters` |
 
 The image carries per definition whether its body is under the 32-bit regime
 (`Definition.width32` in `ir.loft`, `Data::body_width32`): without it a `#width 32` file's unit
@@ -188,6 +202,7 @@ came out 64-bit from the image.
 | `selfhost/src/cgen.loft` | `src/c/mod.rs` | the runtime's composition, `c_string`, the unit's assembly for a program whose `main` is empty; any other program is refused by name |
 | `selfhost/src/cgen_types.loft` | `src/c/mod.rs` (`CType`, `Cx::ctype`, `local_ctype`, `variable_shapes`) | whole, a shape held as its word; a build under `--width 32` is not asked (the image does not say it) |
 | `selfhost/src/opt_names.loft` | `src/opt/names.rs` | `reachable_functions` with its walks (`collect_calls`, `collect_fn_ref_literals`, `collect_int_fn_refs`, `collect_tuple_fn_refs`), the store instances and a closure record's drop cascade; a unit's lazy drivers are not roots yet; `written_functions` (the unit's list: no operator, no native the runtime implements, the root first) |
+| `selfhost/src/loop_shape.loft` | `src/loop_shape.rs` | `range_counters` with the stop guard and the break test; `plain_for_body` and `wrapped_counter` are not ported yet |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 

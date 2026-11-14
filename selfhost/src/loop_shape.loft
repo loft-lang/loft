@@ -1,0 +1,241 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft: the shape of a counted `for` loop in the IR
+// (src/loop_shape.rs): its counters and its stop guard.  A pure reading of the tree the parser
+// lowered.
+
+use ir;
+
+// `Value::unspan`: the node under its source spans.
+pub fn unspan(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos: _, inner } => unspan(inner),
+    _ => n,
+  }
+}
+
+// The name of the definition a call names, or the empty text for any other node.
+pub fn call_name(defs: vector<ir::Definition>, n: ir::Node) -> text {
+  match unspan(n) {
+    NdCall { def_nr, args: _ } => defs[def_nr].name ?? "",
+    _ => "",
+  }
+}
+
+// How many arguments a call has; 0 for any other node.
+fn call_arity(n: ir::Node) -> integer {
+  match unspan(n) {
+    NdCall { def_nr: _, args } => len(args),
+    _ => 0,
+  }
+}
+
+// The variable a bare `Var` names, or -1.
+pub fn var_of(n: ir::Node) -> integer {
+  match unspan(n) {
+    NdVar { n: nr } => nr,
+    _ => -1,
+  }
+}
+
+// Is `v` a `break` — bare, or a block whose only statement is one?
+fn is_break_block(v: ir::Node) -> boolean {
+  match unspan(v) {
+    NdBreak { n: _ } => true,
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) != 1 {
+        return false;
+      }
+      match unspan(ops[0]) {
+        NdBreak { n: _ } => true,
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+// Is `v` an `if <cond> { break } else null`?  Its condition, or null.
+fn break_test(v: ir::Node) -> ir::Node? {
+  match unspan(v) {
+    NdIf { cond, t, f } => {
+      if is_break_block(t) && unspan(f) == NdNull {
+        return cond;
+      }
+      null
+    },
+    _ => null,
+  }
+}
+
+// The `if index == hi { break }` an INCLUSIVE range emits before its step — the stop decided
+// on the value just yielded, so `hi + 1` never has to exist.  Recognised by shape: the range's
+// own test compares with `OpLtInt` / `OpLeInt`; only the stop guard is `==`.
+fn is_inclusive_stop_guard(v: ir::Node, defs: vector<ir::Definition>) -> boolean {
+  cond = break_test(v) ?? return false;
+  call_arity(cond) == 2 && call_name(defs, cond) == "OpEqInt"
+}
+
+// The counters of a counted `for` loop, as the parser lowers `for v in a..b`: the loop
+// variable, the `#index` it yields, the `next` counter of the two-counter form (-1 in the
+// single-counter form), whether the range is inclusive, and its end operand.
+pub struct RangeCounters {
+  pub loop_var: integer,
+  pub index: integer,
+  pub next: integer,
+  pub inclusive: boolean,
+  pub hi: ir::Node,
+}
+
+// The value a `Set` assigns to its variable; `var` receives the variable, -1 for another node.
+fn set_of(n: ir::Node, var: &integer) -> ir::Node {
+  match unspan(n) {
+    NdSet { var: nr, inner } => {
+      var = nr;
+      inner
+    },
+    _ => {
+      var = -1;
+      NdNull
+    },
+  }
+}
+
+// A loop's iterator — its FIRST statement — as its counters, or null where the block is not
+// a counted range.  The statement alone is read: the counters are a fact about the iterator
+// and not about what follows it.
+pub fn range_counters(lp: ir::Block, defs: vector<ir::Definition>) -> RangeCounters? {
+  if len(lp.operators) == 0 {
+    return null;
+  }
+  loop_var = -1;
+  iter = set_of(lp.operators[0], loop_var);
+  if loop_var < 0 {
+    return null;
+  }
+  it = match unspan(iter) {
+    NdBlock { block } => block[0],
+    _ => return null,
+  };
+  if it.name != "Iter range" {
+    return null;
+  }
+  // An inclusive range carries one extra leading statement, its stop guard: peeled.
+  ops = it.operators;
+  from = 0;
+  if len(ops) >= 4 && is_inclusive_stop_guard(ops[0], defs) {
+    from = 1;
+  }
+  count = len(ops) - from;
+  seed_index = -1;
+  next_var = -1;
+  test: ir::Node = NdNull;
+  step: ir::Node = NdNull;
+  yielded: ir::Node = NdNull;
+  if count == 4 {
+    // [if …; index = next; next = next + 1; index]
+    test = ops[from]!;
+    source = set_of(ops[from + 1]!, seed_index);
+    if seed_index < 0 {
+      return null;
+    }
+    next_var = var_of(source);
+    if next_var < 0 {
+      return null;
+    }
+    stepped = -1;
+    step = unspan(set_of(ops[from + 2]!, stepped));
+    if stepped != next_var {
+      return null;
+    }
+    yielded = ops[from + 3]!;
+  } else if count == 3 {
+    // [index = index + 1; if …; index]
+    step = unspan(set_of(ops[from]!, seed_index));
+    if seed_index < 0 {
+      return null;
+    }
+    test = ops[from + 1]!;
+    yielded = ops[from + 2]!;
+  } else {
+    return null;
+  }
+  counter = if next_var >= 0 { next_var } else { seed_index };
+  // The step: counter = counter + 1.
+  one = match step {
+    NdCall { def_nr, args } => (defs[def_nr].name ?? "") == "OpAddInt" && len(args) == 2 && var_of(args[0]) == counter && unspan(args[1]) == NdInt { n: 1 },
+    _ => false,
+  };
+  if !one {
+    return null;
+  }
+  // The test: if hi <cmp> counter { break } else null.
+  cond = break_test(test) ?? return null;
+  name = call_name(defs, cond);
+  if name != "OpLtInt" && name != "OpLeInt" {
+    return null;
+  }
+  hi = match unspan(cond) {
+    NdCall { def_nr: _, args } => {
+      if len(args) != 2 || var_of(args[1]) != counter {
+        return null;
+      }
+      args[0]
+    },
+    _ => return null,
+  };
+  // The yield: the index variable.
+  if var_of(yielded) != seed_index {
+    return null;
+  }
+  RangeCounters { loop_var: loop_var, index: seed_index, next: next_var, inclusive: name == "OpLtInt", hi: hi }
+}
+
+// The counted loops of `node` in the order a walk meets them (`Value::walk`: a node before
+// its children), as `loop_var,index,next,inclusive` each — the row of `LOFT_TRACE_COUNTERS`.
+fn counters_of(node: ir::Node, defs: vector<ir::Definition>, row: vector<text>) {
+  match node {
+    NdSpan { pos: _, inner } => counters_of(inner, defs, row),
+    NdLoop { block } => {
+      rc = range_counters(block[0], defs);
+      if rc != null {
+        next = if rc.next < 0 { "-" } else { "{rc.next}" };
+        row += ["{rc.loop_var},{rc.index},{next},{if rc.inclusive { 1 } else { 0 }}"];
+      }
+      for a in block[0].operators { counters_of(a, defs, row); }
+    },
+    NdBlock { block } => { for a in block[0].operators { counters_of(a, defs, row); } },
+    NdCall { def_nr: _, args } => { for a in args { counters_of(a, defs, row); } },
+    NdCallRef { var: _, args } => { for a in args { counters_of(a, defs, row); } },
+    NdInsert { items } => { for a in items { counters_of(a, defs, row); } },
+    NdTuple { items } => { for a in items { counters_of(a, defs, row); } },
+    NdParallel { arms } => { for a in arms { counters_of(a, defs, row); } },
+    NdSet { var: _, inner } => counters_of(inner, defs, row),
+    NdReturn { inner } => counters_of(inner, defs, row),
+    NdDrop { inner } => counters_of(inner, defs, row),
+    NdYield { inner } => counters_of(inner, defs, row),
+    NdTuplePut { var: _, idx: _, inner } => counters_of(inner, defs, row),
+    NdIf { cond, t, f } => {
+      counters_of(cond, defs, row);
+      counters_of(t, defs, row);
+      counters_of(f, defs, row);
+    },
+    NdIter { var: _, create, next, init } => {
+      counters_of(create, defs, row);
+      counters_of(next, defs, row);
+      counters_of(init, defs, row);
+    },
+    _ => {},
+  }
+}
+
+// The trace line of `d`'s counted loops (`LOFT_TRACE_COUNTERS`).
+pub fn counters_line(d: ir::Definition, defs: vector<ir::Definition>) -> text {
+  row: vector<text> = [];
+  if len(d.code) > 0 {
+    counters_of(d.code[0], defs, row);
+  }
+  "[counters]\t{d.name}\t{row.join(" ")}"
+}
