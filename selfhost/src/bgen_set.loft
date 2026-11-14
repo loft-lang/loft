@@ -15,6 +15,7 @@ use ir;
 use own;
 use binds;
 use bgen;
+use bgen_tuple;
 
 // `bind_lowering::ReBind`: the facts one reassignment is decided on.
 struct ReBind {
@@ -264,6 +265,14 @@ fn set_var(g: bgen::Gen, v: integer, value: ir::Node) {
       bgen::typed_null(g, tp);
     }
     bgen::put_fn_ref(g, v);
+    return;
+  }
+  tuple = match bgen::base(tp) {
+    TyTuple { elems: _ } => true,
+    _ => false,
+  };
+  if tuple {
+    bgen_tuple::set(g, v, value);
     return;
   }
   put_ref = match bgen::base(tp) {

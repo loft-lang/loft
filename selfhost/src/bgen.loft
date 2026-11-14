@@ -17,6 +17,7 @@ use lower;
 use ret_adopt;
 use bgen_set;
 use bgen_loop;
+use bgen_tuple;
 
 // The bytes of one function while they are written.
 pub struct Out {
@@ -971,7 +972,14 @@ fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
       _ => -1,
     };
     if v < 0 {
-      stop(g, "not written yet: a tuple member's text freed");
+      member = match unspan(args[0]!) {
+        NdTupleGet { var, idx } => bgen_tuple::free_member(g, var, idx),
+        _ => false,
+      };
+      if !member {
+        stop(g, "not written yet: a text freed that is no local and no tuple member");
+      }
+      return true;
     }
     return false;
   }
@@ -1470,6 +1478,14 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     keyed_null(g, v, true);
     return;
   }
+  tuple = match bs {
+    TyTuple { elems: _ } => true,
+    _ => false,
+  };
+  if tuple && null_value {
+    bgen_tuple::first_null(g, v);
+    return;
+  }
   ref_var = match tp {
     TyRefVar { inner: _ } => true,
     _ => false,
@@ -1511,6 +1527,10 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
       fn_ref_value(g, value);
     }
     put_fn_ref(g, v);
+    return;
+  }
+  if tuple {
+    bgen_tuple::first_bind(g, v, value);
     return;
   }
   if !put_ref {
@@ -1645,6 +1665,16 @@ fn variable(g: Gen, v: integer) -> ir::TypeT {
   if var.linked_narrow {
     stop(g, "a linked narrow local");
     return tp;
+  }
+  match base(tp) {
+    TyRefVar { inner } => {
+      match base(inner) {
+        TyTuple { elems: _ } => { return bgen_tuple::read_link(g, v, inner); }
+        _ => {}
+      }
+    }
+    TyTuple { elems: _ } => { return bgen_tuple::read(g, v); }
+    _ => {}
   }
   at = var_pos(g, v);
   name = match base(tp) {
@@ -1892,6 +1922,9 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
       }
       t[0] ?? ir::TyVoid
     }
+    NdTuple { items } => bgen_tuple::value(g, items),
+    NdTupleGet { var, idx } => bgen_tuple::get(g, var, idx),
+    NdTuplePut { var, idx, inner } => bgen_tuple::put(g, var, idx, inner),
     NdFnRefDnr { n } => {
       init_slot(g, n, "OpVarInt");
       ir::TyInteger { spec: ir::IntegerSpec { min: 0, max: 0, not_null: false, forced_size: 0 } }
@@ -2103,13 +2136,6 @@ pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, n
       }
       if v.argument && v.linked_narrow {
         stop(g, "not written yet: a linked narrow argument");
-      }
-      tuple = match base(t) {
-        TyTuple { elems: _ } => v.argument,
-        _ => false,
-      };
-      if tuple {
-        stop(g, "a tuple argument");
       }
     }
     g.arguments = g.position;
