@@ -72,7 +72,7 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
     want, got, img = stem + ".want.c", stem + ".layer", stem + ".store"
     switch = {"shapes": "LOFT_TRACE_SHAPES", "reach": "LOFT_TRACE_REACH", "functions": "LOFT_TRACE_REACH",
-              "counters": "LOFT_TRACE_COUNTERS", "iterations": "LOFT_TRACE_COUNTERS", "nn": "LOFT_TRACE_FACTS", "ranges": "LOFT_TRACE_FACTS"}[layer]
+              "counters": "LOFT_TRACE_COUNTERS", "iterations": "LOFT_TRACE_COUNTERS", "nn": "LOFT_TRACE_FACTS", "ranges": "LOFT_TRACE_FACTS", "bodies": "LOFT_TRACE_BODIES"}[layer]
     try:
         rc, err = proc([loft, "--emit-c", want, f], {**env, switch: "1"}, timeout, cwd=os.path.dirname(f))
         if rc != 0:
@@ -91,6 +91,25 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
             for line in fh.read().splitlines():
                 if line.startswith(f"[{layer}]\t"):
                     mine[line.split("\t")[1]] = line
+        if layer == "bodies":
+            # A SUBSET comparison: the function writer carries some functions and refuses the
+            # rest by name; each body it writes must be the oracle's.
+            refused = {}
+            with open(got, encoding="utf-8", errors="replace") as fh:
+                for line in fh.read().splitlines():
+                    if line.startswith("[refused]\t"):
+                        cells = line.split("\t")
+                        refused[cells[1]] = cells[2] if len(cells) > 2 else ""
+            equal = [n for n, line in mine.items() if rust.get(n) == line]
+            wrong = sorted(n for n, line in mine.items() if rust.get(n) != line)
+            detail = ""
+            if wrong:
+                n = wrong[0]
+                a, b = (rust.get(n) or "(no line)").split("\\n"), mine[n].split("\\n")
+                k = next((i for i in range(min(len(a), len(b))) if a[i] != b[i]), min(len(a), len(b)))
+                detail = (f"{n} line {k}\n    oracle: {(a[k] if k < len(a) else '(end)')[:170]}"
+                          f"\n    other:  {(b[k] if k < len(b) else '(end)')[:170]}")
+            return f, "differ" if wrong else "agree", (len(rust), len(equal), len(wrong), refused, detail)
         for name, line in sorted(rust.items()):
             if mine.get(name) != line:
                 return f, "differ", f"{name}\n    oracle: {line[:160]}\n    other:  {(mine.get(name) or '(no line)')[:160]}"
@@ -138,7 +157,7 @@ def main():
     ap.add_argument("--cgen", action="store_true", help="build selfhost/front/cgen.loft and use it")
     ap.add_argument("--form", choices=["program", "debug"], default="program",
                     help="which unit: the program's, or the debug tier's with its #line marks")
-    ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges"], default=None,
+    ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges", "bodies"], default=None,
                     help="compare what an analysis derived instead of the unit")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
@@ -175,17 +194,32 @@ def main():
         run = ((lambda f: layer_one(f, loft, o.generator, tmp, env, o.timeout, o.layer)) if o.layer else
                (lambda f: one(f, loft, o.generator, tmp, env, o.timeout, o.form == "debug")))
         rows = 0
+        bodies = collections.Counter()
+        body_why = collections.Counter()
         with cf.ThreadPoolExecutor(o.jobs) as ex:
             for f, verdict, what in ex.map(run, files) if o.layer else ex.map(lambda f: one(f, loft, o.generator, tmp, env, o.timeout, o.form == "debug"), files):
                 counts[verdict] += 1
-                if o.layer and verdict == "agree":
+                if o.layer == "bodies" and verdict in ("agree", "differ"):
+                    total, equal, wrong, refused, detail = what
+                    for k, v in (("functions", total), ("equal", equal), ("differ", wrong), ("refused", len(refused))):
+                        bodies[k] += v
+                    for reason in refused.values():
+                        body_why[reason] += 1
+                    what = f"{equal} equal, {wrong} differ, {len(refused)} refused" + (f"\n    {detail}" if detail else "")
+                elif o.layer and verdict == "agree":
                     rows += int(what)
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what}")
                 if verdict == "refused":
                     why[what] += 1
         units = len(files) - counts["nounit"]
-        if o.layer:
+        if o.layer == "bodies":
+            print(f"layer bodies: of {bodies['functions']} function bodies the oracle wrote, the function writer "
+                  f"wrote {bodies['equal']} equal and {bodies['differ']} different, and refused {bodies['refused']}")
+            print("why a body was not written, by functions:")
+            for name, n in body_why.most_common(o.top):
+                print(f"  {n:6d}  {name}")
+        elif o.layer:
             print(f"layer {o.layer}: {rows} function rows compared")
         print(f"{counts['agree']} of {units} units agree; " +
               ", ".join(f"{counts[k]} {k}" for k in ("differ", "refused", "nounit") if counts[k]))

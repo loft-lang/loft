@@ -4540,6 +4540,26 @@ fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String 
     )
 }
 
+/// `LOFT_TRACE_BODIES=1` — every function body this unit writes, as written (before the unit
+/// is tidied and its hot helpers are decided): one line on standard error,
+/// `[bodies]<TAB>name<TAB>text`, the text with each backslash doubled and each newline as
+/// `\n`; a body `(R-CSplit)` wrote in parts prints `(split)`.  A layer of the loft-written
+/// generator's comparison (12-c-generator.md § The layers beside the unit): its function
+/// writer prints the same line for each function it carries.
+fn trace_body(name: &str, split: bool, whole: &str) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_BODIES").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    if split {
+        eprintln!("[bodies]\t{name}\t(split)");
+    } else {
+        eprintln!(
+            "[bodies]\t{name}\t{}",
+            whole.replace('\\', "\\\\").replace('\n', "\\n")
+        );
+    }
+}
+
 /// The storage of a frame wrapper's body: `LOFT_HOT_INLINE` where the function is hinted
 /// `inline`, the hot-helper marker's body form where that is still undecided
 /// (`resolve_hot_helpers`), the function's own storage otherwise.
@@ -4586,6 +4606,7 @@ fn framed(
         held(ret)
     );
     let whole = format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
+    trace_body(name, parts.is_some(), &whole);
     let text = match parts {
         Some(parts) if split::everywhere() => parts,
         Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),

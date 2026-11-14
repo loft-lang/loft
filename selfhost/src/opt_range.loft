@@ -267,6 +267,23 @@ fn masked(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolea
 
 // `op_range`: the range of operator `name` over `args`, where its result cannot leave the
 // type.
+// What a writer asks at the integer operator it is about to write (`op_range_at_site`):
+// `op_range`, or — the open-end counter clause — a counted loop's own step `c + 1`, which the
+// loop's exit test proves cannot overflow (`Ranges.steps`) though `c` itself is left unranged.
+pub fn op_range_at_site(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, name: text, args: vector<ir::Node>) -> Range? {
+  if name == "OpAddInt" && len(args) == 2 {
+    counter = loop_shape::var_of(loop_shape::unspan(args[0]));
+    one = match loop_shape::unspan(args[1]) {
+      NdInt { n } => n == 1,
+      _ => false,
+    };
+    if one && counter >= 0 && counter < len(rv.steps) && rv.steps[counter]! {
+      return Range { lo: -9223372036854775807, hi: 9223372036854775807 };
+    }
+  }
+  op_range(b, p, c, nn, rv, name, args, 0)
+}
+
 fn op_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, name: text, args: vector<ir::Node>, depth: integer) -> Range? {
   n = len(args);
   if (name == "OpSizeText" || name == "OpLengthText" || name == "OpLengthVector" || name == "t_4text_size" || name == "t_4text_len" || name == "t_6vector_len") && n == 1 {

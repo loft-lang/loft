@@ -15,6 +15,7 @@ use loop_shape;
 use opt_iteration;
 use opt_non_sentinel;
 use opt_range;
+use cgen_fn;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -171,7 +172,8 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
 // `main` reaches, and the functions its unit writes in order; a program without a `main` (its
 // tests' unit) prints no line yet.  `counters` (`LOFT_TRACE_COUNTERS`): every counted loop of
 // every function with a body, as `loop_shape::range_counters` reads it; `iterations`: the
-// `#index` of every `for e in v` loop its own bound keeps from overflowing.
+// `#index` of every `for e in v` loop its own bound keeps from overflowing.  `bodies`
+// (`LOFT_TRACE_BODIES`): the C definition of each function body the function writer carries.
 pub fn layer(b: ir::Bundle, name: text) -> text? {
   if name == "reach" || name == "functions" {
     for d in b.data.definitions {
@@ -183,6 +185,27 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
       }
     }
     return "";
+  }
+  if name == "bodies" {
+    // `LOFT_TRACE_BODIES`: every function of the unit the function writer carries, as the C
+    // definition of its body; one it does not carry is a `[refused]` line naming why.
+    out = "";
+    for d in b.data.definitions {
+      if d.name == "n_main" {
+        proof = opt_non_sentinel::new_proof(b);
+        calls = opt_range::new_calls();
+        for f in opt_names::written_functions(b, d#index) {
+          fname = b.data.definitions[f]!.name;
+          wr = cgen_fn::write_function(b, proof, calls, f);
+          if wr.refused != "" {
+            out += "[refused]\t{fname}\t{wr.refused}\n";
+          } else {
+            out += "[bodies]\t{fname}\t{wr.text.replace("\\", "\\\\").replace("\n", "\\n")}\n";
+          }
+        }
+      }
+    }
+    return out;
   }
   if name == "nn" || name == "ranges" {
     proof = opt_non_sentinel::new_proof(b);
