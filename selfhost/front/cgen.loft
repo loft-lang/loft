@@ -1,9 +1,11 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-// @PLN91 strand 12 — the C generator in loft, as a program: `cgen <image> <out.c> <src/c dir>`
-// writes the C unit of the program whose image (`loft --emit-image`) is given, or says which
-// construct it does not carry yet and exits 3; a file it cannot read or write is exit 2.
+// @PLN91 strand 12 — the C generator in loft, as a program:
+// `cgen <image> <out.c> <src/c dir> [--debug]` writes the C unit of the program whose image
+// (`loft --emit-image`) is given, or says which construct it does not carry yet and exits 3; a
+// file it cannot read or write is exit 2.  `--debug` asks for the debug unit, each statement
+// marked with its source line, from an image of the debug tier (`--native-debug --emit-image`).
 
 #cwd
 use load;

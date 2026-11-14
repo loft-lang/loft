@@ -40,6 +40,14 @@ These are the interpreter port's rules (strand 1b), unchanged:
    The generator's own refusals carry the Rust generator's text, since they are part of the
    compared output.
 5. **Files under 2500 lines**, one subject each, from the start.
+6. **Every analysis is compared by its debug data, not only by the text it leads to.**  A
+   decision of `src/opt/` or of the writer has an internal state — the facts it derived, what
+   it admitted, what it declined and why.  Both implementations print that state in one
+   format, and the survey compares it as a layer of its own, per function.  Where the Rust
+   side has no dump for a state the port needs to see, one is ADDED there (an env-gated
+   `LOFT_TRACE_<analysis>` line or a census row), and the loft side prints the same.  A unit
+   that differs then names the first analysis whose state differs, instead of leaving a
+   reader to work back from a line of C.
 
 ## Input and oracle
 
@@ -67,8 +75,25 @@ Each is a separate comparison; a program agrees in a form or it does not.
 
 The **debug data** the unit carries is compared in the forms that write it: the `#line`
 directives and their resets, the frame sites (`loft_frame_push` with file and line,
-`loft_frame_site`), the `LOFT_PROVED` labels, the census and trace lines the switches print
-(`LOFT_TRACE_*`), which are compared as a layer of their own.
+`loft_frame_site`), the `LOFT_PROVED` labels.  `cgen_survey.py --form debug` compares the
+debug unit; the plain form carries the frame sites.
+
+### The layers beside the unit
+
+What an analysis knew, compared per function (rule 6).  A layer exists once both sides
+print it; `cgen_survey.py` gets a `--layer <name>` per row as it is built.
+
+| layer | what it shows | Rust side today |
+|---|---|---|
+| `shapes` | the C shape of every variable of a function (`variable_shapes`), parameters first | to add: `LOFT_TRACE_SHAPES` |
+| `ranges` | the range facts a body's operators were written under (`opt::range`) | to add |
+| `census` | each rewrite a function admitted, by rule (`make rewrite-census`) | `LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN` |
+| `declines` | each rewrite declined, with its reason (`make decline-census`) | the decline census |
+| `inline` | each function's statement count and its inline verdict | `LOFT_TRACE_INLINE` |
+| per analysis | its own trace | `LOFT_TRACE_VERSION`, `_COLD`, `_VALUEREC`, `_HOIST_DECLINE`, `_PUSH_FILL`, `_LOOP_BUFFER`, `_KEPT`, `_ARG_COPY`, `_BIND`, … (`grep -rho 'LOFT_TRACE_[A-Z_]*' src`) |
+
+A trace line is machine-read here, so its format is a contract once a layer compares it: tab
+separated, the function first, no address or hash order in it.
 
 ## Layout
 
@@ -141,9 +166,36 @@ The order inside G-2 follows the survey's ranking, not this list, once the ranki
 |---|---|---|
 | G-0, image against memory | 1075 of 1075 units agree (1 program has no unit) | `python3 selfhost/bench/cgen_survey.py` |
 
+| passes, `tidy.rs` | its 9 Rust unit tests in loft; `drop_unnamed` a fixpoint on 8 kernels' units | `loft test tests/cgen_tidy.loft` (in `selfhost/`, through `tests/selfhost.rs`) |
+| G-2a, the empty program | its unit byte-identical (1 435 365 bytes), plain and debug form | `cgen_survey.py --cgen [--form debug]` |
+
 The image carries per definition whether its body is under the 32-bit regime
 (`Definition.width32` in `ir.loft`, `Data::body_width32`): without it a `#width 32` file's unit
 came out 64-bit from the image.
+
+## What is built
+
+| loft | Rust | state |
+|---|---|---|
+| `selfhost/src/cgen_tidy.loft` | `src/c/tidy.rs` | whole: `tidy`, `tidy_unit` (with `@FR-R-RefParam`), `drop_unnamed`; the census line `R-RefParam` is not counted yet |
+| `selfhost/src/cgen.loft` | `src/c/mod.rs` | the runtime's composition, `c_string`, the unit's assembly for a program whose `main` is empty; any other program is refused by name |
+| `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir>`; exit 3 with `not carried: <what>` |
+
+The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at
+run time, in the order `RUNTIME` embeds them.
+
+## Loft defects the port met
+
+Each was fixed where it was met, with its guard (rule 2 and 3 of the port).
+
+| issue | what | guard |
+|---|---|---|
+| loft#2483 | `x = e ?? return null;` answered the empty text for a `text?` function on the interpreter | `tests/scripts/2483-…loft` |
+| loft#2484 | `for c in f()` over a hash a call answers freed its store twice, both backends | `tests/scripts/2484-…loft` |
+| loft#2485 | a bind after its block ended moved the ended binding's type (a false gating warning), and a per-loop binding never ended | `tests/callarg_nstore.rs` |
+
+Not fixed, noted: a `hash<T[k]>` local cannot be formatted (`"{h}"`: "Cannot format type"),
+where a record holding one can.
 
 ## Open questions, answered by the first probes
 

@@ -132,7 +132,10 @@ fn empty_function(d: ir::Definition, decls: &text, bodies: &text) {
 }
 
 // The unit of the program in `b` (`emit_program`): the runtime, the program's functions and a
-// `main` that calls the program's.  `runtime_text` is `runtime`'s answer.
+// `main` that calls the program's.  `runtime_text` is `runtime`'s answer.  The debug unit
+// (`emit_program_with_source_lines`) marks each statement with a `#line`: a function without a
+// statement has none, so what is carried today is the same text in both forms, and the form
+// becomes a parameter with the first statement written.
 pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
   main = load::definition(b, "n_main");
   if main == null {

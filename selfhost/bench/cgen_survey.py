@@ -16,6 +16,10 @@ tests' unit where it has no `main`) is compared with a second unit:
                      `loft --emit-image` writes
   --generator EXE    the same with a generator built elsewhere: `EXE <image> <out.c> <src/c>`
 
+`--form debug` compares the DEBUG unit instead (`--native-c --native-debug --native-emit`: the
+debug tier's own image, a `#line` per statement, no whole-program rewrite), which only a
+generator can be asked for.
+
 A program is counted `agree`; `differ` (the first line that differs, both sides); `refused`
 (the second side wrote no unit: its last line of standard error, ranked); `nounit` (the oracle
 writes none: the C backend refuses the program, which is no program of this corpus).
@@ -58,17 +62,20 @@ def first_difference(a, b):
                 return n, "", ""
 
 
-def one(f, loft, generator, tmp, env, timeout):
+def one(f, loft, generator, tmp, env, timeout, debug=False):
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
     want, got, img = stem + ".want.c", stem + ".got.c", stem + ".store"
     try:
-        rc, err = proc([loft, "--emit-c", want, f], env, timeout, cwd=os.path.dirname(f))
+        tier = ["--native-debug"] if debug else []
+        oracle = [loft, "--native-c", "--native-debug", "--native-emit", want, f] if debug else [loft, "--emit-c", want, f]
+        rc, err = proc(oracle, env, timeout, cwd=os.path.dirname(f))
         if rc != 0 or not os.path.exists(want):
             return f, "nounit", last(err)
         if generator:
-            rc, err = proc([loft, "--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
+            rc, err = proc([loft] + tier + ["--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
             if rc == 0:
-                rc, err = proc([generator, img, got, RUNTIME_DIR], env, timeout, cwd=os.path.dirname(f))
+                rc, err = proc([generator, img, got, RUNTIME_DIR] + (["--debug"] if debug else []), env, timeout,
+                               cwd=os.path.dirname(f))
         else:
             rc, err = proc([loft, "--emit-c", got, f], {**env, "LOFT_EMIT_FROM_IMAGE": "1"}, timeout,
                            cwd=os.path.dirname(f))
@@ -90,6 +97,8 @@ def main():
     ap.add_argument("--loft", default=None, help="the loft binary (default: target/release/loft)")
     ap.add_argument("--generator", default=None, help="a built generator: EXE <image> <out.c> <src/c>")
     ap.add_argument("--cgen", action="store_true", help="build selfhost/front/cgen.loft and use it")
+    ap.add_argument("--form", choices=["program", "debug"], default="program",
+                    help="which unit: the program's, or the debug tier's with its #line marks")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
@@ -103,6 +112,8 @@ def main():
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
     tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
+    if o.form == "debug" and not (o.cgen or o.generator):
+        sys.exit("--form debug compares a generator's unit: give --cgen or --generator")
     try:
         if o.cgen:
             out = os.path.join(tmp, "cgen")
@@ -121,7 +132,7 @@ def main():
         why = collections.Counter()
         shown = []
         with cf.ThreadPoolExecutor(o.jobs) as ex:
-            for f, verdict, what in ex.map(lambda f: one(f, loft, o.generator, tmp, env, o.timeout), files):
+            for f, verdict, what in ex.map(lambda f: one(f, loft, o.generator, tmp, env, o.timeout, o.form == "debug"), files):
                 counts[verdict] += 1
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what}")
