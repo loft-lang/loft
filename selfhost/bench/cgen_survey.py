@@ -41,7 +41,7 @@ def last(err):
 
 def first_difference(a, b):
     """The first line two files differ at: `(line number, a's line, b's line)`."""
-    with open(a, errors="replace") as fa, open(b, errors="replace") as fb:
+    with open(a, encoding="utf-8", errors="replace") as fa, open(b, encoding="utf-8", errors="replace") as fb:
         n = 0
         while True:
             n += 1
