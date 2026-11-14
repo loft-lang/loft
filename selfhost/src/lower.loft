@@ -2046,7 +2046,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     tp = literal(l, args[2]!);
     fmt = literal(l, args[3]!);
-    why = show::refusal(b, tp, []);
+    why = show::refusal(b.types, tp, []);
     if why != "" {
       refuse(l, why);
       return true;

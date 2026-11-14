@@ -1881,7 +1881,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         at = text_at(stk, base, op);
         sp_int -= 3;
         piece = "";
-        show::render(b, op.b / 4, stack_pos(ints, sp_int), op.b % 4, 0, piece);
+        show::render(b.types, op.b / 4, stack_pos(ints, sp_int), op.b % 4, 0, piece);
         crt::slot_text_append(stk, at, piece);
       }
       // `v += other`: the copies are claims of `v`'s store, so no owner changes; the claims are

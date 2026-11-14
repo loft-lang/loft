@@ -16,6 +16,7 @@ use ir;
 use crt;
 use types;
 use files;
+use show;
 
 // The null reference's store (`DbRef::NULL`).
 NULL_STORE = 65535;
@@ -196,6 +197,7 @@ H_TEXT_WALK_STEP = 172;
 H_TEXT_END_JUMP = 173;
 H_CAST_FROM_TEXT = 175;
 H_RANGE_DEFAULT = 176;
+H_FORMAT_DATABASE = 177;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -432,6 +434,8 @@ pub fn handler(name: text) -> integer {
     "OpCastFloatFromText" => H_CAST_FROM_TEXT,
     "OpRangeDefault" => H_RANGE_DEFAULT,
     "OpLengthSorted" => H_LENGTH_VECTOR,
+    "OpFormatDatabase" => H_FORMAT_DATABASE,
+    "OpFormatStackDatabase" => H_FORMAT_DATABASE,
     _ => -1
   }
 }
@@ -612,6 +616,7 @@ fn layout_of(h: integer) -> text {
     172 => "hhhhb",
     173 => "hbhi",
     176 => "qqq",
+    177 => "hhb",
     _ => ""
   }
 }
@@ -2533,6 +2538,30 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       pc += 24;
       rv = get(stk, sp - 8);
       set(stk, sp - 8, if rv == null { if rdf == null { rv } else { rdf } } else if rv! >= (rlo ?? 0) && rv! <= (rhi ?? 0) { rv } else { rdf });
+    } else if h == H_FORMAT_DATABASE {
+      // `"{v}"` of a store value, rendered by `show::render` (bit 1 of the format pretty, bit 2
+      // JSON) and appended to the destination: the text local `pos` back from the stack top
+      // before the value is popped, or for the stack form the text that local's reference
+      // names (`State::format_database` / `format_stack_database`).
+      fdp = u16_at(img.code, pc);
+      fdtp = u16_at(img.code, pc + 2);
+      fdfmt = img.code[pc + 4] ?? 0;
+      pc += 5;
+      fdwhy = show::refusal(img.types, fdtp, []);
+      if fdwhy != "" {
+        return Outcome { refused: "{fdwhy}: {img.ops[op] ?? ""} at {at}", steps: steps };
+      }
+      ensure_table(img.types, tl);
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      fdpiece = "";
+      show::render(img.types, fdtp, crt::Pos { s: io[0] ?? NULL_STORE, r: io[1] ?? 0, p: io[2] ?? 0 }, fdfmt, 0, fdpiece);
+      if (img.ops[op] ?? "") == "OpFormatStackDatabase" {
+        crt::slot_ref(io, stk, sp - (fdp - 16));
+        crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fdpiece);
+      } else {
+        crt::slot_text_append(stk, sp - (fdp - 16), fdpiece);
+      }
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
