@@ -12,6 +12,11 @@
  * `LOFT_CRT_ALLOC_TRACE` names, so the interpreter's own stores never mix into them. */
 #define LOFT_ALLOC_TRACE 1
 #define LOFT_ALLOC_TRACE_ENV "LOFT_CRT_ALLOC_TRACE"
+/* The text parser (`t as vector<T>`, `json_parse`): the C runtime's own, with each store's parse
+ * errors kept beside it (a side table; no store's layout changes, so the runner's own unit, built
+ * without it, shares the stores unchanged). */
+#define LOFT_JSON 1
+#define LOFT_PARSE 1
 #include "../../../src/c/loft_crt.h"
 /* The file routines (@PLN91 S6's files): a File record of the interpreted program is read and
  * written by the runtime's own `loft_get_file`, `loft_write_file`, `loft_read_file`, …, and a
@@ -22,6 +27,32 @@
 /* A second pass over the radix walks defines their paged twins, as the C backend's unit order. */
 #include "../../../src/c/loft_radix_walk.h"
 #include "../../../src/c/loft_paged_load.h"
+
+/* The text parser (`loft_parse.h`, `loft_json.h`) reads its unit's type table and asks which
+ * types are a vector variable's own store (`main_vector<T>`); for the runner both come from the
+ * loaded table and from a list the runner hands over (`loft_crt_main_vector`). */
+static uint8_t *loft_crt_main_vectors = 0;
+static uint32_t loft_crt_nmain_vectors = 0;
+static int loft_is_main_vector(uint16_t tp) {
+    return tp < loft_crt_nmain_vectors && loft_crt_main_vectors[tp];
+}
+/* The JsonValue tree's layout (the emitter's `json_layout`): positions in the stdlib's own
+ * JsonValue types, read from the loaded schema before the first `json_parse`
+ * (`loft_crt_json_layout`). */
+static uint32_t loft_crt_jl[11];
+#define LOFT_JV_SIZE loft_crt_jl[0]
+#define LOFT_JF_SIZE loft_crt_jl[1]
+#define LOFT_TEXT_SIZE loft_crt_jl[2]
+#define LOFT_JF_NAME loft_crt_jl[3]
+#define LOFT_JF_VALUE loft_crt_jl[4]
+#define LOFT_JV_BOOL_VALUE loft_crt_jl[5]
+#define LOFT_JV_NUMBER_VALUE loft_crt_jl[6]
+#define LOFT_JV_INT_VALUE loft_crt_jl[7]
+#define LOFT_JV_STRING_VALUE loft_crt_jl[8]
+#define LOFT_JV_ITEMS loft_crt_jl[9]
+#define LOFT_JV_FIELDS loft_crt_jl[10]
+#include "../../../src/c/loft_json.h"
+#include "../../../src/c/loft_parse.h"
 #include "../../../src/c/loft_log.h"
 
 /* A text that crossed the bridge: `bytes` long (an embedded NUL kept), or null when -1. */
@@ -1052,6 +1083,219 @@ int64_t loft_crt_pg_load_range(int64_t s, int64_t r, int64_t p, const char *path
 int64_t loft_crt_store_verify(int64_t s, int64_t r, int64_t p) {
     if (!loft_crt_types) return 0;
     return loft_store_verify((const loft_tdesc *) loft_crt_types, loft_crt_ntypes, loft_crt_ref(s, r, p));
+}
+
+/* The parser's type table (`loft_parse.h` declares it): the loaded one. */
+static const loft_tdesc *loft_parse_types(void) {
+    return (const loft_tdesc *) loft_crt_types;
+}
+
+/* ── The parse table (`loft_ptypes`, the C backend's `parse_table`), built at run time from the
+ * rows the runner derives from the schema (selfhost/src/ptypes.loft). ─────────────────────── */
+static loft_ptype *loft_crt_ptypes = 0;
+static uint32_t loft_crt_nptypes = 0;
+
+/* A type is a vector variable's own store (`main_vector<T>`). */
+void loft_crt_main_vector(int64_t tp) {
+    if (tp < 0) return;
+    if ((uint32_t) tp >= loft_crt_nmain_vectors) {
+        uint32_t n = (uint32_t) tp + 64;
+        uint8_t *t = (uint8_t *) realloc(loft_crt_main_vectors, n);
+        if (!t) { fputs("loft: out of memory\n", stderr); abort(); }
+        memset(t + loft_crt_nmain_vectors, 0, n - loft_crt_nmain_vectors);
+        loft_crt_main_vectors = t;
+        loft_crt_nmain_vectors = n;
+    }
+    loft_crt_main_vectors[tp] = 1;
+}
+
+/* Row `tp` of the parse table, the table grown to hold it; zeroed when new. */
+static loft_ptype *loft_crt_prow(int64_t tp) {
+    if (tp < 0 || tp > 65535) return 0;
+    if ((uint32_t) tp >= loft_crt_nptypes) {
+        uint32_t n = (uint32_t) tp + 64;
+        loft_ptype *t = (loft_ptype *) realloc(loft_crt_ptypes, n * sizeof *t);
+        if (!t) { fputs("loft: out of memory\n", stderr); abort(); }
+        memset(t + loft_crt_nptypes, 0, (n - loft_crt_nptypes) * sizeof *t);
+        loft_crt_ptypes = t;
+        loft_crt_nptypes = n;
+    }
+    return &loft_crt_ptypes[tp];
+}
+
+/* Is row `tp` written already? */
+int64_t loft_crt_ptype_known(int64_t tp) {
+    return tp >= 0 && (uint32_t) tp < loft_crt_nptypes && loft_crt_ptypes[tp].name != 0 ? 1 : 0;
+}
+
+/* A row's scalar parts; a keyed collection's key parts are the loaded table's. */
+void loft_crt_ptype_set(int64_t tp, int64_t kind, int64_t size, int64_t elem, int64_t min, int64_t nullable,
+                        int64_t n, int64_t strict, int64_t zero, int64_t variant, int64_t keyed, int64_t linked,
+                        int64_t some, int64_t payload_tp, int64_t payload_pos, int64_t refs, const char *name,
+                        int64_t nlen) {
+    loft_ptype *r = loft_crt_prow(tp);
+    if (!r) return;
+    r->kind = (uint8_t) kind;
+    r->size = (uint16_t) size;
+    r->elem = (uint16_t) elem;
+    r->min = (int32_t) min;
+    r->nullable = (uint8_t) nullable;
+    r->n = (uint16_t) n;
+    r->strict_enum = (uint8_t) strict;
+    r->zero_default = (uint8_t) zero;
+    r->variant = (uint8_t) variant;
+    r->name = loft_crt_cstr(name, nlen);
+    r->keyed = (uint8_t) keyed;
+    if (kind == LOFT_P_KEYED && LOFT_CRT_TP_OK(tp)) {
+        r->keys = loft_crt_types[tp].keys;
+        r->nk = (uint8_t) loft_crt_types[tp].nk;
+    }
+    r->linked = (uint8_t) linked;
+    r->some = (uint8_t) some;
+    r->payload_tp = (uint16_t) payload_tp;
+    r->payload_pos = (uint16_t) payload_pos;
+    r->refs = (uint8_t) refs;
+}
+
+/* A record row's prefill image. */
+void loft_crt_ptype_prefill(int64_t tp, const uint8_t *img, int64_t n) {
+    loft_ptype *r = loft_crt_prow(tp);
+    if (!r || n <= 0) return;
+    uint8_t *c = (uint8_t *) malloc((size_t) n);
+    if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(c, img, (size_t) n);
+    r->prefill = c;
+}
+
+/* An enum row's variants: their record types; the names follow, one `loft_crt_ptype_vname` each. */
+void loft_crt_ptype_enum(int64_t tp, const int64_t *vt, int64_t n) {
+    loft_ptype *r = loft_crt_prow(tp);
+    if (!r) return;
+    uint16_t *types = (uint16_t *) calloc((size_t) (n > 0 ? n : 1), sizeof *types);
+    /* The names by value from 1, as the emitter's `loft_enum{tp}`: slot 0 the empty name. */
+    const char **vn = (const char **) calloc((size_t) n + 1, sizeof *vn);
+    if (!types || !vn) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (int64_t i = 0; i <= n; i++) vn[i] = "";
+    for (int64_t i = 0; i < n; i++) types[i] = (uint16_t) vt[i];
+    r->vtypes = types;
+    r->vnames = vn;
+}
+
+/* The name of variant `k` (from 1) of enum row `tp`. */
+void loft_crt_ptype_vname(int64_t tp, int64_t k, const char *name, int64_t nlen) {
+    if (tp < 0 || (uint32_t) tp >= loft_crt_nptypes || !loft_crt_ptypes[tp].vnames) return;
+    if (k < 1 || k > loft_crt_ptypes[tp].n) return;
+    ((const char **) loft_crt_ptypes[tp].vnames)[k] = loft_crt_cstr(name, nlen);
+}
+
+/* A record row's field table of `n` fields. */
+void loft_crt_ptype_fields(int64_t tp, int64_t n) {
+    loft_ptype *r = loft_crt_prow(tp);
+    if (!r) return;
+    loft_pfield *f = (loft_pfield *) calloc((size_t) (n > 0 ? n : 1), sizeof *f);
+    if (!f) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (int64_t i = 0; i < n; i++) f[i].name = "";
+    r->fields = f;
+}
+
+/* Field `i` of record row `tp`, as the C backend's `parse_field` writes it. */
+void loft_crt_pfield_set(int64_t tp, int64_t i, const char *name, int64_t nlen, int64_t content, int64_t pos,
+                         int64_t nullable, int64_t skip, int64_t type_tag, int64_t dkind, int64_t di, const double *dnum,
+                         int64_t ndnum, const char *ds, int64_t dslen, int64_t target) {
+    if (tp < 0 || (uint32_t) tp >= loft_crt_nptypes || !loft_crt_ptypes[tp].fields) return;
+    loft_pfield *f = (loft_pfield *) &loft_crt_ptypes[tp].fields[i];
+    f->name = loft_crt_cstr(name, nlen);
+    f->content = (uint16_t) content;
+    f->pos = (uint16_t) pos;
+    f->nullable = (uint8_t) nullable;
+    f->skip = (uint8_t) skip;
+    f->type_tag = (uint8_t) type_tag;
+    f->dkind = (uint8_t) dkind;
+    f->di = di;
+    double dv = ndnum > 0 ? dnum[0] : 0.0;
+    memcpy(&f->dbits, &dv, sizeof f->dbits); /* a NUMBER default's bits */
+    f->ds = loft_crt_cstr(ds, dslen);
+    f->dslen = (size_t) dslen;
+    f->target = (uint16_t) target;
+}
+
+/* The linked group field `i` of record row `tp` is a member of: `(position, kind, type)` per
+ * member, the field itself first. */
+void loft_crt_pfield_group(int64_t tp, int64_t i, const int64_t *m, int64_t nm, int64_t gelem, int64_t gheld,
+                           int64_t gnull) {
+    if (tp < 0 || (uint32_t) tp >= loft_crt_nptypes || !loft_crt_ptypes[tp].fields) return;
+    int n = (int) (nm / 3);
+    loft_member *rows = (loft_member *) calloc((size_t) (n > 0 ? n : 1), sizeof *rows);
+    if (!rows) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (int k = 0; k < n; k++) {
+        int64_t mtp = m[3 * k + 2];
+        rows[k].pos = (uint32_t) m[3 * k];
+        rows[k].kind = (int) m[3 * k + 1];
+        rows[k].keys = LOFT_CRT_TP_OK(mtp) ? loft_crt_types[mtp].keys : 0;
+        rows[k].nk = LOFT_CRT_TP_OK(mtp) ? loft_crt_types[mtp].nk : 0;
+    }
+    loft_pfield *f = (loft_pfield *) &loft_crt_ptypes[tp].fields[i];
+    f->grp = rows;
+    f->ngrp = (uint8_t) n;
+    f->gelem = (uint16_t) gelem;
+    f->gheld = (uint8_t) gheld;
+    f->gnull = (uint8_t) gnull;
+}
+
+/* The JsonValue layout, in `loft_crt_jl`'s order. */
+void loft_crt_json_layout(const int64_t *v, int64_t n) {
+    for (int64_t i = 0; i < n && i < 11; i++) loft_crt_jl[i] = (uint32_t) v[i];
+}
+
+/* `json_parse(raw)`: the tree in a store of its own. */
+int64_t loft_crt_json_parse(int64_t *out, int64_t no, const char *raw, int64_t len) {
+    loft_crt_put_ref(out, no, loft_json_parse_value(loft_crt_str(raw, len)));
+    return 0;
+}
+
+/* `json_errors()`: the last parse's errors, `|`-separated. */
+int64_t loft_crt_json_errors(char *out, int64_t cap) {
+    loft_text t = loft_json_errors();
+    return loft_crt_out(&t, out, cap);
+}
+
+/* `parse_errors_of(r)`: the errors of the parse that built `r`'s store, as a fresh vector. */
+int64_t loft_crt_parse_errors_of(int64_t *out, int64_t no, int64_t s, int64_t r, int64_t p) {
+    loft_crt_put_ref(out, no, loft_parse_errors_of(loft_crt_ref(s, r, p)));
+    return 0;
+}
+
+/* `LOFT_CRT_PTYPES=1`: the parse table's rows on standard error, in the emitter's spelling of
+ * `loft_ptypes`, to compare with a `--native-c --native-emit` of the same program. */
+static void loft_crt_ptypes_dump(void) {
+    for (uint32_t tp = 0; tp < loft_crt_nptypes; tp++) {
+        const loft_ptype *r = &loft_crt_ptypes[tp];
+        if (!r->name) continue;
+        fprintf(stderr, "[%u] kind=%u size=%u elem=%u min=%d nullable=%u n=%u strict=%u zero=%u variant=%u keyed=%u nk=%u linked=%u some=%u payload=%u@%u refs=%u name=%s\n",
+                tp, r->kind, r->size, r->elem, r->min, r->nullable, r->n, r->strict_enum, r->zero_default, r->variant,
+                r->keyed, r->nk, r->linked, r->some, r->payload_tp, r->payload_pos, r->refs, r->name);
+        for (uint16_t k = 0; r->kind == LOFT_P_ENUM && k < r->n; k++)
+            fprintf(stderr, "    variant %u %s -> %u\n", k + 1, r->vnames[k + 1], r->vtypes[k]);
+        for (uint16_t k = 0; r->kind == LOFT_P_RECORD && k < r->n; k++) {
+            const loft_pfield *f = &r->fields[k];
+            fprintf(stderr, "    field %s content=%u pos=%u nullable=%u skip=%u tag=%u dkind=%u di=%lld ds=%s ngrp=%u target=%u\n",
+                    f->name, f->content, f->pos, f->nullable, f->skip, f->type_tag, f->dkind, (long long) f->di,
+                    f->ds, f->ngrp, f->target);
+        }
+        if (r->prefill) {
+            fprintf(stderr, "    prefill");
+            for (uint16_t k = 0; k < r->size; k++) fprintf(stderr, " %u", r->prefill[k]);
+            fprintf(stderr, "\n");
+        }
+    }
+}
+
+/* `t as vector<T>` / a record from text (`loft_record_from_text`) as type `tp`: its reference. */
+int64_t loft_crt_record_from_text(int64_t *out, int64_t no, const char *text, int64_t len, int64_t tp) {
+    const char *d = getenv("LOFT_CRT_PTYPES");
+    if (d && *d == '1') loft_crt_ptypes_dump();
+    loft_crt_put_ref(out, no, loft_record_from_text(loft_crt_ptypes, loft_crt_str(text, len), (uint16_t) tp));
+    return 0;
 }
 
 /* OpMoveVector (Stores::move_vector): `src`'s elements moved onto `dst`, `linked` an element

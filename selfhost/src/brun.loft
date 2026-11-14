@@ -18,6 +18,7 @@ use types;
 use files;
 use show;
 use eq;
+use ptypes;
 
 // The null reference's store (`DbRef::NULL`).
 NULL_STORE = 65535;
@@ -258,6 +259,7 @@ H_SLOT_TAG = 233;
 H_GET_SLOT_REF = 234;
 H_SLOT_WRITE = 235;
 H_EXPOSE = 236;
+H_CAST_VECTOR_FROM_TEXT = 237;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -571,6 +573,7 @@ pub fn handler(name: text) -> integer {
     "OpSetSlotRef" => H_SLOT_WRITE,
     "OpExpose" => H_EXPOSE,
     "OpRelease" => H_EXPOSE,
+    "OpCastVectorFromText" => H_CAST_VECTOR_FROM_TEXT,
     "OpCastSingleFromText" => H_CAST_FROM_TEXT,
     "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
@@ -630,6 +633,9 @@ N_UPGRADE_ROUTINE = 47;
 N_LOG = 48;
 N_SOURCE_DIR_DEST = 49;
 N_LOAD_KEY = 50;
+N_JSON_PARSE = 51;
+N_JSON_ERRORS_DEST = 52;
+N_PARSE_ERRORS_OF = 53;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -687,6 +693,9 @@ pub fn native_handler(name: text) -> integer {
     "n_log_fatal" => N_LOG,
     "n_source_dir_dest" => N_SOURCE_DIR_DEST,
     "n_store_load_key" => N_LOAD_KEY,
+    "n_json_parse" => N_JSON_PARSE,
+    "n_json_errors_dest" => N_JSON_ERRORS_DEST,
+    "n_parse_errors_of" => N_PARSE_ERRORS_OF,
     "n_store_load_key_text" => N_LOAD_KEY,
     "n_store_load_keys" => N_LOAD_KEY,
     "n_store_load_keys_text" => N_LOAD_KEY,
@@ -866,6 +875,7 @@ fn layout_of(h: integer) -> text {
     234 => "h",
     235 => "h",
     236 => "h",
+    237 => "h",
     _ => ""
   }
 }
@@ -1303,7 +1313,7 @@ fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
 // arguments popped and its result pushed on the stack store `stk` at `sp0`, as Rust's native
 // does.  Answers the new stack top, or -1 with the reason in `why[0]` when the runner does not
 // carry it.
-fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, why: vector<text>) -> integer {
+fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
   sp = sp0;
   if nh == N_ASSERT {
     line = get(stk, sp - 8);
@@ -1667,6 +1677,25 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
       thi = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     }
     crt::ref_text_append(tds, tdr, tdp, crt::vec_text_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tlo, thi));
+  } else if nh == N_JSON_PARSE {
+    // `json_parse(raw)`: the C runtime's reader, the tree in a store of its own.
+    ensure_table(img.types, tl);
+    ptypes::json_layout(img.types, ptold);
+    jraw = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    crt::json_parse(io, jraw);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_JSON_ERRORS_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::json_errors());
+  } else if nh == N_PARSE_ERRORS_OF {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::parse_errors_of(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
   } else if nh == N_HASH_SORTED || nh == N_HASH_UNSORTED {
     // A hash's records as a vector, in key order or the hash's own (a scratch vector).
     ensure_table(img.types, tl);
@@ -1689,7 +1718,7 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
 // limit on one function's variables.  The stack top and the code position come in and go back
 // in `regs` (`[sp, pc]`); answers 0, or -1 with the reason in `why[0]` when the runner does not
 // carry the operator or this use of it.
-fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, io: vector<integer>, tl: vector<boolean>, images: vector<vector<u8>>, imaged: vector<boolean>, step_io: vector<integer>, cos: vector<CoFrame>, act: vector<integer>, cogen: vector<integer>, interned: vector<integer>, why: vector<text>) -> integer {
+fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, io: vector<integer>, tl: vector<boolean>, images: vector<vector<u8>>, imaged: vector<boolean>, step_io: vector<integer>, cos: vector<CoFrame>, act: vector<integer>, cogen: vector<integer>, interned: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
   sp = regs[0] ?? 0;
   pc = regs[1] ?? 0;
   if h == H_PUT_SINGLE {
@@ -2738,6 +2767,18 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       return -1;
     }
     crt::index_group(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, iggm![0] ?? 0, ignull, igvpos, igvkind, igtp, igkeyed);
+  } else if h == H_CAST_VECTOR_FROM_TEXT {
+    // `t as vector<T>` (`Stores::record_from_text`): the C runtime's parser over the parse table
+    // the schema gives (ptypes.loft), a new store holding the value.
+    ensure_table(img.types, tl);
+    cvtp = u16_at(img.code, pc);
+    pc += 2;
+    cvt = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    ptypes::prepare(img.types, cvtp, ptold);
+    crt::record_from_text(io, cvt, cvtp);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
   } else if h == H_EXPOSE {
     // The value and the tag popped; the value's store locked (`expose`) or unlocked (`release`).
     pc += 2;
@@ -3543,6 +3584,9 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   cogen: vector<integer> = [1];
   // Enum variant names viewed by `OpCastTextFromEnum`: `[key, handle, length]` per name.
   interned: vector<integer> = [];
+  // Whether the parse table has been told the `main_vector<T>` types, and the C runtime the
+  // JsonValue layout (ptypes.loft).
+  ptold: vector<boolean> = [false, false];
   // `par`: its natives, the jobs whose workers are running, and the answer buffer stacks.
   ptab = par_natives(img);
   pjobs: vector<ParJob> = [];
@@ -3952,7 +3996,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         depth += 1;
         pc = img.starts[shd] ?? 0;
       } else {
-        nsp = call_native(ns[idx] ?? -1, idx, img, stk, sp, io, tl, sidecar_ix, nwhy);
+        nsp = call_native(ns[idx] ?? -1, idx, img, stk, sp, io, tl, sidecar_ix, ptold, nwhy);
         if nsp < 0 {
           return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
         }
@@ -4635,7 +4679,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     } else if h >= H_PUT_SINGLE {
       mregs[0] = sp;
       mregs[1] = pc;
-      if exec_more(h, op, img, stk, mregs, io, tl, images, imaged, step_io, cos, act, cogen, interned, nwhy) < 0 {
+      if exec_more(h, op, img, stk, mregs, io, tl, images, imaged, step_io, cos, act, cogen, interned, ptold, nwhy) < 0 {
         return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
       }
       sp = mregs[0] ?? 0;

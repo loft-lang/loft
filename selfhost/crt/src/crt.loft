@@ -426,6 +426,34 @@ fn c_pg_load_range(s: integer, r: integer, p: integer, path: text, plen: integer
 #c "loft_crt_pg_load_range" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_store_lock(s: integer, r: integer, p: integer, lock: integer);
 #c "loft_crt_store_lock" "void(int64_t, int64_t, int64_t, int64_t)"
+fn c_main_vector(tp: integer);
+#c "loft_crt_main_vector" "void(int64_t)"
+fn c_ptype_known(tp: integer) -> integer;
+#c "loft_crt_ptype_known" "int64_t(int64_t)"
+fn c_ptype_set(tp: integer, kind: integer, size: integer, elem: integer, mn: integer, nullable: integer, n: integer, strict: integer, zero: integer, variant: integer, keyed: integer, linked: integer, some: integer, payload_tp: integer, payload_pos: integer, refs: integer, name: text, nlen: integer);
+#c "loft_crt_ptype_set" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+fn c_ptype_prefill(tp: integer, img: vector<u8>);
+#c "loft_crt_ptype_prefill" "void(int64_t, const uint8_t*, int64_t)"
+fn c_ptype_enum(tp: integer, vt: vector<integer>);
+#c "loft_crt_ptype_enum" "void(int64_t, const int64_t*, int64_t)"
+fn c_ptype_vname(tp: integer, k: integer, name: text, nlen: integer);
+#c "loft_crt_ptype_vname" "void(int64_t, int64_t, const char*, int64_t)"
+fn c_ptype_fields(tp: integer, n: integer);
+#c "loft_crt_ptype_fields" "void(int64_t, int64_t)"
+fn c_pfield_set(tp: integer, i: integer, name: text, nlen: integer, content: integer, pos: integer, nullable: integer, skip: integer, type_tag: integer, dkind: integer, di: integer, dnum: vector<float>, ds: text, dslen: integer, target: integer);
+#c "loft_crt_pfield_set" "void(int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const double*, int64_t, const char*, int64_t, int64_t)"
+fn c_pfield_group(tp: integer, i: integer, m: vector<integer>, gelem: integer, gheld: integer, gnull: integer);
+#c "loft_crt_pfield_group" "void(int64_t, int64_t, const int64_t*, int64_t, int64_t, int64_t, int64_t)"
+fn c_record_from_text(out: vector<integer>, text: text, len: integer, tp: integer) -> integer;
+#c "loft_crt_record_from_text" "int64_t(int64_t*, int64_t, const char*, int64_t, int64_t)"
+fn c_json_layout(v: vector<integer>);
+#c "loft_crt_json_layout" "void(const int64_t*, int64_t)"
+fn c_json_parse(out: vector<integer>, raw: text, len: integer) -> integer;
+#c "loft_crt_json_parse" "int64_t(int64_t*, int64_t, const char*, int64_t)"
+fn c_json_errors(out: vector<u8>) -> integer;
+#c "loft_crt_json_errors" "int64_t(char*, int64_t)"
+fn c_parse_errors_of(out: vector<integer>, s: integer, r: integer, p: integer) -> integer;
+#c "loft_crt_parse_errors_of" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -714,6 +742,74 @@ pub fn pg_load_range(s: integer, r: integer, p: integer, path: text, sc: integer
 // `expose` / `release`: the value's store locked read-only, or unlocked.
 pub fn store_lock(s: integer, r: integer, p: integer, lock: boolean) {
   c_store_lock(s, r, p, if lock { 1 } else { 0 });
+}
+
+// The parse table (`loft_ptypes`) built at run time: see selfhost/src/ptypes.loft.
+pub fn main_vector(tp: integer) {
+  c_main_vector(tp);
+}
+
+pub fn ptype_known(tp: integer) -> boolean {
+  c_ptype_known(tp) != 0
+}
+
+pub fn ptype_set(tp: integer, kind: integer, size: integer, elem: integer, mn: integer, nullable: boolean, n: integer, strict: boolean, zero: boolean, variant: boolean, keyed: integer, linked: boolean, some: integer, payload_tp: integer, payload_pos: integer, refs: boolean, name: text) {
+  c_ptype_set(tp, kind, size, elem, mn, if nullable { 1 } else { 0 }, n, if strict { 1 } else { 0 }, if zero { 1 } else { 0 }, if variant { 1 } else { 0 }, keyed, if linked { 1 } else { 0 }, some, payload_tp, payload_pos, if refs { 1 } else { 0 }, name, name.size());
+}
+
+pub fn ptype_prefill(tp: integer, img: vector<u8>) {
+  c_ptype_prefill(tp, img);
+}
+
+// An enum row's variants: their record types, and their names by value from 1.
+pub fn ptype_enum(tp: integer, vt: vector<integer>, names: vector<text>) {
+  c_ptype_enum(tp, vt);
+  for k in 0..len(names) {
+    c_ptype_vname(tp, k + 1, names[k] ?? "", (names[k] ?? "").size());
+  }
+}
+
+pub fn ptype_fields(tp: integer, n: integer) {
+  c_ptype_fields(tp, n);
+}
+
+pub fn pfield_set(tp: integer, i: integer, name: text, content: integer, pos: integer, nullable: boolean, skip: boolean, type_tag: boolean, dkind: integer, di: integer, dnum: float, ds: text, target: integer) {
+  c_pfield_set(tp, i, name, name.size(), content, pos, if nullable { 1 } else { 0 }, if skip { 1 } else { 0 }, if type_tag { 1 } else { 0 }, dkind, di, [dnum], ds, ds.size(), target);
+}
+
+pub fn pfield_group(tp: integer, i: integer, m: vector<integer>, gelem: integer, gheld: boolean, gnull: boolean) {
+  c_pfield_group(tp, i, m, gelem, if gheld { 1 } else { 0 }, if gnull { 1 } else { 0 });
+}
+
+// `t as vector<T>` / a record read from text as type `tp`: its reference in `out`.
+pub fn record_from_text(out: vector<integer>, t: text, tp: integer) {
+  c_record_from_text(out, t, t.size(), tp);
+}
+
+// The JsonValue tree's layout: sizes and field positions of the stdlib's JsonValue types.
+pub fn json_layout(v: vector<integer>) {
+  c_json_layout(v);
+}
+
+// `json_parse(raw)`: the tree's reference in `out`.
+pub fn json_parse(out: vector<integer>, raw: text) {
+  c_json_parse(out, raw, raw.size());
+}
+
+// `json_errors()`: the last parse's errors, `|`-separated.
+pub fn json_errors() -> text {
+  buf = room(256);
+  n = c_json_errors(buf);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_json_errors(buf);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// `parse_errors_of(r)`: a fresh vector of the errors of the parse that built `r`'s store.
+pub fn parse_errors_of(out: vector<integer>, s: integer, r: integer, p: integer) {
+  c_parse_errors_of(out, s, r, p);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
