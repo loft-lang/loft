@@ -914,7 +914,8 @@ pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result
 #[cfg(feature = "mmap")]
 #[expect(
     clippy::too_many_arguments,
-    reason = "the run image's parts, each from its own owner"
+    clippy::too_many_lines,
+    reason = "the run image's parts, each from its own owner, written one after the other"
 )]
 fn materialize_run_image(
     stores: &mut Stores,

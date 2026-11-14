@@ -26,23 +26,44 @@
 //!   scalar 8 bytes, a text view 16); the answer is written at their base and the new top
 //!   returned.  A boolean answer is ONE byte of its 8-byte slot (0, 1, 255 for null), read as
 //!   a byte, as the bytecode's boolean is.  Negative: not carried, or the stack does not hold
-//!   the arguments — the caller runs the loft body.
+//!   the arguments — the caller runs the loft body;
+//! - `int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, int64_t r,
+//!   int64_t p)` — the destination form of a function that answers a text
+//!   (`loft_shared_<fn>#dest`): the destination reference `(s, r, p)` is popped by the caller,
+//!   the answer is appended to the text it names and nothing is pushed — the new top is the
+//!   arguments' base.
+//!
+//! A text answer follows the Rust bridge (`extensions::dispatch_shared`): it is APPENDED to a
+//! destination.  The destination form names it; the plain form uses the call's own work buffer
+//! (the caller-cleared cell whose reference lies among the arguments) and pushes a view of it,
+//! and a function with no such cell has no plain form here.  The body's work buffers are the
+//! entry's own locals, as they are the bridge's.
 //!
 //! A carried body never REPORTS (an assert, a panic, a fault): the runner keeps reports in its
 //! own `State`, which a compiled body cannot reach, so the fragment refuses to be written when
 //! its code names a reporting call.  `LOFT_NO_COMPILED_BODIES=1` at run time makes every lookup
 //! answer -1 (the A/B: the loft bodies, the same answers).
 //!
-//! Every body carried today only READS the program's data.  A body that writes a store would
-//! be written against this unit's facts (no locks, no threads), which the shim does not hold
-//! for the program it runs; it is not carried until the shim states those facts itself.
+//! Every body carried today only READS the program's data and builds texts on the C heap; the
+//! one write into the program's data is the ENTRY's append to the destination text, which is the
+//! shim's own `loft_crt_ref_text_append` — what the runner does when the loft body returns.  A
+//! body that itself writes a store would be written against this unit's facts (no locks, no
+//! threads), which the shim does not hold for the program it runs; it is not carried until the
+//! shim states those facts itself.
 //!
 //! A function this fragment cannot carry has no entry, so the runner runs its loft body: slower,
 //! never wrong.  The fragment says which and why in its header.
 use super::{RUNTIME_END, c_name, emit_unit_for, tidy};
 use crate::data::{Data, Type};
 use crate::database::Stores;
+use crate::native_gate::BridgeAttrKind;
 use std::fmt::Write as _;
+
+/// The contract with nothing carried: every lookup and call answers -1.  What a shim is built
+/// with when the fragment cannot be written.
+pub const STUBS: &str = "int64_t loft_body_find(const char *name, int64_t len) { (void) name; (void) len; return -1; }\n\
+     int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) { (void) entry; (void) stk; (void) sp; return -1; }\n\
+     int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, int64_t r, int64_t p) { (void) entry; (void) stk; (void) sp; (void) s; (void) r; (void) p; return -1; }\n";
 
 /// One argument or the answer as the runner's stack holds it.
 #[derive(Clone, Copy, PartialEq)]
@@ -55,12 +76,15 @@ enum Slot {
     Bool,
     /// A text, a 16-byte view (`loft_str`).
     Text,
+    /// A text answer's work buffer: the 16-byte slot holds the reference of the caller's cell;
+    /// the body is handed a text of the entry's own.
+    Work,
 }
 
 impl Slot {
     fn bytes(self) -> i64 {
         match self {
-            Slot::Text => 16,
+            Slot::Text | Slot::Work => 16,
             _ => 8,
         }
     }
@@ -70,12 +94,15 @@ impl Slot {
             Slot::Float => "double",
             Slot::Bool => "uint8_t",
             Slot::Text => "loft_str",
+            Slot::Work => "loft_text",
         }
     }
 }
 
 /// `d`'s arguments and answer as slots, or why the fragment does not carry it: a reference, a
-/// collection, a `&` parameter, a hidden buffer, a text answer — the later slices.
+/// collection, a `&` parameter, a hidden buffer — the later slices.  Each attribute is judged by
+/// the bridge's own `native_gate::classify_bridge_attr`, so the slots are the ones the call site
+/// pushed.
 fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
     let def = data.def(d);
     if def.hidden_return_buffer_attr().is_some() {
@@ -86,18 +113,21 @@ fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
             Type::Integer(..) | Type::Character => Ok(Slot::Int),
             Type::Float => Ok(Slot::Float),
             Type::Boolean => Ok(Slot::Bool),
-            Type::Text(_) if what == "argument" => Ok(Slot::Text),
+            Type::Text(_) => Ok(Slot::Text),
             other => Err(format!("{what} of type {}", super::type_word(other))),
         }
     };
+    let ret = slot(def.returned(), "answer")?;
     let mut args = Vec::new();
     for a in def.attributes() {
-        if matches!(a.typedef.base(), Type::RefVar(_)) {
-            return Err("a & parameter".into());
+        match crate::native_gate::classify_bridge_attr(a, ret == Slot::Text) {
+            Some(BridgeAttrKind::WorkText) => args.push(Slot::Work),
+            Some(BridgeAttrKind::Marshal) if !matches!(a.typedef.base(), Type::RefVar(_)) => {
+                args.push(slot(&a.typedef, "argument")?);
+            }
+            _ => return Err("a & parameter".into()),
         }
-        args.push(slot(&a.typedef, "argument")?);
     }
-    let ret = slot(def.returned(), "answer")?;
     Ok((args, ret))
 }
 
@@ -185,24 +215,69 @@ pub fn emit_bodies(data: &Data, stores: &Stores) -> Result<String, super::Refusa
 }
 
 /// Entry `k`: the arguments read from their slots below `sp`, the body called, its answer
-/// written at the arguments' base, the new top answered.
+/// written at the arguments' base, the new top answered.  A text answer is appended to `dest`
+/// (the destination form) or, with none, to the call's work cell, whose view is then pushed.
 fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
     let size: i64 = args.iter().map(|s| s.bytes()).sum();
     let mut e = format!(
-        "\nstatic int64_t loft_body_e{k}(int64_t stk, int64_t sp) {{\n    \
+        "\nstatic int64_t loft_body_e{k}(int64_t stk, int64_t sp, loft_text *dest) {{\n    \
          int64_t base = sp - {size};\n    \
          if (base < 0) return -1;\n"
     );
+    if ret == Slot::Text {
+        // The plain form's destination: the first work buffer's cell.
+        e.push_str("    int plain = !dest;\n");
+        let mut off = 0;
+        let cell = args.iter().find_map(|s| {
+            let at = off;
+            off += s.bytes();
+            (*s == Slot::Work).then_some(at)
+        });
+        match cell {
+            Some(at) => {
+                let _ = writeln!(
+                    e,
+                    "    if (plain) {{\n        uint32_t q[3]; memcpy(q, loft_crt_slot_at(stk, base + {at}), sizeof q);\n        \
+                     dest = (loft_text *) loft_place(loft_crt_ref(q[0], q[1], q[2]), 0);\n        \
+                     if (!dest) return -1;\n    }}"
+                );
+            }
+            None => e.push_str("    if (plain) return -1;\n"),
+        }
+    } else {
+        e.push_str("    if (dest) return -1;\n");
+    }
     let mut off = 0;
     let mut call = Vec::new();
     for (i, s) in args.iter().enumerate() {
-        let _ = writeln!(
-            e,
-            "    {} a{i}; memcpy(&a{i}, loft_crt_slot_at(stk, base + {off}), sizeof a{i});",
-            s.c()
-        );
-        call.push(format!("a{i}"));
+        if *s == Slot::Work {
+            let _ = writeln!(e, "    loft_text a{i} = {{ 0, 0, 0 }};");
+            call.push(format!("&a{i}"));
+        } else {
+            let _ = writeln!(
+                e,
+                "    {} a{i}; memcpy(&a{i}, loft_crt_slot_at(stk, base + {off}), sizeof a{i});",
+                s.c()
+            );
+            call.push(format!("a{i}"));
+        }
         off += s.bytes();
+    }
+    if ret == Slot::Text {
+        let _ = writeln!(e, "    loft_text r = {body}({});", call.join(", "));
+        e.push_str(
+            "    if (r.len > 0) loft_text_concat(dest, loft_view(&r));\n    loft_text_free(&r);\n",
+        );
+        for (i, s) in args.iter().enumerate() {
+            if *s == Slot::Work {
+                let _ = writeln!(e, "    loft_text_free(&a{i});");
+            }
+        }
+        e.push_str(
+            "    if (!plain) return base;\n    loft_str v = loft_view(dest);\n    \
+             memcpy(loft_crt_slot_at(stk, base), &v, sizeof v);\n    return base + 16;\n}\n",
+        );
+        return e;
     }
     let _ = writeln!(e, "    {} r = {body}({});", ret.c(), call.join(", "));
     let _ = writeln!(
@@ -218,7 +293,7 @@ fn lookup(names: &[String]) -> String {
     let mut t = String::from(
         "\n/* A text argument's slot is 16 bytes, as the bytecode lays it out; a view must fit it. */\n\
          typedef char loft_body_text_fits[sizeof(loft_str) <= 16 ? 1 : -1];\n\
-         typedef int64_t (*loft_body_fn)(int64_t, int64_t);\nstatic const struct { const char *name; loft_body_fn fn; } loft_body_table[] = {\n",
+         typedef int64_t (*loft_body_fn)(int64_t, int64_t, loft_text *);\nstatic const struct { const char *name; loft_body_fn fn; } loft_body_table[] = {\n",
     );
     for (k, n) in names.iter().enumerate() {
         let _ = writeln!(t, "    {{ \"{n}\", loft_body_e{k} }},");
@@ -242,7 +317,12 @@ fn lookup(names: &[String]) -> String {
          return -1;\n}}\n\n\
          int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) {{\n    \
          if (entry < 0 || entry >= loft_body_count || !loft_body_table[entry].fn) return -1;\n    \
-         return loft_body_table[entry].fn(stk, sp);\n}}\n",
+         return loft_body_table[entry].fn(stk, sp, 0);\n}}\n\n\
+         int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, int64_t r, int64_t p) {{\n    \
+         if (entry < 0 || entry >= loft_body_count || !loft_body_table[entry].fn) return -1;\n    \
+         loft_text *dest = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);\n    \
+         if (!dest) return -1;\n    \
+         return loft_body_table[entry].fn(stk, sp, dest);\n}}\n",
         names.len()
     );
     t
