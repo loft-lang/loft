@@ -317,7 +317,7 @@ fn swap_fields(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: vector
 
 // Is the element of collection type `tp` a `__nullable<S>` whose `Some` variant exists
 // (`Stores::nullable_some_variant(content(tp)).is_some()`)?
-fn nullable_element(ts: vector<ir::DbType>, tp: integer) -> boolean {
+pub fn nullable_element(ts: vector<ir::DbType>, tp: integer) -> boolean {
   e = content_of(ts, tp);
   if e == null {
     return false;
@@ -339,7 +339,7 @@ fn nullable_element(ts: vector<ir::DbType>, tp: integer) -> boolean {
 }
 
 // The fields of a struct or of an enum variant, empty for any other type.
-fn record_fields(ts: vector<ir::DbType>, tp: integer) -> vector<ir::DbField> {
+pub fn record_fields(ts: vector<ir::DbType>, tp: integer) -> vector<ir::DbField> {
   match ts[tp]?.parts[0] {
     PtStruct { fields } => fields,
     PtEnumValue { value: _, fields } => fields,
@@ -788,6 +788,49 @@ pub struct RecordColl {
   pub tp: integer,
   pub fld: integer,
   pub at: integer?
+}
+
+// The members of field `fld`'s linked group in struct `ptp` (`@FR-Col-Group`), the field itself
+// first: `(position, kind, type)` each, the kind as `loft_member`'s — 0 a vector of the records
+// (an array), 1 a hash, 2 an index, 3 an ordered, 4 a spatial, 5 a trie.  Empty outside a group;
+// null for a member the group cannot hold (a sorted, as the C backend refuses it).
+pub fn group_members(ts: vector<ir::DbType>, ptp: integer, fld: integer) -> vector<integer>? {
+  fs = record_fields(ts, ptp);
+  f = fs[fld];
+  if f == null {
+    return [];
+  }
+  out: vector<integer> = [];
+  nrs: vector<integer> = [fld];
+  for o in f.other_indexes {
+    if o != 65535 {
+      nrs += [o];
+    }
+  }
+  if len(nrs) < 2 {
+    return [];
+  }
+  for nr in nrs {
+    m = fs[nr];
+    if m == null {
+      return null;
+    }
+    tp = m.content;
+    kind = if array_element(ts, tp) != null { 0 } else if hash_element(ts, tp) != null { 1 } else {
+      match keyed_kind(ts, tp) ?? 0 {
+        3 => 2,
+        2 => 3,
+        4 => 4,
+        5 => 5,
+        _ => -1,
+      }
+    };
+    if kind < 0 {
+      return null;
+    }
+    out += [m.position, kind, tp];
+  }
+  out
 }
 
 pub fn record_collection(ts: vector<ir::DbType>, ptp: integer, fld: integer) -> RecordColl {

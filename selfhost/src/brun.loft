@@ -3419,6 +3419,15 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       fld = u16_at(img.code, pc + 2);
       pc += 4;
       rc = types::record_collection(img.types, ptp, fld);
+      // A member of a linked group: the record is made as the field's own collection makes it
+      // and filed into every member at its finish (`group_finish`).
+      gm: vector<integer>? = [];
+      if rc.fld != 65535 && rc.at == null {
+        gm = types::group_members(img.types, ptp, fld);
+        if gm != null && len(gm!) >= 6 {
+          rc = types::RecordColl { tp: gm![2] ?? 0, fld: fld, at: gm![0] ?? 0 };
+        }
+      }
       elem = types::vector_element(img.types, rc.tp);
       aelem = types::array_element(img.types, rc.tp);
       kelem = types::keyed_element(img.types, rc.tp);
@@ -3437,7 +3446,19 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         vs = io[0] ?? NULL_STORE;
         vr = io[1] ?? 0;
         vp = (io[2] ?? 0) + (rc.at ?? 0);
-        if aelem != null {
+        if gm != null && len(gm!) >= 6 {
+          ensure_table(img.types, tl);
+          gheld = false;
+          gnull = false;
+          gk = 0;
+          while gk + 2 < len(gm!) {
+            gheld = gheld || (gm![gk + 1] ?? -1) == 0;
+            gnull = gnull || types::nullable_element(img.types, gm![gk + 2] ?? 0);
+            gk += 3;
+          }
+          gelem = types::content_of(img.types, rc.tp) ?? 0;
+          crt::group_finish(gelem, gheld, gnull, vs, vr, io[2] ?? 0, rs, rr, rp, gm!);
+        } else if aelem != null {
           crt::array_append(vs, vr, vp, rs, rr, rp);
         } else if kelem != null {
           crt::keyed_finish(vs, vr, vp, rs, rr, rp, types::keyed_kind(img.types, rc.tp) ?? 0, kelem!, rc.tp);

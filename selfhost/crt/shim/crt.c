@@ -857,6 +857,26 @@ int64_t loft_crt_place_record(int64_t *out, int64_t n, int64_t h_store, int64_t 
  * type table; a call before the table is loaded does nothing. */
 #define LOFT_CRT_TP_OK(tp) (loft_crt_types && (tp) >= 0 && (uint32_t) (tp) < loft_crt_ntypes)
 
+/* `OpFinishRecord` in a member of a linked group (`@FR-Col-Group`, the C backend's
+ * `group_finish`): the record enters every member — `m` holds `(position, kind, type)` per member,
+ * its keys the loaded table's for that type — and a record a keyed member displaces leaves them
+ * all, released when no vector member holds it (`held`). */
+void loft_crt_group_finish(int64_t elem, int64_t held, int64_t nullable, int64_t ps, int64_t pr, int64_t pp,
+                           int64_t rs, int64_t rr, int64_t rp, const int64_t *m, int64_t nm) {
+    int n = (int) (nm / 3);
+    if (!loft_crt_types || n <= 0 || n > 64) return;
+    loft_member rows[64];
+    for (int i = 0; i < n; i++) {
+        int64_t tp = m[3 * i + 2];
+        rows[i].pos = (uint32_t) m[3 * i];
+        rows[i].kind = (int) m[3 * i + 1];
+        rows[i].keys = LOFT_CRT_TP_OK(tp) ? loft_crt_types[tp].keys : 0;
+        rows[i].nk = LOFT_CRT_TP_OK(tp) ? loft_crt_types[tp].nk : 0;
+    }
+    loft_group_finish(loft_crt_types, (uint16_t) elem, (int) held, (int) nullable, loft_crt_ref(ps, pr, pp),
+                      loft_crt_ref(rs, rr, rp), rows, n);
+}
+
 /* OpMoveVector (Stores::move_vector): `src`'s elements moved onto `dst`, `linked` an element
  * type of a linked group. */
 void loft_crt_move_vector(int64_t d_store, int64_t d_rec, int64_t d_pos, int64_t s_store, int64_t s_rec,
