@@ -125,12 +125,77 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # The PR-head nightly (`pr_head`) starts its heavy jobs only after the PR's own runs on the
+  # same commit have theirs on runners.  Runners are handed out in queue order, so a nightly
+  # dispatched beside a fresh push took the slots the PR's required checks were waiting for
+  # and the verdict that lands the PR came later.  Every job a pull_request run skips needs
+  # this one, so the order holds whoever dispatches, and whenever.  On the schedule and
+  # under the release gate there is nothing to wait for: the job is one step that says so.
+  pr-ci-started:
+    # @windows-exempt: platform-free — reads run states from the API
+    # @nightly-class: report — orders two runs; says nothing about the language
+    name: PR-head nightly waits for the PR's own runs
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: read
+    steps:
+      - name: Wait until the PR's CI and revalidate-libs have no job in the queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          PR_HEAD: ${{ inputs.pr_head }}
+        run: |
+          if [[ "$PR_HEAD" != "true" ]]; then
+            echo "not a PR-head nightly: nothing to wait for"
+            exit 0
+          fi
+          # One look: "<jobs> <queued>" over the unfinished runs of both workflows on this
+          # commit.  A run's own status reads `queued` while its jobs run, so the jobs are
+          # what is counted.
+          look() {
+            local jobs=0 queued=0 wf id n q
+            for wf in ci.yml revalidate-libs.yml; do
+              for id in $(gh api "repos/$REPO/actions/workflows/$wf/runs?head_sha=$SHA&per_page=20" \
+                            --jq '.workflow_runs[] | select(.status != "completed") | .id'); do
+                read -r n q < <(gh api --paginate "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+                                  --jq '.jobs[] | .status' \
+                                | awk '{n++} $1=="queued"{q++} END{print n+0, q+0}')
+                jobs=$((jobs + n)); queued=$((queued + q))
+              done
+            done
+            echo "$jobs $queued"
+          }
+          # Clear means two looks a minute apart with nothing queued and the same number of
+          # jobs: a run adds jobs as the ones they need finish (the test legs after the job
+          # that lists them), so one quiet look can fall between two waves.  A commit with no
+          # unfinished run reads "0 0" twice and passes after that one minute.
+          deadline=$((SECONDS + 45 * 60))
+          last=""
+          while :; do
+            now=$(look)
+            echo "$(date -u +%H:%M:%S) jobs and queued on $SHA: $now"
+            if [[ "${now#* }" == "0" && "$now" == "$last" ]]; then
+              echo "the PR's runs have their jobs on runners"
+              exit 0
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "::notice::45 minutes and the PR's runs still have queued jobs ($now): the nightly starts all the same"
+              exit 0
+            fi
+            last=$now
+            sleep 60
+          done
+
   stale-plans-audit:
     # @windows-exempt: platform-free — audits plan text
     # @nightly-class: report — plan-tracker drift; says nothing about the language
     name: Stale-plan audit (drift advisory + mislabel gate)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -177,6 +242,7 @@ jobs:
     # any commit — a push-time gate never fires for it.  `make ci` prints the offline half
     # (which sentences are limitations, and their guards); this leg asks the tracker.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -460,6 +526,7 @@ jobs:
     name: ASan interpreter leak gate (${{ matrix.os }})
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -782,6 +849,7 @@ jobs:
     # @nightly-class: unsound — a store use-after-free, an unclaimed read or UB the C backend alone makes
     name: C backend ${{ matrix.sweep }} sweep (${{ matrix.shard }}/${{ matrix.of }})
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -835,6 +903,7 @@ jobs:
     # box does not have can be read.
     name: C backend sweep, ${{ matrix.leg }} (${{ matrix.shard }}/6)
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ${{ matrix.leg == 'macos' && 'macos-latest' || 'windows-latest' }}
     timeout-minutes: 60
     strategy:
@@ -1180,6 +1249,7 @@ jobs:
     name: Valgrind memcheck sweep (release binary, both backends)
     # Nightly-only: ~1200 memcheck runs exceed the 20-min PR ceiling on their own — @CI_BUDGET.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -1270,6 +1340,7 @@ jobs:
     name: Release-gate sweeps (the ignored tests whose reason names this job)
     # Nightly-only: rustc per cell / per run puts both over the PR ceiling — @CI_BUDGET.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -1459,6 +1530,7 @@ jobs:
     # Unmaintained-crate warnings do not fail it (memmap, ttf-parser are known); a
     # vulnerability does.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1494,6 +1566,7 @@ jobs:
     name: Suite under ${{ matrix.toolchain }}
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # Full interpreter suite under beta + nightly — an early-warning signal for
@@ -1628,6 +1701,7 @@ jobs:
     name: doc index hygiene (nightly)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -1694,6 +1768,7 @@ jobs:
     name: Library health audit (informational)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
+    needs: pr-ci-started
     runs-on: ubuntu-latest
     # 75, not 30: @PLN20 P6 adds the NATIVE tier below, which compiles every published
     # package with rustc.  The interpreter step keeps its own fast signal regardless —
@@ -1938,7 +2013,7 @@ jobs:
   red-steps-digest:
     # @windows-exempt: platform-free — writes an issue
     name: → tracked issue (red-steps digest)
-    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
+    needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -1955,7 +2030,7 @@ jobs:
   daily-status:
     # @windows-exempt: platform-free — writes the daily status
     name: Daily status (the one place to look)
-    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
+    needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a

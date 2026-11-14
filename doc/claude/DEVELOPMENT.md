@@ -215,10 +215,14 @@ auto-merge does not wait for it.  Dispatched with the PR (step 4) it runs beside
 on `main` the night after the merge.  It costs about one nightly's runner time per PR (about
 1150 runner-minutes, most of them on macOS and Windows).
 
-It competes for runners with the PR's own run, so dispatch it on a head that already carries
-every known fix, and not while that run's CI or revalidate-libs jobs are still queued (`gh run
-list --status queued`).  One dispatched on a head a push was about to replace left the
-library revalidation running 2 jobs at a time; cancelled, it ran 10 or more.
+It competes for runners with the PR's own run, and runners are handed out in queue order.
+The workflow keeps the order itself: every job a pull_request run skips needs `pr-ci-started`,
+which waits until the CI and revalidate-libs runs on the same commit have no job left in the
+queue (two looks a minute apart, since a run adds jobs as the ones they need finish), and
+starts the nightly all the same after 45 minutes.  So the dispatch may be sent at any moment,
+beside the push included.  What stays a judgement is the head: dispatch on one that already
+carries every known fix, because a push replaces the head and the run on the old one is
+runner time spent on nothing (`gh run cancel` it).
 
 A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
 it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the
