@@ -91,7 +91,7 @@ The first two are run by hand; neither is a test yet.
 
 | Part | State |
 |---|---|
-| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: file access, constants (`OpConstRef`), fn-refs and closures, keyed lookups and walks, iteration, coroutines, `par` |
+| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: iteration (`OpIterate`, `OpStep`), coroutines, `par`, the child-record and slot-reference families |
 | natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |
@@ -112,11 +112,10 @@ with the top just above it.  The differences:
 | 2 | **Faults stop the run with a text.**  Each operand read, pop and frame slot is checked as in Rust; where Rust raises a typed runtime error with a position, the runner sets `State.fault` and stops. | Rust's error kinds and positions, when a program's diagnostics are compared |
 | 3 | **The store layer is the C runtime's.**  The buffer layout is the same; the allocator's choices differ where STORE_MODEL.md lists an open divergence, the store table is the C one, and Rust's store instruments are absent.  Store numbers can differ, which `store_memory()` shows. | nothing here: STORE_MODEL.md closes divergences on its own terms |
 | 4 | **The stack's address.**  Rust's `stack_cur` is a reference with its own record and position; the runner's frame area is the stack store's primary record at offset 8. | a `stack_cur` in `State`, if a program can observe the numbers |
-| 5 | **`fn_return` releases no fn-ref buffer.**  The frames are kept as Rust keeps them (definition, call position, arguments' base and size); the buffers a returning frame releases (`release_fnref_bufs`) are not, as no fn-ref operator is carried. | with the fn-ref operators |
-| 6 | **Texts.**  A local text is a Rust `String` in its 24-byte slot in Rust, a C-runtime text of the same size here; the 16-byte view is the same.  A text popped as a template's argument is copied into a loft text. | nothing, unless a program observes capacity |
-| 7 | **Arithmetic by loft's operators, reports as texts.**  A template writes `v1 + v2`, compiled to the C runtime's routine, where Rust calls `ops::op_add_int`; the kernels compare the values.  What Rust reports through `raise_recoverable` (a division by zero, a dropped write, an overflow) is recorded as a text in `State.reported`, and an overflow's report comes from the C runtime, not from the template. | the corpus survey, once `main` runs; Rust's error kinds when diagnostics are compared |
-| 8 | **One dispatch.**  Rust has three tables (checked, direct, register); the runner has one loop, `run`, whose arms are the register table and whose fallback, `execute`, is the checked one. | see Speed |
-| 9 | **No instruments.**  Rust's stack verifier, poison of a reserved frame, and text-position tracking have no counterpart. | only if the runner is to host those sweeps |
+| 5 | **Texts.**  A local text is a Rust `String` in its 24-byte slot in Rust, a C-runtime text of the same size here; the 16-byte view is the same.  A text popped as a template's argument is copied into a loft text. | nothing, unless a program observes capacity |
+| 6 | **Arithmetic by loft's operators, reports as texts.**  A template writes `v1 + v2`, compiled to the C runtime's routine, where Rust calls `ops::op_add_int`; the kernels compare the values.  What Rust reports through `raise_recoverable` (a division by zero, a dropped write, an overflow) is recorded as a text in `State.reported`, and an overflow's report comes from the C runtime, not from the template. | the corpus survey, once `main` runs; Rust's error kinds when diagnostics are compared |
+| 7 | **One dispatch.**  Rust has three tables (checked, direct, register); the runner has one loop, `run`, whose arms are the register table and whose fallback, `execute`, is the checked one. | see Speed |
+| 8 | **No instruments.**  Rust's stack verifier, poison of a reserved frame, and text-position tracking have no counterpart. | only if the runner is to host those sweeps |
 
 ## Speed
 

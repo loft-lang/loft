@@ -81,6 +81,12 @@ fn test_a_nul_character_is_a_null_integer() {
   assert(r == 655, "'A' and NUL as integers: {r}");
 }
 
+// A function called through a reference held in a parameter.
+fn test_a_call_through_a_reference() {
+  r = answer("fnref", "n_apply", [4]);
+  assert(r == 636, "inc twice and triple twice of 4: {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {

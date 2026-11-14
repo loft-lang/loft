@@ -49,6 +49,23 @@ pub struct State {
   pub imaged: vector<boolean>,
   // The constants as stores of their own (`State::const_refs`), by definition.
   pub consts: vector<DbRef>,
+  // Each definition's code start, and its function-reference shape (`fnrefs`) by definition
+  // (-1: none).
+  pub starts: vector<u32>,
+  pub fnrefs: vector<ir::RunFnRef>,
+  pub fnref_of: vector<integer>,
+  // The buffers calls through a reference hold (`State::fnref_bufs`), each with the frame
+  // depth that releases it; the allocation count at each such call's entry, as pairs of depth
+  // and count; and the answer of the last one when it was borrowed (store, record, position).
+  pub fn_bufs: vector<FnBuf>,
+  pub fn_calls: vector<integer>,
+  pub fn_borrowed: vector<integer>,
+}
+
+// A buffer a call through a reference holds until the frame at `depth` returns.
+pub struct FnBuf {
+  pub depth: integer,
+  pub at: DbRef,
 }
 
 // `DbRef`: a reference — its store, its record and the position in it.
@@ -90,7 +107,10 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [] };
+  for f in s.fnrefs {
+    s.fnref_of[f.def] = f#index;
+  }
   // Each constant adopted from the bytes Rust built it as (`RunImage.consts`).
   for c in img.consts {
     while len(s.consts) <= c.def {
@@ -518,6 +538,9 @@ pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
     crt::stack_move(self.stk, pos - step, fn_stack, value);
   }
   self.stack_pos = fn_stack + step;
+  if len(self.fn_bufs) > 0 || len(self.fn_calls) > 0 {
+    self.release_fnref_bufs(fn_stack, value);
+  }
   if len(self.frames) > 0 {
     self.frames.remove(len(self.frames) - 1);
   }
@@ -1560,4 +1583,199 @@ pub fn truncate_file(self: State) {
 
 pub fn sync_file(self: State) {
   self.put_stack_i64(self.file_op(3, 0));
+}
+
+// ── Calls through a function reference. ───────────────────────────────────────────────────
+
+// The reference in the frame slot at byte `at`.
+fn slot_dbref(self: State, at: integer) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  if self.slot_ok(at) {
+    crt::slot_ref(io, self.stk, at);
+  }
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// A call's hidden return buffers (`RunFnRef.hidden`) pushed and held until the frame at
+// `depth` returns: a record's buffer a store with no root, a vector's a store of its type
+// with its defaults — both fresh.
+fn push_hidden(self: State, hidden: vector<integer>, depth: integer) {
+  for hb in hidden {
+    io: vector<integer> = [NULL_STORE, 0, 0];
+    if hb < 0 {
+      crt::database(io, 8, 0);
+      io[1] = 0;
+    } else {
+      crt::database(io, self.types[hb]!.size, hb);
+      crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(hb));
+    }
+    buf = DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 };
+    self.put_stack_dbref(buf);
+    self.fn_bufs += [FnBuf { depth: depth, at: buf }];
+  }
+}
+
+// `State::fn_call_ref_to`: the definition the reference in the slot `fn_var` names called —
+// its extra text buffers dropped, its hidden return buffers pushed, its closure record pushed
+// when it has one.
+pub fn fn_call_ref(self: State, fn_var: integer, arg_size: integer) {
+  fv = fn_var;
+  asz = arg_size;
+  d = self.get_var_i64(fv) ?? -1;
+  if d < 0 || d + 1 >= len(self.starts) {
+    self.stop("a call through a reference that names no function");
+    return;
+  }
+  depth = len(self.frames) + 1;
+  top = self.stack_pos;
+  i = self.fnref_of[d] ?? -1;
+  if i >= 0 {
+    f = self.fnrefs[i]!;
+    if f.kind != 0 {
+      self.stop("not carried: a call through a reference to a {if f.kind == 1 { "native" } else { "generator" }}");
+      return;
+    }
+    if f.drop > 0 && asz >= f.drop {
+      self.stack_pos -= f.drop;
+      fv -= f.drop;
+      asz -= f.drop;
+      top = self.stack_pos;
+    }
+    self.push_hidden(f.hidden, depth);
+  }
+  closure = self.slot_dbref(top - (fv - 8));
+  if closure.rec != 0 {
+    self.put_stack_dbref(closure);
+  }
+  // loft#1185: the allocation count before the callee runs (`release_fnref_bufs` compares).
+  self.fn_calls += [depth, crt::serial_now()];
+  self.fn_call(d, asz + self.stack_pos - top, self.starts[d] ?? 0);
+}
+
+// `State::release_fnref_bufs`, at the return of the frame on top: the reference it answers
+// (`value` 12, at `fn_stack`), when a call through a reference made it, judged against the
+// allocation count at that call's entry — a store stamped after it was minted by the call and
+// is held for handing up; one that predates it and is not the call's own buffer is borrowed
+// (`fn_borrowed`, which `bind_fn_ref_result` copies).  Then the buffers held at this depth are
+// freed, except the one returned, which the caller's frame now holds.
+fn release_fnref_bufs(self: State, fn_stack: integer, value: integer) {
+  depth = len(self.frames);
+  ret = DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+  if value == 12 {
+    ret = self.slot_dbref(fn_stack);
+  }
+  since = -1;
+  i = len(self.fn_calls) - 2;
+  while i >= 0 && since < 0 {
+    if (self.fn_calls[i] ?? -1) == depth {
+      since = self.fn_calls[i + 1] ?? 0;
+      self.fn_calls.remove(i + 1);
+      self.fn_calls.remove(i);
+    }
+    i -= 2;
+  }
+  minted = since >= 0 && value == 12 && ret.store_nr != NULL_STORE && crt::store_serial(ret.store_nr) > since;
+  own = false;
+  for b in self.fn_bufs {
+    own = own || (b.depth == depth && b.at.store_nr == ret.store_nr);
+  }
+  self.fn_borrowed.clear();
+  if since >= 0 && value == 12 && !minted && !own && ret.store_nr != NULL_STORE && ret.rec != 0 {
+    self.fn_borrowed += [ret.store_nr, ret.rec, ret.pos];
+  }
+  if minted && !own {
+    self.fn_bufs += [FnBuf { depth: depth, at: ret }];
+  }
+  handed: vector<FnBuf> = [];
+  while len(self.fn_bufs) > 0 && (self.fn_bufs[len(self.fn_bufs) - 1]?.depth ?? -1) >= depth {
+    k = len(self.fn_bufs) - 1;
+    b = self.fn_bufs[k]!;
+    held = b.depth;
+    at = DbRef { store_nr: b.at.store_nr, rec: b.at.rec, pos: b.at.pos };
+    self.fn_bufs.remove(k);
+    if held != depth {
+      continue;
+    }
+    if value == 12 && at.store_nr == ret.store_nr {
+      handed += [FnBuf { depth: depth - 1, at: at }];
+    } else if crt::store_live(at.store_nr) {
+      // A buffer already freed — by the frame it was handed up to — is left alone.
+      crt::free_ref(at.store_nr, at.rec, at.pos);
+    }
+  }
+  // The first frame hands nothing up: it has no caller.
+  if depth > 1 {
+    for h in handed {
+      self.fn_bufs += [FnBuf { depth: h.depth, at: DbRef { store_nr: h.at.store_nr, rec: h.at.rec, pos: h.at.pos } }];
+    }
+  }
+}
+
+// `State::bind_fn_ref_result`: a call through a reference's answer, popped, bound into the
+// variable at `pos` — a copy into a record of its own when it was borrowed, else the store
+// itself, which the frame stops holding (the bind owns it now).
+pub fn bind_fn_ref_result(self: State) {
+  pos = self.code_u16();
+  tp = self.code_u16();
+  src = self.get_stack_dbref();
+  borrowed = len(self.fn_borrowed) > 0 && (self.fn_borrowed[0] ?? -1) == src.store_nr;
+  self.fn_borrowed.clear();
+  at = self.stack_pos - pos;
+  if borrowed && src.rec != 0 {
+    self.make_store(at, tp);
+    v = self.slot_dbref(at);
+    self.load_table();
+    crt::copy_record(src.store_nr, src.rec, src.pos, v.store_nr, v.rec, v.pos, tp, self.copy_flags(tp));
+    return;
+  }
+  if src.store_nr != NULL_STORE {
+    depth = len(self.frames);
+    k = len(self.fn_bufs) - 1;
+    found = -1;
+    while k >= 0 && (self.fn_bufs[k]?.depth ?? -1) >= depth && found < 0 {
+      if self.fn_bufs[k]!.depth == depth && self.fn_bufs[k]!.at.store_nr == src.store_nr {
+        found = k;
+      }
+      k -= 1;
+    }
+    if found >= 0 {
+      self.fn_bufs.remove(found);
+    }
+  }
+  if self.slot_ok(at) {
+    crt::set_slot_ref(self.stk, at, src.store_nr, src.rec, src.pos);
+  }
+}
+
+// `State::fn_ref_closure`: a function reference's closure record, 8 bytes into its 20-byte
+// slot, pushed.
+pub fn fn_ref_closure(self: State) {
+  fn_var = self.code_u16();
+  self.put_stack_dbref(self.slot_dbref(self.stack_pos - (fn_var - 8)));
+}
+
+// `State::drop_fn_ref`: a live closure record released by its record's drop cascade, called
+// with the closure pushed; nothing for a null or freed closure, or one without a cascade.
+pub fn drop_fn_ref(self: State) {
+  fn_var = self.code_u16();
+  d = self.get_var_i64(fn_var) ?? -1;
+  closure = self.slot_dbref(self.stack_pos - (fn_var - 8));
+  i = if d >= 0 { self.fnref_of[d] ?? -1 } else { -1 };
+  cascade = if i >= 0 { self.fnrefs[i]!.cascade } else { -1 };
+  if cascade >= 0 && closure.rec != 0 && crt::store_live(closure.store_nr) {
+    self.put_stack_dbref(closure);
+    self.fn_call(cascade, 16, self.starts[cascade] ?? 0);
+  }
+}
+
+// `State::fn_ref_detach_shared`: the old reference's closure forgotten where it has none or
+// shares the new one's store.
+pub fn fn_ref_detach_shared(self: State) {
+  old = self.code_u16();
+  new = self.code_u16();
+  fresh = self.slot_dbref(self.stack_pos - (new - 8));
+  was = self.slot_dbref(self.stack_pos - (old - 8));
+  if was.rec == 0 || was.store_nr == fresh.store_nr {
+    crt::set_slot_ref(self.stk, self.stack_pos - (old - 8), NULL_STORE, 0, 0);
+  }
 }

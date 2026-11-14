@@ -149,6 +149,7 @@ fn OpRelease(tag: __word, val: reference, db_tp: const u16) fs#update;
 // arg_size — total byte size of the already-pushed arguments.
 fn OpCallRef(fn_var: const u16, arg_size: const u16);
 #rust"s.fn_call_ref(@fn_var, @arg_size);"
+#loft"s.fn_call_ref(fn_var, arg_size);"
 fn OpMkdir(path: text) -> __word fs#update;
 #cold
 #rust"s.database.fs_mkdir_at(@path)"

@@ -1232,6 +1232,14 @@ pub fn op_get_stack_ref(s: state::State) {
   s.get_stack_ref();
 }
 
+pub fn op_drop_fn_ref(s: state::State) {
+  s.drop_fn_ref();
+}
+
+pub fn op_fn_ref_closure(s: state::State) {
+  s.fn_ref_closure();
+}
+
 pub fn op_append_stack_text(s: state::State) {
   s.append_stack_text();
 }
@@ -1242,6 +1250,12 @@ pub fn op_append_stack_character(s: state::State) {
 
 pub fn op_clear_stack_text(s: state::State) {
   s.clear_stack_text();
+}
+
+pub fn op_call_ref(s: state::State) {
+  fn_var = s.code_u16();
+  arg_size = s.code_u16();
+  s.fn_call_ref(fn_var, arg_size);
 }
 
 pub fn op_var_fn_ref(s: state::State) {
@@ -1258,6 +1272,10 @@ pub fn op_const_ref(s: state::State) {
   d_nr = s.code_i64();
   new_value: state::DbRef? = s.const_ref_at(d_nr);
   s.put_stack_dbref(new_value);
+}
+
+pub fn op_bind_fn_ref_result(s: state::State) {
+  s.bind_fn_ref_result();
 }
 
 pub fn op_text_walk_step(s: state::State) {
@@ -1523,6 +1541,10 @@ pub fn op_clear_keyed(s: state::State) {
   tp = s.code_u16();
   dest = s.get_stack_dbref();
   s.clear_keyed(dest, tp);
+}
+
+pub fn op_fn_ref_detach_shared(s: state::State) {
+  s.fn_ref_detach_shared();
 }
 
 pub fn op_pre_alloc_vector(s: state::State) {
@@ -1800,12 +1822,16 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     236 => op_init_create_stack(s),
     237 => op_get_stack_text(s),
     238 => op_get_stack_ref(s),
+    245 => op_drop_fn_ref(s),
+    246 => op_fn_ref_closure(s),
     247 => op_append_stack_text(s),
     248 => op_append_stack_character(s),
     249 => op_clear_stack_text(s),
+    250 => op_call_ref(s),
     253 => op_var_fn_ref(s),
     254 => op_put_fn_ref(s),
     255 => op_const_ref(s),
+    258 => op_bind_fn_ref_result(s),
     259 => op_text_walk_step(s),
     260 => op_text_null_jump(s),
     261 => op_text_end_jump(s),
@@ -1850,6 +1876,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     325 => op_clear(s),
     326 => op_copy_record(s),
     329 => op_clear_keyed(s),
+    335 => op_fn_ref_detach_shared(s),
     339 => op_pre_alloc_vector(s),
     341 => op_get_file(s),
     343 => op_get_file_text(s),
@@ -2783,6 +2810,26 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         nv_213: boolean? = v1_213 != v2_213;
         crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_213));
         sp += 8;
+        continue;
+      }
+    }
+    250 => {
+      fn_var_250 = crt::cget_u16(code, cbase, clen, ip + 1);
+      arg_size_250 = crt::cget_u16(code, cbase, clen, ip + 3);
+      if ip <= safe {
+        ip += 5;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.fn_call_ref(fn_var_250, arg_size_250);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        cbase = crt::code_base(code);
         continue;
       }
     }
