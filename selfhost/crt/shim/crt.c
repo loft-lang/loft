@@ -1062,6 +1062,8 @@ int64_t loft_crt_ref_part(int64_t store, int64_t rec, int64_t pos, int64_t which
  * A struct enum's `n` is its variant count, as `copy_table` writes it.
  * Answers how many types were loaded, or -1 for rows that do not parse. */
 static loft_tdesc *loft_crt_types = 0;
+/* Counts the loads: what a holder of a verdict on the table (the compiled bodies) keys it by. */
+static uint32_t loft_crt_types_gen = 0;
 static uint32_t loft_crt_ntypes = 0;
 
 static void loft_crt_drop_types(void) {
@@ -1077,6 +1079,7 @@ static void loft_crt_drop_types(void) {
 
 int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
     loft_crt_drop_types();
+    loft_crt_types_gen++;
     if (ntypes < 1 || ntypes > 0xFFFF) return -1;
     loft_crt_types = (loft_tdesc *) calloc((size_t) ntypes, sizeof(loft_tdesc));
     if (!loft_crt_types) return -1;

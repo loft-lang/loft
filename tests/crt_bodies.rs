@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
     } else {
         for (int i = 1; i < argc; i++) line(argv[i], (int64_t) strlen(argv[i]));
     }
-    printf("unknown %lld\n", (long long) loft_body_find("t_4text_split", 13));
+    printf("unknown %lld\n", (long long) loft_body_find("t_4File_lines", 13));
     return 0;
 }
 "#;

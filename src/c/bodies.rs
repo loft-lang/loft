@@ -44,12 +44,17 @@
 //! its code names a reporting call.  `LOFT_NO_COMPILED_BODIES=1` at run time makes every lookup
 //! answer -1 (the A/B: the loft bodies, the same answers).
 //!
-//! Every body carried today only READS the program's data and builds texts on the C heap; the
-//! one write into the program's data is the ENTRY's append to the destination text, which is the
-//! shim's own `loft_crt_ref_text_append` — what the runner does when the loft body returns.  A
-//! body that itself writes a store would be written against this unit's facts (no locks, no
-//! threads), which the shim does not hold for the program it runs; it is not carried until the
-//! shim states those facts itself.
+//! The fragment is the unit's code after the runtime, so the unit's FACTS reach it in three ways:
+//!
+//! - a fact the runtime reads as a `#define` (`LOFT_NO_LOCKS`, `LOFT_NO_THREADS`,
+//!   `LOFT_FRAMES`, `LOFT_PATH_FOLD`) is the SHIM's here, not the stub program's: the bodies'
+//!   text is the same either way, and a body that writes a store (a vector answer filled in the
+//!   destination record the caller pushed) meets the shim's lock test and its tables;
+//! - the unit's TYPES are named by the bodies (`loft_types`, a type number): the fragment keeps
+//!   its own table — the standard library's types — and an entry that works on records runs only
+//!   once `loft_body_types_ok` has found each of them the same in the table the runner loaded;
+//! - a fact that changes the bodies' TEXT (`Cx::lazy`: a keyed lookup's fetch on a miss) cannot
+//!   be the program's: a body with a keyed lookup is refused.
 //!
 //! A function this fragment cannot carry has no entry, so the runner runs its loft body: slower,
 //! never wrong.  The fragment says which and why in its header.
@@ -76,6 +81,9 @@ enum Slot {
     Bool,
     /// A text, a 16-byte view (`loft_str`).
     Text,
+    /// A reference — a record, a vector, the destination record of a vector answer — 12 bytes
+    /// of a 16-byte slot: store, record, position, 4 bytes each.
+    Ref,
     /// A text answer's work buffer: the 16-byte slot holds the reference of the caller's cell;
     /// the body is handed a text of the entry's own.
     Work,
@@ -84,7 +92,7 @@ enum Slot {
 impl Slot {
     fn bytes(self) -> i64 {
         match self {
-            Slot::Text | Slot::Work => 16,
+            Slot::Text | Slot::Work | Slot::Ref => 16,
             _ => 8,
         }
     }
@@ -95,6 +103,7 @@ impl Slot {
             Slot::Bool => "uint8_t",
             Slot::Text => "loft_str",
             Slot::Work => "loft_text",
+            Slot::Ref => "loft_ref",
         }
     }
 }
@@ -105,15 +114,13 @@ impl Slot {
 /// pushed.
 fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
     let def = data.def(d);
-    if def.hidden_return_buffer_attr().is_some() {
-        return Err("a hidden return buffer".into());
-    }
     let slot = |tp: &Type, what: &str| -> Result<Slot, String> {
         match tp.base() {
             Type::Integer(..) | Type::Character => Ok(Slot::Int),
             Type::Float => Ok(Slot::Float),
             Type::Boolean => Ok(Slot::Bool),
             Type::Text(_) => Ok(Slot::Text),
+            Type::Vector(..) => Ok(Slot::Ref),
             other => Err(format!("{what} of type {}", super::type_word(other))),
         }
     };
@@ -122,6 +129,7 @@ fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
     for a in def.attributes() {
         match crate::native_gate::classify_bridge_attr(a, ret == Slot::Text) {
             Some(BridgeAttrKind::WorkText) => args.push(Slot::Work),
+            Some(BridgeAttrKind::HiddenDest) => args.push(Slot::Ref),
             Some(BridgeAttrKind::Marshal) if !matches!(a.typedef.base(), Type::RefVar(_)) => {
                 args.push(slot(&a.typedef, "argument")?);
             }
@@ -181,7 +189,19 @@ pub fn emit_bodies(data: &Data, stores: &Stores) -> Result<String, super::Refusa
     {
         written.replace_range(s..s + e + 3, "\n");
     }
+    let typed = carried.iter().any(|(_, a, r)| needs_types(a, *r));
+    // The check stands between the bodies' prototypes and the entries that call it; it reads
+    // the unit's table, so a unit that describes no type cannot hold a body that needs one.
     let mut entries = String::new();
+    if typed {
+        if !written.contains("static const uint32_t loft_ntypes =") {
+            return Err(super::Refusal {
+                function: "the compiled standard-library bodies".to_string(),
+                why: "a body works on records and the unit describes no type".to_string(),
+            });
+        }
+        entries.push_str(TYPES_OK);
+    }
     let mut names = Vec::new();
     for (k, (d, args, ret)) in carried.iter().enumerate() {
         entries.push_str(&entry(k, &c_name(data, *d), args, *ret));
@@ -201,6 +221,30 @@ pub fn emit_bodies(data: &Data, stores: &Stores) -> Result<String, super::Refusa
             fragment = fragment.replace(&format!("\"{}", &file[..=at]), "\"");
         }
     }
+    // The types a body names are tested where it is entered; a table nothing tests is a body
+    // working on records the signature did not show.
+    if !typed && fragment.contains("loft_types") {
+        return Err(super::Refusal {
+            function: "the compiled standard-library bodies".to_string(),
+            why: "a body names the unit's types and no entry tests them".to_string(),
+        });
+    }
+    // A keyed lookup is written for the unit's lazy-source fact (`Cx::lazy`), which is the
+    // stub program's here, not the program's the runner runs.
+    let keyed = crate::opt::names::reachable_functions(data, &roots)
+        .into_iter()
+        .find(|&d| {
+            data.def(d).code.any_node(&mut |n| {
+                matches!(n, crate::data::Value::Call(f, _) if data.def(*f).name() == "OpGetRecord")
+            })
+        });
+    if let Some(d) = keyed {
+        return Err(super::Refusal {
+            function: data.def(d).name().to_string(),
+            why: "a carried body looks a key up: written for this unit's lazy-source fact"
+                .to_string(),
+        });
+    }
     // A carried body never reports: the runner's reports live in its `State`.
     for call in ["loft_panic(", "loft_assert(", "loft_fault_"] {
         if fragment.contains(call) {
@@ -214,6 +258,52 @@ pub fn emit_bodies(data: &Data, stores: &Stores) -> Result<String, super::Refusa
     Ok(out)
 }
 
+/// Does a function of this signature work on records — so the types its body names must be the
+/// program's (`loft_body_types_ok`)?
+fn needs_types(args: &[Slot], ret: Slot) -> bool {
+    ret == Slot::Ref || args.contains(&Slot::Ref)
+}
+
+/// The test that the types the bodies were written against are the program's: every type the
+/// fragment's own table describes — the standard library's, numbered as in every program that
+/// starts with the same library — is the same in the table the runner loaded into the shim
+/// (`loft_crt_load_types`).  Until that table is loaded, and for a program built against
+/// another library, a body that works on records does not answer and the loft body runs.
+/// `file` is not compared: the runner's rows do not carry it.
+const TYPES_OK: &str = "
+static int loft_body_types_ok(void) {
+    static uint32_t seen = 0;
+    static int ok = 0;
+    if (!loft_crt_types) return 0;
+    if (seen == loft_crt_types_gen) return ok;
+    seen = loft_crt_types_gen;
+    ok = 0;
+    if (loft_crt_ntypes < loft_ntypes) return 0;
+    for (uint32_t t = 0; t < loft_ntypes; t++) {
+        const loft_tdesc *a = &loft_types[t], *b = &loft_crt_types[t];
+        if (!a->kind && !a->size && !a->n && !a->nk) continue;
+        if (a->kind != b->kind || a->size != b->size || a->elem != b->elem || a->n != b->n
+            || a->owns_heap != b->owns_heap || a->linked != b->linked || a->nk != b->nk)
+            return 0;
+        if ((a->fields != 0) != (b->fields != 0) || (a->variants != 0) != (b->variants != 0)) return 0;
+        for (uint16_t i = 0; a->fields && i < a->n; i++) {
+            const loft_fld *f = &a->fields[i], *g = &b->fields[i];
+            if (f->pos != g->pos || f->type != g->type || f->view != g->view
+                || f->hidden != g->hidden || f->group != g->group)
+                return 0;
+        }
+        for (uint16_t i = 0; a->variants && i < a->n; i++)
+            if (a->variants[i] != b->variants[i]) return 0;
+        for (uint8_t i = 0; i < a->nk; i++) {
+            const loft_key *f = &a->keys[i], *g = &b->keys[i];
+            if (f->type != g->type || f->pos != g->pos || f->start != g->start) return 0;
+        }
+    }
+    ok = 1;
+    return 1;
+}
+";
+
 /// Entry `k`: the arguments read from their slots below `sp`, the body called, its answer
 /// written at the arguments' base, the new top answered.  A text answer is appended to `dest`
 /// (the destination form) or, with none, to the call's work cell, whose view is then pushed.
@@ -224,6 +314,9 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
          int64_t base = sp - {size};\n    \
          if (base < 0) return -1;\n"
     );
+    if needs_types(args, ret) {
+        e.push_str("    if (!loft_body_types_ok()) return -1;\n");
+    }
     if ret == Slot::Text {
         // The plain form's destination: the first work buffer's cell.
         e.push_str("    int plain = !dest;\n");
@@ -253,6 +346,13 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
         if *s == Slot::Work {
             let _ = writeln!(e, "    loft_text a{i} = {{ 0, 0, 0 }};");
             call.push(format!("&a{i}"));
+        } else if *s == Slot::Ref {
+            let _ = writeln!(
+                e,
+                "    uint32_t q{i}[3]; memcpy(q{i}, loft_crt_slot_at(stk, base + {off}), sizeof q{i});\n    \
+                 loft_ref a{i} = loft_crt_ref(q{i}[0], q{i}[1], q{i}[2]);"
+            );
+            call.push(format!("a{i}"));
         } else {
             let _ = writeln!(
                 e,
@@ -280,6 +380,13 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
         return e;
     }
     let _ = writeln!(e, "    {} r = {body}({});", ret.c(), call.join(", "));
+    if ret == Slot::Ref {
+        e.push_str(
+            "    uint32_t q[4] = { r.store_nr, r.rec, r.pos, 0 };\n    \
+             memcpy(loft_crt_slot_at(stk, base), q, sizeof q);\n    return base + 16;\n}\n",
+        );
+        return e;
+    }
     let _ = writeln!(
         e,
         "    memcpy(loft_crt_slot_at(stk, base), &r, sizeof r);\n    return base + {};\n}}",
