@@ -11,6 +11,8 @@
 //
 // @falsified-at: 0de1794d4 — native exit 1 -> 0; interpret INERT (expected for a
 //   backend-divergence guard — only one side can move)
+//   HOLDS: leak, panic and refusals are clean on both trees (`falsify` requires HERE clean);
+//   the exit is the whole measurement.
 // CHANNEL: the asserts; before the fix the C backend's unit does not compile.
 struct Held { has: boolean, lo: integer, hi: integer }
 struct Ranges { vars: vector<Held>, steps: vector<boolean> }

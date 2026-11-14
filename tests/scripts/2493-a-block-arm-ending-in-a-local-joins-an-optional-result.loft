@@ -7,6 +7,8 @@
 // Each cell is hand-computed; the `B` arm answers null through its call.
 //
 // @falsified-at: 0de1794d4 — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: leak, panic and refusals are clean on both trees (`falsify` requires HERE clean);
+//   the exit is the whole measurement.
 // CHANNEL: the asserts; before the fix the file does not parse.
 struct Out { kind: integer, value: integer }
 struct Other { kind: integer }
