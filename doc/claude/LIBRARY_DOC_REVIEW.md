@@ -257,42 +257,42 @@ as a STALE ROW rather than ignored.
 
 | library | reviewed through | at commit | notes |
 |---|---|---|---|
-| `default` | 2026-11 | `0e95172c` | Pre-tag: the 10 joins since `46ec215e` change no doc-carried signature — effect tags (`env#read`, `time#read`) added, `JsonValue.as_long` returns `i64`; STDLIB's exact-integer claim probed on both backends (`as_long`, an `integer` and an `i64` field read 9007199254740993).  @STD-001..012 authored across text / collections / JSON / files-IO. Every published section read against the release and each authored sentence probed on both backends (`.doc_review_ledger` 264/264), including `len`/`size` of an absent text answering 0, `log10`/`log2` exact at powers, `StackFrame.arguments` listing the parameters, and only `///` lines published (loft#1808) |
+| `default` | 2026-11 | `9701f0e6` | Read at the #2482 join: `u32` at its whole width, `bits` / `float_from_bits`, the `f64` / `i64` spellings; `File.size` is `i64` (STDLIB_FILES.md corrected); float `divided_by` answers inf on a zero divisor (comment corrected) |
 | `lib/git` | 2026-11 | `46ec215e` | @GIT-001..005 tagged to live uses in `scan.loft` + `refresh.loft`; 13 pub fns read. A query that cannot be ASKED halts instead of answering `""` (loft#1061), and the doc above `git_query` and `branch` says so |
 | `lib/lexer.loft` | 2026-11 | `231a813a` | @LEX-001 (matches/test/identifier), @LEX-002 (anchor/revert backtracking) — both tagged to live uses in `parser.loft` (`function`, `object`), exercised by the `16-parser` doc test; format-protocol/comment fns still owe examples (need a non-rendered demo). `Lexer`, `Anchor.start`, `split_token` and `offset` documented with their reasons |
 | `lib/parser.loft` | 2026-11 | `a8cc8a38` | One `pub fn` (`parse`); @PAR-001 tags the doc test `tests/docs/16-parser.loft`, the clearest call site there is. Its doc states the contract of the grammar it has — `while`, `match` with guards, both lambda forms, `::` names, the optional `;` after a block (loft#1800) — and the doc test asserts both what it parses and the listed constructs it does not |
-| `lib/code.loft` | 2026-11 | `231a813a` | 24 `pub fn`; the module header names what `Code` is, what `cur_arg` switches, and which half is reached; `Code` and `Structure` documented. `deferred` in `examples-exempt.tsv`: the emitter half has no call site to cite |
+| `lib/code.loft` | 2026-11 | `cdd792e8` | `define` writes one record set; no signature or doc statement moved |
 | `lib/testlib.loft` | 2026-11 | `231a813a` | `exempt` in `examples-exempt.tsv` — a fixture for `tests/docs/17-libraries.loft` and `tests/diagnostic_reach.rs`, deliberately trivial, so a call site teaches nothing its signature does not. `Point` and `Bag` documented as the fixtures they are |
 | `lib/docs.loft` | 2026-11 | `a8cc8a38` | `exempt` in `examples-exempt.tsv` — one unfinished function writing heading-only pages. Comments restated as rules instead of the loft#1339 story; its gating nullable warnings (and two in `lib/lexer.loft`) discharged |
 | `lib/process` | 2026-11 | `c3122aa5` | Pre-tag: one join since `3de09bde`, no `pub` line changed.  12 `pub` items read against `src/process_run.rs` and probed: `Run.code`'s `128 + n` / `-1` hold; `hole_float` promised a "shortest" form that `1.0e20` does not get, and `args` now says a `-`-led word refuses the command even after `--`. `deferred` in `examples-exempt.tsv` until a @PLN179 port calls it |
 | `lib/audience_crystal` | 2026-11 | `3de09bde` | @ACR-001..003 tagged to the `01-editor-helpers` test (picking inverse, incr editor loop, erase) |
 | `lib/engine_host` | 2026-11 | `46ec215e` | @EHK-001..004 tagged to CI-spawned audience-demo kernels (run loop, broadcast, sync lanes, run_client drain); 37 pub fns read while tagging |
 | `arguments` | 2026-11 | `1b276274` | Every doc probed on both backends; three untrue promises fixed in code (0.2.4): a value option takes the next word whatever it looks like, `-h`/`-V` go to the program's own option, a short-only option is queried by its short name |
-| `cbor` | 2026-11 | `0b3f1eb6` | "Never crashes" was false on deep nesting; `decode` refuses past `MAX_DEPTH` (0.1.9). Header no longer promises phases that shipped or a `to_cbor` that does not exist |
+| `cbor` | 2026-11 | `4c152941` | 0.1.13: `read_value` takes slices (internal); catalogue matches |
 | `crypto` | 2026-11 | `1b276274` | Malformed base64 decoded to other bytes at every door; strict decode, each door refuses (0.3.11). The `+=` CAUTION on `base64_to_bytes` was stale and is gone. Two `pub` TEST-ONLY HPKE fns remain a surface question |
 | `random` | 2026-11 | `1b276274` | `RandStream` described; `rand_indices`' negative case named (0.3.4) |
 | `regex` | 2026-11 | `3e23a2cf` | `regex_find`'s supersession named the wrong `search`; roadmap's FFI-gap cause was stale (0.4.2) |
 | `zttext` | 2026-11 | `0b3f1eb6` | Guide written and falsified; `zttext_version()` answers the manifest; design pointers name where the notation lives (0.1.3) |
-| `assets` | 2026-11 | `b3cb7445` | Guide and @PAK-001..003 written; README example did not compile under @C98 and the v2026.8.0 hang note was obsolete; `blob_put`'s `+=` claim was stale (0.2.4). Found loft's text-key replace duplicating (fixed in loft) |
-| `glb` | 2026-11 | `358f31b2` | Guide written; README claimed camera nodes that are never written (0.1.4). A spot light now carries the `spot` object KHR_lights_punctual requires and its node's translation (0.1.5) |
+| `assets` | 2026-11 | `7108f355` | 0.5.2: a version and a test; no doc statement moved |
+| `glb` | 2026-11 | `ca791ae3` | 0.1.8: a light's rotation is bound before the `if` that chooses it (internal) and a test; no doc statement moved |
 | `mesh3d` | 2026-11 | `ac5049fe` | Guide written; `mat4_scale` is per-axis, not uniform; the bare-import claim predated @C98 (0.1.3) |
-| `drawing` | 2026-11 | `72464377` | Guide and @DRW-001..003 written; the README's example did not compile under @C98, and its rasteriser import order, `--native-wasm` and "Fronds / gradients / checks not drawn" claims were stale. 0.4.0's Brush/Lock rows read against the parser (`flip` defaults to 0); the corpus re-measured with the `Lock` brush: all 36 of the crawler's scenes byte-identical on both backends (0.4.0) |
+| `drawing` | 2026-11 | `a4981c41` | 0.5: `Brush.img`, `Layer.px` and `hair_brush`'s answer are `vector<u32>`; the README names no element type and the catalogue carries the new signature |
 | `graphics` | 2026-11 | `badee5f7` | README listed `mesh3d` and `glb` as sub-modules it does not pass on; every listed function exists, the wasm PNG and blend claims measured (0.9.5) |
-| `gridmesh` | 2026-11 | `72464377` | Guide written; its read-only functions take `const`, so a rule holding the field `const` can call `idx_at`; plan history out of the comments (0.2.4). Found loft's false avoidable-copy advice on a field or parameter copy (fixed in loft) |
+| `gridmesh` | 2026-11 | `ed4d1575` | 0.2.7: a test's guard clause; no doc statement moved |
 | `imaging` | 2026-11 | `72464377` | README only: `--native-wasm` builds and decodes as the interpreter does; @IMG-002 described as RGBA with alpha carried (0.4.2) |
 | `shapes` | 2026-11 | `72464377` | Guide written; a depth is the distance out, not the part inside (0.5.2) |
-| `stage` | 2026-11 | `72464377` | README read against the source: all 100 listed names exist, the test-backed claims each have their test; guide linked (0.18.6) |
-| `text2d` | 2026-11 | `72464377` | Guide and @T2D-001..003 written; `write_text("")` answered -1 and a scale below 1 measured unlike it drew (0.4.3) |
+| `stage` | 2026-11 | `4c18041f` | 0.20.0, two declared breaks (`gl_stage`, `add_mask`'s `vector<u8>`); README's 102 names exist; the local catalogue was stale and is rebuilt |
+| `text2d` | 2026-11 | `4c18041f` | The bench hashes a canvas's u32 pixels; no source or doc statement moved |
 | `tween` | 2026-11 | `e780c015` | Guide and @TWN-001..003 written; the README's fixstep example did not compile under @C98 (0.1.2). Found loft's misleading bare-variant import advice (fixed in loft) |
 | `fixstep` | 2026-11 | `45a02641` | Guide written: a frame clock banking its remainder, a rate through a `Bank`, a cooldown firing once. The `--native-wasm` row was "not yet exercised"; measured, it answers as the interpreter does (0.1.3) |
-| `input` | 2026-11 | `3ad70ab7` | Guide written, driven headless through `input_tick_from_state`; the repo README listed `input` as "(planned)" (0.2.4) |
+| `input` | 2026-11 | `bd5a7404` | 0.3.0, a declared break: `input_tick(self, w, events)` and the device calls; README, guide and catalogue carry the new signatures |
 | `time` | 2026-11 | `e34fb068` | Read at 0.4.0, the @PLN182 P5 release (operator definitions; loft-libs-game#16). Every README claim measured on both backends; its bare `use time;` example did not compile — the @C98 qualifier and, under it, no operator of the type (D-opr-1, fixed in loft); the README imports the names. Floored on the dated daily `>=2026.10.20261002` |
 | `game_protocol` | 2026-11 | `0c37bcf8` | Guide written (JSON on the wire with `:j` and `GameEnvelope.parse`); the README promised framing and ack/retransmit the package does not have — it is message types and constructors (0.1.5) |
-| `ssh` | 2026-11 | `edf5c8ef` | Guide written, runs with no sshd; the README's loop bounded `recv` bytes by `len` — the mistake @SSH-002 warns against (0.1.3) |
+| `ssh` | 2026-11 | `b4075f3f` | 0.1.5: the natives are loft's `net` component; README and manifest rewritten and read against `src/c/loft_ssh.h` |
 | `server` | 2026-11 | `0b6f2463` | Read at 0.7.3 (`next` is an `operator next`; loft-libs-net#29). Its three `use server;` examples iterated `for req in srv`, unreachable through a bare `use` (D-opr-1, fixed in loft); they import the names, and all five README blocks compile warning-clean. Floored on `>=2026.10.20261002` |
 | `web` | 2026-11 | `0c37bcf8` | `byte_at`'s argument order was reversed in the README; the browser `fetch()` backend described as shipped, with what the browser does differently; `pack_u32_le` keeps the low 32 bits of a 64-bit `integer` (0.4.3) |
 | `hex_body` | 2026-11 | `f5291ead` | Guide written; history in README and source restated (0.3.3) |
-| `hex_draw` | 2026-11 | `e275eb5e` | Guide written; `place_opening` replaces the wall's material — its comment said the material was kept (0.1.2) |
+| `hex_draw` | 2026-11 | `a237c97a` | The bench's Rust twin only; catalogue matches (23 fns) |
 | `hex_edge` | 2026-11 | `15b93718` | Guide written; a material does not open a gate — `passable` reads only the surface mark; `SURF_NONE` slot is i32, not u16 (0.2.2) |
 | `hex_field` | 2026-11 | `f5291ead` | Status said stencils, the document format and the edge layer were "landing next"; all ship. `tests/08-hex-grid-parity.loft` keeps the restated lattice equal to `hex_grid` (0.1.4) |
 | `hex_fit` | 2026-11 | `f5291ead` | Guide written; comments cited a `tests/fit.loft` the package lacks (0.1.3) |
@@ -305,7 +305,7 @@ as a STALE ROW rather than ignored.
 | `hex_terrain` | 2026-11 | `f5291ead` | Guide written; the README example was refused under @C98 (0.1.5) |
 | `hex_way` | 2026-11 | `f5291ead` | Guide written; the README listed six of seven examples and half the surface (0.1.3) |
 | `hex_world` | 2026-11 | `f5291ead` | Guide written; the README named two consumers that do not use it. Ships `src/overland.loft` and `src/wall.loft`, which fail `--check` and nothing reaches — left for the owner to remove (0.2.2) |
-| `pluginabi` | 2026-11 | `8aa6d459` | Guide written (a counter plugin and its host over frames); both README examples were refused under @C98, the loft#1491 leak note was obsolete (clean under `LOFT_STORES=warn`), and the header's example spelled the error code `unknown_op` (0.1.5) |
+| `pluginabi` | 2026-11 | `66fabda1` | 0.1.10: `request` decodes each payload once; catalogue matches (12 fns) |
 | `html` | 2026-11 | `defa6704` | @HTM-001..002 written: escaping is one pass but not idempotent (escape once, at the output), and the apostrophe keeps a single-quoted attribute closed. "`&` is escaped first" described a replace chain the function is not (0.1.2) |
 | `markdown` | 2026-11 | `dd260f04` | @MKD-001..003 written: a non-empty `base_dir` routes relative links through `/file/` (undocumented until now), a heading's text is raw with `render`'s slug, `html_escape` leaves `'`. Only `@P<n>` / `@PLAN<n>` mentions are linked (0.2.4) |
 
