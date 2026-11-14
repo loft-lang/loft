@@ -70,6 +70,9 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     if v >= 0 && (w.shapes[v] ?? "") == "ref" {
       return E { code: "loft_free_var(&{w.names[v]!})", kind: K_VOID };
     }
+    if v >= 0 && (w.shapes[v] ?? "") == "fn" {
+      return E { code: "loft_free_var(&{w.names[v]!}.clos)", kind: K_VOID };
+    }
     if v >= 0 {
       refuse(w, "a release of a variable of shape {w.shapes[v] ?? ""}");
       return none();
@@ -166,6 +169,15 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     if v >= 0 {
       val = cgen_fn::expr(x, w, args[1], ind);
       return E { code: "{w.names[v]!} = {as_ref(w, val)}", kind: K_VOID };
+    }
+  }
+  if (name == "OpDropFnRef" || name == "OpFnRefClosure") && count == 1 {
+    f = loop_shape::var_of(args[0]);
+    if f >= 0 && (w.shapes[f] ?? "") == "fn" {
+      if name == "OpDropFnRef" {
+        return E { code: "loft_drop_closure({w.names[f]!})", kind: K_VOID };
+      }
+      return E { code: "{w.names[f]!}.clos", kind: K_REF };
     }
   }
   if name == "OpStoreLive" && count == 1 {

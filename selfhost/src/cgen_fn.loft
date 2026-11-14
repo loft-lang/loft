@@ -827,6 +827,11 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       xs[i] = if shapes[i]! == "text" { "loft_null_text()" } else { "(({held(shapes[i]!)}) {initial(shapes[i]!)})" };
       continue;
     }
+    named = function_literal(x.b, a);
+    if shapes[i]! == "fn" && named >= 0 {
+      xs[i] = fn_value(named);
+      continue;
+    }
     later_writes = false;
     for j in i + 1..len(args) {
       if !linked[j]! && loop_shape::unspan(args[j]!) != NdNull && may_write(x.b, args[j]!) {
@@ -1110,6 +1115,157 @@ fn work_twin(x: Cx, d: integer) -> text {
   name
 }
 
+// `Cx::fn_value`: definition `d` used as a value.
+fn fn_value(d: integer) -> text {
+  "loft_fn_of(INT64_C({if d < 0 { -d } else { d }}))"
+}
+
+// The function an integer literal names where a function value is expected (`is_function`),
+// -1 for any other node.
+fn function_literal(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdInt { n } => if n >= 0 && n < len(b.data.definitions) && b.data.definitions[n]!.def_type == 1 { n } else { -1 },
+    _ => -1,
+  }
+}
+
+// `Cx::fn_sig`: the number of the dispatcher for these parameter shapes, their modes and
+// this result, made on first use.
+fn fn_sig(x: Cx, key: text) -> integer {
+  for s in x.sigs {
+    if s == key {
+      return s#index;
+    }
+  }
+  x.sigs += [key];
+  len(x.sigs) - 1
+}
+
+// A function value read out of a record: `{ d = …; …; closure }` (`fn_ref_field_read`).
+fn fn_ref_field_read(x: Cx, w: W, all: vector<ir::Node>, target: text, ind: integer) {
+  ops: vector<ir::Node> = [];
+  for o in all {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => { ops += [o]; },
+    }
+  }
+  if len(ops) < 2 {
+    refuse(w, "a function value read with an unexpected shape");
+    return;
+  }
+  first = expr(x, w, ops[0], ind);
+  dt = temp(w, "int");
+  line(w, ind, "{dt} = {as_int(w, first)};");
+  for o in ops {
+    if o#index > 0 && o#index < len(ops) - 1 {
+      stmt(x, w, o, ind);
+    }
+  }
+  clos = expr(x, w, ops[len(ops) - 1], ind);
+  line(w, ind, "{target} = loft_fn_make({dt}, {as_ref(w, clos)});");
+}
+
+// A call through function value `v` (`call_ref`): the dispatcher of its signature.
+fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E {
+  params: vector<ir::TypeT> = [];
+  result = ir::TyVoid;
+  match cgen_types::base(x.b.data.definitions[w.index]!.variables.variables[v]!.type_def[0]!) {
+    TyFunction { args: ps, result: r, dep: _, consts: _ } => {
+      params = ps;
+      result = r;
+    },
+    _ => {
+      refuse(w, "a call through a value that is not a function");
+      return none();
+    },
+  }
+  shapes: vector<text> = [];
+  links: vector<boolean> = [];
+  for p in params {
+    link = false;
+    shape = match cgen_types::base(p) {
+      TyRefVar { inner } => {
+        link = true;
+        cgen_types::ctype(inner) ?? ""
+      },
+      _ => cgen_types::ctype(p) ?? "",
+    };
+    if shape == "" || shape == "void" {
+      refuse(w, "a function value with a parameter of no C shape");
+      return none();
+    }
+    if held(shape) == "" {
+      refuse(w, "a call through a function value with a parameter of shape {shape}");
+      return none();
+    }
+    shapes += [shape];
+    links += [link];
+  }
+  ret = cgen_types::ctype(result) ?? "";
+  if ret == "" || held(ret) == "" {
+    refuse(w, "a function value returning shape {ret}");
+    return none();
+  }
+  if len(args) < len(shapes) {
+    refuse(w, "a call through a function value with arguments left out");
+    return none();
+  }
+  xs: vector<text> = [for _ in 0..len(shapes) { "" }];
+  modes: vector<text> = [];
+  for s in shapes {
+    i = s#index;
+    if links[i]! {
+      xs[i] = link_arg(x, w, args[i]!, s, true, ind);
+      if w.why != "" {
+        return none();
+      }
+      modes += ["{s}:1"];
+    } else {
+      modes += ["{s}:0"];
+    }
+  }
+  sig = fn_sig(x, "{modes.join(",")}->{ret}");
+  for s in shapes {
+    i = s#index;
+    if links[i]! {
+      continue;
+    }
+    a = args[i]!;
+    if loop_shape::unspan(a) == NdNull {
+      xs[i] = if s == "text" { "loft_null_text()" } else { "(({held(s)}) {initial(s)})" };
+      continue;
+    }
+    named = function_literal(x.b, a);
+    if s == "fn" && named >= 0 {
+      xs[i] = fn_value(named);
+      continue;
+    }
+    later_writes = false;
+    for j in i + 1..len(shapes) {
+      if !links[j]! && loop_shape::unspan(args[j]!) != NdNull && !(shapes[j]! == "fn" && function_literal(x.b, args[j]!) >= 0) && may_write(x.b, args[j]!) {
+        later_writes = true;
+      }
+    }
+    xs[i] = as_shape(w, arg_with(x, w, a, later_writes, ind), s);
+    if w.why != "" {
+      return none();
+    }
+  }
+  list = [w.names[v]!];
+  for a in xs {
+    list += [a];
+  }
+  code = "loft_call{sig}({list.join(", ")})";
+  if ret == "text" {
+    held_t = temp(w, "text");
+    line(w, ind, "loft_text_free(&{held_t});");
+    line(w, ind, "{held_t} = {code};");
+    return held_value(w, held_t, "text");
+  }
+  E { code: code, kind: kind_of(ret) }
+}
+
 // The C shape a compound evaluates to (`shape_of`), for the compounds carried; "" refuses.
 fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
   match loop_shape::unspan(v) {
@@ -1132,6 +1288,14 @@ fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
     NdSingle { f: _ } => "single",
     NdText { s: _ } => "text",
     NdVar { n } => w.shapes[n] ?? "",
+    NdFnRef { def_nr: _, var: _, t: _ } => "fn",
+    NdFnRefDnr { n: _ } => "int",
+    NdCallRef { var, args: _ } => {
+      match cgen_types::base(b.data.definitions[w.index]!.variables.variables[var]!.type_def[0]!) {
+        TyFunction { args: _, result, dep: _, consts: _ } => cgen_types::ctype(result) ?? "",
+        _ => "",
+      }
+    },
     NdCall { def_nr, args: _ } => {
       def = b.data.definitions[def_nr]!;
       if def.name.starts_with("Op") {
@@ -1192,6 +1356,15 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     NdFloat { f } => E { code: "loft_f64(UINT64_C(0x{float_bits(f)}))", kind: K_FLOAT },
     NdSingle { f } => E { code: "loft_f32(UINT32_C({if f == null { "0x7fc00000" } else { "{f.bits():#x}" }}))", kind: K_SINGLE },
     NdText { s: literal } => E { code: "loft_lit({c_string(literal)}, {literal.size()})", kind: K_VIEW },
+    // The definition number a function value names, as an integer.
+    NdFnRefDnr { n } => E { code: "{w.names[n]!}.d", kind: K_INT },
+    NdFnRef { def_nr, var, t: _ } => {
+      if var == 65535 {
+        return E { code: fn_value(def_nr), kind: K_FN };
+      }
+      E { code: "loft_fn_make(INT64_C({def_nr}), {w.names[var]!})", kind: K_FN }
+    },
+    NdCallRef { var, args } => call_ref(x, w, var, args, ind),
     NdVar { n } => {
       shape = w.shapes[n] ?? "";
       if held(shape) == "" || shape == "void" {
@@ -1389,6 +1562,8 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
     line(w, ind, "loft_text_set(&{target}, loft_null_text());");
   } else if shape == "ref" {
     line(w, ind, "{target} = loft_ref_null();");
+  } else if shape == "fn" {
+    line(w, ind, "{target} = loft_fn_of(LOFT_NULL);");
   } else if shape != "void" {
     refuse(w, "a null of shape {shape}");
   }
@@ -1415,9 +1590,20 @@ fn assign(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
 
 fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
   node = loop_shape::unspan(v);
+  // A function named where a function value is expected.
+  if shape == "fn" && function_literal(x.b, node) >= 0 {
+    line(w, ind, "{target} = {fn_value(function_literal(x.b, node))};");
+    return;
+  }
   match node {
     NdNull => null_into(w, target, shape, ind),
-    NdBlock { block } => assign_seq(x, w, block[0].operators, target, shape, ind),
+    NdBlock { block } => {
+      if shape == "fn" && block[0].name == "fn_ref_field_read" {
+        fn_ref_field_read(x, w, block[0].operators, target, ind);
+        return;
+      }
+      assign_seq(x, w, block[0].operators, target, shape, ind);
+    },
     NdInsert { items } => assign_seq(x, w, items, target, shape, ind),
     NdIf { cond, t, f } => {
       cold = null_test(x.b, cond) && !int_literal_fallback_value(x.b, cond, f);
@@ -2037,7 +2223,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
   ret = if work_ret >= 0 || len(helper) > 0 { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
-  if held(ret) == "" || (ret == "ref" && !plain_rules()) {
+  if held(ret) == "" || ((ret == "ref" || ret == "fn") && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
   params: vector<text> = [];
@@ -2056,6 +2242,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     };
     if v.store_text_link {
       return Written { text: "", refused: "a link to a text in a store" };
+    }
+    if shape == "fn" && !plain_rules() {
+      return Written { text: "", refused: "a variable of shape fn" };
     }
     if shape == "ref" && !plain_rules() {
       return Written { text: "", refused: "a variable of shape ref" };
@@ -2197,7 +2386,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     if t.verify {
       out += "#ifdef LOFT_VERIFY\n";
     }
-    if t.shape == "text" {
+    if t.shape == "text" || t.shape == "fn" {
       out += "    {held(t.shape)} {t.name} = {initial(t.shape)};\n";
     } else {
       out += "    {held(t.shape)} {t.name};\n";

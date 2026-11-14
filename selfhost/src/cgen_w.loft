@@ -31,6 +31,7 @@ K_SINGLE = 7;
 K_CHAR = 8;
 K_VIEW = 9;
 K_REF = 10;
+K_FN = 11;
 
 // A C expression and the shape of its value (`E`).
 struct E {
@@ -119,6 +120,9 @@ pub struct Cx {
   pub writes: opt_writes::Writes,
   // The operators the ownership oracle reads by number (`own::Ops`).
   pub ops: own::Ops,
+  // The signatures the unit calls function values through, in the order they were first
+  // used (`Cx::fn_sigs`): `loft_call{n}`.
+  pub sigs: vector<text>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -134,6 +138,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     why_work: "",
     writes: opt_writes::new_writes(b),
     ops: own::ops_of(b),
+    sigs: [],
   }
 }
 
@@ -378,6 +383,8 @@ fn held(shape: text) -> text {
     "loft_text"
   } else if shape == "ref" {
     "loft_ref"
+  } else if shape == "fn" {
+    "loft_fn"
   } else if shape == "void" {
     "void"
   } else {
@@ -422,6 +429,8 @@ fn initial(shape: text) -> text {
     "{{ 0, 0, 0 }}"
   } else if shape == "ref" {
     "{{ 0xFFFF, 0, 0, 0 }}"
+  } else if shape == "fn" {
+    "{{ LOFT_NULL, {{ 0xFFFF, 0, 0, 0 }} }}"
   } else {
     "0"
   }
@@ -444,6 +453,8 @@ fn kind_of(shape: text) -> integer {
     K_VIEW
   } else if shape == "ref" {
     K_REF
+  } else if shape == "fn" {
+    K_FN
   } else {
     K_VOID
   }
@@ -466,6 +477,8 @@ fn shape_of_kind(k: integer) -> text {
     "text"
   } else if k == K_REF {
     "ref"
+  } else if k == K_FN {
+    "fn"
   } else {
     "bool"
   }
@@ -493,6 +506,8 @@ fn kind_name(k: integer) -> text {
     "View"
   } else if k == K_REF {
     "Ref"
+  } else if k == K_FN {
+    "Fn"
   } else {
     "Void"
   }
@@ -664,6 +679,14 @@ fn as_ref(w: W, e: E) -> text {
   ""
 }
 
+fn as_fn(w: W, e: E) -> text {
+  if e.kind == K_FN {
+    return e.code;
+  }
+  refuse(w, "a function value expected, a {kind_name(e.kind)} found");
+  ""
+}
+
 fn as_shape(w: W, e: E, shape: text) -> text {
   if shape == "int" {
     as_int(w, e)
@@ -681,6 +704,8 @@ fn as_shape(w: W, e: E, shape: text) -> text {
     as_view(w, e)
   } else if shape == "ref" {
     as_ref(w, e)
+  } else if shape == "fn" {
+    as_fn(w, e)
   } else {
     refuse(w, "a value of shape {shape}");
     ""

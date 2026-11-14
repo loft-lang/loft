@@ -67,6 +67,17 @@ def first_difference(a, b):
                 return n, "", ""
 
 
+def numbered(line):
+    """A body with the names the UNIT numbers by first use — a function-value dispatcher
+    `loft_call<n>`, a tuple struct `loft_tup<n>` — renumbered by first appearance in the body:
+    a function writer that does not carry every function yet cannot know the unit's numbers,
+    and the unit comparison is what checks them."""
+    for stem in ("loft_call", "loft_tup"):
+        seen = {}
+        line = re.sub(stem + r"(\d+)", lambda m: stem + "#" + str(seen.setdefault(m.group(1), len(seen))), line)
+    return line
+
+
 def layer_one(f, loft, generator, tmp, env, timeout, layer):
     """One program's `layer`: each line the Rust generator traced against the generator's."""
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
@@ -80,7 +91,7 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
         rust = {}
         for line in err.splitlines():
             if line.startswith(f"[{layer}]\t"):
-                rust[line.split("\t")[1]] = line
+                rust[line.split("\t")[1]] = numbered(line) if layer == "bodies" else line
         rc, err = proc([loft, "--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
         if rc == 0:
             rc, err = proc([generator, img, got, "--layer", layer], env, timeout, cwd=os.path.dirname(f))
@@ -90,7 +101,7 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
         with open(got, encoding="utf-8", errors="replace") as fh:
             for line in fh.read().splitlines():
                 if line.startswith(f"[{layer}]\t"):
-                    mine[line.split("\t")[1]] = line
+                    mine[line.split("\t")[1]] = numbered(line) if layer == "bodies" else line
         if layer == "bodies":
             # A SUBSET comparison: the function writer carries some functions and refuses the
             # rest by name; each body it writes must be the oracle's.
