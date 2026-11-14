@@ -255,6 +255,7 @@ fn OpVarInt(pos: const u16) -> __word;
 #loft"s.get_var_i64(pos)"
 fn OpVarCharacter(pos: const u16) -> character;
 #rust"s.get_var::<char>(@pos)"
+#loft"s.get_var_char(pos)"
 fn OpPutInt(pos: const u16, value: __word);
 #hot
 #rust"s.put_var(@pos, @value);"
@@ -268,6 +269,7 @@ fn OpPutNarrow(pos: const u16, min: const i32, kind: const u8, value: __word);
 #rust"s.put_narrow(@pos, @min, @kind, @value);"
 fn OpPutCharacter(pos: const u16, value: character);
 #rust"s.put_var(@pos, @value);"
+#loft"s.put_var_char(pos, value);"
 fn OpConvIntFromNull() -> __word;
 #rust"i64::MIN"
 #loft"null"
@@ -279,6 +281,7 @@ fn OpConvCharacterFromNull() -> character;
 #loft"null"
 fn OpConvCharacterFromInt(v1: __word) -> character;
 #rust"if @v1 == i64::MIN {{ char::from(0) }} else if let Some(c) = char::from_u32((@v1) as u32) {{ c }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); char::from(0) }}"
+#loft"if v1 == null {{ 0 }} else if (v1 >= 0 && v1 < 55296) || (v1 >= 57344 && v1 <= 1114111) {{ v1 }} else {{ s.raise_recoverable(\"a cast outside the type\"); 0 }}"
 fn OpConstLongText(start: const __word, size: const __word) -> text;
 #cold
 #rust"s.string_from_texts(@start, @size);"
@@ -341,8 +344,10 @@ fn OpAddIntNullable(v1: __word, v2: __word) -> __word;
 #loft"(v1 + v2) ?? null"
 fn OpMinIntNullable(v1: __word, v2: __word) -> __word;
 #rust"ops::op_min_int_nullable(@v1, @v2)"
+#loft"(v1 - v2) ?? null"
 fn OpMulIntNullable(v1: __word, v2: __word) -> __word;
 #rust"ops::op_mul_int_nullable(@v1, @v2)"
+#loft"(v1 * v2) ?? null"
 fn OpDivIntNullable(v1: __word, v2: __word) -> __word;
 #rust"ops::op_div_int_nullable(@v1, @v2)"
 #loft"if v2 == 0 {{ null }} else {{ (v1 / v2) ?? null }}"
@@ -355,18 +360,23 @@ fn OpLandInt(v1: __word, v2: __word) -> __word;
 #loft"v1 & v2"
 fn OpLorInt(v1: __word, v2: __word) -> __word;
 #rust"ops::op_logical_or_int(@v1, @v2)"
+#loft"v1 | v2"
 fn OpEorInt(v1: __word, v2: __word) -> __word;
 #rust"ops::op_exclusive_or_int(@v1, @v2)"
+#loft"v1 ^ v2"
 fn OpSLeftInt(v1: __word, v2: __word) -> __word;
 #rust"if @v1 == i64::MIN || @v2 == i64::MIN {{ i64::MIN }} else if !(0..64).contains(&@v2) {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::ShiftOutOfRange); i64::MIN }} else {{ let r = ops::op_shift_left_int(@v1, @v2); if r == i64::MIN {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::ShiftOutOfRange); i64::MIN }} else {{ r }} }}"
+#loft"if v1 == null || v2 == null {{ null }} else if v2 < 0 || v2 >= 64 {{ s.raise_recoverable(\"a shift outside 0..64\"); null }} else {{ v1 << v2 }}"
 fn OpSRightInt(v1: __word, v2: __word) -> __word;
 #rust"if @v1 == i64::MIN || @v2 == i64::MIN {{ i64::MIN }} else if !(0..64).contains(&@v2) {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::ShiftOutOfRange); i64::MIN }} else {{ ops::op_shift_right_int(@v1, @v2) }}"
+#loft"if v1 == null || v2 == null {{ null }} else if v2 < 0 || v2 >= 64 {{ s.raise_recoverable(\"a shift outside 0..64\"); null }} else {{ v1 >> v2 }}"
 fn OpEqInt(v1: __word, v2: __word) -> boolean;
 #hot
 #rust"@v1 == @v2"
 #loft"v1 == v2"
 fn OpNeInt(v1: __word, v2: __word) -> boolean;
 #rust"@v1 != @v2"
+#loft"v1 != v2"
 fn OpLtInt(v1: __word, v2: __word) -> boolean;
 #hot
 #rust"@v1 < @v2"
@@ -548,6 +558,7 @@ pub fn log(self: single, v2: single) -> single? {
 fn OpPowInt(v1: __word, v2: __word) -> __word;
 #cold
 #rust"ops::op_pow_int(@v1, @v2)"
+#loft"if v1 == null || v2 == null || v2 < 0 {{ null }} else {{ v1.pow(v2) }}"
 /// Raises the integer to the power given second: `pow(3, 4)` is 81, and `3 ** 20` is
 /// 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the
 /// answer does not fit an integer (`pow(2, 63)`), as `*` answers null past the range.
@@ -810,8 +821,10 @@ fn OpMinSingleFloat(v1: __fword) -> __fword;
 #rust"-@v1"
 fn OpCastSingleFromFloat(v1: __fword) -> single;
 #rust"@v1 as f32"
+#loft"v1 as single"
 fn OpCastIntFromFloat(v1: __fword) -> __word;
 #rust"if @v1.is_nan() {{ i64::MIN }} else if !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&@v1) {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ let r = ops::op_cast_int_from_float(@v1); if r == i64::MIN {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ r }} }}"
+#loft"v1 as integer"
 fn OpConvBoolFromFloat(v1: __fword) -> boolean;
 #hot
 #rust"!@v1.is_nan()"
@@ -1111,11 +1124,13 @@ pub operator compare(self: character, other: character) -> Ordering {
 type enumerate size(1);
 fn OpVarEnum(pos: const u16) -> enumerate;
 #rust"s.get_var::<u8>(@pos)"
+#loft"s.get_var_u8(pos)"
 fn OpConstEnum(val: const enumerate) -> enumerate;
 #rust"@val"
 #loft"val"
 fn OpPutEnum(pos: const u16, value: enumerate);
 #rust"s.put_var(@pos, @value);"
+#loft"s.put_var_u8(pos, value);"
 // "This enum holds a value" — the ONE predicate every null test over an enum
 // asks, and the one the RENDERER already answers the same way: `enum_val`
 // indexes real variants from 1 and shows both discriminant 0 and 255 as
@@ -1163,6 +1178,7 @@ fn OpConvRefFromNull() -> reference;
 fn OpInitRef(pos: const u16);
 fn OpNullRefSentinel() -> reference;
 #rust"DbRef::NULL"
+#loft"null"
 // Plan-04 Phase B: positional sentinel init — writes
 // DbRef{store_nr: u16::MAX, rec: 0, pos: 0} at frame slot
 // `stack_pos - pos`.  Does not push onto the eval stack.  Paired
@@ -1221,8 +1237,10 @@ fn OpSizeofRef(val: reference) -> __word;
 #cold
 fn OpVarRef(pos: const u16) -> reference;
 #rust"{{let r = s.get_var::<DbRef>(@pos); stores.valid(&r); r}}"
+#loft"s.get_var_dbref(pos)"
 fn OpPutRef(pos: const u16, value: reference);
 #rust"s.put_var(@pos, @value);"
+#loft"s.put_var_dbref(pos, value);"
 fn OpEqRef(v1: reference, v2: reference) -> boolean;
 #rust"if @v1.rec == 0 || @v2.rec == 0 {{ @v1.rec == 0 && @v2.rec == 0 }} else {{ @v1 == @v2 }}"
 fn OpNeRef(v1: reference, v2: reference) -> boolean;
@@ -1252,6 +1270,7 @@ fn OpGetDbRef(v1: reference, fld: const u16) -> reference;
 // These always point to a field what value can change depending on the content.
 fn OpGetField(v1: reference, fld: const u16) -> reference[v1];
 #rust"DbRef {{store_nr: @v1.store_nr, rec: @v1.rec, pos: @v1.pos + u32::from(@fld)}}"
+#loft"state::DbRef {{ store_nr: v1.store_nr, rec: v1.rec, pos: v1.pos + fld }}"
 // Simple type value write and read, vector elements always have fld=0.
 // All these types are passed by value instead of by reference.
 //
@@ -1270,12 +1289,14 @@ fn OpGetField(v1: reference, fld: const u16) -> reference[v1];
 // here: it lives one level down in `Store::addr_mut`.)
 fn OpGetInt(v1: reference, fld: const u16) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ stores.store(&db).get_int(db.rec, db.pos + u32::from(@fld))}} }}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_int(v1.store_nr, v1.rec, v1.pos, fld) }}"
 fn OpGetCharacter(v1: reference, fld: const u16) -> character;
 #rust"{{let db = @v1; if db.rec == 0 {{ char::from(0) }} else {{ char::from_u32(stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld))).unwrap_or(char::from(0)) }} }}"
 fn OpGetSingle(v1: reference, fld: const u16) -> single;
 #rust"{{let db = @v1; if db.rec == 0 {{ f32::NAN }} else {{ stores.store(&db).get_single(db.rec, db.pos + u32::from(@fld)) }} }}"
 fn OpGetFloat(v1: reference, fld: const u16) -> __fword;
 #rust"{{let db = @v1; if db.rec == 0 {{ f64::NAN }} else {{ stores.store(&db).get_float(db.rec, db.pos + u32::from(@fld)) }} }}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_float(v1.store_nr, v1.rec, v1.pos, fld, false) }}"
 fn OpGetByte(v1: reference, fld: const u16, min: const i32) -> __word;
 // #403 — a read at the null DbRef (`rec == 0`, e.g. the OOB element a for-loop
 // reads one past the last vector item) returns the `i64::MIN` null sentinel,
@@ -1304,39 +1325,49 @@ fn OpGetEnum(v1: reference, fld: const u16) -> enumerate;
 #rust"{{let db = @v1; if db.rec == 0 {{ 0u8 }} else {{ let r = stores.store(&db).get_byte(db.rec, db.pos + u32::from(@fld), 0); if r < 0 {{ 255u8 }} else {{ r as u8 }} }}}}"
 fn OpSetEnum(v1: reference, fld: const u16, val: enumerate);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(crt::W_ENUM, v1.store_nr, v1.rec, v1.pos, fld, 0, ops::byte_or_null(val)); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // @PLN17: boolean field/element storage is byte-stored with the u8 form
 // (0=false, 1=true, 255=null) — identical to a plain enum, so it inherits
 // enum's end-to-end null handling (incl. serialization).  Replaces the old
 // OpGetByte+`==1` read / `if val {1} else {0}`+OpSetByte write that forced 0/1.
 fn OpGetBoolean(v1: reference, fld: const u16) -> boolean;
 #rust"{{let db = @v1; if db.rec == 0 {{ 255u8 }} else {{ let r = stores.store(&db).get_byte(db.rec, db.pos + u32::from(@fld), 0); if r < 0 {{ 255u8 }} else {{ r as u8 }} }}}}"
+#loft"ops::tri(if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_BOOLEAN, v1.store_nr, v1.rec, v1.pos, fld, 0) }})"
 fn OpSetBoolean(v1: reference, fld: const u16, val: boolean);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(crt::W_BOOLEAN, v1.store_nr, v1.rec, v1.pos, fld, 0, ops::byte_or_null(val)); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpGetShort(v1: reference, fld: const u16, min: const i32) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_short(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT, v1.store_nr, v1.rec, v1.pos, fld, min) }}"
 fn OpGetText(v1: reference, fld: const u16) -> text[v1];
 #rust"{{let db = @v1; if db.rec == 0 {{ Str::new(crate::state::STRING_NULL) }} else {{ let store = stores.store(&db); Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(@fld)))) }} }}"
 fn OpSetInt(v1: reference, fld: const u16, val: __word);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_int(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpSetCharacter(v1: reference, fld: const u16, val: character);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v as u32); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetSingle(v1: reference, fld: const u16, val: single);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_single(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetFloat(v1: reference, fld: const u16, val: __fword);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_float(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_float(v1.store_nr, v1.rec, v1.pos, fld, val, false); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpSetByte(v1: reference, fld: const u16, min: const i32, val: __word);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), (@min), v as i32); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(crt::W_BYTE, v1.store_nr, v1.rec, v1.pos, fld, min, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpSetByteNullable(v1: reference, fld: const u16, min: const i32, val: __word);
 #rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_byte_nullable(&db, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetShort(v1: reference, fld: const u16, min: const i32, val: __word);
 #rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_short_nullable(&db, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(crt::W_SHORT, v1.store_nr, v1.rec, v1.pos, fld, min, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // 4-byte integer field read/write (post-2c `integer size(4)` subtypes).
 // Raw i32 storage with i32::MIN as the null sentinel; the stack value
 // stays i64 (widen on load, narrow on store).
 fn OpGetInt4(v1: reference, fld: const u16) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_i32_raw(db.rec, db.pos + u32::from(@fld)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_INT4, v1.store_nr, v1.rec, v1.pos, fld, 0) }}"
 fn OpSetInt4(v1: reference, fld: const u16, val: __word);
 #rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i32_raw(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(crt::W_INT4, v1.store_nr, v1.rec, v1.pos, fld, 0, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // 4-byte UNSIGNED read/write, for a `size(4)` type whose range runs past `i32::MAX`
 // (`u32`, or any `integer limit(0, N) size(4)` with N > 2147483647).  The signed pair
 // above cannot express those at all: it sign-extends on load, so a `u32` of 4000000000
@@ -1399,6 +1430,7 @@ type sorted size(4);
 // All vectors are referenced by the field that points towards them.
 fn OpVarVector(pos: const u16) -> vector;
 #rust"s.get_var::<DbRef>(@pos)"
+#loft"s.get_var_dbref(pos)"
 // The length of vectors is written at the start of their allocation.
 fn OpLengthVector(r: vector) -> __word;
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
@@ -1413,6 +1445,7 @@ fn OpVectorIsNull(r: vector) -> boolean;
 // `enum == null` (OpEqRef's rec==0 test misreads native enums as null).
 fn OpRefIsNull(r: reference) -> boolean;
 #rust"@r.store_nr == u16::MAX"
+#loft"r.store_nr == 65535"
 // The store-identity test behind a local's runtime OWNER WITNESS (`__own_<name>`,
 // `scopes::owner_witness_locals`): true when the two references name DIFFERENT stores.
 // Two sentinels compare EQUAL (`u16::MAX == u16::MAX`), so a witness that never took a
@@ -1430,6 +1463,7 @@ fn OpStoreLive(r: reference) -> boolean;
 // own owner witness, which has to point at the local's store rather than own a second one.
 fn OpRefAlias(r: reference) -> reference;
 #rust"@r"
+#loft"r"
 /// Number of elements in the vector. Use in loop bounds: for i in 0..v.len().
 pub fn len(self: const vector) -> integer {
   OpLengthVector(self)

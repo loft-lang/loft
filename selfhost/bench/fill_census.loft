@@ -31,7 +31,7 @@ fn main() {
     if want.refused != "" {
       continue;
     }
-    s = state::new_state(img!.code, 1 << 16);
+    s = state::new_state(img!, 1 << 16);
     got = fill_run::call(img!, d, args, s);
     name = fill_run::name_of(b!, d);
     if s.fault != "" {

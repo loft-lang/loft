@@ -12,6 +12,8 @@
 // basic type here takes 8.
 
 use crt;
+use ir;
+use types;
 
 pub struct State {
   // The bytecode (`State::code_base` / `code_len`) and the position of the next byte to read.
@@ -29,6 +31,16 @@ pub struct State {
   pub fault: text,
   // What `raise_recoverable` was told: the run goes on, as Rust's does in production mode.
   pub reported: vector<text>,
+  // The program's types (`Stores::types`), and whether the C runtime's table holds them yet.
+  pub types: vector<ir::DbType>,
+  pub table_loaded: boolean,
+}
+
+// `DbRef`: a reference — its store, its record and the position in it.
+pub struct DbRef {
+  pub store_nr: integer,
+  pub rec: integer,
+  pub pos: integer,
 }
 
 // `DbRef::NULL`'s store number.
@@ -50,11 +62,12 @@ pub FRAME_HEADROOM = 65536;
 // `State::MAX_CALL_DEPTH`.
 pub MAX_CALL_DEPTH = 10000;
 
-// A state over `code` with a stack store of `size` bytes, both positions at 0.
-pub fn new_state(code: vector<u8>, size: integer) -> State {
+// A state over the image's code and types with a stack store of `size` bytes, both positions
+// at 0.
+pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  State { code: code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", reported: [] }
+  State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", reported: [], types: img.types, table_loaded: false }
 }
 
 // `State::ensure_stack`: room for `step` more bytes above the top, the stack store doubled
@@ -569,10 +582,23 @@ pub fn get_stack_char(self: State) -> integer {
   crt::stack_get(crt::SW_U32, self.stk, self.stack_pos)
 }
 
-pub fn put_stack_char(self: State, v: character?) {
+pub fn put_stack_char(self: State, v: integer?) {
   self.ensure_stack(8);
-  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, if v == null { 0 } else { v! as integer });
+  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, v ?? 0);
   self.stack_pos += 8;
+}
+
+pub fn get_var_char(self: State, pos: integer) -> integer {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos - pos)
+}
+
+pub fn put_var_char(self: State, pos: integer, v: integer) {
+  if self.slot_ok(self.stack_pos + 8 - pos) {
+    crt::stack_put(crt::SW_U32, self.stk, self.stack_pos + 8 - pos, v);
+  }
 }
 
 // ── References: a 12-byte reference in a 16-byte slot. ────────────────────────────────────
@@ -597,4 +623,105 @@ pub fn init_ref_sentinel(self: State) {
 // range): recorded, and the operator answers its null or default.
 pub fn raise_recoverable(self: State, what: text) {
   self.reported += [what];
+}
+
+// The reference in the frame slot at byte `at`.
+fn ref_at(self: State, at: integer) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::slot_ref(io, self.stk, at);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `get_stack::<DbRef>`: a reference popped (a 16-byte step).
+pub fn get_stack_dbref(self: State) -> DbRef {
+  if !self.can_pop(16) {
+    return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+  }
+  self.stack_pos -= 16;
+  self.ref_at(self.stack_pos)
+}
+
+// `put_stack::<DbRef>`: a reference pushed; null is `DbRef::NULL`.
+pub fn put_stack_dbref(self: State, v: DbRef?) {
+  self.ensure_stack(16);
+  if v == null {
+    crt::set_slot_ref(self.stk, self.stack_pos, NULL_STORE, 0, 0);
+  } else {
+    crt::set_slot_ref(self.stk, self.stack_pos, v!.store_nr, v!.rec, v!.pos);
+  }
+  self.stack_pos += 16;
+}
+
+// `get_var::<DbRef>(pos)` / `put_var(pos, DbRef)`: a reference frame slot.
+pub fn get_var_dbref(self: State, pos: integer) -> DbRef {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+  }
+  self.ref_at(self.stack_pos - pos)
+}
+
+pub fn put_var_dbref(self: State, pos: integer, v: DbRef) {
+  if self.slot_ok(self.stack_pos + 16 - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos + 16 - pos, v.store_nr, v.rec, v.pos);
+  }
+}
+
+// The program's types loaded into the C runtime's table, once: what a store's release walks.
+fn load_table(self: State) {
+  if self.table_loaded {
+    return;
+  }
+  rows: vector<types::Row> = [];
+  for tp in 0..len(self.types) {
+    if len(self.types[tp]!.parts) > 0 {
+      rows += [types::row(self.types, tp)];
+    }
+  }
+  crt::load_types(types::flat(rows), len(self.types));
+  self.table_loaded = true;
+}
+
+// `State::database` (`OpDatabase`, `OpDatabaseNP`): the store the reference in the frame slot at
+// `pos` names made — or made again — with a zeroed root of type `db_tp` (an enum variant's is
+// its parent's size), and the reference written back.
+pub fn database(self: State) {
+  pos = self.code_u16();
+  db_tp = self.code_u16();
+  at = self.stack_pos - pos;
+  if !self.slot_ok(at) {
+    return;
+  }
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::slot_ref(io, self.stk, at);
+  bytes = types::enum_parent_size(self.types, db_tp);
+  if types::is_vector_wrapper(self.types, db_tp) {
+    self.load_table();
+    crt::database_wrapper(io, bytes, db_tp);
+  } else {
+    crt::database(io, bytes, db_tp);
+  }
+  crt::set_slot_ref(self.stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+}
+
+pub fn database_n_p(self: State) {
+  self.database();
+}
+
+// `State::free_ref`: the reference on top popped and its store released.
+pub fn free_ref(self: State) {
+  r = self.get_stack_dbref();
+  if r.store_nr != NULL_STORE {
+    self.load_table();
+    crt::free_ref(r.store_nr, r.rec, r.pos);
+  }
+}
+
+// `State::init_create_stack`: the frame slot at `pos` given a reference to the place `dep_pos`
+// names in the stack itself.
+pub fn init_create_stack(self: State) {
+  pos = self.code_u16();
+  dep_pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, self.stk, 1, 8 + self.stack_pos - dep_pos);
+  }
 }
