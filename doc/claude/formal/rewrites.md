@@ -187,7 +187,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Callee)` | `R-Callee` c, native |
 | `(R-CharWalk)` | `R-CharWalk` c, native |
 | `(R-CodeBase)` | not counted — executor: bytecode reads through a cached base |
-| `(R-Cold)` | not counted — runtime: the runtime helpers' own shape |
+| `(R-Cold)` | counted; admitted on no bench program |
 | `(R-Compact)` | `R-Compact` ir · `/prepend` ir |
 | `(R-CompleteWrite)` | `R-CompleteWrite` ir |
 | `(R-Const)` | `R-Const` ir · `/fn` parse |
