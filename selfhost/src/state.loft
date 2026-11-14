@@ -60,6 +60,43 @@ pub struct State {
   pub fn_bufs: vector<FnBuf>,
   pub fn_calls: vector<integer>,
   pub fn_borrowed: vector<integer>,
+  // The generators' frames (`State::coroutines`; slot 0 unused: a handle's record is never
+  // 0), the ones running, innermost last, the next handle's generation, and each generator
+  // definition's frame facts.
+  pub cos: vector<CoFrame>,
+  pub co_active: vector<integer>,
+  pub co_generation: integer,
+  pub gens: vector<ir::RunGen>,
+}
+
+// A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
+// running, where it resumes, where its caller's stack and code continue, the copies of its
+// text arguments it owns, the argument stores it holds (store, record, position each), and
+// how many holders its handle has.  A handle is the reference `(65535, slot, generation)` —
+// the null store with a record number — so a handle to a frame since freed (its slot handed
+// on) is told apart by its generation.
+pub struct CoFrame {
+  pub live: boolean,
+  pub gen: integer,
+  pub status: integer,
+  pub code_pos: integer,
+  pub stack_base: integer,
+  pub caller_return_pos: integer,
+  pub bytes: vector<u8>,
+  pub owned: vector<integer>,
+  pub generation: integer,
+  pub holds: integer,
+  pub held: vector<integer>,
+}
+
+CO_CREATED = 0;
+CO_SUSPENDED = 1;
+CO_RUNNING = 2;
+CO_EXHAUSTED = 3;
+
+// The table's unused slot 0 and every freed slot.
+fn co_empty() -> CoFrame {
+  CoFrame { live: false, gen: -1, status: CO_EXHAUSTED, code_pos: 0, stack_base: 0, caller_return_pos: 0, bytes: [], owned: [], generation: 0, holds: 0, held: [] }
 }
 
 // A buffer a call through a reference holds until the frame at `depth` returns.
@@ -107,7 +144,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens };
   for f in s.fnrefs {
     s.fnref_of[f.def] = f#index;
   }
@@ -773,6 +810,9 @@ pub fn free_ref(self: State) {
   if r.store_nr != NULL_STORE {
     self.load_table();
     crt::free_ref(r.store_nr, r.rec, r.pos);
+  } else if r.rec != 0 {
+    // A generator's handle (`free_ref_db`'s coroutine arm).
+    self.co_free(r.rec, r.pos);
   }
 }
 
@@ -1906,4 +1946,268 @@ pub fn set_stack_ref(self: State) {
   v1 = self.get_stack_dbref();
   r = self.get_stack_dbref();
   crt::set_place_ref(r.store_nr, r.rec, r.pos, v1.store_nr, v1.rec, v1.pos);
+}
+
+// ── Generators (`State::coroutine_*`). ────────────────────────────────────────────────────
+
+// The frame facts of generator definition `d` (`RunGen`), -1 for none.
+fn gen_of(self: State, d: integer) -> integer {
+  for i in 0..len(self.gens) {
+    if (self.gens[i]?.def ?? -1) == d {
+      return i;
+    }
+  }
+  -1
+}
+
+// Does the handle `(_, r, p)` name the live frame it was made for (`coroutine_slot_matches`)?
+fn co_matches(self: State, r: integer, p: integer) -> boolean {
+  r > 0 && r < len(self.cos) && (self.cos[r]?.live ?? false) && (self.cos[r]?.generation ?? -1) == p
+}
+
+// Is the handle exhausted: a null or stale one is; a live frame is when it ended.
+fn co_done(self: State, h: DbRef) -> boolean {
+  h.store_nr != NULL_STORE || h.rec == 0 || !self.co_matches(h.rec, h.pos) || (self.cos[h.rec]?.status ?? CO_EXHAUSTED) == CO_EXHAUSTED
+}
+
+// What an advance of an exhausted, null or stale handle answers (`push_null_value`), written
+// at the stack byte `at`: by the packed size's channel tag (high byte) and size (low byte) —
+// a null reference, an (integer, reference) pair, a null 4- or 8-byte value, the null text,
+// or zeroes.  The top is left just above it.
+fn push_null_value(self: State, at: integer, packed: integer) {
+  vs = packed % 256;
+  tag = packed / 256;
+  self.stack_pos = at;
+  self.ensure_stack(24);
+  if (tag == 0 || tag == 6) && vs == 12 {
+    crt::set_slot_ref(self.stk, at, NULL_STORE, 0, 0);
+    self.stack_pos = at + 16;
+    return;
+  }
+  if tag == 2 && vs == 20 {
+    crt::stack_zero(self.stk, at, 24);
+    crt::stack_put(crt::SW_I64, self.stk, at, null);
+    crt::set_slot_ref(self.stk, at + 8, NULL_STORE, 0, 0);
+    self.stack_pos = at + 24;
+    return;
+  }
+  step = (vs + 7) / 8 * 8;
+  self.ensure_stack(step);
+  if vs == 4 {
+    crt::stack_put(crt::SW_I64, self.stk, at, 2147483648);
+  } else if vs == 8 {
+    crt::stack_put(crt::SW_I64, self.stk, at, null);
+  } else if vs == 16 {
+    crt::stack_str_null(self.stk, at);
+  } else {
+    crt::stack_zero(self.stk, at, step);
+  }
+  self.stack_pos = at + step;
+}
+
+// A frame's end, of whatever kind: its text copies released, its argument stores' holds given
+// back, its slot freed for the next generator.
+fn co_release(self: State, idx: integer) {
+  for c in self.cos[idx]!.owned {
+    crt::owned_free(c);
+  }
+  held = self.cos[idx]!.held;
+  k = 0;
+  while k + 2 < len(held) {
+    crt::release_frame_hold(held[k] ?? NULL_STORE, held[k + 1] ?? 0, held[k + 2] ?? 0);
+    k += 3;
+  }
+  self.cos[idx] = co_empty();
+}
+
+// `free_coroutine`: a handle released.  One of several holders only gives its hold back; the
+// last frees the frame — a suspended or a created one first releasing what its locals own (its
+// text locals' texts, the stores its owning locals name, read from its saved bytes through the
+// stack bytes above the top).  A stale handle frees nothing.
+fn co_free(self: State, r: integer, p: integer) {
+  if !self.co_matches(r, p) {
+    return;
+  }
+  if (self.cos[r]?.holds ?? 0) > 1 {
+    self.cos[r].holds -= 1;
+    return;
+  }
+  owned: vector<DbRef> = [];
+  st = self.cos[r]!.status;
+  g = self.cos[r]!.gen;
+  if (st == CO_SUSPENDED || st == CO_CREATED) && g >= 0 {
+    self.ensure_stack(24);
+    scr = self.stack_pos;
+    nb = len(self.cos[r]!.bytes);
+    for slot in self.gens[g]!.text_locals {
+      if slot + 24 <= nb {
+        crt::stack_code_bytes(self.stk, scr, self.cos[r]!.bytes, slot, 24);
+        crt::slot_text_free(self.stk, scr);
+        for z in 0..24 {
+          self.cos[r].bytes[slot + z] = 0 as u8;
+        }
+      }
+    }
+    for slot in self.gens[g]!.owned_locals {
+      if slot + 12 <= nb {
+        crt::stack_code_bytes(self.stk, scr, self.cos[r]!.bytes, slot, 12);
+        o = self.slot_dbref(scr);
+        for z in 0..12 {
+          self.cos[r].bytes[slot + z] = 0 as u8;
+        }
+        if o.rec != 0 {
+          owned += [o];
+        }
+      }
+    }
+  }
+  self.co_release(r);
+  for o in owned {
+    if o.store_nr == NULL_STORE {
+      self.co_free(o.rec, o.pos);
+    } else if crt::store_live(o.store_nr) {
+      crt::free_ref(o.store_nr, o.rec, o.pos);
+    }
+  }
+}
+
+// `State::coroutine_create`: the arguments leave the stack for a new frame — its text
+// arguments copied into texts of its own, its reference arguments' stores held — with the
+// return slot after them; the handle pushed.
+pub fn coroutine_create(self: State, d_nr: integer, args_size: integer, to: integer) {
+  if !self.can_pop(args_size) {
+    return;
+  }
+  base = self.stack_pos - args_size;
+  g = self.gen_of(d_nr);
+  owned: vector<integer> = [];
+  held: vector<integer> = [];
+  if g >= 0 {
+    for off in self.gens[g]!.text_args {
+      if off < args_size {
+        copy = crt::stack_str_own(self.stk, base + off);
+        if copy != 0 {
+          owned += [copy];
+        }
+      }
+    }
+    for off in self.gens[g]!.ref_args {
+      if off + 12 <= args_size {
+        a = self.slot_dbref(base + off);
+        if crt::hold_for_frame(a.store_nr, a.rec, a.pos) {
+          held += [a.store_nr, a.rec, a.pos];
+        }
+      }
+    }
+  }
+  self.ensure_stack(8);
+  bytes = crt::stack_read_bytes(self.stk, base, args_size + 8);
+  for z in 0..8 {
+    bytes[args_size + z] = 0 as u8;
+  }
+  self.stack_pos = base;
+  generation = self.co_generation;
+  self.co_generation = if generation >= 2147483647 { 1 } else { generation + 1 };
+  slot = -1;
+  for i in 1..len(self.cos) {
+    if slot < 0 && !(self.cos[i]?.live ?? true) {
+      slot = i;
+    }
+  }
+  frame = CoFrame { live: true, gen: g, status: CO_CREATED, code_pos: to, stack_base: 0, caller_return_pos: 0, bytes: bytes, owned: owned, generation: generation, holds: 1, held: held };
+  if slot < 0 {
+    slot = len(self.cos);
+    self.cos += [frame];
+  } else {
+    self.cos[slot] = frame;
+  }
+  self.put_stack_dbref(DbRef { store_nr: NULL_STORE, rec: slot, pos: generation });
+}
+
+// `State::coroutine_next`: the handle popped; a live frame's bytes back on the stack and run
+// on from where it stopped (its locals zeroed at the first resume), or the null value for an
+// exhausted, null or stale handle.
+pub fn coroutine_next(self: State, value_size: integer) {
+  h = self.get_stack_dbref();
+  if self.co_done(h) {
+    self.push_null_value(self.stack_pos, value_size);
+    return;
+  }
+  r = h.rec;
+  st = self.cos[r]!.status;
+  if st == CO_RUNNING {
+    self.stop("a generator advanced while it runs");
+    return;
+  }
+  self.cos[r].caller_return_pos = self.code_pos;
+  self.cos[r].stack_base = self.stack_pos;
+  self.cos[r].status = CO_RUNNING;
+  n = len(self.cos[r]!.bytes);
+  g = self.cos[r]!.gen;
+  zone = if st == CO_CREATED && g >= 0 { self.gens[g]?.zone2 ?? 0 } else { 0 };
+  // The frame's own height is in reach above it, as a call's is (`fn_call`).
+  self.ensure_stack(n + zone + FRAME_HEADROOM);
+  crt::stack_code_bytes(self.stk, self.stack_pos, self.cos[r]!.bytes, 0, n);
+  self.stack_pos += n;
+  if zone > 0 {
+    crt::stack_zero(self.stk, self.stack_pos, zone);
+  }
+  self.co_active += [r];
+  self.code_pos = self.cos[r]!.code_pos;
+}
+
+// `State::coroutine_yield`: the frame's locals saved, the yielded value moved to where the
+// frame began, and the caller continued.
+pub fn coroutine_yield(self: State, value_size: integer) {
+  if len(self.co_active) == 0 {
+    self.stop("a yield outside a running generator");
+    return;
+  }
+  r = self.co_active[len(self.co_active) - 1] ?? 0;
+  self.co_active.remove(len(self.co_active) - 1);
+  base = self.cos[r]!.stack_base;
+  step = (value_size + 7) / 8 * 8;
+  start = self.stack_pos - step;
+  self.cos[r].bytes = crt::stack_read_bytes(self.stk, base, start - base);
+  self.cos[r].code_pos = self.code_pos;
+  self.cos[r].status = CO_SUSPENDED;
+  crt::stack_move(self.stk, start, base, value_size);
+  self.stack_pos = base + step;
+  self.code_pos = self.cos[r]!.caller_return_pos;
+}
+
+// `State::coroutine_return`: the frame ends; the caller gets the null value, the reference
+// elements of a yielded tuple nulled in it.
+pub fn coroutine_return(self: State, value_size: integer) {
+  if len(self.co_active) == 0 {
+    self.stop("a generator return outside a running generator");
+    return;
+  }
+  r = self.co_active[len(self.co_active) - 1] ?? 0;
+  self.co_active.remove(len(self.co_active) - 1);
+  base = self.cos[r]!.stack_base;
+  back = self.cos[r]!.caller_return_pos;
+  g = self.cos[r]!.gen;
+  self.co_release(r);
+  self.push_null_value(base, value_size);
+  if g >= 0 {
+    for off in self.gens[g]!.tuple_refs {
+      crt::set_slot_ref(self.stk, base + off, NULL_STORE, 0, 0);
+    }
+  }
+  self.code_pos = back;
+}
+
+// `State::coroutine_exhausted`: see `co_done`.
+pub fn coroutine_exhausted(self: State, gen: DbRef) -> boolean {
+  self.co_done(gen)
+}
+
+// `State::coroutine_retain`: a second holder of the handle (`(G-Hold)`) — one more hold on
+// its frame; the handle is answered as it is.
+pub fn coroutine_retain(self: State, gen: DbRef) -> DbRef {
+  if self.co_matches(gen.rec, gen.pos) {
+    self.cos[gen.rec].holds += 1;
+  }
+  gen
 }

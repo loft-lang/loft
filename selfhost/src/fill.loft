@@ -1381,6 +1381,16 @@ pub fn op_call_ref(s: state::State) {
   s.fn_call_ref(fn_var, arg_size);
 }
 
+pub fn op_coroutine_next(s: state::State) {
+  value_size = s.code_u16();
+  s.coroutine_next(value_size);
+}
+
+pub fn op_coroutine_yield(s: state::State) {
+  value_size = s.code_u16();
+  s.coroutine_yield(value_size);
+}
+
 pub fn op_var_fn_ref(s: state::State) {
   pos = s.code_u16();
   s.var_fn_ref(pos);
@@ -1824,6 +1834,30 @@ pub fn op_rmdir(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn op_coroutine_create(s: state::State) {
+  d_nr = s.code_i64();
+  args_size = s.code_u16();
+  to = s.code_i64();
+  s.coroutine_create(d_nr, args_size, to);
+}
+
+pub fn op_coroutine_return(s: state::State) {
+  value_size = s.code_u16();
+  s.coroutine_return(value_size);
+}
+
+pub fn op_coroutine_exhausted(s: state::State) {
+  gen = s.get_stack_dbref();
+  new_value: boolean? = s.coroutine_exhausted(gen);
+  s.put_stack_bool(new_value);
+}
+
+pub fn op_coroutine_retain(s: state::State) {
+  gen = s.get_stack_dbref();
+  new_value: state::DbRef? = s.coroutine_retain(gen);
+  s.put_stack_dbref(new_value);
+}
+
 pub fn op_database_n_p(s: state::State) {
   s.database_n_p();
 }
@@ -2053,6 +2087,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     248 => op_append_stack_character(s),
     249 => op_clear_stack_text(s),
     250 => op_call_ref(s),
+    251 => op_coroutine_next(s),
+    252 => op_coroutine_yield(s),
     253 => op_var_fn_ref(s),
     254 => op_put_fn_ref(s),
     255 => op_const_ref(s),
@@ -2130,6 +2166,10 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     355 => op_mkdir(s),
     356 => op_mkdir_all(s),
     357 => op_rmdir(s),
+    360 => op_coroutine_create(s),
+    361 => op_coroutine_return(s),
+    362 => op_coroutine_exhausted(s),
+    363 => op_coroutine_retain(s),
     365 => op_database_n_p(s),
     _ => return false,
   }
@@ -3109,6 +3149,44 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         s.code_pos = ip;
         s.stack_pos = sp;
         s.fn_call_ref(fn_var_250, arg_size_250);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        cbase = crt::code_base(code);
+        continue;
+      }
+    }
+    251 => {
+      value_size_251 = crt::cget_u16(code, cbase, clen, ip + 1);
+      if ip <= safe {
+        ip += 3;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.coroutine_next(value_size_251);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        cbase = crt::code_base(code);
+        continue;
+      }
+    }
+    252 => {
+      value_size_252 = crt::cget_u16(code, cbase, clen, ip + 1);
+      if ip <= safe {
+        ip += 3;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.coroutine_yield(value_size_252);
         if s.stopped || s.native >= 0 {
           return;
         }

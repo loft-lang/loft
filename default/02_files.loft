@@ -1073,24 +1073,29 @@ fn OpSortVector(r: vector, db_tp: const u16);
 fn OpCoroutineCreate(d_nr: const __word, args_size: const u16, to: const __word);
 #cold
 #rust"s.coroutine_create(@d_nr as u32, u32::from(@args_size), @to as u32);"
+#loft"s.coroutine_create(d_nr, args_size, to);"
 // `value_size` is packed: the byte size in the low byte, the channel tag above it
 // (`coroutine_layout::next_operands`).  The null a finished generator answers reads the tag.
 fn OpCoroutineNext(value_size: const u16);
 #rust"s.coroutine_next(u32::from(@value_size));"
+#loft"s.coroutine_next(value_size);"
 
 // CO1.3a: Coroutine return — exhaust frame, push null, return to consumer
 fn OpCoroutineReturn(value_size: const u16);
 #cold
 #rust"s.coroutine_return(u32::from(@value_size));"
+#loft"s.coroutine_return(value_size);"
 
 // CO1.3b: Yield — suspend generator, return value to consumer
 fn OpCoroutineYield(value_size: const u16);
 #rust"s.coroutine_yield(u32::from(@value_size));"
+#loft"s.coroutine_yield(value_size);"
 
 // CO1.6: Coroutine stdlib opcodes
 fn OpCoroutineExhausted(gen: reference) -> boolean;
 #cold
 #rust"s.coroutine_exhausted(&@gen)"
+#loft"s.coroutine_exhausted(gen)"
 
 // A5.6-1: Push 20-byte fn-ref slot (d_nr + closure DbRef) from frame variable at pos.
 // WARNING (C40): declared as `text` (16B Str) but actually holds [d_nr:i64 8B][closure:DbRef 12B] = 20B post-2c.
@@ -1140,6 +1145,7 @@ fn OpBindFnRefResult(src: reference, pos: const u16, tp: const u16);
 fn OpCoroutineRetain(gen: reference) -> reference;
 #cold
 #rust"s.coroutine_retain(@gen)"
+#loft"s.coroutine_retain(gen)"
 // Interpreter superinstructions: an integer operator whose operands are frame locals
 // (`V`) or a literal (`C`), read in place instead of pushed first, optionally stored
 // straight into a local (`Put`).  Emitted only by the bytecode generator's operand fusion

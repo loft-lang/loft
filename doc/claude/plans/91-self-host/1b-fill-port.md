@@ -91,7 +91,7 @@ The first two are run by hand; neither is a test yet.
 
 | Part | State |
 |---|---|
-| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: coroutines, `par`, keyed writes (`OpSetKeyed`, `OpReplaceKeyed`), the child-record and slot-reference families |
+| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: `par` (its operators and the `parallel_*` natives), the child-record and slot-reference families, narrow locals |
 | natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |
