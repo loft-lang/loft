@@ -991,6 +991,57 @@ int64_t loft_crt_pg_load_key(int64_t s, int64_t r, int64_t p, const char *path, 
     return n > 0 ? 1 : 0;
 }
 
+/* `store_load_keys(r, path, keys)` (`loft_pg_load_key_list`): every key of the vector `(ls, lr, lp)`
+ * read; how many records were. */
+int64_t loft_crt_pg_load_keys(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
+                              const char *refusal, int64_t rlen, int64_t content, int64_t coll, int64_t kind,
+                              int64_t ls, int64_t lr, int64_t lp, int64_t is_text) {
+    if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(coll)) return 0;
+    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
+    return loft_pg_load_key_list((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+                                 &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
+                                 loft_crt_types[coll].keys, loft_crt_types[coll].nk, (int) kind, loft_crt_ref(ls, lr, lp),
+                                 (int) is_text);
+}
+
+/* `store_load_prefix(r, path, pre, limit)` (`loft_pg_load_prefix`) on a trie: how many records were
+ * read. */
+int64_t loft_crt_pg_load_prefix(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
+                                const char *refusal, int64_t rlen, int64_t content, int64_t coll, const char *pre,
+                                int64_t prelen, int64_t limit) {
+    if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(coll)) return 0;
+    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
+    return loft_pg_load_prefix((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+                               &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
+                               loft_crt_types[coll].keys, loft_crt_types[coll].nk, loft_crt_str(pre, prelen), limit);
+}
+
+/* `store_load_box(r, path, from, till, limit)` (`loft_pg_load_box`) on a spatial index: the
+ * records inside the box read; how many were.  `name` the collection's type name. */
+int64_t loft_crt_pg_load_box(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
+                             const char *refusal, int64_t rlen, int64_t content, int64_t coll, int64_t fs, int64_t fr,
+                             int64_t fp, int64_t ts, int64_t tr, int64_t tp, int64_t limit, const char *name,
+                             int64_t nlen) {
+    if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(coll)) return 0;
+    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
+    return loft_pg_load_box((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+                            &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
+                            loft_crt_types[coll].keys, loft_crt_types[coll].nk, loft_crt_ref(fs, fr, fp),
+                            loft_crt_ref(ts, tr, tp), limit, loft_crt_cstr(name, nlen));
+}
+
+/* `store_load_range(r, path, lo, hi)` (`loft_pg_load_range`) on a sorted collection, the root type
+ * `tp` itself: the records in the key range read; how many were. */
+int64_t loft_crt_pg_load_range(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
+                               const char *refusal, int64_t rlen, int64_t content, int64_t tp, int64_t lo,
+                               int64_t hi) {
+    if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(tp)) return 0;
+    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
+    return loft_pg_load_range((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+                              &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
+                              loft_crt_types[tp].keys, lo, hi);
+}
+
 /* `store_verify(r)` (`loft_store_verify`). */
 int64_t loft_crt_store_verify(int64_t s, int64_t r, int64_t p) {
     if (!loft_crt_types) return 0;

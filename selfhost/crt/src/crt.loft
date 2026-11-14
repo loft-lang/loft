@@ -416,6 +416,14 @@ fn c_log(sev: integer, m: text, mlen: integer, f: text, flen: integer, line: int
 #c "loft_crt_log" "void(int64_t, const char*, int64_t, const char*, int64_t, int64_t)"
 fn c_pg_load_key(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, kind: integer, key: integer, tkey: text, tlen: integer, is_text: integer) -> integer;
 #c "loft_crt_pg_load_key" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_pg_load_keys(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, kind: integer, ls: integer, lr: integer, lp: integer, is_text: integer) -> integer;
+#c "loft_crt_pg_load_keys" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_pg_load_prefix(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, pre: text, prelen: integer, limit: integer) -> integer;
+#c "loft_crt_pg_load_prefix" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_pg_load_box(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, fs: integer, fr: integer, fp: integer, ts: integer, tr: integer, tp: integer, limit: integer, name: text, nlen: integer) -> integer;
+#c "loft_crt_pg_load_box" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+fn c_pg_load_range(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, tp: integer, lo: integer, hi: integer) -> integer;
+#c "loft_crt_pg_load_range" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -679,6 +687,26 @@ pub fn log(sev: integer, m: text, f: text, line: integer) {
 // `store_load_key(r, path, key)`: one record under an integer or a text key read from the image.
 pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text, is_text: boolean) -> boolean {
   c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey, tkey.size(), if is_text { 1 } else { 0 }) != 0
+}
+
+// `store_load_keys(r, path, keys)`: every key of the vector read; how many records were.
+pub fn pg_load_keys(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, ls: integer, lr: integer, lp: integer, is_text: boolean) -> integer {
+  c_pg_load_keys(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, ls, lr, lp, if is_text { 1 } else { 0 })
+}
+
+// `store_load_prefix(r, path, pre, limit)` on a trie: how many records were read.
+pub fn pg_load_prefix(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, pre: text, limit: integer) -> integer {
+  c_pg_load_prefix(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, pre, pre.size(), limit)
+}
+
+// `store_load_box(r, path, from, till, limit)` on a spatial index: how many records were read.
+pub fn pg_load_box(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, fs: integer, fr: integer, fp: integer, ts: integer, tr: integer, tp: integer, limit: integer, name: text) -> integer {
+  c_pg_load_box(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, fs, fr, fp, ts, tr, tp, limit, name, name.size())
+}
+
+// `store_load_range(r, path, lo, hi)` on a sorted collection: how many records were read.
+pub fn pg_load_range(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, tp: integer, lo: integer, hi: integer) -> integer {
+  c_pg_load_range(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, tp, lo, hi)
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).

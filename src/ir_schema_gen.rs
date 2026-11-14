@@ -952,6 +952,9 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t117, "pcontent", 0);
     db.field(t117, "pkind", 0);
     db.field(t117, "prefusal", t5);
+    db.field(t117, "pboxrefusal", t5);
+    db.field(t117, "prangecontent", 0);
+    db.field(t117, "prangerefusal", t5);
     db.field(t117, "walks", t4);
     db.field(t117, "refs", t4);
     db.field(t117, "rekey", t4);

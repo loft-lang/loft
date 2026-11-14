@@ -510,6 +510,12 @@ pub struct RunSidecar {
   pub pcontent: integer,
   pub pkind: integer,
   pub prefusal: text,
+  // The refusal of a box load, which wants a spatial index (empty for none).
+  pub pboxrefusal: text,
+  // A range load's plan: the sorted collection's element type (the root type itself is the
+  // collection), -1 for none, and its refusal (empty for none).
+  pub prangecontent: integer,
+  pub prangerefusal: text,
   pub walks: boolean,
   pub refs: boolean,
   pub rekey: boolean,

@@ -1127,6 +1127,9 @@ fn materialize_run_sidecars(
         e.set_field_int(stores, ds::RUNSIDECAR_PCONTENT, c.pcontent);
         e.set_field_int(stores, ds::RUNSIDECAR_PKIND, c.pkind);
         e.set_field_str(stores, ds::RUNSIDECAR_PREFUSAL, &c.prefusal);
+        e.set_field_str(stores, ds::RUNSIDECAR_PBOXREFUSAL, &c.pboxrefusal);
+        e.set_field_int(stores, ds::RUNSIDECAR_PRANGECONTENT, c.prangecontent);
+        e.set_field_str(stores, ds::RUNSIDECAR_PRANGEREFUSAL, &c.prangerefusal);
         e.set_field_bool(stores, ds::RUNSIDECAR_WALKS, c.walks);
         e.set_field_bool(stores, ds::RUNSIDECAR_REFS, c.refs);
         e.set_field_bool(stores, ds::RUNSIDECAR_REKEY, c.rekey);
@@ -1354,6 +1357,9 @@ pub struct RunSidecarShape {
     pub pcontent: i64,
     pub pkind: i64,
     pub prefusal: String,
+    pub pboxrefusal: String,
+    pub prangecontent: i64,
+    pub prangerefusal: String,
     pub walks: bool,
     pub refs: bool,
     pub rekey: bool,
@@ -1384,6 +1390,11 @@ pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape>
                     | "n_store_verify"
                     | "n_store_load_key"
                     | "n_store_load_key_text"
+                    | "n_store_load_keys"
+                    | "n_store_load_keys_text"
+                    | "n_store_load_prefix"
+                    | "n_store_load_box"
+                    | "n_store_load_range"
             ) {
                 return;
             }
@@ -1420,26 +1431,45 @@ pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape>
             let id = crate::schema_sidecar::LayoutIdentity::of_store(program, u16::MAX, tp);
             let text = id.to_sidecar();
             let (before, after) = text.split_once(&marker).unwrap_or((&text, ""));
-            // `paged_plan` for a key load: the store's collection, which must be a hash or a trie
-            // of copyable entries.
+            // `paged_plan`: the store's collection — a key load wants a hash or a trie, a box
+            // load a spatial index, each of copyable entries.
             use crate::database::Parts;
             let pcoll = program.collection_type_of_store(tp);
             let parts = program.types.get(pcoll as usize).map(|t| &t.parts);
             let content = match parts {
-                Some(Parts::Hash(c, _) | Parts::Trie(c, _)) => Some(*c),
+                Some(Parts::Hash(c, _) | Parts::Trie(c, _) | Parts::Radix(c, _)) => Some(*c),
                 _ => None,
             };
-            let prefusal = match content {
-                None => program.wrong_collection_reason(tp, "a hash or a trie"),
+            let refusal = |served: bool, want: &str| match content {
+                Some(c) if served && !program.is_copyable_entry(c) => {
+                    program.not_copyable_reason(c)
+                }
+                Some(_) if served => String::new(),
+                _ => program.wrong_collection_reason(tp, want),
+            };
+            let prefusal = refusal(
+                matches!(parts, Some(Parts::Hash(..) | Parts::Trie(..))),
+                "a hash or a trie",
+            );
+            let pboxrefusal = refusal(matches!(parts, Some(Parts::Radix(..))), "a spatial index");
+            // A range load reads the root type itself as the sorted collection.
+            let rparts = program.types.get(tp as usize).map(|t| &t.parts);
+            let rcontent = match rparts {
+                Some(Parts::Sorted(c, _) | Parts::Ordered(c, _)) => Some(*c),
+                _ => None,
+            };
+            let prangerefusal = match rcontent {
                 Some(c) if !program.is_copyable_entry(c) => program.not_copyable_reason(c),
                 Some(_) => String::new(),
+                None => program.wrong_collection_reason(tp, "a sorted collection"),
             };
-            let pcontent = if prefusal.is_empty() {
-                content.map_or(-1, i64::from)
-            } else {
-                -1
+            let prangecontent = rcontent.map_or(-1, i64::from);
+            let pcontent = content.map_or(-1, i64::from);
+            let pkind = match parts {
+                Some(Parts::Trie(..)) => 1,
+                Some(Parts::Radix(..)) => 2,
+                _ => 0,
             };
-            let pkind = i64::from(matches!(parts, Some(Parts::Trie(..))));
             RunSidecarShape {
                 tp,
                 hash: id.layout_hash,
@@ -1447,6 +1477,9 @@ pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape>
                 pcontent,
                 pkind,
                 prefusal,
+                pboxrefusal,
+                prangecontent,
+                prangerefusal,
                 walks: crate::c::holds_stored_refs_in(program, tp)
                     || crate::c::holds_trie_in(program, tp),
                 refs: crate::c::holds_stored_refs_in(program, tp),

@@ -685,6 +685,11 @@ pub fn native_handler(name: text) -> integer {
     "n_source_dir_dest" => N_SOURCE_DIR_DEST,
     "n_store_load_key" => N_LOAD_KEY,
     "n_store_load_key_text" => N_LOAD_KEY,
+    "n_store_load_keys" => N_LOAD_KEY,
+    "n_store_load_keys_text" => N_LOAD_KEY,
+    "n_store_load_prefix" => N_LOAD_KEY,
+    "n_store_load_box" => N_LOAD_KEY,
+    "n_store_load_range" => N_LOAD_KEY,
     "t_4text_byte_at" => N_TEXT_BYTE_AT,
     "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
     "t_4text_rfind" => N_TEXT_RFIND,
@@ -1402,10 +1407,45 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     // A paged load of one key (`paged_load`): the key, the path and the collection's place
     // popped; its root type's sidecar and plan from the image.
     ensure_table(img.types, tl);
-    lktext = (img.natives[idx] ?? "") == "n_store_load_key_text";
+    lkname = img.natives[idx] ?? "";
+    lktext = lkname == "n_store_load_key_text";
     lkint = 0;
     lkt = "";
-    if lktext {
+    lkls = NULL_STORE;
+    lklr = 0;
+    lklp = 0;
+    lkts = NULL_STORE;
+    lktr = 0;
+    lktp = 0;
+    lkhi = 0;
+    if lkname == "n_store_load_range" {
+      lkhi = get(stk, sp - 8) ?? 0;
+      lkint = get(stk, sp - 16) ?? 0;
+      sp -= 16;
+    } else if lkname == "n_store_load_box" {
+      // The limit, the till and from corners.
+      lkint = get(stk, sp - 8) ?? -1;
+      crt::slot_ref(io, stk, sp - 24);
+      lkts = io[0] ?? NULL_STORE;
+      lktr = io[1] ?? 0;
+      lktp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 40);
+      lkls = io[0] ?? NULL_STORE;
+      lklr = io[1] ?? 0;
+      lklp = io[2] ?? 0;
+      sp -= 40;
+    } else if lkname == "n_store_load_prefix" {
+      // The prefix and the limit.
+      lkint = get(stk, sp - 8) ?? -1;
+      lkt = crt::stack_str(stk, sp - 24) ?? "";
+      sp -= 24;
+    } else if lkname == "n_store_load_keys" || lkname == "n_store_load_keys_text" {
+      crt::slot_ref(io, stk, sp - 16);
+      lkls = io[0] ?? NULL_STORE;
+      lklr = io[1] ?? 0;
+      lklp = io[2] ?? 0;
+      sp -= 16;
+    } else if lktext {
       lkt = crt::stack_str(stk, sp - 16) ?? "";
       sp -= 16;
     } else {
@@ -1432,7 +1472,21 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
       }
     }
     lks = img.sidecars[lki]!;
-    set_bool(stk, sp, crt::pg_load_key(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkint, lkt, lktext));
+    if lkname == "n_store_load_range" {
+      set(stk, sp, crt::pg_load_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prangerefusal, lks.prangecontent, lks.tp, lkint, lkhi));
+    } else if lkname == "n_store_load_box" {
+      set(stk, sp, crt::pg_load_box(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.pboxrefusal, lks.pcontent, lks.pcoll, lkls, lklr, lklp, lkts, lktr, lktp, lkint, img.types[lks.pcoll]?.name ?? ""));
+    } else if lkname == "n_store_load_prefix" {
+      if lks.pkind != 1 {
+        why[0] = "a prefix load from a store that holds no trie: n_store_load_prefix";
+        return -1;
+      }
+      set(stk, sp, crt::pg_load_prefix(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lkt, lkint));
+    } else if lkname == "n_store_load_keys" || lkname == "n_store_load_keys_text" {
+      set(stk, sp, crt::pg_load_keys(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkls, lklr, lklp, lkname == "n_store_load_keys_text"));
+    } else {
+      set_bool(stk, sp, crt::pg_load_key(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkint, lkt, lktext));
+    }
     sp += 8;
   } else if nh == N_STORE_PERSIST_COPY || nh == N_STORE_LOAD || nh == N_STORE_LOAD_UNTRUSTED {
     // A store's image written or loaded with its root type's sidecar (`RunSidecar`), the one the

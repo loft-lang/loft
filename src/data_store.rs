@@ -531,21 +531,25 @@ pub(crate) const RUNFNREF_HIDDEN: u32 = 32;
 pub(crate) const RUNFNREF_STRIDE: u32 = 40;
 /// `RunGen { def, zone2: integer, text_args, ref_args, text_locals, owned_locals, tuple_refs:
 /// vector<integer> }` — a generator's frame facts (`state::gen_facts`).
-/// `RunSidecar { tp, hash, pcoll, pcontent, pkind: integer, prefusal: text, walks, refs, rekey:
-/// boolean, before, after, dump: text }` — a persisted root type's sidecar and paged-load plan.
+/// `RunSidecar { tp, hash, pcoll, pcontent, pkind, prangecontent: integer, prefusal,
+/// pboxrefusal, prangerefusal: text, walks, refs, rekey: boolean, before, after, dump: text }` —
+/// a persisted root type's sidecar and paged-load plans.
 pub(crate) const RUNSIDECAR_TP: u32 = 0;
 pub(crate) const RUNSIDECAR_HASH: u32 = 8;
 pub(crate) const RUNSIDECAR_PCOLL: u32 = 16;
 pub(crate) const RUNSIDECAR_PCONTENT: u32 = 24;
 pub(crate) const RUNSIDECAR_PKIND: u32 = 32;
-pub(crate) const RUNSIDECAR_PREFUSAL: u32 = 40;
-pub(crate) const RUNSIDECAR_BEFORE: u32 = 44;
-pub(crate) const RUNSIDECAR_AFTER: u32 = 48;
-pub(crate) const RUNSIDECAR_DUMP: u32 = 52;
-pub(crate) const RUNSIDECAR_WALKS: u32 = 56;
-pub(crate) const RUNSIDECAR_REFS: u32 = 57;
-pub(crate) const RUNSIDECAR_REKEY: u32 = 58;
-pub(crate) const RUNSIDECAR_STRIDE: u32 = 64;
+pub(crate) const RUNSIDECAR_PRANGECONTENT: u32 = 40;
+pub(crate) const RUNSIDECAR_PREFUSAL: u32 = 48;
+pub(crate) const RUNSIDECAR_PBOXREFUSAL: u32 = 52;
+pub(crate) const RUNSIDECAR_PRANGEREFUSAL: u32 = 56;
+pub(crate) const RUNSIDECAR_BEFORE: u32 = 60;
+pub(crate) const RUNSIDECAR_AFTER: u32 = 64;
+pub(crate) const RUNSIDECAR_DUMP: u32 = 68;
+pub(crate) const RUNSIDECAR_WALKS: u32 = 72;
+pub(crate) const RUNSIDECAR_REFS: u32 = 73;
+pub(crate) const RUNSIDECAR_REKEY: u32 = 74;
+pub(crate) const RUNSIDECAR_STRIDE: u32 = 80;
 /// `RunWorker { def, input, ret, texts, dests: integer }` — a `par` worker's call shape.
 pub(crate) const RUNWORKER_DEF: u32 = 0;
 pub(crate) const RUNWORKER_INPUT: u32 = 8;
@@ -1853,6 +1857,15 @@ mod tests {
         assert_eq!(pos(ids.run_sidecar, "pcontent"), RUNSIDECAR_PCONTENT);
         assert_eq!(pos(ids.run_sidecar, "pkind"), RUNSIDECAR_PKIND);
         assert_eq!(pos(ids.run_sidecar, "prefusal"), RUNSIDECAR_PREFUSAL);
+        assert_eq!(pos(ids.run_sidecar, "pboxrefusal"), RUNSIDECAR_PBOXREFUSAL);
+        assert_eq!(
+            pos(ids.run_sidecar, "prangecontent"),
+            RUNSIDECAR_PRANGECONTENT
+        );
+        assert_eq!(
+            pos(ids.run_sidecar, "prangerefusal"),
+            RUNSIDECAR_PRANGEREFUSAL
+        );
         assert_eq!(pos(ids.run_sidecar, "before"), RUNSIDECAR_BEFORE);
         assert_eq!(pos(ids.run_sidecar, "after"), RUNSIDECAR_AFTER);
         assert_eq!(pos(ids.run_sidecar, "dump"), RUNSIDECAR_DUMP);
