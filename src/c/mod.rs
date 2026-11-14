@@ -642,16 +642,7 @@ impl<'a> Cx<'a> {
             s.max = 0;
             s
         });
-        let known = |td: u32| self.data.def(td).known_type();
-        let nr = match tp.base() {
-            Type::Sorted(td, key, _) => s.sorted(known(*td), key),
-            Type::Hash(td, key, _) => s.hash(known(*td), key),
-            Type::Index(td, key, _) => s.index(known(*td), key),
-            Type::Radix(td, key, _) => s.spatial(known(*td), key),
-            Type::Trie(td, key, _) => s.trie(known(*td), key),
-            _ => return None,
-        };
-        (usize::from(nr) < self.stores.types.len()).then_some(nr)
+        keyed_local_type_in(self.data, s, self.stores.types.len(), tp)
     }
 
     /// The root type a store holding a value of `tp` is minted as — a keyed local's collection,
@@ -670,61 +661,14 @@ impl<'a> Cx<'a> {
     /// Can a value of `tp` hold a stored reference (`Parts::DbRef`) — a field an image's
     /// loader must remap to the slot it lands in (`rebase_stored_refs`)?
     pub(crate) fn holds_stored_refs(&self, tp: u16) -> bool {
-        use crate::database::Parts;
-        fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
-            if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
-                return false;
-            }
-            seen.push(tp);
-            match &s.types[tp as usize].parts {
-                Parts::DbRef => true,
-                Parts::Struct(f) | Parts::EnumValue(_, f) => {
-                    f.iter().any(|f| walk(s, f.content, seen))
-                }
-                Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
-                Parts::Vector(c)
-                | Parts::Sorted(c, _)
-                | Parts::Hash(c, _)
-                | Parts::Index(c, _)
-                | Parts::Ordered(c, _)
-                | Parts::Array(c)
-                | Parts::ChildRec(c)
-                | Parts::Radix(c, _)
-                | Parts::Trie(c, _) => walk(s, *c, seen),
-                _ => false,
-            }
-        }
-        walk(self.stores, tp, &mut Vec::new())
+        holds_stored_refs_in(self.stores, tp)
     }
 
     /// Does `tp` reach a `trie`?  A whole load of an image whose tries an older placement wrote
     /// files them again by a walk of the type (loft#2241, `loft_trie_refile`), so such a type
     /// is described as one holding references is.
     pub(crate) fn holds_trie(&self, tp: u16) -> bool {
-        use crate::database::Parts;
-        fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
-            if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
-                return false;
-            }
-            seen.push(tp);
-            match &s.types[tp as usize].parts {
-                Parts::Trie(..) => true,
-                Parts::Struct(f) | Parts::EnumValue(_, f) => {
-                    f.iter().any(|f| walk(s, f.content, seen))
-                }
-                Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
-                Parts::Vector(c)
-                | Parts::Sorted(c, _)
-                | Parts::Hash(c, _)
-                | Parts::Index(c, _)
-                | Parts::Ordered(c, _)
-                | Parts::Array(c)
-                | Parts::ChildRec(c)
-                | Parts::Radix(c, _) => walk(s, *c, seen),
-                _ => false,
-            }
-        }
-        walk(self.stores, tp, &mut Vec::new())
+        holds_trie_in(self.stores, tp)
     }
 
     /// Does a load of a store minted as `tp` walk its type: to re-point its references, or to
@@ -826,9 +770,7 @@ impl<'a> Cx<'a> {
     /// Does `tp`'s layout hold a collection whose key order moved (loft#2237)?  An image of it
     /// written before is converted by a whole load (`loft_rekey_walk`).
     fn needs_rekey(&self, tp: u16) -> bool {
-        crate::schema_sidecar::LayoutIdentity::of_store(self.stores, u16::MAX, tp)
-            .dump
-            .contains(crate::placement::KEY_ORDER)
+        needs_rekey_in(self.stores, tp)
     }
 
     /// The rows of the copy table (`loft_ntypes`): one past the highest type it describes.
@@ -4775,4 +4717,87 @@ pub fn emit_tests_of(
         .unwrap_or(out.len());
     out.insert_str(at, &format!("\n{wrappers}"));
     Ok(tidy::drop_unnamed(&out, RUNTIME_END))
+}
+
+/// [`Cx::holds_stored_refs`] over the program's stores, for a reader without a `Cx` (the run
+/// image's sidecars, @PLN91).
+pub(crate) fn holds_stored_refs_in(stores: &Stores, tp: u16) -> bool {
+    use crate::database::Parts;
+    fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
+        if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
+            return false;
+        }
+        seen.push(tp);
+        match &s.types[tp as usize].parts {
+            Parts::DbRef => true,
+            Parts::Struct(f) | Parts::EnumValue(_, f) => f.iter().any(|f| walk(s, f.content, seen)),
+            Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
+            Parts::Vector(c)
+            | Parts::Sorted(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Array(c)
+            | Parts::ChildRec(c)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _) => walk(s, *c, seen),
+            _ => false,
+        }
+    }
+    walk(stores, tp, &mut Vec::new())
+}
+
+/// [`Cx::holds_trie`] over the program's stores.
+pub(crate) fn holds_trie_in(stores: &Stores, tp: u16) -> bool {
+    use crate::database::Parts;
+    fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
+        if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
+            return false;
+        }
+        seen.push(tp);
+        match &s.types[tp as usize].parts {
+            Parts::Trie(..) => true,
+            Parts::Struct(f) | Parts::EnumValue(_, f) => f.iter().any(|f| walk(s, f.content, seen)),
+            Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
+            Parts::Vector(c)
+            | Parts::Sorted(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Array(c)
+            | Parts::ChildRec(c)
+            | Parts::Radix(c, _) => walk(s, *c, seen),
+            _ => false,
+        }
+    }
+    walk(stores, tp, &mut Vec::new())
+}
+
+/// Does `tp`'s layout hold a collection whose key order moved (`Cx::needs_rekey`)?
+pub(crate) fn needs_rekey_in(stores: &Stores, tp: u16) -> bool {
+    crate::schema_sidecar::LayoutIdentity::of_store(stores, u16::MAX, tp)
+        .dump
+        .contains(crate::placement::KEY_ORDER)
+}
+
+/// [`Cx::keyed_local_type`]: the collection type a keyed local's store is minted as, looked up in
+/// `scratch` (a clone of the program's stores, where the lookup may number a type), or `None`
+/// for one past the program's own `limit` types — for a reader without a `Cx` too (the run
+/// image's sidecars, @PLN91).
+pub(crate) fn keyed_local_type_in(
+    data: &Data,
+    scratch: &mut Stores,
+    limit: usize,
+    tp: &Type,
+) -> Option<u16> {
+    let known = |td: u32| data.def(td).known_type();
+    let nr = match tp.base() {
+        Type::Sorted(td, key, _) => scratch.sorted(known(*td), key),
+        Type::Hash(td, key, _) => scratch.hash(known(*td), key),
+        Type::Index(td, key, _) => scratch.index(known(*td), key),
+        Type::Radix(td, key, _) => scratch.spatial(known(*td), key),
+        Type::Trie(td, key, _) => scratch.trie(known(*td), key),
+        _ => return None,
+    };
+    (usize::from(nr) < limit).then_some(nr)
 }

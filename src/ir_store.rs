@@ -927,6 +927,8 @@ fn materialize_run_image(
     gens: &[RunGenShape],
     shared: &[i64],
     workers: &[[i64; 5]],
+    sidecars: &[RunSidecarShape],
+    release: (&str, &str),
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -1015,6 +1017,9 @@ fn materialize_run_image(
         shared,
         workers,
     );
+    materialize_run_sidecars(stores, &rec, &slot(ds::RUNIMG_SIDECARS), sidecars);
+    rec.set_field_str(stores, ds::RUNIMG_OLDEST, release.0);
+    rec.set_field_str(stores, ds::RUNIMG_BRIDGE, release.1);
     crate::vector::pre_alloc_vector(
         &slot(ds::RUNIMG_TYPES),
         count(schema.len()),
@@ -1094,6 +1099,35 @@ fn materialize_run_tables(
         e.set_field_int(stores, ds::RUNWORKER_RET, w[2]);
         e.set_field_int(stores, ds::RUNWORKER_TEXTS, w[3]);
         e.set_field_int(stores, ds::RUNWORKER_DESTS, w[4]);
+    }
+}
+
+/// The run image's persisted-type sidecars (`RunSidecar`).
+#[cfg(feature = "mmap")]
+fn materialize_run_sidecars(
+    stores: &mut Stores,
+    rec: &Record,
+    slot: &DbRef,
+    sidecars: &[RunSidecarShape],
+) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(
+        slot,
+        count(sidecars.len()),
+        ds::RUNSIDECAR_STRIDE,
+        &mut stores.allocations,
+    );
+    let sv = rec.field_recvec(ds::RUNIMG_SIDECARS, ds::RUNSIDECAR_STRIDE);
+    for c in sidecars {
+        let e = sv.push(stores);
+        e.set_field_int(stores, ds::RUNSIDECAR_TP, i64::from(c.tp));
+        e.set_field_int(stores, ds::RUNSIDECAR_HASH, c.hash.cast_signed());
+        e.set_field_bool(stores, ds::RUNSIDECAR_WALKS, c.walks);
+        e.set_field_bool(stores, ds::RUNSIDECAR_REFS, c.refs);
+        e.set_field_bool(stores, ds::RUNSIDECAR_REKEY, c.rekey);
+        e.set_field_str(stores, ds::RUNSIDECAR_BEFORE, &c.before);
+        e.set_field_str(stores, ds::RUNSIDECAR_AFTER, &c.after);
+        e.set_field_str(stores, ds::RUNSIDECAR_DUMP, &c.dump);
     }
 }
 
@@ -1307,6 +1341,89 @@ pub fn run_image_workers(data: &Data) -> Vec<[i64; 5]> {
         .collect()
 }
 
+/// A persisted root type's sidecar, as the C backend's `sidecar_table` writes it.
+pub struct RunSidecarShape {
+    pub tp: u16,
+    pub hash: u64,
+    pub walks: bool,
+    pub refs: bool,
+    pub rekey: bool,
+    pub before: String,
+    pub after: String,
+    pub dump: String,
+}
+
+/// The sidecars of every root type a store is persisted, loaded or verified as: the type the
+/// C backend reads off each such call's value (`store_value_type`, then `root_type`), with the
+/// layout identity the C backend writes for it.
+#[must_use]
+pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape> {
+    let mut tps: Vec<u16> = Vec::new();
+    let mut scratch: Option<Stores> = None;
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        let vars = def.variables();
+        def.code.walk(&mut |v| {
+            let Value::Call(c, args) = v else {
+                return;
+            };
+            if !matches!(
+                data.def(*c).name.as_str(),
+                "n_store_persist_copy"
+                    | "n_store_load"
+                    | "n_store_load_untrusted"
+                    | "n_store_verify"
+            ) {
+                return;
+            }
+            let mut a = args.first().map(Value::unspan);
+            while let Some(Value::Call(g, ga)) = a
+                && data.def(*g).name() == "OpGetField"
+            {
+                a = ga.first().map(Value::unspan);
+            }
+            let Some(Value::Var(var)) = a else {
+                return;
+            };
+            let tp = match vars.tp(*var).base() {
+                Type::Reference(r, _) | Type::Enum(r, true, _) => data.def(*r).known_type(),
+                Type::Vector(elm, _) => data.owned_vector_type(elm, def.source()),
+                other => {
+                    let sc = scratch.get_or_insert_with(|| {
+                        let mut s = program.clone();
+                        s.max = 0;
+                        s
+                    });
+                    crate::c::keyed_local_type_in(data, sc, program.types.len(), other)
+                        .unwrap_or(u16::MAX)
+                }
+            };
+            if tp != u16::MAX && !tps.contains(&tp) {
+                tps.push(tp);
+            }
+        });
+    }
+    let marker = format!("slot={}\n", u16::MAX);
+    tps.into_iter()
+        .map(|tp| {
+            let id = crate::schema_sidecar::LayoutIdentity::of_store(program, u16::MAX, tp);
+            let text = id.to_sidecar();
+            let (before, after) = text.split_once(&marker).unwrap_or((&text, ""));
+            RunSidecarShape {
+                tp,
+                hash: id.layout_hash,
+                walks: crate::c::holds_stored_refs_in(program, tp)
+                    || crate::c::holds_trie_in(program, tp),
+                refs: crate::c::holds_stored_refs_in(program, tp),
+                rekey: crate::c::needs_rekey_in(program, tp),
+                before: before.to_string(),
+                after: after.to_string(),
+                dump: id.dump.clone(),
+            }
+        })
+        .collect()
+}
+
 /// A generator's frame facts for the run image (`RunGen`), from `state::gen_facts` — the same
 /// reads the interpreter's coroutine operators make.
 pub struct RunGenShape {
@@ -1503,6 +1620,8 @@ pub fn save_run_image(
             &run_image_gens(data),
             &run_image_shared(data, library_names),
             &run_image_workers(data),
+            &run_image_sidecars(data, program),
+            (&program.release().oldest, &program.release().bridge),
             library_names,
             &program.types,
             main,

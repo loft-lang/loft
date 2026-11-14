@@ -605,6 +605,14 @@ N_LIST_DIR = 36;
 N_RADIX_SORTED = 37;
 N_SPATIAL_RANGE = 38;
 N_TRIE_PREFIX = 39;
+N_STORE_PERSIST_COPY = 40;
+N_STORE_LOAD = 41;
+N_STORE_LOAD_UNTRUSTED = 42;
+N_STORE_VERIFY = 43;
+N_UPGRADE_OWED_NEXT = 44;
+N_UPGRADE_OWED_FINISH = 45;
+N_UPGRADE_OWED_REF = 46;
+N_UPGRADE_ROUTINE = 47;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -646,6 +654,16 @@ pub fn native_handler(name: text) -> integer {
     "n_radix_sorted" => N_RADIX_SORTED,
     "n_spatial_range" => N_SPATIAL_RANGE,
     "n_trie_prefix" => N_TRIE_PREFIX,
+    "n_store_persist_copy" => N_STORE_PERSIST_COPY,
+    "n_store_load" => N_STORE_LOAD,
+    "n_store_load_untrusted" => N_STORE_LOAD_UNTRUSTED,
+    "n_store_verify" => N_STORE_VERIFY,
+    "n_store_upgrade_owed_next" => N_UPGRADE_OWED_NEXT,
+    "n_store_upgrade_owed_finish" => N_UPGRADE_OWED_FINISH,
+    "n_store_upgrade_owed_record" => N_UPGRADE_OWED_REF,
+    "n_store_upgrade_owed_old" => N_UPGRADE_OWED_REF,
+    "n_store_upgrade_owed_from" => N_UPGRADE_OWED_REF,
+    "n_store_upgrade_routine" => N_UPGRADE_ROUTINE,
     "t_4text_byte_at" => N_TEXT_BYTE_AT,
     "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
     "t_4text_rfind" => N_TEXT_RFIND,
@@ -1251,7 +1269,7 @@ fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
 // arguments popped and its result pushed on the stack store `stk` at `sp0`, as Rust's native
 // does.  Answers the new stack top, or -1 with the reason in `why[0]` when the runner does not
 // carry it.
-fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, why: vector<text>) -> integer {
+fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, why: vector<text>) -> integer {
   sp = sp0;
   if nh == N_ASSERT {
     line = get(stk, sp - 8);
@@ -1322,6 +1340,53 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     crt::radix_snap(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rswhich, rstp, rsints, rspre);
     crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     sp += 16;
+  } else if nh == N_UPGRADE_OWED_NEXT {
+    // No conversion is owed: the runner loads only an image of its own layout (it carries no
+    // converter), as the C runtime built without one answers.
+    set(stk, sp, -1);
+    sp += 8;
+  } else if nh == N_UPGRADE_OWED_FINISH {
+    set_bool(stk, sp, true);
+    sp += 8;
+  } else if nh == N_UPGRADE_OWED_REF {
+    crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
+    sp += 16;
+  } else if nh == N_UPGRADE_ROUTINE {
+    // A routine registered for a conversion the runner never makes.
+    sp -= 24;
+  } else if nh == N_STORE_VERIFY {
+    ensure_table(img.types, tl);
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set_bool(stk, sp, crt::store_verify(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    sp += 8;
+  } else if nh == N_STORE_PERSIST_COPY || nh == N_STORE_LOAD || nh == N_STORE_LOAD_UNTRUSTED {
+    // A store's image written or loaded with its root type's sidecar (`RunSidecar`), the one the
+    // C backend names at the call: the store's root type picks it here.
+    ensure_table(img.types, tl);
+    pcpath = crt::stack_str(stk, sp - 16) ?? "";
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    pcs = io[0] ?? NULL_STORE;
+    pck = crt::store_known(pcs);
+    pci = -1;
+    for i in 0..len(img.sidecars) {
+      if (img.sidecars[i]?.tp ?? -1) == pck {
+        pci = i;
+      }
+    }
+    if pci < 0 || (nh == N_STORE_PERSIST_COPY && (img.sidecars[pci]?.refs ?? false)) {
+      why[0] = "a store persisted or loaded without a sidecar the runner can use: {img.natives[idx] ?? ""}";
+      return -1;
+    }
+    if len(sidecar_ix) == 0 {
+      for sc in img.sidecars {
+        sidecar_ix += [crt::sidecar_add(sc.tp, sc.hash, sc.walks, sc.before, sc.after, sc.dump, img.oldest, img.bridge)];
+      }
+    }
+    pcix = sidecar_ix[pci] ?? -1;
+    set_bool(stk, sp, if nh == N_STORE_PERSIST_COPY { crt::image_write(pcs, io[1] ?? 0, io[2] ?? 0, pcpath, pcix) } else { crt::image_load(pcs, io[1] ?? 0, io[2] ?? 0, pcpath, pcix, nh == N_STORE_LOAD_UNTRUSTED) });
+    sp += 8;
   } else if nh == N_YIELD_FRAME {
     // The frame-yield flag only a host's frame loop reads; a run from an image has none.
     sp = sp;
@@ -3259,6 +3324,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   ptab = par_natives(img);
   pjobs: vector<ParJob> = [];
   pbufs: vector<ParBuf> = [];
+  // The C runtime's index of each image sidecar, made at the first persistence call.
+  sidecar_ix: vector<integer> = [];
   // The stack top and the code position handed to `exec_more` and back.
   mregs: vector<integer> = [0, 0, 0];
   // A walk step's answer: the record's reference and the walk's next state.
@@ -3662,7 +3729,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         depth += 1;
         pc = img.starts[shd] ?? 0;
       } else {
-        nsp = call_native(ns[idx] ?? -1, idx, img, stk, sp, io, tl, nwhy);
+        nsp = call_native(ns[idx] ?? -1, idx, img, stk, sp, io, tl, sidecar_ix, nwhy);
         if nsp < 0 {
           return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
         }

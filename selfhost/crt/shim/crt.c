@@ -912,6 +912,60 @@ void loft_crt_set_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int6
     loft_set_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(fs, fr, fp), loft_crt_ref(ss, sr, sp), (int) free_source);
 }
 
+/* The run image's persisted-type sidecars (`RunSidecar`), made once a run: each the C backend's
+ * `loft_sidecar{tp}`, its texts copied into memory of its own. */
+static loft_sidecar *loft_crt_sidecars = 0;
+static int64_t loft_crt_nsidecars = 0;
+
+static const char *loft_crt_cstr(const char *p, int64_t n) {
+    char *c = (char *) malloc((size_t) n + 1);
+    if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (n > 0) memcpy(c, p, (size_t) n);
+    c[n] = 0;
+    return c;
+}
+
+/* One sidecar added; its index. */
+int64_t loft_crt_sidecar_add(int64_t tp, int64_t hash, int64_t walks, const char *before, int64_t blen,
+                             const char *after, int64_t alen, const char *dump, int64_t dlen, const char *oldest,
+                             int64_t olen, const char *bridge, int64_t brlen) {
+    loft_sidecar *t = (loft_sidecar *) realloc(loft_crt_sidecars, (size_t) (loft_crt_nsidecars + 1) * sizeof *t);
+    if (!t) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_crt_sidecars = t;
+    loft_sidecar *c = &t[loft_crt_nsidecars];
+    memset(c, 0, sizeof *c);
+    c->tp = (uint16_t) tp;
+    c->before_slot = loft_crt_cstr(before, blen);
+    c->after_slot = loft_crt_cstr(after, alen);
+    c->hash = (uint64_t) hash;
+    c->dump = loft_crt_cstr(dump, dlen);
+    c->oldest = loft_crt_cstr(oldest, olen);
+    c->bridge = loft_crt_cstr(bridge, brlen);
+    c->types = walks ? (const loft_tdesc *) loft_crt_types : 0;
+    return loft_crt_nsidecars++;
+}
+
+/* `store_persist_copy(r, path)` (`loft_image_write`) with sidecar `sc`. */
+int64_t loft_crt_image_write(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc) {
+    if (!loft_crt_types || sc < 0 || sc >= loft_crt_nsidecars) return 0;
+    return loft_image_write((const loft_tdesc *) loft_crt_types, loft_crt_ntypes, loft_crt_ref(s, r, p),
+                            loft_crt_str(path, plen), &loft_crt_sidecars[sc]) ? 1 : 0;
+}
+
+/* `store_load(r, path)` / `store_load_untrusted` (`loft_image_load`) with sidecar `sc`. */
+int64_t loft_crt_image_load(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
+                            int64_t untrusted) {
+    if (sc < 0 || sc >= loft_crt_nsidecars) return 0;
+    return loft_image_load(loft_crt_ref(s, r, p), loft_crt_str(path, plen), &loft_crt_sidecars[sc], (int) untrusted)
+               ? 1 : 0;
+}
+
+/* `store_verify(r)` (`loft_store_verify`). */
+int64_t loft_crt_store_verify(int64_t s, int64_t r, int64_t p) {
+    if (!loft_crt_types) return 0;
+    return loft_store_verify((const loft_tdesc *) loft_crt_types, loft_crt_ntypes, loft_crt_ref(s, r, p));
+}
+
 /* OpMoveVector (Stores::move_vector): `src`'s elements moved onto `dst`, `linked` an element
  * type of a linked group. */
 void loft_crt_move_vector(int64_t d_store, int64_t d_rec, int64_t d_pos, int64_t s_store, int64_t s_rec,

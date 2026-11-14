@@ -500,8 +500,9 @@ pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
 /// `RunImage { code: vector<u8>, starts: vector<u32>, ops, layouts, natives: vector<text>,
 /// consts: vector<RunConst>, fnrefs: vector<RunFnRef>, types: vector<DbType>,
-/// gens: vector<RunGen>, shared: vector<integer>, workers: vector<RunWorker>, main: integer,
-/// cwd: boolean }` — the run image's store root (@PLN91).
+/// gens: vector<RunGen>, shared: vector<integer>, workers: vector<RunWorker>,
+/// sidecars: vector<RunSidecar>, oldest, bridge: text, main: integer, cwd: boolean }` — the run
+/// image's store root (@PLN91).
 pub(crate) const RUNIMG_MAIN: u32 = 0;
 pub(crate) const RUNIMG_CODE: u32 = 8;
 pub(crate) const RUNIMG_STARTS: u32 = 12;
@@ -514,8 +515,11 @@ pub(crate) const RUNIMG_TYPES: u32 = 36;
 pub(crate) const RUNIMG_GENS: u32 = 40;
 pub(crate) const RUNIMG_SHARED: u32 = 44;
 pub(crate) const RUNIMG_WORKERS: u32 = 48;
-pub(crate) const RUNIMG_CWD: u32 = 52;
-pub(crate) const RUNIMG_STRIDE: u32 = 56;
+pub(crate) const RUNIMG_SIDECARS: u32 = 52;
+pub(crate) const RUNIMG_OLDEST: u32 = 56;
+pub(crate) const RUNIMG_BRIDGE: u32 = 60;
+pub(crate) const RUNIMG_CWD: u32 = 64;
+pub(crate) const RUNIMG_STRIDE: u32 = 72;
 /// `RunFnRef { def, drop, kind, cascade: integer, hidden: vector<integer> }` — a call through a function
 /// reference's shape.
 pub(crate) const RUNFNREF_DEF: u32 = 0;
@@ -526,6 +530,17 @@ pub(crate) const RUNFNREF_HIDDEN: u32 = 32;
 pub(crate) const RUNFNREF_STRIDE: u32 = 40;
 /// `RunGen { def, zone2: integer, text_args, ref_args, text_locals, owned_locals, tuple_refs:
 /// vector<integer> }` — a generator's frame facts (`state::gen_facts`).
+/// `RunSidecar { tp, hash: integer, walks, refs, rekey: boolean, before, after, dump: text }` —
+/// a persisted root type's sidecar.
+pub(crate) const RUNSIDECAR_TP: u32 = 0;
+pub(crate) const RUNSIDECAR_HASH: u32 = 8;
+pub(crate) const RUNSIDECAR_BEFORE: u32 = 16;
+pub(crate) const RUNSIDECAR_AFTER: u32 = 20;
+pub(crate) const RUNSIDECAR_DUMP: u32 = 24;
+pub(crate) const RUNSIDECAR_WALKS: u32 = 28;
+pub(crate) const RUNSIDECAR_REFS: u32 = 29;
+pub(crate) const RUNSIDECAR_REKEY: u32 = 30;
+pub(crate) const RUNSIDECAR_STRIDE: u32 = 32;
 /// `RunWorker { def, input, ret, texts, dests: integer }` — a `par` worker's call shape.
 pub(crate) const RUNWORKER_DEF: u32 = 0;
 pub(crate) const RUNWORKER_INPUT: u32 = 8;
@@ -1822,6 +1837,18 @@ mod tests {
         assert_eq!(pos(ids.run_image, "gens"), RUNIMG_GENS);
         assert_eq!(pos(ids.run_image, "shared"), RUNIMG_SHARED);
         assert_eq!(pos(ids.run_image, "workers"), RUNIMG_WORKERS);
+        assert_eq!(pos(ids.run_image, "sidecars"), RUNIMG_SIDECARS);
+        assert_eq!(pos(ids.run_image, "oldest"), RUNIMG_OLDEST);
+        assert_eq!(pos(ids.run_image, "bridge"), RUNIMG_BRIDGE);
+        assert_eq!(u32::from(stores.size(ids.run_sidecar)), RUNSIDECAR_STRIDE);
+        assert_eq!(pos(ids.run_sidecar, "tp"), RUNSIDECAR_TP);
+        assert_eq!(pos(ids.run_sidecar, "hash"), RUNSIDECAR_HASH);
+        assert_eq!(pos(ids.run_sidecar, "before"), RUNSIDECAR_BEFORE);
+        assert_eq!(pos(ids.run_sidecar, "after"), RUNSIDECAR_AFTER);
+        assert_eq!(pos(ids.run_sidecar, "dump"), RUNSIDECAR_DUMP);
+        assert_eq!(pos(ids.run_sidecar, "walks"), RUNSIDECAR_WALKS);
+        assert_eq!(pos(ids.run_sidecar, "refs"), RUNSIDECAR_REFS);
+        assert_eq!(pos(ids.run_sidecar, "rekey"), RUNSIDECAR_REKEY);
         assert_eq!(u32::from(stores.size(ids.run_worker)), RUNWORKER_STRIDE);
         assert_eq!(pos(ids.run_worker, "def"), RUNWORKER_DEF);
         assert_eq!(pos(ids.run_worker, "input"), RUNWORKER_INPUT);

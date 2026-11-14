@@ -495,6 +495,22 @@ pub struct RunWorker {
   pub dests: integer,
 }
 
+// A persisted root type's sidecar (`schema_sidecar::LayoutIdentity`, as the C backend's
+// `sidecar_table` writes it): the sidecar text split where its slot line goes, the layout hash
+// and dump a load gates on, whether a load walks the type (`load_walks_type`), whether it holds
+// a stored reference (written through the converter, which the runner does not carry) and
+// whether its key order moved (converted by a whole load, likewise).
+pub struct RunSidecar {
+  pub tp: integer,
+  pub hash: integer,
+  pub walks: boolean,
+  pub refs: boolean,
+  pub rekey: boolean,
+  pub before: text,
+  pub after: text,
+  pub dump: text,
+}
+
 pub struct RunImage {
   pub code: vector<u8>,
   pub starts: vector<u32>,
@@ -510,11 +526,16 @@ pub struct RunImage {
   // other native, a `#dest` form included.
   pub shared: vector<integer>,
   pub workers: vector<RunWorker>,
+  pub sidecars: vector<RunSidecar>,
+  // The release's oldest readable layout and its bridge (`Stores::release`), which a load gates
+  // an older image on.
+  pub oldest: text,
+  pub bridge: text,
   pub main: integer,
   pub cwd: boolean,
 }
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], sidecars: [], oldest: "", bridge: "", main: 0, cwd: false }
 }
