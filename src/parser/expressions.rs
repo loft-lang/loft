@@ -7237,6 +7237,10 @@ use a separate collection or add after the loop"
             var_nr = self
                 .vars
                 .body_local_binding(&name, var_nr, &s_type, &mut self.lexer);
+            // Bound HERE, in this loop's body (`@FR-B-Scope`): without the record the new
+            // binding never ended, and a later loop could not take the spelling for its
+            // variable ("shadows a local still in scope").
+            self.record_binding(var_nr);
             rebound_to = Value::Var(var_nr);
             &rebound_to
         } else {
