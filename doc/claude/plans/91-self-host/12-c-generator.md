@@ -157,7 +157,25 @@ The order inside G-2 follows the survey's ranking, not this list, once the ranki
 
 ### The order of the next ports
 
-Each is a layer first (rule 6), then text.  The range facts need `opt/char_walk.rs` and `opt/range.rs`
+Each is a layer first (rule 6), then text.  What `opt/range.rs` asks of its port, read off the
+Rust before the first line is written:
+
+- its expression half (`range`, `op_range`, `rem_range`, `elem_range`, `type_range`) is
+  interval arithmetic in `i128`; in loft an operation on two `integer` bounds that does not fit
+  answers null, which is the same verdict (`fits`);
+- `call_range` keeps a memo per callee and argument ranges (`CALL_MEMO`, keyed by the
+  definition's address) and a nesting count (`LONG_DEPTH`): a record of the program's `Ranges`
+  context, keyed by definition number;
+- `seed_accumulators` finds "the call just before this step" by the IDENTITY of a node
+  (`std::ptr::eq`): the port names a statement by its block and position instead;
+- three loops walk a `HashMap` (`shaped`, `sets`, `round`); each entry is judged alone except
+  in `seed_while_counters`, where a counter's seed may read a range another one just entered —
+  the port walks them by variable number, and a difference there is a defect of the Rust
+  order, to settle in Rust;
+- its inputs are the `nn` facts (ported), the function's character walks
+  (`char_walk::walks`, the self-host stream's) and a twin's seeds (none for a plain function).
+
+The range facts need `opt/char_walk.rs` and `opt/range.rs`
 (its interval arithmetic in `i128` is written with the null an overflowing `integer`
 operation answers).  With both layers equal, the writer's core walk (`body.rs` `write`:
 declarations, temporaries, statements, calls, `if`) starts producing text.
