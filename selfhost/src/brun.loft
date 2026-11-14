@@ -209,6 +209,9 @@ H_INDEX_LEN = 185;
 H_SET_STACK_REF = 186;
 H_NEGATE_SINGLE = 187;
 H_ABS_FLOAT = 188;
+H_MATH_FUNC = 189;
+H_MATH_FUNC2 = 190;
+H_SET_CHARACTER = 191;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -467,6 +470,12 @@ pub fn handler(name: text) -> integer {
     "OpSetStackRef" => H_SET_STACK_REF,
     "OpMinSingleSingle" => H_NEGATE_SINGLE,
     "OpAbsFloat" => H_ABS_FLOAT,
+    "OpMathFuncFloat" => H_MATH_FUNC,
+    "OpMathFunc2Float" => H_MATH_FUNC2,
+    "OpSetCharacter" => H_SET_CHARACTER,
+    "OpConvSingleFromNull" => H_CONV_FLOAT_FROM_NULL,
+    "OpDivFloatNullable" => H_FLOAT2,
+    "OpRemFloatNullable" => H_FLOAT2,
     _ => -1
   }
 }
@@ -497,6 +506,8 @@ N_TEXT_FIND = 21;
 N_TEXT_TRIM = 22;
 N_TEXT_TRIM_START = 23;
 N_TEXT_TRIM_END = 24;
+N_TO_UPPERCASE_DEST = 25;
+N_TO_LOWERCASE_DEST = 26;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -524,6 +535,8 @@ pub fn native_handler(name: text) -> integer {
     "t_4text_trim" => N_TEXT_TRIM,
     "t_4text_trim_start" => N_TEXT_TRIM_START,
     "t_4text_trim_end" => N_TEXT_TRIM_END,
+    "t_4text_to_uppercase_dest" => N_TO_UPPERCASE_DEST,
+    "t_4text_to_lowercase_dest" => N_TO_LOWERCASE_DEST,
     _ => -1
   }
 }
@@ -659,6 +672,9 @@ fn layout_of(h: integer) -> text {
     180 => "h",
     181 => "h",
     183 => "h",
+    189 => "c",
+    190 => "c",
+    191 => "h",
     _ => ""
   }
 }
@@ -952,6 +968,12 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
   } else if nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END {
     // A view of the same text, narrowed in place (Rust's `str::trim*`).
     crt::stack_text_trim(stk, sp - 16, if nh == N_TEXT_TRIM { 0 } else if nh == N_TEXT_TRIM_START { 1 } else { 2 });
+  } else if nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST {
+    // The text's case changed, appended to the destination.
+    crt::slot_ref(io, stk, sp - 16);
+    ucv = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if nh == N_TO_UPPERCASE_DEST { ucv.to_uppercase() } else { ucv.to_lowercase() });
   } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
     nv = crt::stack_str(stk, sp - 16) ?? "";
     ns2 = crt::stack_str(stk, sp - 32) ?? "";
@@ -1411,7 +1433,7 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
     crt::slot_ref(io, stk, sp - 16);
     wkind = won & 63;
     if h == H_WALK_REMOVE {
-      if wkind < 1 || wkind > 3 {
+      if wkind > 3 {
         why[0] = "a removal in a walk the runner does not carry: OpRemove";
         return -1;
       }
@@ -1585,9 +1607,12 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       }
     }
   } else if h == H_CONV_FLOAT_FROM_NULL {
-    // A null float (NaN) or the null character (0) pushed.
-    if (img.ops[op] ?? "") == "OpConvCharacterFromNull" {
+    // A null float or single (NaN) or the null character (0) pushed.
+    cfnname = img.ops[op] ?? "";
+    if cfnname == "OpConvCharacterFromNull" {
       set(stk, sp, 0);
+    } else if cfnname == "OpConvSingleFromNull" {
+      crt::set_float(stk, 1, 8 + sp, 0, null, true);
     } else {
       crt::set_float(stk, 1, 8 + sp, 0, null, false);
     }
@@ -1638,6 +1663,37 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
   } else if h == H_ABS_FLOAT {
     afv = get_f(stk, sp - 8);
     crt::set_float(stk, 1, 8 + sp - 8, 0, if afv == null { null } else { afv!.abs() }, false);
+  } else if h == H_MATH_FUNC {
+    // `OpMathFuncFloat`: loft's own functions, which are this operator compiled.
+    mfid = i8_at(img.code, pc);
+    pc += 1;
+    mfv = get_f(stk, sp - 8);
+    mfr: float? = null;
+    if mfv != null {
+      x = mfv!;
+      mfr = if mfid == 0 { x.cos() } else if mfid == 1 { x.sin() } else if mfid == 2 { x.tan() } else if mfid == 3 { x.acos() } else if mfid == 4 { x.asin() } else if mfid == 5 { x.atan() } else if mfid == 6 { x.ceil() } else if mfid == 7 { x.floor() } else if mfid == 8 { x.round() } else if mfid == 9 { x.sqrt() } else if mfid == 10 { x.exp() } else { null };
+    }
+    crt::set_float(stk, 1, 8 + sp - 8, 0, mfr, false);
+  } else if h == H_MATH_FUNC2 {
+    // `OpMathFunc2Float`: `atan2` (0) and `log` to a base (1).
+    m2id = i8_at(img.code, pc);
+    pc += 1;
+    m2b = get_f(stk, sp - 8);
+    m2a = get_f(stk, sp - 16);
+    sp -= 8;
+    m2r: float? = null;
+    if m2a != null && m2b != null {
+      m2r = if m2id == 0 { m2a!.atan2(m2b!) } else if m2id == 1 { m2a!.log(m2b!) } else { null };
+    }
+    crt::set_float(stk, 1, 8 + sp - 8, 0, m2r, false);
+  } else if h == H_SET_CHARACTER {
+    // The character popped, then the reference; written as its code point.
+    scfld = u16_at(img.code, pc);
+    pc += 2;
+    scv = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    crt::set_w(crt::W_CHARACTER, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, scfld, 0, scv);
   } else {
     why[0] = "an operator the runner does not carry: {img.ops[op] ?? "op {op}"}";
     return -1;
@@ -2373,7 +2429,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       fb = get_f(stk, sp);
       fa = get_f(stk, sp - 8);
       name = img.ops[op] ?? "";
-      set_f(stk, sp - 8, if name == "OpAddFloat" { fa + fb } else if name == "OpMinFloat" { fa - fb } else if name == "OpMulFloat" { fa * fb } else if name == "OpDivFloat" { fa / fb } else { fa % fb });
+      set_f(stk, sp - 8, if name == "OpAddFloat" { fa + fb } else if name == "OpMinFloat" { fa - fb } else if name == "OpMulFloat" { fa * fb } else if name == "OpDivFloat" || name == "OpDivFloatNullable" { fa / fb } else { fa % fb });
     } else if h == H_CMP_FLOAT {
       sp -= 8;
       fb = get_f(stk, sp);
