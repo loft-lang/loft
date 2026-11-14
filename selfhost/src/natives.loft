@@ -228,35 +228,60 @@ fn ensure_table(ts: vector<ir::DbType>, tl: vector<boolean>) {
   }
 }
 
-// The `n` key parts of collection type `tp` on the stack under `top` — the first key on top, as
-// `State::stack_keys` pops them — pushed onto the C runtime's key stack in key order, each read
-// as `stack_keys` reads it by its content (`types::key_contents`): an integer of any width, a single, a float, a
-// boolean's byte, a text, a character, any other (an enum) a byte.  Answers the bytes they take,
-// -1 with nothing pushed when a part's type does not resolve.
-pub fn push_keys(ts: vector<ir::DbType>, stk: integer, tp: integer, n: integer, top: integer) -> integer {
-  kc = types::key_contents(ts, tp);
-  if kc == null || n > len(kc) {
+// The `n` key parts on the stack under `top` — the first key on top, as `State::stack_keys`
+// pops them — pushed onto the C runtime's key stack in key order, each read as its plan says
+// (`State::keyed_facts`: the part count at `plan` in `parts`, then each part's `KP_*`).
+// Answers the bytes they take, -1 with nothing pushed when the type has no plan for them.
+pub fn push_keys(parts: const vector<integer>, plan: integer, stk: integer, n: integer, top: integer) -> integer {
+  if plan < 0 || n > (parts[plan] ?? 0) {
     return -1;
   }
   at = top;
   for i in 0..n {
-    code = kc[i] ?? 0;
-    at -= if code == 5 { 16 } else { 8 };
-    if code == 2 || code == 3 {
-      crt::key_float(crt::get_float(stk, 1, 8 + at, 0, code == 2), code == 2);
-    } else if code == 5 {
+    code = parts[plan + 1 + i] ?? KP_INT;
+    at -= if code == KP_TEXT { 16 } else { 8 };
+    if code == KP_FLOAT || code == KP_SINGLE {
+      crt::key_float(crt::get_float(stk, 1, 8 + at, 0, code == KP_SINGLE), code == KP_SINGLE);
+    } else if code == KP_TEXT {
       crt::key_text(crt::stack_str(stk, at));
-    } else if code == 4 {
+    } else if code == KP_BOOLEAN {
       crt::key_int(crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0));
-    } else if code == 6 {
+    } else if code == KP_CHARACTER {
       crt::key_int(crt::get_w(crt::W_CHARACTER, stk, 1, 8 + at, 0, 0));
-    } else if code >= 7 && !narrow_integer(ts, code) {
+    } else if code == KP_ENUM {
       crt::key_int(crt::get_w(crt::W_ENUM, stk, 1, 8 + at, 0, 0));
     } else {
       crt::key_int(get(stk, at));
     }
   }
   top - at
+}
+
+// How a key part of content type `code` (`types::key_contents`) lies in its stack slot.
+pub KP_INT = 0;
+pub KP_FLOAT = 1;
+pub KP_SINGLE = 2;
+pub KP_TEXT = 3;
+pub KP_BOOLEAN = 4;
+pub KP_CHARACTER = 5;
+pub KP_ENUM = 6;
+
+pub fn key_part(ts: vector<ir::DbType>, code: integer) -> integer {
+  if code == 3 {
+    KP_FLOAT
+  } else if code == 2 {
+    KP_SINGLE
+  } else if code == 5 {
+    KP_TEXT
+  } else if code == 4 {
+    KP_BOOLEAN
+  } else if code == 6 {
+    KP_CHARACTER
+  } else if code >= 7 && !narrow_integer(ts, code) {
+    KP_ENUM
+  } else {
+    KP_INT
+  }
 }
 
 // Is type `tp` one of the narrow integer encodings (`Parts::Int`/`IntRaw`/`Short`/`ShortRaw`/

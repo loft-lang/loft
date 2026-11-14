@@ -449,6 +449,7 @@ static void loft_store_drop(uint16_t nr) {
     s->buf = (uint8_t *) malloc((size_t) s->size * 8);
     if (!s->buf) { fputs("loft: out of memory\n", stderr); abort(); }
     s->live = 0;
+    loft_store_freed(nr);
     s->defined = 0;
     s->no_park = 0;
 }

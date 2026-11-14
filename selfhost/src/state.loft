@@ -104,6 +104,13 @@ pub struct State {
   // and for a destination form (`…#dest`) the body of its plain twin.
   pub bodies: vector<integer>,
   pub bodies_dest: vector<integer>,
+  // Each keyed collection type's facts, derived on its first lookup (`keyed_facts`): four
+  // integers per type — derived (1) or not (0), the kind (0 a hash, `types::keyed_kind`
+  // otherwise, -1 not a keyed collection), where its key plan starts in `key_parts` (-1 none),
+  // its element type.  A plan is its part count, then how each part lies in its slot
+  // (`natives::KP_*`).
+  pub kfacts: vector<integer>,
+  pub key_parts: vector<integer>,
 }
 
 // `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
@@ -220,7 +227,7 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [] };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
@@ -846,9 +853,8 @@ pub fn raise_recoverable(self: State, what: text) {
 
 // The reference in the frame slot at byte `at`.
 fn ref_at(self: State, at: integer) -> DbRef {
-  io: vector<integer> = [NULL_STORE, 0, 0];
-  crt::slot_ref(io, self.stk, at);
-  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+  // Three raw words of the slot, the store number its low 16 bits (`crt::place_ref`).
+  DbRef { store_nr: crt::stack_get(4, self.stk, at) & 65535, rec: crt::stack_get(4, self.stk, at + 4), pos: crt::stack_get(4, self.stk, at + 8) }
 }
 
 // `get_stack::<DbRef>`: a reference popped (a 16-byte step).
@@ -1094,6 +1100,32 @@ pub fn default_of(self: State, tp: integer) -> vector<u8> {
     self.imaged[tp] = true;
   }
   self.images[tp] ?? []
+}
+
+// Type `tp`'s keyed facts (`State.kfacts`), derived on its first use: answers where they start.
+pub fn keyed_facts(self: State, tp: integer) -> integer {
+  at = tp * 4;
+  if (self.kfacts[at] ?? 0) == 1 {
+    return at;
+  }
+  while len(self.kfacts) < at + 4 {
+    self.kfacts += [0];
+  }
+  kind = types::keyed_kind(self.types, tp) ?? (if types::hash_element(self.types, tp) == null { -1 } else { 0 });
+  plan = -1;
+  kc = types::key_contents(self.types, tp);
+  if kc != null && kind >= 0 {
+    plan = len(self.key_parts);
+    self.key_parts += [len(kc)];
+    for c in kc {
+      self.key_parts += [natives::key_part(self.types, c)];
+    }
+  }
+  self.kfacts[at + 1] = kind;
+  self.kfacts[at + 2] = plan;
+  self.kfacts[at + 3] = types::content_of(self.types, tp) ?? 0;
+  self.kfacts[at] = 1;
+  at
 }
 
 // The collection a record is added to (`OpNewRecord`, `OpFinishRecord`): the parent `ptp`
@@ -1455,13 +1487,14 @@ pub fn get_record(self: State) {
   db_tp = self.code_u16();
   no_keys = self.code_u8();
   self.load_table();
-  kind = types::keyed_kind(self.types, db_tp) ?? 0;
-  if types::hash_element(self.types, db_tp) == null && kind == 0 {
+  f = self.keyed_facts(db_tp);
+  kind = self.kfacts[f + 1] ?? -1;
+  if kind < 0 {
     self.stop("not carried: a lookup in {self.types[db_tp]?.name ?? "a collection"}");
     return;
   }
   // The key parts read off the stack as the old runner reads them (`stack_keys`).
-  bytes = natives::push_keys(self.types, self.stk, db_tp, no_keys, self.stack_pos);
+  bytes = natives::push_keys(self.key_parts, self.kfacts[f + 2] ?? -1, self.stk, no_keys, self.stack_pos);
   if bytes < 0 || !self.can_pop(bytes + 16) {
     self.stop("not carried: a lookup whose key does not resolve");
     return;
@@ -2134,12 +2167,13 @@ pub fn set_keyed(self: State) {
   no_keys = self.code_u8();
   tp = raw & 32767;
   self.load_table();
-  kind = types::keyed_kind(self.types, tp) ?? 0;
-  if types::hash_element(self.types, tp) == null && kind == 0 {
+  f = self.keyed_facts(tp);
+  kind = self.kfacts[f + 1] ?? -1;
+  if kind < 0 {
     self.stop("not carried: a keyed write into {self.types[tp]?.name ?? "a collection"}");
     return;
   }
-  bytes = natives::push_keys(self.types, self.stk, tp, no_keys, self.stack_pos);
+  bytes = natives::push_keys(self.key_parts, self.kfacts[f + 2] ?? -1, self.stk, no_keys, self.stack_pos);
   if bytes < 0 || !self.can_pop(bytes + 32) {
     self.stop("not carried: a keyed write whose key does not resolve");
     return;
@@ -2147,7 +2181,7 @@ pub fn set_keyed(self: State) {
   self.stack_pos -= bytes;
   value = self.get_stack_dbref();
   coll = self.get_stack_dbref();
-  crt::set_keyed(coll.store_nr, coll.rec, coll.pos, value.store_nr, value.rec, value.pos, types::content_of(self.types, tp) ?? 0, tp, no_keys, raw >= 32768, kind);
+  crt::set_keyed(coll.store_nr, coll.rec, coll.pos, value.store_nr, value.rec, value.pos, self.kfacts[f + 3] ?? 0, tp, no_keys, raw >= 32768, kind);
 }
 
 // `State::replace_keyed`: a keyed local rebound from a call (`h = f()`) — `dest`, popped

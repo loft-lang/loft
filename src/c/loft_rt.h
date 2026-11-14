@@ -1490,6 +1490,9 @@ static uint32_t loft_store_make(int counted) {
     /* `no_slot_reuse`: every slot below the floor was made once, and stays dead once freed. */
     nr = loft_strict_floor;
 #endif
+#ifndef LOFT_STRICT_STORES
+    if (loft_hint_table == loft_stores && loft_hint <= loft_nstores) nr = loft_hint;
+#endif
     while (nr < loft_nstores && loft_stores[nr].live) nr++;
 #ifdef LOFT_STRICT_STORES
     loft_strict_floor = nr + 1;
@@ -1516,6 +1519,8 @@ static uint32_t loft_store_make(int counted) {
         loft_stores = s;
         loft_nstores = n;
     }
+    loft_hint_table = loft_stores;
+    loft_hint = nr + 1;
     loft_store_t *s = &loft_stores[nr];
 #ifdef LOFT_LEAK_SITES
     loft_note_site(nr);
@@ -1974,6 +1979,7 @@ static void loft_free_ref(loft_ref r) {
     }
     if (loft_release_file_leases_hook) loft_release_file_leases_hook(r.store_nr);
     s->live = 0;
+    loft_store_freed(r.store_nr);
 #if defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)
     loft_note_free(r.store_nr);
 #endif
