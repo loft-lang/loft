@@ -27,6 +27,16 @@ fn scan(path: text, out: Out) {
   lines = file(path).lines();
   for i in 0..len(lines) {
     line = lines[i];
+    // rustfmt writes a `cfg_attr` with a reason over several lines: read it as one.
+    if line.trim() == "#[cfg_attr(" {
+      last = i + 6;
+      if last > len(lines) { last = len(lines); }
+      for k in i + 1..last {
+        line += " " + lines[k].trim();
+        if lines[k].trim() == ")]" { break; }
+      }
+      line = line.replace("( ", "(").replace(" )]", ")]");
+    }
     reason = "";
     if line.matches(IGNORE) { reason = reason_of(line); }
     else if !line.matches(BARE) { continue; }
