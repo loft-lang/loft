@@ -4690,6 +4690,15 @@ use a separate collection or add after the loop"
         if self.vars.is_declared(*v) || self.vars.is_argument(*v) {
             return;
         }
+        // `@FR-B-Scope` — a bind after the name's block ended starts a new binding, which pass
+        // 2 gives a variable of its own once it knows the type (`rebind_after_block`).
+        // Joined here, the ENDED binding's variable was widened between the passes: pass 2
+        // then met a `τ?` variable and a `τ?` value, saw no difference to split on, and the
+        // ended block's own non-null bind read as nullable (loft#2485).
+        if self.late_join_ended.take() == Some(*v) {
+            self.last_forward_call = None;
+            return;
+        }
         if let Some(callee) = self.last_forward_call.take() {
             self.late_call_joins
                 .push((self.context, *v, callee, self.lexer.at().0));
@@ -5508,6 +5517,9 @@ use a separate collection or add after the loop"
         // the value's type yet: it views an element of the walked collection, so a bind that
         // reused it wrote the new value through that view into the collection, or made the
         // view an owner that freed the walked store on every pass of an enclosing loop.
+        // The bind this statement makes stands after its name's block ended: a late join
+        // (`note_late_call_join`) is of ONE binding, and this one is new.
+        self.late_join_ended = ended_any;
         let ended_loop_var = ended_bind == Some(var_nr) && self.vars.was_loop_var(var_nr);
         let (new_binding, new_binding_type);
         let (to, f_type) = if op == "="
@@ -7210,18 +7222,19 @@ use a separate collection or add after the loop"
             && cur_loop != u16::MAX
             && born_in != u16::MAX
             && born_in != cur_loop
+            // Only of a binding the name's own resolution saw ENDED (`bind_after_end`,
+            // `@FR-B-Scope`: another loop's body local cannot be read here).  A loop NUMBER is
+            // not the same on both passes, so `born_in` alone also holds for the LIVE binding
+            // of this very loop: split there, a write to it from a nested block (`if c { tp =
+            // TInt { min: 50 } }`) became a binding of that block, and the read after the
+            // block was refused as out of scope.
+            && ended_any == Some(var_nr)
             && (self
                 .vars
                 .retype_would_be_refused(var_nr, &s_type, &self.data)
-                // The other loop's binding has ENDED (`@FR-B-Scope`: its body local cannot
-                // be read here), so a bind that differs from it in absence starts a binding
-                // too: `@FR-N-Join` joins the writes of one binding, not of two loops.  Asked
-                // of a binding the name's own resolution saw ended (`bind_after_end`): a loop
-                // NUMBER is not the same on both passes, so `born_in` alone also holds for
-                // the live binding of this very loop, whose non-null write into its `τ?` is
-                // the join itself.
-                || (ended_any == Some(var_nr)
-                    && self.vars.rebind_differs_in_absence(var_nr, &s_type)))
+                // A bind that differs from the ended one in absence starts a binding too:
+                // `@FR-N-Join` joins the writes of one binding, not of two loops.
+                || self.vars.rebind_differs_in_absence(var_nr, &s_type))
         {
             // The SOURCE spelling, not the bound one.  A variable already split once is
             // named `e#b1`, and registering the next split under that would key the third
