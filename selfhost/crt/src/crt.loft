@@ -344,6 +344,12 @@ fn c_store_from_image(io: vector<integer>, bytes: vector<u8>) -> integer;
 #c "loft_crt_store_from_image" "int64_t(int64_t*, int64_t, const char*, int64_t)"
 fn c_store_live(nr: integer) -> integer;
 #c "loft_crt_store_live" "int64_t(int64_t)"
+fn c_stack_text_sub(store: integer, at: integer);
+#c "loft_crt_stack_text_sub" "void(int64_t, int64_t)"
+fn c_stack_text_char(store: integer, at: integer) -> integer;
+#c "loft_crt_stack_text_char" "int64_t(int64_t, int64_t)"
+fn c_text_walk_step(store: integer, sp: integer, c: integer, index: integer, next: integer, src: integer, arg: integer);
+#c "loft_crt_text_walk_step" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -418,6 +424,23 @@ pub fn store_from_image(io: vector<integer>, bytes: vector<u8>) -> boolean {
 // Is store `nr` live — not freed?
 pub fn store_live(nr: integer) -> boolean {
   c_store_live(nr) != 0
+}
+
+// `OpGetTextSub` on the stack: the view at `at` replaced by its slice, the bounds the two words
+// above it.
+pub fn stack_text_sub(store: integer, at: integer) {
+  c_stack_text_sub(store, at);
+}
+
+// `OpTextCharacter` on the stack: the character holding byte `idx`, the word above the view at
+// `at`, of that view.
+pub fn stack_text_char(store: integer, at: integer) -> integer {
+  c_stack_text_char(store, at)
+}
+
+// `OpTextWalkStep`: one step of `for c in t`, its frame slots addressed from the stack top.
+pub fn text_walk_step(store: integer, sp: integer, c: integer, index: integer, next: integer, src: integer, arg: integer) {
+  c_text_walk_step(store, sp, c, index, next, src, arg);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).

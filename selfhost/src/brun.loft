@@ -190,6 +190,9 @@ H_FREE_SCRATCH = 166;
 H_FREE_RECORD_IN = 167;
 H_CAST_SINGLE_FROM_FLOAT = 168;
 H_CONV_FLOAT_FROM_SINGLE = 169;
+H_GET_TEXT_SUB = 170;
+H_TEXT_CHARACTER = 171;
+H_TEXT_WALK_STEP = 172;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -418,6 +421,9 @@ pub fn handler(name: text) -> integer {
     "OpSetByteNullable" => H_SET_SHORT,
     "OpCastSingleFromFloat" => H_CAST_SINGLE_FROM_FLOAT,
     "OpConvFloatFromSingle" => H_CONV_FLOAT_FROM_SINGLE,
+    "OpGetTextSub" => H_GET_TEXT_SUB,
+    "OpTextCharacter" => H_TEXT_CHARACTER,
+    "OpTextWalkStep" => H_TEXT_WALK_STEP,
     _ => -1
   }
 }
@@ -595,6 +601,7 @@ fn layout_of(h: integer) -> text {
     164 => "hbh",
     165 => "hbh",
     167 => "h",
+    172 => "hhhhb",
     _ => ""
   }
 }
@@ -1771,11 +1778,22 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         crt::free_displaced(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ws, wr, wp);
       }
     } else if h == H_CLEAR {
-      ctp2 = u16_at(img.code, pc);
+      // `Stores::remove_claims`: a buffer emptied for reuse, its claims released.  With
+      // `@FR-R-Reuse`'s reset flag (`POOL_RESET`, the type's top bit) a pooled buffer's store is
+      // made again at its root instead, where `reset_pool_root` allows it.
+      craw = u16_at(img.code, pc);
       pc += 2;
+      ctp2 = craw & 32767;
       sp -= 16;
       crt::slot_ref(io, stk, sp);
-      crt::clear(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ctp2);
+      creset = false;
+      if craw & 32768 != 0 {
+        default_of(img.types, images, imaged, ctp2);
+        creset = crt::reset_pool_root(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ctp2, types::enum_parent_size(img.types, ctp2), images[ctp2] ?? []);
+      }
+      if !creset {
+        crt::clear(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ctp2);
+      }
     } else if h == H_VEC_SET_INT {
       vec2 = u16_at(img.code, pc);
       size2 = u16_at(img.code, pc + 2);
@@ -2437,6 +2455,20 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     } else if h == H_CONV_FLOAT_FROM_SINGLE {
       cfs = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
       crt::set_float(stk, 1, 8 + sp - 8, 0, cfs, false);
+    } else if h == H_GET_TEXT_SUB {
+      // `t[from..till]`: the bounds popped, the view below them replaced by its slice.
+      sp -= 16;
+      crt::stack_text_sub(stk, sp - 16);
+    } else if h == H_TEXT_CHARACTER {
+      // `t[i]`: the index and the view popped, the character pushed (null out of range; Rust
+      // raises a recoverable error there, which only its logger sees).
+      tch = crt::stack_text_char(stk, sp - 24);
+      sp -= 24;
+      set(stk, sp, tch);
+      sp += 8;
+    } else if h == H_TEXT_WALK_STEP {
+      crt::text_walk_step(stk, sp, u16_at(img.code, pc), u16_at(img.code, pc + 2), u16_at(img.code, pc + 4), u16_at(img.code, pc + 6), img.code[pc + 8] ?? 0);
+      pc += 9;
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };

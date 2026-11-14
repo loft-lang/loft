@@ -293,6 +293,43 @@ void loft_crt_set_store_known(int64_t nr, int64_t tp) {
     if (nr >= 0 && nr < loft_nstores) loft_stores[nr].known = (uint16_t) tp;
 }
 
+/* The run image's runner (step 3): text views on the stack as `State::get_text_sub`,
+ * `text_character` and `text_walk_step` work them, through the runtime's own rules. */
+
+/* OpGetTextSub: the view at `at` replaced by its `from..till` slice — the two raw words above
+ * it (`till` i32::MIN: the one character at `from`) — snapped to character boundaries. */
+void loft_crt_stack_text_sub(int64_t store, int64_t at) {
+    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
+    int64_t from = *(int64_t *) loft_crt_slot_at(store, at + 16);
+    int64_t till = *(int64_t *) loft_crt_slot_at(store, at + 24);
+    *v = loft_text_sub(*v, from, till);
+}
+
+/* OpTextCharacter: the character holding byte `idx` — the raw word above the view at `at` — of
+ * that view, 0 out of range. */
+int64_t loft_crt_stack_text_char(int64_t store, int64_t at) {
+    int64_t idx = *(int64_t *) loft_crt_slot_at(store, at + 16);
+    return (int64_t) loft_text_char(*(loft_str *) loft_crt_slot_at(store, at), idx);
+}
+
+/* OpTextWalkStep: a `for c in t` step, the frame slots addressed from the stack top `sp`: the
+ * character at byte `next` of the text at `src` (a local's text, `arg` 0, or a view) read into
+ * `c`, `index` set to where it starts and `next` moved past it — by one byte at least. */
+void loft_crt_text_walk_step(int64_t store, int64_t sp, int64_t c, int64_t index, int64_t next, int64_t src,
+                             int64_t arg) {
+    int64_t *nx = (int64_t *) loft_crt_slot_at(store, sp - next);
+    int64_t at = *nx;
+    loft_str t = arg ? *(loft_str *) loft_crt_slot_at(store, sp - src)
+                     : loft_view((loft_text *) loft_crt_slot_at(store, sp - src));
+    uint32_t ch = loft_str_is_null(t) ? 0 : loft_text_char(t, at);
+    int64_t w = ch == 0 ? 0 : ch < 0x80 ? 1 : ch < 0x800 ? 2 : ch < 0x10000 ? 3 : 4;
+    int64_t moved = at == LOFT_NULL ? LOFT_NULL : at + w;
+    if (moved <= at) moved = at == LOFT_NULL ? LOFT_NULL : at + 1;
+    *(int64_t *) loft_crt_slot_at(store, sp - index) = at;
+    *nx = moved;
+    *(uint32_t *) loft_crt_slot_at(store, sp - c) = ch;
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);
