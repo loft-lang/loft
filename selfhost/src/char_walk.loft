@@ -1,0 +1,182 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A character walk over a text local, recognised (@PLN91): the port of
+// `opt::char_walk::char_walks` (`src/opt/char_walk.rs`), the decision `@FR-R-Fuse`'s text
+// walk step and the range facts both read.  Shared by the bytecode writer (`bgen_loop.loft`),
+// the C generator and the older lowering (`lower.loft`): it takes the program and a
+// definition, no writer's state.
+use ir;
+use binds;
+use ret_adopt;
+
+// One scalar of a tuple (F-T1): its byte in the tuple's slot, the stack its value is on, and how
+// the frame holds it (`var_access`'s codes).
+// `@FR-R-CharWalk` (`opt::char_walk::CharWalk`): a `for c in T` walk over a text variable — the
+// loop variable, the `#index` and `#next` the step keeps, the block's result temp, the text.
+struct CharWalk {
+  loop_var: integer,
+  index: integer,
+  next: integer,
+  result: integer,
+  src: integer,
+}
+
+// `opt::char_walk::char_walks`, for one loop: the parser's lowering of `for c in T` matched
+// whole — the loop's first statement binds `c` to a `for text next` block of five statements
+// (`index = next`; the character at `next`; `next` advanced by its width; the zero-width
+// guard; the character), its second the null test `if !T { break }`, and T a text VARIABLE.
+fn char_walk(b: ir::Bundle, d_nr: integer, lp: ir::Block) -> CharWalk? {
+  if lp.name != "For loop" || len(lp.operators) < 2 {
+    return null;
+  }
+  loop_var = -1;
+  it: ir::Block? = null;
+  match binds::unspan_node(lp.operators[0]!) {
+    NdSet { var, inner } => {
+      loop_var = var;
+      match binds::unspan_node(inner) {
+        NdBlock { block } => { it = block[0]; }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  if it == null || it!.name != "for text next" {
+    return null;
+  }
+  ops: vector<ir::Node> = [];
+  for o in it!.operators {
+    if !(binds::unspan_node(o) is NdLine) {
+      ops += [binds::unspan_node(o)];
+    }
+  }
+  if len(ops) != 5 {
+    return null;
+  }
+  // index = next
+  index = set_target(ops[0]!);
+  next = var_value(set_value(ops[0]!));
+  // res = OpTextCharacterNullable(src, next)
+  res = set_target(ops[1]!);
+  read = call_args(b, set_value(ops[1]!), "OpTextCharacterNullable");
+  if index == null || next == null || res == null || read == null || len(read!) != 2 {
+    return null;
+  }
+  src = var_value(read![0]!);
+  if src == null || var_value(read![1]!) != next || !(binds::base(b.data.definitions[d_nr]!.variables.variables[src!]!.type_def[0]!) is TyText) {
+    return null;
+  }
+  // next = next + OpLengthCharacter(res)
+  stepped = call_args(b, set_value(ops[2]!), "OpAddInt");
+  if set_target(ops[2]!) != next || stepped == null || var_value(stepped![0]!) != next {
+    return null;
+  }
+  width = call_args(b, stepped![1]!, "OpLengthCharacter");
+  if width == null || var_value(width![0]!) != res {
+    return null;
+  }
+  // if next <= index { next = index + 1 }
+  if !guard_shape(b, ops[3]!, next!, index!) || var_value(ops[4]!) != res {
+    return null;
+  }
+  // the null test: if !T { break }
+  if !null_test_shape(b, lp.operators[1]!, src!) {
+    return null;
+  }
+  CharWalk { loop_var: loop_var, index: index!, next: next!, result: res!, src: src! }
+}
+
+// The variable a `Set` writes, its value, a variable read's number, a call's operands when it
+// calls the operator named: the pieces `char_walk` matches, each null for any other shape.
+fn set_target(n: ir::Node) -> integer? {
+  match binds::unspan_node(n) {
+    NdSet { var, inner: _ } => var,
+    _ => null,
+  }
+}
+
+fn set_value(n: ir::Node) -> ir::Node {
+  match binds::unspan_node(n) {
+    NdSet { var: _, inner } => binds::unspan_node(inner),
+    _ => ir::Node.NdNull,
+  }
+}
+
+fn var_value(n: ir::Node) -> integer? {
+  match binds::unspan_node(n) {
+    NdVar { n: v } => v,
+    _ => null,
+  }
+}
+
+fn call_args(b: ir::Bundle, n: ir::Node, name: text) -> vector<ir::Node>? {
+  match binds::unspan_node(n) {
+    NdCall { def_nr, args } => if b.data.definitions[def_nr]?.name == name { args } else { null },
+    _ => null,
+  }
+}
+
+// `if next <= index { next = index + 1 }`, the walk's zero-width guard.
+fn guard_shape(b: ir::Bundle, n: ir::Node, next: integer, index: integer) -> boolean {
+  match binds::unspan_node(n) {
+    NdIf { cond, t, f } => {
+      le = call_args(b, cond, "OpLeInt");
+      bump = call_args(b, set_value(t), "OpAddInt");
+      le != null && var_value(le![0]!) == next && var_value(le![1]!) == index
+        && set_target(t) == next && bump != null && var_value(bump![0]!) == index
+        && binds::unspan_node(bump![1]!) == NdInt { n: 1 } && binds::unspan_node(f) is NdNull
+    }
+    _ => false,
+  }
+}
+
+// `if !T { break }`, the walk's null test.
+fn null_test_shape(b: ir::Bundle, n: ir::Node, src: integer) -> boolean {
+  match binds::unspan_node(n) {
+    NdIf { cond, t: _, f } => {
+      not = call_args(b, cond, "OpNot");
+      if not == null || !(binds::unspan_node(f) is NdNull) {
+        return false;
+      }
+      conv = call_args(b, not![0]!, "OpConvBoolFromText");
+      conv != null && var_value(conv![0]!) == src
+    }
+    _ => false,
+  }
+}
+
+// Every loop of a node offered to `char_walk`, and whether a `yield` was met.
+fn gather(b: ir::Bundle, d: integer, n: ir::Node, out: vector<CharWalk>, yields: vector<boolean>) {
+  match n {
+    NdLoop { block } => {
+      w = char_walk(b, d, block[0]!);
+      if w != null {
+        out += [w!];
+      }
+    }
+    NdYield { inner: _ } => {
+      yields[0] = true;
+    }
+    _ => {}
+  }
+  for c in ret_adopt::children(n) {
+    gather(b, d, c, out, yields);
+  }
+}
+
+// `char_walks`: the walks of definition `d`, one per loop variable.  A generator has none:
+// its loop variables live on its state machine.
+pub fn walks(b: ir::Bundle, d: integer) -> vector<CharWalk> {
+  out: vector<CharWalk> = [];
+  yields: vector<boolean> = [false];
+  code = b.data.definitions[d]!.code[0];
+  if code != null {
+    gather(b, d, code!, out, yields);
+  }
+  if yields[0] ?? false {
+    return [];
+  }
+  out
+}

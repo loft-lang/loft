@@ -14,6 +14,7 @@ use frame;
 use own;
 use binds;
 use lower;
+use char_walk;
 use ret_adopt;
 use bgen_set;
 use bgen_loop;
@@ -112,7 +113,7 @@ pub struct Gen {
   owned_reassigned: vector<integer>,
   // The function's character walks (`opt::char_walk::char_walks`), gathered at the first
   // bind that asks.
-  walks: vector<lower::CharWalk>,
+  walks: vector<char_walk::CharWalk>,
   walks_known: boolean,
   // `@FR-R-RetAdopt`: the local that is built in the caller's buffer (`v` -1: none).
   adopt: ret_adopt::RetAdopt,

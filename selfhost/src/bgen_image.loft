@@ -11,6 +11,7 @@
 use ir;
 use own;
 use binds;
+use frame;
 use bgen;
 
 // The stream and each definition's start in it, one more entry for its end; `why` says what
@@ -223,4 +224,143 @@ pub fn tables(b: ir::Bundle, img: ir::RunImage) {
   img.layouts = layouts;
   img.shared = shared;
   img.main = main;
+}
+
+// ── generators (`src/gen_facts.rs`, `ir_store::run_image_gens`) ──
+
+// `data::holds_dbref`: a reference, or a tuple holding one anywhere.
+fn holds_dbref(t: ir::TypeT) -> boolean {
+  bs = bgen::base(t);
+  if own::is_dbref(bs) {
+    return true;
+  }
+  match bs {
+    TyTuple { elems } => {
+      for e in elems {
+        if holds_dbref(e) {
+          return true;
+        }
+      }
+      false
+    }
+    _ => false,
+  }
+}
+
+fn dbref_slot(t: ir::TypeT) -> boolean {
+  own::is_dbref(t) || (t is TyIterator)
+}
+
+// `gen_facts::tuple_refs_at`: where each reference of a yielded tuple lies in it.
+fn tuple_refs_at(elems: vector<ir::TypeT>, start: integer, out: vector<integer>) {
+  at = start;
+  for e in elems {
+    match bgen::base(e) {
+      TyTuple { elems: inner } => tuple_refs_at(inner, at, out),
+      _ => {
+        if dbref_slot(bgen::base(e)) {
+          out += [at];
+        }
+      }
+    }
+    at += frame::member_step(e, false);
+  }
+}
+
+// One generator's frame facts (`RunGenShape`).
+fn gen_shape(b: ir::Bundle, d: integer) -> ir::RunGen {
+  def = b.data.definitions[d]!;
+  f = def.variables;
+  g = ir::RunGen { def: d, zone2: 0, text_args: [], ref_args: [], text_locals: [], owned_locals: [], tuple_refs: [] };
+  // The arguments' byte offsets, each after the unstepped sizes of those before it.
+  offset = 0;
+  for a in def.attributes {
+    t = a.typedef[0] ?? ir::TyVoid;
+    if t is TyText {
+      g.text_args += [offset];
+    }
+    if own::is_dbref(bgen::base(t)) {
+      g.ref_args += [offset];
+    }
+    offset += frame::width(t, true);
+  }
+  // `zone2_size`: the locals' region, from past the arguments and the return slot to the
+  // end of the highest local.
+  local_start = 8;
+  for v in f.variables {
+    if v.argument {
+      local_start += frame::stepped(frame::width(v.type_def[0] ?? ir::TyVoid, true));
+    }
+  }
+  top = local_start;
+  for v in f.variables {
+    t = v.type_def[0] ?? ir::TyVoid;
+    if !v.argument && v.stack_pos != 65535 {
+      end = v.stack_pos + frame::width(t, false);
+      if end > top {
+        top = end;
+      }
+      if t is TyText {
+        g.text_locals += [v.stack_pos];
+      }
+    }
+    // `owned_store_local_slots`: the stores an abandoned suspended frame frees.
+    iterator = bgen::base(t) is TyIterator;
+    if v.argument && !iterator {
+      continue;
+    }
+    if !own::is_dbref(t) && !(t is TyIterator) {
+      continue;
+    }
+    // `Function::owns_store`: no inline reference, never skipped, and independent — no
+    // dependency, or a lone dependency on itself for anything but a record.
+    deps = own::tp_depend(f, v#index);
+    record = match bgen::base(t) {
+      TyReference { n: _, dep: _ } => true,
+      TyEnum { n: _, is_ref, dep: _ } => is_ref,
+      _ => false,
+    };
+    independent = len(deps) == 0 || (len(deps) == 1 && deps[0] == v#index && !record);
+    owns = !binds::is_inline_ref(f, v#index) && !v.skip_free && independent;
+    if owns && !v.captured && v.stack_pos != 65535 {
+      g.owned_locals += [v.stack_pos];
+    }
+  }
+  g.zone2 = top - local_start;
+  match bgen::base(def.returned[0] ?? ir::TyVoid) {
+    TyIterator { step, inner: _ } => {
+      match bgen::base(step) {
+        TyTuple { elems } => {
+          any = false;
+          for e in elems {
+            if holds_dbref(e) || dbref_slot(bgen::base(e)) {
+              any = true;
+            }
+          }
+          if any {
+            tuple_refs_at(elems, 0, g.tuple_refs);
+          }
+        }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  g
+}
+
+// `run_image_gens`: every function with a body that answers an iterator.
+pub fn gens(b: ir::Bundle) -> vector<ir::RunGen> {
+  out: vector<ir::RunGen> = [];
+  for d in b.data.definitions {
+    body = match d.code[0] {
+      null => false,
+      NdNull => false,
+      _ => true,
+    };
+    if d.def_type == 1 && body && (bgen::base(d.returned[0] ?? ir::TyVoid) is TyIterator) {
+      out += [gen_shape(b, d#index)];
+    }
+  }
+  out
 }

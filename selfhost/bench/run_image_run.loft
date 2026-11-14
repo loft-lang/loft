@@ -43,6 +43,7 @@ fn main() {
       exit(3);
     }
     bgen_image::tables(b!, img!);
+    img!.gens = bgen_image::gens(b!);
     img!.code = st.code;
     img!.starts = st.starts;
   }
