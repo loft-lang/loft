@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2496 — a lambda that captures a local whose type pass 1 cannot know yet (it is read
+// off `Holder`, declared below) beside a `vector<boolean>`: the closure record waits for pass 2
+// to type the capture, and was then never laid out, because a shared `vector<boolean>` capture
+// is stored as a reference to definition 0 (`boolean`), which read as unresolved.  The file
+// did not compile: `field 'count' of '__closure_marked_0' has no storage in that type's layout`.
+// Each cell is hand-computed: of `[0, 2, 7]` two values are below the length 3.
+//
+// CHANNEL: the asserts; before the fix the file does not compile.
+
+fn each(v: vector<integer>, f: fn(integer)) {
+  for e in v {
+    f(e);
+  }
+}
+
+// The forward-typed capture `count` beside a `vector<boolean>`.
+fn marked(w: Holder) -> integer {
+  count = len(w.items);
+  marks: vector<boolean> = [false, false, false, false];
+  each(w.items, fn(n: integer) {
+    if n < count {
+      marks[n] = true;
+    }
+  });
+  hits = 0;
+  for m in marks {
+    if m {
+      hits += 1;
+    }
+  }
+  hits
+}
+
+// The same beside a `vector<integer>` and a text, which never waited.
+fn summed(w: Holder) -> text {
+  count = len(w.items);
+  seen: vector<integer> = [];
+  label = "n";
+  each(w.items, fn(n: integer) {
+    if n < count {
+      seen += [n * 10];
+    }
+  });
+  "{label}{len(seen)}:{seen[1] ?? -1}"
+}
+
+// Two forward-typed captures and two boolean vectors in one record.
+fn both(w: Holder) -> integer {
+  count = len(w.items);
+  first = w.items[0] ?? -1;
+  low: vector<boolean> = [false, false, false];
+  high: vector<boolean> = [false, false, false];
+  each(w.items, fn(n: integer) {
+    if n < count {
+      low[n] = true;
+    } else if n > first {
+      high[0] = true;
+    }
+  });
+  score = 0;
+  for l in low {
+    if l {
+      score += 1;
+    }
+  }
+  for h in high {
+    if h {
+      score += 10;
+    }
+  }
+  score
+}
+
+struct Holder {
+  items: vector<integer>,
+}
+
+fn test_a_forward_typed_capture_beside_a_boolean_vector() {
+  w = Holder { items: [0, 2, 7] };
+  assert(marked(w) == 2, "marked: {marked(w)}");
+  assert(summed(w) == "n2:20", "summed: {summed(w)}");
+  assert(both(w) == 12, "both: {both(w)}");
+}

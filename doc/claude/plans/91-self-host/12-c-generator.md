@@ -251,6 +251,15 @@ where a record holding one can.  A recursion over a tree that calls itself in ta
 draws `warning[tail-call-not-jumped]` (@C155, by design: such a call keeps its frame); the
 port's recursive proofs go through a wrapper that binds the answer.
 
+## Peers
+
+The other streams this strand shares code and merges with, by the name their session
+answers to: **loft3-ac** gathers the work branches into the pull requests and takes the sha
+of each push of `laptop-c-perf`; **loft2-c0** writes the interpreter in loft
+(`tuxedo-pln204-int32`) and owns `ir.loft`, `load.loft`, `binds.loft`, `own.loft` and
+`char_walk.loft`.  This strand's session is **loft-c2**.  Where a session cannot be reached,
+the note for it goes in the commit message it will merge.
+
 ## Open questions, answered by the first probes
 
 1. How many corpus programs does the Rust generator write equally from the image and from
