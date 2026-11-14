@@ -812,7 +812,7 @@ fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
 // The operators and natives `generate_call` writes in a way of their own, which this writer
 // does not write yet.
 fn special_call(name: text) -> boolean {
-  name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+  name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpCreateStack" || name.starts_with("n_parallel_")
 }
 
 // Is `n` in the list a `NoPrefill` fact keeps under `tag` (`l` locals, `m` mints;
@@ -1012,6 +1012,17 @@ fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
     }
     return false;
   }
+  if name == "OpCoroutineNext" && len(args) >= 2 {
+    generate(g, args[0]!, false);
+    size = match args[1]! {
+      NdInt { n } => n & 65535,
+      _ => 4,
+    };
+    put_op(g.o, g.b, op);
+    put_u16(g.o, size);
+    g.position += frame::stepped(size & 255) - 16;
+    return true;
+  }
   if name == "OpNullRefSentinel" {
     push_sentinel(g);
     return true;
@@ -1199,11 +1210,7 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
     add_op(g, "OpStaticCall");
     put_u16(g.o, lib);
   } else {
-    if generator {
-      stop(g, "a generator's creation");
-      return ret;
-    }
-    add_op(g, "OpCall");
+    add_op(g, if generator { "OpCoroutineCreate" } else { "OpCall" });
     put_i64(g.o, op);
     put_u16(g.o, size);
     put_i64(g.o, g.starts[op] ?? 0);
@@ -2176,13 +2183,38 @@ fn returned_value(g: Gen, inner: ir::Node) {
   }
 }
 
+// The packed size a generator's next and return carry for an element; -1 for one the port
+// of `next_operands` does not carry.
+fn yield_size(step: ir::TypeT) -> integer {
+  // `channel_tag`, of the type as it stands; a tuple's member kinds are not ported.
+  tag = match step {
+    TyTuple { elems: _ } => -1,
+    TyFunction { args: _, result: _, dep: _, consts: _ } => 2,
+    TyFloat => 3,
+    TySingle => 4,
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { 0 } else { 5 },
+    _ => 0,
+  };
+  if tag < 0 {
+    return -1;
+  }
+  tag * 256 + frame::width(step, true)
+}
+
 // `State::add_return`: the return, with the arguments' bytes, the answer's and the evaluation
 // position.
 fn add_return(g: Gen) {
   ret = def_of(g, g.d).returned[0] ?? ir::TyVoid;
   match ret {
-    TyIterator { step: _, inner: _ } => {
-      stop(g, "a generator's return");
+    TyIterator { step, inner: _ } => {
+      // A generator ends: `coroutine_layout::next_operands`' packed size of what it yields.
+      size = yield_size(step);
+      if size < 0 {
+        stop(g, "not written yet: a generator of an element the port does not carry");
+        return;
+      }
+      add_op(g, "OpCoroutineReturn");
+      put_u16(g.o, size);
       return;
     }
     _ => {}
@@ -2330,6 +2362,37 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
         init_slot(g, var, "OpVarRef");
       }
       t[0] ?? ir::TyVoid
+    }
+    NdYield { inner } => {
+      // A scalar or text handed out; a record's or function's temporaries are handed over
+      // with it (`yield_handed_temps`), which is not written yet.
+      step = match def_of(g, g.d).returned[0] ?? ir::TyVoid {
+        TyIterator { step: st, inner: _ } => st,
+        _ => ir::TyVoid,
+      };
+      plain = match base(step) {
+        TyInteger { spec: _ } => true,
+        TyBoolean => true,
+        TyFloat => true,
+        TySingle => true,
+        TyCharacter => true,
+        TyText { dep: _ } => true,
+        TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+        _ => false,
+      };
+      if !plain {
+        return unwritten(g, "a yield that hands a record or a function value over");
+      }
+      t = generate(g, inner, false);
+      value_tp = match base(t) {
+        TyRefVar { inner: under } => under,
+        _ => t,
+      };
+      size = frame::width(value_tp, true);
+      add_op(g, "OpCoroutineYield");
+      put_u16(g.o, size);
+      g.position -= frame::stepped(size);
+      ir::TyVoid
     }
     NdTuple { items } => bgen_tuple::value(g, items),
     NdTupleGet { var, idx } => bgen_tuple::get(g, var, idx),
