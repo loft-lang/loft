@@ -56,6 +56,12 @@ pub fn put_width_header(dir: &std::path::Path) -> Result<(), String> {
 /// body, slower, never wrong.
 const BODIES: &str = "loft_bodies.c";
 
+/// The contract with nothing carried: every lookup and call answers -1.  What a shim is built
+/// with when the fragment (`c::bodies::emit_bodies`) cannot be written.
+pub const BODY_STUBS: &str = "int64_t loft_body_find(const char *name, int64_t len) { (void) name; (void) len; return -1; }\n\
+     int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) { (void) entry; (void) stk; (void) sp; return -1; }\n\
+     int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, int64_t r, int64_t p) { (void) entry; (void) stk; (void) sp; (void) s; (void) r; (void) p; return -1; }\n";
+
 /// Does any of `paths` name [`BODIES`]?
 fn wants_bodies(paths: &[std::path::PathBuf]) -> bool {
     paths
@@ -67,7 +73,7 @@ fn wants_bodies(paths: &[std::path::PathBuf]) -> bool {
 fn bodies_text() -> &'static str {
     static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     TEXT.get_or_init(|| {
-        let stubs = crate::c::bodies::STUBS;
+        let stubs = BODY_STUBS;
         let Ok(exe) = std::env::current_exe() else {
             return stubs.to_string();
         };

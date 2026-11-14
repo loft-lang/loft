@@ -8568,8 +8568,7 @@ impl DoubleMove<'_> {
             return root;
         }
         let param = self.func.promoted_from(root);
-        if param != u16::MAX && self.func.is_argument(param) && views(self.func.tp(root), param)
-        {
+        if param != u16::MAX && self.func.is_argument(param) && views(self.func.tp(root), param) {
             param
         } else {
             root

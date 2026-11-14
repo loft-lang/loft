@@ -13337,7 +13337,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     state.database.set_logger(lg);
 
     if let Some(out) = emit_c_bodies {
-        match loft::c::bodies::emit_bodies(&p.data, &state.database) {
+        match loft::c::bodies::emit_bodies(
+            &p.data,
+            &state.database,
+            &loft::stdlib_codegen::export_set(&p.data),
+        ) {
             Ok(c) => {
                 if let Err(e) = fa::write(&out, c) {
                     eprintln!("loft: cannot write {out}: {e}");

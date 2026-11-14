@@ -60,12 +60,6 @@ use crate::database::Stores;
 use crate::native_gate::BridgeAttrKind;
 use std::fmt::Write as _;
 
-/// The contract with nothing carried: every lookup and call answers -1.  What a shim is built
-/// with when the fragment cannot be written.
-pub const STUBS: &str = "int64_t loft_body_find(const char *name, int64_t len) { (void) name; (void) len; return -1; }\n\
-     int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) { (void) entry; (void) stk; (void) sp; return -1; }\n\
-     int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, int64_t r, int64_t p) { (void) entry; (void) stk; (void) sp; (void) s; (void) r; (void) p; return -1; }\n";
-
 /// One argument or the answer as the runner's stack holds it.
 #[derive(Clone, Copy, PartialEq)]
 enum Slot {
@@ -137,11 +131,14 @@ fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
 ///
 /// # Errors
 /// The C writer's refusal of a body it was asked for.
-pub fn emit_bodies(data: &Data, stores: &Stores) -> Result<String, super::Refusal> {
-    // The Rust build's own set (`stdlib_codegen::export_set`): the functions both compile.
-    let mut set: Vec<u32> = crate::stdlib_codegen::export_set(data)
-        .into_iter()
-        .collect();
+pub fn emit_bodies(
+    data: &Data,
+    stores: &Stores,
+    export: &std::collections::HashSet<u32>,
+) -> Result<String, super::Refusal> {
+    // The Rust build's own set (`stdlib_codegen::export_set`, handed in: the writer of C does
+    // not name the Rust writer's layer): the functions both compile.
+    let mut set: Vec<u32> = export.iter().copied().collect();
     set.sort_unstable_by_key(|d| data.def(*d).name().to_string());
     let mut carried: Vec<(u32, Vec<Slot>, Slot)> = Vec::new();
     let mut declined: Vec<(String, String)> = Vec::new();
