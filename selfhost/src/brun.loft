@@ -257,6 +257,7 @@ H_MOVE_CHILD_REC = 232;
 H_SLOT_TAG = 233;
 H_GET_SLOT_REF = 234;
 H_SLOT_WRITE = 235;
+H_EXPOSE = 236;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -568,6 +569,8 @@ pub fn handler(name: text) -> integer {
     "OpGetSlotRef" => H_GET_SLOT_REF,
     "OpMoveSlotRef" => H_SLOT_WRITE,
     "OpSetSlotRef" => H_SLOT_WRITE,
+    "OpExpose" => H_EXPOSE,
+    "OpRelease" => H_EXPOSE,
     "OpCastSingleFromText" => H_CAST_FROM_TEXT,
     "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
@@ -862,6 +865,7 @@ fn layout_of(h: integer) -> text {
     232 => "h",
     234 => "h",
     235 => "h",
+    236 => "h",
     _ => ""
   }
 }
@@ -2734,6 +2738,12 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       return -1;
     }
     crt::index_group(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, iggm![0] ?? 0, ignull, igvpos, igvkind, igtp, igkeyed);
+  } else if h == H_EXPOSE {
+    // The value and the tag popped; the value's store locked (`expose`) or unlocked (`release`).
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 24;
+    crt::store_lock(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, (img.ops[op] ?? "") == "OpExpose");
   } else if h == H_SLOT_TAG {
     // A field's address as a slot cell names it (`keys::slot_tag`): its position tagged with
     // `SLOT_FIELD_BIT`; the null reference for none.

@@ -471,6 +471,12 @@ void loft_crt_log(int64_t sev, const char *m, int64_t mlen, const char *f, int64
     else loft_log_fatal(ms, fs, line);
 }
 
+/* `expose` / `release` off the browser (`Stores::expose_value`): the value's store locked
+ * read-only while the host holds it, and unlocked. */
+void loft_crt_store_lock(int64_t s, int64_t r, int64_t p, int64_t lock) {
+    loft_set_store_lock(loft_crt_ref(s, r, p), (uint8_t) lock);
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

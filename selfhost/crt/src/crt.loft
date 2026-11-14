@@ -424,6 +424,8 @@ fn c_pg_load_box(s: integer, r: integer, p: integer, path: text, plen: integer, 
 #c "loft_crt_pg_load_box" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
 fn c_pg_load_range(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, tp: integer, lo: integer, hi: integer) -> integer;
 #c "loft_crt_pg_load_range" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_store_lock(s: integer, r: integer, p: integer, lock: integer);
+#c "loft_crt_store_lock" "void(int64_t, int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -707,6 +709,11 @@ pub fn pg_load_box(s: integer, r: integer, p: integer, path: text, sc: integer, 
 // `store_load_range(r, path, lo, hi)` on a sorted collection: how many records were read.
 pub fn pg_load_range(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, tp: integer, lo: integer, hi: integer) -> integer {
   c_pg_load_range(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, tp, lo, hi)
+}
+
+// `expose` / `release`: the value's store locked read-only, or unlocked.
+pub fn store_lock(s: integer, r: integer, p: integer, lock: boolean) {
+  c_store_lock(s, r, p, if lock { 1 } else { 0 });
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
