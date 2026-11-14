@@ -338,6 +338,98 @@ fn nullable_element(ts: vector<ir::DbType>, tp: integer) -> boolean {
   false
 }
 
+// The fields of a struct or of an enum variant, empty for any other type.
+fn record_fields(ts: vector<ir::DbType>, tp: integer) -> vector<ir::DbField> {
+  match ts[tp]?.parts[0] {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => [],
+  }
+}
+
+// The type whose fields hold an element's keys (`Stores::key_owner`): a `__nullable<S>`
+// element keeps them in its `Some` variant's `payload` field, any other element itself.
+fn key_owner(ts: vector<ir::DbType>, elem: integer) -> integer {
+  name = ts[elem]?.name ?? "";
+  if name.starts_with("__nullable<") {
+    some = "{name}::Some";
+    for i in 0..len(ts) {
+      if ts[i]!.name == some {
+        for f in record_fields(ts, i) {
+          if f.name == "payload" {
+            return f.content;
+          }
+        }
+      }
+    }
+  }
+  elem
+}
+
+// The key content types one key field contributes (`Stores::key_contents_for_field`): one, or
+// a `__tuple<…>` field's elements, each expanded the same way.
+fn field_key_contents(ts: vector<ir::DbType>, content: integer) -> vector<integer> {
+  if (ts[content]?.name ?? "").starts_with("__tuple<") {
+    out: vector<integer> = [];
+    for f in record_fields(ts, content) {
+      out += field_key_contents(ts, f.content);
+    }
+    if len(out) > 0 {
+      return out;
+    }
+  }
+  [content]
+}
+
+// The content types of a keyed collection's key parts, in comparison order — the list
+// `Stores::get_keys` answers, which says the width each part takes on the stack: 0..5 a base
+// kind (integer, long, single, float, boolean, text), 6 a character, any other a type number.
+// A hash or a spatial names its key fields by index, a sorted, an ordered or an index by
+// `KeyField.nr`, a trie its one key field.  Null when the schema does not resolve one.
+pub fn key_contents(ts: vector<ir::DbType>, tp: integer) -> vector<integer>? {
+  elem = -1;
+  nrs: vector<integer> = [];
+  match ts[tp]?.parts[0] {
+    PtHash { content, fields } => {
+      elem = content;
+      nrs = fields;
+    }
+    PtRadix { content, fields } => {
+      elem = content;
+      nrs = fields;
+    }
+    PtSorted { content, keys } => {
+      elem = content;
+      nrs = [for k in keys { k.nr }];
+    }
+    PtOrdered { content, keys } => {
+      elem = content;
+      nrs = [for k in keys { k.nr }];
+    }
+    PtIndex { content, keys } => {
+      elem = content;
+      nrs = [for k in keys { k.nr }];
+    }
+    PtTrie { content, key } => {
+      elem = content;
+      nrs = [key];
+    }
+    _ => {
+      return null;
+    }
+  }
+  fields = record_fields(ts, key_owner(ts, elem));
+  out: vector<integer> = [];
+  for nr in nrs {
+    f = fields[nr];
+    if f == null {
+      return null;
+    }
+    out += field_key_contents(ts, f.content);
+  }
+  out
+}
+
 // The owner of field `i`'s linked group — the member whose `other_indexes` does not start with
 // the view marker 65535 — or null outside a group.  `group_owner` (`src/c/mod.rs`).
 fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer? {

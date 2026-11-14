@@ -183,6 +183,13 @@ H_MOVE_VECTOR = 159;
 H_MOVE_FIELD = 160;
 H_HASH_REMOVE = 161;
 H_SET_KEYED = 162;
+H_ITERATE = 163;
+H_STEP = 164;
+H_WALK_REMOVE = 165;
+H_FREE_SCRATCH = 166;
+H_FREE_RECORD_IN = 167;
+H_CAST_SINGLE_FROM_FLOAT = 168;
+H_CONV_FLOAT_FROM_SINGLE = 169;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -402,6 +409,15 @@ pub fn handler(name: text) -> integer {
     "OpMoveRecord" => H_MOVE_FIELD,
     "OpHashRemove" => H_HASH_REMOVE,
     "OpSetKeyed" => H_SET_KEYED,
+    "OpIterate" => H_ITERATE,
+    "OpStep" => H_STEP,
+    "OpRemove" => H_WALK_REMOVE,
+    "OpFreeScratch" => H_FREE_SCRATCH,
+    "OpFreeRecordIn" => H_FREE_RECORD_IN,
+    "OpGetByteNullable" => H_GET_W,
+    "OpSetByteNullable" => H_SET_SHORT,
+    "OpCastSingleFromFloat" => H_CAST_SINGLE_FROM_FLOAT,
+    "OpConvFloatFromSingle" => H_CONV_FLOAT_FROM_SINGLE,
     _ => -1
   }
 }
@@ -428,6 +444,7 @@ N_TEXT_FROM_BYTE_RANGE_DEST = 17;
 N_TEXT_FROM_BYTES_DEST = 18;
 N_HASH_SORTED = 19;
 N_HASH_UNSORTED = 20;
+N_TEXT_FIND = 21;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -451,6 +468,7 @@ pub fn native_handler(name: text) -> integer {
     "n_text_from_bytes_dest" => N_TEXT_FROM_BYTES_DEST,
     "n_hash_sorted" => N_HASH_SORTED,
     "n_hash_unsorted" => N_HASH_UNSORTED,
+    "t_4text_find" => N_TEXT_FIND,
     _ => -1
   }
 }
@@ -573,6 +591,10 @@ fn layout_of(h: integer) -> text {
     160 => "h",
     161 => "h",
     162 => "hb",
+    163 => "bhkbb",
+    164 => "hbh",
+    165 => "hbh",
+    167 => "h",
     _ => ""
   }
 }
@@ -596,7 +618,7 @@ pub fn bind_ops(img: ir::RunImage) -> vector<integer> {
   hs: vector<integer> = [];
   for name in img.ops {
     h = handler(name);
-    want = if name == "OpPushByte" { "i" } else if name == "OpGetByte" || name == "OpGetShort" || name == "OpGetShortRaw" { "hi" } else { layout_of(h) };
+    want = if name == "OpPushByte" { "i" } else if name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" { "hi" } else { layout_of(h) };
     if h > 0 && (img.layouts[len(hs)] ?? "") != want {
       h = -2;
     }
@@ -748,22 +770,20 @@ fn default_of(ts: vector<ir::DbType>, images: vector<vector<u8>>, imaged: vector
   }
 }
 
-// The width a key part takes on the stack, by its key's type: Rust's key content code is the
-// type number less one (`stack_keys`) — 5 a text's view (16), any other 8.
-fn key_width(ts: vector<ir::DbType>, tp: integer, i: integer) -> integer {
-  code = (ts[tp]!.keys[i]!.type_nr).abs() - 1;
-  if code == 5 { 16 } else { 8 }
-}
-
 // The `n` key parts of collection type `tp` on the stack under `top` — the first key on top, as
-// `stack_keys` pops them — pushed onto the C runtime's key stack in key order, each read at its
-// own width: an integer, a single, a float, a boolean's or an enum's byte, a text, a character.
-// Answers the bytes they take.
+// `State::stack_keys` pops them — pushed onto the C runtime's key stack in key order, each read
+// as `stack_keys` reads it by its content (`types::key_contents`): an integer of any width, a single, a float, a
+// boolean's byte, a text, a character, any other (an enum) a byte.  Answers the bytes they take,
+// -1 with nothing pushed when a part's type does not resolve.
 fn push_keys(ts: vector<ir::DbType>, stk: integer, tp: integer, n: integer, top: integer) -> integer {
+  kc = types::key_contents(ts, tp);
+  if kc == null || n > len(kc) {
+    return -1;
+  }
   at = top;
   for i in 0..n {
-    code = (ts[tp]!.keys[i]!.type_nr).abs() - 1;
-    at -= key_width(ts, tp, i);
+    code = kc[i] ?? 0;
+    at -= if code == 5 { 16 } else { 8 };
     if code == 2 || code == 3 {
       crt::key_float(crt::get_float(stk, 1, 8 + at, 0, code == 2), code == 2);
     } else if code == 5 {
@@ -772,13 +792,59 @@ fn push_keys(ts: vector<ir::DbType>, stk: integer, tp: integer, n: integer, top:
       crt::key_int(crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0));
     } else if code == 6 {
       crt::key_int(crt::get_w(crt::W_CHARACTER, stk, 1, 8 + at, 0, 0));
-    } else if code >= 7 && ts[code]!.parts[0]! is PtEnum {
+    } else if code >= 7 && !narrow_integer(ts, code) {
       crt::key_int(crt::get_w(crt::W_ENUM, stk, 1, 8 + at, 0, 0));
     } else {
       crt::key_int(get(stk, at));
     }
   }
   top - at
+}
+
+// Is type `tp` one of the narrow integer encodings (`Parts::Int`/`IntRaw`/`Short`/`ShortRaw`/
+// `Byte`), which a key part carries as a whole integer?
+fn narrow_integer(ts: vector<ir::DbType>, tp: integer) -> boolean {
+  match ts[tp]?.parts[0] {
+    PtInt { start, nullable } => true,
+    PtIntRaw { start, nullable } => true,
+    PtShort { start, nullable } => true,
+    PtShortRaw { start, nullable } => true,
+    PtByte { start, nullable } => true,
+    _ => false,
+  }
+}
+
+// The `n` parts of one walk bound under `top`, key 0 on top as `State::stack_key` pops them,
+// pushed onto the C runtime's key stack in key order; each part read at the width its walk key's
+// type number gives (`kt`: 3 a single, 4 a float, 5 a boolean, 6 a text, 7 a byte, any other an
+// integer).  Answers the bytes they take.
+fn push_walk_bound(stk: integer, kt: vector<integer>, n: integer, top: integer) -> integer {
+  at = top;
+  for i in 0..n {
+    t = kt[i] ?? 1;
+    at -= if t == 6 { 16 } else { 8 };
+    if t == 3 || t == 4 {
+      crt::key_float(crt::get_float(stk, 1, 8 + at, 0, t == 3), t == 3);
+    } else if t == 6 {
+      crt::key_text(crt::stack_str(stk, at));
+    } else if t == 5 {
+      crt::key_int(crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0));
+    } else if t == 7 {
+      crt::key_int(crt::get_w(crt::W_ENUM, stk, 1, 8 + at, 0, 0));
+    } else {
+      crt::key_int(get(stk, at));
+    }
+  }
+  top - at
+}
+
+// The bytes a walk bound of `n` parts takes on the stack.
+fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
+  b = 0;
+  for i in 0..n {
+    b += if (kt[i] ?? 1) == 6 { 16 } else { 8 };
+  }
+  b
 }
 
 // What a run answers: the operator it stopped at when it refused one, and how many it ran.
@@ -834,6 +900,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   trace = env_variable("LOFT_BRUN_TRACE") != null;
   // Each element type's default image, derived on first use (`types::default_image`).
   images: vector<vector<u8>> = [];
+  // A walk step's answer: the record's reference and the walk's next state.
+  step_io: vector<integer> = [0, 0, 0, 0];
   imaged: vector<boolean> = [];
   while true {
     if sp + 1024 > cap {
@@ -1241,6 +1309,13 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         sp -= 16;
         crt::slot_ref(io, stk, sp);
         crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
+      } else if nh == N_TEXT_FIND {
+        // The byte position of the first `value` in `self`, null when there is none.
+        fval = crt::stack_str(stk, sp - 16) ?? "";
+        fself = crt::stack_str(stk, sp - 32) ?? "";
+        sp -= 32;
+        set(stk, sp, fself.find(fval));
+        sp += 8;
       } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
         nv = crt::stack_str(stk, sp - 16) ?? "";
         ns2 = crt::stack_str(stk, sp - 32) ?? "";
@@ -1492,13 +1567,13 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       fld = u16_at(img.code, pc);
       mn = 0;
       pc += 2;
-      if name == "OpGetByte" || name == "OpGetShort" || name == "OpGetShortRaw" {
+      if name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" {
         mn = i32_at(img.code, pc);
         pc += 4;
       }
       sp -= 16;
       crt::slot_ref(io, stk, sp);
-      w = if name == "OpGetByte" { crt::W_BYTE } else if name == "OpGetShort" { crt::W_SHORT } else if name == "OpGetShortRaw" { crt::W_SHORT_RAW } else if name == "OpGetEnum" { crt::W_ENUM } else { crt::W_BOOLEAN };
+      w = if name == "OpGetByte" { crt::W_BYTE } else if name == "OpGetByteNullable" { crt::W_BYTE_NULLABLE } else if name == "OpGetShort" { crt::W_SHORT } else if name == "OpGetShortRaw" { crt::W_SHORT_RAW } else if name == "OpGetEnum" { crt::W_ENUM } else { crt::W_BOOLEAN };
       v = crt::get_w(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld, mn);
       // A boolean or an enum stays its byte on the stack, 255 for null.
       set(stk, sp, if w == crt::W_ENUM || w == crt::W_BOOLEAN { v ?? 255 } else { v });
@@ -2128,6 +2203,9 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         return Outcome { refused: "a lookup in a collection the runner does not look up in: OpGetRecord at {at}", steps: steps };
       }
       gbytes = push_keys(img.types, stk, gtp2, gn, sp);
+      if gbytes < 0 {
+        return Outcome { refused: "a lookup in {img.types[gtp2]?.name ?? "type {gtp2}"} whose key the runner cannot read: OpGetRecord at {at}", steps: steps };
+      }
       sp -= gbytes + 16;
       crt::slot_ref(io, stk, sp);
       if gkind != 0 {
@@ -2138,14 +2216,16 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
       sp += 16;
     } else if h == H_SET_SHORT {
-      // The value popped, then the reference; a 2-byte field, `min` its offset.
+      // The value popped, then the reference; a 2-byte field or a nullable byte, `min` its
+      // offset.
       sfld = u16_at(img.code, pc);
       smn = i32_at(img.code, pc + 2);
       pc += 6;
       sv = get(stk, sp - 8);
       crt::slot_ref(io, stk, sp - 24);
       sp -= 24;
-      crt::set_w(if (img.ops[op] ?? "") == "OpSetShortRaw" { crt::W_SHORT_RAW } else { crt::W_SHORT }, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, sfld, smn, sv);
+      sop = img.ops[op] ?? "";
+      crt::set_w(if sop == "OpSetShortRaw" { crt::W_SHORT_RAW } else if sop == "OpSetByteNullable" { crt::W_BYTE_NULLABLE } else { crt::W_SHORT }, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, sfld, smn, sv);
     } else if h == H_STORE_LIVE {
       // A reference to a record (not null, not the stack's) in a store not freed.
       crt::slot_ref(io, stk, sp - 16);
@@ -2263,7 +2343,11 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       if types::hash_element(img.types, ktp) == null && kkind == 0 {
         return Outcome { refused: "a keyed write into a collection the runner does not write into: OpSetKeyed at {at}", steps: steps };
       }
-      sp -= push_keys(img.types, stk, ktp, kn2, sp);
+      kbytes = push_keys(img.types, stk, ktp, kn2, sp);
+      if kbytes < 0 {
+        return Outcome { refused: "a keyed write into {img.types[ktp]?.name ?? "type {ktp}"} whose key the runner cannot read ({kn2} parts): OpSetKeyed at {at}", steps: steps };
+      }
+      sp -= kbytes;
       crt::slot_ref(io, stk, sp - 16);
       kvs = io[0] ?? NULL_STORE;
       kvr = io[1] ?? 0;
@@ -2271,6 +2355,88 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       crt::slot_ref(io, stk, sp - 32);
       sp -= 32;
       crt::set_keyed(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, kvs, kvr, kvp, types::content_of(img.types, ktp) ?? 0, ktp, kn2, kraw >= 32768, kkind);
+    } else if h == H_ITERATE {
+      // A walk's start (`State::iterate`): the key list and the bounds' sizes from the code,
+      // then the till bound, the from bound and the collection popped; the walk's state pushed.
+      // The state is the C runtime's cursor — only `OpStep` and `OpRemove` read it, both here.
+      // A snapshot (kind 4) walks without bounds; an index (1), a sorted (2) or an ordered (3)
+      // through `keyed_iterate`; a spatial walk is refused.
+      ion = img.code[pc] ?? 0;
+      iarg = u16_at(img.code, pc + 1);
+      ink = img.code[pc + 3] ?? 0;
+      pc += 4;
+      ikt: vector<integer> = [];
+      for _ in 0..ink {
+        it = i8_at(img.code, pc);
+        ikt += [it.abs()];
+        crt::walk_key(it, u16_at(img.code, pc + 1), i32_at(img.code, pc + 3));
+        pc += 7;
+      }
+      infrom = img.code[pc] ?? 0;
+      intill = img.code[pc + 1] ?? 0;
+      pc += 2;
+      ikind = ion & 63;
+      if ikind < 1 || ikind > 4 || (ikind == 4 && (infrom != 0 || intill != 0)) {
+        return Outcome { refused: "a walk the runner does not carry: OpIterate at {at}", steps: steps };
+      }
+      itill = walk_bound_bytes(ikt, intill);
+      push_walk_bound(stk, ikt, infrom, sp - itill);
+      push_walk_bound(stk, ikt, intill, sp);
+      sp -= itill + walk_bound_bytes(ikt, infrom) + 16;
+      crt::slot_ref(io, stk, sp);
+      if ikind == 4 {
+        set(stk, sp, crt::scratch_iterate(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+      } else {
+        ensure_table(img.types, tl);
+        set(stk, sp, crt::keyed_iterate(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ion, iarg, infrom, intill));
+      }
+      sp += 8;
+    } else if h == H_STEP || h == H_WALK_REMOVE {
+      // A walk's next record (`State::step`), or the current one removed (`State::remove`):
+      // the state at its variable, read and written before the collection is popped.
+      wst = u16_at(img.code, pc);
+      won = img.code[pc + 2] ?? 0;
+      warg = u16_at(img.code, pc + 3);
+      pc += 5;
+      wstate = get(stk, sp - wst) ?? 0;
+      crt::slot_ref(io, stk, sp - 16);
+      wkind = won & 63;
+      if h == H_WALK_REMOVE {
+        if wkind < 1 || wkind > 3 {
+          return Outcome { refused: "a removal in a walk the runner does not carry: OpRemove at {at}", steps: steps };
+        }
+        ensure_table(img.types, tl);
+        set(stk, sp - wst, crt::walk_remove(wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won, warg));
+        sp -= 16;
+      } else {
+        if wkind == 4 {
+          crt::scratch_step(step_io, wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won & 64 != 0);
+        } else if wkind >= 1 && wkind <= 3 {
+          ensure_table(img.types, tl);
+          crt::keyed_step(step_io, wstate, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, won, warg);
+        } else {
+          return Outcome { refused: "a walk the runner does not carry: OpStep at {at}", steps: steps };
+        }
+        set(stk, sp - wst, step_io[3]);
+        crt::set_slot_ref(stk, sp - 16, step_io[0] ?? NULL_STORE, step_io[1] ?? 0, step_io[2] ?? 0);
+      }
+    } else if h == H_FREE_SCRATCH {
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      crt::free_scratch(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else if h == H_FREE_RECORD_IN {
+      // What the `tp` record owns released, the record itself left (`Stores::free_record_in`).
+      ensure_table(img.types, tl);
+      frtp = u16_at(img.code, pc);
+      pc += 2;
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      crt::free_record_in(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, frtp);
+    } else if h == H_CAST_SINGLE_FROM_FLOAT {
+      crt::set_float(stk, 1, 8 + sp - 8, 0, get_f(stk, sp - 8), true);
+    } else if h == H_CONV_FLOAT_FROM_SINGLE {
+      cfs = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+      crt::set_float(stk, 1, 8 + sp - 8, 0, cfs, false);
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
