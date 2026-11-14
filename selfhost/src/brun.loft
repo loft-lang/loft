@@ -626,6 +626,7 @@ N_UPGRADE_OWED_REF = 46;
 N_UPGRADE_ROUTINE = 47;
 N_LOG = 48;
 N_SOURCE_DIR_DEST = 49;
+N_LOAD_KEY = 50;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -682,6 +683,8 @@ pub fn native_handler(name: text) -> integer {
     "n_log_error" => N_LOG,
     "n_log_fatal" => N_LOG,
     "n_source_dir_dest" => N_SOURCE_DIR_DEST,
+    "n_store_load_key" => N_LOAD_KEY,
+    "n_store_load_key_text" => N_LOAD_KEY,
     "t_4text_byte_at" => N_TEXT_BYTE_AT,
     "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
     "t_4text_rfind" => N_TEXT_RFIND,
@@ -1394,6 +1397,42 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     crt::slot_ref(io, stk, sp - 16);
     sp -= 16;
     set_bool(stk, sp, crt::store_verify(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    sp += 8;
+  } else if nh == N_LOAD_KEY {
+    // A paged load of one key (`paged_load`): the key, the path and the collection's place
+    // popped; its root type's sidecar and plan from the image.
+    ensure_table(img.types, tl);
+    lktext = (img.natives[idx] ?? "") == "n_store_load_key_text";
+    lkint = 0;
+    lkt = "";
+    if lktext {
+      lkt = crt::stack_str(stk, sp - 16) ?? "";
+      sp -= 16;
+    } else {
+      lkint = get(stk, sp - 8) ?? 0;
+      sp -= 8;
+    }
+    lkpath = crt::stack_str(stk, sp - 16) ?? "";
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    lkk = crt::store_known(io[0] ?? NULL_STORE);
+    lki = -1;
+    for i in 0..len(img.sidecars) {
+      if (img.sidecars[i]?.tp ?? -1) == lkk {
+        lki = i;
+      }
+    }
+    if lki < 0 {
+      why[0] = "a paged load without a sidecar the runner can use: {img.natives[idx] ?? ""}";
+      return -1;
+    }
+    if len(sidecar_ix) == 0 {
+      for sc in img.sidecars {
+        sidecar_ix += [crt::sidecar_add(sc.tp, sc.hash, sc.walks, sc.before, sc.after, sc.dump, img.oldest, img.bridge)];
+      }
+    }
+    lks = img.sidecars[lki]!;
+    set_bool(stk, sp, crt::pg_load_key(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkint, lkt, lktext));
     sp += 8;
   } else if nh == N_STORE_PERSIST_COPY || nh == N_STORE_LOAD || nh == N_STORE_LOAD_UNTRUSTED {
     // A store's image written or loaded with its root type's sidecar (`RunSidecar`), the one the

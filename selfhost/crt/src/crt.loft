@@ -414,6 +414,8 @@ fn c_slot_set(raw: integer, s: integer, r: integer, p: integer, vs: integer, vr:
 #c "loft_crt_slot_set" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_log(sev: integer, m: text, mlen: integer, f: text, flen: integer, line: integer);
 #c "loft_crt_log" "void(int64_t, const char*, int64_t, const char*, int64_t, int64_t)"
+fn c_pg_load_key(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, kind: integer, key: integer, tkey: text, tlen: integer, is_text: integer) -> integer;
+#c "loft_crt_pg_load_key" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -672,6 +674,11 @@ pub fn slot_set(raw: integer, s: integer, r: integer, p: integer, vs: integer, v
 // `log_info` … `log_fatal` (`sev` 0 … 3) through the C runtime's logger.
 pub fn log(sev: integer, m: text, f: text, line: integer) {
   c_log(sev, m, m.size(), f, f.size(), line);
+}
+
+// `store_load_key(r, path, key)`: one record under an integer or a text key read from the image.
+pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text, is_text: boolean) -> boolean {
+  c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey, tkey.size(), if is_text { 1 } else { 0 }) != 0
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).

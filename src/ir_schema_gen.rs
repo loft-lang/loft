@@ -948,6 +948,10 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t116, "dests", 0);
     db.field(t117, "tp", 0);
     db.field(t117, "hash", 0);
+    db.field(t117, "pcoll", 0);
+    db.field(t117, "pcontent", 0);
+    db.field(t117, "pkind", 0);
+    db.field(t117, "prefusal", t5);
     db.field(t117, "walks", t4);
     db.field(t117, "refs", t4);
     db.field(t117, "rekey", t4);

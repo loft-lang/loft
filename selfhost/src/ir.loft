@@ -503,6 +503,13 @@ pub struct RunWorker {
 pub struct RunSidecar {
   pub tp: integer,
   pub hash: integer,
+  // A paged load's plan (`paged_plan`): the collection the store holds, its element type (-1
+  // when it serves no `load_key`), its kind (0 a hash, 1 a trie, 2 a spatial index), and the
+  // reason a load is refused (empty for none).
+  pub pcoll: integer,
+  pub pcontent: integer,
+  pub pkind: integer,
+  pub prefusal: text,
   pub walks: boolean,
   pub refs: boolean,
   pub rekey: boolean,

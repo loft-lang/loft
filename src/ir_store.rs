@@ -1123,6 +1123,10 @@ fn materialize_run_sidecars(
         let e = sv.push(stores);
         e.set_field_int(stores, ds::RUNSIDECAR_TP, i64::from(c.tp));
         e.set_field_int(stores, ds::RUNSIDECAR_HASH, c.hash.cast_signed());
+        e.set_field_int(stores, ds::RUNSIDECAR_PCOLL, i64::from(c.pcoll));
+        e.set_field_int(stores, ds::RUNSIDECAR_PCONTENT, c.pcontent);
+        e.set_field_int(stores, ds::RUNSIDECAR_PKIND, c.pkind);
+        e.set_field_str(stores, ds::RUNSIDECAR_PREFUSAL, &c.prefusal);
         e.set_field_bool(stores, ds::RUNSIDECAR_WALKS, c.walks);
         e.set_field_bool(stores, ds::RUNSIDECAR_REFS, c.refs);
         e.set_field_bool(stores, ds::RUNSIDECAR_REKEY, c.rekey);
@@ -1346,6 +1350,10 @@ pub fn run_image_workers(data: &Data) -> Vec<[i64; 5]> {
 pub struct RunSidecarShape {
     pub tp: u16,
     pub hash: u64,
+    pub pcoll: u16,
+    pub pcontent: i64,
+    pub pkind: i64,
+    pub prefusal: String,
     pub walks: bool,
     pub refs: bool,
     pub rekey: bool,
@@ -1374,6 +1382,8 @@ pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape>
                     | "n_store_load"
                     | "n_store_load_untrusted"
                     | "n_store_verify"
+                    | "n_store_load_key"
+                    | "n_store_load_key_text"
             ) {
                 return;
             }
@@ -1410,9 +1420,33 @@ pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape>
             let id = crate::schema_sidecar::LayoutIdentity::of_store(program, u16::MAX, tp);
             let text = id.to_sidecar();
             let (before, after) = text.split_once(&marker).unwrap_or((&text, ""));
+            // `paged_plan` for a key load: the store's collection, which must be a hash or a trie
+            // of copyable entries.
+            use crate::database::Parts;
+            let pcoll = program.collection_type_of_store(tp);
+            let parts = program.types.get(pcoll as usize).map(|t| &t.parts);
+            let content = match parts {
+                Some(Parts::Hash(c, _) | Parts::Trie(c, _)) => Some(*c),
+                _ => None,
+            };
+            let prefusal = match content {
+                None => program.wrong_collection_reason(tp, "a hash or a trie"),
+                Some(c) if !program.is_copyable_entry(c) => program.not_copyable_reason(c),
+                Some(_) => String::new(),
+            };
+            let pcontent = if prefusal.is_empty() {
+                content.map_or(-1, i64::from)
+            } else {
+                -1
+            };
+            let pkind = i64::from(matches!(parts, Some(Parts::Trie(..))));
             RunSidecarShape {
                 tp,
                 hash: id.layout_hash,
+                pcoll,
+                pcontent,
+                pkind,
+                prefusal,
                 walks: crate::c::holds_stored_refs_in(program, tp)
                     || crate::c::holds_trie_in(program, tp),
                 refs: crate::c::holds_stored_refs_in(program, tp),

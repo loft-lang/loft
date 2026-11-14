@@ -18,6 +18,10 @@
  * relative path resolves against the program's directory as a C program's does. */
 #include "../../../src/c/loft_io.h"
 #include "../../../src/c/loft_image.h"
+#include "../../../src/c/loft_paged.h"
+/* A second pass over the radix walks defines their paged twins, as the C backend's unit order. */
+#include "../../../src/c/loft_radix_walk.h"
+#include "../../../src/c/loft_paged_load.h"
 #include "../../../src/c/loft_log.h"
 
 /* A text that crossed the bridge: `bytes` long (an embedded NUL kept), or null when -1. */
@@ -969,6 +973,22 @@ int64_t loft_crt_image_load(int64_t s, int64_t r, int64_t p, const char *path, i
     if (sc < 0 || sc >= loft_crt_nsidecars) return 0;
     return loft_image_load(loft_crt_ref(s, r, p), loft_crt_str(path, plen), &loft_crt_sidecars[sc], (int) untrusted)
                ? 1 : 0;
+}
+
+/* `store_load_key(r, path, key)` / `_text` (`loft_pg_load_keys`, the C backend's `paged_load`):
+ * the one record under the key read from the image into the collection `r`'s store holds, with
+ * sidecar `sc` and the plan the image carries — the collection `coll`, its element `content`,
+ * its `kind`, the refusal (empty for none).  Whether a record was read. */
+int64_t loft_crt_pg_load_key(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
+                             const char *refusal, int64_t rlen, int64_t content, int64_t coll, int64_t kind,
+                             int64_t key, const char *tkey, int64_t tlen, int64_t is_text) {
+    if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(coll)) return 0;
+    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
+    loft_kv kv = is_text ? loft_kv_text(loft_crt_str(tkey, tlen)) : loft_kv_int(key);
+    int64_t n = loft_pg_load_keys((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+                                  &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
+                                  loft_crt_types[coll].keys, loft_crt_types[coll].nk, (int) kind, &kv, 1);
+    return n > 0 ? 1 : 0;
 }
 
 /* `store_verify(r)` (`loft_store_verify`). */
