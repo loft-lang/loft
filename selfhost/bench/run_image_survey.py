@@ -7,8 +7,9 @@
 program of the coverage census's corpus (`selfhost/cover/census.py`): its run image is written
 (`loft --emit-run-image`), run on the runner built `--native-c --ship` from
 selfhost/bench/run_image_run.loft, and its standard output compared with `loft --interpret`'s.
-A program is counted as `agree`, `differ` (the runner printed something else), `refused` (an
-operator it does not carry, named in the ranking) or `crash`.  The ranking is the order to add
+A program is counted as `agree`, `differ` (the runner printed something else), `leak` (the same
+output, but a different count of stores left at exit than the interpreter reports), `refused`
+(an operator it does not carry, named in the ranking) or `crash`.  The ranking is the order to add
 operators in.
 
     python3 selfhost/bench/run_image_survey.py [--scripts-only] [--jobs N] [--top 30]
@@ -32,8 +33,12 @@ def one(f, loft, runner, tmp, env, timeout):
     rc, _, err = proc([loft, "--emit-run-image", img, f], env, timeout)
     if rc != 0:
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
-    rc, want, _ = proc([loft, "--interpret", f], env, timeout, cwd=os.path.dirname(f))
-    rc2, got, err2 = proc([runner, img], env, timeout, cwd=os.path.dirname(f))
+    rc, want, err = proc([loft, "--interpret", f], env, timeout, cwd=os.path.dirname(f))
+    # The runner shares one C runtime with the program it runs, so its exit leak check
+    # (`LOFT_NATIVE_LEAK_CHECK`) counts the program's stores left at exit, as the interpreter's
+    # own report does: the two counts are compared too.
+    rc2, got, err2 = proc([runner, img], {**env, "LOFT_NATIVE_LEAK_CHECK": "1"}, timeout,
+                          cwd=os.path.dirname(f))
     m = re.search(r"refused: (.*): (.+?) at \d+", err2)
     if rc2 == 3 and m:
         # An operator or a native by name; a collection the runner does not add to by its kind.
@@ -41,7 +46,13 @@ def one(f, loft, runner, tmp, env, timeout):
         return f, "refused", [what]
     if rc2 not in (0, 1) and rc2 != rc:
         return f, "crash", [f"exit {rc2}"]
-    return f, ("agree" if got == want else "differ"), [""]
+    if got != want:
+        return f, "differ", [""]
+    leaked = [int(m.group(1)) if m else 0
+              for m in (re.search(r"(\d+) stores not freed at program exit", e) for e in (err, err2))]
+    if leaked[0] != leaked[1]:
+        return f, "leak", [f"interpreter {leaked[0]}, runner {leaked[1]}"]
+    return f, "agree", [""]
 
 
 def main():
@@ -53,7 +64,7 @@ def main():
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--timeout", type=int, default=60)
     ap.add_argument("--show", action="append", default=[],
-                    help="list the programs of a verdict (agree, differ, refused, crash; repeatable)")
+                    help="list the programs of a verdict (agree, differ, leak, refused, crash; repeatable)")
     o = ap.parse_args()
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = o.loft or os.path.join(root, "target", "release", "loft")
@@ -86,7 +97,7 @@ def main():
                 if verdict == "refused":
                     ops[what[0]] += 1
         print(f"{counts['agree']} of {len(files)} programs agree; " +
-              ", ".join(f"{counts[k]} {k}" for k in ("refused", "differ", "crash", "noimage") if counts[k]))
+              ", ".join(f"{counts[k]} {k}" for k in ("refused", "differ", "leak", "crash", "noimage") if counts[k]))
         for line in sorted(shown):
             print(line)
         if ops:
