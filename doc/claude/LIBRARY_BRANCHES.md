@@ -9,7 +9,7 @@ the branch-level view of what is still IN FLIGHT. A branch with an **open PR** i
 that is **unmerged with no open PR** is an *orphan* — stranded work to land or delete.
 Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
-**7 unmerged branch(es) across 4 repo(s); 7 orphan(s) (unmerged, no open PR).**
+**5 unmerged branch(es) across 3 repo(s); 5 orphan(s) (unmerged, no open PR).**
 
 ## loft-libs-game
 
@@ -18,13 +18,8 @@ Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
 ## loft-libs-graphics
 
-- `firewall02-imaging-c99` — PR #60 closed · (12 files) — imaging 0.5.0: the PNG codec is C99 — a [c] sh  ⚠ orphan
 - `pln217-width32-tanmatsu` — PR no-PR · (3 files) — imaging, graphics: the 32-bit regime (@PLN217)  ⚠ orphan
 - `tuxedo-native-pixels` — PR no-PR · (7 files) — tiles: display surfaces — in a page the GPU dr  ⚠ orphan
-
-## loft-libs-net
-
-- `firewall02-web-in-binary` — PR no-PR · (15 files) — web 0.5.0: the natives are declared on loft's   ⚠ orphan
 
 ## loft-libs-world
 
