@@ -115,6 +115,33 @@ fn input_kind_for_first_arg(def: &crate::data::Definition) -> InputKind {
     }
 }
 
+/// A `par` worker's hidden parameters, classified by TYPE (a name-prefix rule misclassified
+/// wrapper-promoted destinations as text buffers): its text work buffers, which a text queue makes
+/// for each row, and its hidden return destinations (a record, a vector or a struct enum), which a
+/// reference queue makes.  The one home for every reader of the two counts.
+#[must_use]
+pub(crate) fn worker_hidden_counts(def: &crate::data::Definition) -> (usize, usize) {
+    let texts = def
+        .attributes
+        .iter()
+        .filter(|a| is_text_work_buffer(&a.typedef))
+        .count();
+    let dests = def
+        .attributes
+        .iter()
+        .filter(|a| {
+            a.hidden
+                && matches!(
+                    a.typedef,
+                    crate::data::Type::Reference(_, _)
+                        | crate::data::Type::Vector(_, _)
+                        | crate::data::Type::Enum(_, true, _)
+                )
+        })
+        .count();
+    (texts, dests)
+}
+
 /// How a `par` worker takes its row, as one number for the run image (@PLN91): 0 a reference to
 /// the row, -1 a text, `n` a primitive of `n` bytes read from the row (`input_kind_for_first_arg`),
 /// `1000 + n` a tuple of `n` bytes, which is re-laid out from the row (`read_tuple_at_wide`).
@@ -243,24 +270,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
         // Classified by TYPE, the same two readers `parallel_queue_dispatch` uses —
         // a second spelling of "which attributes are hidden" is how the prefix
         // heuristic it replaced went wrong.
-        let n_hidden_text = def
-            .attributes
-            .iter()
-            .filter(|a| is_text_work_buffer(&a.typedef))
-            .count();
-        let n_hidden_dests = def
-            .attributes
-            .iter()
-            .filter(|a| {
-                a.hidden
-                    && matches!(
-                        a.typedef,
-                        crate::data::Type::Reference(_, _)
-                            | crate::data::Type::Vector(_, _)
-                            | crate::data::Type::Enum(_, true, _)
-                    )
-            })
-            .count();
+        let (n_hidden_text, n_hidden_dests) = worker_hidden_counts(def);
         (
             return_size,
             primitive_input_size,
@@ -393,24 +403,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
         // `__ref_1`, Reference/Vector-typed) as text buffers — a live
         // frame-underflow panic for par workers calling wrapper-promoted
         // fns ('No elements left on the stack 8 < 12').
-        let n_hidden_text = def
-            .attributes
-            .iter()
-            .filter(|a| is_text_work_buffer(&a.typedef))
-            .count();
-        let n_hidden_dests = def
-            .attributes
-            .iter()
-            .filter(|a| {
-                a.hidden
-                    && matches!(
-                        a.typedef,
-                        crate::data::Type::Reference(_, _)
-                            | crate::data::Type::Vector(_, _)
-                            | crate::data::Type::Enum(_, true, _)
-                    )
-            })
-            .count();
+        let (n_hidden_text, n_hidden_dests) = worker_hidden_counts(def);
         let ret_type = def.returned.clone();
         let primitive_input_size = match input_kind_for_first_arg(def) {
             InputKind::Ref => 0u32,

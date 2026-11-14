@@ -2296,9 +2296,13 @@ fn narrow_decode(kind: integer, mn: integer, bits: integer) -> integer? {
 
 // ── `par` (`parallel_natives`), its workers run one after another ───────────────────────────
 // A queue's workers run in row order, each an ordinary call: a worker shares no mutable state
-// with another, so the answers are those of the threads Rust runs them on.  A job is started at
-// the queue's `OpStaticCall` and continued at each worker's return (`par_return`); its answers
-// go onto a buffer stack the `parallel_buf_*` natives read, as Rust's `par_*_buffer_stack`.
+// with another, so the answers are those of the threads Rust runs them on.  A fold mirrors Rust's
+// partition (`par_pool::parallel_workers`: `min(threads, rows)` workers over contiguous ranges,
+// each folding from `init`, the partials then combined from `init` in order), so a fold that is
+// not associative answers what Rust's does.  A job is started at the native's `OpStaticCall`
+// (`par_start`) and continued at each worker's return (`par_return`); a queue's answers go onto a
+// buffer stack the `parallel_buf_*` natives read, the topmost of their kind as Rust's per-kind
+// `par_*_buffer_stack`s.
 struct ParJob {
   kind: integer,
   depth: integer,
@@ -2316,11 +2320,30 @@ struct ParJob {
   n: integer,
   // An answer may be null (an integer's null), kept as it is.
   res: vector<integer?>,
+  texts: vector<text?>,
+  bytes: vector<u8>,
+  refs: vector<integer>,
+  wtexts: integer,
+  wbase: integer,
+  dests: integer,
+  held: vector<integer>,
+  init: integer?,
+  threads: integer,
+  t: integer,
+  rend: integer,
+  acc: integer?,
+  parts: vector<integer?>,
+  phase: integer,
 }
 
 struct ParBuf {
+  kind: integer,
   res: vector<integer?>,
   stride: integer,
+  texts: vector<text?>,
+  bytes: vector<u8>,
+  refs: vector<integer>,
+  adopted: vector<integer>,
 }
 
 PAR_QUEUE = 1;
@@ -2331,6 +2354,16 @@ PAR_BUF_GET_NARROW = 5;
 PAR_BUF_DROP_NARROW = 6;
 PAR_BUF_GET_SINGLE = 7;
 PAR_BUF_GET_FLOAT = 8;
+PAR_QUEUE_TEXT = 9;
+PAR_QUEUE_REF = 10;
+PAR_QUEUE_FN = 11;
+PAR_FOLD = 12;
+PAR_BUF_GET_TEXT_DEST = 13;
+PAR_BUF_DROP_TEXT = 14;
+PAR_BUF_GET_REF = 15;
+PAR_BUF_DROP_REF = 16;
+PAR_BUF_GET_FN = 17;
+PAR_BUF_DROP_FN = 18;
 
 // Per native: which `par` entry it is, 0 for none.
 fn par_natives(img: ir::RunImage) -> vector<integer> {
@@ -2338,48 +2371,134 @@ fn par_natives(img: ir::RunImage) -> vector<integer> {
     match nm {
       "n_parallel_queue" => PAR_QUEUE,
       "n_parallel_queue_narrow" => PAR_QUEUE_NARROW,
+      "n_parallel_queue_text" => PAR_QUEUE_TEXT,
+      "n_parallel_queue_ref" => PAR_QUEUE_REF,
+      "n_parallel_queue_fn" => PAR_QUEUE_FN,
+      "n_parallel_fold" => PAR_FOLD,
       "n_parallel_buf_get" => PAR_BUF_GET,
       "n_parallel_buf_drop" => PAR_BUF_DROP,
       "n_parallel_buf_get_narrow" => PAR_BUF_GET_NARROW,
       "n_parallel_buf_drop_narrow" => PAR_BUF_DROP_NARROW,
       "n_parallel_buf_get_single" => PAR_BUF_GET_SINGLE,
       "n_parallel_buf_get_float" => PAR_BUF_GET_FLOAT,
+      "n_parallel_buf_get_text_dest" => PAR_BUF_GET_TEXT_DEST,
+      "n_parallel_buf_drop_text" => PAR_BUF_DROP_TEXT,
+      "n_parallel_buf_get_ref" => PAR_BUF_GET_REF,
+      "n_parallel_buf_drop_ref" => PAR_BUF_DROP_REF,
+      "n_parallel_buf_get_fn" => PAR_BUF_GET_FN,
+      "n_parallel_buf_drop_fn" => PAR_BUF_DROP_FN,
       _ => 0,
     }
   }]
 }
 
-// A job's next row called: its argument — a reference to the row, its primitive read at the
-// row's width and passed at the worker's, or a wide value's bytes as they lie — the extra
-// arguments, the return position.  Answers
-// the stack top; the caller enters the worker.
-fn par_push_row(stk: integer, sp: integer, job: ParJob, io: vector<integer>) -> integer {
-  at = sp;
-  crt::vec_get(io, job.in_s, job.in_r, job.in_p, job.esize, job.row);
-  if job.input == 0 {
-    crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    at += 16;
-  } else if job.input > 8 {
-    crt::par_row_wide(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, stk, at, job.input);
-    at += step(job.input);
+// The kind of buffer a queue fills, the one its readers name.
+fn par_buf_kind(pk: integer) -> integer {
+  if pk == PAR_QUEUE_NARROW || pk == PAR_BUF_GET_NARROW || pk == PAR_BUF_DROP_NARROW || pk == PAR_BUF_GET_SINGLE {
+    PAR_QUEUE_NARROW
+  } else if pk == PAR_QUEUE_TEXT || pk == PAR_BUF_GET_TEXT_DEST || pk == PAR_BUF_DROP_TEXT {
+    PAR_QUEUE_TEXT
+  } else if pk == PAR_QUEUE_REF || pk == PAR_BUF_GET_REF || pk == PAR_BUF_DROP_REF {
+    PAR_QUEUE_REF
+  } else if pk == PAR_QUEUE_FN || pk == PAR_BUF_GET_FN || pk == PAR_BUF_DROP_FN {
+    PAR_QUEUE_FN
   } else {
-    crt::par_row(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, job.esize, stk, at, job.input);
-    at += 8;
+    PAR_QUEUE
   }
-  for e in job.extras {
-    set(stk, at, e);
+}
+
+// The row's argument pushed at `at` as `push_worker_arg` pushes it: a reference to the row, its
+// primitive read at the row's width and passed at the worker's, a wide value's bytes as they lie,
+// or a view of its text.  A function queue always passes the reference.  Answers the stack top.
+fn par_row_arg(stk: integer, at: integer, job: ParJob, io: vector<integer>) -> integer {
+  crt::vec_get(io, job.in_s, job.in_r, job.in_p, job.esize, job.row);
+  if job.input == 0 || job.kind == PAR_QUEUE_FN {
+    crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    return at + 16;
+  }
+  if job.input < 0 {
+    crt::stack_str_of_field(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0);
+    return at + 16;
+  }
+  if job.input > 8 {
+    crt::par_row_wide(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, stk, at, job.input);
+    return at + step(job.input);
+  }
+  crt::par_row(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, job.esize, stk, at, job.input);
+  at + 8
+}
+
+// The job's next worker call pushed at `sp`, in the order Rust's entry for its kind pushes it —
+// `execute_at_raw*`: the row, the extras; `execute_at_text`: the work texts made below the frame,
+// the row, the extras, references to the work texts; `execute_at_ref`: the row, fresh hidden
+// destinations, the extras; a fold's `(acc, row, extras…)` or, combining, `(acc, partial)` — then
+// the return position.  Answers the stack top; the caller enters the worker.
+fn par_call(stk: integer, sp: integer, pjobs: vector<ParJob>, k: integer, io: vector<integer>) -> integer {
+  job = pjobs[k]!;
+  at = sp;
+  if job.kind == PAR_FOLD {
+    set(stk, at, job.acc);
     at += 8;
+    if job.phase == 0 {
+      crt::vec_get(io, job.in_s, job.in_r, job.in_p, job.esize, job.row);
+      crt::par_row(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, job.esize, stk, at, 8);
+      at += 8;
+      for e in job.extras {
+        set(stk, at, e);
+        at += 8;
+      }
+    } else {
+      set(stk, at, job.parts[job.row]);
+      at += 8;
+    }
+  } else if job.kind == PAR_QUEUE_TEXT {
+    pjobs[k].wbase = at;
+    for w in 0..job.wtexts {
+      crt::slot_text_init(stk, at + w * 24);
+    }
+    at += job.wtexts * 24;
+    at = par_row_arg(stk, at, job, io);
+    for e in job.extras {
+      set(stk, at, e);
+      at += 8;
+    }
+    for w in 0..job.wtexts {
+      crt::set_slot_ref(stk, at, stk, 1, 8 + job.wbase + w * 24);
+      at += 16;
+    }
+  } else if job.kind == PAR_QUEUE_REF {
+    at = par_row_arg(stk, at, job, io);
+    pjobs[k].held.clear();
+    for _ in 0..job.dests {
+      io[0] = NULL_STORE;
+      io[1] = 0;
+      io[2] = 0;
+      crt::database(io, 800, 0);
+      pjobs[k].held += [io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0];
+      crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+      at += 16;
+    }
+    for e in job.extras {
+      set(stk, at, e);
+      at += 8;
+    }
+  } else {
+    at = par_row_arg(stk, at, job, io);
+    for e in job.extras {
+      set(stk, at, e);
+      at += 8;
+    }
   }
   set(stk, at, job.back);
   at + 8
 }
 
-// `n_parallel_queue` / `_narrow` (`parallel_queue_dispatch`) at its `OpStaticCall`, `regs` the
-// `[sp, pc, depth]` in and out: the arguments popped (the extras count and the extras, the
-// worker, the threads, the answer size, the row size, the rows), then the first row's worker
-// called — or, with no rows, the empty buffer pushed and the count 0 answered.  -1 with the
-// reason in `why[0]` for a worker the runner does not call.
-fn par_start(kind: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pint: vector<ParBuf>, pnar: vector<ParBuf>, io: vector<integer>, why: vector<text>) -> integer {
+// A queue's or a fold's native at its `OpStaticCall`, `regs` the `[sp, pc, depth]` in and out:
+// its arguments popped as the native pops them — a queue's extras count and extras, worker,
+// threads, answer size, row size, rows; a fold's extras count and extras, threads, worker, init,
+// rows — then the first worker called, or with no rows the empty answer given at once.  -1 with
+// the reason in `why[0]` for a worker the runner does not call.
+fn par_start(pk: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>, why: vector<text>) -> integer {
   sp = regs[0] ?? 0;
   next = get(stk, sp - 8) ?? 0;
   sp -= 8;
@@ -2392,11 +2511,25 @@ fn par_start(kind: integer, img: ir::RunImage, stk: integer, regs: vector<intege
   for k in 0..len(ex) {
     extras += [ex[len(ex) - 1 - k] ?? 0];
   }
-  wdef = get(stk, sp - 8) ?? -1;
-  rsize = get(stk, sp - 24) ?? 8;
-  esize = get(stk, sp - 32) ?? 8;
-  crt::slot_ref(io, stk, sp - 48);
-  sp -= 48;
+  wdef = -1;
+  rsize = 8;
+  esize = 8;
+  threads = 1;
+  init: integer? = null;
+  if pk == PAR_FOLD {
+    threads = get(stk, sp - 8) ?? 1;
+    wdef = get(stk, sp - 16) ?? -1;
+    init = get(stk, sp - 24);
+    crt::slot_ref(io, stk, sp - 40);
+    sp -= 40;
+  } else {
+    wdef = get(stk, sp - 8) ?? -1;
+    threads = get(stk, sp - 16) ?? 1;
+    rsize = get(stk, sp - 24) ?? 8;
+    esize = get(stk, sp - 32) ?? 8;
+    crt::slot_ref(io, stk, sp - 48);
+    sp -= 48;
+  }
   wi = -1;
   for i in 0..len(img.workers) {
     if (img.workers[i]?.def ?? -1) == wdef {
@@ -2404,96 +2537,202 @@ fn par_start(kind: integer, img: ir::RunImage, stk: integer, regs: vector<intege
     }
   }
   if wi < 0 || wdef < 0 || wdef + 1 >= len(img.starts) {
-    why[0] = "a par worker the image does not describe: n_parallel_queue";
+    why[0] = "a par worker the image does not describe: {img.natives[0] ?? ""}";
     return -1;
   }
   w = img.workers[wi]!;
-  if w.input < 0 || w.input >= 1000 {
-    why[0] = "a par worker taking a text or a tuple row: n_parallel_queue";
+  if w.input >= 1000 && pk != PAR_QUEUE_FN && pk != PAR_FOLD {
+    why[0] = "a par worker taking a tuple row: n_parallel_queue";
     return -1;
   }
   wret = if w.ret >= 1 && w.ret <= 8 { w.ret } else if rsize < 1 { 1 } else if rsize > 8 { 8 } else { rsize };
   n = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-  job = ParJob { kind: kind, depth: (regs[2] ?? 0) + 1, back: regs[1] ?? 0, start: img.starts[wdef] ?? 0, input: w.input, ret: if kind == PAR_QUEUE_NARROW { w.ret } else { wret }, stride: rsize, in_s: io[0] ?? NULL_STORE, in_r: io[1] ?? 0, in_p: io[2] ?? 0, esize: esize, extras: extras, row: 0, n: n, res: [] };
+  nth = if threads < 1 { 1 } else if threads > n { n } else { threads };
+  job = ParJob { kind: pk, depth: (regs[2] ?? 0) + 1, back: regs[1] ?? 0, start: img.starts[wdef] ?? 0, input: w.input, ret: if pk == PAR_QUEUE_NARROW { w.ret } else { wret }, stride: rsize, in_s: io[0] ?? NULL_STORE, in_r: io[1] ?? 0, in_p: io[2] ?? 0, esize: esize, extras: extras, row: 0, n: n, res: [], texts: [], bytes: [], refs: [], wtexts: w.texts, wbase: 0, dests: w.dests, held: [], init: init, threads: nth, t: 0, rend: if nth > 0 { (n / nth) ?? 0 } else { 0 }, acc: init, parts: [], phase: 0 };
   if n == 0 {
-    if kind == PAR_QUEUE_NARROW {
-      pnar += [ParBuf { res: [], stride: rsize }];
+    if pk == PAR_FOLD {
+      set(stk, sp, init);
     } else {
-      pint += [ParBuf { res: [], stride: 0 }];
+      pbufs += [ParBuf { kind: par_buf_kind(pk), res: [], stride: rsize, texts: [], bytes: [], refs: [], adopted: [] }];
+      set(stk, sp, 0);
     }
-    set(stk, sp, 0);
     regs[0] = sp + 8;
     return 0;
   }
   pjobs += [job];
-  regs[0] = par_push_row(stk, sp, job, io);
+  k = len(pjobs) - 1;
+  regs[0] = par_call(stk, sp, pjobs, k, io);
   regs[1] = job.start;
   regs[2] = job.depth;
   0
 }
 
-// A `par` worker returned (`regs` `[sp, pc]`): its answer — `ret` bytes, as `execute_at_raw`
-// reads it — taken off the stack into the job; the next row's worker called (true, `regs`
-// updated), or, after the last, the job's buffer pushed and its row count answered (false).
-fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pint: vector<ParBuf>, pnar: vector<ParBuf>, io: vector<integer>) -> boolean {
+// A `par` worker returned (`regs` `[sp, pc]`): its answer taken off the stack — `ret` bytes, a
+// text copied out (its work texts then released), a record (the destinations it did not answer
+// in released), a function reference's 20 bytes, a fold's accumulator — then the next worker
+// called (true, `regs` updated), or after the last the job's buffer pushed and its count
+// answered, a fold its result (false).
+fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>) -> boolean {
   sp = regs[0] ?? 0;
   k = len(pjobs) - 1;
-  rs = pjobs[k]!.ret;
-  v: integer? = null;
-  if rs == 8 {
-    v = get(stk, sp - 8);
+  kind = pjobs[k]!.kind;
+  if kind == PAR_QUEUE_TEXT {
+    pjobs[k].texts += [crt::stack_str(stk, sp - 16)];
+    sp -= 16;
+    for w in 0..pjobs[k]!.wtexts {
+      crt::slot_text_free(stk, pjobs[k]!.wbase + w * 24);
+    }
+    sp = pjobs[k]!.wbase;
+  } else if kind == PAR_QUEUE_REF {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    rs = io[0] ?? NULL_STORE;
+    pjobs[k].refs += [rs, io[1] ?? 0, io[2] ?? 0];
+    h = pjobs[k]!.held;
+    j = 0;
+    while j + 2 < len(h) {
+      if (h[j] ?? -1) != rs && crt::store_live(h[j] ?? NULL_STORE) {
+        crt::free_ref(h[j] ?? NULL_STORE, h[j + 1] ?? 0, h[j + 2] ?? 0);
+      }
+      j += 3;
+    }
+  } else if kind == PAR_QUEUE_FN {
+    pjobs[k].bytes += crt::stack_read_bytes(stk, sp - 24, 20);
+    sp -= 24;
   } else {
-    bs = crt::stack_read_bytes(stk, sp - 8, if rs == 1 { 1 } else { 4 });
-    v = 0;
-    for b in 0..len(bs) {
-      v = v! + ((bs[b] ?? 0) << (8 * b));
+    rs = pjobs[k]!.ret;
+    v: integer? = null;
+    if kind == PAR_FOLD || rs == 8 {
+      v = get(stk, sp - 8);
+    } else {
+      bs = crt::stack_read_bytes(stk, sp - 8, if rs == 1 { 1 } else { 4 });
+      v = 0;
+      for b in 0..len(bs) {
+        v = v! + ((bs[b] ?? 0) << (8 * b));
+      }
+    }
+    sp -= 8;
+    if kind == PAR_FOLD {
+      pjobs[k].acc = v;
+    } else {
+      pjobs[k].res += [v];
     }
   }
-  sp -= 8;
-  pjobs[k].res += [v];
   pjobs[k].row += 1;
+  if kind == PAR_FOLD {
+    if pjobs[k]!.phase == 0 && pjobs[k]!.row >= pjobs[k]!.rend {
+      // A worker's range done: its partial kept, the next worker's range from `init`.
+      pjobs[k].parts += [pjobs[k]!.acc];
+      pjobs[k].t += 1;
+      pjobs[k].acc = pjobs[k]!.init;
+      if pjobs[k]!.t < pjobs[k]!.threads {
+        pjobs[k].rend = ((pjobs[k]!.t + 1) * pjobs[k]!.n / pjobs[k]!.threads) ?? pjobs[k]!.n;
+      } else {
+        pjobs[k].phase = 1;
+        pjobs[k].row = 0;
+      }
+    }
+    more = if pjobs[k]!.phase == 0 { true } else { pjobs[k]!.row < len(pjobs[k]!.parts) };
+    if more {
+      regs[0] = par_call(stk, sp, pjobs, k, io);
+      regs[1] = pjobs[k]!.start;
+      return true;
+    }
+    set(stk, sp, pjobs[k]!.acc);
+    regs[0] = sp + 8;
+    pjobs.remove(k);
+    return false;
+  }
   if pjobs[k]!.row < pjobs[k]!.n {
-    regs[0] = par_push_row(stk, sp, pjobs[k]!, io);
+    regs[0] = par_call(stk, sp, pjobs, k, io);
     regs[1] = pjobs[k]!.start;
     return true;
   }
-  if pjobs[k]!.kind == PAR_QUEUE_NARROW {
-    pnar += [ParBuf { res: pjobs[k]!.res, stride: pjobs[k]!.stride }];
-  } else {
-    pint += [ParBuf { res: pjobs[k]!.res, stride: 0 }];
+  // The answer records' stores are the buffer's until it drops (`revive_record_chain`'s
+  // adoption, the records' own stores).
+  ad: vector<integer> = [];
+  if kind == PAR_QUEUE_REF {
+    r = pjobs[k]!.refs;
+    j = 0;
+    while j + 2 < len(r) {
+      st = r[j] ?? NULL_STORE;
+      seen = false;
+      for a in ad {
+        if a == st {
+          seen = true;
+        }
+      }
+      if st != NULL_STORE && !seen {
+        ad += [st];
+      }
+      j += 3;
+    }
   }
+  pbufs += [ParBuf { kind: par_buf_kind(kind), res: pjobs[k]!.res, stride: pjobs[k]!.stride, texts: pjobs[k]!.texts, bytes: pjobs[k]!.bytes, refs: pjobs[k]!.refs, adopted: ad }];
   set(stk, sp, pjobs[k]!.n);
   regs[0] = sp + 8;
   pjobs.remove(k);
   false
 }
 
-// The `parallel_buf_*` readers and drops on the top buffer, at `sp`: answers the stack top.
-fn par_buf(pk: integer, stk: integer, sp: integer, pint: vector<ParBuf>, pnar: vector<ParBuf>) -> integer {
-  if pk == PAR_BUF_DROP {
-    pint.remove(len(pint) - 1);
+// The topmost buffer of a kind.
+fn par_top(pbufs: vector<ParBuf>, kind: integer) -> integer {
+  i = len(pbufs) - 1;
+  while i >= 0 && (pbufs[i]?.kind ?? -1) != kind {
+    i -= 1;
+  }
+  i
+}
+
+// The `parallel_buf_*` readers and drops on the topmost buffer of their kind, at `sp`: answers
+// the stack top.
+fn par_buf(pk: integer, stk: integer, sp: integer, pbufs: vector<ParBuf>, io: vector<integer>) -> integer {
+  bi = par_top(pbufs, par_buf_kind(pk));
+  if bi < 0 {
     return sp;
   }
-  if pk == PAR_BUF_DROP_NARROW {
-    pnar.remove(len(pnar) - 1);
+  if pk == PAR_BUF_DROP || pk == PAR_BUF_DROP_NARROW || pk == PAR_BUF_DROP_TEXT || pk == PAR_BUF_DROP_FN || pk == PAR_BUF_DROP_REF {
+    if pk == PAR_BUF_DROP_REF {
+      for st in pbufs[bi]!.adopted {
+        if crt::store_live(st) {
+          crt::free_ref(st, 1, 8);
+        }
+      }
+    }
+    pbufs.remove(bi);
     return sp;
   }
   if pk == PAR_BUF_GET_NARROW {
     signed = (get(stk, sp - 8) ?? 0) != 0;
     idx = get(stk, sp - 24) ?? 0;
-    b = pnar[len(pnar) - 1]!;
+    b = pbufs[bi]!;
     raw = (b.res[idx] ?? 0) & (if b.stride == 1 { 255 } else if b.stride == 2 { 65535 } else { 4294967295 });
     top = if b.stride == 1 { 128 } else if b.stride == 2 { 32768 } else { 2147483648 };
     set(stk, sp - 24, if signed && raw >= top { raw - 2 * top } else { raw });
     return sp - 16;
   }
+  if pk == PAR_BUF_GET_TEXT_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    tidx = get(stk, sp - 24) ?? 0;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, pbufs[bi]!.texts[tidx] ?? "");
+    return sp - 24;
+  }
   idx = get(stk, sp - 8) ?? 0;
   if pk == PAR_BUF_GET_SINGLE {
-    bits = (pnar[len(pnar) - 1]!.res[idx] ?? 0) & 4294967295;
-    crt::stack_code_bytes(stk, sp - 8, [for k in 0..4 { ((bits >> (8 * k)) & 255) as u8 }], 0, 4);
+    bits = (pbufs[bi]!.res[idx] ?? 0) & 4294967295;
+    crt::stack_code_bytes(stk, sp - 8, [for b in 0..4 { ((bits >> (8 * b)) & 255) as u8 }], 0, 4);
     return sp;
   }
-  set(stk, sp - 8, pint[len(pint) - 1]!.res[idx]);
+  if pk == PAR_BUF_GET_REF {
+    r = pbufs[bi]!.refs;
+    crt::set_slot_ref(stk, sp - 8, r[3 * idx] ?? NULL_STORE, r[3 * idx + 1] ?? 0, r[3 * idx + 2] ?? 0);
+    return sp + 8;
+  }
+  if pk == PAR_BUF_GET_FN {
+    crt::stack_code_bytes(stk, sp - 8, pbufs[bi]!.bytes, 20 * idx, 20);
+    return sp + 16;
+  }
+  set(stk, sp - 8, pbufs[bi]!.res[idx]);
   sp
 }
 
@@ -2713,8 +2952,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   // `par`: its natives, the jobs whose workers are running, and the answer buffer stacks.
   ptab = par_natives(img);
   pjobs: vector<ParJob> = [];
-  pint: vector<ParBuf> = [];
-  pnar: vector<ParBuf> = [];
+  pbufs: vector<ParBuf> = [];
   // The stack top and the code position handed to `exec_more` and back.
   mregs: vector<integer> = [0, 0, 0];
   // A walk step's answer: the record's reference and the walk's next state.
@@ -2821,7 +3059,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       }
       if len(pjobs) > 0 && (pjobs[len(pjobs) - 1]?.depth ?? -1) == depth {
         mregs[0] = sp;
-        if par_return(stk, mregs, pjobs, pint, pnar, io) {
+        if par_return(stk, mregs, pjobs, pbufs, io) {
           // The next row's worker, at the same depth.
           sp = mregs[0] ?? 0;
           pc = mregs[1] ?? 0;
@@ -3084,11 +3322,11 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       pc += 2;
       shd = img.shared[idx] ?? -1;
       pk = ptab[idx] ?? 0;
-      if pk == PAR_QUEUE || pk == PAR_QUEUE_NARROW {
+      if pk == PAR_QUEUE || pk == PAR_QUEUE_NARROW || pk == PAR_QUEUE_TEXT || pk == PAR_QUEUE_REF || pk == PAR_QUEUE_FN || pk == PAR_FOLD {
         mregs[0] = sp;
         mregs[1] = pc;
         mregs[2] = depth;
-        if par_start(pk, img, stk, mregs, pjobs, pint, pnar, io, nwhy) < 0 {
+        if par_start(pk, img, stk, mregs, pjobs, pbufs, io, nwhy) < 0 {
           return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
         }
         sp = mregs[0] ?? 0;
@@ -3097,7 +3335,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         continue;
       }
       if pk > 0 {
-        sp = par_buf(pk, stk, sp, pint, pnar);
+        sp = par_buf(pk, stk, sp, pbufs, io);
         continue;
       }
       if (ns[idx] ?? -1) < 0 && shd < 0 && (sdest[idx] ?? -1) >= 0 {

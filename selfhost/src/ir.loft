@@ -485,12 +485,14 @@ pub struct RunGen {
 
 // A `par` worker (`parallel_natives::parallel_queue_dispatch`): its definition, how it takes
 // its row — 0 a reference to the row, -1 a text, `n` a primitive of `n` bytes, `1000 + n` a
-// tuple of `n` bytes — and the byte
-// size of its answer as an argument.
+// tuple of `n` bytes — the byte size of its answer as an argument, and its hidden text work
+// buffers and return destinations (`parallel_natives::worker_hidden_counts`).
 pub struct RunWorker {
   pub def: integer,
   pub input: integer,
   pub ret: integer,
+  pub texts: integer,
+  pub dests: integer,
 }
 
 pub struct RunImage {

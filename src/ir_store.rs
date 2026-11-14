@@ -926,7 +926,7 @@ fn materialize_run_image(
     fnrefs: &[RunFnRefShape],
     gens: &[RunGenShape],
     shared: &[i64],
-    workers: &[[i64; 3]],
+    workers: &[[i64; 5]],
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -1071,7 +1071,7 @@ fn materialize_run_tables(
     shared_slot: &DbRef,
     workers_slot: &DbRef,
     shared: &[i64],
-    workers: &[[i64; 3]],
+    workers: &[[i64; 5]],
 ) {
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     crate::vector::pre_alloc_vector(shared_slot, count(shared.len()), 8, &mut stores.allocations);
@@ -1092,6 +1092,8 @@ fn materialize_run_tables(
         e.set_field_int(stores, ds::RUNWORKER_DEF, w[0]);
         e.set_field_int(stores, ds::RUNWORKER_INPUT, w[1]);
         e.set_field_int(stores, ds::RUNWORKER_RET, w[2]);
+        e.set_field_int(stores, ds::RUNWORKER_TEXTS, w[3]);
+        e.set_field_int(stores, ds::RUNWORKER_DESTS, w[4]);
     }
 }
 
@@ -1260,7 +1262,7 @@ pub fn run_image_shared(
 /// Every `par` worker of the program, found where the IR names it — the `func` literal of a
 /// `parallel_*` call — with how it takes its row and its answer's size (`RunWorker`).
 #[must_use]
-pub fn run_image_workers(data: &Data) -> Vec<[i64; 3]> {
+pub fn run_image_workers(data: &Data) -> Vec<[i64; 5]> {
     let mut defs: Vec<u32> = Vec::new();
     for d in 0..data.definitions() {
         data.def(d).code.walk(&mut |v| {
@@ -1290,6 +1292,7 @@ pub fn run_image_workers(data: &Data) -> Vec<[i64; 3]> {
     defs.into_iter()
         .map(|w| {
             let def = data.def(w);
+            let (texts, dests) = crate::parallel_natives::worker_hidden_counts(def);
             [
                 i64::from(w),
                 crate::parallel_natives::worker_input_code(def),
@@ -1297,6 +1300,8 @@ pub fn run_image_workers(data: &Data) -> Vec<[i64; 3]> {
                     &def.returned,
                     &crate::data::Context::Argument,
                 )),
+                i64::try_from(texts).unwrap_or(0),
+                i64::try_from(dests).unwrap_or(0),
             ]
         })
         .collect()

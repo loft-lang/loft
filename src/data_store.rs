@@ -526,11 +526,13 @@ pub(crate) const RUNFNREF_HIDDEN: u32 = 32;
 pub(crate) const RUNFNREF_STRIDE: u32 = 40;
 /// `RunGen { def, zone2: integer, text_args, ref_args, text_locals, owned_locals, tuple_refs:
 /// vector<integer> }` — a generator's frame facts (`state::gen_facts`).
-/// `RunWorker { def, input, ret: integer }` — a `par` worker's call shape.
+/// `RunWorker { def, input, ret, texts, dests: integer }` — a `par` worker's call shape.
 pub(crate) const RUNWORKER_DEF: u32 = 0;
 pub(crate) const RUNWORKER_INPUT: u32 = 8;
 pub(crate) const RUNWORKER_RET: u32 = 16;
-pub(crate) const RUNWORKER_STRIDE: u32 = 24;
+pub(crate) const RUNWORKER_TEXTS: u32 = 24;
+pub(crate) const RUNWORKER_DESTS: u32 = 32;
+pub(crate) const RUNWORKER_STRIDE: u32 = 40;
 pub(crate) const RUNGEN_DEF: u32 = 0;
 pub(crate) const RUNGEN_ZONE2: u32 = 8;
 pub(crate) const RUNGEN_TEXT_ARGS: u32 = 16;
@@ -1824,6 +1826,8 @@ mod tests {
         assert_eq!(pos(ids.run_worker, "def"), RUNWORKER_DEF);
         assert_eq!(pos(ids.run_worker, "input"), RUNWORKER_INPUT);
         assert_eq!(pos(ids.run_worker, "ret"), RUNWORKER_RET);
+        assert_eq!(pos(ids.run_worker, "texts"), RUNWORKER_TEXTS);
+        assert_eq!(pos(ids.run_worker, "dests"), RUNWORKER_DESTS);
         assert_eq!(u32::from(stores.size(ids.run_gen)), RUNGEN_STRIDE);
         assert_eq!(pos(ids.run_gen, "def"), RUNGEN_DEF);
         assert_eq!(pos(ids.run_gen, "zone2"), RUNGEN_ZONE2);
