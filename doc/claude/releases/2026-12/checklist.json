@@ -1,0 +1,22 @@
+{
+  "M-close-plans": {
+    "at": "2026-11-14 18:10",
+    "commit": "d242b2a4937d4faa21567f91f2c8ab54321ec35a",
+    "note": "close-shipped-plans.sh --range v2026.11.0..HEAD --dry-run at d242b2a49: no plan-close directive in the range; nothing to close."
+  },
+  "M-falsify-receipts": {
+    "at": "2026-11-14 18:10",
+    "commit": "d242b2a4937d4faa21567f91f2c8ab54321ec35a",
+    "note": "make falsify-review at d242b2a49: worklist 0 of 1403 receipts unscored, none with an unreachable control. Eight patch receipts went stale in the #2482 join and were re-derived (0f65e006a, 32df480a0), scored by receipts.yml."
+  },
+  "M-monthly-bugs": {
+    "at": "2026-11-14 18:09",
+    "commit": "d242b2a4937d4faa21567f91f2c8ab54321ec35a",
+    "note": "make bug-review at d242b2a49 over 766 bug issues (#1195-#2485, 5 open): ownership/free is the one RISING class (19.8% of the newest band, +2.2pp over its peak); null/sentinel is back to 19.3% but under its peak. The generalization for the rising class is the one in flight: the IR store records and their static checker (STORE_RECORDS.md), which every lifetime fix now extends (CAUGHT with the cure off)."
+  },
+  "M-ops-census": {
+    "at": "2026-11-14 18:09",
+    "commit": "d242b2a4937d4faa21567f91f2c8ab54321ec35a",
+    "note": "make ops-census at d242b2a49: 366 declared / 345 emitted / 21 unexercised / 0 orphan (2562 of 2935 .loft files produced bytecode); last cycle 343 / 315 / 28. The 23 new operators are the run image's and the float-bits four; unexercised fell by 7."
+  }
+}
