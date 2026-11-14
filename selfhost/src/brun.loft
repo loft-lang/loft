@@ -251,6 +251,7 @@ H_MATH_FUNC2_SINGLE = 226;
 H_REVERSE_VECTOR = 227;
 H_SET_CHILD_REC = 228;
 H_LINK_RECORD = 229;
+H_REF_FROM_CHILD_REC = 230;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -555,6 +556,7 @@ pub fn handler(name: text) -> integer {
     "OpReverseVector" => H_REVERSE_VECTOR,
     "OpSetChildRec" => H_SET_CHILD_REC,
     "OpLinkRecord" => H_LINK_RECORD,
+    "OpRefFromChildRec" => H_REF_FROM_CHILD_REC,
     "OpCastSingleFromText" => H_CAST_FROM_TEXT,
     "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
@@ -599,6 +601,10 @@ N_WRITE_TEXT_RAW = 27;
 N_IS_DIR = 32;
 N_YIELD_FRAME = 33;
 N_IS_FILE = 34;
+N_LIST_DIR = 36;
+N_RADIX_SORTED = 37;
+N_SPATIAL_RANGE = 38;
+N_TRIE_PREFIX = 39;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -636,6 +642,10 @@ pub fn native_handler(name: text) -> integer {
     "n_is_dir" => N_IS_DIR,
     "n_yield_frame" => N_YIELD_FRAME,
     "n_is_file" => N_IS_FILE,
+    "n_list_dir" => N_LIST_DIR,
+    "n_radix_sorted" => N_RADIX_SORTED,
+    "n_spatial_range" => N_SPATIAL_RANGE,
+    "n_trie_prefix" => N_TRIE_PREFIX,
     "t_4text_byte_at" => N_TEXT_BYTE_AT,
     "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
     "t_4text_rfind" => N_TEXT_RFIND,
@@ -1280,6 +1290,38 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     sp -= 16;
     set_bool(stk, sp, if nh == N_IS_DIR { is_dir(idp) } else { is_file(idp) });
     sp += 8;
+  } else if nh == N_LIST_DIR {
+    // The directory's entries, a vector in a store of its own (the C runtime's `list_dir`).
+    ldp = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    crt::list_dir(io, ldp);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_RADIX_SORTED || nh == N_SPATIAL_RANGE || nh == N_TRIE_PREFIX {
+    // A spatial or trie walk's snapshot (all of it, a spatial range, a trie prefix), as a
+    // scratch vector — `radix_snap` as today's runner reaches it.
+    ensure_table(img.types, tl);
+    rsints: vector<integer> = [];
+    rspre: text? = null;
+    rswhich = 0;
+    if nh == N_SPATIAL_RANGE {
+      rswhich = 1;
+      for ri in 0..8 {
+        rsints += [get(stk, sp - 64 + 8 * ri) ?? 0];
+      }
+      sp -= 64;
+    } else if nh == N_TRIE_PREFIX {
+      rswhich = 2;
+      rsints = [get(stk, sp - 8) ?? 0];
+      rspre = crt::stack_str(stk, sp - 24);
+      sp -= 24;
+    }
+    rstp = get(stk, sp - 8) ?? 0;
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    crt::radix_snap(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rswhich, rstp, rsints, rspre);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
   } else if nh == N_YIELD_FRAME {
     // The frame-yield flag only a host's frame loop reads; a run from an image has none.
     sp = sp;
@@ -2456,6 +2498,11 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       }
       crt::group_finish(types::content_of(img.types, lgm![2] ?? 0) ?? 0, lheld, lnull, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lrs, lrr, lrp, lsib);
     }
+  } else if h == H_REF_FROM_CHILD_REC {
+    // The child record a field names by number, in the field's own store (null for 0).
+    crt::slot_ref(io, stk, sp - 16);
+    rfc = crt::get_w(8, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0, 0) ?? 0;
+    crt::set_slot_ref(stk, sp - 16, if rfc == 0 { NULL_STORE } else { io[0] ?? NULL_STORE }, rfc, if rfc == 0 { 0 } else { 8 });
   } else if h == H_REVERSE_VECTOR {
     rvsize = u16_at(img.code, pc);
     pc += 2;
