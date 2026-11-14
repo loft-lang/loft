@@ -723,7 +723,7 @@ fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
 // The operators and natives `generate_call` writes in a way of their own, which this writer
 // does not write yet.
 fn special_call(name: text) -> boolean {
-  name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpGetRecord" || name == "OpSetKeyed" || name == "OpStart" || name == "OpNext" || name == "OpIterate" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+  name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpCreateStack" || name.starts_with("n_parallel_")
 }
 
 // Is `n` in the list a `NoPrefill` fact keeps under `tag` (`l` locals, `m` mints;
@@ -952,6 +952,19 @@ fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
   false
 }
 
+// `gather_key`: the key values a keyed call names after position `from`, last first.
+fn gather_key(g: Gen, args: vector<ir::Node>, from: integer) {
+  keys = match args[from] ?? ir::NdNull {
+    NdInt { n } => n,
+    _ => 0,
+  };
+  k = 0;
+  while k < keys {
+    generate(g, args[keys + from - k] ?? ir::NdNull, false);
+    k += 1;
+  }
+}
+
 // `State::generate_call`: an operator with its stack arguments written first and its constant
 // operands after its number; a native by its number (`OpStaticCall`); a function by its
 // definition, its arguments' size and its code position (`OpCall`).
@@ -1021,6 +1034,43 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
     }
   }
   if operator_def {
+    // The keyed calls take their key values after their declared arguments (`gather_key`),
+    // and leave the evaluation position where the call's own rule puts it.
+    was = -1;
+    if def.name == "OpGetRecord" {
+      was = g.position;
+      gather_key(g, args, 2);
+    } else if def.name == "OpSetKeyed" {
+      was = g.position - 32;
+      gather_key(g, args, 3);
+    } else if def.name == "OpStart" {
+      was = g.position + 8 - 16;
+      gather_key(g, args, 2);
+    } else if def.name == "OpNext" {
+      was = g.position;
+      gather_key(g, args, 3);
+    } else if def.name == "OpIterate" {
+      was = g.position + 8 - 16;
+      first_keys = match args[4] ?? ir::NdNull {
+        NdInt { n } => n,
+        _ => -1,
+      };
+      if first_keys >= 0 {
+        gather_key(g, args, 4);
+        gather_key(g, args, 5 + first_keys);
+      }
+    }
+    if was >= 0 {
+      before = g.position;
+      put_op(g.o, g.b, op);
+      g.position = was;
+      for a in def.attributes {
+        if !a.mutable {
+          add_const(g, a.typedef[0] ?? ir::TyVoid, args[a#index]!, before);
+        }
+      }
+      return ret;
+    }
     before = g.position;
     actual = no_prefill_twin(g, stack_variant(g, op, args), args);
     put_op(g.o, g.b, actual);
@@ -1230,6 +1280,27 @@ fn keyed_null(g: Gen, v: integer, first: boolean) {
   put_u16(g.o, known!);
 }
 
+// A record local copied into `v` (`OpBindOrCopy`): `v` nulled, the source and its witness
+// pushed, and the copy made unless the two are one store.
+fn var_copy(g: Gen, v: integer, src: integer, rec: integer) {
+  reserve_ref_slot(g, v);
+  init_slot(g, v, "OpInitRef");
+  generate(g, ir::NdVar { n: src }, false);
+  // `push_copy_witness`: a link's is the record it names, any other local's its own slot.
+  link = match base(var_of(g, src).type_def[0] ?? ir::TyVoid) {
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  };
+  if link {
+    generate(g, ir::NdVar { n: src }, false);
+  } else {
+    init_slot(g, src, "OpVarRef");
+  }
+  add_op(g, "OpBindOrCopy");
+  put_u16(g.o, var_pos(g, v));
+  put_u16(g.o, def_of(g, rec).known_type);
+}
+
 // `gen_set_first_at_tos`: a first bind of a value that is no scalar and no text, by the arm
 // `bind_lowering::first_arm` decides, in its order.  An arm not ported yet stops the function
 // under its name.
@@ -1278,7 +1349,16 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
   if hd != null && src >= 0 {
     sd = own::record_copy_source(g.b, f, v, src);
     if sd != null && own::copies_as(g.b, hd!, sd!) {
-      stop(g, "not written yet: a first bind copying a record local");
+      // `gen_set_first_ref_var_copy`: a source read once that owns its store hands it over
+      // and is never freed; any other is copied unless it is the same store.
+      if binds::uses(f, src) == 1 && binds::proxy_says_owned(f, src) && !var_of(g, src).argument && !binds::is_captured(f, src) {
+        init_slot(g, src, "OpVarRef");
+        g.position += 16;
+        g.b.data.definitions[g.d]!.variables.variables[src].skip_free = true;
+        init_slot(g, v, "OpPutRef");
+        return;
+      }
+      var_copy(g, v, src, hd!);
       return;
     }
   }

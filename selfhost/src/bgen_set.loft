@@ -209,6 +209,13 @@ pub fn rebind(g: bgen::Gen, v: integer, value: ir::Node) {
     }
     g.owned_reassigned += [v];
   }
+  if rb.arm == "R2c" {
+    bgen::var_copy(g, v, rb.src, rb.rec);
+    if stash {
+      free_stashed(g, v, rb);
+    }
+    return;
+  }
   if rb.arm != "R3" {
     bgen::stop(g, "not written yet: a rebind's arm {rb.arm}");
     return;
