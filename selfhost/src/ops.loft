@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the loft counterpart of the `src/ops.rs` helpers the operator templates call
+// (`ops::fused_int`, `ops::fused_cmp`), under the same names, for the generated `fill.loft`.
+// Integer arithmetic is loft's own, which is the operators' meaning: a null operand or an
+// overflow answers null.
+
+// `ops::fused` — the operation a fused operator's `kind` names.
+pub ADD = 0;
+pub MIN = 1;
+pub MUL = 2;
+pub LAND = 3;
+pub LOR = 4;
+pub EQ = 0;
+pub NE = 1;
+pub LT = 2;
+pub LE = 3;
+pub GT = 4;
+pub GE = 5;
+
+// `ops::fused_int`: the arithmetic `kind` of a fused operator applied to `v1` and `v2`.
+pub fn fused_int(kind: integer, v1: integer, v2: integer) -> integer {
+  if kind == ADD {
+    v1 + v2
+  } else if kind == MIN {
+    v1 - v2
+  } else if kind == MUL {
+    v1 * v2
+  } else if kind == LAND {
+    v1 & v2
+  } else if kind == LOR {
+    v1 | v2
+  } else {
+    v1 ^ v2
+  }
+}
+
+// `ops::fused_cmp`: the comparison `kind` of a fused operator applied to `v1` and `v2`.
+pub fn fused_cmp(kind: integer, v1: integer, v2: integer) -> boolean {
+  if kind == EQ {
+    v1 == v2
+  } else if kind == NE {
+    v1 != v2
+  } else if kind == LT {
+    v1 < v2
+  } else if kind == GT {
+    v1 > v2
+  } else if kind == GE {
+    v1 >= v2
+  } else {
+    v1 <= v2
+  }
+}

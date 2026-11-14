@@ -8,7 +8,6 @@
 #![allow(non_snake_case)]
 use crate::database::{Call, Stores};
 use crate::keys::DbRef;
-use crate::native_gate::is_text_work_buffer;
 use crate::parallel::{WorkerProgram, run_parallel_text};
 use crate::vector;
 use std::sync::Arc;
@@ -38,82 +37,6 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_parallel_buf_get_fn", n_parallel_buf_get_fn),
     ("n_parallel_buf_drop_fn", n_parallel_buf_drop_fn),
 ];
-
-/// Typed worker-input dispatch: an explicit enum rather than a
-/// sentinel-encoded slot size, so the dispatcher's pre-loop code reads as a plain
-/// match, and so wide-inline first args (tuples, fn-refs, anything
-/// 9..=64 bytes) are not silently misrouted as "DbRef-by-pointer"
-/// when their vector storage is actually inline.
-///
-/// Cap at 64 bytes: anything wider falls back to `Ref` so the
-/// per-row push doesn't blow the worker stack frame budget.  64 is
-/// one cache line plus headroom for 4-element tuples of Long /
-/// Float.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum InputKind {
-    /// Worker takes a `DbRef` in slot 0 (struct-by-ref, vector,
-    /// keyed collection, or any inline-typed first arg whose slot
-    /// width exceeds the 64-byte inline cap).
-    Ref,
-    /// Worker takes a 16-byte `Str` in slot 0.  The G3 path
-    /// (text-input dispatch) hooks here.
-    Text,
-    /// Worker takes `size` bytes inline in slot 0.  `size` is the
-    /// stack-representation width from `variables::size` (which
-    /// reports 20 for fn-ref, 16 for `(int, int)`, etc.) — not the
-    /// 4-byte vector storage width.
-    Primitive { size: u8 },
-}
-
-/// Maximum bytes accepted for `InputKind::Primitive`.  Anything
-/// wider falls back to `InputKind::Ref` so the worker stack frame
-/// stays bounded.
-const INPUT_PRIMITIVE_MAX_BYTES: usize = 64;
-
-/// P189d — element types of a tuple first-arg, or `None` if the
-/// worker's first arg isn't a tuple.  Used by the wide-input path
-/// to dispatch `read_tuple_at_wide` (per-element inflation,
-/// notably 4 B heap text-pointer → 16 B stack `Str`) instead of
-/// `read_primitive_at_wide` (flat memcpy).
-///
-/// Also returns `Some(vec![first.typedef])`
-/// for `Type::Function` first-args so the dispatcher routes through
-/// `read_tuple_at_wide` which produces a clean failure mode (vs. the
-/// hang from raw `read_primitive_at_wide` reading 20 bytes from a
-/// 4-byte stride).
-fn tuple_first_arg_types(def: &crate::data::Definition) -> Option<Vec<crate::data::Type>> {
-    let first = def.attributes.first()?;
-    match &first.typedef {
-        crate::data::Type::Tuple(elems) => Some(elems.clone()),
-        crate::data::Type::Function(..) => Some(vec![first.typedef.clone()]),
-        _ => None,
-    }
-}
-
-fn input_kind_for_first_arg(def: &crate::data::Definition) -> InputKind {
-    use crate::data::Type;
-    let Some(first) = def.attributes.first() else {
-        // No args — treat as Ref (the dispatcher won't push anything
-        // either way; this matches the legacy fall-through to the
-        // DbRef-passing path).
-        return InputKind::Ref;
-    };
-    match &first.typedef {
-        Type::Text(_) => InputKind::Text,
-        Type::Boolean | Type::Enum(_, false, _) => InputKind::Primitive { size: 1 },
-        Type::Single | Type::Character => InputKind::Primitive { size: 4 },
-        Type::Integer(_) | Type::Float => InputKind::Primitive { size: 8 },
-        Type::Function(..) | Type::Tuple(_) => {
-            let sz = crate::variables::size(&first.typedef, &crate::data::Context::Argument);
-            if (sz as usize) <= INPUT_PRIMITIVE_MAX_BYTES && sz > 0 {
-                InputKind::Primitive { size: sz as u8 }
-            } else {
-                InputKind::Ref
-            }
-        }
-        _ => InputKind::Ref,
-    }
-}
 
 /// The materialised `parallel_for` path is unreachable: every primitive
 /// return type — including Single (4-byte f32) and Float (8-byte
@@ -220,36 +143,19 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
         } else {
             (v_return_size.clamp(1, 8)) as u32
         };
-        let primitive_input_size = match input_kind_for_first_arg(def) {
-            InputKind::Ref => 0u32,
-            InputKind::Text => u32::MAX,
-            InputKind::Primitive { size } => u32::from(size),
+        let primitive_input_size = match crate::par_facts::input_kind_for_first_arg(def) {
+            crate::par_facts::InputKind::Ref => 0u32,
+            crate::par_facts::InputKind::Text => u32::MAX,
+            crate::par_facts::InputKind::Primitive { size } => u32::from(size),
         };
         // Classified by TYPE, the same two readers `parallel_queue_dispatch` uses —
         // a second spelling of "which attributes are hidden" is how the prefix
         // heuristic it replaced went wrong.
-        let n_hidden_text = def
-            .attributes
-            .iter()
-            .filter(|a| is_text_work_buffer(&a.typedef))
-            .count();
-        let n_hidden_dests = def
-            .attributes
-            .iter()
-            .filter(|a| {
-                a.hidden
-                    && matches!(
-                        a.typedef,
-                        crate::data::Type::Reference(_, _)
-                            | crate::data::Type::Vector(_, _)
-                            | crate::data::Type::Enum(_, true, _)
-                    )
-            })
-            .count();
+        let (n_hidden_text, n_hidden_dests) = crate::par_facts::worker_hidden_counts(def);
         (
             return_size,
             primitive_input_size,
-            tuple_first_arg_types(def),
+            crate::par_facts::tuple_first_arg_types(def),
             n_hidden_text,
             n_hidden_dests,
         )
@@ -378,31 +284,14 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
         // `__ref_1`, Reference/Vector-typed) as text buffers — a live
         // frame-underflow panic for par workers calling wrapper-promoted
         // fns ('No elements left on the stack 8 < 12').
-        let n_hidden_text = def
-            .attributes
-            .iter()
-            .filter(|a| is_text_work_buffer(&a.typedef))
-            .count();
-        let n_hidden_dests = def
-            .attributes
-            .iter()
-            .filter(|a| {
-                a.hidden
-                    && matches!(
-                        a.typedef,
-                        crate::data::Type::Reference(_, _)
-                            | crate::data::Type::Vector(_, _)
-                            | crate::data::Type::Enum(_, true, _)
-                    )
-            })
-            .count();
+        let (n_hidden_text, n_hidden_dests) = crate::par_facts::worker_hidden_counts(def);
         let ret_type = def.returned.clone();
-        let primitive_input_size = match input_kind_for_first_arg(def) {
-            InputKind::Ref => 0u32,
-            InputKind::Text => u32::MAX,
-            InputKind::Primitive { size } => u32::from(size),
+        let primitive_input_size = match crate::par_facts::input_kind_for_first_arg(def) {
+            crate::par_facts::InputKind::Ref => 0u32,
+            crate::par_facts::InputKind::Text => u32::MAX,
+            crate::par_facts::InputKind::Primitive { size } => u32::from(size),
         };
-        let tuple_input_types = tuple_first_arg_types(def);
+        let tuple_input_types = crate::par_facts::tuple_first_arg_types(def);
         let worker_return_size = u32::from(crate::variables::size(
             &def.returned,
             &crate::data::Context::Argument,

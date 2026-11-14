@@ -28,13 +28,7 @@
 use crate::data::{Data, DefType, Type, Value};
 use std::collections::HashSet;
 
-/// Is `t` a `text_return` work buffer — a `&mut String` the inner fn appends the
-/// result into (loft IR type `RefVar(Text)`)?  The bridge owns a local `String`
-/// for each and passes `&mut`.  Shared with `native_lib` (the gate admits exactly
-/// these as the one allowed `__`-prefixed param, and only for a text-returning fn).
-pub(crate) fn is_text_work_buffer(t: &Type) -> bool {
-    matches!(t, Type::RefVar(inner) if matches!(**inner, Type::Text(_)))
-}
+pub(crate) use crate::par_facts::is_text_work_buffer;
 
 /// @PLN11 Arc N / N2 — the set of function `def_nr`s that can be `--native`-
 /// compiled (the maximal native subgraph).  Everything not in the set runs
@@ -387,7 +381,7 @@ fn fn_decline(data: &Data, d_nr: u32, visited: &mut HashSet<u32>) -> Option<Decl
     // a bridge name, and every call then warned "could not be wired ... calling
     // it will panic". The binding is the implementation; nothing here may
     // replace it.
-    if !def.c_sig.is_empty() {
+    if def.is_c_binding() {
         return Some(Decline::CBinding);
     }
     // @PLN199 D1 — a generator compiles, unless its yield has no native transport: the
@@ -439,7 +433,7 @@ fn walk_decline(v: &Value, owner: u32, data: &Data, visited: &mut HashSet<u32>) 
         // a whole-program build does.  Only the `#c` DEFINITION stays out of the export set
         // (`fn_decline`'s `CBinding`): the binding is its implementation.
         Value::Call(callee, args) => {
-            let c_binding = *callee < data.definitions() && !data.def(*callee).c_sig.is_empty();
+            let c_binding = *callee < data.definitions() && data.def(*callee).is_c_binding();
             (if c_binding {
                 None
             } else {

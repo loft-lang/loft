@@ -9088,7 +9088,8 @@ pub fn c_binding_call_unsupported(
     /// Why this binding is outside the contract, or `None` when it is inside.
     fn uncovered(data: &Data, d_nr: u32) -> Option<String> {
         let def = data.def(d_nr);
-        if def.c_sig.is_empty() {
+        // A twin's body is what the interpreter runs; only the C backend calls its routine.
+        if !def.is_c_binding() {
             return None;
         }
         let sig = match crate::c_signature::of(data, d_nr, crate::c_signature::CTarget::host()) {
@@ -9113,7 +9114,7 @@ pub fn c_binding_call_unsupported(
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
         let own = def.source == crate::data::STD_SOURCE || data.source_is_owned(def.source);
-        if own && !def.c_sig.is_empty() && uncovered(data, d_nr).is_some() {
+        if own && def.is_c_binding() && uncovered(data, d_nr).is_some() {
             reported.push(d_nr);
         }
     }

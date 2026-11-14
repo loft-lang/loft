@@ -1374,6 +1374,9 @@ pub struct Parser {
     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
     /// than falling to the ladder and reporting the same site a second way.
     pub(crate) reported_dynamic_refusal: bool,
+    /// Whether the function whose annotations are being read was written with a body: a
+    /// `#c` binding has none, a `#c_twin` must have one.
+    pub(crate) fn_has_body: bool,
     /// `@FR-Disp-Hint` — while an argument of a call to an overload set is parsed without a
     /// hint, the set's definitions as a refusal names them; a short lambda whose parameter
     /// thereby has no type takes it and says so, naming them (`parse_lambda_short`).
@@ -2286,6 +2289,7 @@ impl Parser {
             lambda_counters: HashMap::new(),
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
+            fn_has_body: false,
             unhinted_set: None,
             unhinted_set_refused: false,
             reported_binding_clash: false,

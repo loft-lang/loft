@@ -9894,11 +9894,34 @@ impl<'a> FnWriter<'a> {
         self.float_conversion(name, args, ind)
     }
 
+    /// `f.bits()` / `float_from_bits(v)` and the `single` pair: the IEEE-754 pattern moved, not
+    /// converted (`loft_f2bits` and its siblings); `None` for any other operator.
+    fn float_bits(&mut self, name: &str, args: &[Value], ind: usize) -> Option<Result<E, String>> {
+        let (f, k) = match name {
+            "OpFloatBits" => ("loft_f2bits", K::Int),
+            "OpFloatFromBits" => ("loft_bits2f", K::Float),
+            "OpSingleBits" => ("loft_s2bits", K::Int),
+            "OpSingleFromBits" => ("loft_bits2s", K::Single),
+            _ => return None,
+        };
+        Some((|| {
+            let a = self.one(name, args, ind)?;
+            let a = match name {
+                "OpFloatBits" => as_float(a)?,
+                "OpSingleBits" => as_single(a)?,
+                _ => as_int(a)?,
+            };
+            Ok(E::new(format!("{f}({a})"), k))
+        })())
+    }
+
     /// The conversions to and from floats, their math functions and their fields.
     fn float_conversion(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        if let Some(e) = self.float_bits(name, args, ind) {
+            return e;
+        }
         match (name, args) {
             ("OpConvFloatFromNull", []) => Ok(E::new("(double) NAN", K::Float)),
-            ("OpConvSingleFromNull", []) => Ok(E::new("(float) NAN", K::Single)),
             ("OpConvFloatFromInt" | "OpConvFloatFromLong", [_]) => {
                 let a = self.one(name, args, ind)?;
                 Ok(E::new(format!("loft_i2f({})", as_int(a)?), K::Float))
@@ -11650,6 +11673,7 @@ const OP_TEXT: &[&str] = &[
     "OpGetTextSub",
 ];
 const OP_FLOAT: &[&str] = &[
+    "OpFloatFromBits",
     "OpAddFloat",
     "OpMinFloat",
     "OpMulFloat",
@@ -11671,6 +11695,7 @@ const OP_FLOAT: &[&str] = &[
     "OpGetFloat",
 ];
 const OP_SINGLE: &[&str] = &[
+    "OpSingleFromBits",
     "OpAddSingle",
     "OpMinSingle",
     "OpMulSingle",
@@ -11700,7 +11725,12 @@ const OP_FCMP: &[&str] = &[
     "OpConvBoolFromFloat",
     "OpConvBoolFromSingle",
 ];
-const OP_FINT: &[&str] = &["OpCastIntFromFloat", "OpCastIntFromSingle"];
+const OP_FINT: &[&str] = &[
+    "OpCastIntFromFloat",
+    "OpCastIntFromSingle",
+    "OpFloatBits",
+    "OpSingleBits",
+];
 const OP_CHAR: &[&str] = &[
     "OpConvCharacterFromInt",
     "OpConvCharacterFromNull",

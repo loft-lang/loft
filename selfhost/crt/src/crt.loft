@@ -319,6 +319,746 @@ pub fn bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: inte
   c_bind_copy(io, tp, s_store, s_rec, s_pos);
 }
 
+// The run image's runner (@PLN91 run image, step 3): the Rust stack image at its positions.
+fn c_stack_str_code(store: integer, at: integer, code: vector<u8>, from: integer, len: integer);
+#c "loft_crt_stack_str_code" "void(int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_stack_str_of_text(store: integer, at: integer, src: integer);
+#c "loft_crt_stack_str_of_text" "void(int64_t, int64_t, int64_t)"
+fn c_stack_text_append_str(store: integer, at: integer, src: integer);
+#c "loft_crt_stack_text_append_str" "void(int64_t, int64_t, int64_t)"
+fn c_stack_code_bytes(store: integer, at: integer, code: vector<u8>, from: integer, n: integer);
+#c "loft_crt_stack_code_bytes" "void(int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_stack_str_null(store: integer, at: integer);
+#c "loft_crt_stack_str_null" "void(int64_t, int64_t)"
+fn c_stack_str_of_field(store: integer, at: integer, s: integer, r: integer, p: integer, fld: integer);
+#c "loft_crt_stack_str_of_field" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_ref_text_append(s: integer, r: integer, p: integer, val: text, bytes: integer);
+#c "loft_crt_ref_text_append" "void(int64_t, int64_t, int64_t, const char*, int64_t)"
+fn c_ref_text_clear(s: integer, r: integer, p: integer);
+#c "loft_crt_ref_text_clear" "void(int64_t, int64_t, int64_t)"
+fn c_stack_str_bool(store: integer, at: integer, v: integer);
+#c "loft_crt_stack_str_bool" "void(int64_t, int64_t, int64_t)"
+fn c_stack_str_of_ref(store: integer, at: integer, s: integer, r: integer, p: integer);
+#c "loft_crt_stack_str_of_ref" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_store_from_image(io: vector<integer>, bytes: vector<u8>) -> integer;
+#c "loft_crt_store_from_image" "int64_t(int64_t*, int64_t, const char*, int64_t)"
+fn c_store_live(nr: integer) -> integer;
+#c "loft_crt_store_live" "int64_t(int64_t)"
+fn c_stack_text_sub(store: integer, at: integer);
+#c "loft_crt_stack_text_sub" "void(int64_t, int64_t)"
+fn c_stack_text_char(store: integer, at: integer) -> integer;
+#c "loft_crt_stack_text_char" "int64_t(int64_t, int64_t)"
+fn c_text_walk_step(store: integer, sp: integer, c: integer, index: integer, next: integer, src: integer, arg: integer);
+#c "loft_crt_text_walk_step" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_local_text_len(store: integer, at: integer, arg: integer) -> integer;
+#c "loft_crt_local_text_len" "int64_t(int64_t, int64_t, int64_t)"
+fn c_local_text_null(store: integer, at: integer, arg: integer) -> integer;
+#c "loft_crt_local_text_null" "int64_t(int64_t, int64_t, int64_t)"
+fn c_ref_text_append_null(s: integer, r: integer, p: integer);
+#c "loft_crt_ref_text_append_null" "void(int64_t, int64_t, int64_t)"
+fn c_stack_text_trim(store: integer, at: integer, which: integer);
+#c "loft_crt_stack_text_trim" "void(int64_t, int64_t, int64_t)"
+fn c_stack_read_bytes(out: vector<u8>, store: integer, at: integer, n: integer);
+#c "loft_crt_stack_read_bytes" "void(char*, int64_t, int64_t, int64_t)"
+fn c_stack_zero(store: integer, at: integer, n: integer);
+#c "loft_crt_stack_zero" "void(int64_t, int64_t, int64_t)"
+fn c_stack_str_own(store: integer, at: integer) -> integer;
+#c "loft_crt_stack_str_own" "int64_t(int64_t, int64_t)"
+fn c_owned_free(copy: integer);
+#c "loft_crt_owned_free" "void(int64_t)"
+fn c_hold_for_frame(s: integer, r: integer, p: integer) -> integer;
+#c "loft_crt_hold_for_frame" "int64_t(int64_t, int64_t, int64_t)"
+fn c_release_frame_hold(s: integer, r: integer, p: integer);
+#c "loft_crt_release_frame_hold" "void(int64_t, int64_t, int64_t)"
+fn c_serial_now() -> integer;
+#c "loft_crt_serial_now" "int64_t(void)"
+fn c_store_serial(nr: integer) -> integer;
+#c "loft_crt_store_serial" "int64_t(int64_t)"
+fn c_intern_text(val: text, bytes: integer) -> integer;
+#c "loft_crt_intern_text" "int64_t(const char*, int64_t)"
+fn c_stack_str_interned(store: integer, at: integer, handle: integer, len: integer);
+#c "loft_crt_stack_str_interned" "void(int64_t, int64_t, int64_t, int64_t)"
+fn c_par_row(store: integer, rec: integer, pos: integer, esize: integer, stk: integer, at: integer, isize: integer);
+#c "loft_crt_par_row" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_par_row_wide(store: integer, rec: integer, pos: integer, stk: integer, at: integer, n: integer);
+#c "loft_crt_par_row_wide" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_par_row_tuple(store: integer, rec: integer, pos: integer, stk: integer, at: integer, plan: vector<integer>);
+#c "loft_crt_par_row_tuple" "void(int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
+fn c_group_finish(elem: integer, held: integer, nullable: integer, ps: integer, pr: integer, pp: integer, rs: integer, rr: integer, rp: integer, m: vector<integer>);
+#c "loft_crt_group_finish" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
+fn c_vec_sort(store: integer, rec: integer, pos: integer, size: integer, is_float: integer, is_text: integer, is_unsigned: integer);
+#c "loft_crt_vec_sort" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_vec_insert(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, index: integer, linked: integer) -> integer;
+#c "loft_crt_vec_insert" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) -> integer;
+#c "loft_crt_child_rec_in_place" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+fn c_set_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer, free_source: integer);
+#c "loft_crt_set_child_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_sidecar_add(tp: integer, hash: integer, walks: integer, before: text, blen: integer, after: text, alen: integer, dump: text, dlen: integer, oldest: text, olen: integer, bridge: text, brlen: integer) -> integer;
+#c "loft_crt_sidecar_add" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, const char*, int64_t, const char*, int64_t, const char*, int64_t, const char*, int64_t)"
+fn c_image_write(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer) -> integer;
+#c "loft_crt_image_write" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_image_load(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, untrusted: integer) -> integer;
+#c "loft_crt_image_load" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, int64_t)"
+fn c_store_verify(s: integer, r: integer, p: integer) -> integer;
+#c "loft_crt_store_verify" "int64_t(int64_t, int64_t, int64_t)"
+fn c_array_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, view: integer);
+#c "loft_crt_array_remove" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_index_group(ps: integer, pr: integer, pp: integer, prim: integer, nullable: integer, vpos: integer, vkind: integer, vtp: integer, m: vector<integer>);
+#c "loft_crt_index_group" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
+fn c_move_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer);
+#c "loft_crt_move_child_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_slot_get(out: vector<integer>, s: integer, r: integer, p: integer, fld: integer) -> integer;
+#c "loft_crt_slot_get" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_slot_move(tp: integer, s: integer, r: integer, p: integer, ss: integer, sr: integer, sp: integer);
+#c "loft_crt_slot_move" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_slot_set(raw: integer, s: integer, r: integer, p: integer, vs: integer, vr: integer, vp: integer);
+#c "loft_crt_slot_set" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_log(sev: integer, m: text, mlen: integer, f: text, flen: integer, line: integer);
+#c "loft_crt_log" "void(int64_t, const char*, int64_t, const char*, int64_t, int64_t)"
+fn c_pg_load_key(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, kind: integer, key: integer, tkey: text, tlen: integer, is_text: integer) -> integer;
+#c "loft_crt_pg_load_key" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_pg_load_keys(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, kind: integer, ls: integer, lr: integer, lp: integer, is_text: integer) -> integer;
+#c "loft_crt_pg_load_keys" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_pg_load_prefix(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, pre: text, prelen: integer, limit: integer) -> integer;
+#c "loft_crt_pg_load_prefix" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_pg_load_box(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, coll: integer, fs: integer, fr: integer, fp: integer, ts: integer, tr: integer, tp: integer, limit: integer, name: text, nlen: integer) -> integer;
+#c "loft_crt_pg_load_box" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+fn c_pg_load_range(s: integer, r: integer, p: integer, path: text, plen: integer, sc: integer, refusal: text, rlen: integer, content: integer, tp: integer, lo: integer, hi: integer) -> integer;
+#c "loft_crt_pg_load_range" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_store_lock(s: integer, r: integer, p: integer, lock: integer);
+#c "loft_crt_store_lock" "void(int64_t, int64_t, int64_t, int64_t)"
+fn c_main_vector(tp: integer);
+#c "loft_crt_main_vector" "void(int64_t)"
+fn c_ptype_known(tp: integer) -> integer;
+#c "loft_crt_ptype_known" "int64_t(int64_t)"
+fn c_ptype_set(tp: integer, kind: integer, size: integer, elem: integer, mn: integer, nullable: integer, n: integer, strict: integer, zero: integer, variant: integer, keyed: integer, linked: integer, some: integer, payload_tp: integer, payload_pos: integer, refs: integer, name: text, nlen: integer);
+#c "loft_crt_ptype_set" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+fn c_ptype_prefill(tp: integer, img: vector<u8>);
+#c "loft_crt_ptype_prefill" "void(int64_t, const uint8_t*, int64_t)"
+fn c_ptype_enum(tp: integer, vt: vector<integer>);
+#c "loft_crt_ptype_enum" "void(int64_t, const int64_t*, int64_t)"
+fn c_ptype_vname(tp: integer, k: integer, name: text, nlen: integer);
+#c "loft_crt_ptype_vname" "void(int64_t, int64_t, const char*, int64_t)"
+fn c_ptype_fields(tp: integer, n: integer);
+#c "loft_crt_ptype_fields" "void(int64_t, int64_t)"
+fn c_pfield_set(tp: integer, i: integer, name: text, nlen: integer, content: integer, pos: integer, nullable: integer, skip: integer, type_tag: integer, dkind: integer, di: integer, dnum: vector<float>, ds: text, dslen: integer, target: integer);
+#c "loft_crt_pfield_set" "void(int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const double*, int64_t, const char*, int64_t, int64_t)"
+fn c_pfield_group(tp: integer, i: integer, m: vector<integer>, gelem: integer, gheld: integer, gnull: integer);
+#c "loft_crt_pfield_group" "void(int64_t, int64_t, const int64_t*, int64_t, int64_t, int64_t, int64_t)"
+fn c_record_from_text(out: vector<integer>, text: text, len: integer, tp: integer) -> integer;
+#c "loft_crt_record_from_text" "int64_t(int64_t*, int64_t, const char*, int64_t, int64_t)"
+fn c_json_layout(v: vector<integer>);
+#c "loft_crt_json_layout" "void(const int64_t*, int64_t)"
+fn c_json_parse(out: vector<integer>, raw: text, len: integer) -> integer;
+#c "loft_crt_json_parse" "int64_t(int64_t*, int64_t, const char*, int64_t)"
+fn c_json_errors(out: vector<u8>) -> integer;
+#c "loft_crt_json_errors" "int64_t(char*, int64_t)"
+fn c_parse_errors_of(out: vector<integer>, s: integer, r: integer, p: integer) -> integer;
+#c "loft_crt_parse_errors_of" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t)"
+fn c_jv(which: integer, ro: vector<integer>, s: integer, r: integer, p: integer, t: text, tl: integer, i: integer, f: vector<float>, out: vector<u8>) -> integer;
+#c "loft_crt_jv" "int64_t(int64_t, int64_t*, int64_t, int64_t, int64_t, int64_t, const char*, int64_t, int64_t, double*, int64_t, char*, int64_t)"
+fn c_deliver(tag: integer, s: integer, r: integer, p: integer, tp: integer, name: text, nlen: integer);
+#c "loft_crt_deliver" "void(int64_t, int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+fn c_store_known(nr: integer) -> integer;
+#c "loft_crt_store_known" "int64_t(int64_t)"
+fn c_set_store_known(nr: integer, tp: integer);
+#c "loft_crt_set_store_known" "void(int64_t, int64_t)"
+fn c_ser_ref_text(s: integer, r: integer, p: integer);
+#c "loft_crt_ser_ref_text" "void(int64_t, int64_t, int64_t)"
+fn c_de_ref_text(s: integer, r: integer, p: integer);
+#c "loft_crt_de_ref_text" "void(int64_t, int64_t, int64_t)"
+fn c_file_text_ref(store: integer, rec: integer, pos: integer, ts: integer, tr: integer, tp: integer);
+#c "loft_crt_file_text_ref" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_stack_move(store: integer, from: integer, to: integer, n: integer);
+#c "loft_crt_stack_move" "void(int64_t, int64_t, int64_t, int64_t)"
+fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
+#c "loft_crt_stack_str" "int64_t(char*, int64_t, int64_t, int64_t)"
+
+// `OpConstText`: a view of `len` bytes of the image's `code` at `from`, pushed at `at`.
+pub fn stack_str_code(store: integer, at: integer, code: vector<u8>, from: integer, len: integer) {
+  c_stack_str_code(store, at, code, from, len);
+}
+
+// `OpVarText`: a view of the text local at `src`, pushed at `at`.
+pub fn stack_str_of_text(store: integer, at: integer, src: integer) {
+  c_stack_str_of_text(store, at, src);
+}
+
+// `OpAppendText`: the view at `src` appended to the text local at `at`.
+pub fn stack_text_append_str(store: integer, at: integer, src: integer) {
+  c_stack_text_append_str(store, at, src);
+}
+
+// `n` bytes of the image's `code` at `from` copied onto the stack at `at` as they stand.
+pub fn stack_code_bytes(store: integer, at: integer, code: vector<u8>, from: integer, n: integer) {
+  c_stack_code_bytes(store, at, code, from, n);
+}
+
+// `OpConvTextFromNull`: the null text's view pushed at `at`.
+pub fn stack_str_null(store: integer, at: integer) {
+  c_stack_str_null(store, at);
+}
+
+// `OpGetText`: a view of the text at field `fld` of `(s, r, p)`, pushed at `at`.
+pub fn stack_str_of_field(store: integer, at: integer, s: integer, r: integer, p: integer, fld: integer) {
+  c_stack_str_of_field(store, at, s, r, p, fld);
+}
+
+// A `*_dest` native's write: `val` appended to the text the reference `(s, r, p)` names.
+pub fn ref_text_append(s: integer, r: integer, p: integer, val: text?) {
+  c_ref_text_append(s, r, p, val ?? "", bytes_of(val));
+}
+
+// `OpClearStackText`: the text the reference `(s, r, p)` names emptied.
+pub fn ref_text_clear(s: integer, r: integer, p: integer) {
+  c_ref_text_clear(s, r, p);
+}
+
+// `OpCastTextFromBool`: "true", "false" or the null text, for the boolean byte `v`.
+pub fn stack_str_bool(store: integer, at: integer, v: integer) {
+  c_stack_str_bool(store, at, v);
+}
+
+// `OpGetStackText`: a view of the text the reference `(s, r, p)` names, pushed at `at`.
+pub fn stack_str_of_ref(store: integer, at: integer, s: integer, r: integer, p: integer) {
+  c_stack_str_of_ref(store, at, s, r, p);
+}
+
+// A store made from `bytes`, a store's image as Rust built it; its reference in `io`.  False
+// when the image is refused.
+pub fn store_from_image(io: vector<integer>, bytes: vector<u8>) -> boolean {
+  c_store_from_image(io, bytes) != 0
+}
+
+// Is store `nr` live — not freed?
+pub fn store_live(nr: integer) -> boolean {
+  c_store_live(nr) != 0
+}
+
+// `OpGetTextSub` on the stack: the view at `at` replaced by its slice, the bounds the two words
+// above it.
+pub fn stack_text_sub(store: integer, at: integer) {
+  c_stack_text_sub(store, at);
+}
+
+// `OpTextCharacter` on the stack: the character holding byte `idx`, the word above the view at
+// `at`, of that view.
+pub fn stack_text_char(store: integer, at: integer) -> integer {
+  c_stack_text_char(store, at)
+}
+
+// `OpTextWalkStep`: one step of `for c in t`, its frame slots addressed from the stack top.
+pub fn text_walk_step(store: integer, sp: integer, c: integer, index: integer, next: integer, src: integer, arg: integer) {
+  c_text_walk_step(store, sp, c, index, next, src, arg);
+}
+
+// The byte length of the text a frame byte holds — a local's (`arg` 0) or a view — the null
+// text's one byte included (`State::text_end_jump`).
+pub fn local_text_len(store: integer, at: integer, arg: integer) -> integer {
+  c_local_text_len(store, at, arg)
+}
+
+// Is the text a frame byte holds — a local's (`arg` 0) or a view — the null text?
+pub fn local_text_null(store: integer, at: integer, arg: integer) -> boolean {
+  c_local_text_null(store, at, arg) != 0
+}
+
+// The null text's byte appended to the text the reference names — a destination native's
+// absent answer, which reads back as null.
+pub fn ref_text_append_null(s: integer, r: integer, p: integer) {
+  c_ref_text_append_null(s, r, p);
+}
+
+// `trim` (0), `trim_start` (1) or `trim_end` (2) of the text view at `at`, narrowed in place.
+pub fn stack_text_trim(store: integer, at: integer, which: integer) {
+  c_stack_text_trim(store, at, which);
+}
+
+// `n` stack bytes at `at`, as a byte vector (a suspended generator's frame).
+pub fn stack_read_bytes(store: integer, at: integer, n: integer) -> vector<u8> {
+  buf = room(n);
+  if n > 0 {
+    c_stack_read_bytes(buf, store, at, n);
+  }
+  buf
+}
+
+// `n` stack bytes at `at` zeroed.
+pub fn stack_zero(store: integer, at: integer, n: integer) {
+  c_stack_zero(store, at, n);
+}
+
+// The text view at `at` repointed at a copy of its own; the copy's handle, 0 for none.
+pub fn stack_str_own(store: integer, at: integer) -> integer {
+  c_stack_str_own(store, at)
+}
+
+// A copy `stack_str_own` made, released.
+pub fn owned_free(copy: integer) {
+  c_owned_free(copy);
+}
+
+// A generator frame's hold on its argument's store (`@FR-G-Arg-Rebind`); whether it took one.
+pub fn hold_for_frame(s: integer, r: integer, p: integer) -> boolean {
+  c_hold_for_frame(s, r, p) != 0
+}
+
+// The frame's hold given back.
+pub fn release_frame_hold(s: integer, r: integer, p: integer) {
+  c_release_frame_hold(s, r, p);
+}
+
+// The allocation count as it stands (`Stores::stores_allocated`).
+pub fn serial_now() -> integer {
+  c_serial_now()
+}
+
+// Store `nr`'s allocation stamp (`Store::alloc_serial`), 0 for none.
+pub fn store_serial(nr: integer) -> integer {
+  c_store_serial(nr)
+}
+
+// A text kept for the whole run, copied once; its handle.
+pub fn intern_text(val: text) -> integer {
+  c_intern_text(val, val.size())
+}
+
+// A view of `len` bytes of an interned text pushed at `at`.
+pub fn stack_str_interned(store: integer, at: integer, handle: integer, len: integer) {
+  c_stack_str_interned(store, at, handle, len);
+}
+
+// A `par` row passed by value: `esize` bytes of the row read, written as `isize` at stack `at`.
+pub fn par_row(store: integer, rec: integer, pos: integer, esize: integer, stk: integer, at: integer, isize: integer) {
+  c_par_row(store, rec, pos, esize, stk, at, isize);
+}
+
+// A `par` row passed wide: `n` bytes of the row copied to stack `at`.
+pub fn par_row_wide(store: integer, rec: integer, pos: integer, stk: integer, at: integer, n: integer) {
+  c_par_row_wide(store, rec, pos, stk, at, n);
+}
+
+// A tuple row re-laid out for a worker taking the tuple, by the image's plan
+// (`RunWorker.row`, four numbers per element).
+pub fn par_row_tuple(store: integer, rec: integer, pos: integer, stk: integer, at: integer, plan: vector<integer>) {
+  c_par_row_tuple(store, rec, pos, stk, at, plan);
+}
+
+// `OpFinishRecord` in a linked group: the record `(rs, rr, rp)` filed into every member of the
+// struct `(ps, pr, pp)`; `members` holds `(position, kind, type)` per member.
+pub fn group_finish(elem: integer, held: boolean, nullable: boolean, ps: integer, pr: integer, pp: integer, rs: integer, rr: integer, rp: integer, members: vector<integer>) {
+  c_group_finish(elem, if held { 1 } else { 0 }, if nullable { 1 } else { 0 }, ps, pr, pp, rs, rr, rp, members);
+}
+
+// `OpSortVector`: the primitive vector sorted in place.
+pub fn vec_sort(store: integer, rec: integer, pos: integer, size: integer, is_float: boolean, is_text: boolean, is_unsigned: boolean) {
+  c_vec_sort(store, rec, pos, size, if is_float { 1 } else { 0 }, if is_text { 1 } else { 0 }, if is_unsigned { 1 } else { 0 });
+}
+
+// `OpInsertVector`: a new element at `index`, its reference in `out`.
+pub fn vec_insert(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, index: integer, linked: boolean) {
+  c_vec_insert(out, store, rec, pos, size, index, if linked { 1 } else { 0 });
+}
+
+// `OpChildRecInPlace`: the field's child record, made with `image` when it has none; in `out`.
+pub fn child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) {
+  c_child_rec_in_place(out, tp, store, rec, pos, image);
+}
+
+// `OpSetChildRec`: the field's child record set from `(ss, sr, sp)` as a `tp` record.
+pub fn set_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer, free_source: boolean) {
+  c_set_child_rec(tp, fs, fr, fp, ss, sr, sp, if free_source { 1 } else { 0 });
+}
+
+// A persisted type's sidecar added to the run's table (`RunSidecar`); its index.
+pub fn sidecar_add(tp: integer, hash: integer, walks: boolean, before: text, after: text, dump: text, oldest: text, bridge: text) -> integer {
+  c_sidecar_add(tp, hash, if walks { 1 } else { 0 }, before, before.size(), after, after.size(), dump, dump.size(), oldest, oldest.size(), bridge, bridge.size())
+}
+
+// `store_persist_copy(r, path)` with sidecar `sc`: whether the image was written.
+pub fn image_write(s: integer, r: integer, p: integer, path: text, sc: integer) -> boolean {
+  c_image_write(s, r, p, path, path.size(), sc) != 0
+}
+
+// `store_load(r, path)` with sidecar `sc`: whether the image was loaded.
+pub fn image_load(s: integer, r: integer, p: integer, path: text, sc: integer, untrusted: boolean) -> boolean {
+  c_image_load(s, r, p, path, path.size(), sc, if untrusted { 1 } else { 0 }) != 0
+}
+
+// `store_verify(r)`: whether the store's record graph is sound.
+pub fn store_verify(s: integer, r: integer, p: integer) -> boolean {
+  c_store_verify(s, r, p) != 0
+}
+
+// `OpHashRemove` on a group's array member: the record's slot removed (a view only unlinks).
+pub fn array_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, view: boolean) {
+  c_array_remove(store, rec, pos, r_store, r_rec, r_pos, elem, if view { 1 } else { 0 });
+}
+
+// `OpIndexGroup`: the vector member's records entered into the view member.
+pub fn index_group(ps: integer, pr: integer, pp: integer, prim: integer, nullable: boolean, vpos: integer, vkind: integer, vtp: integer, keyed: vector<integer>) {
+  c_index_group(ps, pr, pp, prim, if nullable { 1 } else { 0 }, vpos, vkind, vtp, keyed);
+}
+
+// `OpMoveChildRec`: the source record moved into the field's child.
+pub fn move_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer) {
+  c_move_child_rec(tp, fs, fr, fp, ss, sr, sp);
+}
+
+// `OpGetSlotRef`: what the slot cell at field `fld` reads as; in `out`.
+pub fn slot_get(out: vector<integer>, s: integer, r: integer, p: integer, fld: integer) {
+  c_slot_get(out, s, r, p, fld);
+}
+
+// `OpMoveSlotRef`: `slot = slot.f` through the cell at `(s, r, p)`.
+pub fn slot_move(tp: integer, s: integer, r: integer, p: integer, ss: integer, sr: integer, sp: integer) {
+  c_slot_move(tp, s, r, p, ss, sr, sp);
+}
+
+// `OpSetSlotRef`: a whole write through the cell at `(s, r, p)`.
+pub fn slot_set(raw: integer, s: integer, r: integer, p: integer, vs: integer, vr: integer, vp: integer) {
+  c_slot_set(raw, s, r, p, vs, vr, vp);
+}
+
+// `log_info` … `log_fatal` (`sev` 0 … 3) through the C runtime's logger.
+pub fn log(sev: integer, m: text, f: text, line: integer) {
+  c_log(sev, m, m.size(), f, f.size(), line);
+}
+
+// `store_load_key(r, path, key)`: one record under an integer or a text key read from the image.
+pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text, is_text: boolean) -> boolean {
+  c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey, tkey.size(), if is_text { 1 } else { 0 }) != 0
+}
+
+// `store_load_keys(r, path, keys)`: every key of the vector read; how many records were.
+pub fn pg_load_keys(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, ls: integer, lr: integer, lp: integer, is_text: boolean) -> integer {
+  c_pg_load_keys(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, ls, lr, lp, if is_text { 1 } else { 0 })
+}
+
+// `store_load_prefix(r, path, pre, limit)` on a trie: how many records were read.
+pub fn pg_load_prefix(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, pre: text, limit: integer) -> integer {
+  c_pg_load_prefix(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, pre, pre.size(), limit)
+}
+
+// `store_load_box(r, path, from, till, limit)` on a spatial index: how many records were read.
+pub fn pg_load_box(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, fs: integer, fr: integer, fp: integer, ts: integer, tr: integer, tp: integer, limit: integer, name: text) -> integer {
+  c_pg_load_box(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, fs, fr, fp, ts, tr, tp, limit, name, name.size())
+}
+
+// `store_load_range(r, path, lo, hi)` on a sorted collection: how many records were read.
+pub fn pg_load_range(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, tp: integer, lo: integer, hi: integer) -> integer {
+  c_pg_load_range(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, tp, lo, hi)
+}
+
+// `expose` / `release`: the value's store locked read-only, or unlocked.
+pub fn store_lock(s: integer, r: integer, p: integer, lock: boolean) {
+  c_store_lock(s, r, p, if lock { 1 } else { 0 });
+}
+
+// The parse table (`loft_ptypes`) built at run time: see selfhost/src/ptypes.loft.
+pub fn main_vector(tp: integer) {
+  c_main_vector(tp);
+}
+
+pub fn ptype_known(tp: integer) -> boolean {
+  c_ptype_known(tp) != 0
+}
+
+pub fn ptype_set(tp: integer, kind: integer, size: integer, elem: integer, mn: integer, nullable: boolean, n: integer, strict: boolean, zero: boolean, variant: boolean, keyed: integer, linked: boolean, some: integer, payload_tp: integer, payload_pos: integer, refs: boolean, name: text) {
+  c_ptype_set(tp, kind, size, elem, mn, if nullable { 1 } else { 0 }, n, if strict { 1 } else { 0 }, if zero { 1 } else { 0 }, if variant { 1 } else { 0 }, keyed, if linked { 1 } else { 0 }, some, payload_tp, payload_pos, if refs { 1 } else { 0 }, name, name.size());
+}
+
+pub fn ptype_prefill(tp: integer, img: vector<u8>) {
+  c_ptype_prefill(tp, img);
+}
+
+// An enum row's variants: their record types, and their names by value from 1.
+pub fn ptype_enum(tp: integer, vt: vector<integer>, names: vector<text>) {
+  c_ptype_enum(tp, vt);
+  for k in 0..len(names) {
+    c_ptype_vname(tp, k + 1, names[k] ?? "", (names[k] ?? "").size());
+  }
+}
+
+pub fn ptype_fields(tp: integer, n: integer) {
+  c_ptype_fields(tp, n);
+}
+
+pub fn pfield_set(tp: integer, i: integer, name: text, content: integer, pos: integer, nullable: boolean, skip: boolean, type_tag: boolean, dkind: integer, di: integer, dnum: float, ds: text, target: integer) {
+  c_pfield_set(tp, i, name, name.size(), content, pos, if nullable { 1 } else { 0 }, if skip { 1 } else { 0 }, if type_tag { 1 } else { 0 }, dkind, di, [dnum], ds, ds.size(), target);
+}
+
+pub fn pfield_group(tp: integer, i: integer, m: vector<integer>, gelem: integer, gheld: boolean, gnull: boolean) {
+  c_pfield_group(tp, i, m, gelem, if gheld { 1 } else { 0 }, if gnull { 1 } else { 0 });
+}
+
+// `t as vector<T>` / a record read from text as type `tp`: its reference in `out`.
+pub fn record_from_text(out: vector<integer>, t: text, tp: integer) {
+  c_record_from_text(out, t, t.size(), tp);
+}
+
+// The JsonValue tree's layout: sizes and field positions of the stdlib's JsonValue types.
+pub fn json_layout(v: vector<integer>) {
+  c_json_layout(v);
+}
+
+// `json_parse(raw)`: the tree's reference in `out`.
+pub fn json_parse(out: vector<integer>, raw: text) {
+  c_json_parse(out, raw, raw.size());
+}
+
+// `json_errors()`: the last parse's errors, `|`-separated.
+pub fn json_errors() -> text {
+  buf = room(256);
+  n = c_json_errors(buf);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_json_errors(buf);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// `parse_errors_of(r)`: a fresh vector of the errors of the parse that built `r`'s store.
+pub fn parse_errors_of(out: vector<integer>, s: integer, r: integer, p: integer) {
+  c_parse_errors_of(out, s, r, p);
+}
+
+// The JsonValue natives, by `which` (`loft_crt_jv`): `jv_ref` answers a reference in `out`,
+// `jv_int` an integer (a boolean as 0, 1 or 255 for null), `jv_float` a float, `jv_text` a text.
+// `s`, `r`, `p` name the receiver or the reference argument, `t` the text argument, `i` an
+// integer or boolean one, `f` a float one.
+pub fn jv_ref(which: integer, out: vector<integer>, s: integer, r: integer, p: integer, t: text, i: integer, f: float) {
+  c_jv(which, out, s, r, p, t, t.size(), i, [f], []);
+}
+
+pub fn jv_int(which: integer, s: integer, r: integer, p: integer, t: text) -> integer {
+  c_jv(which, [], s, r, p, t, t.size(), 0, [0.0], [])
+}
+
+pub fn jv_float(which: integer, s: integer, r: integer, p: integer) -> float {
+  f = [0.0];
+  c_jv(which, [], s, r, p, "", 0, 0, f, []);
+  f[0] ?? 0.0
+}
+
+pub fn jv_text(which: integer, s: integer, r: integer, p: integer) -> text {
+  buf = room(256);
+  n = c_jv(which, [], s, r, p, "", 0, 0, [0.0], buf);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_jv(which, [], s, r, p, "", 0, 0, [0.0], buf);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// `deliver(tag, value)` off the browser: the value's bytes, or why its layout cannot carry them,
+// printed as the loopback host prints them; the parse table holds the rows it walks.
+pub fn deliver(tag: integer, s: integer, r: integer, p: integer, tp: integer, name: text) {
+  c_deliver(tag, s, r, p, tp, name, name.size());
+}
+
+// ── Typed reads and writes of a byte vector at a byte offset, little-endian: the loft runner's
+// code and stack accessors (`State::code` / `get_stack` / `put_stack` in src/state).  Each body
+// says what it answers; its `#c_twin` is the C backend's single load or store.  Outside the
+// vector a read answers 0 and a write does nothing, in the body and in the twin alike.
+
+pub fn get_u8(b: const vector<u8>, at: integer) -> integer {
+  if at < 0 || at >= len(b) {
+    return 0;
+  }
+  b[at] ?? 0
+}
+#c_twin "loft_twin_get_u8" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_i8(b: const vector<u8>, at: integer) -> integer {
+  v = get_u8(b, at);
+  if v >= 128 { v - 256 } else { v }
+}
+#c_twin "loft_twin_get_i8" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_u16(b: const vector<u8>, at: integer) -> integer {
+  if at < 0 || at + 2 > len(b) {
+    return 0;
+  }
+  (b[at] ?? 0) + (b[at + 1] ?? 0) * 256
+}
+#c_twin "loft_twin_get_u16" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_i16(b: const vector<u8>, at: integer) -> integer {
+  v = get_u16(b, at);
+  if v >= 32768 { v - 65536 } else { v }
+}
+#c_twin "loft_twin_get_i16" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_u32(b: const vector<u8>, at: integer) -> integer {
+  if at < 0 || at + 4 > len(b) {
+    return 0;
+  }
+  (b[at] ?? 0) + (b[at + 1] ?? 0) * 256 + (b[at + 2] ?? 0) * 65536 + (b[at + 3] ?? 0) * 16777216
+}
+#c_twin "loft_twin_get_u32" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_i32(b: const vector<u8>, at: integer) -> integer {
+  v = get_u32(b, at);
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+#c_twin "loft_twin_get_i32" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+// The two's complement of the eight bytes; the pattern of the integer null reads as null.
+pub fn get_i64(b: const vector<u8>, at: integer) -> integer {
+  if at < 0 || at + 8 > len(b) {
+    return 0;
+  }
+  lo = get_u32(b, at);
+  hi = get_u32(b, at + 4);
+  if hi < 2147483648 {
+    hi * 4294967296 + lo
+  } else {
+    // The complement, which fits: `-(~v) - 1`.
+    -((4294967295 - hi) * 4294967296 + (4294967295 - lo)) - 1
+  }
+}
+#c_twin "loft_twin_get_i64" "int64_t(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_f32(b: const vector<u8>, at: integer) -> single {
+  single_from_bits(get_i32(b, at))
+}
+#c_twin "loft_twin_get_f32" "float(const uint8_t*, int64_t, int64_t)"
+
+pub fn get_f64(b: const vector<u8>, at: integer) -> float {
+  float_from_bits(get_i64(b, at))
+}
+#c_twin "loft_twin_get_f64" "double(const uint8_t*, int64_t, int64_t)"
+
+// The `n` bytes at `from` copied to `to`, within the vector, as a move (overlap allowed);
+// nothing where either range leaves it.
+pub fn copy_within(b: vector<u8>, from: integer, to: integer, n: integer) {
+  if n <= 0 || from < 0 || to < 0 || from + n > len(b) || to + n > len(b) {
+    return;
+  }
+  if to < from {
+    for k in 0..n {
+      b[to + k] = b[from + k] ?? 0 as u8;
+    }
+  } else {
+    k = n - 1;
+    while k >= 0 {
+      b[to + k] = b[from + k] ?? 0 as u8;
+      k -= 1;
+    }
+  }
+}
+#c_twin "loft_twin_copy_within" "void(uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+// The `n` low bytes of `v`, least significant first.
+fn put_bytes(b: vector<u8>, at: integer, n: integer, v: integer?) {
+  if at < 0 || at + n > len(b) {
+    return;
+  }
+  if v == null {
+    // The integer null's pattern: the top bit alone.
+    for k in 0..n {
+      b[at + k] = if k == 7 { 128 as u8 } else { 0 as u8 };
+    }
+    return;
+  }
+  for k in 0..n {
+    b[at + k] = ((v >> (8 * k)) & 255) as u8;
+  }
+}
+
+pub fn put_u8(b: vector<u8>, at: integer, v: integer?) {
+  put_bytes(b, at, 1, v);
+}
+#c_twin "loft_twin_put_u8" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_i8(b: vector<u8>, at: integer, v: integer?) {
+  put_bytes(b, at, 1, v);
+}
+#c_twin "loft_twin_put_i8" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_u16(b: vector<u8>, at: integer, v: integer?) {
+  put_bytes(b, at, 2, v);
+}
+#c_twin "loft_twin_put_u16" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_i16(b: vector<u8>, at: integer, v: integer?) {
+  put_bytes(b, at, 2, v);
+}
+#c_twin "loft_twin_put_i16" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_u32(b: vector<u8>, at: integer, v: integer?) {
+  put_bytes(b, at, 4, v);
+}
+#c_twin "loft_twin_put_u32" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_i32(b: vector<u8>, at: integer, v: integer?) {
+  put_bytes(b, at, 4, v);
+}
+#c_twin "loft_twin_put_i32" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_i64(b: vector<u8>, at: integer, v: integer?) {
+  put_bytes(b, at, 8, v);
+}
+#c_twin "loft_twin_put_i64" "void(uint8_t*, int64_t, int64_t, int64_t)"
+
+pub fn put_f32(b: vector<u8>, at: integer, v: single?) {
+  // Null is the quiet NaN's pattern (`0x7FC00000`), as the C runtime's `NAN` is.
+  put_bytes(b, at, 4, if v == null { 2143289344 } else { v!.bits() });
+}
+#c_twin "loft_twin_put_f32" "void(uint8_t*, int64_t, int64_t, float)"
+
+pub fn put_f64(b: vector<u8>, at: integer, v: float?) {
+  // Null is the quiet NaN's pattern (`0x7FF8000000000000`), as Rust's `f64::NAN` and C's are.
+  put_bytes(b, at, 8, if v == null { 9221120237041090560 } else { v!.bits() });
+}
+#c_twin "loft_twin_put_f64" "void(uint8_t*, int64_t, int64_t, double)"
+
+// The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
+pub fn store_known(nr: integer) -> integer {
+  c_store_known(nr)
+}
+
+// Store `nr`'s root type set, as a placement into a fresh store sets it.
+pub fn set_store_known(nr: integer, tp: integer) {
+  c_set_store_known(nr, tp);
+}
+
+// A text reached through a reference, serialised for `OpWriteFile`.
+pub fn ser_ref_text(s: integer, r: integer, p: integer) {
+  c_ser_ref_text(s, r, p);
+}
+
+// The bytes `OpReadFile` read, into the text the reference names.
+pub fn de_ref_text(s: integer, r: integer, p: integer) {
+  c_de_ref_text(s, r, p);
+}
+
+// `OpGetFileText`: the file's text into the text the reference `(ts, tr, tp)` names.
+pub fn file_text_ref(store: integer, rec: integer, pos: integer, ts: integer, tr: integer, tp: integer) {
+  c_file_text_ref(store, rec, pos, ts, tr, tp);
+}
+
+// `n` bytes of the stack moved from `from` to `to` (`copy_result`).
+pub fn stack_move(store: integer, from: integer, to: integer, n: integer) {
+  c_stack_move(store, from, to, n);
+}
+
+// The text the view at `at` shows, or null.
+pub fn stack_str(store: integer, at: integer) -> text? {
+  buf = room(64);
+  n = c_stack_str(buf, store, at);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf = room(n);
+    n = c_stack_str(buf, store, at);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
 // `OpGetInt` and `OpSetInt`: the 8-byte integer at byte `fld` of the record.
 pub fn get_int(store: integer, rec: integer, pos: integer, fld: integer) -> integer? {
   c_get_int(store, rec, pos, fld)

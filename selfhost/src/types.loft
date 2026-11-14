@@ -59,12 +59,12 @@ pub struct Row {
   pub keys: vector<KeyRow>,
 }
 
-fn schema(b: ir::Bundle, tp: integer) -> ir::DbType? {
-  b.types[tp]
+fn schema(ts: vector<ir::DbType>, tp: integer) -> ir::DbType? {
+  ts[tp]
 }
 
-fn parts(b: ir::Bundle, tp: integer) -> ir::DbParts? {
-  t = schema(b, tp);
+fn parts(ts: vector<ir::DbType>, tp: integer) -> ir::DbParts? {
+  t = schema(ts, tp);
   if t == null {
     return null;
   }
@@ -75,13 +75,13 @@ fn parts(b: ir::Bundle, tp: integer) -> ir::DbParts? {
 // (`src/database/allocation.rs`): text is the one heap-owning base type; a struct or a variant
 // owns heap when a field does; an enum when a variant does; every collection does.  A type met
 // again on the way answers no, as there.
-pub fn owns_heap(b: ir::Bundle, tp: integer) -> boolean {
+pub fn owns_heap(ts: vector<ir::DbType>, tp: integer) -> boolean {
   seen: vector<integer> = [];
-  owns_from(b, tp, seen)
+  owns_from(ts, tp, seen)
 }
 
-fn owns_from(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
-  p = parts(b, tp);
+fn owns_from(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
+  p = parts(ts, tp);
   if p == null {
     return false;
   }
@@ -93,12 +93,12 @@ fn owns_from(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
   seen += [tp];
   match p {
     PtBase => tp == 5,
-    PtStruct { fields } => fields_own(b, fields, seen),
-    PtEnumValue { value: _, fields } => fields_own(b, fields, seen),
+    PtStruct { fields } => fields_own(ts, fields, seen),
+    PtEnumValue { value: _, fields } => fields_own(ts, fields, seen),
     PtEnum { values } => {
       owns = false;
       for v in values {
-        if v.nr != 65535 && owns_from(b, v.nr, seen) {
+        if v.nr != 65535 && owns_from(ts, v.nr, seen) {
           owns = true;
         }
       }
@@ -117,10 +117,10 @@ fn owns_from(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
   }
 }
 
-fn fields_own(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+fn fields_own(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
   owns = false;
   for f in fields {
-    if owns_from(b, f.content, seen) {
+    if owns_from(ts, f.content, seen) {
       owns = true;
     }
   }
@@ -132,18 +132,18 @@ fn fields_own(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>)
 // (`src/database/allocation.rs:1423`), the test the Rust interpreter's exchange makes.  Scalars,
 // structs and variants of them, vectors of them and a plain enum's values say yes; any other part —
 // a keyed collection, a reference, a child record — says no; a type met again on the way says yes.
-pub fn holds_no_stored_refs(b: ir::Bundle, tp: integer) -> boolean {
+pub fn holds_no_stored_refs(ts: vector<ir::DbType>, tp: integer) -> boolean {
   walking: vector<integer> = [];
-  no_refs(b, tp, walking)
+  no_refs(ts, tp, walking)
 }
 
-fn no_refs(b: ir::Bundle, tp: integer, walking: vector<integer>) -> boolean {
+fn no_refs(ts: vector<ir::DbType>, tp: integer, walking: vector<integer>) -> boolean {
   for w in walking {
     if w == tp {
       return true;
     }
   }
-  p = parts(b, tp);
+  p = parts(ts, tp);
   if p == null {
     return false;
   }
@@ -153,8 +153,8 @@ fn no_refs(b: ir::Bundle, tp: integer, walking: vector<integer>) -> boolean {
     PtEnum { values } => {
       all = true;
       for v in values {
-        vp = parts(b, v.nr);
-        if vp != null && (vp is PtEnumValue) && !no_refs(b, v.nr, walking) {
+        vp = parts(ts, v.nr);
+        if vp != null && (vp is PtEnumValue) && !no_refs(ts, v.nr, walking) {
           all = false;
         }
       }
@@ -166,18 +166,18 @@ fn no_refs(b: ir::Bundle, tp: integer, walking: vector<integer>) -> boolean {
     PtInt { start: _, nullable: _ } => true,
     PtShortRaw { start: _, nullable: _ } => true,
     PtIntRaw { start: _, nullable: _ } => true,
-    PtStruct { fields } => fields_no_refs(b, fields, walking),
-    PtEnumValue { value: _, fields } => fields_no_refs(b, fields, walking),
-    PtVector { content } => no_refs(b, content, walking),
+    PtStruct { fields } => fields_no_refs(ts, fields, walking),
+    PtEnumValue { value: _, fields } => fields_no_refs(ts, fields, walking),
+    PtVector { content } => no_refs(ts, content, walking),
     _ => false,
   };
   walking.remove(len(walking) - 1);
   ok
 }
 
-fn fields_no_refs(b: ir::Bundle, fields: vector<ir::DbField>, walking: vector<integer>) -> boolean {
+fn fields_no_refs(ts: vector<ir::DbType>, fields: vector<ir::DbField>, walking: vector<integer>) -> boolean {
   for f in fields {
-    if !no_refs(b, f.content, walking) {
+    if !no_refs(ts, f.content, walking) {
       return false;
     }
   }
@@ -185,8 +185,8 @@ fn fields_no_refs(b: ir::Bundle, fields: vector<ir::DbField>, walking: vector<in
 }
 
 // `Stores::content`: a collection type's element, null for any other type.
-pub fn content_of(b: ir::Bundle, tp: integer) -> integer? {
-  t = b.types[tp];
+pub fn content_of(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
   if t == null {
     return null;
   }
@@ -204,8 +204,8 @@ pub fn content_of(b: ir::Bundle, tp: integer) -> integer? {
 }
 
 // A plain enum's variant names in their order, or null when `tp` is no plain enum.
-pub fn enum_names(b: ir::Bundle, tp: integer) -> vector<text>? {
-  t = b.types[tp];
+pub fn enum_names(ts: vector<ir::DbType>, tp: integer) -> vector<text>? {
+  t = ts[tp];
   if t == null {
     return null;
   }
@@ -223,8 +223,8 @@ pub fn enum_names(b: ir::Bundle, tp: integer) -> vector<text>? {
 
 // `Stores::root_vector_element_of`: the element type of the one vector field of struct `kt` — a
 // store whose root is a vector — or null for any other type.
-pub fn root_vector_element(b: ir::Bundle, kt: integer) -> integer? {
-  t = b.types[kt];
+pub fn root_vector_element(ts: vector<ir::DbType>, kt: integer) -> integer? {
+  t = ts[kt];
   if t == null {
     return null;
   }
@@ -233,7 +233,7 @@ pub fn root_vector_element(b: ir::Bundle, kt: integer) -> integer? {
       if len(fields) != 1 {
         return null;
       }
-      vt = b.types[fields[0]!.content];
+      vt = ts[fields[0]!.content];
       if vt == null {
         return null;
       }
@@ -247,8 +247,8 @@ pub fn root_vector_element(b: ir::Bundle, kt: integer) -> integer? {
 }
 
 // Is `tp` a keyed collection — a hash, index, sorted, ordered, spatial or trie (`Cx::keyed`)?
-pub fn is_keyed(b: ir::Bundle, tp: integer) -> boolean {
-  t = b.types[tp];
+pub fn is_keyed(ts: vector<ir::DbType>, tp: integer) -> boolean {
+  t = ts[tp];
   if t == null {
     return false;
   }
@@ -265,50 +265,50 @@ pub fn is_keyed(b: ir::Bundle, tp: integer) -> boolean {
 
 // `Cx::swap_safe`: may a `tp` collection's element tree move whole — no stored reference
 // (`target`) and no `DbRef` anywhere inside it?  A type met again on the walk answers yes.
-pub fn swap_safe(b: ir::Bundle, tp: integer) -> boolean {
+pub fn swap_safe(ts: vector<ir::DbType>, tp: integer) -> boolean {
   seen: vector<integer> = [];
-  swap_walk(b, tp, seen)
+  swap_walk(ts, tp, seen)
 }
 
-fn swap_walk(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
+fn swap_walk(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
   for s in seen {
     if s == tp {
       return true;
     }
   }
   seen += [tp];
-  t = b.types[tp];
+  t = ts[tp];
   if t == null {
     return false;
   }
   match t.parts[0]! {
-    PtStruct { fields } => swap_fields(b, fields, seen),
-    PtEnumValue { value: _, fields } => swap_fields(b, fields, seen),
+    PtStruct { fields } => swap_fields(ts, fields, seen),
+    PtEnumValue { value: _, fields } => swap_fields(ts, fields, seen),
     PtEnum { values } => {
       for v in values {
-        if v.nr != 65535 && !swap_walk(b, v.nr, seen) {
+        if v.nr != 65535 && !swap_walk(ts, v.nr, seen) {
           return false;
         }
       }
       true
     }
-    PtVector { content } => swap_walk(b, content, seen),
-    PtSorted { content, keys: _ } => swap_walk(b, content, seen),
-    PtArray { content } => swap_walk(b, content, seen),
-    PtOrdered { content, keys: _ } => swap_walk(b, content, seen),
-    PtHash { content, fields: _ } => swap_walk(b, content, seen),
-    PtIndex { content, keys: _ } => swap_walk(b, content, seen),
-    PtRadix { content, fields: _ } => swap_walk(b, content, seen),
-    PtTrie { content, key: _ } => swap_walk(b, content, seen),
-    PtChildRec { content } => swap_walk(b, content, seen),
+    PtVector { content } => swap_walk(ts, content, seen),
+    PtSorted { content, keys: _ } => swap_walk(ts, content, seen),
+    PtArray { content } => swap_walk(ts, content, seen),
+    PtOrdered { content, keys: _ } => swap_walk(ts, content, seen),
+    PtHash { content, fields: _ } => swap_walk(ts, content, seen),
+    PtIndex { content, keys: _ } => swap_walk(ts, content, seen),
+    PtRadix { content, fields: _ } => swap_walk(ts, content, seen),
+    PtTrie { content, key: _ } => swap_walk(ts, content, seen),
+    PtChildRec { content } => swap_walk(ts, content, seen),
     PtDbRef => false,
     _ => true,
   }
 }
 
-fn swap_fields(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+fn swap_fields(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
   for f in fields {
-    if f.target != 65535 || !swap_walk(b, f.content, seen) {
+    if f.target != 65535 || !swap_walk(ts, f.content, seen) {
       return false;
     }
   }
@@ -317,12 +317,12 @@ fn swap_fields(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>
 
 // Is the element of collection type `tp` a `__nullable<S>` whose `Some` variant exists
 // (`Stores::nullable_some_variant(content(tp)).is_some()`)?
-fn nullable_element(b: ir::Bundle, tp: integer) -> boolean {
-  e = content_of(b, tp);
+pub fn nullable_element(ts: vector<ir::DbType>, tp: integer) -> boolean {
+  e = content_of(ts, tp);
   if e == null {
     return false;
   }
-  et = b.types[e];
+  et = ts[e];
   if et == null {
     return false;
   }
@@ -330,12 +330,104 @@ fn nullable_element(b: ir::Bundle, tp: integer) -> boolean {
     return false;
   }
   some = "{et.name}::Some";
-  for t in b.types {
+  for t in ts {
     if t.name == some {
       return true;
     }
   }
   false
+}
+
+// The fields of a struct or of an enum variant, empty for any other type.
+pub fn record_fields(ts: vector<ir::DbType>, tp: integer) -> vector<ir::DbField> {
+  match ts[tp]?.parts[0] {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => [],
+  }
+}
+
+// The type whose fields hold an element's keys (`Stores::key_owner`): a `__nullable<S>`
+// element keeps them in its `Some` variant's `payload` field, any other element itself.
+fn key_owner(ts: vector<ir::DbType>, elem: integer) -> integer {
+  name = ts[elem]?.name ?? "";
+  if name.starts_with("__nullable<") {
+    some = "{name}::Some";
+    for i in 0..len(ts) {
+      if ts[i]!.name == some {
+        for f in record_fields(ts, i) {
+          if f.name == "payload" {
+            return f.content;
+          }
+        }
+      }
+    }
+  }
+  elem
+}
+
+// The key content types one key field contributes (`Stores::key_contents_for_field`): one, or
+// a `__tuple<…>` field's elements, each expanded the same way.
+fn field_key_contents(ts: vector<ir::DbType>, content: integer) -> vector<integer> {
+  if (ts[content]?.name ?? "").starts_with("__tuple<") {
+    out: vector<integer> = [];
+    for f in record_fields(ts, content) {
+      out += field_key_contents(ts, f.content);
+    }
+    if len(out) > 0 {
+      return out;
+    }
+  }
+  [content]
+}
+
+// The content types of a keyed collection's key parts, in comparison order — the list
+// `Stores::get_keys` answers, which says the width each part takes on the stack: 0..5 a base
+// kind (integer, long, single, float, boolean, text), 6 a character, any other a type number.
+// A hash or a spatial names its key fields by index, a sorted, an ordered or an index by
+// `KeyField.nr`, a trie its one key field.  Null when the schema does not resolve one.
+pub fn key_contents(ts: vector<ir::DbType>, tp: integer) -> vector<integer>? {
+  elem = -1;
+  nrs: vector<integer> = [];
+  match ts[tp]?.parts[0] {
+    PtHash { content, fields } => {
+      elem = content;
+      nrs = fields;
+    }
+    PtRadix { content, fields } => {
+      elem = content;
+      nrs = fields;
+    }
+    PtSorted { content, keys } => {
+      elem = content;
+      nrs = [for k in keys { k.nr }];
+    }
+    PtOrdered { content, keys } => {
+      elem = content;
+      nrs = [for k in keys { k.nr }];
+    }
+    PtIndex { content, keys } => {
+      elem = content;
+      nrs = [for k in keys { k.nr }];
+    }
+    PtTrie { content, key } => {
+      elem = content;
+      nrs = [key];
+    }
+    _ => {
+      return null;
+    }
+  }
+  fields = record_fields(ts, key_owner(ts, elem));
+  out: vector<integer> = [];
+  for nr in nrs {
+    f = fields[nr];
+    if f == null {
+      return null;
+    }
+    out += field_key_contents(ts, f.content);
+  }
+  out
 }
 
 // The owner of field `i`'s linked group — the member whose `other_indexes` does not start with
@@ -359,7 +451,7 @@ fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer? {
 // A struct's field rows, as `field_rows` writes them (`src/c/mod.rs`): a view member of a linked
 // group is 1, or 2 when its collection's element is a `__nullable<S>` with a `Some` variant
 // (`Stores::nullable_some_variant`; the wrapper flag is the name, `types.rs`).
-fn field_rows(b: ir::Bundle, fields: vector<ir::DbField>) -> vector<FieldRow> {
+fn field_rows(ts: vector<ir::DbType>, fields: vector<ir::DbField>) -> vector<FieldRow> {
   out: vector<FieldRow> = [];
   for i in 0..len(fields) {
     f = fields[i]!;
@@ -369,7 +461,7 @@ fn field_rows(b: ir::Bundle, fields: vector<ir::DbField>) -> vector<FieldRow> {
     if o != null {
       group = o + 1;
       if o != i {
-        view = 1 + (if nullable_element(b, f.content) { 1 } else { 0 });
+        view = 1 + (if nullable_element(ts, f.content) { 1 } else { 0 });
       }
     }
     out += [FieldRow {
@@ -385,15 +477,16 @@ fn field_rows(b: ir::Bundle, fields: vector<ir::DbField>) -> vector<FieldRow> {
 
 // Type `tp`'s row, as `copy_table` writes it (`src/c/mod.rs`).  A keyed collection's key parts
 // are the image's own (`DbType.keys`), carried as they are.
-pub fn row(b: ir::Bundle, tp: integer) -> Row {
-  t = schema(b, tp)!;
+pub fn row(ts: vector<ir::DbType>, tp: integer) -> Row {
+  // Indexed directly: `schema(ts, tp)!` leaks a store per call (loft#2481).
+  t = ts[tp]!;
   r = Row {
     tp: tp,
     kind: T_SCALAR,
     size: t.size,
     elem: 0,
     n: 0,
-    owns_heap: owns_heap(b, tp),
+    owns_heap: owns_heap(ts, tp),
     linked: t.linked,
     fields: [],
     variants: [],
@@ -411,12 +504,12 @@ pub fn row(b: ir::Bundle, tp: integer) -> Row {
     PtStruct { fields } => {
       r.kind = T_STRUCT;
       r.n = len(fields);
-      r.fields = field_rows(b, fields);
+      r.fields = field_rows(ts, fields);
     }
     PtEnumValue { value: _, fields } => {
       r.kind = T_STRUCT;
       r.n = len(fields);
-      r.fields = field_rows(b, fields);
+      r.fields = field_rows(ts, fields);
     }
     PtVector { content } => { r.kind = T_VECTOR; r.elem = content; }
     PtSorted { content, keys: _ } => { r.kind = T_VECTOR; r.elem = content; }
@@ -497,10 +590,11 @@ pub fn flat(rows: vector<Row>) -> vector<integer> {
 // the others: an integer's and a float's null, a nullable boolean's 255, a narrow integer's
 // null code (or a non-null short's `0 - min + 1`), and a variant's type tag.  The selfhost
 // tests compare this with the C generator's image, byte by byte.
-pub fn default_image(b: ir::Bundle, tp: integer) -> vector<u8> {
-  t = schema(b, tp)!;
+pub fn default_image(ts: vector<ir::DbType>, tp: integer) -> vector<u8> {
+  // Indexed directly: `schema(ts, tp)!` leaks a store per call (loft#2481).
+  t = ts[tp]!;
   out: vector<u8> = [for _ in 0..t.size { 0 as u8 }];
-  default_into(b, tp, true, out, 0);
+  default_into(ts, tp, true, out, 0);
   out
 }
 
@@ -513,7 +607,7 @@ fn put_bytes(out: vector<u8>, at: integer, bytes: vector<integer>) {
   }
 }
 
-fn default_into(b: ir::Bundle, tp: integer, nullable: boolean, out: vector<u8>, at: integer) {
+fn default_into(ts: vector<ir::DbType>, tp: integer, nullable: boolean, out: vector<u8>, at: integer) {
   if tp == 65535 {
     return;
   }
@@ -531,7 +625,7 @@ fn default_into(b: ir::Bundle, tp: integer, nullable: boolean, out: vector<u8>, 
     }
     return;
   }
-  p = parts(b, tp);
+  p = parts(ts, tp);
   if p == null {
     return;
   }
@@ -551,11 +645,12 @@ fn default_into(b: ir::Bundle, tp: integer, nullable: boolean, out: vector<u8>, 
     PtIntRaw { start: _, nullable: null_code } => {
       if null_code { put_bytes(out, at, [255, 255, 255, 255]); }
     }
-    PtStruct { fields } => fields_into(b, tp, fields, out, at),
-    PtEnumValue { value: _, fields } => fields_into(b, tp, fields, out, at),
+    PtStruct { fields } => fields_into(ts, tp, fields, out, at),
+    PtEnumValue { value: _, fields } => fields_into(ts, tp, fields, out, at),
     PtEnum { values: _ } => {
       // `@FR-D-Json`: a non-null `JsonValue` defaults to its `JNull` tag, 1.
-      if !nullable && schema(b, tp)!.name == "JsonValue" {
+      // Indexed directly: `schema(ts, tp)!.name` leaks a store per call (loft#2481).
+      if !nullable && ts[tp]!.name == "JsonValue" {
         put_bytes(out, at, [1]);
       }
     }
@@ -563,13 +658,13 @@ fn default_into(b: ir::Bundle, tp: integer, nullable: boolean, out: vector<u8>, 
   }
 }
 
-fn fields_into(b: ir::Bundle, tp: integer, fields: vector<ir::DbField>, out: vector<u8>, at: integer) {
+fn fields_into(ts: vector<ir::DbType>, tp: integer, fields: vector<ir::DbField>, out: vector<u8>, at: integer) {
   for f in fields {
     if f.name == "type" && f.position == 0 {
       // The type tag, a short with minimum 0: `tp - 0 + 1`.
       put_bytes(out, at, [(tp + 1) & 255, (tp + 1) >> 8]);
     } else {
-      default_into(b, f.content, f.nullable, out, at + f.position);
+      default_into(ts, f.content, f.nullable, out, at + f.position);
     }
   }
 }
@@ -578,9 +673,9 @@ fn fields_into(b: ir::Bundle, tp: integer, fields: vector<ir::DbField>, out: vec
 // `src/database/types.rs:3039`): a struct-enum variant is claimed at its ENUM's size — the
 // largest variant's — so any variant can be written over it in place; every other type at its
 // own.  The first enum, in type order, that lists `tp` and is larger.
-pub fn enum_parent_size(b: ir::Bundle, tp: integer) -> integer {
-  own = b.types[tp]!.size;
-  for t in b.types {
+pub fn enum_parent_size(ts: vector<ir::DbType>, tp: integer) -> integer {
+  own = ts[tp]!.size;
+  for t in ts {
     match t.parts[0]! {
       PtEnum { values } => {
         for v in values {
@@ -598,21 +693,153 @@ pub fn enum_parent_size(b: ir::Bundle, tp: integer) -> integer {
 // Is `tp` a vector wrapper, `main_vector<T>` (`Stores::is_vector_wrapper`,
 // `src/database/allocation.rs:1304`)?  Its `OpDatabase` keeps a buffer that is a place.
 // Is `tp` a struct (`Parts::Struct`)?
-pub fn is_struct(b: ir::Bundle, tp: integer) -> boolean {
-  p = parts(b, tp);
+pub fn is_struct(ts: vector<ir::DbType>, tp: integer) -> boolean {
+  p = parts(ts, tp);
   p != null && p! is PtStruct
 }
 
-pub fn is_vector_wrapper(b: ir::Bundle, tp: integer) -> boolean {
-  (b.types[tp]?.name ?? "").starts_with("main_vector<")
+pub fn is_vector_wrapper(ts: vector<ir::DbType>, tp: integer) -> boolean {
+  (ts[tp]?.name ?? "").starts_with("main_vector<")
 }
 
 // The type the schema names `name`, or null.
-pub fn named(b: ir::Bundle, name: text) -> integer? {
-  for t in b.types {
+pub fn named(ts: vector<ir::DbType>, name: text) -> integer? {
+  for t in ts {
     if t.name == name {
       return t#index;
     }
   }
   null
+}
+
+// The element type of `tp` when it is a hash, else null.
+pub fn hash_element(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtHash { content, fields: _ } => content,
+    _ => null,
+  }
+}
+
+// The element type of `tp` when it is a plain vector, else null.
+// An array's element type (a vector of linked records), or null.
+pub fn array_element(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtArray { content } => content,
+    _ => null,
+  }
+}
+
+pub fn vector_element(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtVector { content } => content,
+    _ => null,
+  }
+}
+
+// S4's keyed collections, by the kind the shim's keyed routines take: 1 a sorted, 2 an ordered (a
+// sorted of linked records), 3 an index, 4 a spatial index, 5 a trie; null for any other type.
+pub fn keyed_kind(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtSorted { content: _, keys: _ } => 1,
+    PtOrdered { content: _, keys: _ } => 2,
+    PtIndex { content: _, keys: _ } => 3,
+    PtRadix { content: _, fields: _ } => 4,
+    PtTrie { content: _, key: _ } => 5,
+    _ => null,
+  }
+}
+
+// The element type of a keyed collection of S4's, or null.
+pub fn keyed_element(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtSorted { content, keys: _ } => content,
+    PtOrdered { content, keys: _ } => content,
+    PtIndex { content, keys: _ } => content,
+    PtRadix { content, fields: _ } => content,
+    PtTrie { content, key: _ } => content,
+    _ => null,
+  }
+}
+
+// The collection a record is added to (`record_collection`): the parent itself (field 65535), or
+// the parent struct's field `fld`, read at its position (`at`, `loft_field`) when it has no
+// linked siblings — `at` null where it has, which no caller carries.
+pub struct RecordColl {
+  pub tp: integer,
+  pub fld: integer,
+  pub at: integer?
+}
+
+// The members of field `fld`'s linked group in struct `ptp` (`@FR-Col-Group`), the field itself
+// first: `(position, kind, type)` each, the kind as `loft_member`'s — 0 a vector of the records
+// (an array), 1 a hash, 2 an index, 3 an ordered, 4 a spatial, 5 a trie.  Empty outside a group;
+// null for a member the group cannot hold (a sorted, as the C backend refuses it).
+pub fn group_members(ts: vector<ir::DbType>, ptp: integer, fld: integer) -> vector<integer>? {
+  fs = record_fields(ts, ptp);
+  f = fs[fld];
+  if f == null {
+    return [];
+  }
+  out: vector<integer> = [];
+  nrs: vector<integer> = [fld];
+  for o in f.other_indexes {
+    if o != 65535 {
+      nrs += [o];
+    }
+  }
+  if len(nrs) < 2 {
+    return [];
+  }
+  for nr in nrs {
+    m = fs[nr];
+    if m == null {
+      return null;
+    }
+    tp = m.content;
+    kind = if array_element(ts, tp) != null { 0 } else if hash_element(ts, tp) != null { 1 } else {
+      match keyed_kind(ts, tp) ?? 0 {
+        3 => 2,
+        2 => 3,
+        4 => 4,
+        5 => 5,
+        _ => -1,
+      }
+    };
+    if kind < 0 {
+      return null;
+    }
+    out += [m.position, kind, tp];
+  }
+  out
+}
+
+pub fn record_collection(ts: vector<ir::DbType>, ptp: integer, fld: integer) -> RecordColl {
+  if fld != 65535 {
+    // A struct's field or an enum variant's.
+    f = record_fields(ts, ptp)[fld];
+    if f != null && len(f.other_indexes) == 0 {
+      return RecordColl { tp: f.content, fld: fld, at: f.position };
+    }
+  }
+  RecordColl { tp: ptp, fld: fld, at: null }
 }

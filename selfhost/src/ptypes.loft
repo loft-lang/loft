@@ -1,0 +1,392 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the C runtime's parse table (`loft_ptypes`) built at run time from the run image's
+// schema, for the loft runner's text parses (`t as vector<T>`, `json_parse`): the rows the C
+// backend writes at compile time (src/c/parse.rs, `parse_type` / `parse_table` / `parse_field`),
+// the same facts, handed to crt one row at a time.
+
+use ir;
+use types;
+use crt;
+
+P_RECORD = 12;
+P_ENUM = 13;
+P_VECTOR = 14;
+P_DBREF = 15;
+P_CHILD = 16;
+P_OTHER = 17;
+P_KEYED = 18;
+P_ARRAY = 6;
+
+// `Stores::reaches_reference`: can a value of `tp` hold a stored reference?
+fn reaches_reference(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
+  t = ts[tp];
+  if t == null {
+    return false;
+  }
+  for s in seen {
+    if s == tp {
+      return false;
+    }
+  }
+  seen += [tp];
+  match t.parts[0]! {
+    PtDbRef => true,
+    PtStruct { fields } => any_field_reaches(ts, fields, seen),
+    PtEnumValue { value: _, fields } => any_field_reaches(ts, fields, seen),
+    PtEnum { values } => {
+      for v in values {
+        if v.nr != 65535 && reaches_reference(ts, v.nr, seen) {
+          return true;
+        }
+      }
+      false
+    }
+    PtVector { content } => reaches_reference(ts, content, seen),
+    PtArray { content } => reaches_reference(ts, content, seen),
+    PtSorted { content, keys: _ } => reaches_reference(ts, content, seen),
+    PtOrdered { content, keys: _ } => reaches_reference(ts, content, seen),
+    PtHash { content, fields: _ } => reaches_reference(ts, content, seen),
+    PtIndex { content, keys: _ } => reaches_reference(ts, content, seen),
+    PtRadix { content, fields: _ } => reaches_reference(ts, content, seen),
+    PtTrie { content, key: _ } => reaches_reference(ts, content, seen),
+    PtChildRec { content } => reaches_reference(ts, content, seen),
+    _ => false,
+  }
+}
+
+fn any_field_reaches(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  for f in fields {
+    if reaches_reference(ts, f.content, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Stores::child_rec_is_value`: an out-of-line field whose content is a value of its own.
+fn child_rec_is_value(ts: vector<ir::DbType>, c: integer) -> boolean {
+  c < len(ts) && !(ts[c]?.name ?? "__").starts_with("__")
+}
+
+// The record type a stored `reference<T>` field names, when the parse can build it
+// (`reference_target`); null for any other field.
+fn reference_target(ts: vector<ir::DbType>, f: ir::DbField) -> integer? {
+  is_ref = match ts[f.content]?.parts[0] {
+    PtDbRef => true,
+    _ => false,
+  };
+  is_record = match ts[f.target]?.parts[0] {
+    PtStruct { fields: _ } => true,
+    PtEnumValue { value: _, fields: _ } => true,
+    _ => false,
+  };
+  if is_ref && is_record { f.target } else { null }
+}
+
+// The element type of a keyed collection or an array, with the row's `keyed` code; null for
+// any other type.
+fn keyed_of(ts: vector<ir::DbType>, tp: integer) -> vector<integer>? {
+  match ts[tp]?.parts[0] {
+    PtArray { content } => [content, P_ARRAY],
+    PtHash { content, fields: _ } => [content, 0],
+    PtSorted { content, keys: _ } => [content, 1],
+    PtIndex { content, keys: _ } => [content, 2],
+    PtOrdered { content, keys: _ } => [content, 3],
+    PtRadix { content, fields: _ } => [content, 4],
+    PtTrie { content, key: _ } => [content, 5],
+    _ => null,
+  }
+}
+
+// The types a parse of `tp` reaches (`parse_type`): its fields' and reference targets', a
+// vector's and a collection's element, an out-of-line value's content, an enum's variants.
+fn reach(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) {
+  for s in seen {
+    if s == tp {
+      return;
+    }
+  }
+  seen += [tp];
+  if tp <= 6 {
+    return;
+  }
+  fs = types::record_fields(ts, tp);
+  for f in fs {
+    reach(ts, f.content, seen);
+    rt = reference_target(ts, f);
+    if rt != null {
+      reach(ts, rt!, seen);
+    }
+  }
+  match ts[tp]?.parts[0] {
+    PtVector { content } => reach(ts, content, seen),
+    PtChildRec { content } => {
+      if child_rec_is_value(ts, content) {
+        reach(ts, content, seen);
+      }
+    }
+    PtEnum { values } => {
+      for v in values {
+        if v.nr != 65535 {
+          reach(ts, v.nr, seen);
+        }
+      }
+    }
+    _ => {
+      k = keyed_of(ts, tp);
+      if k != null {
+        reach(ts, k![0] ?? 0, seen);
+      }
+    }
+  }
+}
+
+// Every row a parse of `tp` reads written into the C runtime's parse table, once each; and the
+// `main_vector<T>` types told it, the first time.
+pub fn prepare(ts: vector<ir::DbType>, tp: integer, told: vector<boolean>) {
+  if !(told[0] ?? false) {
+    for i in 0..len(ts) {
+      if (ts[i]?.name ?? "").starts_with("main_vector<") {
+        crt::main_vector(i);
+      }
+    }
+    told[0] = true;
+  }
+  seen: vector<integer> = [];
+  reach(ts, tp, seen);
+  for t in seen {
+    if !crt::ptype_known(t) {
+      row(ts, t);
+    }
+  }
+}
+
+// A field's declared default: the wire writes none as an empty text (`Field::default_to_wire`).
+fn has_default(f: ir::DbField) -> boolean {
+  if len(f.default) == 0 {
+    return false;
+  }
+  match f.default[0]! {
+    DcStr { v } => v != "",
+    _ => true,
+  }
+}
+
+// `Stores::zero_default` (`derive_facts`): is `tp`'s default all zero bytes — no nullable
+// field, no declared default, no text, no `type` tag, recursively; an enum's is its zero tag,
+// except a `JsonValue`'s, whose default is `JNull`.
+fn zero_default(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
+  t = ts[tp];
+  if t == null {
+    return false;
+  }
+  for s in seen {
+    if s == tp {
+      return false;
+    }
+  }
+  seen += [tp];
+  match t.parts[0]! {
+    PtBase => tp <= 6 && tp != 5,
+    PtByte { start: _, nullable } => !nullable,
+    PtShort { start: _, nullable } => !nullable,
+    PtShortRaw { start: _, nullable } => !nullable,
+    PtInt { start: _, nullable } => !nullable,
+    PtIntRaw { start: _, nullable } => !nullable,
+    PtEnum { values: _ } => t.name != "JsonValue",
+    PtStruct { fields } => fields_zero(ts, fields, seen),
+    PtEnumValue { value: _, fields } => fields_zero(ts, fields, seen),
+    _ => true,
+  }
+}
+
+fn fields_zero(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  zero = true;
+  for f in fields {
+    // The path so far, not every type visited: `derive_facts` remembers each type's answer,
+    // so a second field of a type already walked reads the same answer, not a cycle's.
+    path: vector<integer> = [for p in seen { p }];
+    z = zero_default(ts, f.content, path);
+    zero = zero && z && !f.nullable && !has_default(f) && !(f.name == "type" && f.position == 0);
+  }
+  zero
+}
+
+// The number of the type named `name`; null when the schema has none.
+fn type_named(ts: vector<ir::DbType>, name: text) -> integer? {
+  for i in 0..len(ts) {
+    if (ts[i]?.name ?? "") == name {
+      return i;
+    }
+  }
+  null
+}
+
+// The size of the type named `name`; 0 when the schema has none.
+fn size_named(ts: vector<ir::DbType>, name: text) -> integer {
+  ts[type_named(ts, name) ?? 65535]?.size ?? 0
+}
+
+// The position of field `field` of the type named `tp`; 0 when absent.
+fn position_in(ts: vector<ir::DbType>, tp: text, field: text) -> integer {
+  t = type_named(ts, tp);
+  if t == null {
+    return 0;
+  }
+  for f in types::record_fields(ts, t!) {
+    if f.name == field {
+      return f.position;
+    }
+  }
+  0
+}
+
+// The JsonValue tree's layout the C runtime reads (the emitter's `json_layout`), told it once.
+pub fn json_layout(ts: vector<ir::DbType>, told: vector<boolean>) {
+  if told[1] ?? false {
+    return;
+  }
+  jl: vector<integer> = [];
+  jl += [size_named(ts, "JsonValue")];
+  jl += [size_named(ts, "JsonField")];
+  jl += [size_named(ts, "text")];
+  jl += [position_in(ts, "JsonField", "name")];
+  jl += [position_in(ts, "JsonField", "value")];
+  jl += [position_in(ts, "JBool", "value")];
+  jl += [position_in(ts, "JNumber", "value")];
+  jl += [position_in(ts, "JInteger", "value")];
+  jl += [position_in(ts, "JString", "value")];
+  jl += [position_in(ts, "JArray", "items")];
+  jl += [position_in(ts, "JObject", "fields")];
+  crt::json_layout(jl);
+  told[1] = true;
+}
+
+// One row, as `parse_table` writes it.
+fn row(ts: vector<ir::DbType>, tp: integer) {
+  t = ts[tp]!;
+  refs = tp > 6 && reaches_reference(ts, tp, []);
+  if tp <= 6 {
+    crt::ptype_set(tp, tp, t.size, 0, 0, false, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name);
+    return;
+  }
+  k = keyed_of(ts, tp);
+  if k != null {
+    c = k![0] ?? 0;
+    crt::ptype_set(tp, P_KEYED, t.size, c, 0, false, 0, false, false, false, k![1] ?? 0, ts[c]?.linked ?? false, 0, 0, 0, refs, t.name);
+    return;
+  }
+  match t.parts[0]! {
+    PtStruct { fields } => record_row(ts, tp, fields, false, refs),
+    PtEnumValue { value: _, fields } => record_row(ts, tp, fields, true, refs),
+    PtVector { content } => crt::ptype_set(tp, P_VECTOR, t.size, content, 0, false, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+    PtEnum { values } => enum_row(ts, tp, values, refs),
+    PtByte { start, nullable } => crt::ptype_set(tp, 7, t.size, 0, start, nullable, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+    PtShort { start, nullable } => crt::ptype_set(tp, 8, t.size, 0, start, nullable, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+    PtShortRaw { start, nullable } => crt::ptype_set(tp, 9, t.size, 0, start, nullable, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+    PtInt { start, nullable } => crt::ptype_set(tp, 10, t.size, 0, start, nullable, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+    PtIntRaw { start, nullable } => crt::ptype_set(tp, 11, t.size, 0, start, nullable, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+    PtDbRef => crt::ptype_set(tp, P_DBREF, t.size, 0, 0, false, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+    PtChildRec { content } => crt::ptype_set(tp, P_CHILD, t.size, if child_rec_is_value(ts, content) { content } else { 65535 }, 0, false, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+    _ => crt::ptype_set(tp, P_OTHER, t.size, 0, 0, false, 0, false, false, false, 0, false, 0, 0, 0, refs, t.name),
+  }
+}
+
+// A record's row (`record_row`): its fields (`parse_field`, each with its linked group), whether
+// it is an enum's variant, and its prefill image unless its default is all zero.
+fn record_row(ts: vector<ir::DbType>, tp: integer, fields: vector<ir::DbField>, variant: boolean, refs: boolean) {
+  zero = zero_default(ts, tp, []);
+  crt::ptype_set(tp, P_RECORD, ts[tp]!.size, 0, 0, false, len(fields), false, zero, variant, 0, false, 0, 0, 0, refs, ts[tp]!.name);
+  if !zero {
+    crt::ptype_prefill(tp, types::default_image(ts, tp));
+  }
+  crt::ptype_fields(tp, len(fields));
+  for i in 0..len(fields) {
+    f = fields[i]!;
+    dkind = 0;
+    di = 0;
+    dnum = 0.0;
+    ds = "";
+    if has_default(f) {
+      match f.default[0]! {
+        DcLong { v } => {
+          ev = match ts[f.content]?.parts[0] {
+            PtEnum { values } => if v > 0 && v <= len(values) { values[v - 1]?.name } else { null },
+            _ => null,
+          };
+          if ev != null {
+            dkind = 4;
+            ds = ev!;
+          } else if f.content == 4 {
+            dkind = 2;
+            di = v;
+          } else {
+            dkind = 1;
+            di = v;
+          }
+        }
+        DcFloat { v } => {
+          dkind = 3;
+          dnum = v;
+        }
+        DcSingle { v } => {
+          dkind = 3;
+          dnum = v as float;
+        }
+        DcStr { v } => {
+          dkind = 4;
+          ds = v;
+        }
+      }
+    }
+    skip = f.name == "enum" || (f.other_indexes[0] ?? 0) == 65535;
+    crt::pfield_set(tp, i, f.name, f.content, f.position, f.nullable, skip, f.name == "type" && f.position == 0, dkind, di, dnum, ds, reference_target(ts, f) ?? 0);
+    if len(f.other_indexes) > 0 {
+      gm = types::group_members(ts, tp, i);
+      if gm != null && len(gm!) >= 6 {
+        gheld = false;
+        gnull = false;
+        gk = 0;
+        while gk + 2 < len(gm!) {
+          gheld = gheld || (gm![gk + 1] ?? -1) == 0;
+          gnull = gnull || types::nullable_element(ts, gm![gk + 2] ?? 0);
+          gk += 3;
+        }
+        crt::pfield_group(tp, i, gm!, types::content_of(ts, gm![2] ?? 0) ?? 0, gheld, gnull);
+      }
+    }
+  }
+}
+
+// An enum's row: its variants' names and record types, whether a field of it the text leaves
+// absent fills nothing, and a `__nullable<S>`'s `Some` value and payload field.
+fn enum_row(ts: vector<ir::DbType>, tp: integer, values: vector<ir::EnumPair>, refs: boolean) {
+  name = ts[tp]!.name;
+  strict = !name.starts_with("__") && name != "JsonValue";
+  some = 0;
+  ptp = 0;
+  ppos = 0;
+  if name.starts_with("__nullable<") {
+    for k in 0..len(values) {
+      if some == 0 && (values[k]?.name ?? "") == "Some" {
+        for f in types::record_fields(ts, values[k]?.nr ?? 65535) {
+          if some == 0 && f.name == "payload" {
+            some = k + 1;
+            ptp = f.content;
+            ppos = f.position;
+          }
+        }
+      }
+    }
+  }
+  crt::ptype_set(tp, P_ENUM, ts[tp]!.size, 0, 0, false, len(values), strict, false, false, 0, false, some, ptp, ppos, refs, name);
+  names: vector<text> = [];
+  vt: vector<integer> = [];
+  for v in values {
+    names += [v.name];
+    vt += [v.nr];
+  }
+  crt::ptype_enum(tp, vt, names);
+}

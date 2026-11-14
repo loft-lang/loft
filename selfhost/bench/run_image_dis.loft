@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Disassemble one definition of a run image (@PLN91 run image): each operator's position, name
+// and constant operands, read through the image's own operator table and layouts.  Usage:
+// `loft --lib selfhost/src selfhost/bench/run_image_dis.loft <image> <definition number>`.
+use ir;
+use load;
+
+fn width(l: text, c: vector<u8>, p: integer) -> integer {
+  match l {
+    "b" => 1, "c" => 1, "e" => 1, "z" => 1,
+    "h" => 2, "s" => 2,
+    "w" => 4, "i" => 4, "g" => 4,
+    "q" => 8, "f" => 8,
+    "t" => 1 + (c[p] ?? 0),
+    "k" => 1 + (c[p] ?? 0) * 8,
+    _ => 0
+  }
+}
+
+fn main() {
+  a = arguments();
+  r = load::load_run(a[0] ?? "")!;
+  d = (a[1] ?? "0") as integer ?? 0;
+  pc = r.starts[d] ?? 0;
+  till = r.starts[d + 1] ?? 0;
+  while pc < till {
+    at = pc;
+    op = r.code[pc] ?? 0;
+    pc += 1;
+    if op == 255 {
+      op = 255 + (r.code[pc] ?? 0);
+      pc += 1;
+    }
+    lay = r.layouts[op] ?? "";
+    for k in 0..len(lay) {
+      pc += width(lay[k..k + 1], r.code, pc);
+    }
+    println("{at - (r.starts[d] ?? 0)}\t{r.ops[op] ?? "?"}\t{lay}");
+  }
+}

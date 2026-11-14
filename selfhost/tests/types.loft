@@ -20,7 +20,7 @@ fn compare_tables(kernel: text) -> integer {
       continue;
     }
     tp = (line.split(' ')[0] ?? "") as integer? ?? -1;
-    got = types::render(types::row(b, tp));
+    got = types::render(types::row(b.types, tp));
     assert(got == line, "{kernel} type {tp}:\n  loft: {got}\n  C:    {line}");
     n += 1;
   }
@@ -50,7 +50,7 @@ fn compare_images(kernel: text) -> integer {
     }
     parts = line.split(' ');
     tp = (parts[0] ?? "") as integer? ?? -1;
-    got = types::default_image(b, tp);
+    got = types::default_image(b.types, tp);
     shown = "{tp}";
     for x in got {
       shown += " {x as integer}";

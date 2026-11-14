@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The run image opened for running (@PLN91, handoff-2026-11-13-run-image.md step 2): the
+// bytecode the Rust writer produced is read as it was stored and never rewritten.  What the
+// runner needs beside it is built once here: which of its own natives each of the image's
+// natives is, and where `main` starts.  The image is kept as `load::load_run` read it; a
+// function takes it as a parameter, which reads it in place.
+use ir;
+use load;
+use lower;
+
+// The runner's own native number for each native of the image, by the index `OpStaticCall`
+// carries (`lower::native_index`), or -1 for one the runner does not carry: a call of that one
+// is refused by name where it is run, not here — a program need not call every native it names.
+pub fn bind_natives(img: ir::RunImage) -> vector<integer> {
+  ids: vector<integer> = [];
+  for n in img.natives {
+    ids += [lower::native_index(n) ?? -1];
+  }
+  ids
+}
+
+// The first byte of the entry definition's code, or -1 for an image without `main`.
+pub fn entry(img: ir::RunImage) -> integer {
+  if img.main < 0 || img.main + 1 >= len(img.starts) {
+    return -1;
+  }
+  from = img.starts[img.main] ?? 0;
+  till = img.starts[img.main + 1] ?? 0;
+  if till > from { from } else { -1 }
+}
+
+// How many of the image's natives the runner carries.
+pub fn natives_carried(ids: vector<integer>) -> integer {
+  n = 0;
+  for i in ids {
+    if i >= 0 {
+      n += 1;
+    }
+  }
+  n
+}

@@ -343,6 +343,37 @@ A pointer return that is *not* spelled `char *` is refused against a `text`
 declaration: `void*` bound to `text` is either a mistake or a handle that wanted
 `integer`, and nothing at runtime tells the two apart.
 
+#### A C version of a loft body — `#c_twin`
+
+```loft
+pub fn get_i64(b: const vector<u8>, at: integer) -> integer {
+  …the loft body: what the function answers…
+}
+#c_twin "loft_twin_get_i64" "int64_t(const uint8_t*, int64_t, int64_t)"
+```
+
+A `#c_twin` gives a function that HAS a loft body a C routine the C backend
+calls in its place.  The body is the definition: the interpreter, `loft debug`
+and the rustc writer run it, and the routine must answer what the body answers
+— a test runs both on the same inputs
+(`tests/c_emit.rs::a_c_twin_runs_its_body_and_the_c_backend_its_routine`).
+Use it for a primitive whose loft body is correct but whose compiled form must
+be one machine operation, such as a typed read of a byte buffer.
+
+- The routine comes from the package's `[c] shim` and is bound as a `#c`
+  binding is: the same signature string and the same crossing of each
+  argument.  A float argument crosses as itself, since only the C backend calls
+  the routine, through its prototype; the interpreter's per-arity caller,
+  which cannot pass one, never meets it.  A nullable integer or float
+  argument crosses as its sentinel bits (`i64::MIN`, a NaN), which the
+  routine stores or reads as they are; for a `#c` binding it stays refused,
+  since there C gives the number its own meaning.
+- To the C backend a twin is the binding: it works from the definitions with
+  each twin's body taken out (`Data::with_c_twins_bound`), so no pass of that
+  backend hoists into the body, calls a variant of it, or adds an input.
+- `#c` on a function with a body is refused, naming `#c_twin`; `#c_twin` on a
+  declaration without one is refused, naming `#c`.
+
 #### Declaring the library (arc D)
 
 ```toml

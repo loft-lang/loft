@@ -196,6 +196,8 @@ pub(crate) fn passed(c: CType) -> String {
 /// structs the unit's functions name.
 pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
+    /// The `#c_twin`s, whose bodies `data` no longer holds (`Data::with_c_twins_bound`).
+    pub(crate) c_twins: Vec<u32>,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
     /// @PLN217 — the tuple conversions `tuple_cast` handed out, as (from, to): one C function each.
@@ -415,6 +417,7 @@ impl<'a> Cx<'a> {
     fn new(data: &'a Data, stores: &'a Stores, browser: bool) -> Cx<'a> {
         Cx {
             data,
+            c_twins: Vec::new(),
             stores,
             browser,
             wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
@@ -642,16 +645,7 @@ impl<'a> Cx<'a> {
             s.max = 0;
             s
         });
-        let known = |td: u32| self.data.def(td).known_type();
-        let nr = match tp.base() {
-            Type::Sorted(td, key, _) => s.sorted(known(*td), key),
-            Type::Hash(td, key, _) => s.hash(known(*td), key),
-            Type::Index(td, key, _) => s.index(known(*td), key),
-            Type::Radix(td, key, _) => s.spatial(known(*td), key),
-            Type::Trie(td, key, _) => s.trie(known(*td), key),
-            _ => return None,
-        };
-        (usize::from(nr) < self.stores.types.len()).then_some(nr)
+        crate::ir_store::keyed_local_type_in(self.data, s, self.stores.types.len(), tp)
     }
 
     /// The root type a store holding a value of `tp` is minted as — a keyed local's collection,
@@ -670,61 +664,14 @@ impl<'a> Cx<'a> {
     /// Can a value of `tp` hold a stored reference (`Parts::DbRef`) — a field an image's
     /// loader must remap to the slot it lands in (`rebase_stored_refs`)?
     pub(crate) fn holds_stored_refs(&self, tp: u16) -> bool {
-        use crate::database::Parts;
-        fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
-            if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
-                return false;
-            }
-            seen.push(tp);
-            match &s.types[tp as usize].parts {
-                Parts::DbRef => true,
-                Parts::Struct(f) | Parts::EnumValue(_, f) => {
-                    f.iter().any(|f| walk(s, f.content, seen))
-                }
-                Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
-                Parts::Vector(c)
-                | Parts::Sorted(c, _)
-                | Parts::Hash(c, _)
-                | Parts::Index(c, _)
-                | Parts::Ordered(c, _)
-                | Parts::Array(c)
-                | Parts::ChildRec(c)
-                | Parts::Radix(c, _)
-                | Parts::Trie(c, _) => walk(s, *c, seen),
-                _ => false,
-            }
-        }
-        walk(self.stores, tp, &mut Vec::new())
+        crate::schema_sidecar::holds_stored_refs_in(self.stores, tp)
     }
 
     /// Does `tp` reach a `trie`?  A whole load of an image whose tries an older placement wrote
     /// files them again by a walk of the type (loft#2241, `loft_trie_refile`), so such a type
     /// is described as one holding references is.
     pub(crate) fn holds_trie(&self, tp: u16) -> bool {
-        use crate::database::Parts;
-        fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
-            if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
-                return false;
-            }
-            seen.push(tp);
-            match &s.types[tp as usize].parts {
-                Parts::Trie(..) => true,
-                Parts::Struct(f) | Parts::EnumValue(_, f) => {
-                    f.iter().any(|f| walk(s, f.content, seen))
-                }
-                Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
-                Parts::Vector(c)
-                | Parts::Sorted(c, _)
-                | Parts::Hash(c, _)
-                | Parts::Index(c, _)
-                | Parts::Ordered(c, _)
-                | Parts::Array(c)
-                | Parts::ChildRec(c)
-                | Parts::Radix(c, _) => walk(s, *c, seen),
-                _ => false,
-            }
-        }
-        walk(self.stores, tp, &mut Vec::new())
+        crate::schema_sidecar::holds_trie_in(self.stores, tp)
     }
 
     /// Does a load of a store minted as `tp` walk its type: to re-point its references, or to
@@ -826,9 +773,7 @@ impl<'a> Cx<'a> {
     /// Does `tp`'s layout hold a collection whose key order moved (loft#2237)?  An image of it
     /// written before is converted by a whole load (`loft_rekey_walk`).
     fn needs_rekey(&self, tp: u16) -> bool {
-        crate::schema_sidecar::LayoutIdentity::of_store(self.stores, u16::MAX, tp)
-            .dump
-            .contains(crate::placement::KEY_ORDER)
+        crate::schema_sidecar::needs_rekey_in(self.stores, tp)
     }
 
     /// The rows of the copy table (`loft_ntypes`): one past the highest type it describes.
@@ -2041,6 +1986,13 @@ pub fn emit_unit_for(
     browser: bool,
 ) -> Result<String, Refusal> {
     crate::opt::non_sentinel::begin_c_generation();
+    // `#c_twin`: the C backend calls a twin's C routine and never compiles its loft body, so it
+    // works from the definitions with those bodies taken out.
+    let bound = data.with_c_twins_bound();
+    let (data, twins) = match &bound {
+        Some((d, t)) => (d, t.clone()),
+        None => (data, Vec::new()),
+    };
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
@@ -2070,7 +2022,8 @@ pub fn emit_unit_for(
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
-    let cx = Cx::new(data, stores, browser);
+    let mut cx = Cx::new(data, stores, browser);
+    cx.c_twins = twins;
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
     cx.lazy
@@ -2285,8 +2238,7 @@ fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, Strin
         let mut own: Vec<String> = (0..data.definitions())
             .filter(|&d| {
                 let def = data.def(d);
-                !def.c_sig.is_empty()
-                    && def.code() == &Value::Null
+                (def.is_c_binding() || def.is_c_twin())
                     && data.c_owner_pkg(def.position().file.as_str()) == Some(pkg)
             })
             .filter_map(|d| {
@@ -3095,8 +3047,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         & !RG_BIT
         & !NN_MASK;
     let def = data.def(d);
-    // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
-    if def.code() == &Value::Null && !def.c_sig.is_empty() {
+    // A `#c` binding (@PLN24): the C function itself, called by its declared signature — a
+    // `#c_twin` too, whose body the C backend's definitions do not hold.
+    if def.is_c_binding() {
         return c_binding(cx, d);
     }
     // A `#native` function of a library the program does not load: the interpreter's stub
@@ -3487,7 +3440,8 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         }
     }
     let params: Vec<Type> = def.attributes().iter().map(|a| a.typedef.clone()).collect();
-    let plan = cs::plan(&params, &sig).map_err(|_| "a C binding whose arguments do not fit")?;
+    let plan = cs::plan_for(&params, &sig, cx.c_twins.contains(&d))
+        .map_err(|_| "a C binding whose arguments do not fit")?;
     // The author's spelling: `<ret>(<param>, …)`.
     let text = def.c_sig.trim();
     let open = text

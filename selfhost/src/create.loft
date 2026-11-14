@@ -1,0 +1,267 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the loft runner's operator table, `fill.loft`, written from the `#loft"…"` operator
+// templates in `default/*.loft`: the loft counterpart of `src/create.rs::generate_code_into`,
+// which writes `src/fill.rs` from the `#rust"…"` templates.  The same operators in the same
+// slots (`#hot`, then the rest, then `#cold`, each in declaration order), each read the same
+// way: its operands (the parameters that are not `mut`) from the code at their widths, its
+// stack arguments popped last first, the template as its body, a non-void answer pushed.
+//
+// A template is plain loft: the generated function binds every operand and argument to a local
+// of the parameter's own name, so the template reads `v1 + v2`, and `s` is the runner's
+// `state::State` (the counterpart of `s: &mut State`).
+
+use ir;
+use el;
+
+// `create.rs::operator_name`: `OpAddInt` -> `add_int`; `OpReturn` -> `op_return`.
+pub fn operator_name(op: text) -> text {
+  out = "";
+  i = 0;
+  for c in op {
+    if i >= 2 {
+      if c >= 'A' && c <= 'Z' {
+        if i > 2 {
+          out += "_";
+        }
+        out += "{c}".to_lowercase();
+      } else {
+        out += "{c}";
+      }
+    }
+    i += 1;
+  }
+  if out == "return" { "op_return" } else { out }
+}
+
+// `Data::rust_type` in the argument context, as the suffix of the `state::State` accessor that
+// reads or writes a value of that width: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `i64`, `bool`,
+// `f64`, `f32`, `char`, `str`, `dbref`, `keys`; "" for a type no operator takes.
+pub fn width(t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => {
+      range = spec.max - spec.min;
+      if spec.forced_size == 4 {
+        if spec.min >= 0 { "u32" } else { "i32" }
+      } else if range <= 255 && spec.min >= 0 {
+        "u8"
+      } else if range <= 65536 && spec.min >= 0 {
+        "u16"
+      } else if range <= 255 {
+        "i8"
+      } else if range <= 65536 {
+        "i16"
+      } else {
+        "i64"
+      }
+    }
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "dbref" } else { "u8" },
+    TyText { dep: _ } => "str",
+    TyBoolean => "bool",
+    TyFloat => "f64",
+    TySingle => "f32",
+    TyCharacter => "char",
+    TyReference { n: _, dep: _ } => "dbref",
+    TyVector { inner: _, dep: _ } => "dbref",
+    TyHash { n: _, names: _, dep: _ } => "dbref",
+    TySorted { n: _, keys: _, dep: _ } => "dbref",
+    TyIndex { n: _, keys: _, dep: _ } => "dbref",
+    TyRadix { n: _, names: _, dep: _ } => "dbref",
+    TyTrie { n: _, key: _, dep: _ } => "dbref",
+    TyRefVar { inner: _ } => "dbref",
+    TyRoutine { n: _ } => "u32",
+    TyKeys => "keys",
+    TyOptional { inner } => width(inner),
+    _ => "",
+  }
+}
+
+// Is the `State` method of operator `d` ported: `state.loft` (its source `state_src`) declares
+// `pub fn <name>(self: State`.
+fn has_method(e: el::El, d: integer, state_src: text) -> boolean {
+  state_src.contains("pub fn {operator_name(e.b.data.definitions[d]!.name)}(self: State")
+}
+
+// Is operator `d` carried: its `#loft` template written, or — an operator with no `#rust`
+// template — its `State` method ported.
+fn carried(e: el::El, d: integer, state_src: text) -> boolean {
+  if e.b.data.definitions[d]!.rust == "" {
+    has_method(e, d, state_src)
+  } else {
+    template(e, d) != null
+  }
+}
+
+// The loft type a template's answer of accessor width `w` is bound as: nullable, as an
+// operator's answer can be null, and named, so a bare `null` has a type.
+fn answer_type(w: text) -> text {
+  match w {
+    "f64" => "float?",
+    "f32" => "single?",
+    "bool" => "boolean?",
+    "char" => "character?",
+    "str" => "text?",
+    _ => "integer?",
+  }
+}
+
+// The template of definition `d`, or null where it has none.
+fn template(e: el::El, d: integer) -> text? {
+  for o in e.loft_ops {
+    if o.def == d {
+      return o.body;
+    }
+  }
+  null
+}
+
+// The operators in slot order (`create.rs::operator_slots`, `@FR-R-OpPriority`).
+pub fn slots(e: el::El) -> vector<integer> {
+  hot: vector<integer> = [];
+  normal: vector<integer> = [];
+  cold: vector<integer> = [];
+  for d in 0..len(e.b.data.definitions) {
+    def = e.b.data.definitions[d]!;
+    if el::is_operator(def) {
+      if def.op_hot {
+        hot += [d];
+      } else if def.op_cold {
+        cold += [d];
+      } else {
+        normal += [d];
+      }
+    }
+  }
+  out: vector<integer> = [];
+  for d in hot {
+    out += [d];
+  }
+  for d in normal {
+    out += [d];
+  }
+  for d in cold {
+    out += [d];
+  }
+  out
+}
+
+// One operator's function: the operands read, the arguments popped, the template, the answer
+// pushed (`create.rs`'s body for one operator).
+fn operator_fn(def: ir::Definition, body: text) -> text {
+  name = operator_name(def.name);
+  out = "\npub fn {name}(s: state::State) {{\n";
+  for a in def.attributes {
+    if !a.name.starts_with("_") && !a.mutable {
+      out += "  {a.name} = s.code_{width(a.typedef[0] ?? ir::TyVoid)}();\n";
+    }
+  }
+  k = len(def.attributes) - 1;
+  while k >= 0 {
+    a = def.attributes[k]!;
+    if !a.name.starts_with("_") && a.mutable {
+      w = width(a.typedef[0] ?? ir::TyVoid);
+      // A boolean is tri-state on the stack (0, 1, 255 for null): read as its byte.
+      out += "  {a.name} = s.get_stack_{if w == "bool" { "u8" } else { w }}();\n";
+    }
+    k -= 1;
+  }
+  ret = def.returned[0] ?? ir::TyVoid;
+  void = match ret {
+    TyVoid => true,
+    _ => false,
+  };
+  is_text = match ret {
+    TyText { dep: _ } => true,
+    _ => false,
+  };
+  if void || (is_text && def.name.starts_with("OpConst")) {
+    out += "  {body}\n";
+  } else {
+    out += "  new_value: {answer_type(width(ret))} = {body};\n  s.put_stack_{width(ret)}(new_value);\n";
+  }
+  out + "}}\n"
+}
+
+// `fill.loft`: every operator that has a template, and every one that is a `State` method, as a
+// function, and `execute`, which runs the operator in slot `op` and answers false for one whose
+// `#loft` template is not written yet.
+pub fn generate(e: el::El, state_src: text) -> text {
+  out = "// @generated by selfhost/src/create.loft from the `#loft\"…\"` operator templates in\n";
+  out += "// default/*.loft — DO NOT EDIT BY HAND; regenerate with selfhost/front/create.loft.\n\n";
+  out += "use state;\nuse ops;\n";
+  order = slots(e);
+  for d in order {
+    def = e.b.data.definitions[d]!;
+    if def.rust == "" {
+      // No template: a `State` method of the operator's name reads its own operands, as
+      // `create.rs` calls `s.{name}()` (the loft `State` holds its port).
+      if has_method(e, d, state_src) {
+        out += "\npub fn {operator_name(def.name)}(s: state::State) {{\n  s.{operator_name(def.name)}();\n}}\n";
+      }
+    } else {
+      body = template(e, d);
+      if body != null {
+        out += operator_fn(def, body!);
+      }
+    }
+  }
+  out += "\n// The operator in slot `op` run on `s`; false for an operator without a `#loft` template.\n";
+  out += "pub fn execute(s: state::State, op: integer) -> boolean {{\n  match op {{\n";
+  for slot in 0..len(order) {
+    d = order[slot] ?? 0;
+    if carried(e, d, state_src) {
+      out += "    {slot} => {operator_name(e.b.data.definitions[d]!.name)}(s),\n";
+    }
+  }
+  out += "    _ => return false,\n  }}\n  true\n}}\n";
+  out
+}
+
+// Each operator's reads, one line in slot order: its name, then `code name:width` for each
+// operand and `stack name:width` for each argument popped, in the order `operator_fn` reads them
+// — what `fill.rs` reads, so the two tables can be compared.
+pub fn reads(e: el::El) -> vector<text> {
+  out: vector<text> = [];
+  for d in slots(e) {
+    def = e.b.data.definitions[d]!;
+    line = def.name;
+    for a in def.attributes {
+      if !a.name.starts_with("_") && !a.mutable {
+        line += " code {a.name}:{width(a.typedef[0] ?? ir::TyVoid)}";
+      }
+    }
+    k = len(def.attributes) - 1;
+    while k >= 0 {
+      a = def.attributes[k]!;
+      if !a.name.starts_with("_") && a.mutable {
+        line += " stack {a.name}:{width(a.typedef[0] ?? ir::TyVoid)}";
+      }
+      k -= 1;
+    }
+    out += [line];
+  }
+  out
+}
+
+// The operators' names in slot order.
+pub fn slot_names(e: el::El) -> vector<text> {
+  out: vector<text> = [];
+  for d in slots(e) {
+    out += [e.b.data.definitions[d]!.name];
+  }
+  out
+}
+
+// The operators not carried yet, in slot order: a `#rust` template without a `#loft` one, or
+// a `State` method not ported (marked `(State)`).
+pub fn missing(e: el::El, state_src: text) -> vector<text> {
+  out: vector<text> = [];
+  for d in slots(e) {
+    if !carried(e, d, state_src) {
+      def = e.b.data.definitions[d]!;
+      out += [if def.rust == "" { "{def.name} (State)" } else { def.name }];
+    }
+  }
+  out
+}

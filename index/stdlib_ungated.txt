@@ -108,6 +108,8 @@ OpEqText
 OpEvacuate
 OpFillKeyed
 OpFinishRecord
+OpFloatBits
+OpFloatFromBits
 OpFnRefClosure
 OpFnRefDetachShared
 OpFormatDatabase
@@ -298,6 +300,8 @@ OpSetStackFnRef
 OpSetStackRef
 OpSetText
 OpSetTextReplace
+OpSingleBits
+OpSingleFromBits
 OpSizeHash
 OpSizeIndex
 OpSizeScalar
@@ -354,12 +358,13 @@ __iface_34#2_OpMin
 __iface_34#2_minus
 __iface_37#2_scale
 __iface_39#1_to_text
-__iface_537#1_children
+__iface_545#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div
 n_assert
 n_chr
+n_float_from_bits
 n_fs_result
 n_get_store_lock
 n_hash_sorted
@@ -395,6 +400,7 @@ n_reflect_field
 n_reflect_field_path
 n_reflect_type
 n_set_store_lock
+n_single_from_bits
 n_spatial_range
 n_stack_trace
 n_store_lazy_clear
@@ -464,6 +470,7 @@ t_5float_approx
 t_5float_asin
 t_5float_atan
 t_5float_atan2
+t_5float_bits
 t_5float_ceil
 t_5float_clamp
 t_5float_compare
@@ -505,6 +512,7 @@ t_6single_approx
 t_6single_asin
 t_6single_atan
 t_6single_atan2
+t_6single_bits
 t_6single_ceil
 t_6single_clamp
 t_6single_compare

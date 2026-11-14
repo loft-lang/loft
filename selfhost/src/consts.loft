@@ -248,7 +248,7 @@ pub fn literal(b: ir::Bundle, d: integer) -> Literal? {
     }
     elements[len(elements) - 1].writes += [Write { at: at, f: f! }];
   }
-  if wrapper < 0 || !types::is_vector_wrapper(b, wrapper) || len(elements) == 0 {
+  if wrapper < 0 || !types::is_vector_wrapper(b.types, wrapper) || len(elements) == 0 {
     return null;
   }
   for e in elements {
@@ -263,16 +263,16 @@ pub fn literal(b: ir::Bundle, d: integer) -> Literal? {
 // type's defaults and its writes (each mirrors the runtime setter of its field), counted, then
 // the store pinned and read-only (`Store::lock_constant`).
 fn build_one(b: ir::Bundle, lit: Literal) -> integer {
-  elem = types::root_vector_element(b, lit.wrapper);
+  elem = types::root_vector_element(b.types, lit.wrapper);
   if elem == null {
     return NULL_STORE;
   }
   io: vector<integer> = [NULL_STORE, 0, 0];
-  crt::database(io, types::enum_parent_size(b, lit.wrapper), lit.wrapper);
+  crt::database(io, types::enum_parent_size(b.types, lit.wrapper), lit.wrapper);
   store = io[0] ?? NULL_STORE;
-  crt::fill(store, 1, 8, types::default_image(b, lit.wrapper));
+  crt::fill(store, 1, 8, types::default_image(b.types, lit.wrapper));
   size = b.types[elem!]!.size;
-  image = types::default_image(b, elem!);
+  image = types::default_image(b.types, elem!);
   rec: vector<integer> = [NULL_STORE, 0, 0];
   for e in lit.elements {
     crt::vec_append(rec, store, 1, 8, size);

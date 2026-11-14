@@ -346,9 +346,44 @@ pub fn is_collection(t: ir::TypeT) -> boolean {
 // `Parser::parse_type` of a named type with nothing after its name: the type a definition of
 // that name answers.  What it does not carry yet is refused by name.
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
+  type_of(e, n, true)
+}
+
+// `parse_depended`: a standard-library return type's `[a, b]` names the parameters the answer
+// borrows from, carried as their attribute numbers on the type (`Type::with_deps`).  A name
+// the function does not take is refused, as Rust reports it.
+fn depended(e: el::El, n: integer, deps: vector<text>) -> ir::TypeT? {
+  base = type_of(e, n, false);
+  if base == null {
+    return null;
+  }
+  nrs: vector<integer> = [];
+  for name in deps {
+    nr = -1;
+    attrs = el::def(e, e.context).attributes;
+    for i in 0..len(attrs) {
+      if (attrs[i]?.name ?? "") == name {
+        nr = i;
+      }
+    }
+    if nr < 0 {
+      el::refuse(e, "a dependency on a name the function does not take: {name}");
+      return null;
+    }
+    nrs += [nr];
+  }
+  with_deps(base!, nrs)
+}
+
+// The type node `n` resolved; `attach` false reads it with its dependency list set aside.
+fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
   match e.p.nodes[n] {
     STy { at, name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
-      if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
+      if attach && len(deps) > 0 && e.default && e.context >= 0 {
+        return depended(e, n, deps);
+      }
+      dl: vector<text> = if attach { deps } else { [] };
+      if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(dl) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
         inner = parse_type(e, args[0]);
         if inner == null {
@@ -370,7 +405,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         v = ir::TyVector { inner: inner!, dep: [] };
         return if nullable { ir::TyOptional { inner: v } } else { v };
       }
-      if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
+      if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(dl) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s keyed arms: a record element and its key fields (`-k` descending,
         // which only `sorted` and `index` take).
         inner = parse_type(e, args[0]);
@@ -405,7 +440,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
       }
       // `sub_type_inner`'s `trie` and `spatial` arms: a record element and its key fields, one
       // text key for a trie, the coordinate axes for a spatial index; neither takes a direction.
-      if (name == "trie" || name == "spatial") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
+      if (name == "trie" || name == "spatial") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(dl) == 0 && limit == null && !not_null && assoc == "" {
         inner = parse_type(e, args[0]);
         if inner == null {
           return null;
@@ -434,7 +469,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
       }
       // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar, a text
       // or a record `T`.
-      if name == "iterator" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+      if name == "iterator" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(dl) == 0 && limit == null && !not_null && assoc == "" && !nullable {
         step = parse_type(e, args[0]);
         if step == null {
           return null;
@@ -447,7 +482,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
       }
       // `sub_type`'s `reference` arm: a record `T` — in a struct field the POINTER (#328), the
       // marker dep selecting its 12-byte `DbRef` layout; anywhere else the record itself.
-      if name == "reference" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
+      if name == "reference" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(dl) == 0 && limit == null && !not_null && assoc == "" {
         inner = parse_type(e, args[0]);
         if inner == null {
           return null;
@@ -464,7 +499,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
       }
       // `parse_type_inner`'s `integer` arm: `limit(lo, hi)` names the range, and `not null`
       // (deprecated, no effect on the range) is carried on the spec.
-      if name == "integer" && member == "" && len(args) == 0 && !elem_null && len(keys) == 0 && len(deps) == 0 && assoc == "" && (limit != null || not_null) {
+      if name == "integer" && member == "" && len(args) == 0 && !elem_null && len(keys) == 0 && len(dl) == 0 && assoc == "" && (limit != null || not_null) {
         spec = ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: not_null, forced_size: 0 };
         if limit != null {
           lim = type_limit(e, limit!);
@@ -482,7 +517,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         el::refuse(e, "a qualified type the library does not declare before its use");
         return null;
       }
-      if (member != "" && qual < 0) || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
+      if (member != "" && qual < 0) || len(args) > 0 || len(keys) > 0 || len(dl) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
       }

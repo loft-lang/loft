@@ -4908,6 +4908,20 @@ impl Definition {
         &self.code
     }
 
+    /// A `#c` binding: the C symbol is the whole function, on every backend that calls C.
+    /// A `#c_twin` becomes one in the C backend's view (`Data::with_c_twins_bound`).
+    #[must_use]
+    pub fn is_c_binding(&self) -> bool {
+        !self.c_sig.is_empty() && self.code == Value::Null
+    }
+
+    /// A `#c_twin`: a loft body, which the interpreter and the rustc writer run, and a C
+    /// routine the C backend calls in its place.
+    #[must_use]
+    pub fn is_c_twin(&self) -> bool {
+        !self.c_sig.is_empty() && self.code != Value::Null
+    }
+
     /// The related/return type.
     #[must_use]
     pub fn returned(&self) -> &Type {
@@ -6544,6 +6558,26 @@ thread_local! {
 }
 
 impl Data {
+    /// The definitions the C backend works from: each `#c_twin`'s loft body taken out, so the
+    /// function is, to every pass of that backend, the `#c` binding it is there — the C routine
+    /// with its declared arguments, no variant, no hoisted input.  The numbers of the twins come
+    /// with it (`Cx::c_twins`): their C routine may take a float, a binding's cannot.  `None`
+    /// when the program has no twin.
+    #[must_use]
+    pub fn with_c_twins_bound(&self) -> Option<(Data, Vec<u32>)> {
+        let twins: Vec<u32> = (0..self.definitions())
+            .filter(|&d| self.def(d).is_c_twin())
+            .collect();
+        if twins.is_empty() {
+            return None;
+        }
+        let mut bound = self.clone();
+        for &d in &twins {
+            bound.definitions[d as usize].code = Value::Null;
+        }
+        Some((bound, twins))
+    }
+
     /// Refuse definition `d_nr`'s frame as past [`crate::limits::Limits`]'s frame cap — at its
     /// position, by its name (`crate::limits::frame_too_large`, which names no `Data`: the
     /// runtime set stays free of the IR, @PLN191 R2).
