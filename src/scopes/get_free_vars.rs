@@ -576,7 +576,15 @@ impl Scopes<'_> {
                 // the hard way: the ladder was attached to that predicate and its gate NEVER
                 // FIRED, because the sweep does not go through it.  That predicate is the
                 // licence for the null-arm / keyed leg; THIS is the licence for the sweep.
+                let viewer_now = !function.proxy_says_owned(v)
+                    && !function.tp(v).depend().is_empty()
+                    && crate::data::is_dbref(function.tp(v).base());
+                if viewer_now {
+                    self.skipped_viewers.insert(v);
+                }
+                // @FR-O-Proxy asks free — the sweep's free; the override is read below.
                 let owns = (function.proxy_says_owned(v)
+                    || self.late_owners.contains(&v)
                     || self.lift_join_witness.contains_key(&v)
                     || (dep.len() == 1
                         && dep[0] == v
@@ -1000,7 +1008,25 @@ impl Scopes<'_> {
                         {
                             ls.push(hook);
                         }
-                        ls.push(call("OpFreeRef", v, data));
+                        // `@FR-H-FreeTwice` — where a branch arm left `v` naming a hoisted
+                        // lift's store (`Scopes::lift_viewers`), that lift releases it: the free
+                        // runs only where `v` names none of them.  An extra guard can only
+                        // REFUSE a free, and each store it refuses is one the lift frees.
+                        let distinct = data.def_nr("OpDistinctStore");
+                        let free = self
+                            .lift_viewers
+                            .get(&v)
+                            .into_iter()
+                            .flatten()
+                            .filter(|&&l| l != v)
+                            .fold(call("OpFreeRef", v, data), |inner, &l| {
+                                v_if(
+                                    Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
+                                    inner,
+                                    Value::Null,
+                                )
+                            });
+                        ls.push(free);
                     }
                 }
             }
@@ -1337,11 +1363,22 @@ impl Scopes<'_> {
         }
         let free = data.def_nr("OpFreeRef");
         let free_distinct = data.def_nr("OpFreeRefIfDistinct");
-        let frees = |op: &Value, w: u16| {
-            matches!(op.unspan(), Value::Call(d, args)
-                if (*d == free || *d == free_distinct)
-                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w))
-        };
+        // A free of `w`, plain or behind the lift-view guard (`if OpDistinctStore(w, lift) free`,
+        // `Scopes::lift_viewers`): guarded, `w` still releases what it holds wherever it names no
+        // lift's store, which is the only place it can hold the buffer's (loft#2475).
+        fn frees_var(op: &Value, w: u16, free: u32, free_distinct: u32) -> bool {
+            match op.unspan() {
+                Value::Call(d, args) => {
+                    (*d == free || *d == free_distinct)
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+                }
+                Value::If(_, t, e) if matches!(e.unspan(), Value::Null) => {
+                    frees_var(t, w, free, free_distinct)
+                }
+                _ => false,
+            }
+        }
+        let frees = |op: &Value, w: u16| frees_var(op, w, free, free_distinct);
         // A rebound parameter (a local renamed onto the return buffer) releases at exit, through
         // its entry witness, what the caller did not hand it — a release added after this sweep.
         let mut rebound_params: Vec<u16> = function
@@ -1400,8 +1437,14 @@ impl Scopes<'_> {
             // releases at exit what the caller did not hand it.
             // @FR-O-Proxy asks free — whether the buffer's free is the store's release;
             // `proxy_says_owned` carries @FR-O-Override's veto.
+            // …or one the sweep frees as a LATE owner (a later bind made it one, and the rescan
+            // reads it so from the start): the same owner the sweep released above, so an early
+            // `return` disarms the buffer as the tail does (the self-hosted elaborator's
+            // `tuple_match`: `result = TyVoid; … return …; … result = b.tp`).
+            // `LOFT_NO_LATE_OWNER_DISARM=1` reads the proxy alone.
             let owner = function.proxy_says_owned(w)
-                || (function.is_argument(w) && rebound_params.contains(&w));
+                || (function.is_argument(w) && rebound_params.contains(&w))
+                || (self.late_owners.contains(&w) && !crate::keys::late_owner_disarm_off());
             if multi && owner && !rebound_adopter_disarm_off() {
                 self.adopter_released.insert(b);
                 continue;

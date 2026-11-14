@@ -1051,8 +1051,8 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     let lib = private_lib(&tmp, &["mathnative"]);
     let native_auto = lib.join("mathnative/native-auto");
 
-    // The second executable: a byte copy in its own `target/release/`, beside a link to
-    // the real `deps/` (the rlib both find) and a project root that links `default/`.
+    // The second executable: a byte copy in its own `target/release/`, beside links to the
+    // real runtime (the rlib both find) and a project root that links `default/`.
     let real = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     let real_dir = real.parent().unwrap();
     let other_root = tmp.join("other");
@@ -1071,7 +1071,14 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     // approved exemption: the second executable's `deps/` and `default/` are directory symlinks, which need the symlink privilege on Windows; Windows substitute: none
     #[cfg(unix)]
     {
-        fa::symlink(real_dir.join("deps"), other_dir.join("deps")).unwrap();
+        // The runtime the second executable links, under either cargo layout: the classic
+        // `deps/`, or the per-unit layout's uplifted `libloft.rlib` and the `build/` tree its
+        // dependencies live in (`cargo_layout::dependency_dirs`).
+        for name in ["deps", "build", "libloft.rlib"] {
+            if fa::exists(real_dir.join(name)) {
+                fa::symlink(real_dir.join(name), other_dir.join(name)).unwrap();
+            }
+        }
         fa::symlink(
             fa::try_plain_canonical("default").expect("default/ resolves"),
             other_root.join("default"),

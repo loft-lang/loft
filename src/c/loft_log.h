@@ -633,7 +633,8 @@ static void loft_leak_report(void) {
                 const loft_store_t *t = &loft_stores[who[j]];
                 const loft_leak_site *b = who[j] < loft_nsites ? &loft_sites[who[j]] : 0;
                 if (t->known == s->known && (a == 0) == (b == 0) &&
-                    (a == 0 || (a->fn == b->fn && a->file == b->file && a->line == b->line)))
+                    (a == 0 || (a->fn == b->fn && a->file == b->file && a->line == b->line
+                                && a->cfn == b->cfn && a->cline == b->cline)))
                     break;
             }
             if (j == ng) { who[ng] = i; many[ng] = 0; ng++; }
@@ -647,9 +648,11 @@ static void loft_leak_report(void) {
         for (i = 0; i < ng; i++) {
             const loft_store_t *s = &loft_stores[who[i]];
             const loft_leak_site *a = who[i] < loft_nsites ? &loft_sites[who[i]] : 0;
-            fprintf(stderr, "  [leak-site] %u\xc3\x97 %s (kt=%u) allocated at %s:%u in fn %s()\n", (unsigned) many[i],
+            fprintf(stderr, "  [leak-site] %u\xc3\x97 %s (kt=%u) allocated at %s:%u in fn %s()", (unsigned) many[i],
                     s->known < loft_ntn ? loft_tn[s->known] : "?", (unsigned) s->known,
                     a && a->file ? a->file : "?", a ? (unsigned) a->line : 0u, a && a->fn ? a->fn : "?");
+            if (a && a->cfn) fprintf(stderr, " called from fn %s() line %u", a->cfn, (unsigned) a->cline);
+            fputc('\n', stderr);
         }
         free(who);
         free(many);

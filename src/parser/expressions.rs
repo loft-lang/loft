@@ -776,9 +776,43 @@ impl Parser {
             self.length_locals = (self.context, found, Vec::new());
         }
         self.parse_block("return from block", &mut v, &result);
+        self.finish_mid_return_prune();
         self.refuse_too_deep_tree(&mut v);
         self.check_result(&v);
         self.finish_body(v, result)
+    }
+
+    /// `@FR-F-Ret` — the D-own-2 prune of a function whose `return`s are all mid-body: a
+    /// visible parameter dep that no `return` justified is dropped, now that every `return`
+    /// has been seen (`ref_return` defers it there; a tail runs it itself, over the whole body).
+    fn finish_mid_return_prune(&mut self) {
+        if self.context == u32::MAX
+            || !self
+                .mid_return_prune_pending
+                .remove(&(self.context, self.first_pass))
+        {
+            return;
+        }
+        let ctx = self.context;
+        let pass = self.first_pass;
+        let ret = self.data.def(ctx).returned().clone();
+        let attrs = self.data.def(ctx).attributes();
+        let Some(deps) = ret.deps_ref() else {
+            return;
+        };
+        let kept: Vec<u16> = deps
+            .iter()
+            .copied()
+            .filter(|&d| {
+                attrs.get(d as usize).is_none_or(|at| at.hidden)
+                    || self.mid_return_justified.contains(&(ctx, pass, d))
+                    || self.mid_return_param_deps.contains(&(ctx, pass, d))
+            })
+            .collect();
+        if kept.len() != deps.len() {
+            self.data.definitions[ctx as usize].returned =
+                ret.with_deps(&crate::data::Deps::attrs(kept));
+        }
     }
 
     /// Finish a function body: everything a parsed `{ … }` needs before it can be
@@ -1909,10 +1943,12 @@ impl Parser {
 
     /// Check for iteration-safety violation on `+=` to collections; emit diagnostics.
     pub(crate) fn check_iter_safety(&mut self, to: &Value, f_type: &Type, op: &str) {
+        // `@FR-B-Ref-Uniform`: a `&` collection parameter is the collection it links — the
+        // shape is asked of the peeled type, or an append to a walked `&vector` went unrefused.
         if self.first_pass
             || op != "+="
             || !matches!(
-                f_type,
+                f_type.peel_link(),
                 Type::Vector(_, _)
                     | Type::Hash(_, _, _)
                     | Type::Sorted(_, _, _)
@@ -4511,6 +4547,7 @@ use a separate collection or add after the loop"
         // @PLN187 — the place's abstract alias (its read settled it) against the value's.
         let place_fact = std::mem::take(&mut self.operand_fact);
         let outer_snapshot = self.tuple_self_snapshot.take();
+        self.last_forward_call = None;
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
         if op == "=" {
             self.fix_place_before_value(code, to);
@@ -4534,6 +4571,7 @@ use a separate collection or add after the loop"
             let (dst, rhs) = (*dst, rhs.clone());
             self.mark_const_view(dst, &rhs, false);
         }
+        self.note_late_call_join(op, to);
         self.rebind_local_heap_param(code, op, to, var_nr);
         self.rebind_param_through_link(code, op, to, var_nr);
         self.rebind_lowered = already;
@@ -4659,6 +4697,27 @@ use a separate collection or add after the loop"
     /// caller's VALUE either way — which is what made the gap easy to read as covered — while
     /// the store the callee minted had no owner: forty calls, forty leaked records.  A
     /// nullable parameter is still a parameter (loft#1295).
+    /// Pass 1: an inferred local bound from a call whose return type is not known yet — a
+    /// callee declared further down — is recorded for [`Self::widen_late_call_joins`].
+    fn note_late_call_join(&mut self, op: &str, to: &Value) {
+        if !self.first_pass
+            || op != "="
+            || crate::env_once!(std::env::var_os("LOFT_NO_LATE_CALL_JOIN").is_some())
+        {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        if self.vars.is_declared(*v) || self.vars.is_argument(*v) {
+            return;
+        }
+        if let Some(callee) = self.last_forward_call.take() {
+            self.late_call_joins
+                .push((self.context, *v, callee, self.lexer.at().0));
+        }
+    }
+
     fn rebind_local_heap_param(&mut self, code: &mut Value, op: &str, to: &Value, var_nr: u16) {
         if self.first_pass
             || op != "="
@@ -4700,9 +4759,20 @@ use a separate collection or add after the loop"
         // while the binding is still intact, then detach, then adopt.  It is the compiler
         // applying the workaround a user would write by hand (`t = mk(p.a + 1); p = t`), which
         // is what makes the target shape a proven artifact rather than a guess.
+        //
+        // A read of the binding is also a read of a VIEW of it (`bl = match p { V { b } => b[0],
+        // … }; p = V { b: [bl] }`): the value copies through `bl` from the store the free is
+        // about to release, so the free-then-build order read freed bytes — a wrong answer on
+        // the interpreter.  `LOFT_NO_DETACH_VIEW_READS=1` asks the name alone.
         if let Value::Set(dst, rhs) = &assign
             && *dst == var_nr
-            && rhs.reads_var(var_nr)
+            && (rhs.reads_var(var_nr)
+                || (!crate::env_once!(std::env::var_os("LOFT_NO_DETACH_VIEW_READS").is_some())
+                    && self
+                        .vars
+                        .views_of(&[var_nr])
+                        .iter()
+                        .any(|w| rhs.reads_var(*w))))
         {
             let tp = self.vars.tp(var_nr).clone();
             let hoisted = self.vars.work_refs(&tp, &mut self.lexer);
@@ -8460,13 +8530,34 @@ use a separate collection or add after the loop"
             };
             // A JOIN's witnesses are its ARMS' — `protectable_ref_args` reads a call's
             // arguments and a join has none of its own (loft#1154).
-            let guarded: Vec<u16> = if tp_val & 0x8000 == 0 {
+            let mut guarded: Vec<u16> = if tp_val & 0x8000 == 0 {
                 Vec::new()
             } else if let Some(w) = join_witnesses {
                 w
             } else {
                 crate::use_analysis::protectable_ref_args(&self.data, self.context, code).0
             };
+            // This bracket is set BEFORE the value runs, so it names only stores that exist
+            // then: a block argument's root is its tail, BOUND to a value inside the value itself
+            // (`set(["c", "a"])` names the literal's `_vec_1`), and protecting that before the
+            // block ran named a variable out of scope in the Rust writer (E0425, script 0.4.0).
+            // A buffer the value only pre-initialises (`Set(__kvb_N, Null)` before its
+            // `OpDatabase`, an empty keyed literal) is declared ahead of the statement and holds
+            // its store when the bracket is set: dropping it re-freed that store (G-Mono's
+            // `addi([], 4)`).  `LOFT_KEYED_BRACKET_NAMES_INNER=1` keeps them all.
+            if !crate::env_once!(std::env::var_os("LOFT_KEYED_BRACKET_NAMES_INNER").is_some()) {
+                fn bound_in(node: &Value, out: &mut Vec<u16>) {
+                    if let Value::Set(v, value) = node.unspan()
+                        && !matches!(value.unspan(), Value::Null)
+                    {
+                        out.push(*v);
+                    }
+                    node.for_each_child(&mut |c| bound_in(c, out));
+                }
+                let mut inner = Vec::new();
+                bound_in(code, &mut inner);
+                guarded.retain(|v| !inner.contains(v));
+            }
             for av in &guarded {
                 seq.push(self.cl("n_protect_store_frees", &[Value::Var(*av)]));
             }
@@ -9202,7 +9293,11 @@ use a separate collection or add after the loop"
     /// @C112 — a binding position mints a local whatever else carries that name.
     pub(crate) fn at_binding_name(&self) -> bool {
         (self.lexer.peek_token("=") && !self.lexer.peek_token("=="))
+            // In a format hole `:` opens the format spec (`{x:3}`), never an annotation (the
+            // annotation parse is skipped there too): read as a declaration, an unknown `zz` in
+            // `"{zz:3}"` became a fresh null local and rendered as nothing, unreported.
             || (self.lexer.peek_token(":")
+                && !self.in_format_expr
                 && !self.lexer.peek_token("::")
                 && !self.lexer.peek_token(":="))
             || (self.in_tuple_lhs && (self.lexer.peek_token(",") || self.lexer.peek_token(")")))

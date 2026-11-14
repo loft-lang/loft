@@ -133,7 +133,8 @@ pub(super) fn run_scan_phase(
     confined: &HashMap<u16, u16>,
     disturbed: Option<&DisturbedParams>,
     sunk: &HashSet<u16>,
-) -> Vec<(usize, u16)> {
+    late_owners: &HashSet<u16>,
+) -> (Vec<(usize, u16)>, HashSet<u16>) {
     // @PLN85 `local_source` over-free fix (gated): the heap slots whose OWNED store
     // is displaced by a later borrow/join reassignment. Computed on the pre-scope
     // code so the dep classification is read before any dep-strip below mutates it.
@@ -185,6 +186,10 @@ pub(super) fn run_scan_phase(
         literal_buffer: HashMap::default(),
         adopter_released: HashSet::default(),
         lift_join_witness: HashMap::default(),
+        lift_viewers: HashMap::default(),
+        late_owners: late_owners.clone(),
+        skipped_viewers: HashSet::default(),
+        value_hoists: Vec::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
         view_temps: view_temps_in(orig_code, orig_vars, data),
@@ -293,9 +298,10 @@ pub(super) fn run_scan_phase(
     // record-buffer pool hands such a callee a live store, "a promoted buffer is a local this
     // function mints" stops being true on every run, and the snapshot is what tells the two
     // apart.  Minted for every promoted record buffer, because every such body can free it
-    // (the exit legs of `free_vars` and the interpreter's rebind).
-    if crate::keys::adopt_buffer_reuse_enabled()
-        && let Some(buf) = hidden_return_buffer_var(d_nr, &function, data)
+    // (the exit legs of `free_vars` and the interpreter's rebind) — with the pool switched off
+    // too (`LOFT_NO_ADOPT_BUFFER_REUSE`): a rebind frees what it displaces only through this
+    // witness (`bind_lowering`, @PLN220), so without it the store a rebind displaced leaked.
+    if let Some(buf) = hidden_return_buffer_var(d_nr, &function, data)
         && function.name(buf) != "__retbuf"
         && let Some(record) = function.tp(buf).heap_def_nr()
     {
@@ -690,12 +696,27 @@ pub(super) fn run_scan_phase(
         data,
     );
     let written_out = std::mem::take(&mut scopes.written_out);
+    // Skipped by a sweep as a view, and an owner by the end of the scan: a later bind
+    // stripped its deps.  The caller rescans with these read as owners from the start.
+    let late: HashSet<u16> = if crate::keys::late_owner_rescan_off() {
+        HashSet::default()
+    } else {
+        let vars = &data.definitions[d_nr as usize].variables;
+        scopes
+            .skipped_viewers
+            .iter()
+            .copied()
+            // @FR-O-Proxy asks oracle — which skipped viewers ended the scan as owners, for the
+            // rescan; it emits nothing, and the rescan's own frees consult the override.
+            .filter(|&v| !late_owners.contains(&v) && v < vars.count() && vars.proxy_says_owned(v))
+            .collect()
+    };
     for (v_nr, scope) in scopes.var_scope {
         data.definitions[d_nr as usize]
             .variables
             .set_scope(v_nr, scope);
     }
-    written_out
+    (written_out, late)
 }
 
 /// For every `Set(v, CallRef)` in `node`, the `Join` base the oracle names for it, grouped by

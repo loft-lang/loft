@@ -1,9 +1,13 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `@FR-H-SwapRebind`, PINNED on its cells (`tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`):
-//! every cell's rebind is emitted as `OpRebindRecord` on `--native`, the cells answer the same
-//! with the switch on and off, and no store is left behind — a released store the exchange
-//! kept instead of freeing reads as a leak here and nowhere else.
+//! the exchange replaces the COPY a rebind's copy-or-adopt arm makes.  The rustc writer takes
+//! that arm only where `bind_lowering::re_bind` copies or joins, and binds these cells' rebinds
+//! plainly (the fresh answer adopted, nothing copied), so the sites are counted on the arm
+//! itself: `LOFT_NATIVE_OWN_CALL_BIND=1` gives every reassignment the copy-or-adopt.  The
+//! cells answer the same with the exchange on and off and on either route, and no store is
+//! left behind — a released store the exchange kept instead of freeing reads as a leak here
+//! and nowhere else.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
@@ -28,7 +32,8 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
         .env_remove("LOFT_NO_SWAP_REBIND")
-        .env_remove("LOFT_NO_STORE_SWAP");
+        .env_remove("LOFT_NO_STORE_SWAP")
+        .env_remove("LOFT_NATIVE_OWN_CALL_BIND");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -57,7 +62,7 @@ fn every_cell_rebinds_through_the_exchange() {
             &rs.to_string_lossy(),
             &cells(),
         ],
-        &[],
+        &[("LOFT_NATIVE_OWN_CALL_BIND", "1")],
     );
     assert!(ok, "emit failed:\n{err}");
     let src = fa::read_to_string(&rs).expect("emitted source");
@@ -78,7 +83,11 @@ fn every_cell_rebinds_through_the_exchange() {
 
 #[test]
 fn the_cells_answer_the_same_and_free_every_store() {
-    for env in [&[][..], &[("LOFT_NO_SWAP_REBIND", "1")][..]] {
+    for env in [
+        &[][..],
+        &[("LOFT_NO_SWAP_REBIND", "1")][..],
+        &[("LOFT_NATIVE_OWN_CALL_BIND", "1")][..],
+    ] {
         let mut env = env.to_vec();
         env.push(("LOFT_NATIVE_LEAK_CHECK", "1"));
         let (out, err, ok) = loft(&["--native", &cells()], &env);

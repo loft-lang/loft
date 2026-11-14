@@ -242,7 +242,14 @@ def main():
     ORACLE[0] = a.oracle
     # Each cell runs from its own directory, so a relative binary path is resolved here.
     a.loft = os.path.abspath(a.loft)
-    cells = [os.path.abspath(c) for c in a.cell] or cells_of(os.path.abspath(a.suite), a.chapter)
+    def resolve(c):
+        # A cell is named from the working directory or from the suite (`rules/...`).
+        for base in (os.getcwd(), os.path.abspath(a.suite)):
+            path = os.path.join(base, c)
+            if os.path.isfile(path):
+                return os.path.abspath(path)
+        sys.exit(f"own_sweep: no program {c} here or under {a.suite}")
+    cells = [resolve(c) for c in a.cell] or cells_of(os.path.abspath(a.suite), a.chapter)
     switches = a.switch if a.switch is not None else [""]
     jobs = [(c, s) for s in switches for c in cells]
     results = []

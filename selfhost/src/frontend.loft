@@ -12,6 +12,7 @@ use syntax;
 use el;
 use el_definitions;
 use el_expressions;
+use el_ex_call;
 use el_tret;
 use el_buffers;
 use el_refhome;
@@ -61,7 +62,7 @@ fn elab_source(e: el::El, f: text) -> boolean {
 // text-return promotion and the work buffers, then the stored-reference checks and the
 // copy, upgrade and drop cascades.
 fn settle(e: el::El) {
-  el_expressions::rebuild_stale(e);
+  el_ex_call::rebuild_stale(e);
   el_tret::promote_text_returns(e);
   el_buffers::promote_work_buffers(e);
   el_refhome::check_stored_reference_homes(e);

@@ -130,7 +130,26 @@ its store was handed on frees nothing (`LOFT_NULL_LETGO_FREES=1` restores the se
 whole write through a `&` link to a plain parameter
 releases nothing it displaces (`Function::link_write_releases`, `@FR-F-ParamRebind`); the
 records follow a link installed on one variable as a write to that variable, and a release of
-a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).
+a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).  So is a copy
+that releases its source (`COPY_FREE_SOURCE`) where the source may be a parameter's store and
+neither the destination nor a bracket's protected argument names it: a call that answers its
+argument on some path hands the caller's store to that free (`LOFT_RECORDS_NO_PARAM_SOURCE_FREE=1`
+leaves it unreported).  A plain free of a variable that may name the caller's store beside
+stores of the frame's own is one too: nothing at run time tells the paths apart
+(`LOFT_RECORDS_NO_MAYBE_PARAM_END=1`).
+A finding names the source line it was first seen at, and a re-free or a use after the end names
+the free that ended the store (`(ended at line L by OpFreeRefIfDistinct(x))`).  Which statement
+of a block is its value is one reading shared with the C and rustc writers
+(`op_sets::is_release_statement`): a release after the value, a witness's with its reset
+included, yields none.
+A call the interpreter brackets only on its copy arm (F9c, F7-copy, R2b) is read bracketed there
+alone (`LOFT_RECORDS_BRACKET_EVERY_BIND=1` reads every bind of a call bracketed).  A callee that
+writes a fresh value through a `&` argument ends the caller's old store and binds the argument to
+a new one; a write inside a branch joins the written and the kept state
+(`LOFT_RECORDS_NO_CALL_WRITE_BACK=1`, `LOFT_RECORDS_NO_BRANCH_WRITE_BACK=1`).  A read through a name
+that may still point into a store ended on every path is a use after its end
+(`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
+read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through
@@ -159,6 +178,10 @@ are not renamed, as on each path the current key already names the latest store.
 Where `OpStoreLive(OpGetDbRef(w, off))` holds (the frame end's let-go of a capture), the slot
 names none of its stores freed on every path or never made: the free it guards cannot reach one
 (`LOFT_RECORDS_NO_SLOT_LIVE_NARROW=1`).
+A store keeps a COVER: the variables that, on every path where it is live, name every live store
+under its key (an older generation stands for several).  A bind adds its name and a rebind drops
+it; a capture slot, a record field or a hand-over makes it unknown.  A certain free that empties
+it leaves the key not live: its names are all freed (`LOFT_RECORDS_NO_COVER=1`).
 A tuple member's free retires every work-ref an assignment made that member's claimant, where
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
 `LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.  A collection a fn-ref call delivers into
@@ -415,9 +438,11 @@ into the IR** — each assignment says, in the IR, whether it binds, copies, ado
 decided once and read by all three code generators and by the records.  Until then the
 records can only read the choice the interpreter's code generator made.
 
-The C writer already reads `bind_lowering` for four of these choices, each with a switch that
+The C writer already reads `bind_lowering` for six of these choices, each with a switch that
 gives it back its own test: whether a rebind copies a call's answer into the variable's own
-store (only where `re_bind` copies or joins; `LOFT_C_OWN_CALL_COPY=1`), a vector local's first null-init mint (`LOFT_C_OWN_VECTOR_NULL=1`),
+store (only where `re_bind` copies or joins; `LOFT_C_OWN_CALL_COPY=1`) or another
+variable's record (only where `re_bind` copies it, R2c; `LOFT_C_OWN_VAR_COPY=1`), whether a
+rebind joins at run time (also a kept local, where `re_bind` joins it, R1; `LOFT_C_OWN_JOIN=1`), a vector local's first null-init mint (`LOFT_C_OWN_VECTOR_NULL=1`),
 a tuple member's first bind (`LOFT_C_OWN_TUPLE_MEMBER_BIND=1`), and whether a reassignment frees
 the store it displaces at all (`re_bind`'s `DisplacedFree`; `LOFT_C_OWN_DISPLACED_FREE=1` frees a
 compiler temporary's null reset again, a second free the writer's same-store guard makes a
@@ -427,12 +452,39 @@ at every bind, as the first bind and C do (`@FR-O-Move`); `LOFT_NO_REBIND_ADOPTS
 it into the local's own store again (the interpreter's arm R2b).  And a heap-enum local bound
 from a call that answers fresh on one path and a view of an argument on another is joined at
 run time as a record local is (F9a / R1, `OpBindOrCopy`); `LOFT_NO_ENUM_JOIN=1` deep-copies it at
-every bind.  A rebound argument with no entry witness frees nothing before the bind: the
-scope pass detaches it in the IR first, so that free acted on the sentinel, and the C writer
-never emitted it (`LOFT_ARG_DISPLACED_FREE=1` emits it again).  A nullable local, whose
+every bind.  That join takes no protect bracket, so no bracket stands between a wrong
+signature and the caller's store: a function's return is the join of every return site (`@FR-F-Ret`), and a mid-body
+`return` never narrows the published deps while the rest of the body is read — the prune of a
+stale parameter dep waits for the tail, or for the end of a body whose returns are all mid-body.
+Narrowed at the site, a recursive call parsed after an early fresh `return` read "fresh", and its
+append released the argument's store (`LOFT_MID_RETURN_PRUNE=1` prunes at the site again).  A renamed return buffer with an entry witness rebound from a closure call takes
+the call's answer through the runtime copy-or-adopt (`@FR-O-Unknown`, R2a) as any local does, as
+the C writer always did (`LOFT_NO_BUFFER_OPAQUE_CALL=1` binds it plain).  A rebound argument with
+no entry witness frees nothing before the bind, as the C writer never did: a by-value parameter
+is detached in the IR first, and a renamed return buffer holds the store its caller handed it,
+which that free released under the caller (`LOFT_ARG_DISPLACED_FREE=1` emits it again; the
+records report the free as a `store-wrong-end`).  A nullable local, whose
 displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
-store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  A copied call result's bracket
+protects the stores the reference arguments hold AFTER the call (`@FR-O-Move`), as the C
+writer compares against them: a callee that re-points a `&` argument and answers its old
+store hands that store to the copy, and one that answers the new store hands over a store the
+argument still holds.  `LOFT_NO_PROTECT_AFTER_CALL=1` brackets the call itself again, which
+leaks the first and frees the second while the argument holds it.  The rustc writer reads it for whether a reassignment frees what it displaces
+(`LOFT_NATIVE_OWN_DISPLACED_FREE=1` gives it back its own test); its trace names its exits
+(`rs-call-bind`, `rs-var-copy`, `rs-value-record`, `rs-tail` for the plain bind).  A reassignment `re_bind` binds plainly takes the rustc writer's plain bind too, not its
+runtime copy-or-adopt (`call_bind_taken`; `LOFT_NATIVE_OWN_CALL_BIND=1` gives the arm back): an
+owner witness then takes the answer as its own where it is no other argument's store
+(`call_bind_declined`), and the plain bind's `_old_` stash stands down where the witness's
+`_disp_` stash already releases the displaced store (`old_stash_var`).  A reassignment from
+another variable's record copies only where `re_bind` copies it (R2c), the owner witness asking
+the same (`var_copy_taken`; `LOFT_NATIVE_OWN_VAR_COPY=1`).  And `re_bind` itself frees nothing a
+keyed local displaces when its null init minted nothing and every value it is bound to is a null
+or a borrow (`__kvb_N = b.0`): it never holds a store (`LOFT_KEYED_VIEW_DISPLACED_FREE=1`).  A writer row's `lowering=` asks
+`bind_lowering` over the IR the writer reads; the bytecode writer changes some variables' deps
+while it generates, so its own row can answer differently for the same assignment — the census
+pairs against that row, never the `lowering=` field.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
 on one writer (`--writer c|native`) and lists the arms the two decide differently.  Every row
 names its source line, so the census pairs by site; an interpreter row carries the facts its
 lowering read and a C row the arm `bind_lowering` decides beside its own (`lowering=R1/b2=stash

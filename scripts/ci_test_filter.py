@@ -8,6 +8,7 @@ and not the other reads as a flake — so it is built here, once.
 
 Usage:  ci_test_filter.py <event_name> [heavy|corpus|rest|rest-a|rest-b|rest-c]
         ci_test_filter.py victims   # the starvation victims, run alone after the main pass
+        ci_test_filter.py nightly   # the clause that keeps the nightly-only tests off a per-change run
 
 The optional shard name is accepted and checked, and selects nothing: since the
 legs build only the binaries they run, the leg a binary runs on is decided by
@@ -209,6 +210,10 @@ def victims_filter() -> str:
 def main() -> None:
     if len(sys.argv) == 2 and sys.argv[1] == "victims":
         print(victims_filter())
+        return
+    # find_problems.sh's curated run is a per-change run too, so it reads the same clause.
+    if len(sys.argv) == 2 and sys.argv[1] == "nightly":
+        print(" and ".join(NIGHTLY_ONLY))
         return
     if not 2 <= len(sys.argv) <= 3:
         raise SystemExit(__doc__)

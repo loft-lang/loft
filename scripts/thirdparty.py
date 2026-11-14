@@ -80,6 +80,9 @@ CACHE = os.environ.get("LOFT_THIRDPARTY_CACHE") or os.path.join(
 REGISTRY_INDEX = "https://raw.githubusercontent.com/loft-lang/registry/main/index.json"
 REGISTRY_REPO = "https://github.com/loft-lang/registry"
 DAY = 24 * 3600
+# How old a register's last answer may be when it does not answer now (`http`).
+STALE_OK = 7 * DAY
+STALE_ANSWERS = []
 CODE_EXT = (".c", ".h", ".cc", ".cpp", ".hpp", ".inl")
 # Code a browser, GL or wasm target ships beside the C: scanned for notices too.
 SCAN_EXT = CODE_EXT + (".js", ".mjs", ".css", ".wgsl", ".glsl", ".wat")
@@ -194,8 +197,19 @@ def http(url, data=None, headers=None, ttl=DAY):
         raise RuntimeError("offline")
     req = urllib.request.Request(url, data=data, headers={"User-Agent": "loft-thirdparty-audit",
                                                           **(headers or {})})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        body = r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            body = r.read()
+    except (urllib.error.URLError, OSError) as e:
+        # A register that does not answer this time answered before: its last answer, up to
+        # STALE_OK old, is what is known, and the report says how old it is.  Older, or never
+        # asked, nothing is known and the caller reports that.
+        if os.path.exists(path) and time.time() - os.path.getmtime(path) < STALE_OK:
+            age = (time.time() - os.path.getmtime(path)) / 3600
+            STALE_ANSWERS.append(f"{url.split('?')[0]} did not answer ({e}); its answer of {age:.0f} h ago is used")
+            with open(path, "rb") as f:
+                return f.read()
+        raise
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(body)
@@ -1305,6 +1319,8 @@ def main():
                 for k, (t, why) in sorted(TIERS.items()):
                     if t == tier:
                         print(f"  {tier} {label:<28} {k} — {why[:150]}")
+    for note in dict.fromkeys(STALE_ANSWERS):
+        print(f"note: {note}")
     if a.action:
         print(f"\n{len(a.action)} need action:" if not args.check else f"{len(a.action)} need action:")
         for where, what in a.action:

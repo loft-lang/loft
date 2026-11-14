@@ -103,6 +103,21 @@ impl Parser {
         receivers.iter().any(|r| r == "vector") && !receivers.iter().any(|r| r == "iterator")
     }
 
+    /// The loft spelling of a member another language gives a vector or a text, for a name that
+    /// resolved to nothing: `v.push(x)` is `v += [x]`, `s.length` is `len(s)`.
+    fn foreign_member_cure(t: &Type, field: &str) -> Option<&'static str> {
+        let vector = matches!(t.peel_link(), Type::Vector(..));
+        let text = matches!(t.peel_link(), Type::Text(_));
+        match field {
+            "push" | "append" | "add" | "push_back" if vector => {
+                Some("an element is added with `v += [x]`")
+            }
+            "length" | "size" | "count" if vector => Some("the length is `len(v)`"),
+            "length" | "size" | "count" if text => Some("the length is `len(s)`"),
+            _ => None,
+        }
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn field(&mut self, code: &mut Value, tp: Type) -> Type {
         // @PLN102 — a field access can't be MORE non-null than its receiver: if the
@@ -739,6 +754,15 @@ impl Parser {
                              declare a fallback `fn {field}(self: {enum_name})` for the variants \
                              without one"
                         );
+                    } else if let Some(cure) = Self::foreign_member_cure(&t, &field) {
+                        // A member spelled as another language spells it (`v.push(x)`,
+                        // `s.length`): say what loft writes instead.
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Unknown field {}.{field} — {cure}",
+                            t.source_name(&self.data)
+                        );
                     } else {
                         diagnostic!(
                             self.lexer,
@@ -752,6 +776,14 @@ impl Parser {
                 if self.lexer.has_token("(") {
                     self.skip_remaining_args();
                 }
+            }
+            // A field the receiver does not declare is no place to store into.  Left as the
+            // receiver `Var`, a WRITE (`p.z = 3`) re-typed the receiver on the first pass and
+            // reported "Variable 'p' cannot change type from P to integer" instead of the
+            // unknown field — the placeholder the variant-field branch above leaves, for the
+            // same reason.
+            if self.first_pass && matches!(code, Value::Var(_)) {
+                *code = Value::Null;
             }
             return Type::Unknown(0);
         }

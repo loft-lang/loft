@@ -343,10 +343,25 @@ pub(super) fn owner_witness_locals(
                 WitnessSet::Mint | WitnessSet::MintReading => {
                     minted.insert(*t);
                 }
+                // A choice of buffer calls owns the store a call made into a null buffer: the
+                // local is mixed where another bind views (`x = h.ex`), which is what a witness
+                // is for (loft#2476).  `LOFT_NO_WITNESS_NULL_BUFFER=1` never answers `MintUnless`.
+                WitnessSet::MintUnless(_) => {
+                    minted.insert(*t);
+                    // A local the parser typed as a view (`tail = if … { unspan(…) } else {
+                    // NdNull }`, deps naming the buffer) frees nothing itself: mixed already.
+                    // And the choice may view storage on an arm, as `Other` reads it
+                    // (`member`'s `x` views a lift on one arm).
+                    if !function.tp(*t).depend().is_empty()
+                        || is_view_of_storage(val, function, data, d_nr)
+                    {
+                        viewed.insert(*t);
+                    }
+                }
                 WitnessSet::Other => {
                     // A view of another variable's storage.  A null or a store nobody names
                     // is not a VIEW and does not make the ownership mixed on its own.
-                    if is_view_of_storage(val, function, data) {
+                    if is_view_of_storage(val, function, data, d_nr) {
                         viewed.insert(*t);
                     }
                 }
@@ -454,7 +469,7 @@ pub(super) fn owner_witness_locals(
 /// — two OWNING assignments by `(B-Copy)` — carry a witness, after which
 /// `Scopes::displaced_drop` declined on `@FR-O-Override` and neither record's `OpDrop` ran.
 /// Two sites, two different questions, one answer: this is the `viewed` half only.
-fn is_view_of_storage(value: &Value, function: &Function, data: &Data) -> bool {
+fn is_view_of_storage(value: &Value, function: &Function, data: &Data, d_nr: u32) -> bool {
     if delivered_work_ref(value, function, data).is_some() {
         return false;
     }
@@ -474,14 +489,28 @@ fn is_view_of_storage(value: &Value, function: &Function, data: &Data) -> bool {
         // of `x = o.opt` under `@FR-L-Null-Which`) answers as its present arm does.
         Value::If(_, _, _) => {
             let seen = crate::use_analysis::through_null_arm(data, value);
-            !matches!(seen.unspan(), Value::If(_, _, _)) && is_view_of_storage(seen, function, data)
+            if !matches!(seen.unspan(), Value::If(_, _, _)) {
+                return is_view_of_storage(seen, function, data, d_nr);
+            }
+            // A CHOICE views storage where the oracle says its value borrows: `match v.tp {
+            // TRv { inner } => inner, _ => v.tp }` hands the local a view on every path.  Read
+            // as no view, a local also bound from a call was never mixed, took no witness, and
+            // its deps were stripped: freed as an owner, it released the store it viewed.  A
+            // choice of two mints (`if c { mk(i) } else { mk2(i) }`) is no view.
+            // `LOFT_NO_CHOICE_VIEW=1` reads every choice as no view again.
+            !crate::keys::choice_view_off()
+                && matches!(
+                    crate::use_analysis::ownership_of(data, d_nr, value),
+                    crate::use_analysis::Own::Borrowed { .. }
+                        | crate::use_analysis::Own::Join { .. }
+                )
         }
         _ => false,
     }
 }
 
 /// What a `Set` hands a witnessed local (see [`owner_witness_locals`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum WitnessSet {
     /// The local MINTS a store of its own and the value does not read the local.
     Mint,
@@ -490,6 +519,90 @@ pub(super) enum WitnessSet {
     MintReading,
     /// A view, a join, a null, or a store somebody else owns: the local stops owning.
     Other,
+    /// A choice whose arms each deliver a store a compiler temp holds — a call's hidden
+    /// buffer, or a temp itself — or none: the temp releases it, unless the call was handed a
+    /// NULL buffer and made the store in its own frame.  Then the local holds the only name,
+    /// so the witness takes it wherever the local names none of these temps' stores.
+    MintUnless(Vec<u16>),
+}
+
+/// The temps a choice's arms deliver through, for [`WitnessSet::MintUnless`]: each leaf is a
+/// null, a compiler temp ([`held_by_compiler_temp`], named by its tail variable), or a
+/// loft-defined call handed a work-ref buffer it answers through (its deps name only
+/// hidden attributes).  `None` when a leaf is anything else, or no leaf is such a call.
+fn choice_delivering_temps(value: &Value, function: &Function, data: &Data) -> Option<Vec<u16>> {
+    // A block's value is its last operator that is not a release of a scratch local
+    // (`match` binds its fields and frees the text ones after the choice: `OpFreeText(_mv_…)`).
+    fn tail<'a>(ops: &'a [Value], data: &Data) -> Option<&'a Value> {
+        ops.iter().rev().find(|op| {
+            !matches!(op.unspan(), Value::Line(_))
+                && !matches!(op.unspan(), Value::Call(d, _)
+                    if matches!(data.def(*d).name(), "OpFreeText" | "OpFreeRef" | "OpFreeRefIfDistinct"))
+        })
+    }
+    fn walk(n: &Value, f: &Function, data: &Data, out: &mut Vec<u16>, calls: &mut usize) -> bool {
+        match n.unspan() {
+            Value::If(_, a, b) => walk(a, f, data, out, calls) && walk(b, f, data, out, calls),
+            Value::Block(bl) => {
+                tail(&bl.operators, data).is_some_and(|t| walk(t, f, data, out, calls))
+            }
+            Value::Insert(ops) => tail(ops, data).is_some_and(|t| walk(t, f, data, out, calls)),
+            _ if crate::use_analysis::holds_no_store(data, n) => true,
+            Value::Var(r) if held_by_compiler_temp(n, f, data) => {
+                out.push(*r);
+                true
+            }
+            Value::Call(d, args) if data.def(*d).is_loft_defined() => {
+                let def = data.def(*d);
+                let attrs = def.attributes();
+                let deps = def.returned().depend();
+                // Fresh (no deps) or through its hidden buffer: never a visible argument's store.
+                let through_buffer = deps
+                    .iter()
+                    .all(|&x| x == u16::MAX || attrs.get(x as usize).is_some_and(|a| a.hidden));
+                // The buffer this frame hands: a compiler work ref, never an argument.
+                let buf = args.iter().find_map(|a| match a.unspan() {
+                    Value::Var(w)
+                        if (*w as usize) < f.count() as usize
+                            && f.is_compiler_generated(*w)
+                            && !f.is_argument(*w)
+                            && f.name(*w).starts_with("__ref_") =>
+                    {
+                        Some(*w)
+                    }
+                    _ => None,
+                });
+                match (through_buffer, buf) {
+                    (true, Some(w)) => {
+                        out.push(w);
+                        *calls += 1;
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+    let mut out = Vec::new();
+    let mut calls = 0;
+    // A choice only: a lone call is a bind the call arms already lower.
+    let mut choice = false;
+    let mut at = value;
+    loop {
+        match at.unspan() {
+            Value::If(..) => {
+                choice = true;
+                break;
+            }
+            Value::Block(bl) => match tail(&bl.operators, data) {
+                Some(t) => at = t,
+                None => break,
+            },
+            _ => break,
+        }
+    }
+    (choice && walk(value, function, data, &mut out, &mut calls) && calls > 0).then_some(out)
 }
 
 /// Classify the value assigned to witnessed local `v` (`ov` is its pre-scan id).
@@ -572,6 +685,13 @@ pub(super) fn witness_set_kind(
         _ => false,
     };
     if !mints {
+        // `LOFT_NO_WITNESS_NULL_BUFFER=1` leaves such a choice `Other`.
+        if !reads
+            && !crate::env_once!(std::env::var_os("LOFT_NO_WITNESS_NULL_BUFFER").is_some())
+            && let Some(temps) = choice_delivering_temps(value, function, data)
+        {
+            return WitnessSet::MintUnless(temps);
+        }
         WitnessSet::Other
     } else if reads {
         WitnessSet::MintReading
@@ -592,9 +712,26 @@ fn held_by_compiler_temp(value: &Value, function: &Function, data: &Data) -> boo
         Value::Var(r) => {
             (*r as usize) < function.count() as usize
                 && function.is_compiler_generated(*r)
-                && ["__ref_", "__rref_", "__vdb_", "__ncc_"]
+                && (["__ref_", "__rref_", "__vdb_", "__ncc_"]
                     .iter()
                     .any(|p| function.name(*r).starts_with(p))
+                    // The `!` unwrap's lift (`{ __lift_N = t; __lift_N }`) holds the store it
+                    // took and frees it at its own scope exit, unless it is marked never-free.
+                    // `LOFT_NO_LIFT_TEMP_VIEW=1` reads a bind of it as a mint again.
+                    || (function.name(*r).starts_with("__lift_")
+                        && !function.is_skip_free(*r)
+                        && !crate::keys::lift_temp_view_off())
+                    // The `!` unwrap's other spelling: a discharged PROJECTION
+                    // (`def(e, n).attrs[i]!`) is checked in a `_ncr_N` that views what the
+                    // projection reads, its deps naming the temporary that holds it (the
+                    // inline container's `__ref_N`).  It is held where that temporary is; an
+                    // `_ncr_N` that took an owned value names no such dep and stays a mint.
+                    // `LOFT_NO_NCR_TEMP_VIEW=1` reads a bind of it as a mint again.
+                    || (function.name(*r).starts_with("_ncr_")
+                        && !crate::keys::ncr_temp_view_off()
+                        && function.tp(*r).depend().iter().any(|&d| {
+                            d != *r && held_by_compiler_temp(&Value::Var(d), function, data)
+                        })))
         }
         Value::Block(b) => b
             .operators

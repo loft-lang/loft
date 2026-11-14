@@ -59,8 +59,16 @@ pub fn find_loft_rlib() -> Option<(std::path::PathBuf, Vec<std::path::PathBuf>)>
     let exe_dir = crate::cargo_layout::current_runtime_profile_dir()?;
     // Find `libloft.rlib` (unhashed) or the newest hashed `libloft-<hash>.rlib`,
     // returning the matching `deps/` dir as the link-search path.
+    // A `deps/` the per-unit layout left behind holds another build's runtime: searched first,
+    // its `libloft.rlib` linked against dependencies of another rustc (`E0514`) wherever the
+    // version check could not read them.  `LOFT_NATIVE_CLASSIC_DEPS_FIRST=1` searches it first.
+    let debris = crate::cargo_layout::classic_deps_is_debris(&exe_dir)
+        && !crate::env_once!(std::env::var_os("LOFT_NATIVE_CLASSIC_DEPS_FIRST").is_some());
     for (dir, deps_dir) in &rlib_search_dirs(&exe_dir) {
         if !crate::file_access::is_dir(dir) {
+            continue;
+        }
+        if debris && crate::file_access::file_name(dir).is_some_and(|n| n == "deps") {
             continue;
         }
         // The dirs rustc searches for the rlib's own dependencies: `deps_dir`, or the

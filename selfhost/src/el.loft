@@ -156,6 +156,16 @@ pub const DT_GENERIC = 9;
 pub const DT_INTERFACE = 10;
 pub const DT_TYPE_TEMPLATE = 11;
 
+// A definition kind in words, for a message that names what a name turned out to be.
+// port: none — Rust prints `DefType` with `{:?}`.
+pub fn def_type_name(dt: integer) -> text {
+  names = ["an unknown definition", "a function", "a dynamic function", "an enum", "an enum value",
+           "a struct", "a vector type", "a type", "a constant", "a generic function", "an interface",
+           "a type template"];
+  if dt < 0 { return "a definition of kind {dt}"; }
+  names[dt] ?? "a definition of kind {dt}"
+}
+
 pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
   El {
     b: ir::Bundle { data: ir::Data { definitions: [], source: 0 }, types: [], cwd: false },

@@ -8,13 +8,15 @@ use el_ir;
 use el_vars;
 use el_types;
 use el_expressions;
+use el_ex_base;
+use el_ex_assign;
 
 // The vector walk `for_expr` set up: the loop's spelling (`src_id`) and binding (`id`), the
 // source `x` hoisted into `vec`, its element and the loop variable's type borrowing `vec`.
 pub struct Walk {
   pub src_id: text,
   pub id: text,
-  pub x: el_expressions::Ex,
+  pub x: el_ex_base::Ex,
   pub vec: integer,
   pub elem: ir::TypeT,
   pub var_tp: ir::TypeT
@@ -29,8 +31,8 @@ pub struct Walk {
 // text.  A method worker, a generic worker, a worker of a nullable or struct-enum element, a
 // narrow, record, function, tuple or optional result, and an element that is no plain scalar,
 // text or record are refused by name.
-pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: integer) -> el_expressions::Ex {
-  void = el_expressions::Ex { code: ir::NdNull, tp: ir::TyVoid };
+pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: integer) -> el_ex_base::Ex {
+  void = el_ex_base::Ex { code: ir::NdNull, tp: ir::TyVoid };
   x = w.x;
   vec = w.vec;
   elem = w.elem;
@@ -49,7 +51,7 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
     el::refuse(e, "a `par` clause with no worker or no thread count");
     return void;
   }
-  lv = el_expressions::loop_var(vars, w.src_id, w.id, w.var_tp);
+  lv = el_ex_base::loop_var(vars, w.src_id, w.id, w.var_tp);
   d = worker_def(e, worker);
   if d < 0 {
     el::refuse(e, "a `par` worker that is no function called by name");
@@ -60,11 +62,11 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
     el::refuse(e, "a `par` worker called with a named argument");
     return void;
   }
-  first = el_expressions::expression(e, vars, args[0]!);
+  first = el_ex_assign::expression(e, vars, args[0]!);
   extras: vector<ir::Node> = [];
   for a in args {
     if a#index > 0 {
-      extras += [el_expressions::expression(e, vars, a).code];
+      extras += [el_ex_assign::expression(e, vars, a).code];
     }
   }
   given = match el_ir::unspan(first.code) { NdVar { n } => n, _ => -1 };
@@ -72,15 +74,15 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
     el::refuse(e, "a `par` worker whose first argument is not the element");
     return void;
   }
-  th = el_expressions::expression(e, vars, threads).code;
+  th = el_ex_assign::expression(e, vars, threads).code;
   ret = el::def(e, d).returned[0] ?? ir::TyUnknown { n: 0 };
   ln = lane(ret);
   es = element_size(e, elem);
   if !e.first_pass && (ln.queue == "" || es < 0) {
-    el::refuse(e, if ln.queue == "" { "a `par` worker answering this type: {el_expressions::type_kind(ret)}" } else { "a `par` loop over this element: {el_expressions::type_kind(elem)}" });
+    el::refuse(e, if ln.queue == "" { "a `par` worker answering this type: {el_ex_base::type_kind(ret)}" } else { "a `par` loop over this element: {el_ex_base::type_kind(elem)}" });
     return void;
   }
-  int_t = ir::TyInteger { spec: el_expressions::i32_spec() };
+  int_t = ir::TyInteger { spec: el_ex_base::i32_spec() };
   idx = el_vars::add_variable(vars, "{result}#index", int_t);
   el_vars::set_defined(vars, idx);
   len_var = el_vars::create_unique(vars, "par_len", int_t);
@@ -91,7 +93,7 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
   el_vars::set_name(vars, result, bv);
   vars.active_loops += [lv];
   vars.active_values += [x.code];
-  b = el_expressions::parse_block(e, vars, body, "parallel for", ir::TyVoid);
+  b = el_ex_assign::parse_block(e, vars, body, "parallel for", ir::TyVoid);
   if el_vars::pop_loop(vars) >= 0 {
     el::refuse(e, "a `par` body that asks its loop's `#count` or `#first`");
   }
@@ -105,12 +107,12 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
   fn_args: vector<ir::Node> = [v, ir::NdInt { n: es }, ir::NdInt { n: ln.size }, th, ir::NdInt { n: d }];
   if empty_body(b.code) && len(extras) == 0 {
     discard = ir::NdCall { def_nr: el::def_nr(e, "n_parallel_discard"), args: fn_args + [ir::NdInt { n: 0 }] };
-    return el_expressions::Ex { code: el_ir::v_block([fill, discard], ir::TyVoid, "par_discard"), tp: ir::TyVoid };
+    return el_ex_base::Ex { code: el_ir::v_block([fill, discard], ir::TyVoid, "par_discard"), tp: ir::TyVoid };
   }
   i = ir::NdVar { n: idx };
   code = el_ir::replace_var(b.code, bv, ir::NdCall { def_nr: el::def_nr(e, ln.get), args: [i] });
   row = el_ir::cl(e, "OpGetVectorNullable", [v, ir::NdInt { n: es }, i]);
-  code = el_ir::replace_var(code, lv, if (elem is TyReference) { row } else { el_expressions::elem_read(e, elem, row) });
+  code = el_ir::replace_var(code, lv, if (elem is TyReference) { row } else { el_ex_base::elem_read(e, elem, row) });
   stop = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: len_var }, i]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull);
   step = el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }]));
   queue = ir::NdCall { def_nr: el::def_nr(e, ln.queue), args: fn_args + extras + [ir::NdInt { n: len(extras) }] };
@@ -121,7 +123,7 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
     el_ir::v_loop([stop, code, step], "Parallel for loop (queue{ln.label})"),
     ir::NdCall { def_nr: el::def_nr(e, ln.drop), args: [] }
   ];
-  el_expressions::Ex { code: el_ir::v_block(ops, ir::TyVoid, "Parallel for block (queue{ln.label})"), tp: ir::TyVoid }
+  el_ex_base::Ex { code: el_ir::v_block(ops, ir::TyVoid, "Parallel for block (queue{ln.label})"), tp: ir::TyVoid }
 }
 
 // The worker of `par(b = f(e, …), …)`: `n_f`, a function and no template, or -1.
@@ -172,7 +174,7 @@ fn lane(ret: ir::TypeT) -> Lane {
   none = Lane { queue: "", get: "", drop: "", label: "", size: 0 };
   match ret {
     TyInteger { spec } => {
-      if el_expressions::byte_width(spec, true) != 8 {
+      if el_ex_base::byte_width(spec, true) != 8 {
         return none;
       }
       Lane { queue: "n_parallel_queue", get: "n_parallel_buf_get", drop: "n_parallel_buf_drop", label: "", size: 8 }
@@ -186,8 +188,8 @@ fn lane(ret: ir::TypeT) -> Lane {
 // `par_elem_size`: the stride of a plain scalar, a text or a record element; -1 for any other.
 fn element_size(e: el::El, elem: ir::TypeT) -> integer {
   match elem {
-    TyInteger { spec } => if spec.forced_size == 4 { -1 } else { el_expressions::elem_size(elem) },
-    TyReference { n: _ } => if e.first_pass { 0 } else { el_expressions::record_size(e, elem) },
+    TyInteger { spec } => if spec.forced_size == 4 { -1 } else { el_ex_base::elem_size(elem) },
+    TyReference { n: _ } => if e.first_pass { 0 } else { el_ex_base::record_size(e, elem) },
     TyFloat => 8,
     TySingle => 4,
     TyText { dep: _ } => 4,

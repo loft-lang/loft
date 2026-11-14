@@ -955,7 +955,8 @@ impl Parser {
                             vec![is_type.clone()],
                         );
                     }
-                    if self.first_pass {
+                    // A source refused where it was written has been reported once already.
+                    if self.first_pass || self.source_refused {
                         return Value::Null;
                     }
                     // Plan-07 phase 6 (partial) — name the offending type
@@ -4347,6 +4348,16 @@ use #count instead"
             self.last_range_from = None;
             self.last_range_till = None;
             let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+            // `@FR-B-Ref-Uniform` × `@FR-I-For`: a `&vector` is walked exactly as the vector it
+            // links — hoisted, and ended when the cursor reaches the length.  Every vector
+            // decision below asks `matches!(in_type, Type::Vector)`, so the unpeeled link fell
+            // to the item-absent end test, and a null ELEMENT ended the walk: `[1, null, 3]`
+            // through a `&vector<integer?>` parameter walked one element, on every backend.
+            if let Type::RefVar(inner) = &in_type
+                && matches!(inner.base(), Type::Vector(_, _))
+            {
+                in_type = inner.base().clone();
+            }
             let range_bounds = (self.last_range_from.take(), self.last_range_till.take());
             let iterable_fact = std::mem::take(&mut self.operand_fact);
             self.expected = block_expected;
@@ -4599,6 +4610,7 @@ use #count instead"
                     if self.data.type_def_nr(e) == u32::MAX);
                 if self.lexer.diagnostics().error_count() == errors_before_iterable
                     && !element_undefined
+                    && !self.source_refused
                 {
                     diagnostic!(
                         self.lexer,

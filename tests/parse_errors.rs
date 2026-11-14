@@ -3059,7 +3059,7 @@ fn p302_unknown_var_arg_column() {
 #[test]
 fn p302_type_mismatch_arg_column() {
     code!("fn test() { print(1 + 2); }")
-        .error("expected text, got integer on argument 1 of call to print at p302_type_mismatch_arg_column:1:19");
+        .error("expected text, got integer on argument 1 of call to print — a format string turns a value into text: `\"{…}\"` at p302_type_mismatch_arg_column:1:19");
 }
 
 /// An undefined type in a struct literal yields `unknown type '…'` at the type

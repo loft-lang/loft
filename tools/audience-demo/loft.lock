@@ -34,9 +34,9 @@ deps = ["glb", "mesh3d"]
 
 [[package]]
 name = "glb"
-version = "0.1.7"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/glb-v0.1.7/glb-0.1.7.tar.gz"
-sha256 = "b5b49928f741177761dfb0f4e9019ba23d7aa7b21a73beaf84b2a806e1b1556f"
+version = "0.1.8"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/glb-v0.1.8/glb-0.1.8.tar.gz"
+sha256 = "eb5cf5f43789a211174b180560c655935ac6a28b2d4a91d8b0130f7fa0e52f4e"
 source = "registry"
 deps = ["mesh3d"]
 

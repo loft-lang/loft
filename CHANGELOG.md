@@ -22,6 +22,15 @@ only be cross-built and never run before it shipped, and loft ships only what it
 On an Intel Mac, build loft from a source checkout (`make install-user`), or keep 2026.11.0,
 the last release with an Intel Mac bundle.
 
+### May need a change in your code
+
+**A format hole with a spec checks its name like any other hole.**  `"{qx:.6}"` is read exactly as
+`"{qx}"` is: a name nobody declared is reported as unknown, and a name bound inside a block that
+has ended is reported as out of scope.  Before, the `:` of the spec let such a hole slip past both
+checks.  If a program now reports "`qx` was bound inside a block that has ended", bind the name
+before the block (`qx = 0.0;` ahead of the `if`) or give the block a value
+(`qx = if … { … } else { … }`).
+
 ### New
 
 **Tree code in Rust's shape.**  A `&Tree?` parameter takes a field of a tree as its argument
@@ -72,6 +81,24 @@ because the wrapper reports the same version.  The compiler's path is now part o
 key.
 
 ### Bug fixes
+
+**A loop over a `&vector` parameter visits every element.**  A `for` over a `&vector<T?>`
+parameter stopped at the first `null` element, so `[1, null, 3]` was walked as `[1]`, with no
+message.  It now walks the whole vector, as a loop over the vector itself does.  `rev(v)` on such
+a parameter works, an `x#remove` in its loop counts as a change to it, and adding to it inside
+its own loop is refused as it is for any vector.
+
+**`rev(v)` no longer depends on where the function that fills `v` is written.**  `v = mk();
+for x in rev(v)` was refused ("rev() on a non-range expression must wrap a sorted, index, or
+vector collection") when `mk` was declared below its caller, and worked when it was declared
+above.  It now works either way.  A `rev` over something that is not a collection is reported
+once, without a second message about the loop.
+
+**Clearer messages for common mistakes.**  `p.z = 3` on a struct with no field `z` says
+`Unknown field P.z` instead of "Variable 'p' cannot change type".  An empty `"{}"` in a text says
+it is an empty format hole and that `{{}}` writes a pair of braces, instead of "Expect token )".
+A number passed where text is expected (`println(i)`) points at the format string `"{i}"`, and
+`v.push(x)` or `s.length` name loft's spelling: `v += [x]` and `len(s)`.
 
 **A compiled program that opens a file reads no uninitialised memory when it rebuilds a
 result.**  A `--native` program that read a file into a vector checked the type word of a

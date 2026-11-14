@@ -1941,10 +1941,16 @@ impl FnWriter<'_> {
                     }
                     _ => continue,
                 };
-                // Every later mention in this block, none of a root's bind or free between.
+                // Every later mention in this block, none of a root's bind or free between,
+                // and none a write: the lifted local is the source, read where it lies
+                // (`@FR-R-Transient`: every use READS the value), so a write to the local —
+                // `x += "!"` after `x = f()` — would land where no read looks.
                 let mut seen = 0usize;
                 let mut clean = true;
                 for later in &blk.operators[at + 1..] {
+                    if crate::scopes::args::writes_var(later, *v, self.cx.data) {
+                        clean = false;
+                    }
                     let mut here = 0usize;
                     later.walk(&mut |m| {
                         if let Value::Var(w) = m

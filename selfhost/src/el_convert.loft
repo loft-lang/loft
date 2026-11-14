@@ -582,6 +582,27 @@ pub fn sentinel_value(t: ir::TypeT) -> boolean {
   plain_scalar(t) || t is TyText
 }
 
+// port: store_check.rs implicit_checked_narrow (`@FR-I-Narrow`, completed by DN4 `(N-Cast?)`) —
+// a value narrowing into a NULLABLE narrow slot takes the checked cast (`dn4_cast`: the value if
+// it fits, else the null) in place of a refusal; a non-nullable narrow slot is still refused.
+// Null where it does not apply.  The constant that does not fit the slot's usable range is a Rust
+// error (`nullable_narrow_constant_refusal`): such a program has no image, so it is not asked.
+fn implicit_checked_narrow(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT) -> ir::Node? {
+  inner = match should { TyOptional { inner: i } => i, _ => { return null; } };
+  if !narrowing_store(el_types::base(src), el_types::base(inner)) {
+    return null;
+  }
+  // The test is the two types' alone, so pass 1 takes the pair too; it converts nothing.
+  if e.first_pass {
+    return code;
+  }
+  // `convert` guards the value against the slot's declared range at its entry, before the
+  // nullable arm casts it: the guard is the cast's operand.  The assignment seam reaches the cast
+  // without that entry, so its operand is the value as it is.
+  guarded = if vars.assign_seam { code } else { guard_range(e, code, should, src, true) };
+  dn4_cast(e, vars, guarded, el_types::base(src), el_types::base(inner))
+}
+
 // `convert` at a store, with the nullable arms (`@FR-N-Intro`): a bare `null` into a nullable
 // slot is the base's null, a value into one converts to the base; a nullable value into a
 // non-null slot is the unwrap `@FR-N-Store` refuses (null).  Otherwise as `convert`, a text taken
@@ -601,6 +622,10 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
           return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [] } };
         }
         return null;
+      }
+      cn = implicit_checked_narrow(e, vars, code, src, should);
+      if cn != null {
+        return cn;
       }
       if el_types::is_equal(e, src, should) {
         return code;

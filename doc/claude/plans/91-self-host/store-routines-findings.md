@@ -283,6 +283,7 @@ LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records
 | series 2026-11-12 (8 commits on 91-self-host 8f7c1c9e0) | 50 → 36 | 6 | 2 (7, 8 below) |
 | series 2026-11-12, continued (loft2 and loft3-c1, on 91-self-host 7e2d72225 + the snapshot patch) | 36 → 6 | 17 (the 16 store_records.rs fixes 15caa3c50..7e2d72225, and the snapshot patch) | 3 (9–11 below) |
 | loop fixes 2026-11-12 (91-self-host f1df5b9a6 + B + D) | 6 → 5 (1643 runs; 4 new cells) | 1 (stale names, loft3-c1) | 4 (12–15 below) |
+| records series 2026-11-12 night (91-self-host 6231ed152..f13d5ce40 + patches-kd) | 4 → 0 | 6 (copy alias, slot null, uncaptured `live_some`, sole slot holder, identity test no use; loft3-c1's null-copy join) | 1 (16 below, E) |
 
 The real defects the checker found first:
 
@@ -428,21 +429,53 @@ The gaps fixed, by the representation they corrected:
   answers null); a guarded free of a capture slot leaves the store live exactly where the witness
   names it.
 
-Open (four cells, all records gaps; every function in them is runtime-clean at 0..3 passes on
-both backends):
-- **One key for every earlier pass.**  A site minting each pass keeps its current store and ONE
-  older generation, so the stores of passes 1..n-1 merge: a slot's correlation with the store it
-  holds cannot survive (C's cell `one_loop`, 2357 `after_returned_fn`'s older store), and the
-  zero-pass path's "this store exists only where the record does" is lost at the loop's exit
-  (2357 `record`).  15's records MISS was the same shape; the first three passes are now analysed
-  one by one, which caught it.  Owner: loft3-c1's pass design.
-- **A liveness test of a capture slot** (C's cell `two_loops`, its `#0`): a let-go point frees a
-  slot's store behind `OpStoreLive(OpGetDbRef(w, off))`, and the records narrowed that test only
-  for a plain variable, so a store the frame had already freed stayed in the slot.  Both backends
-  reset a freed variable, so the identity test beside it is no witness; the liveness test is what
-  keeps them clean.  Fixed by loft3-c1's cl-patches13 (the slot narrowed on the live arm).
-- **A store's existence correlated with a record variable across a branch join** (L-CapOne/2281
-  `lv`: `h` names the second record exactly where it was built; the frame end's stand-downs walk
-  an arm where `h` names it and its record variable is null).  Same relation as 2357 `record`.
-  Owner: loft3-c1's design.
-- L-CapKeep/1636: loft3-c1's.
+Closed in the records series (each a records gap; the functions are runtime-clean at 0..3 passes
+on both backends):
+- **A null written into a capture slot, and a slot's presence test** (L-CapOne/2281 `lv`): the
+  frame end lets a record give up its capture (`OpSetDbRef(w, 0, OpNullRefSentinel())`) and then
+  frees the capture only where no slot still holds it (`OpConvBoolFromRef(OpGetDbRef(w, 0))`).
+  The records dropped the null write and decided the presence test for a plain variable only.
+  Switch `LOFT_RECORDS_NO_SLOT_NULL`.  A k-limited state split over the frame end was measured
+  beside it and is not needed.
+- **A store no record captures, minted only on the runs that build a record** (2357 `record`):
+  its `live_some` now asks every closure record of the function, and a free of the record
+  variable drops it.  Switch `LOFT_RECORDS_NO_LIVE_SOME_UNCAPTURED`.
+- **A store held only in a leaving record's slots** (2357 `after_returned_fn`'s older generation):
+  where no variable or fn field names it and the value certainly hands the records on, it leaves
+  with them.  Switch `LOFT_RECORDS_NO_SLOT_SOLE_HOLDER`.  Keeping the slot's correlation through
+  the re-mint and the loop join instead was measured and moves nothing: the older generation is
+  live before every later re-mint.
+
+- **A store identity test read as a use** (C's cell `two_loops`, a use after end on `a`): the
+  frame end compares a capture slot with `a` (`OpDistinctStore`) after `a`'s buffer was freed.
+  The test is `a.store_nr != b.store_nr` on every backend; it now joins the reference
+  comparisons whose operands are no use.  Switch `LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE`.
+
+Checker MISSes closed (each a defect the checker must report with its cure off):
+- **A guarded free that reaches a store already freed** — all seven control MISSes
+  (E-NullArg/1945, B-View/2362 and /1184, B-Copy/2334, B-Disturb, F-Ret/1884, R-LoopRecord) were
+  `LOFT_NO_REBOUND_ADOPTER_DISARM`'s re-free: an owning local adopts a literal buffer, a pass
+  frees it (a rebind's displaced free, or a view's free) and moves the local away, and the frame
+  end's `OpFreeRefIfDistinct(buffer, local)` frees it again.  The records ended a guarded free's
+  stores silently.  Now a store the witness cannot name is checked as a plain free is, and a
+  shared store already freed where the witness cannot point into it (`maybe_stale`) reads as a
+  second free.  Switch `LOFT_RECORDS_NO_GUARDED_REST_REPORTS`; control MISS 7 → 0.
+
+- **A capture slot's correlation, lost through the loop and the frame end** (C's cell
+  `one_loop` / `two_loops`): the record's slot holds the older `a` buffers, and the frame end
+  frees the slot's store unless another name holds it.  Three gaps, each needed: the slot's
+  correlation was dropped at a re-mint and at the loop join; an identity test of a slot narrowed
+  only against one store, and a correlated store narrowed out stayed live; the dead arm of
+  `OpStoreLive(slot)` left the slot's stores live.  A correlation is read only where the slot is
+  the store's sole holder.  Switches `LOFT_RECORDS_NO_SLOT_CORR_JOIN`,
+  `LOFT_RECORDS_NO_SLOT_CORR_NARROW`, `LOFT_RECORDS_NO_SLOT_DEAD_ARM`.
+
+- **A keep temporary's drop read as the emitter's stand-down drop** (L-CapKeep/1636 `c6`): a
+  plain copy keeps the record each pass, so the old record leaves through closure_keep's
+  `__fkeep_N` drop, whose cascade releases the pass's capture.  The stand-down collector skipped
+  every guarded `OpDropFnRef(f)`; a keep temporary's drop now cascades.  Switch
+  `LOFT_RECORDS_NO_KEEP_DROP_CASCADE`.
+
+Open: none.  The clean sweep is CLEAN 1644/1644 (STATIC 0); the control has no MISS, matched
+catches 169 (the C cell's leak match was a false `one_loop` leak standing in for a leak that
+follows from the still-caught record re-free).

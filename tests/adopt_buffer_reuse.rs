@@ -164,9 +164,11 @@ fn the_pool_takes_an_adopting_callees_buffer() {
 #[test]
 fn the_switch_restores_b1() {
     let ir = introspect(OFF);
+    // The switch turns off the POOL alone: the entry witness stays, because a rebind of the
+    // promoted buffer frees what it displaces only through it (`bind_lowering`).
     assert!(
-        !ir.contains("__rbw_"),
-        "LOFT_NO_ADOPT_BUFFER_REUSE: no entry witness is minted"
+        ir.contains("__rbw_"),
+        "LOFT_NO_ADOPT_BUFFER_REUSE: the entry witness is still minted"
     );
     assert!(
         !section(&ir, "n_r9").contains("OpRefIsNull(__ref_1(1))"),
@@ -360,7 +362,14 @@ fn the_store_census_drops() {
         // A rebind from a call whose answer is its minted buffer store adopts it as the first
         // bind does (`@FR-O-Move`, `bind_lowering::re_bind`): 14 fewer on and off the pool,
         // native unchanged.  `LOFT_NO_REBIND_ADOPTS_MINTED=1` gives back 225/345.
-        (211, 331, 104, 232),
+        // The rustc writer binds those rebinds plain too (`call_bind_taken`): the callee's
+        // fresh store is kept where its copy-or-adopt refilled a released one, 14 more pooled
+        // and 12 more unpooled on native (a 30M-pass rebind loop runs ~6% faster and no longer
+        // grows to 3.3 GB).  `LOFT_NATIVE_OWN_CALL_BIND=1` gives back 104/232.
+        // The entry witness is minted with the pool off too, so a promoted buffer's rebind
+        // frees what it displaces there: 22 fewer unpooled on the interpreter, the rest
+        // unchanged.
+        (211, 309, 118, 244),
         "mints (interpret on, off, native on, off)"
     );
 }

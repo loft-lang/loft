@@ -483,7 +483,9 @@ impl Parser {
     /// Also check for redundant `const` annotations on primitive parameters that are never
     /// written to — the `const` has no effect when the parameter is not modified.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    pub(super) fn check_ref_mutations(&mut self, arguments: &[Argument]) {
+    /// `body_refused`: this body reported an error, so its code may lack the statement that
+    /// writes a `&` parameter — the refusal dropped it.
+    pub(super) fn check_ref_mutations(&mut self, arguments: &[Argument], body_refused: bool) {
         let code = self.data.def(self.context).code().clone();
         let mut written = crate::fxhash::FxHashSet::default();
         // interprocedural param-write cache, local to this check.
@@ -637,9 +639,15 @@ impl Parser {
         // is what a `&` parameter needs — the lambda is its own definition (loft#1276).
         let mut lambda_written: HashSet<String> = HashSet::new();
         lambda_mutated_captures(&code, &self.data, &mut lambda_written);
+        // The written set is read off the code as parsed, and a refused statement is not in it:
+        // after `v += [0]` is refused (an append during `v`'s own walk), `v` reads as never
+        // written, and "remove the &" would contradict the error that names the real problem.
+        // Asked of THIS body's errors: another function's refusal says nothing about this one.
+        let refused_already = body_refused;
         for (a_nr, a) in arguments.iter().enumerate() {
             if matches!(a.typedef, Type::RefVar(_))
                 && !a.constant
+                && !refused_already
                 && !written.contains(&(a_nr as u16))
                 && !lambda_written.contains(&a.name)
             {

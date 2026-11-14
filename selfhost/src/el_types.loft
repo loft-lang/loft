@@ -546,10 +546,8 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         }
         ts += [mt!];
       }
-      if tuple_def(e, ts, el::pos_at(e, closing_paren(e, at) + 1)) < 0 {
-        el::refuse(e, "a tuple type with a member of this kind");
-        return null;
-      }
+      // A member not resolved yet defers the registration to the second pass (-1).
+      tuple_def(e, ts, el::pos_at(e, closing_paren(e, at) + 1));
       ir::TyTuple { elems: ts }
     },
     // `fn(T, …) -> R`: the argument types, a `const` one's bit in `consts` (`ConstParams`), and
@@ -627,15 +625,6 @@ pub fn tuple_member(t: ir::TypeT) -> text {
   }
 }
 
-fn tuple_member_width(t: ir::TypeT) -> integer {
-  match t {
-    TyInteger { spec: _ } => 8,
-    TyFloat => 8,
-    TyBoolean => 1,
-    _ => 4
-  }
-}
-
 // The members' spellings joined as a tuple names them (`integer,text`), or "" for a member
 // this port does not carry.
 pub fn tuple_spelling(elems: vector<ir::TypeT>, sep: text) -> text {
@@ -650,16 +639,19 @@ pub fn tuple_spelling(elems: vector<ir::TypeT>, sep: text) -> text {
   r
 }
 
-// `Data::tuple_def` (P189): the synthetic struct a tuple shape is stored as, `__tuple<…>` with
-// members `_0`, `_1`, … in element order — registered in the standard library's source so
-// every file shares it, its members not-null, its one Tuple field group covering them all.
-// The existing definition where the shape has one; -1 for a member this port does not carry.
+// port: data.rs tuple_def
+// The synthetic struct a tuple shape is stored as (P189): `__tuple<…>` named by its members'
+// `Type::name`, with members `_0`, `_1`, … in element order — registered in the standard
+// library's source so every file shares it, a member nullable only where its type says so, its
+// one Tuple field group covering them all.  The existing definition where the shape has one;
+// -1 (Rust's `u32::MAX`) while a member is unresolved: the pass after mints it.
 pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> integer {
-  sp = tuple_shape(e, elems);
-  if sp == "" {
-    return -1;
+  for t in elems {
+    if type_has_unresolved(t) {
+      return -1;
+    }
   }
-  nm = "__tuple<{sp}>";
+  nm = tuple_name(e, elems);
   d = el::def_nr(e, nm);
   if d >= 0 {
     return d;
@@ -670,28 +662,195 @@ pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> inte
   idx: vector<integer> = [];
   size = 0;
   align = 1;
-  for t in elems {
-    // `tuple_member_stored`: a member is stored without the borrow its value carried.
-    a = el::attribute("_{t#index}", without_deps(t));
-    a.nullable = false;
+  for m in elems {
+    // loft#1503: the name omits a reference's borrows, so the layout omits them too.
+    t = tuple_member_stored(m);
+    a = el::attribute("_{m#index}", t);
+    // @PLN114: a member is nullable only where its type says so.
+    a.nullable = t is TyOptional;
+    idx += [len(e.b.data.definitions[d]!.attributes)];
     e.b.data.definitions[d].attributes += [a];
-    idx += [t#index];
-    // `group_size`: each member at its alignment, then its size (`element_stack_size` /
-    // `element_stack_align`; a struct enum is one `DbRef`, 12 bytes at 4).
-    w = tuple_member_width(t);
-    ma = if is_struct_enum(t) { 4 } else { w };
-    ms = if is_struct_enum(t) { 12 } else { w };
+    // `LinkedFieldGroup::group_size` / `group_alignment`: each member at its natural alignment.
+    ma = element_stack_align(t);
     rem = (size % ma) ?? 0;
     if rem != 0 {
       size += ma - rem;
     }
-    size += ms;
+    size += element_stack_size(t);
     if ma > align {
       align = ma;
     }
   }
   e.b.data.definitions[d].field_groups += [ir::LinkedFieldGroup { kind: 0, instance: 0, field_indices: idx, alignment: align, size: size }];
+  // A tuple of a type variable is an OPEN instance of the anonymous tuple template: it keeps its
+  // members as written, so each monomorph closes it to the tuple of its bindings.
+  for t in elems {
+    if names_type_var(e, t) {
+      e.b.data.definitions[d].instance_args = elems;
+      break;
+    }
+  }
   d
+}
+
+// port: data.rs tuple_member_stored
+// A member as a tuple stores it: an INFERRED borrow list dropped, as the name drops it; the
+// pointer marker (`u16::MAX`, a written `reference<T>`) kept.
+fn tuple_member_stored(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyReference { n, dep } => if len(dep) > 0 && !dep.contains(65535) { ir::TyReference { n: n, dep: [] } } else { t },
+    TyOptional { inner } => ir::TyOptional { inner: tuple_member_stored(inner) },
+    _ => t
+  }
+}
+
+// port: data.rs type_has_unresolved
+// Is any part of `t` a type not resolved yet?
+fn type_has_unresolved(t: ir::TypeT) -> boolean {
+  match t {
+    TyUnknown { n: _ } => true,
+    TyOptional { inner } => type_has_unresolved(inner),
+    TyRefVar { inner } => type_has_unresolved(inner),
+    TyRewritten { inner } => type_has_unresolved(inner),
+    TyVector { inner } => type_has_unresolved(inner),
+    TyIterator { step, inner } => type_has_unresolved(step) || type_has_unresolved(inner),
+    TyTuple { elems } => any_unresolved(elems),
+    TyFunction { args, result } => type_has_unresolved(result) || any_unresolved(args),
+    _ => false
+  }
+}
+
+fn any_unresolved(ts: vector<ir::TypeT>) -> boolean {
+  for t in ts {
+    if type_has_unresolved(t) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: data.rs mentions_type_var
+// Does `t` name a type variable's placeholder, or an open instance, anywhere in it?
+fn names_type_var(e: el::El, t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n } => is_type_var_placeholder(e, n) || is_open_instance(e, n),
+    TyEnum { n } => is_open_instance(e, n),
+    TyOptional { inner } => names_type_var(e, inner),
+    TyRefVar { inner } => names_type_var(e, inner),
+    TyRewritten { inner } => names_type_var(e, inner),
+    TyVector { inner } => names_type_var(e, inner),
+    TyIterator { step, inner } => names_type_var(e, step) || names_type_var(e, inner),
+    TyTuple { elems } => any_names_type_var(e, elems),
+    TyFunction { args, result } => names_type_var(e, result) || any_names_type_var(e, args),
+    _ => false
+  }
+}
+
+fn any_names_type_var(e: el::El, ts: vector<ir::TypeT>) -> boolean {
+  for t in ts {
+    if names_type_var(e, t) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: data.rs is_type_var_placeholder
+// A type variable's placeholder: a struct with no fields that is its own type.
+pub fn is_type_var_placeholder(e: el::El, d: integer) -> boolean {
+  if d < 0 || d >= len(e.b.data.definitions) {
+    return false;
+  }
+  df = el::def(e, d);
+  df.def_type == el::DT_STRUCT && len(df.attributes) == 0 && match df.returned[0] ?? ir::TyVoid { TyReference { n } => n == d, _ => false }
+}
+
+// port: data.rs is_open_instance
+// An instance of a generic struct, or a tuple record, whose arguments still name a type variable.
+fn is_open_instance(e: el::El, d: integer) -> boolean {
+  if d < 0 || d >= len(e.b.data.definitions) {
+    return false;
+  }
+  df = el::def(e, d);
+  if df.def_type == el::DT_ENUM_VALUE && df.instance_of < 0 {
+    return df.parent >= 0 && el::def(e, df.parent).def_type == el::DT_ENUM && is_open_instance(e, df.parent);
+  }
+  // `is_tuple_def`: told by its Tuple field group (kind 0), never by its name.
+  tuple_record = false;
+  for g in df.field_groups {
+    if g.kind == 0 {
+      tuple_record = true;
+    }
+  }
+  (df.instance_of >= 0 || tuple_record) && any_names_type_var(e, df.instance_args)
+}
+
+// port: data.rs element_stack_size (`element_stack_size_in`, not owned)
+// A member's width on the eval stack: an integer 8 bytes whatever its range, a text the `Str`
+// it is passed as (16), any heap value one `DbRef` (12), a nested tuple an 8-byte step per member.
+pub fn element_stack_size(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => element_stack_size(inner),
+    TyBoolean => 1,
+    TyEnum { is_ref } => if is_ref { 12 } else { 1 },
+    TySingle => 4,
+    TyCharacter => 4,
+    TyFunction { args: _ } => 20,
+    TyInteger { spec: _ } => 8,
+    TyFloat => 8,
+    TyText { dep: _ } => 16,
+    TyReference { n: _ } => 12,
+    TyVector { inner: _ } => 12,
+    TySorted { n: _ } => 12,
+    TyIndex { n: _ } => 12,
+    TyHash { n: _ } => 12,
+    TyRadix { n: _ } => 12,
+    TyTrie { n: _ } => 12,
+    TyIterator { step: _ } => 12,
+    TyTuple { elems } => {
+      sum = 0;
+      for m in elems {
+        sum += (element_stack_size(m) + 7) / 8 * 8;
+      }
+      sum
+    },
+    _ => 0
+  }
+}
+
+// port: data.rs element_stack_align
+// A member's natural alignment; a nested tuple's is its widest member's.
+pub fn element_stack_align(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => element_stack_align(inner),
+    TyBoolean => 1,
+    TyEnum { is_ref } => if is_ref { 4 } else { 1 },
+    TySingle => 4,
+    TyCharacter => 4,
+    TyFunction { args: _ } => 8,
+    TyInteger { spec: _ } => 8,
+    TyFloat => 8,
+    TyText { dep: _ } => 4,
+    TyReference { n: _ } => 4,
+    TyVector { inner: _ } => 4,
+    TyRefVar { inner: _ } => 4,
+    TySorted { n: _ } => 4,
+    TyIndex { n: _ } => 4,
+    TyHash { n: _ } => 4,
+    TyRadix { n: _ } => 4,
+    TyTrie { n: _ } => 4,
+    TyTuple { elems } => {
+      m = 1;
+      for x in elems {
+        a = element_stack_align(x);
+        if a > m {
+          m = a;
+        }
+      }
+      m
+    },
+    _ => 1
+  }
 }
 
 fn is_struct_enum(t: ir::TypeT) -> boolean {
@@ -704,24 +863,79 @@ pub fn is_heap_record(t: ir::TypeT) -> boolean {
   t is TyReference || is_struct_enum(t)
 }
 
-// `Data::tuple_def`'s name parts: each member as `Type::name` writes it — the carried scalars and
-// texts as `tuple_member` spells them, a struct enum by its own name.  "" for any other member.
-fn tuple_shape(e: el::El, elems: vector<ir::TypeT>) -> text {
-  r = "";
-  for t in elems {
-    m = match t { TyEnum { n, is_ref } => if is_ref { el::def(e, n).name } else { "" }, _ => tuple_member(t) };
-    if m == "" {
-      return "";
+// The name a tuple shape's record is registered under: `__tuple<integer,text>`.
+fn tuple_name(e: el::El, elems: vector<ir::TypeT>) -> text {
+  "__tuple<{join([for t in elems { key_name(e, t) }], ",")}>"
+}
+
+// port: data.rs Type::name (`render` as the schema key)
+// The name a definition built from types is keyed by, as the `__tuple<…>` of a tuple shape.  It
+// differs from the reader's spelling (`display_type_name`) at an integer range, a keyed
+// collection's keys and a type variable.
+pub fn key_name(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => "{key_name(e, inner)}?",
+    TyRewritten { inner } => key_name(e, inner),
+    TyRefVar { inner } => "&{key_name(e, inner)}",
+    TyEnum { n } => def_key_name(e, n),
+    TyReference { n } => def_key_name(e, n),
+    TyText { dep: _ } => "text",
+    TyVector { inner } => if inner is TyUnknown { "vector" } else { "vector<{key_name(e, inner)}>" },
+    TySorted { n, keys } => "sorted<{el::def(e, n).name},{sort_keys_debug(keys)}>",
+    TyIndex { n, keys } => "index<{el::def(e, n).name},{sort_keys_debug(keys)}>",
+    TyHash { n, names } => "hash<{el::def(e, n).name},{name_refs_debug(names)}>",
+    TyRadix { n, names } => "spatial<{el::def(e, n).name},{name_refs_debug(names)}>",
+    TyTrie { n, key } => "trie<{el::def(e, n).name}[{key}]>",
+    TyRoutine { n } => "fn {el::def(e, n).name}[{n}]",
+    TyUnknown { n: _ } => "unknown",
+    TyNull => "null",
+    TyVoid => "void",
+    TyNever => "never",
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyInteger { spec } => integer_key_name(spec),
+    TyKeys => "keys",
+    TyIterator { step } => "iterator<{key_name(e, step)}>",
+    TyTuple { elems } => "({join([for m in elems { key_name(e, m) }], ", ")})",
+    TyFunction { args, result, consts } => {
+      ps = join([for a in args { if ((consts >> a#index) & 1) == 1 { "const {key_name(e, a)}" } else { key_name(e, a) } }], ", ");
+      if result is TyVoid { "fn({ps})" } else { "fn({ps}) -> {key_name(e, result)}" }
     }
-    r = if t#index == 0 { m } else { "{r},{m}" };
   }
-  r
+}
+
+// A struct or enum by its name; a type variable's placeholder by the `__typevar_` row
+// (`TYPEVAR_ROW_PREFIX`) its runtime type is minted under.
+fn def_key_name(e: el::El, n: integer) -> text {
+  if is_type_var_placeholder(e, n) { "__typevar_{el::def(e, n).name}" } else { el::def(e, n).name }
+}
+
+// `IntegerSpec::source_name`, else the explicit range.
+fn integer_key_name(spec: ir::IntegerSpec) -> text {
+  if spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295) {
+    "integer"
+  } else if spec.min == 0 && spec.max == 256 {
+    "byte"
+  } else {
+    "integer({spec.min}, {spec.max})"
+  }
+}
+
+// A sort key list as Rust's `{:?}` writes a `Vec<(String, bool)>`: `[("id", true)]`.
+fn sort_keys_debug(keys: vector<ir::SortKey>) -> text {
+  "[{join([for k in keys { "(\"{k.name}\", {k.asc})" }], ", ")}]"
+}
+
+// A key name list as Rust's `{:?}` writes a `Vec<String>`: `["id"]`.
+fn name_refs_debug(names: vector<ir::NameRef>) -> text {
+  "[{join([for k in names { "\"{k.name}\"" }], ", ")}]"
 }
 
 // The definition a tuple type is stored as, or -1 where none is made yet.
 pub fn tuple_def_of(e: el::El, elems: vector<ir::TypeT>) -> integer {
-  sp = tuple_shape(e, elems);
-  if sp == "" { -1 } else { el::def_nr(e, "__tuple<{sp}>") }
+  el::def_nr(e, tuple_name(e, elems))
 }
 
 // An iterator element this port carries: a plain scalar (no narrow width), a text, a record, or

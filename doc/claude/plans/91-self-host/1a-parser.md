@@ -189,7 +189,7 @@ copied:
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 511 of 1679 programs agree, none differs (`selfhost/front/elab_gate.py`); 225 more are programs the Rust front end itself refuses (an `@ARGS: --lib` is passed to both) | the families `elab_gate.py --plan` ranks first |
+| E image | 718 of 1825 programs agree, 1 differs (`selfhost/front/elab_gate.py`, at `6ca9cf280`); 250 more are programs the Rust front end itself refuses (an `@ARGS: --lib` is passed to both) | the one difference (C-Var/2441: the compiled elaborator frees a store twice), then the families `elab_gate.py --plan` ranks first |
 | E by rule | 60 of 379 formal rules carried for every suite cell, 94 for some, 225 for none; 254 of 1073 suite cells (14 rules have only cells the Rust front end refuses) | dispatch (5 of 28 cells: free overload sets carried; methods in a set, generic members, run-time variant dispatch refused by name), tuples (0 of 22), closures (1 of 47), calls (6 of 50), interfaces (2 of 38) |
 
 **Measuring by formal rule.**  The suite holds its cells under `rules/<chapter>/<rule>/`, so a
@@ -215,7 +215,9 @@ Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.
 **Measuring a change against gate E.**  The count alone hides a swap (one program gained, one
 lost).  Run the gate with `LOFT_ELAB_VERDICTS=<file>` on the change and on its base — the base
 from a `git worktree add <scratch>/head HEAD`, built there — and diff the two files: every line
-that moved is a program to read.  `--plan` ranks the refusal families by how many programs each
+that moved is a program to read.  Run it with `--jobs 6` under `ulimit -v 6000000`: the default runs
+one `elab` per core, and some corpus program drives one to 11 GB, which on a 60 GB box brought
+in the kernel's OOM killer and took the whole session with it.  `--plan` ranks the refusal families by how many programs each
 alone blocks; `--which TEXT` lists the programs that meet one; `LOFT_ELAB_KEEP=1` keeps the
 build directory for a single-program diff.
 

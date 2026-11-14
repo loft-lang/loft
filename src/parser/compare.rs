@@ -926,6 +926,13 @@ impl Parser {
         if self.first_pass && types.iter().any(Type::has_unknown) {
             return Type::Unknown(0);
         }
+        // An operand poisoned by a reported error (`p.z += 1` on a field `P` does not declare):
+        // the error named the cause, and "No matching operator '+=' on 'unknown' and …" would
+        // name a second one that is not there — the calls' guard.  Guarded on the
+        // report, so an operand that is unknown for a reason nobody reported still refuses.
+        if types.iter().any(Type::has_unknown) && self.lexer.diagnostics().error_count() > 0 {
+            return Type::Unknown(0);
+        }
         // generic-specific error message for operators on T.
         let generic_name = types
             .iter()

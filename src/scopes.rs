@@ -74,7 +74,7 @@ use crate::variables::{Function, compute_intervals, size};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
 
-mod args;
+pub(crate) mod args;
 mod arm_lift;
 mod backings;
 mod branches;
@@ -280,6 +280,24 @@ struct Scopes<'s> {
     /// against that base — `ownership.md` D-own-16's route, no witness slot.  Read by
     /// `get_free_vars`, which frees the temp only where it is NOT the caller's store.
     lift_join_witness: HashMap<u16, u16>,
+    /// `@FR-H-FreeTwice` — per bound local, the `__lift_N` temporaries a branch arm of its value
+    /// reads a projection out of (`d = if c { mk().x } else { fresh() }`).  The arm's block
+    /// hands the lift to the enclosing scope, which frees it there, so `d` names the lift's
+    /// store on that path and must not free it a second time: `get_free_vars` and a rebind's
+    /// displaced free decline where `d` names one of them (`keys::lift_view_guard`).
+    lift_viewers: HashMap<u16, Vec<u16>>,
+    /// Locals a scope sweep treats as owners although their deps still name a view where it
+    /// runs: the scan strips those deps at a LATER bind (a view materialised across its
+    /// container's rebind), so an early `return` scanned before that bind would otherwise
+    /// skip them while the frame's exit frees them.  Filled by a rescan
+    /// (`run_scan_phase`'s second answer).  `LOFT_NO_LATE_OWNER_RESCAN=1` leaves it empty.
+    late_owners: HashSet<u16>,
+    /// The locals a sweep skipped because their deps named a view (`owns == false`); after
+    /// the scan, those the scan made owners are the next rescan's [`Self::late_owners`].
+    skipped_viewers: HashSet<u16>,
+    /// The lifts hoisted out of value blocks while the current binding's value is scanned:
+    /// collected into `lift_viewers` by `scan_set`.
+    value_hoists: Vec<u16>,
     /// Set by `callref_owned_return` on that path, consumed by the next `new_lift_var`.
     /// `u16::MAX` = none.
     pending_join_witness: std::cell::Cell<u16>,
@@ -713,7 +731,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         reassociate_coalesce_chains(&mut orig_code, &mut orig_vars, data);
         retain_shared_handles(d_nr, &mut orig_code, &orig_vars, data, database);
         // Phase 1: the normal scan → apply → set-scope pass.
-        let written_out = run_scan_phase(
+        let (written_out, mut late) = run_scan_phase(
             data,
             database,
             d_nr,
@@ -721,6 +739,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             &orig_vars,
             &HashMap::default(),
             disturbed,
+            &HashSet::default(),
             &HashSet::default(),
         );
         let sunk: HashSet<u16> = written_out.iter().map(|&(_, v)| v).collect();
@@ -730,7 +749,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         if !written_out.is_empty()
             && rewrite_written_out(&mut orig_code, &mut orig_vars, data, &written_out)
         {
-            run_scan_phase(
+            let (_, more) = run_scan_phase(
                 data,
                 database,
                 d_nr,
@@ -739,7 +758,26 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 &HashMap::default(),
                 disturbed,
                 &sunk,
+                &late,
             );
+            late.extend(more);
+        }
+        // A local an early sweep skipped as a view and the scan then made an owner (a later bind
+        // stripped its deps): scan again with it read as an owner from the start, so every exit
+        // frees it as the last one does.  The rescans below carry the set.
+        if !late.is_empty() {
+            let (_, more) = run_scan_phase(
+                data,
+                database,
+                d_nr,
+                &orig_code,
+                &orig_vars,
+                &HashMap::default(),
+                disturbed,
+                &sunk,
+                &late,
+            );
+            late.extend(more);
         }
         // Plan-57 cluster I-a — two-phase scan.  If a vector store is block-confined,
         // re-scan registering its `__vdb` (+ backed local) at the confined block scope
@@ -780,7 +818,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 }
             }
             run_scan_phase(
-                data, database, d_nr, &orig_code, &orig_vars, &cmap, disturbed, &sunk,
+                data, database, d_nr, &orig_code, &orig_vars, &cmap, disturbed, &sunk, &late,
             );
             for (&vdb, &(_local, b)) in &confined {
                 relocate_null_init(&mut data.definitions[d_nr as usize].code, vdb, b);

@@ -8,6 +8,7 @@
 use ir;
 use el;
 use el_types;
+use el_ex_base;
 
 pub struct VarName {
   pub name: text,
@@ -110,6 +111,8 @@ pub struct Vars {
   pub proven: vector<Proven>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
+  // `Variable::was_loop_var`: every variable that has served as a loop's, kept across passes.
+  pub loop_vars: vector<integer>,
   // The `x#count` counter a body asked of an open loop (`Function::loop_count_of`), by its loop
   // variable.
   pub loop_counts: vector<LoopCounter>,
@@ -164,8 +167,21 @@ pub struct Vars {
   // that holds the caller's store (`ensure_rebind_witness`), pairwise
   pub rebind_params: vector<integer>,
   pub rebind_origs: vector<integer>,
+  // `Function::promoted_text_args`: each written text PARAMETER and the owned shadow local
+  // (`__tp_<name>`) its name reads as from then on, pairwise
+  pub promoted_params: vector<integer>,
+  pub promoted_shadows: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
   pub dn4_coalesce: boolean = false,
+  // The assignment seam's conversion is in flight (`Parser::parse_assign`, which reaches the
+  // checked narrowing without `convert`'s entry guard): `el_convert::implicit_checked_narrow` reads it.
+  pub assign_seam: boolean = false,
+  // The last change of type `change_var_type` refused: the local, its type and the new one.
+  pub retype_var: integer = -1,
+  pub retype_from: vector<ir::TypeT>,
+  pub retype_to: vector<ir::TypeT>,
+  // The bind `object_into` builds into declares its local (`assignment`'s `declaring`).
+  pub bind_declares: boolean = false,
   // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
   pub lambdas: integer = 0,
   // `Parser::expected` for the one node a bind is about to read (`expect_node`): the type its
@@ -445,7 +461,20 @@ pub fn is_compiler_generated(v: Vars, nr: integer) -> boolean {
 // `Function::change_var_type`, the cases a plain binding meets: a local still untyped takes the
 // value's type, and one already of that type keeps it.  False for any other change, which the
 // caller refuses by name.
+// `change_var`, recording what it refused (the local, its type, the new type) for the refusal
+// that names it.
 pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
+  was = tp(v, nr);
+  ok = change_var_type_core(e, v, nr, t);
+  if !ok {
+    v.retype_var = nr;
+    v.retype_from = [was];
+    v.retype_to = [t];
+  }
+  ok
+}
+
+fn change_var_type_core(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
   // A local bound again is no longer what a guard (or a loop range) proved of it.
   v.present = [for x in v.present if x != nr { x }];
   v.nonzero = [for x in v.nonzero if x != nr { x }];
@@ -570,7 +599,7 @@ fn is_dbref(t: ir::TypeT) -> boolean {
   }
 }
 
-// `IntegerSpec::byte_width(true)` (`el_expressions::byte_width`): the bytes a nullable integer
+// `IntegerSpec::byte_width(true)` (`el_ex_base::byte_width`): the bytes a nullable integer
 // of this spec is stored in.
 fn integer_bytes(s: ir::IntegerSpec) -> integer {
   if s.forced_size > 0 {
@@ -648,6 +677,22 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.rebuilt = [];
   v.rebind_params = [];
   v.rebind_origs = [];
+  // `parse_function`'s second-pass remap: a parameter the first pass promoted reads as its
+  // shadow from the first statement on, the shadow defined (it is seeded at entry).
+  v.promoted_params = [];
+  v.promoted_shadows = [];
+  for sh in v.vars {
+    if starts_with(sh.name, "__tp_") {
+      for orig in v.vars {
+        if orig.argument && orig.name == sh.name[5..] {
+          v.promoted_params += [orig#index];
+          v.promoted_shadows += [sh#index];
+          set_name(v, orig.name, sh#index);
+          v.defined[sh#index] = true;
+        }
+      }
+    }
+  }
   v.captured = [];
   v.unique = [];
   v.work_vdb = 0;
@@ -755,6 +800,11 @@ pub fn loop_value_of_index(v: Vars, nr: integer) -> ir::Node {
     k -= 1;
   }
   ir::NdNull
+}
+
+// `Function::was_loop_var`: has `nr` served as a loop's variable in this function?
+pub fn was_loop_var(v: Vars, nr: integer) -> boolean {
+  v.loop_vars.contains(nr)
 }
 
 // `Function::is_active_loop_var`: the variable of a loop still open.
@@ -870,6 +920,19 @@ fn another_sites_parameter(v: Vars, name: text, t: ir::TypeT) -> boolean {
 // The first pass's work refs that ended as parameters, with their sites, for the second pass.
 pub fn minted_parameters(v: Vars) -> vector<RefSite> {
   [for s in v.ref_sites if v.vars[s.nr].argument { s }]
+}
+
+// `Parser::promote_text_param`: a text PARAMETER that is written takes an owned local,
+// `__tp_<name>`, which its name reads as from here on (`(F-ParamScalar)`'s copy): the parameter
+// is the caller's text, passed borrowed.  It inherits the const mark; first pass only.
+pub fn promote_text_param(v: Vars, p: integer) -> integer {
+  name = v.vars[p]!.name;
+  sh = new_var(v, "__tp_{name}", ir::TyText { dep: [] });
+  v.vars[sh].value_const = v.vars[p]!.value_const;
+  set_name(v, name, sh);
+  v.promoted_params += [p];
+  v.promoted_shadows += [sh];
+  sh
 }
 
 // `Parser::ensure_rebind_witness`: the work-ref that witnesses parameter `p`'s entry store —

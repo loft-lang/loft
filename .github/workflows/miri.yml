@@ -116,11 +116,6 @@ permissions:
   contents: read
 
 env:
-  # Cargo 1.100 (stable since 2026-11-09) builds into a new build-dir layout with no
-  # target/<profile>/deps/, which the native toolchain (src/toolchain.rs), make-release.sh
-  # and the cdylib builds still read.  Its temporary opt-out keeps the old layout until they
-  # read the new one; cargo drops the opt-out one release later (rust-lang/cargo#17182).
-  __CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT: "1"
   # Where `.github/actions/checkout-suite` puts the language suite (@PLN193); a job
   # without that step reads an empty suite and says so.
   LOFT_SUITE_DIR: loft-suite
@@ -1329,10 +1324,10 @@ jobs:
       - name: Library code names no program numbers — whole corpus
         run: cargo test --release --test lib_ids -- --ignored
 
-      # A `[c] shim` linked into the wasm32 target (wasmtime runs it): a whole-program wasm
-      # build, too slow for the per-commit suite's serial native group.
-      - name: A C shim links into the wasm target
-        run: cargo test --release --test native a_c_shim_links_into_the_wasm_target -- --ignored
+      # `[c] shim`s linked into the wasm32 target (wasmtime runs them): one package's, and two
+      # packages' in one program.  Whole-program wasm builds, too slow for the per-commit suite.
+      - name: C shims link into the wasm target
+        run: cargo test --release --test native into_the_wasm_target -- --ignored
 
       # The limit guards at the real 300 / 64 KiB (`tests/limits_full/`).  The per-commit corpus
       # proves the same relations under LOWERED limits (`// @LIMIT:`); this run proves the real
@@ -1479,6 +1474,15 @@ jobs:
       # SDK releases.  A new advisory against something loft ships fails this the morning
       # after it is published.  Each published library gets the same check in its own
       # `revalidate-libs` leg, in the pass that already goes over them.
+      # The registers' last answers, carried from run to run: a register that times out is
+      # answered from its answer of up to a week ago (`thirdparty.py` STALE_OK), instead of
+      # failing the job on one slow request.
+      - name: Third-party register answers (last run's)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/loft/thirdparty
+          key: thirdparty-registers-${{ github.run_id }}
+          restore-keys: thirdparty-registers-
       - name: Third-party code — provenance and advisories (loft)
         env:
           GH_TOKEN: ${{ github.token }}

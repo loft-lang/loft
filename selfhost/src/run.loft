@@ -28,6 +28,10 @@ pub struct Outcome {
   // What the entry's return left on the stack: its frame base and the evaluation stacks'
   // depths, 0 when every call gave back what it took (PF5); 0 for a refused run.
   pub stack_left: integer,
+  // The microseconds the run spent lowering functions to the interpreter's code (each on its
+  // first call), so a timed run can tell that compile work from the program's own steps
+  // (`selfhost/bench/run_timed.loft`).  Set on a run that finished.
+  pub lowered_us: integer,
 }
 
 NULL_STORE = 65535;
@@ -253,7 +257,10 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
     progs += [lower::empty()];
     lowered += [false];
   }
+  lowered_us = 0;
+  t_lower = ticks();
   first = lower::lower(b, entry);
+  lowered_us += ticks() - t_lower;
   if first.refused != "" {
     return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0, stack_left: 0 };
   }
@@ -459,7 +466,9 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
       Call => {
         callee = op.a;
         if !lowered[callee] {
+          t_lower = ticks();
           progs[callee] = lower::lower(b, callee);
+          lowered_us += ticks() - t_lower;
           lowered[callee] = true;
         }
         callee_prog = progs[callee]!;
@@ -594,6 +603,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
             refused_in: "",
             stores_left: crt::live_stores() - stores_before,
             stack_left: base + sp_int + sp_float + sp_text,
+            lowered_us: lowered_us,
           };
         }
         // The frame's text arguments were copies the call made.
@@ -1300,7 +1310,8 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         put_int(ints, sp_int, (texts[sp_text] ?? "") as integer?);
         sp_int += 1;
       }
-      // `OpMathFuncFloat`: loft's own function of that number.
+      // `OpMathFuncFloat`: loft's own function of that number, by `fn_id` as `default/01_code.loft`'s
+      // `#rust` table numbers them (10 is `exp`, which the front end folds `E.pow(x)` to).
       MathFunc => {
         f = floats[sp_float - 1];
         // A null operand answers null: it stays where it is.
@@ -1310,12 +1321,14 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           floats[sp_float - 1] = (match op.a {
             0 => g.cos(), 1 => g.sin(), 2 => g.tan(), 3 => g.acos(), 4 => g.asin(),
             5 => g.atan(), 6 => g.ceil(), 7 => g.floor(), 8 => g.round(), 9 => g.sqrt(),
+            10 => g.exp(),
             _ => null,
           }) as float?;
         } else {
           floats[sp_float - 1] = match op.a {
             0 => f.cos(), 1 => f.sin(), 2 => f.tan(), 3 => f.acos(), 4 => f.asin(),
             5 => f.atan(), 6 => f.ceil(), 7 => f.floor(), 8 => f.round(), 9 => f.sqrt(),
+            10 => f.exp(),
             _ => null,
           };
         }
@@ -1533,6 +1546,13 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           ints[sp_int + 3] ?? 65535, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
           op.a, op.b
         );
+        // A null source copied into a FRESH destination (flag 4, `COPY_FRESH_DEST`) leaves it
+        // absent: a struct takes its default image over the runtime's zero fill, so a nullable
+        // field reads null (`Stores::copy_null_into`, loft#2414, `@C137`).
+        d_store = ints[sp_int + 3] ?? NULL_STORE;
+        if (ints[sp_int] ?? NULL_STORE) == NULL_STORE && d_store != NULL_STORE && op.b & 4 != 0 && types::is_struct(b, op.a) {
+          crt::fill(d_store, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, image_of(b, images, imaged, op.a));
+        }
       }
       // Vectors (S3's second slice): a vector is the reference to its field, an element a
       // reference into the same store, so neither changes who owns the store.

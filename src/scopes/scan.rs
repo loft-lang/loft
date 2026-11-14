@@ -564,6 +564,7 @@ impl Scopes<'_> {
                     for v in &hoisted {
                         self.var_scope.insert(*v, outer_scope);
                     }
+                    self.value_hoists.extend(hoisted.iter().copied());
                     if !hoisted.is_empty() {
                         drop_tail_frees(&mut ls, &hoisted, data);
                     }

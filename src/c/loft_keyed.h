@@ -416,9 +416,16 @@ static void loft_key_set(loft_ref e, const loft_key *k, loft_kv v) {
     case 4:
         memcpy(loft_at(s, e.rec, at), &v.f, 8);
         return;
-    case 6:
+    case 6: {
+        /* The text the key field held — the copy's, or the literal's — is released first, as
+         * `keys::set_key` deletes it; written over, it stayed claimed in the collection's store,
+         * one record per text-keyed insert. */
+        uint32_t old;
+        memcpy(&old, loft_at(s, e.rec, at), 4);
+        if (old != 0 && !LOFT_WRITE_REFUSED(s)) loft_st_delete(s, old);
         loft_set_text(e, k->pos, v.s);
         return;
+    }
     case 8: {
         int32_t x = loft_i32_of(v.i);
         memcpy(loft_at(s, e.rec, at), &x, 4);
@@ -461,10 +468,14 @@ static loft_ref loft_keyed_find(loft_ref c, int kind, uint32_t size, const loft_
 
 /* The element `existing` of `c` taken out and released, by the collection's kind — the removal
  * `c[k…] = v` makes before it files the copy, and the one an absent `v` makes alone. */
+static void loft_sorted_remove_owned(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, uint32_t size);
+
 static void loft_keyed_remove_at(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref existing, int kind,
                                  const loft_key *keys, int nk, uint32_t size) {
     if (kind == LOFT_KEYED_HASH) loft_hash_remove(T, etp, c, existing, keys, nk, 0);
-    else if (kind == LOFT_KEYED_SORTED) loft_sorted_remove(c, existing, size);
+    /* A sorted element lives inline: what it owns (a text key, a nested collection) is released
+     * before its successor shifts over it, as `Stores::remove_owned` does. */
+    else if (kind == LOFT_KEYED_SORTED) loft_sorted_remove_owned(T, etp, c, existing, size);
     else if (kind == LOFT_KEYED_INDEX) loft_ix_remove(T, etp, c, existing, keys, nk, 0);
     else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
         loft_rx_remove_owned(T, etp, c, existing, keys, nk, kind == LOFT_KEYED_TRIE, 0);

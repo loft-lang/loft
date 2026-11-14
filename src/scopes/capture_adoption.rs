@@ -237,7 +237,14 @@ impl ReleaseOps {
                     Value::Call(c, vec![Value::Var(t)]),
                     Value::Null,
                 );
-                out.push(self.unless_own_build(t, cascade, vars));
+                let placed = self.unless_own_build(t, cascade, vars);
+                // Placed once, as the free side's cascade is: a warm load restores the code
+                // this pass already patched and runs the pass over it again, and a second copy
+                // found its own build's record local emptied by the first, so it cascaded the
+                // record the frame then released itself (`@FR-H-FreeTwice`).
+                if ops_in.get(at + 1) != Some(&placed) {
+                    out.push(placed);
+                }
                 continue;
             }
             if let Some((v, c)) = self.owed(data, vars, &op) {

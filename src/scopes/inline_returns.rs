@@ -666,6 +666,34 @@ impl Scopes<'_> {
         {
             return Some(Self::reopt(opt, Type::Reference(*d_nr, Deps::none())));
         }
+        // …and a `!` discharge of a loft call's record answer (`{#ncr _ncr_N = f(…); <check>;
+        // _ncr_N }`, typed owned by the parser): used INLINE (`schema(b, k)!.name == "y"`), the
+        // temporary's store was owned by nothing, one record per evaluation, while the bound
+        // spelling (`t = schema(b, k)!`) gives it an owner.  Lifting rewrites the inline spelling
+        // into that bound form (the self-hosted elaborator's `default_into`; main, both
+        // backends).  `LOFT_NO_NCR_LIFT=1` leaves it inline.
+        if let Value::Block(bl) = val.unspan()
+            && bl.name == "ncr"
+            && let (Type::Reference(d_nr, dep) | Type::Enum(d_nr, true, dep), opt) =
+                bl.result.peel_optional()
+            && dep.is_empty()
+            // A callee that may answer a VIEW of an argument: the temporary is bound inside the
+            // block by the join or copy arm and nothing frees it.  A callee answering a fresh
+            // record has its temporary owned and freed by the scope already, and a lift beside
+            // it freed it twice (`mint(5)!.size`).
+            && matches!(bl.operators.first().map(Value::unspan), Some(Value::Set(_, rhs))
+                if matches!(rhs.unspan(), Value::Call(f, _)
+                    if !data.def(*f).name().starts_with("Op")
+                        && data.def(*f).is_loft_defined()
+                        && data.def(*f).returns_borrowed_view()))
+            && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_LIFT").is_some())
+        {
+            let base = match bl.result.peel_optional().0 {
+                Type::Enum(..) => Type::Enum(*d_nr, true, Deps::none()),
+                _ => Type::Reference(*d_nr, Deps::none()),
+            };
+            return Some(Self::reopt(opt, base));
+        }
         // loft#1157 — and the KEYED kinds, which that carve-out never named.  Its reasons are
         // PER ITEM and both are about a mechanism that exists elsewhere: text is freed in place
         // by the skip_free-orphan pass, a vector by its own delivery path.  A keyed `??` has

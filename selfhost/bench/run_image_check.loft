@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The run image's own check (@PLN91, handoff-2026-11-13-run-image.md step 1): load the image
+// `loft --emit-run-image` wrote and print each function's byte count and the FNV-1a hash of its
+// bytes, read from the image's code stream through its start table, in definition order.  They
+// must equal `LOFT_TRACE_BYTECODE`'s `fn` lines without the name column (the image keeps no
+// names).  Usage: `loft --lib selfhost/src selfhost/bench/run_image_check.loft <image>`.
+use ir;
+use load;
+
+// A 64-bit FNV-1a step held as two 32-bit halves, since a loft integer that overflows is
+// null: the prime is 2^40 + 0x1b3, so `h * prime` is `h * 0x1b3` plus `h` shifted by 40.
+struct Fnv { hi: integer, lo: integer }
+
+fn step(h: Fnv, b: integer) -> Fnv {
+  lo = h.lo ^ b;
+  m = 4294967295;
+  plo = lo * 435;
+  carry = plo >> 32;
+  nhi = (h.hi * 435 + carry + ((lo & 16777215) << 8)) & m;
+  Fnv { hi: nhi, lo: plo & m }
+}
+
+fn hex8(n: integer) -> text {
+  digits = "0123456789abcdef";
+  s = "";
+  for k in rev(0..8) {
+    d = (n >> (k * 4)) & 15;
+    s += digits[d..d + 1];
+  }
+  s
+}
+
+fn main() {
+  args = arguments();
+  if len(args) < 1 {
+    println("usage: run_image_check <image>");
+    return;
+  }
+  img = load::load_run(args[0] ?? "");
+  if img == null {
+    println("cannot load the run image");
+    return;
+  }
+  r = img!;
+  // Definition `d`'s code is `code[starts[d]..starts[d + 1]]`; one with none is skipped, as the
+  // trace skips it.
+  for d in 0..len(r.starts) - 1 {
+    from = r.starts[d] ?? 0;
+    till = r.starts[d + 1] ?? 0;
+    if till > from {
+      h = Fnv { hi: 3421674724, lo: 2216829733 };
+      for i in from..till {
+        h = step(h, r.code[i] ?? 0);
+      }
+      println("fn\t{till - from}\t{hex8(h.hi)}{hex8(h.lo)}");
+    }
+  }
+}

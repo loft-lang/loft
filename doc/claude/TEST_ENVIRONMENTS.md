@@ -195,17 +195,22 @@ or set `RUSTUP_HOME` / `CARGO_HOME` to the real ones, when the native half is pa
 the test claims.  `n3_use_native.rs::a_dependency_version_is_part_of_its_users_native_artifact`
 is the worked example; the defect it guards read as a flake in `manifest_less_resolution.rs`.
 
-## Cargo 1.100's build-dir layout: keep the old one for now
+## Cargo's build-dir layout: every reader takes both
 
-Cargo 1.100 builds into a new layout: one `target/<profile>/build/<crate>/<hash>/out/` per
-crate and no `target/<profile>/deps/`.  The native toolchain (`src/toolchain.rs`
-`rlib_search_dirs`), `scripts/make-release.sh` and the library cdylib builds still look in
-`deps/`, so on the new layout a `--native` build reports `E0463: can't find crate for loft`.
-Until they read the new layout, `__CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT=1` keeps the old
-one.  `make` exports it and every CI workflow that builds sets it.  A bare `cargo` command on
-a 1.100 toolchain needs it in the shell.  Cargo removes the opt-out one release later
-(rust-lang/cargo#17182), so the readers have to move before then.  `gen_target_surface.py`'s
-probe already reads both layouts.
+Cargo 1.100 builds into a per-unit layout: one `target/<profile>/build/<crate>/<hash>/` per
+unit, the build script's output under `run/`, and no `target/<profile>/deps/`; older cargo and
+an existing tree still have `deps/`.  Every reader of the build directory takes both:
+`src/cargo_layout.rs` for the native toolchain, the cache and the tests
+(`dependency_dirs`, `build_units`, `runtime_profile_dir`, `rlib_meta_header`), and
+`scripts/cargo_dep_files.sh` for `runtime_bundle.sh`, `make install` and `find_problems.sh`.
+A new reader goes through one of the two; a path spelled `deps/` by hand breaks on the default
+layout (`E0463: can't find crate for loft`, or `E0514` where a stale `deps/` from another
+rustc is still there).  The history of the switch is in
+[TEST_ENVIRONMENTS-history.md](TEST_ENVIRONMENTS-history.md).
+
+A `--native` run whose runtime rlib was built by another rustc rebuilds the runtime with
+`cargo build --release` from the CURRENT tree, replacing `target/release/loft` underneath any
+gate that runs it; a gate sets `LOFT_NO_AUTO_REBUILD=1`.
 
 ## macOS: what makes the suite slow, and the setup that removes it
 

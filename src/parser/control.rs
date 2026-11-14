@@ -19420,8 +19420,9 @@ impl Parser {
     /// that mint behind — the buffer is a parameter, so no free on the return path names it,
     /// and the caller frees only the result it is handed (`@FR-O-Complete`).  A pooled buffer
     /// (`@FR-R-Reuse`) hid it: the mint then refilled the caller's own store.  The source is
-    /// read into a view local (`_ret_src_N`, never freed: what it views is released by its own
-    /// owner) and the copy reads that, so only the path that copies mints.
+    /// read into a local (`_ret_src_N`) and the copy reads that, so only the path that copies
+    /// mints.  A source with deps is a view, never freed (its owner releases what it views);
+    /// one without owns its store, which the frame's exit releases.
     fn bind_leaving_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
         if self.first_pass
             || matches!(self.data.def(self.context).def_type(), DefType::Generic)
@@ -19442,10 +19443,31 @@ impl Parser {
             Value::Block(bl) => bl.result.depend(),
             _ => Vec::new(),
         };
+        // A source with no deps answers a store of its own (a call's fresh record,
+        // `v_if(lc.code, …)` after the arm's early `return`): the local OWNS it, and the
+        // frame's exit releases it after the copy.  Never freed, it leaked one record per
+        // pass (the self-hosted elaborator's `pattern_cond`).  `LOFT_NO_RET_SRC_OWNS=1`
+        // keeps every source a view.
+        // Not an arm ending in a LITERAL: its record lies in the literal's own buffer, which the
+        // frame releases — freed by the local too, it was freed twice.
+        fn tail_is_literal(v: &Value) -> bool {
+            match v.unspan() {
+                Value::Block(bl) if bl.name == "Object" => true,
+                Value::Block(bl) => bl.operators.last().is_some_and(tail_is_literal),
+                Value::Insert(ops) => ops.last().is_some_and(tail_is_literal),
+                Value::If(_, t, f) => tail_is_literal(t) || tail_is_literal(f),
+                _ => false,
+            }
+        }
+        let owns = deps.is_empty()
+            && !tail_is_literal(src)
+            && !crate::env_once!(std::env::var_os("LOFT_NO_RET_SRC_OWNS").is_some());
         let tp = Type::Optional(Box::new(Type::Reference(td, Deps::frame(deps))));
         let v = self.create_unique("_ret_src", &tp);
         self.vars.defined(v);
-        self.vars.set_skip_free(v);
+        if !owns {
+            self.vars.set_skip_free(v);
+        }
         let path = std::mem::replace(src, Value::Var(v));
         Some(crate::data::v_set(v, path))
     }
@@ -22433,7 +22455,32 @@ impl Parser {
             })
             .map(|(a, _)| a)
             .collect();
-            dep.retain(|d| !stale_visible.contains(d));
+            // `@FR-F-Ret` — a mid-body `return` sees its own value only, so a dep it does not
+            // justify may be one a LATER `return` does (`match v { … => { return mk(..); } … _
+            // => v }`).  Dropped here, the signature said "fresh" for the rest of the body, and
+            // a recursive call parsed there freed the store of the argument it was handed back.
+            // The site records what it justifies; the prune runs once every `return` has been
+            // seen: at the tail, whose body is the whole function, or at the end of the body
+            // (`finish_mid_return_prune`).  `LOFT_MID_RETURN_PRUNE=1` prunes here again.
+            if site == RetSite::MidReturn && !crate::keys::mid_return_prune_now() {
+                let attrs = self.data.def(self.context).attributes();
+                for &d in &dep {
+                    if attrs.get(d as usize).is_some_and(|at| !at.hidden)
+                        && !stale_visible.contains(&d)
+                    {
+                        self.mid_return_justified
+                            .insert((self.context, self.first_pass, d));
+                    }
+                }
+                self.mid_return_prune_pending
+                    .insert((self.context, self.first_pass));
+            } else {
+                dep.retain(|d| !stale_visible.contains(d));
+                if site == RetSite::BlockTail {
+                    self.mid_return_prune_pending
+                        .remove(&(self.context, self.first_pass));
+                }
+            }
             // loft#2179 — where mid-body `return`s of this pass hand back TWO or more different
             // parameters, every one of them stays declared.  A mid-body site's `body` is its own
             // value only, so the prune above dropped the parameter an earlier `return` merged:
@@ -23581,6 +23628,16 @@ impl Parser {
             }
         }
         self.last_called = u32::MAX;
+        if self.first_pass {
+            // The definition name is built in a reused buffer: a call to a declared function, the
+            // common case, allocates nothing here (the front-end allocation pins).
+            let mut def = std::mem::take(&mut self.call_def_name);
+            def.clear();
+            def.push_str("n_");
+            def.push_str(name);
+            self.last_forward_call = (self.data.def_nr(&def) == u32::MAX).then(|| def.clone());
+            self.call_def_name = def;
+        }
         // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
         if std::mem::take(&mut self.unhinted_set_refused) {
             return Type::Never;

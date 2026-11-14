@@ -124,6 +124,8 @@ src/main.rs            CLI; loads default/ then user file
   e.g. `t_4text_starts_with`. Operators `OpCamelCase` (loft) → `op_snake_case` (`fill.rs`).
 - `#rust "..."` in `default/*.loft` supplies the Rust body for codegen. Full naming + null-sentinel
   rules: [CODE.md](doc/claude/CODE.md).
+- **No source file passes 5000 lines** (owner, hard): one that reaches it is split into files of
+  at most 2500 lines before more is added ([RELEASE.md § File split](doc/claude/RELEASE.md)).
 - **A new op or builtin renumbers `index/target_surface.json`** — rebuild the wasm rlib, then
   `make surface-gen`, or `make ci` fails a drift guard no targeted suite shows (INTERMEDIATE.md).
 - stdlib load order: `01_code.loft` (operators/math/text/collections) → `02_files.loft` (I/O) →

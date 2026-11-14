@@ -3611,7 +3611,23 @@ impl Parser {
             let saved_in_fmt = self.in_format_expr;
             self.in_format_expr = true;
             let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-            let mut tp = if self.lexer.has_token("for") {
+            // `@FR-F-Interp` — a hole holds an expression.  An empty one (`"{}"`) is almost always
+            // a literal pair of braces the author meant; parsed as an expression it reported
+            // `Expect token )` and `Expect token ;` at the brace, which names neither the hole
+            // nor the escape.
+            let empty_hole = self.lexer.peek_token("}");
+            if empty_hole && !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "an empty `{{}}` in a text is a format hole with nothing in it — write `{{{{}}}}` \
+                     for a literal pair of braces, or put the value to show between them"
+                );
+            }
+            let mut tp = if empty_hole {
+                format = Value::str("");
+                Type::Text(crate::data::Deps::none())
+            } else if self.lexer.has_token("for") {
                 self.iter_for(&mut format, &mut append_value)
             } else {
                 self.expression(&mut format)
@@ -3777,7 +3793,14 @@ impl Parser {
                     list.push(self.cl(call, &[Value::Var(var), Value::str(&text)]));
                 }
             } else {
-                diagnostic!(self.lexer, Level::Error, "Formatter error");
+                // The hole's expression ended, an optional `:spec` was read, and what follows is
+                // neither the `}` that closes the hole nor the rest of the text.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "this format hole does not close here — a hole holds one expression, then \
+                     an optional `:spec`, then `}}`; write `{{{{` and `}}}}` for literal braces"
+                );
                 return Type::Void;
             }
         }
@@ -4437,7 +4460,7 @@ impl Parser {
             let mut create_iter = expr;
             let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
             let iter_next = self.iterator(&mut create_iter, &in_type, &it, iter_var, pre_var);
-            if !self.first_pass && iter_next == Value::Null {
+            if !self.first_pass && iter_next == Value::Null && !self.source_refused {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -5210,6 +5233,7 @@ impl Parser {
         name: &str,
     ) -> Type {
         self.unordered_iterator = false;
+        self.source_refused = false;
         // Borrowed, not cloned: this runs for every `for` header, and a cloned identifier is
         // an allocation each time (the front-end allocation pins count it).
         if matches!(&self.lexer.peek().has, LexItem::Identifier(u) if u == "unordered") {
@@ -5253,12 +5277,17 @@ impl Parser {
                     return in_type;
                 }
                 // rev() wrapping a bare collection (not a range subscript).
+                // `@FR-B-Ref-Uniform`: a `&` collection parameter reverses as the collection.
                 if matches!(
-                    in_type,
+                    in_type.peel_link(),
                     Type::Sorted(_, _, _) | Type::Index(_, _, _) | Type::Vector(_, _)
                 ) {
                     // reverse_iterator stays set; consumed and reset by iterator()
-                } else if !matches!(in_type, Type::Null) {
+                } else if !matches!(in_type, Type::Null)
+                    // A local bound from a function declared further down is typed only on
+                    // the second pass, which decides it; the first knows nothing to refuse.
+                    && (!self.first_pass || !in_type.is_unknown())
+                {
                     self.reverse_iterator = false;
                     // A NULLABLE collection is refused — `@FR-I-NullSrc` draws the line
                     // explicitly: a `nullref` (a runtime null of a NON-nullable type) iterates
@@ -5280,6 +5309,7 @@ impl Parser {
                             "rev() on a non-range expression must wrap a sorted, index, or vector collection"
                         );
                     }
+                    self.source_refused = true;
                 }
                 self.lexer.token(")");
             }
@@ -6731,6 +6761,10 @@ impl Parser {
         let mut list = Vec::new();
         let mut new_object = false;
         let mut in_place_var: Option<u16> = None;
+        // The parameter whose rebind this literal detaches IN PLACE: told to `parse_assign_op`
+        // (`rebind_lowered`) only once the in-place construction is kept, never by an attempt a
+        // retry abandons for a construction built apart.
+        let mut param_detached: Option<u16> = None;
         // @FR-R-InPlaceLiteral's staging clause — the variable a field initialiser must be
         // hoisted for, which is NOT `in_place_var`: that one also drives the retry below
         // (`*code = Value::Var(v_nr)`), which is only meaningful for a whole-variable
@@ -6900,7 +6934,10 @@ impl Parser {
                     // the construction's own ops.  Tell `parse_assign_op` — which carries
                     // the same lowering for every OTHER right-hand side — that this
                     // statement already has one (loft#1290).
-                    self.rebind_lowered = *v_nr;
+                    param_detached = Some(*v_nr);
+                    if crate::env_once!(std::env::var_os("LOFT_REBIND_FLAG_EARLY").is_some()) {
+                        self.rebind_lowered = *v_nr;
+                    }
                 } else if !self.vars.is_argument(*v_nr) {
                     // A non-arg local OWNS its store; the `Set(Null)` lets the
                     // allocator reuse-or-fresh it in place (pre-existing).  A
@@ -7238,6 +7275,13 @@ impl Parser {
                     ));
                 }
             }
+        }
+        // The in-place construction is kept: its detach is in `list` (`param_detached`).  A
+        // retry above built the literal apart and returned without one, so the assignment's own
+        // lowering (`rebind_local_heap_param`) supplies it — left claimed, the rebind freed the
+        // caller's store (`LOFT_REBIND_FLAG_EARLY=1`).
+        if let Some(v) = param_detached {
+            self.rebind_lowered = v;
         }
         if new_object && let Value::Var(v) = code {
             list.push(Value::Var(*v));

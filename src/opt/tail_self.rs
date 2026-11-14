@@ -196,10 +196,28 @@ fn rewrite_body(code: &mut Value, voids: bool, cx: &mut Cx) {
     if let Value::Span(bx) = code {
         return rewrite_body(&mut bx.1, voids, cx);
     }
-    let ops = match code {
+    let mut ops = match code {
         Value::Block(b) => std::mem::take(&mut b.operators),
         Value::Insert(items) => std::mem::take(items),
         _ => return,
+    };
+    // `@FR-O-Buffer` — a return buffer's ENTRY witness names the store the caller handed, and
+    // the jump forwards the buffer to the next pass, so the snapshot is taken once, before the
+    // loop.  Retaken per pass it named what the first pass had allocated into a null buffer,
+    // and the release at the final return declined a store nobody else frees.
+    // `LOFT_TAIL_JUMP_FREES_BUFFER=1` keeps it in the loop.
+    let entry: Vec<Value> = if crate::keys::tail_jump_frees_buffer() {
+        Vec::new()
+    } else {
+        let is_entry = |op: &Value| {
+            matches!(op.unspan(), Value::Set(w, val)
+                if matches!(val.unspan(), Value::Call(_, a)
+                    if matches!(a.first().map(Value::unspan), Some(Value::Var(b))
+                        if cx.vars.entry_witness(*b) == Some(*w))))
+        };
+        let (e, rest): (Vec<Value>, Vec<Value>) = ops.into_iter().partition(|op| is_entry(op));
+        ops = rest;
+        e
     };
     let pos = if voids { Pos::Void } else { Pos::Return };
     let mut body = block(ops, Some(pos), &[], 0, cx);
@@ -218,6 +236,7 @@ fn rewrite_body(code: &mut Value, voids: bool, cx: &mut Cx) {
         .filter(|(p, _)| crate::data::is_dbref_slot(cx.vars.tp(**p).base()))
         .map(|(_, t)| v_set(*t, Value::Null))
         .collect();
+    ops.extend(entry);
     ops.push(v_loop(body, "tail_self"));
     match code {
         Value::Block(b) => b.operators = ops,
@@ -246,7 +265,36 @@ fn releases(
         })
         .collect();
     f.extend_from_slice(epi);
+    // `@FR-O-Buffer` — the jump hands the function's own return buffer to the next pass as that
+    // pass's buffer (a tail call forwards it), so the return-time release of a buffer that
+    // moved off its entry store does not belong on the jump: run there, it freed a store the
+    // first pass had allocated into a null buffer, and the next pass wrote into it.
+    // `LOFT_TAIL_JUMP_FREES_BUFFER=1` keeps the release.
+    if !crate::keys::tail_jump_frees_buffer() {
+        f.retain(|op| !releases_return_buffer(op, cx));
+    }
     f
+}
+
+/// Is `op` a release (or a guard around one) of a promoted return buffer — a variable with an
+/// entry witness?  A guard whose release is of anything else answers no.
+fn releases_return_buffer(op: &Value, cx: &Cx) -> bool {
+    match op.unspan() {
+        Value::If(_, a, b) => {
+            releases_return_buffer(a, cx)
+                && matches!(b.unspan(), Value::Null | Value::Block(_) if !is_nonempty(b))
+        }
+        Value::Call(d, items) => {
+            cx.data.def(*d).name().starts_with("OpFreeRef")
+                && matches!(items.first().map(Value::unspan), Some(Value::Var(b))
+                    if cx.vars.entry_witness(*b).is_some())
+        }
+        _ => false,
+    }
+}
+
+fn is_nonempty(v: &Value) -> bool {
+    matches!(v.unspan(), Value::Block(b) if !b.operators.is_empty())
 }
 
 /// A release as the jump runs it, where `x` is the delivery place no value has reached:

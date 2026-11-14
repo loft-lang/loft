@@ -1970,6 +1970,11 @@ impl Lexer {
                 // `@FR-F-Escape` — `{{` is one literal `{`; the second is consumed below.
                 if let Some('{') = self.iter.peek() {
                     res.push(c);
+                } else if let Some('}') = self.iter.peek() {
+                    // `{}` — a hole with nothing in it, almost always a literal pair of braces.
+                    // Said here, and read on as that pair, so the rest of the line still parses.
+                    self.empty_hole();
+                    res.push_str("{}");
                 } else if !self.hole_closes_on_this_line() {
                     // Say it here, where the `{` is, and carry on as though the author
                     // had written `{{` — which is the fix offered.  Opening a hole that
@@ -2077,6 +2082,9 @@ impl Lexer {
                 self.next_char();
                 if let Some('{') = self.iter.peek() {
                     res.push(c);
+                } else if let Some('}') = self.iter.peek() {
+                    self.empty_hole();
+                    res.push_str("{}");
                 } else if !self.hole_closes_on_this_line() {
                     self.unclosed_hole();
                     res.push('{');
@@ -2968,6 +2976,21 @@ impl Lexer {
     /// existed the two halves of the same mistake got very different answers — `}` a
     /// coded error naming `}}`, `{` a bare "Formatter error" raised four diagnostics
     /// later by a parser that could not know a `{` started it (loft#989).
+    /// An empty `{}` where a format string expects a hole: `@FR-F-Interp` says a hole holds an
+    /// expression, and an empty one is almost always a literal pair of braces.  The scanner
+    /// stands on the `}` (consumed after the call), one column past the `{`.
+    fn empty_hole(&mut self) {
+        let mut at = self.position;
+        at.pos = at.pos.saturating_sub(1).max(1);
+        diagnostic_at!(
+            self,
+            &at,
+            Level::Error,
+            "an empty `{{}}` in a text is a format hole with nothing in it — write `{{{{}}}}` for a \
+             literal pair of braces, or put the value to show between them"
+        );
+    }
+
     fn unclosed_hole(&mut self) {
         // The scanners consume the brace before reporting, so the cursor sits ONE column
         // past the `{`.  Point the caret AT it instead of one past: the whole message is

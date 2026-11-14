@@ -6448,6 +6448,16 @@ impl Function {
             .map_or(0, |v| v.nullable_line)
     }
 
+    /// Record `line` as the assignment that gave `var_nr` a nullable value, unless one did
+    /// already ([`Self::nullable_line`]).
+    pub(crate) fn note_nullable_line(&mut self, var_nr: u16, line: u32) {
+        if let Some(v) = self.variables.get_mut(var_nr as usize)
+            && v.nullable_line == 0
+        {
+            v.nullable_line = line;
+        }
+    }
+
     pub fn set_type(&mut self, var_nr: u16, tp: Type) {
         self.trace_type_change(var_nr, &tp, "set_type");
         self.variables[var_nr as usize].type_def = tp;

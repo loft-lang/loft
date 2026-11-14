@@ -46,16 +46,22 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-// @speed 1.0
-#[test]
-fn dhtml_vector_arg_gl_host_import_is_emitted() {
-    if !wasm32_installed() {
-        eprintln!(
-            "SKIP dhtml_vector_arg_gl_host_import_is_emitted: wasm32-unknown-unknown target not installed"
-        );
-        return;
+// The test whose subject is the Rust writer's page runs in the nightly, never per change
+// (TESTING.md § The compiled backend a test runs on; scripts/ci_test_filter.py).
+mod rust_writer {
+    use super::*;
+
+    // @speed 1.0
+    #[test]
+    fn dhtml_vector_arg_gl_host_import_is_emitted() {
+        if !wasm32_installed() {
+            eprintln!(
+                "SKIP dhtml_vector_arg_gl_host_import_is_emitted: wasm32-unknown-unknown target not installed"
+            );
+            return;
+        }
+        vector_arg_import_is_emitted("--native-rust", "rust");
     }
-    vector_arg_import_is_emitted("--native-rust", "rust");
 }
 
 /// The same page from the C backend (@PLN203 C6): the import comes from the one contract both

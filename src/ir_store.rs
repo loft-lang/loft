@@ -900,6 +900,199 @@ pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result
     )
 }
 
+/// The RUN image (the run-image handoff under doc/claude/plans/91-self-host/): the
+/// bytecode the Rust writer produced (`compile::byte_code`), stored as it was written so the
+/// loft runner executes it in place — no IR, no lowering on the run path.
+///
+/// Written into `root` (a zeroed `RunImage` record, `selfhost/src/ir.loft`): the program's and
+/// the standard library's code as ONE byte vector (a call's operand is an absolute position in
+/// it), each definition's start in it (`starts`, see [`run_image_starts`]), the natives by the
+/// index `OpStaticCall` carries (`State::library_names`; an index nothing names stays an empty
+/// text), the type schema of the program's stores, the entry definition and whether the
+/// program declared `#cwd`.  Every vector is reserved at its exact length first
+/// (`@FR-Col-Capacity`): grown by doubling, each would carry up to twice its content.
+#[cfg(feature = "mmap")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the run image's parts, each from its own owner"
+)]
+fn materialize_run_image(
+    stores: &mut Stores,
+    root: DbRef,
+    code: &[u8],
+    starts: &[u32],
+    library_names: &crate::fxhash::FxHashMap<String, u16>,
+    schema: &[SchemaType],
+    main: i64,
+    cwd: bool,
+) {
+    stores
+        .store_mut(&root)
+        .zero_range(root.rec, root.pos, ds::RUNIMG_STRIDE);
+    let rec = Record::new(root);
+    let slot = |off: u32| DbRef {
+        pos: root.pos + off,
+        ..root
+    };
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_CODE),
+        count(code.len()),
+        1,
+        &mut stores.allocations,
+    );
+    crate::vector::append_bytes(&slot(ds::RUNIMG_CODE), code, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_STARTS),
+        count(starts.len()),
+        4,
+        &mut stores.allocations,
+    );
+    let sv = rec.field_recvec(ds::RUNIMG_STARTS, 4);
+    for &at in starts {
+        let e = sv.push(stores).db_ref();
+        stores.store_mut(&e).set_u32_raw(e.rec, e.pos, at);
+    }
+    let mut natives: Vec<&str> = Vec::new();
+    for (name, &idx) in library_names {
+        let i = usize::from(idx);
+        if natives.len() <= i {
+            natives.resize(i + 1, "");
+        }
+        natives[i] = name;
+    }
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_NATIVES),
+        count(natives.len()),
+        4,
+        &mut stores.allocations,
+    );
+    let nv = rec.field_recvec(ds::RUNIMG_NATIVES, 4);
+    for n in natives {
+        let e = nv.push(stores);
+        e.set_field_str(stores, 0, n);
+    }
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_TYPES),
+        count(schema.len()),
+        ds::DBTYPE_STRIDE,
+        &mut stores.allocations,
+    );
+    materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
+    rec.set_field_int(stores, ds::RUNIMG_MAIN, main);
+    rec.set_field_bool(stores, ds::RUNIMG_CWD, cwd);
+}
+
+/// Each definition's first byte in the code stream, and one more entry for the stream's end, so
+/// definition `d`'s code is `starts[d]..starts[d + 1]`: a definition with no bytecode starts
+/// where the one before it ended.  `None` when the code is not laid out in definition order —
+/// the one shape this table cannot hold.
+#[must_use]
+pub fn run_image_starts(data: &Data, code_len: usize) -> Option<Vec<u32>> {
+    let mut starts = Vec::with_capacity(data.definitions() as usize + 1);
+    let mut at = 0_u32;
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.code_length > 0 {
+            if def.code_position < at {
+                return None;
+            }
+            // A gap between two functions belongs to the one before it.
+            at = def.code_position;
+        }
+        starts.push(at);
+        at += def.code_length;
+    }
+    starts.push(u32::try_from(code_len).ok()?.max(at));
+    Some(starts)
+}
+
+/// Write the run image of a compiled program to `path` — its bytecode `code`, the natives by
+/// index, the `program`'s stores' schema and `#cwd` — with its layout sidecar (`RunImage` of
+/// the IR schema), atomically as [`save_bundle`] writes a bundle.  The parts arrive as data:
+/// this layer does not name the interpreter that holds them.
+///
+/// # Errors
+/// As [`save_bundle`]: a file-remove, sidecar-write or `rename` error, or a temp path that
+/// cannot be created, opened or sized; and `InvalidData` when the bytecode is not laid out in
+/// definition order ([`run_image_starts`]).
+///
+/// # Panics
+/// If the materialized root does not land at [`ds::IR_ROOT_REC`].
+#[cfg(feature = "mmap")]
+pub fn save_run_image(
+    code: &[u8],
+    library_names: &crate::fxhash::FxHashMap<String, u16>,
+    program: &Stores,
+    data: &Data,
+    path: &str,
+) -> std::io::Result<()> {
+    let Some(starts) = run_image_starts(data, code.len()) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the bytecode is not laid out in definition order",
+        ));
+    };
+    let main = match data.def_nr("n_main") {
+        u32::MAX => -1,
+        d => i64::from(d),
+    };
+    let tmp = format!("{path}.{}.tmp", std::process::id());
+    match crate::file_access::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let slot = {
+        let fstore = crate::store::Store::try_open(&tmp)?;
+        let mut stores = Stores::new();
+        let nr = stores.adopt_store(fstore);
+        let rec = stores.allocations[nr as usize].claim(ds::RUNIMG_ROOT_WORDS);
+        assert_eq!(
+            rec,
+            ds::IR_ROOT_REC,
+            "run-image root must be the first record of a fresh store"
+        );
+        let root = DbRef {
+            store_nr: nr,
+            rec,
+            pos: ds::IR_ROOT_POS,
+        };
+        materialize_run_image(
+            &mut stores,
+            root,
+            code,
+            &starts,
+            library_names,
+            &program.types,
+            main,
+            !program.program_relative,
+        );
+        // The image is the bytes it holds: the store's growth room past its last record is cut
+        // off before the file is published (`Store::shrink_to`, which refuses anything else).
+        let live = stores.allocations[nr as usize].usage();
+        if live.walk_complete {
+            stores.allocations[nr as usize].shrink_to(live.live_end_words);
+        }
+        nr
+    };
+    let mut ir = Stores::new();
+    let ids = crate::ir_schema_gen::register_ir_schema(&mut ir);
+    let identity = crate::schema_sidecar::LayoutIdentity::of_store(&ir, slot, ids.run_image);
+    let staged = match identity.stage_beside(std::path::Path::new(path)) {
+        Ok(staged) => staged,
+        Err(e) => {
+            let _ = crate::file_access::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+    crate::file_access::rename(&tmp, path)?;
+    crate::file_access::rename(
+        &staged,
+        crate::schema_sidecar::dschema_path(std::path::Path::new(path)),
+    )
+}
+
 /// Write `v` into the already-allocated `slot` (its bytes are zeroed).
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {

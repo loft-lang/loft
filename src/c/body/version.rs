@@ -17,7 +17,8 @@
 //! - THE PRECONDITION `f__vp`: the leaf's tests over its parameters, inputs and header
 //!   lengths, every operation through `loft_vg_*` (a null operand or an overflow refuses).
 //! - THE FAST TWIN: the leaf written with each decided `if` its arm, each proven element
-//!   access through `loft_vh_at_int`/`loft_vh_put_int`, each tested operation plain.
+//!   access through `loft_vh_at_*`/`loft_vh_put_*` (a narrow read through the element's
+//!   address), each tested operation plain.
 
 use super::{FnWriter, as_int};
 use crate::c::{CType, Cx, c_name};
@@ -785,6 +786,9 @@ pub(super) fn version_access(
     match (name, value) {
         ("OpSetInt", Some(v)) => {
             format!("loft_vh_put_int({held}, {size}, {index}, {fld}, {v})")
+        }
+        ("OpSetInt4Raw", Some(v)) => {
+            format!("loft_vh_put_u32({held}, {size}, {index}, {fld}, {v})")
         }
         ("OpSetFloat", Some(v)) => {
             format!("loft_vh_put_float({held}, {size}, {index}, {fld}, {v})")

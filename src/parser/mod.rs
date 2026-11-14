@@ -549,6 +549,13 @@ pub struct Parser {
     /// it cannot tell a parameter another `return` borrows from a stale one; this is how it
     /// knows (`ref_return`'s D-own-2 prune).
     pub(crate) mid_return_param_deps: std::collections::HashSet<(u32, bool, u16)>,
+    /// `@FR-F-Ret` — the visible parameters a mid-body `return` justifies as a borrow source,
+    /// by `(function, first_pass, attribute)`, and the functions whose D-own-2 prune waits for
+    /// the end of the body (`ref_return`, `finish_mid_return_prune`).  A mid-body site sees
+    /// only its own value, so it must not drop a dep a later `return` justifies: the signature
+    /// is read while the body is still parsed, by the function's own recursive calls.
+    pub(crate) mid_return_justified: std::collections::HashSet<(u32, bool, u16)>,
+    pub(crate) mid_return_prune_pending: std::collections::HashSet<(u32, bool)>,
     /// loft#2188 — the parser is reading the right-hand side of a plain local's `=`: a branch
     /// there is a VALUE being bound, whose arms `lift_borrowing_call_value` lifts.  Cleared
     /// inside a lambda's body, whose tail is a return position again (`ref_return`'s).
@@ -1039,6 +1046,17 @@ pub struct Parser {
     /// the file.  Consumed by `promote_late_text_buffers` between the passes, where the
     /// callee exists — the same late-derivation slot `reserve_late_return_buffers` uses.
     late_text_tails: Vec<(u32, u16)>,
+    /// `@FR-N-Join` — pass 1's binds of an INFERRED local from a call whose callee was not yet
+    /// declared, `(function, local, callee, line)`: its return type was unknown there, so a `τ?`
+    /// answer did not widen the local.  `widen_late_call_joins` widens it between the passes,
+    /// so pass 2 reads every use against the join, whatever order the two functions are in.
+    late_call_joins: Vec<(u32, u16, String, u32)>,
+    /// Pass 1: the definition name of the last call parsed, when no such function was declared
+    /// yet (`parse_call`); `None` after a call to a known one.  Taken by the assignment whose
+    /// value it was (`note_late_call_join`).
+    pub(crate) last_forward_call: Option<String>,
+    /// The scratch buffer `parse_call` builds a callee's definition name in on pass 1.
+    call_def_name: String,
     /// loft#945 — every short `|x|` lambda whose return type is to be read off its own
     /// BODY, because nothing else names it: no `-> τ` (the short form forbids one) and no
     /// return in the hint that placed it (`map`'s callback, whose `U` is free).
@@ -1151,6 +1169,9 @@ pub struct Parser {
     /// Set by `parse_in_range` when `rev(collection)` (without a `..` range) is parsed.
     /// Consumed by `fill_iter` to add the reverse bit (64) into the `on` byte of OpIterate/OpStep.
     reverse_iterator: bool,
+    /// The source of the `for` being parsed was refused where it was written (`rev(n)` over a
+    /// non-collection): the loop's own "cannot iterate" refusal would repeat it.
+    source_refused: bool,
     /// `@FR-Col-Unordered` — set by `parse_in_range` when the iterable is `unordered(c)`, and
     /// taken by `keyed_snapshot`, which then builds a hash's snapshot in slot order instead of
     /// key order.  Any other walk ignores it: key order is one of the orders `unordered` allows.
@@ -2104,6 +2125,8 @@ impl Parser {
             abstract_vars: std::collections::HashMap::new(),
             plain_declared: std::collections::HashSet::new(),
             mid_return_param_deps: std::collections::HashSet::new(),
+            mid_return_justified: std::collections::HashSet::new(),
+            mid_return_prune_pending: std::collections::HashSet::new(),
             in_bind_rhs: false,
             produced: None,
             pending_lambda_facts: Vec::new(),
@@ -2168,6 +2191,9 @@ impl Parser {
             par_deferred: Vec::new(),
             par_replay_body: None,
             late_text_tails: Vec::new(),
+            late_call_joins: Vec::new(),
+            last_forward_call: None,
+            call_def_name: String::new(),
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
@@ -2186,6 +2212,7 @@ impl Parser {
             bound_method_stubs: Vec::new(),
             stub_origin: std::collections::HashMap::new(),
             reverse_iterator: false,
+            source_refused: false,
             unordered_iterator: false,
             iterable_context: false,
             last_range_from: None,
@@ -3422,7 +3449,9 @@ pub(crate) fn find_written_vars(
             // OpCopyRecord(src, dst, type) writes through `dst` (arg[1]).
             // Used by struct field whole-replacement (`s.i = fresh`) where the
             // destination is `OpGetField(s, …)`.
-            let second_arg_write = def.name() == "OpCopyRecord";
+            // OpRemove(state_var, data, on, tp) — a walk's `x#remove` — removes from the walked
+            // collection `data` (arg[1]), as OpCopyRecord writes its destination.
+            let second_arg_write = matches!(def.name(), "OpCopyRecord" | "OpRemove");
             for (i, arg) in args.iter().enumerate() {
                 if i < attrs.len()
                     && matches!(attrs[i].typedef, Type::RefVar(_))
@@ -3618,7 +3647,9 @@ pub(crate) fn find_field_written_vars(
                 // (a `__retbuf = call(…)` Set, or the BlockTail path's `OpClearVector`), so
                 // the omission is masked INCIDENTALLY rather than by design.
                 || def.name() == "OpReplaceVector";
-            let second_arg_write = def.name() == "OpCopyRecord";
+            // OpRemove(state_var, data, on, tp) — a walk's `x#remove` — removes from the walked
+            // collection `data` (arg[1]), as OpCopyRecord writes its destination.
+            let second_arg_write = matches!(def.name(), "OpCopyRecord" | "OpRemove");
             for (i, arg) in args.iter().enumerate() {
                 if i == 0 && first_arg_write {
                     collect_vars_in(arg, written);

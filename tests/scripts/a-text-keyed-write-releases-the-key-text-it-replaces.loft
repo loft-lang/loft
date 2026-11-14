@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `c[k] = r` into a collection keyed by a TEXT deep-copies `r`, its key text included, then
+// writes the subscript's key over the copy's key field; a key already there is replaced, which
+// removes its element.  Rust releases the text the key field held (`keys::set_key`) and what a
+// removed sorted element owned (`Stores::remove_owned`).  The C runtime did neither: its
+// `loft_key_set` wrote the new text over the old, and a sorted's replace only shifted the
+// vector (`loft_sorted_remove`).  Each such write left dead records in the collection's store —
+// the values right, the store growing — on the C backend and on the loft-in-loft interpreter,
+// which runs on that runtime (tests/scripts/882, 889 and 890's alloc traces).
+//
+// Each cell writes the same four keys over and over, by a copy and by a literal written in
+// place, and reads the collection's record count off `store_memory()`: after 200 writes it is
+// what it was after 4 (hand-computed: a write under a key already there replaces its element).
+// The values are read back too: the last write of key j is i = n - 4 + j, so they sum to
+// 4 * (n - 4) + 6.
+//
+// @falsified-at: none — by hand, on the C backend: with only the key-text release, `sorted copy`
+//   failed (202 records after 200 writes, 6 after 4); before either fix the alloc traces of a
+//   trie, hash, sorted and index probe showed one dead text record per write.  The interpreter
+//   held throughout.
+// HOLDS: equal counts and the hand-computed values on the interpreter and the C backend.
+
+struct Tx { tq: text, tr: integer }
+
+// The record count `store_memory()` reports for the store of type `tp`, or -1.
+fn recs_of(tp: text) -> integer {
+  report = store_memory();
+  at = report.find("type {tp}") ?? -1;
+  if at < 0 {
+    return -1;
+  }
+  line_start = 0;
+  for i in 0..at {
+    if report[i] == '\n' {
+      line_start = i + 1;
+    }
+  }
+  line = report[line_start..at];
+  r = line.find("recs ") ?? -1;
+  if r < 0 {
+    return -1;
+  }
+  n = 0;
+  for c in line[r + 5..] {
+    if c == ' ' {
+      if n > 0 {
+        return n;
+      }
+    } else if c >= '0' && c <= '9' {
+      n = n * 10 + (c as integer - '0' as integer);
+    } else {
+      return n;
+    }
+  }
+  n
+}
+
+fn trie_copy(n: integer) -> integer {
+  t: trie<Tx[tq]> = [];
+  for i in 0..n { r = Tx { tq: "k{i % 4}", tr: i }; t["k{i % 4}"] = r; }
+  total = 0;
+  for k in 0..4 { total += (t["k{k}"] ?? Tx { tq: "", tr: -1000 }).tr; }
+  assert(total == 4 * (n - 4) + 6, "trie copy values {total}");
+  recs_of("trie<Tx[tq]>")
+}
+
+fn hash_copy(n: integer) -> integer {
+  h: hash<Tx[tq]> = [];
+  for i in 0..n { r = Tx { tq: "k{i % 4}", tr: i }; h["k{i % 4}"] = r; }
+  total = 0;
+  for k in 0..4 { total += (h["k{k}"] ?? Tx { tq: "", tr: -1000 }).tr; }
+  assert(total == 4 * (n - 4) + 6, "hash copy values {total}");
+  recs_of("hash<Tx[tq]>")
+}
+
+fn hash_literal(n: integer) -> integer {
+  h: hash<Tx[tq]> = [];
+  for i in 0..n { h["k{i % 4}"] = Tx { tq: "k{i % 4}", tr: i }; }
+  total = 0;
+  for k in 0..4 { total += (h["k{k}"] ?? Tx { tq: "", tr: -1000 }).tr; }
+  assert(total == 4 * (n - 4) + 6, "hash literal values {total}");
+  recs_of("hash<Tx[tq]>")
+}
+
+fn sorted_copy(n: integer) -> integer {
+  s: sorted<Tx[tq]> = [];
+  for i in 0..n { r = Tx { tq: "k{i % 4}", tr: i }; s["k{i % 4}"] = r; }
+  total = 0;
+  for k in 0..4 { total += (s["k{k}"] ?? Tx { tq: "", tr: -1000 }).tr; }
+  assert(total == 4 * (n - 4) + 6, "sorted copy values {total}");
+  recs_of("sorted<Tx[tq]>")
+}
+
+fn index_copy(n: integer) -> integer {
+  x: index<Tx[tq]> = [];
+  for i in 0..n { r = Tx { tq: "k{i % 4}", tr: i }; x["k{i % 4}"] = r; }
+  total = 0;
+  for k in 0..4 { total += (x["k{k}"] ?? Tx { tq: "", tr: -1000 }).tr; }
+  assert(total == 4 * (n - 4) + 6, "index copy values {total}");
+  recs_of("index<Tx[tq]>")
+}
+
+fn main() {
+  // The control: the channel reads a count at all.
+  assert(trie_copy(4) > 0, "the trie's record count is read");
+  assert(trie_copy(200) == trie_copy(4), "trie copy: {trie_copy(200)} records after 200 writes, {trie_copy(4)} after 4");
+  assert(hash_copy(200) == hash_copy(4), "hash copy: {hash_copy(200)} records after 200 writes, {hash_copy(4)} after 4");
+  assert(hash_literal(200) == hash_literal(4), "hash literal: {hash_literal(200)} after 200, {hash_literal(4)} after 4");
+  assert(sorted_copy(200) == sorted_copy(4), "sorted copy: {sorted_copy(200)} after 200, {sorted_copy(4)} after 4");
+  assert(index_copy(200) == index_copy(4), "index copy: {index_copy(200)} after 200, {index_copy(4)} after 4");
+  println("ok");
+}

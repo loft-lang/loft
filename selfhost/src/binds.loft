@@ -242,9 +242,19 @@ fn rebind_keeps_displaced(f: ir::Function, v: integer) -> boolean {
   is_buffer_witnessed(f, v)
 }
 
-// src/variables/mod.rs:5391 fn owns_displaced_store — may the store `v` DISPLACES at
+// src/variables/mod.rs fn owns_displaced_store — may the store `v` DISPLACES at
 // `v = value` be freed?
+// A bare `null` is a pass's LET-GO (`a = null` reaches the IR as `OpNullRefSentinel()`): the
+// local hands its record on and displaces nothing it owns (`LOFT_NULL_LETGO_FREES` unset).
 fn owns_displaced_store(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> boolean {
+  !(unspan_node(value) is NdNull) && owns_its_binding(b, f, v, value) && !rebind_keeps_displaced(f, v)
+}
+
+// src/variables/mod.rs fn owns_its_binding — is `v` an OWNER at `v = value`:
+// `owns_displaced_store` without loft#1522's veto, which decides only who releases the displaced
+// store (`@FR-B-Copy` does not depend on who frees).  A view is no owner: its deps name what it
+// views.
+fn owns_its_binding(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   t = base(tp(f, v));
   store_backed = match t {
     TyReference { n: _, dep: _ } => true,
@@ -255,7 +265,6 @@ fn owns_displaced_store(b: ir::Bundle, f: ir::Function, v: integer, value: ir::N
   (store_backed || is_keyed(t))
     && proxy_says_owned(f, v)
     && !is_captured(f, v)
-    && !rebind_keeps_displaced(f, v)
     && !is_null_sentinel_detach(b, f, v, value)
 }
 
@@ -623,10 +632,15 @@ fn is_return_temp_owning_its_arms(b: ir::Bundle, d: integer, f: ir::Function, v:
 // src/state/codegen.rs:2741 `owned_ref` — the displaced store is this frame's to free:
 // `owns_displaced_store` or a return temp owning its arms, and not the hidden buffer argument
 // unless an entry witness (:2730) guards it.
-fn owned_ref(b: ir::Bundle, d: integer, f: ir::Function, v: integer, value: ir::Node) -> boolean {
+// A keyed local whose null init minted nothing and that is only ever bound to a null or a borrow
+// never holds a store of its own, so a reassignment displaces nothing (src/bind_lowering.rs
+// `re_bind`'s `keyed_view`, @PLN220).
+pub fn owned_ref(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   s1 = s1_substituted(b, v, value);
+  keyed_view = owns_keyed_store(tp(f, v)) && !keyed_null_mints(f, v) && only_null_or_borrowed(b, ops, d, v);
   (owns_displaced_store(b, f, v, value) || is_return_temp_owning_its_arms(b, d, f, v))
     && (!is_hidden_buf_arg(b, d, f, v, s1) || entry_witness(f, v) != null)
+    && !keyed_view
 }
 
 // ── projections (src/use_analysis.rs) ──
@@ -643,7 +657,8 @@ fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer? {
       if !own::is_projection_op(b, def_nr) || len(args) == 0 {
         return null;
       }
-      own::var_of(args[0]!) ?? projection_container_var(b, args[0])
+      // A bare-variable discharge (`va!.p`) is `va` itself (`discharged_variable`).
+      own::var_of(args[0]!) ?? own::discharged_variable(args[0]!) ?? projection_container_var(b, args[0])
     }
     _ => null,
   }
@@ -702,11 +717,27 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
       continue;
     }
     t = at.typedef[0]!;
+    // A `&` link carries the store of what it links to; a `τ?` carries τ's.
+    carried = match t { TyRefVar { inner } => inner, _ => t };
+    link_target: ir::TypeT? = match t { TyRefVar { inner } => inner, _ => null };
     // `heap_dep()` already peels; `base().heap_dep()` peels once more.
-    if !own::has_heap_dep(t) && !own::has_heap_dep(base(t)) {
+    if !own::has_heap_dep(carried) && !own::has_heap_dep(base(carried)) {
+      // A TUPLE carries the stores of its heap members, and the callee may hand one back
+      // (`fn first(p: (R, integer)) -> R { p.0 }`): a literal's members protect their roots,
+      // any other tuple leaves the set incomplete, so the copy frees no source.
+      if heap_leaves(carried) > 0 {
+        roots = tuple_member_roots(b, arg, carried);
+        if roots == null {
+          r.covers_all = false;
+        } else {
+          for x in roots! {
+            insert_sorted_unique(r.slots, x);
+          }
+        }
+      }
       continue;
     }
-    // src/use_analysis.rs:3319 fn is_protectable_store_type — `is_dbref(tp.base())`.
+    // src/use_analysis.rs fn is_protectable_store_type — `is_dbref(tp.base())`.
     protectable = own::base_is_dbref(t);
     // The arms match the argument AS GIVEN, spans included; only `view_root_slots` peels them.
     match arg {
@@ -723,6 +754,12 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
           // holds no store
         } else if protectable {
           view_roots_into(b, arg, r);
+        } else if own::def_name(b, cd) == "OpCreateStack" && link_target != null && own::base_is_dbref(link_target!) {
+          // A `&` link to a local: the callee reaches that local's store and may hand it back.
+          match cargs[0] ?? ir::NdNull {
+            NdVar { n: u } => { insert_sorted_unique(r.slots, u); },
+            _ => { r.covers_all = false; }
+          }
         } else {
           r.covers_all = false;
         }
@@ -735,6 +772,117 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
         }
       }
     }
+  }
+}
+
+// src/bind_lowering.rs fn join_base — the base a rebind joins on (R1): a choice's
+// whole-variable arm (`choice_var_arm`), else the oracle's `Join` base.
+pub fn join_base(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, value: ir::Node, v: integer) -> integer? {
+  cv = choice_var_arm(b, ops, d, f, value, v);
+  if cv != null {
+    return cv;
+  }
+  own::named_join_base(own::ownership_of(b, ops, d, value))
+}
+
+// src/bind_lowering.rs fn choice_var_arm (`@FR-B-Copy`) — the variable a CHOICE hands over whole
+// on one of its arms (`class = bound ?? Owned`) while every other arm answers a store of its own
+// or null: the rebind joins on it.  Null for anything else — a second such variable, or an arm
+// that may be a view.
+pub fn choice_var_arm(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, value: ir::Node, v: integer) -> integer? {
+  if !(own::bare(value) is NdIf) {
+    return null;
+  }
+  arms: vector<ir::Node> = [];
+  choice_leaves(value, arms);
+  var: integer? = null;
+  for arm in arms {
+    a = own::bare(arm);
+    w = match a { NdVar { n } => n, _ => -1 };
+    if w >= 0 && w != v && w < len(f.variables) && !own::is_argument(f, w)
+        && own::heap_def_nr(tp(f, w)) != null && !own::var_name(f, w).starts_with("__") {
+      if var != null && var! != w {
+        return null;
+      }
+      var = w;
+      continue;
+    }
+    if own::holds_no_store(b, a) {
+      continue;
+    }
+    // A construction's work-ref, or a call that answers a store of its own.
+    if w >= 0 && own::var_name(f, w).starts_with("__ref_") {
+      continue;
+    }
+    if w < 0 && own::ownership_of(b, ops, d, a) is Owned {
+      continue;
+    }
+    return null;
+  }
+  var
+}
+
+// The leaves of a choice: each arm's value, a block's its tail.
+fn choice_leaves(n: ir::Node, out: vector<ir::Node>) {
+  match n {
+    NdSpan { pos: _, inner } => choice_leaves(inner, out),
+    NdIf { cond: _, t, f } => {
+      choice_leaves(t, out);
+      choice_leaves(f, out);
+    },
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      out += [if len(ops) > 0 { ops[len(ops) - 1]! } else { n }];
+    },
+    _ => { out += [n]; }
+  }
+}
+
+// src/use_analysis.rs fn tuple_member_roots — the slots naming every heap member of a tuple
+// LITERAL argument of type `t`; null when one cannot be named (a tuple variable, a member built
+// inline that was not hoisted).
+fn tuple_member_roots(b: ir::Bundle, arg: ir::Node, t: ir::TypeT) -> vector<integer>? {
+  members = match own::bare(arg) { NdTuple { items } => items, _ => { return null; } };
+  elems = match base(t) { TyTuple { elems: es } => es, _ => { return null; } };
+  roots: vector<integer> = [];
+  for e in elems {
+    m = members[e#index];
+    if m == null {
+      break;
+    }
+    if heap_leaves(e) == 0 {
+      continue;
+    }
+    if base(e) is TyTuple {
+      inner = tuple_member_roots(b, m!, e);
+      if inner == null {
+        return null;
+      }
+      roots += inner!;
+    } else if own::base_is_dbref(e) {
+      found: vector<integer> = [];
+      if !own::view_root_slots(b, m!, found) {
+        return null;
+      }
+      roots += found;
+    } else {
+      return null;
+    }
+  }
+  roots
+}
+
+// src/data.rs fn tuple_heap_leaves — how many records a type holds, a nested tuple's summed.
+pub fn heap_leaves(t: ir::TypeT) -> integer {
+  match base(t) {
+    TyTuple { elems } => {
+      n = 0;
+      for e in elems {
+        n += heap_leaves(e);
+      }
+      n
+    },
+    _ => if own::is_dbref(base(t)) { 1 } else { 0 }
   }
 }
 
@@ -954,4 +1102,272 @@ fn binds_the_minted_store_of_call(b: ir::Bundle, ops: own::Ops, f: ir::Function,
     return true;
   }
   own::var_of(args[buf]!) != v
+}
+
+// ── a reassignment's facts and arm (src/bind_lowering.rs `re_bind`, `re_arm`) ──
+
+// src/bind_lowering.rs fn is_null_value — `null`, or the sentinel a reference reset writes.
+fn is_null_value(b: ir::Bundle, value: ir::Node) -> boolean {
+  match value {
+    NdSpan { pos: _, inner } => is_null_value(b, inner),
+    NdNull => true,
+    NdCall { def_nr, args } => {
+      if len(args) != 0 || def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      nm = def(b, def_nr).name;
+      nm == "OpNullRefSentinel" || nm == "OpConvRefFromNull"
+    }
+    _ => false,
+  }
+}
+
+// src/bind_lowering.rs fn rhs_reads_a_view_of (`@FR-H-FreeTwice`): does `value` read a local
+// that VIEWS the store `v` displaces — whose deps name `v`, or name a view of `v` in turn?  A
+// view of a view counts: `bl = block[0]` out of a match capture of `b` names the capture, whose
+// deps name `b`, so `b = …[bl]…` reads out of the store a pre-free would release.  The views are
+// closed over their dep chains (`LOFT_NO_TRANSITIVE_VIEW_READ` is the Rust side's A/B only).
+fn rhs_reads_a_view_of(f: ir::Function, value: ir::Node, v: integer) -> boolean {
+  n = len(f.variables);
+  views: vector<boolean> = [for _ in 0..n { false }];
+  if v >= 0 && v < n {
+    views[v] = true;
+  }
+  grew = true;
+  while grew {
+    grew = false;
+    for w in 0..n {
+      if !(views[w] ?? false) {
+        for x in own::tp_depend(f, w) {
+          if x >= 0 && (views[x] ?? false) {
+            views[w] = true;
+            grew = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  for w in 0..n {
+    if w != v && (views[w] ?? false) && reads_var(value, w) {
+      return true;
+    }
+  }
+  false
+}
+
+// src/bind_lowering.rs fn keyed_null_mints — does keyed local `v`'s null init mint a store?  Not
+// for an inline reference or an overwritten view (`_mv_` / `__ncc_`, skip-free).
+fn keyed_null_mints(f: ir::Function, v: integer) -> boolean {
+  !(is_inline_ref(f, v) || is_overwritten_view(f, v))
+}
+
+// src/variables/mod.rs fn is_overwritten_view — a skip-free `_mv_` capture or `__ncc_` hold.
+fn is_overwritten_view(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v]!;
+  x.skip_free && (x.name.starts_with("_mv_") || x.name.starts_with("__ncc_"))
+}
+
+// src/bind_lowering.rs fn only_null_or_borrowed — is every value function `d` binds to `v` a
+// null or a borrow of another binding (`Own::Borrowed`)?  Then `v` never holds a store of its own.
+fn only_null_or_borrowed(b: ir::Bundle, ops: own::Ops, d: integer, v: integer) -> boolean {
+  !binds_an_owner(b, ops, d, v, def(b, d).code[0] ?? ir::NdNull)
+}
+
+// The walk of `only_null_or_borrowed`: a `Set(v, value)` whose value is neither null nor a borrow.
+fn binds_an_owner(b: ir::Bundle, ops: own::Ops, d: integer, v: integer, n: ir::Node) -> boolean {
+  match n {
+    NdSet { var, inner } => {
+      if var == v && !is_null_value(b, inner) && !own::is_borrowed(own::ownership_of(b, ops, d, inner)) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in children(n) {
+    if binds_an_owner(b, ops, d, v, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// src/data.rs Value::for_each_child — the direct child nodes of `n`, in order.
+fn children(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdSpan { inner } => [inner],
+    NdCall { args } => args,
+    NdCallRef { args } => args,
+    NdBlock { block } => block[0]!.operators,
+    NdLoop { block } => block[0]!.operators,
+    NdInsert { items } => items,
+    NdTuple { items } => items,
+    NdSet { inner } => [inner],
+    NdReturn { inner } => [inner],
+    NdDrop { inner } => [inner],
+    NdYield { inner } => [inner],
+    NdIf { cond, t, f } => [cond, t, f],
+    NdIter { create, next, init } => [create, next, init],
+    NdTuplePut { inner } => [inner],
+    NdParallel { arms } => arms,
+    _ => []
+  }
+}
+
+// src/bind_lowering.rs fn row_line — the source line a bind row names for `v = value`: the
+// value's own position where the parser spanned it, else the line the writer last passed.
+pub fn row_line(value: ir::Node, fallback: integer) -> integer {
+  match value {
+    NdSpan { pos } => pos.line,
+    _ => fallback
+  }
+}
+
+// src/bind_lowering.rs fn reads_var_unless_exiting — `reads_var` with the arms that leave by
+// `return`, `break` or `continue` skipped: the frees such an exit carries name every owned local.
+fn reads_var_unless_exiting(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => reads_var_unless_exiting(inner, v),
+    NdIf { cond, t, f } => reads_var_unless_exiting(cond, v)
+      || (!exits(t) && reads_var_unless_exiting(t, v))
+      || (!exits(f) && reads_var_unless_exiting(f, v)),
+    NdCall { def_nr: _, args } => any_reads_unless_exiting(args, v),
+    NdCallRef { var, args } => var == v || any_reads_unless_exiting(args, v),
+    NdInsert { items } => any_reads_unless_exiting(items, v),
+    NdTuple { items } => any_reads_unless_exiting(items, v),
+    NdParallel { arms } => any_reads_unless_exiting(arms, v),
+    NdBlock { block } => any_reads_unless_exiting(block[0]!.operators, v),
+    NdLoop { block } => any_reads_unless_exiting(block[0]!.operators, v),
+    NdSet { var, inner } => var == v || reads_var_unless_exiting(inner, v),
+    NdReturn { inner } => reads_var_unless_exiting(inner, v),
+    NdDrop { inner } => reads_var_unless_exiting(inner, v),
+    NdYield { inner } => reads_var_unless_exiting(inner, v),
+    NdTuplePut { var, idx: _, inner } => var == v || reads_var_unless_exiting(inner, v),
+    NdIter { var, create, next, init } => var == v || reads_var_unless_exiting(create, v)
+      || reads_var_unless_exiting(next, v) || reads_var_unless_exiting(init, v),
+    _ => var_named_here(n) == v,
+  }
+}
+
+fn any_reads_unless_exiting(ns: vector<ir::Node>, v: integer) -> boolean {
+  for c in ns {
+    if reads_var_unless_exiting(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does every path through `n` leave by `return`, `break` or `continue` (`exits` in
+// `reads_var_unless_exiting`)?
+fn exits(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => exits(inner),
+    NdReturn { inner: _ } => true,
+    NdBreak { n: _ } => true,
+    NdContinue { n: _ } => true,
+    NdBlock { block } => any_exits(block[0]!.operators),
+    NdInsert { items } => any_exits(items),
+    NdIf { cond: _, t, f } => exits(t) && exits(f),
+    _ => false,
+  }
+}
+
+fn any_exits(ns: vector<ir::Node>) -> boolean {
+  for c in ns {
+    if exits(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// src/state/codegen.rs fn value_can_exit — may evaluating `n` leave it by `return`, `break` or
+// `continue`, anywhere inside it?
+fn value_can_exit(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => value_can_exit(inner),
+    NdReturn { inner: _ } => true,
+    NdBreak { n: _ } => true,
+    NdContinue { n: _ } => true,
+    NdCall { def_nr: _, args } => any_can_exit(args),
+    NdCallRef { var: _, args } => any_can_exit(args),
+    NdInsert { items } => any_can_exit(items),
+    NdTuple { items } => any_can_exit(items),
+    NdParallel { arms } => any_can_exit(arms),
+    NdBlock { block } => any_can_exit(block[0]!.operators),
+    NdLoop { block } => any_can_exit(block[0]!.operators),
+    NdSet { var: _, inner } => value_can_exit(inner),
+    NdDrop { inner } => value_can_exit(inner),
+    NdYield { inner } => value_can_exit(inner),
+    NdTuplePut { var: _, idx: _, inner } => value_can_exit(inner),
+    NdIf { cond, t, f } => value_can_exit(cond) || value_can_exit(t) || value_can_exit(f),
+    NdIter { var: _, create, next, init } => value_can_exit(create) || value_can_exit(next) || value_can_exit(init),
+    _ => false,
+  }
+}
+
+fn any_can_exit(ns: vector<ir::Node>) -> boolean {
+  for c in ns {
+    if value_can_exit(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// src/bind_lowering.rs fn delivered_tail — the node a value delivers: the last operator through
+// spans, inserts and blocks.
+fn delivered_tail(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos: _, inner } => delivered_tail(inner),
+    NdInsert { items } => if len(items) == 0 { n } else { delivered_tail(items[len(items) - 1]!) },
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      if len(ops) == 0 { n } else { delivered_tail(ops[len(ops) - 1]!) }
+    }
+    _ => n,
+  }
+}
+
+// src/bind_lowering.rs fn answers_a_view_to_copy (`@FR-B-Copy`): a value that answers a VIEW on
+// some path and is not a call's answer or a bare variable.  `LOFT_NO_READING_VIEW_COPY` unset.
+fn answers_a_view_to_copy(b: ir::Bundle, ops: own::Ops, d: integer, value: ir::Node) -> boolean {
+  tail = delivered_tail(value);
+  if tail is NdVar || tail is NdCall || tail is NdCallRef {
+    return false;
+  }
+  o = own::ownership_of(b, ops, d, value);
+  own::is_borrowed(o) || own::is_join(o)
+}
+
+// src/bind_lowering.rs fn join_record — the record a runtime JOIN bind copies into: a heap
+// record, or a heap enum (`LOFT_NO_ENUM_JOIN` unset).
+fn join_record(t: ir::TypeT) -> integer? {
+  match t {
+    TyReference { n, dep: _ } => n,
+    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { null },
+    _ => null,
+  }
+}
+
+// src/use_analysis.rs fn opaque_callref_bind — a record `CallRef` whose target cannot be
+// resolved, into a binding with no deps: the copy-or-adopt bind's record (`R2a`, `F8`).
+fn opaque_callref_bind(b: ir::Bundle, defs: own::Defs, t: ir::TypeT, value: ir::Node) -> integer? {
+  if !has_no_deps(t) {
+    return null;
+  }
+  rec = join_record(base(t));
+  if rec == null || !(unspan_node(value) is NdCallRef) || callee_of(b, defs, value) != null {
+    return null;
+  }
+  rec
+}
+
+// `Value::unspan`: the node a span wraps.
+fn unspan_node(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos: _, inner } => unspan_node(inner),
+    _ => n,
+  }
 }

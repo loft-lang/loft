@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-E-Left` for a text operand, on every backend: an operand reduces to its value before the
+// next operand runs, so a text variable read as a VALUE (an index, a comparison) holds the text
+// it had then, even when a later operand hands the variable to a `&text` callee that replaces
+// it.  The interpreter and the Rust backend read such a text by reference; the front
+// (`scopes::args::copy_written_text_operands`) takes its value into a temp first wherever a later
+// operand can write it, and leaves a later operand that only reads it alone.  A destination —
+// a `&text` parameter, an operator's stack position — is never copied.  Values hand-computed.
+//
+// t1, t2 and t3 take the temp; t4 (a later operand that only reads) and t5 (a destination)
+// do not.
+//
+// @falsified-at: `LOFT_NO_COPY_WRITTEN_TEXT=1` (the clause off, the same build) — t1 answers
+//   'z' and t2 false on `--interpret`, and `--native` does not compile the file (t2: rustc
+//   E0502, a text borrowed while a `&mut` of it is taken).
+//   CHANNEL: an assertion.
+
+fn overwrite(s: &text) -> integer {
+  s = "zzz";
+  0
+}
+
+fn extend(s: &text) -> integer {
+  s += "q";
+  1
+}
+
+// t1: the index reads "abc"[0] = 'a'; t holds "zzz" after.
+fn test_an_index_beside_a_callee_that_replaces_it() {
+  t = "abc";
+  c = t[overwrite(t)];
+  assert(c == 'a', "t1 {c}");
+  assert(t == "zzz", "t1 t {t}");
+}
+
+// t2: the comparison reads "abc" == "abc"; t holds "zzz" after.
+fn test_a_comparison_beside_a_callee_that_replaces_it() {
+  t = "abc";
+  same = t == (if overwrite(t) == 0 { "abc" } else { "" });
+  assert(same, "t2 {same}");
+  assert(t == "zzz", "t2 t {t}");
+}
+
+// t3: the index reads "abc"[1] = 'b'; t holds "abcq" after.
+fn test_an_index_beside_a_callee_that_extends_it() {
+  t = "abc";
+  c = t[extend(t)];
+  assert(c == 'b', "t3 {c}");
+  assert(t == "abcq", "t3 t {t}");
+}
+
+// t4: a later operand that only reads t: "abc"[size - 1] = 'c'.
+fn test_a_later_operand_that_only_reads() {
+  t = "abc";
+  c = t[size(t) - 1];
+  assert(c == 'c', "t4 {c}");
+}
+
+// t5: the destination itself is the `&text` parameter: "ab" + "q" + "cd" = "abqcd".
+fn add_twice(s: &text) {
+  s += "q";
+}
+
+fn test_a_destination_is_not_copied() {
+  t = "ab";
+  add_twice(t);
+  t += "cd";
+  assert(t == "abqcd", "t5 {t}");
+}

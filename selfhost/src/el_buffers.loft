@@ -14,6 +14,8 @@ use el_ir;
 use el_vars;
 use el_types;
 use el_expressions;
+use el_ex_call;
+use el_ex_base;
 
 pub struct Pool {
   pub ctx: integer,
@@ -97,7 +99,7 @@ fn hands_result_buffer(e: el::El, n: ir::Node, vars: el_vars::Vars, in_container
             if at != null && at!.hidden && !at!.work_buffer && x != null && !x!.argument && starts_with(x!.name, "__ref_") {
               match x!.type_def[0] ?? ir::TyVoid {
                 TyVector { inner } => {
-                  if el_expressions::scalar(inner) || in_container && inner is TyReference {
+                  if el_ex_call::scalar(inner) || in_container && inner is TyReference {
                     return true;
                   }
                 },
@@ -249,7 +251,7 @@ fn candidate(vars: el_vars::Vars, v: integer) -> integer {
   }
   match t {
     TyVector { inner, dep } => {
-      if el_expressions::scalar(inner) && len(dep) == 1 && starts_with(el_vars::name_of(vars, dep[0]), "__vdb_") {
+      if el_ex_call::scalar(inner) && len(dep) == 1 && starts_with(el_vars::name_of(vars, dep[0]), "__vdb_") {
         return dep[0];
       }
     },
@@ -264,10 +266,10 @@ fn admit(e: el::El, code: ir::Node, vars: el_vars::Vars, v: integer, db: integer
   if !(el_ir::unspan(code) is NdBlock) {
     return false;
   }
-  if el_expressions::trios(e, code, v, db, false) != 1 || el_expressions::trios(e, code, v, db, true) > 0 {
+  if el_ex_base::trios(e, code, v, db, false) != 1 || el_ex_base::trios(e, code, v, db, true) > 0 {
     return false;
   }
-  if el_expressions::sets(code, v) != 1 || el_expressions::sets(code, db) != 1 || el_ir::mentions(code, db) != 3 || top_null_inits(code, db) != 1 {
+  if el_ex_base::sets(code, v) != 1 || el_ex_base::sets(code, db) != 1 || el_ir::mentions(code, db) != 3 || top_null_inits(code, db) != 1 {
     return false;
   }
   w = Walk { v: v, db: db, tracked: [v], aliases: [], copy_bound: el_expressions::copy_bound(e, code, v) };
@@ -350,12 +352,12 @@ fn walk(e: el::El, vars: el_vars::Vars, body: ir::Node, w: Walk, n: ir::Node, po
     },
     NdSet { var, inner } => {
       if w.tracked.contains(var) {
-        trio_bind = var == w.v && el_expressions::calls(e, inner, "OpGetField") && match el_ir::unspan(inner) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, w.db), _ => false };
+        trio_bind = var == w.v && el_ex_base::calls(e, inner, "OpGetField") && match el_ir::unspan(inner) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, w.db), _ => false };
         alias_bind = var != w.v && tracked_var(inner, w.tracked);
         return trio_bind || alias_bind;
       }
       if tracked_var(inner, w.tracked) {
-        if vars.vars[var].argument || el_expressions::sets(body, var) != 1 {
+        if vars.vars[var].argument || el_ex_base::sets(body, var) != 1 {
           return false;
         }
         w.aliases += [var];
@@ -547,7 +549,7 @@ fn reads_of(e: el::El, n: ir::Node, v: integer) -> integer {
   match n {
     NdSpan { inner } => reads_of(e, inner, v),
     NdVar { n: x } => if x == v { 1 } else { 0 },
-    NdSet { var, inner } => if var == v && el_expressions::calls(e, inner, "OpGetField") { 0 } else { reads_of(e, inner, v) },
+    NdSet { var, inner } => if var == v && el_ex_base::calls(e, inner, "OpGetField") { 0 } else { reads_of(e, inner, v) },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
       c = 0;
@@ -667,12 +669,12 @@ fn is_trio(e: el::El, ops: vector<ir::Node>, i: integer, v: integer, db: integer
   if i + 2 >= len(ops) {
     return false;
   }
-  mint = el_expressions::calls(e, ops[i] ?? ir::NdNull, "OpDatabase") && match el_ir::unspan(ops[i] ?? ir::NdNull) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false };
+  mint = el_ex_base::calls(e, ops[i] ?? ir::NdNull, "OpDatabase") && match el_ir::unspan(ops[i] ?? ir::NdNull) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false };
   bind = match el_ir::unspan(ops[i + 1] ?? ir::NdNull) {
-    NdSet { var, inner } => var == v && el_expressions::calls(e, inner, "OpGetField") && match el_ir::unspan(inner) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false },
+    NdSet { var, inner } => var == v && el_ex_base::calls(e, inner, "OpGetField") && match el_ir::unspan(inner) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false },
     _ => false
   };
-  zero = el_expressions::calls(e, ops[i + 2] ?? ir::NdNull, "OpSetInt4") && match el_ir::unspan(ops[i + 2] ?? ir::NdNull) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false };
+  zero = el_ex_base::calls(e, ops[i + 2] ?? ir::NdNull, "OpSetInt4") && match el_ir::unspan(ops[i + 2] ?? ir::NdNull) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false };
   mint && bind && zero
 }
 
@@ -826,7 +828,7 @@ fn promote_refs_in(e: el::El, d: integer, fresh: vector<integer>) -> integer {
         numbered_before = true;
       }
     }
-    if numbered_before || top_null_inits(code, r) != 1 || el_expressions::sets(code, r) != 1 {
+    if numbered_before || top_null_inits(code, r) != 1 || el_ex_base::sets(code, r) != 1 {
       continue;
     }
     handed = handed_down(e, d, code, r);
@@ -1441,7 +1443,7 @@ fn promote_result_ref(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node
   e.b.data.definitions[d].attributes += [a];
   el_vars::become_argument(vars, buf);
   w = el_vars::rebind_witness(vars, buf);
-  rows = el_expressions::vector_rows(e, elem, 0, true);
+  rows = el_ex_base::vector_rows(e, elem, 0, true);
   if rows == null {
     return code;
   }

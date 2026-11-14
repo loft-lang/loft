@@ -141,7 +141,7 @@ html-wasm-serial = { max-threads = 1 }
 # bounded drain FIRST — they currently carry their own UNBOUNDED copies of
 # drain_with_timeout, so today they would be exposed to the same 600s-TMT hang.
 heavy-serial = { max-threads = 1 }
-# Widened twins of the two serial groups, used ONLY by `[profile.fast]` below.
+# Widened twins of the two serial groups: `heavy-wide` serves the default profile (the local run), `ci` and `fast`; `html-wasm-wide` serves `ci` and `fast`.
 heavy-wide = { max-threads = 6 }
 html-wasm-wide = { max-threads = 4 }
 
@@ -161,12 +161,23 @@ threads-required = 8
 filter = 'binary(html_wasm)'
 test-group = 'html-wasm-serial'
 
+# The local run (`find_problems.sh`) schedules as the gate's main pass does: the rustc-storm
+# makers six wide, the corpus chunks bounded by the lanes they declare, and the starvation
+# victims alone in a pass of their own after every storm has ended (`find_problems.sh` runs it
+# with `ci-victims`).  One at a time the storm makers were a 716 s chain the 20-minute cap cut
+# every full run; six wide they take 313 s on this 20-core, 14 GiB laptop, MemAvailable never
+# under 7.5 GB (2026-11-12).  A bare `cargo nextest run` keeps the victims in `heavy-serial`,
+# one at a time, but beside the storm.
 [[profile.default.overrides]]
-filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
-test-group = 'heavy-serial'
+filter = '(binary(native) & (test(/^native_scripts_[0-9]+$/) | test(=native_dir) | test(=native_reference) | test(=native_learn_loft_samples) | test(=native_comparisons) | test(=native_features) | test(=native_limits_at_full_size))) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/))'
+test-group = '@global'
 
 [[profile.default.overrides]]
-filter = 'binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)'
+filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native)'
+test-group = 'heavy-wide'
+
+[[profile.default.overrides]]
+filter = 'binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
 test-group = 'heavy-serial'
 
 # The gate's two passes (`make ci`, ci.yml's test step): the MAIN pass runs everything but the
@@ -181,13 +192,15 @@ test-group = 'heavy-serial'
 filter = 'binary(html_wasm)'
 test-group = 'html-wasm-wide'
 
-# The corpus chunks (`native_scripts_NN`) are NOT in the group: their storm is bounded by the
-# `threads-required` they declare (the profile.default override above), which nextest counts
-# against the GROUP as well as the run — in a six-slot group an eight-thread test runs alone,
-# which would serialise the whole corpus at eight lanes.  `@global` keeps them out of the
-# default profile's `heavy-serial` too, which this profile would otherwise inherit.
+# The pool tests of `native` (the corpus chunks `native_scripts_NN` and the directory sweeps)
+# are NOT in the group: their storm is bounded by the `threads-required` they declare (the
+# profile.default override above), which nextest counts against the GROUP as well as the run.
+# An eight-thread test in a six-slot group never starts once other binaries share the run,
+# and the group's later tests queue behind it: `native_comparisons` and every `native` test
+# listed after it were "not run".  `@global` also keeps them out of the default profile's
+# `heavy-serial`, which this profile would otherwise inherit.
 [[profile.ci.overrides]]
-filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/))'
+filter = '(binary(native) & (test(/^native_scripts_[0-9]+$/) | test(=native_dir) | test(=native_reference) | test(=native_learn_loft_samples) | test(=native_comparisons) | test(=native_features) | test(=native_limits_at_full_size))) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/))'
 test-group = '@global'
 
 [[profile.ci.overrides]]
@@ -343,7 +356,7 @@ test-group = 'html-wasm-wide'
 
 # As in `ci`: the chunks that declare their lanes stay out of the group.
 [[profile.fast.overrides]]
-filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/))'
+filter = '(binary(native) & (test(/^native_scripts_[0-9]+$/) | test(=native_dir) | test(=native_reference) | test(=native_learn_loft_samples) | test(=native_comparisons) | test(=native_features) | test(=native_limits_at_full_size))) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/))'
 test-group = '@global'
 
 [[profile.fast.overrides]]

@@ -35,7 +35,9 @@ script or suite cell.  `FILE` runs `main`; `FILE::test_name` runs that one test 
 **Strict:** the exit code is 0 only when every selected layer of every entry is `EQUAL`.
 `MISSING` is a failure, not a skip; `--layers out,alloc` selects layers for a run that wants
 fewer, and the selection is printed with the verdict.  No normalisation exists but the ones
-written in the table below; a new one is a design change here first.
+written in the table below; a new one is a design change here first.  Both sides run with one
+fixed `LOFT_HASH_SEED` (the caller's, else a constant): a hash's seed is otherwise drawn per
+table, and its walk and teardown order would differ between two runs of the same side.
 
 ## The layers
 
@@ -60,7 +62,7 @@ differently shows as the row where it does.
 | **out** | `loft --interpret` (`--tests FILE::ENTRY` for a test) | the runner on the emitted image, in its comparison mode (no census lines) | stdout byte for byte; the exit code; stderr byte for byte after removing the front end's diagnostics, which the tool takes from `--emit-image`'s stderr (the same front end, nothing run) and requires as an exact PREFIX of the run's stderr — PC4 measured it so; `--check` is not that source, it also prints toolchain noise.  For a test entry, the harness's block (from the `ok`/`FAIL` line of the file on) is cut from the Rust stdout, and its verdict and failure message are compared with the runner's |
 | **alloc** | `LOFT_ALLOC_TRACE` from the `op-census` build (`store_census::alloc_event`: `N`, `F`, `C`, `D`, `R`, `M`) | the same lines from the `crt` shim's runtime, compiled with the trace on | the events after `M` on stores made after it, each store named by the order it first appears — exactly `c_alloc_diff.py`'s `program_events` (the Rust value stack and constant stores are setup) |
 | **leak** | the stores live at exit (the alloc layer's `N` without `F`) | the same | none: the two sets, by name, must be equal (a store both sides leak is equal; one side only is a difference) |
-| **binds** | `LOFT_TRACE_BIND` from `generate_set` (1b-s3.md § The comparison): one row per assignment the bytecode writer lowers, `function⇥variable⇥first\|re⇥L<line>⇥facts… arm`, a reassignment's row carrying `re_bind`'s facts (`ReBind::trace_facts`: `b2=stash\|pre\|none`, `owned_ref`, `s1`, `reads_v`, `witnessed`, `entry_w`, `buffer_w`, `nullable`, `kept`, `base`, `alias_v`, and for a call `callee`, `adopt`), a first bind's row its arm's (`FirstArm::trace_facts`), and `decided=<arm>` where the arm emitted is not the one `bind_lowering` decided.  The loft side still writes the earlier form (no line, the first seven facts), so this layer reads `DIFFERENT` until `lower.loft` follows | the lowering's bind table, written to the same variable in the same form | the functions the loft side lowered, matched by name, each one's rows in order — the Rust writer lowers every function of the image (the stdlib's too), the loft lowering only those the run reaches; a function the loft side lowered and the Rust side did not is a difference |
+| **binds** | `LOFT_TRACE_BIND` from `generate_set` (1b-s3.md § The comparison): one row per assignment the bytecode writer lowers, `function⇥variable⇥first\|re⇥L<line>⇥facts… arm` (`<line>` the value's own position where the parser spanned it, else the function's last line marker before it, 0 before its first — `bind_lowering::row_line`, one rule for every writer), a reassignment's row carrying `re_bind`'s facts (`ReBind::trace_facts`: `b2=stash\|pre\|none`, `owned_ref`, `s1`, `reads_v`, `witnessed`, `entry_w`, `buffer_w`, `nullable`, `kept`, `base`, `alias_v`, and for a call `callee`, `adopt`), a first bind's row its arm's (`FirstArm::trace_facts`), and `decided=<arm>` where the arm emitted is not the one `bind_lowering` decided.  The loft side writes the same form (`lower.loft`'s `bind_row`, `note_first`, `trace_call_facts`); `decided=` never appears there, since its arms are both the decision and the emission | the lowering's bind table, written to the same variable in the same form | the functions the loft side lowered, matched by name, each one's rows in order — of two Rust definitions sharing a name (a library's own `main` beside the program's), the one whose rows equal the loft side's, else the first — the Rust writer lowers every function of the image (the stdlib's too), the loft lowering only those the run reaches; a function the loft side lowered and the Rust side did not is a difference |
 | **opcodes** | `LOFT_TRACE_BYTECODE=<file>`'s `op` lines (`compile.rs::bytecode_trace`): per operator in number order its number, name, class (`hot`, `normal`, `cold`), result type and each argument as `name:c\|m:type` (`c` an operand in the bytecode, `m` a value on the stack) | the same lines from the loft side's own numbering — `Data::op_code`'s rule over the image's definitions: the operators in their `default/*.loft` declaration order, numbered within their class (`op_hot` / `op_cold` on `Definition`), hot first, cold last | none, byte for byte |
 | **bytecode** | `LOFT_TRACE_BYTECODE`'s `fn` lines: per generated function in definition order its name, code length and the FNV-1a hash of `bytecode[code_position..+code_length]` — the listing (`loft introspect`) to read a difference by | the bytecode writer's port (1b-frame.md F-2), its bytes hashed the same way | none: every function the Rust writer generates, the stdlib's included — a call operand is an absolute code position, so one function's bytes depend on every function before it |
 
@@ -102,6 +104,24 @@ start; the interpreter fills it in.
 - **C-3 — slots, lifetimes and bytecode** (with F-1, the `compute_intervals` port, F-2): each
   in the form `introspect` prints.  **Slots built**: `reports slots` (`report::slots_report`)
   against `introspect --show-slots`; lifetimes and bytecode wait on their producers.
+
+## Reading a difference
+
+- **The runner's own frame, without a C build:** run it on the Rust interpreter,
+  `LOFT_NO_NATIVE_LIBS=1 loft --interpret selfhost/cover/run_program.loft --compare <image>`
+  (from `selfhost/`; seconds, where the C build of the runner takes minutes).  An env-gated
+  `eprintln` in `run.loft`'s op fetch then names every op a function runs.
+- **A run that stops before its table:** `LOFT_ALLOW_REFREE=1` lets the runner pass a re-free,
+  so it writes its `LOFT_TRACE_BIND` table (an absolute path: the runner resolves relative paths
+  from the program's directory).  Equal tables with a different run mean the runner EMITS an arm
+  differently from what both sides decided.
+- **The tools follow the compiler they were built with:** compare.py builds the runner and the
+  report tool with `target/op-census/release/loft`; rebuild that binary after a compiler change.
+- **A copied image needs its layout sidecar:** a `std.store` copied without `std.store.dschema`
+  is refused by `store_load` ("no layout sidecar"), so both `front/elab.loft` and
+  `compare/defs.loft` print nothing, and an empty-against-empty diff reads as agreement.  A
+  one-program comparison script checks that the reference side wrote something before it
+  reports a match.
 
 ## Probes before building (each can fail on its own)
 

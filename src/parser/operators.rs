@@ -4294,12 +4294,28 @@ impl Parser {
         let not_null = self.coalesce_not_null(&Value::Var(tmp), lhs_type);
         let is_null = self.cl("OpNot", &[not_null]);
         let if_ret = v_if(is_null, ret_stmt, Value::Null);
+        // A user call's record answer is the temporary's own (its bind copies or adopts it), so
+        // the block hands on an OWNED value: typed with the call's borrows, `t = schema(b, k)!`
+        // read as a view of `b`, the temporary's scope ended without freeing what it held, and
+        // the copy leaked once per discharge (the self-hosted elaborator's `default_image`;
+        // main, both backends).  `LOFT_NO_NCR_CALL_OWNS=1` keeps the call's borrows.
+        let block_tp = if matches!(
+            lhs_type.base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _)
+        ) && matches!(code.unspan(), Value::Call(d, _)
+                if !self.data.def(*d).name().starts_with("Op") && self.data.def(*d).is_loft_defined())
+            && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_CALL_OWNS").is_some())
+        {
+            lhs_type.without_deps()
+        } else {
+            lhs_type.clone()
+        };
         *code = v_block(
             vec![set_tmp, if_ret, Value::Var(tmp)],
-            lhs_type.clone(),
+            block_tp.clone(),
             "ncr",
         );
-        *ctp = lhs_type.clone();
+        *ctp = block_tp;
     }
 
     /// `lhs ?? default` — emit the `if` (or temp + `if` for non-trivial lhs)

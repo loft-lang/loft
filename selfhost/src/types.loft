@@ -597,6 +597,12 @@ pub fn enum_parent_size(b: ir::Bundle, tp: integer) -> integer {
 
 // Is `tp` a vector wrapper, `main_vector<T>` (`Stores::is_vector_wrapper`,
 // `src/database/allocation.rs:1304`)?  Its `OpDatabase` keeps a buffer that is a place.
+// Is `tp` a struct (`Parts::Struct`)?
+pub fn is_struct(b: ir::Bundle, tp: integer) -> boolean {
+  p = parts(b, tp);
+  p != null && p! is PtStruct
+}
+
 pub fn is_vector_wrapper(b: ir::Bundle, tp: integer) -> boolean {
   (b.types[tp]?.name ?? "").starts_with("main_vector<")
 }

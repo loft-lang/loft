@@ -178,7 +178,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Alias)` | `/versioned` c, native |
 | `(R-Apart)` | `R-Apart` c, native · `/records` c, native · `/records/boundary` c · `/vector` c, native |
 | `(R-AppendTwin)` | `R-AppendTwin` c, native · `/loop-window` c · `/mint` c |
-| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c |
+| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c · `/wrap-select` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
@@ -263,8 +263,8 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Place)` | `R-Place` ir |
 | `(R-Prefill)` | not counted — runtime: admitted per TYPE at its first mint |
 | `(R-PureReuse)` | `R-PureReuse` ir |
-| `(R-Push)` | `R-Push` c, native · `/sole` c |
-| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c · `/several` ir · `/text` c |
+| `(R-Push)` | `R-Push` c, native · `/read` c · `/sole` c |
+| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/held-run` c · `/record` native · `/run` c, native · `/run-header` c · `/several` ir · `/text` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
 | `(R-Range)` | `R-Range` c, native · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
@@ -274,7 +274,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-RefParam)` | `R-RefParam` c |
 | `(R-RefillBuffer)` | `R-RefillBuffer` native |
 | `(R-RefillText)` | `R-RefillText` native |
-| `(R-Refresh)` | `R-Refresh` native |
+| `(R-Refresh)` | `R-Refresh` native · `/keep-header` c |
 | `(R-RegisterTable)` | not counted — executor: position and stack top passed in registers |
 | `(R-RepeatRun)` | `R-RepeatRun` ir |
 | `(R-RetAdopt)` | `R-RetAdopt` interp, c, native |
@@ -1163,7 +1163,70 @@ header path they take in a loop.  The value test is native's, lifted to
 `opt::hoist::run_value_plain` so both backends read one predicate.  Switch
 `LOFT_NO_PUSH_RUN_HEADER=1`; census `R-PushFill/run-header`.  Guard: the run cells
 (`a-run-of-pushes-reserves-its-room-once.loft`) — a header put that never bumps the length
-fails r1 with lengths 0 for 3.
+fails r1 with lengths 0 for 3.  With a header the run derives it FIRST and reserves only when
+it has no room for the run (`len + k > cap`), deriving it again after: a vector refilled with
+its room kept — cleared, or a reused record buffer's field — takes no reservation call.
+hex_recover `forms_upto` (two 3-element runs per candidate): gcc −16 %, clang −6 %.  The
+reservation is capacity: no defect in it changes a value (a header left stale after it has too
+little room, so every push takes the put's own growth step), so the run cells guard values.
+
+**The run's held-header clause (the C).**  A run whose vector already has a push header
+held by an enclosing loop is not reserved; the run clause above declines it.  With every
+value plain (the same `run_value_plain`) it is written as ONE call, `loft_ph_put<w>_run(&h,
+k, values)`: a single room test for all k elements, the elements stored past the length at
+one record address, and one length bump in the header and the record.  Pushed one by one,
+each element tested the room, resolved the store twice and wrote the length back.  The
+values are computed into temporaries first, in the run's order (an array initialiser's
+elements are unsequenced, and a checked operator's fault must keep its place), so reading them
+before the first store changes nothing: a plain value reaches neither the vector nor its
+store.  A run that does not fit pushes one element at a time, each through the header's own
+growth step, so an absent vector or a locked store refuses where it did.  A line marker
+ends the run.  Priced in the graphics library's `draw_bezier`, whose subdivision stack
+refills two vectors with `v += [a, b, c, d]` per split (C ship lane, one core): gcc 3.33 →
+2.95 ms (−11 %), clang 3.01 → 2.62 ms (−13 %), with the hash unchanged.  The three
+spellings tried ran within 2 % of each other's instruction count (callgrind) but up to 9 %
+apart on gcc — layout — and this one is the simplest and the fastest on clang.  Sites:
+`FnWriter::held_push_run` and `push_bits` (`src/c/body.rs`, in `stmts_in` before the
+reservation), `LOFT_PH_RUN` (`src/c/loft_rt.h`).  Switch `LOFT_NO_HELD_PUSH_RUN=1`; census
+`R-PushFill/held-run`.  Guard: `tests/scripts/a-run-of-pushes-through-a-loops-header-tests-its-room-once.loft`
+— a run that bumps the length by one less than it stored fails h1, h3 and h4.
+
+**An operand's temporary, per variable (the C).**  `(E-Left)` (`operational.md`) reduces each
+operand before the next, and the C keeps that order by holding an operand in a temporary when a
+later operand may change it.  For a variable operand the question is whether a later operand may
+write THAT variable (`FnWriter::may_write_var`): one that names it, assigns it, or calls through a
+function value.  A later operand that never names it — a `??` block binding its own temporaries,
+a call it is not handed to — leaves it read in place.  A parameter, which may share what it names
+with another reference, and a borrowed text other than a view of a literal keep the temporary.
+For a text the temporary is a copy of the whole text: `out += chars[(v / 64 ?? 0) % 64 ?? 0]` in a
+base64 encoder copied its 64-byte alphabet once per output character.  That encoder, 4 KiB, one
+core: gcc 44 → 6 µs, clang 9 → 3 µs — the index spelling now as fast as the slice
+`chars[c..c + 1]` (6 / 4 µs).  The character read itself is inline for an ASCII byte
+(`loft_text_char`, the decode of a wider character out of line in `loft_text_char_wide`): gcc
+kept the whole decode a call per character — the index spelling 6.08 → 4.92 µs on gcc, clang
+unchanged (guard `a-text-index-reads-the-character-holding-the-byte.loft`).  A text push window
+on the same loop was priced and not built: clang −20 %, gcc +23 %.  Switch
+`LOFT_NO_OPERAND_VAR_WRITE=1`.  Guard:
+`tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft` — the rule
+answering "no" for every variable fails e2.
+
+**Reads and cuts through a loop's push header (the C).**  A loop that holds a push header for
+a path keeps the path's record and length current in it — every growth goes through it, and so
+does every cut (below).  So an element READ of the path in the loop goes through the header:
+`FnWriter::read_header` sees it as a held vector header (`loft_ph_vh`: the record and length,
+the base derived from the record) for every read form, and the plain read (`v[i] ?? d`, no
+report, no proven bound) calls `loft_ph_get_int` / `loft_ph_get_float` on the header itself,
+without building the view.  Each keeps the read's meaning: a negative index from the end, null
+outside.  Writes, lengths and the clauses that ask whether a path is held keep `held_vector`.
+A CUT `v = v[lo..hi]` of the path takes the header too (`loft_ph_keep`): from 0 — the truncate —
+it is the length set at the header and the record, clamped as `loft_vec_keep_range` clamps it;
+any other range moves its span there and derives the header again.  graphics `draw_bezier`
+(eight pops and two cuts per split of its stack), ship lane: gcc 2.94 → 2.43 ms (−17 %), clang
+2.60 → 2.38 ms (−9 %), the hash unchanged; the view alone left clang at −4 %.  Switches
+`LOFT_NO_PUSH_HEADER_READ=1`, `LOFT_NO_PUSH_HEADER_KEEP=1`; census `R-Push/read`,
+`R-Refresh/keep-header`.  Guard:
+`tests/scripts/a-loop-reads-and-cuts-its-pushed-vector-through-the-header.loft` — a header read
+without the from-end wrap fails p2, a cut one short fails p1 and p6.
 
 **(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
@@ -1277,9 +1340,36 @@ pair check struck, t3 with the starts' adjacency struck).  Not yet: an element w
 **The wrapped form.**  A read at `(i + c) % n` — a counter of such a loop, `c` a literal from 0
 up, `n` a local holding the held vector's length for the loop (the range end, or the local it
 was copied from) — lies in `[0, n)` (`(R-InRange)`'s wrapped form gives the reason) and takes
-no test either; it is written `((i + c) % n)`, `i` alone for `c = 0`.  Site:
+no test either; it is written `((i + c) % n)`, `i` alone for `c = 0` and a compare for `c = 1`
+(below).  Site:
 `FnWriter::counter_index`, through `loop_shape::wrapped_counter`.  Census row `R-Base/counter`.
 Guard `tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft`.
+
+**The wrapped form's step-1 spelling (the C).**  `(i + 1) % n` at such a read is written
+`i == n - 1 ? 0 : i + 1` — the same value, since `0 <= i < n`.  gcc keeps the `%` as a 64-bit
+division on every turn; clang and rustc already turn it into a wrapping counter, which this
+spelling leaves them free to keep (`i + 1 < n ? i + 1 : 0` cost clang 5 % more instructions).
+graphics `fill_polygon` (`pc_pts[(i + 1) % pc_n ?? 0]?`, one wrap per edge), ship lane: gcc
+485 → 325 µs (−33 %), clang unchanged, the hash unchanged.  A larger step keeps the `%`: `i + c`
+can pass `n` more than once.  Switch `LOFT_NO_WRAP_SELECT=1`; census `R-Base/wrap-select`.
+Guard: the same cells — a select that answers 1 at the wrap fails `main` (6898 for 6086).
+
+**A clear with nothing to release (the C).**  `(H-ClearRelease)` (`heap.md`) releases what a
+cleared vector's elements own; a vector of scalars owns nothing through them, so its clear is
+the length reset.  The C writes `loft_vec_clear` for a local of type `vector<τ>`, `τ` a scalar
+(`data::is_scalar`), and for a field whose vector type (`OpGetField`'s third operand) holds
+elements that own no heap and are not linked — at `OpClearVector` and at the return-adopt
+clear of a reused buffer — where `loft_vec_clear_release` walked the type descriptors per
+clear to learn the same (for a record that is its store's root, a search of its fields).
+hex_recover `forms_upto` clears a reused `Form` buffer's two `vector<integer>` fields per
+candidate: gcc −9.5 %, clang −22 %.
+graphics `polygon_crossings` clears its reused crossings buffer once per scanline: ship lane
+gcc 327 → 308 µs (−6 %), clang 340 → 309 µs (−9 %), the hash unchanged.  A clear that names a
+field of a local's store is typed by its `OpGetField`.  Sites: `FnWriter::clear_releases_nothing`
+(`src/c/body.rs`).  Switch
+`LOFT_NO_PLAIN_CLEAR=1`; census `H-ClearRelease/plain`.  Guard:
+`tests/scripts/a-vector-of-scalars-clears-without-a-release-walk.loft` — a plain clear that
+leaves the length fails k1 and k6 at `OpClearVector`, k3 and k5 at the return-adopt clear.
 
 **The guard clause.**  An index a passed test keeps below the length: inside `if e < len(v)`
 (its then-arm), after a `while e < n` loop's test (the rest of each turn), or either side of
@@ -3393,7 +3483,10 @@ the ordinary writer's shapes for its value-record locals and pointer parameters.
 gone where the source is transient: a `text argument copy` of a transient text is the text
 itself (nothing writes the tree while it lives), and a call whose callee answers the caller's
 `&text` work buffer goes to that callee's `__wr` twin, its result read from the buffer, when it
-is read in the bind's block before the buffer is touched again.  The writer is the allow-list: an
+is read in the bind's block before the buffer is touched again and never written there (a local
+appended to or handed to a `&text` parameter after its bind keeps its own text:
+`scopes::args::writes_var`; guard
+`tests/scripts/a-transient-sites-text-local-keeps-a-write-after-its-bind.loft`).  The writer is the allow-list: an
 operation on a transient value no arm answers declines the twin, and the function keeps the
 store form.  Texts are COPIED into the arena (the views of the frame are a later step).  Two
 consequences of sharing, enforced in the writer: a transient tree may share records the store

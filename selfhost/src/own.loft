@@ -1020,10 +1020,12 @@ fn fnref_target_of(rhss: vector<ir::Node>) -> integer? {
 
 // ── the structural helpers (src/use_analysis.rs) ──
 
-// src/use_analysis.rs:3448 fn is_projection_op — the ROOT-naming list.
+// src/use_analysis.rs fn is_projection_op — the ROOT-naming list.  `OpRefFromChildRec` is the
+// child record an out-of-line field (or a closure record) names, in argument 0's store: a view
+// of a child is a view of its host.
 fn is_projection_op(b: ir::Bundle, d: integer) -> boolean {
   n = def_name(b, d);
-  n == "OpGetField" || n == "OpGetVector" || n == "OpVectorRef" || n == "OpGetRecord"
+  n == "OpGetField" || n == "OpGetVector" || n == "OpVectorRef" || n == "OpGetRecord" || n == "OpRefFromChildRec"
 }
 
 // src/use_analysis.rs:3365 fn view_root_slots — false for `None`, else the slots in `out`.
@@ -1626,7 +1628,7 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
       }
       first = args[0]!;
       // Bound first: a tail call whose argument a local holds cannot jump.
-      r = var_of(first) ?? if_variant_subject(b, first) ?? borrow_base_guarded(b, ops, first, func, defs, visited);
+      r = var_of(first) ?? if_variant_subject(b, first) ?? discharged_variable(first) ?? borrow_base_guarded(b, ops, first, func, defs, visited);
       r
     }
     NdVar { n: v } => {
@@ -1671,6 +1673,41 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
     NdReturn { inner } => borrow_base_guarded(b, ops, inner, func, defs, visited),
     _ => null,
   }
+}
+
+// src/use_analysis.rs fn discharged_variable — the variable a bare-variable discharge answers
+// (`x` in `x!`, `x ?? return`): the `ncr` block `{ if <x is absent> { <exit> }; x }` the parser
+// builds, recognised by its name, its two statements and the `if` with no else.  Its value is
+// `x` itself on every path that has one, so a projection through it reads `x`'s place
+// (loft#2447).  Null for any other node.
+pub fn discharged_variable(n: ir::Node) -> integer? {
+  match n {
+    NdSpan { pos: _, inner } => discharged_variable(inner),
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name != "ncr" || len(bl.operators) != 2 {
+        return null;
+      }
+      test_ok = match bare(bl.operators[0]!) { NdIf { cond: _, t: _, f } => bare(f) is NdNull, _ => false };
+      if !test_ok {
+        return null;
+      }
+      match bare(bl.operators[1]!) { NdVar { n: v } => v, _ => null }
+    },
+    _ => null,
+  }
+}
+
+// A node without its source-position wrappers (`Value::unspan`).
+fn bare(n: ir::Node) -> ir::Node {
+  at = n;
+  while true {
+    match at {
+      NdSpan { pos: _, inner } => { at = inner; },
+      _ => { break; }
+    }
+  }
+  at
 }
 
 // The first argument of a projection as a variant-check `If`: its subject, or null.

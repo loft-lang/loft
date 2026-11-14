@@ -280,7 +280,40 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
         }
         return FirstArm::CallCopy { d_nr: rec };
     }
+    // `@FR-B-Copy` — a choice handing another heap variable over whole on one arm and a store of
+    // its own on the others (`chain = if p { f() ?? NdNull } else { NdNull }`) joins on that
+    // variable, as the rebind does (`join_base`) and the C writer's `join_bind` does for a first
+    // bind.  Bound plainly, `v` named the variable's store, and a later rebind releasing what `v`
+    // displaces freed it under the variable (the self-hosted elaborator's `enum_field`).
+    if let Some(base) = first_bind_choice_join(data, d_nr, function, v, value)
+        && let Some(rec) = join_record(crate::use_analysis::first_bind_shape(tp))
+    {
+        return FirstArm::CallJoin { d_nr: rec, base };
+    }
     first_arm_plain(function, tp, value)
+}
+
+/// The variable a first bind from a choice joins on ([`choice_var_arm`]), for a local that OWNS
+/// what it binds: its deps are empty and no later copy witnessed it, as for an element copy.  A
+/// local that keeps its deps is a view the exit does not free, so a copy into it would leak.
+/// The C writer's `join_stmt` asks the same.
+pub(crate) fn first_bind_choice_join(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    value: &Value,
+) -> Option<u16> {
+    let tp = function.tp(v);
+    if !crate::keys::join_own_enabled()
+        || matches!(crate::use_analysis::first_bind_shape(tp), Type::Optional(_))
+        || !tp.depend().is_empty()
+        || function.owner_witness(v).is_some()
+        || function.is_view_elided(v)
+    {
+        return None;
+    }
+    choice_var_arm(data, d_nr, function, value, v)
 }
 
 /// The arms of a first assignment that is not a heap record bind: the null inits, a function
@@ -547,9 +580,39 @@ fn reads_var_unless_exiting(value: &Value, v: u16) -> bool {
 /// until after it, and runs only when the stores differ (`DisplacedFree::Stash`): `x = m(x)`
 /// where `x` views a lift temp that owns each delivery.  `rhs_reads_v` is syntactic and sees
 /// only `v` itself.
+///
+/// A view of a view is one too: `bl = block[0]` out of a match capture `_mv_block_1` of `b`
+/// names `_mv_block_1`, whose deps name `b`, so `b = ex(NdBlock { block: [bl] })` copies out of
+/// the store a pre-free had already released (a silent wrong answer on the interpreter, the
+/// self-hosted elaborator's `parse_code`).  The views are closed over their dep chains;
+/// `LOFT_NO_TRANSITIVE_VIEW_READ=1` asks the direct deps alone again.
 fn rhs_reads_a_view_of(function: &Function, value: &Value, v: u16) -> bool {
-    (0..function.count())
-        .any(|w| w != v && function.tp(w).depend().contains(&v) && value.reads_var(w))
+    if crate::keys::transitive_view_read_off() {
+        return (0..function.count())
+            .any(|w| w != v && function.tp(w).depend().contains(&v) && value.reads_var(w));
+    }
+    let n = function.count();
+    let mut views = vec![false; usize::from(n)];
+    if usize::from(v) < views.len() {
+        views[usize::from(v)] = true;
+    }
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for w in 0..n {
+            if !views[usize::from(w)]
+                && function
+                    .tp(w)
+                    .depend()
+                    .iter()
+                    .any(|&d| views.get(usize::from(d)).copied().unwrap_or(false))
+            {
+                views[usize::from(w)] = true;
+                grew = true;
+            }
+        }
+    }
+    (0..n).any(|w| w != v && views[usize::from(w)] && value.reads_var(w))
 }
 
 /// The facts a reassignment `v = value` in function `d_nr` is lowered on, and the lowering;
@@ -753,19 +816,33 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // arm's bind copies into the temp (that is what the write-out is for), so the
     // temp owns what the arm displaces — the sentinel its pre-init put there.
     // An ARGUMENT frees what it displaces only with an entry witness, which tells the caller's
-    // store from one this frame minted (`@FR-O-Buffer`).  Without one the release is the scope
-    // pass's own: a rebound by-value parameter is detached in the IR before each rebind
-    // (`OpFreeRefIfDistinct(p, snapshot)` and its reset to the sentinel), so a free here would
-    // act on the sentinel — the C writer's `displacing_rebind` frees no such argument either.
+    // store from one this frame minted (`@FR-O-Buffer`).  Without one the release is not this
+    // free's: a rebound by-value parameter is detached in the IR before each rebind
+    // (`OpFreeRefIfDistinct(p, snapshot)` and its reset to the sentinel), and a renamed return
+    // buffer holds the store its CALLER handed it, which a free here released under the caller
+    // (a re-free under `LOFT_NO_ADOPT_BUFFER_REUSE=1`: tests/scripts/a-value-read-and-dropped-is-
+    // built-outside-the-store.loft's `decode`).  The C writer's `displacing_rebind` frees no
+    // such argument either.
     // @PLN220.  `LOFT_ARG_DISPLACED_FREE=1` keeps the free for every argument but the hidden
     // buffer, as before.
     // Only the free BEFORE the bind is the scope pass's: `owned_ref` still decides the copy arms
     // below, since a rebound parameter that owns its binding copies a call's answer as any owner
     // does, and a stashed free (the value reads the parameter, or it is nullable) still runs —
     // it is what the copy arms' fresh-store choice reads (#360).
+    // A keyed local whose null init minted nothing (`keyed_null_mints`) and that is only ever
+    // bound to a null or a borrow (`__kvb_N = b.0`, a temporary viewing a store another binding
+    // owns) never holds a store of its own, so a reassignment displaces nothing — the C and
+    // rustc writers free nothing there either.  One that takes a call's answer may hold a store
+    // that call minted, and keeps its free.  @PLN220.  `LOFT_KEYED_VIEW_DISPLACED_FREE=1` frees
+    // again.
+    let keyed_view = crate::parser::vectors::owns_keyed_store(function.tp(v))
+        && !keyed_null_mints(function, v)
+        && !crate::keys::keyed_view_displaced_free()
+        && only_null_or_borrowed(data, d_nr, v);
     let owned_ref = (function.owns_displaced_store(v, value, data)
         || is_return_temp_owning_its_arms(data, d_nr, function, v))
-        && (!is_hidden_buf_arg || entry_w.is_some());
+        && (!is_hidden_buf_arg || entry_w.is_some())
+        && !keyed_view;
     let frees_displaced = owned_ref
         && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
@@ -878,7 +955,30 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     rb
 }
 
+/// `@FR-O-Unknown` — may `v` take a closure call's answer through the runtime copy-or-adopt
+/// (`ReArm::OpaqueCallRef`: copied when it predates the call, adopted when the call minted it)?
+/// Any local; and a renamed return buffer where an entry witness tells the caller's store from
+/// this frame's (`@FR-O-Buffer`), as the C writer's `opaque_callref_stmt` takes it.  Another
+/// argument's store is its caller's, which no bind here may adopt.  @PLN220.
+/// `LOFT_NO_BUFFER_OPAQUE_CALL=1` leaves the return buffer to the plain bind.
+fn opaque_call_destination(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    rb: &ReBind,
+) -> bool {
+    !function.is_argument(v)
+        || (is_promoted_return_buffer(data, d_nr, function, v)
+            && rb.entry_w.is_some()
+            && !crate::keys::buffer_opaque_call_off())
+}
+
 /// The arm of a reassignment, given its facts: the tests in the order the old chain took them.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one test per arm, in the order the chain decides them"
+)]
 fn re_arm(
     data: &Data,
     d_nr: u32,
@@ -894,7 +994,8 @@ fn re_arm(
     let stashed = rb.free == DisplacedFree::Stash;
     // A stashed displaced free (a nullable local) runs after the join as it runs after a copy,
     // and a `τ?` local joins as its `τ` twin does (`first_bind_shape`) — the C writer's
-    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there: a call handed `v`
+    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there — either call
+    // spelling, a `CallRef` whose target resolves (`callee_of`) included: a call handed `v`
     // may answer `v`'s own store, which the copy arm would refill under it (#360), and the
     // join's "fresh" test is a call's — a `??` block's stored-reference arm names a store
     // neither `v` nor the base owns.  `LOFT_NO_STASHED_JOIN=1` copies them instead.  @PLN220.
@@ -904,19 +1005,32 @@ fn re_arm(
     } else {
         tp
     };
+    // `@FR-O-Move` — a call handed `v` itself as its buffer (S1, `__ref_N = f(x, __ref_N)`, the
+    // shape a join arm's owning call is bound in) whose answer may be an ARGUMENT's store: the
+    // answer is the buffer the callee filled, a store it made, or `x`'s.  Bound plainly, `v`
+    // named `x`'s store on that path and both were freed (loft#2474's elaborator,
+    // `arm_delivery`).  Joined on `x` it is copied there and adopted elsewhere; the stashed
+    // displaced free releases the buffer's store where the answer is not it.
+    // `LOFT_NO_S1_JOIN=1` binds it plainly again.
+    let s1_join = rb.s1_substituted
+        && stashed
+        && !crate::keys::s1_join_off()
+        && matches!(value.unspan(), Value::Call(..))
+        && crate::use_analysis::callee_of(data, d_nr, value).is_some();
     if (rb.owned_ref || rb.buffer_kept)
-        && !rb.s1_substituted
+        && (!rb.s1_substituted || s1_join)
         && (!stashed
+            || s1_join
             || (stashed_join
                 && !rb.rhs_reads_v
-                && matches!(value.unspan(), Value::Call(..))
+                && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
                 && crate::use_analysis::callee_of(data, d_nr, value).is_some()))
         && !matches!(value.unspan(), Value::Var(_))
         && crate::keys::join_own_enabled()
         && !function.is_view_elided(v)
-        && let crate::use_analysis::Own::Join { base } =
-            crate::use_analysis::ownership_of(data, d_nr, value)
+        && let Some(base) = join_base(data, d_nr, function, value, v)
         && base != u16::MAX
+        && base != v
         && let Some(rec) = join_record(join_shape)
     {
         return ReArm::Join { d_nr: rec, base };
@@ -926,7 +1040,7 @@ fn re_arm(
     }
     if rb.owned_ref
         && !rb.witnessed
-        && !function.is_argument(v)
+        && opaque_call_destination(data, d_nr, function, v, rb)
         && !function.is_view_elided(v)
         && let Some(rec) = crate::use_analysis::opaque_callref_bind(data, d_nr, tp, value)
     {
@@ -991,7 +1105,15 @@ fn re_arm(
         };
     }
     let reads_v_on_exit_only = rb.rhs_reads_v && stashed && !reads_var_unless_exiting(value, v);
-    if rb.owned_ref
+    // A KEPT local (one a construction buffer's store was adopted into) is released at its
+    // exits too (`OpFreeRefIfDistinct(v, buffer)`), so a projection bound into it plainly made
+    // it a view the exit then freed, and a refill of the container rewrote it (`cond = mc.cond`
+    // in a loop beside `cond = NdIf { … }`: a wrong answer on the interpreter, a double free on
+    // both backends; main).  It copies as an owner does.  `LOFT_NO_KEPT_ELEMENT_COPY=1`.
+    // An OWNING kept local only: one with deps is a view on some path, and a copy into it
+    // would have no owner.
+    let kept_copies = rb.buffer_kept && tp.depend().is_empty() && crate::keys::kept_element_copy();
+    if (rb.owned_ref || kept_copies)
         && let Some(rec) = tp.base().heap_def_nr()
         && (!rb.rhs_reads_v || reads_v_on_exit_only)
         && !rb.rhs_is_new_record
@@ -1020,6 +1142,102 @@ fn re_arm(
 /// copies into, for a local of type `tp`: a heap record, or a heap enum, which the copy walks
 /// the same way (the C writer's `join_bind` takes both).  `None` for every other type, and for
 /// an enum under `LOFT_NO_ENUM_JOIN=1`, which deep-copies it at every bind as before.  @PLN220.
+/// The base a rebind joins on (R1): a choice's whole-variable arm ([`choice_var_arm`]), else
+/// the oracle's `Join` base.
+fn join_base(data: &Data, d_nr: u32, function: &Function, value: &Value, v: u16) -> Option<u16> {
+    choice_var_arm(data, d_nr, function, value, v).or_else(|| {
+        match crate::use_analysis::ownership_of(data, d_nr, value) {
+            crate::use_analysis::Own::Join { base } => Some(base),
+            _ => None,
+        }
+    })
+}
+
+/// `@FR-B-Copy` — the variable a CHOICE hands over whole on one of its arms
+/// (`class = bound ?? Owned`, `x = if c { y } else { mk() }`) while every other arm answers a
+/// store of its own or null.  Bound plainly, `v` named that variable's store beside it and the
+/// two were freed apart; the choice is a join on that variable, copied where the answer is its
+/// store and adopted where it is a fresh arm's.  Decided by the arms, not by the oracle's answer
+/// for the whole, which reads through the variable's own definitions (an owning local first
+/// bound from a parameter's view reads as that view).  `None` for anything else — a second
+/// such variable, or an arm that may be a view — which keeps the lowering it had
+/// (`LOFT_NO_CHOICE_VAR_JOIN=1` answers `None` always).
+pub(crate) fn choice_var_arm(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    value: &Value,
+    v: u16,
+) -> Option<u16> {
+    fn leaves<'a>(data: &Data, n: &'a Value, out: &mut Vec<&'a Value>) {
+        match n.unspan() {
+            Value::If(_, t, e) => {
+                leaves(data, t, out);
+                leaves(data, e, out);
+            }
+            Value::Block(b) if !b.operators.is_empty() => {
+                // A block's value is its tail; a block that ends in a jump answers nothing.  A
+                // `??` block (`ncc`) is the choice its `if` makes, followed by the frees of its
+                // lifted operands, which answer nothing.
+                let tail = if b.name == "ncc" && !crate::keys::ncc_choice_join_off() {
+                    b.operators.iter().rev().find(|op| !is_free_call(data, op))
+                } else {
+                    b.operators.last()
+                };
+                // The tail answers the block: a nested block or choice is walked the same way.
+                if let Some(last) = tail {
+                    if matches!(last.unspan(), Value::If(..) | Value::Block(_)) {
+                        leaves(data, last, out);
+                    } else {
+                        out.push(last);
+                    }
+                }
+            }
+            _ => out.push(n),
+        }
+    }
+    fn is_free_call(data: &Data, op: &Value) -> bool {
+        matches!(op.unspan(), Value::Call(f, _)
+            if matches!(data.def(*f).name(), "OpFreeRef" | "OpFreeRefIfDistinct"))
+    }
+    if crate::keys::choice_var_join_off() || !matches!(value.unspan(), Value::If(..)) {
+        return None;
+    }
+    let mut arms = Vec::new();
+    leaves(data, value, &mut arms);
+    let mut var = None;
+    for arm in arms {
+        match arm.unspan() {
+            Value::Var(w)
+                if *w != v
+                    && *w < function.count()
+                    && !function.is_argument(*w)
+                    && function.tp(*w).base().heap_def_nr().is_some()
+                    // A `??`'s temp (`__ncc_N`) owns the store its subject answered, freed
+                    // where the `??` runs again and at the exit: a whole variable here too.
+                    && (!function.name(*w).starts_with("__")
+                        || (function.name(*w).starts_with("__ncc_")
+                            && !crate::keys::ncc_choice_join_off())) =>
+            {
+                if var.is_some_and(|x| x != *w) {
+                    return None;
+                }
+                var = Some(*w);
+            }
+            a if crate::use_analysis::holds_no_store(data, a) => {}
+            // A construction's work-ref (`{ OpDatabase(__ref_N); …; __ref_N }`) or a call that
+            // answers a store of its own.
+            Value::Var(w) if function.name(*w).starts_with("__ref_") => {}
+            a if matches!(
+                crate::use_analysis::ownership_of(data, d_nr, a),
+                crate::use_analysis::Own::Owned
+            ) && !matches!(a.unspan(), Value::Var(_)) => {}
+            _ => return None,
+        }
+    }
+    var
+}
+
 fn join_record(tp: &Type) -> Option<u32> {
     match tp {
         Type::Reference(rec, _) => Some(*rec),
@@ -1029,6 +1247,32 @@ fn join_record(tp: &Type) -> Option<u32> {
         Type::Optional(_) => None,
         _ => None,
     }
+}
+
+/// Is every value function `d_nr` binds to `v` a null or a borrow of another binding
+/// (`use_analysis::Own::Borrowed`)?  Then `v` never holds a store of its own.  A value of any
+/// other ownership — a call's answer, a join, a mint — answers no, which only keeps a free.
+fn only_null_or_borrowed(data: &Data, d_nr: u32, v: u16) -> bool {
+    fn walk(data: &Data, d_nr: u32, v: u16, node: &Value, ok: &mut bool) {
+        if !*ok {
+            return;
+        }
+        if let Value::Set(var, value) = node.unspan()
+            && *var == v
+            && !is_null_value(data, value)
+            && !matches!(
+                crate::use_analysis::ownership_of(data, d_nr, value),
+                crate::use_analysis::Own::Borrowed { .. }
+            )
+        {
+            *ok = false;
+            return;
+        }
+        node.for_each_child(&mut |c| walk(data, d_nr, v, c, ok));
+    }
+    let mut ok = true;
+    walk(data, d_nr, v, data.def(d_nr).code(), &mut ok);
+    ok
 }
 
 /// Is `value` a null — `null`, or the sentinel a reference reset writes?
@@ -1107,6 +1351,40 @@ pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
             crate::use_analysis::ownership_of(data, d_nr, value),
             crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. }
         )
+}
+
+/// The lowering `bind_lowering` decides for `v = value`, as a writer's trace row names it beside
+/// its own arm (`lowering=R1/b2=stash join`): the first arm's name for a first bind, the
+/// reassignment's arm with its displaced free otherwise.  Only a trace asks it.
+#[must_use]
+pub fn decided_lowering(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    value: &Value,
+    first: bool,
+) -> String {
+    if first {
+        return first_arm(data, d_nr, function, v, value)
+            .trace_name()
+            .to_string();
+    }
+    let rb = re_bind(data, d_nr, function, v, value);
+    let b2 = match rb.free {
+        DisplacedFree::Stash => "stash",
+        DisplacedFree::Pre { .. } => "pre",
+        DisplacedFree::None => "none",
+    };
+    format!("{}/b2={b2}", rb.arm.trace_name())
+}
+
+/// The source line a bind trace row names for `v = value`: the value's own position where the
+/// parser spanned it, else the line the writer last passed (`fallback`), so the three writers
+/// name one assignment by one line even where a writer's own position stream skips a function.
+#[must_use]
+pub fn row_line(value: &Value, fallback: u32) -> u32 {
+    value.span_pos().map_or(fallback, |p| p.line)
 }
 
 /// Is the bind trace the environment variable `env` names switched on?  A writer asks it before
