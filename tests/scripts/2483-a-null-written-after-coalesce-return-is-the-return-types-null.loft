@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2483 — `x = e ?? return null;`: the written `null` is the function's return type's null,
+// as it is in a plain `return null;` (`@FR-N-Coal`, `@FR-C-Never`).  The caller then sees an
+// absent value: `== null` holds, `?? d` answers `d`, `?? continue` skips.  One cell per return
+// type, each with the present answer beside it so a cell that returns nothing at all fails too;
+// the plain statement and the bare `?? return` are the controls.
+//
+// @falsified-at: 4fc5b305f — interpret exit 1 -> 0, interpret 3 assertion failures -> 0; native
+//   INERT (the C writer wrote the typed null already)
+// CHANNEL: the asserts.
+// WITNESS: each assert message prints what was read.
+
+struct P { v: integer }
+enum E { A, B }
+
+fn k(p: text) -> integer? { p.find("k") }
+fn r_text(p: text) -> text? { at = k(p) ?? return null; "t{at}" }
+fn r_text_later(p: text) -> text? { at = k(p) ?? return null; if at > 5 { return "far"; } p }
+fn r_int(p: text) -> integer? { at = k(p) ?? return null; at + 10 }
+fn r_float(p: text) -> float? { at = k(p) ?? return null; at as float + 0.5 }
+fn r_bool(p: text) -> boolean? { at = k(p) ?? return null; at > 0 }
+fn r_char(p: text) -> character? { at = k(p) ?? return null; p[at] }
+fn r_rec(p: text) -> P? { at = k(p) ?? return null; P { v: at } }
+fn r_vec(p: text) -> vector<integer>? { at = k(p) ?? return null; [at, at] }
+fn r_enum(p: text) -> E? { at = k(p) ?? return null; if at > 0 { B } else { A } }
+fn r_bare(p: text) -> text? { at = k(p) ?? return; "t{at}" }
+fn r_plain(p: text) -> text? { at = k(p); if at == null { return null; } "t{at}" }
+
+fn test_text_is_null() {
+  assert(r_text("n") == null, "absent: [{r_text("n") ?? "NULL"}]");
+  assert(r_text("ak") == "t1", "present: {r_text("ak") ?? "NULL"}");
+  assert(r_text_later("n") == null, "absent, a later return in the body");
+  assert(r_text_later("ak") == "ak", "present: {r_text_later("ak") ?? "NULL"}");
+}
+
+fn test_every_return_type_is_null() {
+  assert(r_int("n") == null && (r_int("ak") ?? -1) == 11, "integer: {r_int("n") ?? -1} {r_int("ak") ?? -1}");
+  assert(r_float("n") == null && (r_float("ak") ?? -1.0) == 1.5, "float: {r_float("ak") ?? -1.0}");
+  assert(r_bool("n") == null && (r_bool("ak") ?? false), "boolean");
+  assert(r_char("n") == null && (r_char("ak") ?? '?') == 'k', "character: {r_char("ak") ?? '?'}");
+  assert(r_rec("n") == null && (r_rec("ak").v ?? -1) == 1, "record: {r_rec("ak").v ?? -1}");
+  assert(r_vec("n") == null && len(r_vec("ak") ?? []) == 2, "vector: {len(r_vec("ak") ?? [])}");
+  assert(r_enum("n") == null && (r_enum("ak") ?? A) == B, "enum");
+}
+
+fn test_the_controls_agree() {
+  assert(r_bare("n") == null && r_bare("ak") == "t1", "a bare `?? return`");
+  assert(r_plain("n") == null && r_plain("ak") == "t1", "a plain `return null`");
+}
+
+// What a caller does with the absent answer: hand-computed, the middle text has no `k`.
+fn test_a_caller_skips_defaults_and_tests_the_null() {
+  skipped = "";
+  defaulted = "";
+  tested = "";
+  for p in ["ak", "n", "bbk"] {
+    defaulted += "({r_text(p) ?? "D"})";
+    if r_text(p) == null {
+      tested += "(null)";
+    }
+    x = r_text(p) ?? continue;
+    skipped += "({x})";
+  }
+  assert(skipped == "(t1)(t2)", "`?? continue`: {skipped}");
+  assert(defaulted == "(t1)(D)(t2)", "`?? d`: {defaulted}");
+  assert(tested == "(null)", "`== null`: {tested}");
+}
