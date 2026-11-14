@@ -223,7 +223,9 @@ Each was fixed where it was met, with its guard (rule 2 and 3 of the port).
 | loft#2485 | a bind after its block ended moved the ended binding's type (a false gating warning), and a per-loop binding never ended | `tests/callarg_nstore.rs` |
 
 Not fixed, noted: a `hash<T[k]>` local cannot be formatted (`"{h}"`: "Cannot format type"),
-where a record holding one can.
+where a record holding one can.  A recursion over a tree that calls itself in tail position
+draws `warning[tail-call-not-jumped]` (@C155, by design: such a call keeps its frame); the
+port's recursive proofs go through a wrapper that binds the answer.
 
 ## Open questions, answered by the first probes
 

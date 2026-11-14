@@ -120,7 +120,14 @@ fn int_of(n: ir::Node) -> integer? {
 }
 
 // `non_sentinel`: is `v` provably non-sentinel under the function's variable facts `vars`?
+// The proof recurses over the value's tree through this entry, so that no step is a call of
+// itself in tail position (`tail-call-not-jumped`: such a call keeps its frame).
 pub fn non_sentinel(b: ir::Bundle, p: Proof, vars: vector<boolean>, v: ir::Node) -> boolean {
+  answer = proven(b, p, vars, v);
+  answer
+}
+
+fn proven(b: ir::Bundle, p: Proof, vars: vector<boolean>, v: ir::Node) -> boolean {
   defs = b.data.definitions;
   match loop_shape::unspan(v) {
     NdFloat { f } => f != null,
@@ -132,9 +139,7 @@ pub fn non_sentinel(b: ir::Bundle, p: Proof, vars: vector<boolean>, v: ir::Node)
     NdVar { n } => vars[n] ?? false,
     NdIf { cond, t, f } => {
       // Under the discharge shape the then-arm is proven by the test itself.
-      then_arm = discharge_guard(defs, cond, t) || non_sentinel(b, p, vars, t);
-      else_arm = non_sentinel(b, p, vars, f);
-      then_arm && else_arm
+      (discharge_guard(defs, cond, t) || non_sentinel(b, p, vars, t)) && non_sentinel(b, p, vars, f)
     },
     NdBlock { block } => {
       ops = block[0].operators;
