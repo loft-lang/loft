@@ -495,7 +495,7 @@ pub struct RunImage {
   pub gens: vector<RunGen>,
   // Per native: the definition whose loft body a `loft_shared_<name>` native was compiled from
   // (the compiled standard library, @PLN181), which the runner runs as bytecode; -1 for any
-  // other native.
+  // other native, a `#dest` form included.
   pub shared: vector<integer>,
   pub main: integer,
   pub cwd: boolean,

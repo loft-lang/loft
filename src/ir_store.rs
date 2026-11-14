@@ -1200,7 +1200,9 @@ pub struct RunFnRefShape {
 
 /// Per native index: the definition a `loft_shared_<name>` native (the compiled standard
 /// library, @PLN181) was compiled from, whose bytecode body the loft runner runs in its place;
-/// -1 for every other native: a `#dest` form, or one whose body answers a text.
+/// -1 for every other native, the `#dest` forms included (they pop a destination and push
+/// nothing, which the body does not).  A plain call passes the body's own parameters, hidden
+/// return and work buffers included, and leaves what the body's return leaves.
 #[must_use]
 pub fn run_image_shared(
     data: &Data,
@@ -1216,9 +1218,7 @@ pub fn run_image_shared(
             && !def.contains('#')
         {
             let nr = data.def_nr(def);
-            // A text answer comes back through caller-supplied text buffers that a native's
-            // caller never pushes; those are called through their `#dest` form instead.
-            if nr != u32::MAX && !matches!(data.def(nr).returned().base(), Type::Text(_)) {
+            if nr != u32::MAX {
                 out[i] = i64::from(nr);
             }
         }
