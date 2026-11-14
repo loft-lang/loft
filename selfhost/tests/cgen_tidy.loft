@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `cgen_tidy.loft` answers what `src/c/tidy.rs` answers: that module's own
+// unit tests, cell for cell, with the Rust tests' expected texts.
+
+use cgen_tidy;
+
+fn test_an_unused_label_and_local_go_and_a_used_one_stays() {
+  body = "    loft_ref v1___retbuf = {{ 0xFFFF, 0, 0, 0 }};\n    int64_t v0_a = LOFT_NULL;\n    for (;;) {{\n        v0_a = 3;\n        if (v0_a > 2) goto brk_1;\n    cont_1:;\n    }}\n    brk_1:;\n    return v0_a;\n";
+  t = cgen_tidy::tidy([], body);
+  assert(!t.contains("v1___retbuf"), "{t}");
+  assert(!t.contains("cont_1"), "{t}");
+  assert(t.contains("brk_1:;") && t.contains("int64_t v0_a"), "{t}");
+}
+
+fn test_a_write_only_local_keeps_its_effect() {
+  body = "    int64_t v2__discard_1 = LOFT_NULL;\n    v2__discard_1 = n_f(3);\n    v2__discard_1 = 4;\n";
+  t = cgen_tidy::tidy([], body);
+  assert(t == "    (void) (n_f(3));\n", "{t}");
+}
+
+fn test_an_initializer_with_an_effect_is_kept() {
+  body = "    loft_text v1_s = loft_text_from(n_g());\n    return 0;\n";
+  t = cgen_tidy::tidy([], body);
+  assert(t == body, "{t}");
+}
+
+fn test_a_name_in_a_string_or_comment_is_no_use() {
+  body = "    int64_t v0_x = 0;\n    /* v0_x */ n_p(\"v0_x\");\n";
+  t = cgen_tidy::tidy([], body);
+  assert(t == "    /* v0_x */ n_p(\"v0_x\");\n", "{t}");
+}
+
+fn test_a_function_and_a_table_nothing_names_are_dropped() {
+  p = "RT\n/*end*/\nstatic const uint8_t loft_dflt4[2] = {{ 0, 0 }};\nstatic const loft_rtype loft_rnone = {{ \"\", 1 }};\nstatic int n_r(int k);\nstatic int n_r(int k) {{\n    return k ? n_r(k - 1) : 0;\n}}\nstatic int n_a(void);\nstatic int n_b(void);\nstatic int n_a(void) {{\n    return n_b();\n}}\nstatic int n_b(void) {{\n    return 1;\n}}\nstatic int n_c(void) {{\n    return 2;\n}}\nint main(void) {{\n    return n_c();\n}}\n";
+  t = cgen_tidy::drop_unnamed(p, "/*end*/\n");
+  assert(!t.contains("loft_dflt4") && !t.contains("n_a") && !t.contains("n_b"), "{t}");
+  assert(t.contains("static int n_c(void) {{") && t.contains("int main"), "{t}");
+  // Hand-computed: the tables, the self-calling `n_r` and the pair `n_a` / `n_b` go.
+  assert(t == "RT\n/*end*/\nstatic int n_c(void) {{\n    return 2;\n}}\nint main(void) {{\n    return n_c();\n}}\n", "{t}");
+}
+
+fn test_a_parameter_only_assigned_keeps_its_effect() {
+  t = cgen_tidy::tidy(["int64_t v0_b"], "    v0_b = n_f(1);\n    return 0;\n");
+  assert(t == "    (void) v0_b;\n    (void) (n_f(1));\n    return 0;\n", "{t}");
+}
+
+fn test_a_pointer_local_nothing_reads_goes() {
+  body = "    lt_103 * v2___ref_p2_1 = 0;\n    uint8_t *loft_pa0_0 = 0;\n    v2___ref_p2_1 = 0;\n    return 1;\n";
+  t = cgen_tidy::tidy([], body);
+  assert(t == "    return 1;\n", "{t}");
+}
+
+fn test_a_write_only_local_in_a_compound_line_keeps_its_effect() {
+  body = "    int64_t v4_r = LOFT_NULL;\n    if (n > 0) {{ uint64_t u = n_t(); v4_r = u > 1 ? 2 : 3; }}\n    return 0;\n";
+  t = cgen_tidy::tidy([], body);
+  assert(t == "    if (n > 0) {{ uint64_t u = n_t(); (void) (u > 1 ? 2 : 3); }}\n    return 0;\n", "{t}");
+}
+
+fn test_a_line_of_two_declarations_is_left_alone() {
+  body = "    int64_t ia1 = LOFT_NULL; int ia1_set = 0;\n    if (!ia1_set) {{ ia1_set = 1; }}\n";
+  t = cgen_tidy::tidy([], body);
+  assert(t == body, "{t}");
+}
+
+fn test_an_unused_parameter_is_marked() {
+  t = cgen_tidy::tidy(["loft_ref v0_t", "loft_vh hi0"], "    return v0_t;\n");
+  assert(t == "    (void) hi0;\n    return v0_t;\n", "{t}");
+}
+
+// A function of a unit: its body tidied, a `loft_ref` parameter it names copied in.
+fn test_a_unit_function_is_tidied_and_takes_its_reference_by_copy() {
+  unit = "static const int t[] = {{ 1 }};\nstatic int n_f(loft_ref v0_r, int64_t v1_k) {{\n    int64_t v2_u = LOFT_NULL;\n    return loft_len(v0_r);\n}}\n";
+  t = cgen_tidy::tidy_unit(unit);
+  assert(t == "static const int t[] = {{ 1 }};\nstatic int n_f(loft_ref v0_r__in, int64_t v1_k) {{\n    LOFT_REF_IN(v0_r);\n    (void) v1_k;\n    return loft_len(v0_r);\n}}\n", "{t}");
+}
