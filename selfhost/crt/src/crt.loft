@@ -2284,8 +2284,27 @@ pub fn lex(source: text) -> vector<u8> {
   buf
 }
 
-// ── Compiled standard-library bodies, the destination form (`src/c/bodies.rs`; `body_find`
-// and `body_call` are above) ──
+// ── Compiled standard-library bodies (`src/c/bodies.rs`, compiled into the shim) ──
+
+fn c_body_find(name: text, bytes: integer) -> integer;
+#c "loft_body_find" "int64_t(const char*, int64_t)"
+
+fn c_body_call(entry: integer, stk: integer, sp: integer) -> integer;
+#c "loft_body_call" "int64_t(int64_t, int64_t, int64_t)"
+
+// The entry of the compiled body of definition `name` (with or without `loft_shared_`), or -1:
+// looked up once per native when an image loads, never per call.
+pub fn body_find(name: text) -> integer {
+  c_body_find(name, size(name))
+}
+
+// Entry `entry` run on the stack store `stk` whose top is `sp`, the arguments in their slots
+// just below it: the new top, the answer at the arguments' base — or negative, and nothing was
+// touched: the caller runs the loft body.  A body that works on records answers negative until
+// the type table is loaded (`load_types`).
+pub fn body_call(entry: integer, stk: integer, sp: integer) -> integer {
+  c_body_call(entry, stk, sp)
+}
 
 fn c_body_call_dest(entry: integer, stk: integer, sp: integer, s: integer, r: integer, p: integer) -> integer;
 #c "loft_body_call_dest" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"

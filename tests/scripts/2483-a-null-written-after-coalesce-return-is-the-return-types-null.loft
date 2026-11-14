@@ -11,6 +11,9 @@
 //   INERT (the C writer wrote the typed null already)
 // CHANNEL: the asserts.
 // WITNESS: each assert message prints what was read.
+// HOLDS: the written `null` for every kind of return type (a text, the scalars, a record, a
+// vector, an enum), a later `return` in the body, and what a caller does with the answer; the
+// plain `return null` and the bare `?? return` are the controls that always held.
 
 struct P { v: integer }
 enum E { A, B }

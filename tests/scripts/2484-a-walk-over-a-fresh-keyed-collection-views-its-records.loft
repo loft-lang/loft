@@ -10,6 +10,7 @@
 // @falsified-at: 4fc5b305f — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: the asserts, and the run's own report (a store freed twice stops the test; a store
 // left at exit is a leak).
+// ARMED: nothing to arm — a store freed twice stops any build with its report.
 // WITNESS: each assert message prints the value it read.
 // HOLDS: every way out of the walk (its end, `break`, `return` on a hit and on a miss), a
 // nested walk, a write through the view, an empty collection, the comprehension and the

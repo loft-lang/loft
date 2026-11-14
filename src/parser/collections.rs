@@ -4427,7 +4427,8 @@ use #count instead"
             // (`OpFreeScratch`, a no-op when co-located).  u16::MAX = not on=4.
             let is_par = matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
             let mut hash_scratch_var: u16 = u16::MAX;
-            if let Some((scratch_var, snapshot)) = self.keyed_snapshot(&mut expr, &mut in_type, is_par)
+            if let Some((scratch_var, snapshot)) =
+                self.keyed_snapshot(&mut expr, &mut in_type, is_par)
             {
                 hash_scratch_var = scratch_var;
                 fill = snapshot;
