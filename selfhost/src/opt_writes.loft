@@ -27,11 +27,15 @@ pub struct Writes {
   // binds of these variables, and the mints and frees of these buffers.  Empty: nothing.
   skip_sets: vector<boolean>,
   skip_bufs: vector<boolean>,
+  // The functions known to write only in place (`in_place_only_writer`'s kept answers).
+  in_place: vector<boolean>,
+  // The definitions `callee_writes_only_its_buffer` is answering (`Facts::buffer_guard`).
+  buffer_guard: vector<boolean>,
 }
 
 pub fn new_writes(b: ir::Bundle) -> Writes {
   count = len(b.data.definitions);
-  Writes { free: [for _ in 0..count { false }], active: [for _ in 0..count { false }], skip_sets: [], skip_bufs: [] }
+  Writes { free: [for _ in 0..count { false }], active: [for _ in 0..count { false }], skip_sets: [], skip_bufs: [], in_place: [for _ in 0..count { false }], buffer_guard: [for _ in 0..count { false }] }
 }
 
 fn env_on(name: text) -> boolean {
@@ -65,7 +69,7 @@ fn text_variable(name: text) -> boolean {
   false
 }
 
-fn in_place_set(name: text) -> boolean {
+pub fn in_place_set(name: text) -> boolean {
   for n in ["OpSetBoolean", "OpSetInt", "OpSetInt4", "OpSetInt4Raw", "OpSetCharacter", "OpSetSingle", "OpSetFloat", "OpSetByte", "OpSetByteNullable", "OpSetShort", "OpSetShortRaw", "OpSetEnum"] {
     if n == name {
       return true;
@@ -116,7 +120,7 @@ pub fn native_op_is_store_free(def: ir::Definition) -> boolean {
 }
 
 // The variable `args[0]` names, -1 for none.
-fn first_var(args: vector<ir::Node>) -> integer {
+pub fn first_var(args: vector<ir::Node>) -> integer {
   if len(args) == 0 { -1 } else { loop_shape::var_of(loop_shape::unspan(args[0])) }
 }
 
@@ -169,7 +173,7 @@ fn discharge_buffer(b: ir::Bundle, d: ir::Definition, args: vector<ir::Node>) ->
 // `callee_allowance` (and the allowances `blocks_header_hoist` gives a native call of function
 // `d`'s body): a null-discharge buffer's allocation or field set, a lazy buffer's mint, a
 // record's release.
-fn allowed(b: ir::Bundle, d: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
+pub fn allowed(b: ir::Bundle, d: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
   mint = name == "OpDatabase" || name == "OpDatabaseNP";
   if (mint || name.starts_with("OpSet")) && discharge_buffer(b, d, args) >= 0 {
     return true;
@@ -465,4 +469,89 @@ pub fn may_write_store_without(b: ir::Bundle, w: Writes, node: ir::Node, sets: v
   w.skip_sets = [];
   w.skip_bufs = [];
   answer
+}
+
+// `scalar_stack_ref`: `OpCreateStack` of a scalar local of function `d`.
+fn scalar_stack_ref(d: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
+  if name != "OpCreateStack" {
+    return false;
+  }
+  v = first_var(args);
+  v >= 0 && v < len(d.variables.variables) && is_scalar(d.variables.variables[v]!.type_def[0]!)
+}
+
+fn any_not_in_place(b: ir::Bundle, w: Writes, d: integer, nodes: vector<ir::Node>) -> boolean {
+  for n in nodes {
+    if not_in_place(b, w, d, n) {
+      return true;
+    }
+  }
+  false
+}
+
+// `InPlaceOnly`'s walk: does `node` of function `d` write a store otherwise than in place?
+fn not_in_place(b: ir::Bundle, w: Writes, d: integer, node: ir::Node) -> boolean {
+  n = loop_shape::unspan(node);
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return true;
+      }
+      callee = b.data.definitions[def_nr]!;
+      def = b.data.definitions[d]!;
+      moves = false;
+      if !binds::has_code(callee) {
+        file_read = false;
+        if callee.name == "OpReadFile" && len(args) > 1 {
+          match loop_shape::unspan(args[1]) {
+            NdCall { def_nr: c, args: inner } => {
+              file_read = c >= 0 && c < len(b.data.definitions) && scalar_stack_ref(def, b.data.definitions[c]!.name, inner);
+            },
+            _ => {},
+          }
+        }
+        moves = !(native_op_is_store_free(callee) || in_place_set(callee.name) || file_read || scalar_stack_ref(def, callee.name, args) || allowed(b, def, callee.name, args));
+      } else {
+        moves = call_writes_store(b, w, def_nr) && !in_place_only_writer(b, w, def_nr);
+      }
+      moves || any_not_in_place(b, w, d, args)
+    },
+    NdCallRef { var: _, args: _ } => true,
+    NdParallel { arms: _ } => true,
+    NdYield { inner: _ } => true,
+    NdBlock { block } => any_not_in_place(b, w, d, block[0].operators),
+    NdLoop { block } => any_not_in_place(b, w, d, block[0].operators),
+    NdInsert { items } => any_not_in_place(b, w, d, items),
+    NdTuple { items } => any_not_in_place(b, w, d, items),
+    NdSet { var: _, inner } => not_in_place(b, w, d, inner),
+    NdReturn { inner } => not_in_place(b, w, d, inner),
+    NdDrop { inner } => not_in_place(b, w, d, inner),
+    NdTuplePut { var: _, idx: _, inner } => not_in_place(b, w, d, inner),
+    NdIf { cond, t, f } => any_not_in_place(b, w, d, [cond, t, f]),
+    NdIter { var: _, create, next, init } => any_not_in_place(b, w, d, [create, next, init]),
+    _ => false,
+  }
+}
+
+// `in_place_only_writer`: does function `d` write stores only in place — a scalar field set,
+// never a growth, a mint or a free?  A native answers no, and so does a recursion cycle; a
+// body's yes is kept.
+pub fn in_place_only_writer(b: ir::Bundle, w: Writes, d: integer) -> boolean {
+  if d < 0 || d >= len(b.data.definitions) {
+    return false;
+  }
+  if w.in_place[d]! {
+    return true;
+  }
+  def = b.data.definitions[d]!;
+  if !binds::has_code(def) || w.active[d]! {
+    return false;
+  }
+  w.active[d] = true;
+  only = !not_in_place(b, w, d, def.code[0]!);
+  w.active[d] = false;
+  if only {
+    w.in_place[d] = true;
+  }
+  only
 }

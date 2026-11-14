@@ -92,6 +92,8 @@ print it; `cgen_survey.py` gets a `--layer <name>` per row as it is built.
 | `iterations` | the `#index` of every `for e in v` loop its own bound keeps from overflowing (`opt::iteration::bounded_iteration_index`) | `LOFT_TRACE_COUNTERS` (its second line) — **compared**: `--layer iterations` |
 | `nn` | the non-sentinel facts a function's operators are written under (`opt::non_sentinel`) | `LOFT_TRACE_FACTS` (its `[nn]` line) — **compared**: `--layer nn` |
 | `ranges` | the range facts a body's operators were written under (`opt::range`) | `LOFT_TRACE_FACTS` (its `[ranges]` line) — compared: `--layer ranges`; differs where an accumulator steps under a character walk, until the walks are handed over |
+| `writes` | whether a call of a function may write a store (`opt::writes::call_writes_store`) | `LOFT_TRACE_WRITES` — **compared**: `--layer writes` |
+| `texts` | the text facts a body is set up with: the borrowed locals, the literal views, the tested borrows, the slice borrows, the lazy splits, the split tables | `LOFT_TRACE_TEXTS` — **compared** field by field: `--layer texts` |
 | `census` | each rewrite a function admitted, by rule (`make rewrite-census`) | `LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN` |
 | `declines` | each rewrite declined, with its reason (`make decline-census`) | the decline census |
 | `inline` | each function's statement count and its inline verdict | `LOFT_TRACE_INLINE` |
@@ -207,6 +209,8 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 | layer `iterations` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer iterations` |
 | layer `nn` | 6 044 function rows (the functions that ask a fact), all equal | `cgen_survey.py --cgen --layer nn` |
 | layer `bodies` | the whole corpus: of 13 511 function bodies the Rust writer wrote, the loft writer wrote 653 equal and none different, and refused the rest by name; the refusals by count: a variable of shape ref 5 899, a result of shape ref 2 324, a variable of shape text 2 020, a result of shape text 1 508, a call of the standard library 153, a function value 235, a `&` variable 60 | `cgen_survey.py --generator <built cgen> --layer bodies` |
+| layer `writes` | 13 263 function rows over 1075 units, all equal | `cgen_survey.py --generator <built cgen> --layer writes` |
+| layer `texts` | 13 263 function rows over 1075 units, all six fields equal | `cgen_survey.py --generator <built cgen> --layer texts` |
 | layer `ranges` | tests/scripts: 444 of 444 programs equal (2 939 rows), the character walks read from `char_walk::walks` | `cgen_survey.py --generator <interpreted cgen, LOFT_NO_IR_VALUE_RECORD=1> --layer ranges --scripts-only` |
 
 The image carries per definition whether its body is under the 32-bit regime
@@ -232,6 +236,10 @@ came out 64-bit from the image.
 | `selfhost/src/opt_ranged_call.loft` | `src/opt/ranged_call.rs` | the gain test, `args_ranged`, `param_seeds`, and `guard_plan` for its variable clause; a hoisted record field is not a guard's leaf yet |
 | `selfhost/src/opt_frame_calls.loft` | `src/opt/frame_calls.rs` | whole (`calls_a_frame`, `GuardFree`) |
 | `selfhost/src/opt_tabulate.loft` | `src/opt/tabulate.rs` | whole |
+| `selfhost/src/opt_writes.loft` | `may_write_store`, `call_writes_store`, `in_place_only_writer` and their allowances in `src/opt/writes.rs`; the memo and cycle guards of `src/opt/facts.rs` | the question with no tier on and no owned buffers; the tiers a loop's verdict turns on are not asked yet |
+| `selfhost/src/opt_lazy_split.loft`, `opt_split_table.loft` | `src/opt/lazy_split.rs`, `opt::hoist::split_tables`, `split_call` and `one_op_wrapper` of `src/ir_shape.rs` | whole |
+| `selfhost/src/opt_text_borrow.loft`, `opt_store_text_borrow.loft` | `src/opt/text_borrow.rs` (`borrowed_text_walks`, `text_escapes_with`), `opt::hoist::borrowed_discharge_temps`, `src/opt/store_text_borrow.rs` | whole for what the C writer asks (`local_roots`); the walk's re-read (`TextBorrow.read`) is not kept |
+| `selfhost/src/cgen_texts.loft` | `borrowed_texts`, `literal_views`, `view_bind`, `work_view_bind` in `src/c/body.rs` | whole; the writer does not write a text yet |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
