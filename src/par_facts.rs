@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I72 — Parallel execution runtime
 
 //! What a `par` worker's definition says about how it takes its row and what it hides — read
 //! from the definitions, so the front end's run image (`ir_store`, @PLN91) and the

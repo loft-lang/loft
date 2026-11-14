@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I66 — Bytecode VM / executor
 
 //! What a generator's definition says about its frame, read once here for both readers: the
 //! interpreter's coroutine operators (`State::coroutine_create` … `free_coroutine`) and the run
