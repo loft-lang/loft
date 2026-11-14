@@ -19,7 +19,9 @@ gates T and S on nearly every file, and its elaborator is gate E's work: the gat
 program and by formal rule, is [1a-parser.md § Where it stands](1a-parser.md#where-it-stands).
 1b's interpreter runs programs from the RUST front end's image (766 of the 1,078 corpus
 programs at its last census, in an earlier `handoff-*.md`; not re-measured since); the IR
-passes and the bytecode writer are not ported yet.
+passes and the bytecode writer are not ported yet.  The bytecode runner built as a port of
+the Rust interpreter — its generated operator table, what is still to build and where it
+differs from Rust — is [1b-fill-port.md](1b-fill-port.md).
 
 **One rule for every stage — a reimplementation, not a new language (owner,
 2026-10-30):** the same IR, the same bytecode, the same memory structures, the same

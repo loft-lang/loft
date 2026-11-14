@@ -171,6 +171,44 @@ static uint8_t *loft_crt_slot_at(int64_t store, int64_t at) {
     return loft_stores[store].buf + (size_t) LOFT_ST_PRIMARY * 8 + 8 + (size_t) at;
 }
 
+/* The interpreter's frame bytes as `State::get_stack` / `put_stack` / `get_var` / `put_var`
+ * read and write them: the raw value of width `which` (0 u8, 1 i8, 2 u16, 3 i16, 4 u32, 5 i32,
+ * 6 i64) at byte `at` of the stack store's frame, no field encoding; a float as its own bytes. */
+int64_t loft_crt_stack_get(int64_t which, int64_t store, int64_t at) {
+    const uint8_t *p = loft_crt_slot_at(store, at);
+    switch (which) {
+    case 0: { uint8_t v; memcpy(&v, p, 1); return v; }
+    case 1: { int8_t v; memcpy(&v, p, 1); return v; }
+    case 2: { uint16_t v; memcpy(&v, p, 2); return v; }
+    case 3: { int16_t v; memcpy(&v, p, 2); return v; }
+    case 4: { uint32_t v; memcpy(&v, p, 4); return v; }
+    case 5: { int32_t v; memcpy(&v, p, 4); return v; }
+    default: { int64_t v; memcpy(&v, p, 8); return v; }
+    }
+}
+void loft_crt_stack_put(int64_t which, int64_t store, int64_t at, int64_t v, int64_t is_null) {
+    uint8_t *p = loft_crt_slot_at(store, at);
+    if (is_null) v = INT64_MIN; /* the integer null's pattern, cut to the width */
+    switch (which) {
+    case 0: case 1: { uint8_t w = (uint8_t) v; memcpy(p, &w, 1); break; }
+    case 2: case 3: { uint16_t w = (uint16_t) v; memcpy(p, &w, 2); break; }
+    case 4: case 5: { uint32_t w = (uint32_t) v; memcpy(p, &w, 4); break; }
+    default: memcpy(p, &v, 8); break;
+    }
+}
+double loft_crt_stack_get_float(int64_t store, int64_t at, int64_t single) {
+    const uint8_t *p = loft_crt_slot_at(store, at);
+    if (single) { float f; memcpy(&f, p, 4); return (double) f; }
+    double d;
+    memcpy(&d, p, 8);
+    return d;
+}
+void loft_crt_stack_put_float(int64_t store, int64_t at, const double *v, int64_t n, int64_t single) {
+    uint8_t *p = loft_crt_slot_at(store, at);
+    double d = n > 0 ? v[0] : 0.0;
+    if (single) { float f = (float) d; memcpy(p, &f, 4); }
+    else memcpy(p, &d, 8);
+}
 /* The text a slot holds — a local's (`arg` 0) or an argument's (1) — copied into `out` when it
  * fits: its length, or -1 for the null text. */
 int64_t loft_crt_slot_text(char *out, int64_t cap, int64_t store, int64_t at, int64_t arg) {

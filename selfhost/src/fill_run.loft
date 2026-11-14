@@ -33,18 +33,55 @@ pub fn call(img: ir::RunImage, d: integer, args: vector<integer>, s: state::Stat
   trace = env_variable("LOFT_FILL_TRACE") == "1";
   while s.code_pos != end && s.fault == "" {
     if trace {
-      eprintln("at {s.code_pos} sp {s.stack_pos} top {if s.stack_pos >= 8 { crt::get_i64(s.stack, s.stack_pos - 8) } else { 0 }}");
+      eprintln("at {s.code_pos} sp {s.stack_pos} top {if s.stack_pos >= 8 { crt::stack_get(crt::SW_I64, s.stk, s.stack_pos - 8) } else { 0 }}");
     }
     op = s.code_u8();
     if op == 255 {
       op = 255 + s.code_u8();
     }
     if !fill::execute(s, op) {
-      s.fault = "the operator in slot {op} is not carried yet (at {s.code_pos})";
+      s.fault = "not carried: {img.ops[op] ?? "slot {op}"}";
     }
   }
   if s.fault != "" {
     return null;
   }
   s.get_stack_i64()
+}
+
+// The program's own functions that take only integers and answer an integer — what `call` can
+// be given — as definition numbers.
+pub fn integer_functions(b: ir::Bundle) -> vector<integer> {
+  out: vector<integer> = [];
+  for d in 0..len(b.data.definitions) {
+    def = b.data.definitions[d]!;
+    if def.source == 0 || def.def_type != 1 || !def.name.starts_with("n_") || def.name == "n_main" {
+      continue;
+    }
+    plain = is_integer(def.returned[0] ?? ir::TyVoid);
+    for a in def.attributes {
+      plain = plain && is_integer(a.typedef[0] ?? ir::TyVoid);
+    }
+    if plain {
+      out += [d];
+    }
+  }
+  out
+}
+
+fn is_integer(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec } => spec.max - spec.min > 65536,
+    _ => false,
+  }
+}
+
+// The name of definition `d` and how many parameters it takes.
+pub fn name_of(b: ir::Bundle, d: integer) -> text {
+  b.data.definitions[d]?.name ?? ""
+}
+
+pub fn arity(b: ir::Bundle, d: integer) -> integer {
+  def = b.data.definitions[d];
+  if def == null { 0 } else { len(def!.attributes) }
 }

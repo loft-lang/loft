@@ -3,6 +3,7 @@
 
 use state;
 use ops;
+use crt;
 
 pub fn goto_word(s: state::State) {
   step = s.code_i32();
@@ -79,14 +80,14 @@ pub fn mul_int(s: state::State) {
 pub fn div_int(s: state::State) {
   v2 = s.get_stack_i64();
   v1 = s.get_stack_i64();
-  new_value: integer? = v1 / v2;
+  new_value: integer? = if v2 == 0 { s.raise_recoverable("division by zero"); null } else { v1 / v2 };
   s.put_stack_i64(new_value);
 }
 
 pub fn rem_int(s: state::State) {
   v2 = s.get_stack_i64();
   v1 = s.get_stack_i64();
-  new_value: integer? = v1 % v2;
+  new_value: integer? = if v2 == 0 { s.raise_recoverable("division by zero"); null } else { v1 % v2 };
   s.put_stack_i64(new_value);
 }
 
@@ -160,6 +161,13 @@ pub fn mul_float(s: state::State) {
   v2 = s.get_stack_f64();
   v1 = s.get_stack_f64();
   new_value: float? = v1 * v2;
+  s.put_stack_f64(new_value);
+}
+
+pub fn div_float(s: state::State) {
+  v2 = s.get_stack_f64();
+  v1 = s.get_stack_f64();
+  new_value: float? = if v2 == 0.0 { s.raise_recoverable("division by zero"); v1 / v2 } else { v1 / v2 };
   s.put_stack_f64(new_value);
 }
 
@@ -260,10 +268,28 @@ pub fn reserve_frame(s: state::State) {
   s.reserve_frame(size);
 }
 
+pub fn put_bool(s: state::State) {
+  var = s.code_u16();
+  value = s.get_stack_u8();
+  s.put_var_u8(var, value);
+}
+
 pub fn not(s: state::State) {
   v1 = s.get_stack_u8();
   new_value: boolean? = v1 != 1;
   s.put_stack_bool(new_value);
+}
+
+pub fn var_character(s: state::State) {
+  pos = s.code_u16();
+  new_value: integer? = s.get_var_char(pos);
+  s.put_stack_char(new_value);
+}
+
+pub fn put_character(s: state::State) {
+  pos = s.code_u16();
+  value = s.get_stack_char();
+  s.put_var_char(pos, value);
 }
 
 pub fn conv_int_from_null(s: state::State) {
@@ -271,10 +297,340 @@ pub fn conv_int_from_null(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn conv_character_from_int(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v1 == null { 0 } else if (v1 >= 0 && v1 < 55296) || (v1 >= 57344 && v1 <= 1114111) { v1 } else { s.raise_recoverable("a cast outside the type"); 0 };
+  s.put_stack_char(new_value);
+}
+
+pub fn abs_int(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v1 == null { null } else { v1.abs() };
+  s.put_stack_i64(new_value);
+}
+
+pub fn min_single_int(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: integer? = -v1;
+  s.put_stack_i64(new_value);
+}
+
 pub fn conv_bool_from_int(s: state::State) {
   v1 = s.get_stack_i64();
   new_value: boolean? = v1 != null;
   s.put_stack_bool(new_value);
+}
+
+pub fn add_int_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = (v1 + v2) ?? null;
+  s.put_stack_i64(new_value);
+}
+
+pub fn min_int_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = (v1 - v2) ?? null;
+  s.put_stack_i64(new_value);
+}
+
+pub fn mul_int_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = (v1 * v2) ?? null;
+  s.put_stack_i64(new_value);
+}
+
+pub fn div_int_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v2 == 0 { null } else { (v1 / v2) ?? null };
+  s.put_stack_i64(new_value);
+}
+
+pub fn rem_int_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v2 == 0 { null } else { (v1 % v2) ?? null };
+  s.put_stack_i64(new_value);
+}
+
+pub fn lor_int(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = v1 | v2;
+  s.put_stack_i64(new_value);
+}
+
+pub fn eor_int(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = v1 ^ v2;
+  s.put_stack_i64(new_value);
+}
+
+pub fn s_left_int(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v1 == null || v2 == null { null } else if v2 < 0 || v2 >= 64 { s.raise_recoverable("a shift outside 0..64"); null } else { v1 << v2 };
+  s.put_stack_i64(new_value);
+}
+
+pub fn s_right_int(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v1 == null || v2 == null { null } else if v2 < 0 || v2 >= 64 { s.raise_recoverable("a shift outside 0..64"); null } else { v1 >> v2 };
+  s.put_stack_i64(new_value);
+}
+
+pub fn ne_int(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: boolean? = v1 != v2;
+  s.put_stack_bool(new_value);
+}
+
+pub fn cast_single_from_float(s: state::State) {
+  v1 = s.get_stack_f64();
+  new_value: single? = v1 as single;
+  s.put_stack_f32(new_value);
+}
+
+pub fn cast_int_from_float(s: state::State) {
+  v1 = s.get_stack_f64();
+  new_value: integer? = v1 as integer;
+  s.put_stack_i64(new_value);
+}
+
+pub fn var_text(s: state::State) {
+  s.var_text();
+}
+
+pub fn arg_text(s: state::State) {
+  s.arg_text();
+}
+
+pub fn const_text(s: state::State) {
+  s.string_from_code();
+}
+
+pub fn length_text(s: state::State) {
+  v1 = s.get_stack_str();
+  new_value: integer? = if v1 == null { 0 } else { len(v1!) };
+  s.put_stack_i64(new_value);
+}
+
+pub fn init_text(s: state::State) {
+  s.init_text();
+}
+
+pub fn append_text(s: state::State) {
+  s.append_text();
+}
+
+pub fn put_text(s: state::State) {
+  s.put_text();
+}
+
+pub fn clear_text(s: state::State) {
+  s.clear_text();
+}
+
+pub fn free_text(s: state::State) {
+  s.free_text();
+}
+
+pub fn var_enum(s: state::State) {
+  pos = s.code_u16();
+  new_value: integer? = s.get_var_u8(pos);
+  s.put_stack_u8(new_value);
+}
+
+pub fn const_enum(s: state::State) {
+  val = s.code_u8();
+  new_value: integer? = val;
+  s.put_stack_u8(new_value);
+}
+
+pub fn put_enum(s: state::State) {
+  pos = s.code_u16();
+  value = s.get_stack_u8();
+  s.put_var_u8(pos, value);
+}
+
+pub fn init_ref(s: state::State) {
+  s.init_ref();
+}
+
+pub fn null_ref_sentinel(s: state::State) {
+  new_value: state::DbRef? = null;
+  s.put_stack_dbref(new_value);
+}
+
+pub fn init_ref_sentinel(s: state::State) {
+  s.init_ref_sentinel();
+}
+
+pub fn free_ref(s: state::State) {
+  s.free_ref();
+}
+
+pub fn var_ref(s: state::State) {
+  pos = s.code_u16();
+  new_value: state::DbRef? = s.get_var_dbref(pos);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn put_ref(s: state::State) {
+  pos = s.code_u16();
+  value = s.get_stack_dbref();
+  s.put_var_dbref(pos, value);
+}
+
+pub fn get_field(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: state::DbRef? = state::DbRef { store_nr: v1.store_nr, rec: v1.rec, pos: v1.pos + fld };
+  s.put_stack_dbref(new_value);
+}
+
+pub fn get_int(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: integer? = if v1.rec == 0 { null } else { crt::get_int(v1.store_nr, v1.rec, v1.pos, fld) };
+  s.put_stack_i64(new_value);
+}
+
+pub fn get_float(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: float? = if v1.rec == 0 { null } else { crt::get_float(v1.store_nr, v1.rec, v1.pos, fld, false) };
+  s.put_stack_f64(new_value);
+}
+
+pub fn set_enum(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_u8();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(crt::W_ENUM, v1.store_nr, v1.rec, v1.pos, fld, 0, ops::byte_or_null(val)); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn get_boolean(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: boolean? = ops::tri(if v1.rec == 0 { null } else { crt::get_w(crt::W_BOOLEAN, v1.store_nr, v1.rec, v1.pos, fld, 0) });
+  s.put_stack_bool(new_value);
+}
+
+pub fn set_boolean(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_u8();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(crt::W_BOOLEAN, v1.store_nr, v1.rec, v1.pos, fld, 0, ops::byte_or_null(val)); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn get_short(s: state::State) {
+  fld = s.code_u16();
+  min = s.code_i32();
+  v1 = s.get_stack_dbref();
+  new_value: integer? = if v1.rec == 0 { null } else { crt::get_w(crt::W_SHORT, v1.store_nr, v1.rec, v1.pos, fld, min) };
+  s.put_stack_i64(new_value);
+}
+
+pub fn set_int(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_i64();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_int(v1.store_nr, v1.rec, v1.pos, fld, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn set_float(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_f64();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_float(v1.store_nr, v1.rec, v1.pos, fld, val, false); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn set_byte(s: state::State) {
+  fld = s.code_u16();
+  min = s.code_i32();
+  val = s.get_stack_i64();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(crt::W_BYTE, v1.store_nr, v1.rec, v1.pos, fld, min, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn set_short(s: state::State) {
+  fld = s.code_u16();
+  min = s.code_i32();
+  val = s.get_stack_i64();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(crt::W_SHORT, v1.store_nr, v1.rec, v1.pos, fld, min, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn get_int4(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: integer? = if v1.rec == 0 { null } else { crt::get_w(crt::W_INT4, v1.store_nr, v1.rec, v1.pos, fld, 0) };
+  s.put_stack_i64(new_value);
+}
+
+pub fn set_int4(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_i64();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(crt::W_INT4, v1.store_nr, v1.rec, v1.pos, fld, 0, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn var_vector(s: state::State) {
+  pos = s.code_u16();
+  new_value: state::DbRef? = s.get_var_dbref(pos);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn ref_is_null(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: boolean? = r.store_nr == 65535;
+  s.put_stack_bool(new_value);
+}
+
+pub fn ref_alias(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: state::DbRef? = r;
+  s.put_stack_dbref(new_value);
+}
+
+pub fn init_create_stack(s: state::State) {
+  s.init_create_stack();
+}
+
+pub fn range_default(s: state::State) {
+  lo = s.code_i64();
+  hi = s.code_i64();
+  dflt = s.code_i64();
+  val = s.get_stack_i64();
+  new_value: integer? = if val == null { if dflt == null { val } else { dflt } } else if val >= lo && val <= hi { val } else { s.raise_recoverable("a value outside its range took the default"); dflt };
+  s.put_stack_i64(new_value);
+}
+
+pub fn conv_character_from_null(s: state::State) {
+  new_value: integer? = null;
+  s.put_stack_char(new_value);
+}
+
+pub fn pow_int(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v1 == null || v2 == null || v2 < 0 { null } else { v1.pow(v2) };
+  s.put_stack_i64(new_value);
+}
+
+pub fn database(s: state::State) {
+  s.database();
+}
+
+pub fn database_n_p(s: state::State) {
+  s.database_n_p();
 }
 
 // The operator in slot `op` run on `s`; false for an operator without a `#loft` template.
@@ -305,6 +661,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     22 => add_float(s),
     23 => min_float(s),
     24 => mul_float(s),
+    25 => div_float(s),
     26 => div_float_nullable(s),
     27 => lt_float(s),
     28 => int_v_v(s),
@@ -318,9 +675,67 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     38 => call(s),
     39 => op_return(s),
     41 => reserve_frame(s),
+    42 => put_bool(s),
     43 => not(s),
+    46 => var_character(s),
+    49 => put_character(s),
     50 => conv_int_from_null(s),
+    52 => conv_character_from_int(s),
+    53 => abs_int(s),
+    54 => min_single_int(s),
     57 => conv_bool_from_int(s),
+    58 => add_int_nullable(s),
+    59 => min_int_nullable(s),
+    60 => mul_int_nullable(s),
+    61 => div_int_nullable(s),
+    62 => rem_int_nullable(s),
+    63 => lor_int(s),
+    64 => eor_int(s),
+    65 => s_left_int(s),
+    66 => s_right_int(s),
+    67 => ne_int(s),
+    92 => cast_single_from_float(s),
+    93 => cast_int_from_float(s),
+    100 => var_text(s),
+    101 => arg_text(s),
+    102 => const_text(s),
+    104 => length_text(s),
+    107 => init_text(s),
+    108 => append_text(s),
+    109 => put_text(s),
+    114 => clear_text(s),
+    115 => free_text(s),
+    124 => var_enum(s),
+    125 => const_enum(s),
+    126 => put_enum(s),
+    131 => init_ref(s),
+    132 => null_ref_sentinel(s),
+    133 => init_ref_sentinel(s),
+    134 => free_ref(s),
+    139 => var_ref(s),
+    140 => put_ref(s),
+    147 => get_field(s),
+    148 => get_int(s),
+    151 => get_float(s),
+    155 => set_enum(s),
+    156 => get_boolean(s),
+    157 => set_boolean(s),
+    158 => get_short(s),
+    160 => set_int(s),
+    163 => set_float(s),
+    164 => set_byte(s),
+    166 => set_short(s),
+    167 => get_int4(s),
+    168 => set_int4(s),
+    178 => var_vector(s),
+    181 => ref_is_null(s),
+    184 => ref_alias(s),
+    236 => init_create_stack(s),
+    270 => range_default(s),
+    272 => conv_character_from_null(s),
+    283 => pow_int(s),
+    299 => database(s),
+    365 => database_n_p(s),
     _ => return false,
   }
   true

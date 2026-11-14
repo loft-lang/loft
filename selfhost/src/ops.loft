@@ -52,3 +52,14 @@ pub fn fused_cmp(kind: integer, v1: integer, v2: integer) -> boolean {
     v1 <= v2
   }
 }
+
+// A stored boolean as `crt::get_w` answers it (1, 0 or null) as a boolean.
+pub fn tri(b: integer?) -> boolean? {
+  if b == null { null } else { b! == 1 }
+}
+
+// A stack byte whose 255 is null (a boolean, an enum) as the value a field write takes.
+pub fn byte_or_null(v: integer) -> integer? {
+  if v == 255 { null } else { v }
+}
+

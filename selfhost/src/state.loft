@@ -12,89 +12,186 @@
 // basic type here takes 8.
 
 use crt;
+use ir;
+use types;
 
 pub struct State {
   // The bytecode (`State::code_base` / `code_len`) and the position of the next byte to read.
   pub code: vector<u8>,
   pub code_pos: integer,
-  // The single stack and its top (`State::stack_pos`), a byte offset into it.
-  pub stack: vector<u8>,
+  // The single stack (`State::stack_cur`): a store of its own whose primary record holds every
+  // frame, so a reference to a stack slot is an ordinary one into it; `stack_pos` is the top, a
+  // byte offset into that record's frame area, `stack_cap` the bytes it holds now.
+  pub stk: integer,
   pub stack_pos: integer,
-  // The frames on the stack (`State::call_stack`'s length), and why the run stopped, if it did.
-  pub depth: integer,
+  pub stack_cap: integer,
+  // The frames on the stack (`State::call_stack`), innermost last, and why the run stopped, if
+  // it did.
+  pub frames: vector<CallFrame>,
   pub fault: text,
+  // What `raise_recoverable` was told: the run goes on, as Rust's does in production mode.
+  pub reported: vector<text>,
+  // The program's types (`Stores::types`), and whether the C runtime's table holds them yet.
+  pub types: vector<ir::DbType>,
+  pub table_loaded: boolean,
 }
+
+// `DbRef`: a reference — its store, its record and the position in it.
+pub struct DbRef {
+  pub store_nr: integer,
+  pub rec: integer,
+  pub pos: integer,
+}
+
+// `DbRef::NULL`'s store number.
+pub NULL_STORE = 65535;
+
+// `CallFrame`: the definition a frame runs, the code position its call returns to, and where
+// its arguments start and how many bytes they take.
+pub struct CallFrame {
+  pub d_nr: integer,
+  pub call_pos: integer,
+  pub args_base: integer,
+  pub args_size: integer,
+}
+
+// The frame height `fn_call` makes room for (`State::frame_headroom_of`'s default): a frame
+// position is a `u16`, so no slot of a frame lies past it.
+pub FRAME_HEADROOM = 65536;
 
 // `State::MAX_CALL_DEPTH`.
 pub MAX_CALL_DEPTH = 10000;
 
-// A state over `code` with a stack of `size` bytes, both positions at 0.
-pub fn new_state(code: vector<u8>, size: integer) -> State {
-  State { code: code, code_pos: 0, stack: [for _ in 0..size { 0 as u8 }], stack_pos: 0, depth: 0, fault: "" }
+// A state over the image's code and types with a stack store of `size` bytes, both positions
+// at 0.
+pub fn new_state(img: ir::RunImage, size: integer) -> State {
+  io: vector<integer> = [0, 0, 0];
+  crt::stack_new(io, size);
+  State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", reported: [], types: img.types, table_loaded: false }
 }
 
-// `State::ensure_stack`: room for `step` more bytes above the top, the stack doubled when it has
-// none.
+// `State::ensure_stack`: room for `step` more bytes above the top, the stack store doubled
+// (`grow_stack`) when it has none.
 fn ensure_stack(self: State, step: integer) {
-  if self.stack_pos + step > len(self.stack) {
-    more = len(self.stack) + step;
-    for _ in 0..more {
-      self.stack += [0 as u8];
-    }
+  if self.stack_pos + step > self.stack_cap {
+    self.stack_cap = (self.stack_pos + step) * 2;
+    crt::stack_grow(self.stk, self.stack_cap);
   }
 }
 
 // ── `State::code::<T>`: an operand read from the code, the position stepped past it. ──────
 
+// Are `n` more bytes of code there?  Past the end the run stops (`code_out_of_range`).
+fn code_has(self: State, n: integer) -> boolean {
+  if self.code_pos < 0 || self.code_pos + n > len(self.code) {
+    if self.fault == "" {
+      self.fault = "the code position {self.code_pos} is outside the bytecode ({len(self.code)} bytes)";
+    }
+    return false;
+  }
+  true
+}
+
+// Is there a value of `step` bytes to pop?  Below the stack's start the run stops
+// (`stack_underflow`).
+fn can_pop(self: State, step: integer) -> boolean {
+  if self.stack_pos < step {
+    if self.fault == "" {
+      self.fault = "the stack holds {self.stack_pos} bytes where {step} are popped";
+    }
+    return false;
+  }
+  true
+}
+
+// Is the frame slot `pos` below the top inside the stack?  (`get_var`'s frame underflow, and
+// a slot above the capacity `fn_call`'s headroom keeps in reach.)
+fn slot_ok(self: State, at: integer) -> boolean {
+  if at < 0 || at + 8 > self.stack_cap {
+    if self.fault == "" {
+      self.fault = "a frame slot at {at} is outside the stack ({self.stack_cap} bytes)";
+    }
+    return false;
+  }
+  true
+}
+
 pub fn code_u8(self: State) -> integer {
+  if !self.code_has(1) {
+    return 0;
+  }
   v = crt::get_u8(self.code, self.code_pos);
   self.code_pos += 1;
   v
 }
 
 pub fn code_i8(self: State) -> integer {
+  if !self.code_has(1) {
+    return 0;
+  }
   v = crt::get_i8(self.code, self.code_pos);
   self.code_pos += 1;
   v
 }
 
 pub fn code_u16(self: State) -> integer {
+  if !self.code_has(2) {
+    return 0;
+  }
   v = crt::get_u16(self.code, self.code_pos);
   self.code_pos += 2;
   v
 }
 
 pub fn code_i16(self: State) -> integer {
+  if !self.code_has(2) {
+    return 0;
+  }
   v = crt::get_i16(self.code, self.code_pos);
   self.code_pos += 2;
   v
 }
 
 pub fn code_u32(self: State) -> integer {
+  if !self.code_has(4) {
+    return 0;
+  }
   v = crt::get_u32(self.code, self.code_pos);
   self.code_pos += 4;
   v
 }
 
 pub fn code_i32(self: State) -> integer {
+  if !self.code_has(4) {
+    return 0;
+  }
   v = crt::get_i32(self.code, self.code_pos);
   self.code_pos += 4;
   v
 }
 
 pub fn code_i64(self: State) -> integer {
+  if !self.code_has(8) {
+    return 0;
+  }
   v = crt::get_i64(self.code, self.code_pos);
   self.code_pos += 8;
   v
 }
 
 pub fn code_f32(self: State) -> single {
+  if !self.code_has(4) {
+    return 0.0f;
+  }
   v = crt::get_f32(self.code, self.code_pos);
   self.code_pos += 4;
   v
 }
 
 pub fn code_f64(self: State) -> float {
+  if !self.code_has(8) {
+    return 0.0;
+  }
   v = crt::get_f64(self.code, self.code_pos);
   self.code_pos += 8;
   v
@@ -102,6 +199,9 @@ pub fn code_f64(self: State) -> float {
 
 // A boolean operand: its byte (`s.code::<bool>()` reads one byte).
 pub fn code_bool(self: State) -> boolean {
+  if !self.code_has(1) {
+    return false;
+  }
   v = crt::get_u8(self.code, self.code_pos);
   self.code_pos += 1;
   v == 1
@@ -110,174 +210,243 @@ pub fn code_bool(self: State) -> boolean {
 // ── `State::get_stack::<T>`: the top value popped, the top stepped down by its width. ─────
 
 pub fn get_stack_u8(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
   self.stack_pos -= 8;
-  crt::get_u8(self.stack, self.stack_pos)
+  crt::stack_get(crt::SW_U8, self.stk, self.stack_pos)
 }
 
 pub fn get_stack_i8(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
   self.stack_pos -= 8;
-  crt::get_i8(self.stack, self.stack_pos)
+  crt::stack_get(crt::SW_I8, self.stk, self.stack_pos)
 }
 
 pub fn get_stack_u16(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
   self.stack_pos -= 8;
-  crt::get_u16(self.stack, self.stack_pos)
+  crt::stack_get(crt::SW_U16, self.stk, self.stack_pos)
 }
 
 pub fn get_stack_i16(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
   self.stack_pos -= 8;
-  crt::get_i16(self.stack, self.stack_pos)
+  crt::stack_get(crt::SW_I16, self.stk, self.stack_pos)
 }
 
 pub fn get_stack_u32(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
   self.stack_pos -= 8;
-  crt::get_u32(self.stack, self.stack_pos)
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos)
 }
 
 pub fn get_stack_i32(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
   self.stack_pos -= 8;
-  crt::get_i32(self.stack, self.stack_pos)
+  crt::stack_get(crt::SW_I32, self.stk, self.stack_pos)
 }
 
 pub fn get_stack_i64(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
   self.stack_pos -= 8;
-  crt::get_i64(self.stack, self.stack_pos)
+  crt::stack_get(crt::SW_I64, self.stk, self.stack_pos)
 }
 
 pub fn get_stack_f32(self: State) -> single {
+  if !self.can_pop(8) {
+    return 0.0f;
+  }
   self.stack_pos -= 8;
-  crt::get_f32(self.stack, self.stack_pos)
+  (crt::stack_get_float(self.stk, self.stack_pos, true) as single)
 }
 
 pub fn get_stack_f64(self: State) -> float {
+  if !self.can_pop(8) {
+    return 0.0;
+  }
   self.stack_pos -= 8;
-  crt::get_f64(self.stack, self.stack_pos)
+  crt::stack_get_float(self.stk, self.stack_pos, false)
 }
 
 // ── `State::put_stack`: a value pushed, the top stepped up by its width. ──────────────────
 
 pub fn put_stack_u8(self: State, v: integer?) {
   self.ensure_stack(8);
-  crt::put_u8(self.stack, self.stack_pos, v);
+  crt::stack_put(crt::SW_U8, self.stk, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
 pub fn put_stack_i8(self: State, v: integer?) {
   self.ensure_stack(8);
-  crt::put_i8(self.stack, self.stack_pos, v);
+  crt::stack_put(crt::SW_I8, self.stk, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
 pub fn put_stack_u16(self: State, v: integer?) {
   self.ensure_stack(8);
-  crt::put_u16(self.stack, self.stack_pos, v);
+  crt::stack_put(crt::SW_U16, self.stk, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
 pub fn put_stack_i16(self: State, v: integer?) {
   self.ensure_stack(8);
-  crt::put_i16(self.stack, self.stack_pos, v);
+  crt::stack_put(crt::SW_I16, self.stk, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
 pub fn put_stack_u32(self: State, v: integer?) {
   self.ensure_stack(8);
-  crt::put_u32(self.stack, self.stack_pos, v);
+  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
 pub fn put_stack_i32(self: State, v: integer?) {
   self.ensure_stack(8);
-  crt::put_i32(self.stack, self.stack_pos, v);
+  crt::stack_put(crt::SW_I32, self.stk, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
 pub fn put_stack_i64(self: State, v: integer?) {
   self.ensure_stack(8);
-  crt::put_i64(self.stack, self.stack_pos, v);
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
 pub fn put_stack_f32(self: State, v: single?) {
   self.ensure_stack(8);
-  crt::put_f32(self.stack, self.stack_pos, v);
+  crt::stack_put_float(self.stk, self.stack_pos, v as float?, true);
   self.stack_pos += 8;
 }
 
 pub fn put_stack_f64(self: State, v: float?) {
   self.ensure_stack(8);
-  crt::put_f64(self.stack, self.stack_pos, v);
+  crt::stack_put_float(self.stk, self.stack_pos, v, false);
   self.stack_pos += 8;
 }
 
 // A boolean answer: its byte — 1, 0, or 255 for null (a boolean is tri-state on the stack).
 pub fn put_stack_bool(self: State, v: boolean?) {
   self.ensure_stack(8);
-  crt::put_u8(self.stack, self.stack_pos, if v == null { 255 } else if v! { 1 } else { 0 });
+  crt::stack_put(crt::SW_U8, self.stk, self.stack_pos, if v == null { 255 } else if v! { 1 } else { 0 });
   self.stack_pos += 8;
 }
 
 // ── `State::get_var::<T>(pos)`: a frame slot read at `stack_pos - pos`. ───────────────────
 
 pub fn get_var_u8(self: State, pos: integer) -> integer {
-  crt::get_u8(self.stack, self.stack_pos - pos)
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U8, self.stk, self.stack_pos - pos)
 }
 
 // A boolean frame slot: 1 true, 0 false, 255 null.
 pub fn get_var_bool(self: State, pos: integer) -> boolean? {
-  b = crt::get_u8(self.stack, self.stack_pos - pos);
+  if !self.slot_ok(self.stack_pos - pos) {
+    return null;
+  }
+  b = crt::stack_get(crt::SW_U8, self.stk, self.stack_pos - pos);
   if b == 255 { null } else { b == 1 }
 }
 
 pub fn get_var_u32(self: State, pos: integer) -> integer {
-  crt::get_u32(self.stack, self.stack_pos - pos)
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos - pos)
 }
 
 pub fn get_var_u16(self: State, pos: integer) -> integer {
-  crt::get_u16(self.stack, self.stack_pos - pos)
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U16, self.stk, self.stack_pos - pos)
 }
 
 pub fn get_var_i32(self: State, pos: integer) -> integer {
-  crt::get_i32(self.stack, self.stack_pos - pos)
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_I32, self.stk, self.stack_pos - pos)
 }
 
 pub fn get_var_i64(self: State, pos: integer) -> integer {
-  crt::get_i64(self.stack, self.stack_pos - pos)
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_I64, self.stk, self.stack_pos - pos)
 }
 
 pub fn get_var_f32(self: State, pos: integer) -> single {
-  crt::get_f32(self.stack, self.stack_pos - pos)
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0.0f;
+  }
+  (crt::stack_get_float(self.stk, self.stack_pos - pos, true) as single)
 }
 
 pub fn get_var_f64(self: State, pos: integer) -> float {
-  crt::get_f64(self.stack, self.stack_pos - pos)
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0.0;
+  }
+  crt::stack_get_float(self.stk, self.stack_pos - pos, false)
 }
 
 // ── `State::put_var(pos, v)`: a frame slot written at `stack_pos + step - pos`, the value's
 // 8-byte step counted as Rust's `put_var` counts it (the value was popped before the write). ──
 
 pub fn put_var_u8(self: State, pos: integer, v: integer) {
-  crt::put_u8(self.stack, self.stack_pos + 8 - pos, v);
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put(crt::SW_U8, self.stk, self.stack_pos + 8 - pos, v);
 }
 
 pub fn put_var_u16(self: State, pos: integer, v: integer) {
-  crt::put_u16(self.stack, self.stack_pos + 8 - pos, v);
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put(crt::SW_U16, self.stk, self.stack_pos + 8 - pos, v);
 }
 
 pub fn put_var_i32(self: State, pos: integer, v: integer) {
-  crt::put_i32(self.stack, self.stack_pos + 8 - pos, v);
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put(crt::SW_I32, self.stk, self.stack_pos + 8 - pos, v);
 }
 
 pub fn put_var_i64(self: State, pos: integer, v: integer) {
-  crt::put_i64(self.stack, self.stack_pos + 8 - pos, v);
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos + 8 - pos, v);
 }
 
 pub fn put_var_f32(self: State, pos: integer, v: single) {
-  crt::put_f32(self.stack, self.stack_pos + 8 - pos, v);
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put_float(self.stk, self.stack_pos + 8 - pos, v as float?, true);
 }
 
 pub fn put_var_f64(self: State, pos: integer, v: float) {
-  crt::put_f64(self.stack, self.stack_pos + 8 - pos, v);
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put_float(self.stk, self.stack_pos + 8 - pos, v, false);
 }
 
 // ── Calls ───────────────────────────────────────────────────────────────────────────────
@@ -285,13 +454,16 @@ pub fn put_var_f64(self: State, pos: integer, v: float) {
 // `State::fn_call`: the position after the call pushed as the return position, the code moved
 // to the callee at `to`; past `MAX_CALL_DEPTH` frames the run stops with a stack overflow.
 pub fn fn_call(self: State, d_nr: integer, args_size: integer, to: integer) {
-  if self.depth >= MAX_CALL_DEPTH {
+  if len(self.frames) >= MAX_CALL_DEPTH {
     self.fault = "stack overflow in definition {d_nr} ({args_size} bytes of arguments)";
     return;
   }
-  self.depth += 1;
-  self.ensure_stack(8);
-  crt::put_u32(self.stack, self.stack_pos, self.code_pos);
+  // `push_frame`: the callee's whole frame fits before it runs, so a slot above the top is
+  // inside the stack.
+  args_base = self.stack_pos - args_size;
+  self.ensure_stack(FRAME_HEADROOM);
+  self.frames += [CallFrame { d_nr: d_nr, call_pos: self.code_pos, args_base: args_base, args_size: args_size }];
+  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, self.code_pos);
   self.stack_pos += 8;
   self.code_pos = to;
 }
@@ -301,16 +473,21 @@ pub fn fn_call(self: State, d_nr: integer, args_size: integer, to: integer) {
 // answer copied down to that base, and the top just above the answer (`copy_result`).
 pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
   pos = self.stack_pos;
+  if !self.can_pop(discard) {
+    return;
+  }
   self.stack_pos -= discard;
   fn_stack = self.stack_pos;
   self.stack_pos += ret;
   self.code_pos = self.get_var_u32(0);
   step = (value + 7) / 8 * 8;
   if value > 0 {
-    crt::copy_within(self.stack, pos - step, fn_stack, value);
+    crt::stack_move(self.stk, pos - step, fn_stack, value);
   }
   self.stack_pos = fn_stack + step;
-  self.depth -= 1;
+  if len(self.frames) > 0 {
+    self.frames.remove(len(self.frames) - 1);
+  }
 }
 
 // `State::reserve_frame`: the frame's locals reserved above the top, at their 8-aligned size.
@@ -318,4 +495,233 @@ pub fn reserve_frame(self: State, size: integer) {
   step = (size + 7) / 8 * 8;
   self.ensure_stack(step);
   self.stack_pos += step;
+}
+
+// ── Texts (`src/state/text.rs`): a local text is a C-runtime text in its frame slot, an
+// argument and a value on the stack a 16-byte view (`Str`). ───────────────────────────────
+
+// `State::string_from_code`: a constant text — its length byte, then its bytes — read from the
+// code and pushed as a view of them.
+pub fn string_from_code(self: State) {
+  n = self.code_u8();
+  self.ensure_stack(16);
+  crt::stack_str_code(self.stk, self.stack_pos, self.code, self.code_pos, n);
+  self.code_pos += n;
+  self.stack_pos += 16;
+}
+
+// `State::var_text`: a view of the local text at `pos` pushed.
+pub fn var_text(self: State) {
+  pos = self.code_u16();
+  self.ensure_stack(16);
+  crt::stack_str_of_text(self.stk, self.stack_pos, self.stack_pos - pos);
+  self.stack_pos += 16;
+}
+
+// `State::arg_text`: the argument's view at `pos` pushed again.
+pub fn arg_text(self: State) {
+  pos = self.code_u16();
+  self.ensure_stack(16);
+  crt::stack_move(self.stk, self.stack_pos - pos, self.stack_pos, 16);
+  self.stack_pos += 16;
+}
+
+// `State::append_text`: the view on top popped, then appended to the local text at `pos`
+// (addressed from the top before the pop).
+pub fn append_text(self: State) {
+  self.stack_pos -= 16;
+  pos = self.code_u16();
+  crt::stack_text_append_str(self.stk, self.stack_pos - pos + 16, self.stack_pos);
+}
+
+// `State::init_text`: the local text at `pos` made empty and owned.
+pub fn init_text(self: State) {
+  pos = self.code_u16();
+  crt::slot_text_init(self.stk, self.stack_pos - pos);
+}
+
+// `State::clear_text`: the local text at `pos` emptied.
+pub fn clear_text(self: State) {
+  pos = self.code_u16();
+  crt::slot_text_clear(self.stk, self.stack_pos - pos);
+}
+
+// `State::free_text`: the local text at `pos` released.
+pub fn free_text(self: State) {
+  pos = self.code_u16();
+  crt::slot_text_free(self.stk, self.stack_pos - pos);
+}
+
+// `State::put_text`: the view on top popped into the frame slot at `pos` (addressed from the
+// top before the pop).
+pub fn put_text(self: State) {
+  pos = self.code_u16();
+  if !self.can_pop(16) {
+    return;
+  }
+  self.stack_pos -= 16;
+  crt::stack_move(self.stk, self.stack_pos, self.stack_pos + 16 - pos, 16);
+}
+
+// A text popped for a template (`State::string`): the view's text, null for the null text.
+pub fn get_stack_str(self: State) -> text? {
+  if !self.can_pop(16) {
+    return null;
+  }
+  self.stack_pos -= 16;
+  crt::stack_str(self.stk, self.stack_pos)
+}
+
+// ── Characters: a code point in a 4-byte slot, 0 for null. ────────────────────────────────
+
+pub fn get_stack_char(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos)
+}
+
+pub fn put_stack_char(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, v ?? 0);
+  self.stack_pos += 8;
+}
+
+pub fn get_var_char(self: State, pos: integer) -> integer {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos - pos)
+}
+
+pub fn put_var_char(self: State, pos: integer, v: integer) {
+  if self.slot_ok(self.stack_pos + 8 - pos) {
+    crt::stack_put(crt::SW_U32, self.stk, self.stack_pos + 8 - pos, v);
+  }
+}
+
+// ── References: a 12-byte reference in a 16-byte slot. ────────────────────────────────────
+
+// `State::init_ref`: the null reference written into the frame slot at `pos`.
+pub fn init_ref(self: State) {
+  pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
+  }
+}
+
+// `State::init_ref_sentinel`: the same null reference, written the same way.
+pub fn init_ref_sentinel(self: State) {
+  pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
+  }
+}
+
+// `State::raise_recoverable`: a fault the run survives (a division by zero, a value outside its
+// range): recorded, and the operator answers its null or default.
+pub fn raise_recoverable(self: State, what: text) {
+  self.reported += [what];
+}
+
+// The reference in the frame slot at byte `at`.
+fn ref_at(self: State, at: integer) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::slot_ref(io, self.stk, at);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `get_stack::<DbRef>`: a reference popped (a 16-byte step).
+pub fn get_stack_dbref(self: State) -> DbRef {
+  if !self.can_pop(16) {
+    return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+  }
+  self.stack_pos -= 16;
+  self.ref_at(self.stack_pos)
+}
+
+// `put_stack::<DbRef>`: a reference pushed; null is `DbRef::NULL`.
+pub fn put_stack_dbref(self: State, v: DbRef?) {
+  self.ensure_stack(16);
+  if v == null {
+    crt::set_slot_ref(self.stk, self.stack_pos, NULL_STORE, 0, 0);
+  } else {
+    crt::set_slot_ref(self.stk, self.stack_pos, v!.store_nr, v!.rec, v!.pos);
+  }
+  self.stack_pos += 16;
+}
+
+// `get_var::<DbRef>(pos)` / `put_var(pos, DbRef)`: a reference frame slot.
+pub fn get_var_dbref(self: State, pos: integer) -> DbRef {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+  }
+  self.ref_at(self.stack_pos - pos)
+}
+
+pub fn put_var_dbref(self: State, pos: integer, v: DbRef) {
+  if self.slot_ok(self.stack_pos + 16 - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos + 16 - pos, v.store_nr, v.rec, v.pos);
+  }
+}
+
+// The program's types loaded into the C runtime's table, once: what a store's release walks.
+fn load_table(self: State) {
+  if self.table_loaded {
+    return;
+  }
+  rows: vector<types::Row> = [];
+  for tp in 0..len(self.types) {
+    if len(self.types[tp]!.parts) > 0 {
+      rows += [types::row(self.types, tp)];
+    }
+  }
+  crt::load_types(types::flat(rows), len(self.types));
+  self.table_loaded = true;
+}
+
+// `State::database` (`OpDatabase`, `OpDatabaseNP`): the store the reference in the frame slot at
+// `pos` names made — or made again — with a zeroed root of type `db_tp` (an enum variant's is
+// its parent's size), and the reference written back.
+pub fn database(self: State) {
+  pos = self.code_u16();
+  db_tp = self.code_u16();
+  at = self.stack_pos - pos;
+  if !self.slot_ok(at) {
+    return;
+  }
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::slot_ref(io, self.stk, at);
+  bytes = types::enum_parent_size(self.types, db_tp);
+  if types::is_vector_wrapper(self.types, db_tp) {
+    self.load_table();
+    crt::database_wrapper(io, bytes, db_tp);
+  } else {
+    crt::database(io, bytes, db_tp);
+  }
+  crt::set_slot_ref(self.stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+}
+
+pub fn database_n_p(self: State) {
+  self.database();
+}
+
+// `State::free_ref`: the reference on top popped and its store released.
+pub fn free_ref(self: State) {
+  r = self.get_stack_dbref();
+  if r.store_nr != NULL_STORE {
+    self.load_table();
+    crt::free_ref(r.store_nr, r.rec, r.pos);
+  }
+}
+
+// `State::init_create_stack`: the frame slot at `pos` given a reference to the place `dep_pos`
+// names in the stack itself.
+pub fn init_create_stack(self: State) {
+  pos = self.code_u16();
+  dep_pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, self.stk, 1, 8 + self.stack_pos - dep_pos);
+  }
 }
