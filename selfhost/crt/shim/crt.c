@@ -877,6 +877,33 @@ void loft_crt_group_finish(int64_t elem, int64_t held, int64_t nullable, int64_t
                       loft_crt_ref(rs, rr, rp), rows, n);
 }
 
+/* OpSortVector (`Stores::sort_vector`): the primitive vector sorted in place, its elements of
+ * `size` bytes compared as floats, texts, unsigned or signed integers. */
+void loft_crt_vec_sort(int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t is_float, int64_t is_text,
+                       int64_t is_unsigned) {
+    loft_vec_sort(loft_crt_ref(store, rec, pos), (uint32_t) size, (int) is_float, (int) is_text, (int) is_unsigned);
+}
+
+/* OpInsertVector: a new element of `size` bytes at `index` — a linked element a record of its
+ * own, its slot the record's id — its reference in `out`. */
+int64_t loft_crt_vec_insert(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos, int64_t size,
+                            int64_t index, int64_t linked) {
+    loft_ref v = loft_crt_ref(store, rec, pos);
+    loft_crt_put_ref(out, no, linked ? loft_vec_insert_linked(v, (uint32_t) size, index)
+                                     : loft_vec_insert(v, (uint32_t) size, index));
+    return 0;
+}
+
+/* OpChildRecInPlace (`Stores::child_rec_in_place`): the child record the field names, made in
+ * place with the type's defaults when it names none; its reference in `out`. */
+int64_t loft_crt_child_rec_in_place(int64_t *out, int64_t no, int64_t tp, int64_t store, int64_t rec, int64_t pos,
+                                    const uint8_t *image, int64_t n) {
+    if (!LOFT_CRT_TP_OK(tp)) return 0;
+    loft_crt_put_ref(out, no, loft_child_rec_in_place(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+                                                      image, (uint32_t) n));
+    return 0;
+}
+
 /* OpMoveVector (Stores::move_vector): `src`'s elements moved onto `dst`, `linked` an element
  * type of a linked group. */
 void loft_crt_move_vector(int64_t d_store, int64_t d_rec, int64_t d_pos, int64_t s_store, int64_t s_rec,

@@ -243,6 +243,11 @@ H_POW_INT = 218;
 H_CMP_TEXT = 219;
 H_EQ_CONTENT = 220;
 H_PREPEND_VECTOR = 221;
+H_SORT_VECTOR = 222;
+H_INSERT_VECTOR = 223;
+H_CHILD_REC_IN_PLACE = 224;
+H_RESERVE_HASH = 225;
+H_MATH_FUNC2_SINGLE = 226;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -539,6 +544,12 @@ pub fn handler(name: text) -> integer {
     "OpGetInt4Full" => H_GET_W,
     "OpEqContent" => H_EQ_CONTENT,
     "OpPrependVector" => H_PREPEND_VECTOR,
+    "OpSortVector" => H_SORT_VECTOR,
+    "OpInsertVector" => H_INSERT_VECTOR,
+    "OpChildRecInPlace" => H_CHILD_REC_IN_PLACE,
+    "OpReserveHash" => H_RESERVE_HASH,
+    "OpMathFunc2Single" => H_MATH_FUNC2_SINGLE,
+    "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
     "OpGetShortFull" => H_GET_W,
     "OpGetShortSpare" => H_GET_W,
@@ -772,6 +783,11 @@ fn layout_of(h: integer) -> text {
     208 => "c",
     220 => "h",
     221 => "h",
+    222 => "h",
+    223 => "hh",
+    224 => "h",
+    225 => "h",
+    226 => "c",
     _ => ""
   }
 }
@@ -2313,6 +2329,59 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
     sp -= 32;
     set_bool(stk, sp, crt::vec_prepend(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, pgs, pgr, pgp, pvtp, img.types[pvtp]?.linked ?? false));
     sp += 8;
+  } else if h == H_SORT_VECTOR {
+    // A primitive vector sorted in place by `<` on its elements (`Stores::sort_vector`).
+    svtp2 = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    svu = match img.types[svtp2]?.parts[0] {
+      PtIntRaw { start: _, nullable: _ } => true,
+      _ => false,
+    };
+    crt::vec_sort(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, img.types[svtp2]?.size ?? 8, svtp2 == 2 || svtp2 == 3, svtp2 == 5, svu);
+  } else if h == H_INSERT_VECTOR {
+    // A new element at the index, filled with its type's defaults; its reference pushed.
+    ivsize = u16_at(img.code, pc);
+    ivtp = u16_at(img.code, pc + 2);
+    pc += 4;
+    ividx = get(stk, sp - 8) ?? 0;
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    crt::vec_insert(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if img.types[ivtp]?.linked ?? false { img.types[ivtp]?.size ?? ivsize } else { ivsize }, ividx, img.types[ivtp]?.linked ?? false);
+    default_of(img.types, images, imaged, ivtp);
+    crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[ivtp] ?? []);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if h == H_CHILD_REC_IN_PLACE {
+    ensure_table(img.types, tl);
+    crtp = u16_at(img.code, pc);
+    pc += 2;
+    default_of(img.types, images, imaged, crtp);
+    crt::slot_ref(io, stk, sp - 16);
+    crt::child_rec_in_place(io, crtp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[crtp] ?? []);
+    crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  } else if h == H_RESERVE_HASH {
+    ensure_table(img.types, tl);
+    rhtp = u16_at(img.code, pc);
+    pc += 2;
+    rhn = get(stk, sp - 8) ?? 0;
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    crt::hash_reserve(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rhtp, rhn);
+  } else if h == H_MATH_FUNC2_SINGLE {
+    // `atan2` (0) and `log` to a base (1) on singles, loft's own (this operator, compiled).
+    m2sid = i8_at(img.code, pc);
+    pc += 1;
+    m2sb = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    m2sa = crt::get_float(stk, 1, 8 + sp - 16, 0, true);
+    sp -= 8;
+    m2sr: float? = null;
+    if m2sa != null && m2sb != null {
+      m2sv: single? = if m2sid == 0 { (m2sa! as single).atan2(m2sb! as single) } else if m2sid == 1 { (m2sa! as single).log(m2sb! as single) } else { null };
+      m2sr = if m2sv == null { null } else { m2sv! as float };
+    }
+    crt::set_float(stk, 1, 8 + sp - 8, 0, m2sr, true);
   } else if h == H_POW_SINGLE {
     // Single precision through loft's own `pow` on singles (this operator, compiled).
     psb = crt::get_float(stk, 1, 8 + sp - 8, 0, true);

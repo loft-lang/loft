@@ -384,6 +384,12 @@ fn c_par_row_wide(store: integer, rec: integer, pos: integer, stk: integer, at: 
 #c "loft_crt_par_row_wide" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_group_finish(elem: integer, held: integer, nullable: integer, ps: integer, pr: integer, pp: integer, rs: integer, rr: integer, rp: integer, m: vector<integer>);
 #c "loft_crt_group_finish" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
+fn c_vec_sort(store: integer, rec: integer, pos: integer, size: integer, is_float: integer, is_text: integer, is_unsigned: integer);
+#c "loft_crt_vec_sort" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_vec_insert(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, index: integer, linked: integer) -> integer;
+#c "loft_crt_vec_insert" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) -> integer;
+#c "loft_crt_child_rec_in_place" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -567,6 +573,21 @@ pub fn par_row_wide(store: integer, rec: integer, pos: integer, stk: integer, at
 // struct `(ps, pr, pp)`; `members` holds `(position, kind, type)` per member.
 pub fn group_finish(elem: integer, held: boolean, nullable: boolean, ps: integer, pr: integer, pp: integer, rs: integer, rr: integer, rp: integer, members: vector<integer>) {
   c_group_finish(elem, if held { 1 } else { 0 }, if nullable { 1 } else { 0 }, ps, pr, pp, rs, rr, rp, members);
+}
+
+// `OpSortVector`: the primitive vector sorted in place.
+pub fn vec_sort(store: integer, rec: integer, pos: integer, size: integer, is_float: boolean, is_text: boolean, is_unsigned: boolean) {
+  c_vec_sort(store, rec, pos, size, if is_float { 1 } else { 0 }, if is_text { 1 } else { 0 }, if is_unsigned { 1 } else { 0 });
+}
+
+// `OpInsertVector`: a new element at `index`, its reference in `out`.
+pub fn vec_insert(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, index: integer, linked: boolean) {
+  c_vec_insert(out, store, rec, pos, size, index, if linked { 1 } else { 0 });
+}
+
+// `OpChildRecInPlace`: the field's child record, made with `image` when it has none; in `out`.
+pub fn child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) {
+  c_child_rec_in_place(out, tp, store, rec, pos, image);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
