@@ -23,7 +23,8 @@ def arms(src, name):
     """The `"a" | "b" => Some("c")` arms of table `name`, as (names, runtime function)."""
     start = src.index(f"fn {name}(name: &str) -> Option<&'static str> {{")
     body = src[start:src.index("\n}\n", start)]
-    found = re.findall(r'((?:"[^"]+"\s*\|?\s*)+)=>\s*Some\("([^"]+)"\)', body)
+    # One name, then `| name` any number of times: each character has one way to match.
+    found = re.findall(r'("[^"]+"(?:\s*\|\s*"[^"]+")*)\s*=>\s*Some\("([^"]+)"\)', body)
     rest = [l.strip() for l in body.split("\n") if "=>" in l and 'Some("' not in l]
     if len(rest) != 1 or not rest[0].startswith("_ =>"):
         sys.exit(f"{name}: an arm this script does not read: {rest}")
