@@ -3287,6 +3287,12 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         // `@FR-R-Cold`'s loft clause refused its own plan: the function as written.
         None if cold => match ordinary(true, shapes.clone(), Vec::new(), Vec::new()) {
             Err(e) if e == body::cold::COLD_ESCAPED => {
+                if crate::env_once!(std::env::var("LOFT_TRACE_COLD").is_ok_and(|v| v != "0")) {
+                    eprintln!(
+                        "[cold] {}\t-\t-\twritten again in place: {e}",
+                        cx.data.def(d).name()
+                    );
+                }
                 ordinary(false, shapes, inputs, scalar_inputs)?
             }
             r => r?,

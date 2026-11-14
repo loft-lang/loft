@@ -5708,7 +5708,8 @@ stack access (`State::code_has`, `can_pop`, `slot_ok`) and reports a failure in 
 Outlined, the shipped runner runs collatz in 2.54 s against 3.71 s, the same answer.  Priced
 by hand first: scoping the work text to the arm gave −3.5 %, forcing the function inline with
 an unlikely hint −1 %, the outlined helper −24 % on the unshipped build.  Switch
-`LOFT_NO_COLD_EXIT=1`; census `R-Cold/loft`, one per arm.  Guard
+`LOFT_NO_COLD_EXIT=1`; census `R-Cold/loft`, one per arm; `LOFT_TRACE_COLD=1` names every
+statement `if` arm that builds a text, outlined or why not.  Guard
 `tests/scripts/an-early-exit-that-builds-a-text-is-written-as-a-cold-helper.loft`; pin
 `c_emit` `an_early_exit_that_builds_a_text_is_a_cold_helper`.  Sites: `c::body::cold`
 (`cold_plan`, `cold_arm`, `cold_if`), the `undeclared` checks in `c::body`, and

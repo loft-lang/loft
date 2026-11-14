@@ -172,10 +172,82 @@ impl<'a> FnWriter<'a> {
         (returns == 1 && !other_exit && builds_text).then_some(answer)
     }
 
+    /// `LOFT_TRACE_COLD=1`: one line per statement `if` arm that builds a text — outlined, or
+    /// why not — with the arm's line and its size in IR nodes, on stderr.
+    fn cold_trace(&self, arm: &Value, verdict: &str) {
+        if !crate::env_once!(std::env::var("LOFT_TRACE_COLD").is_ok_and(|v| v != "0")) {
+            return;
+        }
+        let mut line = 0u32;
+        let mut nodes = 0usize;
+        arm.walk(&mut |n| {
+            nodes += 1;
+            if line == 0
+                && let Value::Line(l) = n
+            {
+                line = *l;
+            }
+        });
+        eprintln!(
+            "[cold] {}\tL{line}\t{nodes}\t{verdict}",
+            self.cx.data.def(self.d).name()
+        );
+    }
+
+    /// Does `arm` build a text in a work text — the arms this clause is about?
+    fn builds_text(&self, arm: &Value) -> bool {
+        let mut hit = false;
+        arm.walk(&mut |n| {
+            if let Value::Set(var, _) = n
+                && self.vars.name(*var).starts_with("__work")
+            {
+                hit = true;
+            }
+        });
+        hit
+    }
+
+    /// Why [`Self::cold_arm`] refuses `arm`, for the trace.
+    fn shape_reason(arm: &Value) -> &'static str {
+        let Value::Block(block) = arm.unspan() else {
+            return "refused: not a block";
+        };
+        let last = block.operators.last().map(Value::unspan);
+        let Some(Value::Return(ret)) = last else {
+            return "refused: ends without a return";
+        };
+        let mut returns = 0usize;
+        let mut other = false;
+        arm.walk(&mut |n| match n {
+            Value::Return(_) => returns += 1,
+            Value::Loop(_)
+            | Value::Break(_)
+            | Value::Continue(_)
+            | Value::Yield(_)
+            | Value::FnRef(..)
+            | Value::FnRefDnr(_)
+            | Value::Parallel(_) => other = true,
+            _ => {}
+        });
+        if other {
+            "refused: holds a loop, break, continue, yield, fn ref or par"
+        } else if returns > 1 {
+            "refused: more than one return"
+        } else if matches!(ret.unspan(), Value::Var(_)) {
+            "refused: returns a local not set to a literal"
+        } else {
+            "refused: returns a computed value"
+        }
+    }
+
     /// Find the cold exits and write their helpers.  An arm is outlined when every variable
     /// it names, besides the parameters, is named nowhere else in the body but by an empty
     /// initialisation: those variables become the helper's own, and this body no longer
     /// declares them.  `LOFT_NO_COLD_EXIT=1` writes every arm in place.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one plan: the arms, each one's verdict and its trace, the helpers' signature"
+    )]
     pub(super) fn cold_plan(&mut self) {
         if !self.cold_on
             || crate::env_once!(std::env::var("LOFT_NO_COLD_EXIT").is_ok_and(|v| v != "0"))
@@ -204,7 +276,16 @@ impl<'a> FnWriter<'a> {
             }
             _ => {}
         });
-        if unnamed || arms.is_empty() {
+        if unnamed {
+            for arm in arms.iter().filter(|a| self.builds_text(a)) {
+                self.cold_trace(
+                    arm,
+                    "refused: the function holds a fn ref, par arm or yield",
+                );
+            }
+            return;
+        }
+        if arms.is_empty() {
             return;
         }
         // The empty initialisations of each variable at the body's top level.
@@ -219,6 +300,9 @@ impl<'a> FnWriter<'a> {
         let mut admitted: Vec<(&'a Value, HashSet<u16>, Value)> = Vec::new();
         for arm in arms {
             let Some(answer) = self.cold_arm(arm) else {
+                if self.builds_text(arm) {
+                    self.cold_trace(arm, Self::shape_reason(arm));
+                }
                 continue;
             };
             let mut inside = HashMap::new();
@@ -236,6 +320,10 @@ impl<'a> FnWriter<'a> {
                 let released = frees.get(&x).copied().unwrap_or(0)
                     - freed_inside.get(&x).copied().unwrap_or(0);
                 if outside != inits.get(&x).copied().unwrap_or(0) + released {
+                    self.cold_trace(
+                        arm,
+                        &format!("refused: reads local {} from outside", self.vars.name(x)),
+                    );
                     ok = false;
                     break;
                 }
@@ -244,6 +332,8 @@ impl<'a> FnWriter<'a> {
             // Two arms sharing a variable: the first takes it, the second stays in place.
             if ok && admitted.iter().all(|(_, o, _)| o.is_disjoint(&own)) {
                 admitted.push((arm, own, answer));
+            } else if ok {
+                self.cold_trace(arm, "refused: shares a variable with an earlier arm");
             }
         }
         if admitted.is_empty() {
@@ -251,8 +341,16 @@ impl<'a> FnWriter<'a> {
         }
         let (params, shapes) = match self.cx.plain_params(self.d) {
             Ok(p) => p,
-            Err(_) => return,
+            Err(why) => {
+                for (arm, _, _) in &admitted {
+                    self.cold_trace(arm, &format!("refused: {why}"));
+                }
+                return;
+            }
         };
+        for (arm, _, _) in &admitted {
+            self.cold_trace(arm, "outlined");
+        }
         let base = super::c_name(self.cx.data, self.d);
         for (k, (arm, own, answer)) in admitted.into_iter().enumerate() {
             let name = format!("{base}__cold{k}");
