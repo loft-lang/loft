@@ -374,6 +374,10 @@ fn c_serial_now() -> integer;
 #c "loft_crt_serial_now" "int64_t(void)"
 fn c_store_serial(nr: integer) -> integer;
 #c "loft_crt_store_serial" "int64_t(int64_t)"
+fn c_intern_text(val: text, bytes: integer) -> integer;
+#c "loft_crt_intern_text" "int64_t(const char*, int64_t)"
+fn c_stack_str_interned(store: integer, at: integer, handle: integer, len: integer);
+#c "loft_crt_stack_str_interned" "void(int64_t, int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -531,6 +535,16 @@ pub fn serial_now() -> integer {
 // Store `nr`'s allocation stamp (`Store::alloc_serial`), 0 for none.
 pub fn store_serial(nr: integer) -> integer {
   c_store_serial(nr)
+}
+
+// A text kept for the whole run, copied once; its handle.
+pub fn intern_text(val: text) -> integer {
+  c_intern_text(val, val.size())
+}
+
+// A view of `len` bytes of an interned text pushed at `at`.
+pub fn stack_str_interned(store: integer, at: integer, handle: integer, len: integer) {
+  c_stack_str_interned(store, at, handle, len);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).

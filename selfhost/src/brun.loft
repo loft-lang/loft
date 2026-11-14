@@ -227,6 +227,8 @@ H_BIND_FN_REF_RESULT = 203;
 H_MATH_PI = 204;
 H_SIZE_VECTOR = 205;
 H_CAST_ENUM_FROM_TEXT = 206;
+H_CAST_TEXT_FROM_ENUM = 207;
+H_MATH_FUNC_SINGLE = 208;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -504,6 +506,8 @@ pub fn handler(name: text) -> integer {
     "OpMathPiFloat" => H_MATH_PI,
     "OpSizeVector" => H_SIZE_VECTOR,
     "OpCastEnumFromText" => H_CAST_ENUM_FROM_TEXT,
+    "OpCastTextFromEnum" => H_CAST_TEXT_FROM_ENUM,
+    "OpMathFuncSingle" => H_MATH_FUNC_SINGLE,
     "OpGetShortFull" => H_GET_W,
     "OpGetShortSpare" => H_GET_W,
     "OpConvSingleFromNull" => H_CONV_FLOAT_FROM_NULL,
@@ -545,6 +549,7 @@ N_WRITE_TEXT_RAW = 27;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
+N_CHAR_PREDICATE = 31;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -578,6 +583,13 @@ pub fn native_handler(name: text) -> integer {
     "t_4text_byte_at" => N_TEXT_BYTE_AT,
     "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
     "t_4text_rfind" => N_TEXT_RFIND,
+    "t_9character_is_lowercase" => N_CHAR_PREDICATE,
+    "t_9character_is_uppercase" => N_CHAR_PREDICATE,
+    "t_9character_is_numeric" => N_CHAR_PREDICATE,
+    "t_9character_is_alphanumeric" => N_CHAR_PREDICATE,
+    "t_9character_is_alphabetic" => N_CHAR_PREDICATE,
+    "t_9character_is_whitespace" => N_CHAR_PREDICATE,
+    "t_9character_is_control" => N_CHAR_PREDICATE,
     _ => -1
   }
 }
@@ -724,6 +736,8 @@ fn layout_of(h: integer) -> text {
     203 => "hh",
     205 => "h",
     206 => "h",
+    207 => "h",
+    208 => "c",
     _ => ""
   }
 }
@@ -1188,6 +1202,13 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     sp -= 16;
     crt::slot_ref(io, stk, sp);
     crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
+  } else if nh == N_CHAR_PREDICATE {
+    // A character's class, by loft's own predicates (these natives, compiled).
+    cpn = img.natives[idx] ?? "";
+    cpc = (crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0) ?? 0) as character;
+    sp -= 8;
+    set_bool(stk, sp, if cpn.ends_with("is_lowercase") { cpc.is_lowercase() } else if cpn.ends_with("is_uppercase") { cpc.is_uppercase() } else if cpn.ends_with("is_numeric") { cpc.is_numeric() } else if cpn.ends_with("is_alphanumeric") { cpc.is_alphanumeric() } else if cpn.ends_with("is_alphabetic") { cpc.is_alphabetic() } else if cpn.ends_with("is_whitespace") { cpc.is_whitespace() } else { cpc.is_control() });
+    sp += 8;
   } else if nh == N_TEXT_RFIND {
     rfv = crt::stack_str(stk, sp - 16) ?? "";
     rfs = crt::stack_str(stk, sp - 32) ?? "";
@@ -1355,7 +1376,7 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
 // limit on one function's variables.  The stack top and the code position come in and go back
 // in `regs` (`[sp, pc]`); answers 0, or -1 with the reason in `why[0]` when the runner does not
 // carry the operator or this use of it.
-fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, io: vector<integer>, tl: vector<boolean>, images: vector<vector<u8>>, imaged: vector<boolean>, step_io: vector<integer>, cos: vector<CoFrame>, act: vector<integer>, cogen: vector<integer>, why: vector<text>) -> integer {
+fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, io: vector<integer>, tl: vector<boolean>, images: vector<vector<u8>>, imaged: vector<boolean>, step_io: vector<integer>, cos: vector<CoFrame>, act: vector<integer>, cogen: vector<integer>, interned: vector<integer>, why: vector<text>) -> integer {
   sp = regs[0] ?? 0;
   pc = regs[1] ?? 0;
   if h == H_PUT_SINGLE {
@@ -2132,6 +2153,53 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
     sp -= 16;
     set(stk, sp, crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0) * svs);
     sp += 8;
+  } else if h == H_CAST_TEXT_FROM_ENUM {
+    // A variant's name, viewed (an interned copy, as Rust views its type table); the null
+    // text for 0 or 255.
+    cttp = u16_at(img.code, pc);
+    pc += 2;
+    ctv = crt::get_w(crt::W_ENUM, stk, 1, 8 + sp - 8, 0, 0) ?? 0;
+    sp -= 8;
+    ctname: text? = null;
+    if ctv > 0 {
+      match img.types[cttp]?.parts[0] {
+        PtEnum { values } => {
+          ctname = values[ctv - 1]?.name;
+        }
+        _ => {}
+      }
+    }
+    if ctname == null {
+      crt::stack_str_null(stk, sp);
+    } else {
+      ckey = cttp * 256 + ctv;
+      ch = -1;
+      k = 0;
+      while k + 2 < len(interned) && ch < 0 {
+        if (interned[k] ?? -1) == ckey {
+          ch = k;
+        }
+        k += 3;
+      }
+      if ch < 0 {
+        ch = len(interned);
+        interned += [ckey, crt::intern_text(ctname!), ctname!.size()];
+      }
+      crt::stack_str_interned(stk, sp, interned[ch + 1] ?? 0, interned[ch + 2] ?? 0);
+    }
+    sp += 16;
+  } else if h == H_MATH_FUNC_SINGLE {
+    // `OpMathFuncSingle`: loft's own single functions, which are this operator compiled.
+    msid = i8_at(img.code, pc);
+    pc += 1;
+    msv = crt::get_float(stk, 1, 8 + sp - 8, 0, true);
+    msr: float? = null;
+    if msv != null {
+      y = msv! as single;
+      r1: single? = if msid == 0 { y.cos() } else if msid == 1 { y.sin() } else if msid == 2 { y.tan() } else if msid == 3 { y.acos() } else if msid == 4 { y.asin() } else if msid == 5 { y.atan() } else if msid == 6 { y.ceil() } else if msid == 7 { y.floor() } else if msid == 8 { y.round() } else if msid == 9 { y.sqrt() } else if msid == 10 { y.exp() } else { null };
+      msr = if r1 == null { null } else { r1! as float };
+    }
+    crt::set_float(stk, 1, 8 + sp - 8, 0, msr, true);
   } else if h == H_CAST_ENUM_FROM_TEXT {
     // The variant named by the text, 1-based; 0 when none is (`Stores::to_enum`).
     cetp = u16_at(img.code, pc);
@@ -2423,6 +2491,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   cos: vector<CoFrame> = [co_empty()];
   act: vector<integer> = [];
   cogen: vector<integer> = [1];
+  // Enum variant names viewed by `OpCastTextFromEnum`: `[key, handle, length]` per name.
+  interned: vector<integer> = [];
   // The stack top and the code position handed to `exec_more` and back.
   mregs: vector<integer> = [0, 0];
   // A walk step's answer: the record's reference and the walk's next state.
@@ -3461,7 +3531,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     } else if h >= H_PUT_SINGLE {
       mregs[0] = sp;
       mregs[1] = pc;
-      if exec_more(h, op, img, stk, mregs, io, tl, images, imaged, step_io, cos, act, cogen, nwhy) < 0 {
+      if exec_more(h, op, img, stk, mregs, io, tl, images, imaged, step_io, cos, act, cogen, interned, nwhy) < 0 {
         return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
       }
       sp = mregs[0] ?? 0;

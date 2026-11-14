@@ -416,6 +416,20 @@ int64_t loft_crt_store_serial(int64_t nr) {
     return nr >= 0 && nr < loft_nstores ? (int64_t) loft_stores[nr].serial : 0;
 }
 
+/* A text the runner keeps for the whole run (an enum variant's name, which Rust views in its type
+ * table): copied once into memory of its own; the handle is that copy. */
+int64_t loft_crt_intern_text(const char *val, int64_t bytes) {
+    char *copy = (char *) malloc(bytes > 0 ? (size_t) bytes : 1);
+    if (!copy) return 0;
+    if (bytes > 0) memcpy(copy, val, (size_t) bytes);
+    return (int64_t) (intptr_t) copy;
+}
+
+/* A view of `len` bytes of an interned text pushed at `at`. */
+void loft_crt_stack_str_interned(int64_t store, int64_t at, int64_t handle, int64_t len) {
+    *(loft_str *) loft_crt_slot_at(store, at) = loft_lit((const char *) (intptr_t) handle, (size_t) len);
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);
