@@ -82,7 +82,7 @@ Two language features exist for the port:
 | a function answers what the Rust interpreter answers | `selfhost/bench/run_fill.loft <program image> <run image> <function> <args…>` against `loft --interpret` |
 | no kernel function differs from the IR runner; the integer kernels' hand-computed answers | `selfhost/tests/fill.loft`, run by `tests/selfhost.rs` |
 | which operator stops each kernel function | `selfhost/bench/fill_census.loft <program image> <run image>` |
-| the corpus: each plain program of `tests/scripts` against `loft --interpret`, and the operator that stops each one not run to its end (the worklist) | `python3 selfhost/bench/fill_survey.py` |
+| the corpus: each plain program of `tests/scripts` against `loft --interpret` (`stores`: equal but for the `store_memory()` report, difference 3), and the operator that stops each one not run to its end (the worklist) | `python3 selfhost/bench/fill_survey.py` |
 | where the top is after an operator | `LOFT_LOG=full loft --interpret` prints each operator with the top before it; `LOFT_FILL_TRACE=1` prints the runner's |
 
 The first two are run by hand; neither is a test yet.
@@ -91,7 +91,7 @@ The first two are run by hand; neither is a test yet.
 
 | Part | State |
 |---|---|
-| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: iteration (`OpIterate`, `OpStep`), coroutines, `par`, the child-record and slot-reference families |
+| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: coroutines, `par`, keyed writes (`OpSetKeyed`, `OpReplaceKeyed`), the child-record and slot-reference families |
 | natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |

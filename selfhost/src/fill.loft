@@ -814,6 +814,11 @@ pub fn op_free_ref_unless_entry(s: state::State) {
   if placeholder.store_nr != entry.store_nr { s.load_table(); crt::free_displaced(placeholder.store_nr, placeholder.rec, placeholder.pos, witness.store_nr, witness.rec, witness.pos); }
 }
 
+pub fn op_free_scratch(s: state::State) {
+  scratch = s.get_stack_dbref();
+  crt::free_scratch(scratch.store_nr, scratch.rec, scratch.pos);
+}
+
 pub fn op_var_ref(s: state::State) {
   pos = s.code_u16();
   new_value: state::DbRef? = s.get_var_dbref(pos);
@@ -1272,6 +1277,14 @@ pub fn op_ne_bool(s: state::State) {
   s.put_stack_bool(new_value);
 }
 
+pub fn op_iterate(s: state::State) {
+  s.iterate();
+}
+
+pub fn op_step(s: state::State) {
+  s.step();
+}
+
 pub fn op_append_copy(s: state::State) {
   s.append_copy();
 }
@@ -1668,9 +1681,25 @@ pub fn op_size_hash(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn op_length_index(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: integer? = crt::index_len(r.store_nr, r.rec, r.pos, 0);
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_size_index(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: integer? = crt::index_len(r.store_nr, r.rec, r.pos, 1);
+  s.put_stack_i64(new_value);
+}
+
 pub fn op_print(s: state::State) {
   v1 = s.get_stack_str();
   print(v1 ?? "");
+}
+
+pub fn op_remove(s: state::State) {
+  s.remove();
 }
 
 pub fn op_clear(s: state::State) {
@@ -1687,6 +1716,24 @@ pub fn op_clear_keyed(s: state::State) {
   tp = s.code_u16();
   dest = s.get_stack_dbref();
   s.clear_keyed(dest, tp);
+}
+
+pub fn op_length_spatial(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: integer? = crt::index_len(r.store_nr, r.rec, r.pos, 2);
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_size_spatial(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: integer? = crt::index_len(r.store_nr, r.rec, r.pos, 3);
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_length_trie(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: integer? = crt::index_len(r.store_nr, r.rec, r.pos, 2);
+  s.put_stack_i64(new_value);
 }
 
 pub fn op_fn_ref_detach_shared(s: state::State) {
@@ -1904,6 +1951,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     134 => op_free_ref(s),
     135 => op_free_ref_if_distinct(s),
     137 => op_free_ref_unless_entry(s),
+    138 => op_free_scratch(s),
     139 => op_var_ref(s),
     140 => op_put_ref(s),
     141 => op_eq_ref(s),
@@ -1971,6 +2019,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     211 => op_length_hash(s),
     212 => op_eq_bool(s),
     213 => op_ne_bool(s),
+    214 => op_iterate(s),
+    215 => op_step(s),
     216 => op_append_copy(s),
     217 => op_place_record(s),
     218 => op_move_record(s),
@@ -2040,10 +2090,16 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     316 => op_replace_vector(s),
     318 => op_hash_remove(s),
     320 => op_size_hash(s),
+    321 => op_length_index(s),
+    322 => op_size_index(s),
     323 => op_print(s),
+    324 => op_remove(s),
     325 => op_clear(s),
     326 => op_copy_record(s),
     329 => op_clear_keyed(s),
+    331 => op_length_spatial(s),
+    332 => op_size_spatial(s),
+    333 => op_length_trie(s),
     335 => op_fn_ref_detach_shared(s),
     339 => op_pre_alloc_vector(s),
     341 => op_get_file(s),

@@ -5,7 +5,7 @@
 run by `selfhost/bench/fill_main.loft` from its run image, its output compared with
 `loft --interpret`'s.
 
-    python3 selfhost/bench/fill_survey.py [--jobs N] [--top N] [--show agree|differ|stopped|fault]
+    python3 selfhost/bench/fill_survey.py [--jobs N] [--top N] [--show agree|stores|differ|stopped|fault]
 
 Prints how many programs agree, and what stops the others: the first operator or native not
 carried, by the programs it stops (the worklist of 1b-fill-port.md).
@@ -13,6 +13,9 @@ carried, by the programs it stops (the worklist of 1b-fill-port.md).
 import argparse, collections, concurrent.futures as cf, glob, os, re, shutil, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+STORE_REPORT = re.compile(r"^(stores: \d+ live|  #\d+ ).*\n", re.M)
 
 
 def run(cmd, cwd=None, env=None, timeout=120):
@@ -39,7 +42,13 @@ def one(f, loft, runner, tmp):
     if rc2 not in (0, rc):
         m = re.search(r"stopped: (.*)", err)
         return f, "fault", (m.group(1) if m else f"exit {rc2}")[:80]
-    return f, ("agree" if got == want else "differ"), ""
+    if got == want:
+        return f, "agree", ""
+    # The store table is the C runtime's (1b-fill-port.md, difference 3): a program that
+    # prints `store_memory()` agrees when everything but that report is equal.
+    if STORE_REPORT.sub("", got) == STORE_REPORT.sub("", want):
+        return f, "stores", ""
+    return f, "differ", ""
 
 
 def main():
@@ -69,7 +78,7 @@ def main():
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{os.path.relpath(f, ROOT)}\t{what}")
         print(f"{counts['agree']} of {len(files)} programs agree; " +
-              ", ".join(f"{counts[k]} {k}" for k in ("stopped", "differ", "fault", "noimage") if counts[k]))
+              ", ".join(f"{counts[k]} {k}" for k in ("stores", "stopped", "differ", "fault", "noimage") if counts[k]))
         for line in sorted(shown):
             print(line)
         if stops:

@@ -1305,7 +1305,7 @@ fn narrow_integer(ts: vector<ir::DbType>, tp: integer) -> boolean {
 // pushed onto the C runtime's key stack in key order; each part read at the width its walk key's
 // type number gives (`kt`: 3 a single, 4 a float, 5 a boolean, 6 a text, 7 a byte, any other an
 // integer).  Answers the bytes they take.
-fn push_walk_bound(stk: integer, kt: vector<integer>, n: integer, top: integer) -> integer {
+pub fn push_walk_bound(stk: integer, kt: vector<integer>, n: integer, top: integer) -> integer {
   at = top;
   for i in 0..n {
     t = kt[i] ?? 1;
@@ -1326,7 +1326,7 @@ fn push_walk_bound(stk: integer, kt: vector<integer>, n: integer, top: integer) 
 }
 
 // The bytes a walk bound of `n` parts takes on the stack.
-fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
+pub fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
   b = 0;
   for i in 0..n {
     b += if (kt[i] ?? 1) == 6 { 16 } else { 8 };

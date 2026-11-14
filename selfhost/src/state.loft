@@ -1779,3 +1779,85 @@ pub fn fn_ref_detach_shared(self: State) {
     crt::set_slot_ref(self.stk, self.stack_pos - (old - 8), NULL_STORE, 0, 0);
   }
 }
+
+// ── Walks over a collection: the state is the C runtime's cursor. ─────────────────────────
+
+// `State::iterate`: a walk's start — the key list and the bounds' sizes from the code, then
+// the till bound, the from bound and the collection popped; the walk's state pushed.  A
+// snapshot (kind 4) walks without bounds; an index (1), a sorted (2) or an ordered (3)
+// through `keyed_iterate`.
+pub fn iterate(self: State) {
+  on = self.code_u8();
+  arg = self.code_u16();
+  nk = self.code_u8();
+  kinds: vector<integer> = [];
+  for _ in 0..nk {
+    kt = self.code_i8();
+    kinds += [kt.abs()];
+    pos = self.code_u16();
+    min = self.code_i32();
+    crt::walk_key(kt, pos, min);
+  }
+  from = self.code_u8();
+  till = self.code_u8();
+  kind = on & 63;
+  if kind < 1 || kind > 4 || (kind == 4 && (from != 0 || till != 0)) {
+    self.stop("not carried: a walk of kind {kind}");
+    return;
+  }
+  till_bytes = brun::walk_bound_bytes(kinds, till);
+  from_bytes = brun::walk_bound_bytes(kinds, from);
+  if !self.can_pop(till_bytes + from_bytes + 16) {
+    return;
+  }
+  brun::push_walk_bound(self.stk, kinds, from, self.stack_pos - till_bytes);
+  brun::push_walk_bound(self.stk, kinds, till, self.stack_pos);
+  self.stack_pos -= till_bytes + from_bytes;
+  data = self.get_stack_dbref();
+  if kind == 4 {
+    self.put_stack_i64(crt::scratch_iterate(data.store_nr, data.rec, data.pos));
+  } else {
+    self.load_table();
+    self.put_stack_i64(crt::keyed_iterate(data.store_nr, data.rec, data.pos, on, arg, from, till));
+  }
+}
+
+// `State::step`: a walk's next record — the state in the frame slot `state_var` advanced, and
+// the collection on top replaced by the record (null at the end).
+pub fn step(self: State) {
+  state_var = self.code_u16();
+  on = self.code_u8();
+  arg = self.code_u16();
+  cursor = self.get_var_i64(state_var) ?? 0;
+  data = self.slot_dbref(self.stack_pos - 16);
+  out: vector<integer> = [NULL_STORE, 0, 0, 0];
+  kind = on & 63;
+  if kind == 4 {
+    crt::scratch_step(out, cursor, data.store_nr, data.rec, data.pos, on & 64 != 0);
+  } else if kind >= 1 && kind <= 3 {
+    self.load_table();
+    crt::keyed_step(out, cursor, data.store_nr, data.rec, data.pos, on, arg);
+  } else {
+    self.stop("not carried: a walk of kind {kind}");
+    return;
+  }
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, out[3]);
+  crt::set_slot_ref(self.stk, self.stack_pos - 16, out[0] ?? NULL_STORE, out[1] ?? 0, out[2] ?? 0);
+}
+
+// `State::remove`: the walk's current record removed — the state in the slot `state_var`
+// moved past it, the collection popped.
+pub fn remove(self: State) {
+  state_var = self.code_u16();
+  on = self.code_u8();
+  arg = self.code_u16();
+  if on & 63 > 3 {
+    self.stop("not carried: a removal in a walk of kind {on & 63}");
+    return;
+  }
+  cursor = self.get_var_i64(state_var) ?? 0;
+  data = self.slot_dbref(self.stack_pos - 16);
+  self.load_table();
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, crt::walk_remove(cursor, data.store_nr, data.rec, data.pos, on, arg));
+  self.stack_pos -= 16;
+}

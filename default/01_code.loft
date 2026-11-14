@@ -1303,6 +1303,7 @@ fn OpFreeRefUnlessEntry(placeholder: reference, witness: reference, entry: refer
 // `Stores::free_iteration_scratch` so the backends cannot drift.
 fn OpFreeScratch(scratch: reference);
 #rust"s.database.free_iteration_scratch(&@scratch);"
+#loft"crt::free_scratch(scratch.store_nr, scratch.rec, scratch.pos);"
 fn OpSizeofRef(val: reference) -> __word;
 #cold
 fn OpVarRef(pos: const u16) -> reference;
@@ -1940,9 +1941,11 @@ pub fn size(self: const hash) -> integer {
 fn OpLengthIndex(r: index) -> __word;
 #cold
 #rust"i64::from(btree::count(&@r, &s.database.allocations))"
+#loft"crt::index_len(r.store_nr, r.rec, r.pos, 0)"
 fn OpSizeIndex(r: index) -> __word;
 #cold
 #rust"i64::from(btree::table_bytes(&@r, &s.database.allocations))"
+#loft"crt::index_len(r.store_nr, r.rec, r.pos, 1)"
 /// The byte footprint of an index: its B+tree's node arena, room included.
 /// Allocation-local, as `size` of a hash: the element records live in separate
 /// allocations and are not counted.  Grows in steps as the arena doubles.  0 for an
@@ -2223,6 +2226,7 @@ type trie;
 fn OpLengthSpatial(r: spatial) -> __word;
 #cold
 #rust"i64::from(codegen_runtime::spatial_len(&@r, &s.database.allocations))"
+#loft"crt::index_len(r.store_nr, r.rec, r.pos, 2)"
 /// Number of elements in a spatial (radix / Morton tree) collection.
 pub fn len(self: const spatial) -> integer {
   OpLengthSpatial(self)
@@ -2231,6 +2235,7 @@ pub fn len(self: const spatial) -> integer {
 fn OpSizeSpatial(r: spatial) -> __word;
 #cold
 #rust"i64::from(codegen_runtime::spatial_bytes(&@r, &s.database.allocations))"
+#loft"crt::index_len(r.store_nr, r.rec, r.pos, 3)"
 /// The byte footprint of a spatial index: its tree's node array, room included.
 /// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
 /// an empty (unallocated) one.
@@ -2243,6 +2248,7 @@ pub fn size(self: const spatial) -> integer {
 fn OpLengthTrie(r: trie) -> __word;
 #cold
 #rust"i64::from(codegen_runtime::trie_len(&@r, &s.database.allocations))"
+#loft"crt::index_len(r.store_nr, r.rec, r.pos, 2)"
 /// Number of elements in the trie.
 pub fn len(self: const trie) -> integer {
   OpLengthTrie(self)
