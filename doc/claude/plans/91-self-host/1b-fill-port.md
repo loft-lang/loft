@@ -117,8 +117,30 @@ with the top just above it.  The differences:
 
 ## Speed
 
-Not a goal yet.  Measured through `run_fill.loft`, the call only, against `loft --interpret`:
-the runner takes several times as long on the integer kernels.  A profile shows why: every
+**The target, written by hand** (`selfhost/bench/hand/hand_steps.c`, `selfhost/bench/hand/build.sh`):
+the step loop with `State`'s code position, stack top, stack capacity, stack base and code base
+in locals, a `switch` on the operator, the hot operators inline, and every check's slow path
+(stack growth, a slot outside the stack, division by zero) and every operator it does not
+write handed to the generated loop for that one step.  On collatz (`kernels/collatz.loft`,
+`longest(1, 100000)`) it runs faster than the Rust interpreter:
+
+| runner | collatz |
+|---|--:|
+| the hand-coded step loop | 0.29 s |
+| `loft --interpret` | 0.335 s |
+| the generated runner, built the same way | 4.13 s |
+
+So the bytecode and the stack image are not what costs; the generated code's shape is.  What
+the generated runner pays per step that the hand loop does not: each `State` field read and
+write is a store lookup; each operand read and stack access is a separate function with its
+own bounds check; each check's fault message is built in a work text whose set-up sits on the
+hot path and keeps the function from being inlined; the loop compares `fault` with `""` on
+every step.  The stack's frame base comes from the C runtime shim (`loft_crt_stack_base`, added
+by `build.sh` to its copy of `crt.c`): the shim keeps the interpreted program's stores in its
+own table.
+
+The generated runner, measured through `run_fill.loft` (the call only) against `loft
+--interpret`, takes 11× as long on collatz (3.71 s shipped).  A profile shows why: every
 `State` field access is a store lookup, the accessors and the `crt` wrappers are separate C
 functions, and `execute` is a chain of comparisons.  The cures are in the C backend
 (a struct parameter's fields held in locals across a loop, small functions inlined without
