@@ -537,6 +537,24 @@ fn c_vec_insert(out: vector<integer>, store: integer, rec: integer, pos: integer
 #c "loft_crt_vec_insert" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) -> integer;
 #c "loft_crt_child_rec_in_place" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+fn c_new_child_rec(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) -> integer;
+#c "loft_crt_new_child_rec" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+fn c_demote_rec(tp: integer, store: integer, rec: integer, pos: integer, fld: integer);
+#c "loft_crt_demote_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_store_buf(out: vector<integer>, store: integer, rec: integer, pos: integer, only: integer) -> integer;
+#c "loft_crt_store_buf" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_adopt_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer);
+#c "loft_crt_adopt_child_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_release_rec_if_distinct(tp: integer, rs: integer, rr: integer, rp: integer, a_s: integer, ar: integer, ap: integer);
+#c "loft_crt_release_rec_if_distinct" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_vec_adopt(tp: integer, vs: integer, vr: integer, vp: integer, os: integer, o_r: integer, op: integer);
+#c "loft_crt_vec_adopt" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_evacuate(tp: integer, hs: integer, hr: integer, hp: integer, fld: integer, ms: integer, mr: integer, mp: integer, size: integer, image: vector<u8>, foreign: integer);
+#c "loft_crt_evacuate" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t, int64_t)"
+fn c_get_dir(path: text, bytes: integer, store: integer, rec: integer, pos: integer, size: integer) -> integer;
+#c "loft_crt_get_dir" "int64_t(const char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_null_reported(out: vector<integer>) -> integer;
+#c "loft_crt_null_reported" "int64_t(int64_t*, int64_t)"
 fn c_set_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer, free_source: integer);
 #c "loft_crt_set_child_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_sidecar_add(tp: integer, hash: integer, walks: integer, before: text, blen: integer, after: text, alen: integer, dump: text, dlen: integer, oldest: text, olen: integer, bridge: text, brlen: integer) -> integer;
@@ -809,6 +827,53 @@ pub fn vec_insert(out: vector<integer>, store: integer, rec: integer, pos: integ
 // `OpChildRecInPlace`: the field's child record, made with `image` when it has none; in `out`.
 pub fn child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) {
   c_child_rec_in_place(out, tp, store, rec, pos, image);
+}
+
+// `OpChildRec`: a new child record of type `tp` for the field, with `image`; in `out`.
+pub fn new_child_rec(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) {
+  c_new_child_rec(out, tp, store, rec, pos, image);
+}
+
+// `OpDemoteRec`: the record's field `fld` of type `tp` demoted to a child record.
+pub fn demote_rec(tp: integer, store: integer, rec: integer, pos: integer, fld: integer) {
+  c_demote_rec(tp, store, rec, pos, fld);
+}
+
+// `OpStoreBuf` / `OpStoreBufOnly`: a return buffer in the host's store, or (`only`) the buffer
+// as its own; in `out`.
+pub fn store_buf(out: vector<integer>, store: integer, rec: integer, pos: integer, only: boolean) {
+  c_store_buf(out, store, rec, pos, if only { 1 } else { 0 });
+}
+
+// `OpAdoptChildRec`: the field's child record adopted from the value.
+pub fn adopt_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer) {
+  c_adopt_child_rec(tp, fs, fr, fp, vs, vr, vp);
+}
+
+// `OpReleaseRecIfDistinct`: the record released unless the answer is it.
+pub fn release_rec_if_distinct(tp: integer, rs: integer, rr: integer, rp: integer, a_s: integer, ar: integer, ap: integer) {
+  c_release_rec_if_distinct(tp, rs, rr, rp, a_s, ar, ap);
+}
+
+// `OpAdoptVector`: the vector takes the other's elements as its own.
+pub fn vec_adopt(tp: integer, vs: integer, vr: integer, vp: integer, os: integer, o_r: integer, op: integer) {
+  c_vec_adopt(tp, vs, vr, vp, os, o_r, op);
+}
+
+// `OpEvacuate`: the holder's field `fld` moved out to a record of its own at the home.
+pub fn evacuate(tp: integer, hs: integer, hr: integer, hp: integer, fld: integer, ms: integer, mr: integer, mp: integer, size: integer, image: vector<u8>, foreign: boolean) {
+  c_evacuate(tp, hs, hr, hp, fld, ms, mr, mp, size, image, if foreign { 1 } else { 0 });
+}
+
+// `OpGetDir`: the directory's entries appended to a vector of `File` records of `size` bytes;
+// whether the path is a directory that was read.
+pub fn get_dir(path: text?, store: integer, rec: integer, pos: integer, size: integer) -> boolean {
+  c_get_dir(path ?? "", bytes_of(path), store, rec, pos, size) != 0
+}
+
+// `DbRef::NULL_REPORTED`: a null whose absence is accounted for; in `out`.
+pub fn null_reported(out: vector<integer>) {
+  c_null_reported(out);
 }
 
 // `OpSetChildRec`: the field's child record set from `(ss, sr, sp)` as a `tp` record.

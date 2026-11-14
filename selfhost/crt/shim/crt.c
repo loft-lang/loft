@@ -1197,6 +1197,72 @@ int64_t loft_crt_child_rec_in_place(int64_t *out, int64_t no, int64_t tp, int64_
     return 0;
 }
 
+/* OpChildRec (`Stores::new_child_rec`): a new child record of type `tp` for the field, with the
+ * type's defaults; its reference in `out`. */
+int64_t loft_crt_new_child_rec(int64_t *out, int64_t no, int64_t tp, int64_t store, int64_t rec, int64_t pos,
+                               const uint8_t *image, int64_t n) {
+    if (!LOFT_CRT_TP_OK(tp)) return 0;
+    loft_crt_put_ref(out, no, loft_new_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos), image,
+                                                 (uint32_t) n));
+    return 0;
+}
+
+/* OpDemoteRec (`Stores::demote_rec`): the record's field `fld` of type `tp` demoted to a child
+ * record. */
+void loft_crt_demote_rec(int64_t tp, int64_t store, int64_t rec, int64_t pos, int64_t fld) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_demote_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos), (uint32_t) fld);
+}
+
+/* OpStoreBuf / OpStoreBufOnly (`Stores::store_buf`, `store_buf_only`): a return buffer in the
+ * host's store, or the buffer as its own; its reference in `out`. */
+int64_t loft_crt_store_buf(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos, int64_t only) {
+    loft_ref h = loft_crt_ref(store, rec, pos);
+    loft_crt_put_ref(out, no, only ? loft_store_buf_only(h) : loft_store_buf(h));
+    return 0;
+}
+
+/* OpAdoptChildRec (`Stores::adopt_child_rec`): the field's child record adopted from the value. */
+void loft_crt_adopt_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int64_t vs, int64_t vr, int64_t vp) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_adopt_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(fs, fr, fp), loft_crt_ref(vs, vr, vp));
+}
+
+/* OpReleaseRecIfDistinct (`Stores::release_rec_if_distinct`): the record released unless the
+ * answer is it. */
+void loft_crt_release_rec_if_distinct(int64_t tp, int64_t rs, int64_t rr, int64_t rp, int64_t as, int64_t ar,
+                                      int64_t ap) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_release_rec_if_distinct(loft_crt_types, (uint16_t) tp, loft_crt_ref(rs, rr, rp), loft_crt_ref(as, ar, ap));
+}
+
+/* OpAdoptVector (`Stores::vector_adopt`): the vector takes the other's elements as its own. */
+void loft_crt_vec_adopt(int64_t tp, int64_t vs, int64_t vr, int64_t vp, int64_t os, int64_t orec, int64_t op) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_vec_adopt(loft_crt_types, (uint16_t) tp, loft_crt_ref(vs, vr, vp), loft_crt_ref(os, orec, op));
+}
+
+/* OpEvacuate (`Stores::evacuate`): the holder's field `fld` moved out to a record of its own at
+ * `home`, placed as `OpPlaceRecord` places one. */
+void loft_crt_evacuate(int64_t tp, int64_t hs, int64_t hr, int64_t hp, int64_t fld, int64_t ms, int64_t mr,
+                       int64_t mp, int64_t size, const uint8_t *image, int64_t n, int64_t foreign) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_evacuate(loft_crt_types, (uint16_t) tp, loft_crt_ref(hs, hr, hp), (uint32_t) fld, loft_crt_ref(ms, mr, mp),
+                  (uint32_t) size, image, (uint32_t) n, (int) foreign);
+}
+
+/* OpGetDir (`Stores::get_dir`): the directory's entries appended to the vector of `File`
+ * records of `size` bytes; whether the path is a directory that was read. */
+int64_t loft_crt_get_dir(const char *path, int64_t bytes, int64_t store, int64_t rec, int64_t pos, int64_t size) {
+    return loft_get_dir(loft_crt_str(path, bytes), loft_crt_ref(store, rec, pos), (uint32_t) size);
+}
+
+/* `DbRef::NULL_REPORTED`: a null whose absence is accounted for; in `out`. */
+int64_t loft_crt_null_reported(int64_t *out, int64_t no) {
+    loft_crt_put_ref(out, no, loft_ref_null_reported());
+    return 0;
+}
+
 /* OpSetChildRec (`Stores::set_child_rec`): the child record the field names set from `src` as a
  * `tp` record, the source freed after when `free_source`. */
 void loft_crt_set_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int64_t ss, int64_t sr, int64_t sp,

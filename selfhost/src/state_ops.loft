@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — `State` methods and helpers of the operators the hand-built runner never carried:
+// ported from the Rust interpreter's `State` and `Stores`, over the C runtime's routines.
+// A second file of `state.loft`'s kind: `create.loft` reads both for the ported methods.
+
+use state;
+use crt;
+use types;
+
+// A reference out of the three integers a `crt` routine answers.
+fn out_ref(io: vector<integer>) -> state::DbRef {
+  state::DbRef { store_nr: io[0] ?? state::NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `DbRef::NULL_REPORTED`: a null whose absence is accounted for.
+pub fn null_reported() -> state::DbRef {
+  io: vector<integer> = [state::NULL_STORE, 0, 0];
+  crt::null_reported(io);
+  out_ref(io)
+}
+
+// `Stores::store_buf` / `store_buf_only`: a call's return buffer in the host's store, or
+// (`only`) the buffer as its own.
+pub fn store_buf(host: state::DbRef, only: boolean) -> state::DbRef {
+  io: vector<integer> = [state::NULL_STORE, 0, 0];
+  crt::store_buf(io, host.store_nr, host.rec, host.pos, only);
+  out_ref(io)
+}
+
+// `Stores::new_child_rec`: a new child record of type `tp` for the field, with its defaults.
+pub fn new_child_rec(self: state::State, field: state::DbRef, tp: integer) -> state::DbRef {
+  self.load_table();
+  io: vector<integer> = [state::NULL_STORE, 0, 0];
+  crt::new_child_rec(io, tp, field.store_nr, field.rec, field.pos, self.default_of(tp));
+  out_ref(io)
+}
+
+// `Stores::evacuate`: the holder's field `fld` moved out to a record of its own at `home`,
+// placed as `OpPlaceRecord` places one — foreign where the holder's store is a vector of
+// another element type.
+pub fn evacuate(self: state::State, holder: state::DbRef, fld: integer, home: state::DbRef, tp: integer) {
+  self.load_table();
+  live = holder.store_nr != state::NULL_STORE && crt::store_live(holder.store_nr);
+  elem = if live { types::root_vector_element(self.types, crt::store_known(holder.store_nr)) } else { null };
+  crt::evacuate(tp, holder.store_nr, holder.rec, holder.pos, fld, home.store_nr, home.rec, home.pos, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+}
+
+// `Stores::get_dir`: the directory's entries appended to `result`, a vector of `File` records;
+// whether the path is a directory that was read.
+pub fn get_dir(self: state::State, path: text?, result: state::DbRef) -> boolean {
+  size = 0;
+  for t in self.types {
+    if t.name == "File" {
+      size = t.size;
+    }
+  }
+  crt::get_dir(path, result.store_nr, result.rec, result.pos, size)
+}

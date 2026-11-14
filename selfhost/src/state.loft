@@ -978,7 +978,7 @@ pub fn local_tag(self: State, of: integer, a: integer) -> integer? {
 }
 
 // Type `tp`'s default image, derived on its first use.
-fn default_of(self: State, tp: integer) -> vector<u8> {
+pub fn default_of(self: State, tp: integer) -> vector<u8> {
   while len(self.imaged) <= tp {
     self.images += [[]];
     self.imaged += [false];

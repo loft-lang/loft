@@ -98,6 +98,7 @@ fn OpGetFile(file: File) -> boolean fs#read;
 fn OpGetDir(path: text, result: vector<File>) -> boolean fs#read;
 #cold
 #rust"stores.get_dir(@path, &@result)"
+#loft"s.get_dir(path, result)"
 fn OpGetFileText(file: File, content: &text) fs#read;
 #cold
 fn OpWriteFile(file: File, val: reference, db_tp: const u16) fs#update;
@@ -1227,6 +1228,7 @@ fn OpVecEndJump(vec: const u16, idx: const u16, step: const i32);
 // `write_dropped` report (`DbRef::NULL_REPORTED`, @FR-E-Report), because the arm is the report.
 fn OpNullReported() -> reference;
 #rust"DbRef::NULL_REPORTED"
+#loft"state_ops::null_reported()"
 // `@FR-R-Fuse`'s tag clause — a variant test of a local as one compare-and-jump: jump unless
 // the tag is `c`.  `of` 0 reads a plain-enum local (`OpEqInt(OpConvIntFromEnum(a), c)`), `of` 1
 // the tag of the record a struct-enum local names (`OpEqInt(OpConvIntFromEnum(OpGetEnum(a, 0)),

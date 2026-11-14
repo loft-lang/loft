@@ -321,6 +321,7 @@ fn OpMinSingleInt(v1: __word) -> __word;
 #loft"-v1"
 fn OpBitNotSingleInt(v1: __word) -> __word;
 #rust"!@v1"
+#loft"if v1 == null {{ 9223372036854775807 }} else {{ -v1 - 1 }}"
 fn OpConvFloatFromInt(v1: __word) -> __fword;
 #hot
 #rust"ops::op_conv_float_from_int(@v1)"
@@ -1245,6 +1246,7 @@ fn OpConvBoolFromRef(val: reference) -> boolean;
 #loft"val.rec != 0"
 fn OpConvRefFromNull() -> reference;
 #rust"stores.null()"
+#loft"state::DbRef {{ store_nr: state::NULL_STORE, rec: 0, pos: 0 }}"
 // Plan-04 Phase 2h: positional init-op; writes a null DbRef at the
 // frame slot `stack_pos - pos`.  Does not push onto the eval stack.
 // Complements `OpConvRefFromNull` for writes to pre-reserved slots.
@@ -1293,6 +1295,7 @@ fn OpFreeRefIfDistinct(placeholder: reference, witness: reference);
 // the store itself.  See `formal/closures.md` D-clo-13 and @PLN150.
 fn OpFreeRefOrHandUp(placeholder: reference, witness: reference);
 #rust"if @placeholder.store_nr == @witness.store_nr {{ s.hand_up_returned(@witness); }} else {{ s.database.free(&@placeholder); }}"
+#loft"crt::free_displaced(placeholder.store_nr, placeholder.rec, placeholder.pos, witness.store_nr, witness.rec, witness.pos);"
 // `OpFreeRefIfDistinct` for a promoted return buffer (@FR-O-Buffer): the displaced store is
 // also kept when it is `entry`, the store the CALLER handed in, which this frame never frees.
 // Emitted by the interpreter's rebind of the buffer, where the displaced value is already on
@@ -1750,12 +1753,14 @@ fn OpSliceView(r: vector, src: vector, lo: __word, hi: __word, tp: const u16);
 // span out, released `r` and copied it back.  The bounds arrive clamped by the slice prelude.
 fn OpKeepRange(r: vector, lo: __word, hi: __word, tp: const u16);
 #rust"s.database.vector_keep_range(&@r, @lo, @hi, @tp);"
+#loft"s.vec_keep(r, tp, lo, hi);"
 // @PLN174 F5 — a local takes a `#native` call's vector answer as its own: a VIEW of the
 // whole when the answer is a foreign store (a library's buffer, no copy), the element copy
 // otherwise (the #409/#410 delivery, unchanged).
 fn OpAdoptVector(r: vector, src: vector, tp: const u16);
 #cold
 #rust"s.database.vector_adopt(&@r, &@src, @tp);"
+#loft"s.load_table(); crt::vec_adopt(tp, r.store_nr, r.rec, r.pos, src.store_nr, src.rec, src.pos);"
 // @PLN157 § V-m — ONE fused scalar append (`OpPush<Kind>` — `OpAppendCharacter` is the text op): `v += [x]` on a plain vector of this kind
 // was OpPreAllocVector · OpNewRecord · OpSet<Kind> · OpFinishRecord, five runtime calls
 // per element each resolving the store and re-reading the headers the previous one
@@ -1831,6 +1836,7 @@ fn OpSlotTag(field: reference) -> reference;
 // before are released here; what that record ADOPTED is released by the emitted code first.
 fn OpChildRec(field: reference, tp: const u16) -> reference[field];
 #rust"s.database.new_child_rec(&@field, @tp)"
+#loft"s.new_child_rec(field, tp)"
 #impure(parent_write)
 // `@FR-B-Copy`, `@FR-L-CapOne` — a fn-ref read out of a place and KEPT (`g = h.f`, a returned
 // `h.f`) is a copy of the closure record it names: a fresh store holding a copy of the `tp`
@@ -2085,6 +2091,7 @@ fn OpPlaceRecord(host: reference, tp: const u16) -> reference;
 fn OpEvacuate(holder: reference, fld: const u16, home: reference, tp: const u16);
 #cold
 #rust"stores.evacuate(&@holder, u32::from(@fld), &@home, @tp);"
+#loft"s.evacuate(holder, fld, home, tp);"
 #impure(parent_write)
 // @PLN164 B2 (`@FR-R-MoveLast`) — the last-use store of an owned record local into a
 // field, consuming the source: within one store the bytes relocate (the heap handles keep
@@ -2124,6 +2131,7 @@ fn OpFreeRecordIn(rec: reference, tp: const u16);
 // temporary record.  A null `r` is left as it is.
 fn OpDemoteRec(r: reference, fld: const u16, tp: const u16);
 #rust"stores.demote_rec(&@r, @fld, @tp);"
+#loft"s.load_table(); crt::demote_rec(tp, r.store_nr, r.rec, r.pos, fld);"
 #impure(parent_write)
 // `@FR-B-OutOfLine`, the move: `field` takes the child record `src` names — a field inside the
 // record `field` holds — by its number: `src` is cleared, the replaced record released with
@@ -2139,23 +2147,27 @@ fn OpMoveChildRec(field: reference, src: reference, tp: const u16);
 // `OpDatabase` claims its result as a record there (`keys::STORE_BUF_BIT`).
 fn OpStoreBuf(host: reference) -> reference;
 #rust"stores.store_buf(&@host)"
+#loft"state_ops::store_buf(host, false)"
 #pure
 // `@FR-R-HostStore`: the out-of-line `field` takes `value` — a record its callee claimed in the
 // field's store, or the child the field already holds — by its number; any other value is
 // written as `OpSetChildRec` writes it.
 fn OpAdoptChildRec(field: reference, value: reference, tp: const u16);
 #rust"stores.adopt_child_rec(&@field, &@value, @tp);"
+#loft"s.load_table(); crt::adopt_child_rec(tp, field.store_nr, field.rec, field.pos, value.store_nr, value.rec, value.pos);"
 #impure(parent_write)
 // `@FR-R-HostStore`'s result clause: `buf` when it is a store buffer, else null — the buffer a
 // function hands on when a caller may have offered a record of its own, which it never writes.
 fn OpStoreBufOnly(buf: reference) -> reference;
 #rust"stores.store_buf_only(&@buf)"
+#loft"state_ops::store_buf(buf, true)"
 #pure
 // `@FR-R-HostStore`'s result clause: `rec`, a result its function drops, released — its store
 // whole when that is not `answer`'s, else the record with what it owns, the store living on for
 // the answer; nothing for null or the answer itself.
 fn OpReleaseRecIfDistinct(rec: reference, answer: reference, tp: const u16);
 #rust"stores.release_rec_if_distinct(&@rec, &@answer, @tp);"
+#loft"s.load_table(); crt::release_rec_if_distinct(tp, rec.store_nr, rec.rec, rec.pos, answer.store_nr, answer.rec, answer.pos);"
 #impure(parent_write)
 fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
 #rust"stores.child_rec_in_place(&@field, @tp)"
@@ -2273,6 +2285,7 @@ pub fn len(self: const trie) -> integer {
 fn OpSizeTrie(r: trie) -> __word;
 #cold
 #rust"i64::from(codegen_runtime::trie_bytes(&@r, &s.database.allocations))"
+#loft"crt::index_len(r.store_nr, r.rec, r.pos, 3)"
 /// The byte footprint of a trie: its tree's node array, room included.
 /// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
 /// an empty (unallocated) one.
@@ -2610,6 +2623,7 @@ fn OpPreAllocVector(r: vector, capacity: const u16, elem_size: const u16);
 fn OpReserveVector(r: vector, count: __word, elem_size: const u16);
 #cold
 #rust"vector::reserve_vector(&@r, @count, u32::from(@elem_size), &mut s.database.allocations);"
+#loft"crt::vec_reserve(r.store_nr, r.rec, r.pos, count, elem_size);"
 // --- Vector aggregates ---
 /// Does the vector hold `value`?  Compared by content, as `==` compares every type; the
 /// empty vector holds nothing.  The membership test a script asks of a list of names —
