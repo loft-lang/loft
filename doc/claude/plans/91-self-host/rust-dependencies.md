@@ -117,6 +117,7 @@ fact was brought up to date there.
 | the bytecode writer over the corpus | `python3 selfhost/bench/bgen_survey.py` — each function once, by name: identical, differing (named with its program), not written with what stops it by count, which is the order to port in |
 | the whole code stream and the starts, one program | the same program with `--stream` after the two images (`selfhost/src/bgen_image.loft`); the corpus survey above counts the programs whose stream is identical |
 | the runner over the corpus | `python3 selfhost/bench/run_image_survey.py` |
+| the runner on the code the loft writer writes | `python3 selfhost/bench/run_image_survey.py --written` — the same comparison with the image's code replaced by `bgen_image.loft`'s (`LOFT_RUN_PROGRAM=<program image>` on the runner); `unwritten` counts the programs holding a function the writer does not write yet |
 | the runner's tests | `cargo test --release --test selfhost` |
 | the front end's IR against Rust's | `selfhost/compare/` ([1b-compare.md](1b-compare.md)) |
 | speed | `selfhost/bench/fill_speed.sh` |

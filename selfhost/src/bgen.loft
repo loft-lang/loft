@@ -2269,7 +2269,10 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
       } else {
         init_slot(g, var, "OpVarRef");
       }
-      t[0] ?? ir::TyVoid
+      // The node's own type (`t[0]`) is not answered: no caller reads it, and answering it
+      // here left its record unfreed where the caller dropped the value (a C-build leak of
+      // one `TypeT` per node, seen with `LOFT_NATIVE_LEAK_CHECK=1`; not reduced yet).
+      ir::TyVoid
     }
     NdYield { inner } => {
       // A scalar or text handed out; a record's or function's temporaries are handed over
