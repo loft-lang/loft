@@ -335,9 +335,10 @@ fn typed_null(g: Gen, tp: ir::TypeT) {
   }
 }
 
-// `is_divergent`: does the node leave by a return, a break or a continue?
+// `is_divergent`: does the node leave by a return, a break or a continue?  Asked of the node
+// as it stands: one under a source span is not seen as leaving, as in the Rust writer.
 fn divergent(n: ir::Node) -> boolean {
-  match unspan(n) {
+  match n {
     NdReturn { inner: _ } => true,
     NdBreak { n: _ } => true,
     NdContinue { n: _ } => true,
@@ -523,8 +524,13 @@ fn leave(g: Gen, nr: integer, out: boolean) -> ir::TypeT {
 // `gen_if_test`: the test and its jump over the true arm; answers where the jump's step is
 // to be written.
 fn if_test(g: Gen, test: ir::Node) -> integer {
-  name = called(g, test);
-  args = call_args(test);
+  // The test as it stands: a call under a source span is written as any value is.
+  spanned = match test {
+    NdSpan { pos: _, inner: _ } => true,
+    _ => false,
+  };
+  name = if spanned { "" } else { called(g, test) };
+  args = if spanned { [] } else { call_args(test) };
   if name == "OpNot" && called(g, args[0] ?? ir::NdNull) == "OpConvBoolFromText" {
     stop(g, "not written yet: a text's end test");
   }
@@ -750,6 +756,50 @@ fn put_str(o: Out, s: text) {
   }
 }
 
+// `emit_fused_vec` (`@FR-R-Fuse`): an integer element of a vector local at an index local is
+// read by one operator (`OpVecGetInt`, `OpVecGetIntNullable`).  True when it was written.
+fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
+  name = def_of(g, op).name;
+  if (name != "OpGetInt" && name != "OpSetInt") || len(args) < 2 {
+    return false;
+  }
+  fld = match unspan(args[1]!) {
+    NdInt { n } => n,
+    _ => -1,
+  };
+  inner = called(g, args[0]!);
+  ga = call_args(args[0]!);
+  if fld < 0 || fld > 65535 || len(ga) != 3 || (inner != "OpGetVector" && inner != "OpGetVectorNullable") {
+    return false;
+  }
+  size = match unspan(ga[1]!) {
+    NdInt { n } => n,
+    _ => -1,
+  };
+  vec = vector_local(g, ga[0]!);
+  idx = int_local(g, ga[2]!);
+  if size < 0 || size > 65535 || vec < 0 || idx < 0 {
+    return false;
+  }
+  if name == "OpSetInt" {
+    if inner == "OpGetVector" {
+      stop(g, "not written yet: a fused vector store");
+    }
+    return false;
+  }
+  if len(args) != 2 {
+    return false;
+  }
+  vp = var_pos(g, vec);
+  ip = var_pos(g, idx);
+  add_op(g, if inner == "OpGetVector" { "OpVecGetInt" } else { "OpVecGetIntNullable" });
+  put_u16(g.o, vp);
+  put_u16(g.o, size);
+  put_u16(g.o, ip);
+  put_u16(g.o, fld);
+  true
+}
+
 // The operators and natives `generate_call` writes in a way of their own, which this writer
 // does not write yet.
 fn special_call(name: text) -> boolean {
@@ -765,6 +815,9 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   fused = fusable(g, op, args);
   if fused.ok {
     put_fused(g, fused, false);
+    return ret;
+  }
+  if fused_vec(g, op, args) {
     return ret;
   }
   if special_call(def.name) || len(args) < len(def.attributes) {
@@ -944,6 +997,20 @@ fn variable(g: Gen, v: integer) -> ir::TypeT {
   tp
 }
 
+// A returned value written, and for a function-valued return that pushed only its definition
+// the null closure slot beside it (`pad_fn_ref_return`).
+fn returned_value(g: Gen, inner: ir::Node) {
+  before = g.position;
+  generate(g, inner, false);
+  function = match def_of(g, g.d).returned[0] ?? ir::TyVoid {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  };
+  if function && g.position - before < 16 {
+    push_sentinel(g);
+  }
+}
+
 // `State::add_return`: the return, with the arguments' bytes, the answer's and the evaluation
 // position.
 fn add_return(g: Gen) {
@@ -975,7 +1042,7 @@ fn block(g: Gen, bl: ir::Block, top: boolean) -> ir::TypeT {
     }
     match unspan(n) {
       NdReturn { inner } => {
-        generate(g, inner, false);
+        returned_value(g, inner);
         add_return(g);
         returned = true;
         tp = ir::TyVoid;
@@ -1049,7 +1116,7 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
     NdCall { def_nr, args } => call(g, def_nr, args),
     NdBlock { block: bl } => block(g, bl[0]!, top),
     NdReturn { inner } => {
-      generate(g, inner, false);
+      returned_value(g, inner);
       add_return(g);
       ir::TyVoid
     }
