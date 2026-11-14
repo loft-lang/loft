@@ -400,6 +400,12 @@ fn c_image_load(s: integer, r: integer, p: integer, path: text, plen: integer, s
 #c "loft_crt_image_load" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, int64_t)"
 fn c_store_verify(s: integer, r: integer, p: integer) -> integer;
 #c "loft_crt_store_verify" "int64_t(int64_t, int64_t, int64_t)"
+fn c_array_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, view: integer);
+#c "loft_crt_array_remove" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_index_group(ps: integer, pr: integer, pp: integer, prim: integer, nullable: integer, vpos: integer, vkind: integer, vtp: integer, m: vector<integer>);
+#c "loft_crt_index_group" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
+fn c_move_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer);
+#c "loft_crt_move_child_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -623,6 +629,21 @@ pub fn image_load(s: integer, r: integer, p: integer, path: text, sc: integer, u
 // `store_verify(r)`: whether the store's record graph is sound.
 pub fn store_verify(s: integer, r: integer, p: integer) -> boolean {
   c_store_verify(s, r, p) != 0
+}
+
+// `OpHashRemove` on a group's array member: the record's slot removed (a view only unlinks).
+pub fn array_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, view: boolean) {
+  c_array_remove(store, rec, pos, r_store, r_rec, r_pos, elem, if view { 1 } else { 0 });
+}
+
+// `OpIndexGroup`: the vector member's records entered into the view member.
+pub fn index_group(ps: integer, pr: integer, pp: integer, prim: integer, nullable: boolean, vpos: integer, vkind: integer, vtp: integer, keyed: vector<integer>) {
+  c_index_group(ps, pr, pp, prim, if nullable { 1 } else { 0 }, vpos, vkind, vtp, keyed);
+}
+
+// `OpMoveChildRec`: the source record moved into the field's child.
+pub fn move_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer) {
+  c_move_child_rec(tp, fs, fr, fp, ss, sr, sp);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).

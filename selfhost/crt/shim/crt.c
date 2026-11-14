@@ -1730,6 +1730,41 @@ void loft_crt_keyed_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_st
     else loft_rx_remove_owned(loft_crt_types, (uint16_t) elem, c, r, loft_crt_types[tp].keys, loft_crt_types[tp].nk, kind == 5, (int) view);
 }
 
+/* OpHashRemove on a group's vector member (an array of linked records): the record's slot
+ * removed, as the C backend's `Keyed::Array` arm (`loft_ordered_remove` over the array); a view
+ * member only unlinks. */
+void loft_crt_array_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec, int64_t r_pos,
+                           int64_t elem, int64_t view) {
+    if (!loft_crt_keyed(elem)) return;
+    loft_ordered_remove(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos), loft_crt_ref(r_store, r_rec, r_pos),
+                        1, (int) view);
+}
+
+/* OpIndexGroup (`index_group_records`): every record the vector member at `prim` holds entered
+ * into the view member `(vpos, vkind, vtp)`, then a record a keyed member answers another for
+ * leaves every keyed member — `m` the keyed members' `(position, kind, type)` rows. */
+void loft_crt_index_group(int64_t ps, int64_t pr, int64_t pp, int64_t prim, int64_t nullable, int64_t vpos,
+                          int64_t vkind, int64_t vtp, const int64_t *m, int64_t nm) {
+    int n = (int) (nm / 3);
+    if (!loft_crt_types || n < 0 || n > 64 || !LOFT_CRT_TP_OK(vtp)) return;
+    loft_member rows[64];
+    for (int i = 0; i < n; i++) {
+        int64_t tp = m[3 * i + 2];
+        rows[i].pos = (uint32_t) m[3 * i];
+        rows[i].kind = (int) m[3 * i + 1];
+        rows[i].keys = LOFT_CRT_TP_OK(tp) ? loft_crt_types[tp].keys : 0;
+        rows[i].nk = LOFT_CRT_TP_OK(tp) ? loft_crt_types[tp].nk : 0;
+    }
+    loft_member view = { (uint32_t) vpos, (int) vkind, loft_crt_types[vtp].keys, loft_crt_types[vtp].nk };
+    loft_index_group(loft_crt_ref(ps, pr, pp), (uint32_t) prim, (int) nullable, &view, rows, n);
+}
+
+/* OpMoveChildRec (`Stores::move_child_rec`): the source record moved into the field's child. */
+void loft_crt_move_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int64_t ss, int64_t sr, int64_t sp) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_move_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(fs, fr, fp), loft_crt_ref(ss, sr, sp));
+}
+
 /* A walk's key list (`OpIterate`'s `Keys`), one part at a time, for the iterate that follows. */
 static loft_key loft_crt_wkeys[LOFT_CRT_KEYS];
 static int loft_crt_nwkeys = 0;

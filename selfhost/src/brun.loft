@@ -252,6 +252,8 @@ H_REVERSE_VECTOR = 227;
 H_SET_CHILD_REC = 228;
 H_LINK_RECORD = 229;
 H_REF_FROM_CHILD_REC = 230;
+H_INDEX_GROUP = 231;
+H_MOVE_CHILD_REC = 232;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -557,6 +559,8 @@ pub fn handler(name: text) -> integer {
     "OpSetChildRec" => H_SET_CHILD_REC,
     "OpLinkRecord" => H_LINK_RECORD,
     "OpRefFromChildRec" => H_REF_FROM_CHILD_REC,
+    "OpIndexGroup" => H_INDEX_GROUP,
+    "OpMoveChildRec" => H_MOVE_CHILD_REC,
     "OpCastSingleFromText" => H_CAST_FROM_TEXT,
     "OpDivSingleNullable" => H_SINGLE2,
     "OpTextCharacterNullable" => H_TEXT_CHARACTER,
@@ -832,6 +836,8 @@ fn layout_of(h: integer) -> text {
     227 => "h",
     228 => "h",
     229 => "hh",
+    231 => "hhh",
+    232 => "h",
     _ => ""
   }
 }
@@ -1813,10 +1819,12 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       mkelem = types::keyed_element(img.types, mtp);
       if mkelem != null {
         crt::keyed_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::keyed_kind(img.types, mtp) ?? 0, mkelem!, mtp, mraw & 32768 != 0);
+      } else if types::array_element(img.types, mtp) != null {
+        crt::array_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::array_element(img.types, mtp) ?? 0, mraw & 32768 != 0);
       } else if types::hash_element(img.types, mtp) != null {
         crt::hash_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::content_of(img.types, mtp) ?? 0, mtp, mraw & 32768 != 0);
       } else {
-        why[0] = "a removal from a collection the runner does not remove from: OpHashRemove";
+        why[0] = "a removal from {img.types[mtp]?.name ?? "type {mtp}"}, a collection the runner does not remove from: OpHashRemove";
         return -1;
       }
     }
@@ -2563,6 +2571,58 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
       }
       crt::group_finish(types::content_of(img.types, lgm![2] ?? 0) ?? 0, lheld, lnull, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lrs, lrr, lrp, lsib);
     }
+  } else if h == H_INDEX_GROUP {
+    // A whole vector member indexed into one view member (`index_group_records`), as the C
+    // backend's `OpIndexGroup` does: the primary's position, the view's row, the keyed siblings.
+    ensure_table(img.types, tl);
+    igtp = u16_at(img.code, pc);
+    igptp = u16_at(img.code, pc + 2);
+    igfld = u16_at(img.code, pc + 4);
+    pc += 6;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    iggm = types::group_members(img.types, igptp, igfld);
+    if iggm == null || len(iggm!) < 6 {
+      why[0] = "a group view the runner cannot index: OpIndexGroup";
+      return -1;
+    }
+    igkeyed: vector<integer> = [];
+    igvpos = -1;
+    igvkind = 0;
+    ignull = false;
+    gk2 = 0;
+    while gk2 + 2 < len(iggm!) {
+      mpos = iggm![gk2] ?? 0;
+      mkind = iggm![gk2 + 1] ?? 0;
+      mtp2 = iggm![gk2 + 2] ?? 0;
+      ignull = ignull || types::nullable_element(img.types, mtp2);
+      if gk2 > 0 {
+        if mtp2 == igtp && igvpos < 0 {
+          igvpos = mpos;
+          igvkind = mkind;
+        }
+        if mkind != 0 {
+          igkeyed += [mpos, mkind, mtp2];
+        }
+      }
+      gk2 += 3;
+    }
+    if igvpos < 0 {
+      why[0] = "a group view that is no member of the group: OpIndexGroup";
+      return -1;
+    }
+    crt::index_group(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, iggm![0] ?? 0, ignull, igvpos, igvkind, igtp, igkeyed);
+  } else if h == H_MOVE_CHILD_REC {
+    ensure_table(img.types, tl);
+    mctp = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    mcs = io[0] ?? NULL_STORE;
+    mcr = io[1] ?? 0;
+    mcp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    crt::move_child_rec(mctp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, mcs, mcr, mcp);
   } else if h == H_REF_FROM_CHILD_REC {
     // The child record a field names by number, in the field's own store (null for 0).
     crt::slot_ref(io, stk, sp - 16);
