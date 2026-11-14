@@ -1847,6 +1847,14 @@ impl Type {
     /// left its capture list unparsed ("Expect token ;"), and a `match` on such a literal typed
     /// `void`.
     #[must_use]
+    pub fn peel_link(&self) -> &Type {
+        let mut tp = self.base();
+        while let Type::RefVar(inner) | Type::Rewritten(inner) = tp {
+            tp = inner.base();
+        }
+        tp
+    }
+
     /// `@FR-N-Shape`'s NULLABILITY question asked through a `&` link: is this `τ?`, or a link to
     /// one?  [`Type::peel_link`] answers the SHAPE and reads through the `?`, so a site that
     /// accepts the shape and must refuse the `?` (`rev()` over a `sorted<…>?`, `@FR-I-NullSrc`)
@@ -1858,14 +1866,6 @@ impl Type {
             Type::RefVar(inner) | Type::Rewritten(inner) => inner.link_nullable(),
             _ => false,
         }
-    }
-
-    pub fn peel_link(&self) -> &Type {
-        let mut tp = self.base();
-        while let Type::RefVar(inner) | Type::Rewritten(inner) = tp {
-            tp = inner.base();
-        }
-        tp
     }
 
     /// Is this a `&` parameter whose whole-value write-back INSTALLS a store the callee

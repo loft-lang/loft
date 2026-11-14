@@ -913,6 +913,67 @@ impl Output<'_> {
             self.note_arm("rs-reading-view-copy");
             return Ok(());
         }
+        // `@FR-B-Copy` — a choice that hands another heap variable over whole on one arm
+        // (`class = bound ?? Owned`, `class = if c { bound! } else { Owned }`) joins on that
+        // variable, as `bind_lowering::re_bind` decides for the bytecode writer (`OpBindOrCopy`)
+        // and the C writer's `join_stmt`: an answer in the base's store is copied into a fresh
+        // one, any other adopted.  Bound plainly, the local named the base's store beside it, a
+        // rebind of the base refilled it in place and an early return freed it twice.  A FIRST
+        // bind joins only into a local that owns what it binds (`first_bind_choice_join`).  A
+        // call answer takes the call arm below.
+        if !self.coroutine_persistent_fields.contains_key(&var)
+            && !matches!(to.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
+            && crate::use_analysis::callee_of(self.data, self.def_nr, to).is_none()
+            && let Some(d) = variables.tp(var).base().heap_def_nr()
+            && let Some(base) = if self.declared.contains(&var) || variables.is_argument(var) {
+                match crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to).arm
+                {
+                    crate::bind_lowering::ReArm::Join { base, .. } => Some(base),
+                    _ => None,
+                }
+            } else {
+                crate::bind_lowering::first_bind_choice_join(
+                    self.data,
+                    self.def_nr,
+                    variables,
+                    var,
+                    to,
+                )
+            }
+            && base != u16::MAX
+        {
+            let name = sanitize(variables.name(var));
+            let tp_lit = self.type_lit(self.data.def(d).known_type());
+            let bname = sanitize(variables.name(base));
+            // A tuple base is witnessed by each of its heap members (loft#2471, loft#2472).
+            let in_base: Vec<String> =
+                match crate::use_analysis::join_witness_members(variables, base) {
+                    Some(m) => m
+                        .iter()
+                        .map(|i| format!("_src.store_nr == var_{bname}.{i}.store_nr"))
+                        .collect(),
+                    None => vec![format!("_src.store_nr == var_{bname}.store_nr")],
+                };
+            if self.declared.contains(&var)
+                || variables.is_argument(var)
+                || self.predeclared.contains(&var)
+            {
+                write!(w, "var_{name} = ")?;
+            } else {
+                self.declared.insert(var);
+                write!(w, "let mut var_{name}: DbRef = ")?;
+            }
+            write!(w, "{{ let _src = ")?;
+            self.output_code_inner(w, to)?;
+            write!(
+                w,
+                "; if _src.store_nr != u16::MAX && ({}) {{ let _c = OpDatabase(cell, DbRef::NULL, {tp_lit}); \
+                 OpCopyRecord(cell, _src, _c, {tp_lit}); _c }} else {{ _src }} }}",
+                in_base.join(" || ")
+            )?;
+            self.note_arm("rs-choice-join");
+            return Ok(());
+        }
         // P224: writes to coroutine-persistent locals target the struct
         // field directly so the value survives across `next_*` calls.
         // The same Var/Set pair would otherwise produce a state-arm-scoped
