@@ -658,6 +658,13 @@ pub fn op_text_character(s: state::State) {
   s.put_stack_char(new_value);
 }
 
+pub fn op_text_character_nullable(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_str();
+  new_value: integer? = ops::text_char(v1, v2);
+  s.put_stack_char(new_value);
+}
+
 pub fn op_conv_bool_from_character(s: state::State) {
   v1 = s.get_stack_char();
   new_value: boolean? = v1 != 0;
@@ -706,6 +713,10 @@ pub fn op_format_text(s: state::State) {
 
 pub fn op_format_stack_text(s: state::State) {
   s.format_stack_text();
+}
+
+pub fn op_append_character(s: state::State) {
+  s.append_character();
 }
 
 pub fn op_conv_int_from_character(s: state::State) {
@@ -840,6 +851,14 @@ pub fn op_get_byte(s: state::State) {
   min = s.code_i32();
   v1 = s.get_stack_dbref();
   new_value: integer? = if v1.rec == 0 { null } else { crt::get_w(crt::W_BYTE, v1.store_nr, v1.rec, v1.pos, fld, min) };
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_get_byte_nullable(s: state::State) {
+  fld = s.code_u16();
+  min = s.code_i32();
+  v1 = s.get_stack_dbref();
+  new_value: integer? = if v1.rec == 0 { null } else { crt::get_w(crt::W_BYTE_NULLABLE, v1.store_nr, v1.rec, v1.pos, fld, min) };
   s.put_stack_i64(new_value);
 }
 
@@ -1217,6 +1236,10 @@ pub fn op_append_stack_text(s: state::State) {
   s.append_stack_text();
 }
 
+pub fn op_append_stack_character(s: state::State) {
+  s.append_stack_character();
+}
+
 pub fn op_clear_stack_text(s: state::State) {
   s.clear_stack_text();
 }
@@ -1332,6 +1355,11 @@ pub fn op_cast_float_from_text(s: state::State) {
   s.put_stack_f64(new_value);
 }
 
+pub fn op_conv_single_from_null(s: state::State) {
+  new_value: single? = null;
+  s.put_stack_f32(new_value);
+}
+
 pub fn op_rem_single(s: state::State) {
   v2 = s.get_stack_f32();
   v1 = s.get_stack_f32();
@@ -1380,6 +1408,14 @@ pub fn op_pow_single(s: state::State) {
   v1 = s.get_stack_f32();
   new_value: single? = v1.pow(v2);
   s.put_stack_f32(new_value);
+}
+
+pub fn op_format_single(s: state::State) {
+  s.format_single();
+}
+
+pub fn op_format_stack_single(s: state::State) {
+  s.format_stack_single();
 }
 
 pub fn op_float_bits(s: state::State) {
@@ -1506,6 +1542,61 @@ pub fn op_get_file_text(s: state::State) {
   s.get_file_text();
 }
 
+pub fn op_write_file(s: state::State) {
+  s.write_file();
+}
+
+pub fn op_read_file(s: state::State) {
+  s.read_file();
+}
+
+pub fn op_seek_file(s: state::State) {
+  s.seek_file();
+}
+
+pub fn op_size_file(s: state::State) {
+  s.size_file();
+}
+
+pub fn op_delete(s: state::State) {
+  path = s.get_stack_str();
+  new_value: integer? = crt::fs_op(0, path, null);
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_move_file(s: state::State) {
+  to = s.get_stack_str();
+  from = s.get_stack_str();
+  new_value: integer? = crt::fs_op(1, from, to);
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_truncate_file(s: state::State) {
+  s.truncate_file();
+}
+
+pub fn op_sync_file(s: state::State) {
+  s.sync_file();
+}
+
+pub fn op_mkdir(s: state::State) {
+  path = s.get_stack_str();
+  new_value: integer? = crt::fs_op(2, path, null);
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_mkdir_all(s: state::State) {
+  path = s.get_stack_str();
+  new_value: integer? = crt::fs_op(3, path, null);
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_rmdir(s: state::State) {
+  path = s.get_stack_str();
+  new_value: integer? = crt::fs_op(4, path, null);
+  s.put_stack_i64(new_value);
+}
+
 pub fn op_database_n_p(s: state::State) {
   s.database_n_p();
 }
@@ -1617,6 +1708,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     109 => op_put_text(s),
     110 => op_get_text_sub(s),
     111 => op_text_character(s),
+    112 => op_text_character_nullable(s),
     113 => op_conv_bool_from_character(s),
     114 => op_clear_text(s),
     115 => op_free_text(s),
@@ -1626,6 +1718,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     119 => op_le_text(s),
     120 => op_format_text(s),
     121 => op_format_stack_text(s),
+    122 => op_append_character(s),
     123 => op_conv_int_from_character(s),
     124 => op_var_enum(s),
     125 => op_const_enum(s),
@@ -1648,6 +1741,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     150 => op_get_single(s),
     151 => op_get_float(s),
     152 => op_get_byte(s),
+    153 => op_get_byte_nullable(s),
     154 => op_get_enum(s),
     155 => op_set_enum(s),
     156 => op_get_boolean(s),
@@ -1707,6 +1801,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     237 => op_get_stack_text(s),
     238 => op_get_stack_ref(s),
     247 => op_append_stack_text(s),
+    248 => op_append_stack_character(s),
     249 => op_clear_stack_text(s),
     253 => op_var_fn_ref(s),
     254 => op_put_fn_ref(s),
@@ -1726,6 +1821,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     274 => op_cast_int_from_text(s),
     275 => op_cast_single_from_text(s),
     276 => op_cast_float_from_text(s),
+    277 => op_conv_single_from_null(s),
     278 => op_rem_single(s),
     279 => op_div_single_nullable(s),
     280 => op_rem_single_nullable(s),
@@ -1733,6 +1829,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     282 => op_math_func2_single(s),
     283 => op_pow_int(s),
     284 => op_pow_single(s),
+    285 => op_format_single(s),
+    286 => op_format_stack_single(s),
     287 => op_float_bits(s),
     288 => op_float_from_bits(s),
     289 => op_single_bits(s),
@@ -1755,6 +1853,17 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     339 => op_pre_alloc_vector(s),
     341 => op_get_file(s),
     343 => op_get_file_text(s),
+    344 => op_write_file(s),
+    345 => op_read_file(s),
+    346 => op_seek_file(s),
+    347 => op_size_file(s),
+    348 => op_delete(s),
+    349 => op_move_file(s),
+    350 => op_truncate_file(s),
+    351 => op_sync_file(s),
+    355 => op_mkdir(s),
+    356 => op_mkdir_all(s),
+    357 => op_rmdir(s),
     365 => op_database_n_p(s),
     _ => return false,
   }

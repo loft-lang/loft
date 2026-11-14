@@ -16,6 +16,7 @@ use ir;
 use types;
 use brun;
 use show;
+use files;
 
 pub struct State {
   // The bytecode (`State::code_base` / `code_len`) and the position of the next byte to read.
@@ -1454,4 +1455,109 @@ pub fn vec_ref(r: DbRef, index: integer?) -> DbRef {
   io: vector<integer> = [NULL_STORE, 0, 0];
   crt::array_get(io, r.store_nr, r.rec, r.pos, index);
   DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `State::format_single` / `format_stack_single`: as `format_float` and `format_stack_float`,
+// the value a single.
+pub fn format_single(self: State) {
+  pos = self.code_u16();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  dir = self.code_i8();
+  precision = self.get_stack_i64();
+  width = self.get_stack_i64();
+  val = self.get_stack_f32();
+  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val as float?, width, precision, token, plus, dir, true));
+}
+
+pub fn format_stack_single(self: State) {
+  pos = self.code_u16();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  dir = self.code_i8();
+  precision = self.get_stack_i64();
+  width = self.get_stack_i64();
+  val = self.get_stack_f32();
+  r = self.get_var_dbref(pos - 24);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_float(val as float?, width, precision, token, plus, dir, true));
+}
+
+// `State::append_character`: a character popped and appended to the text local `pos` back
+// from the top before the pop; the null character appends nothing (`@FR-F-Render`).
+pub fn append_character(self: State) {
+  pos = self.code_u16();
+  c = self.get_stack_char();
+  if c != 0 && self.slot_ok(self.stack_pos - (pos - 8)) {
+    crt::slot_text_append(self.stk, self.stack_pos - (pos - 8), "{c as character}");
+  }
+}
+
+// `State::append_stack_character`: as `append_character`, to the text that local's reference
+// names.
+pub fn append_stack_character(self: State) {
+  pos = self.code_u16();
+  c = self.get_stack_char();
+  if c != 0 {
+    r = self.get_var_dbref(pos - 8);
+    crt::ref_text_append(r.store_nr, r.rec, r.pos, "{c as character}");
+  }
+}
+
+// `State::write_file`: the value's reference and then the File popped; the value written at
+// the File's next position — a text's bytes as they are, any other in its binary form.
+pub fn write_file(self: State) {
+  tp = self.code_u16();
+  val = self.get_stack_dbref();
+  file = self.get_stack_dbref();
+  if tp == 5 {
+    crt::ser_ref_text(val.store_nr, val.rec, val.pos);
+    crt::ser_write(file.store_nr, file.rec, file.pos);
+  } else {
+    self.load_table();
+    files::write(self.types, crt::Pos { s: file.store_nr, r: file.rec, p: file.pos }, crt::Pos { s: val.store_nr, r: val.rec, p: val.pos }, tp);
+  }
+}
+
+// `State::read_file`: the byte count, the value's reference and the File popped; that many
+// bytes read from the File's next position into the value — a text's as they are, any other
+// decoded from its binary form.
+pub fn read_file(self: State) {
+  tp = self.code_u16();
+  n = self.get_stack_i64() ?? 0;
+  val = self.get_stack_dbref();
+  file = self.get_stack_dbref();
+  if tp == 5 {
+    if crt::read_file(file.store_nr, file.rec, file.pos, n, true, 0) >= 0 {
+      crt::de_ref_text(val.store_nr, val.rec, val.pos);
+    }
+  } else {
+    self.load_table();
+    files::read(self.types, crt::Pos { s: file.store_nr, r: file.rec, p: file.pos }, crt::Pos { s: val.store_nr, r: val.rec, p: val.pos }, n, tp);
+  }
+}
+
+// The File popped and one of its operations run: 0 its size, 1 a seek to `arg`, 2 a truncation
+// to `arg`, 3 a sync.
+fn file_op(self: State, which: integer, arg: integer) -> integer? {
+  file = self.get_stack_dbref();
+  crt::file_op(which, file.store_nr, file.rec, file.pos, arg)
+}
+
+// `State::size_file`, `seek_file`, `truncate_file`, `sync_file`.
+pub fn size_file(self: State) {
+  self.put_stack_i64(self.file_op(0, 0));
+}
+
+pub fn seek_file(self: State) {
+  pos = self.get_stack_i64() ?? 0;
+  self.file_op(1, pos);
+}
+
+pub fn truncate_file(self: State) {
+  size = self.get_stack_i64() ?? 0;
+  self.put_stack_i64(self.file_op(2, size));
+}
+
+pub fn sync_file(self: State) {
+  self.put_stack_i64(self.file_op(3, 0));
 }

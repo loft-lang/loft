@@ -440,6 +440,7 @@ fn OpPutSingle(pos: const u16, value: single);
 fn OpConvSingleFromNull() -> single;
 #cold
 #rust"f32::NAN"
+#loft"null"
 fn OpAbsSingle(v1: single) -> single;
 #rust"@v1.abs()"
 #loft"v1.abs()"
@@ -1144,6 +1145,7 @@ fn OpTextCharacter(v1: text, v2: __word) -> character;
 // OpGetVector / OpGetVectorNullable split.
 fn OpTextCharacterNullable(v1: text, v2: __word) -> character;
 #rust"ops::text_character(@v1, @v2)"
+#loft"ops::text_char(v1, v2)"
 fn OpConvBoolFromCharacter(v1: character) -> boolean;
 #rust"ops::op_conv_bool_from_character(@v1)"
 #loft"v1 != 0"
@@ -1382,6 +1384,7 @@ fn OpGetByteNullable(v1: reference, fld: const u16, min: const i32) -> __word;
 // would decode as the value `min` instead of null.  The byte 255 sentinel is
 // value-ambiguous, so OOB null is detected by `rec == 0`, not by the value.
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_byte(db.rec, db.pos + u32::from(@fld), (@min)); if r == (@min) + 255 {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_BYTE_NULLABLE, v1.store_nr, v1.rec, v1.pos, fld, min) }}"
 fn OpGetEnum(v1: reference, fld: const u16) -> enumerate;
 // A `rec == 0` ref is the null/absent record — an out-of-bounds vector index
 // (`get_vector` returns `rec: 0`) or an unset slot.  `OpGetInt`/`OpGetCharacter`

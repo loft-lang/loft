@@ -550,11 +550,11 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     db.finish();
 }
 
-// loft:default/01_code.loft:942
+// loft:default/01_code.loft:943
 #[inline]
 fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:943
+  // loft:default/01_code.loft:944
   return if ((((var_self) as i64) <= ((var_b) as i64)) as u8) == 1 { //block_2: integer
     var_self
     } /*block_2: integer*/ else { //block_3: integer
@@ -562,11 +562,11 @@ fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut v
     } /*block_3: integer*/
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:947
+// loft:default/01_code.loft:948
 #[inline]
 fn t_7integer_max(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:948
+  // loft:default/01_code.loft:949
   return if ((((var_b) as i64) <= ((var_self) as i64)) as u8) == 1 { //block_2: integer
     var_self
     } /*block_2: integer*/ else { //block_3: integer
@@ -574,64 +574,64 @@ fn t_7integer_max(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut v
     } /*block_3: integer*/
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:952
+// loft:default/01_code.loft:953
 #[inline]
 fn t_7integer_clamp(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_lo: i64, mut var_hi: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:953
+  // loft:default/01_code.loft:954
   let _pre_0 = t_7integer_max(cell, var_self, var_lo);
   return t_7integer_min(cell, _pre_0, var_hi)
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:1100
+// loft:default/01_code.loft:1101
 #[inline]
 fn t_4text_len(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:1101
+  // loft:default/01_code.loft:1102
   return {{ let __t = (var_self); if __t == loft::state::STRING_NULL { 0 } else { __t.chars().count() as i64 } }}
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:1113
+// loft:default/01_code.loft:1114
 #[inline]
 fn t_4text_size(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:1114
+  // loft:default/01_code.loft:1115
   return {{ let __t = (var_self); if __t == loft::state::STRING_NULL { 0 } else { __t.len() as i64 } }}
   } /*block_1: integer*/
 
-// loft:default/02_files.loft:162
+// loft:default/02_files.loft:167
 #[inline]
 fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_result: *mut String) -> Str { //block_1: text["result"]?
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/02_files.loft:165
+  // loft:default/02_files.loft:170
   let _pre_1 = {{let db = (var_self); if db.rec == 0 { 0u8 } else { let r = stores.store(&db).get_byte(db.rec, db.pos + (32_i64) as u32, 0); if r < 0 { 255u8 } else { r as u8 } }}};
   if (((({{ let _v_v1 = ((_pre_1) as u8); if _v_v1 == 255 { i64::MIN } else { i64::from(_v_v1) } }}) as i64) == (({{ let _v_v1 = ((5_u8) as u8); if _v_v1 == 255 { i64::MIN } else { i64::from(_v_v1) } }}) as i64)) as u8) == 1 { //block_2: never
     return Str::new(loft::state::STRING_NULL)
     } /*block_2: never*/ else {()};
-  // loft:default/02_files.loft:167
+  // loft:default/02_files.loft:172
   let _pre_2 = {{let db = (var_self); if db.rec == 0 { 0u8 } else { let r = stores.store(&db).get_byte(db.rec, db.pos + (32_i64) as u32, 0); if r < 0 { 255u8 } else { r as u8 } }}};
   if (((({{ let _v_v1 = ((_pre_2) as u8); if _v_v1 == 255 { i64::MIN } else { i64::from(_v_v1) } }}) as i64) == (({{ let _v_v1 = ((4_u8) as u8); if _v_v1 == 255 { i64::MIN } else { i64::from(_v_v1) } }}) as i64)) as u8) == 1 { //block_3: never
     return Str::new(loft::state::STRING_NULL)
     } /*block_3: never*/ else {()};
-  // loft:default/02_files.loft:168
+  // loft:default/02_files.loft:173
   unsafe { (*var_result).clear() };
-  // loft:default/02_files.loft:169
+  // loft:default/02_files.loft:174
   let mut var_txt: String = "".to_string();
-  // loft:default/02_files.loft:170
+  // loft:default/02_files.loft:175
   OpGetFileText(cell, var_self, &mut var_txt);
-  // loft:default/02_files.loft:171
-  unsafe { ops::append_text(&mut (*var_result), &*(&var_txt)) };
   // loft:default/02_files.loft:176
+  unsafe { ops::append_text(&mut (*var_result), &*(&var_txt)) };
+  // loft:default/02_files.loft:181
   if ((if ((((t_4text_size(cell, unsafe { &*var_result })) as i64) == ((0_i64) as i64)) as u8) == 1 {({((0_i64) as i64) < (({{let db = (var_self); if db.rec == 0 { i64::MIN } else { stores.store(&db).get_int(db.rec, db.pos + (0_i64) as u32)} }}) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 { //block_4: never
     ;
     return Str::new(loft::state::STRING_NULL)
     } /*block_4: never*/ else {()};
-  // loft:default/02_files.loft:179
+  // loft:default/02_files.loft:184
   ;
   return Str::new(unsafe { &*var_result })
   } /*block_1: text["result"]?*/
 
-// loft:default/02_files.loft:186
+// loft:default/02_files.loft:191
 fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var___retbuf: DbRef) -> DbRef { //block_1: vector<text>["__retbuf"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var__elm_1: DbRef = DbRef::NULL;
@@ -640,10 +640,10 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
   var___vdb_1 = DbRef::NULL;
   let mut var___work_c1: String = "".to_string();
   if var___retbuf.rec != 0 { stores.clear_vector_release(&var___retbuf); };
-  // loft:default/02_files.loft:187
+  // loft:default/02_files.loft:192
   ();
   let mut var_result: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 50_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
-  // loft:default/02_files.loft:189
+  // loft:default/02_files.loft:194
   let mut var_c: String = "".to_string();
   { //ncc_2: void
     let _pre_3 = { //default ref_3: ref(reference)["__work_c1"]
@@ -654,11 +654,11 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
     if (((&var___ncc_1) != loft::state::STRING_NULL) as u8) == 1 {var_c = var___ncc_1.clone()} else {var_c.clear()};
     } /*ncc_2: void*/;
   ;
-  // loft:default/02_files.loft:190
+  // loft:default/02_files.loft:195
   let mut var_p: i64 = 0_i64;
-  // loft:default/02_files.loft:191
+  // loft:default/02_files.loft:196
   let mut var_prev_cr: u8 = (false) as u8;
-  // loft:default/02_files.loft:192
+  // loft:default/02_files.loft:197
   { //For block_4: void
     let mut var_ch__index: i64 = 0_i64;
     let mut var__for_text_1: String = var_c.clone();
@@ -676,13 +676,13 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
         break;
         } /*break_8: void*/ else {()};
       { //block_9: void
-        // loft:default/02_files.loft:193
+        // loft:default/02_files.loft:198
         var__elm_1 = DbRef::NULL;
         var__elm_2 = DbRef::NULL;
         if (((({{ let _v_v1 = (ops::to_char(var_ch)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64) == ((10_i64) as i64)) as u8) == 1 { //block_10: void
-          // loft:default/02_files.loft:194
+          // loft:default/02_files.loft:199
           let mut var_e: i64 = var_ch__index;
-          // loft:default/02_files.loft:195
+          // loft:default/02_files.loft:200
           if ((var_prev_cr) as u8) == 1 { //block_11: void
             {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
             var__elm_1 = stores.vector_record_append::<true, false>(&(var_result), 4, 5);
@@ -694,17 +694,17 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
             {{{let db = (var__elm_2); let s_tmp = &((&*(OpGetTextSub(&var_c, var_p, var_e)))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
             vector::vector_finish(&(var_result), &mut stores.allocations);
             } /*block_12: void*/;
-          // loft:default/02_files.loft:196
+          // loft:default/02_files.loft:201
           var_p = var_ch__next;
           } /*block_10: void*/ else {()};
-        // loft:default/02_files.loft:198
+        // loft:default/02_files.loft:203
         var_prev_cr = ((({{ let _v_v1 = (ops::to_char(var_ch)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64) == ((13_i64) as i64)) as u8;
         } /*block_9: void*/;
       } /*For loop_5*/
       } /*@FR-R-CharWalk*/;
     ;
     } /*For block_4: void*/;
-  // loft:default/02_files.loft:200
+  // loft:default/02_files.loft:205
   let mut var__elm_3: DbRef = DbRef::NULL;
   if ((((var_p) as i64) < ((t_4text_size(cell, &var_c)) as i64)) as u8) == 1 { //block_13: void
     {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
@@ -714,7 +714,7 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
     {{{let db = (var__elm_3); let s_tmp = &((&*(_pre_3))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
     vector::vector_finish(&(var_result), &mut stores.allocations);
     } /*block_13: void*/ else {()};
-  // loft:default/02_files.loft:201
+  // loft:default/02_files.loft:206
   { //one_buffer_vec_copy_14: vector<text>["__retbuf"]
     ();
     ();
@@ -725,19 +725,19 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
     } /*one_buffer_vec_copy_14: vector<text>["__retbuf"]*/
   } /*block_1: vector<text>["__retbuf"]*/
 
-// loft:default/02_files.loft:210
+// loft:default/02_files.loft:215
 fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_separator: i32, mut var___retbuf: DbRef) -> DbRef { //block_1: vector<text>["__retbuf"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var__elm_1: DbRef = DbRef::NULL;
   let mut var___vdb_1: DbRef = DbRef::NULL;
   var___vdb_1 = DbRef::NULL;
   if var___retbuf.rec != 0 { stores.clear_vector_release(&var___retbuf); };
-  // loft:default/02_files.loft:211
+  // loft:default/02_files.loft:216
   ();
   let mut var_result: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 50_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
-  // loft:default/02_files.loft:212
+  // loft:default/02_files.loft:217
   let mut var_p: i64 = 0_i64;
-  // loft:default/02_files.loft:213
+  // loft:default/02_files.loft:218
   { //For block_2: void
     let mut var_c__index: i64 = 0_i64;
     let mut var__for_text_1: &str = var_self;
@@ -755,15 +755,15 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
         break;
         } /*break_6: void*/ else {()};
       { //block_7: void
-        // loft:default/02_files.loft:214
+        // loft:default/02_files.loft:219
         var__elm_1 = DbRef::NULL;
         if (((({{ let _v_v1 = (ops::to_char(var_c)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64) == (({{ let _v_v1 = (ops::to_char(var_separator)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64)) as u8) == 1 { //block_8: void
-          // loft:default/02_files.loft:215
+          // loft:default/02_files.loft:220
           {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
           var__elm_1 = stores.vector_record_append::<true, false>(&(var_result), 4, 5);
           {{{let db = (var__elm_1); let s_tmp = &((&*(OpGetTextSub(var_self, var_p, var_c__index)))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
           vector::vector_finish(&(var_result), &mut stores.allocations);
-          // loft:default/02_files.loft:216
+          // loft:default/02_files.loft:221
           var_p = var_c__next;
           } /*block_8: void*/ else {()};
         } /*block_7: void*/;
@@ -771,7 +771,7 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
       } /*@FR-R-CharWalk*/;
     ;
     } /*For block_2: void*/;
-  // loft:default/02_files.loft:222
+  // loft:default/02_files.loft:227
   let mut var__elm_2: DbRef = DbRef::NULL;
   if ((((0_i64) as i64) < ((t_4text_len(cell, var_self)) as i64)) as u8) == 1 { //block_9: void
     {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
@@ -781,7 +781,7 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
     {{{let db = (var__elm_2); let s_tmp = &((&*(_pre_3))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
     vector::vector_finish(&(var_result), &mut stores.allocations);
     } /*block_9: void*/ else {()};
-  // loft:default/02_files.loft:223
+  // loft:default/02_files.loft:228
   { //one_buffer_vec_copy_10: vector<text>["__retbuf"]
     ();
     ();
@@ -790,74 +790,74 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
     } /*one_buffer_vec_copy_10: vector<text>["__retbuf"]*/
   } /*block_1: vector<text>["__retbuf"]*/
 
-// loft:default/02_files.loft:233
+// loft:default/02_files.loft:238
 fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_separator: &str, mut var___retbuf: DbRef) -> DbRef { //block_1: vector<text>["__retbuf"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var__elm_2: DbRef = DbRef::NULL;
   let mut var___vdb_1: DbRef = DbRef::NULL;
   var___vdb_1 = DbRef::NULL;
   if var___retbuf.rec != 0 { stores.clear_vector_release(&var___retbuf); };
-  // loft:default/02_files.loft:234
+  // loft:default/02_files.loft:239
   ();
   let mut var_out: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 50_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
-  // loft:default/02_files.loft:235
+  // loft:default/02_files.loft:240
   let mut var_n: i64 = t_4text_size(cell, var_self);
-  // loft:default/02_files.loft:236
+  // loft:default/02_files.loft:241
   if ((((var_n) as i64) == ((0_i64) as i64)) as u8) == 1 { //block_2: never
     {stores.vector_replace(&(var___retbuf), &(var_out), (5_u16));};
           if var___vdb_1.store_nr != u16::MAX { OpFreeRef(cell,var___vdb_1, "var___vdb_1"); var___vdb_1.store_nr = u16::MAX; };
       return var___retbuf
 
     } /*block_2: never*/ else {()};
-  // loft:default/02_files.loft:237
+  // loft:default/02_files.loft:242
   let mut var_sl: i64 = t_4text_size(cell, var_separator);
-  // loft:default/02_files.loft:238
+  // loft:default/02_files.loft:243
   let mut var__elm_1: DbRef = DbRef::NULL;
   if ((((var_sl) as i64) == ((0_i64) as i64)) as u8) == 1 { //block_3: never
-    // loft:default/02_files.loft:239
+    // loft:default/02_files.loft:244
     {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
     var__elm_1 = stores.vector_record_append::<true, false>(&(var_out), 4, 5);
     {{{let db = (var__elm_1); let s_tmp = &((var_self)); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
     vector::vector_finish(&(var_out), &mut stores.allocations);
-    // loft:default/02_files.loft:239
+    // loft:default/02_files.loft:244
     {stores.vector_replace(&(var___retbuf), &(var_out), (5_u16));};
           if var___vdb_1.store_nr != u16::MAX { OpFreeRef(cell,var___vdb_1, "var___vdb_1"); var___vdb_1.store_nr = u16::MAX; };
       return var___retbuf
 
     } /*block_3: never*/ else {()};
-  // loft:default/02_files.loft:241
+  // loft:default/02_files.loft:246
   let mut var_p: i64 = 0_i64;
-  // loft:default/02_files.loft:242
+  // loft:default/02_files.loft:247
   let mut var_i: i64 = 0_i64;
-  // loft:default/02_files.loft:243
+  // loft:default/02_files.loft:248
   'l4: loop { //while_4
     if ((((((ops::op_add_int((var_i), (var_sl))) as i64) <= ((var_n) as i64)) as u8) != 1) as u8) == 1 { //break_5: void
       break;
       } /*break_5: void*/ else {()};
     { //block_6: void
-      // loft:default/02_files.loft:244
+      // loft:default/02_files.loft:249
       var__elm_2 = DbRef::NULL;
       if ((ops::op_eq_text((&*(OpGetTextSub(var_self, var_i, ops::op_add_int((var_i), (var_sl))))), (var_separator))) as u8) == 1 { //block_7: void
-        // loft:default/02_files.loft:245
+        // loft:default/02_files.loft:250
         {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
         var__elm_2 = stores.vector_record_append::<true, false>(&(var_out), 4, 5);
         {{{let db = (var__elm_2); let s_tmp = &((&*(OpGetTextSub(var_self, var_p, var_i)))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
         vector::vector_finish(&(var_out), &mut stores.allocations);
-        // loft:default/02_files.loft:246
+        // loft:default/02_files.loft:251
         var_p = ops::op_add_int((var_i), (var_sl));
-        // loft:default/02_files.loft:247
+        // loft:default/02_files.loft:252
         var_i = var_p;
         } /*block_7: void*/ else { //block_8: void
         var_i = ops::op_add_int((var_i), (1_i64));
         } /*block_8: void*/;
       } /*block_6: void*/;
     } /*while_4*/;
-  // loft:default/02_files.loft:250
+  // loft:default/02_files.loft:255
   {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
   let mut var__elm_3: DbRef = stores.vector_record_append::<true, false>(&(var_out), 4, 5);
   {{{let db = (var__elm_3); let s_tmp = &((&*(OpGetTextSub(var_self, var_p, var_n)))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
   vector::vector_finish(&(var_out), &mut stores.allocations);
-  // loft:default/02_files.loft:251
+  // loft:default/02_files.loft:256
   { //one_buffer_vec_copy_9: vector<text>["__retbuf"]
     ();
     ();
@@ -866,70 +866,70 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
     } /*one_buffer_vec_copy_9: vector<text>["__retbuf"]*/
   } /*block_1: vector<text>["__retbuf"]*/
 
-// loft:default/02_files.loft:1259
+// loft:default/02_files.loft:1264
 fn t_4text_dir(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> String { //block_1: text["self"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/02_files.loft:1260
+  // loft:default/02_files.loft:1265
   let mut var_n: i64 = t_4text_size(cell, var_self);
-  // loft:default/02_files.loft:1261
+  // loft:default/02_files.loft:1266
   let mut var_i: i64 = var_n;
-  // loft:default/02_files.loft:1262
+  // loft:default/02_files.loft:1267
   'l2: loop { //while_2
     if ((((((0_i64) as i64) < ((var_i) as i64)) as u8) != 1) as u8) == 1 { //break_3: void
       break;
       } /*break_3: void*/ else {()};
     { //block_4: void
-      // loft:default/02_files.loft:1263
-      if (((({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1263, (var_self), (ops::op_min_int((var_i), (1_i64))))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)) as u8) == 1 { //block_5: never
+      // loft:default/02_files.loft:1268
+      if (((({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1268, (var_self), (ops::op_min_int((var_i), (1_i64))))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)) as u8) == 1 { //block_5: never
         return (OpGetTextSub(var_self, 0_i64, ops::op_min_int((var_i), (1_i64)))).to_string()
         } /*block_5: never*/ else {()};
-      // loft:default/02_files.loft:1264
+      // loft:default/02_files.loft:1269
       var_i = ops::op_min_int((var_i), (1_i64));
       } /*block_4: void*/;
     } /*while_2*/;
-  // loft:default/02_files.loft:1266
+  // loft:default/02_files.loft:1271
   return ("").to_string()
   } /*block_1: text["self"]*/
 
-// loft:default/02_files.loft:1274
+// loft:default/02_files.loft:1279
 fn t_4text_basename(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> String { //block_1: text["self"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/02_files.loft:1275
+  // loft:default/02_files.loft:1280
   let mut var_n: i64 = t_4text_size(cell, var_self);
-  // loft:default/02_files.loft:1276
+  // loft:default/02_files.loft:1281
   let mut var_i: i64 = var_n;
-  // loft:default/02_files.loft:1277
+  // loft:default/02_files.loft:1282
   'l2: loop { //while_2
     if ((((((0_i64) as i64) < ((var_i) as i64)) as u8) != 1) as u8) == 1 { //break_3: void
       break;
       } /*break_3: void*/ else {()};
     { //block_4: void
-      // loft:default/02_files.loft:1278
-      if (((({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1278, (var_self), (ops::op_min_int((var_i), (1_i64))))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)) as u8) == 1 { //block_5: never
+      // loft:default/02_files.loft:1283
+      if (((({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1283, (var_self), (ops::op_min_int((var_i), (1_i64))))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)) as u8) == 1 { //block_5: never
         return (OpGetTextSub(var_self, var_i, var_n)).to_string()
         } /*block_5: never*/ else {()};
-      // loft:default/02_files.loft:1279
+      // loft:default/02_files.loft:1284
       var_i = ops::op_min_int((var_i), (1_i64));
       } /*block_4: void*/;
     } /*while_2*/;
-  // loft:default/02_files.loft:1281
+  // loft:default/02_files.loft:1286
   return (var_self).to_string()
   } /*block_1: text["self"]*/
 
-// loft:default/02_files.loft:1303
+// loft:default/02_files.loft:1308
 fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_target: &str, mut var_t: *mut String, mut var___work_4: *mut String) -> Str { //block_1: text["base", "t"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var___work_p2_2: String = "".to_string();
   let mut var___work_p2_1: String = "".to_string();
   let mut var___work_2: String = "".to_string();
   let mut var___work_1: String = "".to_string();
-  // loft:default/02_files.loft:1304
+  // loft:default/02_files.loft:1309
   let mut var_base: String = var_self.to_string();
-  // loft:default/02_files.loft:1305
+  // loft:default/02_files.loft:1310
   unsafe { *var_t = (var_target).to_string() };
-  // loft:default/02_files.loft:1307
+  // loft:default/02_files.loft:1312
   'l2: loop { //while_2
-    if (({{ let _ha0 = if ((if ((((2_i64) as i64) <= ((t_4text_size(cell, unsafe { &*var_t })) as i64)) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1307, (unsafe { &*var_t }), (0_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1307, (unsafe { &*var_t }), (1_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)} as u8)} else {({false} as u8)}; ((_ha0) as u8) != 1 }}) as u8) == 1 { //break_3: void
+    if (({{ let _ha0 = if ((if ((((2_i64) as i64) <= ((t_4text_size(cell, unsafe { &*var_t })) as i64)) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1312, (unsafe { &*var_t }), (0_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1312, (unsafe { &*var_t }), (1_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)} as u8)} else {({false} as u8)}; ((_ha0) as u8) != 1 }}) as u8) == 1 { //break_3: void
       break;
       } /*break_3: void*/ else {()};
     { //block_4: void
@@ -940,38 +940,38 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
       unsafe { *var_t = (&var___work_p2_1).to_string() };
       } /*block_4: void*/;
     } /*while_2*/;
-  // loft:default/02_files.loft:1309
+  // loft:default/02_files.loft:1314
   'l5: loop { //while_5
-    if (({{ let _ha0 = if ((if ((if ((((3_i64) as i64) <= ((t_4text_size(cell, unsafe { &*var_t })) as i64)) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1309, (unsafe { &*var_t }), (0_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1309, (unsafe { &*var_t }), (1_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1309, (unsafe { &*var_t }), (2_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)} as u8)} else {({false} as u8)}; ((_ha0) as u8) != 1 }}) as u8) == 1 { //break_6: void
+    if (({{ let _ha0 = if ((if ((if ((((3_i64) as i64) <= ((t_4text_size(cell, unsafe { &*var_t })) as i64)) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1314, (unsafe { &*var_t }), (0_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1314, (unsafe { &*var_t }), (1_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1314, (unsafe { &*var_t }), (2_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)} as u8)} else {({false} as u8)}; ((_ha0) as u8) != 1 }}) as u8) == 1 { //break_6: void
       break;
       } /*break_6: void*/ else {()};
     { //block_7: void
-      // loft:default/02_files.loft:1310
+      // loft:default/02_files.loft:1315
       let mut var_bn: i64 = t_4text_size(cell, &var_base);
-      // loft:default/02_files.loft:1311
+      // loft:default/02_files.loft:1316
       let mut var_cut: i64 = var_bn;
-      // loft:default/02_files.loft:1312
+      // loft:default/02_files.loft:1317
       let mut var_walked: u8 = (false) as u8;
-      // loft:default/02_files.loft:1313
+      // loft:default/02_files.loft:1318
       'l8: loop { //while_8
         if ((((((0_i64) as i64) < ((var_cut) as i64)) as u8) != 1) as u8) == 1 { //break_9: void
           break;
           } /*break_9: void*/ else {()};
         { //block_10: void
-          // loft:default/02_files.loft:1314
-          if (((({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1314, (&var_base), (ops::op_min_int((var_cut), (1_i64))))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)) as u8) == 1 { //block_11: never
-            // loft:default/02_files.loft:1315
+          // loft:default/02_files.loft:1319
+          if (((({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1319, (&var_base), (ops::op_min_int((var_cut), (1_i64))))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)) as u8) == 1 { //block_11: never
+            // loft:default/02_files.loft:1320
             var_cut = ops::op_min_int((var_cut), (1_i64));
-            // loft:default/02_files.loft:1316
+            // loft:default/02_files.loft:1321
             var_walked = (true) as u8;
-            // loft:default/02_files.loft:1317
+            // loft:default/02_files.loft:1322
             break
             } /*block_11: never*/ else {()};
-          // loft:default/02_files.loft:1319
+          // loft:default/02_files.loft:1324
           var_cut = ops::op_min_int((var_cut), (1_i64));
           } /*block_10: void*/;
         } /*while_8*/;
-      // loft:default/02_files.loft:1321
+      // loft:default/02_files.loft:1326
       if ((var_walked) as u8) == 1 { //block_12: void
         var___work_1.clear();
         ops::append_text(&mut var___work_1, &*(OpGetTextSub(&var_base, 0_i64, var_cut)));
@@ -979,7 +979,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
         } /*block_12: void*/ else { //block_13: void
         var_base.clear();
         } /*block_13: void*/;
-      // loft:default/02_files.loft:1322
+      // loft:default/02_files.loft:1327
       var___work_p2_2.clear();
       let _pre_4 = t_4text_size(cell, unsafe { &*var_t });
       let _pre_3 = OpGetTextSub(unsafe { &*var_t }, 3_i64, _pre_4);
@@ -987,7 +987,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
       unsafe { *var_t = (&var___work_p2_2).to_string() };
       } /*block_7: void*/;
     } /*while_5*/;
-  // loft:default/02_files.loft:1324
+  // loft:default/02_files.loft:1329
   if ((ops::op_eq_text((&var_base), (""))) as u8) == 1 { //block_14: never
     ;
     ;
@@ -996,7 +996,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
     ;
     return Str::new(unsafe { &*var_t })
     } /*block_14: never*/ else {()};
-  // loft:default/02_files.loft:1325
+  // loft:default/02_files.loft:1330
   { //Formatted string_15: text["__work_2"]
     var___work_2.clear();
     ops::format_text(&mut var___work_2, &var_base, 0_i64, 2, 32);
@@ -1829,4 +1829,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
 pub(crate) const PREFIX_TYPES: usize = 100;
 pub(crate) const PREFIX_FINGERPRINT: u64 = 9925269632125183879;
 /// The hash of the `default/*.loft` source these bodies were compiled from.
-pub(crate) const SOURCE_HASH: u64 = 10762313109587439754;
+pub(crate) const SOURCE_HASH: u64 = 9975600670288810012;

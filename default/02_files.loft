@@ -111,9 +111,11 @@ fn OpSizeFile(file: File) -> __word fs#read;
 fn OpDelete(path: text) -> __word fs#update;
 #cold
 #rust"s.database.fs_delete_at(@path)"
+#loft"crt::fs_op(0, path, null)"
 fn OpMoveFile(from: text, to: text) -> __word fs#update;
 #cold
 #rust"s.database.fs_move_at(@from, @to)"
+#loft"crt::fs_op(1, from, to)"
 fn OpTruncateFile(self: File, size: __word) -> boolean fs#update;
 #cold
 fn OpSyncFile(self: File) -> boolean fs#update;
@@ -150,12 +152,15 @@ fn OpCallRef(fn_var: const u16, arg_size: const u16);
 fn OpMkdir(path: text) -> __word fs#update;
 #cold
 #rust"s.database.fs_mkdir_at(@path)"
+#loft"crt::fs_op(2, path, null)"
 fn OpMkdirAll(path: text) -> __word fs#update;
 #cold
 #rust"s.database.fs_mkdir_all_at(@path)"
+#loft"crt::fs_op(3, path, null)"
 fn OpRmdir(path: text) -> __word fs#update;
 #cold
 #rust"s.database.fs_rmdir_at(@path)"
+#loft"crt::fs_op(4, path, null)"
 /// Reads the entire file as a UTF-8 text value.
 /// Use for small configuration files or scripts.
 /// Example: @STD-010
