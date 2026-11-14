@@ -147,3 +147,80 @@ pub fn stream(b: ir::Bundle, natives: vector<text>) -> Stream {
   out.starts = starts;
   out
 }
+
+// `ir_store::operand_layout`: the letter of one constant operand's bytes.
+fn operand_layout(t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => {
+      if spec.forced_size == 4 {
+        if spec.min >= 0 { "w" } else { "i" }
+      } else if spec.min == 0 && spec.max == 255 {
+        "b"
+      } else if spec.min == -128 && spec.max == 127 {
+        "c"
+      } else if spec.min == 0 && spec.max == 65535 {
+        "h"
+      } else if spec.min == -32768 && spec.max == 32767 {
+        "s"
+      } else {
+        "q"
+      }
+    }
+    TyEnum { n: _, is_ref: _, dep: _ } => "e",
+    TyBoolean => "z",
+    TyText { dep: _ } => "t",
+    TyFloat => "f",
+    TySingle => "g",
+    TyKeys => "k",
+    _ => "?",
+  }
+}
+
+// The tables of a run image that follow from the program's definitions alone, written into
+// `img` (`ir_store::run_image_ops`, `run_image_shared`, and the entry definition): the
+// operators' names and operand layouts by their number, per native the definition a compiled
+// standard-library body was made from, and `main`.
+pub fn tables(b: ir::Bundle, img: ir::RunImage) {
+  ops: vector<text> = [];
+  layouts: vector<text> = [];
+  main = -1;
+  for d in b.data.definitions {
+    // The program's own `main`: its source is parsed after every library's, so where a
+    // library holds a `main` too the program's is the later definition.
+    if d.name == "n_main" {
+      main = d#index;
+    }
+    if !is_operator(d) || d.op_code == 65535 {
+      continue;
+    }
+    while len(ops) <= d.op_code {
+      ops += [""];
+      layouts += [""];
+    }
+    layout = "";
+    for a in d.attributes {
+      if !a.mutable {
+        layout += operand_layout(a.typedef[0] ?? ir::TyVoid);
+      }
+    }
+    ops[d.op_code] = d.name;
+    layouts[d.op_code] = layout;
+  }
+  shared: vector<integer> = [];
+  for n in img.natives {
+    nr = -1;
+    if n.starts_with("loft_shared_") && !n.contains("#") {
+      name = n[12..];
+      for d in b.data.definitions {
+        if d.name == name && nr < 0 {
+          nr = d#index;
+        }
+      }
+    }
+    shared += [nr];
+  }
+  img.ops = ops;
+  img.layouts = layouts;
+  img.shared = shared;
+  img.main = main;
+}

@@ -82,7 +82,7 @@ def main():
                     if line.startswith("stream\t"):
                         verdict = line.split("\t")[1]
                         streams[verdict] += 1
-                        if verdict == "differs":
+                        if verdict in ("differs", "natives", "tables"):
                             stream_differs.append(f"{os.path.relpath(f, root)}\t{line.split(chr(9), 2)[2]}")
                         continue
                     m = re.match(r"(same|differs|unwritten)\t([^\t]+)(?:\t(.*))?$", line)
@@ -104,7 +104,8 @@ def main():
               f"{n['differs']} differ, {n['unwritten']} not written")
         print(f"whole code stream and starts: {streams['same']} programs identical, "
               f"{streams['differs']} differ, {streams['unwritten']} hold a function not written, "
-              f"{streams['natives']} with another natives table than loft's")
+              f"{streams['natives']} with another natives table than loft's, "
+              f"{streams['tables']} with another operator, shared-body or entry table")
         for d in sorted(stream_differs)[:20]:
             print(f"stream differs\t{d}")
         for d in sorted(differ)[:40]:

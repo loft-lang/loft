@@ -65,6 +65,34 @@ fn main() {
         }
       }
     }
+    // The tables that follow from the definitions alone, against the image's.
+    mine = ir::empty_run_image();
+    mine.natives = own_natives;
+    bgen_image::tables(b!, mine);
+    wrong = "";
+    if len(mine.ops) != len(img!.ops) || len(mine.layouts) != len(img!.layouts) {
+      wrong = "the operators' count";
+    }
+    for o in mine.ops {
+      if wrong == "" && (o != (img!.ops[o#index] ?? "?") || (mine.layouts[o#index] ?? "") != (img!.layouts[o#index] ?? "?")) {
+        wrong = "operator {o#index} {o}";
+      }
+    }
+    if wrong == "" && len(mine.shared) != len(img!.shared) {
+      wrong = "the shared bodies' count";
+    }
+    for x in mine.shared {
+      if wrong == "" && x != (img!.shared[x#index] ?? -2) {
+        wrong = "the shared body of native {x#index}";
+      }
+    }
+    if wrong == "" && mine.main != img!.main {
+      wrong = "main";
+    }
+    if wrong != "" {
+      println("stream\ttables\t{wrong}");
+      return;
+    }
     if equal {
       println("stream\tsame\t{len(st.code)} bytes, {len(st.starts)} starts");
     } else {

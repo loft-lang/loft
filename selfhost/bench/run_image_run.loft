@@ -42,6 +42,7 @@ fn main() {
       eprintln("stopped: not carried by the bytecode writer in loft: {st.why}");
       exit(3);
     }
+    bgen_image::tables(b!, img!);
     img!.code = st.code;
     img!.starts = st.starts;
   }
