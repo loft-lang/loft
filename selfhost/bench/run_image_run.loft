@@ -44,6 +44,7 @@ fn main() {
     }
     bgen_image::tables(b!, img!);
     img!.gens = bgen_image::gens(b!);
+    img!.fnrefs = bgen_image::fnrefs(b!);
     img!.code = st.code;
     img!.starts = st.starts;
   }

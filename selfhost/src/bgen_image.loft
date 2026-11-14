@@ -11,6 +11,8 @@
 use ir;
 use own;
 use binds;
+use lower;
+use types;
 use frame;
 use bgen;
 
@@ -361,6 +363,144 @@ pub fn gens(b: ir::Bundle) -> vector<ir::RunGen> {
     if d.def_type == 1 && body && (bgen::base(d.returned[0] ?? ir::TyVoid) is TyIterator) {
       out += [gen_shape(b, d#index)];
     }
+  }
+  out
+}
+
+// ── function values (`ir_store::run_image_fnrefs`) ──
+
+// `Definition::fnref_visible_params`: the parameters a caller of the value writes.
+fn visible_params(d: ir::Definition) -> integer {
+  n = 0;
+  for a in d.attributes {
+    if !a.hidden && a.name != "__closure" {
+      n += 1;
+    }
+  }
+  n
+}
+
+// `Definition::text_work_buffers`: the hidden text buffers a function is handed.
+fn text_work_buffers(d: ir::Definition) -> integer {
+  n = 0;
+  for a in d.attributes {
+    text_link = match a.typedef[0] ?? ir::TyVoid {
+      TyRefVar { inner } => inner is TyText,
+      _ => false,
+    };
+    if a.hidden && text_link {
+      n += 1;
+    }
+  }
+  n
+}
+
+fn returns_text(d: ir::Definition) -> boolean {
+  bgen::base(d.returned[0] ?? ir::TyVoid) is TyText
+}
+
+// The first definition of a name; -1 for none.
+fn def_named(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// `Data::drop_cascade_nr`: the generated function that releases what a record of `rec`
+// holds (`t_<len><Type>_OpDropAll`), else its own drop hook; -1 for none.
+fn drop_cascade(b: ir::Bundle, rec: integer) -> integer {
+  def = b.data.definitions[rec];
+  if def == null {
+    return -1;
+  }
+  name = def.name;
+  if def.def_type == 4 {
+    owner = b.data.definitions[def.parent];
+    if owner != null {
+      name = "{owner.name}::{def.name}";
+    }
+  }
+  nr = def_named(b, "t_{len(name)}{name}_OpDropAll");
+  if nr >= 0 {
+    return nr;
+  }
+  def_named(b, "t_{len(def.name)}{def.name}_OpDrop")
+}
+
+// `run_image_fnrefs`: what a call through a function value needs to know of its target —
+// the buffer bytes a caller pushes past what the target takes, its hidden reference
+// parameters (the wrapper type of a vector one, -1 for a record), whether it is a native (1)
+// or a generator (2), and its closure record's drop cascade.  A function with none of these
+// has no entry.
+pub fn fnrefs(b: ir::Bundle) -> vector<ir::RunFnRef> {
+  // The most text buffers any text-answering function of a given visible arity takes.
+  widest: vector<integer> = [];
+  for d in b.data.definitions {
+    if d.def_type == 1 && returns_text(d) {
+      p = visible_params(d);
+      while len(widest) <= p {
+        widest += [1];
+      }
+      w = text_work_buffers(d);
+      if w > (widest[p] ?? 1) {
+        widest[p] = w;
+      }
+    }
+  }
+  out: vector<ir::RunFnRef> = [];
+  for d in b.data.definitions {
+    if d.def_type != 1 {
+      continue;
+    }
+    pushed = if returns_text(d) { widest[visible_params(d)] ?? 1 } else { 0 };
+    extra = pushed - text_work_buffers(d);
+    drop = if extra > 0 { extra * 16 } else { 0 };
+    hidden: vector<integer> = [];
+    for a in d.attributes {
+      if !a.hidden {
+        continue;
+      }
+      match bgen::base(a.typedef[0] ?? ir::TyVoid) {
+        TyReference { n: _, dep: _ } => { hidden += [-1]; }
+        TyEnum { n: _, is_ref, dep: _ } => {
+          if is_ref {
+            hidden += [-1];
+          }
+        }
+        TyVector { inner, dep: _ } => {
+          // The store schema's own entry for the wrapper, by its name.
+          // A record element is named as the schema names its type: a type variable's
+          // placeholder is `__typevar_<name>` there, not its definition's name.
+          key = lower::type_key(b, inner);
+          rec = match bgen::base(inner) {
+            TyReference { n, dep: _ } => n,
+            _ => -1,
+          };
+          if rec >= 0 {
+            known = b.types[b.data.definitions[rec]!.known_type];
+            if known != null {
+              key = known.name;
+            }
+          }
+          hidden += [if key == null { -1 } else { types::named(b.types, "main_vector<{key!}>") ?? -1 }];
+        }
+        _ => {}
+      }
+    }
+    body = match d.code[0] {
+      null => false,
+      NdNull => false,
+      _ => true,
+    };
+    kind = if !body { 1 } else if bgen::base(d.returned[0] ?? ir::TyVoid) is TyIterator { 2 } else { 0 };
+    cascade = if d.closure_record < 0 || d.closure_record >= len(b.data.definitions) { -1 } else { drop_cascade(b, d.closure_record) };
+    if drop == 0 && len(hidden) == 0 && kind == 0 && cascade < 0 {
+      continue;
+    }
+    out += [ir::RunFnRef { def: d#index, drop: drop, kind: kind, cascade: cascade, hidden: hidden }];
   }
   out
 }

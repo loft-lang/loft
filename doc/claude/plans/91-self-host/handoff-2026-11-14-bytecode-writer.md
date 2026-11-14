@@ -114,6 +114,7 @@ kernels; the cure is in the emitted C and in the generator of `fill.loft`.
 - The Rust changes pushed earlier in the session (run-image long-text entry and `store_insts`
   in `src/ir_store.rs`, the `par` worker-row fix, the `LOFT_HOT_INLINE` wrapper in
   `src/c/mod.rs`) stand; whether to revert them is the owner's call.
-- A library's cached parse can be read by an image emitted under another
-  `LOFT_NO_TEXT_BORROW` setting: one program (`F-Surface/2331`) compared unequal once and
-  equal on every re-emission.  Not run down.
+- The compiler's warm cache does not know `LOFT_NO_TEXT_BORROW`: the first emission after
+  the switch changed can read what the other setting left, and then a program's two images
+  disagree in the standard library's text functions (`t_4File_lines`,
+  `t_4text_char_slice`).  The surveys emit once of each kind first; by hand, emit twice.

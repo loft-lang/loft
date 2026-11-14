@@ -89,6 +89,16 @@ fn main() {
     if wrong == "" && mine.main != img!.main {
       wrong = "main";
     }
+    mine.fnrefs = bgen_image::fnrefs(b!);
+    if wrong == "" && len(mine.fnrefs) != len(img!.fnrefs) {
+      wrong = "the function-value shapes' count ({len(mine.fnrefs)} against {len(img!.fnrefs)})";
+    }
+    for x in mine.fnrefs {
+      y = img!.fnrefs[x#index];
+      if wrong == "" && y != null && (x.def != y.def || x.drop != y.drop || x.kind != y.kind || x.cascade != y.cascade || "{x.hidden}" != "{y.hidden}") {
+        wrong = "function value {bgen::name_of(b!, x.def)}: {x} against {y!}";
+      }
+    }
     mine.gens = bgen_image::gens(b!);
     if wrong == "" && len(mine.gens) != len(img!.gens) {
       wrong = "the generators' count ({len(mine.gens)} against {len(img!.gens)})";
