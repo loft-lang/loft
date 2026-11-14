@@ -832,10 +832,10 @@ differently and only a cell could ever have caught the claim.
 
 | chapter source | reviewed through | commit |
 |---|---|---|
-| `default` | 2026-11-02 | `11f767b68` |
+| `default` | 2026-11-14 | `43d7352e4` |
 | `doc/00-vs-python.html` | 2026-10-01 | `a80e26737` |
-| `doc/00-vs-rust.html` | 2026-10-01 | `0c1e2c840` |
-| `doc/install.html` | 2026-11-02 | `11f767b68` |
+| `doc/00-vs-rust.html` | 2026-11-14 | `7ab6b9677` |
+| `doc/install.html` | 2026-11-14 | `096397bba` |
 | `doc/roadmap.html` | 2026-11-02 | `11f767b68` |
 | `tests/docs/01-keywords.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/02-text.loft` | 2026-10-01 | `0c1e2c840` |
@@ -858,7 +858,7 @@ differently and only a cell could ever have caught the claim.
 | `tests/docs/20-logging.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/22-time.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/23-safety.loft` | 2026-10-01 | `0c1e2c840` |
-| `tests/docs/24-json.loft` | 2026-11-02 | `11f767b68` |
+| `tests/docs/24-json.loft` | 2026-11-14 | `096397bba` |
 | `tests/docs/25-generics.loft` | 2026-11-02 | `11f767b68` |
 | `tests/docs/26-closures.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/27-coroutines.loft` | 2026-10-01 | `0c1e2c840` |
