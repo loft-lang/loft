@@ -921,6 +921,15 @@ fn materialize_run_image(
     root: DbRef,
     code: &[u8],
     starts: &[u32],
+    ops: &(Vec<String>, Vec<String>),
+    consts: &[RunConstBytes],
+    fnrefs: &[RunFnRefShape],
+    gens: &[RunGenShape],
+    shared: &[i64],
+    store_insts: &[i64],
+    workers: &[RunWorkerShape],
+    sidecars: &[RunSidecarShape],
+    release: (&str, &str, &str),
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -953,6 +962,14 @@ fn materialize_run_image(
         let e = sv.push(stores).db_ref();
         stores.store_mut(&e).set_u32_raw(e.rec, e.pos, at);
     }
+    for (off, list) in [(ds::RUNIMG_OPS, &ops.0), (ds::RUNIMG_LAYOUTS, &ops.1)] {
+        crate::vector::pre_alloc_vector(&slot(off), count(list.len()), 4, &mut stores.allocations);
+        let v = rec.field_recvec(off, 4);
+        for n in list {
+            let e = v.push(stores);
+            e.set_field_str(stores, 0, n);
+        }
+    }
     let mut natives: Vec<&str> = Vec::new();
     for (name, &idx) in library_names {
         let i = usize::from(idx);
@@ -973,6 +990,56 @@ fn materialize_run_image(
         e.set_field_str(stores, 0, n);
     }
     crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_CONSTS),
+        count(consts.len()),
+        ds::RUNCONST_STRIDE,
+        &mut stores.allocations,
+    );
+    let cv = rec.field_recvec(ds::RUNIMG_CONSTS, ds::RUNCONST_STRIDE);
+    for c in consts {
+        let e = cv.push(stores);
+        // The long texts' entry belongs to no definition: -1.
+        let def = if c.def == u32::MAX {
+            -1
+        } else {
+            i64::from(c.def)
+        };
+        e.set_field_int(stores, ds::RUNCONST_DEF, def);
+        e.set_field_int(stores, ds::RUNCONST_REC, i64::from(c.rec));
+        e.set_field_int(stores, ds::RUNCONST_POS, i64::from(c.pos));
+        let b = DbRef {
+            pos: e.db_ref().pos + ds::RUNCONST_BYTES,
+            ..e.db_ref()
+        };
+        crate::vector::pre_alloc_vector(&b, count(c.bytes.len()), 1, &mut stores.allocations);
+        crate::vector::append_bytes(&b, &c.bytes, &mut stores.allocations);
+    }
+    materialize_run_fnrefs(stores, &rec, &slot(ds::RUNIMG_FNREFS), fnrefs);
+    materialize_run_gens(stores, &rec, &slot(ds::RUNIMG_GENS), gens);
+    materialize_run_tables(
+        stores,
+        &rec,
+        &slot(ds::RUNIMG_SHARED),
+        &slot(ds::RUNIMG_WORKERS),
+        shared,
+        workers,
+    );
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_STORE_INSTS),
+        count(store_insts.len()),
+        8,
+        &mut stores.allocations,
+    );
+    let siv = rec.field_recvec(ds::RUNIMG_STORE_INSTS, 8);
+    for &v in store_insts {
+        let e = siv.push(stores);
+        e.set_field_int(stores, 0, v);
+    }
+    materialize_run_sidecars(stores, &rec, &slot(ds::RUNIMG_SIDECARS), sidecars);
+    rec.set_field_str(stores, ds::RUNIMG_OLDEST, release.0);
+    rec.set_field_str(stores, ds::RUNIMG_BRIDGE, release.1);
+    rec.set_field_str(stores, ds::RUNIMG_SOURCE, release.2);
+    crate::vector::pre_alloc_vector(
         &slot(ds::RUNIMG_TYPES),
         count(schema.len()),
         ds::DBTYPE_STRIDE,
@@ -981,6 +1048,670 @@ fn materialize_run_image(
     materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
     rec.set_field_int(stores, ds::RUNIMG_MAIN, main);
     rec.set_field_bool(stores, ds::RUNIMG_CWD, cwd);
+}
+
+/// The run image's rows for calls through function references (`RunFnRef`), into the root's
+/// `fnrefs` vector at `slot`.
+#[cfg(feature = "mmap")]
+fn materialize_run_fnrefs(
+    stores: &mut Stores,
+    rec: &Record,
+    slot: &DbRef,
+    fnrefs: &[RunFnRefShape],
+) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(
+        slot,
+        count(fnrefs.len()),
+        ds::RUNFNREF_STRIDE,
+        &mut stores.allocations,
+    );
+    let fv = rec.field_recvec(ds::RUNIMG_FNREFS, ds::RUNFNREF_STRIDE);
+    for f in fnrefs {
+        let e = fv.push(stores);
+        e.set_field_int(stores, ds::RUNFNREF_DEF, i64::from(f.def));
+        e.set_field_int(stores, ds::RUNFNREF_DROP, i64::from(f.drop));
+        e.set_field_int(stores, ds::RUNFNREF_KIND, i64::from(f.kind));
+        e.set_field_int(stores, ds::RUNFNREF_CASCADE, f.cascade);
+        let hv = DbRef {
+            pos: e.db_ref().pos + ds::RUNFNREF_HIDDEN,
+            ..e.db_ref()
+        };
+        crate::vector::pre_alloc_vector(&hv, count(f.hidden.len()), 8, &mut stores.allocations);
+        let hr = RecVector::new(hv, 8);
+        for &h in &f.hidden {
+            let x = hr.push(stores);
+            x.set_field_int(stores, 0, h);
+        }
+    }
+}
+
+/// The run image's per-native table of compiled-stdlib bodies (`shared`) and its `par` workers
+/// (`RunWorker`), into the root's vectors at the two slots.
+#[cfg(feature = "mmap")]
+fn materialize_run_tables(
+    stores: &mut Stores,
+    rec: &Record,
+    shared_slot: &DbRef,
+    workers_slot: &DbRef,
+    shared: &[i64],
+    workers: &[RunWorkerShape],
+) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(shared_slot, count(shared.len()), 8, &mut stores.allocations);
+    let shv = rec.field_recvec(ds::RUNIMG_SHARED, 8);
+    for &d in shared {
+        let e = shv.push(stores);
+        e.set_field_int(stores, 0, d);
+    }
+    crate::vector::pre_alloc_vector(
+        workers_slot,
+        count(workers.len()),
+        ds::RUNWORKER_STRIDE,
+        &mut stores.allocations,
+    );
+    let wv = rec.field_recvec(ds::RUNIMG_WORKERS, ds::RUNWORKER_STRIDE);
+    for w in workers {
+        let e = wv.push(stores);
+        e.set_field_int(stores, ds::RUNWORKER_DEF, w.def);
+        e.set_field_int(stores, ds::RUNWORKER_INPUT, w.input);
+        e.set_field_int(stores, ds::RUNWORKER_RET, w.ret);
+        e.set_field_int(stores, ds::RUNWORKER_TEXTS, w.texts);
+        e.set_field_int(stores, ds::RUNWORKER_DESTS, w.dests);
+        let lv = DbRef {
+            pos: e.db_ref().pos + ds::RUNWORKER_ROW,
+            ..e.db_ref()
+        };
+        crate::vector::pre_alloc_vector(&lv, count(w.row.len()), 8, &mut stores.allocations);
+        let lr = RecVector::new(lv, 8);
+        for &x in &w.row {
+            let y = lr.push(stores);
+            y.set_field_int(stores, 0, x);
+        }
+    }
+}
+
+/// The run image's persisted-type sidecars (`RunSidecar`).
+#[cfg(feature = "mmap")]
+fn materialize_run_sidecars(
+    stores: &mut Stores,
+    rec: &Record,
+    slot: &DbRef,
+    sidecars: &[RunSidecarShape],
+) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(
+        slot,
+        count(sidecars.len()),
+        ds::RUNSIDECAR_STRIDE,
+        &mut stores.allocations,
+    );
+    let sv = rec.field_recvec(ds::RUNIMG_SIDECARS, ds::RUNSIDECAR_STRIDE);
+    for c in sidecars {
+        let e = sv.push(stores);
+        e.set_field_int(stores, ds::RUNSIDECAR_TP, i64::from(c.tp));
+        e.set_field_int(stores, ds::RUNSIDECAR_HASH, c.hash.cast_signed());
+        e.set_field_int(stores, ds::RUNSIDECAR_PCOLL, i64::from(c.pcoll));
+        e.set_field_int(stores, ds::RUNSIDECAR_PCONTENT, c.pcontent);
+        e.set_field_int(stores, ds::RUNSIDECAR_PKIND, c.pkind);
+        e.set_field_str(stores, ds::RUNSIDECAR_PREFUSAL, &c.prefusal);
+        e.set_field_str(stores, ds::RUNSIDECAR_PBOXREFUSAL, &c.pboxrefusal);
+        e.set_field_int(stores, ds::RUNSIDECAR_PRANGECONTENT, c.prangecontent);
+        e.set_field_str(stores, ds::RUNSIDECAR_PRANGEREFUSAL, &c.prangerefusal);
+        e.set_field_bool(stores, ds::RUNSIDECAR_WALKS, c.walks);
+        e.set_field_bool(stores, ds::RUNSIDECAR_REFS, c.refs);
+        e.set_field_bool(stores, ds::RUNSIDECAR_REKEY, c.rekey);
+        e.set_field_str(stores, ds::RUNSIDECAR_BEFORE, &c.before);
+        e.set_field_str(stores, ds::RUNSIDECAR_AFTER, &c.after);
+        e.set_field_str(stores, ds::RUNSIDECAR_DUMP, &c.dump);
+    }
+}
+
+/// The run image's generator rows (`RunGen`, `gen_facts`): each generator's frame facts,
+/// into the root's `gens` vector at `slot`.
+#[cfg(feature = "mmap")]
+fn materialize_run_gens(stores: &mut Stores, rec: &Record, slot: &DbRef, gens: &[RunGenShape]) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(
+        slot,
+        count(gens.len()),
+        ds::RUNGEN_STRIDE,
+        &mut stores.allocations,
+    );
+    let gv = rec.field_recvec(ds::RUNIMG_GENS, ds::RUNGEN_STRIDE);
+    for g in gens {
+        let e = gv.push(stores);
+        e.set_field_int(stores, ds::RUNGEN_DEF, i64::from(g.def));
+        e.set_field_int(stores, ds::RUNGEN_ZONE2, i64::from(g.zone2));
+        for (off, list) in [
+            (ds::RUNGEN_TEXT_ARGS, &g.text_args),
+            (ds::RUNGEN_REF_ARGS, &g.ref_args),
+            (ds::RUNGEN_TEXT_LOCALS, &g.text_locals),
+            (ds::RUNGEN_OWNED_LOCALS, &g.owned_locals),
+            (ds::RUNGEN_TUPLE_REFS, &g.tuple_refs),
+        ] {
+            let lv = DbRef {
+                pos: e.db_ref().pos + off,
+                ..e.db_ref()
+            };
+            crate::vector::pre_alloc_vector(&lv, count(list.len()), 8, &mut stores.allocations);
+            let lr = RecVector::new(lv, 8);
+            for &x in list {
+                let y = lr.push(stores);
+                y.set_field_int(stores, 0, i64::from(x));
+            }
+        }
+    }
+}
+
+/// How a constant operand of type `tp` sits in the bytecode, as one letter — the width the
+/// Rust writer gives it (`state::codegen::add_const`, the two must agree): `b` u8, `c` i8, `h`
+/// u16, `s` i16, `w` u32, `i` i32, `q` i64, `e` an enum's byte, `z` a boolean's byte, `t` a
+/// text (a u8 length, then the bytes), `f` f64, `g` f32, `k` keys (a u8 count, then per key a
+/// u16 type, an i16 position and an i32 start), `?` a type the writer gives no operand.
+#[must_use]
+pub fn operand_layout(tp: &Type) -> char {
+    match tp {
+        Type::Integer(s) if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) => {
+            if s.min >= 0 { 'w' } else { 'i' }
+        }
+        Type::Integer(s) if s.min == 0 && s.max == 255 => 'b',
+        Type::Integer(s) if s.min == -128 && s.max == 127 => 'c',
+        Type::Integer(s) if s.min == 0 && s.max == 65535 => 'h',
+        Type::Integer(s) if s.min == -32768 && s.max == 32767 => 's',
+        Type::Integer(_) => 'q',
+        Type::Enum(_, _, _) => 'e',
+        Type::Boolean => 'z',
+        Type::Text(_) => 't',
+        Type::Float => 'f',
+        Type::Single => 'g',
+        Type::Keys => 'k',
+        _ => '?',
+    }
+}
+
+/// The operators by opcode: each one's name and the layout of its constant operands
+/// ([`operand_layout`], one letter per operand); an opcode no operator holds stays empty.
+#[must_use]
+pub fn run_image_ops(data: &Data) -> (Vec<String>, Vec<String>) {
+    let mut names: Vec<String> = Vec::new();
+    let mut layouts: Vec<String> = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !def.is_operator() || def.op_code() == u16::MAX {
+            continue;
+        }
+        let code = usize::from(def.op_code());
+        if names.len() <= code {
+            names.resize(code + 1, String::new());
+            layouts.resize(code + 1, String::new());
+        }
+        names[code] = def.name().to_string();
+        layouts[code] = def
+            .attributes()
+            .iter()
+            .filter(|a| !a.mutable)
+            .map(|a| operand_layout(&a.typedef))
+            .collect();
+    }
+    (names, layouts)
+}
+
+/// One constant's store as the run image carries it: its definition, its root, and the store's
+/// bytes up to its last live record.  `def` `u32::MAX` is the constant store itself, for its
+/// long texts.
+pub struct RunConstBytes {
+    pub def: u32,
+    pub rec: u32,
+    pub pos: u32,
+    pub bytes: Vec<u8>,
+}
+
+/// The constants Rust built for the program (`Stores::const_refs`, by definition): each one's
+/// store as bytes, the run image's copy of it.
+#[must_use]
+pub fn run_image_consts(program: &Stores) -> Vec<RunConstBytes> {
+    let mut out = Vec::new();
+    for (d, r) in program.const_refs.iter().enumerate() {
+        if r.store_nr == u16::MAX || r.rec == 0 {
+            continue;
+        }
+        let store = &program.allocations[r.store_nr as usize];
+        let live = store.usage();
+        let end = (live.live_end_words as usize * 8).min(store.raw_bytes().len());
+        out.push(RunConstBytes {
+            def: u32::try_from(d).unwrap_or(u32::MAX),
+            rec: r.rec,
+            pos: r.pos,
+            bytes: store.raw_bytes()[..end].to_vec(),
+        });
+    }
+    // The constant store's long texts, where `OpConstStoreText` reads one by its record
+    // (`gen_text`: a text of 256 bytes or more): an entry of no definition (`u32::MAX`), the
+    // store's layout with only those records' bytes in it — each one's length word and its
+    // text — and zeroes everywhere else, so nothing unwritten leaves the process.
+    if let Some(store) = program
+        .allocations
+        .get(crate::database::CONST_STORE as usize)
+        && !program.const_texts.is_empty()
+    {
+        let mut bytes = Vec::new();
+        for &rec in &program.const_texts {
+            let text = store.get_str(rec).as_bytes();
+            let at = rec as usize * 8;
+            if bytes.len() < at + 8 + text.len() {
+                bytes.resize(at + 8 + text.len(), 0);
+            }
+            bytes[at + 4..at + 8]
+                .copy_from_slice(&u32::try_from(text.len()).unwrap_or(0).to_ne_bytes());
+            bytes[at + 8..at + 8 + text.len()].copy_from_slice(text);
+        }
+        out.push(RunConstBytes {
+            def: u32::MAX,
+            rec: 0,
+            pos: 0,
+            bytes,
+        });
+    }
+    out
+}
+
+/// A function's shape as a call through a function reference needs it (`State::fn_call_ref_to`),
+/// written only where it differs from a plain call: the text-buffer bytes the call drops, the
+/// hidden return buffers it allocates (-1 a record's — `Stores::null()`, a store with no root —
+/// a type number a vector's of `main_vector<T>`), and its kind: 0 bytecode, 1 a native (no
+/// code), 2 a generator.
+pub struct RunFnRefShape {
+    pub def: u32,
+    pub drop: u32,
+    pub kind: u8,
+    pub cascade: i64,
+    pub hidden: Vec<i64>,
+}
+
+/// Per native index: the definition a `loft_shared_<name>` native (the compiled standard
+/// library, @PLN181) was compiled from, whose bytecode body the loft runner runs in its place;
+/// -1 for every other native, the `#dest` forms included (they pop a destination and push
+/// nothing, which the body does not).  A plain call passes the body's own parameters, hidden
+/// return and work buffers included, and leaves what the body's return leaves.
+#[must_use]
+pub fn run_image_shared(
+    data: &Data,
+    library_names: &crate::fxhash::FxHashMap<String, u16>,
+) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::new();
+    for (name, &idx) in library_names {
+        let i = usize::from(idx);
+        if out.len() <= i {
+            out.resize(i + 1, -1);
+        }
+        if let Some(def) = name.strip_prefix("loft_shared_")
+            && !def.contains('#')
+        {
+            let nr = data.def_nr(def);
+            if nr != u32::MAX {
+                out[i] = i64::from(nr);
+            }
+        }
+    }
+    out
+}
+
+/// The store instances of the program (`parser/store_text.rs`), as triples of the function's
+/// definition, the mask and the instance: what `OpCallRefStore` resolves at run time
+/// (`Data::store_text_instance`), since a run image carries no definition names.
+#[must_use]
+pub fn run_image_store_insts(data: &Data) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !def.is_store_text_instance() {
+            continue;
+        }
+        let Some((base, mask)) = def.name.rsplit_once("@st") else {
+            continue;
+        };
+        let Ok(mask) = mask.parse::<u64>() else {
+            continue;
+        };
+        for b in 0..data.definitions() {
+            if data.def(b).name == base && data.store_text_instance(b, mask) == d {
+                out.extend([i64::from(b), mask.cast_signed(), i64::from(d)]);
+            }
+        }
+    }
+    out
+}
+
+/// Every `par` worker of the program, found where the IR names it — the `func` literal of a
+/// `parallel_*` call — with how it takes its row and its answer's size (`RunWorker`).
+#[must_use]
+pub fn run_image_workers(data: &Data, program: &Stores) -> Vec<RunWorkerShape> {
+    let mut defs: Vec<u32> = Vec::new();
+    for d in 0..data.definitions() {
+        data.def(d).code.walk(&mut |v| {
+            if let Value::Call(c, args) = v {
+                let at = match data.def(*c).name.as_str() {
+                    "n_parallel_queue"
+                    | "n_parallel_queue_text"
+                    | "n_parallel_queue_ref"
+                    | "n_parallel_queue_narrow"
+                    | "n_parallel_queue_fn"
+                    | "n_parallel_for"
+                    | "n_parallel_for_light"
+                    | "n_parallel_discard" => 4,
+                    "n_parallel_fold" => 2,
+                    _ => return,
+                };
+                if let Some(Value::Int(w)) = args.get(at).map(Value::unspan)
+                    && let Ok(w) = u32::try_from(*w)
+                    && w < data.definitions()
+                    && !defs.contains(&w)
+                {
+                    defs.push(w);
+                }
+            }
+        });
+    }
+    defs.into_iter()
+        .map(|w| {
+            let def = data.def(w);
+            let (texts, dests) = crate::par_facts::worker_hidden_counts(def);
+            // A tuple row's plan, as `read_tuple_at_wide` reads it.
+            let row = crate::par_facts::tuple_first_arg_types(def)
+                .filter(|_| crate::par_facts::worker_input_code(def) >= 1000)
+                .map(|elems| {
+                    crate::par_facts::tuple_row_plan(Some(data), program, &elems)
+                        .iter()
+                        .flat_map(|m| {
+                            let kind = match m.kind {
+                                crate::par_facts::TupleMove::Copy => 0,
+                                crate::par_facts::TupleMove::Text => 1,
+                                crate::par_facts::TupleMove::FnRef => 2,
+                            };
+                            [m.at as i64, m.stored as i64, m.arg as i64, kind]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            RunWorkerShape {
+                def: i64::from(w),
+                input: crate::par_facts::worker_input_code(def),
+                ret: i64::from(crate::variables::size(
+                    &def.returned,
+                    &crate::data::Context::Argument,
+                )),
+                texts: i64::try_from(texts).unwrap_or(0),
+                dests: i64::try_from(dests).unwrap_or(0),
+                row,
+            }
+        })
+        .collect()
+}
+
+/// A `par` worker's row of the run image (`RunWorker`).
+pub struct RunWorkerShape {
+    pub def: i64,
+    pub input: i64,
+    pub ret: i64,
+    pub texts: i64,
+    pub dests: i64,
+    /// A tuple row's plan, four numbers per element (`parallel::tuple_row_plan`).
+    pub row: Vec<i64>,
+}
+
+/// A persisted root type's sidecar, as the C backend's `sidecar_table` writes it.
+pub struct RunSidecarShape {
+    pub tp: u16,
+    pub hash: u64,
+    pub pcoll: u16,
+    pub pcontent: i64,
+    pub pkind: i64,
+    pub prefusal: String,
+    pub pboxrefusal: String,
+    pub prangecontent: i64,
+    pub prangerefusal: String,
+    pub walks: bool,
+    pub refs: bool,
+    pub rekey: bool,
+    pub before: String,
+    pub after: String,
+    pub dump: String,
+}
+
+/// The sidecars of every root type a store is persisted, loaded or verified as: the type the
+/// C backend reads off each such call's value (`store_value_type`, then `root_type`), with the
+/// layout identity the C backend writes for it.
+#[must_use]
+pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape> {
+    let mut tps: Vec<u16> = Vec::new();
+    let mut scratch: Option<Stores> = None;
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        let vars = def.variables();
+        def.code.walk(&mut |v| {
+            let Value::Call(c, args) = v else {
+                return;
+            };
+            if !matches!(
+                data.def(*c).name.as_str(),
+                "n_store_persist_copy"
+                    | "n_store_load"
+                    | "n_store_load_untrusted"
+                    | "n_store_verify"
+                    | "n_store_load_key"
+                    | "n_store_load_key_text"
+                    | "n_store_load_keys"
+                    | "n_store_load_keys_text"
+                    | "n_store_load_prefix"
+                    | "n_store_load_box"
+                    | "n_store_load_range"
+            ) {
+                return;
+            }
+            let mut a = args.first().map(Value::unspan);
+            while let Some(Value::Call(g, ga)) = a
+                && data.def(*g).name() == "OpGetField"
+            {
+                a = ga.first().map(Value::unspan);
+            }
+            let Some(Value::Var(var)) = a else {
+                return;
+            };
+            let tp = match vars.tp(*var).base() {
+                Type::Reference(r, _) | Type::Enum(r, true, _) => data.def(*r).known_type(),
+                Type::Vector(elm, _) => data.owned_vector_type(elm, def.source()),
+                other => {
+                    let sc = scratch.get_or_insert_with(|| {
+                        let mut s = program.clone();
+                        s.max = 0;
+                        s
+                    });
+                    keyed_local_type_in(data, sc, program.types.len(), other).unwrap_or(u16::MAX)
+                }
+            };
+            if tp != u16::MAX && !tps.contains(&tp) {
+                tps.push(tp);
+            }
+        });
+    }
+    tps.into_iter()
+        .map(|tp| sidecar_shape(program, tp))
+        .collect()
+}
+
+/// One root type's sidecar row: the layout identity the C backend writes for it, and each paged
+/// load's plan (`paged_plan`).
+fn sidecar_shape(program: &Stores, tp: u16) -> RunSidecarShape {
+    let marker = format!("slot={}\n", u16::MAX);
+    let id = crate::schema_sidecar::LayoutIdentity::of_store(program, u16::MAX, tp);
+    let text = id.to_sidecar();
+    let (before, after) = text.split_once(&marker).unwrap_or((&text, ""));
+    // `paged_plan`: the store's collection — a key load wants a hash or a trie, a box
+    // load a spatial index, each of copyable entries.
+    use crate::database::Parts;
+    let pcoll = program.collection_type_of_store(tp);
+    let parts = program.types.get(pcoll as usize).map(|t| &t.parts);
+    let content = match parts {
+        Some(Parts::Hash(c, _) | Parts::Trie(c, _) | Parts::Radix(c, _)) => Some(*c),
+        _ => None,
+    };
+    let refusal = |served: bool, want: &str| match content {
+        Some(c) if served && !program.is_copyable_entry(c) => program.not_copyable_reason(c),
+        Some(_) if served => String::new(),
+        _ => program.wrong_collection_reason(tp, want),
+    };
+    let prefusal = refusal(
+        matches!(parts, Some(Parts::Hash(..) | Parts::Trie(..))),
+        "a hash or a trie",
+    );
+    let pboxrefusal = refusal(matches!(parts, Some(Parts::Radix(..))), "a spatial index");
+    // A range load reads the root type itself as the sorted collection.
+    let rparts = program.types.get(tp as usize).map(|t| &t.parts);
+    let rcontent = match rparts {
+        Some(Parts::Sorted(c, _) | Parts::Ordered(c, _)) => Some(*c),
+        _ => None,
+    };
+    let prangerefusal = match rcontent {
+        Some(c) if !program.is_copyable_entry(c) => program.not_copyable_reason(c),
+        Some(_) => String::new(),
+        None => program.wrong_collection_reason(tp, "a sorted collection"),
+    };
+    let prangecontent = rcontent.map_or(-1, i64::from);
+    let pcontent = content.map_or(-1, i64::from);
+    let pkind = match parts {
+        Some(Parts::Trie(..)) => 1,
+        Some(Parts::Radix(..)) => 2,
+        _ => 0,
+    };
+    RunSidecarShape {
+        tp,
+        hash: id.layout_hash,
+        pcoll,
+        pcontent,
+        pkind,
+        prefusal,
+        pboxrefusal,
+        prangecontent,
+        prangerefusal,
+        walks: crate::schema_sidecar::holds_stored_refs_in(program, tp)
+            || crate::schema_sidecar::holds_trie_in(program, tp),
+        refs: crate::schema_sidecar::holds_stored_refs_in(program, tp),
+        rekey: crate::schema_sidecar::needs_rekey_in(program, tp),
+        before: before.to_string(),
+        after: after.to_string(),
+        dump: id.dump.clone(),
+    }
+}
+
+/// A generator's frame facts for the run image (`RunGen`), from `gen_facts` — the same
+/// reads the interpreter's coroutine operators make.
+pub struct RunGenShape {
+    pub def: u32,
+    pub zone2: u32,
+    pub text_args: Vec<u32>,
+    pub ref_args: Vec<u32>,
+    pub text_locals: Vec<u32>,
+    pub owned_locals: Vec<u32>,
+    pub tuple_refs: Vec<u32>,
+}
+
+/// Every generator of the program: a function with a body whose result is an iterator.
+#[must_use]
+pub fn run_image_gens(data: &Data) -> Vec<RunGenShape> {
+    use crate::gen_facts as gf;
+    let mut out = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !matches!(def.def_type(), DefType::Function)
+            || matches!(def.code, Value::Null)
+            || !matches!(def.returned().base(), Type::Iterator(..))
+        {
+            continue;
+        }
+        out.push(RunGenShape {
+            def: d,
+            zone2: u32::try_from(gf::zone2_size(def)).unwrap_or(0),
+            text_args: gf::text_arg_offsets(def),
+            ref_args: gf::ref_arg_offsets(def),
+            text_locals: gf::text_local_slots(def)
+                .into_iter()
+                .map(u32::from)
+                .collect(),
+            owned_locals: gf::owned_store_local_slots(def)
+                .into_iter()
+                .map(u32::from)
+                .collect(),
+            tuple_refs: gf::yield_tuple(def).map_or_else(Vec::new, |e| gf::tuple_ref_offsets(&e)),
+        });
+    }
+    out
+}
+
+/// Every function's call-through-a-reference shape that is not a plain call.
+#[must_use]
+pub fn run_image_fnrefs(data: &Data, program: &Stores) -> Vec<RunFnRefShape> {
+    let buf_span = crate::variables::aligned_stack_step(size_of::<DbRef>() as u32);
+    let mut widest: crate::fxhash::FxHashMap<usize, usize> = crate::fxhash::FxHashMap::default();
+    let mut out = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !matches!(def.def_type(), DefType::Function) {
+            continue;
+        }
+        let params = def.fnref_visible_params();
+        let pushed = if matches!(def.returned().base(), Type::Text(_)) {
+            *widest
+                .entry(params)
+                .or_insert_with(|| data.fnref_text_buffers(params, def.returned()))
+        } else {
+            0
+        };
+        let extra = pushed.saturating_sub(def.text_work_buffers());
+        let drop = u32::try_from(extra).unwrap_or(0) * buf_span;
+        let mut hidden = Vec::new();
+        for a in def.attributes() {
+            if !a.hidden {
+                continue;
+            }
+            match a.typedef.base() {
+                Type::Reference(_, _) | Type::Enum(_, true, _) => hidden.push(-1),
+                Type::Vector(elm, _) => {
+                    let tp = program.name(&format!("main_vector<{}>", elm.name(data)));
+                    hidden.push(if tp == u16::MAX { -1 } else { i64::from(tp) });
+                }
+                _ => {}
+            }
+        }
+        let kind = if matches!(def.code, Value::Null) {
+            1
+        } else if matches!(def.returned().base(), Type::Iterator(..)) {
+            2
+        } else {
+            0
+        };
+        // `drop_fn_ref`: the closure record's drop cascade, a generated function.
+        let record = def.closure_record();
+        let cascade = if record == u32::MAX {
+            -1
+        } else {
+            match data.drop_cascade_nr(record) {
+                u32::MAX => -1,
+                c => i64::from(c),
+            }
+        };
+        if drop == 0 && hidden.is_empty() && kind == 0 && cascade < 0 {
+            continue;
+        }
+        out.push(RunFnRefShape {
+            def: d,
+            drop,
+            kind,
+            cascade,
+            hidden,
+        });
+    }
+    out
 }
 
 /// Each definition's first byte in the code stream, and one more entry for the stream's end, so
@@ -1063,6 +1794,19 @@ pub fn save_run_image(
             root,
             code,
             &starts,
+            &run_image_ops(data),
+            &run_image_consts(program),
+            &run_image_fnrefs(data, program),
+            &run_image_gens(data),
+            &run_image_shared(data, library_names),
+            &run_image_store_insts(data),
+            &run_image_workers(data, program),
+            &run_image_sidecars(data, program),
+            (
+                &program.release().oldest,
+                &program.release().bridge,
+                &crate::file_access::given(&program.source_dir),
+            ),
             library_names,
             &program.types,
             main,
@@ -1248,6 +1992,28 @@ fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {
             );
         }
     }
+}
+
+/// the C backend\'s `keyed_local_type`: the collection type a keyed local's store is minted as, looked up in
+/// `scratch` (a clone of the program's stores, where the lookup may number a type), or `None`
+/// for one past the program's own `limit` types — for a reader without the C backend's context too (the run
+/// image's sidecars, @PLN91).
+pub(crate) fn keyed_local_type_in(
+    data: &crate::data::Data,
+    scratch: &mut crate::database::Stores,
+    limit: usize,
+    tp: &crate::data::Type,
+) -> Option<u16> {
+    let known = |td: u32| data.def(td).known_type();
+    let nr = match tp.base() {
+        crate::data::Type::Sorted(td, key, _) => scratch.sorted(known(*td), key),
+        crate::data::Type::Hash(td, key, _) => scratch.hash(known(*td), key),
+        crate::data::Type::Index(td, key, _) => scratch.index(known(*td), key),
+        crate::data::Type::Radix(td, key, _) => scratch.spatial(known(*td), key),
+        crate::data::Type::Trie(td, key, _) => scratch.trie(known(*td), key),
+        _ => return None,
+    };
+    (usize::from(nr) < limit).then_some(nr)
 }
 
 #[cfg(test)]

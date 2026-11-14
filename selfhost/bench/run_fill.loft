@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — times one function of a program through the generated operator table: `run_fill
+// <program image> <run image> <function> <integer argument>…`, both images emitted from the
+// same program (`loft --emit-image`, `--emit-run-image`).  Prints the answer and the
+// microseconds of the call, as a kernel's own `main` prints them.
+
+use ir;
+use load;
+use state;
+use fill_run;
+
+fn main() {
+  a = arguments();
+  if len(a) < 3 {
+    eprintln("usage: run_fill <program image> <run image> <function> <integer argument>…");
+    exit(2);
+  }
+  b = load::load(a[0]);
+  img = load::load_run(a[1]);
+  if b == null || img == null {
+    eprintln("no image");
+    exit(2);
+  }
+  d = fill_run::def_named(b!, a[2]);
+  if d < 0 {
+    eprintln("no function {a[2]}");
+    exit(2);
+  }
+  args: vector<integer> = [];
+  for k in 3..len(a) {
+    args += [(a[k] ?? "") as integer? ?? 0];
+  }
+  s = state::new_state(img!, 1 << 16);
+  t0 = ticks();
+  r = fill_run::call(img!, d, args, s);
+  t1 = ticks();
+  if r == null {
+    eprintln("stopped: {s.fault}");
+    exit(1);
+  }
+  println("{r} {t1 - t0}");
+}

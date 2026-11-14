@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a walk over a hash and one over a sorted collection: every record visited
+// once, the sorted one in key order.
+
+struct R { id: integer, n: integer }
+
+// The hash's values summed (10 + 20 + 12 = 42), then the sorted one's keys in order as
+// digits (1, 2, 3 → 123): 42 * 1000 + 123.
+fn walked(k: integer) -> integer {
+  h: hash<R[id]> = [R { id: 3, n: 12 }, R { id: 1, n: 10 }, R { id: 2, n: 20 }];
+  sum = 0;
+  for r in h {
+    sum += r.n;
+  }
+  o: sorted<R[id]> = [R { id: 3, n: 12 }, R { id: 1, n: 10 }, R { id: 2, n: 20 }];
+  order = 0;
+  for r in o {
+    order = order * 10 + r.id;
+  }
+  sum * 1000 + order + k - k
+}
+
+fn main() {
+  println("{walked(0)}");
+}

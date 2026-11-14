@@ -961,7 +961,7 @@ fn emit(l: Lowering, code: Code, kind: Kind, a: integer, b: integer) {
 
 // The natives the interpreter carries, by the index a `Native` op names: each runs as loft's
 // own function of that name (`run.loft`), so its behaviour is the stdlib's.
-fn native_index(name: text) -> integer? {
+pub fn native_index(name: text) -> integer? {
   match name {
     "n_assert" => 0,
     "n_env_variable" => 1,
@@ -1376,7 +1376,7 @@ fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
   p = t.parts[0];
   // A struct enum's parent (`PtEnum`) is minted at its largest variant (`enum_parent_size`);
   // its variant is written into the record after.
-  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) && !(p is PtEnum) && keyed_kind(b, tp) == null {
+  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) && !(p is PtEnum) && types::keyed_kind(b.types, tp) == null {
     refuse(l, "a store of a type the interpreter does not carry yet: {t.name}");
   }
 }
@@ -1437,99 +1437,6 @@ fn push_of(name: text) -> integer? {
     "OpPushBoolean" => 5,
     _ => null,
   }
-}
-
-// The element type of `tp` when it is a hash, else null.
-fn hash_element(b: ir::Bundle, tp: integer) -> integer? {
-  t = b.types[tp];
-  if t == null {
-    return null;
-  }
-  match t.parts[0]! {
-    PtHash { content, fields: _ } => content,
-    _ => null,
-  }
-}
-
-// The element type of `tp` when it is a plain vector, else null.
-// An array's element type (a vector of linked records), or null.
-fn array_element(b: ir::Bundle, tp: integer) -> integer? {
-  t = b.types[tp];
-  if t == null {
-    return null;
-  }
-  match t.parts[0]! {
-    PtArray { content } => content,
-    _ => null,
-  }
-}
-
-fn vector_element(b: ir::Bundle, tp: integer) -> integer? {
-  t = b.types[tp];
-  if t == null {
-    return null;
-  }
-  match t.parts[0]! {
-    PtVector { content } => content,
-    _ => null,
-  }
-}
-
-// S4's keyed collections, by the kind the shim's keyed routines take: 1 a sorted, 2 an ordered (a
-// sorted of linked records), 3 an index, 4 a spatial index, 5 a trie; null for any other type.
-fn keyed_kind(b: ir::Bundle, tp: integer) -> integer? {
-  t = b.types[tp];
-  if t == null {
-    return null;
-  }
-  match t.parts[0]! {
-    PtSorted { content: _, keys: _ } => 1,
-    PtOrdered { content: _, keys: _ } => 2,
-    PtIndex { content: _, keys: _ } => 3,
-    PtRadix { content: _, fields: _ } => 4,
-    PtTrie { content: _, key: _ } => 5,
-    _ => null,
-  }
-}
-
-// The element type of a keyed collection of S4's, or null.
-fn keyed_element(b: ir::Bundle, tp: integer) -> integer? {
-  t = b.types[tp];
-  if t == null {
-    return null;
-  }
-  match t.parts[0]! {
-    PtSorted { content, keys: _ } => content,
-    PtOrdered { content, keys: _ } => content,
-    PtIndex { content, keys: _ } => content,
-    PtRadix { content, fields: _ } => content,
-    PtTrie { content, key: _ } => content,
-    _ => null,
-  }
-}
-
-// The collection a record is added to (`record_collection`): the parent itself (field 65535), or
-// the parent struct's field `fld`, read at its position (`at`, `loft_field`) when it has no
-// linked siblings — `at` null where it has, which no caller carries.
-struct RecordColl {
-  tp: integer,
-  fld: integer,
-  at: integer?
-}
-
-fn record_collection(b: ir::Bundle, ptp: integer, fld: integer) -> RecordColl {
-  if fld != 65535 {
-    match b.types[ptp]!.parts[0]! {
-      PtStruct { fields } => {
-        f = fields[fld]!;
-        if len(f.other_indexes) == 0 {
-          return RecordColl { tp: f.content, fld: fld, at: f.position };
-        }
-      }
-      _ => {}
-    }
-  }
-  RecordColl { tp: ptp, fld: fld, at: null }
 }
 
 // The key parts `args[from..]` of a lookup or a keyed write, each pushed onto the key stack as
@@ -1668,7 +1575,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     raw = literal(l, args[2]!);
     tp = raw & 16383;
     flags = (if raw & 32768 != 0 { 1 } else { 0 })
-      + (if types::holds_no_stored_refs(b, tp) { 2 } else { 0 })
+      + (if types::holds_no_stored_refs(b.types, tp) { 2 } else { 0 })
       + (if raw & 16384 != 0 { 4 } else { 0 });
     emit(l, CopyRecord, KRef, tp, flags);
   } else if name == "OpLengthVector" {
@@ -1677,7 +1584,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpEqContent" || name == "OpNeContent" {
     // Two values equal by content (`eq.loft`, `Stores::eq_content`): `a` the type, `b` 1 for `!=`.
     tp = literal(l, args[2]!);
-    if eq::holds_unwalked(b, tp, []) {
+    if eq::holds_unwalked(b.types, tp, []) {
       refuse(l, "an equality of a type holding a collection the interpreter does not walk yet: {b.types[tp]?.name ?? "?"}");
       return true;
     }
@@ -1809,7 +1716,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     value(l, b, args[0]!, KRef);
     value(l, b, args[2]!, KInt);
-    mode = if et!.linked { 2 } else if types::owns_heap(b, tp) { 1 } else { 0 };
+    mode = if et!.linked { 2 } else if types::owns_heap(b.types, tp) { 1 } else { 0 };
     emit(l, VecRemove, KInt, tp, mode);
   } else if name == "OpVectorIsNull" {
     value(l, b, args[0]!, KRef);
@@ -1846,13 +1753,13 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       NdVar { n: host } => {
         kt = root_type(b, fvar(b, l.def_nr, host).type_def[0] ?? ir::TypeT.TyVoid);
         if kt != null {
-          elem = types::root_vector_element(b, kt!);
+          elem = types::root_vector_element(b.types, kt!);
           foreign = elem != null && elem != tp;
         }
       }
       _ => {}
     }
-    emit(l, PlaceRecord, KRef, tp, types::enum_parent_size(b, tp) * 2 + (if foreign { 1 } else { 0 }));
+    emit(l, PlaceRecord, KRef, tp, types::enum_parent_size(b.types, tp) * 2 + (if foreign { 1 } else { 0 }));
   } else if name == "OpMoveVector" || name == "OpReplaceVector" || name == "OpMoveField" || name == "OpMoveRecord" {
     // The two references in the operator's order, the element or record type last.
     value(l, b, args[0]!, KRef);
@@ -1873,7 +1780,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // A plain enum's name (`Stores::enum_val`): the names are the function's text constants.
     value(l, b, args[0]!, KInt);
     tp = literal(l, args[1]!);
-    names = types::enum_names(b, tp);
+    names = types::enum_names(b.types, tp);
     if names == null {
       refuse(l, "an enum name of a type that is no plain enum");
     } else {
@@ -1896,7 +1803,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     raw = literal(l, args[1]!);
     tp = raw & 32767;
     view = raw & 32768 != 0;
-    if view && !types::is_keyed(b, tp) {
+    if view && !types::is_keyed(b.types, tp) {
       refuse(l, "a keyed view clear of a type that is not a keyed collection");
     } else {
       emit(l, ClearKeyed, KRef, tp, if view { 1 } else { 0 });
@@ -1908,17 +1815,17 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[1]!, KRef);
     raw = literal(l, args[2]!);
     tp = raw & 32767;
-    if !types::is_keyed(b, tp) {
+    if !types::is_keyed(b.types, tp) {
       refuse(l, "a keyed replace of a type that is not a keyed collection");
     } else {
-      flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(b, tp) { 2 } else { 0 });
+      flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(b.types, tp) { 2 } else { 0 });
       emit(l, ReplaceKeyed, KRef, tp, flags);
     }
   } else if name == "OpAppendCopy" {
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KInt);
     tp = literal(l, args[2]!);
-    ctp = types::content_of(b, tp);
+    ctp = types::content_of(b.types, tp);
     if ctp == null || (b.types[ctp!]?.linked ?? false) {
       // A repeat of a linked element is refused as the C backend refuses it.
       refuse(l, "a repeat of an element type the interpreter does not carry");
@@ -1952,14 +1859,14 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // A record added to a plain vector: appended (and filled with its type's defaults), then
     // counted.  A keyed collection's record is the hash slice's.
     last = len(args) - 1;
-    rc = record_collection(b, literal(l, args[last - 1]!), literal(l, args[last]!));
+    rc = types::record_collection(b.types, literal(l, args[last - 1]!), literal(l, args[last]!));
     vtp = rc.tp;
     at = rc.at;
     fld = rc.fld;
-    elem = vector_element(b, vtp);
-    helem = hash_element(b, vtp);
-    aelem = array_element(b, vtp);
-    kelem = keyed_element(b, vtp);
+    elem = types::vector_element(b.types, vtp);
+    helem = types::hash_element(b.types, vtp);
+    aelem = types::array_element(b.types, vtp);
+    kelem = types::keyed_element(b.types, vtp);
     if (fld != 65535 && at == null) || (elem == null && helem == null && aelem == null && kelem == null) {
       refuse(l, "a record added to a collection that is not a plain vector or a hash: {b.types[vtp]!.name}");
       return true;
@@ -1983,7 +1890,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       // `keyed_new` / `keyed_finish` (S4): a sorted stages its element past its end, an ordered
       // or an index gives it a record of its own, each filled with the element's defaults; the
       // finish files it under its key, an equal key's element replaced (`@FR-Col-Insert`).
-      kind = keyed_kind(b, vtp) ?? 0;
+      kind = types::keyed_kind(b.types, vtp) ?? 0;
       if name == "OpNewRecord" {
         emit(l, KeyedNew, KRef, kelem!, kind);
       } else {
@@ -2015,8 +1922,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // `OpGetRecord(data, tp, n, value…)` on a hash: the collection, then each key part as its
     // key's type converts it (`key_value`, `src/c/body/keyed.rs`), then the find.
     tp = literal(l, args[1]!);
-    kind = keyed_kind(b, tp) ?? 0;
-    if hash_element(b, tp) == null && kind == 0 {
+    kind = types::keyed_kind(b.types, tp) ?? 0;
+    if types::hash_element(b.types, tp) == null && kind == 0 {
       refuse(l, "a lookup in a keyed collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
       return true;
     }
@@ -2037,8 +1944,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // `@FR-R-KeyedEntry` (`opt::keyed_entry`): `keyed_entry_*(data, parent_tp, fld, key…)`, the
     // entry under the key in the hash `record_collection` names, found or filed with its key
     // written — the collection, the key parts the hash's key reads, then the op.
-    rc = record_collection(b, literal(l, args[1]!), literal(l, args[2]!));
-    if (rc.fld != 65535 && rc.at == null) || hash_element(b, rc.tp) == null {
+    rc = types::record_collection(b.types, literal(l, args[1]!), literal(l, args[2]!));
+    if (rc.fld != 65535 && rc.at == null) || types::hash_element(b.types, rc.tp) == null {
       refuse(l, "a keyed entry in a collection that is not a hash: {b.types[rc.tp]!.name}");
       return true;
     }
@@ -2055,8 +1962,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // (`CLEAR_KEYED_VIEW`) marks a linked group's view member, which only unlinks.
     raw = literal(l, args[2]!);
     tp = raw & 32767;
-    elem = hash_element(b, tp);
-    kelem = keyed_element(b, tp);
+    elem = types::hash_element(b.types, tp);
+    kelem = types::keyed_element(b.types, tp);
     if elem == null && kelem == null {
       refuse(l, "a removal from a keyed collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
       return true;
@@ -2066,7 +1973,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     if kelem != null {
       // `keyed_remove`'s other arms: what the element owns is released, a view member only
       // unlinks.
-      emit(l, KeyedRemove, KRef, raw, (keyed_kind(b, tp) ?? 0) + 8 * kelem!);
+      emit(l, KeyedRemove, KRef, raw, (types::keyed_kind(b.types, tp) ?? 0) + 8 * kelem!);
     } else {
       emit(l, HashRemove, KRef, tp, if raw & 32768 != 0 { 1 } else { 0 });
     }
@@ -2075,8 +1982,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // value, each key part, then the write; the type's top bit releases the value after.
     raw = literal(l, args[2]!);
     tp = raw & 32767;
-    kind = keyed_kind(b, tp) ?? 0;
-    if hash_element(b, tp) == null && kind == 0 {
+    kind = types::keyed_kind(b.types, tp) ?? 0;
+    if types::hash_element(b.types, tp) == null && kind == 0 {
       refuse(l, "a keyed write into a collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
       return true;
     }
@@ -2139,7 +2046,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     tp = literal(l, args[2]!);
     fmt = literal(l, args[3]!);
-    why = show::refusal(b, tp, []);
+    why = show::refusal(b.types, tp, []);
     if why != "" {
       refuse(l, why);
       return true;
@@ -2453,11 +2360,11 @@ pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
     // S4: `Stores::sorted` / `Stores::index` name theirs `sorted<{content}[{key},-{key}…]>` and
     // `index<…>`, a descending key marked `-`; a sorted of linked records is laid out as an
     // `ordered<…>` of the same tail.
-    TySorted { n, keys, dep: _ } => types::named(b, "sorted<" + key_tail(b, n, keys)) ?? types::named(b, "ordered<" + key_tail(b, n, keys)),
-    TyIndex { n, keys, dep: _ } => types::named(b, "index<" + key_tail(b, n, keys)),
+    TySorted { n, keys, dep: _ } => types::named(b.types, "sorted<" + key_tail(b, n, keys)) ?? types::named(b.types, "ordered<" + key_tail(b, n, keys)),
+    TyIndex { n, keys, dep: _ } => types::named(b.types, "index<" + key_tail(b, n, keys)),
     // `Stores::spatial` and `Stores::trie`: `spatial<{content}[{field},…]>`, `trie<{content}[{field}]>`.
-    TyRadix { n, names, dep: _ } => types::named(b, "spatial<{b.types[b.data.definitions[n]!.known_type]!.name}[{names_joined(names)}]>"),
-    TyTrie { n, key, dep: _ } => types::named(b, "trie<{b.types[b.data.definitions[n]!.known_type]!.name}[{key}]>"),
+    TyRadix { n, names, dep: _ } => types::named(b.types, "spatial<{b.types[b.data.definitions[n]!.known_type]!.name}[{names_joined(names)}]>"),
+    TyTrie { n, key, dep: _ } => types::named(b.types, "trie<{b.types[b.data.definitions[n]!.known_type]!.name}[{key}]>"),
     _ => null,
   }
 }
@@ -3161,7 +3068,7 @@ fn init_ref(l: Lowering, slot: integer) {
 fn copy_operand(b: ir::Bundle, raw: integer) -> integer {
   tp = raw & 16383;
   tp + 65536 * ((if raw & 32768 != 0 { 1 } else { 0 })
-    + (if types::holds_no_stored_refs(b, tp) { 2 } else { 0 })
+    + (if types::holds_no_stored_refs(b.types, tp) { 2 } else { 0 })
     + (if raw & 16384 != 0 { 4 } else { 0 }))
 }
 

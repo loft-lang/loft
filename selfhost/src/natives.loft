@@ -1,0 +1,1272 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — what the bytecode runner (`fill_run.loft`, `state.loft`) calls that is no operator:
+// the standard library's natives as `OpStaticCall` reaches them (`call_native`, each popping
+// its arguments from the stack store and pushing its answer, through the C runtime's
+// routines), the `par` scheduler (`par_start` / `par_return` / `par_buf`: a queue's or a
+// fold's workers run one after another), and the readers of a collection's key parts, a
+// walk's bounds and a narrow local, which both the natives and the `State` use.
+use ir;
+use crt;
+use types;
+use files;
+use show;
+use eq;
+use ptypes;
+
+// The null reference's store (`DbRef::NULL`).
+NULL_STORE = 65535;
+
+// The runner's natives, by the number `native_handler` gives each name: each pops its
+// arguments off the stack and pushes its result as its Rust body does (`src/native.rs`).
+N_ASSERT = 1;
+N_ENV_VARIABLE_DEST = 2;
+N_NOW = 3;
+N_TICKS = 4;
+N_PROTECT = 5;
+N_UNPROTECT = 6;
+N_STARTS_WITH = 7;
+N_ENDS_WITH = 8;
+N_WRITE_BYTES = 9;
+N_VECTOR_SUM_INT = 10;
+N_OS_TEMP_DIR_DEST = 11;
+N_KEYED_ENTRY_INTS = 12;
+N_KEYED_ENTRY_TEXT = 13;
+N_READ_BYTES = 14;
+N_ARGUMENTS = 15;
+N_STORE_MEMORY_DEST = 16;
+N_TEXT_FROM_BYTE_RANGE_DEST = 17;
+N_TEXT_FROM_BYTES_DEST = 18;
+N_HASH_SORTED = 19;
+N_HASH_UNSORTED = 20;
+N_TEXT_FIND = 21;
+N_TEXT_TRIM = 22;
+N_TEXT_TRIM_START = 23;
+N_TEXT_TRIM_END = 24;
+N_TO_UPPERCASE_DEST = 25;
+N_TO_LOWERCASE_DEST = 26;
+N_WRITE_TEXT_RAW = 27;
+N_IS_DIR = 32;
+N_YIELD_FRAME = 33;
+N_IS_FILE = 34;
+N_LIST_DIR = 36;
+N_RADIX_SORTED = 37;
+N_SPATIAL_RANGE = 38;
+N_TRIE_PREFIX = 39;
+N_STORE_PERSIST_COPY = 40;
+N_STORE_LOAD = 41;
+N_STORE_LOAD_UNTRUSTED = 42;
+N_STORE_VERIFY = 43;
+N_UPGRADE_OWED_NEXT = 44;
+N_UPGRADE_OWED_FINISH = 45;
+N_UPGRADE_OWED_REF = 46;
+N_UPGRADE_ROUTINE = 47;
+N_LOG = 48;
+N_SOURCE_DIR_DEST = 49;
+N_LOAD_KEY = 50;
+N_JSON_PARSE = 51;
+N_JSON_ERRORS_DEST = 52;
+N_PARSE_ERRORS_OF = 53;
+// The JsonValue natives: one number each, from `N_JV` on, in `jv_which`'s order.
+N_JV = 60;
+N_TEXT_BYTE_AT = 28;
+N_TEXT_REPLACE_DEST = 29;
+N_TEXT_RFIND = 30;
+N_CHAR_PREDICATE = 31;
+
+pub fn native_handler(name: text) -> integer {
+  match name {
+    "n_assert" => N_ASSERT,
+    "n_env_variable_dest" => N_ENV_VARIABLE_DEST,
+    "n_now" => N_NOW,
+    "n_ticks" => N_TICKS,
+    "n_protect_store_frees" => N_PROTECT,
+    "n_unprotect_store_frees" => N_UNPROTECT,
+    "t_4text_starts_with" => N_STARTS_WITH,
+    "t_4text_ends_with" => N_ENDS_WITH,
+    "n_write_bytes" => N_WRITE_BYTES,
+    "n_vector_sum_int" => N_VECTOR_SUM_INT,
+    "n_os_temp_dir_dest" => N_OS_TEMP_DIR_DEST,
+    "n_keyed_entry_ints" => N_KEYED_ENTRY_INTS,
+    "n_keyed_entry_text" => N_KEYED_ENTRY_TEXT,
+    "n_read_bytes" => N_READ_BYTES,
+    "n_arguments" => N_ARGUMENTS,
+    "n_store_memory_dest" => N_STORE_MEMORY_DEST,
+    "n_text_from_byte_range_dest" => N_TEXT_FROM_BYTE_RANGE_DEST,
+    "n_text_from_bytes_dest" => N_TEXT_FROM_BYTES_DEST,
+    "n_hash_sorted" => N_HASH_SORTED,
+    "n_hash_unsorted" => N_HASH_UNSORTED,
+    "t_4text_find" => N_TEXT_FIND,
+    "t_4text_trim" => N_TEXT_TRIM,
+    "t_4text_trim_start" => N_TEXT_TRIM_START,
+    "t_4text_trim_end" => N_TEXT_TRIM_END,
+    "t_4text_to_uppercase_dest" => N_TO_UPPERCASE_DEST,
+    "t_4text_to_lowercase_dest" => N_TO_LOWERCASE_DEST,
+    "n_write_text_raw" => N_WRITE_TEXT_RAW,
+    "n_is_dir" => N_IS_DIR,
+    "n_yield_frame" => N_YIELD_FRAME,
+    "n_is_file" => N_IS_FILE,
+    "n_list_dir" => N_LIST_DIR,
+    "n_radix_sorted" => N_RADIX_SORTED,
+    "n_spatial_range" => N_SPATIAL_RANGE,
+    "n_trie_prefix" => N_TRIE_PREFIX,
+    "n_store_persist_copy" => N_STORE_PERSIST_COPY,
+    "n_store_load" => N_STORE_LOAD,
+    "n_store_load_untrusted" => N_STORE_LOAD_UNTRUSTED,
+    "n_store_verify" => N_STORE_VERIFY,
+    "n_store_upgrade_owed_next" => N_UPGRADE_OWED_NEXT,
+    "n_store_upgrade_owed_finish" => N_UPGRADE_OWED_FINISH,
+    "n_store_upgrade_owed_record" => N_UPGRADE_OWED_REF,
+    "n_store_upgrade_owed_old" => N_UPGRADE_OWED_REF,
+    "n_store_upgrade_owed_from" => N_UPGRADE_OWED_REF,
+    "n_store_upgrade_routine" => N_UPGRADE_ROUTINE,
+    "n_log_info" => N_LOG,
+    "n_log_warn" => N_LOG,
+    "n_log_error" => N_LOG,
+    "n_log_fatal" => N_LOG,
+    "n_source_dir_dest" => N_SOURCE_DIR_DEST,
+    "n_store_load_key" => N_LOAD_KEY,
+    "n_json_parse" => N_JSON_PARSE,
+    "n_json_errors_dest" => N_JSON_ERRORS_DEST,
+    "n_parse_errors_of" => N_PARSE_ERRORS_OF,
+    "n_json_null" => N_JV,
+    "n_json_bool" => N_JV + 1,
+    "n_json_number" => N_JV + 2,
+    "n_json_string" => N_JV + 3,
+    "n_json_array" => N_JV + 4,
+    "n_json_object" => N_JV + 5,
+    "t_9JsonValue_fields" => N_JV + 6,
+    "t_9JsonValue_field" => N_JV + 7,
+    "t_9JsonValue_item" => N_JV + 8,
+    "t_9JsonValue_keys" => N_JV + 9,
+    "n_struct_from_jsonvalue" => N_JV + 10,
+    "t_9JsonValue_len" => N_JV + 20,
+    "t_9JsonValue_as_long" => N_JV + 21,
+    "t_9JsonValue_as_bool" => N_JV + 22,
+    "t_9JsonValue_has_field" => N_JV + 23,
+    "t_9JsonValue_as_number" => N_JV + 30,
+    "t_9JsonValue_as_text_dest" => N_JV + 40,
+    "t_9JsonValue_kind_dest" => N_JV + 41,
+    "t_9JsonValue_to_json_dest" => N_JV + 42,
+    "t_9JsonValue_to_json_pretty_dest" => N_JV + 43,
+    "n_store_load_key_text" => N_LOAD_KEY,
+    "n_store_load_keys" => N_LOAD_KEY,
+    "n_store_load_keys_text" => N_LOAD_KEY,
+    "n_store_load_prefix" => N_LOAD_KEY,
+    "n_store_load_box" => N_LOAD_KEY,
+    "n_store_load_range" => N_LOAD_KEY,
+    "t_4text_byte_at" => N_TEXT_BYTE_AT,
+    "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
+    "t_4text_rfind" => N_TEXT_RFIND,
+    "t_9character_is_lowercase" => N_CHAR_PREDICATE,
+    "t_9character_is_uppercase" => N_CHAR_PREDICATE,
+    "t_9character_is_numeric" => N_CHAR_PREDICATE,
+    "t_9character_is_alphanumeric" => N_CHAR_PREDICATE,
+    "t_9character_is_alphabetic" => N_CHAR_PREDICATE,
+    "t_9character_is_whitespace" => N_CHAR_PREDICATE,
+    "t_9character_is_control" => N_CHAR_PREDICATE,
+    _ => -1
+  }
+}
+
+fn get(stk: integer, at: integer) -> integer? {
+  crt::get_int(stk, 1, 8 + at, 0)
+}
+
+fn set(stk: integer, at: integer, v: integer?) {
+  crt::set_int(stk, 1, 8 + at, 0, v);
+}
+
+fn get_bool(stk: integer, at: integer) -> boolean {
+  crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0) == 1
+}
+
+fn set_bool(stk: integer, at: integer, v: boolean) {
+  crt::set_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0, if v { 1 } else { 0 });
+}
+
+// The stack's width for a value of `size` bytes (`aligned_stack_step`).
+fn step(size: integer) -> integer {
+  (size + 7) / 8 * 8
+}
+
+// ── the operators' arithmetic, as `ops::fused_int` and `ops::fused_cmp` ──
+
+// The program's types loaded into the C runtime's table, as `run.loft`'s `load_table` loads
+// them: what a vector wrapper's release walks.
+fn load_table(ts: vector<ir::DbType>) {
+  rows: vector<types::Row> = [];
+  for tp in 0..len(ts) {
+    if len(ts[tp]!.parts) > 0 {
+      rows += [types::row(ts, tp)];
+    }
+  }
+  n = crt::load_types(types::flat(rows), len(ts));
+  assert(n == len(rows), "the type table loads: {n} rows of {len(rows)}");
+}
+
+fn get_f(stk: integer, at: integer) -> float? {
+  crt::get_float(stk, 1, 8 + at, 0, false)
+}
+
+fn set_f(stk: integer, at: integer, v: float?) {
+  crt::set_float(stk, 1, 8 + at, 0, v, false);
+}
+
+// The type table loaded into the C runtime once a run (`tl[0]` says it is).
+fn ensure_table(ts: vector<ir::DbType>, tl: vector<boolean>) {
+  if !(tl[0] ?? false) {
+    load_table(ts);
+    tl[0] = true;
+  }
+}
+
+// The `n` key parts of collection type `tp` on the stack under `top` — the first key on top, as
+// `State::stack_keys` pops them — pushed onto the C runtime's key stack in key order, each read
+// as `stack_keys` reads it by its content (`types::key_contents`): an integer of any width, a single, a float, a
+// boolean's byte, a text, a character, any other (an enum) a byte.  Answers the bytes they take,
+// -1 with nothing pushed when a part's type does not resolve.
+pub fn push_keys(ts: vector<ir::DbType>, stk: integer, tp: integer, n: integer, top: integer) -> integer {
+  kc = types::key_contents(ts, tp);
+  if kc == null || n > len(kc) {
+    return -1;
+  }
+  at = top;
+  for i in 0..n {
+    code = kc[i] ?? 0;
+    at -= if code == 5 { 16 } else { 8 };
+    if code == 2 || code == 3 {
+      crt::key_float(crt::get_float(stk, 1, 8 + at, 0, code == 2), code == 2);
+    } else if code == 5 {
+      crt::key_text(crt::stack_str(stk, at));
+    } else if code == 4 {
+      crt::key_int(crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0));
+    } else if code == 6 {
+      crt::key_int(crt::get_w(crt::W_CHARACTER, stk, 1, 8 + at, 0, 0));
+    } else if code >= 7 && !narrow_integer(ts, code) {
+      crt::key_int(crt::get_w(crt::W_ENUM, stk, 1, 8 + at, 0, 0));
+    } else {
+      crt::key_int(get(stk, at));
+    }
+  }
+  top - at
+}
+
+// Is type `tp` one of the narrow integer encodings (`Parts::Int`/`IntRaw`/`Short`/`ShortRaw`/
+// `Byte`), which a key part carries as a whole integer?
+fn narrow_integer(ts: vector<ir::DbType>, tp: integer) -> boolean {
+  match ts[tp]?.parts[0] {
+    PtInt { start, nullable } => true,
+    PtIntRaw { start, nullable } => true,
+    PtShort { start, nullable } => true,
+    PtShortRaw { start, nullable } => true,
+    PtByte { start, nullable } => true,
+    _ => false,
+  }
+}
+
+// The `n` parts of one walk bound under `top`, key 0 on top as `State::stack_key` pops them,
+// pushed onto the C runtime's key stack in key order; each part read at the width its walk key's
+// type number gives (`kt`: 3 a single, 4 a float, 5 a boolean, 6 a text, 7 a byte, any other an
+// integer).  Answers the bytes they take.
+pub fn push_walk_bound(stk: integer, kt: vector<integer>, n: integer, top: integer) -> integer {
+  at = top;
+  for i in 0..n {
+    t = kt[i] ?? 1;
+    at -= if t == 6 { 16 } else { 8 };
+    if t == 3 || t == 4 {
+      crt::key_float(crt::get_float(stk, 1, 8 + at, 0, t == 3), t == 3);
+    } else if t == 6 {
+      crt::key_text(crt::stack_str(stk, at));
+    } else if t == 5 {
+      crt::key_int(crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0));
+    } else if t == 7 {
+      crt::key_int(crt::get_w(crt::W_ENUM, stk, 1, 8 + at, 0, 0));
+    } else {
+      crt::key_int(get(stk, at));
+    }
+  }
+  top - at
+}
+
+// The bytes a walk bound of `n` parts takes on the stack.
+pub fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
+  b = 0;
+  for i in 0..n {
+    b += if (kt[i] ?? 1) == 6 { 16 } else { 8 };
+  }
+  b
+}
+
+// A native `OpStaticCall` names, by the runner's number for it (`native_handler`): its
+// arguments popped and its result pushed on the stack store `stk` at `sp0`, as Rust's native
+// does.  Answers the new stack top, or -1 with the reason in `why[0]` when the runner does not
+// carry it.
+pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
+  sp = sp0;
+  if nh == N_ASSERT {
+    line = get(stk, sp - 8);
+    file = crt::stack_str(stk, sp - 24);
+    message = crt::stack_str(stk, sp - 40);
+    test = get_bool(stk, sp - 48);
+    sp -= 48;
+    assert(test, message ?? "", file ?? "", line ?? 0);
+  } else if nh == N_ENV_VARIABLE_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    vname = crt::stack_str(stk, sp - 32);
+    sp -= 32;
+    // An unset variable is Rust's null text appended (`Stores::os_variable`), not an empty one.
+    ev = env_variable(vname ?? "");
+    if ev == null {
+      crt::ref_text_append_null(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else {
+      crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ev);
+    }
+  } else if nh == N_NOW || nh == N_TICKS {
+    set(stk, sp, if nh == N_NOW { now() } else { ticks() });
+    sp += 8;
+  } else if nh == N_PROTECT || nh == N_UNPROTECT {
+    sp -= 16;
+    crt::slot_ref(io, stk, sp);
+    crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
+  } else if nh == N_CHAR_PREDICATE {
+    // A character's class, by loft's own predicates (these natives, compiled).
+    cpn = img.natives[idx] ?? "";
+    cpc = (crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0) ?? 0) as character;
+    sp -= 8;
+    set_bool(stk, sp, if cpn.ends_with("is_lowercase") { cpc.is_lowercase() } else if cpn.ends_with("is_uppercase") { cpc.is_uppercase() } else if cpn.ends_with("is_numeric") { cpc.is_numeric() } else if cpn.ends_with("is_alphanumeric") { cpc.is_alphanumeric() } else if cpn.ends_with("is_alphabetic") { cpc.is_alphabetic() } else if cpn.ends_with("is_whitespace") { cpc.is_whitespace() } else { cpc.is_control() });
+    sp += 8;
+  } else if nh == N_IS_DIR || nh == N_IS_FILE {
+    idp = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    set_bool(stk, sp, if nh == N_IS_DIR { is_dir(idp) } else { is_file(idp) });
+    sp += 8;
+  } else if nh == N_LIST_DIR {
+    // The directory's entries, a vector in a store of its own (the C runtime's `list_dir`).
+    ldp = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    crt::list_dir(io, ldp);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_RADIX_SORTED || nh == N_SPATIAL_RANGE || nh == N_TRIE_PREFIX {
+    // A spatial or trie walk's snapshot (all of it, a spatial range, a trie prefix), as a
+    // scratch vector — `radix_snap` as today's runner reaches it.
+    ensure_table(img.types, tl);
+    rsints: vector<integer> = [];
+    rspre: text? = null;
+    rswhich = 0;
+    if nh == N_SPATIAL_RANGE {
+      rswhich = 1;
+      for ri in 0..8 {
+        rsints += [get(stk, sp - 64 + 8 * ri) ?? 0];
+      }
+      sp -= 64;
+    } else if nh == N_TRIE_PREFIX {
+      rswhich = 2;
+      rsints = [get(stk, sp - 8) ?? 0];
+      rspre = crt::stack_str(stk, sp - 24);
+      sp -= 24;
+    }
+    rstp = get(stk, sp - 8) ?? 0;
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    crt::radix_snap(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rswhich, rstp, rsints, rspre);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_UPGRADE_OWED_NEXT {
+    // No conversion is owed: the runner loads only an image of its own layout (it carries no
+    // converter), as the C runtime built without one answers.
+    set(stk, sp, -1);
+    sp += 8;
+  } else if nh == N_UPGRADE_OWED_FINISH {
+    set_bool(stk, sp, true);
+    sp += 8;
+  } else if nh == N_UPGRADE_OWED_REF {
+    crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
+    sp += 16;
+  } else if nh == N_UPGRADE_ROUTINE {
+    // A routine registered for a conversion the runner never makes.
+    sp -= 24;
+  } else if nh == N_LOG {
+    // The message, the file and the line popped; logged as a compiled program logs it.
+    lgn = img.natives[idx] ?? "";
+    lgl = get(stk, sp - 8) ?? 0;
+    lgf = crt::stack_str(stk, sp - 24) ?? "";
+    lgm = crt::stack_str(stk, sp - 40) ?? "";
+    sp -= 40;
+    crt::log(if lgn == "n_log_info" { 0 } else if lgn == "n_log_warn" { 1 } else if lgn == "n_log_error" { 2 } else { 3 }, lgm, lgf, lgl);
+  } else if nh == N_SOURCE_DIR_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    // The program's own directory, which the image carries (the runner's anchor is its own).
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, img.source);
+  } else if nh == N_STORE_VERIFY {
+    ensure_table(img.types, tl);
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set_bool(stk, sp, crt::store_verify(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    sp += 8;
+  } else if nh == N_LOAD_KEY {
+    // A paged load of one key (`paged_load`): the key, the path and the collection's place
+    // popped; its root type's sidecar and plan from the image.
+    ensure_table(img.types, tl);
+    lkname = img.natives[idx] ?? "";
+    lktext = lkname == "n_store_load_key_text";
+    lkint = 0;
+    lkt = "";
+    lkls = NULL_STORE;
+    lklr = 0;
+    lklp = 0;
+    lkts = NULL_STORE;
+    lktr = 0;
+    lktp = 0;
+    lkhi = 0;
+    if lkname == "n_store_load_range" {
+      lkhi = get(stk, sp - 8) ?? 0;
+      lkint = get(stk, sp - 16) ?? 0;
+      sp -= 16;
+    } else if lkname == "n_store_load_box" {
+      // The limit, the till and from corners.
+      lkint = get(stk, sp - 8) ?? -1;
+      crt::slot_ref(io, stk, sp - 24);
+      lkts = io[0] ?? NULL_STORE;
+      lktr = io[1] ?? 0;
+      lktp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 40);
+      lkls = io[0] ?? NULL_STORE;
+      lklr = io[1] ?? 0;
+      lklp = io[2] ?? 0;
+      sp -= 40;
+    } else if lkname == "n_store_load_prefix" {
+      // The prefix and the limit.
+      lkint = get(stk, sp - 8) ?? -1;
+      lkt = crt::stack_str(stk, sp - 24) ?? "";
+      sp -= 24;
+    } else if lkname == "n_store_load_keys" || lkname == "n_store_load_keys_text" {
+      crt::slot_ref(io, stk, sp - 16);
+      lkls = io[0] ?? NULL_STORE;
+      lklr = io[1] ?? 0;
+      lklp = io[2] ?? 0;
+      sp -= 16;
+    } else if lktext {
+      lkt = crt::stack_str(stk, sp - 16) ?? "";
+      sp -= 16;
+    } else {
+      lkint = get(stk, sp - 8) ?? 0;
+      sp -= 8;
+    }
+    lkpath = crt::stack_str(stk, sp - 16) ?? "";
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    lkk = crt::store_known(io[0] ?? NULL_STORE);
+    lki = -1;
+    for i in 0..len(img.sidecars) {
+      if (img.sidecars[i]?.tp ?? -1) == lkk {
+        lki = i;
+      }
+    }
+    if lki < 0 {
+      why[0] = "a paged load without a sidecar the runner can use: {img.natives[idx] ?? ""}";
+      return -1;
+    }
+    if len(sidecar_ix) == 0 {
+      for sc in img.sidecars {
+        sidecar_ix += [crt::sidecar_add(sc.tp, sc.hash, sc.walks, sc.before, sc.after, sc.dump, img.oldest, img.bridge)];
+      }
+    }
+    lks = img.sidecars[lki]!;
+    if lkname == "n_store_load_range" {
+      set(stk, sp, crt::pg_load_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prangerefusal, lks.prangecontent, lks.tp, lkint, lkhi));
+    } else if lkname == "n_store_load_box" {
+      set(stk, sp, crt::pg_load_box(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.pboxrefusal, lks.pcontent, lks.pcoll, lkls, lklr, lklp, lkts, lktr, lktp, lkint, img.types[lks.pcoll]?.name ?? ""));
+    } else if lkname == "n_store_load_prefix" {
+      if lks.pkind != 1 {
+        why[0] = "a prefix load from a store that holds no trie: n_store_load_prefix";
+        return -1;
+      }
+      set(stk, sp, crt::pg_load_prefix(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lkt, lkint));
+    } else if lkname == "n_store_load_keys" || lkname == "n_store_load_keys_text" {
+      set(stk, sp, crt::pg_load_keys(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkls, lklr, lklp, lkname == "n_store_load_keys_text"));
+    } else {
+      set_bool(stk, sp, crt::pg_load_key(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkint, lkt, lktext));
+    }
+    sp += 8;
+  } else if nh == N_STORE_PERSIST_COPY || nh == N_STORE_LOAD || nh == N_STORE_LOAD_UNTRUSTED {
+    // A store's image written or loaded with its root type's sidecar (`RunSidecar`), the one the
+    // C backend names at the call: the store's root type picks it here.
+    ensure_table(img.types, tl);
+    pcpath = crt::stack_str(stk, sp - 16) ?? "";
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    pcs = io[0] ?? NULL_STORE;
+    pck = crt::store_known(pcs);
+    pci = -1;
+    for i in 0..len(img.sidecars) {
+      if (img.sidecars[i]?.tp ?? -1) == pck {
+        pci = i;
+      }
+    }
+    if pci < 0 || (nh == N_STORE_PERSIST_COPY && (img.sidecars[pci]?.refs ?? false)) {
+      why[0] = "a store persisted or loaded without a sidecar the runner can use: {img.natives[idx] ?? ""}";
+      return -1;
+    }
+    if len(sidecar_ix) == 0 {
+      for sc in img.sidecars {
+        sidecar_ix += [crt::sidecar_add(sc.tp, sc.hash, sc.walks, sc.before, sc.after, sc.dump, img.oldest, img.bridge)];
+      }
+    }
+    pcix = sidecar_ix[pci] ?? -1;
+    set_bool(stk, sp, if nh == N_STORE_PERSIST_COPY { crt::image_write(pcs, io[1] ?? 0, io[2] ?? 0, pcpath, pcix) } else { crt::image_load(pcs, io[1] ?? 0, io[2] ?? 0, pcpath, pcix, nh == N_STORE_LOAD_UNTRUSTED) });
+    sp += 8;
+  } else if nh == N_YIELD_FRAME {
+    // The frame-yield flag only a host's frame loop reads; a run from an image has none.
+    sp = sp;
+  } else if nh == N_TEXT_RFIND {
+    rfv = crt::stack_str(stk, sp - 16) ?? "";
+    rfs = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    set(stk, sp, rfs.rfind(rfv));
+    sp += 8;
+  } else if nh == N_TEXT_FIND {
+    // The byte position of the first `value` in `self`, null when there is none.
+    fval = crt::stack_str(stk, sp - 16) ?? "";
+    fself = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    set(stk, sp, fself.find(fval));
+    sp += 8;
+  } else if nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END {
+    // A view of the same text, narrowed in place (Rust's `str::trim*`).
+    crt::stack_text_trim(stk, sp - 16, if nh == N_TEXT_TRIM { 0 } else if nh == N_TEXT_TRIM_START { 1 } else { 2 });
+  } else if nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST {
+    // The text's case changed, appended to the destination.
+    crt::slot_ref(io, stk, sp - 16);
+    ucv = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if nh == N_TO_UPPERCASE_DEST { ucv.to_uppercase() } else { ucv.to_lowercase() });
+  } else if nh == N_WRITE_TEXT_RAW {
+    // The text popped, then the File; whether it was written.
+    crt::slot_ref(io, stk, sp - 32);
+    wtr = crt::write_text_raw(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::stack_str(stk, sp - 16));
+    sp -= 32;
+    set_bool(stk, sp, wtr);
+    sp += 8;
+  } else if nh == N_TEXT_BYTE_AT {
+    // The byte at `i` (from the end when negative), 0 out of range (`text_byte_at_native`).
+    bai = get(stk, sp - 8) ?? 0;
+    bas = crt::stack_str(stk, sp - 24) ?? "";
+    sp -= 24;
+    set(stk, sp, bas.byte_at(bai));
+    sp += 8;
+  } else if nh == N_TEXT_REPLACE_DEST {
+    // `self.replace(value, with)` appended to the destination.
+    crt::slot_ref(io, stk, sp - 16);
+    rwith = crt::stack_str(stk, sp - 32) ?? "";
+    rval = crt::stack_str(stk, sp - 48) ?? "";
+    rself = crt::stack_str(stk, sp - 64) ?? "";
+    sp -= 64;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rself.replace(rval, rwith));
+  } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
+    nv = crt::stack_str(stk, sp - 16) ?? "";
+    ns2 = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    set_bool(stk, sp, if nh == N_STARTS_WITH { ns2.starts_with(nv) } else { ns2.ends_with(nv) });
+    sp += 8;
+  } else if nh == N_WRITE_BYTES {
+    // The byte vector popped, then the path; answers whether it was written.
+    crt::slot_ref(io, stk, sp - 16);
+    wpath = crt::stack_str(stk, sp - 32) ?? "";
+    sp -= 32;
+    set_bool(stk, sp, crt::write_bytes(wpath, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    sp += 8;
+  } else if nh == N_VECTOR_SUM_INT {
+    acc = get(stk, sp - 8);
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    set(stk, sp, crt::vector_sum_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acc));
+    sp += 8;
+  } else if nh == N_OS_TEMP_DIR_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_temp_dir());
+  } else if nh == N_KEYED_ENTRY_INTS {
+    // `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` — the entry under
+    // the key in the hash `record_collection` names, found or filed with its key written.
+    if !(tl[0] ?? false) {
+      ensure_table(img.types, tl);
+    }
+    kptp = get(stk, sp - 48) ?? 0;
+    kfld = get(stk, sp - 40) ?? 0;
+    krc = types::record_collection(img.types, kptp, kfld);
+    if (krc.fld != 65535 && krc.at == null) || types::hash_element(img.types, krc.tp) == null {
+      why[0] = "a keyed entry in a collection that is not a hash: n_keyed_entry_ints";
+      return -1;
+    }
+    kkeys = len(img.types[krc.tp]!.keys);
+    kn = if kkeys < 1 { 1 } else if kkeys > 4 { 4 } else { kkeys };
+    for ki in 0..kn {
+      crt::key_int(get(stk, sp - 32 + ki * 8));
+    }
+    crt::slot_ref(io, stk, sp - 64);
+    sp -= 64;
+    crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (krc.at ?? 0), types::content_of(img.types, krc.tp) ?? 0, krc.tp, kn);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_KEYED_ENTRY_TEXT {
+    // `keyed_entry_text(data, parent_tp, fld, key)`: as the integer form, one text key.
+    ensure_table(img.types, tl);
+    tptp = get(stk, sp - 32) ?? 0;
+    tfld = get(stk, sp - 24) ?? 0;
+    trc = types::record_collection(img.types, tptp, tfld);
+    if (trc.fld != 65535 && trc.at == null) || types::hash_element(img.types, trc.tp) == null {
+      why[0] = "a keyed entry in a collection that is not a hash: n_keyed_entry_text";
+      return -1;
+    }
+    crt::key_text(crt::stack_str(stk, sp - 16));
+    crt::slot_ref(io, stk, sp - 48);
+    sp -= 48;
+    crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (trc.at ?? 0), types::content_of(img.types, trc.tp) ?? 0, trc.tp, 1);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_READ_BYTES {
+    // The file's bytes, a vector in a store of its own (the C runtime's `read_bytes`).
+    rpath = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    crt::read_bytes(io, rpath);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_ARGUMENTS {
+    crt::arguments_into(io);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_STORE_MEMORY_DEST {
+    // The C runtime's report, its types named as the image names them, into the text the
+    // destination reference names.
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::type_names([for tn in img.types { tn.name }]);
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::store_memory());
+  } else if nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST {
+    // The bytes `lo..hi` of a byte vector — the whole of it for `text_from_bytes` — as a
+    // text into the destination.
+    crt::slot_ref(io, stk, sp - 16);
+    tds = io[0] ?? NULL_STORE;
+    tdr = io[1] ?? 0;
+    tdp = io[2] ?? 0;
+    sp -= 16;
+    tlo: integer? = 0;
+    thi: integer? = 0;
+    if nh == N_TEXT_FROM_BYTE_RANGE_DEST {
+      thi = get(stk, sp - 8);
+      tlo = get(stk, sp - 16);
+      sp -= 16;
+    }
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    if nh == N_TEXT_FROM_BYTES_DEST {
+      thi = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    }
+    crt::ref_text_append(tds, tdr, tdp, crt::vec_text_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tlo, thi));
+  } else if nh == N_JSON_PARSE {
+    // `json_parse(raw)`: the C runtime's reader, the tree in a store of its own.
+    ensure_table(img.types, tl);
+    ptypes::json_layout(img.types, ptold);
+    jraw = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    crt::json_parse(io, jraw);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_JSON_ERRORS_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::json_errors());
+  } else if nh == N_PARSE_ERRORS_OF {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    crt::parse_errors_of(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh >= N_JV && nh < N_JV + 50 {
+    sp = call_jv(nh - N_JV, img, stk, sp, io, tl, ptold);
+  } else if nh == N_HASH_SORTED || nh == N_HASH_UNSORTED {
+    // A hash's records as a vector, in key order or the hash's own (a scratch vector).
+    ensure_table(img.types, tl);
+    htp = get(stk, sp - 8) ?? 0;
+    crt::slot_ref(io, stk, sp - 24);
+    sp -= 24;
+    crt::hash_sorted(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, htp, nh == N_HASH_UNSORTED);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else {
+    nname = img.natives[idx] ?? "native {idx}";
+    why[0] = "a native the runner does not carry: {nname}";
+    return -1;
+  }
+  sp
+}
+
+// A JsonValue native by its number from `N_JV` (`crt::jv_*`, the C runtime's routines): its
+// arguments popped as Rust's native pops them, its answer pushed.  Answers the new stack top.
+fn call_jv(w: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, ptold: vector<boolean>) -> integer {
+  sp = sp0;
+  ensure_table(img.types, tl);
+  ptypes::json_layout(img.types, ptold);
+  if w >= 40 {
+    // A text answer into the destination text, popped last-pushed first, then the receiver.
+    dest: vector<integer> = [NULL_STORE, 0, 0];
+    crt::slot_ref(dest, stk, sp - 16);
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    crt::ref_text_append(dest[0] ?? NULL_STORE, dest[1] ?? 0, dest[2] ?? 0, crt::jv_text(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    return sp;
+  }
+  if w == 30 {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set_f(stk, sp, crt::jv_float(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    return sp + 8;
+  }
+  if w >= 20 {
+    // `has_field` takes a text after the receiver; the others the receiver alone.
+    jt = "";
+    if w == 23 {
+      jt = crt::stack_str(stk, sp - 16) ?? "";
+      sp -= 16;
+    }
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    jn = crt::jv_int(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, jt);
+    if w == 22 || w == 23 {
+      crt::set_w(crt::W_BOOLEAN, stk, 1, 8 + sp, 0, 0, jn);
+    } else {
+      set(stk, sp, jn);
+    }
+    return sp + 8;
+  }
+  // A reference answer.
+  ji = 0;
+  jf = 0.0;
+  jt = "";
+  if w == 1 {
+    ji = if get_bool(stk, sp - 8) { 1 } else { 0 };
+    sp -= 8;
+  } else if w == 2 {
+    jf = get_f(stk, sp - 8) ?? 0.0;
+    sp -= 8;
+  } else if w == 3 {
+    jt = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+  } else if w == 7 {
+    jt = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+  } else if w == 8 || w == 10 {
+    ji = get(stk, sp - 8) ?? 0;
+    sp -= 8;
+  }
+  if w == 10 {
+    ptypes::prepare(img.types, ji, ptold);
+  }
+  if w >= 4 {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+  } else {
+    io[0] = NULL_STORE;
+    io[1] = 0;
+    io[2] = 0;
+  }
+  crt::jv_ref(w, io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, jt, ji, jf);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp + 16
+}
+
+pub fn narrow_width(kind: integer) -> integer {
+  if kind == 0 || kind == 1 || kind == 8 { 1 } else if kind == 2 || kind == 3 || kind == 4 || kind == 9 { 2 } else { 4 }
+}
+
+pub fn narrow_encode(kind: integer, mn: integer, v: integer?) -> integer {
+  if kind == 1 || kind == 8 {
+    if v == null { 255 } else { (v! - mn) & 255 }
+  } else if kind == 0 {
+    ((v ?? 0) - mn) & 255
+  } else if kind == 3 {
+    if v == null { 0 } else { (v! - mn + 1) & 65535 }
+  } else if kind == 4 {
+    ((v ?? 0) - mn) & 65535
+  } else if kind == 2 || kind == 9 {
+    if v == null { 65535 } else { (v! - mn) & 65535 }
+  } else if kind == 5 {
+    if v == null { 2147483648 } else { v! & 4294967295 }
+  } else if kind == 6 {
+    if v == null { 4294967295 } else { v! & 4294967295 }
+  } else {
+    (v ?? 0) & 4294967295
+  }
+}
+
+pub fn narrow_decode(kind: integer, mn: integer, bits: integer) -> integer? {
+  if kind == 0 || kind == 4 {
+    bits + mn
+  } else if kind == 1 || kind == 8 {
+    if bits == 255 { null } else { bits + mn }
+  } else if kind == 3 {
+    if bits == 0 { null } else { bits + mn - 1 }
+  } else if kind == 2 || kind == 9 {
+    if bits == 65535 { null } else { bits + mn }
+  } else if kind == 5 {
+    if bits == 2147483648 { null } else if bits >= 2147483648 { bits - 4294967296 } else { bits }
+  } else if kind == 6 {
+    if bits == 4294967295 { null } else { bits }
+  } else {
+    bits
+  }
+}
+
+// ── `par` (`parallel_natives`), its workers run one after another ───────────────────────────
+// A queue's workers run in row order, each an ordinary call: a worker shares no mutable state
+// with another, so the answers are those of the threads Rust runs them on.  A fold mirrors Rust's
+// partition (`par_pool::parallel_workers`: `min(threads, rows)` workers over contiguous ranges,
+// each folding from `init`, the partials then combined from `init` in order), so a fold that is
+// not associative answers what Rust's does.  A job is started at the native's `OpStaticCall`
+// (`par_start`) and continued at each worker's return (`par_return`); a queue's answers go onto a
+// buffer stack the `parallel_buf_*` natives read, the topmost of their kind as Rust's per-kind
+// `par_*_buffer_stack`s.
+pub struct ParJob {
+  // A tuple row's plan (`RunWorker.row`): how each element moves into the worker's argument.
+  plan: vector<integer>,
+  kind: integer,
+  depth: integer,
+  back: integer,
+  start: integer,
+  input: integer,
+  ret: integer,
+  stride: integer,
+  in_s: integer,
+  in_r: integer,
+  in_p: integer,
+  esize: integer,
+  extras: vector<integer>,
+  row: integer,
+  n: integer,
+  // An answer may be null (an integer's null), kept as it is.
+  res: vector<integer?>,
+  texts: vector<text?>,
+  bytes: vector<u8>,
+  refs: vector<integer>,
+  wtexts: integer,
+  wbase: integer,
+  dests: integer,
+  held: vector<integer>,
+  init: integer?,
+  threads: integer,
+  t: integer,
+  rend: integer,
+  acc: integer?,
+  parts: vector<integer?>,
+  phase: integer,
+}
+
+pub struct ParBuf {
+  kind: integer,
+  res: vector<integer?>,
+  stride: integer,
+  texts: vector<text?>,
+  bytes: vector<u8>,
+  refs: vector<integer>,
+  adopted: vector<integer>,
+}
+
+PAR_QUEUE = 1;
+PAR_QUEUE_NARROW = 2;
+PAR_BUF_GET = 3;
+PAR_BUF_DROP = 4;
+PAR_BUF_GET_NARROW = 5;
+PAR_BUF_DROP_NARROW = 6;
+PAR_BUF_GET_SINGLE = 7;
+PAR_BUF_GET_FLOAT = 8;
+PAR_QUEUE_TEXT = 9;
+PAR_QUEUE_REF = 10;
+PAR_QUEUE_FN = 11;
+PAR_FOLD = 12;
+PAR_BUF_GET_TEXT_DEST = 13;
+PAR_BUF_DROP_TEXT = 14;
+PAR_BUF_GET_REF = 15;
+PAR_BUF_DROP_REF = 16;
+PAR_BUF_GET_FN = 17;
+PAR_BUF_DROP_FN = 18;
+
+// Per native: which `par` entry it is, 0 for none.
+// Does the native of par kind `pk` start a job (a queue or a fold), where every other kind
+// reads or drops a buffer?
+pub fn par_is_job(pk: integer) -> boolean {
+  pk == PAR_QUEUE || pk == PAR_QUEUE_NARROW || pk == PAR_QUEUE_TEXT || pk == PAR_QUEUE_REF || pk == PAR_QUEUE_FN || pk == PAR_FOLD
+}
+
+pub fn par_natives(img: ir::RunImage) -> vector<integer> {
+  [for nm in img.natives {
+    match nm {
+      "n_parallel_queue" => PAR_QUEUE,
+      "n_parallel_queue_narrow" => PAR_QUEUE_NARROW,
+      "n_parallel_queue_text" => PAR_QUEUE_TEXT,
+      "n_parallel_queue_ref" => PAR_QUEUE_REF,
+      "n_parallel_queue_fn" => PAR_QUEUE_FN,
+      "n_parallel_fold" => PAR_FOLD,
+      "n_parallel_buf_get" => PAR_BUF_GET,
+      "n_parallel_buf_drop" => PAR_BUF_DROP,
+      "n_parallel_buf_get_narrow" => PAR_BUF_GET_NARROW,
+      "n_parallel_buf_drop_narrow" => PAR_BUF_DROP_NARROW,
+      "n_parallel_buf_get_single" => PAR_BUF_GET_SINGLE,
+      "n_parallel_buf_get_float" => PAR_BUF_GET_FLOAT,
+      "n_parallel_buf_get_text_dest" => PAR_BUF_GET_TEXT_DEST,
+      "n_parallel_buf_drop_text" => PAR_BUF_DROP_TEXT,
+      "n_parallel_buf_get_ref" => PAR_BUF_GET_REF,
+      "n_parallel_buf_drop_ref" => PAR_BUF_DROP_REF,
+      "n_parallel_buf_get_fn" => PAR_BUF_GET_FN,
+      "n_parallel_buf_drop_fn" => PAR_BUF_DROP_FN,
+      _ => 0,
+    }
+  }]
+}
+
+// The kind of buffer a queue fills, the one its readers name.
+fn par_buf_kind(pk: integer) -> integer {
+  if pk == PAR_QUEUE_NARROW || pk == PAR_BUF_GET_NARROW || pk == PAR_BUF_DROP_NARROW || pk == PAR_BUF_GET_SINGLE {
+    PAR_QUEUE_NARROW
+  } else if pk == PAR_QUEUE_TEXT || pk == PAR_BUF_GET_TEXT_DEST || pk == PAR_BUF_DROP_TEXT {
+    PAR_QUEUE_TEXT
+  } else if pk == PAR_QUEUE_REF || pk == PAR_BUF_GET_REF || pk == PAR_BUF_DROP_REF {
+    PAR_QUEUE_REF
+  } else if pk == PAR_QUEUE_FN || pk == PAR_BUF_GET_FN || pk == PAR_BUF_DROP_FN {
+    PAR_QUEUE_FN
+  } else {
+    PAR_QUEUE
+  }
+}
+
+// The row's argument pushed at `at` as `push_worker_arg` pushes it: a reference to the row, its
+// primitive read at the row's width and passed at the worker's, a wide value's bytes as they lie,
+// or a view of its text.  Answers the stack top.
+fn par_row_arg(stk: integer, at: integer, job: ParJob, io: vector<integer>) -> integer {
+  crt::vec_get(io, job.in_s, job.in_r, job.in_p, job.esize, job.row);
+  if job.input == 0 {
+    crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    return at + 16;
+  }
+  if job.input < 0 {
+    crt::stack_str_of_field(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0);
+    return at + 16;
+  }
+  if job.input >= 1000 {
+    crt::par_row_tuple(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, stk, at, job.plan);
+    return at + step(job.input - 1000);
+  }
+  if job.input > 8 {
+    crt::par_row_wide(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, stk, at, job.input);
+    return at + step(job.input);
+  }
+  crt::par_row(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, job.esize, stk, at, job.input);
+  at + 8
+}
+
+// The job's next worker call pushed at `sp`, in the order Rust's entry for its kind pushes it —
+// `execute_at_raw*`: the row, the extras; `execute_at_text`: the work texts made below the frame,
+// the row, the extras, references to the work texts; `execute_at_ref`: the row, fresh hidden
+// destinations, the extras; a fold's `(acc, row, extras…)` or, combining, `(acc, partial)` — then
+// the return position.  Answers the stack top; the caller enters the worker.
+fn par_call(stk: integer, sp: integer, pjobs: vector<ParJob>, k: integer, io: vector<integer>) -> integer {
+  job = pjobs[k]!;
+  at = sp;
+  if job.kind == PAR_FOLD {
+    set(stk, at, job.acc);
+    at += 8;
+    if job.phase == 0 {
+      crt::vec_get(io, job.in_s, job.in_r, job.in_p, job.esize, job.row);
+      crt::par_row(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, job.esize, stk, at, 8);
+      at += 8;
+      for e in job.extras {
+        set(stk, at, e);
+        at += 8;
+      }
+    } else {
+      set(stk, at, job.parts[job.row]);
+      at += 8;
+    }
+  } else if job.kind == PAR_QUEUE_TEXT {
+    pjobs[k].wbase = at;
+    for w in 0..job.wtexts {
+      crt::slot_text_init(stk, at + w * 24);
+    }
+    at += job.wtexts * 24;
+    at = par_row_arg(stk, at, job, io);
+    for e in job.extras {
+      set(stk, at, e);
+      at += 8;
+    }
+    for w in 0..job.wtexts {
+      crt::set_slot_ref(stk, at, stk, 1, 8 + job.wbase + w * 24);
+      at += 16;
+    }
+  } else if job.kind == PAR_QUEUE_REF {
+    at = par_row_arg(stk, at, job, io);
+    pjobs[k].held.clear();
+    for _ in 0..job.dests {
+      io[0] = NULL_STORE;
+      io[1] = 0;
+      io[2] = 0;
+      crt::database(io, 800, 0);
+      pjobs[k].held += [io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0];
+      crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+      at += 16;
+    }
+    for e in job.extras {
+      set(stk, at, e);
+      at += 8;
+    }
+  } else {
+    at = par_row_arg(stk, at, job, io);
+    for e in job.extras {
+      set(stk, at, e);
+      at += 8;
+    }
+  }
+  set(stk, at, job.back);
+  at + 8
+}
+
+// A queue's or a fold's native at its `OpStaticCall`, `regs` the `[sp, pc, depth]` in and out:
+// its arguments popped as the native pops them — a queue's extras count and extras, worker,
+// threads, answer size, row size, rows; a fold's extras count and extras, threads, worker, init,
+// rows — then the first worker called, or with no rows the empty answer given at once.  -1 with
+// the reason in `why[0]` for a worker the runner does not call.
+pub fn par_start(pk: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>, why: vector<text>) -> integer {
+  sp = regs[0] ?? 0;
+  next = get(stk, sp - 8) ?? 0;
+  sp -= 8;
+  ex: vector<integer> = [];
+  for _ in 0..next {
+    ex += [get(stk, sp - 8) ?? 0];
+    sp -= 8;
+  }
+  extras: vector<integer> = [];
+  for k in 0..len(ex) {
+    extras += [ex[len(ex) - 1 - k] ?? 0];
+  }
+  wdef = -1;
+  rsize = 8;
+  esize = 8;
+  threads = 1;
+  init: integer? = null;
+  if pk == PAR_FOLD {
+    threads = get(stk, sp - 8) ?? 1;
+    wdef = get(stk, sp - 16) ?? -1;
+    init = get(stk, sp - 24);
+    crt::slot_ref(io, stk, sp - 40);
+    sp -= 40;
+  } else {
+    wdef = get(stk, sp - 8) ?? -1;
+    threads = get(stk, sp - 16) ?? 1;
+    rsize = get(stk, sp - 24) ?? 8;
+    esize = get(stk, sp - 32) ?? 8;
+    crt::slot_ref(io, stk, sp - 48);
+    sp -= 48;
+  }
+  wi = -1;
+  for i in 0..len(img.workers) {
+    if (img.workers[i]?.def ?? -1) == wdef {
+      wi = i;
+    }
+  }
+  if wi < 0 || wdef < 0 || wdef + 1 >= len(img.starts) {
+    why[0] = "a par worker the image does not describe: {img.natives[0] ?? ""}";
+    return -1;
+  }
+  w = img.workers[wi]!;
+  wret = if w.ret >= 1 && w.ret <= 8 { w.ret } else if rsize < 1 { 1 } else if rsize > 8 { 8 } else { rsize };
+  n = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  nth = if threads < 1 { 1 } else if threads > n { n } else { threads };
+  job = ParJob { plan: w.row, kind: pk, depth: (regs[2] ?? 0) + 1, back: regs[1] ?? 0, start: img.starts[wdef] ?? 0, input: w.input, ret: if pk == PAR_QUEUE_NARROW { w.ret } else { wret }, stride: rsize, in_s: io[0] ?? NULL_STORE, in_r: io[1] ?? 0, in_p: io[2] ?? 0, esize: esize, extras: extras, row: 0, n: n, res: [], texts: [], bytes: [], refs: [], wtexts: w.texts, wbase: 0, dests: w.dests, held: [], init: init, threads: nth, t: 0, rend: if nth > 0 { (n / nth) ?? 0 } else { 0 }, acc: init, parts: [], phase: 0 };
+  if n == 0 {
+    if pk == PAR_FOLD {
+      set(stk, sp, init);
+    } else {
+      pbufs += [ParBuf { kind: par_buf_kind(pk), res: [], stride: rsize, texts: [], bytes: [], refs: [], adopted: [] }];
+      set(stk, sp, 0);
+    }
+    regs[0] = sp + 8;
+    return 0;
+  }
+  pjobs += [job];
+  k = len(pjobs) - 1;
+  regs[0] = par_call(stk, sp, pjobs, k, io);
+  regs[1] = job.start;
+  regs[2] = job.depth;
+  0
+}
+
+// A `par` worker returned (`regs` `[sp, pc]`): its answer taken off the stack — `ret` bytes, a
+// text copied out (its work texts then released), a record (the destinations it did not answer
+// in released), a function reference's 20 bytes, a fold's accumulator — then the next worker
+// called (true, `regs` updated), or after the last the job's buffer pushed and its count
+// answered, a fold its result (false).
+pub fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>) -> boolean {
+  sp = regs[0] ?? 0;
+  k = len(pjobs) - 1;
+  kind = pjobs[k]!.kind;
+  if kind == PAR_QUEUE_TEXT {
+    pjobs[k].texts += [crt::stack_str(stk, sp - 16)];
+    sp -= 16;
+    for w in 0..pjobs[k]!.wtexts {
+      crt::slot_text_free(stk, pjobs[k]!.wbase + w * 24);
+    }
+    sp = pjobs[k]!.wbase;
+  } else if kind == PAR_QUEUE_REF {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    rs = io[0] ?? NULL_STORE;
+    pjobs[k].refs += [rs, io[1] ?? 0, io[2] ?? 0];
+    h = pjobs[k]!.held;
+    j = 0;
+    while j + 2 < len(h) {
+      if (h[j] ?? -1) != rs && crt::store_live(h[j] ?? NULL_STORE) {
+        crt::free_ref(h[j] ?? NULL_STORE, h[j + 1] ?? 0, h[j + 2] ?? 0);
+      }
+      j += 3;
+    }
+  } else if kind == PAR_QUEUE_FN {
+    pjobs[k].bytes += crt::stack_read_bytes(stk, sp - 24, 20);
+    sp -= 24;
+  } else {
+    rs = pjobs[k]!.ret;
+    v: integer? = null;
+    if kind == PAR_FOLD || rs == 8 {
+      v = get(stk, sp - 8);
+    } else {
+      bs = crt::stack_read_bytes(stk, sp - 8, if rs == 1 { 1 } else { 4 });
+      v = 0;
+      for b in 0..len(bs) {
+        v = v! + ((bs[b] ?? 0) << (8 * b));
+      }
+    }
+    sp -= 8;
+    if kind == PAR_FOLD {
+      pjobs[k].acc = v;
+    } else {
+      pjobs[k].res += [v];
+    }
+  }
+  pjobs[k].row += 1;
+  if kind == PAR_FOLD {
+    if pjobs[k]!.phase == 0 && pjobs[k]!.row >= pjobs[k]!.rend {
+      // A worker's range done: its partial kept, the next worker's range from `init`.
+      pjobs[k].parts += [pjobs[k]!.acc];
+      pjobs[k].t += 1;
+      pjobs[k].acc = pjobs[k]!.init;
+      if pjobs[k]!.t < pjobs[k]!.threads {
+        pjobs[k].rend = ((pjobs[k]!.t + 1) * pjobs[k]!.n / pjobs[k]!.threads) ?? pjobs[k]!.n;
+      } else {
+        pjobs[k].phase = 1;
+        pjobs[k].row = 0;
+      }
+    }
+    more = if pjobs[k]!.phase == 0 { true } else { pjobs[k]!.row < len(pjobs[k]!.parts) };
+    if more {
+      regs[0] = par_call(stk, sp, pjobs, k, io);
+      regs[1] = pjobs[k]!.start;
+      return true;
+    }
+    set(stk, sp, pjobs[k]!.acc);
+    regs[0] = sp + 8;
+    pjobs.remove(k);
+    return false;
+  }
+  if pjobs[k]!.row < pjobs[k]!.n {
+    regs[0] = par_call(stk, sp, pjobs, k, io);
+    regs[1] = pjobs[k]!.start;
+    return true;
+  }
+  // The answer records' stores are the buffer's until it drops (`revive_record_chain`'s
+  // adoption, the records' own stores).
+  ad: vector<integer> = [];
+  if kind == PAR_QUEUE_REF {
+    r = pjobs[k]!.refs;
+    j = 0;
+    while j + 2 < len(r) {
+      st = r[j] ?? NULL_STORE;
+      seen = false;
+      for a in ad {
+        if a == st {
+          seen = true;
+        }
+      }
+      if st != NULL_STORE && !seen {
+        ad += [st];
+      }
+      j += 3;
+    }
+  }
+  pbufs += [ParBuf { kind: par_buf_kind(kind), res: pjobs[k]!.res, stride: pjobs[k]!.stride, texts: pjobs[k]!.texts, bytes: pjobs[k]!.bytes, refs: pjobs[k]!.refs, adopted: ad }];
+  set(stk, sp, pjobs[k]!.n);
+  regs[0] = sp + 8;
+  pjobs.remove(k);
+  false
+}
+
+// The topmost buffer of a kind.
+fn par_top(pbufs: vector<ParBuf>, kind: integer) -> integer {
+  i = len(pbufs) - 1;
+  while i >= 0 && (pbufs[i]?.kind ?? -1) != kind {
+    i -= 1;
+  }
+  i
+}
+
+// The `parallel_buf_*` readers and drops on the topmost buffer of their kind, at `sp`: answers
+// the stack top.
+pub fn par_buf(pk: integer, stk: integer, sp: integer, pbufs: vector<ParBuf>, io: vector<integer>) -> integer {
+  bi = par_top(pbufs, par_buf_kind(pk));
+  if bi < 0 {
+    return sp;
+  }
+  if pk == PAR_BUF_DROP || pk == PAR_BUF_DROP_NARROW || pk == PAR_BUF_DROP_TEXT || pk == PAR_BUF_DROP_FN || pk == PAR_BUF_DROP_REF {
+    if pk == PAR_BUF_DROP_REF {
+      for st in pbufs[bi]!.adopted {
+        if crt::store_live(st) {
+          crt::free_ref(st, 1, 8);
+        }
+      }
+    }
+    pbufs.remove(bi);
+    return sp;
+  }
+  if pk == PAR_BUF_GET_NARROW {
+    signed = (get(stk, sp - 8) ?? 0) != 0;
+    idx = get(stk, sp - 24) ?? 0;
+    b = pbufs[bi]!;
+    raw = (b.res[idx] ?? 0) & (if b.stride == 1 { 255 } else if b.stride == 2 { 65535 } else { 4294967295 });
+    top = if b.stride == 1 { 128 } else if b.stride == 2 { 32768 } else { 2147483648 };
+    set(stk, sp - 24, if signed && raw >= top { raw - 2 * top } else { raw });
+    return sp - 16;
+  }
+  if pk == PAR_BUF_GET_TEXT_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    tidx = get(stk, sp - 24) ?? 0;
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, pbufs[bi]!.texts[tidx] ?? "");
+    return sp - 24;
+  }
+  idx = get(stk, sp - 8) ?? 0;
+  if pk == PAR_BUF_GET_SINGLE {
+    bits = (pbufs[bi]!.res[idx] ?? 0) & 4294967295;
+    crt::stack_code_bytes(stk, sp - 8, [for b in 0..4 { ((bits >> (8 * b)) & 255) as u8 }], 0, 4);
+    return sp;
+  }
+  if pk == PAR_BUF_GET_REF {
+    r = pbufs[bi]!.refs;
+    crt::set_slot_ref(stk, sp - 8, r[3 * idx] ?? NULL_STORE, r[3 * idx + 1] ?? 0, r[3 * idx + 2] ?? 0);
+    return sp + 8;
+  }
+  if pk == PAR_BUF_GET_FN {
+    crt::stack_code_bytes(stk, sp - 8, pbufs[bi]!.bytes, 20 * idx, 20);
+    return sp + 16;
+  }
+  set(stk, sp - 8, pbufs[bi]!.res[idx]);
+  sp
+}

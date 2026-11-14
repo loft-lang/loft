@@ -315,6 +315,10 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     pow_single::<false>,
     format_single::<false>,
     format_stack_single::<false>,
+    float_bits::<false>,
+    float_from_bits::<false>,
+    single_bits::<false>,
+    single_from_bits::<false>,
     math_pi_float::<false>,
     math_e_float::<false>,
     rem_float_nullable::<false>,
@@ -682,6 +686,10 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     pow_single::<true>,
     format_single::<true>,
     format_stack_single::<true>,
+    float_bits::<true>,
+    float_from_bits::<true>,
+    single_bits::<true>,
+    single_from_bits::<true>,
     math_pi_float::<true>,
     math_e_float::<true>,
     rem_float_nullable::<true>,
@@ -1049,6 +1057,10 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     pow_single_r,
     format_single_r,
     format_stack_single_r,
+    float_bits_r,
+    float_from_bits_r,
+    single_bits_r,
+    single_from_bits_r,
     math_pi_float_r,
     math_e_float_r,
     rem_float_nullable_r,
@@ -2664,6 +2676,58 @@ fn abs_float<const F: bool>(s: &mut State) {
 fn abs_float_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     abs_float::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn float_bits<const F: bool>(s: &mut State) {
+    let v_v1 = s.get_stack_m::<F, f64>();
+    let new_value = v_v1.to_bits() as i64;
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn float_bits_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    float_bits::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn float_from_bits<const F: bool>(s: &mut State) {
+    let v_v1 = s.get_stack_m::<F, i64>();
+    let new_value = f64::from_bits(v_v1 as u64);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn float_from_bits_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    float_from_bits::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn single_bits<const F: bool>(s: &mut State) {
+    let v_v1 = s.get_stack_m::<F, f32>();
+    let new_value = i64::from(v_v1.to_bits() as i32);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn single_bits_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    single_bits::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn single_from_bits<const F: bool>(s: &mut State) {
+    let v_v1 = s.get_stack_m::<F, i64>();
+    let new_value = f32::from_bits(v_v1 as i32 as u32);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn single_from_bits_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    single_from_bits::<true>(s);
     s.regs_out()
 }
 

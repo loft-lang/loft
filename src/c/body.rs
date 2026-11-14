@@ -11,6 +11,7 @@
 mod apart;
 mod apart_value;
 mod chain;
+pub(crate) mod cold;
 mod deferred;
 mod files;
 mod generator;
@@ -183,6 +184,9 @@ pub(crate) struct FnWriter<'a> {
     verify_temps: std::collections::HashSet<String>,
     /// The owned text temporaries the current statement made.
     pending: Vec<String>,
+    /// `@FR-R-BufferReturn`'s bind clause: the work buffers a `__wr` call of the current statement
+    /// filled that were made for that call alone, so a text target may take their buffer.
+    pending_work: Vec<String>,
     /// The label number of each enclosing loop, innermost last.
     loops: Vec<u32>,
     labels: u32,
@@ -322,6 +326,16 @@ pub(crate) struct FnWriter<'a> {
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
     wr_call: Option<usize>,
+    /// `@FR-R-Cold`'s loft clause: whether this body may outline its cold exits, the arms it
+    /// outlined (by node address, with the helper's name), and the variables only those arms
+    /// use — which this body neither declares nor initialises, holds or frees.
+    cold_on: bool,
+    cold_arms: std::collections::HashMap<usize, (String, Value)>,
+    undeclared: std::collections::HashSet<u16>,
+    /// The helpers the plan made, written once the body has called them: (name, arm, the
+    /// arm's own variables, the helper's parameter list, its shapes, whether a call was
+    /// written).
+    cold_pending: Vec<cold::Pending<'a>>,
     /// The guards written so far, which numbers each one's flag.
     chain_guards: u32,
     /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
@@ -785,6 +799,7 @@ impl<'a> FnWriter<'a> {
             temps: Vec::new(),
             verify_temps: std::collections::HashSet::new(),
             pending: Vec::new(),
+            pending_work: Vec::new(),
             loops: Vec::new(),
             labels: 0,
             headers: Vec::new(),
@@ -844,6 +859,10 @@ impl<'a> FnWriter<'a> {
             guarded: None,
             work_ret: None,
             wr_call: None,
+            cold_on: false,
+            cold_arms: std::collections::HashMap::new(),
+            undeclared: std::collections::HashSet::new(),
+            cold_pending: Vec::new(),
             chain_guards: 0,
             rec_ptrs: Vec::new(),
             text_ptrs: std::collections::HashSet::new(),
@@ -1142,6 +1161,7 @@ impl<'a> FnWriter<'a> {
             fired("R-RetAdopt", usize::from(self.adopt.is_some()));
         }
         let code = self.code;
+        self.cold_plan();
         self.dc = self.deferred_plan();
         let mut flags: Vec<u16> = self.dc.vars.keys().copied().collect();
         flags.sort_unstable();
@@ -1180,7 +1200,11 @@ impl<'a> FnWriter<'a> {
         }
         let mut out = String::new();
         // An apart record and a push group's element are no records (`apart.rs`).
-        for v in (0..self.shapes.len()).filter(|v| !self.params[*v] && !self.apr_holds(*v as u16)) {
+        for v in (0..self.shapes.len()).filter(|v| {
+            !self.params[*v]
+                && !self.apr_holds(*v as u16)
+                && !self.undeclared.contains(&(*v as u16))
+        }) {
             let c = self.shapes[v];
             if self.store_links[v] {
                 let name = var_name(self.vars.name(v as u16), v as u16);
@@ -1218,6 +1242,7 @@ impl<'a> FnWriter<'a> {
         if self.marked_line != 0 {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
+        self.cold_finish(&out)?;
         Ok((self.park_work_texts(out), statements))
     }
 
@@ -1352,6 +1377,7 @@ impl<'a> FnWriter<'a> {
 
     /// Free the owned text temporaries the statement just finished made.
     fn flush(&mut self, ind: usize) {
+        self.pending_work.clear();
         for t in std::mem::take(&mut self.pending) {
             self.line(ind, &format!("loft_text_free(&{t});"));
         }
@@ -1436,6 +1462,7 @@ impl<'a> FnWriter<'a> {
                     && !self.links[v]
                     && !self.borrowed[v]
                     && self.shapes[v] == CType::Text
+                    && !self.undeclared.contains(&(v as u16))
             })
             .map(|v| self.var(v as u16))
             .collect();
@@ -2970,6 +2997,13 @@ impl<'a> FnWriter<'a> {
                 if self.work_ret.is_some()
                     && matches!(v.unspan(), Value::Var(p) if Some(*p) == self.work_ret) =>
             {
+                self.epilogue(ind);
+                self.line(ind, "return;");
+            }
+            // `@FR-R-BufferReturn`: a null answer is the null text in the caller's buffer.
+            (CType::Void, Some(v)) if self.work_ret.is_some() && is_null_text(self.cx.data, v) => {
+                let w = self.text_dest(&Value::Var(self.work_ret.unwrap_or_default()))?;
+                self.line(ind, &format!("loft_text_set(&{w}, loft_null_text());"));
                 self.epilogue(ind);
                 self.line(ind, "return;");
             }
@@ -5636,6 +5670,10 @@ impl<'a> FnWriter<'a> {
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => {
+                // `@FR-R-Cold`'s loft clause: an outlined arm's own variable is initialised there.
+                if self.undeclared.contains(var) {
+                    return Ok(());
+                }
                 // `@FR-R-Transient`: a lifted text argument served by the transient text it
                 // copies is not bound at all.
                 if self.tr.is_some() && self.tr_text_lift(*var).is_some() {
@@ -5691,6 +5729,21 @@ impl<'a> FnWriter<'a> {
                 self.stmt(arm, ind)?;
                 self.flush(ind);
                 Ok(())
+            }
+            // `@FR-R-Cold`'s loft clause: a variable only an outlined arm uses is the arm's own —
+            // its frees here go with it.
+            Value::Call(..)
+                if cold::text_free(v, self.cx.data)
+                    .is_some_and(|w| self.undeclared.contains(&w)) =>
+            {
+                Ok(())
+            }
+            Value::If(cond, then_arm, else_arm)
+                if self
+                    .cold_arms
+                    .contains_key(&(&raw const **then_arm as usize)) =>
+            {
+                self.cold_if(cond, then_arm, else_arm, ind)
             }
             Value::If(cond, then_arm, else_arm) => {
                 let null_test = self.null_test(cond);
@@ -7288,6 +7341,20 @@ impl<'a> FnWriter<'a> {
                     self.line(ind, &format!("loft_text_move(&{target}, &{t});"));
                     return Ok(());
                 }
+                // `@FR-R-BufferReturn`'s bind clause: the target takes the call site's own buffer;
+                // the next call at the site starts that buffer empty either way.
+                if c == CType::Text
+                    && let Some(w) = e
+                        .code
+                        .strip_prefix("loft_view(&")
+                        .and_then(|r| r.strip_suffix(')'))
+                    && self.pending_work.iter().any(|p| p == w)
+                    && w != target
+                {
+                    self.line(ind, &format!("loft_text_move(&{target}, &{w});"));
+                    crate::rewrite_census::fired("R-BufferReturn/bind", 1);
+                    return Ok(());
+                }
                 let s = match c {
                     CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
                     CType::Void => format!("{};", e.code),
@@ -8422,6 +8489,27 @@ impl<'a> FnWriter<'a> {
         }
         if wr {
             return Ok(E::new(call, K::Void));
+        }
+        // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
+        // through its `__wr` twin, and the call's value is a view of that buffer — what the
+        // interpreter's text return is — not a copy of it taken on the way out.
+        if ret == CType::Text
+            && mask == 0
+            && !tr_named
+            && !native
+            && !crate::env_once!(std::env::var("LOFT_NO_BUFFER_RETURN").is_ok_and(|v| v != "0"))
+            && let Some(p) = cx.answers_work(d, true)
+            && xs.get(p).is_some_and(|x| plain_place(x))
+            && let Some(twin) = cx.work_twin(d)
+        {
+            self.line(ind, &format!("{twin}({});", xs.join(", ")));
+            crate::rewrite_census::fired("R-BufferReturn", 1);
+            if call_site_buffer(&args[p])
+                && let Some(w) = xs[p].strip_prefix('&')
+            {
+                self.pending_work.push(w.to_string());
+            }
+            return Ok(E::new(format!("loft_view({})", xs[p]), K::View));
         }
         Ok(match ret {
             CType::Text => {
@@ -9847,8 +9935,32 @@ impl<'a> FnWriter<'a> {
         self.float_conversion(name, args, ind)
     }
 
+    /// `f.bits()` / `float_from_bits(v)` and the `single` pair: the IEEE-754 pattern moved, not
+    /// converted (`loft_f2bits` and its siblings); `None` for any other operator.
+    fn float_bits(&mut self, name: &str, args: &[Value], ind: usize) -> Option<Result<E, String>> {
+        let (f, k) = match name {
+            "OpFloatBits" => ("loft_f2bits", K::Int),
+            "OpFloatFromBits" => ("loft_bits2f", K::Float),
+            "OpSingleBits" => ("loft_s2bits", K::Int),
+            "OpSingleFromBits" => ("loft_bits2s", K::Single),
+            _ => return None,
+        };
+        Some((|| {
+            let a = self.one(name, args, ind)?;
+            let a = match name {
+                "OpFloatBits" => as_float(a)?,
+                "OpSingleBits" => as_single(a)?,
+                _ => as_int(a)?,
+            };
+            Ok(E::new(format!("{f}({a})"), k))
+        })())
+    }
+
     /// The conversions to and from floats, their math functions and their fields.
     fn float_conversion(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        if let Some(e) = self.float_bits(name, args, ind) {
+            return e;
+        }
         match (name, args) {
             ("OpConvFloatFromNull", []) => Ok(E::new("(double) NAN", K::Float)),
             ("OpConvSingleFromNull", []) => Ok(E::new("(float) NAN", K::Single)),
@@ -11409,6 +11521,43 @@ fn as_fn(e: E) -> Result<String, String> {
     }
 }
 
+/// Is `v` the null text — `OpConvTextFromNull()`, what `return null` is in a text function?
+pub(crate) fn is_null_text(data: &crate::data::Data, v: &Value) -> bool {
+    matches!(v.unspan(), Value::Call(op, a)
+        if a.is_empty()
+            && (*op as usize) < data.definitions.len()
+            && data.def(*op).name() == "OpConvTextFromNull")
+}
+
+/// Is `arg` a work buffer made for this one call — the IR's default reference
+/// `{ w = ""; ref(w) }` — rather than a buffer the caller was handed or reads again?
+fn call_site_buffer(arg: &Value) -> bool {
+    let Value::Block(b) = arg.unspan() else {
+        return false;
+    };
+    matches!(
+        b.operators.as_slice(),
+        [Value::Set(w, x), Value::Call(_, r)]
+            if matches!(x.unspan(), Value::Text(t) if t.is_empty())
+                && matches!(r.as_slice(), [Value::Var(v)] if v == w)
+    )
+}
+
+/// Is `x` a C place that reads the same twice and does nothing else — `name`, `&name`,
+/// `(*name)` — so a call may take it and the caller name it again after?  Anything longer
+/// may compute or write, and is not repeated.
+fn plain_place(x: &str) -> bool {
+    let inner = x
+        .strip_prefix("&(*")
+        .and_then(|r| r.strip_suffix(')'))
+        .or_else(|| x.strip_prefix('&'))
+        .unwrap_or(x);
+    !inner.is_empty()
+        && inner
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
 fn as_view(e: E) -> Result<String, String> {
     match e.kind {
         K::View => Ok(e.code),
@@ -11566,6 +11715,7 @@ const OP_TEXT: &[&str] = &[
     "OpGetTextSub",
 ];
 const OP_FLOAT: &[&str] = &[
+    "OpFloatFromBits",
     "OpAddFloat",
     "OpMinFloat",
     "OpMulFloat",
@@ -11587,6 +11737,7 @@ const OP_FLOAT: &[&str] = &[
     "OpGetFloat",
 ];
 const OP_SINGLE: &[&str] = &[
+    "OpSingleFromBits",
     "OpAddSingle",
     "OpMinSingle",
     "OpMulSingle",
@@ -11616,7 +11767,12 @@ const OP_FCMP: &[&str] = &[
     "OpConvBoolFromFloat",
     "OpConvBoolFromSingle",
 ];
-const OP_FINT: &[&str] = &["OpCastIntFromFloat", "OpCastIntFromSingle"];
+const OP_FINT: &[&str] = &[
+    "OpCastIntFromFloat",
+    "OpCastIntFromSingle",
+    "OpFloatBits",
+    "OpSingleBits",
+];
 const OP_CHAR: &[&str] = &[
     "OpConvCharacterFromInt",
     "OpConvCharacterFromNull",

@@ -19,7 +19,11 @@ gates T and S on nearly every file, and its elaborator is gate E's work: the gat
 program and by formal rule, is [1a-parser.md § Where it stands](1a-parser.md#where-it-stands).
 1b's interpreter runs programs from the RUST front end's image (766 of the 1,078 corpus
 programs at its last census, in an earlier `handoff-*.md`; not re-measured since); the IR
-passes and the bytecode writer are not ported yet.  **1b is behind the reference (owner,
+passes and the bytecode writer are not ported yet.  The bytecode runner built as a port of
+the Rust interpreter — its generated operator table, what is still to build and where it
+differs from Rust — is [1b-fill-port.md](1b-fill-port.md).
+
+**1b is behind the reference (owner,
 2026-11-12):** the IR lifetime work (@PLN211) landed after its last census and its port of the
 optimisations is half done, so its open items start with a fresh run of the comparison, worked
 under [§ The port method](#the-port-method--the-diff-is-the-work-the-reference-is-the-truth).

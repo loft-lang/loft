@@ -308,6 +308,14 @@ fn store_trace_names(
 /// FNV-1a hash of its bytes.  The loft interpreter writes the same lines from its own
 /// numbering and its own bytecode writer, and the two files must be equal.
 fn bytecode_trace(state: &State, data: &Data) {
+    // `LOFT_TRACE_BYTECODE_RAW=<file>` — the whole code stream as the interpreter runs it, byte
+    // for byte: what the run image's code must equal (@PLN91, selfhost/bench/run_image_bytecode.py).
+    if let Some(raw) = std::env::var_os("LOFT_TRACE_BYTECODE_RAW").filter(|v| !v.is_empty())
+        && let Ok(mut f) = crate::file_access::create(raw.to_string_lossy().as_ref())
+    {
+        use std::io::Write as _;
+        let _ = f.write_all(state.bytecode.as_slice());
+    }
     let Some(path) = std::env::var_os("LOFT_TRACE_BYTECODE").filter(|v| !v.is_empty()) else {
         return;
     };

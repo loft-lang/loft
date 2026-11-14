@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a function with a `&text` parameter called through a reference and given a
+// struct's text field: the call enters the function's store instance, which writes the field.
+
+struct B { t: text }
+
+fn bang(x: &text) {
+  x += "!";
+}
+
+fn star(x: &text) {
+  x += "*";
+}
+
+// "a" grown to "a!*" by two calls through references: its length 3, and 1 for the exact text:
+// 3 * 10 + 1.
+fn linked(k: integer) -> integer {
+  b = B { t: "a" };
+  f = bang;
+  f(b.t);
+  g = if len(b.t) > 1 { star } else { bang };
+  g(b.t);
+  len(b.t) * 10 + (if b.t == "a!*" { 1 } else { 0 }) + k - k
+}
+
+fn main() {
+  println("{linked(0)}");
+}

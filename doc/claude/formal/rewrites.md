@@ -181,12 +181,13 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c · `/wrap-select` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
+| `(R-BufferReturn)` | `R-BufferReturn` c · `/bind` c |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
 | `(R-CallLine)` | not counted — executor: a frame's line derived from its call position |
 | `(R-Callee)` | `R-Callee` c, native |
 | `(R-CharWalk)` | `R-CharWalk` c, native |
 | `(R-CodeBase)` | not counted — executor: bytecode reads through a cached base |
-| `(R-Cold)` | not counted — runtime: the runtime helpers' own shape |
+| `(R-Cold)` | `/loft` c (the runtime helpers' half is their own shape, not counted) |
 | `(R-Compact)` | `R-Compact` ir · `/prepend` ir |
 | `(R-CompleteWrite)` | `R-CompleteWrite` ir |
 | `(R-Const)` | `R-Const` ir · `/fn` parse |
@@ -3748,6 +3749,43 @@ text that held MORE than it is refilled with; with the clear replaced by a no-op
 reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
 `Output::output_set_inner`.
 
+### A text call's result is read from its work buffer
+
+```
+  (R-BufferReturn) a call f(…, w) where f ANSWERS its `&text` work buffer w — every
+                 `return` of f, and its tail, is w, a block whose last value is w, or the
+                 null text (which the twin writes into w) —
+                 is written as f's `__wr` twin, which fills w and returns nothing, and
+                 the call's value is a VIEW of w.  That is what the text return is: the
+                 caller's buffer holds the result (`scopes::free_vars`' buffer arm), and
+                 the interpreter's call answers a view of it.  The view is read within
+                 the statement the call stands in, and nothing else writes w there:
+                 each call site is handed a buffer of its own (`caller_text_buf`'s
+                 `__work_c<N>`, one per site per function), a later operand of the
+                 statement cannot run this site again, and a recursive call fills a
+                 buffer of its own frame.
+                 THE BIND CLAUSE: where w is the call site's OWN buffer — the default
+                 reference `{ w = ""; ref(w) }` the call was given, which nothing reads
+                 after it — and the statement binds the value to a text target, the
+                 target takes w's buffer rather than a copy; the next call at the site
+                 starts w empty, as it does anyway.  A buffer the caller was handed
+                 (its own `&text` parameter passed down) is never taken.
+                 A callee whose signature the twin does not take, and a buffer argument
+                 that is not a plain place, keep the copy.
+```
+
+**In words.**  A function returning a text writes it into the buffer its caller hands it; the
+C then copied that buffer into a second text to return it by value, so every text-returning
+call paid one whole-text copy on the way out, and a bind of the result paid nothing more only
+because it moved that copy.  Read from the buffer, a result passed on, compared or appended
+costs no copy, and a bound result costs none either.  The self-hosted interpreter's text read
+(`crt::slot_text`, a text made from bytes and pushed on its stack, with a `return null`) loses
+one of its whole-text copies.  Switch `LOFT_NO_BUFFER_RETURN=1`; census `R-BufferReturn`,
+`R-BufferReturn/bind`.  Guard
+`tests/scripts/a-text-call-result-is-read-from-its-work-buffer.loft`.  Sites: the
+`@FR-R-BufferReturn` arms of `c::body` (the call and the text bind), `Cx::work_return` and
+`answers_buffer` in `c::body::transient`.
+
 ### A text copied byte by byte is one append
 
 ```
@@ -5644,7 +5682,38 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  twice.  The held walk's own out-of-range half
                  (`get_vector_hoisted` at the walk's end) stays outlined, since
                  the cheaper `get_vector` inlined there grows every held loop.
+                 LOFT CLAUSE (the C writer): in a loft function, the `then` arm of
+                 an `if` that builds a text in a work text and ends in its one
+                 `return` — of a literal, or of a local the arm set to one — and
+                 holds no loop, `break`, `continue`, `yield`, function reference
+                 or `par` arm, is OUTLINED as a `LOFT_NOINLINE LOFT_COLD` helper
+                 taking the function's own parameters, when every other variable
+                 the arm names is named outside it only by an empty
+                 initialisation or a free.  Those variables are the helper's;
+                 the function declares, holds, parks and frees none of them, and
+                 runs `if (LOFT_UNLIKELY(test)) { helper(params); return lit; }`.
+                 The arm runs exactly as written — the parameters by value or,
+                 `&` ones, by pointer; a write to a by-value parameter is read
+                 only in the arm, which leaves the function — and its frame
+                 sites name the function's own frame, which the helper does not
+                 push.  What it protects is the C compiler's inline decision:
+                 the arm's work text set up on every call, and the arm's
+                 statements counted against `(R-Inline)`'s budget, kept a guard
+                 that is two compares on its hot path out of line at every call.
 ```
+
+**The loft clause, in words.**  The self-hosted bytecode runner checks every operand read and
+stack access (`State::code_has`, `can_pop`, `slot_ok`) and reports a failure in a formatted
+`fault`; written in place, each check ran 44–70 instructions a call and none was inlined.
+Outlined, the shipped runner runs collatz in 2.54 s against 3.71 s, the same answer.  Priced
+by hand first: scoping the work text to the arm gave −3.5 %, forcing the function inline with
+an unlikely hint −1 %, the outlined helper −24 % on the unshipped build.  Switch
+`LOFT_NO_COLD_EXIT=1`; census `R-Cold/loft`, one per arm; `LOFT_TRACE_COLD=1` names every
+statement `if` arm that builds a text, outlined or why not.  Guard
+`tests/scripts/an-early-exit-that-builds-a-text-is-written-as-a-cold-helper.loft`; pin
+`c_emit` `an_early_exit_that_builds_a_text_is_a_cold_helper`.  Sites: `c::body::cold`
+(`cold_plan`, `cold_arm`, `cold_if`), the `undeclared` checks in `c::body`, and
+`Cx::plain_params`, which the `__wr` twin shares.
 
 **The twin clause, in words.**  hex_field's `edgeset_count` walks every cell and calls
 `edge_mat` → `eg_index` → `eg_dir_from` → `nb_q`/`nb_r` per edge; the loop holds the edge set's

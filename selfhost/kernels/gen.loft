@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a generator: its frame leaves the stack at each yield and comes back at the
+// next advance with its locals as they were, and a walk over it ends when it returns.
+
+// The squares below `n`, a running count kept in a local across the yields.
+fn squares(n: integer) -> iterator<integer> {
+  made = 0;
+  for i in 0..n {
+    made += 1;
+    yield i * i + made - made;
+  }
+}
+
+// 0 + 1 + 4 + 9 = 14 from one walk; a second generator advanced beside it gives 5 values:
+// 14 * 10 + 5.
+fn walked(n: integer) -> integer {
+  sum = 0;
+  for v in squares(n) {
+    sum += v;
+  }
+  count = 0;
+  for _ in squares(n + 1) {
+    count += 1;
+  }
+  sum * 10 + count
+}
+
+fn main() {
+  println("{walked(4)}");
+}

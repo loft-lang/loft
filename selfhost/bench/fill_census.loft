@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the generated operator table against the IR runner, over every function of a
+// program that takes integers and answers one: `fill_census <program image> <run image>`.
+// Each function is called with 3 for every parameter.  One line per function: `agree`,
+// `DIFFER` with both answers, or the operator not carried yet; then the operators that stop a
+// function, by how many they stop.  The IR runner's answers are held to the Rust interpreter's
+// by `selfhost/tests/run.loft`.
+
+use ir;
+use load;
+use run;
+use state;
+use fill_run;
+
+fn main() {
+  a = arguments();
+  b = load::load(a[0] ?? "");
+  img = load::load_run(a[1] ?? "");
+  if b == null || img == null {
+    eprintln("usage: fill_census <program image> <run image>");
+    exit(2);
+  }
+  agree = 0;
+  differ = 0;
+  stopped: vector<text> = [];
+  for d in fill_run::integer_functions(b!) {
+    args: vector<integer> = [for _ in 0..fill_run::arity(b!, d) { 3 }];
+    want = run::run(b!, d, args);
+    if want.refused != "" {
+      continue;
+    }
+    s = state::new_state(img!, 1 << 16);
+    got = fill_run::call(img!, d, args, s);
+    name = fill_run::name_of(b!, d);
+    if s.fault != "" {
+      println("{name}: {s.fault}");
+      stopped += [s.fault];
+    } else if got == want.value {
+      println("{name}: agree");
+      agree += 1;
+    } else {
+      println("{name}: DIFFER fill {got} ir {want.value}");
+      differ += 1;
+    }
+  }
+  println("{agree} agree, {differ} differ, {len(stopped)} stopped");
+}

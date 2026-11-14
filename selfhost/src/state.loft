@@ -1,0 +1,2591 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the loft runner's state, the counterpart of `src/state/mod.rs::State` that the
+// generated operator table (`fill.loft`, from the `#loft` templates) runs on: the bytecode, the
+// single stack, and their positions.  The accessors are named and stepped as the Rust ones the
+// `#rust` templates call (`s.code::<u16>()` is `s.code_u16()` here, `s.get_stack::<i64>()` is
+// `s.get_stack_i64()`), over the typed byte reads and writes of `crt` — each a loft body with a
+// `#c_twin`, one load or store in the compiled runner.
+//
+// A value on the stack takes its width rounded up to 8 bytes (`aligned_stack_step`): every
+// basic type here takes 8.
+
+use crt;
+use ir;
+use types;
+use natives;
+use show;
+use files;
+use eq;
+use ptypes;
+
+pub struct State {
+  // The bytecode (`State::code_base` / `code_len`) and the position of the next byte to read.
+  pub code: vector<u8>,
+  pub code_pos: integer,
+  // The single stack (`State::stack_cur`): a store of its own whose primary record holds every
+  // frame, so a reference to a stack slot is an ordinary one into it; `stack_pos` is the top, a
+  // byte offset into that record's frame area, `stack_cap` the bytes it holds now.
+  pub stk: integer,
+  pub stack_pos: integer,
+  pub stack_cap: integer,
+  // The frames on the stack (`State::call_stack`), innermost last, and why the run stopped, if
+  // it did.
+  pub frames: vector<CallFrame>,
+  pub fault: text,
+  // `(R-DispatchStop)` — set with `fault` (`stop`): what the dispatch loop tests each step.
+  pub stopped: boolean,
+  // The operator slot the table does not carry, when that is why the run stopped (-1: not).
+  pub unknown: integer,
+  // What `raise_recoverable` was told: the run goes on, as Rust's does in production mode.
+  pub reported: vector<text>,
+  // The program's types (`Stores::types`), and whether the C runtime's table holds them yet.
+  pub types: vector<ir::DbType>,
+  pub table_loaded: boolean,
+  // The native `static_call` named, for the dispatch loop to run (-1: none): the natives are a
+  // table beside the operators, as Rust's library functions are.
+  pub native: integer,
+  // Each type's default image, derived on its first use (`types::default_image`).
+  pub images: vector<vector<u8>>,
+  pub imaged: vector<boolean>,
+  // The constants as stores of their own (`State::const_refs`), by definition.
+  pub consts: vector<DbRef>,
+  // Each definition's code start, and its function-reference shape (`fnrefs`) by definition
+  // (-1: none).
+  pub starts: vector<u32>,
+  pub fnrefs: vector<ir::RunFnRef>,
+  pub fnref_of: vector<integer>,
+  // The buffers calls through a reference hold (`State::fnref_bufs`), each with the frame
+  // depth that releases it; the allocation count at each such call's entry, as pairs of depth
+  // and count; and the answer of the last one when it was borrowed (store, record, position).
+  pub fn_bufs: vector<FnBuf>,
+  pub fn_calls: vector<integer>,
+  pub fn_borrowed: vector<integer>,
+  // The generators' frames (`State::coroutines`; slot 0 unused: a handle's record is never
+  // 0), the ones running, innermost last, the next handle's generation, and each generator
+  // definition's frame facts.
+  pub cos: vector<CoFrame>,
+  pub co_active: vector<integer>,
+  pub co_generation: integer,
+  pub gens: vector<ir::RunGen>,
+  // What the C runtime's text parser has been told of the schema (`ptypes::prepare`), shared
+  // with the natives; and the enum names viewed so far, as triples of a key (type * 256 +
+  // variant), the interned text and its length.
+  pub ptold: vector<boolean>,
+  pub interned: vector<integer>,
+  // Per native: the definition whose loft body stands for it — a standard-library function
+  // the Rust build compiled (`loft_shared_<def>`) — or -1; the same for its destination form
+  // (`…#dest`); and the destinations such calls in flight append their answer to.
+  pub shared: vector<integer>,
+  pub shared_dest: vector<integer>,
+  pub dest_calls: vector<FnBuf>,
+  // The frame depth each `par` job in flight runs its workers at, innermost last: a return
+  // at that depth hands the run back (`native` is `PAR_RETURNED`) for the job's next worker.
+  pub par_depths: vector<integer>,
+  // A `par` block: its arms' code offsets as `OpParallelArm` gave them, and the frame depth
+  // whose return ends the arm now running (-1: none).
+  pub arm_offsets: vector<integer>,
+  pub arm_depth: integer,
+  // The code and the constant store's long texts, held where no store's growth moves them
+  // (`crt::hold_bytes`): a text view names bytes there, never in this record's own vectors.
+  pub code_held: integer,
+  pub texts_held: integer,
+  // The store instances (`RunImage.store_insts`: definition, mask, instance each), and the
+  // instance the next call through a reference enters in place of the definition its slot
+  // names (`fn_call_ref_store`; -1: none).
+  pub store_insts: vector<integer>,
+  pub call_target: integer,
+  // Per native: the compiled body the build carries for it (`crt::body_find`), -1 for none.
+  pub bodies: vector<integer>,
+}
+
+// `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
+// one of them returned.
+pub PAR_RETURNED = 1000000;
+pub PAR_BLOCK = 1000001;
+pub PAR_ARM_DONE = 1000002;
+
+// A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
+// running, where it resumes, where its caller's stack and code continue, the copies of its
+// text arguments it owns, the argument stores it holds (store, record, position each), and
+// how many holders its handle has.  A handle is the reference `(65535, slot, generation)` —
+// the null store with a record number — so a handle to a frame since freed (its slot handed
+// on) is told apart by its generation.
+pub struct CoFrame {
+  pub live: boolean,
+  pub gen: integer,
+  pub status: integer,
+  pub code_pos: integer,
+  pub stack_base: integer,
+  pub caller_return_pos: integer,
+  pub bytes: vector<u8>,
+  pub owned: vector<integer>,
+  pub generation: integer,
+  pub holds: integer,
+  pub held: vector<integer>,
+}
+
+CO_CREATED = 0;
+CO_SUSPENDED = 1;
+CO_RUNNING = 2;
+CO_EXHAUSTED = 3;
+
+// The table's unused slot 0 and every freed slot.
+fn co_empty() -> CoFrame {
+  CoFrame { live: false, gen: -1, status: CO_EXHAUSTED, code_pos: 0, stack_base: 0, caller_return_pos: 0, bytes: [], owned: [], generation: 0, holds: 0, held: [] }
+}
+
+// A buffer a call through a reference holds until the frame at `depth` returns.
+pub struct FnBuf {
+  pub depth: integer,
+  pub at: DbRef,
+}
+
+// `DbRef`: a reference — its store, its record and the position in it.
+pub struct DbRef {
+  pub store_nr: integer,
+  pub rec: integer,
+  pub pos: integer,
+}
+
+// `DbRef::NULL`'s store number.
+pub NULL_STORE = 65535;
+
+// `CallFrame`: the definition a frame runs, the code position its call returns to, and where
+// its arguments start and how many bytes they take.
+pub struct CallFrame {
+  pub d_nr: integer,
+  pub call_pos: integer,
+  pub args_base: integer,
+  pub args_size: integer,
+}
+
+// The frame height `fn_call` makes room for (`State::frame_headroom_of`'s default): a frame
+// position is a `u16`, so no slot of a frame lies past it.
+pub FRAME_HEADROOM = 65536;
+
+// The run stopped: the first reason is kept, and the dispatch loop's flag set.
+pub fn stop(self: State, why: text) {
+  if !self.stopped {
+    self.fault = why;
+    self.stopped = true;
+  }
+}
+
+// `State::MAX_CALL_DEPTH`.
+pub MAX_CALL_DEPTH = 10000;
+
+// A state over the image's code and types with a stack store of `size` bytes, both positions
+// at 0.
+pub fn new_state(img: ir::RunImage, size: integer) -> State {
+  io: vector<integer> = [0, 0, 0];
+  crt::stack_new(io, size);
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [] };
+  for i in 0..len(img.natives) {
+    name = img.natives[i] ?? "";
+    // A native the runner carries itself keeps its own port.
+    carried = natives::native_handler(name) >= 0;
+    s.shared += [if carried { -1 } else { img.shared[i] ?? -1 }];
+    s.bodies += [if carried { -1 } else { crt::body_find(name) }];
+    twin = -1;
+    if !carried && name.starts_with("loft_shared_") && name.ends_with("#dest") {
+      plain = name[0..len(name) - 5];
+      for j in 0..len(img.natives) {
+        if (img.natives[j] ?? "") == plain {
+          twin = img.shared[j] ?? -1;
+        }
+      }
+    }
+    s.shared_dest += [twin];
+  }
+  for f in s.fnrefs {
+    s.fnref_of[f.def] = f#index;
+  }
+  // Each constant adopted from the bytes Rust built it as (`RunImage.consts`).
+  for c in img.consts {
+    if c.def < 0 {
+      // The constant store itself: its long texts, read by record (`string_from_const_store`).
+      s.texts_held = crt::hold_bytes(c.bytes);
+      continue;
+    }
+    while len(s.consts) <= c.def {
+      s.consts += [DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }];
+    }
+    if crt::store_from_image(io, c.bytes) {
+      s.consts[c.def] = DbRef { store_nr: io[0] ?? NULL_STORE, rec: c.rec, pos: c.pos };
+    }
+  }
+  s
+}
+
+// `State::ensure_stack`: room for `step` more bytes above the top, the stack store doubled
+// (`grow_stack`) when it has none.
+fn ensure_stack(self: State, step: integer) {
+  if self.stack_pos + step > self.stack_cap {
+    self.stack_cap = (self.stack_pos + step) * 2;
+    crt::stack_grow(self.stk, self.stack_cap);
+  }
+}
+
+// ── `State::code::<T>`: an operand read from the code, the position stepped past it. ──────
+
+// Are `n` more bytes of code there?  Past the end the run stops (`code_out_of_range`).
+fn code_has(self: State, n: integer) -> boolean {
+  if self.code_pos < 0 || self.code_pos + n > len(self.code) {
+    if self.fault == "" {
+      self.stop("the code position {self.code_pos} is outside the bytecode ({len(self.code)} bytes)");
+    }
+    return false;
+  }
+  true
+}
+
+// Is there a value of `step` bytes to pop?  Below the stack's start the run stops
+// (`stack_underflow`).
+fn can_pop(self: State, step: integer) -> boolean {
+  if self.stack_pos < step {
+    if self.fault == "" {
+      self.stop("the stack holds {self.stack_pos} bytes where {step} are popped");
+    }
+    return false;
+  }
+  true
+}
+
+// Is the frame slot `pos` below the top inside the stack?  (`get_var`'s frame underflow, and
+// a slot above the capacity `fn_call`'s headroom keeps in reach.)
+fn slot_ok(self: State, at: integer) -> boolean {
+  if at < 0 || at + 8 > self.stack_cap {
+    if self.fault == "" {
+      self.stop("a frame slot at {at} is outside the stack ({self.stack_cap} bytes)");
+    }
+    return false;
+  }
+  true
+}
+
+pub fn code_u8(self: State) -> integer {
+  if !self.code_has(1) {
+    return 0;
+  }
+  v = crt::get_u8(self.code, self.code_pos);
+  self.code_pos += 1;
+  v
+}
+
+pub fn code_i8(self: State) -> integer {
+  if !self.code_has(1) {
+    return 0;
+  }
+  v = crt::get_i8(self.code, self.code_pos);
+  self.code_pos += 1;
+  v
+}
+
+pub fn code_u16(self: State) -> integer {
+  if !self.code_has(2) {
+    return 0;
+  }
+  v = crt::get_u16(self.code, self.code_pos);
+  self.code_pos += 2;
+  v
+}
+
+pub fn code_i16(self: State) -> integer {
+  if !self.code_has(2) {
+    return 0;
+  }
+  v = crt::get_i16(self.code, self.code_pos);
+  self.code_pos += 2;
+  v
+}
+
+pub fn code_u32(self: State) -> integer {
+  if !self.code_has(4) {
+    return 0;
+  }
+  v = crt::get_u32(self.code, self.code_pos);
+  self.code_pos += 4;
+  v
+}
+
+pub fn code_i32(self: State) -> integer {
+  if !self.code_has(4) {
+    return 0;
+  }
+  v = crt::get_i32(self.code, self.code_pos);
+  self.code_pos += 4;
+  v
+}
+
+pub fn code_i64(self: State) -> integer {
+  if !self.code_has(8) {
+    return 0;
+  }
+  v = crt::get_i64(self.code, self.code_pos);
+  self.code_pos += 8;
+  v
+}
+
+pub fn code_f32(self: State) -> single {
+  if !self.code_has(4) {
+    return 0.0f;
+  }
+  v = crt::get_f32(self.code, self.code_pos);
+  self.code_pos += 4;
+  v
+}
+
+pub fn code_f64(self: State) -> float {
+  if !self.code_has(8) {
+    return 0.0;
+  }
+  v = crt::get_f64(self.code, self.code_pos);
+  self.code_pos += 8;
+  v
+}
+
+// A boolean operand: its byte (`s.code::<bool>()` reads one byte).
+pub fn code_bool(self: State) -> boolean {
+  if !self.code_has(1) {
+    return false;
+  }
+  v = crt::get_u8(self.code, self.code_pos);
+  self.code_pos += 1;
+  v == 1
+}
+
+// ── `State::get_stack::<T>`: the top value popped, the top stepped down by its width. ─────
+
+pub fn get_stack_u8(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_U8, self.stk, self.stack_pos)
+}
+
+pub fn get_stack_i8(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_I8, self.stk, self.stack_pos)
+}
+
+pub fn get_stack_u16(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_U16, self.stk, self.stack_pos)
+}
+
+pub fn get_stack_i16(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_I16, self.stk, self.stack_pos)
+}
+
+pub fn get_stack_u32(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos)
+}
+
+pub fn get_stack_i32(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_I32, self.stk, self.stack_pos)
+}
+
+pub fn get_stack_i64(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_I64, self.stk, self.stack_pos)
+}
+
+pub fn get_stack_f32(self: State) -> single {
+  if !self.can_pop(8) {
+    return 0.0f;
+  }
+  self.stack_pos -= 8;
+  (crt::stack_get_float(self.stk, self.stack_pos, true) as single)
+}
+
+pub fn get_stack_f64(self: State) -> float {
+  if !self.can_pop(8) {
+    return 0.0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get_float(self.stk, self.stack_pos, false)
+}
+
+// ── `State::put_stack`: a value pushed, the top stepped up by its width. ──────────────────
+
+pub fn put_stack_u8(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_U8, self.stk, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_i8(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_I8, self.stk, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_u16(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_U16, self.stk, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_i16(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_I16, self.stk, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_u32(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_i32(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_I32, self.stk, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_i64(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos, v);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_f32(self: State, v: single?) {
+  self.ensure_stack(8);
+  crt::stack_put_float(self.stk, self.stack_pos, v as float?, true);
+  self.stack_pos += 8;
+}
+
+pub fn put_stack_f64(self: State, v: float?) {
+  self.ensure_stack(8);
+  crt::stack_put_float(self.stk, self.stack_pos, v, false);
+  self.stack_pos += 8;
+}
+
+// A boolean answer: its byte — 1, 0, or 255 for null (a boolean is tri-state on the stack).
+pub fn put_stack_bool(self: State, v: boolean?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_U8, self.stk, self.stack_pos, if v == null { 255 } else if v! { 1 } else { 0 });
+  self.stack_pos += 8;
+}
+
+// ── `State::get_var::<T>(pos)`: a frame slot read at `stack_pos - pos`. ───────────────────
+
+pub fn get_var_u8(self: State, pos: integer) -> integer {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U8, self.stk, self.stack_pos - pos)
+}
+
+// A boolean frame slot: 1 true, 0 false, 255 null.
+pub fn get_var_bool(self: State, pos: integer) -> boolean? {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return null;
+  }
+  b = crt::stack_get(crt::SW_U8, self.stk, self.stack_pos - pos);
+  if b == 255 { null } else { b == 1 }
+}
+
+pub fn get_var_u32(self: State, pos: integer) -> integer {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos - pos)
+}
+
+pub fn get_var_u16(self: State, pos: integer) -> integer {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U16, self.stk, self.stack_pos - pos)
+}
+
+pub fn get_var_i32(self: State, pos: integer) -> integer {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_I32, self.stk, self.stack_pos - pos)
+}
+
+pub fn get_var_i64(self: State, pos: integer) -> integer {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_I64, self.stk, self.stack_pos - pos)
+}
+
+pub fn get_var_f32(self: State, pos: integer) -> single {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0.0f;
+  }
+  (crt::stack_get_float(self.stk, self.stack_pos - pos, true) as single)
+}
+
+pub fn get_var_f64(self: State, pos: integer) -> float {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0.0;
+  }
+  crt::stack_get_float(self.stk, self.stack_pos - pos, false)
+}
+
+// ── `State::put_var(pos, v)`: a frame slot written at `stack_pos + step - pos`, the value's
+// 8-byte step counted as Rust's `put_var` counts it (the value was popped before the write). ──
+
+pub fn put_var_u8(self: State, pos: integer, v: integer) {
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put(crt::SW_U8, self.stk, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_u16(self: State, pos: integer, v: integer) {
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put(crt::SW_U16, self.stk, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_i32(self: State, pos: integer, v: integer) {
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put(crt::SW_I32, self.stk, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_i64(self: State, pos: integer, v: integer) {
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos + 8 - pos, v);
+}
+
+pub fn put_var_f32(self: State, pos: integer, v: single) {
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put_float(self.stk, self.stack_pos + 8 - pos, v as float?, true);
+}
+
+pub fn put_var_f64(self: State, pos: integer, v: float) {
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  crt::stack_put_float(self.stk, self.stack_pos + 8 - pos, v, false);
+}
+
+// ── Calls ───────────────────────────────────────────────────────────────────────────────
+
+// `State::fn_call`: the position after the call pushed as the return position, the code moved
+// to the callee at `to`; past `MAX_CALL_DEPTH` frames the run stops with a stack overflow.
+pub fn fn_call(self: State, d_nr: integer, args_size: integer, to: integer) {
+  if len(self.frames) >= MAX_CALL_DEPTH {
+    self.stop("stack overflow in definition {d_nr} ({args_size} bytes of arguments)");
+    return;
+  }
+  // `push_frame`: the callee's whole frame fits before it runs, so a slot above the top is
+  // inside the stack.
+  args_base = self.stack_pos - args_size;
+  self.ensure_stack(FRAME_HEADROOM);
+  self.frames += [CallFrame { d_nr: d_nr, call_pos: self.code_pos, args_base: args_base, args_size: args_size }];
+  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, self.code_pos);
+  self.stack_pos += 8;
+  self.code_pos = to;
+}
+
+// `State::fn_return`: the frame's `discard` bytes dropped, the code back at the return position
+// (the slot `ret` — the arguments' size — above the frame's base), the `value` bytes of the
+// answer copied down to that base, and the top just above the answer (`copy_result`).
+pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
+  pos = self.stack_pos;
+  if !self.can_pop(discard) {
+    return;
+  }
+  self.stack_pos -= discard;
+  fn_stack = self.stack_pos;
+  self.stack_pos += ret;
+  self.code_pos = self.get_var_u32(0);
+  step = (value + 7) / 8 * 8;
+  if value > 0 {
+    crt::stack_move(self.stk, pos - step, fn_stack, value);
+  }
+  self.stack_pos = fn_stack + step;
+  if len(self.fn_bufs) > 0 || len(self.fn_calls) > 0 {
+    self.release_fnref_bufs(fn_stack, value);
+  }
+  if len(self.dest_calls) > 0 {
+    // A destination-form call returning: the text the body answered, on top of the stack,
+    // appended to the destination and popped, as the native does.
+    last = len(self.dest_calls) - 1;
+    if self.dest_calls[last]!.depth == len(self.frames) {
+      dest = self.dest_calls[last]!.at;
+      crt::ref_text_append(dest.store_nr, dest.rec, dest.pos, crt::stack_str(self.stk, self.stack_pos - 16));
+      self.stack_pos -= 16;
+      self.dest_calls.remove(last);
+    }
+  }
+  if len(self.par_depths) > 0 && (self.par_depths[len(self.par_depths) - 1] ?? -1) == len(self.frames) {
+    self.native = PAR_RETURNED;
+  }
+  if self.arm_depth == len(self.frames) {
+    self.native = PAR_ARM_DONE;
+  }
+  if len(self.frames) > 0 {
+    self.frames.remove(len(self.frames) - 1);
+  }
+}
+
+// A frame entered whose arguments and return slot are on the stack already (a `par` worker's):
+// the frame recorded and its height kept in reach, as `fn_call` does.
+pub fn enter(self: State, d_nr: integer, call_pos: integer) {
+  self.ensure_stack(FRAME_HEADROOM);
+  self.frames += [CallFrame { d_nr: d_nr, call_pos: call_pos, args_base: self.stack_pos, args_size: 0 }];
+}
+
+// `State::reserve_frame`: the frame's locals reserved above the top, at their 8-aligned size.
+pub fn reserve_frame(self: State, size: integer) {
+  step = (size + 7) / 8 * 8;
+  self.ensure_stack(step);
+  self.stack_pos += step;
+}
+
+// ── Texts (`src/state/text.rs`): a local text is a C-runtime text in its frame slot, an
+// argument and a value on the stack a 16-byte view (`Str`). ───────────────────────────────
+
+// `State::string_from_code`: a constant text — its length byte, then its bytes — read from the
+// code and pushed as a view of them.
+pub fn string_from_code(self: State) {
+  n = self.code_u8();
+  self.ensure_stack(16);
+  crt::stack_str_held(self.stk, self.stack_pos, self.code_held, self.code_pos, n);
+  self.code_pos += n;
+  self.stack_pos += 16;
+}
+
+// `State::var_text`: a view of the local text at `pos` pushed.
+pub fn var_text(self: State) {
+  pos = self.code_u16();
+  self.ensure_stack(16);
+  crt::stack_str_of_text(self.stk, self.stack_pos, self.stack_pos - pos);
+  self.stack_pos += 16;
+}
+
+// `State::arg_text`: the argument's view at `pos` pushed again.
+pub fn arg_text(self: State) {
+  pos = self.code_u16();
+  self.ensure_stack(16);
+  crt::stack_move(self.stk, self.stack_pos - pos, self.stack_pos, 16);
+  self.stack_pos += 16;
+}
+
+// `State::append_text`: the view on top popped, then appended to the local text at `pos`
+// (addressed from the top before the pop).
+pub fn append_text(self: State) {
+  self.stack_pos -= 16;
+  pos = self.code_u16();
+  crt::stack_text_append_str(self.stk, self.stack_pos - pos + 16, self.stack_pos);
+}
+
+// `State::init_text`: the local text at `pos` made empty and owned.
+pub fn init_text(self: State) {
+  pos = self.code_u16();
+  crt::slot_text_init(self.stk, self.stack_pos - pos);
+}
+
+// `State::clear_text`: the local text at `pos` emptied.
+pub fn clear_text(self: State) {
+  pos = self.code_u16();
+  crt::slot_text_clear(self.stk, self.stack_pos - pos);
+}
+
+// `State::free_text`: the local text at `pos` released.
+pub fn free_text(self: State) {
+  pos = self.code_u16();
+  crt::slot_text_free(self.stk, self.stack_pos - pos);
+}
+
+// `State::put_text`: the view on top popped into the frame slot at `pos` (addressed from the
+// top before the pop).
+pub fn put_text(self: State) {
+  pos = self.code_u16();
+  if !self.can_pop(16) {
+    return;
+  }
+  self.stack_pos -= 16;
+  crt::stack_move(self.stk, self.stack_pos, self.stack_pos + 16 - pos, 16);
+}
+
+// A text popped for a template (`State::string`): the view's text, null for the null text.
+pub fn get_stack_str(self: State) -> text? {
+  if !self.can_pop(16) {
+    return null;
+  }
+  self.stack_pos -= 16;
+  crt::stack_str(self.stk, self.stack_pos)
+}
+
+// ── Characters: a code point in a 4-byte slot, 0 for null. ────────────────────────────────
+
+pub fn get_stack_char(self: State) -> integer {
+  if !self.can_pop(8) {
+    return 0;
+  }
+  self.stack_pos -= 8;
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos)
+}
+
+pub fn put_stack_char(self: State, v: integer?) {
+  self.ensure_stack(8);
+  crt::stack_put(crt::SW_U32, self.stk, self.stack_pos, v ?? 0);
+  self.stack_pos += 8;
+}
+
+pub fn get_var_char(self: State, pos: integer) -> integer {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return 0;
+  }
+  crt::stack_get(crt::SW_U32, self.stk, self.stack_pos - pos)
+}
+
+pub fn put_var_char(self: State, pos: integer, v: integer) {
+  if self.slot_ok(self.stack_pos + 8 - pos) {
+    crt::stack_put(crt::SW_U32, self.stk, self.stack_pos + 8 - pos, v);
+  }
+}
+
+// ── References: a 12-byte reference in a 16-byte slot. ────────────────────────────────────
+
+// `State::init_ref`: the null reference written into the frame slot at `pos`.
+pub fn init_ref(self: State) {
+  pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
+  }
+}
+
+// `State::init_ref_sentinel`: the same null reference, written the same way.
+pub fn init_ref_sentinel(self: State) {
+  pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
+  }
+}
+
+// `State::raise_recoverable`: a fault the run survives (a division by zero, a value outside its
+// range): recorded, and the operator answers its null or default.
+pub fn raise_recoverable(self: State, what: text) {
+  self.reported += [what];
+}
+
+// The reference in the frame slot at byte `at`.
+fn ref_at(self: State, at: integer) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::slot_ref(io, self.stk, at);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `get_stack::<DbRef>`: a reference popped (a 16-byte step).
+pub fn get_stack_dbref(self: State) -> DbRef {
+  if !self.can_pop(16) {
+    return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+  }
+  self.stack_pos -= 16;
+  self.ref_at(self.stack_pos)
+}
+
+// `put_stack::<DbRef>`: a reference pushed; null is `DbRef::NULL`.
+pub fn put_stack_dbref(self: State, v: DbRef?) {
+  self.ensure_stack(16);
+  if v == null {
+    crt::set_slot_ref(self.stk, self.stack_pos, NULL_STORE, 0, 0);
+  } else {
+    crt::set_slot_ref(self.stk, self.stack_pos, v!.store_nr, v!.rec, v!.pos);
+  }
+  self.stack_pos += 16;
+}
+
+// `get_var::<DbRef>(pos)` / `put_var(pos, DbRef)`: a reference frame slot.
+pub fn get_var_dbref(self: State, pos: integer) -> DbRef {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+  }
+  self.ref_at(self.stack_pos - pos)
+}
+
+pub fn put_var_dbref(self: State, pos: integer, v: DbRef) {
+  if self.slot_ok(self.stack_pos + 16 - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos + 16 - pos, v.store_nr, v.rec, v.pos);
+  }
+}
+
+// The program's types loaded into the C runtime's table, once: what a store's release walks.
+pub fn load_table(self: State) {
+  if self.table_loaded {
+    return;
+  }
+  rows: vector<types::Row> = [];
+  for tp in 0..len(self.types) {
+    if len(self.types[tp]!.parts) > 0 {
+      rows += [types::row(self.types, tp)];
+    }
+  }
+  crt::load_types(types::flat(rows), len(self.types));
+  self.table_loaded = true;
+}
+
+// The store the reference in the frame slot at byte `at` names made — or made again — with a
+// zeroed root of type `tp` (an enum variant's is its parent's size), and the reference written
+// back.
+fn make_store(self: State, at: integer, tp: integer) {
+  if !self.slot_ok(at) {
+    return;
+  }
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::slot_ref(io, self.stk, at);
+  bytes = types::enum_parent_size(self.types, tp);
+  if types::is_vector_wrapper(self.types, tp) {
+    self.load_table();
+    crt::database_wrapper(io, bytes, tp);
+  } else {
+    crt::database(io, bytes, tp);
+  }
+  crt::set_slot_ref(self.stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+}
+
+// `State::database` (`OpDatabase`, `OpDatabaseNP`): the store of the frame slot at `pos` made.
+pub fn database(self: State) {
+  pos = self.code_u16();
+  db_tp = self.code_u16();
+  self.make_store(self.stack_pos - pos, db_tp);
+}
+
+pub fn database_n_p(self: State) {
+  self.database();
+}
+
+// `State::free_ref`: the reference on top popped and its store released.
+pub fn free_ref(self: State) {
+  r = self.get_stack_dbref();
+  if r.store_nr != NULL_STORE {
+    self.load_table();
+    crt::free_ref(r.store_nr, r.rec, r.pos);
+  } else if r.rec != 0 {
+    // A generator's handle (`free_ref_db`'s coroutine arm).
+    self.co_free(r.rec, r.pos);
+  }
+}
+
+// `State::init_create_stack`: the frame slot at `pos` given a reference to the place `dep_pos`
+// names in the stack itself.
+pub fn init_create_stack(self: State) {
+  pos = self.code_u16();
+  dep_pos = self.code_u16();
+  if self.slot_ok(self.stack_pos - pos) {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, self.stk, 1, 8 + self.stack_pos - dep_pos);
+  }
+}
+
+// `State::static_call`: the native numbered by the operand is called — by the dispatch loop,
+// which holds the natives' table.
+pub fn static_call(self: State) {
+  idx = self.code_u16();
+  body = self.bodies[idx] ?? -1;
+  if body >= 0 {
+    // A compiled body, called on the frame the bytecode's call would use; a negative answer
+    // leaves the stack as it was and the loft body runs.
+    top = crt::body_call(body, self.stk, self.stack_pos);
+    if top >= 0 {
+      self.stack_pos = top;
+      return;
+    }
+  }
+  d = self.shared[idx] ?? -1;
+  if d < 0 && (self.shared_dest[idx] ?? -1) >= 0 {
+    // The destination form: the destination parked until the body returns (`fn_return`),
+    // then the body called as the plain form is.
+    d = self.shared_dest[idx] ?? -1;
+    dest = self.get_stack_dbref();
+    self.dest_calls += [FnBuf { depth: len(self.frames) + 1, at: dest }];
+  }
+  if d >= 0 && d + 1 < len(self.starts) {
+    // A compiled standard-library function: its loft body run as bytecode in its place.
+    // The native takes exactly the body's arguments, so the body is entered as a plain call.
+    self.fn_call(d, 0, self.starts[d] ?? 0);
+    return;
+  }
+  self.native = idx;
+}
+
+// `State::clear_stack_text`: the text the reference in the frame slot at `pos` names emptied.
+pub fn clear_stack_text(self: State) {
+  pos = self.code_u16();
+  r = self.get_var_dbref(pos);
+  crt::ref_text_clear(r.store_nr, r.rec, r.pos);
+}
+
+// `State::text_null_jump`: the jump taken when the text at `src` (`arg`: an argument's view)
+// is not the null text.
+pub fn text_null_jump(self: State) {
+  src = self.code_u16();
+  arg = self.code_u8() == 1;
+  step = self.code_i32();
+  if crt::slot_text(self.stk, self.stack_pos - src, arg) != null {
+    self.code_pos += step;
+  }
+}
+
+// A text field pushed as a view (`OpGetText`): the null text for an absent record.
+pub fn put_field_text(self: State, v1: DbRef, fld: integer) {
+  self.ensure_stack(16);
+  if v1.rec == 0 {
+    crt::stack_str_null(self.stk, self.stack_pos);
+  } else {
+    crt::stack_str_of_field(self.stk, self.stack_pos, v1.store_nr, v1.rec, v1.pos, fld);
+  }
+  self.stack_pos += 16;
+}
+
+// `vector::get_vector`: a reference to element `index` of `size` bytes of the vector `r` — null
+// past either end.
+pub fn vec_get(r: DbRef, size: integer, index: integer?) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::vec_get(io, r.store_nr, r.rec, r.pos, size, index);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `State::vec_get_or_raise`: the same element, an index outside the vector reported (a negative
+// one counts from the end).
+pub fn vec_get_or_raise(self: State, r: DbRef, size: integer, index: integer?) -> DbRef {
+  if index != null {
+    n = crt::vec_len(r.store_nr, r.rec, r.pos) ?? 0;
+    at = if index! < 0 { index! + n } else { index! };
+    if at < 0 {
+      self.raise_recoverable("a negative index {index!}");
+      return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+    }
+    if at >= n {
+      self.raise_recoverable("index {index!} outside a vector of {n}");
+      return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+    }
+  }
+  vec_get(r, size, index)
+}
+
+// The integer field `fld` of element `idx` (a local) of the vector local `vec`
+// (`OpVecGetInt`, `OpVecGetIntNullable`): null for no such element, reported when `raise`.
+pub fn vec_get_int(self: State, vec: integer, size: integer, idx: integer, fld: integer, raise: boolean) -> integer? {
+  r = self.get_var_dbref(vec);
+  i = self.get_var_i64(idx);
+  db = if raise { self.vec_get_or_raise(r, size, i) } else { vec_get(r, size, i) };
+  if db.rec == 0 { null } else { crt::get_int(db.store_nr, db.rec, db.pos, fld) }
+}
+
+// `State::local_tag`: a local's tag byte, or (`of` 1) the first byte of the record the local's
+// reference names — 0 for a null reference, null for an absent tag.
+pub fn local_tag(self: State, of: integer, a: integer) -> integer? {
+  if of == 0 {
+    return crt::get_w(crt::W_ENUM, self.stk, 1, 8 + self.stack_pos - a, 0, 0);
+  }
+  r = self.get_var_dbref(a);
+  if r.rec == 0 { 0 } else { crt::get_w(crt::W_ENUM, r.store_nr, r.rec, r.pos, 0, 0) }
+}
+
+// Type `tp`'s default image, derived on its first use.
+pub fn default_of(self: State, tp: integer) -> vector<u8> {
+  while len(self.imaged) <= tp {
+    self.images += [[]];
+    self.imaged += [false];
+  }
+  if !(self.imaged[tp] ?? false) {
+    self.images[tp] = types::default_image(self.types, tp);
+    self.imaged[tp] = true;
+  }
+  self.images[tp] ?? []
+}
+
+// The collection a record is added to (`OpNewRecord`, `OpFinishRecord`): the parent `ptp`
+// itself or its field `fld`, a linked group's member resolved to the field's own collection.
+// Null where the runner does not add to it, with the reason in `fault`.
+fn record_target(self: State, ptp: integer, fld: integer, gm: vector<integer>) -> types::RecordColl? {
+  rc = types::record_collection(self.types, ptp, fld);
+  if rc.fld != 65535 && rc.at == null {
+    g = types::group_members(self.types, ptp, fld);
+    if g != null && len(g!) >= 6 {
+      for x in g! {
+        gm += [x];
+      }
+      rc = types::RecordColl { tp: g![2] ?? 0, fld: fld, at: g![0] ?? 0 };
+    }
+  }
+  plain = types::vector_element(self.types, rc.tp) != null || types::array_element(self.types, rc.tp) != null || types::keyed_element(self.types, rc.tp) != null || types::hash_element(self.types, rc.tp) != null;
+  if (rc.fld != 65535 && rc.at == null) || !plain {
+    self.stop("not carried: a record added to {self.types[rc.tp]?.name ?? "a collection"}");
+    return null;
+  }
+  rc
+}
+
+// `State::new_record`: a record made in the collection the reference on top holds — a plain
+// vector's element appended, an array's entry, a keyed collection's staged element, a hash's
+// entry — filled with its type's defaults when `defaults`, and a reference to it pushed.
+fn new_record_of(self: State, defaults: boolean) {
+  ptp = self.code_u16();
+  fld = self.code_u16();
+  gm: vector<integer> = [];
+  rc = self.record_target(ptp, fld, gm);
+  if rc == null {
+    return;
+  }
+  // A keyed collection's routines read its key parts from the loaded table.
+  self.load_table();
+  v = self.get_stack_dbref();
+  vp = v.pos + (rc!.at ?? 0);
+  aelem = types::array_element(self.types, rc!.tp);
+  kelem = types::keyed_element(self.types, rc!.tp);
+  helem = types::hash_element(self.types, rc!.tp);
+  rtp = aelem ?? kelem ?? helem ?? types::vector_element(self.types, rc!.tp) ?? 0;
+  size = self.types[rtp]?.size ?? 0;
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  if aelem != null {
+    crt::entry_new(io, v.store_nr, v.rec, vp, size);
+  } else if kelem != null {
+    crt::keyed_new(io, v.store_nr, v.rec, vp, types::keyed_kind(self.types, rc!.tp) ?? 0, size);
+  } else if helem != null {
+    crt::hash_entry(io, v.store_nr, v.rec, vp, size, self.types[rtp]?.linked ?? false);
+  } else {
+    crt::vec_append(io, v.store_nr, v.rec, vp, size);
+  }
+  if defaults {
+    crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(rtp));
+  }
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+pub fn new_record(self: State) {
+  self.new_record_of(true);
+}
+
+pub fn new_record_n_p(self: State) {
+  self.new_record_of(false);
+}
+
+// `State::finish_record`: the record on top and the collection's owner under it popped, the
+// record filed as its collection files it.
+pub fn finish_record(self: State) {
+  ptp = self.code_u16();
+  fld = self.code_u16();
+  gm: vector<integer> = [];
+  rc = self.record_target(ptp, fld, gm);
+  if rc == null {
+    return;
+  }
+  self.load_table();
+  r = self.get_stack_dbref();
+  v = self.get_stack_dbref();
+  vp = v.pos + (rc!.at ?? 0);
+  aelem = types::array_element(self.types, rc!.tp);
+  kelem = types::keyed_element(self.types, rc!.tp);
+  helem = types::hash_element(self.types, rc!.tp);
+  if len(gm) >= 6 {
+    self.load_table();
+    gheld = false;
+    gnull = false;
+    gk = 0;
+    while gk + 2 < len(gm) {
+      gheld = gheld || (gm[gk + 1] ?? -1) == 0;
+      gnull = gnull || types::nullable_element(self.types, gm[gk + 2] ?? 0);
+      gk += 3;
+    }
+    crt::group_finish(types::content_of(self.types, rc!.tp) ?? 0, gheld, gnull, v.store_nr, v.rec, v.pos, r.store_nr, r.rec, r.pos, gm);
+  } else if aelem != null {
+    crt::array_append(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos);
+  } else if kelem != null {
+    crt::keyed_finish(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, types::keyed_kind(self.types, rc!.tp) ?? 0, kelem!, rc!.tp);
+  } else if helem != null {
+    crt::hash_insert(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, helem!, rc!.tp);
+  } else {
+    crt::vec_finish(v.store_nr, v.rec, vp);
+  }
+}
+
+// `State::format_int`: the width and then the value popped, the value formatted and appended to
+// the local text at `pos` (addressed from the top before the pops).
+pub fn format_int(self: State) {
+  pos = self.code_u16();
+  radix = self.code_u8();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  note = self.code_u8() == 1;
+  dir = self.code_i8();
+  width = self.get_stack_i64();
+  val = self.get_stack_i64();
+  crt::slot_text_append(self.stk, self.stack_pos - (pos - 16), crt::format_int(val, radix, width, token, plus, note, dir));
+}
+
+// `State::format_text`: the width and then the view popped, the text formatted and appended to
+// the local text at `pos`.
+pub fn format_text(self: State) {
+  pos = self.code_u16();
+  dir = self.code_i8();
+  token = self.code_u8();
+  width = self.get_stack_i64();
+  val = self.get_stack_str();
+  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_text(val, width, dir, token));
+}
+
+// `State::append_stack_text`: the view popped, appended to the text the reference in the frame
+// slot at `pos` names.
+pub fn append_stack_text(self: State) {
+  pos = self.code_u16();
+  val = self.get_stack_str();
+  r = self.get_var_dbref(pos - 16);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, val);
+}
+
+// `State::get_stack_ref`: the reference on top replaced by the one stored at its field `fld`.
+pub fn get_stack_ref(self: State) {
+  fld = self.code_u16();
+  r = self.get_stack_dbref();
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::place_ref(io, r.store_nr, r.rec, r.pos + fld);
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+// `State::get_stack_text`: the reference on top replaced by a view of the text it names.
+pub fn get_stack_text(self: State) {
+  r = self.get_stack_dbref();
+  self.ensure_stack(16);
+  crt::stack_str_of_ref(self.stk, self.stack_pos, r.store_nr, r.rec, r.pos);
+  self.stack_pos += 16;
+}
+
+// `State::copy_record`: the destination and then the source popped, the record of type `tp`
+// copied — the operand's high bits say the source is freed (0x8000) and the destination fresh
+// (0x4000); a null source into a fresh struct leaves it its default image.
+pub fn copy_record(self: State) {
+  raw = self.code_u16();
+  tp = raw & 16383;
+  flags = self.copy_flags(raw);
+  d = self.get_stack_dbref();
+  src = self.get_stack_dbref();
+  self.load_table();
+  crt::copy_record(src.store_nr, src.rec, src.pos, d.store_nr, d.rec, d.pos, tp, flags);
+  if src.store_nr == NULL_STORE && d.store_nr != NULL_STORE && flags & 4 != 0 && types::is_struct(self.types, tp) {
+    crt::fill(d.store_nr, d.rec, d.pos, self.default_of(tp));
+  }
+}
+
+// `State::append_copy`: the count and then the vector popped, its last element repeated to
+// `count` elements.
+pub fn append_copy(self: State) {
+  tp = self.code_u16();
+  count = self.get_stack_i64();
+  r = self.get_stack_dbref();
+  etp = types::content_of(self.types, tp);
+  if etp == null || (self.types[etp!]?.linked ?? false) {
+    self.stop("not carried: a repeat of a linked element");
+    return;
+  }
+  self.load_table();
+  crt::vec_append_copy(r.store_nr, r.rec, r.pos, etp!, count);
+}
+
+// `Stores::get_db_ref`: the reference a record's field stores, null when it names a removed
+// record.
+pub fn db_ref(v1: DbRef, fld: integer) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::get_dbref(io, v1.store_nr, v1.rec, v1.pos, fld);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `State::free_stack`: `discard` bytes dropped, the `value` bytes that were on top kept there.
+pub fn free_stack(self: State, value: integer, discard: integer) {
+  pos = self.stack_pos;
+  if !self.can_pop(discard) {
+    return;
+  }
+  self.stack_pos -= discard;
+  step = (value + 7) / 8 * 8;
+  if value > 0 {
+    crt::stack_move(self.stk, pos - step, self.stack_pos, value);
+  }
+  self.stack_pos += step;
+}
+
+// The length of the vector the frame slot at `vec` names.
+pub fn local_vec_len(self: State, vec: integer) -> integer {
+  r = self.get_var_dbref(vec);
+  crt::vec_len(r.store_nr, r.rec, r.pos) ?? 0
+}
+
+// `OpVecSetInt`: the integer field `fld` of element `idx` (a local) of the vector local `vec`
+// written; an index outside the vector is reported and nothing is written.
+pub fn vec_set_int(self: State, vec: integer, size: integer, idx: integer, fld: integer, val: integer?) {
+  r = self.get_var_dbref(vec);
+  db = self.vec_get_or_raise(r, size, self.get_var_i64(idx));
+  if db.rec != 0 {
+    crt::set_int(db.store_nr, db.rec, db.pos, fld, val);
+  }
+}
+
+// The null text pushed as a view (`OpConvTextFromNull`), and a boolean's text — `true`,
+// `false`, or the null text for a null boolean (`OpCastTextFromBool`).
+pub fn push_null_text(self: State) {
+  self.ensure_stack(16);
+  crt::stack_str_null(self.stk, self.stack_pos);
+  self.stack_pos += 16;
+}
+
+pub fn push_bool_text(self: State, v: integer) {
+  self.ensure_stack(16);
+  crt::stack_str_bool(self.stk, self.stack_pos, v);
+  self.stack_pos += 16;
+}
+
+// `State::format_stack_int`: as `format_int`, into the text the reference in the frame slot
+// at `pos` names.
+pub fn format_stack_int(self: State) {
+  pos = self.code_u16();
+  radix = self.code_u8();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  note = self.code_u8() == 1;
+  dir = self.code_i8();
+  width = self.get_stack_i64();
+  val = self.get_stack_i64();
+  r = self.get_var_dbref(pos - 16);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_int(val, radix, width, token, plus, note, dir));
+}
+
+// `State::format_stack_text`: as `format_text`, into the text the slot's reference names.
+pub fn format_stack_text(self: State) {
+  pos = self.code_u16();
+  dir = self.code_i8();
+  token = self.code_u8();
+  width = self.get_stack_i64();
+  val = self.get_stack_str();
+  r = self.get_var_dbref(pos - 24);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_text(val, width, dir, token));
+}
+
+// `State::format_float`: the precision, the width and then the value popped, the value
+// formatted and appended to the local text at `pos`.
+pub fn format_float(self: State) {
+  pos = self.code_u16();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  dir = self.code_i8();
+  precision = self.get_stack_i64();
+  width = self.get_stack_i64();
+  val = self.get_stack_f64();
+  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val, width, precision, token, plus, dir, false));
+}
+
+// A copy's type operand as flags: the source freed (0x8000), the type holding no stored
+// references, the destination fresh (0x4000).
+fn copy_flags(self: State, raw: integer) -> integer {
+  (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(self.types, raw & 16383) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
+}
+
+// `State::const_ref_at`: constant `d`'s root, in the store adopted for it.
+pub fn const_ref_at(self: State, d: integer) -> DbRef {
+  self.consts[d] ?? DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }
+}
+
+// `Stores::remove_claims` (`OpClear`): a buffer emptied for reuse, its claims released; with
+// the reset flag (the type's top bit) a pooled buffer's store is made again at its root where
+// the runtime allows it.
+pub fn clear(self: State, data: DbRef, raw: integer) {
+  tp = raw & 32767;
+  self.load_table();
+  reset = false;
+  if raw & 32768 != 0 {
+    reset = crt::reset_pool_root(data.store_nr, data.rec, data.pos, tp, types::enum_parent_size(self.types, tp), self.default_of(tp));
+  }
+  if !reset {
+    crt::clear(data.store_nr, data.rec, data.pos, tp);
+  }
+}
+
+// `State::copy_ref_or_null`: the source popped; a null one frees the variable's store at `pos`
+// and leaves it null, any other is copied into the store the variable names.
+pub fn copy_ref_or_null(self: State) {
+  pos = self.code_u16();
+  raw = self.code_u16();
+  src = self.get_stack_dbref();
+  v = self.get_var_dbref(pos);
+  self.load_table();
+  if src.rec == 0 {
+    if v.store_nr != NULL_STORE {
+      crt::free_ref(v.store_nr, v.rec, v.pos);
+    }
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
+  } else {
+    crt::copy_record(src.store_nr, src.rec, src.pos, v.store_nr, v.rec, v.pos, raw & 16383, self.copy_flags(raw));
+  }
+}
+
+// `State::bind_or_copy`: the witness and then the source popped; a source in the witness's
+// store is copied into a store made for the variable at `pos`, any other is bound as it is.
+pub fn bind_or_copy(self: State) {
+  pos = self.code_u16();
+  raw = self.code_u16();
+  witness = self.get_stack_dbref();
+  src = self.get_stack_dbref();
+  if src.store_nr != NULL_STORE && src.store_nr == witness.store_nr {
+    self.make_store(self.stack_pos - pos, raw & 32767);
+    v = self.get_var_dbref(pos);
+    self.load_table();
+    crt::copy_record(src.store_nr, src.rec, src.pos, v.store_nr, v.rec, v.pos, raw & 16383, self.copy_flags(raw));
+  } else {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, src.store_nr, src.rec, src.pos);
+  }
+}
+
+// `Stores::place_record_prefilled` (`OpPlaceRecord`): a call's return buffer claimed in the
+// store of the record its result lands in, prefilled with its type's defaults — in a fresh
+// store when the host names none.
+pub fn place_record(self: State, host: DbRef, tp: integer) -> DbRef {
+  fresh = host.store_nr == NULL_STORE || host.rec == 0 || !crt::store_live(host.store_nr);
+  elem = if fresh { null } else { types::root_vector_element(self.types, crt::store_known(host.store_nr)) };
+  io: vector<integer> = [host.store_nr, host.rec, host.pos];
+  crt::place_record(io, host.store_nr, host.rec, host.pos, tp, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+  if fresh {
+    crt::set_store_known(io[0] ?? NULL_STORE, tp);
+  }
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `State::get_record`: the key parts and then the collection popped; a hash's entry, or a
+// sorted's or an index's record, found under them — null for none.
+pub fn get_record(self: State) {
+  db_tp = self.code_u16();
+  no_keys = self.code_u8();
+  self.load_table();
+  kind = types::keyed_kind(self.types, db_tp) ?? 0;
+  if types::hash_element(self.types, db_tp) == null && kind == 0 {
+    self.stop("not carried: a lookup in {self.types[db_tp]?.name ?? "a collection"}");
+    return;
+  }
+  // The key parts read off the stack as the old runner reads them (`stack_keys`).
+  bytes = natives::push_keys(self.types, self.stk, db_tp, no_keys, self.stack_pos);
+  if bytes < 0 || !self.can_pop(bytes + 16) {
+    self.stop("not carried: a lookup whose key does not resolve");
+    return;
+  }
+  self.stack_pos -= bytes;
+  r = self.get_stack_dbref();
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  if kind != 0 {
+    crt::keyed_find(io, r.store_nr, r.rec, r.pos, kind, db_tp, no_keys);
+  } else {
+    crt::hash_find(io, r.store_nr, r.rec, r.pos, db_tp, no_keys);
+  }
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+// `State::get_text_sub`: the bounds popped, the view below them replaced by its slice.
+pub fn get_text_sub(self: State) {
+  if !self.can_pop(32) {
+    return;
+  }
+  self.stack_pos -= 16;
+  crt::stack_text_sub(self.stk, self.stack_pos - 16);
+}
+
+// `State::format_stack_float`: as `format_float`, into the text the slot's reference names.
+pub fn format_stack_float(self: State) {
+  pos = self.code_u16();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  dir = self.code_i8();
+  precision = self.get_stack_i64();
+  width = self.get_stack_i64();
+  val = self.get_stack_f64();
+  r = self.get_var_dbref(pos - 24);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_float(val, width, precision, token, plus, dir, false));
+}
+
+// `Stores::remove_vector_at`: element `index` removed, by its type's mode — linked, owning
+// heap, or plain; whether one was removed.
+pub fn vec_remove(self: State, r: DbRef, tp: integer, index: integer?) -> boolean {
+  et = self.types[tp]!;
+  self.load_table();
+  mode = if et.linked { 2 } else if types::owns_heap(self.types, tp) { 1 } else { 0 };
+  crt::vec_remove(r.store_nr, r.rec, r.pos, tp, et.size, mode, index)
+}
+
+// `Stores::keep_vector_range`: the vector cut to its elements `lo..hi`.
+pub fn vec_keep(self: State, r: DbRef, tp: integer, lo: integer?, hi: integer?) {
+  et = self.types[tp]!;
+  self.load_table();
+  crt::vec_keep(r.store_nr, r.rec, r.pos, tp, if et.linked { 0 } else { et.size }, lo, hi);
+}
+
+// `Stores::vector_slice` / `vector_slice_view`: `r` made the elements `lo..hi` of `src`, a
+// copy or (`view`) a view of them.
+pub fn vec_slice(self: State, r: DbRef, src: DbRef, lo: integer?, hi: integer?, tp: integer, view: boolean) {
+  crt::vec_slice(r.store_nr, r.rec, r.pos, src.store_nr, src.rec, src.pos, lo ?? 0, hi ?? 0, self.types[tp]?.size ?? 0, view);
+}
+
+// ── `(R-RegisterTable)` — what a template's boolean slot read and answer are respelled to
+// when its operator runs inline in the dispatch loop (`fill.loft`'s `run`), whose locals are
+// the stack store, its base and capacity and the stack top. ──
+
+pub fn rget_bool(stk: integer, base: integer, cap: integer, sp: integer, pos: integer) -> boolean? {
+  b = crt::fget_u8(stk, base, cap, sp - pos);
+  if b == 255 { null } else { b == 1 }
+}
+
+// A boolean answer as its stack byte: 1, 0, or 255 for null.
+pub fn bool_byte(v: boolean?) -> integer {
+  if v == null { 255 } else if v! { 1 } else { 0 }
+}
+
+// `OpPutFnRef`: a function reference's 20 bytes popped (a 24-byte step) and written at the
+// frame slot `pos`.
+pub fn put_fn_ref(self: State, pos: integer) {
+  if !self.can_pop(24) || !self.slot_ok(self.stack_pos - pos) {
+    return;
+  }
+  self.stack_pos -= 24;
+  crt::stack_move(self.stk, self.stack_pos, self.stack_pos + 24 - pos, 20);
+}
+
+// `State::text_walk_step`: one step of a walk over a text's characters, on the frame slots
+// its operands name.
+pub fn text_walk_step(self: State) {
+  c = self.code_u16();
+  index = self.code_u16();
+  next = self.code_u16();
+  src = self.code_u16();
+  arg = self.code_u8();
+  crt::text_walk_step(self.stk, self.stack_pos, c, index, next, src, arg);
+}
+
+// The store value popped, rendered as `"{v}"` shows it (bit 1 of the format pretty, bit 2
+// JSON); null with the run stopped for a type the renderer does not show.
+fn rendered(self: State, tp: integer, fmt: integer) -> text? {
+  why = show::refusal(self.types, tp, []);
+  if why != "" {
+    self.stop("not carried: {why}");
+    return null;
+  }
+  self.load_table();
+  val = self.get_stack_dbref();
+  piece = "";
+  show::render(self.types, tp, crt::Pos { s: val.store_nr, r: val.rec, p: val.pos }, fmt, 0, piece);
+  piece
+}
+
+// `State::format_database`: a store value appended as text to the text local `pos` back from
+// the top before the value is popped.
+pub fn format_database(self: State) {
+  pos = self.code_u16();
+  tp = self.code_u16();
+  fmt = self.code_u8();
+  piece = self.rendered(tp, fmt);
+  if piece != null && self.slot_ok(self.stack_pos - (pos - 16)) {
+    crt::slot_text_append(self.stk, self.stack_pos - (pos - 16), piece!);
+  }
+}
+
+// `State::format_stack_database`: as `format_database`, into the text that local's reference
+// names.
+pub fn format_stack_database(self: State) {
+  pos = self.code_u16();
+  tp = self.code_u16();
+  fmt = self.code_u8();
+  piece = self.rendered(tp, fmt);
+  if piece != null {
+    r = self.get_var_dbref(pos - 16);
+    crt::ref_text_append(r.store_nr, r.rec, r.pos, piece!);
+  }
+}
+
+// `Stores::remove_claims_keyed` (`OpClearKeyed`): a keyed field emptied; a linked group's
+// secondary view (the type's top bit) drops only its own route.
+pub fn clear_keyed(self: State, dest: DbRef, raw: integer) {
+  tp = raw & 32767;
+  self.load_table();
+  if raw & 32768 == 0 {
+    crt::clear(dest.store_nr, dest.rec, dest.pos, tp);
+  } else if types::is_keyed(self.types, tp) {
+    crt::clear_view(dest.store_nr, dest.rec, dest.pos, tp);
+  } else {
+    self.stop("not carried: a keyed view clear of a type that is not a keyed collection");
+  }
+}
+
+// `Stores::move_vector` / `vector_replace` (`@FR-R-Place`): `src`'s elements moved into
+// `dest`, or `dest` replaced by them.
+pub fn move_vector(self: State, dest: DbRef, src: DbRef, tp: integer, replace: boolean) {
+  linked = self.types[tp]?.linked ?? false;
+  self.load_table();
+  if replace {
+    crt::vec_replace(dest.store_nr, dest.rec, dest.pos, src.store_nr, src.rec, src.pos, tp, linked);
+  } else {
+    crt::move_vector(dest.store_nr, dest.rec, dest.pos, src.store_nr, src.rec, src.pos, tp, linked);
+  }
+}
+
+// `Stores::move_field_out` / `move_record_out`: a field's, or a whole record's, value moved
+// out of `data` into `dest`.
+pub fn move_field(self: State, data: DbRef, dest: DbRef, tp: integer, record: boolean) {
+  self.load_table();
+  crt::move_field(data.store_nr, data.rec, data.pos, dest.store_nr, dest.rec, dest.pos, tp, record);
+}
+
+// `State::hash_remove`: the record and then the collection popped; the record taken out of a
+// sorted, an index, an array or a hash.  The type's top bit marks a linked group's view
+// member, which only unlinks.
+pub fn hash_remove(self: State) {
+  raw = self.code_u16();
+  rec = self.get_stack_dbref();
+  data = self.get_stack_dbref();
+  if rec.rec == 0 {
+    return;
+  }
+  self.load_table();
+  tp = raw & 32767;
+  view = raw & 32768 != 0;
+  kelem = types::keyed_element(self.types, tp);
+  if kelem != null {
+    crt::keyed_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::keyed_kind(self.types, tp) ?? 0, kelem!, tp, view);
+  } else if types::array_element(self.types, tp) != null {
+    crt::array_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::array_element(self.types, tp) ?? 0, view);
+  } else if types::hash_element(self.types, tp) != null {
+    crt::hash_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp, view);
+  } else {
+    self.stop("not carried: a removal from {self.types[tp]?.name ?? "a collection"}");
+  }
+}
+
+// `State::text_end_jump`: a text walk's loop test — the jump taken while the text in the
+// frame slot `src` is longer than the index in the slot `idx`.
+pub fn text_end_jump(self: State) {
+  src = self.code_u16();
+  arg = self.code_u8();
+  idx = self.code_u16();
+  step = self.code_i32();
+  if !self.slot_ok(self.stack_pos - src) {
+    return;
+  }
+  at = self.get_var_i64(idx);
+  if crt::local_text_len(self.stk, self.stack_pos - src, arg) > (at ?? (-9223372036854775807 - 1)) {
+    self.code_pos += step;
+  }
+}
+
+// `OpVarFnRef`: a function reference's 20 bytes pushed from the frame slot `pos`, in a
+// 24-byte step.
+pub fn var_fn_ref(self: State, pos: integer) {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return;
+  }
+  self.ensure_stack(24);
+  crt::stack_move(self.stk, self.stack_pos - pos, self.stack_pos, 20);
+  self.stack_pos += 24;
+}
+
+// `State::get_file_text`: the file's text read into the text the `&text` reference names;
+// that reference and then the File popped.
+pub fn get_file_text(self: State) {
+  content = self.get_stack_dbref();
+  file = self.get_stack_dbref();
+  crt::file_text_ref(file.store_nr, file.rec, file.pos, content.store_nr, content.rec, content.pos);
+}
+
+// `Stores::get_ref` of a vector's element (`OpVectorRef`, `OpVectorRefNullable`): the record
+// an array's slot `index` names; null outside it.
+pub fn vec_ref(r: DbRef, index: integer?) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::array_get(io, r.store_nr, r.rec, r.pos, index);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `State::format_single` / `format_stack_single`: as `format_float` and `format_stack_float`,
+// the value a single.
+pub fn format_single(self: State) {
+  pos = self.code_u16();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  dir = self.code_i8();
+  precision = self.get_stack_i64();
+  width = self.get_stack_i64();
+  val = self.get_stack_f32();
+  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val as float?, width, precision, token, plus, dir, true));
+}
+
+pub fn format_stack_single(self: State) {
+  pos = self.code_u16();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  dir = self.code_i8();
+  precision = self.get_stack_i64();
+  width = self.get_stack_i64();
+  val = self.get_stack_f32();
+  r = self.get_var_dbref(pos - 24);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_float(val as float?, width, precision, token, plus, dir, true));
+}
+
+// `State::append_character`: a character popped and appended to the text local `pos` back
+// from the top before the pop; the null character appends nothing (`@FR-F-Render`).
+pub fn append_character(self: State) {
+  pos = self.code_u16();
+  c = self.get_stack_char();
+  if c != 0 && self.slot_ok(self.stack_pos - (pos - 8)) {
+    crt::slot_text_append(self.stk, self.stack_pos - (pos - 8), "{c as character}");
+  }
+}
+
+// `State::append_stack_character`: as `append_character`, to the text that local's reference
+// names.
+pub fn append_stack_character(self: State) {
+  pos = self.code_u16();
+  c = self.get_stack_char();
+  if c != 0 {
+    r = self.get_var_dbref(pos - 8);
+    crt::ref_text_append(r.store_nr, r.rec, r.pos, "{c as character}");
+  }
+}
+
+// `State::write_file`: the value's reference and then the File popped; the value written at
+// the File's next position — a text's bytes as they are, any other in its binary form.
+pub fn write_file(self: State) {
+  tp = self.code_u16();
+  val = self.get_stack_dbref();
+  file = self.get_stack_dbref();
+  if tp == 5 {
+    crt::ser_ref_text(val.store_nr, val.rec, val.pos);
+    crt::ser_write(file.store_nr, file.rec, file.pos);
+  } else {
+    self.load_table();
+    files::write(self.types, crt::Pos { s: file.store_nr, r: file.rec, p: file.pos }, crt::Pos { s: val.store_nr, r: val.rec, p: val.pos }, tp);
+  }
+}
+
+// `State::read_file`: the byte count, the value's reference and the File popped; that many
+// bytes read from the File's next position into the value — a text's as they are, any other
+// decoded from its binary form.
+pub fn read_file(self: State) {
+  tp = self.code_u16();
+  n = self.get_stack_i64() ?? 0;
+  val = self.get_stack_dbref();
+  file = self.get_stack_dbref();
+  if tp == 5 {
+    if crt::read_file(file.store_nr, file.rec, file.pos, n, true, 0) >= 0 {
+      crt::de_ref_text(val.store_nr, val.rec, val.pos);
+    }
+  } else {
+    self.load_table();
+    files::read(self.types, crt::Pos { s: file.store_nr, r: file.rec, p: file.pos }, crt::Pos { s: val.store_nr, r: val.rec, p: val.pos }, n, tp);
+  }
+}
+
+// The File popped and one of its operations run: 0 its size, 1 a seek to `arg`, 2 a truncation
+// to `arg`, 3 a sync.
+fn file_op(self: State, which: integer, arg: integer) -> integer? {
+  file = self.get_stack_dbref();
+  crt::file_op(which, file.store_nr, file.rec, file.pos, arg)
+}
+
+// `State::size_file`, `seek_file`, `truncate_file`, `sync_file`.
+pub fn size_file(self: State) {
+  self.put_stack_i64(self.file_op(0, 0));
+}
+
+pub fn seek_file(self: State) {
+  pos = self.get_stack_i64() ?? 0;
+  self.file_op(1, pos);
+}
+
+pub fn truncate_file(self: State) {
+  size = self.get_stack_i64() ?? 0;
+  self.put_stack_i64(self.file_op(2, size));
+}
+
+pub fn sync_file(self: State) {
+  self.put_stack_i64(self.file_op(3, 0));
+}
+
+// ── Calls through a function reference. ───────────────────────────────────────────────────
+
+// The reference in the frame slot at byte `at`.
+fn slot_dbref(self: State, at: integer) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  if self.slot_ok(at) {
+    crt::slot_ref(io, self.stk, at);
+  }
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// A call's hidden return buffers (`RunFnRef.hidden`) pushed and held until the frame at
+// `depth` returns: a record's buffer a store with no root, a vector's a store of its type
+// with its defaults — both fresh.
+fn push_hidden(self: State, hidden: vector<integer>, depth: integer) {
+  for hb in hidden {
+    io: vector<integer> = [NULL_STORE, 0, 0];
+    if hb < 0 {
+      crt::database(io, 8, 0);
+      io[1] = 0;
+    } else {
+      crt::database(io, self.types[hb]!.size, hb);
+      crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(hb));
+    }
+    buf = DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 };
+    self.put_stack_dbref(buf);
+    self.fn_bufs += [FnBuf { depth: depth, at: buf }];
+  }
+}
+
+// `State::fn_call_ref_to`: the definition the reference in the slot `fn_var` names called —
+// its extra text buffers dropped, its hidden return buffers pushed, its closure record pushed
+// when it has one.
+pub fn fn_call_ref(self: State, fn_var: integer, arg_size: integer) {
+  fv = fn_var;
+  asz = arg_size;
+  d = self.get_var_i64(fv) ?? -1;
+  if d >= 0 && self.call_target >= 0 {
+    d = self.call_target;
+  }
+  self.call_target = -1;
+  if d < 0 || d + 1 >= len(self.starts) {
+    self.stop("a call through a reference that names no function");
+    return;
+  }
+  depth = len(self.frames) + 1;
+  top = self.stack_pos;
+  i = self.fnref_of[d] ?? -1;
+  if i >= 0 {
+    f = self.fnrefs[i]!;
+    if f.kind != 0 {
+      self.stop("not carried: a call through a reference to a {if f.kind == 1 { "native" } else { "generator" }}");
+      return;
+    }
+    if f.drop > 0 && asz >= f.drop {
+      self.stack_pos -= f.drop;
+      fv -= f.drop;
+      asz -= f.drop;
+      top = self.stack_pos;
+    }
+    self.push_hidden(f.hidden, depth);
+  }
+  closure = self.slot_dbref(top - (fv - 8));
+  if closure.rec != 0 {
+    self.put_stack_dbref(closure);
+  }
+  // loft#1185: the allocation count before the callee runs (`release_fnref_bufs` compares).
+  self.fn_calls += [depth, crt::serial_now()];
+  self.fn_call(d, asz + self.stack_pos - top, self.starts[d] ?? 0);
+}
+
+// `State::release_fnref_bufs`, at the return of the frame on top: the reference it answers
+// (`value` 12, at `fn_stack`), when a call through a reference made it, judged against the
+// allocation count at that call's entry — a store stamped after it was minted by the call and
+// is held for handing up; one that predates it and is not the call's own buffer is borrowed
+// (`fn_borrowed`, which `bind_fn_ref_result` copies).  Then the buffers held at this depth are
+// freed, except the one returned, which the caller's frame now holds.
+fn release_fnref_bufs(self: State, fn_stack: integer, value: integer) {
+  depth = len(self.frames);
+  ret = DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+  if value == 12 {
+    ret = self.slot_dbref(fn_stack);
+  }
+  since = -1;
+  i = len(self.fn_calls) - 2;
+  while i >= 0 && since < 0 {
+    if (self.fn_calls[i] ?? -1) == depth {
+      since = self.fn_calls[i + 1] ?? 0;
+      self.fn_calls.remove(i + 1);
+      self.fn_calls.remove(i);
+    }
+    i -= 2;
+  }
+  minted = since >= 0 && value == 12 && ret.store_nr != NULL_STORE && crt::store_serial(ret.store_nr) > since;
+  own = false;
+  for b in self.fn_bufs {
+    own = own || (b.depth == depth && b.at.store_nr == ret.store_nr);
+  }
+  self.fn_borrowed.clear();
+  if since >= 0 && value == 12 && !minted && !own && ret.store_nr != NULL_STORE && ret.rec != 0 {
+    self.fn_borrowed += [ret.store_nr, ret.rec, ret.pos];
+  }
+  if minted && !own {
+    self.fn_bufs += [FnBuf { depth: depth, at: ret }];
+  }
+  handed: vector<FnBuf> = [];
+  while len(self.fn_bufs) > 0 && (self.fn_bufs[len(self.fn_bufs) - 1]?.depth ?? -1) >= depth {
+    k = len(self.fn_bufs) - 1;
+    b = self.fn_bufs[k]!;
+    held = b.depth;
+    at = DbRef { store_nr: b.at.store_nr, rec: b.at.rec, pos: b.at.pos };
+    self.fn_bufs.remove(k);
+    if held != depth {
+      continue;
+    }
+    if value == 12 && at.store_nr == ret.store_nr {
+      handed += [FnBuf { depth: depth - 1, at: at }];
+    } else if crt::store_live(at.store_nr) {
+      // A buffer already freed — by the frame it was handed up to — is left alone.
+      crt::free_ref(at.store_nr, at.rec, at.pos);
+    }
+  }
+  // The first frame hands nothing up: it has no caller.
+  if depth > 1 {
+    for h in handed {
+      self.fn_bufs += [FnBuf { depth: h.depth, at: DbRef { store_nr: h.at.store_nr, rec: h.at.rec, pos: h.at.pos } }];
+    }
+  }
+}
+
+// `State::bind_fn_ref_result`: a call through a reference's answer, popped, bound into the
+// variable at `pos` — a copy into a record of its own when it was borrowed, else the store
+// itself, which the frame stops holding (the bind owns it now).
+pub fn bind_fn_ref_result(self: State) {
+  pos = self.code_u16();
+  tp = self.code_u16();
+  src = self.get_stack_dbref();
+  borrowed = len(self.fn_borrowed) > 0 && (self.fn_borrowed[0] ?? -1) == src.store_nr;
+  self.fn_borrowed.clear();
+  at = self.stack_pos - pos;
+  if borrowed && src.rec != 0 {
+    self.make_store(at, tp);
+    v = self.slot_dbref(at);
+    self.load_table();
+    crt::copy_record(src.store_nr, src.rec, src.pos, v.store_nr, v.rec, v.pos, tp, self.copy_flags(tp));
+    return;
+  }
+  if src.store_nr != NULL_STORE {
+    depth = len(self.frames);
+    k = len(self.fn_bufs) - 1;
+    found = -1;
+    while k >= 0 && (self.fn_bufs[k]?.depth ?? -1) >= depth && found < 0 {
+      if self.fn_bufs[k]!.depth == depth && self.fn_bufs[k]!.at.store_nr == src.store_nr {
+        found = k;
+      }
+      k -= 1;
+    }
+    if found >= 0 {
+      self.fn_bufs.remove(found);
+    }
+  }
+  if self.slot_ok(at) {
+    crt::set_slot_ref(self.stk, at, src.store_nr, src.rec, src.pos);
+  }
+}
+
+// `State::fn_ref_closure`: a function reference's closure record, 8 bytes into its 20-byte
+// slot, pushed.
+pub fn fn_ref_closure(self: State) {
+  fn_var = self.code_u16();
+  self.put_stack_dbref(self.slot_dbref(self.stack_pos - (fn_var - 8)));
+}
+
+// `State::drop_fn_ref`: a live closure record released by its record's drop cascade, called
+// with the closure pushed; nothing for a null or freed closure, or one without a cascade.
+pub fn drop_fn_ref(self: State) {
+  fn_var = self.code_u16();
+  d = self.get_var_i64(fn_var) ?? -1;
+  closure = self.slot_dbref(self.stack_pos - (fn_var - 8));
+  i = if d >= 0 { self.fnref_of[d] ?? -1 } else { -1 };
+  cascade = if i >= 0 { self.fnrefs[i]!.cascade } else { -1 };
+  if cascade >= 0 && closure.rec != 0 && crt::store_live(closure.store_nr) {
+    self.put_stack_dbref(closure);
+    self.fn_call(cascade, 16, self.starts[cascade] ?? 0);
+  }
+}
+
+// `State::fn_ref_detach_shared`: the old reference's closure forgotten where it has none or
+// shares the new one's store.
+pub fn fn_ref_detach_shared(self: State) {
+  old = self.code_u16();
+  new = self.code_u16();
+  fresh = self.slot_dbref(self.stack_pos - (new - 8));
+  was = self.slot_dbref(self.stack_pos - (old - 8));
+  if was.rec == 0 || was.store_nr == fresh.store_nr {
+    crt::set_slot_ref(self.stk, self.stack_pos - (old - 8), NULL_STORE, 0, 0);
+  }
+}
+
+// ── Walks over a collection: the state is the C runtime's cursor. ─────────────────────────
+
+// `State::iterate`: a walk's start — the key list and the bounds' sizes from the code, then
+// the till bound, the from bound and the collection popped; the walk's state pushed.  A
+// snapshot (kind 4) walks without bounds; an index (1), a sorted (2) or an ordered (3)
+// through `keyed_iterate`.
+pub fn iterate(self: State) {
+  on = self.code_u8();
+  arg = self.code_u16();
+  nk = self.code_u8();
+  kinds: vector<integer> = [];
+  for _ in 0..nk {
+    kt = self.code_i8();
+    kinds += [kt.abs()];
+    pos = self.code_u16();
+    min = self.code_i32();
+    crt::walk_key(kt, pos, min);
+  }
+  from = self.code_u8();
+  till = self.code_u8();
+  kind = on & 63;
+  if kind < 1 || kind > 4 || (kind == 4 && (from != 0 || till != 0)) {
+    self.stop("not carried: a walk of kind {kind}");
+    return;
+  }
+  till_bytes = natives::walk_bound_bytes(kinds, till);
+  from_bytes = natives::walk_bound_bytes(kinds, from);
+  if !self.can_pop(till_bytes + from_bytes + 16) {
+    return;
+  }
+  natives::push_walk_bound(self.stk, kinds, from, self.stack_pos - till_bytes);
+  natives::push_walk_bound(self.stk, kinds, till, self.stack_pos);
+  self.stack_pos -= till_bytes + from_bytes;
+  data = self.get_stack_dbref();
+  if kind == 4 {
+    self.put_stack_i64(crt::scratch_iterate(data.store_nr, data.rec, data.pos));
+  } else {
+    self.load_table();
+    self.put_stack_i64(crt::keyed_iterate(data.store_nr, data.rec, data.pos, on, arg, from, till));
+  }
+}
+
+// `State::step`: a walk's next record — the state in the frame slot `state_var` advanced, and
+// the collection on top replaced by the record (null at the end).
+pub fn step(self: State) {
+  state_var = self.code_u16();
+  on = self.code_u8();
+  arg = self.code_u16();
+  cursor = self.get_var_i64(state_var) ?? 0;
+  data = self.slot_dbref(self.stack_pos - 16);
+  out: vector<integer> = [NULL_STORE, 0, 0, 0];
+  kind = on & 63;
+  if kind == 4 {
+    crt::scratch_step(out, cursor, data.store_nr, data.rec, data.pos, on & 64 != 0);
+  } else if kind >= 1 && kind <= 3 {
+    self.load_table();
+    crt::keyed_step(out, cursor, data.store_nr, data.rec, data.pos, on, arg);
+  } else {
+    self.stop("not carried: a walk of kind {kind}");
+    return;
+  }
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, out[3]);
+  crt::set_slot_ref(self.stk, self.stack_pos - 16, out[0] ?? NULL_STORE, out[1] ?? 0, out[2] ?? 0);
+}
+
+// `State::remove`: the walk's current record removed — the state in the slot `state_var`
+// moved past it, the collection popped.
+pub fn remove(self: State) {
+  state_var = self.code_u16();
+  on = self.code_u8();
+  arg = self.code_u16();
+  if on & 63 > 3 {
+    self.stop("not carried: a removal in a walk of kind {on & 63}");
+    return;
+  }
+  cursor = self.get_var_i64(state_var) ?? 0;
+  data = self.slot_dbref(self.stack_pos - 16);
+  self.load_table();
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, crt::walk_remove(cursor, data.store_nr, data.rec, data.pos, on, arg));
+  self.stack_pos -= 16;
+}
+
+// `State::set_keyed` (`c[k…] = v`): the key parts, the value and the collection popped; the
+// type's top bit releases the value after.
+pub fn set_keyed(self: State) {
+  raw = self.code_u16();
+  no_keys = self.code_u8();
+  tp = raw & 32767;
+  self.load_table();
+  kind = types::keyed_kind(self.types, tp) ?? 0;
+  if types::hash_element(self.types, tp) == null && kind == 0 {
+    self.stop("not carried: a keyed write into {self.types[tp]?.name ?? "a collection"}");
+    return;
+  }
+  bytes = natives::push_keys(self.types, self.stk, tp, no_keys, self.stack_pos);
+  if bytes < 0 || !self.can_pop(bytes + 32) {
+    self.stop("not carried: a keyed write whose key does not resolve");
+    return;
+  }
+  self.stack_pos -= bytes;
+  value = self.get_stack_dbref();
+  coll = self.get_stack_dbref();
+  crt::set_keyed(coll.store_nr, coll.rec, coll.pos, value.store_nr, value.rec, value.pos, types::content_of(self.types, tp) ?? 0, tp, no_keys, raw >= 32768, kind);
+}
+
+// `State::replace_keyed`: a keyed local rebound from a call (`h = f()`) — `dest`, popped
+// first, filled again from `src`; the flags the operator's own bit and whether the element
+// tree may move whole.
+pub fn replace_keyed(self: State) {
+  raw = self.code_u16();
+  tp = raw & 32767;
+  if !types::is_keyed(self.types, tp) {
+    self.stop("not carried: a keyed replace of a type that is not a keyed collection");
+    return;
+  }
+  self.load_table();
+  dest = self.get_stack_dbref();
+  src = self.get_stack_dbref();
+  crt::replace_keyed(src.store_nr, src.rec, src.pos, dest.store_nr, dest.rec, dest.pos, tp, (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(self.types, tp) { 2 } else { 0 }));
+}
+
+// `State::set_stack_ref`: a reference, popped first, written raw at the place another names.
+pub fn set_stack_ref(self: State) {
+  v1 = self.get_stack_dbref();
+  r = self.get_stack_dbref();
+  crt::set_place_ref(r.store_nr, r.rec, r.pos, v1.store_nr, v1.rec, v1.pos);
+}
+
+// ── Generators (`State::coroutine_*`). ────────────────────────────────────────────────────
+
+// The frame facts of generator definition `d` (`RunGen`), -1 for none.
+fn gen_of(self: State, d: integer) -> integer {
+  for i in 0..len(self.gens) {
+    if (self.gens[i]?.def ?? -1) == d {
+      return i;
+    }
+  }
+  -1
+}
+
+// Does the handle `(_, r, p)` name the live frame it was made for (`coroutine_slot_matches`)?
+fn co_matches(self: State, r: integer, p: integer) -> boolean {
+  r > 0 && r < len(self.cos) && (self.cos[r]?.live ?? false) && (self.cos[r]?.generation ?? -1) == p
+}
+
+// Is the handle exhausted: a null or stale one is; a live frame is when it ended.
+fn co_done(self: State, h: DbRef) -> boolean {
+  h.store_nr != NULL_STORE || h.rec == 0 || !self.co_matches(h.rec, h.pos) || (self.cos[h.rec]?.status ?? CO_EXHAUSTED) == CO_EXHAUSTED
+}
+
+// What an advance of an exhausted, null or stale handle answers (`push_null_value`), written
+// at the stack byte `at`: by the packed size's channel tag (high byte) and size (low byte) —
+// a null reference, an (integer, reference) pair, a null 4- or 8-byte value, the null text,
+// or zeroes.  The top is left just above it.
+fn push_null_value(self: State, at: integer, packed: integer) {
+  vs = packed % 256;
+  tag = packed / 256;
+  self.stack_pos = at;
+  self.ensure_stack(24);
+  if (tag == 0 || tag == 6) && vs == 12 {
+    crt::set_slot_ref(self.stk, at, NULL_STORE, 0, 0);
+    self.stack_pos = at + 16;
+    return;
+  }
+  if tag == 2 && vs == 20 {
+    crt::stack_zero(self.stk, at, 24);
+    crt::stack_put(crt::SW_I64, self.stk, at, null);
+    crt::set_slot_ref(self.stk, at + 8, NULL_STORE, 0, 0);
+    self.stack_pos = at + 24;
+    return;
+  }
+  step = (vs + 7) / 8 * 8;
+  self.ensure_stack(step);
+  if vs == 4 {
+    crt::stack_put(crt::SW_I64, self.stk, at, 2147483648);
+  } else if vs == 8 {
+    crt::stack_put(crt::SW_I64, self.stk, at, null);
+  } else if vs == 16 {
+    crt::stack_str_null(self.stk, at);
+  } else {
+    crt::stack_zero(self.stk, at, step);
+  }
+  self.stack_pos = at + step;
+}
+
+// A frame's end, of whatever kind: its text copies released, its argument stores' holds given
+// back, its slot freed for the next generator.
+fn co_release(self: State, idx: integer) {
+  for c in self.cos[idx]!.owned {
+    crt::owned_free(c);
+  }
+  held = self.cos[idx]!.held;
+  k = 0;
+  while k + 2 < len(held) {
+    crt::release_frame_hold(held[k] ?? NULL_STORE, held[k + 1] ?? 0, held[k + 2] ?? 0);
+    k += 3;
+  }
+  self.cos[idx] = co_empty();
+}
+
+// `free_coroutine`: a handle released.  One of several holders only gives its hold back; the
+// last frees the frame — a suspended or a created one first releasing what its locals own (its
+// text locals' texts, the stores its owning locals name, read from its saved bytes through the
+// stack bytes above the top).  A stale handle frees nothing.
+fn co_free(self: State, r: integer, p: integer) {
+  if !self.co_matches(r, p) {
+    return;
+  }
+  if (self.cos[r]?.holds ?? 0) > 1 {
+    self.cos[r].holds -= 1;
+    return;
+  }
+  owned: vector<DbRef> = [];
+  st = self.cos[r]!.status;
+  g = self.cos[r]!.gen;
+  if (st == CO_SUSPENDED || st == CO_CREATED) && g >= 0 {
+    self.ensure_stack(24);
+    scr = self.stack_pos;
+    nb = len(self.cos[r]!.bytes);
+    for slot in self.gens[g]!.text_locals {
+      if slot + 24 <= nb {
+        crt::stack_code_bytes(self.stk, scr, self.cos[r]!.bytes, slot, 24);
+        crt::slot_text_free(self.stk, scr);
+        for z in 0..24 {
+          self.cos[r].bytes[slot + z] = 0 as u8;
+        }
+      }
+    }
+    for slot in self.gens[g]!.owned_locals {
+      if slot + 12 <= nb {
+        crt::stack_code_bytes(self.stk, scr, self.cos[r]!.bytes, slot, 12);
+        o = self.slot_dbref(scr);
+        for z in 0..12 {
+          self.cos[r].bytes[slot + z] = 0 as u8;
+        }
+        if o.rec != 0 {
+          owned += [o];
+        }
+      }
+    }
+  }
+  self.co_release(r);
+  for o in owned {
+    if o.store_nr == NULL_STORE {
+      self.co_free(o.rec, o.pos);
+    } else if crt::store_live(o.store_nr) {
+      crt::free_ref(o.store_nr, o.rec, o.pos);
+    }
+  }
+}
+
+// `State::coroutine_create`: the arguments leave the stack for a new frame — its text
+// arguments copied into texts of its own, its reference arguments' stores held — with the
+// return slot after them; the handle pushed.
+pub fn coroutine_create(self: State, d_nr: integer, args_size: integer, to: integer) {
+  if !self.can_pop(args_size) {
+    return;
+  }
+  base = self.stack_pos - args_size;
+  g = self.gen_of(d_nr);
+  owned: vector<integer> = [];
+  held: vector<integer> = [];
+  if g >= 0 {
+    for off in self.gens[g]!.text_args {
+      if off < args_size {
+        copy = crt::stack_str_own(self.stk, base + off);
+        if copy != 0 {
+          owned += [copy];
+        }
+      }
+    }
+    for off in self.gens[g]!.ref_args {
+      if off + 12 <= args_size {
+        a = self.slot_dbref(base + off);
+        if crt::hold_for_frame(a.store_nr, a.rec, a.pos) {
+          held += [a.store_nr, a.rec, a.pos];
+        }
+      }
+    }
+  }
+  self.ensure_stack(8);
+  bytes = crt::stack_read_bytes(self.stk, base, args_size + 8);
+  for z in 0..8 {
+    bytes[args_size + z] = 0 as u8;
+  }
+  self.stack_pos = base;
+  generation = self.co_generation;
+  self.co_generation = if generation >= 2147483647 { 1 } else { generation + 1 };
+  slot = -1;
+  for i in 1..len(self.cos) {
+    if slot < 0 && !(self.cos[i]?.live ?? true) {
+      slot = i;
+    }
+  }
+  frame = CoFrame { live: true, gen: g, status: CO_CREATED, code_pos: to, stack_base: 0, caller_return_pos: 0, bytes: bytes, owned: owned, generation: generation, holds: 1, held: held };
+  if slot < 0 {
+    slot = len(self.cos);
+    self.cos += [frame];
+  } else {
+    self.cos[slot] = frame;
+  }
+  self.put_stack_dbref(DbRef { store_nr: NULL_STORE, rec: slot, pos: generation });
+}
+
+// `State::coroutine_next`: the handle popped; a live frame's bytes back on the stack and run
+// on from where it stopped (its locals zeroed at the first resume), or the null value for an
+// exhausted, null or stale handle.
+pub fn coroutine_next(self: State, value_size: integer) {
+  h = self.get_stack_dbref();
+  if self.co_done(h) {
+    self.push_null_value(self.stack_pos, value_size);
+    return;
+  }
+  r = h.rec;
+  st = self.cos[r]!.status;
+  if st == CO_RUNNING {
+    self.stop("a generator advanced while it runs");
+    return;
+  }
+  self.cos[r].caller_return_pos = self.code_pos;
+  self.cos[r].stack_base = self.stack_pos;
+  self.cos[r].status = CO_RUNNING;
+  n = len(self.cos[r]!.bytes);
+  g = self.cos[r]!.gen;
+  zone = if st == CO_CREATED && g >= 0 { self.gens[g]?.zone2 ?? 0 } else { 0 };
+  // The frame's own height is in reach above it, as a call's is (`fn_call`).
+  self.ensure_stack(n + zone + FRAME_HEADROOM);
+  crt::stack_code_bytes(self.stk, self.stack_pos, self.cos[r]!.bytes, 0, n);
+  self.stack_pos += n;
+  if zone > 0 {
+    crt::stack_zero(self.stk, self.stack_pos, zone);
+  }
+  self.co_active += [r];
+  self.code_pos = self.cos[r]!.code_pos;
+}
+
+// `State::coroutine_yield`: the frame's locals saved, the yielded value moved to where the
+// frame began, and the caller continued.
+pub fn coroutine_yield(self: State, value_size: integer) {
+  if len(self.co_active) == 0 {
+    self.stop("a yield outside a running generator");
+    return;
+  }
+  r = self.co_active[len(self.co_active) - 1] ?? 0;
+  self.co_active.remove(len(self.co_active) - 1);
+  base = self.cos[r]!.stack_base;
+  step = (value_size + 7) / 8 * 8;
+  start = self.stack_pos - step;
+  self.cos[r].bytes = crt::stack_read_bytes(self.stk, base, start - base);
+  self.cos[r].code_pos = self.code_pos;
+  self.cos[r].status = CO_SUSPENDED;
+  crt::stack_move(self.stk, start, base, value_size);
+  self.stack_pos = base + step;
+  self.code_pos = self.cos[r]!.caller_return_pos;
+}
+
+// `State::coroutine_return`: the frame ends; the caller gets the null value, the reference
+// elements of a yielded tuple nulled in it.
+pub fn coroutine_return(self: State, value_size: integer) {
+  if len(self.co_active) == 0 {
+    self.stop("a generator return outside a running generator");
+    return;
+  }
+  r = self.co_active[len(self.co_active) - 1] ?? 0;
+  self.co_active.remove(len(self.co_active) - 1);
+  base = self.cos[r]!.stack_base;
+  back = self.cos[r]!.caller_return_pos;
+  g = self.cos[r]!.gen;
+  self.co_release(r);
+  self.push_null_value(base, value_size);
+  if g >= 0 {
+    for off in self.gens[g]!.tuple_refs {
+      crt::set_slot_ref(self.stk, base + off, NULL_STORE, 0, 0);
+    }
+  }
+  self.code_pos = back;
+}
+
+// `State::coroutine_exhausted`: see `co_done`.
+pub fn coroutine_exhausted(self: State, gen: DbRef) -> boolean {
+  self.co_done(gen)
+}
+
+// `State::coroutine_retain`: a second holder of the handle (`(G-Hold)`) — one more hold on
+// its frame; the handle is answered as it is.
+pub fn coroutine_retain(self: State, gen: DbRef) -> DbRef {
+  if self.co_matches(gen.rec, gen.pos) {
+    self.cos[gen.rec].holds += 1;
+  }
+  gen
+}
+
+// ── Casts between a text and a value; narrow locals. ──────────────────────────────────────
+
+// `State::db_from_text` (`t as vector<T>`): the C runtime's parser over the parse table the
+// schema gives, a new store holding the value.
+pub fn db_from_text(self: State, val: text?, tp: integer) -> DbRef {
+  self.load_table();
+  ptypes::prepare(self.types, tp, self.ptold);
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::record_from_text(io, val ?? "", tp);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `Stores::to_enum`: the variant of enum type `tp` the text names, 1-based; 0 when none is.
+pub fn to_enum(self: State, tp: integer, name: text?) -> integer {
+  match self.types[tp]?.parts[0] {
+    PtEnum { values } => {
+      for vi in 0..len(values) {
+        if (values[vi]?.name ?? "") == (name ?? "") {
+          return vi + 1;
+        }
+      }
+    }
+    _ => {}
+  }
+  0
+}
+
+// `OpCastTextFromEnum`: a variant's name pushed as a view of an interned copy (as Rust views
+// its type table); the null text for 0 or 255.
+pub fn push_enum_text(self: State, v: integer, tp: integer) {
+  name: text? = null;
+  if v > 0 && v != 255 {
+    match self.types[tp]?.parts[0] {
+      PtEnum { values } => {
+        name = values[v - 1]?.name;
+      }
+      _ => {}
+    }
+  }
+  if name == null {
+    self.push_null_text();
+    return;
+  }
+  key = tp * 256 + v;
+  at = -1;
+  k = 0;
+  while k + 2 < len(self.interned) && at < 0 {
+    if (self.interned[k] ?? -1) == key {
+      at = k;
+    }
+    k += 3;
+  }
+  if at < 0 {
+    at = len(self.interned);
+    self.interned += [key, crt::intern_text(name!), name!.size()];
+  }
+  self.ensure_stack(16);
+  crt::stack_str_interned(self.stk, self.stack_pos, self.interned[at + 1] ?? 0, self.interned[at + 2] ?? 0);
+  self.stack_pos += 16;
+}
+
+// `State::var_narrow` / `put_narrow`: a narrow local read from, or written at, its slot's low
+// bytes, by its kind's width and null code.
+pub fn var_narrow(self: State, pos: integer, min: integer, kind: integer) -> integer? {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return null;
+  }
+  w = natives::narrow_width(kind);
+  bytes = crt::stack_read_bytes(self.stk, self.stack_pos - pos, w);
+  bits = 0;
+  for b in 0..w {
+    bits += (bytes[b] ?? 0) << (8 * b);
+  }
+  natives::narrow_decode(kind, min, bits)
+}
+
+pub fn put_narrow(self: State, pos: integer, min: integer, kind: integer, value: integer?) {
+  if !self.slot_ok(self.stack_pos + 8 - pos) {
+    return;
+  }
+  w = natives::narrow_width(kind);
+  bits = natives::narrow_encode(kind, min, value);
+  crt::stack_code_bytes(self.stk, self.stack_pos + 8 - pos, [for b in 0..w { ((bits >> (8 * b)) & 255) as u8 }], 0, w);
+}
+
+// `State::insert_vector`: the index and the vector popped; a new element at the index, filled
+// with its type's defaults; its reference pushed.
+pub fn insert_vector(self: State) {
+  size = self.code_u16();
+  tp = self.code_u16();
+  index = self.get_stack_i64() ?? 0;
+  r = self.get_stack_dbref();
+  linked = self.types[tp]?.linked ?? false;
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::vec_insert(io, r.store_nr, r.rec, r.pos, if linked { self.types[tp]?.size ?? size } else { size }, index, linked);
+  crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(tp));
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+// `Stores::eq_content`: two values of type `tp` compared field by field.
+pub fn eq_content(self: State, v1: DbRef, v2: DbRef, tp: integer) -> boolean {
+  self.load_table();
+  eq::eq_content(self.types, crt::Pos { s: v1.store_nr, r: v1.rec, p: v1.pos }, crt::Pos { s: v2.store_nr, r: v2.rec, p: v2.pos }, tp)
+}
+
+// `Stores::sort_vector`: a primitive vector sorted in place by `<` on its elements.
+pub fn sort_vector(self: State, r: DbRef, tp: integer) {
+  raw = match self.types[tp]?.parts[0] {
+    PtIntRaw { start: _, nullable: _ } => true,
+    _ => false,
+  };
+  crt::vec_sort(r.store_nr, r.rec, r.pos, self.types[tp]?.size ?? 8, tp == 2 || tp == 3, tp == 5, raw);
+}
+
+// `Stores::prepend_vector`: `g`'s elements in front of `r`'s; whether any were.
+pub fn vec_prepend(self: State, r: DbRef, g: DbRef, tp: integer) -> boolean {
+  self.load_table();
+  crt::vec_prepend(r.store_nr, r.rec, r.pos, g.store_nr, g.rec, g.pos, tp, self.types[tp]?.linked ?? false)
+}
+
+// `Stores::child_rec_in_place`: the field's child record of type `tp`, made with its defaults
+// where it has none.
+pub fn child_rec_in_place(self: State, field: DbRef, tp: integer) -> DbRef {
+  self.load_table();
+  io: vector<integer> = [field.store_nr, field.rec, field.pos];
+  crt::child_rec_in_place(io, tp, field.store_nr, field.rec, field.pos, self.default_of(tp));
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `Stores::set_child_rec`: the field's child record set from `data` (the type's top bit frees
+// the source).
+pub fn set_child_rec(self: State, field: DbRef, data: DbRef, raw: integer) {
+  self.load_table();
+  crt::set_child_rec(raw & 16383, field.store_nr, field.rec, field.pos, data.store_nr, data.rec, data.pos, raw & 32768 != 0);
+}
+
+// ── Child records, slot tags, linked groups, deliver. ─────────────────────────────────────
+
+// `Stores::ref_from_child_rec`: the child record a field names by number, in the field's own
+// store; null for 0.
+pub fn ref_from_child_rec(field: DbRef) -> DbRef {
+  rec = crt::get_w(8, field.store_nr, field.rec, field.pos, 0, 0) ?? 0;
+  if rec == 0 {
+    DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }
+  } else {
+    DbRef { store_nr: field.store_nr, rec: rec, pos: 8 }
+  }
+}
+
+// `keys::slot_tag`: a field's address as a slot cell names it — its position tagged with
+// `SLOT_FIELD_BIT`; the null reference for none.
+pub fn slot_tag(field: DbRef) -> DbRef {
+  if field.store_nr == NULL_STORE || field.rec == 0 {
+    DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }
+  } else {
+    DbRef { store_nr: field.store_nr, rec: field.rec, pos: field.pos | 1073741824 }
+  }
+}
+
+// `Stores::index_group_records`: a whole vector member indexed into the view member of type
+// `tp` of its group — the primary's position, the view's row, the keyed siblings.
+pub fn index_group(self: State, primary: DbRef, tp: integer, parent_tp: integer, fld: integer) {
+  self.load_table();
+  gm = types::group_members(self.types, parent_tp, fld);
+  if gm == null || len(gm!) < 6 {
+    self.stop("not carried: a group view that cannot be indexed");
+    return;
+  }
+  keyed: vector<integer> = [];
+  vpos = -1;
+  vkind = 0;
+  nullable = false;
+  k = 0;
+  while k + 2 < len(gm!) {
+    mpos = gm![k] ?? 0;
+    mkind = gm![k + 1] ?? 0;
+    mtp = gm![k + 2] ?? 0;
+    nullable = nullable || types::nullable_element(self.types, mtp);
+    if k > 0 {
+      if mtp == tp && vpos < 0 {
+        vpos = mpos;
+        vkind = mkind;
+      }
+      if mkind != 0 {
+        keyed += [mpos, mkind, mtp];
+      }
+    }
+    k += 3;
+  }
+  if vpos < 0 {
+    self.stop("not carried: a group view that is no member of the group");
+    return;
+  }
+  crt::index_group(primary.store_nr, primary.rec, primary.pos, gm![0] ?? 0, nullable, vpos, vkind, tp, keyed);
+}
+
+// `Stores::link_record_siblings`: a record the vector member holds handed to its group's
+// other members after an element write.
+pub fn link_record(self: State, data: DbRef, rec: DbRef, parent_tp: integer, fld: integer) {
+  self.load_table();
+  gm = types::group_members(self.types, parent_tp, fld);
+  if gm == null {
+    self.stop("not carried: a linked group that cannot be filed into");
+    return;
+  }
+  if len(gm!) < 6 {
+    return;
+  }
+  // The siblings: every member but the field itself (the first row), which holds it.
+  siblings: vector<integer> = [];
+  for i in 3..len(gm!) {
+    siblings += [gm![i] ?? 0];
+  }
+  held = false;
+  nullable = false;
+  k = 0;
+  while k + 2 < len(gm!) {
+    held = held || (gm![k + 1] ?? -1) == 0;
+    nullable = nullable || types::nullable_element(self.types, gm![k + 2] ?? 0);
+    k += 3;
+  }
+  crt::group_finish(types::content_of(self.types, gm![2] ?? 0) ?? 0, held, nullable, data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, siblings);
+}
+
+// `Stores::deliver_reconstruct` (`deliver(tag, value)`): the value's bytes printed by the
+// loopback host, walked over the parse table's rows.
+pub fn deliver(self: State, tag: integer?, val: DbRef, tp: integer) {
+  self.load_table();
+  ptypes::prepare(self.types, tp, self.ptold);
+  crt::deliver(tag ?? 0, val.store_nr, val.rec, val.pos, tp, self.types[tp]?.name ?? "#{tp}");
+}
+
+// `State::length_character`: a character's UTF-8 length, 0 for the null character.
+pub fn length_character(self: State) {
+  c = self.get_stack_char();
+  self.put_stack_i64(if c == 0 { 0 } else if c < 128 { 1 } else if c < 2048 { 2 } else if c < 65536 { 3 } else { 4 });
+}
+
+// `State::get_slot_ref`: the reference a slot cell at field `fld` of the record on top names,
+// in its place.
+pub fn get_slot_ref(self: State) {
+  fld = self.code_u16();
+  r = self.get_stack_dbref();
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::slot_get(io, r.store_nr, r.rec, r.pos, fld);
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+// `State::set_slot_ref` / `move_slot_ref`: the value popped, then the cell's place; the value
+// written into the slot cell, or moved there.
+pub fn set_slot_ref(self: State) {
+  raw = self.code_u16();
+  v = self.get_stack_dbref();
+  r = self.get_stack_dbref();
+  self.load_table();
+  crt::slot_set(raw, r.store_nr, r.rec, r.pos, v.store_nr, v.rec, v.pos);
+}
+
+pub fn move_slot_ref(self: State) {
+  raw = self.code_u16();
+  src = self.get_stack_dbref();
+  r = self.get_stack_dbref();
+  self.load_table();
+  crt::slot_move(raw, r.store_nr, r.rec, r.pos, src.store_nr, src.rec, src.pos);
+}

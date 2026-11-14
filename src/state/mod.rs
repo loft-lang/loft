@@ -18,7 +18,6 @@ use crate::fxhash::FxHashMap;
 use crate::keys::{DbRef, Str};
 use crate::lexer::Position;
 use crate::log_config::LogConfig;
-use crate::variables::size as var_size;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Error, Write};
 use std::sync::Arc;
@@ -2075,36 +2074,10 @@ impl State {
         let Some(def) = data.definitions.get(d_nr as usize) else {
             return owned;
         };
-        let vars = &def.variables();
-        for v in 0..vars.count() {
-            let tp = vars.tp(v);
-            // A generator HOLDS every handle it was handed (`(G-Hold)`, loft#1708): the caller
-            // took a hold for the frame, and an abandoned frame gives it back.  Any other
-            // argument is the caller's.
-            if vars.is_argument(v) && !matches!(tp.base(), Type::Iterator(_, _)) {
-                continue;
-            }
-            // `Iterator` joins the heap types here: a generator local holding another
-            // generator's handle is freed through the same path, which `free_ref_db`
-            // routes back to this function for that frame.
-            if !Self::is_heap_type(tp) && !matches!(tp, Type::Iterator(_, _)) {
-                continue;
-            }
-            if !vars.owns_store(v) {
-                continue;
-            }
-            // A local a closure record ADOPTED is the record's to release (`@FR-L-CapOwn`), and
-            // the frame's own scope exit skips it for that reason (`capture_adoption_owns_free`).
-            // Abandonment has to agree: a yielded lambda's capture copies (loft#1676) outlive the
-            // generator in the consumer's closure, and releasing them here freed a store a live
-            // closure still reads — through a slot the copies share, which named the wrong store.
-            if vars.is_captured(v) {
-                continue;
-            }
-            let slot = vars.stack(v);
-            if slot == u16::MAX {
-                continue;
-            }
+        // Which locals: `crate::gen_facts::owned_store_local_slots` — a heap local or an iterator
+        // that owns its store, not the caller's arguments (a generator handle excepted,
+        // `(G-Hold)`, loft#1708) nor a local a closure record adopted (`@FR-L-CapOwn`).
+        for slot in crate::gen_facts::owned_store_local_slots(def) {
             let off = slot as usize;
             if off + std::mem::size_of::<DbRef>() > bytes.len() {
                 continue; // local beyond the yield snapshot — never assigned
@@ -2139,35 +2112,9 @@ impl State {
         let Some(data) = data_ptr.get() else {
             return 0;
         };
-        let Some(def) = data.definitions.get(d_nr as usize) else {
-            return 0;
-        };
-        let vars = &def.variables();
-        // local_start = total argument bytes + return-address slot.
-        // @PLAN53 cluster 2 / S4: 8-rounded stepped spans, mirroring
-        // scopes.rs's local_start.
-        let step = |s: u16| crate::variables::aligned_stack_step(u32::from(s)) as u16;
-        let local_start: u16 = vars
-            .arguments()
-            .iter()
-            .map(|&a| step(var_size(vars.tp(a), &Context::Argument)))
-            .sum::<u16>()
-            .saturating_add(step(4));
-        // top = absolute end of the last local variable (from frame base 0).
-        let mut top: u16 = local_start;
-        for v in 0..vars.count() {
-            if vars.is_argument(v) {
-                continue;
-            }
-            let slot = vars.stack(v);
-            if slot == u16::MAX {
-                continue;
-            }
-            let sz = vars.size(v, &Context::Variable);
-            top = top.max(slot.saturating_add(sz));
-        }
-        // Return the SIZE of the local region (subtract the args+return-slot prefix).
-        top.saturating_sub(local_start) as usize
+        data.definitions
+            .get(d_nr as usize)
+            .map_or(0, crate::gen_facts::zone2_size)
     }
 
     /// S25.3 (C24): drop `String` objects embedded at text-local slots in a
@@ -2192,18 +2139,7 @@ impl State {
         let Some(def) = data.definitions.get(d_nr as usize) else {
             return;
         };
-        let vars = &def.variables();
-        for v in 0..vars.count() {
-            if vars.is_argument(v) {
-                continue;
-            }
-            if !matches!(vars.tp(v), Type::Text(_)) {
-                continue;
-            }
-            let slot = vars.stack(v);
-            if slot == u16::MAX {
-                continue;
-            }
+        for slot in crate::gen_facts::text_local_slots(def) {
             let off = slot as usize;
             if off + std::mem::size_of::<String>() > bytes.len() {
                 continue; // text local beyond yield snapshot — never assigned
@@ -2279,15 +2215,12 @@ impl State {
             return Vec::new();
         };
         let mut held = Vec::new();
-        let mut byte_offset: usize = 0;
-        for attr in def.attributes() {
+        for off in crate::gen_facts::ref_arg_offsets(def) {
+            let byte_offset = off as usize;
             if byte_offset >= args_size as usize {
                 break;
             }
-            let attr_size = var_size(&attr.typedef, &Context::Argument) as usize;
-            if crate::data::is_dbref(attr.typedef.base())
-                && byte_offset + std::mem::size_of::<DbRef>() <= stack_bytes.len()
-            {
+            if byte_offset + std::mem::size_of::<DbRef>() <= stack_bytes.len() {
                 // SAFETY: bounds checked above; the byte-packed stack stores the `DbRef`
                 // unaligned.
                 #[allow(clippy::cast_ptr_alignment)]
@@ -2298,7 +2231,6 @@ impl State {
                     held.push(db);
                 }
             }
-            byte_offset += attr_size;
         }
         held
     }
@@ -2318,37 +2250,32 @@ impl State {
         }
         let def = &data.definitions[d_nr as usize];
         let mut text_owned: Vec<(u32, String)> = Vec::new();
-        let mut byte_offset: usize = 0;
-
-        for attr in def.attributes() {
+        for off in crate::gen_facts::text_arg_offsets(def) {
+            let byte_offset = off as usize;
             if byte_offset >= args_size as usize {
                 break; // only scan the arg region
             }
-            let attr_size = var_size(&attr.typedef, &Context::Argument) as usize;
-            if matches!(&attr.typedef, Type::Text(_)) {
-                // Read the Str from stack_bytes at byte_offset.
-                // SAFETY: byte_offset + size_of::<Str>() <= args_size <= stack_bytes.len().
-                // Str is stored unaligned in the byte-packed stack; read_unaligned is correct.
+            // Read the Str from stack_bytes at byte_offset.
+            // SAFETY: byte_offset + size_of::<Str>() <= args_size <= stack_bytes.len().
+            // Str is stored unaligned in the byte-packed stack; read_unaligned is correct.
+            #[allow(clippy::cast_ptr_alignment)]
+            let str_val: Str = unsafe {
+                let src = stack_bytes.as_ptr().add(byte_offset).cast::<Str>();
+                std::ptr::read_unaligned(src)
+            };
+            // Skip null sentinel and static text (pointer lives in text_code).
+            let is_null = str_val.ptr == STRING_NULL.as_ptr() || str_val.len == 0;
+            if !is_null && !self.is_in_text_code(str_val.ptr) {
+                let owned = str_val.str().to_owned();
+                let new_str = Str::new(owned.as_str());
+                // Patch stack_bytes to point to the owned buffer.
                 #[allow(clippy::cast_ptr_alignment)]
-                let str_val: Str = unsafe {
-                    let src = stack_bytes.as_ptr().add(byte_offset).cast::<Str>();
-                    std::ptr::read_unaligned(src)
-                };
-                // Skip null sentinel and static text (pointer lives in text_code).
-                let is_null = str_val.ptr == STRING_NULL.as_ptr() || str_val.len == 0;
-                if !is_null && !self.is_in_text_code(str_val.ptr) {
-                    let owned = str_val.str().to_owned();
-                    let new_str = Str::new(owned.as_str());
-                    // Patch stack_bytes to point to the owned buffer.
-                    #[allow(clippy::cast_ptr_alignment)]
-                    unsafe {
-                        let dst = stack_bytes.as_mut_ptr().add(byte_offset).cast::<Str>();
-                        std::ptr::write_unaligned(dst, new_str);
-                    }
-                    text_owned.push((byte_offset as u32, owned));
+                unsafe {
+                    let dst = stack_bytes.as_mut_ptr().add(byte_offset).cast::<Str>();
+                    std::ptr::write_unaligned(dst, new_str);
                 }
+                text_owned.push((off, owned));
             }
-            byte_offset += attr_size;
         }
         text_owned
     }
@@ -2695,56 +2622,23 @@ impl State {
     fn yield_tuple_of(&self, d_nr: u32) -> Option<Vec<Type>> {
         let handle = &self.data_ptr;
         let data = handle.get()?;
-        let def = data.definitions.get(d_nr as usize)?;
-        match def.returned().base() {
-            Type::Iterator(inner, _) => match inner.base() {
-                Type::Tuple(elems)
-                    if elems.iter().any(|e| {
-                        crate::data::holds_dbref(e) || crate::data::is_dbref_slot(e.base())
-                    }) =>
-                {
-                    Some(elems.clone())
-                }
-                _ => None,
-            },
-            _ => None,
-        }
+        crate::gen_facts::yield_tuple(data.definitions.get(d_nr as usize)?)
     }
 
-    /// Write `DbRef::NULL` over every reference member of the tuple of `elems` whose value
-    /// starts at stack offset `base` — nested tuples included.
     fn null_tuple_refs(&mut self, base: u32, elems: &[Type]) {
-        let offsets = crate::data::element_stack_offsets(elems);
-        for (elm, off) in elems.iter().zip(offsets) {
-            let at = base + off as u32;
-            match elm.base() {
-                Type::Tuple(inner) => self.null_tuple_refs(at, inner),
-                // A generator handle member too (loft#1585): released, a zeroed one names the
-                // stack store.
-                t if crate::data::is_dbref_slot(t) => {
-                    let dst = self.database.store_mut(&self.stack_cur).addr_span_mut(
-                        self.stack_cur.rec,
-                        self.stack_cur.pos + at,
-                        std::mem::size_of::<DbRef>(),
-                    );
-                    // SAFETY: the span lies inside the value just pushed at `base`.
-                    #[allow(clippy::cast_ptr_alignment)]
-                    unsafe {
-                        std::ptr::write_unaligned(dst.cast::<DbRef>(), DbRef::NULL);
-                    }
-                }
-                _ => {}
+        for off in crate::gen_facts::tuple_ref_offsets(elems) {
+            let dst = self.database.store_mut(&self.stack_cur).addr_span_mut(
+                self.stack_cur.rec,
+                self.stack_cur.pos + base + off,
+                std::mem::size_of::<DbRef>(),
+            );
+            #[allow(clippy::cast_ptr_alignment)]
+            unsafe {
+                std::ptr::write_unaligned(dst.cast::<DbRef>(), DbRef::NULL);
             }
         }
     }
 
-    /// Push the null a finished generator answers, for a yield of the packed `value_size`
-    /// (byte size in the low byte, channel tag above it).  A handle — tag 0, a `DbRef`'s
-    /// width — answers `DbRef::NULL`, as `--native`'s `next_dbref` does: the consumer OWNS
-    /// what an advance produces (`(G-Own)`) and releases it, and releasing the null handle
-    /// is a no-op where releasing a zeroed one names the stack store.  So does a GENERATOR
-    /// handle, which has no native channel (`CHANNEL_NONE`): a generator of generators ended
-    /// with the consumer releasing a zeroed handle, which names the stack store too.
     fn push_null_value(&mut self, packed_size: u32) {
         let value_size = packed_size & 0xFF;
         let tag = packed_size >> 8;
@@ -9684,7 +9578,7 @@ impl State {
     pub unsafe fn execute_at_raw_to(
         &mut self,
         fn_pos: u32,
-        arg: &DbRef,
+        arg: WorkerArg,
         extra_args: &[u64],
         return_size: u32,
         dst: *mut u8,
@@ -9704,10 +9598,10 @@ impl State {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
-            args_size: 12,
+            args_size: self.worker_arg_size(&arg),
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
-        self.put_stack(*arg);
+        self.push_worker_arg(arg);
         for &extra in extra_args {
             self.put_stack(extra as i64);
         }

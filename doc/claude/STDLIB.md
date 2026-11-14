@@ -106,6 +106,15 @@ method (`x.abs()`) or free (`abs(x)`) — the same function either way.
 | `log2(v: F) -> F` | Base-2 logarithm. |
 | `log10(v: F) -> F` | Base-10 logarithm. |
 
+### Bits of a float
+
+| Function | Description |
+|----------|-------------|
+| `bits(self: f64) -> i64` | The double's 64 bits as stored (IEEE-754 binary64), moved, not converted: what a byte format writes for it. `-0.0`'s pattern is the integer null's, so `(-0.0).bits()` reads as null and still comes back as `-0.0`. |
+| `float_from_bits(v: i64) -> f64` | The double whose stored bits are `v`: `bits()` taken back. |
+| `bits(self: single) -> integer` | The single's 32 bits as stored (IEEE-754 binary32), as a signed 32-bit value. |
+| `single_from_bits(v: integer) -> single` | The single whose stored bits are `v`. |
+
 ### Trigonometry (F = single | float, angles in radians)
 
 | Function | Description |

@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a `par` loop: a worker called for every element, its answers read back in
+// element order.
+
+fn cube(x: integer) -> integer {
+  x * x * x
+}
+
+// The cubes of 1, 2, 3 and 4 as worked out by four workers, weighted by their order:
+// 1 * 1 + 8 * 2 + 27 * 3 + 64 * 4 = 354.
+fn weighed(k: integer) -> integer {
+  v = [1, 2, 3, 4];
+  sum = 0;
+  at = 0;
+  for a in v par(b = cube(a), 4) {
+    at += 1;
+    sum += b * at;
+  }
+  sum + k - k
+}
+
+fn main() {
+  println("{weighed(0)}");
+}

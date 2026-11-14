@@ -1,0 +1,133 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Cold`'s loft clause: an `if` arm that builds a text and returns a literal is written,
+// on the C backend, as a cold helper taking the function's parameters; the function keeps its
+// hot path.  Every cell runs the arm and reads what it left — the text it stored, the result,
+// a write through a `&` parameter — and runs the hot path beside it.  Values hand-computed.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipt is a defect
+//   planted (2026-11-14) in the writer: the helper's call dropped from the outlined `if`
+//   fails k1, k3, k5 and k7, the cells whose arms are outlined (k2, k4 and k6 append to a
+//   `&text` directly, so they build no work text and stay in place).
+//   CHANNEL: an assertion.
+
+struct Box { n: integer, note: text }
+enum Mode { Off, On }
+
+// k1: a record parameter; the arm sets a field from a format and answers false.
+fn check(b: Box, limit: integer) -> boolean {
+  if b.n > limit {
+    if b.note == "" { b.note = "n {b.n} over {limit}"; }
+    return false;
+  }
+  true
+}
+
+fn test_k1_a_record_parameter() {
+  b = Box { n: 7, note: "" };
+  assert(check(b, 9) && b.note == "", "k1 hot {b.note}");
+  assert(!check(b, 3) && b.note == "n 7 over 3", "k1 cold {b.note}");
+  assert(!check(b, 1) && b.note == "n 7 over 3", "k1 kept {b.note}");
+}
+
+// k2: a `&text` parameter written in the arm, an integer literal answered.
+fn grow(s: &text, n: integer) -> integer {
+  if n < 0 {
+    s += "[{n}]";
+    return -1;
+  }
+  n * 2
+}
+
+fn test_k2_a_reference_parameter() {
+  s = "a";
+  assert(grow(s, 4) == 8 && s == "a", "k2 hot {s}");
+  assert(grow(s, -3) == -1 && s == "a[-3]", "k2 cold {s}");
+}
+
+// k3: a by-value parameter written inside the arm, read there after the write.
+fn twice(n: integer, log: &text) -> boolean {
+  if n > 100 {
+    n = n - 100;
+    log = "{n} left";
+    return false;
+  }
+  true
+}
+
+fn test_k3_a_value_parameter_written_in_the_arm() {
+  l = "";
+  assert(twice(5, l) && l == "", "k3 hot {l}");
+  assert(!twice(130, l) && l == "30 left", "k3 cold {l}");
+}
+
+// k4: two cold arms in one function, an enum answered, an else branch.
+fn mode(n: integer, log: &text) -> Mode {
+  if n < 0 {
+    log += "neg {n};";
+    return Off;
+  } else {
+    log += "";
+  }
+  if n > 9 {
+    log += "big {n};";
+    return Off;
+  }
+  On
+}
+
+fn test_k4_two_arms() {
+  l = "";
+  assert(mode(3, l) == On && l == "", "k4 hot {l}");
+  assert(mode(-2, l) == Off && mode(12, l) == Off && l == "neg -2;big 12;", "k4 cold {l}");
+}
+
+// k5: a float and a null answered.
+fn ratio(a: integer, b: integer, log: &text) -> float {
+  if b == 0 {
+    log = "{a} over zero";
+    return 0.5;
+  }
+  a as float / b as float
+}
+
+fn maybe(a: integer, log: &text) -> integer? {
+  if a > 5 {
+    log = "{a} too big";
+    return null;
+  }
+  a + 1
+}
+
+fn test_k5_float_and_null() {
+  l = "";
+  assert(ratio(3, 2, l) == 1.5 && ratio(3, 0, l) == 0.5 && l == "3 over zero", "k5a {l}");
+  assert((maybe(2, l) ?? 0) == 3 && maybe(9, l) == null && l == "9 too big", "k5b {l}");
+}
+
+// k6: recursion through the function, its arm's work text parked between calls.
+fn depth(n: integer, log: &text) -> integer {
+  if n == 0 {
+    log += "bottom;";
+    return 0;
+  }
+  1 + depth(n - 1, log)
+}
+
+fn test_k6_recursion() {
+  l = "";
+  assert(depth(4, l) == 4 && l == "bottom;", "k6 {l}");
+  assert(depth(2, l) == 2 && l == "bottom;bottom;", "k6b {l}");
+}
+
+// k7: the hot path in a loop, the arm once at the end.
+fn test_k7_hot_loop() {
+  b = Box { n: 0, note: "" };
+  ok = 0;
+  for i in 0..1000 {
+    b.n = i;
+    if check(b, 998) { ok += 1; }
+  }
+  assert(ok == 999 && b.note == "n 999 over 998", "k7 {ok} {b.note}");
+}
