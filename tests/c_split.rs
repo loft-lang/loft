@@ -162,3 +162,32 @@ fn a_loop_match_block_value_return_and_generator_answer_as_whole() {
 fn a_split_before_the_tail_value_and_around_an_early_return() {
     check("boundary", &["n_main", "n_tail", "n_early"]);
 }
+
+/// A shipped unit is the C build that carries value records (a semantics build ships the live
+/// tier and takes no whole-program rewrite), so the site-gate case of
+/// `tests/c_split/ship_value_before_frees.loft` is seen only there; the interpreter is the control.
+#[test]
+fn a_call_before_its_blocks_frees_is_the_blocks_value_in_a_shipped_unit() {
+    let name = "ship_value_before_frees";
+    let want = format!("{name} ok\n");
+    for backend in [&["--interpret"][..], &["--native-c", "--ship"][..]] {
+        if backend[0] != "--interpret" && !have_cc() {
+            continue;
+        }
+        let r = loft::platform::process::harness_command(loft_bin())
+            .args(backend)
+            .arg("--no-warnings")
+            .arg(cell(name))
+            .env("LOFT_TIMEOUT", "300")
+            .env("LOFT_NATIVE_NO_CACHE", "1")
+            .output()
+            .expect("loft runs");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&r.stdout),
+            want,
+            "{name} on {backend:?}: {err}"
+        );
+        assert!(r.status.success(), "{name} on {backend:?}: {err}");
+    }
+}
