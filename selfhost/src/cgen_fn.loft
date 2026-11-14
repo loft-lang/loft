@@ -1671,6 +1671,15 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   if w.why != "" {
     return;
   }
+  // A minted room is forgotten by any statement but the bind of its vector and the write of
+  // the vector's empty handle (`room_keeps`).
+  if !room_keeps(x.b, w, v) {
+    for r in w.room_minted {
+      if r >= 0 {
+        w.room_minted[r#index] = -1;
+      }
+    }
+  }
   // An assignment or a `return` of a located value reports a fault in it at that line.
   at = match loop_shape::unspan(v) {
     NdSet { var: _, inner } => innermost_span(inner),
@@ -1748,6 +1757,27 @@ fn stack_target(b: ir::Bundle, w: W, value: ir::Node) -> text {
       ""
     },
     _ => "",
+  }
+}
+
+// Is `x` a variable whose room was just minted?
+fn of_minted(w: W, x: ir::Node) -> boolean {
+  v = loop_shape::var_of(loop_shape::unspan(x));
+  v >= 0 && w.room_minted[v]! >= 0
+}
+
+// `room_keeps`: does statement `v` leave the minted rooms as they are?
+fn room_keeps(b: ir::Bundle, w: W, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdLine { n: _ } => true,
+    NdSet { var: _, inner } => {
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args } => def_name(b, def_nr) == "OpGetField" && len(args) > 0 && of_minted(w, args[0]),
+        _ => false,
+      }
+    },
+    NdCall { def_nr, args } => def_name(b, def_nr) == "OpSetInt4" && len(args) > 2 && of_minted(w, args[0]) && loop_shape::unspan(args[2]) == NdInt { n: 0 },
+    _ => false,
   }
 }
 
