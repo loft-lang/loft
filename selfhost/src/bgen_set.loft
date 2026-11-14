@@ -352,6 +352,16 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
     bgen::init_slot(g, v, "OpAppendStackText");
     return;
   }
+  function = match tp {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  };
+  if function {
+    bgen::fn_ref_value(g, value);
+    bgen::init_slot(g, v, "OpSetStackFnRef");
+    g.position -= 8;
+    return;
+  }
   nullable = bgen::optional_shape(inner);
   op = match tp {
     TyInteger { spec } => {
@@ -363,7 +373,8 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
     TySingle => "OpSetSingle",
     TyFloat => "OpSetFloat",
     TyBoolean => "OpSetBoolean",
-    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "" } else { "OpSetEnum" },
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "OpSetStackRef" } else { "OpSetEnum" },
+    TyReference { n: _, dep: _ } => "OpSetStackRef",
     TyVector { inner: _, dep: _ } => "OpSetStackRef",
     TySorted { n: _, keys: _, dep: _ } => "OpSetStackRef",
     TyHash { n: _, names: _, dep: _ } => "OpSetStackRef",
@@ -373,7 +384,7 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
     _ => "",
   };
   if op == "" {
-    bgen::stop(g, "not written yet: a write through a link to a record, a narrow integer, a function or a tuple");
+    bgen::stop(g, "not written yet: a write through a link to a narrow integer, a function or a tuple");
     return;
   }
   collection = op == "OpSetStackRef";
@@ -384,11 +395,29 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
     bgen::add_op(g, "OpGetStackRef");
     bgen::put_u16(g.o, 0);
   }
+  // A link to a record held out of line writes its slot cell (`OpSetSlotRef`); a child
+  // record moved within its own slot is a path of its own (`slot_self_step`).
+  slot_def = binds::slot_link_def(g.b, var.type_def[0] ?? ir::TyVoid);
+  if slot_def != null {
+    moved = match bgen::unspan(value) {
+      NdCall { def_nr, args: _ } => g.b.data.definitions[def_nr]!.name == "OpRefFromChildRec",
+      _ => false,
+    };
+    if moved {
+      bgen::stop(g, "not written yet: a child record moved within its slot");
+      return;
+    }
+  }
   bgen::init_slot(g, v, "OpVarRef");
   bgen::generate(g, value, false);
-  bgen::add_op(g, op);
-  if !collection {
-    bgen::put_u16(g.o, 0);
+  if slot_def != null {
+    bgen::add_op(g, "OpSetSlotRef");
+    bgen::put_u16(g.o, g.b.data.definitions[slot_def!]!.known_type | if owned_writeback { 32768 } else { 0 });
+  } else {
+    bgen::add_op(g, op);
+    if !collection {
+      bgen::put_u16(g.o, 0);
+    }
   }
   if displaces {
     bgen::init_slot(g, v, "OpVarRef");
