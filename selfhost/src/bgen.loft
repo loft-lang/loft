@@ -85,6 +85,9 @@ pub struct Gen {
   position: integer,
   arguments: integer,
   slots: vector<integer>,
+  // Whether each variable has been given its value yet (`is_stack_allocated`): an argument
+  // from the start, a local from its first assignment.
+  allocated: vector<boolean>,
   why: text,
 }
 
@@ -204,7 +207,7 @@ fn int_local(g: Gen, n: ir::Node) -> integer {
     _ => false,
   };
   slot = g.slots[v] ?? 65535;
-  if whole && !var.linked_narrow && var.stack_allocated && slot != 65535 && slot <= g.position { v } else { -1 }
+  if whole && !var.linked_narrow && (g.allocated[v] ?? false) && slot != 65535 && slot <= g.position { v } else { -1 }
 }
 
 // A fused integer operator (`FusedInt`): `kind` among the arithmetic or the comparison kinds
@@ -597,6 +600,85 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   ret
 }
 
+// The operator that stores a scalar into its frame slot; "" for a type whose assignment this
+// writer does not write yet.
+fn put_op_of(t: ir::TypeT) -> text {
+  match base(t) {
+    TyInteger { spec: _ } => "OpPutInt",
+    TyCharacter => "OpPutCharacter",
+    TyBoolean => "OpPutBool",
+    TySingle => "OpPutSingle",
+    TyFloat => "OpPutFloat",
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "" } else { "OpPutEnum" },
+    _ => "",
+  }
+}
+
+// `State::generate_set` for a scalar local: its first value written where it is pushed and
+// stored (`FirstArm::Plain`), a later one through `set_var` — an integer operator over locals
+// stored by the operator itself (`OpIntVVPut` / `OpIntVCPut`).
+fn assign(g: Gen, v: integer, value: ir::Node) {
+  var = var_of(g, v);
+  tp = var.type_def[0] ?? ir::TyVoid;
+  put = put_op_of(tp);
+  block = match unspan(value) {
+    NdBlock { block: _ } => true,
+    _ => false,
+  };
+  if put == "" || var.linked_narrow || block || (g.slots[v] ?? 65535) == 65535 {
+    stop(g, "not written yet: an assignment of {if block { "a block" } else { "a value that is no scalar" }}");
+    return;
+  }
+  if !(g.allocated[v] ?? false) {
+    g.allocated[v] = true;
+    before = g.position;
+    generate(g, value, false);
+    if g.position == before {
+      return;
+    }
+    at = var_pos(g, v);
+    add_op(g, put);
+    put_u16(g.o, at);
+    return;
+  }
+  before = g.position;
+  integer_var = put == "OpPutInt";
+  if integer_var {
+    match unspan(value) {
+      NdCall { def_nr, args } => {
+        f = fusable(g, def_nr, args);
+        if f.ok && !f.compare {
+          // The store's position is the one an `OpPutInt` would carry after the push.
+          at = var_pos(g, f.a);
+          bt = if f.b >= 0 { var_pos(g, f.b) } else { 0 };
+          dst = g.position + 8 - (g.slots[v] ?? 0);
+          add_op(g, if f.b >= 0 { "OpIntVVPut" } else { "OpIntVCPut" });
+          put_u8(g.o, f.kind);
+          put_u16(g.o, dst);
+          put_u16(g.o, at);
+          if f.b >= 0 {
+            put_u16(g.o, bt);
+          } else {
+            put_i64(g.o, f.c);
+          }
+          return;
+        }
+      }
+      _ => {}
+    }
+  }
+  generate(g, value, false);
+  if g.position == before {
+    match unspan(value) {
+      NdNull => typed_null(g, tp),
+      _ => {}
+    }
+  }
+  at = var_pos(g, v);
+  add_op(g, put);
+  put_u16(g.o, at);
+}
+
 // `State::generate_var`: a variable's value pushed, by its type.
 fn variable(g: Gen, v: integer) -> ir::TypeT {
   var = var_of(g, v);
@@ -739,7 +821,10 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
       add_return(g);
       ir::TyVoid
     }
-    NdSet { var: _, inner: _ } => unwritten(g, "an assignment"),
+    NdSet { var, inner } => {
+      assign(g, var, inner);
+      ir::TyVoid
+    }
     NdIf { cond, t, f } => branch(g, cond, t, f),
     NdLoop { block: _ } => unwritten(g, "a loop"),
     NdBreak { n: _ } => unwritten(g, "a break"),
@@ -775,7 +860,7 @@ fn unwritten(g: Gen, what: text) -> ir::TypeT {
 pub fn function(b: ir::Bundle, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
   def = b.data.definitions[d]!;
   ret = def.returned[0] ?? ir::TyVoid;
-  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], why: "" };
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], why: "" };
   if body_null(def) {
     // No body: the arguments, the return slot, and a return of the declared size.
     g.arguments = arguments_size(def);
@@ -785,6 +870,7 @@ pub fn function(b: ir::Bundle, d: integer, starts: vector<u32>, natives: vector<
     hwm = 0;
     for v in def.variables.variables {
       g.slots += [v.stack_pos];
+      g.allocated += [v.argument];
     }
     for v in def.variables.variables {
       t = v.type_def[0] ?? ir::TyVoid;
