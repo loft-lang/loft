@@ -304,6 +304,8 @@ fn print_help() {
     println!("  --native-emit [out.rs]        write generated Rust source and exit");
     println!("  --emit-image <out.store>      write the program's compiled IR image and exit");
     println!("  --emit-run-image <out.store>  write the program's bytecode image and exit");
+    println!("  --emit-c-bodies <out.c>       write the compiled standard-library bodies the loft");
+    println!("                                runner's C shim includes, and exit");
     println!("                                (default: .loft/<script>.rs beside the script)");
     println!("  --native-c                    like --native but through C and the host's C");
     println!("                                compiler (LOFT_CC, CC, else cc); combines with");
@@ -7720,6 +7722,9 @@ fn main() {
     let mut introspect_mode = false;
     // @PLN200 B5 — `--emit-c <out.c>`: write the program as C (the C backend) and exit.
     let mut emit_c: Option<String> = None;
+    // @PLN91 — `--emit-c-bodies <out.c>`: the compiled standard-library bodies the loft runner's
+    // C runtime shim includes (`c::bodies`).
+    let mut emit_c_bodies: Option<String> = None;
     // @PLN91 S0.2 — `--emit-image <out.store>`: write the program's IMAGE (the bundle the
     // startup cache saves, with its layout sidecar) and exit without running it.
     let mut emit_image: Option<String> = None;
@@ -7899,6 +7904,10 @@ fn main() {
             native_mode = false;
         } else if a == "--emit-c" {
             emit_c = argv.get(i).cloned();
+            i += 1;
+            native_mode = false;
+        } else if a == "--emit-c-bodies" {
+            emit_c_bodies = argv.get(i).cloned();
             i += 1;
             native_mode = false;
         } else if a == "--emit-image" {
@@ -9886,7 +9895,11 @@ fn main() {
     // A C build with no fallback skips every host cdylib.  A default run that the C backend
     // refuses falls back to the interpreter (`native_fallback_reason`), which needs them, so
     // `LOFT_NATIVE_BACKEND=c` alone does not set it.
-    if emit_c.is_some() || (native_c && native_requested) || native_esp.is_some() {
+    if emit_c.is_some()
+        || emit_c_bodies.is_some()
+        || (native_c && native_requested)
+        || native_esp.is_some()
+    {
         loft::interp::extensions::set_c_target();
     }
     // #358 — a warm hit returns the def-table index where user definitions
@@ -13323,6 +13336,21 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     }
     state.database.set_logger(lg);
 
+    if let Some(out) = emit_c_bodies {
+        match loft::c::bodies::emit_bodies(&p.data, &state.database) {
+            Ok(c) => {
+                if let Err(e) = fa::write(&out, c) {
+                    eprintln!("loft: cannot write {out}: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            Err(r) => {
+                eprintln!("loft: {}", r.message());
+                std::process::exit(2);
+            }
+        }
+    }
     if let Some(out) = emit_c {
         // A test expected to fail (`@EXPECT_FAIL`) passes by failing with its message, as
         // `loft --tests` runs it.

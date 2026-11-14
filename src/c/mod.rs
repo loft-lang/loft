@@ -16,6 +16,7 @@
 //! raises as a recoverable error is a null here and nothing more, because how a C program
 //! reaches loft's runtime is @PLN91's decision.
 
+pub mod bodies;
 mod body;
 pub mod component;
 mod deliver;
