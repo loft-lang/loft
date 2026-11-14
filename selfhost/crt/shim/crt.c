@@ -262,6 +262,16 @@ LOFT_STEP_FN double loft_twin_peek_f64(int64_t base, int64_t at) {
 LOFT_STEP_FN void loft_twin_poke_f64(int64_t base, int64_t at, double v) {
     memcpy(LOFT_AT(base, at), &v, 8);
 }
+extern float loft_twin_peek_f32(int64_t base, int64_t at);
+extern void loft_twin_poke_f32(int64_t base, int64_t at, float v);
+LOFT_STEP_FN float loft_twin_peek_f32(int64_t base, int64_t at) {
+    float v;
+    memcpy(&v, LOFT_AT(base, at), 4);
+    return v;
+}
+LOFT_STEP_FN void loft_twin_poke_f32(int64_t base, int64_t at, float v) {
+    memcpy(LOFT_AT(base, at), &v, 4);
+}
 void loft_crt_move(int64_t base, int64_t from, int64_t to, int64_t n) {
     memmove(LOFT_AT(base, to), LOFT_AT(base, from), (size_t) n);
 }

@@ -3271,6 +3271,17 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    56 => {
+      if sp >= 8 {
+        ri0 = crt::peek_i64(base, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nvs: single? = ri0 as single;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
     57 => {
       if sp >= 8 {
         ri0 = crt::peek_i64(base, sp - 8);
@@ -3418,6 +3429,187 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    70 => {
+      rs0 = crt::peek_f32(cbase, ip + 1);
+      if true {
+        ip += 5;
+        nvs: single? = rs0;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    71 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if ri0 >= 8 && ri0 <= sp {
+        ip += 3;
+        nvs: single? = crt::peek_f32(base, sp - ri0);
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    72 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 8 && ri0 >= 8 && ri0 <= sp - 8 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        sp -= 8;
+        ip += 3;
+        crt::poke_f32(base, sp + 8 - ri0, rs0);
+        continue;
+      }
+    }
+    73 => {
+      if sp >= 8 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nvs: single? = rs0.abs();
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    74 => {
+      if sp >= 8 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nvs: single? = -rs0;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    75 => {
+      if sp >= 8 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nvi: integer? = rs0 as integer;
+        crt::poke_i64(base, sp, nvi);
+        sp += 8;
+        continue;
+      }
+    }
+    76 => {
+      if sp >= 8 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nvf: float? = rs0 as float;
+        crt::poke_f64(base, sp, nvf);
+        sp += 8;
+        continue;
+      }
+    }
+    77 => {
+      if sp >= 8 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nvb: boolean? = rs0 != null;
+        crt::poke_u8(base, sp, state::bool_byte(nvb));
+        sp += 8;
+        continue;
+      }
+    }
+    78 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nvs: single? = rs1 + rs0;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    79 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nvs: single? = rs1 - rs0;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    80 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nvs: single? = rs1 * rs0;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    81 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nvs: single? = if rs0 == 0.0f { s.raise_recoverable("division by zero"); rs1 / rs0 } else { rs1 / rs0 };
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    82 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nvb: boolean? = ops::cmp_single(0, rs1, rs0);
+        crt::poke_u8(base, sp, state::bool_byte(nvb));
+        sp += 8;
+        continue;
+      }
+    }
+    83 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nvb: boolean? = ops::cmp_single(1, rs1, rs0);
+        crt::poke_u8(base, sp, state::bool_byte(nvb));
+        sp += 8;
+        continue;
+      }
+    }
+    84 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nvb: boolean? = ops::cmp_single(2, rs1, rs0);
+        crt::poke_u8(base, sp, state::bool_byte(nvb));
+        sp += 8;
+        continue;
+      }
+    }
+    85 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nvb: boolean? = ops::cmp_single(3, rs1, rs0);
+        crt::poke_u8(base, sp, state::bool_byte(nvb));
+        sp += 8;
+        continue;
+      }
+    }
     86 => {
       if true {
         ip += 1;
@@ -3482,6 +3674,17 @@ pub fn run(s: state::State, end: integer) {
         ip += 1;
         nvf: float? = if rf0 == null { null } else { -rf0 };
         crt::poke_f64(base, sp, nvf);
+        sp += 8;
+        continue;
+      }
+    }
+    92 => {
+      if sp >= 8 {
+        rf0 = crt::peek_f64(base, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nvs: single? = rf0 as single;
+        crt::poke_f32(base, sp, nvs);
         sp += 8;
         continue;
       }
@@ -4041,6 +4244,20 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    150 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 16 {
+        ri1 = crt::peek_u32(base, sp - 16);
+        ri2 = crt::peek_u32(base, sp - 12);
+        ri3 = crt::peek_u32(base, sp - 8);
+        sp -= 16;
+        ip += 3;
+        nvs: single? = if ri2 == 0 { null } else { crt::get_float(ri1, ri2, ri3, ri0, true) as single? };
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
     151 => {
       ri0 = crt::peek_u16(cbase, ip + 1);
       if sp >= 16 {
@@ -4189,6 +4406,19 @@ pub fn run(s: state::State, end: integer) {
         sp -= 24;
         ip += 3;
         if ri3 != 0 { crt::set_w(crt::W_CHARACTER, ri2, ri3, ri4, ri0, 0, ri1); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+        continue;
+      }
+    }
+    162 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 24 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        ri1 = crt::peek_u32(base, sp - 24);
+        ri2 = crt::peek_u32(base, sp - 20);
+        ri3 = crt::peek_u32(base, sp - 16);
+        sp -= 24;
+        ip += 3;
+        if ri2 != 0 { crt::set_float(ri1, ri2, ri3, ri0, rs0 as float?, true); } else { s.raise_recoverable("a write to an absent record was dropped"); }
         continue;
       }
     }
@@ -4573,6 +4803,18 @@ pub fn run(s: state::State, end: integer) {
         sp -= 24;
         ip += 1;
         crt::vec_push_float(ri0, ri1, ri2, rf0, false);
+        continue;
+      }
+    }
+    201 => {
+      if sp >= 24 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        ri0 = crt::peek_u32(base, sp - 24);
+        ri1 = crt::peek_u32(base, sp - 20);
+        ri2 = crt::peek_u32(base, sp - 16);
+        sp -= 24;
+        ip += 1;
+        crt::vec_push_float(ri0, ri1, ri2, rs0 as float?, true);
         continue;
       }
     }
@@ -5118,6 +5360,76 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    22 => {
+      if true {
+        ip += 2;
+        nvs: single? = null;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    23 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 2;
+        nvs: single? = if rs0 == 0.0f { s.raise_recoverable("division by zero"); rs1 % rs0 } else { rs1 % rs0 };
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    24 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 2;
+        nvs: single? = rs1 / rs0;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    25 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 2;
+        nvs: single? = rs1 % rs0;
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    26 => {
+      ri0 = crt::peek_i8(cbase, ip + 2);
+      if sp >= 8 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        sp -= 8;
+        ip += 3;
+        nvs: single? = ops::math_func_single(ri0, rs0);
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    27 => {
+      ri0 = crt::peek_i8(cbase, ip + 2);
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 3;
+        nvs: single? = ops::math_func2_single(ri0, rs1, rs0);
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
     28 => {
       if sp >= 16 {
         ri0 = crt::peek_i64(base, sp - 8);
@@ -5126,6 +5438,18 @@ pub fn run(s: state::State, end: integer) {
         ip += 2;
         nvi: integer? = if ri1 == null || ri0 == null || ri0 < 0 { null } else { ri1.pow(ri0) };
         crt::poke_i64(base, sp, nvi);
+        sp += 8;
+        continue;
+      }
+    }
+    29 => {
+      if sp >= 16 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        rs1 = crt::peek_f32(base, sp - 16);
+        sp -= 16;
+        ip += 2;
+        nvs: single? = rs1.pow(rs0);
+        crt::poke_f32(base, sp, nvs);
         sp += 8;
         continue;
       }
@@ -5148,6 +5472,28 @@ pub fn run(s: state::State, end: integer) {
         ip += 2;
         nvf: float? = float_from_bits(ri0);
         crt::poke_f64(base, sp, nvf);
+        sp += 8;
+        continue;
+      }
+    }
+    34 => {
+      if sp >= 8 {
+        rs0 = crt::peek_f32(base, sp - 8);
+        sp -= 8;
+        ip += 2;
+        nvi: integer? = rs0.bits();
+        crt::poke_i64(base, sp, nvi);
+        sp += 8;
+        continue;
+      }
+    }
+    35 => {
+      if sp >= 8 {
+        ri0 = crt::peek_i64(base, sp - 8);
+        sp -= 8;
+        ip += 2;
+        nvs: single? = single_from_bits(ri0);
+        crt::poke_f32(base, sp, nvs);
         sp += 8;
         continue;
       }

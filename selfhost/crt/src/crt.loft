@@ -278,6 +278,12 @@ pub fn peek_f64(base: integer, at: integer) -> float {
 }
 #c_twin "loft_twin_peek_f64" "double(int64_t, int64_t)"
 
+// A single: its four bytes, the quiet NaN's pattern for null (`put_f32`).
+pub fn peek_f32(base: integer, at: integer) -> single {
+  single_from_bits(c_peek(SW_U32, base, at))
+}
+#c_twin "loft_twin_peek_f32" "float(int64_t, int64_t)"
+
 pub fn poke_i64(base: integer, at: integer, v: integer?) {
   c_poke(SW_I64, base, at, v ?? 0, v == null);
 }
@@ -297,6 +303,11 @@ pub fn poke_f64(base: integer, at: integer, v: float?) {
   c_poke_f64(base, at, [v ?? 0.0 / 0.0]);
 }
 #c_twin "loft_twin_poke_f64" "void(int64_t, int64_t, double)"
+
+pub fn poke_f32(base: integer, at: integer, v: single?) {
+  c_poke(SW_U32, base, at, if v == null { 2143289344 } else { v!.bits() }, false);
+}
+#c_twin "loft_twin_poke_f32" "void(int64_t, int64_t, float)"
 
 fn c_stack_base(store: integer) -> integer;
 #c "loft_crt_stack_base" "int64_t(int64_t)"
