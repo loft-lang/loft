@@ -34,6 +34,12 @@ pub struct State {
   // The program's types (`Stores::types`), and whether the C runtime's table holds them yet.
   pub types: vector<ir::DbType>,
   pub table_loaded: boolean,
+  // The native `static_call` named, for the dispatch loop to run (-1: none): the natives are a
+  // table beside the operators, as Rust's library functions are.
+  pub native: integer,
+  // Each type's default image, derived on its first use (`types::default_image`).
+  pub images: vector<vector<u8>>,
+  pub imaged: vector<boolean>,
 }
 
 // `DbRef`: a reference — its store, its record and the position in it.
@@ -67,7 +73,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", reported: [], types: img.types, table_loaded: false }
+  State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [] }
 }
 
 // `State::ensure_stack`: room for `step` more bytes above the top, the stack store doubled
@@ -667,7 +673,7 @@ pub fn put_var_dbref(self: State, pos: integer, v: DbRef) {
 }
 
 // The program's types loaded into the C runtime's table, once: what a store's release walks.
-fn load_table(self: State) {
+pub fn load_table(self: State) {
   if self.table_loaded {
     return;
   }
@@ -724,4 +730,289 @@ pub fn init_create_stack(self: State) {
   if self.slot_ok(self.stack_pos - pos) {
     crt::set_slot_ref(self.stk, self.stack_pos - pos, self.stk, 1, 8 + self.stack_pos - dep_pos);
   }
+}
+
+// `State::static_call`: the native numbered by the operand is called — by the dispatch loop,
+// which holds the natives' table.
+pub fn static_call(self: State) {
+  self.native = self.code_u16();
+}
+
+// `State::clear_stack_text`: the text the reference in the frame slot at `pos` names emptied.
+pub fn clear_stack_text(self: State) {
+  pos = self.code_u16();
+  r = self.get_var_dbref(pos);
+  crt::ref_text_clear(r.store_nr, r.rec, r.pos);
+}
+
+// `State::text_null_jump`: the jump taken when the text at `src` (`arg`: an argument's view)
+// is not the null text.
+pub fn text_null_jump(self: State) {
+  src = self.code_u16();
+  arg = self.code_u8() == 1;
+  step = self.code_i32();
+  if crt::slot_text(self.stk, self.stack_pos - src, arg) != null {
+    self.code_pos += step;
+  }
+}
+
+// A text field pushed as a view (`OpGetText`): the null text for an absent record.
+pub fn put_field_text(self: State, v1: DbRef, fld: integer) {
+  self.ensure_stack(16);
+  if v1.rec == 0 {
+    crt::stack_str_null(self.stk, self.stack_pos);
+  } else {
+    crt::stack_str_of_field(self.stk, self.stack_pos, v1.store_nr, v1.rec, v1.pos, fld);
+  }
+  self.stack_pos += 16;
+}
+
+// `vector::get_vector`: a reference to element `index` of `size` bytes of the vector `r` — null
+// past either end.
+pub fn vec_get(r: DbRef, size: integer, index: integer?) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::vec_get(io, r.store_nr, r.rec, r.pos, size, index);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `State::vec_get_or_raise`: the same element, an index outside the vector reported (a negative
+// one counts from the end).
+pub fn vec_get_or_raise(self: State, r: DbRef, size: integer, index: integer?) -> DbRef {
+  if index != null {
+    n = crt::vec_len(r.store_nr, r.rec, r.pos) ?? 0;
+    at = if index! < 0 { index! + n } else { index! };
+    if at < 0 {
+      self.raise_recoverable("a negative index {index!}");
+      return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+    }
+    if at >= n {
+      self.raise_recoverable("index {index!} outside a vector of {n}");
+      return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
+    }
+  }
+  vec_get(r, size, index)
+}
+
+// The integer field `fld` of element `idx` (a local) of the vector local `vec`
+// (`OpVecGetInt`, `OpVecGetIntNullable`): null for no such element, reported when `raise`.
+pub fn vec_get_int(self: State, vec: integer, size: integer, idx: integer, fld: integer, raise: boolean) -> integer? {
+  r = self.get_var_dbref(vec);
+  i = self.get_var_i64(idx);
+  db = if raise { self.vec_get_or_raise(r, size, i) } else { vec_get(r, size, i) };
+  if db.rec == 0 { null } else { crt::get_int(db.store_nr, db.rec, db.pos, fld) }
+}
+
+// `State::local_tag`: a local's tag byte, or (`of` 1) the first byte of the record the local's
+// reference names — 0 for a null reference, null for an absent tag.
+pub fn local_tag(self: State, of: integer, a: integer) -> integer? {
+  if of == 0 {
+    return crt::get_w(crt::W_ENUM, self.stk, 1, 8 + self.stack_pos - a, 0, 0);
+  }
+  r = self.get_var_dbref(a);
+  if r.rec == 0 { 0 } else { crt::get_w(crt::W_ENUM, r.store_nr, r.rec, r.pos, 0, 0) }
+}
+
+// Type `tp`'s default image, derived on its first use.
+fn default_of(self: State, tp: integer) -> vector<u8> {
+  while len(self.imaged) <= tp {
+    self.images += [[]];
+    self.imaged += [false];
+  }
+  if !(self.imaged[tp] ?? false) {
+    self.images[tp] = types::default_image(self.types, tp);
+    self.imaged[tp] = true;
+  }
+  self.images[tp] ?? []
+}
+
+// The collection a record is added to (`OpNewRecord`, `OpFinishRecord`): the parent `ptp`
+// itself or its field `fld`, a linked group's member resolved to the field's own collection.
+// Null where the runner does not add to it, with the reason in `fault`.
+fn record_target(self: State, ptp: integer, fld: integer, gm: vector<integer>) -> types::RecordColl? {
+  rc = types::record_collection(self.types, ptp, fld);
+  if rc.fld != 65535 && rc.at == null {
+    g = types::group_members(self.types, ptp, fld);
+    if g != null && len(g!) >= 6 {
+      for x in g! {
+        gm += [x];
+      }
+      rc = types::RecordColl { tp: g![2] ?? 0, fld: fld, at: g![0] ?? 0 };
+    }
+  }
+  plain = types::vector_element(self.types, rc.tp) != null || types::array_element(self.types, rc.tp) != null || types::keyed_element(self.types, rc.tp) != null || types::hash_element(self.types, rc.tp) != null;
+  if (rc.fld != 65535 && rc.at == null) || !plain {
+    self.fault = "not carried: a record added to {self.types[rc.tp]?.name ?? "a collection"}";
+    return null;
+  }
+  rc
+}
+
+// `State::new_record`: a record made in the collection the reference on top holds — a plain
+// vector's element appended, an array's entry, a keyed collection's staged element, a hash's
+// entry — filled with its type's defaults when `defaults`, and a reference to it pushed.
+fn new_record_of(self: State, defaults: boolean) {
+  ptp = self.code_u16();
+  fld = self.code_u16();
+  gm: vector<integer> = [];
+  rc = self.record_target(ptp, fld, gm);
+  if rc == null {
+    return;
+  }
+  v = self.get_stack_dbref();
+  vp = v.pos + (rc!.at ?? 0);
+  aelem = types::array_element(self.types, rc!.tp);
+  kelem = types::keyed_element(self.types, rc!.tp);
+  helem = types::hash_element(self.types, rc!.tp);
+  rtp = aelem ?? kelem ?? helem ?? types::vector_element(self.types, rc!.tp) ?? 0;
+  size = self.types[rtp]?.size ?? 0;
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  if aelem != null {
+    crt::entry_new(io, v.store_nr, v.rec, vp, size);
+  } else if kelem != null {
+    crt::keyed_new(io, v.store_nr, v.rec, vp, types::keyed_kind(self.types, rc!.tp) ?? 0, size);
+  } else if helem != null {
+    crt::hash_entry(io, v.store_nr, v.rec, vp, size, self.types[rtp]?.linked ?? false);
+  } else {
+    crt::vec_append(io, v.store_nr, v.rec, vp, size);
+  }
+  if defaults {
+    crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(rtp));
+  }
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+pub fn new_record(self: State) {
+  self.new_record_of(true);
+}
+
+pub fn new_record_n_p(self: State) {
+  self.new_record_of(false);
+}
+
+// `State::finish_record`: the record on top and the collection's owner under it popped, the
+// record filed as its collection files it.
+pub fn finish_record(self: State) {
+  ptp = self.code_u16();
+  fld = self.code_u16();
+  gm: vector<integer> = [];
+  rc = self.record_target(ptp, fld, gm);
+  if rc == null {
+    return;
+  }
+  r = self.get_stack_dbref();
+  v = self.get_stack_dbref();
+  vp = v.pos + (rc!.at ?? 0);
+  aelem = types::array_element(self.types, rc!.tp);
+  kelem = types::keyed_element(self.types, rc!.tp);
+  helem = types::hash_element(self.types, rc!.tp);
+  if len(gm) >= 6 {
+    self.load_table();
+    gheld = false;
+    gnull = false;
+    gk = 0;
+    while gk + 2 < len(gm) {
+      gheld = gheld || (gm[gk + 1] ?? -1) == 0;
+      gnull = gnull || types::nullable_element(self.types, gm[gk + 2] ?? 0);
+      gk += 3;
+    }
+    crt::group_finish(types::content_of(self.types, rc!.tp) ?? 0, gheld, gnull, v.store_nr, v.rec, v.pos, r.store_nr, r.rec, r.pos, gm);
+  } else if aelem != null {
+    crt::array_append(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos);
+  } else if kelem != null {
+    crt::keyed_finish(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, types::keyed_kind(self.types, rc!.tp) ?? 0, kelem!, rc!.tp);
+  } else if helem != null {
+    crt::hash_insert(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, helem!, rc!.tp);
+  } else {
+    crt::vec_finish(v.store_nr, v.rec, vp);
+  }
+}
+
+// `State::format_int`: the width and then the value popped, the value formatted and appended to
+// the local text at `pos` (addressed from the top before the pops).
+pub fn format_int(self: State) {
+  pos = self.code_u16();
+  radix = self.code_u8();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  note = self.code_u8() == 1;
+  dir = self.code_i8();
+  width = self.get_stack_i64();
+  val = self.get_stack_i64();
+  crt::slot_text_append(self.stk, self.stack_pos - (pos - 16), crt::format_int(val, radix, width, token, plus, note, dir));
+}
+
+// `State::format_text`: the width and then the view popped, the text formatted and appended to
+// the local text at `pos`.
+pub fn format_text(self: State) {
+  pos = self.code_u16();
+  dir = self.code_i8();
+  token = self.code_u8();
+  width = self.get_stack_i64();
+  val = self.get_stack_str();
+  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_text(val, width, dir, token));
+}
+
+// `State::append_stack_text`: the view popped, appended to the text the reference in the frame
+// slot at `pos` names.
+pub fn append_stack_text(self: State) {
+  pos = self.code_u16();
+  val = self.get_stack_str();
+  r = self.get_var_dbref(pos - 16);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, val ?? "");
+}
+
+// `State::get_stack_ref`: the reference on top replaced by the one stored at its field `fld`.
+pub fn get_stack_ref(self: State) {
+  fld = self.code_u16();
+  r = self.get_stack_dbref();
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::place_ref(io, r.store_nr, r.rec, r.pos + fld);
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+// `State::get_stack_text`: the reference on top replaced by a view of the text it names.
+pub fn get_stack_text(self: State) {
+  r = self.get_stack_dbref();
+  self.ensure_stack(16);
+  crt::stack_str_of_ref(self.stk, self.stack_pos, r.store_nr, r.rec, r.pos);
+  self.stack_pos += 16;
+}
+
+// `State::copy_record`: the destination and then the source popped, the record of type `tp`
+// copied — the operand's high bits say the source is freed (0x8000) and the destination fresh
+// (0x4000); a null source into a fresh struct leaves it its default image.
+pub fn copy_record(self: State) {
+  raw = self.code_u16();
+  tp = raw & 16383;
+  flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(self.types, tp) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 });
+  d = self.get_stack_dbref();
+  src = self.get_stack_dbref();
+  self.load_table();
+  crt::copy_record(src.store_nr, src.rec, src.pos, d.store_nr, d.rec, d.pos, tp, flags);
+  if src.store_nr == NULL_STORE && d.store_nr != NULL_STORE && flags & 4 != 0 && types::is_struct(self.types, tp) {
+    crt::fill(d.store_nr, d.rec, d.pos, self.default_of(tp));
+  }
+}
+
+// `State::append_copy`: the count and then the vector popped, its last element repeated to
+// `count` elements.
+pub fn append_copy(self: State) {
+  tp = self.code_u16();
+  count = self.get_stack_i64();
+  r = self.get_stack_dbref();
+  etp = types::content_of(self.types, tp);
+  if etp == null || (self.types[etp!]?.linked ?? false) {
+    self.fault = "not carried: a repeat of a linked element";
+    return;
+  }
+  self.load_table();
+  crt::vec_append_copy(r.store_nr, r.rec, r.pos, etp!, count);
+}
+
+// `Stores::get_db_ref`: the reference a record's field stores, null when it names a removed
+// record.
+pub fn db_ref(v1: DbRef, fld: integer) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::get_dbref(io, v1.store_nr, v1.rec, v1.pos, fld);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
 }

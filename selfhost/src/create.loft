@@ -35,6 +35,13 @@ pub fn operator_name(op: text) -> text {
   if out == "return" { "op_return" } else { out }
 }
 
+// The generated function of an operator: its `operator_name` behind `op_`, so that none takes a
+// standard-library function's name (`print`, `abs`).
+fn fn_name(op: text) -> text {
+  n = operator_name(op);
+  if n.starts_with("op_") { n } else { "op_{n}" }
+}
+
 // `Data::rust_type` in the argument context, as the suffix of the `state::State` accessor that
 // reads or writes a value of that width: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `i64`, `bool`,
 // `f64`, `f32`, `char`, `str`, `dbref`, `keys`; "" for a type no operator takes.
@@ -150,8 +157,7 @@ pub fn slots(e: el::El) -> vector<integer> {
 // One operator's function: the operands read, the arguments popped, the template, the answer
 // pushed (`create.rs`'s body for one operator).
 fn operator_fn(def: ir::Definition, body: text) -> text {
-  name = operator_name(def.name);
-  out = "\npub fn {name}(s: state::State) {{\n";
+  out = "\npub fn {fn_name(def.name)}(s: state::State) {{\n";
   for a in def.attributes {
     if !a.name.starts_with("_") && !a.mutable {
       out += "  {a.name} = s.code_{width(a.typedef[0] ?? ir::TyVoid)}();\n";
@@ -176,7 +182,9 @@ fn operator_fn(def: ir::Definition, body: text) -> text {
     TyText { dep: _ } => true,
     _ => false,
   };
-  if void || (is_text && def.name.starts_with("OpConst")) {
+  // A text answer is a view the template pushes itself (`OpConstText`'s rule in `create.rs`,
+  // for every text here: a loft text value is not a view into a store or the code).
+  if void || is_text {
     out += "  {body}\n";
   } else {
     out += "  new_value: {answer_type(width(ret))} = {body};\n  s.put_stack_{width(ret)}(new_value);\n";
@@ -198,7 +206,7 @@ pub fn generate(e: el::El, state_src: text) -> text {
       // No template: a `State` method of the operator's name reads its own operands, as
       // `create.rs` calls `s.{name}()` (the loft `State` holds its port).
       if has_method(e, d, state_src) {
-        out += "\npub fn {operator_name(def.name)}(s: state::State) {{\n  s.{operator_name(def.name)}();\n}}\n";
+        out += "\npub fn {fn_name(def.name)}(s: state::State) {{\n  s.{operator_name(def.name)}();\n}}\n";
       }
     } else {
       body = template(e, d);
@@ -212,7 +220,7 @@ pub fn generate(e: el::El, state_src: text) -> text {
   for slot in 0..len(order) {
     d = order[slot] ?? 0;
     if carried(e, d, state_src) {
-      out += "    {slot} => {operator_name(e.b.data.definitions[d]!.name)}(s),\n";
+      out += "    {slot} => {fn_name(e.b.data.definitions[d]!.name)}(s),\n";
     }
   }
   out += "    _ => return false,\n  }}\n  true\n}}\n";

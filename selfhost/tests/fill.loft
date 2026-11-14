@@ -50,11 +50,17 @@ fn test_mix_and_collatz_answer_as_the_rust_interpreter() {
   assert(m == want_m && c == want_c, "mix {m} (want {want_m}), collatz {c} (want {want_c})");
 }
 
+// A record rebuilt in a loop starts each pass with empty vectors: 1, 2, 3 and 4 elements.
+fn test_a_reused_record_starts_empty() {
+  r = answer("reuse", "n_loop_record", [4]);
+  assert(r == 100200300400, "four passes: {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {
   judged = 0;
-  for name in ["fib", "mix", "collatz", "small_ops", "frames", "repeats", "records", "structs", "refs"] {
+  for name in ["fib", "mix", "collatz", "small_ops", "frames", "repeats", "records", "structs", "refs", "reuse"] {
     (b, img) = images(name);
     for d in fill_run::integer_functions(b) {
       args: vector<integer> = [for _ in 0..fill_run::arity(b, d) { 3 }];

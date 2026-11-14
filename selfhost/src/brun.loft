@@ -1338,7 +1338,7 @@ fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
 // arguments popped and its result pushed on the stack store `stk` at `sp0`, as Rust's native
 // does.  Answers the new stack top, or -1 with the reason in `why[0]` when the runner does not
 // carry it.
-fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
+pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
   sp = sp0;
   if nh == N_ASSERT {
     line = get(stk, sp - 8);
