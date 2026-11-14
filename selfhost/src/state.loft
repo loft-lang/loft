@@ -122,6 +122,8 @@ pub struct State {
   // `OpStaticCall`'s arm (`State::light_call`) — else -1; and the scratch vector it passes.
   pub lights: vector<integer>,
   pub lio: vector<integer>,
+  // The bytes a popped text is copied through (`get_stack_str`), kept between operators.
+  pub tbuf: vector<u8>,
 }
 
 // What `OpNewRecord` / `OpFinishRecord` file a record into, derived once per parent type and
@@ -278,7 +280,7 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }] };
   ptab = natives::par_natives(img);
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
@@ -848,7 +850,7 @@ pub fn get_stack_str(self: State) -> text? {
     return null;
   }
   self.stack_pos -= 16;
-  crt::stack_str(self.stk, self.stack_pos)
+  crt::stack_str_in(self.tbuf, self.stk, self.stack_pos)
 }
 
 // ── Characters: a code point in a 4-byte slot, 0 for null. ────────────────────────────────
@@ -1378,9 +1380,13 @@ pub fn format_text(self: State) {
 // slot at `pos` names.
 pub fn append_stack_text(self: State) {
   pos = self.code_u16();
-  val = self.get_stack_str();
+  if !self.can_pop(16) {
+    return;
+  }
+  // The view appended where it lies: no text copied out of it.
+  self.stack_pos -= 16;
   r = self.get_var_dbref(pos - 16);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, val);
+  crt::ref_text_append_view(r.store_nr, r.rec, r.pos, self.stk, self.stack_pos);
 }
 
 // `State::get_stack_ref`: the reference on top replaced by the one stored at its field `fld`.

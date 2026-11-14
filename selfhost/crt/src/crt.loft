@@ -1448,6 +1448,20 @@ pub fn stack_move(store: integer, from: integer, to: integer, n: integer) {
   c_stack_move(store, from, to, n);
 }
 
+// `stack_str` into the caller's scratch buffer `buf`, grown when the text is longer: no store
+// is made per call.
+pub fn stack_str_in(buf: vector<u8>, store: integer, at: integer) -> text? {
+  n = c_stack_str(buf, store, at);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf += room(n - len(buf));
+    n = c_stack_str(buf, store, at);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
 // The text the view at `at` shows, or null.
 pub fn stack_str(store: integer, at: integer) -> text? {
   buf = room(64);
