@@ -1108,6 +1108,7 @@ fn OpPutFnRef(pos: const u16, _fnref: text);
 // another (e.g. OpGetVector wrapping OpConstRef).  @P275 fix.
 fn OpConstRef(d_nr: const __word) -> reference;
 #rust"s.const_ref_at(@d_nr as usize)"
+#loft"s.const_ref_at(d_nr)"
 // Push a Str pointing into the constant store for integer string literals.
 fn OpConstStoreText(rec: const __word, pos: const __word) -> text;
 #rust"s.string_from_const_store(@rec as u32, @pos as u32)"

@@ -80,3 +80,13 @@ pub fn le_text(a: text?, b: text?) -> boolean {
   if a == null || b == null { a == null } else { a! <= b! }
 }
 
+// `State::text_char_or_raise`: the character at `i` of `t` as its code point; null for a null
+// text or index, or one outside the text.
+pub fn text_char(t: text?, i: integer?) -> integer? {
+  if t == null || i == null {
+    return null;
+  }
+  c = t![i!];
+  if c == null { null } else { c! as integer }
+}
+

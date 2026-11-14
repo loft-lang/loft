@@ -303,6 +303,11 @@ pub fn op_conv_int_from_null(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn op_conv_bool_from_null(s: state::State) {
+  new_value: boolean? = null;
+  s.put_stack_bool(new_value);
+}
+
 pub fn op_conv_character_from_int(s: state::State) {
   v1 = s.get_stack_i64();
   new_value: integer? = if v1 == null { 0 } else if (v1 >= 0 && v1 < 55296) || (v1 >= 57344 && v1 <= 1114111) { v1 } else { s.raise_recoverable("a cast outside the type"); 0 };
@@ -319,6 +324,12 @@ pub fn op_min_single_int(s: state::State) {
   v1 = s.get_stack_i64();
   new_value: integer? = -v1;
   s.put_stack_i64(new_value);
+}
+
+pub fn op_conv_single_from_int(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: single? = v1 as single;
+  s.put_stack_f32(new_value);
 }
 
 pub fn op_conv_bool_from_int(s: state::State) {
@@ -411,6 +422,29 @@ pub fn op_const_single(s: state::State) {
   s.put_stack_f32(new_value);
 }
 
+pub fn op_var_single(s: state::State) {
+  pos = s.code_u16();
+  new_value: single? = s.get_var_f32(pos);
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_put_single(s: state::State) {
+  pos = s.code_u16();
+  value = s.get_stack_f32();
+  s.put_var_f32(pos, value);
+}
+
+pub fn op_conv_float_from_null(s: state::State) {
+  new_value: float? = null;
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_min_single_float(s: state::State) {
+  v1 = s.get_stack_f64();
+  new_value: float? = if v1 == null { null } else { -v1 };
+  s.put_stack_f64(new_value);
+}
+
 pub fn op_cast_single_from_float(s: state::State) {
   v1 = s.get_stack_f64();
   new_value: single? = v1 as single;
@@ -446,6 +480,10 @@ pub fn op_le_float(s: state::State) {
 
 pub fn op_format_float(s: state::State) {
   s.format_float();
+}
+
+pub fn op_format_stack_float(s: state::State) {
+  s.format_stack_float();
 }
 
 pub fn op_var_text(s: state::State) {
@@ -486,6 +524,17 @@ pub fn op_append_text(s: state::State) {
 
 pub fn op_put_text(s: state::State) {
   s.put_text();
+}
+
+pub fn op_get_text_sub(s: state::State) {
+  s.get_text_sub();
+}
+
+pub fn op_text_character(s: state::State) {
+  v2 = s.get_stack_i64();
+  v1 = s.get_stack_str();
+  new_value: integer? = ops::text_char(v1, v2);
+  s.put_stack_char(new_value);
 }
 
 pub fn op_clear_text(s: state::State) {
@@ -548,6 +597,12 @@ pub fn op_put_enum(s: state::State) {
   pos = s.code_u16();
   value = s.get_stack_u8();
   s.put_var_u8(pos, value);
+}
+
+pub fn op_conv_int_from_enum(s: state::State) {
+  v1 = s.get_stack_u8();
+  new_value: integer? = if v1 == 255 { null } else { v1 };
+  s.put_stack_i64(new_value);
 }
 
 pub fn op_conv_bool_from_ref(s: state::State) {
@@ -626,6 +681,20 @@ pub fn op_get_int(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn op_get_character(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: integer? = if v1.rec == 0 { 0 } else { crt::get_w(crt::W_CHARACTER, v1.store_nr, v1.rec, v1.pos, fld, 0) };
+  s.put_stack_char(new_value);
+}
+
+pub fn op_get_single(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: single? = if v1.rec == 0 { null } else { crt::get_float(v1.store_nr, v1.rec, v1.pos, fld, true) as single? };
+  s.put_stack_f32(new_value);
+}
+
 pub fn op_get_float(s: state::State) {
   fld = s.code_u16();
   v1 = s.get_stack_dbref();
@@ -690,6 +759,20 @@ pub fn op_set_int(s: state::State) {
   if v1.rec != 0 { crt::set_int(v1.store_nr, v1.rec, v1.pos, fld, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
 }
 
+pub fn op_set_character(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_char();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(crt::W_CHARACTER, v1.store_nr, v1.rec, v1.pos, fld, 0, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn op_set_single(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_f32();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_float(v1.store_nr, v1.rec, v1.pos, fld, val as float?, true); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
 pub fn op_set_float(s: state::State) {
   fld = s.code_u16();
   val = s.get_stack_f64();
@@ -734,6 +817,13 @@ pub fn op_set_text(s: state::State) {
   if v1.rec != 0 { crt::set_text(v1.store_nr, v1.rec, v1.pos, fld, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
 }
 
+pub fn op_set_text_replace(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_str();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::refill_text(v1.store_nr, v1.rec, v1.pos, fld, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
 pub fn op_var_vector(s: state::State) {
   pos = s.code_u16();
   new_value: state::DbRef? = s.get_var_dbref(pos);
@@ -744,6 +834,12 @@ pub fn op_length_vector(s: state::State) {
   r = s.get_stack_dbref();
   new_value: integer? = crt::vec_len(r.store_nr, r.rec, r.pos);
   s.put_stack_i64(new_value);
+}
+
+pub fn op_vector_is_null(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: boolean? = crt::vec_absent(r.store_nr, r.rec, r.pos);
+  s.put_stack_bool(new_value);
 }
 
 pub fn op_ref_is_null(s: state::State) {
@@ -801,6 +897,24 @@ pub fn op_append_vector(s: state::State) {
   s.load_table(); crt::vec_add(tp, r.store_nr, r.rec, r.pos, other.store_nr, other.rec, other.pos);
 }
 
+pub fn op_slice_vector(s: state::State) {
+  tp = s.code_u16();
+  hi = s.get_stack_i64();
+  lo = s.get_stack_i64();
+  src = s.get_stack_dbref();
+  r = s.get_stack_dbref();
+  s.vec_slice(r, src, lo, hi, tp, false);
+}
+
+pub fn op_slice_view(s: state::State) {
+  tp = s.code_u16();
+  hi = s.get_stack_i64();
+  lo = s.get_stack_i64();
+  src = s.get_stack_dbref();
+  r = s.get_stack_dbref();
+  s.vec_slice(r, src, lo, hi, tp, true);
+}
+
 pub fn op_push_int(s: state::State) {
   val = s.get_stack_i64();
   r = s.get_stack_dbref();
@@ -850,6 +964,16 @@ pub fn op_push_byte(s: state::State) {
   crt::vec_push(crt::P_BYTE, r.store_nr, r.rec, r.pos, min, val);
 }
 
+pub fn op_get_record(s: state::State) {
+  s.get_record();
+}
+
+pub fn op_length_hash(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: integer? = crt::hash_len(r.store_nr, r.rec, r.pos);
+  s.put_stack_i64(new_value);
+}
+
 pub fn op_eq_bool(s: state::State) {
   v2 = s.get_stack_u8();
   v1 = s.get_stack_u8();
@@ -866,6 +990,27 @@ pub fn op_ne_bool(s: state::State) {
 
 pub fn op_append_copy(s: state::State) {
   s.append_copy();
+}
+
+pub fn op_place_record(s: state::State) {
+  tp = s.code_u16();
+  host = s.get_stack_dbref();
+  new_value: state::DbRef? = s.place_record(host, tp);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn op_free_record_in(s: state::State) {
+  tp = s.code_u16();
+  rec = s.get_stack_dbref();
+  s.load_table(); crt::free_record_in(rec.store_nr, rec.rec, rec.pos, tp);
+}
+
+pub fn op_copy_ref_or_null(s: state::State) {
+  s.copy_ref_or_null();
+}
+
+pub fn op_bind_or_copy(s: state::State) {
+  s.bind_or_copy();
 }
 
 pub fn op_static_call(s: state::State) {
@@ -890,6 +1035,12 @@ pub fn op_append_stack_text(s: state::State) {
 
 pub fn op_clear_stack_text(s: state::State) {
   s.clear_stack_text();
+}
+
+pub fn op_const_ref(s: state::State) {
+  d_nr = s.code_i64();
+  new_value: state::DbRef? = s.const_ref_at(d_nr);
+  s.put_stack_dbref(new_value);
 }
 
 pub fn op_text_null_jump(s: state::State) {
@@ -961,6 +1112,12 @@ pub fn op_conv_character_from_null(s: state::State) {
   s.put_stack_char(new_value);
 }
 
+pub fn op_cast_int_from_text(s: state::State) {
+  v1 = s.get_stack_str();
+  new_value: integer? = if v1 == null { null } else { v1! as integer? };
+  s.put_stack_i64(new_value);
+}
+
 pub fn op_pow_int(s: state::State) {
   v2 = s.get_stack_i64();
   v1 = s.get_stack_i64();
@@ -978,9 +1135,31 @@ pub fn op_database(s: state::State) {
   s.database();
 }
 
+pub fn op_remove_vector(s: state::State) {
+  tp = s.code_u16();
+  index = s.get_stack_i64();
+  r = s.get_stack_dbref();
+  new_value: boolean? = s.vec_remove(r, tp, index);
+  s.put_stack_bool(new_value);
+}
+
+pub fn op_keep_vector_range(s: state::State) {
+  tp = s.code_u16();
+  hi = s.get_stack_i64();
+  lo = s.get_stack_i64();
+  r = s.get_stack_dbref();
+  s.vec_keep(r, tp, lo, hi);
+}
+
 pub fn op_print(s: state::State) {
   v1 = s.get_stack_str();
   print(v1 ?? "");
+}
+
+pub fn op_clear(s: state::State) {
+  tp = s.code_u16();
+  data = s.get_stack_dbref();
+  s.clear(data, tp);
 }
 
 pub fn op_copy_record(s: state::State) {
@@ -1046,9 +1225,11 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     46 => op_var_character(s),
     49 => op_put_character(s),
     50 => op_conv_int_from_null(s),
+    51 => op_conv_bool_from_null(s),
     52 => op_conv_character_from_int(s),
     53 => op_abs_int(s),
     54 => op_min_single_int(s),
+    56 => op_conv_single_from_int(s),
     57 => op_conv_bool_from_int(s),
     58 => op_add_int_nullable(s),
     59 => op_min_int_nullable(s),
@@ -1063,12 +1244,17 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     68 => op_format_int(s),
     69 => op_format_stack_int(s),
     70 => op_const_single(s),
+    71 => op_var_single(s),
+    72 => op_put_single(s),
+    86 => op_conv_float_from_null(s),
+    91 => op_min_single_float(s),
     92 => op_cast_single_from_float(s),
     93 => op_cast_int_from_float(s),
     95 => op_eq_float(s),
     96 => op_ne_float(s),
     97 => op_le_float(s),
     98 => op_format_float(s),
+    99 => op_format_stack_float(s),
     100 => op_var_text(s),
     101 => op_arg_text(s),
     102 => op_const_text(s),
@@ -1078,6 +1264,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     107 => op_init_text(s),
     108 => op_append_text(s),
     109 => op_put_text(s),
+    110 => op_get_text_sub(s),
+    111 => op_text_character(s),
     114 => op_clear_text(s),
     115 => op_free_text(s),
     116 => op_eq_text(s),
@@ -1089,6 +1277,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     124 => op_var_enum(s),
     125 => op_const_enum(s),
     126 => op_put_enum(s),
+    128 => op_conv_int_from_enum(s),
     129 => op_conv_bool_from_ref(s),
     131 => op_init_ref(s),
     132 => op_null_ref_sentinel(s),
@@ -1102,6 +1291,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     146 => op_get_db_ref(s),
     147 => op_get_field(s),
     148 => op_get_int(s),
+    149 => op_get_character(s),
+    150 => op_get_single(s),
     151 => op_get_float(s),
     152 => op_get_byte(s),
     154 => op_get_enum(s),
@@ -1111,14 +1302,18 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     158 => op_get_short(s),
     159 => op_get_text(s),
     160 => op_set_int(s),
+    161 => op_set_character(s),
+    162 => op_set_single(s),
     163 => op_set_float(s),
     164 => op_set_byte(s),
     166 => op_set_short(s),
     167 => op_get_int4(s),
     168 => op_set_int4(s),
     176 => op_set_text(s),
+    177 => op_set_text_replace(s),
     178 => op_var_vector(s),
     179 => op_length_vector(s),
+    180 => op_vector_is_null(s),
     181 => op_ref_is_null(s),
     182 => op_distinct_store(s),
     184 => op_ref_alias(s),
@@ -1128,6 +1323,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     192 => op_new_record(s),
     193 => op_finish_record(s),
     194 => op_append_vector(s),
+    195 => op_slice_vector(s),
+    196 => op_slice_view(s),
     198 => op_push_int(s),
     199 => op_push_int4(s),
     200 => op_push_float(s),
@@ -1136,15 +1333,22 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     203 => op_push_enum(s),
     204 => op_push_character(s),
     205 => op_push_byte(s),
+    209 => op_get_record(s),
+    211 => op_length_hash(s),
     212 => op_eq_bool(s),
     213 => op_ne_bool(s),
     216 => op_append_copy(s),
+    217 => op_place_record(s),
+    221 => op_free_record_in(s),
+    229 => op_copy_ref_or_null(s),
+    230 => op_bind_or_copy(s),
     234 => op_static_call(s),
     236 => op_init_create_stack(s),
     237 => op_get_stack_text(s),
     238 => op_get_stack_ref(s),
     247 => op_append_stack_text(s),
     249 => op_clear_stack_text(s),
+    255 => op_const_ref(s),
     260 => op_text_null_jump(s),
     262 => op_vec_get_int(s),
     263 => op_vec_get_int_nullable(s),
@@ -1155,10 +1359,14 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     269 => op_cast_text_from_bool(s),
     270 => op_range_default(s),
     272 => op_conv_character_from_null(s),
+    274 => op_cast_int_from_text(s),
     283 => op_pow_int(s),
     294 => op_size_text(s),
     299 => op_database(s),
+    312 => op_remove_vector(s),
+    313 => op_keep_vector_range(s),
     323 => op_print(s),
+    325 => op_clear(s),
     326 => op_copy_record(s),
     339 => op_pre_alloc_vector(s),
     365 => op_database_n_p(s),

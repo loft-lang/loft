@@ -1262,7 +1262,7 @@ fn push_hidden(img: ir::RunImage, stk: integer, sp: integer, hidden: vector<inte
 // as `stack_keys` reads it by its content (`types::key_contents`): an integer of any width, a single, a float, a
 // boolean's byte, a text, a character, any other (an enum) a byte.  Answers the bytes they take,
 // -1 with nothing pushed when a part's type does not resolve.
-fn push_keys(ts: vector<ir::DbType>, stk: integer, tp: integer, n: integer, top: integer) -> integer {
+pub fn push_keys(ts: vector<ir::DbType>, stk: integer, tp: integer, n: integer, top: integer) -> integer {
   kc = types::key_contents(ts, tp);
   if kc == null || n > len(kc) {
     return -1;

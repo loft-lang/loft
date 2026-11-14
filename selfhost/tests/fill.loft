@@ -62,6 +62,12 @@ fn test_a_null_text_takes_its_default() {
   assert(r == 424, "none, ab, none: {r}");
 }
 
+// Records filed in a hash under a narrow key are found under it, and an absent key is not.
+fn test_a_hash_finds_what_was_filed() {
+  r = answer("keyedfind", "n_found", [5]);
+  assert(r == 1230, "the values under -100, 7, 100 and 5: {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {

@@ -14,6 +14,7 @@
 use crt;
 use ir;
 use types;
+use brun;
 
 pub struct State {
   // The bytecode (`State::code_base` / `code_len`) and the position of the next byte to read.
@@ -40,6 +41,8 @@ pub struct State {
   // Each type's default image, derived on its first use (`types::default_image`).
   pub images: vector<vector<u8>>,
   pub imaged: vector<boolean>,
+  // The constants as stores of their own (`State::const_refs`), by definition.
+  pub consts: vector<DbRef>,
 }
 
 // `DbRef`: a reference — its store, its record and the position in it.
@@ -73,7 +76,17 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [] }
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [] };
+  // Each constant adopted from the bytes Rust built it as (`RunImage.consts`).
+  for c in img.consts {
+    while len(s.consts) <= c.def {
+      s.consts += [DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }];
+    }
+    if crt::store_from_image(io, c.bytes) {
+      s.consts[c.def] = DbRef { store_nr: io[0] ?? NULL_STORE, rec: c.rec, pos: c.pos };
+    }
+  }
+  s
 }
 
 // `State::ensure_stack`: room for `step` more bytes above the top, the stack store doubled
@@ -687,26 +700,30 @@ pub fn load_table(self: State) {
   self.table_loaded = true;
 }
 
-// `State::database` (`OpDatabase`, `OpDatabaseNP`): the store the reference in the frame slot at
-// `pos` names made — or made again — with a zeroed root of type `db_tp` (an enum variant's is
-// its parent's size), and the reference written back.
-pub fn database(self: State) {
-  pos = self.code_u16();
-  db_tp = self.code_u16();
-  at = self.stack_pos - pos;
+// The store the reference in the frame slot at byte `at` names made — or made again — with a
+// zeroed root of type `tp` (an enum variant's is its parent's size), and the reference written
+// back.
+fn make_store(self: State, at: integer, tp: integer) {
   if !self.slot_ok(at) {
     return;
   }
   io: vector<integer> = [NULL_STORE, 0, 0];
   crt::slot_ref(io, self.stk, at);
-  bytes = types::enum_parent_size(self.types, db_tp);
-  if types::is_vector_wrapper(self.types, db_tp) {
+  bytes = types::enum_parent_size(self.types, tp);
+  if types::is_vector_wrapper(self.types, tp) {
     self.load_table();
-    crt::database_wrapper(io, bytes, db_tp);
+    crt::database_wrapper(io, bytes, tp);
   } else {
-    crt::database(io, bytes, db_tp);
+    crt::database(io, bytes, tp);
   }
   crt::set_slot_ref(self.stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+}
+
+// `State::database` (`OpDatabase`, `OpDatabaseNP`): the store of the frame slot at `pos` made.
+pub fn database(self: State) {
+  pos = self.code_u16();
+  db_tp = self.code_u16();
+  self.make_store(self.stack_pos - pos, db_tp);
 }
 
 pub fn database_n_p(self: State) {
@@ -858,6 +875,8 @@ fn new_record_of(self: State, defaults: boolean) {
   if rc == null {
     return;
   }
+  // A keyed collection's routines read its key parts from the loaded table.
+  self.load_table();
   v = self.get_stack_dbref();
   vp = v.pos + (rc!.at ?? 0);
   aelem = types::array_element(self.types, rc!.tp);
@@ -899,6 +918,7 @@ pub fn finish_record(self: State) {
   if rc == null {
     return;
   }
+  self.load_table();
   r = self.get_stack_dbref();
   v = self.get_stack_dbref();
   vp = v.pos + (rc!.at ?? 0);
@@ -984,7 +1004,7 @@ pub fn get_stack_text(self: State) {
 pub fn copy_record(self: State) {
   raw = self.code_u16();
   tp = raw & 16383;
-  flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(self.types, tp) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 });
+  flags = self.copy_flags(raw);
   d = self.get_stack_dbref();
   src = self.get_stack_dbref();
   self.load_table();
@@ -1098,4 +1118,151 @@ pub fn format_float(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_f64();
   crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val, width, precision, token, plus, dir, false));
+}
+
+// A copy's type operand as flags: the source freed (0x8000), the type holding no stored
+// references, the destination fresh (0x4000).
+fn copy_flags(self: State, raw: integer) -> integer {
+  (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(self.types, raw & 16383) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
+}
+
+// `State::const_ref_at`: constant `d`'s root, in the store adopted for it.
+pub fn const_ref_at(self: State, d: integer) -> DbRef {
+  self.consts[d] ?? DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }
+}
+
+// `Stores::remove_claims` (`OpClear`): a buffer emptied for reuse, its claims released; with
+// the reset flag (the type's top bit) a pooled buffer's store is made again at its root where
+// the runtime allows it.
+pub fn clear(self: State, data: DbRef, raw: integer) {
+  tp = raw & 32767;
+  self.load_table();
+  reset = false;
+  if raw & 32768 != 0 {
+    reset = crt::reset_pool_root(data.store_nr, data.rec, data.pos, tp, types::enum_parent_size(self.types, tp), self.default_of(tp));
+  }
+  if !reset {
+    crt::clear(data.store_nr, data.rec, data.pos, tp);
+  }
+}
+
+// `State::copy_ref_or_null`: the source popped; a null one frees the variable's store at `pos`
+// and leaves it null, any other is copied into the store the variable names.
+pub fn copy_ref_or_null(self: State) {
+  pos = self.code_u16();
+  raw = self.code_u16();
+  src = self.get_stack_dbref();
+  v = self.get_var_dbref(pos);
+  self.load_table();
+  if src.rec == 0 {
+    if v.store_nr != NULL_STORE {
+      crt::free_ref(v.store_nr, v.rec, v.pos);
+    }
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
+  } else {
+    crt::copy_record(src.store_nr, src.rec, src.pos, v.store_nr, v.rec, v.pos, raw & 16383, self.copy_flags(raw));
+  }
+}
+
+// `State::bind_or_copy`: the witness and then the source popped; a source in the witness's
+// store is copied into a store made for the variable at `pos`, any other is bound as it is.
+pub fn bind_or_copy(self: State) {
+  pos = self.code_u16();
+  raw = self.code_u16();
+  witness = self.get_stack_dbref();
+  src = self.get_stack_dbref();
+  if src.store_nr != NULL_STORE && src.store_nr == witness.store_nr {
+    self.make_store(self.stack_pos - pos, raw & 32767);
+    v = self.get_var_dbref(pos);
+    self.load_table();
+    crt::copy_record(src.store_nr, src.rec, src.pos, v.store_nr, v.rec, v.pos, raw & 16383, self.copy_flags(raw));
+  } else {
+    crt::set_slot_ref(self.stk, self.stack_pos - pos, src.store_nr, src.rec, src.pos);
+  }
+}
+
+// `Stores::place_record_prefilled` (`OpPlaceRecord`): a call's return buffer claimed in the
+// store of the record its result lands in, prefilled with its type's defaults — in a fresh
+// store when the host names none.
+pub fn place_record(self: State, host: DbRef, tp: integer) -> DbRef {
+  fresh = host.store_nr == NULL_STORE || host.rec == 0 || !crt::store_live(host.store_nr);
+  elem = if fresh { null } else { types::root_vector_element(self.types, crt::store_known(host.store_nr)) };
+  io: vector<integer> = [host.store_nr, host.rec, host.pos];
+  crt::place_record(io, host.store_nr, host.rec, host.pos, tp, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+  if fresh {
+    crt::set_store_known(io[0] ?? NULL_STORE, tp);
+  }
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `State::get_record`: the key parts and then the collection popped; a hash's entry, or a
+// sorted's or an index's record, found under them — null for none.
+pub fn get_record(self: State) {
+  db_tp = self.code_u16();
+  no_keys = self.code_u8();
+  self.load_table();
+  kind = types::keyed_kind(self.types, db_tp) ?? 0;
+  if types::hash_element(self.types, db_tp) == null && kind == 0 {
+    self.fault = "not carried: a lookup in {self.types[db_tp]?.name ?? "a collection"}";
+    return;
+  }
+  // The key parts read off the stack as the old runner reads them (`stack_keys`).
+  bytes = brun::push_keys(self.types, self.stk, db_tp, no_keys, self.stack_pos);
+  if bytes < 0 || !self.can_pop(bytes + 16) {
+    self.fault = "not carried: a lookup whose key does not resolve";
+    return;
+  }
+  self.stack_pos -= bytes;
+  r = self.get_stack_dbref();
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  if kind != 0 {
+    crt::keyed_find(io, r.store_nr, r.rec, r.pos, kind, db_tp, no_keys);
+  } else {
+    crt::hash_find(io, r.store_nr, r.rec, r.pos, db_tp, no_keys);
+  }
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+// `State::get_text_sub`: the bounds popped, the view below them replaced by its slice.
+pub fn get_text_sub(self: State) {
+  if !self.can_pop(32) {
+    return;
+  }
+  self.stack_pos -= 16;
+  crt::stack_text_sub(self.stk, self.stack_pos - 16);
+}
+
+// `State::format_stack_float`: as `format_float`, into the text the slot's reference names.
+pub fn format_stack_float(self: State) {
+  pos = self.code_u16();
+  token = self.code_u8();
+  plus = self.code_u8() == 1;
+  dir = self.code_i8();
+  precision = self.get_stack_i64();
+  width = self.get_stack_i64();
+  val = self.get_stack_f64();
+  r = self.get_var_dbref(pos - 24);
+  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_float(val, width, precision, token, plus, dir, false));
+}
+
+// `Stores::remove_vector_at`: element `index` removed, by its type's mode — linked, owning
+// heap, or plain; whether one was removed.
+pub fn vec_remove(self: State, r: DbRef, tp: integer, index: integer?) -> boolean {
+  et = self.types[tp]!;
+  self.load_table();
+  mode = if et.linked { 2 } else if types::owns_heap(self.types, tp) { 1 } else { 0 };
+  crt::vec_remove(r.store_nr, r.rec, r.pos, tp, et.size, mode, index)
+}
+
+// `Stores::keep_vector_range`: the vector cut to its elements `lo..hi`.
+pub fn vec_keep(self: State, r: DbRef, tp: integer, lo: integer?, hi: integer?) {
+  et = self.types[tp]!;
+  self.load_table();
+  crt::vec_keep(r.store_nr, r.rec, r.pos, tp, if et.linked { 0 } else { et.size }, lo, hi);
+}
+
+// `Stores::vector_slice` / `vector_slice_view`: `r` made the elements `lo..hi` of `src`, a
+// copy or (`view`) a view of them.
+pub fn vec_slice(self: State, r: DbRef, src: DbRef, lo: integer?, hi: integer?, tp: integer, view: boolean) {
+  crt::vec_slice(r.store_nr, r.rec, r.pos, src.store_nr, src.rec, src.pos, lo ?? 0, hi ?? 0, self.types[tp]?.size ?? 0, view);
 }

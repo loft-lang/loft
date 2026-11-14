@@ -277,6 +277,7 @@ fn OpConvIntFromNull() -> __word;
 #loft"null"
 fn OpConvBoolFromNull() -> boolean;
 #rust"255u8"
+#loft"null"
 fn OpConvCharacterFromNull() -> character;
 #cold
 #rust"char::from(0)"
@@ -290,6 +291,7 @@ fn OpConstLongText(start: const __word, size: const __word) -> text;
 fn OpCastIntFromText(v1: text) -> __word;
 #cold
 #rust"match @v1.parse::<i64>() {{ Ok(v) if v == i64::MIN => {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }}, Ok(v) => v, Err(_) => i64::MIN }}"
+#loft"if v1 == null {{ null }} else {{ v1! as integer? }}"
 fn OpCastSingleFromText(v1: text) -> single;
 #cold
 #rust"@v1.parse().unwrap_or(f32::NAN)"
@@ -316,6 +318,7 @@ fn OpConvFloatFromInt(v1: __word) -> __fword;
 #loft"v1 as float"
 fn OpConvSingleFromInt(v1: __word) -> single;
 #rust"ops::op_conv_single_from_int(@v1)"
+#loft"v1 as single"
 fn OpConvBoolFromInt(v1: __word) -> boolean;
 #rust"ops::op_conv_bool_from_int(@v1)"
 #loft"v1 != null"
@@ -428,8 +431,10 @@ fn OpConstSingle(val: const single) -> single;
 #loft"val"
 fn OpVarSingle(pos: const u16) -> single;
 #rust"s.get_var::<f32>(@pos)"
+#loft"s.get_var_f32(pos)"
 fn OpPutSingle(pos: const u16, value: single);
 #rust"s.put_var(@pos, @value);"
+#loft"s.put_var_f32(pos, value);"
 fn OpConvSingleFromNull() -> single;
 #cold
 #rust"f32::NAN"
@@ -626,6 +631,7 @@ fn OpPutFloat(pos: const u16, value: __fword);
 #loft"s.put_var_f64(pos, value);"
 fn OpConvFloatFromNull() -> __fword;
 #rust"f64::NAN"
+#loft"null"
 fn OpAbsFloat(v1: __fword) -> __fword;
 #rust"@v1.abs()"
 /// Absolute value for double-precision floats.
@@ -822,6 +828,7 @@ pub fn log10(self: f64) -> f64? {
 
 fn OpMinSingleFloat(v1: __fword) -> __fword;
 #rust"-@v1"
+#loft"if v1 == null {{ null }} else {{ -v1 }}"
 fn OpCastSingleFromFloat(v1: __fword) -> single;
 #rust"@v1 as f32"
 #loft"v1 as single"
@@ -1095,6 +1102,7 @@ fn OpPutText(pos: const u16, value: text);
 fn OpGetTextSub(v1: text, from: __word, till: __word) -> text[v1];
 fn OpTextCharacter(v1: text, v2: __word) -> character;
 #rust"s.text_char_or_raise(@v1, @v2)"
+#loft"ops::text_char(v1, v2)"
 // Plan-07 phase 4 step 4.8 — nullable peer of OpTextCharacter for
 // for-loop iteration over text (`for c in s`).  Returns char(0) on
 // out-of-bounds; the loop driver in
@@ -1165,6 +1173,7 @@ fn OpCastEnumFromText(v1: text, enum_tp: const u16) -> enumerate;
 #rust"s.database.to_enum(@enum_tp, @v1)"
 fn OpConvIntFromEnum(v1: enumerate) -> __word;
 #rust"if @v1 == 255 {{ i64::MIN }} else {{ i64::from(@v1) }}"
+#loft"if v1 == 255 {{ null }} else {{ v1 }}"
 fn OpCastEnumFromInt(v1: __word) -> enumerate;
 #cold
 #rust"if @v1 == i64::MIN {{ 255 }} else {{ @v1 as u8 }}"
@@ -1311,8 +1320,10 @@ fn OpGetInt(v1: reference, fld: const u16) -> __word;
 #loft"if v1.rec == 0 {{ null }} else {{ crt::get_int(v1.store_nr, v1.rec, v1.pos, fld) }}"
 fn OpGetCharacter(v1: reference, fld: const u16) -> character;
 #rust"{{let db = @v1; if db.rec == 0 {{ char::from(0) }} else {{ char::from_u32(stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld))).unwrap_or(char::from(0)) }} }}"
+#loft"if v1.rec == 0 {{ 0 }} else {{ crt::get_w(crt::W_CHARACTER, v1.store_nr, v1.rec, v1.pos, fld, 0) }}"
 fn OpGetSingle(v1: reference, fld: const u16) -> single;
 #rust"{{let db = @v1; if db.rec == 0 {{ f32::NAN }} else {{ stores.store(&db).get_single(db.rec, db.pos + u32::from(@fld)) }} }}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_float(v1.store_nr, v1.rec, v1.pos, fld, true) as single? }}"
 fn OpGetFloat(v1: reference, fld: const u16) -> __fword;
 #rust"{{let db = @v1; if db.rec == 0 {{ f64::NAN }} else {{ stores.store(&db).get_float(db.rec, db.pos + u32::from(@fld)) }} }}"
 #loft"if v1.rec == 0 {{ null }} else {{ crt::get_float(v1.store_nr, v1.rec, v1.pos, fld, false) }}"
@@ -1368,8 +1379,10 @@ fn OpSetInt(v1: reference, fld: const u16, val: __word);
 #loft"if v1.rec != 0 {{ crt::set_int(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpSetCharacter(v1: reference, fld: const u16, val: character);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v as u32); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(crt::W_CHARACTER, v1.store_nr, v1.rec, v1.pos, fld, 0, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpSetSingle(v1: reference, fld: const u16, val: single);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_single(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_float(v1.store_nr, v1.rec, v1.pos, fld, val as float?, true); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpSetFloat(v1: reference, fld: const u16, val: __fword);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_float(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 #loft"if v1.rec != 0 {{ crt::set_float(v1.store_nr, v1.rec, v1.pos, fld, val, false); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
@@ -1443,6 +1456,7 @@ fn OpSetText(v1: reference, fld: const u16, val: text);
 // reads the slot, because there it can hold bytes that are not a block.
 fn OpSetTextReplace(v1: reference, fld: const u16, val: text);
 #rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::refill_text(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // --- Collections ---
 /// Operations on vector<T> — the primary ordered collection type.
 /// Vectors are grown by appending with += and elements are accessed by index.
@@ -1463,6 +1477,7 @@ fn OpLengthVector(r: vector) -> __word;
 // `==`/`!=` operator dispatch for `vector == null` / `vector != null`.
 fn OpVectorIsNull(r: vector) -> boolean;
 #rust"vector::is_absent_collection(&@r, &s.database.allocations)"
+#loft"crt::vec_absent(r.store_nr, r.rec, r.pos)"
 // @PLN25: true when a reference/enum value is the null sentinel, tested via
 // store_nr — NOT rec==0, which an inline-represented value (e.g. a present enum
 // on the native backend) also carries.  Lowered by the `==`/`!=` dispatch for
@@ -1604,6 +1619,7 @@ fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
 fn OpRemoveVector(r: vector, tp: const u16, index: __word) -> boolean;
 #cold
 #rust"s.database.remove_vector_at(&@r, @tp, @index)"
+#loft"s.vec_remove(r, tp, index)"
 #impure(parent_write)
 // `@FR-R-Compact` — the vector becomes the elements it held at [lo, hi), in place: every
 // other element is released where it stands, the kept run moves to the front as one block,
@@ -1614,6 +1630,7 @@ fn OpRemoveVector(r: vector, tp: const u16, index: __word) -> boolean;
 fn OpKeepVectorRange(r: vector, tp: const u16, lo: __word, hi: __word);
 #cold
 #rust"s.database.keep_vector_range(&@r, @tp, @lo, @hi)"
+#loft"s.vec_keep(r, tp, lo, hi);"
 #impure(parent_write)
 // `@FR-R-Compact`'s prepend form — the vector becomes `g`'s elements followed by its own, in
 // its own record: what `t = []; t += g; t += r; r = t` leaves, without copying every element
@@ -1649,10 +1666,12 @@ fn OpAppendVector(r: vector, other: vector, tp: const u16);
 // kind keeps the per-element loop (the parser never emits this for one).
 fn OpSliceVector(r: vector, src: vector, lo: __word, hi: __word, tp: const u16);
 #rust"s.database.vector_slice(&@r, &@src, @lo, @hi, @tp);"
+#loft"s.vec_slice(r, src, lo, hi, tp, false);"
 // @PLN174 F4b — `r = src[lo..hi]` into a local that owns its backing store: a VIEW of the
 // span when `src` is a foreign store (read-only bytes, no copy), the block copy otherwise.
 fn OpSliceView(r: vector, src: vector, lo: __word, hi: __word, tp: const u16);
 #rust"s.database.vector_slice_view(&@r, &@src, @lo, @hi, @tp);"
+#loft"s.vec_slice(r, src, lo, hi, tp, true);"
 // `r = r[lo..hi]` for a SCALAR element kind: `r` keeps that range in place — the span moves
 // to the front of its own record and the length is set — where the self-slice copied the
 // span out, released `r` and copied it back.  The bounds arrive clamped by the slice prelude.
@@ -1823,6 +1842,7 @@ type index size(4);
 // the bucket array's size is read from the data record itself.
 fn OpLengthHash(r: hash) -> __word;
 #rust"i64::from(hash::count(&@r, &s.database.allocations))"
+#loft"crt::hash_len(r.store_nr, r.rec, r.pos)"
 /// Number of elements in a hash collection.
 pub fn len(self: const hash) -> integer {
   OpLengthHash(self)
@@ -1966,6 +1986,7 @@ fn OpRemove(state_var: const u16, data: reference, on: const u8, tp: const u16);
 fn OpClear(data: reference, tp: const u16);
 #cold
 #rust"stores.remove_claims(&@data, @tp);"
+#loft"s.clear(data, tp);"
 #impure(parent_write)
 fn OpAppendCopy(data: reference, count: __word, tp: const u16);
 fn OpCopyRecord(data: reference, to: reference, tp: const u16);
@@ -1976,6 +1997,7 @@ fn OpCopyRecord(data: reference, to: reference, tp: const u16);
 // fresh-store buffer instead, which `OpFreeRecordIn` releases whole.
 fn OpPlaceRecord(host: reference, tp: const u16) -> reference;
 #rust"stores.place_record_prefilled(&@host, @tp)"
+#loft"s.place_record(host, tp)"
 #impure(parent_write)
 // `@FR-H-RefHome` — the store `home` names is about to be freed: when the stored reference at
 // byte `fld` of `holder` names a record of it, the record is copied as a `tp` record into the
@@ -2011,6 +2033,7 @@ fn OpMoveVector(dest: vector, src: vector, tp: const u16);
 // owns, then its block; null-guarded, and a store-root record frees its whole store.
 fn OpFreeRecordIn(rec: reference, tp: const u16);
 #rust"stores.free_record_in(&@rec, @tp);"
+#loft"s.load_table(); crt::free_record_in(rec.store_nr, rec.rec, rec.pos, tp);"
 #impure(parent_write)
 // `@FR-R-Demote`, emitted directly: the record at `r` moves into a fresh child record of its own
 // store, `r`'s record is left zeroed and its out-of-line field at `fld` names the child — what
