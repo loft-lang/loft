@@ -912,7 +912,10 @@ pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result
 /// program declared `#cwd`.  Every vector is reserved at its exact length first
 /// (`@FR-Col-Capacity`): grown by doubling, each would carry up to twice its content.
 #[cfg(feature = "mmap")]
-#[expect(clippy::too_many_arguments, reason = "the run image's parts, each from its own owner")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the run image's parts, each from its own owner"
+)]
 fn materialize_run_image(
     stores: &mut Stores,
     root: DbRef,
@@ -921,6 +924,7 @@ fn materialize_run_image(
     ops: &(Vec<String>, Vec<String>),
     consts: &[RunConstBytes],
     fnrefs: &[RunFnRefShape],
+    gens: &[RunGenShape],
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -935,9 +939,19 @@ fn materialize_run_image(
         ..root
     };
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_CODE), count(code.len()), 1, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_CODE),
+        count(code.len()),
+        1,
+        &mut stores.allocations,
+    );
     crate::vector::append_bytes(&slot(ds::RUNIMG_CODE), code, &mut stores.allocations);
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_STARTS), count(starts.len()), 4, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_STARTS),
+        count(starts.len()),
+        4,
+        &mut stores.allocations,
+    );
     let sv = rec.field_recvec(ds::RUNIMG_STARTS, 4);
     for &at in starts {
         let e = sv.push(stores).db_ref();
@@ -959,13 +973,23 @@ fn materialize_run_image(
         }
         natives[i] = name;
     }
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_NATIVES), count(natives.len()), 4, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_NATIVES),
+        count(natives.len()),
+        4,
+        &mut stores.allocations,
+    );
     let nv = rec.field_recvec(ds::RUNIMG_NATIVES, 4);
     for n in natives {
         let e = nv.push(stores);
         e.set_field_str(stores, 0, n);
     }
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_CONSTS), count(consts.len()), ds::RUNCONST_STRIDE, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_CONSTS),
+        count(consts.len()),
+        ds::RUNCONST_STRIDE,
+        &mut stores.allocations,
+    );
     let cv = rec.field_recvec(ds::RUNIMG_CONSTS, ds::RUNCONST_STRIDE);
     for c in consts {
         let e = cv.push(stores);
@@ -979,7 +1003,35 @@ fn materialize_run_image(
         crate::vector::pre_alloc_vector(&b, count(c.bytes.len()), 1, &mut stores.allocations);
         crate::vector::append_bytes(&b, &c.bytes, &mut stores.allocations);
     }
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_FNREFS), count(fnrefs.len()), ds::RUNFNREF_STRIDE, &mut stores.allocations);
+    materialize_run_fnrefs(stores, &rec, &slot(ds::RUNIMG_FNREFS), fnrefs);
+    materialize_run_gens(stores, &rec, &slot(ds::RUNIMG_GENS), gens);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_TYPES),
+        count(schema.len()),
+        ds::DBTYPE_STRIDE,
+        &mut stores.allocations,
+    );
+    materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
+    rec.set_field_int(stores, ds::RUNIMG_MAIN, main);
+    rec.set_field_bool(stores, ds::RUNIMG_CWD, cwd);
+}
+
+/// The run image's rows for calls through function references (`RunFnRef`), into the root's
+/// `fnrefs` vector at `slot`.
+#[cfg(feature = "mmap")]
+fn materialize_run_fnrefs(
+    stores: &mut Stores,
+    rec: &Record,
+    slot: &DbRef,
+    fnrefs: &[RunFnRefShape],
+) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(
+        slot,
+        count(fnrefs.len()),
+        ds::RUNFNREF_STRIDE,
+        &mut stores.allocations,
+    );
     let fv = rec.field_recvec(ds::RUNIMG_FNREFS, ds::RUNFNREF_STRIDE);
     for f in fnrefs {
         let e = fv.push(stores);
@@ -998,10 +1050,43 @@ fn materialize_run_image(
             x.set_field_int(stores, 0, h);
         }
     }
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_TYPES), count(schema.len()), ds::DBTYPE_STRIDE, &mut stores.allocations);
-    materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
-    rec.set_field_int(stores, ds::RUNIMG_MAIN, main);
-    rec.set_field_bool(stores, ds::RUNIMG_CWD, cwd);
+}
+
+/// The run image's generator rows (`RunGen`, `state::gen_facts`): each generator's frame facts,
+/// into the root's `gens` vector at `slot`.
+#[cfg(feature = "mmap")]
+fn materialize_run_gens(stores: &mut Stores, rec: &Record, slot: &DbRef, gens: &[RunGenShape]) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(
+        slot,
+        count(gens.len()),
+        ds::RUNGEN_STRIDE,
+        &mut stores.allocations,
+    );
+    let gv = rec.field_recvec(ds::RUNIMG_GENS, ds::RUNGEN_STRIDE);
+    for g in gens {
+        let e = gv.push(stores);
+        e.set_field_int(stores, ds::RUNGEN_DEF, i64::from(g.def));
+        e.set_field_int(stores, ds::RUNGEN_ZONE2, i64::from(g.zone2));
+        for (off, list) in [
+            (ds::RUNGEN_TEXT_ARGS, &g.text_args),
+            (ds::RUNGEN_REF_ARGS, &g.ref_args),
+            (ds::RUNGEN_TEXT_LOCALS, &g.text_locals),
+            (ds::RUNGEN_OWNED_LOCALS, &g.owned_locals),
+            (ds::RUNGEN_TUPLE_REFS, &g.tuple_refs),
+        ] {
+            let lv = DbRef {
+                pos: e.db_ref().pos + off,
+                ..e.db_ref()
+            };
+            crate::vector::pre_alloc_vector(&lv, count(list.len()), 8, &mut stores.allocations);
+            let lr = RecVector::new(lv, 8);
+            for &x in list {
+                let y = lr.push(stores);
+                y.set_field_int(stores, 0, i64::from(x));
+            }
+        }
+    }
 }
 
 /// How a constant operand of type `tp` sits in the bytecode, as one letter — the width the
@@ -1103,6 +1188,50 @@ pub struct RunFnRefShape {
 
 /// Every function's call-through-a-reference shape that is not a plain call.
 #[must_use]
+/// A generator's frame facts for the run image (`RunGen`), from `state::gen_facts` — the same
+/// reads the interpreter's coroutine operators make.
+pub struct RunGenShape {
+    pub def: u32,
+    pub zone2: u32,
+    pub text_args: Vec<u32>,
+    pub ref_args: Vec<u32>,
+    pub text_locals: Vec<u32>,
+    pub owned_locals: Vec<u32>,
+    pub tuple_refs: Vec<u32>,
+}
+
+/// Every generator of the program: a function with a body whose result is an iterator.
+#[must_use]
+pub fn run_image_gens(data: &Data) -> Vec<RunGenShape> {
+    use crate::state::gen_facts as gf;
+    let mut out = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !matches!(def.def_type(), DefType::Function)
+            || matches!(def.code, Value::Null)
+            || !matches!(def.returned().base(), Type::Iterator(..))
+        {
+            continue;
+        }
+        out.push(RunGenShape {
+            def: d,
+            zone2: u32::try_from(gf::zone2_size(def)).unwrap_or(0),
+            text_args: gf::text_arg_offsets(def),
+            ref_args: gf::ref_arg_offsets(def),
+            text_locals: gf::text_local_slots(def)
+                .into_iter()
+                .map(u32::from)
+                .collect(),
+            owned_locals: gf::owned_store_local_slots(def)
+                .into_iter()
+                .map(u32::from)
+                .collect(),
+            tuple_refs: gf::yield_tuple(def).map_or_else(Vec::new, |e| gf::tuple_ref_offsets(&e)),
+        });
+    }
+    out
+}
+
 pub fn run_image_fnrefs(data: &Data, program: &Stores) -> Vec<RunFnRefShape> {
     let buf_span = crate::variables::aligned_stack_step(size_of::<DbRef>() as u32);
     let mut widest: crate::fxhash::FxHashMap<usize, usize> = crate::fxhash::FxHashMap::default();
@@ -1156,7 +1285,13 @@ pub fn run_image_fnrefs(data: &Data, program: &Stores) -> Vec<RunFnRefShape> {
         if drop == 0 && hidden.is_empty() && kind == 0 && cascade < 0 {
             continue;
         }
-        out.push(RunFnRefShape { def: d, drop, kind, cascade, hidden });
+        out.push(RunFnRefShape {
+            def: d,
+            drop,
+            kind,
+            cascade,
+            hidden,
+        });
     }
     out
 }
@@ -1244,6 +1379,7 @@ pub fn save_run_image(
             &run_image_ops(data),
             &run_image_consts(program),
             &run_image_fnrefs(data, program),
+            &run_image_gens(data),
             library_names,
             &program.types,
             main,

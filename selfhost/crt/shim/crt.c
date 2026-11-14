@@ -366,6 +366,45 @@ void loft_crt_stack_text_trim(int64_t store, int64_t at, int64_t which) {
     if (which != 1) *v = loft_trim_end_view(*v);
 }
 
+/* The run image's runner (step 3): a generator frame's pieces (`State::coroutine_*`). */
+
+/* `n` stack bytes at `at` copied into `out` (a byte vector's buffer). */
+void loft_crt_stack_read_bytes(char *out, int64_t store, int64_t at, int64_t n) {
+    memcpy(out, loft_crt_slot_at(store, at), (size_t) n);
+}
+
+/* `n` stack bytes at `at` zeroed: a generator's locals region at its first resume. */
+void loft_crt_stack_zero(int64_t store, int64_t at, int64_t n) {
+    memset(loft_crt_slot_at(store, at), 0, (size_t) n);
+}
+
+/* A created generator's text argument: the view at `at` repointed at a copy the frame owns (the
+ * caller's text may be gone before the generator runs, `serialise_text_args`).  Answers the copy
+ * to release with the frame, 0 for the null or the empty text, which keep their view. */
+int64_t loft_crt_stack_str_own(int64_t store, int64_t at) {
+    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
+    if (v->len == 0 || loft_str_is_null(*v)) return 0;
+    char *copy = (char *) malloc(v->len);
+    if (!copy) return 0;
+    memcpy(copy, v->p, v->len);
+    v->p = copy;
+    return (int64_t) (intptr_t) copy;
+}
+
+/* The copy `loft_crt_stack_str_own` made, released when its frame ends. */
+void loft_crt_owned_free(int64_t copy) {
+    free((void *) (intptr_t) copy);
+}
+
+/* `Stores::hold_for_frame` / `release_frame_hold` (`@FR-G-Arg-Rebind`). */
+int64_t loft_crt_hold_for_frame(int64_t s, int64_t r, int64_t p) {
+    return loft_hold_for_frame(loft_crt_ref(s, r, p)) ? 1 : 0;
+}
+
+void loft_crt_release_frame_hold(int64_t s, int64_t r, int64_t p) {
+    loft_release_frame_hold(loft_crt_ref(s, r, p));
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

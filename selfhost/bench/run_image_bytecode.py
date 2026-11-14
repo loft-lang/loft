@@ -83,8 +83,10 @@ def main():
         check = os.path.join(out, "run_image_check")
         if not os.path.exists(check):
             sys.exit(f"the check did not build:\n{p.stderr[-2000:]}")
-        files = [f for f in census.corpus(root, suite if os.path.isdir(suite) else None,
-                                          o.chapter, o.scripts_only) if census.plain(f)]
+        # Absolute: each program runs from its own directory, where a path relative to the
+        # working directory (a relative LOFT_SUITE_DIR) does not resolve.
+        files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
+                                                           o.chapter, o.scripts_only) if census.plain(f)]
         counts, rows = {}, []
         with cf.ThreadPoolExecutor(o.jobs) as ex:
             for f, verdict, what in ex.map(lambda f: one(f, loft, check, tmp, env, o.timeout), files):

@@ -499,8 +499,8 @@ pub(crate) const BUNDLE_STRIDE: u32 = 40;
 pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
 /// `RunImage { code: vector<u8>, starts: vector<u32>, ops, layouts, natives: vector<text>,
-/// consts: vector<RunConst>, fnrefs: vector<RunFnRef>, types: vector<DbType>, main: integer,
-/// cwd: boolean }` — the run image's store root (@PLN91).
+/// consts: vector<RunConst>, fnrefs: vector<RunFnRef>, types: vector<DbType>,
+/// gens: vector<RunGen>, main: integer, cwd: boolean }` — the run image's store root (@PLN91).
 pub(crate) const RUNIMG_MAIN: u32 = 0;
 pub(crate) const RUNIMG_CODE: u32 = 8;
 pub(crate) const RUNIMG_STARTS: u32 = 12;
@@ -510,7 +510,8 @@ pub(crate) const RUNIMG_NATIVES: u32 = 24;
 pub(crate) const RUNIMG_CONSTS: u32 = 28;
 pub(crate) const RUNIMG_FNREFS: u32 = 32;
 pub(crate) const RUNIMG_TYPES: u32 = 36;
-pub(crate) const RUNIMG_CWD: u32 = 40;
+pub(crate) const RUNIMG_GENS: u32 = 40;
+pub(crate) const RUNIMG_CWD: u32 = 44;
 pub(crate) const RUNIMG_STRIDE: u32 = 48;
 /// `RunFnRef { def, drop, kind, cascade: integer, hidden: vector<integer> }` — a call through a function
 /// reference's shape.
@@ -520,6 +521,16 @@ pub(crate) const RUNFNREF_KIND: u32 = 16;
 pub(crate) const RUNFNREF_CASCADE: u32 = 24;
 pub(crate) const RUNFNREF_HIDDEN: u32 = 32;
 pub(crate) const RUNFNREF_STRIDE: u32 = 40;
+/// `RunGen { def, zone2: integer, text_args, ref_args, text_locals, owned_locals, tuple_refs:
+/// vector<integer> }` — a generator's frame facts (`state::gen_facts`).
+pub(crate) const RUNGEN_DEF: u32 = 0;
+pub(crate) const RUNGEN_ZONE2: u32 = 8;
+pub(crate) const RUNGEN_TEXT_ARGS: u32 = 16;
+pub(crate) const RUNGEN_REF_ARGS: u32 = 20;
+pub(crate) const RUNGEN_TEXT_LOCALS: u32 = 24;
+pub(crate) const RUNGEN_OWNED_LOCALS: u32 = 28;
+pub(crate) const RUNGEN_TUPLE_REFS: u32 = 32;
+pub(crate) const RUNGEN_STRIDE: u32 = 40;
 /// `RunConst { def, rec, pos: integer, bytes: vector<u8> }` — one constant's store as bytes.
 pub(crate) const RUNCONST_DEF: u32 = 0;
 pub(crate) const RUNCONST_REC: u32 = 8;
@@ -1798,6 +1809,15 @@ mod tests {
         assert_eq!(pos(ids.run_image, "cwd"), RUNIMG_CWD);
         assert_eq!(pos(ids.run_image, "consts"), RUNIMG_CONSTS);
         assert_eq!(pos(ids.run_image, "fnrefs"), RUNIMG_FNREFS);
+        assert_eq!(pos(ids.run_image, "gens"), RUNIMG_GENS);
+        assert_eq!(u32::from(stores.size(ids.run_gen)), RUNGEN_STRIDE);
+        assert_eq!(pos(ids.run_gen, "def"), RUNGEN_DEF);
+        assert_eq!(pos(ids.run_gen, "zone2"), RUNGEN_ZONE2);
+        assert_eq!(pos(ids.run_gen, "text_args"), RUNGEN_TEXT_ARGS);
+        assert_eq!(pos(ids.run_gen, "ref_args"), RUNGEN_REF_ARGS);
+        assert_eq!(pos(ids.run_gen, "text_locals"), RUNGEN_TEXT_LOCALS);
+        assert_eq!(pos(ids.run_gen, "owned_locals"), RUNGEN_OWNED_LOCALS);
+        assert_eq!(pos(ids.run_gen, "tuple_refs"), RUNGEN_TUPLE_REFS);
         assert_eq!(u32::from(stores.size(ids.run_fn_ref)), RUNFNREF_STRIDE);
         assert_eq!(pos(ids.run_fn_ref, "def"), RUNFNREF_DEF);
         assert_eq!(pos(ids.run_fn_ref, "drop"), RUNFNREF_DROP);

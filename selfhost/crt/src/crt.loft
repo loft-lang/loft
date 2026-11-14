@@ -358,6 +358,18 @@ fn c_ref_text_append_null(s: integer, r: integer, p: integer);
 #c "loft_crt_ref_text_append_null" "void(int64_t, int64_t, int64_t)"
 fn c_stack_text_trim(store: integer, at: integer, which: integer);
 #c "loft_crt_stack_text_trim" "void(int64_t, int64_t, int64_t)"
+fn c_stack_read_bytes(out: vector<u8>, store: integer, at: integer, n: integer);
+#c "loft_crt_stack_read_bytes" "void(char*, int64_t, int64_t, int64_t)"
+fn c_stack_zero(store: integer, at: integer, n: integer);
+#c "loft_crt_stack_zero" "void(int64_t, int64_t, int64_t)"
+fn c_stack_str_own(store: integer, at: integer) -> integer;
+#c "loft_crt_stack_str_own" "int64_t(int64_t, int64_t)"
+fn c_owned_free(copy: integer);
+#c "loft_crt_owned_free" "void(int64_t)"
+fn c_hold_for_frame(s: integer, r: integer, p: integer) -> integer;
+#c "loft_crt_hold_for_frame" "int64_t(int64_t, int64_t, int64_t)"
+fn c_release_frame_hold(s: integer, r: integer, p: integer);
+#c "loft_crt_release_frame_hold" "void(int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -471,6 +483,40 @@ pub fn ref_text_append_null(s: integer, r: integer, p: integer) {
 // `trim` (0), `trim_start` (1) or `trim_end` (2) of the text view at `at`, narrowed in place.
 pub fn stack_text_trim(store: integer, at: integer, which: integer) {
   c_stack_text_trim(store, at, which);
+}
+
+// `n` stack bytes at `at`, as a byte vector (a suspended generator's frame).
+pub fn stack_read_bytes(store: integer, at: integer, n: integer) -> vector<u8> {
+  buf = room(n);
+  if n > 0 {
+    c_stack_read_bytes(buf, store, at, n);
+  }
+  buf
+}
+
+// `n` stack bytes at `at` zeroed.
+pub fn stack_zero(store: integer, at: integer, n: integer) {
+  c_stack_zero(store, at, n);
+}
+
+// The text view at `at` repointed at a copy of its own; the copy's handle, 0 for none.
+pub fn stack_str_own(store: integer, at: integer) -> integer {
+  c_stack_str_own(store, at)
+}
+
+// A copy `stack_str_own` made, released.
+pub fn owned_free(copy: integer) {
+  c_owned_free(copy);
+}
+
+// A generator frame's hold on its argument's store (`@FR-G-Arg-Rebind`); whether it took one.
+pub fn hold_for_frame(s: integer, r: integer, p: integer) -> boolean {
+  c_hold_for_frame(s, r, p) != 0
+}
+
+// The frame's hold given back.
+pub fn release_frame_hold(s: integer, r: integer, p: integer) {
+  c_release_frame_hold(s, r, p);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).

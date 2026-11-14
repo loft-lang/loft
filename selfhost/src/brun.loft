@@ -212,6 +212,16 @@ H_ABS_FLOAT = 188;
 H_MATH_FUNC = 189;
 H_MATH_FUNC2 = 190;
 H_SET_CHARACTER = 191;
+H_CO_CREATE = 192;
+H_CO_NEXT = 193;
+H_CO_YIELD = 194;
+H_CO_RETURN = 195;
+H_CO_EXHAUSTED = 196;
+H_CO_RETAIN = 197;
+H_NARROW = 198;
+H_NARROW32 = 199;
+H_POW_FLOAT = 200;
+H_NULL_REF_SENTINEL = 201;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -473,6 +483,17 @@ pub fn handler(name: text) -> integer {
     "OpMathFuncFloat" => H_MATH_FUNC,
     "OpMathFunc2Float" => H_MATH_FUNC2,
     "OpSetCharacter" => H_SET_CHARACTER,
+    "OpCoroutineCreate" => H_CO_CREATE,
+    "OpCoroutineNext" => H_CO_NEXT,
+    "OpCoroutineYield" => H_CO_YIELD,
+    "OpCoroutineReturn" => H_CO_RETURN,
+    "OpCoroutineExhausted" => H_CO_EXHAUSTED,
+    "OpCoroutineRetain" => H_CO_RETAIN,
+    "OpVarNarrow" => H_NARROW,
+    "OpPutNarrow" => H_NARROW,
+    "OpNarrow32" => H_NARROW32,
+    "OpPowFloat" => H_POW_FLOAT,
+    "OpNullRefSentinel" => H_NULL_REF_SENTINEL,
     "OpConvSingleFromNull" => H_CONV_FLOAT_FROM_NULL,
     "OpDivFloatNullable" => H_FLOAT2,
     "OpRemFloatNullable" => H_FLOAT2,
@@ -675,6 +696,11 @@ fn layout_of(h: integer) -> text {
     189 => "c",
     190 => "c",
     191 => "h",
+    192 => "qhq",
+    193 => "h",
+    194 => "h",
+    195 => "h",
+    198 => "hib",
     _ => ""
   }
 }
@@ -1097,7 +1123,7 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
 // limit on one function's variables.  The stack top and the code position come in and go back
 // in `regs` (`[sp, pc]`); answers 0, or -1 with the reason in `why[0]` when the runner does not
 // carry the operator or this use of it.
-fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, io: vector<integer>, tl: vector<boolean>, images: vector<vector<u8>>, imaged: vector<boolean>, step_io: vector<integer>, why: vector<text>) -> integer {
+fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, io: vector<integer>, tl: vector<boolean>, images: vector<vector<u8>>, imaged: vector<boolean>, step_io: vector<integer>, cos: vector<CoFrame>, act: vector<integer>, cogen: vector<integer>, why: vector<text>) -> integer {
   sp = regs[0] ?? 0;
   pc = regs[1] ?? 0;
   if h == H_PUT_SINGLE {
@@ -1694,6 +1720,175 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
     crt::slot_ref(io, stk, sp - 24);
     sp -= 24;
     crt::set_w(crt::W_CHARACTER, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, scfld, 0, scv);
+  } else if h == H_CO_CREATE {
+    // `coroutine_create`: the arguments leave the stack for a new frame — its text arguments
+    // copied into texts of its own, its reference arguments' stores held — with the return
+    // slot after them; the handle pushed.
+    ccd = i64_at(img.code, pc) ?? 0;
+    cargs = u16_at(img.code, pc + 8);
+    cto = i64_at(img.code, pc + 10) ?? 0;
+    pc += 18;
+    cbase = sp - cargs;
+    cg = gen_of(img, ccd);
+    cown: vector<integer> = [];
+    chold: vector<integer> = [];
+    if cg >= 0 {
+      for off in img.gens[cg]!.text_args {
+        if off < cargs {
+          cownh = crt::stack_str_own(stk, cbase + off);
+          if cownh != 0 {
+            cown += [cownh];
+          }
+        }
+      }
+      for off in img.gens[cg]!.ref_args {
+        if off + 12 <= cargs {
+          crt::slot_ref(io, stk, cbase + off);
+          if crt::hold_for_frame(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0) {
+            chold += [io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0];
+          }
+        }
+      }
+    }
+    cbytes = crt::stack_read_bytes(stk, cbase, cargs + 8);
+    for z in 0..8 {
+      cbytes[cargs + z] = 0 as u8;
+    }
+    sp = cbase;
+    cgenr = cogen[0] ?? 1;
+    cogen[0] = if cgenr >= 2147483647 { 1 } else { cgenr + 1 };
+    cslot = -1;
+    for i in 1..len(cos) {
+      if cslot < 0 && !(cos[i]?.live ?? true) {
+        cslot = i;
+      }
+    }
+    cf = CoFrame { live: true, gen: cg, status: CO_CREATED, code_pos: cto, stack_base: 0, caller_return_pos: 0, bytes: cbytes, owned: cown, generation: cgenr, holds: 1, held: chold };
+    if cslot < 0 {
+      cslot = len(cos);
+      cos += [cf];
+    } else {
+      cos[cslot] = cf;
+    }
+    crt::set_slot_ref(stk, sp, NULL_STORE, cslot, cgenr);
+    sp += 16;
+  } else if h == H_CO_NEXT {
+    // `coroutine_next`: the handle popped; a live frame's bytes back on the stack and run on
+    // from where it stopped (its locals zeroed at the first resume), or the null value for an
+    // exhausted, null or stale handle.
+    npk = u16_at(img.code, pc);
+    pc += 2;
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    ngr = io[1] ?? 0;
+    if (io[0] ?? NULL_STORE) != NULL_STORE || ngr == 0 || !co_matches(cos, ngr, io[2] ?? 0) || (cos[ngr]?.status ?? CO_EXHAUSTED) == CO_EXHAUSTED {
+      sp = push_null_value(stk, sp, npk);
+    } else {
+      nst = cos[ngr]!.status;
+      if nst == CO_RUNNING {
+        why[0] = "a generator advanced while it runs: OpCoroutineNext";
+        return -1;
+      }
+      cos[ngr].caller_return_pos = pc;
+      cos[ngr].stack_base = sp;
+      cos[ngr].status = CO_RUNNING;
+      nn = len(cos[ngr]!.bytes);
+      crt::stack_code_bytes(stk, sp, cos[ngr]!.bytes, 0, nn);
+      sp += nn;
+      ng = cos[ngr]!.gen;
+      if nst == CO_CREATED && ng >= 0 && (img.gens[ng]?.zone2 ?? 0) > 0 {
+        crt::stack_zero(stk, sp, img.gens[ng]?.zone2 ?? 0);
+      }
+      act += [ngr];
+      pc = cos[ngr]!.code_pos;
+    }
+  } else if h == H_CO_YIELD {
+    // `coroutine_yield`: the frame's locals saved, the yielded value moved to where the frame
+    // began, and the caller continued.
+    yvs = u16_at(img.code, pc);
+    pc += 2;
+    if len(act) == 0 {
+      why[0] = "a yield outside a running generator: OpCoroutineYield";
+      return -1;
+    }
+    yidx = act[len(act) - 1] ?? 0;
+    ybase = cos[yidx]!.stack_base;
+    ystart = sp - step(yvs);
+    cos[yidx].bytes = crt::stack_read_bytes(stk, ybase, ystart - ybase);
+    cos[yidx].code_pos = pc;
+    cos[yidx].status = CO_SUSPENDED;
+    act = act[0..len(act) - 1];
+    crt::stack_move(stk, ystart, ybase, yvs);
+    sp = ybase + step(yvs);
+    pc = cos[yidx]!.caller_return_pos;
+  } else if h == H_CO_RETURN {
+    // `coroutine_return`: the frame ends; the caller gets the null value, the reference elements
+    // of a yielded tuple nulled in it.
+    rpk = u16_at(img.code, pc);
+    pc += 2;
+    if len(act) == 0 {
+      why[0] = "a generator return outside a running generator: OpCoroutineReturn";
+      return -1;
+    }
+    ridx = act[len(act) - 1] ?? 0;
+    rbase = cos[ridx]!.stack_base;
+    rback = cos[ridx]!.caller_return_pos;
+    rg = cos[ridx]!.gen;
+    act = act[0..len(act) - 1];
+    co_release(cos, ridx);
+    sp = push_null_value(stk, rbase, rpk);
+    if rg >= 0 {
+      for off in img.gens[rg]!.tuple_refs {
+        crt::set_slot_ref(stk, rbase + off, NULL_STORE, 0, 0);
+      }
+    }
+    pc = rback;
+  } else if h == H_CO_EXHAUSTED {
+    // A null or stale handle is exhausted; a live frame is when it ended.
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    exr = io[1] ?? 0;
+    set_bool(stk, sp, (io[0] ?? NULL_STORE) != NULL_STORE || exr == 0 || !co_matches(cos, exr, io[2] ?? 0) || (cos[exr]?.status ?? CO_EXHAUSTED) == CO_EXHAUSTED);
+    sp += 8;
+  } else if h == H_CO_RETAIN {
+    // A second holder of the handle (`(G-Hold)`): one more hold on its frame; the handle stays.
+    crt::slot_ref(io, stk, sp - 16);
+    if co_matches(cos, io[1] ?? 0, io[2] ?? 0) {
+      cos[io[1] ?? 0].holds += 1;
+    }
+  } else if h == H_NARROW {
+    // A narrow local read (`State::var_narrow`), or written with the value popped first
+    // (`put_narrow`), at its slot's low bytes.
+    nwp = u16_at(img.code, pc);
+    nwmn = i32_at(img.code, pc + 2);
+    nwk = img.code[pc + 6] ?? 7;
+    pc += 7;
+    nww = narrow_width(nwk);
+    if (img.ops[op] ?? "") == "OpPutNarrow" {
+      nwbits = narrow_encode(nwk, nwmn, get(stk, sp - 8));
+      sp -= 8;
+      crt::stack_code_bytes(stk, sp + 8 - nwp, [for b in 0..nww { ((nwbits >> (8 * b)) & 255) as u8 }], 0, nww);
+    } else {
+      nwbytes = crt::stack_read_bytes(stk, sp - nwp, nww);
+      nwbits = 0;
+      for b in 0..nww {
+        nwbits += (nwbytes[b] ?? 0) << (8 * b);
+      }
+      set(stk, sp, narrow_decode(nwk, nwmn, nwbits));
+      sp += 8;
+    }
+  } else if h == H_NARROW32 {
+    // A value that does not fit a 32-bit integer becomes null (`op_narrow32`).
+    n32 = get(stk, sp - 8);
+    set(stk, sp - 8, if n32 != null && n32! > -2147483648 && n32! <= 2147483647 { n32 } else { null });
+  } else if h == H_POW_FLOAT {
+    pwb = get_f(stk, sp - 8);
+    pwa = get_f(stk, sp - 16);
+    sp -= 8;
+    crt::set_float(stk, 1, 8 + sp - 8, 0, if pwa == null || pwb == null { null } else { pwa!.pow(pwb!) }, false);
+  } else if h == H_NULL_REF_SENTINEL {
+    crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
+    sp += 16;
   } else {
     why[0] = "an operator the runner does not carry: {img.ops[op] ?? "op {op}"}";
     return -1;
@@ -1701,6 +1896,198 @@ fn exec_more(h: integer, op: integer, img: ir::RunImage, stk: integer, regs: vec
   regs[0] = sp;
   regs[1] = pc;
   0
+}
+
+// ── Narrow locals (`src/narrow.rs`) ─────────────────────────────────────────────────────────
+// A narrow integer local keeps its value in 1, 2 or 4 bytes of its slot, encoded by its kind:
+// 0 a byte biased by the minimum, 1 and 8 such a byte with 255 for null, 2 and 9 two bytes with
+// 65535 for null, 3 two bytes biased one past the minimum with 0 for null, 4 two bytes biased,
+// 5 a signed int with i32::MIN for null, 6 an unsigned one with all ones for null, any other an
+// unsigned int as it is.
+
+fn narrow_width(kind: integer) -> integer {
+  if kind == 0 || kind == 1 || kind == 8 { 1 } else if kind == 2 || kind == 3 || kind == 4 || kind == 9 { 2 } else { 4 }
+}
+
+fn narrow_encode(kind: integer, mn: integer, v: integer?) -> integer {
+  if kind == 1 || kind == 8 {
+    if v == null { 255 } else { (v! - mn) & 255 }
+  } else if kind == 0 {
+    ((v ?? 0) - mn) & 255
+  } else if kind == 3 {
+    if v == null { 0 } else { (v! - mn + 1) & 65535 }
+  } else if kind == 4 {
+    ((v ?? 0) - mn) & 65535
+  } else if kind == 2 || kind == 9 {
+    if v == null { 65535 } else { (v! - mn) & 65535 }
+  } else if kind == 5 {
+    if v == null { 2147483648 } else { v! & 4294967295 }
+  } else if kind == 6 {
+    if v == null { 4294967295 } else { v! & 4294967295 }
+  } else {
+    (v ?? 0) & 4294967295
+  }
+}
+
+fn narrow_decode(kind: integer, mn: integer, bits: integer) -> integer? {
+  if kind == 0 || kind == 4 {
+    bits + mn
+  } else if kind == 1 || kind == 8 {
+    if bits == 255 { null } else { bits + mn }
+  } else if kind == 3 {
+    if bits == 0 { null } else { bits + mn - 1 }
+  } else if kind == 2 || kind == 9 {
+    if bits == 65535 { null } else { bits + mn }
+  } else if kind == 5 {
+    if bits == 2147483648 { null } else if bits >= 2147483648 { bits - 4294967296 } else { bits }
+  } else if kind == 6 {
+    if bits == 4294967295 { null } else { bits }
+  } else {
+    bits
+  }
+}
+
+// ── Generators (`State::coroutine_*`) ───────────────────────────────────────────────────────
+// A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
+// running, where it resumes, where its caller's stack and code continue, the copies of its text
+// arguments it owns, the argument stores it holds, and how many holders its handle has.  A
+// handle is the reference `(65535, slot, generation)` — the null store with a record number —
+// so a handle to a frame since freed (its slot handed on) is told apart by its generation.
+struct CoFrame {
+  live: boolean,
+  gen: integer,
+  status: integer,
+  code_pos: integer,
+  stack_base: integer,
+  caller_return_pos: integer,
+  bytes: vector<u8>,
+  owned: vector<integer>,
+  generation: integer,
+  holds: integer,
+  held: vector<integer>,
+}
+
+CO_CREATED = 0;
+CO_SUSPENDED = 1;
+CO_RUNNING = 2;
+CO_EXHAUSTED = 3;
+
+// The table's unused slot 0 (a handle's record is never 0) and every freed slot.
+fn co_empty() -> CoFrame {
+  CoFrame { live: false, gen: -1, status: CO_EXHAUSTED, code_pos: 0, stack_base: 0, caller_return_pos: 0, bytes: [], owned: [], generation: 0, holds: 0, held: [] }
+}
+
+// The run image's frame facts for generator definition `d` (`RunGen`), -1 for none.
+fn gen_of(img: ir::RunImage, d: integer) -> integer {
+  for i in 0..len(img.gens) {
+    if (img.gens[i]?.def ?? -1) == d {
+      return i;
+    }
+  }
+  -1
+}
+
+// Does the handle `(_, r, p)` name the live frame it was made for (`coroutine_slot_matches`)?
+fn co_matches(cos: vector<CoFrame>, r: integer, p: integer) -> boolean {
+  r > 0 && r < len(cos) && (cos[r]?.live ?? false) && (cos[r]?.generation ?? -1) == p
+}
+
+// What an advance of an exhausted, null or stale handle answers (`push_null_value`): by the
+// packed size's channel tag (high byte) and size (low byte) — a null reference, an
+// (integer, reference) pair, a null 4- or 8-byte value, the null text, or zeroes.  Answers the
+// new stack top.
+fn push_null_value(stk: integer, sp: integer, packed: integer) -> integer {
+  vs = packed % 256;
+  tag = packed / 256;
+  if (tag == 0 || tag == 6) && vs == 12 {
+    crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
+    return sp + 16;
+  }
+  if tag == 2 && vs == 20 {
+    crt::stack_zero(stk, sp, 24);
+    set(stk, sp, null);
+    crt::set_slot_ref(stk, sp + 8, NULL_STORE, 0, 0);
+    return sp + 24;
+  }
+  if vs == 4 {
+    set(stk, sp, 2147483648);
+  } else if vs == 8 {
+    set(stk, sp, null);
+  } else if vs == 16 {
+    crt::stack_str_null(stk, sp);
+  } else {
+    crt::stack_zero(stk, sp, step(vs));
+  }
+  sp + step(vs)
+}
+
+// A frame's end, of whatever kind: its text copies released, its argument stores' holds given
+// back, its slot freed for the next generator.
+fn co_release(cos: vector<CoFrame>, idx: integer) {
+  for c in cos[idx]!.owned {
+    crt::owned_free(c);
+  }
+  hl = cos[idx]!.held;
+  k = 0;
+  while k + 2 < len(hl) {
+    crt::release_frame_hold(hl[k] ?? NULL_STORE, hl[k + 1] ?? 0, hl[k + 2] ?? 0);
+    k += 3;
+  }
+  cos[idx] = co_empty();
+}
+
+// `free_coroutine`: a handle released.  One of several holders only gives its hold back; the
+// last frees the frame — a suspended or a created one first releasing what its locals own (its
+// text locals' texts, the stores its owning locals name, read from its saved bytes through the
+// scratch stack bytes at `scr`).  A stale handle frees nothing.
+fn co_free(img: ir::RunImage, stk: integer, scr: integer, cos: vector<CoFrame>, r: integer, p: integer, io: vector<integer>) {
+  if !co_matches(cos, r, p) {
+    return;
+  }
+  if (cos[r]?.holds ?? 0) > 1 {
+    cos[r].holds -= 1;
+    return;
+  }
+  fs: vector<integer> = [];
+  fr: vector<integer> = [];
+  fp: vector<integer> = [];
+  st = cos[r]!.status;
+  g = cos[r]!.gen;
+  if (st == CO_SUSPENDED || st == CO_CREATED) && g >= 0 {
+    nb = len(cos[r]!.bytes);
+    for slot in img.gens[g]!.text_locals {
+      if slot + 24 <= nb {
+        crt::stack_code_bytes(stk, scr, cos[r]!.bytes, slot, 24);
+        crt::slot_text_free(stk, scr);
+        for z in 0..24 {
+          cos[r].bytes[slot + z] = 0 as u8;
+        }
+      }
+    }
+    for slot in img.gens[g]!.owned_locals {
+      if slot + 12 <= nb {
+        crt::stack_code_bytes(stk, scr, cos[r]!.bytes, slot, 12);
+        crt::slot_ref(io, stk, scr);
+        for z in 0..12 {
+          cos[r].bytes[slot + z] = 0 as u8;
+        }
+        if (io[1] ?? 0) != 0 {
+          fs += [io[0] ?? NULL_STORE];
+          fr += [io[1] ?? 0];
+          fp += [io[2] ?? 0];
+        }
+      }
+    }
+  }
+  co_release(cos, r);
+  for i in 0..len(fs) {
+    os = fs[i] ?? NULL_STORE;
+    if os == NULL_STORE {
+      co_free(img, stk, scr, cos, fr[i] ?? 0, fp[i] ?? 0, io);
+    } else if crt::store_live(os) {
+      crt::free_ref(os, fr[i] ?? 0, fp[i] ?? 0);
+    }
+  }
 }
 
 // What a run answers: the operator it stopped at when it refused one, and how many it ran.
@@ -1758,6 +2145,11 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   images: vector<vector<u8>> = [];
   // Why a native was refused (`call_native`).
   nwhy: vector<text> = [""];
+  // The generators' frames (slot 0 unused), the running ones innermost last, and the next
+  // frame's generation.
+  cos: vector<CoFrame> = [co_empty()];
+  act: vector<integer> = [];
+  cogen: vector<integer> = [1];
   // The stack top and the code position handed to `exec_more` and back.
   mregs: vector<integer> = [0, 0];
   // A walk step's answer: the record's reference and the walk's next state.
@@ -2110,7 +2502,12 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       if trace {
         eprintln("\tfree store {io[0] ?? NULL_STORE} rec {io[1] ?? 0}");
       }
-      crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+      if (io[0] ?? NULL_STORE) == NULL_STORE && (io[1] ?? 0) != 0 {
+        // A generator's handle (`free_ref_db`'s coroutine arm).
+        co_free(img, stk, sp, cos, io[1] ?? 0, io[2] ?? 0, io);
+      } else {
+        crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+      }
     } else if h == H_VAR_BOOL || h == H_VAR_8 {
       // The slot's bytes as they stand: a boolean's tri-state byte (255 for null), an enum's
       // byte, a float's bits.
@@ -2818,7 +3215,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     } else if h >= H_PUT_SINGLE {
       mregs[0] = sp;
       mregs[1] = pc;
-      if exec_more(h, op, img, stk, mregs, io, tl, images, imaged, step_io, nwhy) < 0 {
+      if exec_more(h, op, img, stk, mregs, io, tl, images, imaged, step_io, cos, act, cogen, nwhy) < 0 {
         return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
       }
       sp = mregs[0] ?? 0;

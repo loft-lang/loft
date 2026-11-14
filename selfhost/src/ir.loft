@@ -468,6 +468,21 @@ pub struct RunFnRef {
   pub hidden: vector<integer>,
 }
 
+// A generator's frame as its definition describes it (`state::gen_facts`), for the coroutine
+// operators: the byte offsets of its text and reference arguments, the size of its locals region
+// (zeroed at first resume), the slots of its text locals and of the locals whose stores an
+// abandoned suspended frame frees, and the offsets of the reference elements of the tuple it
+// yields, nulled in the value an exhausted generator answers.
+pub struct RunGen {
+  pub def: integer,
+  pub zone2: integer,
+  pub text_args: vector<integer>,
+  pub ref_args: vector<integer>,
+  pub text_locals: vector<integer>,
+  pub owned_locals: vector<integer>,
+  pub tuple_refs: vector<integer>,
+}
+
 pub struct RunImage {
   pub code: vector<u8>,
   pub starts: vector<u32>,
@@ -477,11 +492,12 @@ pub struct RunImage {
   pub consts: vector<RunConst>,
   pub fnrefs: vector<RunFnRef>,
   pub types: vector<DbType>,
+  pub gens: vector<RunGen>,
   pub main: integer,
   pub cwd: boolean,
 }
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], main: 0, cwd: false }
 }

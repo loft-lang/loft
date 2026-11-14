@@ -71,8 +71,10 @@ def main():
         runner = os.path.join(out, "run_image_run")
         if not os.path.exists(runner):
             sys.exit(f"the runner did not build:\n{p.stderr[-2000:]}")
-        files = [f for f in census.corpus(root, suite if os.path.isdir(suite) else None,
-                                          o.chapter, o.scripts_only) if census.plain(f)]
+        # Absolute: each program runs from its own directory, where a path relative to the
+        # working directory (a relative LOFT_SUITE_DIR) does not resolve.
+        files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
+                                                           o.chapter, o.scripts_only) if census.plain(f)]
         counts = collections.Counter()
         ops = collections.Counter()
         shown = []
