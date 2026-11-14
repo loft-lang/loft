@@ -1548,7 +1548,6 @@ const SEARCH_INDEX=[
 {name:"ssh::is_open",kind:"fn",url:"lib-ssh-api.html"},
 {name:"ssh::close",kind:"fn",url:"lib-ssh-api.html"},
 {name:"stage",kind:"library",url:"lib-stage.html"},
-{name:"stage guide",kind:"guide",url:"lib-stage-guide.html"},
 {name:"stage::StageNode",kind:"struct",url:"lib-stage-api.html"},
 {name:"stage::Layer",kind:"struct",url:"lib-stage-api.html"},
 {name:"stage::View",kind:"struct",url:"lib-stage-api.html"},

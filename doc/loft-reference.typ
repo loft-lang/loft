@@ -587,7 +587,7 @@ let k = take_min(&mut t.right);
 
 Upside The code reads as the textbook algorithm: no take(), no unwrap(), no as\_mut(), and about a third shorter.  A field is a place: handed to a & parameter, a whole write in the callee writes that field, so a user's own tree, trie or list is built and taken apart without an index arena.
 
-Downside Only the & tells a walk from a write: slot = &slot.left steps down, slot = slot.left replaces the field with its child.  Rust's types catch a forgotten &mut; loft does not yet warn.  The call take\_min(t.right) does not show that it writes, and the unlink copies the subtree into the field where Rust's take() moves a pointer.
+Downside Only the & tells a walk from a write: slot = &slot.left steps down, slot = slot.left replaces the field with its child.  Rust's types catch a forgotten &mut; loft warns (walk-or-write) where a walk writes the field it stands on.  The call take\_min(t.right) does not show that it writes, and the unlink copies the subtree into the field where Rust's take() moves a pointer.
 
 
 = vs Python
@@ -678,7 +678,7 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
 
 Upside Field access is checked at compile time — typos in field names are caught before any code runs. Struct memory layout is fixed and unboxed; integer and float fields live directly in memory with no heap allocation overhead. Methods are ordinary named functions — they can be added from any file, at any time, without modifying the struct definition.
 
-Downside No inheritance, no properties or descriptors. Printing needs no \_\_repr\_\_ — "{p}" renders every field — and == compares every field with no \_\_eq\_\_ written, as \@dataclass's generated one does (&a == &b asks what Python's is asks). A struct can overload operators by defining them (OpAdd for +, OpEq for ==, OpLt for \<). Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.
+Downside No inheritance, no properties or descriptors. Printing needs no \_\_repr\_\_ — "{p}" renders every field — and == compares every field with no \_\_eq\_\_ written, as \@dataclass's generated one does (&a == &b asks what Python's is asks). A struct can overload operators by defining them (operator plus for +, operator compare for \<; == is always the comparison of every field). Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.
 
 === while loop — yes, and while true; no while ... else
 
@@ -848,7 +848,7 @@ fn divide(a: float, b: float) -> float {
 // Reading: check f#exists before using content
 f = file("data.txt");
 if f#exists {
-    data = f.content();
+    data = f.content() ?? "";
     print("{len(data)} characters\n");
 } else {
     print("file not found\n");
@@ -1035,7 +1035,7 @@ cube  = x ** (<span class="nm">1</span>/<span class="nm">3</span>)         <span
 
 Upside Loft's \*\* exponentiation operator matches Python's — 2 \*\* 10 == 1024 on integers, 2.0 \*\* 3.0 == 8.0 on floats (pow(base, exp) is available too). ^ behaves as bitwise XOR in both loft and Python — no mismatch. Bitwise operator precedence matches: | (loose) → ^ → & → shifts → arithmetic (tight).
 
-Downside Python's \*\* additionally handles complex numbers, and its three-argument pow(base, exp, mod) form computes modular exponentiation efficiently; loft has neither. Loft's pow() function itself operates on float/single only — use the \*\* operator for integer exponentiation.
+Downside Python's \*\* additionally handles complex numbers, and its three-argument pow(base, exp, mod) form computes modular exponentiation efficiently; loft has neither.
 
 
 = Keywords
@@ -10316,7 +10316,7 @@ The Moros scene editor gains a loft scripting panel with in-browser compile and 
 
 Version 1.0 means: any program that works on 1.0 will compile and run identically on all future 1.x releases. The language syntax, type system, standard library, and command-line flags are frozen. Until then, what a released version promises is kept, and a breaking change needs a documented reason and a migration.
 
-Tagging 1.0 requires every stability gate to be satisfied without shortcuts: zero open high-severity bugs, valgrind-clean debug builds of the full Brick Buster and tuple tests, green CI on Linux, macOS Intel, macOS ARM, and Windows, pre-built binaries on the GitHub release, and the reference + PDF linked from the release page.
+Tagging 1.0 requires every stability gate to be satisfied without shortcuts: zero open high-severity bugs, valgrind-clean debug builds of the full Brick Buster and tuple tests, green CI on Linux, macOS ARM, and Windows, pre-built binaries on the GitHub release, and the reference + PDF linked from the release page.
 
 === 1.1 and beyond
 
