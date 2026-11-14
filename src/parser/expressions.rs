@@ -5509,9 +5509,14 @@ use a separate collection or add after the loop"
             && ended_bind == Some(var_nr)
             && (ended_loop_var
                 || (!s_type.is_unknown()
-                    && self
+                    && (self
                         .vars
-                        .retype_would_be_refused(var_nr, &s_type, &self.data)))
+                        .retype_would_be_refused(var_nr, &s_type, &self.data)
+                        // `@FR-N-Join` joins the writes of ONE binding.  Asked of a binding
+                        // that has ended, it widened the ended one's variable: every read in
+                        // the block that bound it non-null then stored "a nullable" value,
+                        // and a later block's non-null bind stayed nullable.
+                        || self.vars.rebind_differs_in_absence(var_nr, &s_type))))
         {
             var_nr = self.rebind_after_block(var_nr, &s_type);
             new_binding = Value::Var(var_nr);
@@ -7214,9 +7219,13 @@ use a separate collection or add after the loop"
             && cur_loop != u16::MAX
             && born_in != u16::MAX
             && born_in != cur_loop
-            && self
+            && (self
                 .vars
                 .retype_would_be_refused(var_nr, &s_type, &self.data)
+                // The other loop's binding has ENDED (`@FR-B-Scope`: its body local cannot
+                // be read here), so a bind that differs from it in absence starts a binding
+                // too: `@FR-N-Join` joins the writes of one binding, not of two loops.
+                || self.vars.rebind_differs_in_absence(var_nr, &s_type))
         {
             // The SOURCE spelling, not the bound one.  A variable already split once is
             // named `e#b1`, and registering the next split under that would key the third

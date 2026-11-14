@@ -2881,6 +2881,31 @@ impl Function {
             .map_or(u16::MAX, |v| v.created_in_loop)
     }
 
+    /// Does a bind of `type_def` to the inferred `var_nr` differ from its type ONLY in
+    /// absence — one of the two is `τ?`, the other `τ`?  `change_var_type` accepts both
+    /// directions (`@FR-N-Join` widens the variable; a non-null write into a `τ?` keeps it),
+    /// so this is a question about a retype that would be ACCEPTED: its caller asks it of a
+    /// binding whose block has ended (`@FR-B-Scope`), where the write starts a new binding
+    /// and must not move the ended one's type.
+    #[must_use]
+    pub fn rebind_differs_in_absence(&self, var_nr: u16, type_def: &Type) -> bool {
+        let Some(v) = self.variables.get(var_nr as usize) else {
+            return false;
+        };
+        if self.is_declared(var_nr) {
+            return false;
+        }
+        match (&v.type_def, type_def) {
+            (Type::Optional(_), Type::Optional(_)) => false,
+            (Type::Optional(inner), other) | (other, Type::Optional(inner)) => {
+                !matches!(other, Type::Null | Type::RefVar(_))
+                    && !other.is_unknown()
+                    && inner.is_equal(other)
+            }
+            _ => false,
+        }
+    }
+
     /// Would storing `type_def` into `var_nr` be REFUSED as a type change?
     ///
     /// Deliberately CONSERVATIVE: it answers `true` only where the two types stand in

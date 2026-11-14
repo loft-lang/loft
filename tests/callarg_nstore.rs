@@ -617,3 +617,44 @@ fn a_nullable_link_into_a_non_null_parameter_still_warns() {
         );
     }
 }
+
+/// `@FR-B-Scope` with `@FR-N-Join` — a name bound again after its block ended is a NEW
+/// binding, so a bind that differs from the ended one only in absence does not move the ended
+/// binding's type.  Both orders, for a record, a text and an integer, between two loops and
+/// between two `if` blocks: no cell stores "a nullable" value, and each answers its
+/// hand-computed text (`a`, the empty text, `b`: the middle one is absent).
+const SIBLING_BLOCKS: &str = "struct D { name: text }\n\
+fn mk(s: text) -> D? { if s == \"\" { return null; } D { name: s } }\n\
+fn mt(s: text) -> text? { if s == \"\" { return null; } s }\n\
+fn mi(s: text) -> integer? { if s == \"\" { return null; } len(s) }\n\
+fn show(n: text) -> text { \"<{n}>\" }\n\
+fn shi(n: integer) -> text { \"<{n}>\" }\n\
+fn w1(xs: vector<text>) -> text { o = \"\"; for x in xs { d = mk(x) ?? continue; o += show(d.name); } for x in xs { d = mk(x); if d != null { o += show(d.name); } } o }\n\
+fn w2(xs: vector<text>) -> text { o = \"\"; for x in xs { d = mk(x); if d != null { o += show(d.name); } } for x in xs { d = mk(x) ?? continue; o += show(d.name); } o }\n\
+fn w3(xs: vector<text>) -> text { o = \"\"; for x in xs { t = mt(x) ?? continue; o += show(t); } for x in xs { t = mt(x); if t != null { o += show(t); } } o }\n\
+fn w4(xs: vector<text>) -> text { o = \"\"; for x in xs { t = mt(x); if t != null { o += show(t); } } for x in xs { t = mt(x) ?? continue; o += show(t); } o }\n\
+fn w5(xs: vector<text>) -> text { o = \"\"; for x in xs { n = mi(x) ?? continue; o += shi(n); } for x in xs { n = mi(x); if n != null { o += shi(n); } } o }\n\
+fn w6(xs: vector<text>) -> text { o = \"\"; if len(xs) > 0 { d = mk(\"q\") ?? return \"R\"; o += show(d.name); } if len(xs) > 1 { d = mk(\"\"); if d == null { o += \"N\"; } } o }\n\
+fn main() {\n  a = [\"a\", \"\", \"b\"];\n  print(\"{w1(a)} {w2(a)} {w3(a)} {w4(a)} {w5(a)} {w6(a)}\");\n}\n";
+
+/// The control: ONE binding written non-null and then nullable is `τ?` (`@FR-N-Join`), and
+/// its field passed on still asks.
+const ONE_BINDING_JOINS: &str = "struct D { name: text }\n\
+fn mk(s: text) -> D? { if s == \"\" { return null; } D { name: s } }\n\
+fn show(n: text) -> text { \"<{n}>\" }\n\
+fn main() {\n  d = D { name: \"a\" };\n  d = mk(\"\");\n  print(show(d.name));\n}\n";
+
+#[test]
+fn a_bind_after_its_block_ended_does_not_make_the_ended_binding_nullable() {
+    for backend in ["--interpret", "--native-c"] {
+        let (ok, warns, out) = run(SIBLING_BLOCKS, backend, true, "sibling");
+        assert!(ok, "{backend}: the program runs");
+        assert_eq!(
+            out, "<a><b><a><b> <a><b><a><b> <a><b><a><b> <a><b><a><b> <1><1><1><1> <q>N",
+            "{backend}"
+        );
+        assert_eq!(warns, 0, "{backend}: no cell stores a nullable value");
+    }
+    let (_, warns, _) = run(ONE_BINDING_JOINS, "--interpret", true, "joined");
+    assert_eq!(warns, 1, "one binding's nullable write still joins");
+}
