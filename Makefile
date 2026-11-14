@@ -282,14 +282,15 @@ install:
 	@$(AS_USER) $(MAKE) --no-print-directory $(if $(NATIVE_ONLY),install-artifacts-native,install-artifacts)
 	@$(AS_USER) $(MAKE) --no-print-directory rebuild-native-cdylibs
 	@$(SUDO) install -d $(PREFIX)/share/loft/deps
-	@$(SUDO) rm -rf $(PREFIX)/share/loft/default
-	@$(SUDO) cp -r default $(PREFIX)/share/loft/
 	@$(SUDO) install -m 644 target/install-lib/release/libloft.rlib $(PREFIX)/share/loft/
 	@$(SUDO) rm -f $(PREFIX)/share/loft/deps/*.rlib $(PREFIX)/share/loft/deps/*.so $(PREFIX)/share/loft/deps/*.dylib
 	@# Every dependency, under either cargo layout (`deps/`, or cargo 1.100's per-unit dirs).
-	@scripts/cargo_dep_files.sh target/install-lib/release '*.rlib' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/
+	@# One file per NAME, the newest: a classic `deps/` left beside a per-unit tree lists a
+	@# crate twice, `cp` refuses to overwrite what it just created, and the install stopped
+	@# here with the new standard library in place and the old binary still installed.
+	@scripts/cargo_dep_files.sh target/install-lib/release '*.rlib' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/
 	@if [ -n "$$(scripts/cargo_dep_files.sh target/install-lib/release '*.so')" ]; then \
-		scripts/cargo_dep_files.sh target/install-lib/release '*.so' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/ || { \
+		scripts/cargo_dep_files.sh target/install-lib/release '*.so' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/ || { \
 			echo "ERROR: failed to install dependency .so files (rights?)."; exit 1; }; \
 	fi
 	@# Proc-macro deps (e.g. displaydoc) are host dylibs — `.dylib` on macOS,
@@ -297,7 +298,7 @@ install:
 	@# so omitting the macOS `.dylib` broke every library native build with
 	@# E0463 "can't find crate for displaydoc" (see plans/user-local-install).
 	@if [ -n "$$(scripts/cargo_dep_files.sh target/install-lib/release '*.dylib')" ]; then \
-		scripts/cargo_dep_files.sh target/install-lib/release '*.dylib' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/ || { \
+		scripts/cargo_dep_files.sh target/install-lib/release '*.dylib' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/ || { \
 			echo "ERROR: failed to install dependency .dylib files (rights?)."; exit 1; }; \
 	fi
 	@if [ -n "$(NATIVE_ONLY)" ]; then \
@@ -313,6 +314,11 @@ install:
 	@$(SUDO) install -d $(PREFIX)/bin
 	@# The production binary, built with the runtime beside it (scripts/lean_build.sh):
 	@# no development aids, and one feature set for the interpreter and `--native`.
+	@# The standard library goes in WITH the binary that reads it, after every copy that can
+	@# fail: replaced first, a failed install left an old binary over a new library.
+	@$(SUDO) rm -rf $(PREFIX)/share/loft/default
+	@$(SUDO) cp -r default $(PREFIX)/share/loft/
+	@$(SUDO) chmod -R a+rX $(PREFIX)/share/loft/default
 	@$(SUDO) install -m 755 target/install-lib/release/loft $(PREFIX)/bin/loft
 	@# The commit this install was built from, so the installed loft is a KNOWN build that a
 	@# tool can use as a control (`scripts/falsify.sh --installed`).  `dirty` when the tree had
