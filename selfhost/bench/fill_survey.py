@@ -59,7 +59,7 @@ def main():
         if not os.path.exists(runner):
             sys.exit(f"the runner did not build:\n{p.stderr[-2000:]}")
         files = sorted(f for f in glob.glob(os.path.join(ROOT, "tests", "scripts", "*.loft"))
-                       if re.search(r"^fn main\(\)", open(f).read(), re.M))
+                       if re.search(r"^fn main\(\)", open(f, encoding="utf-8").read(), re.M))
         counts, stops, shown = collections.Counter(), collections.Counter(), []
         with cf.ThreadPoolExecutor(o.jobs) as ex:
             for f, verdict, what in ex.map(lambda f: one(f, loft, runner, tmp), files):

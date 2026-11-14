@@ -30,7 +30,7 @@ closed or left as the need arises.
 | `State` methods for operators with no template (`fn_call`, `var_text`, …) | methods of the same name in `state.loft` |
 | `src/ops.rs` helpers (`fused_int`, `fused_cmp`) | `selfhost/src/ops.loft`, the same names |
 | `Stores` (`src/store.rs`, `src/database/`) | the C runtime's store routines, through `selfhost/crt` (STORE_MODEL.md: the C model is the standard) |
-| the dispatch loop | `selfhost/src/fill_run.loft` (`call` for one function, `run_main` for a program) |
+| the dispatch loop | generated: `fill.loft`'s `run`; `selfhost/src/fill_run.loft` drives it (`call` for one function, `run_main` for a program) and calls the natives |
 | the library functions `static_call` reaches | the hand-built runner's native ports (`brun::call_native`), over the same stack store |
 
 Regenerate the table after changing a template or porting a `State` method:
@@ -115,15 +115,30 @@ with the top just above it.  The differences:
 | 5 | **`fn_return` releases no fn-ref buffer.**  The frames are kept as Rust keeps them (definition, call position, arguments' base and size); the buffers a returning frame releases (`release_fnref_bufs`) are not, as no fn-ref operator is carried. | with the fn-ref operators |
 | 6 | **Texts.**  A local text is a Rust `String` in its 24-byte slot in Rust, a C-runtime text of the same size here; the 16-byte view is the same.  A text popped as a template's argument is copied into a loft text. | nothing, unless a program observes capacity |
 | 7 | **Arithmetic by loft's operators, reports as texts.**  A template writes `v1 + v2`, compiled to the C runtime's routine, where Rust calls `ops::op_add_int`; the kernels compare the values.  What Rust reports through `raise_recoverable` (a division by zero, a dropped write, an overflow) is recorded as a text in `State.reported`, and an overflow's report comes from the C runtime, not from the template. | the corpus survey, once `main` runs; Rust's error kinds when diagnostics are compared |
-| 8 | **One dispatch.**  Rust has three tables (checked, direct, register) and inlines the `#hot` operators; the runner has one `execute`. | see Speed |
+| 8 | **One dispatch.**  Rust has three tables (checked, direct, register); the runner has one loop, `run`, whose arms are the register table and whose fallback, `execute`, is the checked one. | see Speed |
 | 9 | **No instruments.**  Rust's stack verifier, poison of a reserved frame, and text-position tracking have no counterpart. | only if the runner is to host those sweeps |
 
 ## Speed
 
-Not a goal yet.  Measured through `run_fill.loft`, the call only, against `loft --interpret`:
-the runner takes several times as long on the integer kernels.  A profile shows why: every
-`State` field access is a store lookup, the accessors and the `crt` wrappers are separate C
-functions, and `execute` is a chain of comparisons.  The cures are in the C backend
-(a struct parameter's fields held in locals across a loop, small functions inlined without
-their stack-trace frame, an integer `match` as a `switch`) or in the generator (the code and
-stack positions as locals of one dispatch function, as Rust's register table passes them).
+The dispatch loop is generated (`fill.loft`'s `run`) by the Rust interpreter's executor rules
+(`formal/rewrites.md`):
+
+| rule | in the runner |
+|---|---|
+| `(R-RegisterTable)` | the code position, the stack top and the stack's capacity are locals of `run`; an operator whose template needs no more of the `State` is an arm of it, any other templated operator with scalar operands an arm that writes the positions to the `State`, runs, and reads them back |
+| `(R-CodeBase)` | operands are read through the code's address (`crt::code_base`, `crt::cget_*`), taken again after an operator that ran on the `State` |
+| `(R-OperandSpan)` | one test, `ip <= safe`, covers an arm's whole operand span |
+| `(R-StackBase)` | a slot is read through the stack store's base (`crt::stack_base`, `crt::fget_*` / `fput_*`) |
+| `(R-DispatchStop)` | `State.stopped`, set with `fault` by `State::stop` |
+| `(R-FrameHeadroom)` | `fn_call` grows the stack by the default headroom; an arm tests one compare against the capacity |
+
+Every check the accessors make is a compare in the arm's guard; an arm whose guard fails
+leaves the step to the operator's function, which reports it.  An operator with a text or
+reference argument runs through `execute`.
+
+Measure with `selfhost/bench/fill_speed.sh` (the generated runner against `loft --interpret`
+on the integer kernels); `selfhost/bench/hand/` holds the step loop written by hand in C, the
+target.  The gate is the generated runner at the
+Rust interpreter's time on the integer kernels; it takes 1.1 to 1.7 times as long.  What is
+left is in the emitted C: checked arithmetic on the positions, and calls and returns through
+the `State`'s fields (the frame list).

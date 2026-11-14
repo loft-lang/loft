@@ -3532,8 +3532,10 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
     };
     let mut out = format!("{decl}\n{body}");
     c_binding_result(cx, &mut out, &sig.ret, ret, &call, &frees);
+    // `@FR-R-Inline`: the wrapper is one call, so it goes into its caller whatever the
+    // caller's size — out of line it doubles the call a binding stands for.
     let sig_c = format!(
-        "static {} {}({})",
+        "LOFT_HOT_INLINE {} {}({})",
         held(ret),
         c_name(data, d),
         if decl_params.is_empty() {

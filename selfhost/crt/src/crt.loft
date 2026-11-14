@@ -224,6 +224,114 @@ pub fn stack_put_float(store: integer, at: integer, v: float?, single: boolean) 
   c_stack_put_float(store, at, [v ?? 0.0 / 0.0], if single { 1 } else { 0 });
 }
 
+fn c_code_base(b: const vector<u8>) -> integer;
+#c "loft_crt_code_base" "int64_t(const uint8_t*, int64_t)"
+
+// `(R-CodeBase)` — the bytecode's address for a run's dispatch loop to hold in a local, taken
+// again after anything that can grow the store the code lies in.
+pub fn code_base(b: const vector<u8>) -> integer {
+  c_code_base(b)
+}
+
+// An operand of the code read at `at` through the base `code_base` gave (`n`: the code's
+// length); the body reads the vector, the twin the base.  Outside the code: 0.
+pub fn cget_u8(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
+  get_u8(b, at)
+}
+#c_twin "loft_twin_cget_u8" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn cget_i8(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
+  get_i8(b, at)
+}
+#c_twin "loft_twin_cget_i8" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn cget_u16(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
+  get_u16(b, at)
+}
+#c_twin "loft_twin_cget_u16" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn cget_i16(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
+  get_i16(b, at)
+}
+#c_twin "loft_twin_cget_i16" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn cget_u32(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
+  get_u32(b, at)
+}
+#c_twin "loft_twin_cget_u32" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn cget_i32(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
+  get_i32(b, at)
+}
+#c_twin "loft_twin_cget_i32" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn cget_i64(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
+  get_i64(b, at)
+}
+#c_twin "loft_twin_cget_i64" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn cget_f64(b: const vector<u8>, base: integer, n: integer, at: integer) -> float {
+  get_f64(b, at)
+}
+#c_twin "loft_twin_cget_f64" "double(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_stack_base(store: integer) -> integer;
+#c "loft_crt_stack_base" "int64_t(int64_t)"
+
+// `(R-StackBase)` — the stack store's frame area as an address the dispatch loop holds in a
+// local; taken again after anything that can grow the stack.
+pub fn stack_base(store: integer) -> integer {
+  c_stack_base(store)
+}
+
+// A frame slot at byte `at` read or written through that base (`cap`: the stack's bytes).  The
+// body reads the store; the twin is one compare and one load or store.  Outside the stack a
+// read answers 0 and a write does nothing.
+pub fn fget_i64(stk: integer, base: integer, cap: integer, at: integer) -> integer {
+  if base == 0 || at < 0 || at + 8 > cap {
+    return 0;
+  }
+  stack_get(SW_I64, stk, at)
+}
+#c_twin "loft_twin_fget_i64" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+pub fn fput_i64(stk: integer, base: integer, cap: integer, at: integer, v: integer?) {
+  if base != 0 && at >= 0 && at + 8 <= cap {
+    stack_put(SW_I64, stk, at, v);
+  }
+}
+#c_twin "loft_twin_fput_i64" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn fget_u8(stk: integer, base: integer, cap: integer, at: integer) -> integer {
+  if base == 0 || at < 0 || at >= cap {
+    return 0;
+  }
+  stack_get(SW_U8, stk, at)
+}
+#c_twin "loft_twin_fget_u8" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+pub fn fput_u8(stk: integer, base: integer, cap: integer, at: integer, v: integer) {
+  if base != 0 && at >= 0 && at < cap {
+    stack_put(SW_U8, stk, at, v);
+  }
+}
+#c_twin "loft_twin_fput_u8" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn fget_f64(stk: integer, base: integer, cap: integer, at: integer) -> float {
+  if base == 0 || at < 0 || at + 8 > cap {
+    return 0.0;
+  }
+  stack_get_float(stk, at, false)
+}
+#c_twin "loft_twin_fget_f64" "double(int64_t, int64_t, int64_t, int64_t)"
+
+pub fn fput_f64(stk: integer, base: integer, cap: integer, at: integer, v: float?) {
+  if base != 0 && at >= 0 && at + 8 <= cap {
+    stack_put_float(stk, at, v, false);
+  }
+}
+#c_twin "loft_twin_fput_f64" "void(int64_t, int64_t, int64_t, int64_t, double)"
+
 // `State::grow_stack`: the stack store grown until it holds `bytes` of frame.
 pub fn stack_grow(store: integer, bytes: integer) {
   c_stack_grow(store, bytes);

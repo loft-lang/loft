@@ -68,6 +68,13 @@ fn test_a_hash_finds_what_was_filed() {
   assert(r == 1230, "the values under -100, 7, 100 and 5: {r}");
 }
 
+// A recursion 5000 deep: the frame list grows under the loop, and the code is still read
+// where it lies.
+fn test_a_deep_recursion_returns() {
+  r = answer("deep", "n_depth", [5000]);
+  assert(r == 5000, "depth(5000): {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {
