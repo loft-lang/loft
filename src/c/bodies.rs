@@ -138,9 +138,14 @@ fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
 ///
 /// # Errors
 /// The C writer's refusal of a body it was asked for.
-pub fn emit_bodies(data: &Data, stores: &Stores, set: &[u32]) -> Result<String, super::Refusal> {
-    // `set` is the Rust build's own (`stdlib_codegen::export_set`): the functions both compile.
-    let mut set: Vec<u32> = set.to_vec();
+pub fn emit_bodies(
+    data: &Data,
+    stores: &Stores,
+    export: &std::collections::HashSet<u32>,
+) -> Result<String, super::Refusal> {
+    // The Rust build's own set (`stdlib_codegen::export_set`, handed in: the writer of C does
+    // not name the Rust writer's layer): the functions both compile.
+    let mut set: Vec<u32> = export.iter().copied().collect();
     set.sort_unstable_by_key(|d| data.def(*d).name().to_string());
     let mut carried: Vec<(u32, Vec<Slot>, Slot)> = Vec::new();
     let mut declined: Vec<(String, String)> = Vec::new();

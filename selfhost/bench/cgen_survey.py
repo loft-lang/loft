@@ -11,8 +11,10 @@ tests' unit where it has no `main`) is compared with a second unit:
   default            the Rust generator's unit written from the program IMAGE
                      (`LOFT_EMIT_FROM_IMAGE=1`): how many programs the image carries whole —
                      the corpus a generator that reads the image can reach
-  --generator EXE    the loft-written generator's unit: `EXE <image> <out.c>` on the image
+  --cgen             the loft-written generator's unit (selfhost/front/cgen.loft, built here
+                     through the C backend): `cgen <image> <out.c> <src/c>` on the image
                      `loft --emit-image` writes
+  --generator EXE    the same with a generator built elsewhere: `EXE <image> <out.c> <src/c>`
 
 A program is counted `agree`; `differ` (the first line that differs, both sides); `refused`
 (the second side wrote no unit: its last line of standard error, ranked); `nounit` (the oracle
@@ -24,6 +26,10 @@ import argparse, collections, concurrent.futures as cf, os, re, shutil, subproce
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
+
+
+# Where the C runtime's headers are: the generator reads them, as the Rust build embeds them.
+RUNTIME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "src", "c")
 
 
 def proc(cmd, env, timeout, cwd=None):
@@ -62,12 +68,12 @@ def one(f, loft, generator, tmp, env, timeout):
         if generator:
             rc, err = proc([loft, "--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
             if rc == 0:
-                rc, err = proc([generator, img, got], env, timeout, cwd=os.path.dirname(f))
+                rc, err = proc([generator, img, got, RUNTIME_DIR], env, timeout, cwd=os.path.dirname(f))
         else:
             rc, err = proc([loft, "--emit-c", got, f], {**env, "LOFT_EMIT_FROM_IMAGE": "1"}, timeout,
                            cwd=os.path.dirname(f))
         if rc != 0 or not os.path.exists(got):
-            return f, "refused", last(err)
+            return f, "refused", re.sub(r"^cgen: not carried: (\w+: )?", "", last(err))
         with open(want, "rb") as a, open(got, "rb") as b:
             if a.read() == b.read():
                 return f, "agree", ""
@@ -82,7 +88,8 @@ def one(f, loft, generator, tmp, env, timeout):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--loft", default=None, help="the loft binary (default: target/release/loft)")
-    ap.add_argument("--generator", default=None, help="the loft-written generator: EXE <image> <out.c>")
+    ap.add_argument("--generator", default=None, help="a built generator: EXE <image> <out.c> <src/c>")
+    ap.add_argument("--cgen", action="store_true", help="build selfhost/front/cgen.loft and use it")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
@@ -97,6 +104,17 @@ def main():
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
     tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
     try:
+        if o.cgen:
+            out = os.path.join(tmp, "cgen")
+            os.makedirs(out, exist_ok=True)
+            p = subprocess.run([loft, "--native-c", "--ship", "--out", out,
+                                "--lib", os.path.join(root, "selfhost", "src"),
+                                "--lib", os.path.join(root, "selfhost", "crt", "src"),
+                                os.path.join(root, "selfhost", "front", "cgen.loft")],
+                               capture_output=True, text=True, env=env, timeout=900)
+            o.generator = os.path.join(out, "cgen")
+            if not os.path.exists(o.generator):
+                sys.exit(f"the generator did not build:\n{p.stderr[-2000:]}")
         files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
                                                            o.chapter, o.scripts_only) if census.plain(f)]
         counts = collections.Counter()

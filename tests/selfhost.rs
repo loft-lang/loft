@@ -109,7 +109,9 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
         );
         // The C generator's type table for the same program: the oracle the loft-derived
         // table is compared with (@PLN91 S3, `selfhost/tests/types.loft`).
-        let c = tmp.join(format!("{stem}.c"));
+        // Kept beside the image: the units are also what the loft-written generator's passes
+        // are checked on (`selfhost/tests/cgen_tidy.loft`).
+        let c = kernels.join(format!("{stem}.c"));
         // `LOFT_NO_COMPLETE_WRITE` (values unchanged, (R-Switch)) makes the C generator fill
         // every appended record from its default image, so each element type's image is
         // there for P6 to compare.

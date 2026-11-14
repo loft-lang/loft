@@ -6,6 +6,9 @@
 
 use cgen_tidy;
 
+// Where a unit's runtime ends (`RUNTIME_END` in src/c/mod.rs).
+RUNTIME_END = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
+
 fn test_an_unused_label_and_local_go_and_a_used_one_stays() {
   body = "    loft_ref v1___retbuf = {{ 0xFFFF, 0, 0, 0 }};\n    int64_t v0_a = LOFT_NULL;\n    for (;;) {{\n        v0_a = 3;\n        if (v0_a > 2) goto brk_1;\n    cont_1:;\n    }}\n    brk_1:;\n    return v0_a;\n";
   t = cgen_tidy::tidy([], body);
@@ -74,4 +77,18 @@ fn test_a_unit_function_is_tidied_and_takes_its_reference_by_copy() {
   unit = "static const int t[] = {{ 1 }};\nstatic int n_f(loft_ref v0_r, int64_t v1_k) {{\n    int64_t v2_u = LOFT_NULL;\n    return loft_len(v0_r);\n}}\n";
   t = cgen_tidy::tidy_unit(unit);
   assert(t == "static const int t[] = {{ 1 }};\nstatic int n_f(loft_ref v0_r__in, int64_t v1_k) {{\n    LOFT_REF_IN(v0_r);\n    (void) v1_k;\n    return loft_len(v0_r);\n}}\n", "{t}");
+}
+
+// The Rust generator's finished unit of each kernel (the harness writes `<kernel>.c` beside
+// the images) holds nothing unnamed: dropping again changes no byte.  A real unit is 1.4 MB
+// of runtime and the program's functions after it, so this is the pass on the text it meets.
+fn test_a_finished_unit_holds_nothing_unnamed() {
+  dir = env_variable("LOFT_SELFHOST_KERNELS") ?? "";
+  for kernel in ["vectors", "records", "hashes", "enums", "format", "stdlib", "walk", "keyed"] {
+    unit = file("{dir}/{kernel}.c").content() ?? "";
+    found = unit.find(RUNTIME_END);
+    assert(found != null && unit.size() > 1000000, "{kernel}: the unit is there, {unit.size()} bytes");
+    again = cgen_tidy::drop_unnamed(unit, RUNTIME_END);
+    assert(again == unit, "{kernel}: {unit.size()} bytes became {again.size()}");
+  }
 }

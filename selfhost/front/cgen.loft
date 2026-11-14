@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft, as a program: `cgen <image> <out.c> <src/c dir>`
+// writes the C unit of the program whose image (`loft --emit-image`) is given, or says which
+// construct it does not carry yet and exits 3; a file it cannot read or write is exit 2.
+
+#cwd
+use load;
+use cgen;
+
+fn main(args: vector<text>) {
+  if len(args) < 3 {
+    eprintln("usage: cgen <image> <out.c> <src/c dir>");
+    exit(2);
+  }
+  b = load::load(args[0]!);
+  if b == null {
+    eprintln("cgen: {args[0]!} is not a program image this build reads");
+    exit(2);
+  }
+  missing = "";
+  runtime = cgen::runtime(args[2]!, missing);
+  if runtime == null {
+    eprintln("cgen: the runtime header {missing} cannot be read");
+    exit(2);
+  }
+  unit = cgen::emit_program(b, runtime);
+  if unit.refused != "" {
+    eprintln("cgen: not carried: {unit.refused}");
+    exit(3);
+  }
+  out = file(args[1]!);
+  out.write(unit.code);
+}

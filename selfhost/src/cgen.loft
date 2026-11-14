@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft: `src/c/mod.rs`'s entry points and the unit's
+// assembly (doc/claude/plans/91-self-host/12-c-generator.md).  A program image in, the C unit
+// out, byte for byte as the Rust generator writes it — or a refusal that names the first
+// construct this generator does not carry yet, never another unit.
+
+use ir;
+use load;
+use cgen_tidy;
+
+// A unit, or why it was not written (`refused` is empty for a written unit).
+pub struct Unit {
+  pub code: text,
+  pub refused: text,
+}
+
+fn refuse(why: text) -> Unit {
+  Unit { code: "", refused: why }
+}
+
+// The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`).
+MAX_CALL_DEPTH = 10000;
+
+// Where a unit's runtime starts: gcc and clang are told not to report an unused helper of the
+// runtime, a library every unit carries whole.
+RUNTIME_START = "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n";
+
+// Where it ends; the program's own functions after it are reported.
+pub RUNTIME_END = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
+
+// The C runtime every unit starts with: the headers of `dir` (the repository's `src/c`) in the
+// order `RUNTIME` holds them in src/c/mod.rs.  Null where one cannot be read, named in `missing`.
+pub fn runtime(dir: text, missing: &text) -> text? {
+  out = "";
+  for name in ["loft_cc.h", "loft_text.h", "loft_store.h", "loft_rt.h", "loft_keys.h", "loft_hash.h", "loft_btree.h", "loft_radix.h", "loft_radix_walk.h", "loft_radix_db.h", "loft_image.h", "loft_paged.h", "loft_radix_walk.h", "loft_paged_load.h", "loft_keyed.h", "loft_json.h", "loft_parse.h", "loft_upgrade.h", "loft_reflect.h", "loft_io.h", "loft_host_io.h", "loft_web_page.h", "loft_log.h", "loft_lazy.h", "loft_sock.h", "loft_https.h", "loft_net.h", "loft_process.h", "loft_mapped.h", "loft_engine.h"] {
+    part = file("{dir}/{name}").content();
+    if part == null {
+      missing = "{dir}/{name}";
+      return null;
+    }
+    out += part;
+  }
+  // A library's native part behind the loft-ffi ABI: the ABI's own header, then the host side.
+  ffi = file("{dir}/../../loft-ffi/include/loft_ffi.h").content();
+  host = file("{dir}/loft_ffi_host.h").content();
+  if ffi == null || host == null {
+    missing = "{dir}/../../loft-ffi/include/loft_ffi.h";
+    return null;
+  }
+  "{out}#ifdef LOFT_FFI\n{ffi}{host}#endif\n"
+}
+
+// `s` as a C string literal (`body::c_string`): a quote, a backslash and a question mark
+// escaped (no trigraph), every byte outside printable ASCII in octal.
+pub fn c_string(s: text) -> text {
+  out = "\"";
+  for i in 0..s.size() {
+    b = s.byte_at(i);
+    if b == 34 {
+      out += "\\\"";
+    } else if b == 92 {
+      out += "\\\\";
+    } else if b == 63 {
+      out += "\\?";
+    } else if b >= 32 && b <= 126 {
+      out += s[i..i + 1];
+    } else {
+      out += "\\{b / 64}{b / 8 % 8}{b % 8}";
+    }
+  }
+  out + "\""
+}
+
+// The name a function's author wrote (`Definition::original_name`): `n_<name>` without its
+// prefix.  A method's key (`t_<LEN><type>_<name>`) is not decoded here yet.
+fn original_name(d: ir::Definition) -> text {
+  if d.name.starts_with("n_") {
+    return d.name[2..d.name.size()];
+  }
+  d.name
+}
+
+// Is `code` (a definition's body, a box of one) a block with no statement?
+fn empty_body(code: vector<ir::Node>) -> boolean {
+  if len(code) != 1 {
+    return false;
+  }
+  match code[0] {
+    NdBlock { block } => len(block) == 1 && len(block[0].operators) == 0,
+    _ => false,
+  }
+}
+
+// The unit's defines (`unit_defines`) for a unit that reaches nothing but an empty `main`: no
+// locked store, no thread, none of the optional runtimes.
+fn unit_defines() -> text {
+  "#define LOFT_NO_LOCKS 1\n#define LOFT_NO_THREADS 1\n#define LOFT_MAX_CALL_DEPTH {MAX_CALL_DEPTH}\n"
+}
+
+// The C libraries' tables (`c_libraries`) of a unit that binds none.
+fn c_libraries() -> text {
+  "static const loft_c_optlib loft_coptlibs[] = {{ {{ 0, 0, 0, 0 }} }};\nstatic const uint32_t loft_ncoptlibs = 0;\nstatic const loft_c_boundlib loft_cboundlibs[] = {{ {{ 0, 0, 0, 0 }} }};\nstatic const uint32_t loft_ncboundlibs = 0;\nstatic const char *const *const loft_clibsyms[] = {{ 0 }};\nstatic const char *const loft_clibs[] = {{ 0 }};\nstatic const uint32_t loft_nclibs = 0;\n"
+}
+
+// Always written (`Cx::type_name_table`): the heap ceiling's report names a type by it too.
+fn type_name_table(types: vector<ir::DbType>) -> text {
+  names: vector<text> = [];
+  for t in types {
+    names += [c_string(t.name)];
+  }
+  // A C99 initializer holds at least one element.
+  list = if len(names) == 0 { "0" } else { names.join(", ") };
+  "static const char *const loft_tnames[] = {{ {list} }};\nstatic const uint32_t loft_ntnames = {len(names)};\n"
+}
+
+// The unit's tables, for the runtime (`loft_bind_tables`): a generated `main` binds them
+// before it starts.
+fn bind_tables() -> text {
+  "\nstatic void loft_bind_tables(void) {{\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    loft_cbl = loft_cboundlibs;\n    loft_ncbl = loft_ncboundlibs;\n    loft_fault_logger = loft_log_production_fault;\n    loft_locked_logger = loft_log_locked_write;\n    loft_warn_logger = loft_log_warn;\n}}\n"
+}
+
+// A function with no parameter, no answer and no statement (`function` + `framed`): the body
+// always inlined into its frame wrapper, the wrapper declared inline.  Answers the two
+// declarations and the two definitions.
+fn empty_function(d: ir::Definition, decls: &text, bodies: &text) {
+  name = d.name;
+  decls += "LOFT_HOT_INLINE void {name}__fr(void);\nstatic inline void {name}(void);\n";
+  bodies += "\nLOFT_HOT_INLINE void {name}__fr(void) {{\n}}\n";
+  bodies += "\nstatic inline void {name}(void) {{\n    loft_frame_push({c_string(original_name(d))}, {c_string(d.position.file)}, {d.position.line});\n    LOFT_HOLD_MARK(hm);\n    {name}__fr();\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n}}\n";
+}
+
+// The unit of the program in `b` (`emit_program`): the runtime, the program's functions and a
+// `main` that calls the program's.  `runtime_text` is `runtime`'s answer.
+pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
+  main = load::definition(b, "n_main");
+  if main == null {
+    return refuse("no main: the tests' unit");
+  }
+  if len(main.attributes) > 0 {
+    return refuse("main: a main that takes arguments");
+  }
+  if !empty_body(main.code) {
+    return refuse("main: a function body");
+  }
+  decls = "";
+  bodies = "";
+  empty_function(main, decls, bodies);
+  written = "{c_libraries()}{type_name_table(b.types)}static void loft_init(void) {{\n}}\n{decls}{bodies}{bind_tables()}";
+  out = "{unit_defines()}{RUNTIME_START}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit(written)}";
+  anchor = if load::program_relative(b) { 1 } else { 0 };
+  out += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {main.name}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
+  // The finished program names what it uses: what nothing names is not written.
+  Unit { code: cgen_tidy::drop_unnamed(out, RUNTIME_END), refused: "" }
+}

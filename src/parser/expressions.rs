@@ -5309,6 +5309,9 @@ use a separate collection or add after the loop"
         // program compiles today and keeps its binding (and its loop-record admission).
         // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
         // A loop's VARIABLE is never that body local: its binding ended with its own loop.
+        // The same note before that filter: the per-loop split asks it too, of a bind that
+        // differs from the ended one only in absence.
+        let ended_any = self.bind_after_end.map(|(v, _)| v);
         let ended_bind = self
             .bind_after_end
             .take()
@@ -7224,8 +7227,13 @@ use a separate collection or add after the loop"
                 .retype_would_be_refused(var_nr, &s_type, &self.data)
                 // The other loop's binding has ENDED (`@FR-B-Scope`: its body local cannot
                 // be read here), so a bind that differs from it in absence starts a binding
-                // too: `@FR-N-Join` joins the writes of one binding, not of two loops.
-                || self.vars.rebind_differs_in_absence(var_nr, &s_type))
+                // too: `@FR-N-Join` joins the writes of one binding, not of two loops.  Asked
+                // of a binding the name's own resolution saw ended (`bind_after_end`): a loop
+                // NUMBER is not the same on both passes, so `born_in` alone also holds for
+                // the live binding of this very loop, whose non-null write into its `τ?` is
+                // the join itself.
+                || (ended_any == Some(var_nr)
+                    && self.vars.rebind_differs_in_absence(var_nr, &s_type)))
         {
             // The SOURCE spelling, not the bound one.  A variable already split once is
             // named `e#b1`, and registering the next split under that would key the third
