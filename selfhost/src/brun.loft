@@ -624,6 +624,8 @@ N_UPGRADE_OWED_NEXT = 44;
 N_UPGRADE_OWED_FINISH = 45;
 N_UPGRADE_OWED_REF = 46;
 N_UPGRADE_ROUTINE = 47;
+N_LOG = 48;
+N_SOURCE_DIR_DEST = 49;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -675,6 +677,11 @@ pub fn native_handler(name: text) -> integer {
     "n_store_upgrade_owed_old" => N_UPGRADE_OWED_REF,
     "n_store_upgrade_owed_from" => N_UPGRADE_OWED_REF,
     "n_store_upgrade_routine" => N_UPGRADE_ROUTINE,
+    "n_log_info" => N_LOG,
+    "n_log_warn" => N_LOG,
+    "n_log_error" => N_LOG,
+    "n_log_fatal" => N_LOG,
+    "n_source_dir_dest" => N_SOURCE_DIR_DEST,
     "t_4text_byte_at" => N_TEXT_BYTE_AT,
     "t_4text_replace_dest" => N_TEXT_REPLACE_DEST,
     "t_4text_rfind" => N_TEXT_RFIND,
@@ -1369,6 +1376,19 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
   } else if nh == N_UPGRADE_ROUTINE {
     // A routine registered for a conversion the runner never makes.
     sp -= 24;
+  } else if nh == N_LOG {
+    // The message, the file and the line popped; logged as a compiled program logs it.
+    lgn = img.natives[idx] ?? "";
+    lgl = get(stk, sp - 8) ?? 0;
+    lgf = crt::stack_str(stk, sp - 24) ?? "";
+    lgm = crt::stack_str(stk, sp - 40) ?? "";
+    sp -= 40;
+    crt::log(if lgn == "n_log_info" { 0 } else if lgn == "n_log_warn" { 1 } else if lgn == "n_log_error" { 2 } else { 3 }, lgm, lgf, lgl);
+  } else if nh == N_SOURCE_DIR_DEST {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    // The program's own directory, which the image carries (the runner's anchor is its own).
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, img.source);
   } else if nh == N_STORE_VERIFY {
     ensure_table(img.types, tl);
     crt::slot_ref(io, stk, sp - 16);

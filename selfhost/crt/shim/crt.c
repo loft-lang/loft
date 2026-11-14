@@ -18,6 +18,7 @@
  * relative path resolves against the program's directory as a C program's does. */
 #include "../../../src/c/loft_io.h"
 #include "../../../src/c/loft_image.h"
+#include "../../../src/c/loft_log.h"
 
 /* A text that crossed the bridge: `bytes` long (an embedded NUL kept), or null when -1. */
 static loft_str loft_crt_str(const char *val, int64_t bytes) {
@@ -454,6 +455,16 @@ void loft_crt_par_row_wide(int64_t store, int64_t rec, int64_t pos, int64_t stk,
     uint8_t *d = loft_crt_slot_at(stk, at);
     memset(d, 0, (size_t) ((n + 7) / 8 * 8));
     if (p) memcpy(d, p, (size_t) n);
+}
+
+/* `log_info` … `log_fatal` (`sev` 0 … 3): the C runtime's logger, configured as a compiled
+ * program's is (`log.conf`). */
+void loft_crt_log(int64_t sev, const char *m, int64_t mlen, const char *f, int64_t flen, int64_t line) {
+    loft_str ms = loft_crt_str(m, mlen), fs = loft_crt_str(f, flen);
+    if (sev == 0) loft_log_info(ms, fs, line);
+    else if (sev == 1) loft_log_warn(ms, fs, line);
+    else if (sev == 2) loft_log_error(ms, fs, line);
+    else loft_log_fatal(ms, fs, line);
 }
 
 /* `copy_result`: `n` bytes moved within the stack. */

@@ -501,7 +501,7 @@ pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 /// `RunImage { code: vector<u8>, starts: vector<u32>, ops, layouts, natives: vector<text>,
 /// consts: vector<RunConst>, fnrefs: vector<RunFnRef>, types: vector<DbType>,
 /// gens: vector<RunGen>, shared: vector<integer>, workers: vector<RunWorker>,
-/// sidecars: vector<RunSidecar>, oldest, bridge: text, main: integer, cwd: boolean }` — the run
+/// sidecars: vector<RunSidecar>, oldest, bridge, source: text, main: integer, cwd: boolean }` — the run
 /// image's store root (@PLN91).
 pub(crate) const RUNIMG_MAIN: u32 = 0;
 pub(crate) const RUNIMG_CODE: u32 = 8;
@@ -518,7 +518,8 @@ pub(crate) const RUNIMG_WORKERS: u32 = 48;
 pub(crate) const RUNIMG_SIDECARS: u32 = 52;
 pub(crate) const RUNIMG_OLDEST: u32 = 56;
 pub(crate) const RUNIMG_BRIDGE: u32 = 60;
-pub(crate) const RUNIMG_CWD: u32 = 64;
+pub(crate) const RUNIMG_SOURCE: u32 = 64;
+pub(crate) const RUNIMG_CWD: u32 = 68;
 pub(crate) const RUNIMG_STRIDE: u32 = 72;
 /// `RunFnRef { def, drop, kind, cascade: integer, hidden: vector<integer> }` — a call through a function
 /// reference's shape.
@@ -1840,6 +1841,7 @@ mod tests {
         assert_eq!(pos(ids.run_image, "sidecars"), RUNIMG_SIDECARS);
         assert_eq!(pos(ids.run_image, "oldest"), RUNIMG_OLDEST);
         assert_eq!(pos(ids.run_image, "bridge"), RUNIMG_BRIDGE);
+        assert_eq!(pos(ids.run_image, "source"), RUNIMG_SOURCE);
         assert_eq!(u32::from(stores.size(ids.run_sidecar)), RUNSIDECAR_STRIDE);
         assert_eq!(pos(ids.run_sidecar, "tp"), RUNSIDECAR_TP);
         assert_eq!(pos(ids.run_sidecar, "hash"), RUNSIDECAR_HASH);

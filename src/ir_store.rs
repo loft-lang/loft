@@ -928,7 +928,7 @@ fn materialize_run_image(
     shared: &[i64],
     workers: &[[i64; 5]],
     sidecars: &[RunSidecarShape],
-    release: (&str, &str),
+    release: (&str, &str, &str),
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -1020,6 +1020,7 @@ fn materialize_run_image(
     materialize_run_sidecars(stores, &rec, &slot(ds::RUNIMG_SIDECARS), sidecars);
     rec.set_field_str(stores, ds::RUNIMG_OLDEST, release.0);
     rec.set_field_str(stores, ds::RUNIMG_BRIDGE, release.1);
+    rec.set_field_str(stores, ds::RUNIMG_SOURCE, release.2);
     crate::vector::pre_alloc_vector(
         &slot(ds::RUNIMG_TYPES),
         count(schema.len()),
@@ -1621,7 +1622,11 @@ pub fn save_run_image(
             &run_image_shared(data, library_names),
             &run_image_workers(data),
             &run_image_sidecars(data, program),
-            (&program.release().oldest, &program.release().bridge),
+            (
+                &program.release().oldest,
+                &program.release().bridge,
+                &crate::file_access::given(&program.source_dir),
+            ),
             library_names,
             &program.types,
             main,
