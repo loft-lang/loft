@@ -109,6 +109,10 @@ pub struct Gen {
   defs: own::Defs,
   // The locals a reassignment released the old store of (`Stack::owned_reassigned`).
   owned_reassigned: vector<integer>,
+  // The function's character walks (`opt::char_walk::char_walks`), gathered at the first
+  // bind that asks.
+  walks: vector<lower::CharWalk>,
+  walks_known: boolean,
   why: text,
 }
 
@@ -390,6 +394,46 @@ fn call_args(n: ir::Node) -> vector<ir::Node> {
   }
 }
 
+// `text_local`: the text local a node reads, where it can be read at its slot; -1 otherwise.
+fn text_local(g: Gen, n: ir::Node) -> integer {
+  v = match unspan(n) {
+    NdVar { n: nr } => nr,
+    _ => -1,
+  };
+  if v < 0 {
+    return -1;
+  }
+  text = match base(var_of(g, v).type_def[0] ?? ir::TyVoid) {
+    TyText { dep: _ } => true,
+    _ => false,
+  };
+  slot = g.slots[v] ?? 65535;
+  if text && (g.allocated[v] ?? false) && slot != 65535 && slot <= g.position { v } else { -1 }
+}
+
+// `fused_pure_int`: an integer value that reads only literals and integer locals through
+// the operators that cannot fail.
+fn fused_pure_int(g: Gen, n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdVar { n: _ } => int_local(g, n) >= 0,
+    NdCall { def_nr, args } => {
+      name = def_of(g, def_nr).name;
+      if name != "OpAddInt" && name != "OpMinInt" && name != "OpMulInt" && name != "OpLandInt" && name != "OpLorInt" && name != "OpEorInt" {
+        return false;
+      }
+      for a in args {
+        if !fused_pure_int(g, a) {
+          return false;
+        }
+      }
+      true
+    }
+    _ => false,
+  }
+}
+
 // `vector_local`: the vector local a node reads, where it can be read at its slot; -1 otherwise.
 fn vector_local(g: Gen, n: ir::Node) -> integer {
   v = match unspan(n) {
@@ -452,11 +496,27 @@ fn if_test(g: Gen, test: ir::Node) -> integer {
   };
   name = if spanned { "" } else { called(g, test) };
   args = if spanned { [] } else { call_args(test) };
-  if name == "OpNot" && called(g, args[0] ?? ir::NdNull) == "OpConvBoolFromText" {
-    stop(g, "not written yet: a text's end test");
-  }
-  if name == "OpLeInt" && called(g, args[0] ?? ir::NdNull) == "OpSizeText" {
-    stop(g, "not written yet: a text's length test");
+  // `emit_text_end_test`: a text local's null test, or its length against an index local,
+  // as one compare-and-jump (`OpTextNullJump`, `OpTextEndJump`).
+  null_test = name == "OpNot" && len(args) == 1 && called(g, args[0]!) == "OpConvBoolFromText";
+  end_test = name == "OpLeInt" && len(args) == 2 && called(g, args[0]!) == "OpSizeText";
+  if null_test || end_test {
+    inner = call_args(args[0]!);
+    src = if len(inner) == 1 { text_local(g, inner[0]!) } else { -1 };
+    idx = if end_test { int_local(g, args[1]!) } else { -1 };
+    if src >= 0 && (null_test || idx >= 0) {
+      sp = var_pos(g, src);
+      ip = if idx >= 0 { var_pos(g, idx) } else { 0 };
+      add_op(g, if end_test { "OpTextEndJump" } else { "OpTextNullJump" });
+      put_u16(g.o, sp);
+      put_u8(g.o, if var_of(g, src).argument { 1 } else { 0 });
+      if end_test {
+        put_u16(g.o, ip);
+      }
+      at = len(g.o.code);
+      put_i32(g.o, 0);
+      return at;
+    }
   }
   if name == "OpLeInt" && called(g, args[0] ?? ir::NdNull) == "OpLengthVector" {
     // A walk's end (`OpVecEndJump`): the vector's length against an index, both locals.
@@ -728,18 +788,20 @@ fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
   if size < 0 || size > 65535 || vec < 0 || idx < 0 {
     return false;
   }
-  if name == "OpSetInt" {
-    if inner == "OpGetVector" {
-      stop(g, "not written yet: a fused vector store");
-    }
+  store = name == "OpSetInt";
+  if store && (inner != "OpGetVector" || len(args) != 3 || !fused_pure_int(g, args[2]!)) {
     return false;
   }
-  if len(args) != 2 {
+  if !store && len(args) != 2 {
     return false;
   }
+  // The positions are taken before the stored value is pushed, as the Rust writer takes them.
   vp = var_pos(g, vec);
   ip = var_pos(g, idx);
-  add_op(g, if inner == "OpGetVector" { "OpVecGetInt" } else { "OpVecGetIntNullable" });
+  if store {
+    generate(g, args[2]!, false);
+  }
+  add_op(g, if store { "OpVecSetInt" } else if inner == "OpGetVector" { "OpVecGetInt" } else { "OpVecGetIntNullable" });
   put_u16(g.o, vp);
   put_u16(g.o, size);
   put_u16(g.o, ip);
@@ -1745,7 +1807,7 @@ fn optional_shape(t: ir::TypeT) -> boolean {
 fn assign(g: Gen, v: integer, value: ir::Node) {
   var = var_of(g, v);
   tp = var.type_def[0] ?? ir::TyVoid;
-  if bgen_loop::loop_slot(g, v, value) {
+  if bgen_loop::walk_step(g, v, value) || bgen_loop::loop_slot(g, v, value) {
     return;
   }
   text = match base(tp) {
@@ -1774,13 +1836,8 @@ fn assign(g: Gen, v: integer, value: ir::Node) {
     NdBlock { block: _ } => true,
     _ => false,
   };
-  // A character bound from a block may be a text walk's step (`emit_walk_step`).
-  walk = block && match base(tp) {
-    TyCharacter => true,
-    _ => false,
-  };
-  if put == "" || var.linked_narrow || walk || (g.slots[v] ?? 65535) == 65535 {
-    stop(g, "not written yet: an assignment of {if walk { "a character from a block" } else { "a value that is no scalar" }}");
+  if put == "" || var.linked_narrow || (g.slots[v] ?? 65535) == 65535 {
+    stop(g, "not written yet: an assignment of a value that is no scalar");
     return;
   }
   if !(g.allocated[v] ?? false) {
@@ -2287,7 +2344,7 @@ pub fn oracle(b: ir::Bundle) -> own::Ops {
 pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
   def = b.data.definitions[d]!;
   ret = def.returned[0] ?? ir::TyVoid;
-  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), owned_reassigned: [], why: "" };
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), owned_reassigned: [], walks: [], walks_known: false, why: "" };
   if !body_null(def) {
     g.defs = own::function_defs(b, d, ops);
     if ret_adopt::ret_adopt(b, d).v >= 0 {

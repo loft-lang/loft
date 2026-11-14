@@ -12,6 +12,7 @@ use ir;
 use binds;
 use ret_adopt;
 use bgen;
+use lower;
 
 // `Rotation`: what runs before the bottom test, the test, what the range step runs after it
 // at the top of the body, the loop variable and the index it is stored from (`store`), and
@@ -333,4 +334,84 @@ fn rotated(g: bgen::Gen, ops: vector<ir::Node>, r: Rotation) -> ir::TypeT {
   g.loop_stack.remove(me);
   g.loop_rotated.remove(me);
   ir::TyVoid
+}
+
+// Every loop of a node offered to `lower::char_walk`, and whether a `yield` was met.
+fn gather_walks(b: ir::Bundle, d: integer, n: ir::Node, out: vector<lower::CharWalk>, yields: vector<boolean>) {
+  match n {
+    NdLoop { block } => {
+      w = lower::char_walk(b, d, block[0]!);
+      if w != null {
+        out += [w!];
+      }
+    }
+    NdYield { inner: _ } => {
+      yields[0] = true;
+    }
+    _ => {}
+  }
+  for c in ret_adopt::children(n) {
+    gather_walks(b, d, c, out, yields);
+  }
+}
+
+// `emit_walk_step` (`@FR-R-Fuse`): the step of a character walk over a text local — the index
+// kept, the character read, the position advanced — as one operator.  True when it was
+// written.  A generator declines whole, as `char_walks` does.
+pub fn walk_step(g: bgen::Gen, c: integer, value: ir::Node) -> boolean {
+  block = match bgen::unspan(value) {
+    NdBlock { block: _ } => true,
+    _ => false,
+  };
+  character = match bgen::base(bgen::var_of(g, c).type_def[0] ?? ir::TyVoid) {
+    TyCharacter => true,
+    _ => false,
+  };
+  if !block || !character {
+    return false;
+  }
+  if !g.walks_known {
+    g.walks_known = true;
+    yields: vector<boolean> = [false];
+    out: vector<lower::CharWalk> = [];
+    code = g.b.data.definitions[g.d]!.code[0];
+    if code != null {
+      gather_walks(g.b, g.d, code!, out, yields);
+    }
+    if !(yields[0] ?? false) {
+      g.walks = out;
+    }
+  }
+  found = -1;
+  for w in g.walks {
+    if w.loop_var == c && found < 0 {
+      found = w#index;
+    }
+  }
+  if found < 0 {
+    return false;
+  }
+  w = g.walks[found]!;
+  for v in [w.index, w.next, w.src] {
+    slot = g.slots[v] ?? 65535;
+    if !(g.allocated[v] ?? false) || slot == 65535 || slot + 8 > g.position {
+      return false;
+    }
+  }
+  slot = g.slots[c] ?? 65535;
+  text = match bgen::base(bgen::var_of(g, w.src).type_def[0] ?? ir::TyVoid) {
+    TyText { dep: _ } => true,
+    _ => false,
+  };
+  if slot == 65535 || slot + 8 > g.position || !text {
+    return false;
+  }
+  g.allocated[c] = true;
+  bgen::add_op(g, "OpTextWalkStep");
+  bgen::put_u16(g.o, bgen::var_pos(g, c));
+  bgen::put_u16(g.o, bgen::var_pos(g, w.index));
+  bgen::put_u16(g.o, bgen::var_pos(g, w.next));
+  bgen::put_u16(g.o, bgen::var_pos(g, w.src));
+  bgen::put_u8(g.o, if bgen::var_of(g, w.src).argument { 1 } else { 0 });
+  true
 }
