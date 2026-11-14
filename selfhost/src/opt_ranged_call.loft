@@ -1,10 +1,11 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 // @PLN91 strand 12 — `src/opt/ranged_call.rs`: `@FR-R-RangedCall`'s facts.  Whether a call of a
 // function repays a ranged variant (the gain test), whether a call's integer arguments are
 // proven within `[-L, L]`, and the facts a ranged variant's body runs under.  The guarded copy
-// (`guard_plan`) is not ported yet.
+// (`guard_plan`) is carried for its variable clause; a hoisted record field is not a leaf yet.
 
 use ir;
 use binds;
@@ -182,4 +183,161 @@ fn gained_ops(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, d:
   }
   memo[d] = total;
   total
+}
+
+// The bound a guarded copy tests each leaf against (`G`).
+pub const G = 1048576;
+
+// What `guard_plan` decides for a counted `For` block: the variables its guard tests
+// (`|x| <= G` each) and the facts its guarded copy runs under.
+pub struct GuardPlan {
+  pub leaves: vector<integer>,
+  pub facts: opt_range::Ranges,
+}
+
+// `variable_leaves`: the integer variables `block` reads in a counted range's start or end but
+// never assigns, that the function never hands out by reference, and that `known` does not
+// already bound within `G`.
+fn variable_leaves(b: ir::Bundle, f: integer, known: opt_range::Ranges, block: ir::Node) -> vector<integer> {
+  if (env_variable("LOFT_NO_RANGED_CALL_VARS") ?? "0") != "0" {
+    return [];
+  }
+  def = b.data.definitions[f]!;
+  vars = def.variables.variables;
+  count = len(vars);
+  written: vector<boolean> = [for _ in 0..count { false }];
+  bounds: vector<ir::Node> = [];
+  opt_non_sentinel::walk(block, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var < count {
+          written[var] = true;
+          if vars[var]!.name.starts_with("_range_start") || vars[var]!.name.starts_with("_range_end") {
+            bounds += [inner];
+          }
+        }
+      },
+      NdTuplePut { var, idx: _, inner: _ } => { if var < count { written[var] = true; } },
+      _ => {},
+    }
+  });
+  escaped: vector<boolean> = [for _ in 0..count { false }];
+  opt_non_sentinel::collect_escapes(b, def.code[0]!, escaped);
+  leaves: vector<integer> = [];
+  for e in bounds {
+    opt_non_sentinel::walk(e, fn(n: ir::Node) {
+      match n {
+        NdVar { n: v } => {
+          if v < count && is_integer(vars[v]!.type_def[0]!) && !written[v]! && !escaped[v]! {
+            r = opt_range::var_range(known, v);
+            bounded = r != null && r.lo >= -G && r.hi <= G;
+            seen = false;
+            for l in leaves {
+              if l == v {
+                seen = true;
+              }
+            }
+            if !bounded && !seen {
+              leaves += [v];
+            }
+          }
+        },
+        _ => {},
+      }
+    });
+  }
+  leaves
+}
+
+// How often `code` assigns each variable (a `Set` or a tuple write).
+fn set_counts(code: ir::Node, count: integer) -> vector<integer> {
+  sets: vector<integer> = [for _ in 0..count { 0 }];
+  count_sets(code, sets);
+  sets
+}
+
+// `sets_outside` walks every child, a span's included.
+fn count_sets(code: ir::Node, sets: vector<integer>) {
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < len(sets) { sets[var] = sets[var]! + 1; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if var < len(sets) { sets[var] = sets[var]! + 1; } },
+      _ => {},
+    }
+  });
+}
+
+// `copy_gains`: does the guarded copy gain — some call in `block` takes a ranged variant under
+// the copy's facts and would not under `known`, and no call doing checked integer work is left
+// checked in the copy?
+fn copy_gains(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, g: Gains, nn: vector<boolean>, known: opt_range::Ranges, block: ir::Node, copy: opt_range::Ranges) -> boolean {
+  candidates: vector<integer> = [];
+  left_checked = [false];
+  opt_non_sentinel::walk(block, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if benefits(b, def_nr) {
+          if !args_ranged(b, p, c, nn, copy, def_nr, args) {
+            left_checked[0] = true;
+          } else if !args_ranged(b, p, c, nn, known, def_nr, args) {
+            candidates += [def_nr];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if left_checked[0]! {
+    return false;
+  }
+  for d in candidates {
+    if variant_gains(b, p, c, g, d, 0) {
+      return true;
+    }
+  }
+  false
+}
+
+// `guard_plan`, its variable clause: for the counted `For` block `block` of function `f`, the
+// leaves its guard tests and the facts its guarded copy runs under — or null when the copy
+// would make no call newly ranged, or would leave a call doing checked work checked.
+pub fn guard_plan(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, g: Gains, f: integer, nn: vector<boolean>, known: opt_range::Ranges, walks: vector<opt_range::Walk>, block: ir::Node) -> GuardPlan? {
+  all_leaves = variable_leaves(b, f, known, block);
+  if len(all_leaves) == 0 {
+    return null;
+  }
+  unranged: vector<integer> = [];
+  for v in all_leaves {
+    if opt_range::var_range(known, v) == null {
+      unranged += [v];
+    }
+  }
+  def = b.data.definitions[f]!;
+  count = len(def.variables.variables);
+  // What the copy alone assigns and nothing hands out by reference keeps the copy's facts.
+  total = set_counts(def.code[0]!, count);
+  inside = set_counts(block, count);
+  escaped: vector<boolean> = [for _ in 0..count { false }];
+  opt_non_sentinel::collect_escapes(b, def.code[0]!, escaped);
+  keep: vector<boolean> = [for v in 0..count { total[v]! <= inside[v]! && !escaped[v]! }];
+  // The fewest leaves that make a call newly ranged: the variables with no range first, and
+  // only then the ones a wider fact bounds.
+  tried = 0;
+  for tier in 0..2 {
+    leaves = if tier == 0 { unranged } else { all_leaves };
+    if len(leaves) == tried {
+      continue;
+    }
+    tried = len(leaves);
+    seeds = opt_range::empty_ranges(count);
+    for v in leaves {
+      opt_range::set_var(seeds, v, opt_range::Range { lo: -G, hi: G });
+    }
+    copy = opt_range::range_vars_code(b, p, c, f, block, nn, walks, seeds);
+    merged = opt_range::merge_guarded(known, copy, keep, leaves, G);
+    if copy_gains(b, p, c, g, nn, known, block, merged) {
+      return GuardPlan { leaves: leaves, facts: merged };
+    }
+  }
+  null
 }

@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
@@ -33,7 +34,7 @@ fn function_type(t: ir::TypeT) -> boolean {
 }
 
 // `Type::peel_link`: the type's data shape — its base with every `&` link peeled.
-fn peel_link(t: ir::TypeT) -> ir::TypeT {
+pub fn peel_link(t: ir::TypeT) -> ir::TypeT {
   match cgen_types::base(t) {
     TyRefVar { inner } => peel_link(inner),
     TyRewritten { inner } => peel_link(inner),
