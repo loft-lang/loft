@@ -13,6 +13,7 @@ use ir;
 use loop_shape;
 use cgen_fn;
 use cgen_bind;
+use ptypes;
 use cgen_w::*;
 
 // A program write as its `_at` setter (`set_at`): `f(args…, file, line)`.
@@ -376,6 +377,21 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     return E { code: "loft_vec_add(loft_types, {tp}, {into}, {from})", kind: K_VOID };
   }
+  if name == "OpFormatDatabase" {
+    if count != 4 {
+      refuse(w, "OpFormatDatabase with an unexpected operand list");
+      return none();
+    }
+    dest = text_dest(w, args[0]);
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    fmt = cgen_fn::literal(w, args[3], "format") ?? return none();
+    if show_refusal(x.b, tp, []) != "" {
+      refuse(w, show_refusal(x.b, tp, []));
+      return none();
+    }
+    val = cgen_fn::expr(x, w, args[1], ind);
+    return E { code: show_top_call(x, w, tp, "&{dest}", as_ref(w, val), "{fmt}"), kind: K_VOID };
+  }
   if name == "OpGetBoolean" && count == 2 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
@@ -441,6 +457,102 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
   }
   done = false;
   none()
+}
+
+// `Cx::show_type`: can a value of type `tp` be rendered — "" when it can, else the refusal.
+fn show_refusal(b: ir::Bundle, tp: integer, seen: vector<integer>) -> text {
+  if tp <= 6 {
+    return "";
+  }
+  for s in seen {
+    if s == tp {
+      return "";
+    }
+  }
+  if tp >= len(b.types) {
+    return "a format of an unknown type";
+  }
+  seen += [tp];
+  t = b.types[tp];
+  match t.parts[0] {
+    PtEnum { values } => {
+      if t.name == "JsonValue" {
+        return "a format of a JsonValue";
+      }
+      for v in values {
+        if v.nr != 65535 {
+          why = show_refusal(b, v.nr, seen);
+          if why != "" {
+            return why;
+          }
+        }
+      }
+      ""
+    },
+    PtStruct { fields } => show_fields_refusal(b, fields, seen),
+    PtEnumValue { value: _, fields } => show_fields_refusal(b, fields, seen),
+    PtVector { content } => show_refusal(b, content, seen),
+    PtChildRec { content } => if ptypes::child_rec_is_value(b.types, content) { show_refusal(b, content, seen) } else { "" },
+    PtSorted { content, keys: _ } => show_refusal(b, content, seen),
+    PtHash { content, fields: _ } => show_refusal(b, content, seen),
+    PtIndex { content, keys: _ } => show_refusal(b, content, seen),
+    PtOrdered { content, keys: _ } => show_refusal(b, content, seen),
+    PtArray { content } => show_refusal(b, content, seen),
+    PtRadix { content, fields: _ } => show_refusal(b, content, seen),
+    PtTrie { content, key: _ } => show_refusal(b, content, seen),
+    PtBase => "a format of a base",
+    _ => "",
+  }
+}
+
+fn show_fields_refusal(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> text {
+  for f in fields {
+    why = show_refusal(b, f.content, seen);
+    if why != "" {
+      return why;
+    }
+    is_ref = f.content >= 0 && f.content < len(b.types) && (match b.types[f.content].parts[0] { PtDbRef => true, _ => false });
+    if is_ref && f.target < len(b.types) && f.target > 6 {
+      why = show_refusal(b, f.target, seen);
+      if why != "" {
+        return why;
+      }
+    }
+  }
+  ""
+}
+
+// `Cx::show_fn`: the routine that renders a value of type `tp`.
+fn show_fn(tp: integer) -> text {
+  if tp == 0 || tp == 1 {
+    "loft_show_long"
+  } else if tp == 2 {
+    "loft_show_single"
+  } else if tp == 3 {
+    "loft_show_float"
+  } else if tp == 4 {
+    "loft_show_bool"
+  } else if tp == 5 {
+    "loft_show_text"
+  } else if tp == 6 {
+    "loft_show_char"
+  } else {
+    "loft_show{tp}"
+  }
+}
+
+// `Cx::show_top_call`: render the value at `r`, of type `tp`, into `s`; "" with the function
+// refused where the type cannot be rendered.
+pub fn show_top_call(x: Cx, w: W, tp: integer, s: text, r: text, fmt: text) -> text {
+  why = show_refusal(x.b, tp, []);
+  if why != "" {
+    refuse(w, why);
+    return "";
+  }
+  if ptypes::reaches_reference(x.b.types, tp, []) {
+    return "loft_show_top({s}, {show_fn(tp)}, {r}, {fmt})";
+  }
+  "{show_fn(tp)}({s}, {r}, {fmt}, 0)"
 }
 
 // `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write

@@ -355,6 +355,8 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     "OpFormatSingle"
   } else if name == "OpFormatStackText" {
     "OpFormatText"
+  } else if name == "OpFormatStackDatabase" {
+    "OpFormatDatabase"
   } else {
     name
   };
@@ -363,7 +365,7 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     return texted;
   }
   is_ref_op = false;
-  stored = cgen_ref::ref_operator(x, w, name, args, ind, is_ref_op);
+  stored = cgen_ref::ref_operator(x, w, plain, args, ind, is_ref_op);
   if is_ref_op {
     return stored;
   }
@@ -756,6 +758,19 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     line(w, ind, "loft_text_free(&{report});");
     line(w, ind, "{report} = loft_store_memory(loft_tnames, loft_ntnames);");
     return held_value(w, report, "text");
+  }
+  // A record as JSON text (`struct_json_native`).
+  if (route == "n_struct_to_json" || route == "n_struct_to_json_pretty") && len(args) == 2 {
+    tp = literal(w, args[1], "type") ?? return none();
+    val = expr(x, w, args[0], ind);
+    json = temp(w, "text");
+    line(w, ind, "loft_text_free(&{json});");
+    shown = cgen_ref::show_top_call(x, w, tp, "&{json}", as_ref(w, val), if route == "n_struct_to_json" { "2" } else { "3" });
+    if w.why != "" {
+      return none();
+    }
+    line(w, ind, "{shown};");
+    return held_value(w, json, "text");
   }
   if route.starts_with("n_store_") || route == "n_spatial_range" || route == "n_trie_prefix" || route == "t_4hash_len" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase" || route == "n_env_variables" || route == "t_6vector_len" || def.native == "n_swap_world" {
     refuse(w, "a call the runtime answers by its name");
