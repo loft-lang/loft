@@ -577,7 +577,7 @@ LOFT_HOT_INLINE int64_t t_4text_size__fr(loft_str v0_self) {
 }
 
 static uint8_t t_4text_is_lowercase(loft_str v0_self) {
-    loft_frame_push("t_4text_is_lowercase", "/home/jurjen/workspace/loft-c-perf/default/03_text.loft", 110);
+    loft_frame_push("t_4text_is_lowercase", "default/03_text.loft", 110);
     LOFT_HOLD_MARK(hm);
     uint8_t r = t_4text_is_lowercase__fr(v0_self);
     LOFT_HOLD_BACK(hm);
@@ -586,7 +586,7 @@ static uint8_t t_4text_is_lowercase(loft_str v0_self) {
 }
 
 static uint8_t t_4text_is_uppercase(loft_str v0_self) {
-    loft_frame_push("t_4text_is_uppercase", "/home/jurjen/workspace/loft-c-perf/default/03_text.loft", 124);
+    loft_frame_push("t_4text_is_uppercase", "default/03_text.loft", 124);
     LOFT_HOLD_MARK(hm);
     uint8_t r = t_4text_is_uppercase__fr(v0_self);
     LOFT_HOLD_BACK(hm);
@@ -595,7 +595,7 @@ static uint8_t t_4text_is_uppercase(loft_str v0_self) {
 }
 
 static uint8_t t_4text_is_numeric(loft_str v0_self) {
-    loft_frame_push("t_4text_is_numeric", "/home/jurjen/workspace/loft-c-perf/default/03_text.loft", 138);
+    loft_frame_push("t_4text_is_numeric", "default/03_text.loft", 138);
     LOFT_HOLD_MARK(hm);
     uint8_t r = t_4text_is_numeric__fr(v0_self);
     LOFT_HOLD_BACK(hm);
@@ -604,7 +604,7 @@ static uint8_t t_4text_is_numeric(loft_str v0_self) {
 }
 
 static uint8_t t_4text_is_alphanumeric(loft_str v0_self) {
-    loft_frame_push("t_4text_is_alphanumeric", "/home/jurjen/workspace/loft-c-perf/default/03_text.loft", 152);
+    loft_frame_push("t_4text_is_alphanumeric", "default/03_text.loft", 152);
     LOFT_HOLD_MARK(hm);
     uint8_t r = t_4text_is_alphanumeric__fr(v0_self);
     LOFT_HOLD_BACK(hm);
@@ -613,7 +613,7 @@ static uint8_t t_4text_is_alphanumeric(loft_str v0_self) {
 }
 
 static uint8_t t_4text_is_alphabetic(loft_str v0_self) {
-    loft_frame_push("t_4text_is_alphabetic", "/home/jurjen/workspace/loft-c-perf/default/03_text.loft", 166);
+    loft_frame_push("t_4text_is_alphabetic", "default/03_text.loft", 166);
     LOFT_HOLD_MARK(hm);
     uint8_t r = t_4text_is_alphabetic__fr(v0_self);
     LOFT_HOLD_BACK(hm);
@@ -622,7 +622,7 @@ static uint8_t t_4text_is_alphabetic(loft_str v0_self) {
 }
 
 static uint8_t t_4text_is_whitespace(loft_str v0_self) {
-    loft_frame_push("t_4text_is_whitespace", "/home/jurjen/workspace/loft-c-perf/default/03_text.loft", 180);
+    loft_frame_push("t_4text_is_whitespace", "default/03_text.loft", 180);
     LOFT_HOLD_MARK(hm);
     uint8_t r = t_4text_is_whitespace__fr(v0_self);
     LOFT_HOLD_BACK(hm);
@@ -631,7 +631,7 @@ static uint8_t t_4text_is_whitespace(loft_str v0_self) {
 }
 
 static uint8_t t_4text_is_control(loft_str v0_self) {
-    loft_frame_push("t_4text_is_control", "/home/jurjen/workspace/loft-c-perf/default/03_text.loft", 194);
+    loft_frame_push("t_4text_is_control", "default/03_text.loft", 194);
     LOFT_HOLD_MARK(hm);
     uint8_t r = t_4text_is_control__fr(v0_self);
     LOFT_HOLD_BACK(hm);
@@ -640,7 +640,7 @@ static uint8_t t_4text_is_control(loft_str v0_self) {
 }
 
 static inline int64_t t_4text_size(loft_str v0_self) {
-    loft_frame_push("t_4text_size", "/home/jurjen/workspace/loft-c-perf/default/01_code.loft", 1121);
+    loft_frame_push("t_4text_size", "default/01_code.loft", 1121);
     LOFT_HOLD_MARK(hm);
     int64_t r = t_4text_size__fr(v0_self);
     LOFT_HOLD_BACK(hm);
@@ -712,6 +712,8 @@ static int64_t loft_body_e6(int64_t stk, int64_t sp) {
     return base + 8;
 }
 
+/* A text argument's slot is 16 bytes, as the bytecode lays it out; a view must fit it. */
+typedef char loft_body_text_fits[sizeof(loft_str) <= 16 ? 1 : -1];
 typedef int64_t (*loft_body_fn)(int64_t, int64_t);
 static const struct { const char *name; loft_body_fn fn; } loft_body_table[] = {
     { "t_4text_is_alphabetic", loft_body_e0 },

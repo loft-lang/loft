@@ -16,12 +16,18 @@
 //! The contract the runner calls (`selfhost/crt/src/crt.loft`):
 //!
 //! - `int64_t loft_body_find(const char *name, int64_t len)` — the entry for definition `name`
-//!   (with or without its `loft_shared_` prefix), or -1;
+//!   (with or without its `loft_shared_` prefix), or -1.  A name lookup: the runner calls it
+//!   once per shared native when it loads the image and keeps the entry, never per call;
 //! - `int64_t loft_body_call(int64_t entry, int64_t stack, int64_t sp)` — run it on the stack
 //!   store `stack` whose top is `sp`: the arguments lie just below `sp`, each in its slot (a
 //!   scalar 8 bytes, a text view 16); the answer is written at their base and the new top
-//!   returned.  Negative: not carried, or the stack does not hold the arguments — the caller
-//!   runs the loft body.
+//!   returned.  A boolean answer is ONE byte of its 8-byte slot (0, 1, 255 for null), read as
+//!   a byte, as the bytecode's boolean is.  Negative: not carried, or the stack does not hold
+//!   the arguments — the caller runs the loft body.
+//!
+//! Every body carried today only READS the program's data.  A body that writes a store would
+//! be written against this unit's facts (no locks, no threads), which the shim does not hold
+//! for the program it runs; it is not carried until the shim states those facts itself.
 //!
 //! A function this fragment cannot carry has no entry, so the runner runs its loft body: slower,
 //! never wrong.  The fragment says which and why in its header.
@@ -147,7 +153,17 @@ pub fn emit_bodies(data: &Data, stores: &Stores) -> Result<String, super::Refusa
     // What nothing names — a callee the carried bodies do not reach — is not written.
     let whole = format!("{RUNTIME_END}{written}{entries}");
     let kept = tidy::drop_unnamed(&whole, RUNTIME_END);
-    out.push_str(&kept[RUNTIME_END.len()..]);
+    // A frame site names its source file as the standard library was found on this machine;
+    // the committed fragment names it as `default/<file>`, as `compiled_stdlib_gen.rs` does, so
+    // it is the same text on every checkout.
+    let mut fragment = kept[RUNTIME_END.len()..].to_string();
+    for (d, _, _) in &carried {
+        let file = data.def(*d).position().file;
+        if let Some(at) = file.rfind("/default/") {
+            fragment = fragment.replace(&format!("\"{}", &file[..=at]), "\"");
+        }
+    }
+    out.push_str(&fragment);
     Ok(out)
 }
 
@@ -183,7 +199,9 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
 /// The name table and the two calls the runner binds.
 fn lookup(names: &[String]) -> String {
     let mut t = String::from(
-        "\ntypedef int64_t (*loft_body_fn)(int64_t, int64_t);\nstatic const struct { const char *name; loft_body_fn fn; } loft_body_table[] = {\n",
+        "\n/* A text argument's slot is 16 bytes, as the bytecode lays it out; a view must fit it. */\n\
+         typedef char loft_body_text_fits[sizeof(loft_str) <= 16 ? 1 : -1];\n\
+         typedef int64_t (*loft_body_fn)(int64_t, int64_t);\nstatic const struct { const char *name; loft_body_fn fn; } loft_body_table[] = {\n",
     );
     for (k, n) in names.iter().enumerate() {
         let _ = writeln!(t, "    {{ \"{n}\", loft_body_e{k} }},");
