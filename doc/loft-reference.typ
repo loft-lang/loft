@@ -8056,7 +8056,7 @@ pub type i16 = integer limit(-32768, 32767) size(2)
 pub type i32 = integer size(4)
 ```
 
-4-byte signed: -2\_147\_483\_647 – 2\_147\_483\_647.  The bottom of the 32-bit range (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold — C127's pragmatic exemption: an `i32` overflow reads `null`, where every other narrow type's reads its default.  Pinned by `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
+4-byte signed: -2\_147\_483\_647 – 2\_147\_483\_647.  The bottom of the 32-bit range (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold — C127's pragmatic exemption: an `i32` overflow reads `null`, where every other narrow type's reads its default.  Pinned by the language suite's `1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
 
 ```rust
 pub type u32 = integer limit(0, 4294967295) size(4)
@@ -8569,7 +8569,7 @@ The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
 pub operator divided_by(self: single, other: single) -> single?
 ```
 
-`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+`/` as a method: `a.divided\_by(b)` is `a / b`: infinite on a zero divisor, null for `0.0 / 0.0`.
 
 ```rust
 pub operator remainder(self: single, other: single) -> single?
@@ -8605,7 +8605,7 @@ The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
 pub operator divided_by(self: f64, other: f64) -> f64?
 ```
 
-`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+`/` as a method: `a.divided\_by(b)` is `a / b`: infinite on a zero divisor, null for `0.0 / 0.0`.
 
 ```rust
 pub operator remainder(self: f64, other: f64) -> f64?
