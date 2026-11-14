@@ -14,6 +14,7 @@ use opt_names;
 use loop_shape;
 use opt_iteration;
 use opt_non_sentinel;
+use opt_range;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -183,12 +184,19 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
     }
     return "";
   }
-  if name == "nn" {
+  if name == "nn" || name == "ranges" {
     proof = opt_non_sentinel::new_proof(b);
+    calls = opt_range::new_calls();
     facts = "";
     for d in b.data.definitions {
       if len(d.code) > 0 && d.code[0] != NdNull {
-        facts += "{opt_non_sentinel::nn_line(b, proof, d#index)}\n";
+        if name == "nn" {
+          facts += "{opt_non_sentinel::nn_line(b, proof, d#index)}\n";
+        } else {
+          // The character walks are not handed over yet: a function whose accumulator steps
+          // under a walk shows as a difference.
+          facts += "{opt_range::ranges_line(b, proof, calls, d#index, [])}\n";
+        }
       }
     }
     return facts;

@@ -91,7 +91,7 @@ print it; `cgen_survey.py` gets a `--layer <name>` per row as it is built.
 | `counters` | every counted loop of a function as `loop_shape::range_counters` reads it | `LOFT_TRACE_COUNTERS` — **compared**: `--layer counters` |
 | `iterations` | the `#index` of every `for e in v` loop its own bound keeps from overflowing (`opt::iteration::bounded_iteration_index`) | `LOFT_TRACE_COUNTERS` (its second line) — **compared**: `--layer iterations` |
 | `nn` | the non-sentinel facts a function's operators are written under (`opt::non_sentinel`) | `LOFT_TRACE_FACTS` (its `[nn]` line) — **compared**: `--layer nn` |
-| `ranges` | the range facts a body's operators were written under (`opt::range`) | `LOFT_TRACE_FACTS` (its `[ranges]` line); the loft side follows `nn` |
+| `ranges` | the range facts a body's operators were written under (`opt::range`) | `LOFT_TRACE_FACTS` (its `[ranges]` line) — compared: `--layer ranges`; differs where an accumulator steps under a character walk, until the walks are handed over |
 | `census` | each rewrite a function admitted, by rule (`make rewrite-census`) | `LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN` |
 | `declines` | each rewrite declined, with its reason (`make decline-census`) | the decline census |
 | `inline` | each function's statement count and its inline verdict | `LOFT_TRACE_INLINE` |
@@ -206,6 +206,7 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 | layer `counters` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer counters` |
 | layer `iterations` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer iterations` |
 | layer `nn` | 6 044 function rows (the functions that ask a fact), all equal | `cgen_survey.py --cgen --layer nn` |
+| layer `ranges` | tests/scripts: 438 of 444 programs equal (2 888 rows); the 6 that differ each hold an accumulator under a character walk (`±4294967295`) | `cgen_survey.py --generator <interpreted cgen, LOFT_NO_IR_VALUE_RECORD=1> --layer ranges --scripts-only` |
 
 The image carries per definition whether its body is under the 32-bit regime
 (`Definition.width32` in `ir.loft`, `Data::body_width32`): without it a `#width 32` file's unit
@@ -222,6 +223,7 @@ came out 64-bit from the image.
 | `selfhost/src/loop_shape.loft` | `src/loop_shape.rs` | `range_counters` with the stop guard and the break test; `plain_for_body` and `wrapped_counter` are not ported yet |
 | `selfhost/src/opt_iteration.loft` | `src/opt/iteration.rs` | `iteration_head`, `bounded_iteration_index`; `element_binding` is not ported yet |
 | `selfhost/src/opt_non_sentinel.loft` | `src/opt/non_sentinel.rs` | whole: `non_sentinel`, the callees' answers, the program-wide parameter proof (a greatest fixpoint over every call site, `src/fixpoint.rs` written out), the counter and iteration seeds, the escapes; the per-thread memos are one `Proof` record |
+| `selfhost/src/opt_range.loft` | `src/opt/range.rs` | `range`, `op_range`, `rem_range`, `elem_range`, `call_range` with its memo (`Calls`), `range_vars` with the counter, accumulator (`movement`, `call_step`, `step_down_by_trips`), `while` and tuple-element seeds; `plain_form` and `blocker` (the writer's questions) are not ported yet; the character walks arrive as `Walk { scope, hoist_null }`, empty until `char_walk.loft` carries both |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
@@ -237,6 +239,7 @@ Each was fixed where it was met, with its guard (rule 2 and 3 of the port).
 | loft#2483 | `x = e ?? return null;` answered the empty text for a `text?` function on the interpreter | `tests/scripts/2483-…loft` |
 | loft#2484 | `for c in f()` over a hash a call answers freed its store twice, both backends | `tests/scripts/2484-…loft` |
 | loft#2486 | an early `return` of a vector a `match` arm bound handed the caller a view into a freed store (an empty vector on the interpreter, a store freed twice on both) | `tests/scripts/2486-…loft` |
+| loft#2490 | an early `return R { … }` from a function answering a small record `R?`, after a condition that calls another such function, answers null on the interpreter (the IR value-record pass leaves the literal in its store form); the C backend refuses a larger function of that shape — **open**: filed with its cause; until it is fixed the generator's layers that use `opt_range.loft` are run interpreted with `LOFT_NO_IR_VALUE_RECORD=1`, and `cgen_survey.py --cgen` cannot build | none yet |
 | loft#2487 | a lambda written in a loop that captures a vector frees the vector's store at the end of the first round, both backends — **open**: filed with its cause and a verified workaround (bind the lambda before the loop); the port gives each walk a function of its own | none yet |
 | loft#2485 | a bind after its block ended moved the ended binding's type (a false gating warning), and a per-loop binding never ended | `tests/callarg_nstore.rs` |
 

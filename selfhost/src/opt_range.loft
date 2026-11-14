@@ -1,0 +1,1409 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft: `@FR-R-Range` (src/opt/range.rs) — the RANGE an
+// integer expression provably lies in, and so whether its operator may be written plain.
+//
+// Every fact is structural and conservative; a miss costs the checked operator, never a value.
+// The Rust module computes in `i128`; here a bound that does not fit an `integer` answers
+// null, which is the verdict `fits` gives it there.  What it keeps per thread (the callees'
+// answers) is the `Calls` record, made per program.
+
+use ir;
+use loop_shape;
+use opt_non_sentinel;
+
+// An inclusive range of values; the sentinel is never inside.
+pub struct Range {
+  pub lo: integer,
+  pub hi: integer,
+}
+
+// One variable's range, where it has one.
+struct Held {
+  has: boolean,
+  lo: integer,
+  hi: integer,
+}
+
+// A ranged element of a tuple local.
+struct ElemRange {
+  tuple: integer,
+  at: integer,
+  lo: integer,
+  hi: integer,
+}
+
+// A range that holds throughout one loop's body, by the loop's scope.
+struct BodyRange {
+  scope: integer,
+  var: integer,
+  lo: integer,
+  hi: integer,
+}
+
+// The facts one function's ranges are read under.
+pub struct Ranges {
+  vars: vector<Held>,
+  elems: vector<ElemRange>,
+  bodies: vector<BodyRange>,
+  // The stepped counters of exclusive counted loops whose `counter + 1` cannot overflow.
+  steps: vector<boolean>,
+}
+
+// A callee's answer for one set of argument ranges.
+struct Answer {
+  d: integer,
+  elem: integer,
+  key: text,
+  has: boolean,
+  lo: integer,
+  hi: integer,
+}
+
+// The answers that are facts about ONE program (`CALL_MEMO`, `LONG_DEPTH`).
+pub struct Calls {
+  answers: vector<Answer>,
+  depth: integer,
+}
+
+pub fn new_calls() -> Calls {
+  Calls { answers: [], depth: 0 }
+}
+
+// A walk's facts as the range analysis reads them: the loop's scope, and whether its null
+// test may be asked once before the loop.
+pub struct Walk {
+  pub scope: integer,
+  pub hoist_null: boolean,
+}
+
+// A callee is evaluated over its arguments' facts at most this many calls deep.
+CALL_DEPTH = 3;
+// The widest a text size or a vector length can be.
+U32_MAX = 4294967295;
+I64_MAX = 9223372036854775807;
+
+fn empty_ranges(count: integer) -> Ranges {
+  Ranges { vars: [for _ in 0..count { Held { has: false, lo: 0, hi: 0 } }], elems: [], bodies: [], steps: [for _ in 0..count { false }] }
+}
+
+fn var_range(rv: Ranges, v: integer) -> Range? {
+  if v < 0 || v >= len(rv.vars) || !rv.vars[v]!.has {
+    return null;
+  }
+  Range { lo: rv.vars[v]!.lo, hi: rv.vars[v]!.hi }
+}
+
+fn set_var(rv: Ranges, v: integer, r: Range) {
+  if v >= 0 && v < len(rv.vars) {
+    rv.vars[v]!.has = true;
+    rv.vars[v]!.lo = r.lo;
+    rv.vars[v]!.hi = r.hi;
+  }
+}
+
+fn elem_of(rv: Ranges, tuple: integer, at: integer) -> Range? {
+  for e in rv.elems {
+    if e.tuple == tuple && e.at == at {
+      return Range { lo: e.lo, hi: e.hi };
+    }
+  }
+  null
+}
+
+// `fits`: the range of two bounds, where both are values and in order.
+fn fits(lo: integer?, hi: integer?) -> Range? {
+  if lo == null || hi == null || lo > hi {
+    return null;
+  }
+  Range { lo: lo, hi: hi }
+}
+
+fn least(a: integer, b: integer) -> integer {
+  if a < b { a } else { b }
+}
+
+fn most(a: integer, b: integer) -> integer {
+  if a > b { a } else { b }
+}
+
+fn union(a: Range, b: Range) -> Range {
+  Range { lo: least(a.lo, b.lo), hi: most(a.hi, b.hi) }
+}
+
+// `type_range`: the range a value carries BY ITS STATIC TYPE — a non-nullable `Integer[lo,
+// hi]` other than the two full-integer templates — or null where the type is no fact.
+fn type_range(t: ir::TypeT) -> Range? {
+  match t {
+    TyInteger { spec } => {
+      if spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == U32_MAX) {
+        return null;
+      }
+      fits(spec.min, spec.max)
+    },
+    _ => null,
+  }
+}
+
+// The last statement of `ops` that is no line mark, or null.
+fn last_statement(ops: vector<ir::Node>) -> ir::Node? {
+  at = len(ops) - 1;
+  while at >= 0 {
+    match ops[at]! {
+      NdLine { n: _ } => {},
+      _ => return ops[at],
+    }
+    at -= 1;
+  }
+  null
+}
+
+// The statements of `ops` that are no line marks (a span around one is looked through).
+fn statements(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => { out += [o]; },
+    }
+  }
+  out
+}
+
+// `range`: the range of `v` under the non-sentinel facts `nn` and the ranges `rv`.  The
+// analysis recurses through this entry, so no step calls itself in tail position.
+pub fn range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, v: ir::Node, depth: integer) -> Range? {
+  answer = ranged(b, p, c, nn, rv, v, depth);
+  answer
+}
+
+fn ranged(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, v: ir::Node, depth: integer) -> Range? {
+  defs = b.data.definitions;
+  match loop_shape::unspan(v) {
+    NdInt { n } => Range { lo: n, hi: n },
+    NdLong { n } => if n == null { null } else { Range { lo: n, hi: n } },
+    NdVar { n } => var_range(rv, n),
+    NdTupleGet { var, idx } => elem_of(rv, var, idx),
+    // An `if` merge is the union of its arms.
+    NdIf { cond: _, t, f } => {
+      first = range(b, p, c, nn, rv, t, depth) ?? return null;
+      second = range(b, p, c, nn, rv, f, depth) ?? return null;
+      union(first, second)
+    },
+    // A block's RESULT TYPE is a fact about its value before its tail is read.
+    NdBlock { block } => {
+      typed = if len(block[0].result) > 0 { type_range(block[0].result[0]!) } else { null };
+      if typed != null {
+        return typed;
+      }
+      tail = last_statement(block[0].operators) ?? return null;
+      range(b, p, c, nn, rv, tail, depth)
+    },
+    NdReturn { inner } => range(b, p, c, nn, rv, inner, depth),
+    NdCall { def_nr, args } => {
+      if def_nr >= len(defs) {
+        return null;
+      }
+      name = defs[def_nr]!.name;
+      // A guarded field read is ranged by a twin's seeds alone; a plain function has none.
+      if name == "OpGetInt" && len(args) >= 2 && loop_shape::var_of(args[0]) >= 0 && opt_non_sentinel::int_of(args[1]) != null {
+        return null;
+      }
+      op = op_range(b, p, c, nn, rv, name, args, depth);
+      if op != null {
+        return op;
+      }
+      call_range(b, p, c, nn, rv, def_nr, args, -1, depth)
+    },
+    _ => null,
+  }
+}
+
+// The value of an `Int` or a `Long` literal that is not the sentinel, or null.
+fn literal(n: ir::Node) -> integer? {
+  match loop_shape::unspan(n) {
+    NdInt { n: value } => value,
+    NdLong { n: value } => value,
+    _ => null,
+  }
+}
+
+fn rem_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, args: vector<ir::Node>, depth: integer) -> Range? {
+  x = range(b, p, c, nn, rv, args[0]!, depth);
+  divisor = literal(args[1]!);
+  if divisor != null && divisor != 0 && (x != null || opt_non_sentinel::non_sentinel(b, p, nn, args[0]!)) {
+    m = (if divisor < 0 { -divisor } else { divisor }) - 1;
+    if x == null {
+      return Range { lo: -m, hi: m };
+    }
+    if x.lo >= 0 {
+      return Range { lo: 0, hi: least(x.hi, m) };
+    }
+    return Range { lo: -m, hi: m };
+  }
+  if x == null {
+    return null;
+  }
+  y = range(b, p, c, nn, rv, args[1]!, depth) ?? return null;
+  if x.lo < 0 || y.lo <= 0 {
+    return null;
+  }
+  Range { lo: 0, hi: least(x.hi, y.hi - 1) }
+}
+
+// `a & lit` with a non-negative literal `m`: the result lies in [0, lit] when the other
+// operand is proven or ranged.
+fn masked(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, m: ir::Node, other: ir::Node, depth: integer) -> Range? {
+  k = literal(m) ?? return null;
+  if k < 0 {
+    return null;
+  }
+  if opt_non_sentinel::non_sentinel(b, p, nn, other) || range(b, p, c, nn, rv, other, depth) != null {
+    return Range { lo: 0, hi: k };
+  }
+  null
+}
+
+// `op_range`: the range of operator `name` over `args`, where its result cannot leave the
+// type.
+fn op_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, name: text, args: vector<ir::Node>, depth: integer) -> Range? {
+  n = len(args);
+  if (name == "OpSizeText" || name == "OpLengthText" || name == "OpLengthVector" || name == "t_4text_size" || name == "t_4text_len" || name == "t_6vector_len") && n == 1 {
+    return Range { lo: 0, hi: U32_MAX };
+  }
+  if name == "t_4text_byte_at" && n == 2 {
+    return Range { lo: 0, hi: 255 };
+  }
+  if (name == "OpRemInt" || name == "OpRemIntNullable") && n == 2 {
+    return rem_range(b, p, c, nn, rv, args, depth);
+  }
+  if name == "OpLandInt" && n == 2 {
+    first = masked(b, p, c, nn, rv, args[1]!, args[0]!, depth);
+    if first != null {
+      return first;
+    }
+    second = masked(b, p, c, nn, rv, args[0]!, args[1]!, depth);
+    if second != null {
+      return second;
+    }
+    x = range(b, p, c, nn, rv, args[0]!, depth) ?? return null;
+    y = range(b, p, c, nn, rv, args[1]!, depth) ?? return null;
+    if x.lo >= 0 && y.lo >= 0 {
+      return Range { lo: 0, hi: least(x.hi, y.hi) };
+    }
+    return null;
+  }
+  if name == "OpSRightInt" && n == 2 {
+    k = opt_non_sentinel::int_of(args[1]!) ?? return null;
+    if k < 0 || k >= 64 {
+      return null;
+    }
+    x = range(b, p, c, nn, rv, args[0]!, depth) ?? return null;
+    return Range { lo: x.lo >> k, hi: x.hi >> k };
+  }
+  if (name == "OpMinSingleInt" || name == "OpAbsInt") && n == 1 {
+    x = range(b, p, c, nn, rv, args[0]!, depth) ?? return null;
+    if name == "OpMinSingleInt" {
+      return fits(-x.hi, -x.lo);
+    }
+    low = if x.lo < 0 { -x.lo } else { x.lo };
+    high = if x.hi < 0 { -x.hi } else { x.hi };
+    bottom = if x.lo >= 0 { x.lo } else if x.hi <= 0 { -x.hi } else { 0 };
+    return fits(bottom, most(low, high));
+  }
+  binary = name == "OpAddInt" || name == "OpAddIntNullable" || name == "OpMinInt" || name == "OpMinIntNullable"
+    || name == "OpMulInt" || name == "OpMulIntNullable" || name == "OpDivInt" || name == "OpDivIntNullable"
+    || name == "OpLorInt" || name == "OpEorInt";
+  if !binary || n != 2 {
+    return null;
+  }
+  x = range(b, p, c, nn, rv, args[0]!, depth) ?? return null;
+  y = range(b, p, c, nn, rv, args[1]!, depth) ?? return null;
+  if name == "OpAddInt" || name == "OpAddIntNullable" {
+    lo: integer? = x.lo + y.lo;
+    hi: integer? = x.hi + y.hi;
+    return fits(lo, hi);
+  }
+  if name == "OpMinInt" || name == "OpMinIntNullable" {
+    lo: integer? = x.lo - y.hi;
+    hi: integer? = x.hi - y.lo;
+    return fits(lo, hi);
+  }
+  if name == "OpMulInt" || name == "OpMulIntNullable" {
+    c1: integer? = x.lo * y.lo;
+    c2: integer? = x.lo * y.hi;
+    c3: integer? = x.hi * y.lo;
+    c4: integer? = x.hi * y.hi;
+    if c1 == null || c2 == null || c3 == null || c4 == null {
+      return null;
+    }
+    return fits(least(least(c1, c2), least(c3, c4)), most(most(c1, c2), most(c3, c4)));
+  }
+  if name == "OpDivInt" || name == "OpDivIntNullable" {
+    if y.lo <= 0 && y.hi >= 0 {
+      return null;
+    }
+    // The divisor's range excludes zero and no bound is the sentinel: each quotient is a value.
+    d1 = (x.lo / y.lo)!;
+    d2 = (x.lo / y.hi)!;
+    d3 = (x.hi / y.lo)!;
+    d4 = (x.hi / y.hi)!;
+    return fits(least(least(d1, d2), least(d3, d4)), most(most(d1, d2), most(d3, d4)));
+  }
+  // `|` and `^` over two non-negative ranges: below the next power of two.
+  if x.lo < 0 || y.lo < 0 {
+    return null;
+  }
+  top = most(x.hi, y.hi);
+  if top == 0 {
+    return Range { lo: 0, hi: 0 };
+  }
+  power: integer? = 1;
+  for _ in 0..64 {
+    if power == null || power > top {
+      break;
+    }
+    power = power * 2;
+  }
+  if power == null {
+    return null;
+  }
+  Range { lo: 0, hi: power - 1 }
+}
+
+// The variable of `d` its parameter named `name` is (`Function::var`), or -1.
+fn named_var(d: ir::Definition, name: text) -> integer {
+  for n in d.variables.names {
+    if n.name == name {
+      return n.nr;
+    }
+  }
+  -1
+}
+
+// `Definition::is_loft_defined`: a function with a body the program or a library wrote.
+fn is_loft_defined(d: ir::Definition) -> boolean {
+  (d.name.starts_with("n_") || d.name.starts_with("t_") || d.instance_of >= 0) && opt_non_sentinel::has_body(d)
+}
+
+// What exit `e` of a callee answers: its range, or that of its element `elem` when the call
+// is read as a tuple.
+fn answer_of(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, e: ir::Node, elem: integer, depth: integer) -> Range? {
+  if elem < 0 {
+    return range(b, p, c, nn, rv, e, depth);
+  }
+  elem_range(b, p, c, nn, rv, e, elem, depth)
+}
+
+// The union of every `return` of `code` under the callee's facts; `ok[0]` is cleared where one
+// has no range.
+fn returns_of(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, code: ir::Node, elem: integer, depth: integer, ok: vector<boolean>) -> Range? {
+  out = [Held { has: false, lo: 0, hi: 0 }];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner } => {
+        if ok[0]! {
+          r = answer_of(b, p, c, nn, rv, inner, elem, depth);
+          if r == null {
+            ok[0] = false;
+          } else if out[0]!.has {
+            out[0]!.lo = least(out[0]!.lo, r.lo);
+            out[0]!.hi = most(out[0]!.hi, r.hi);
+          } else {
+            out[0]!.has = true;
+            out[0]!.lo = r.lo;
+            out[0]!.hi = r.hi;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if !out[0]!.has {
+    return null;
+  }
+  Range { lo: out[0]!.lo, hi: out[0]!.hi }
+}
+
+// `call_range`: a call of a user function evaluated over its arguments' facts — a
+// one-expression body at the call site, a longer one through its own facts under the
+// parameters' seeds, kept per callee and argument ranges.
+fn call_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, d: integer, args: vector<ir::Node>, elem: integer, depth: integer) -> Range? {
+  if depth >= CALL_DEPTH {
+    return null;
+  }
+  def = b.data.definitions[d]!;
+  if !opt_non_sentinel::has_body(def) || len(def.attributes) != len(args) {
+    return null;
+  }
+  count = len(def.variables.variables);
+  nn2: vector<boolean> = [for _ in 0..count { false }];
+  rv2 = empty_ranges(count);
+  key = "";
+  seeded = false;
+  for at in def.attributes {
+    param = named_var(def, at.name);
+    if param < 0 || param >= count {
+      return null;
+    }
+    arg = args[at#index]!;
+    r = range(b, p, c, nn, rv, arg, depth);
+    if r != null {
+      key += "{r.lo}..{r.hi},";
+      set_var(rv2, param, r);
+      nn2[param] = true;
+      seeded = true;
+    } else {
+      key += "-,";
+      if opt_non_sentinel::non_sentinel(b, p, nn, arg) {
+        nn2[param] = true;
+      }
+    }
+  }
+  body = match def.code[0]! {
+    NdBlock { block } => block[0].operators,
+    _ => return null,
+  };
+  stmts = statements_raw(body);
+  if len(stmts) == 0 {
+    return null;
+  }
+  if len(stmts) == 1 {
+    return answer_of(b, p, c, nn2, rv2, stmts[0]!, elem, depth + 1);
+  }
+  if (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || !seeded {
+    return null;
+  }
+  for a in c.answers {
+    if a.d == d && a.elem == elem && a.key == key {
+      if !a.has {
+        return null;
+      }
+      return Range { lo: a.lo, hi: a.hi };
+    }
+  }
+  // The memo entry is marked in progress (unranged) before the analysis, so a recursive
+  // callee meets itself as unranged; the nesting count bounds what the depth cannot.
+  if c.depth >= CALL_DEPTH {
+    return null;
+  }
+  slot = len(c.answers);
+  c.answers += [Answer { d: d, elem: elem, key: key, has: false, lo: 0, hi: 0 }];
+  c.depth += 1;
+  callee_nn = opt_non_sentinel::non_sentinel_vars(b, p, d);
+  callee_rv = range_vars_seeded(b, p, c, d, callee_nn, [], rv2);
+  ok = [true];
+  out = returns_of(b, p, c, callee_nn, callee_rv, def.code[0]!, elem, depth + 1, ok);
+  if ok[0]! {
+    tail = last_statement(body);
+    falls = if tail == null { false } else { match loop_shape::unspan(tail) { NdReturn { inner: _ } => false, _ => true } };
+    if falls {
+      r = answer_of(b, p, c, callee_nn, callee_rv, tail!, elem, depth + 1);
+      if r == null {
+        ok[0] = false;
+      } else if out == null {
+        out = r;
+      } else {
+        out = union(out, r);
+      }
+    }
+  }
+  c.depth -= 1;
+  if ok[0]! && out != null {
+    c.answers[slot]!.has = true;
+    c.answers[slot]!.lo = out.lo;
+    c.answers[slot]!.hi = out.hi;
+    return out;
+  }
+  null
+}
+
+// The statements of `ops` that are no line marks, as written (a span is a statement).
+fn statements_raw(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    match o {
+      NdLine { n: _ } => {},
+      _ => { out += [o]; },
+    }
+  }
+  out
+}
+
+// `elem_range`: the range of element `i` of a tuple value.  Recursed through this entry, as
+// `range` is.
+fn elem_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, v: ir::Node, i: integer, depth: integer) -> Range? {
+  answer = elem_ranged(b, p, c, nn, rv, v, i, depth);
+  answer
+}
+
+fn elem_ranged(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, v: ir::Node, i: integer, depth: integer) -> Range? {
+  defs = b.data.definitions;
+  match loop_shape::unspan(v) {
+    NdTuple { items } => {
+      if i >= len(items) {
+        return null;
+      }
+      range(b, p, c, nn, rv, items[i]!, depth)
+    },
+    NdIf { cond: _, t, f } => {
+      first = elem_range(b, p, c, nn, rv, t, i, depth) ?? return null;
+      second = elem_range(b, p, c, nn, rv, f, i, depth) ?? return null;
+      union(first, second)
+    },
+    NdBlock { block } => {
+      tail = last_statement(block[0].operators) ?? return null;
+      elem_range(b, p, c, nn, rv, tail, i, depth)
+    },
+    NdReturn { inner } => elem_range(b, p, c, nn, rv, inner, i, depth),
+    NdCall { def_nr, args } => {
+      if def_nr >= len(defs) || !is_loft_defined(defs[def_nr]!) {
+        return null;
+      }
+      call_range(b, p, c, nn, rv, def_nr, args, i, depth)
+    },
+    _ => null,
+  }
+}
+
+// Does `v` name variable `i` anywhere?
+fn mentions_var(v: ir::Node, i: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == i { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// How many nodes of `v` write variable `i` — a `Set`, and a tuple member's write when
+// `members`.
+fn writes_of(v: ir::Node, i: integer, members: boolean) -> integer {
+  count = [0];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var == i { count[0] += 1; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if members && var == i { count[0] += 1; } },
+      _ => {},
+    }
+  });
+  count[0]!
+}
+
+// The arguments of a call of the definition named `name`, or null.
+fn is_op(defs: vector<ir::Definition>, v: ir::Node, name: text) -> vector<ir::Node>? {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if def_nr < len(defs) && defs[def_nr]!.name == name {
+        return [for a in args { a }];
+      }
+      null
+    },
+    _ => null,
+  }
+}
+
+// One `Set` of a function: its variable and the value assigned.
+struct Assigned {
+  var: integer,
+  value: ir::Node,
+}
+
+// Every `Set` of `code`, in walk order.
+fn assignments(code: ir::Node) -> vector<Assigned> {
+  out: vector<Assigned> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => { out += [Assigned { var: var, value: inner }]; },
+      _ => {},
+    }
+  });
+  out
+}
+
+// Every loop of `code`, in walk order.
+fn loops_of(code: ir::Node) -> vector<ir::Block> {
+  out: vector<ir::Block> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdLoop { block } => { out += [block[0]!]; },
+      _ => {},
+    }
+  });
+  out
+}
+
+// `seed_elems`: each element of a tuple local every assignment of which answers that element
+// in range.
+fn seed_elems(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, sets: vector<Assigned>, nn: vector<boolean>, escaped: vector<boolean>, rv: Ranges) {
+  vars = b.data.definitions[d]!.variables.variables;
+  for v in vars {
+    t = v#index;
+    arity = match opt_non_sentinel::cgen_base(v.type_def[0]!) {
+      TyTuple { elems } => len(elems),
+      _ => 0,
+    };
+    if arity == 0 || escaped[t]! {
+      continue;
+    }
+    for i in 0..arity {
+      if elem_of(rv, t, i) != null {
+        continue;
+      }
+      acc: Range? = null;
+      ok = true;
+      any = false;
+      for s in sets {
+        if s.var != t || !ok {
+          continue;
+        }
+        any = true;
+        r = elem_range(b, p, c, nn, rv, s.value, i, 0);
+        if r == null {
+          ok = false;
+        } else if acc == null {
+          acc = r;
+        } else {
+          acc = union(acc, r);
+        }
+      }
+      if ok && any && acc != null {
+        rv.elems += [ElemRange { tuple: t, at: i, lo: acc.lo, hi: acc.hi }];
+      }
+    }
+  }
+}
+
+// `while_counter_shape`: the counter of `while i < bound { …; i = i + 1 }` as the parser
+// lowers it — the test first, the step last, the bound not naming the counter, the counter
+// written once in the loop — or -1.
+fn while_counter_shape(defs: vector<ir::Definition>, lp: ir::Block) -> integer {
+  ops = statements_raw(lp.operators);
+  if len(ops) == 0 {
+    return -1;
+  }
+  cond = match loop_shape::unspan(ops[0]!) {
+    NdIf { cond: tested, t: _, f: _ } => tested,
+    _ => return -1,
+  };
+  not = is_op(defs, cond, "OpNot") ?? return -1;
+  if len(not) == 0 {
+    return -1;
+  }
+  lt = is_op(defs, not[0]!, "OpLtInt") ?? return -1;
+  if len(lt) < 2 {
+    return -1;
+  }
+  i = loop_shape::var_of(lt[0]!);
+  if i < 0 || mentions_var(lt[1]!, i) {
+    return -1;
+  }
+  body = match loop_shape::unspan(ops[len(ops) - 1]!) {
+    NdBlock { block } => statements_raw(block[0].operators),
+    _ => return -1,
+  };
+  if len(body) == 0 {
+    return -1;
+  }
+  stepped = -1;
+  step: ir::Node = NdNull;
+  match loop_shape::unspan(body[len(body) - 1]!) {
+    NdSet { var, inner } => {
+      stepped = var;
+      step = inner;
+    },
+    _ => return -1,
+  }
+  add = is_op(defs, step, "OpAddInt") ?? return -1;
+  if stepped != i || len(add) < 2 || loop_shape::var_of(add[0]!) != i || literal(add[1]!) != 1 {
+    return -1;
+  }
+  writes = 0;
+  for o in lp.operators {
+    writes += writes_of(o, i, true);
+  }
+  if writes == 1 { i } else { -1 }
+}
+
+// `seed_while_counters`: a `while` counter that only steps up from a ranged start.
+fn seed_while_counters(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, loops: vector<ir::Block>, sets: vector<Assigned>, code: ir::Node, nn: vector<boolean>, escaped: vector<boolean>, rv: Ranges, counters: vector<boolean>) {
+  if (env_variable("LOFT_NO_WHILE_COUNTER") ?? "0") != "0" {
+    return;
+  }
+  defs = b.data.definitions;
+  shaped: vector<integer> = [for _ in 0..len(counters) { 0 }];
+  for lp in loops {
+    i = while_counter_shape(defs, lp);
+    if i >= 0 && i < len(shaped) {
+      shaped[i] += 1;
+    }
+  }
+  for n in shaped {
+    i = n#index;
+    if n == 0 || counters[i]! || escaped[i]! || rv.vars[i]!.has {
+      continue;
+    }
+    steps = 0;
+    lo: integer? = null;
+    ok = writes_of(code, i, true) == writes_of(code, i, false);
+    for s in sets {
+      if s.var != i || !ok {
+        continue;
+      }
+      if mentions_var(s.value, i) {
+        steps += 1;
+      } else {
+        r = range(b, p, c, nn, rv, s.value, 0);
+        if r == null {
+          ok = false;
+        } else {
+          lo = if lo == null { r.lo } else { least(lo, r.lo) };
+        }
+      }
+    }
+    // Each self-step is one shaped loop's step: a step anywhere else is a second write.
+    if ok && steps == n && lo != null {
+      set_var(rv, i, Range { lo: lo, hi: I64_MAX });
+      counters[i] = true;
+    }
+  }
+}
+
+// `end_source`: the variable a counted loop's end local was copied from, where it is set once.
+fn end_source(sets: vector<Assigned>, end: integer) -> integer {
+  from = -1;
+  count = 0;
+  for s in sets {
+    if s.var == end {
+      count += 1;
+      from = loop_shape::var_of(s.value);
+    }
+  }
+  if count == 1 { from } else { -1 }
+}
+
+// `seed_counters`: a counted loop's counters, ranged off its seed and its end.
+fn seed_counters(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, loops: vector<ir::Block>, sets: vector<Assigned>, nn: vector<boolean>, rv: Ranges, counters: vector<boolean>) {
+  defs = b.data.definitions;
+  open_ends = (env_variable("LOFT_NO_OPEN_END") ?? "0") == "0";
+  for lp in loops {
+    rc = loop_shape::range_counters(lp, defs) ?? continue;
+    counters[rc.index] = true;
+    counters[rc.loop_var] = true;
+    if rc.next >= 0 {
+      counters[rc.next] = true;
+    }
+    stepped = if rc.next >= 0 { rc.next } else { rc.index };
+    // The seed: the one `Set` to the stepped counter that is not its own step.
+    seed: Range? = null;
+    seeds = 0;
+    for s in sets {
+      if s.var != stepped {
+        continue;
+      }
+      step = is_op(defs, s.value, "OpAddInt");
+      if step != null && len(step) == 2 && loop_shape::var_of(step[0]!) == stepped {
+        continue;
+      }
+      seeds += 1;
+      seed = range(b, p, c, nn, rv, s.value, 0);
+    }
+    end = range(b, p, c, nn, rv, rc.hi, 0);
+    // An exclusive loop over an unranged end steps only after the test saw the counter below
+    // the end, so the step cannot overflow: the open-end clause.
+    open_end = !rc.inclusive && open_ends && end == null;
+    lo_var = 0;
+    if seed != null {
+      lo_var = if rc.next >= 0 || seed.lo == I64_MAX { seed.lo } else { seed.lo + 1 };
+    }
+    if seeds == 1 && open_end && (rc.next >= 0 || (seed != null && seed.hi < I64_MAX)) {
+      rv.steps[stepped] = true;
+    } else if seeds == 1 && seed != null && end != null {
+      top = end.hi;
+      hi_var = if rc.inclusive || top == -I64_MAX { top } else { top - 1 };
+      set_var(rv, stepped, Range { lo: seed.lo, hi: most(top, seed.lo) });
+      if rc.next >= 0 {
+        set_var(rv, rc.index, Range { lo: lo_var, hi: most(hi_var, lo_var) });
+      }
+      set_var(rv, rc.loop_var, Range { lo: lo_var, hi: most(hi_var, lo_var) });
+    }
+    // The END clause: an end copied from a variable `x` the loop never writes is above the
+    // loop variable's lowest value throughout the body.
+    end_var = loop_shape::var_of(rc.hi);
+    if seeds == 1 && !rc.inclusive && seed != null && end_var >= 0 {
+      x = end_source(sets, end_var);
+      held = var_range(rv, x);
+      if x >= 0 && held != null {
+        written = 0;
+        for o in lp.operators {
+          written += writes_of(o, x, false) + writes_of(o, end_var, false);
+        }
+        floor = most(if lo_var == I64_MAX { lo_var } else { lo_var + 1 }, held.lo);
+        if written == 0 && floor <= held.hi {
+          rv.bodies += [BodyRange { scope: lp.scope, var: x, lo: floor, hi: held.hi }];
+        }
+      }
+    }
+  }
+}
+
+// `literal_step`: `acc ± literal`, the literal below 2^31 — its signed step — or null.
+fn literal_step(defs: vector<ir::Definition>, acc: integer, expr: ir::Node) -> integer? {
+  name = loop_shape::call_name(defs, expr);
+  if name != "OpAddInt" && name != "OpMinInt" {
+    return null;
+  }
+  args = is_op(defs, expr, name) ?? return null;
+  if len(args) != 2 || loop_shape::var_of(args[0]!) != acc {
+    return null;
+  }
+  step = literal(args[1]!) ?? return null;
+  if step >= 2147483648 || step <= -2147483648 {
+    return null;
+  }
+  if name == "OpAddInt" { step } else { -step }
+}
+
+// `call_step`: a step taken through a tuple-answering call — the statement at `at` of `ops`
+// is `acc = tup.k`, and the call just before it handed `acc` to a callee each of whose exits
+// answers `p` or `p ± c` in element `k`.  The largest `|c|`, or null.
+fn call_step(b: ir::Bundle, ops: vector<ir::Node>, at: integer, acc: integer) -> integer? {
+  defs = b.data.definitions;
+  tup = -1;
+  member = -1;
+  match loop_shape::unspan(ops[at]!) {
+    NdSet { var: _, inner } => {
+      match loop_shape::unspan(inner) {
+        NdTupleGet { var, idx } => {
+          tup = var;
+          member = idx;
+        },
+        _ => return null,
+      }
+    },
+    _ => return null,
+  }
+  callee = -1;
+  call_args: vector<ir::Node> = [];
+  k = at - 1;
+  while k >= 0 {
+    target = -1;
+    value: ir::Node = NdNull;
+    match loop_shape::unspan(ops[k]!) {
+      NdSet { var, inner } => {
+        target = var;
+        value = inner;
+      },
+      _ => break,
+    }
+    if target == tup {
+      match loop_shape::unspan(value) {
+        NdCall { def_nr, args } => {
+          callee = def_nr;
+          call_args = [for a in args { a }];
+        },
+        _ => {},
+      }
+      break;
+    }
+    reads = match loop_shape::unspan(value) {
+      NdTupleGet { var, idx: _ } => var == tup,
+      _ => false,
+    };
+    if !reads {
+      break;
+    }
+    k -= 1;
+  }
+  if callee < 0 || callee >= len(defs) {
+    return null;
+  }
+  param = -1;
+  for a in call_args {
+    if param < 0 && loop_shape::var_of(a) == acc {
+      param = a#index;
+    }
+  }
+  def = defs[callee]!;
+  if param < 0 || len(def.code) == 0 || def.code[0] == NdNull {
+    return null;
+  }
+  body = def.code[0]!;
+  if writes_of(body, param, true) > 0 {
+    return null;
+  }
+  // Element `member` of every result: `p` or `p ± c`, answering `|c|`.
+  state = [0, 1];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner } => {
+        step = result_step(defs, inner, member, param);
+        if step == null {
+          state[1] = 0;
+        } else {
+          state[0] = most(state[0]!, step);
+        }
+      },
+      _ => {},
+    }
+  });
+  if state[1]! == 0 {
+    return null;
+  }
+  top = match loop_shape::unspan(body) {
+    NdBlock { block } => block[0].operators,
+    _ => return null,
+  };
+  if len(top) == 0 {
+    return null;
+  }
+  last = loop_shape::unspan(top[len(top) - 1]!);
+  match last {
+    NdReturn { inner: _ } => state[0],
+    _ => {
+      step = result_step(defs, last, member, param) ?? return null;
+      most(state[0]!, step)
+    },
+  }
+}
+
+// Element `member` of the result tuple `result`: 0 for the parameter itself, `|c|` for
+// `p ± c`, null for anything else.
+fn result_step(defs: vector<ir::Definition>, result: ir::Node, member: integer, param: integer) -> integer? {
+  match loop_shape::unspan(result) {
+    NdTuple { items } => {
+      if member >= len(items) {
+        return null;
+      }
+      if loop_shape::var_of(items[member]!) == param {
+        return 0;
+      }
+      step = literal_step(defs, param, items[member]!) ?? return null;
+      if step < 0 { -step } else { step }
+    },
+    _ => null,
+  }
+}
+
+// How often a loop runs at most: a walk's whose null test is hoisted, the width of a text;
+// a counted loop's, the width of its counter's range.
+fn trips(b: ir::Bundle, walks: vector<Walk>, rv: Ranges, lp: ir::Block) -> integer? {
+  for w in walks {
+    if w.scope == lp.scope && w.hoist_null {
+      return U32_MAX;
+    }
+  }
+  rc = loop_shape::range_counters(lp, b.data.definitions) ?? return null;
+  held = var_range(rv, if rc.next >= 0 { rc.next } else { rc.index }) ?? return null;
+  width: integer? = held.hi - held.lo + 1;
+  if width == null {
+    return null;
+  }
+  most(width, 0)
+}
+
+// `movement`: how far the statements of `node` can move accumulator `acc` — each step times
+// the trips of the loops around it — or null where a write is no bounded step.  `steps[0]`
+// counts the steps met.  `ops` and `at` name `node` as a statement of a block, where it is one.
+fn movement(b: ir::Bundle, walks: vector<Walk>, rv: Ranges, node: ir::Node, ops: vector<ir::Node>, at: integer, acc: integer, mult: integer?, steps: vector<integer>) -> integer? {
+  answer = moved_by(b, walks, rv, node, ops, at, acc, mult, steps);
+  answer
+}
+
+fn moved_by(b: ir::Bundle, walks: vector<Walk>, rv: Ranges, node: ir::Node, ops: vector<ir::Node>, at: integer, acc: integer, mult: integer?, steps: vector<integer>) -> integer? {
+  defs = b.data.definitions;
+  match loop_shape::unspan(node) {
+    NdSet { var, inner } => {
+      if var != acc {
+        return movement(b, walks, rv, inner, [], -1, acc, mult, steps);
+      }
+      step = literal_step(defs, acc, inner);
+      if step == null {
+        if at < 0 {
+          return null;
+        }
+        step = call_step(b, ops, at, acc);
+      }
+      if step == null {
+        return null;
+      }
+      steps[0] += 1;
+      if mult == null {
+        return null;
+      }
+      moved: integer? = (if step < 0 { -step } else { step }) * mult;
+      moved
+    },
+    NdTuplePut { var, idx: _, inner } => {
+      if var == acc {
+        return null;
+      }
+      movement(b, walks, rv, inner, [], -1, acc, mult, steps)
+    },
+    NdLoop { block } => {
+      inner: integer? = null;
+      if mult != null {
+        t = trips(b, walks, rv, block[0]!);
+        if t != null {
+          inner = mult * t;
+        }
+      }
+      total: integer? = 0;
+      for op in block[0].operators {
+        m = movement(b, walks, rv, op, [], -1, acc, inner, steps) ?? return null;
+        if total != null {
+          total = total + m;
+        }
+      }
+      total
+    },
+    NdBlock { block } => {
+      total: integer? = 0;
+      for op in block[0].operators {
+        m = movement(b, walks, rv, op, block[0].operators, op#index, acc, mult, steps) ?? return null;
+        if total != null {
+          total = total + m;
+        }
+      }
+      total
+    },
+    NdCall { def_nr: _, args } => sum_movement(b, walks, rv, args, acc, mult, steps),
+    NdCallRef { var: _, args } => sum_movement(b, walks, rv, args, acc, mult, steps),
+    NdInsert { items } => sum_movement(b, walks, rv, items, acc, mult, steps),
+    NdTuple { items } => sum_movement(b, walks, rv, items, acc, mult, steps),
+    NdParallel { arms } => sum_movement(b, walks, rv, arms, acc, mult, steps),
+    NdReturn { inner } => movement(b, walks, rv, inner, [], -1, acc, mult, steps),
+    NdDrop { inner } => movement(b, walks, rv, inner, [], -1, acc, mult, steps),
+    NdYield { inner } => movement(b, walks, rv, inner, [], -1, acc, mult, steps),
+    NdIf { cond, t, f } => sum_movement(b, walks, rv, [cond, t, f], acc, mult, steps),
+    NdIter { var: _, create, next, init } => sum_movement(b, walks, rv, [create, next, init], acc, mult, steps),
+    _ => 0,
+  }
+}
+
+fn sum_movement(b: ir::Bundle, walks: vector<Walk>, rv: Ranges, nodes: vector<ir::Node>, acc: integer, mult: integer?, steps: vector<integer>) -> integer? {
+  total: integer? = 0;
+  for n in nodes {
+    m = movement(b, walks, rv, n, [], -1, acc, mult, steps) ?? return null;
+    if total != null {
+      total = total + m;
+    }
+  }
+  total
+}
+
+// Every block of `code`, in walk order.
+fn blocks_of(code: ir::Node) -> vector<ir::Block> {
+  out: vector<ir::Block> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdBlock { block } => { out += [block[0]!]; },
+      _ => {},
+    }
+  });
+  out
+}
+
+// Is `v` the step `n = n - 1`?
+fn is_step_down(defs: vector<ir::Definition>, v: ir::Node, n: integer) -> boolean {
+  match loop_shape::unspan(v) {
+    NdSet { var, inner } => {
+      args = is_op(defs, inner, "OpMinInt");
+      var == n && args != null && len(args) == 2 && loop_shape::var_of(args[0]!) == n && opt_non_sentinel::int_of(args[1]!) == 1
+    },
+    _ => false,
+  }
+}
+
+// Does every path through `v` end with the step of `n`, or leave `n` alone?
+fn ends_with_step(defs: vector<ir::Definition>, v: ir::Node, n: integer) -> boolean {
+  if is_step_down(defs, v, n) || writes_of(v, n, false) == 0 {
+    return true;
+  }
+  match loop_shape::unspan(v) {
+    NdBlock { block } => {
+      ops = statements(block[0].operators);
+      if len(ops) == 0 {
+        return true;
+      }
+      for o in ops {
+        if o#index + 1 < len(ops) && writes_of(o, n, false) > 0 {
+          return false;
+        }
+      }
+      last = ends_with_step(defs, ops[len(ops) - 1]!, n);
+      last
+    },
+    NdIf { cond, t, f } => {
+      both = writes_of(cond, n, false) == 0 && ends_with_step(defs, t, n) && ends_with_step(defs, f, n);
+      both
+    },
+    _ => false,
+  }
+}
+
+// `step_down_by_trips`: `n` seeded from a non-negative `x`, then stepped down once per round
+// of `for _ in 0..x` and nowhere else — inside that loop `n` is at least 1.  The loop's scope
+// and `x`'s top, or null.
+fn step_down_by_trips(b: ir::Bundle, rv: Ranges, ops: vector<ir::Node>, k: integer, n: integer, seed: ir::Node) -> Range? {
+  defs = b.data.definitions;
+  x = loop_shape::var_of(seed);
+  held = var_range(rv, x) ?? return null;
+  if x < 0 || held.lo < 0 {
+    return null;
+  }
+  // The statements between the seed and the loop write neither `n` nor `x`.
+  at = k + 1;
+  found = -1;
+  while at < len(ops) && found < 0 {
+    if writes_of(ops[at]!, n, false) > 0 {
+      found = at;
+    } else if writes_of(ops[at]!, x, false) > 0 {
+      return null;
+    }
+    at += 1;
+  }
+  if found < 0 {
+    return null;
+  }
+  fb = match loop_shape::unspan(ops[found]!) {
+    NdBlock { block } => block[0].operators,
+    _ => return null,
+  };
+  // `_range_end = x; index = -1; loop { index = index + 1; if end <= index break; … }`
+  end = -1;
+  index_from = -1;
+  lp: ir::Block? = null;
+  for op in fb {
+    match loop_shape::unspan(op) {
+      NdSet { var, inner } => {
+        if loop_shape::var_of(inner) == x {
+          end = var;
+        } else if opt_non_sentinel::int_of(inner) == -1 {
+          index_from = var;
+        } else {
+          return null;
+        }
+      },
+      NdLoop { block } => {
+        if lp != null {
+          return null;
+        }
+        lp = block[0];
+      },
+      NdLine { n: _ } => {},
+      _ => return null,
+    }
+  }
+  if lp == null || end < 0 {
+    return null;
+  }
+  rc = loop_shape::range_counters(lp, defs) ?? return null;
+  if rc.next >= 0 || rc.inclusive || rc.index != index_from || loop_shape::var_of(rc.hi) != end {
+    return null;
+  }
+  body = statements([for o in lp.operators if o#index > 0 { o }]);
+  for o in lp.operators {
+    if o#index > 0 && (writes_of(o, x, false) > 0 || writes_of(o, end, false) > 0 || writes_of(o, rc.index, false) > 0) {
+      return null;
+    }
+  }
+  if len(body) == 0 {
+    return null;
+  }
+  for o in body {
+    if o#index + 1 < len(body) && writes_of(o, n, false) > 0 {
+      return null;
+    }
+  }
+  if !ends_with_step(defs, body[len(body) - 1]!, n) {
+    return null;
+  }
+  Range { lo: lp.scope, hi: held.hi }
+}
+
+// `seed_accumulators`: a local seeded in range and then only stepped by literals (or through
+// a call that answers it stepped) under loops whose trips are known moves at most the steps
+// times the trips from its seed.
+fn seed_accumulators(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, blocks: vector<ir::Block>, code: ir::Node, nn: vector<boolean>, escaped: vector<boolean>, walks: vector<Walk>, rv: Ranges, counters: vector<boolean>) {
+  defs = b.data.definitions;
+  for bl in blocks {
+    for op in bl.operators {
+      k = op#index;
+      n = -1;
+      e: ir::Node = NdNull;
+      match loop_shape::unspan(op) {
+        NdSet { var, inner } => {
+          n = var;
+          e = inner;
+        },
+        _ => continue,
+      }
+      if counters[n]! || rv.vars[n]!.has || escaped[n]! {
+        continue;
+      }
+      // The seed: ranged, and not itself a step.
+      if literal_step(defs, n, e) != null {
+        continue;
+      }
+      seed = range(b, p, c, nn, rv, e, 0) ?? continue;
+      // Every write to `n` in the function: this seed, and the steps after it here.
+      writes = writes_of(code, n, true);
+      steps = [0];
+      bound: integer? = 0;
+      moved = true;
+      for later in bl.operators {
+        if later#index <= k || !moved {
+          continue;
+        }
+        m = movement(b, walks, rv, later, bl.operators, later#index, n, 1, steps);
+        if m == null {
+          moved = false;
+        } else if bound != null {
+          bound = bound + m;
+        }
+      }
+      if !moved || bound == null || steps[0]! == 0 || writes != steps[0]! + 1 {
+        continue;
+      }
+      down = step_down_by_trips(b, rv, bl.operators, k, n, e);
+      if down != null && steps[0]! == 1 {
+        set_var(rv, n, Range { lo: least(seed.lo, 0), hi: seed.hi });
+        rv.bodies += [BodyRange { scope: down.lo, var: n, lo: 1, hi: down.hi }];
+        counters[n] = true;
+        continue;
+      }
+      lo: integer? = seed.lo - bound;
+      hi: integer? = seed.hi + bound;
+      r = fits(lo, hi);
+      if r != null {
+        set_var(rv, n, r);
+        counters[n] = true;
+      }
+    }
+  }
+}
+
+// `scan_sets`: one round — every `Set(var, expr)`'s range under the current facts folded into
+// `state` (0 no assignment seen, 1 every assignment ranged so far, 2 one is not) and `acc`.
+fn scan_sets(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, sets: vector<Assigned>, nn: vector<boolean>, rv: Ranges, counters: vector<boolean>, state: vector<integer>, acc: vector<Held>) {
+  for s in sets {
+    nr = s.var;
+    if counters[nr]! {
+      continue;
+    }
+    r = if mentions_var(s.value, nr) { null } else { range(b, p, c, nn, rv, s.value, 0) };
+    if r == null {
+      state[nr] = 2;
+    } else if state[nr]! == 0 {
+      state[nr] = 1;
+      acc[nr]!.lo = r.lo;
+      acc[nr]!.hi = r.hi;
+    } else if state[nr]! == 1 {
+      acc[nr]!.lo = least(acc[nr]!.lo, r.lo);
+      acc[nr]!.hi = most(acc[nr]!.hi, r.hi);
+    }
+  }
+}
+
+fn ranged_count(rv: Ranges) -> integer {
+  n = 0;
+  for v in rv.vars {
+    if v.has {
+      n += 1;
+    }
+  }
+  n
+}
+
+// `range_vars`: the ranges of function `d`'s variables — the type clause, the counters, the
+// accumulators, then a fixpoint over the assignments: a variable enters once every input of
+// every assignment is in, so its range never changes afterwards.
+pub fn range_vars(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, nn: vector<boolean>, walks: vector<Walk>) -> Ranges {
+  count = len(b.data.definitions[d]!.variables.variables);
+  range_vars_seeded(b, p, c, d, nn, walks, empty_ranges(count))
+}
+
+fn range_vars_seeded(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, nn: vector<boolean>, walks: vector<Walk>, seeds: Ranges) -> Ranges {
+  def = b.data.definitions[d]!;
+  vars = def.variables.variables;
+  count = len(vars);
+  rv = empty_ranges(count);
+  // A definition that is no function (a constant's initialiser, a template) stores no
+  // variables: it has no facts.
+  if len(def.code) == 0 || def.def_type != 1 {
+    return rv;
+  }
+  code = def.code[0]!;
+  escaped: vector<boolean> = [for _ in 0..count { false }];
+  opt_non_sentinel::collect_escapes(b, code, escaped);
+  // A seeded variable holds its seed only while nothing in the code can change it.
+  for s in seeds.vars {
+    v = s#index;
+    if s.has && writes_of(code, v, true) == 0 && !escaped[v]! {
+      set_var(rv, v, Range { lo: s.lo, hi: s.hi });
+    }
+  }
+  // The type clause: every variable whose static type is a fact carries that range.
+  for v in vars {
+    typed = type_range(v.type_def[0]!);
+    if typed != null && !rv.vars[v#index]!.has {
+      set_var(rv, v#index, typed);
+    }
+  }
+  sets = assignments(code);
+  loops = loops_of(code);
+  blocks = blocks_of(code);
+  // Counters first: their step names themselves, which the fixpoint below refuses.
+  counters: vector<boolean> = [for _ in 0..count { false }];
+  seed_counters(b, p, c, loops, sets, nn, rv, counters);
+  seed_accumulators(b, p, c, blocks, code, nn, escaped, walks, rv, counters);
+  seed_while_counters(b, p, c, loops, sets, code, nn, escaped, rv, counters);
+  for _ in 0..4 * count + 8 {
+    state: vector<integer> = [for _ in 0..count { 0 }];
+    acc: vector<Held> = [for _ in 0..count { Held { has: false, lo: 0, hi: 0 } }];
+    elems_before = len(rv.elems);
+    seed_elems(b, p, c, d, sets, nn, escaped, rv);
+    scan_sets(b, p, c, sets, nn, rv, counters, state, acc);
+    changed = false;
+    for s in state {
+      nr = s#index;
+      // A parameter is never ranged by its assignments.
+      if s == 1 && !escaped[nr]! && !counters[nr]! && !vars[nr]!.argument && !rv.vars[nr]!.has {
+        set_var(rv, nr, Range { lo: acc[nr]!.lo, hi: acc[nr]!.hi });
+        changed = true;
+      }
+    }
+    if !changed && len(rv.elems) != elems_before {
+      changed = true;
+    }
+    if !changed {
+      // A counter whose end the fixpoint has only now ranged is seeded here, and the
+      // fixpoint resumes with it; the accumulators likewise.
+      before = ranged_count(rv);
+      seed_counters(b, p, c, loops, sets, nn, rv, counters);
+      seed_accumulators(b, p, c, blocks, code, nn, escaped, walks, rv, counters);
+      seed_while_counters(b, p, c, loops, sets, code, nn, escaped, rv, counters);
+      if ranged_count(rv) == before {
+        break;
+      }
+    }
+  }
+  rv
+}
+
+// The trace line of `d`'s ranges (`LOFT_TRACE_FACTS`' `[ranges]` line): `number=lo..hi` for
+// each variable ranged, in number order.
+pub fn ranges_line(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, walks: vector<Walk>) -> text {
+  nn = opt_non_sentinel::non_sentinel_vars(b, p, d);
+  row: vector<text> = [];
+  for v in range_vars(b, p, c, d, nn, walks).vars {
+    if v.has {
+      row += ["{v#index}={v.lo}..{v.hi}"];
+    }
+  }
+  "[ranges]\t{b.data.definitions[d]!.name}\t{row.join(" ")}"
+}

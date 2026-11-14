@@ -46,7 +46,7 @@ pub fn new_proof(b: ir::Bundle) -> Proof {
 
 // `Value::walk`: `f` on every node of `node`, a node before its children, a source span
 // passed through.
-fn walk(node: ir::Node, f: fn(ir::Node)) {
+pub fn walk(node: ir::Node, f: fn(ir::Node)) {
   match node {
     NdSpan { pos: _, inner } => walk(inner, f),
     NdCall { def_nr: _, args } => { f(node); for a in args { walk(a, f); } },
@@ -78,7 +78,7 @@ fn walk(node: ir::Node, f: fn(ir::Node)) {
 }
 
 // Is `code` (a definition's body, a box of one) a block — a loft body?
-fn has_body(d: ir::Definition) -> boolean {
+pub fn has_body(d: ir::Definition) -> boolean {
   if len(d.code) == 0 {
     return false;
   }
@@ -112,7 +112,7 @@ fn discharge_guard(defs: vector<ir::Definition>, cond: ir::Node, then: ir::Node)
 }
 
 // The value of an `Int` literal, or null for any other node.
-fn int_of(n: ir::Node) -> integer? {
+pub fn int_of(n: ir::Node) -> integer? {
   match loop_shape::unspan(n) {
     NdInt { n: value } => value,
     _ => null,
@@ -276,7 +276,7 @@ pub fn collect_escapes(b: ir::Bundle, code: ir::Node, escaped: vector<boolean>) 
 }
 
 // `Type::base`: the type without its `τ?` marker.
-fn cgen_base(t: ir::TypeT) -> ir::TypeT {
+pub fn cgen_base(t: ir::TypeT) -> ir::TypeT {
   match t {
     TyOptional { inner } => cgen_base(inner),
     _ => t,
