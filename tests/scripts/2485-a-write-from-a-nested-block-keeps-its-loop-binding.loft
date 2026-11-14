@@ -11,6 +11,7 @@
 //     ended block's own dense bind read as nullable.  The new bind is a binding of its own.
 // Each cell is hand-computed.
 //
+// @falsified-at: d73454cd3 — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: the asserts; (1) did not compile before the fix.
 
 enum Ty { TNever, TInt { min: integer }, TText { dep: vector<integer> } }
