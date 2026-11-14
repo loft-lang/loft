@@ -99,12 +99,47 @@ pub fn copy_closure(self: state::State, src: state::DbRef, tp: integer) -> state
 
 // A native `natives::light` carries, called by `OpStaticCall`'s arm on the stack as it stands.
 pub fn light_call(self: state::State, h: integer) {
+  if natives::is_state_native(h) {
+    self.keyed_entry(h == natives::N_KEYED_ENTRY_TEXT);
+    return;
+  }
   sp = natives::light(h, self.stk, self.stack_pos, self.lio);
   if sp < 0 {
     self.stop("not carried: native handler {h}");
   } else {
     self.stack_pos = sp;
   }
+}
+
+// `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` and
+// `keyed_entry_text(data, parent_tp, fld, key)` — the entry under the key in the hash the
+// record target names (`State::target_of`, derived once), found or filed with its key written.
+pub fn keyed_entry(self: state::State, text_key: boolean) {
+  self.load_table();
+  sp = self.stack_pos;
+  ptp = natives::get(self.stk, sp - (if text_key { 32 } else { 48 })) ?? 0;
+  fld = natives::get(self.stk, sp - (if text_key { 24 } else { 40 })) ?? 0;
+  t = self.targets[self.target_of(ptp, fld)]!;
+  if !t.direct || t.how != state::T_HASH {
+    self.stop("not carried: a keyed entry in a collection that is not a hash");
+    return;
+  }
+  n = 1;
+  if text_key {
+    crt::key_view(self.stk, sp - 16);
+  } else {
+    n = if t.nkeys < 1 { 1 } else if t.nkeys > 4 { 4 } else { t.nkeys };
+    for ki in 0..n {
+      crt::key_int(natives::get(self.stk, sp - 32 + ki * 8));
+    }
+  }
+  at = sp - (if text_key { 48 } else { 64 });
+  vs = crt::stack_get(4, self.stk, at) & 65535;
+  vr = crt::stack_get(4, self.stk, at + 4);
+  vp = crt::stack_get(4, self.stk, at + 8);
+  crt::keyed_entry(self.lio, vs, vr, vp + t.at, t.content, t.tp, n);
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+  self.stack_pos = at + 16;
 }
 
 // `State::hash_add`: the record and then the hash popped; the record filed in the hash of

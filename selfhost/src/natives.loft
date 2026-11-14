@@ -32,7 +32,7 @@ N_WRITE_BYTES = 9;
 N_VECTOR_SUM_INT = 10;
 N_OS_TEMP_DIR_DEST = 11;
 N_KEYED_ENTRY_INTS = 12;
-N_KEYED_ENTRY_TEXT = 13;
+pub N_KEYED_ENTRY_TEXT = 13;
 N_READ_BYTES = 14;
 N_ARGUMENTS = 15;
 N_STORE_MEMORY_DEST = 16;
@@ -176,7 +176,7 @@ pub fn native_handler(name: text) -> integer {
   }
 }
 
-fn get(stk: integer, at: integer) -> integer? {
+pub fn get(stk: integer, at: integer) -> integer? {
   crt::get_int(stk, 1, 8 + at, 0)
 }
 
@@ -403,6 +403,12 @@ pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> in
     return -1;
   }
   sp
+}
+
+// Whether native handler `nh` is one the `State` carries itself (`State::light_call`): the
+// keyed entries, which read the record target's facts it derives once.
+pub fn is_state_native(nh: integer) -> boolean {
+  nh == N_KEYED_ENTRY_INTS || nh == N_KEYED_ENTRY_TEXT
 }
 
 // Whether `light` carries native handler `nh`.

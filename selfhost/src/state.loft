@@ -132,20 +132,24 @@ pub struct State {
 // when finished), the element type, its size and the facts the filing routines take; a
 // linked group's members (`types::group_members`) and whether they hold or may be null.
 pub struct Target {
-  key: integer,
-  ok: boolean,
-  tp: integer,
-  at: integer,
-  how: integer,
-  group: boolean,
-  elem: integer,
-  size: integer,
-  kkind: integer,
-  linked: boolean,
-  content: integer,
-  gm: vector<integer>,
-  gheld: boolean,
-  gnull: boolean,
+  pub key: integer,
+  pub ok: boolean,
+  pub tp: integer,
+  pub at: integer,
+  pub how: integer,
+  pub group: boolean,
+  pub elem: integer,
+  pub size: integer,
+  pub kkind: integer,
+  pub linked: boolean,
+  pub content: integer,
+  pub gm: vector<integer>,
+  pub gheld: boolean,
+  pub gnull: boolean,
+  // Whether `types::record_collection` named the collection itself (no linked group's rule),
+  // and how many key parts the collection type has.
+  pub direct: boolean,
+  pub nkeys: integer,
 }
 
 pub T_VECTOR = 0;
@@ -287,7 +291,7 @@ pub fn new_state(img: ir::RunImage, size: integer) -> State {
     // A native the runner carries itself keeps its own port.
     handler = natives::native_handler(name);
     s.handlers += [handler];
-    s.lights += [if natives::is_light(handler) && (ptab[i] ?? 0) == 0 { handler } else { -1 }];
+    s.lights += [if (natives::is_light(handler) || natives::is_state_native(handler)) && (ptab[i] ?? 0) == 0 { handler } else { -1 }];
     carried = handler >= 0;
     s.shared += [if carried { -1 } else { img.shared[i] ?? -1 }];
     dest_form = name.ends_with("#dest");
@@ -1206,7 +1210,7 @@ pub fn has(self: State, k: integer, tp: integer) -> boolean {
 }
 
 // The record target `(ptp, fld)` names (`Target`), derived on its first use.
-fn target_of(self: State, ptp: integer, fld: integer) -> integer {
+pub fn target_of(self: State, ptp: integer, fld: integer) -> integer {
   key = ptp * 65536 + fld;
   if self.targets[key] != null {
     return key;
@@ -1215,6 +1219,7 @@ fn target_of(self: State, ptp: integer, fld: integer) -> integer {
   rc = types::record_collection(self.types, ptp, fld);
   at = rc.at;
   ctp = rc.tp;
+  direct = !(rc.fld != 65535 && rc.at == null);
   if rc.fld != 65535 && at == null {
     g = types::group_members(self.types, ptp, fld);
     if g != null && len(g!) >= 6 {
@@ -1240,7 +1245,7 @@ fn target_of(self: State, ptp: integer, fld: integer) -> integer {
     gnull = gnull || self.has(F_NULLABLE_ELEMENT, gm[gk + 2] ?? 0);
     gk += 3;
   }
-  self.targets += [Target { key: key, ok: ok, tp: ctp, at: at ?? 0, how: how, group: len(gm) >= 6, elem: elem, size: self.types[elem]?.size ?? 0, kkind: self.fact(F_KEYED_KIND, ctp) ?? 0, linked: self.types[elem]?.linked ?? false, content: self.fact(F_CONTENT, ctp) ?? 0, gm: gm, gheld: gheld, gnull: gnull }];
+  self.targets += [Target { key: key, ok: ok, tp: ctp, at: at ?? 0, how: how, group: len(gm) >= 6, elem: elem, size: self.types[elem]?.size ?? 0, kkind: self.fact(F_KEYED_KIND, ctp) ?? 0, linked: self.types[elem]?.linked ?? false, content: self.fact(F_CONTENT, ctp) ?? 0, gm: gm, gheld: gheld, gnull: gnull, direct: direct, nkeys: if self.types[ctp] == null { 0 } else { len(self.types[ctp]!.keys) } }];
   key
 }
 
