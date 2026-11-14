@@ -163,13 +163,17 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
 // A LAYER of the program in `b`: what an analysis derived, one line per function, in the
 // format the Rust generator traces it in — or null for a layer this generator does not print.
 // `shapes` (`LOFT_TRACE_SHAPES`): every function with a body; one a variable of which has no
-// shape prints no line.  `reach` (`LOFT_TRACE_REACH`): what the program's `main` reaches; a
-// program without one (its tests' unit) prints no line yet.
+// shape prints no line.  `reach` and `functions` (`LOFT_TRACE_REACH`): what the program's
+// `main` reaches, and the functions its unit writes in order; a program without a `main` (its
+// tests' unit) prints no line yet.
 pub fn layer(b: ir::Bundle, name: text) -> text? {
-  if name == "reach" {
+  if name == "reach" || name == "functions" {
     for d in b.data.definitions {
       if d.name == "n_main" {
-        return "{opt_names::reach_line(b, d#index)}\n";
+        if name == "reach" {
+          return "{opt_names::reach_line(b, d#index)}\n";
+        }
+        return "{opt_names::functions_line(b, d#index)}\n";
       }
     }
     return "";

@@ -8,6 +8,7 @@
 
 use ir;
 use cgen_types;
+use cgen_natives;
 
 // No definition (`u32::MAX`, as the image stores it).
 NONE = 4294967295;
@@ -394,6 +395,45 @@ pub fn reachable_functions(b: ir::Bundle, roots: vector<integer>) -> vector<bool
   reachable
 }
 
+// `Definition::is_stdlib`: declared in `default/` — a directory of its file's path has that
+// name.
+pub fn is_stdlib(d: ir::Definition) -> boolean {
+  parts = d.position.file.split('/');
+  for p in parts {
+    if p == "default" && p#index + 1 < len(parts) {
+      return true;
+    }
+  }
+  false
+}
+
+// The functions a unit writes for `root` (`emit_unit_for`): every reachable function that is
+// no operator and no native the C runtime implements, the root first, the others in
+// definition order.
+pub fn written_functions(b: ir::Bundle, root: integer) -> vector<integer> {
+  out: vector<integer> = [root];
+  for r in reachable_functions(b, [root]) {
+    d = b.data.definitions[r#index]!;
+    if !r || r#index == root || d.def_type != FUNCTION || d.name.starts_with("Op") {
+      continue;
+    }
+    if is_stdlib(d) && cgen_natives::native_c(d.name) != null {
+      continue;
+    }
+    out += [r#index];
+  }
+  out
+}
+
+// The trace line of the functions a unit writes for `root` (`LOFT_TRACE_REACH`'s second line).
+pub fn functions_line(b: ir::Bundle, root: integer) -> text {
+  names: vector<text> = [];
+  for d in written_functions(b, root) {
+    names += [b.data.definitions[d]!.name];
+  }
+  "[functions]\t{b.data.definitions[root]!.name}\t{names.join(" ")}"
+}
+
 // The trace line of what `root` reaches (`LOFT_TRACE_REACH`): `[reach]<TAB>root<TAB>names…`,
 // sorted by name.
 pub fn reach_line(b: ir::Bundle, root: integer) -> text {
@@ -404,5 +444,5 @@ pub fn reach_line(b: ir::Bundle, root: integer) -> text {
     }
   }
   names.sort();
-  "[reach]\t{b.data.definitions[root].name}\t{names.join(" ")}"
+  "[reach]\t{b.data.definitions[root]!.name}\t{names.join(" ")}"
 }
