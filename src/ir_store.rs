@@ -926,6 +926,7 @@ fn materialize_run_image(
     fnrefs: &[RunFnRefShape],
     gens: &[RunGenShape],
     shared: &[i64],
+    workers: &[[i64; 3]],
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -1006,17 +1007,14 @@ fn materialize_run_image(
     }
     materialize_run_fnrefs(stores, &rec, &slot(ds::RUNIMG_FNREFS), fnrefs);
     materialize_run_gens(stores, &rec, &slot(ds::RUNIMG_GENS), gens);
-    crate::vector::pre_alloc_vector(
+    materialize_run_tables(
+        stores,
+        &rec,
         &slot(ds::RUNIMG_SHARED),
-        count(shared.len()),
-        8,
-        &mut stores.allocations,
+        &slot(ds::RUNIMG_WORKERS),
+        shared,
+        workers,
     );
-    let shv = rec.field_recvec(ds::RUNIMG_SHARED, 8);
-    for &d in shared {
-        let e = shv.push(stores);
-        e.set_field_int(stores, 0, d);
-    }
     crate::vector::pre_alloc_vector(
         &slot(ds::RUNIMG_TYPES),
         count(schema.len()),
@@ -1061,6 +1059,39 @@ fn materialize_run_fnrefs(
             let x = hr.push(stores);
             x.set_field_int(stores, 0, h);
         }
+    }
+}
+
+/// The run image's per-native table of compiled-stdlib bodies (`shared`) and its `par` workers
+/// (`RunWorker`), into the root's vectors at the two slots.
+#[cfg(feature = "mmap")]
+fn materialize_run_tables(
+    stores: &mut Stores,
+    rec: &Record,
+    shared_slot: &DbRef,
+    workers_slot: &DbRef,
+    shared: &[i64],
+    workers: &[[i64; 3]],
+) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    crate::vector::pre_alloc_vector(shared_slot, count(shared.len()), 8, &mut stores.allocations);
+    let shv = rec.field_recvec(ds::RUNIMG_SHARED, 8);
+    for &d in shared {
+        let e = shv.push(stores);
+        e.set_field_int(stores, 0, d);
+    }
+    crate::vector::pre_alloc_vector(
+        workers_slot,
+        count(workers.len()),
+        ds::RUNWORKER_STRIDE,
+        &mut stores.allocations,
+    );
+    let wv = rec.field_recvec(ds::RUNIMG_WORKERS, ds::RUNWORKER_STRIDE);
+    for w in workers {
+        let e = wv.push(stores);
+        e.set_field_int(stores, ds::RUNWORKER_DEF, w[0]);
+        e.set_field_int(stores, ds::RUNWORKER_INPUT, w[1]);
+        e.set_field_int(stores, ds::RUNWORKER_RET, w[2]);
     }
 }
 
@@ -1224,6 +1255,51 @@ pub fn run_image_shared(
         }
     }
     out
+}
+
+/// Every `par` worker of the program, found where the IR names it — the `func` literal of a
+/// `parallel_*` call — with how it takes its row and its answer's size (`RunWorker`).
+#[must_use]
+pub fn run_image_workers(data: &Data) -> Vec<[i64; 3]> {
+    let mut defs: Vec<u32> = Vec::new();
+    for d in 0..data.definitions() {
+        data.def(d).code.walk(&mut |v| {
+            if let Value::Call(c, args) = v {
+                let at = match data.def(*c).name.as_str() {
+                    "n_parallel_queue"
+                    | "n_parallel_queue_text"
+                    | "n_parallel_queue_ref"
+                    | "n_parallel_queue_narrow"
+                    | "n_parallel_queue_fn"
+                    | "n_parallel_for"
+                    | "n_parallel_for_light"
+                    | "n_parallel_discard" => 4,
+                    "n_parallel_fold" => 2,
+                    _ => return,
+                };
+                if let Some(Value::Int(w)) = args.get(at).map(Value::unspan)
+                    && let Ok(w) = u32::try_from(*w)
+                    && w < data.definitions()
+                    && !defs.contains(&w)
+                {
+                    defs.push(w);
+                }
+            }
+        });
+    }
+    defs.into_iter()
+        .map(|w| {
+            let def = data.def(w);
+            [
+                i64::from(w),
+                crate::parallel_natives::worker_input_code(def),
+                i64::from(crate::variables::size(
+                    &def.returned,
+                    &crate::data::Context::Argument,
+                )),
+            ]
+        })
+        .collect()
 }
 
 /// A generator's frame facts for the run image (`RunGen`), from `state::gen_facts` — the same
@@ -1421,6 +1497,7 @@ pub fn save_run_image(
             &run_image_fnrefs(data, program),
             &run_image_gens(data),
             &run_image_shared(data, library_names),
+            &run_image_workers(data),
             library_names,
             &program.types,
             main,

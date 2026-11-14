@@ -2294,6 +2294,209 @@ fn narrow_decode(kind: integer, mn: integer, bits: integer) -> integer? {
   }
 }
 
+// ── `par` (`parallel_natives`), its workers run one after another ───────────────────────────
+// A queue's workers run in row order, each an ordinary call: a worker shares no mutable state
+// with another, so the answers are those of the threads Rust runs them on.  A job is started at
+// the queue's `OpStaticCall` and continued at each worker's return (`par_return`); its answers
+// go onto a buffer stack the `parallel_buf_*` natives read, as Rust's `par_*_buffer_stack`.
+struct ParJob {
+  kind: integer,
+  depth: integer,
+  back: integer,
+  start: integer,
+  input: integer,
+  ret: integer,
+  stride: integer,
+  in_s: integer,
+  in_r: integer,
+  in_p: integer,
+  esize: integer,
+  extras: vector<integer>,
+  row: integer,
+  n: integer,
+  // An answer may be null (an integer's null), kept as it is.
+  res: vector<integer?>,
+}
+
+struct ParBuf {
+  res: vector<integer?>,
+  stride: integer,
+}
+
+PAR_QUEUE = 1;
+PAR_QUEUE_NARROW = 2;
+PAR_BUF_GET = 3;
+PAR_BUF_DROP = 4;
+PAR_BUF_GET_NARROW = 5;
+PAR_BUF_DROP_NARROW = 6;
+PAR_BUF_GET_SINGLE = 7;
+PAR_BUF_GET_FLOAT = 8;
+
+// Per native: which `par` entry it is, 0 for none.
+fn par_natives(img: ir::RunImage) -> vector<integer> {
+  [for nm in img.natives {
+    match nm {
+      "n_parallel_queue" => PAR_QUEUE,
+      "n_parallel_queue_narrow" => PAR_QUEUE_NARROW,
+      "n_parallel_buf_get" => PAR_BUF_GET,
+      "n_parallel_buf_drop" => PAR_BUF_DROP,
+      "n_parallel_buf_get_narrow" => PAR_BUF_GET_NARROW,
+      "n_parallel_buf_drop_narrow" => PAR_BUF_DROP_NARROW,
+      "n_parallel_buf_get_single" => PAR_BUF_GET_SINGLE,
+      "n_parallel_buf_get_float" => PAR_BUF_GET_FLOAT,
+      _ => 0,
+    }
+  }]
+}
+
+// A job's next row called: its argument — a reference to the row, its primitive read at the
+// row's width and passed at the worker's, or a wide value's bytes as they lie — the extra
+// arguments, the return position.  Answers
+// the stack top; the caller enters the worker.
+fn par_push_row(stk: integer, sp: integer, job: ParJob, io: vector<integer>) -> integer {
+  at = sp;
+  crt::vec_get(io, job.in_s, job.in_r, job.in_p, job.esize, job.row);
+  if job.input == 0 {
+    crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    at += 16;
+  } else if job.input > 8 {
+    crt::par_row_wide(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, stk, at, job.input);
+    at += step(job.input);
+  } else {
+    crt::par_row(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, job.esize, stk, at, job.input);
+    at += 8;
+  }
+  for e in job.extras {
+    set(stk, at, e);
+    at += 8;
+  }
+  set(stk, at, job.back);
+  at + 8
+}
+
+// `n_parallel_queue` / `_narrow` (`parallel_queue_dispatch`) at its `OpStaticCall`, `regs` the
+// `[sp, pc, depth]` in and out: the arguments popped (the extras count and the extras, the
+// worker, the threads, the answer size, the row size, the rows), then the first row's worker
+// called — or, with no rows, the empty buffer pushed and the count 0 answered.  -1 with the
+// reason in `why[0]` for a worker the runner does not call.
+fn par_start(kind: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pint: vector<ParBuf>, pnar: vector<ParBuf>, io: vector<integer>, why: vector<text>) -> integer {
+  sp = regs[0] ?? 0;
+  next = get(stk, sp - 8) ?? 0;
+  sp -= 8;
+  ex: vector<integer> = [];
+  for _ in 0..next {
+    ex += [get(stk, sp - 8) ?? 0];
+    sp -= 8;
+  }
+  extras: vector<integer> = [];
+  for k in 0..len(ex) {
+    extras += [ex[len(ex) - 1 - k] ?? 0];
+  }
+  wdef = get(stk, sp - 8) ?? -1;
+  rsize = get(stk, sp - 24) ?? 8;
+  esize = get(stk, sp - 32) ?? 8;
+  crt::slot_ref(io, stk, sp - 48);
+  sp -= 48;
+  wi = -1;
+  for i in 0..len(img.workers) {
+    if (img.workers[i]?.def ?? -1) == wdef {
+      wi = i;
+    }
+  }
+  if wi < 0 || wdef < 0 || wdef + 1 >= len(img.starts) {
+    why[0] = "a par worker the image does not describe: n_parallel_queue";
+    return -1;
+  }
+  w = img.workers[wi]!;
+  if w.input < 0 || w.input >= 1000 {
+    why[0] = "a par worker taking a text or a tuple row: n_parallel_queue";
+    return -1;
+  }
+  wret = if w.ret >= 1 && w.ret <= 8 { w.ret } else if rsize < 1 { 1 } else if rsize > 8 { 8 } else { rsize };
+  n = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  job = ParJob { kind: kind, depth: (regs[2] ?? 0) + 1, back: regs[1] ?? 0, start: img.starts[wdef] ?? 0, input: w.input, ret: if kind == PAR_QUEUE_NARROW { w.ret } else { wret }, stride: rsize, in_s: io[0] ?? NULL_STORE, in_r: io[1] ?? 0, in_p: io[2] ?? 0, esize: esize, extras: extras, row: 0, n: n, res: [] };
+  if n == 0 {
+    if kind == PAR_QUEUE_NARROW {
+      pnar += [ParBuf { res: [], stride: rsize }];
+    } else {
+      pint += [ParBuf { res: [], stride: 0 }];
+    }
+    set(stk, sp, 0);
+    regs[0] = sp + 8;
+    return 0;
+  }
+  pjobs += [job];
+  regs[0] = par_push_row(stk, sp, job, io);
+  regs[1] = job.start;
+  regs[2] = job.depth;
+  0
+}
+
+// A `par` worker returned (`regs` `[sp, pc]`): its answer — `ret` bytes, as `execute_at_raw`
+// reads it — taken off the stack into the job; the next row's worker called (true, `regs`
+// updated), or, after the last, the job's buffer pushed and its row count answered (false).
+fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pint: vector<ParBuf>, pnar: vector<ParBuf>, io: vector<integer>) -> boolean {
+  sp = regs[0] ?? 0;
+  k = len(pjobs) - 1;
+  rs = pjobs[k]!.ret;
+  v: integer? = null;
+  if rs == 8 {
+    v = get(stk, sp - 8);
+  } else {
+    bs = crt::stack_read_bytes(stk, sp - 8, if rs == 1 { 1 } else { 4 });
+    v = 0;
+    for b in 0..len(bs) {
+      v = v! + ((bs[b] ?? 0) << (8 * b));
+    }
+  }
+  sp -= 8;
+  pjobs[k].res += [v];
+  pjobs[k].row += 1;
+  if pjobs[k]!.row < pjobs[k]!.n {
+    regs[0] = par_push_row(stk, sp, pjobs[k]!, io);
+    regs[1] = pjobs[k]!.start;
+    return true;
+  }
+  if pjobs[k]!.kind == PAR_QUEUE_NARROW {
+    pnar += [ParBuf { res: pjobs[k]!.res, stride: pjobs[k]!.stride }];
+  } else {
+    pint += [ParBuf { res: pjobs[k]!.res, stride: 0 }];
+  }
+  set(stk, sp, pjobs[k]!.n);
+  regs[0] = sp + 8;
+  pjobs.remove(k);
+  false
+}
+
+// The `parallel_buf_*` readers and drops on the top buffer, at `sp`: answers the stack top.
+fn par_buf(pk: integer, stk: integer, sp: integer, pint: vector<ParBuf>, pnar: vector<ParBuf>) -> integer {
+  if pk == PAR_BUF_DROP {
+    pint.remove(len(pint) - 1);
+    return sp;
+  }
+  if pk == PAR_BUF_DROP_NARROW {
+    pnar.remove(len(pnar) - 1);
+    return sp;
+  }
+  if pk == PAR_BUF_GET_NARROW {
+    signed = (get(stk, sp - 8) ?? 0) != 0;
+    idx = get(stk, sp - 24) ?? 0;
+    b = pnar[len(pnar) - 1]!;
+    raw = (b.res[idx] ?? 0) & (if b.stride == 1 { 255 } else if b.stride == 2 { 65535 } else { 4294967295 });
+    top = if b.stride == 1 { 128 } else if b.stride == 2 { 32768 } else { 2147483648 };
+    set(stk, sp - 24, if signed && raw >= top { raw - 2 * top } else { raw });
+    return sp - 16;
+  }
+  idx = get(stk, sp - 8) ?? 0;
+  if pk == PAR_BUF_GET_SINGLE {
+    bits = (pnar[len(pnar) - 1]!.res[idx] ?? 0) & 4294967295;
+    crt::stack_code_bytes(stk, sp - 8, [for k in 0..4 { ((bits >> (8 * k)) & 255) as u8 }], 0, 4);
+    return sp;
+  }
+  set(stk, sp - 8, pint[len(pint) - 1]!.res[idx]);
+  sp
+}
+
 // ── Generators (`State::coroutine_*`) ───────────────────────────────────────────────────────
 // A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
 // running, where it resumes, where its caller's stack and code continue, the copies of its text
@@ -2507,8 +2710,13 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   cogen: vector<integer> = [1];
   // Enum variant names viewed by `OpCastTextFromEnum`: `[key, handle, length]` per name.
   interned: vector<integer> = [];
+  // `par`: its natives, the jobs whose workers are running, and the answer buffer stacks.
+  ptab = par_natives(img);
+  pjobs: vector<ParJob> = [];
+  pint: vector<ParBuf> = [];
+  pnar: vector<ParBuf> = [];
   // The stack top and the code position handed to `exec_more` and back.
-  mregs: vector<integer> = [0, 0];
+  mregs: vector<integer> = [0, 0, 0];
   // A walk step's answer: the record's reference and the walk's next state.
   step_io: vector<integer> = [0, 0, 0, 0];
   imaged: vector<boolean> = [];
@@ -2610,6 +2818,16 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       }
       if len(dpx) > 0 {
         sp = dest_return(stk, sp, dpx, depth);
+      }
+      if len(pjobs) > 0 && (pjobs[len(pjobs) - 1]?.depth ?? -1) == depth {
+        mregs[0] = sp;
+        if par_return(stk, mregs, pjobs, pint, pnar, io) {
+          // The next row's worker, at the same depth.
+          sp = mregs[0] ?? 0;
+          pc = mregs[1] ?? 0;
+          continue;
+        }
+        sp = mregs[0] ?? 0;
       }
       depth -= 1;
       pc = back;
@@ -2865,6 +3083,23 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       idx = u16_at(img.code, pc);
       pc += 2;
       shd = img.shared[idx] ?? -1;
+      pk = ptab[idx] ?? 0;
+      if pk == PAR_QUEUE || pk == PAR_QUEUE_NARROW {
+        mregs[0] = sp;
+        mregs[1] = pc;
+        mregs[2] = depth;
+        if par_start(pk, img, stk, mregs, pjobs, pint, pnar, io, nwhy) < 0 {
+          return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
+        }
+        sp = mregs[0] ?? 0;
+        pc = mregs[1] ?? 0;
+        depth = mregs[2] ?? 0;
+        continue;
+      }
+      if pk > 0 {
+        sp = par_buf(pk, stk, sp, pint, pnar);
+        continue;
+      }
       if (ns[idx] ?? -1) < 0 && shd < 0 && (sdest[idx] ?? -1) >= 0 {
         // The destination form: the destination parked until the body returns
         // (`dest_return`), then the body called as the plain form is.

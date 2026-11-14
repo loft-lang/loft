@@ -430,6 +430,32 @@ void loft_crt_stack_str_interned(int64_t store, int64_t at, int64_t handle, int6
     *(loft_str *) loft_crt_slot_at(store, at) = loft_lit((const char *) (intptr_t) handle, (size_t) len);
 }
 
+/* A `par` row passed by value (`parallel::read_primitive_at` + `put_stack`): `esize` bytes of the
+ * row at `(store, rec, pos)` — 1, 4, else 8 — read unsigned and written as `isize` bytes — 1, 4,
+ * else 8 — at stack byte `at`, the rest of its 8-byte slot zero. */
+void loft_crt_par_row(int64_t store, int64_t rec, int64_t pos, int64_t esize, int64_t stk, int64_t at,
+                      int64_t isize) {
+    const uint8_t *p = (const uint8_t *) loft_place(loft_crt_ref(store, rec, pos), 0);
+    uint64_t v = 0;
+    if (p) {
+        if (esize == 1) v = p[0];
+        else if (esize == 4) { uint32_t w; memcpy(&w, p, 4); v = w; }
+        else memcpy(&v, p, 8);
+    }
+    uint8_t *d = loft_crt_slot_at(stk, at);
+    memset(d, 0, 8);
+    memcpy(d, &v, isize == 1 ? 1 : isize == 4 ? 4 : 8);
+}
+
+/* A `par` row passed wide (`read_primitive_at_wide`): `n` bytes of the row copied to stack byte
+ * `at`, the slot's stepped rest zero. */
+void loft_crt_par_row_wide(int64_t store, int64_t rec, int64_t pos, int64_t stk, int64_t at, int64_t n) {
+    const uint8_t *p = (const uint8_t *) loft_place(loft_crt_ref(store, rec, pos), 0);
+    uint8_t *d = loft_crt_slot_at(stk, at);
+    memset(d, 0, (size_t) ((n + 7) / 8 * 8));
+    if (p) memcpy(d, p, (size_t) n);
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

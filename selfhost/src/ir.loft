@@ -483,6 +483,16 @@ pub struct RunGen {
   pub tuple_refs: vector<integer>,
 }
 
+// A `par` worker (`parallel_natives::parallel_queue_dispatch`): its definition, how it takes
+// its row — 0 a reference to the row, -1 a text, `n` a primitive of `n` bytes, `1000 + n` a
+// tuple of `n` bytes — and the byte
+// size of its answer as an argument.
+pub struct RunWorker {
+  pub def: integer,
+  pub input: integer,
+  pub ret: integer,
+}
+
 pub struct RunImage {
   pub code: vector<u8>,
   pub starts: vector<u32>,
@@ -497,11 +507,12 @@ pub struct RunImage {
   // (the compiled standard library, @PLN181), which the runner runs as bytecode; -1 for any
   // other native, a `#dest` form included.
   pub shared: vector<integer>,
+  pub workers: vector<RunWorker>,
   pub main: integer,
   pub cwd: boolean,
 }
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], main: 0, cwd: false }
 }

@@ -378,6 +378,10 @@ fn c_intern_text(val: text, bytes: integer) -> integer;
 #c "loft_crt_intern_text" "int64_t(const char*, int64_t)"
 fn c_stack_str_interned(store: integer, at: integer, handle: integer, len: integer);
 #c "loft_crt_stack_str_interned" "void(int64_t, int64_t, int64_t, int64_t)"
+fn c_par_row(store: integer, rec: integer, pos: integer, esize: integer, stk: integer, at: integer, isize: integer);
+#c "loft_crt_par_row" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_par_row_wide(store: integer, rec: integer, pos: integer, stk: integer, at: integer, n: integer);
+#c "loft_crt_par_row_wide" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -545,6 +549,16 @@ pub fn intern_text(val: text) -> integer {
 // A view of `len` bytes of an interned text pushed at `at`.
 pub fn stack_str_interned(store: integer, at: integer, handle: integer, len: integer) {
   c_stack_str_interned(store, at, handle, len);
+}
+
+// A `par` row passed by value: `esize` bytes of the row read, written as `isize` at stack `at`.
+pub fn par_row(store: integer, rec: integer, pos: integer, esize: integer, stk: integer, at: integer, isize: integer) {
+  c_par_row(store, rec, pos, esize, stk, at, isize);
+}
+
+// A `par` row passed wide: `n` bytes of the row copied to stack `at`.
+pub fn par_row_wide(store: integer, rec: integer, pos: integer, stk: integer, at: integer, n: integer) {
+  c_par_row_wide(store, rec, pos, stk, at, n);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).

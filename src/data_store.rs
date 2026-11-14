@@ -500,8 +500,8 @@ pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
 /// `RunImage { code: vector<u8>, starts: vector<u32>, ops, layouts, natives: vector<text>,
 /// consts: vector<RunConst>, fnrefs: vector<RunFnRef>, types: vector<DbType>,
-/// gens: vector<RunGen>, shared: vector<integer>, main: integer, cwd: boolean }` — the run
-/// image's store root (@PLN91).
+/// gens: vector<RunGen>, shared: vector<integer>, workers: vector<RunWorker>, main: integer,
+/// cwd: boolean }` — the run image's store root (@PLN91).
 pub(crate) const RUNIMG_MAIN: u32 = 0;
 pub(crate) const RUNIMG_CODE: u32 = 8;
 pub(crate) const RUNIMG_STARTS: u32 = 12;
@@ -513,7 +513,8 @@ pub(crate) const RUNIMG_FNREFS: u32 = 32;
 pub(crate) const RUNIMG_TYPES: u32 = 36;
 pub(crate) const RUNIMG_GENS: u32 = 40;
 pub(crate) const RUNIMG_SHARED: u32 = 44;
-pub(crate) const RUNIMG_CWD: u32 = 48;
+pub(crate) const RUNIMG_WORKERS: u32 = 48;
+pub(crate) const RUNIMG_CWD: u32 = 52;
 pub(crate) const RUNIMG_STRIDE: u32 = 56;
 /// `RunFnRef { def, drop, kind, cascade: integer, hidden: vector<integer> }` — a call through a function
 /// reference's shape.
@@ -525,6 +526,11 @@ pub(crate) const RUNFNREF_HIDDEN: u32 = 32;
 pub(crate) const RUNFNREF_STRIDE: u32 = 40;
 /// `RunGen { def, zone2: integer, text_args, ref_args, text_locals, owned_locals, tuple_refs:
 /// vector<integer> }` — a generator's frame facts (`state::gen_facts`).
+/// `RunWorker { def, input, ret: integer }` — a `par` worker's call shape.
+pub(crate) const RUNWORKER_DEF: u32 = 0;
+pub(crate) const RUNWORKER_INPUT: u32 = 8;
+pub(crate) const RUNWORKER_RET: u32 = 16;
+pub(crate) const RUNWORKER_STRIDE: u32 = 24;
 pub(crate) const RUNGEN_DEF: u32 = 0;
 pub(crate) const RUNGEN_ZONE2: u32 = 8;
 pub(crate) const RUNGEN_TEXT_ARGS: u32 = 16;
@@ -1813,6 +1819,11 @@ mod tests {
         assert_eq!(pos(ids.run_image, "fnrefs"), RUNIMG_FNREFS);
         assert_eq!(pos(ids.run_image, "gens"), RUNIMG_GENS);
         assert_eq!(pos(ids.run_image, "shared"), RUNIMG_SHARED);
+        assert_eq!(pos(ids.run_image, "workers"), RUNIMG_WORKERS);
+        assert_eq!(u32::from(stores.size(ids.run_worker)), RUNWORKER_STRIDE);
+        assert_eq!(pos(ids.run_worker, "def"), RUNWORKER_DEF);
+        assert_eq!(pos(ids.run_worker, "input"), RUNWORKER_INPUT);
+        assert_eq!(pos(ids.run_worker, "ret"), RUNWORKER_RET);
         assert_eq!(u32::from(stores.size(ids.run_gen)), RUNGEN_STRIDE);
         assert_eq!(pos(ids.run_gen, "def"), RUNGEN_DEF);
         assert_eq!(pos(ids.run_gen, "zone2"), RUNGEN_ZONE2);

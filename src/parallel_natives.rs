@@ -115,6 +115,21 @@ fn input_kind_for_first_arg(def: &crate::data::Definition) -> InputKind {
     }
 }
 
+/// How a `par` worker takes its row, as one number for the run image (@PLN91): 0 a reference to
+/// the row, -1 a text, `n` a primitive of `n` bytes read from the row (`input_kind_for_first_arg`),
+/// `1000 + n` a tuple of `n` bytes, which is re-laid out from the row (`read_tuple_at_wide`).
+#[must_use]
+pub(crate) fn worker_input_code(def: &crate::data::Definition) -> i64 {
+    match input_kind_for_first_arg(def) {
+        InputKind::Ref => 0,
+        InputKind::Text => -1,
+        InputKind::Primitive { size } if tuple_first_arg_types(def).is_some() => {
+            1000 + i64::from(size)
+        }
+        InputKind::Primitive { size } => i64::from(size),
+    }
+}
+
 /// The materialised `parallel_for` path is unreachable: every primitive
 /// return type — including Single (4-byte f32) and Float (8-byte
 /// f64) — routes through the Queue family (`n_parallel_queue` /
