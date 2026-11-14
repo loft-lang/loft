@@ -9289,6 +9289,42 @@ impl<'a> FnWriter<'a> {
         crate::opt::range::op_range_at_site(self.cx.data, &facts.0, ranges, name, args).is_some()
     }
 
+    /// `LOFT_TRACE_FACTS=1` — the non-sentinel and range facts a plain function's operators
+    /// are written under, as they were derived: two lines on standard error,
+    /// `[nn]<TAB>function<TAB>number=0|1 …` and `[ranges]<TAB>function<TAB>number=lo..hi …`,
+    /// each sorted by variable number.  A twin's seeded facts are its caller's and print no
+    /// line.  Layers of the loft-written generator's comparison (12-c-generator.md § The
+    /// layers beside the unit); a function whose body asks no fact prints none.
+    fn trace_facts(
+        &self,
+        nn: &std::collections::HashMap<u16, bool>,
+        rv: &crate::opt::range::Ranges,
+    ) {
+        if !crate::env_once!(std::env::var("LOFT_TRACE_FACTS").is_ok_and(|v| v != "0"))
+            || !self.nn_seed.is_empty()
+            || !self.rg_seed.vars.is_empty()
+            || !self.rg_seed.fields.is_empty()
+        {
+            return;
+        }
+        let name = self.cx.data.def(self.d).name();
+        let mut held: Vec<(u16, bool)> = nn.iter().map(|(v, b)| (*v, *b)).collect();
+        held.sort_unstable();
+        let row: Vec<String> = held
+            .iter()
+            .map(|(v, b)| format!("{v}={}", u8::from(*b)))
+            .collect();
+        eprintln!("[nn]\t{name}\t{}", row.join(" "));
+        let mut ranged: Vec<(u16, crate::opt::range::Range)> =
+            rv.vars.iter().map(|(v, r)| (*v, *r)).collect();
+        ranged.sort_unstable();
+        let row: Vec<String> = ranged
+            .iter()
+            .map(|(v, (lo, hi))| format!("{v}={lo}..{hi}"))
+            .collect();
+        eprintln!("[ranges]\t{name}\t{}", row.join(" "));
+    }
+
     /// This function's non-sentinel and range facts (`non_sentinel_vars`, `range_vars`), a
     /// `__nn` twin's seeded parameters included; computed once.
     fn nn_facts(
@@ -9317,6 +9353,7 @@ impl<'a> FnWriter<'a> {
                     &self.char_walks,
                     &self.rg_seed,
                 );
+                self.trace_facts(&nn, &rv);
                 let f = std::rc::Rc::new((nn, rv));
                 self.range_facts = Some(f.clone());
                 f
