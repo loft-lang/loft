@@ -2354,3 +2354,99 @@ pub fn set_child_rec(self: State, field: DbRef, data: DbRef, raw: integer) {
   self.load_table();
   crt::set_child_rec(raw & 16383, field.store_nr, field.rec, field.pos, data.store_nr, data.rec, data.pos, raw & 32768 != 0);
 }
+
+// ── Child records, slot tags, linked groups, deliver. ─────────────────────────────────────
+
+// `Stores::ref_from_child_rec`: the child record a field names by number, in the field's own
+// store; null for 0.
+pub fn ref_from_child_rec(field: DbRef) -> DbRef {
+  rec = crt::get_w(8, field.store_nr, field.rec, field.pos, 0, 0) ?? 0;
+  if rec == 0 {
+    DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }
+  } else {
+    DbRef { store_nr: field.store_nr, rec: rec, pos: 8 }
+  }
+}
+
+// `keys::slot_tag`: a field's address as a slot cell names it — its position tagged with
+// `SLOT_FIELD_BIT`; the null reference for none.
+pub fn slot_tag(field: DbRef) -> DbRef {
+  if field.store_nr == NULL_STORE || field.rec == 0 {
+    DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }
+  } else {
+    DbRef { store_nr: field.store_nr, rec: field.rec, pos: field.pos | 1073741824 }
+  }
+}
+
+// `Stores::index_group_records`: a whole vector member indexed into the view member of type
+// `tp` of its group — the primary's position, the view's row, the keyed siblings.
+pub fn index_group(self: State, primary: DbRef, tp: integer, parent_tp: integer, fld: integer) {
+  self.load_table();
+  gm = types::group_members(self.types, parent_tp, fld);
+  if gm == null || len(gm!) < 6 {
+    self.stop("not carried: a group view that cannot be indexed");
+    return;
+  }
+  keyed: vector<integer> = [];
+  vpos = -1;
+  vkind = 0;
+  nullable = false;
+  k = 0;
+  while k + 2 < len(gm!) {
+    mpos = gm![k] ?? 0;
+    mkind = gm![k + 1] ?? 0;
+    mtp = gm![k + 2] ?? 0;
+    nullable = nullable || types::nullable_element(self.types, mtp);
+    if k > 0 {
+      if mtp == tp && vpos < 0 {
+        vpos = mpos;
+        vkind = mkind;
+      }
+      if mkind != 0 {
+        keyed += [mpos, mkind, mtp];
+      }
+    }
+    k += 3;
+  }
+  if vpos < 0 {
+    self.stop("not carried: a group view that is no member of the group");
+    return;
+  }
+  crt::index_group(primary.store_nr, primary.rec, primary.pos, gm![0] ?? 0, nullable, vpos, vkind, tp, keyed);
+}
+
+// `Stores::link_record_siblings`: a record the vector member holds handed to its group's
+// other members after an element write.
+pub fn link_record(self: State, data: DbRef, rec: DbRef, parent_tp: integer, fld: integer) {
+  self.load_table();
+  gm = types::group_members(self.types, parent_tp, fld);
+  if gm == null {
+    self.stop("not carried: a linked group that cannot be filed into");
+    return;
+  }
+  if len(gm!) < 6 {
+    return;
+  }
+  // The siblings: every member but the field itself (the first row), which holds it.
+  siblings: vector<integer> = [];
+  for i in 3..len(gm!) {
+    siblings += [gm![i] ?? 0];
+  }
+  held = false;
+  nullable = false;
+  k = 0;
+  while k + 2 < len(gm!) {
+    held = held || (gm![k + 1] ?? -1) == 0;
+    nullable = nullable || types::nullable_element(self.types, gm![k + 2] ?? 0);
+    k += 3;
+  }
+  crt::group_finish(types::content_of(self.types, gm![2] ?? 0) ?? 0, held, nullable, data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, siblings);
+}
+
+// `Stores::deliver_reconstruct` (`deliver(tag, value)`): the value's bytes printed by the
+// loopback host, walked over the parse table's rows.
+pub fn deliver(self: State, tag: integer?, val: DbRef, tp: integer) {
+  self.load_table();
+  ptypes::prepare(self.types, tp, self.ptold);
+  crt::deliver(tag ?? 0, val.store_nr, val.rec, val.pos, tp, self.types[tp]?.name ?? "#{tp}");
+}

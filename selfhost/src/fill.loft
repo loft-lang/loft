@@ -1277,6 +1277,18 @@ pub fn op_push_byte(s: state::State) {
   crt::vec_push(crt::P_BYTE, r.store_nr, r.rec, r.pos, min, val);
 }
 
+pub fn op_ref_from_child_rec(s: state::State) {
+  field = s.get_stack_dbref();
+  new_value: state::DbRef? = state::ref_from_child_rec(field);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn op_slot_tag(s: state::State) {
+  field = s.get_stack_dbref();
+  new_value: state::DbRef? = state::slot_tag(field);
+  s.put_stack_dbref(new_value);
+}
+
 pub fn op_get_record(s: state::State) {
   s.get_record();
 }
@@ -1347,6 +1359,13 @@ pub fn op_free_record_in(s: state::State) {
   s.load_table(); crt::free_record_in(rec.store_nr, rec.rec, rec.pos, tp);
 }
 
+pub fn op_move_child_rec(s: state::State) {
+  tp = s.code_u16();
+  src = s.get_stack_dbref();
+  field = s.get_stack_dbref();
+  s.load_table(); crt::move_child_rec(tp, field.store_nr, field.rec, field.pos, src.store_nr, src.rec, src.pos);
+}
+
 pub fn op_child_rec_in_place(s: state::State) {
   tp = s.code_u16();
   field = s.get_stack_dbref();
@@ -1360,6 +1379,23 @@ pub fn op_copy_ref_or_null(s: state::State) {
 
 pub fn op_bind_or_copy(s: state::State) {
   s.bind_or_copy();
+}
+
+pub fn op_index_group(s: state::State) {
+  tp = s.code_u16();
+  parent_tp = s.code_u16();
+  fld = s.code_u16();
+  s.get_stack_dbref();
+  primary = s.get_stack_dbref();
+  s.index_group(primary, tp, parent_tp, fld);
+}
+
+pub fn op_link_record(s: state::State) {
+  parent_tp = s.code_u16();
+  fld = s.code_u16();
+  rec = s.get_stack_dbref();
+  data = s.get_stack_dbref();
+  s.link_record(data, rec, parent_tp, fld);
 }
 
 pub fn op_set_keyed(s: state::State) {
@@ -1900,6 +1936,13 @@ pub fn op_sync_file(s: state::State) {
   s.sync_file();
 }
 
+pub fn op_deliver(s: state::State) {
+  db_tp = s.code_u16();
+  val = s.get_stack_dbref();
+  tag = s.get_stack_i64();
+  s.deliver(tag, val, db_tp);
+}
+
 pub fn op_expose(s: state::State) {
   s.code_u16();
   val = s.get_stack_dbref();
@@ -2181,6 +2224,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     203 => op_push_enum(s),
     204 => op_push_character(s),
     205 => op_push_byte(s),
+    206 => op_ref_from_child_rec(s),
+    207 => op_slot_tag(s),
     209 => op_get_record(s),
     211 => op_length_hash(s),
     212 => op_eq_bool(s),
@@ -2193,9 +2238,12 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     219 => op_move_field(s),
     220 => op_move_vector(s),
     221 => op_free_record_in(s),
+    223 => op_move_child_rec(s),
     228 => op_child_rec_in_place(s),
     229 => op_copy_ref_or_null(s),
     230 => op_bind_or_copy(s),
+    231 => op_index_group(s),
+    232 => op_link_record(s),
     233 => op_set_keyed(s),
     234 => op_static_call(s),
     236 => op_init_create_stack(s),
@@ -2292,6 +2340,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     349 => op_move_file(s),
     350 => op_truncate_file(s),
     351 => op_sync_file(s),
+    352 => op_deliver(s),
     353 => op_expose(s),
     354 => op_release(s),
     355 => op_mkdir(s),

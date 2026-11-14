@@ -130,6 +130,7 @@ fn OpSyncFile(self: File) -> boolean fs#update;
 fn OpDeliver(tag: __word, val: reference, db_tp: const u16) fs#update;
 #cold
 #rust"stores.deliver_reconstruct(@tag, @val, @db_tp);"
+#loft"s.deliver(tag, val, db_tp);"
 // @PLN105 Phase 3 — expose/release: a LONG-LIVED deliver whose borrow spans frames.
 // `expose(tag, value)` hands the host the same descriptor handle as `deliver` but PINS
 // the value's store (read-only lock) so its wasm-memory addresses stay stable across

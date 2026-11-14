@@ -1814,12 +1814,14 @@ fn OpReplaceVector(r: vector, other: vector, tp: const u16);
 // (non-capturing closure / default-init).
 fn OpRefFromChildRec(field: reference) -> reference[field];
 #rust"s.database.ref_from_child_rec(&@field)"
+#loft"state::ref_from_child_rec(field)"
 #pure
 // @PLN219 `@FR-F-ParamRef` — the slot-cell content naming the out-of-line field at `field`
 // (`keys::SLOT_FIELD_BIT` set in its position), handed to a `&S` parameter whose `S` is held
 // out of line, so the callee's whole write is the field write.  Null for an absent field.
 fn OpSlotTag(field: reference) -> reference;
 #rust"s.database.slot_tag(&@field)"
+#loft"state::slot_tag(field)"
 #pure
 // `@FR-L-Escape`, `@FR-L-CapOwn` — build a closure record IN PLACE in a host's child-record
 // field (loft#1867): a fresh `tp` record in the field's store, filled with the type's
@@ -2128,6 +2130,7 @@ fn OpDemoteRec(r: reference, fld: const u16, tp: const u16);
 // what it still owns.  The value `h.f = h.f.g` gives, without copying the subtree.
 fn OpMoveChildRec(field: reference, src: reference, tp: const u16);
 #rust"stores.move_child_rec(&@field, &@src, @tp);"
+#loft"s.load_table(); crt::move_child_rec(tp, field.store_nr, field.rec, field.pos, src.store_nr, src.rec, src.pos);"
 #impure(parent_write)
 // `@FR-R-InPlaceLiteral` for an out-of-line field: the child record a literal is written into —
 // the present child, its owned heap released and its bytes reset to the type's defaults (its
@@ -2199,6 +2202,7 @@ fn OpClearKeyed(dest: reference, tp: const u16);
 // member, not only the one it collided in (loft#1576, `(Col-Group-Dup)`).
 fn OpIndexGroup(primary: reference, view: reference, tp: const u16, parent_tp: const u16, fld: const u16);
 #rust"s.database.index_group_records(&@primary, &@view, @tp, @parent_tp, @fld);"
+#loft"s.index_group(primary, tp, parent_tp, fld);"
 // A record that field `fld` of the struct at `data` ALREADY holds is put into every OTHER
 // member of that field's linked group — the sibling half of `Stores::record_finish` on its
 // own.  An element-level write through the vector member (`w.es[i] = e`) keeps the record's
@@ -2206,6 +2210,7 @@ fn OpIndexGroup(primary: reference, view: reference, tp: const u16, parent_tp: c
 // write and emits this after it; `OpFinishRecord` would append it to the vector a second time.
 fn OpLinkRecord(data: reference, rec: reference, parent_tp: const u16, fld: const u16);
 #rust"s.database.link_record_siblings(&@data, &@rec, @parent_tp, @fld);"
+#loft"s.link_record(data, rec, parent_tp, fld);"
 #impure(parent_write)
 // loft#1159 — fill the keyed collection `dest` with a deep COPY of every record the plain
 // vector `src` holds, each placed by its own key.  A vector LITERAL in a keyed position is
