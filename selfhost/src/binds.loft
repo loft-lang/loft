@@ -163,6 +163,63 @@ fn is_inline_ref(f: ir::Function, v: integer) -> boolean {
   own::has(f.inline_refs, v)
 }
 
+// src/variables/mod.rs fn link_targets — every local a link `v` may name, through links to
+// links; `v` itself is never one.
+fn link_targets(f: ir::Function, v: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  todo: vector<integer> = [v];
+  while len(todo) > 0 {
+    x = todo[len(todo) - 1]!;
+    todo.remove(len(todo) - 1);
+    if !in_range(f, x) || !(base(tp(f, x)) is TyRefVar) {
+      continue;
+    }
+    for d in own::tp_depend(f, x) {
+      if d != v && !own::has(out, d) {
+        out += [d];
+        todo += [d];
+      }
+    }
+  }
+  out
+}
+
+// src/variables/mod.rs fn link_target_owns — does the place a link names own its store?  An
+// argument's does; a local link's when what it depends on is a link or an owning local.
+fn link_target_owns(f: ir::Function, v: integer) -> boolean {
+  if own::is_argument(f, v) {
+    return true;
+  }
+  match base(tp(f, v)) {
+    TyRefVar { inner } => {
+      deps: vector<integer> = [];
+      own::depend(inner, deps);
+      if len(deps) == 0 {
+        return true;
+      }
+      for d in deps {
+        if (base(tp(f, d)) is TyRefVar) || (!own::is_argument(f, d) && proxy_says_owned(f, d)) {
+          return true;
+        }
+      }
+      false
+    }
+    _ => true,
+  }
+}
+
+// src/variables/mod.rs fn link_write_releases — does a write through link `v` release what it
+// displaces?  Not where the link reaches a plain parameter, which borrows
+// (`@FR-F-ParamRebind`; `LOFT_LINK_PARAM_RELEASES` unset).
+fn link_write_releases(f: ir::Function, v: integer) -> boolean {
+  for t in link_targets(f, v) {
+    if own::is_argument(f, t) && !(base(tp(f, t)) is TyRefVar) {
+      return false;
+    }
+  }
+  link_target_owns(f, v)
+}
+
 // src/variables/mod.rs:4495 fn rebind_orig — the map is stored per variable (`u16::MAX` none);
 // null for `None`.
 fn rebind_orig(f: ir::Function, v: integer) -> integer? {

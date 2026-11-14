@@ -730,6 +730,40 @@ fn no_prefill_lists(fact: text, tag: character, n: integer) -> boolean {
   false
 }
 
+// `refvar_text_stack_variant`: a text operator whose destination is a link to a text writes
+// through the link, by its stack twin.
+fn stack_variant(g: Gen, op: integer, args: vector<ir::Node>) -> integer {
+  v = if len(args) > 0 { plain_var(args[0]!) } else { -1 };
+  if v < 0 {
+    return op;
+  }
+  link = match var_of(g, v).type_def[0] ?? ir::TyVoid {
+    TyRefVar { inner } => match base(inner) {
+      TyText { dep: _ } => true,
+      _ => false,
+    },
+    _ => false,
+  };
+  if !link {
+    return op;
+  }
+  name = def_of(g, op).name;
+  twin = if name == "OpAppendText" { "OpAppendStackText" }
+    else if name == "OpClearText" { "OpClearStackText" }
+    else if name == "OpAppendCharacter" { "OpAppendStackCharacter" }
+    else if name == "OpFormatText" { "OpFormatStackText" }
+    else if name == "OpFormatInt" { "OpFormatStackInt" }
+    else if name == "OpFormatFloat" { "OpFormatStackFloat" }
+    else if name == "OpFormatSingle" { "OpFormatStackSingle" }
+    else if name == "OpFormatDatabase" { "OpFormatStackDatabase" }
+    else { "" };
+  if twin == "" {
+    return op;
+  }
+  nr = op_named(g.b, twin);
+  if nr < 0 { op } else { nr }
+}
+
 // `no_prefill_twin` (`@FR-R-CompleteWrite`): the mint whose literal writes every field runs
 // as its no-prefill twin; any other call as itself.
 fn no_prefill_twin(g: Gen, op: integer, args: vector<ir::Node>) -> integer {
@@ -944,7 +978,32 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
     if a.mutable {
       before = g.position;
       at = a.typedef[0] ?? ir::TyVoid;
-      generate(g, args[a#index]!, false);
+      arg = args[a#index]!;
+      // `push_forwarded_link`: a link handed on to a link parameter goes as it is.
+      forwarded = plain_var(arg);
+      link_param = match at {
+        TyRefVar { inner: _ } => true,
+        _ => false,
+      };
+      link_arg = forwarded >= 0 && match var_of(g, forwarded).type_def[0] ?? ir::TyVoid {
+        TyRefVar { inner: _ } => true,
+        _ => false,
+      };
+      if link_param && link_arg {
+        init_slot(g, forwarded, "OpVarRef");
+      } else {
+        generate(g, arg, false);
+        if raw_null(arg) && g.position == before {
+          typed_null(g, at);
+        }
+        function_param = match at {
+          TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+          _ => false,
+        };
+        if function_param && g.position - before < 16 {
+          push_sentinel(g);
+        }
+      }
       if g.position - before != pushed(at) {
         stop(g, "an argument that does not take its parameter's bytes in a call of {def.name}");
       }
@@ -952,7 +1011,7 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   }
   if operator_def {
     before = g.position;
-    actual = no_prefill_twin(g, op, args);
+    actual = no_prefill_twin(g, stack_variant(g, op, args), args);
     put_op(g.o, g.b, actual);
     stack_effect(g, actual);
     for a in def.attributes {
@@ -1468,15 +1527,61 @@ fn variable(g: Gen, v: integer) -> ir::TypeT {
     TySorted { n: _, keys: _, dep: _ } => "OpVarVector",
     TyHash { n: _, names: _, dep: _ } => "OpVarVector",
     TyIndex { n: _, keys: _, dep: _ } => "OpVarVector",
+    TyRadix { n: _, names: _, dep: _ } => "OpVarVector",
+    TyTrie { n: _, key: _, dep: _ } => "OpVarVector",
+    TyIterator { step: _, inner: _ } => "OpVarRef",
+    TyRefVar { inner: _ } => "OpVarRef",
     TyText { dep: _ } => if var.argument { "OpArgText" } else { "OpVarText" },
     _ => "",
   };
   if name == "" {
-    stop(g, "a variable of a type the writer does not read yet");
+    stop(g, "not written yet: a read of {shape_name(tp)}");
+    return tp;
+  }
+  // A link is read through: the reference its slot holds, then the value it names.
+  through = "";
+  operand = true;
+  match tp {
+    TyRefVar { inner } => {
+      nullable = optional_shape(inner);
+      through = match base(inner) {
+        TyInteger { spec } => {
+          codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+          width = if spec.forced_size > 0 { spec.forced_size } else if codes <= 65536 { 2 } else { 8 };
+          if width < 8 { "narrow" } else { "OpGetInt" }
+        }
+        TyCharacter => "OpGetCharacter",
+        TySingle => "OpGetSingle",
+        TyFloat => "OpGetFloat",
+        TyBoolean => "OpGetBoolean",
+        TyEnum { n: _, is_ref, dep: _ } => if is_ref { "record" } else { "OpGetEnum" },
+        TyText { dep: _ } => "OpGetStackText",
+        TyReference { n: _, dep: _ } => "record",
+        TyVector { inner: _, dep: _ } => "OpGetStackRef",
+        TySorted { n: _, keys: _, dep: _ } => "OpGetStackRef",
+        TyHash { n: _, names: _, dep: _ } => "OpGetStackRef",
+        TyIndex { n: _, keys: _, dep: _ } => "OpGetStackRef",
+        TyRadix { n: _, names: _, dep: _ } => "OpGetStackRef",
+        TyTrie { n: _, key: _, dep: _ } => "OpGetStackRef",
+        TyTuple { elems: _ } => "tuple",
+        _ => "other",
+      };
+      operand = through != "OpGetStackText";
+    }
+    _ => {}
+  }
+  if through != "" && !through.starts_with("Op") {
+    stop(g, "not written yet: a read through a link to {if through == "narrow" { "a narrow integer" } else if through == "record" { "a record" } else if through == "tuple" { "a tuple" } else { "another shape" }}");
     return tp;
   }
   add_op(g, name);
   put_u16(g.o, at);
+  if through != "" {
+    add_op(g, through);
+    if operand {
+      put_u16(g.o, 0);
+    }
+  }
   tp
 }
 
@@ -1611,7 +1716,18 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
     NdLoop { block: bl } => bgen_loop::loop_of(g, bl[0]!),
     NdBreak { n } => leave(g, n, true),
     NdContinue { n } => leave(g, n, false),
-    NdDrop { inner: _ } => unwritten(g, "a dropped value"),
+    NdDrop { inner } => {
+      // `gen_drop`: the value, then its bytes taken off the stack.
+      generate(g, inner, false);
+      size = frame::stepped(size_code(g, inner));
+      if size > 0 {
+        add_op(g, "OpFreeStack");
+        put_u16(g.o, 0);
+        put_u16(g.o, size);
+      }
+      g.position -= size;
+      ir::TyVoid
+    }
     NdEnum { ord, tp: _ } => {
       add_op(g, "OpConstEnum");
       put_u8(g.o, ord);
@@ -1629,6 +1745,29 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
     }
     NdCallRef { var: _, args: _ } => unwritten(g, "a call through a reference"),
     _ => unwritten(g, "a node of another kind"),
+  }
+}
+
+// `Stack::size_code`: the bytes a node's value takes, read off the node as it stands.
+fn size_code(g: Gen, n: ir::Node) -> integer {
+  match n {
+    NdInt { n: _ } => 4,
+    NdSingle { f: _ } => 4,
+    NdLong { n: _ } => 8,
+    NdFloat { f: _ } => 8,
+    NdBoolean { b: _ } => 1,
+    NdEnum { ord: _, tp: _ } => 1,
+    NdBlock { block: bl } => {
+      ops = bl[0]!.operators;
+      if len(ops) == 0 { 0 } else { size_code(g, ops[len(ops) - 1]!) }
+    }
+    NdInsert { items } => if len(items) == 0 { 0 } else { size_code(g, items[len(items) - 1]!) },
+    NdCall { def_nr, args: _ } => frame::width(def_of(g, def_nr).returned[0] ?? ir::TyVoid, true),
+    NdIf { cond: _, t, f: _ } => size_code(g, t),
+    NdText { s: _ } => 16,
+    NdVar { n: v } => frame::width(var_of(g, v).type_def[0] ?? ir::TyVoid, true),
+    NdSpan { pos: _, inner } => size_code(g, inner),
+    _ => 0,
   }
 }
 

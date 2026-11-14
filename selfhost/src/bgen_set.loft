@@ -235,6 +235,13 @@ fn set_var(g: bgen::Gen, v: integer, value: ir::Node) {
     bgen::owned_vector_store(g, v);
     return;
   }
+  match tp {
+    TyRefVar { inner } => {
+      set_link(g, v, inner, value);
+      return;
+    }
+    _ => {}
+  }
   put_ref = match bgen::base(tp) {
     TyVector { inner: _, dep: _ } => true,
     TyReference { n: _, dep: _ } => true,
@@ -257,4 +264,103 @@ fn set_var(g: bgen::Gen, v: integer, value: ir::Node) {
     bgen::push_sentinel(g);
   }
   bgen::init_slot(g, v, "OpPutRef");
+}
+
+// `set_var` for a link: the value written through the reference its slot holds — unless the
+// set re-points it (`@FR-B-Ref-Repoint`), when the reference goes into the slot itself.
+fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
+  f = g.b.data.definitions[g.d]!.variables;
+  var = f.variables[v]!;
+  tp = bgen::base(inner);
+  scalar_link = match tp {
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  };
+  repoints = match bgen::unspan(value) {
+    NdCall { def_nr, args: _ } => {
+      def = g.b.data.definitions[def_nr]!;
+      returns_record = match bgen::base(def.returned[0] ?? ir::TyVoid) {
+        TyReference { n: _, dep: _ } => true,
+        _ => false,
+      };
+      def.name == "OpCreateStack" || def.name == "OpVarRef" || (scalar_link && returns_record) || var.store_text_link
+    }
+    _ => false,
+  };
+  if repoints {
+    bgen::generate(g, value, false);
+    bgen::init_slot(g, v, "OpPutRef");
+    return;
+  }
+  text = match tp {
+    TyText { dep: _ } => true,
+    _ => false,
+  };
+  if text {
+    empty = match value {
+      NdText { s } => s == "",
+      _ => false,
+    };
+    if empty {
+      bgen::init_slot(g, v, "OpClearStackText");
+      return;
+    }
+    if bgen::dest_call(g, value) {
+      bgen::stop(g, "not written yet: a text call that answers into its destination");
+      return;
+    }
+    bgen::init_slot(g, v, "OpClearStackText");
+    bgen::generate(g, value, false);
+    bgen::init_slot(g, v, "OpAppendStackText");
+    return;
+  }
+  nullable = bgen::optional_shape(inner);
+  op = match tp {
+    TyInteger { spec } => {
+      codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+      width = if spec.forced_size > 0 { spec.forced_size } else if codes <= 65536 { 2 } else { 8 };
+      if width < 8 { "" } else { "OpSetInt" }
+    }
+    TyCharacter => "OpSetCharacter",
+    TySingle => "OpSetSingle",
+    TyFloat => "OpSetFloat",
+    TyBoolean => "OpSetBoolean",
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "" } else { "OpSetEnum" },
+    TyVector { inner: _, dep: _ } => "OpSetStackRef",
+    TySorted { n: _, keys: _, dep: _ } => "OpSetStackRef",
+    TyHash { n: _, names: _, dep: _ } => "OpSetStackRef",
+    TyIndex { n: _, keys: _, dep: _ } => "OpSetStackRef",
+    TyRadix { n: _, names: _, dep: _ } => "OpSetStackRef",
+    TyTrie { n: _, key: _, dep: _ } => "OpSetStackRef",
+    _ => "",
+  };
+  if op == "" {
+    bgen::stop(g, "not written yet: a write through a link to a record, a narrow integer, a function or a tuple");
+    return;
+  }
+  collection = op == "OpSetStackRef";
+  owned_writeback = collection && (own::ownership_of(g.b, g.ops, g.d, value) is Owned);
+  displaces = (owned_writeback || own::heap_def_nr(tp) != null) && binds::link_write_releases(f, v);
+  if displaces {
+    bgen::init_slot(g, v, "OpVarRef");
+    bgen::add_op(g, "OpGetStackRef");
+    bgen::put_u16(g.o, 0);
+  }
+  bgen::init_slot(g, v, "OpVarRef");
+  bgen::generate(g, value, false);
+  bgen::add_op(g, op);
+  if !collection {
+    bgen::put_u16(g.o, 0);
+  }
+  if displaces {
+    bgen::init_slot(g, v, "OpVarRef");
+    bgen::add_op(g, "OpGetStackRef");
+    bgen::put_u16(g.o, 0);
+    bgen::add_op(g, "OpFreeRefIfDistinct");
+  }
 }

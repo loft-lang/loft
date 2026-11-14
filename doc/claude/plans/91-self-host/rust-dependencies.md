@@ -68,7 +68,7 @@ Each step removes dependencies and can fail on its own; none needs a `.rs` chang
 
 | Step | What is built | Ends | Gate |
 |---|---|---|---|
-| **1. The bytecode writer in loft** | `selfhost/src/bgen.loft`: a port of `src/state/codegen.rs` from the stored IR to bytes.  Function by function: a function it does not write yet is counted, never written wrongly. | the writer half of row 1 | every function's bytes equal the Rust image's (`selfhost/bench/bgen_check.loft`), over the corpus |
+| **1. The bytecode writer in loft** | `selfhost/src/bgen.loft` with `bgen_set.loft` (reassignments) and `bgen_loop.loft` (loops): a port of `src/state/codegen.rs` from the stored IR to bytes, deciding on the facts `binds.loft` and `own.loft` port.  Function by function: a function it does not write yet is counted, never written wrongly. | the writer half of row 1 | every function's bytes equal the Rust image's (`selfhost/bench/bgen_check.loft`), over the corpus |
 | **2. The image in memory** | The tables of row 2 computed in loft from the IR and the schema — operator numbers by `Data::op_code`'s rule, the natives' table, constants, fn-ref shapes, generator facts, workers, sidecars, instances — and with them the debug data of row 6.  The runner takes this image; `stack_trace()` is answered from it. | rows 2 and 6 | each table equal to the Rust image's; the wide survey unchanged when the runner is fed the loft-written image |
 | **3. The loft front end's own IR** | The bytecode writer is fed the IR `frontend.loft` elaborates, not `--emit-image`'s: the lexer, parser, scopes, slot assignment and IR passes complete in loft ([README.md](README.md) strand 1a). | rows 1 and 3 | the IR equal to Rust's (`selfhost/compare/`), then the bytes of step 1 equal again from that IR |
 | **4. One program: source in, run** | `selfhost/front/loft.loft` runs a source file through the front end, the bytecode writer and the runner.  The older IR interpreter (`run.loft`, `lower.loft`) is removed once the corpus runs this way. | the last use of an image file | the wide survey, started from sources |
@@ -80,11 +80,35 @@ Speed is its own line of work beside these: the runner's time against the Rust
 interpreter's on the integer kernels (`selfhost/bench/fill_speed.sh`), cured in the emitted
 C and in the generator of `fill.loft`, never by a Rust change.
 
+## Step 1: what the writer does not write yet
+
+`bgen_survey.py` prints the list with its counts; the kinds, by what they need:
+
+- **Function values and tuples**: their first bind, read and store, a call through a function
+  value, a tuple argument, `Tuple` / `TupleGet` / `TuplePut` nodes.
+- **The copy and join arms of a bind** (`first_arm`'s record copies and joins, `re_bind`'s R1,
+  R2a–R2d): the decision is ported and names the arm; its bytes are not written.
+- **Links to a record**: the read and the write need `Data::held_out_of_line` in loft.
+- **Keyed access and iteration**: `OpGetRecord`, `OpSetKeyed`, `OpIterate`, `Iter` nodes, a
+  text's end test, a character walk's step, a fused vector store.
+- **Generators, `par` and return-buffer adoption**: a generator's creation and `Yield`, the
+  `n_parallel_*` calls, a function `ret_adopt.loft` says adopts its buffer.
+- **A text call that answers into its destination.**
+
+The bytes are compared with the Rust writer's under `LOFT_NO_TEXT_BORROW=1`: the loft writer
+holds every text local as its own text, so the rewrite that makes one a view
+(`opt::text_borrow`, `mark_text_views`) is a port this step still owes before the default
+form is compared.
+
+One function differs for a reason outside the writer: a text constant holding a NUL byte
+reaches the writer empty, because the image reader ends a text at its first NUL (step 5).
+
 ## How each step is checked
 
 | Check | Command |
 |---|---|
 | the bytecode writer, one program | `loft --interpret --lib selfhost/src --lib selfhost/crt/src selfhost/bench/bgen_check.loft <program image> <run image>` — functions identical, differing (a defect, named), not written |
+| the bytecode writer over the corpus | `python3 selfhost/bench/bgen_survey.py` — each function once, by name: identical, differing (named with its program), not written with what stops it by count, which is the order to port in |
 | the runner over the corpus | `python3 selfhost/bench/run_image_survey.py` |
 | the runner's tests | `cargo test --release --test selfhost` |
 | the front end's IR against Rust's | `selfhost/compare/` ([1b-compare.md](1b-compare.md)) |
