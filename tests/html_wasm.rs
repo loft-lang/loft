@@ -1015,7 +1015,14 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
     // Prefer the release rlib (the Makefile-built one); fall back to debug.
     let (rlib, deps) = ["release", "debug"].iter().find_map(|prof| {
         let r = root.join(format!("target/wasm32-wasip2/{prof}/libloft.rlib"));
-        fa::exists(&r).then(|| (r, root.join(format!("target/wasm32-wasip2/{prof}/deps"))))
+        // Where cargo put loft's dependencies: `deps/`, or one directory per unit on a cargo
+        // of the per-unit layout — where a `deps/` left by an older build is debris.
+        fa::exists(&r).then(|| {
+            let dirs = loft::cargo_layout::dependency_dirs(
+                &root.join(format!("target/wasm32-wasip2/{prof}")),
+            );
+            (r, dirs)
+        })
     })?;
 
     let tmp = std::env::temp_dir();
@@ -1053,8 +1060,10 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
             "--extern",
         ])
         .arg(format!("loft={}", rlib.display()))
-        .arg("-L")
-        .arg(format!("dependency={}", deps.display()))
+        .args(
+            deps.iter()
+                .flat_map(|d| ["-L".to_string(), format!("dependency={}", d.display())]),
+        )
         .arg("-o")
         .arg(&wasm)
         .arg(&rs)
