@@ -82,6 +82,16 @@ struct ChainFrame {
   escaped: vector<boolean>,
 }
 
+// `@FR-R-Cold`'s loft clause: an early exit written as a helper — its arm, the literal it
+// answers, the helper's name, whether the body wrote its call, the variables it owns.
+struct ColdArm {
+  arm: ir::Node,
+  answer: ir::Node,
+  name: text,
+  called: boolean,
+  own: vector<integer>,
+}
+
 // `@FR-R-Peel`: a constant the statements just before a loop gave one of its counters.
 struct Seed {
   var: integer,
@@ -213,6 +223,10 @@ struct W {
   room_minted: vector<integer>,
   // The element type the last `vector_place` found.
   elem: integer,
+  // `@FR-R-Cold`: the outlined arms, and per variable whether the body leaves it to one of
+  // them (or, in a helper, to the function) — it is then neither declared nor bound here.
+  cold: vector<ColdArm>,
+  undeclared: vector<boolean>,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line

@@ -22,6 +22,7 @@ use cgen_loop;
 use cgen_text;
 use cgen_ref;
 use cgen_bind;
+use cgen_cold;
 use own;
 use cgen_texts;
 use cgen_natives;
@@ -1099,7 +1100,7 @@ fn work_twin(x: Cx, d: integer) -> text {
     x.work_twins[d] = 1;
     return "";
   }
-  written = write_body(x, cgen_names::plain(d), param);
+  written = write_body(x, cgen_names::plain(d), param, false, []);
   if written.refused != "" {
     x.work_twins[d] = 3;
     x.why_work = written.refused;
@@ -1813,6 +1814,16 @@ fn note_site(x: Cx, w: W, v: ir::Node, ind: integer) {
 
 fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
   note_site(x, w, v, ind);
+  // `@FR-R-Cold`: a variable only an outlined arm uses is the arm's own — its frees go with it.
+  match v {
+    NdCall { def_nr: _, args: _ } => {
+      freed = cgen_cold::text_free(x.b, v);
+      if freed >= 0 && w.undeclared[freed]! {
+        return;
+      }
+    },
+    _ => {},
+  }
   match v {
     NdNull => {},
     NdLine { n: _ } => {},
@@ -1853,6 +1864,10 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       }
     },
     NdSet { var, inner } => {
+      // `@FR-R-Cold`: an outlined arm's own variable is initialised there.
+      if w.undeclared[var]! {
+        return;
+      }
       shape = w.shapes[var] ?? "";
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
@@ -1901,6 +1916,11 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       flush(w, ind);
     },
     NdIf { cond, t, f } => {
+      outlined = if len(w.cold) == 0 { -1 } else { cgen_cold::cold_index(w, t) };
+      if outlined >= 0 {
+        cgen_cold::cold_if(x, w, outlined, cond, f, ind);
+        return;
+      }
       cold = null_test(x.b, cond) && !int_literal_fallback(x.b, cond, f);
       test = as_cond(w, expr(x, w, cond, ind));
       line(w, ind, "if ({bare(test)}) {{");
@@ -1994,12 +2014,20 @@ fn store_linked(b: ir::Bundle, d: ir::Definition, links: vector<boolean>) -> boo
 }
 
 pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
-  write_body(x, twin, -1)
+  // `@FR-R-Cold`'s loft clause: the ordinary body only, and written again in place where
+  // the body did not keep to the plan.
+  if cgen_names::is_plain(twin) && plain_rules() {
+    tried = write_body(x, twin, -1, true, []);
+    if tried.refused != cgen_cold::COLD_ESCAPED {
+      return tried;
+    }
+  }
+  write_body(x, twin, -1, false, [])
 }
 
 // The body of twin `twin` (`FnWriter::write`); with `work_ret` a `__wr` twin's — the body
 // alone, answering nothing, its result the caller's buffer `work_ret`.
-fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
+fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>) -> Written {
   index = twin.d;
   d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
@@ -2007,7 +2035,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
   }
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
-  ret = if work_ret >= 0 { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  ret = if work_ret >= 0 || len(helper) > 0 { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
   if held(ret) == "" || (ret == "ref" && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
@@ -2067,7 +2095,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
     return Written { text: "", refused: "a tested text borrow" };
   }
   // `@FR-R-Cold`'s loft clause outlines an early exit that builds a text: not carried.
-  if cgen_names::is_plain(twin) && (env_variable("LOFT_NO_COLD_EXIT") ?? "0") == "0" && cgen_text::may_outline(d, d.code[0]!) {
+  if !plain_rules() && cgen_names::is_plain(twin) && (env_variable("LOFT_NO_COLD_EXIT") ?? "0") == "0" && cgen_text::may_outline(d, d.code[0]!) {
     return Written { text: "", refused: "a cold exit that builds a text" };
   }
   nn = opt_non_sentinel::non_sentinel_vars_seeded(x.b, x.p, index, seeded);
@@ -2118,8 +2146,29 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
     defs: own::function_defs(x.b, index, x.ops),
     room_minted: [for _ in 0..len(d.variables.variables) { -1 }],
     elem: -1,
+    cold: [],
+    undeclared: [for _ in 0..len(d.variables.variables) { false }],
   };
   code = d.code[0]!;
+  if len(helper) > 0 {
+    // A helper declares only what its arm names besides the parameters.
+    code = helper[0].arm;
+    for v in d.variables.variables {
+      owned = false;
+      for o in helper[0].own {
+        if o == v#index {
+          owned = true;
+        }
+      }
+      w.undeclared[v#index] = !v.argument && !owned;
+    }
+  }
+  if cold_on {
+    planned = cgen_cold::cold_plan(x, w);
+    if planned != "" {
+      return Written { text: "", refused: planned };
+    }
+  }
   if ret == "void" {
     stmt(x, w, code, 1);
     epilogue(w, 1);
@@ -2131,7 +2180,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
   }
   out = "";
   for v in d.variables.variables {
-    if !v.argument {
+    if !v.argument && !w.undeclared[v#index]! {
       shape = shapes[v#index]!;
       if w.links[v#index]! {
         out += "    {held(shape)} *{w.raw[v#index]!} = 0;\n";
@@ -2163,6 +2212,17 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
   body = cgen_text::expand_epilogues(w);
   statements = statement_count(body);
   out += body;
+  if len(w.cold) > 0 {
+    if cgen_cold::cold_escaped(w, out) {
+      return Written { text: "", refused: cgen_cold::COLD_ESCAPED };
+    }
+    for a in w.cold {
+      part = write_body(x, twin, -1, false, [a]);
+      if part.refused != "" {
+        return Written { text: "", refused: part.refused };
+      }
+    }
+  }
   out = cgen_text::park_work_texts(w, d, out);
   // `@FR-R-Tabulate`: a classifier of a byte reads its answer from the table the compiler
   // evaluated when its one parameter is in the table's range, and runs its body otherwise.

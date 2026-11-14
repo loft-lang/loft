@@ -538,7 +538,7 @@ fn held_texts(w: W) -> vector<text> {
   texts: vector<text> = [];
   for s in w.shapes {
     v = s#index;
-    if s == "text" && !w.params[v]! && !w.links[v]! && !w.borrowed[v]! {
+    if s == "text" && !w.params[v]! && !w.links[v]! && !w.borrowed[v]! && !w.undeclared[v]! {
       texts += [w.names[v]!];
     }
   }
