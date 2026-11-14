@@ -636,6 +636,8 @@ N_LOAD_KEY = 50;
 N_JSON_PARSE = 51;
 N_JSON_ERRORS_DEST = 52;
 N_PARSE_ERRORS_OF = 53;
+// The JsonValue natives: one number each, from `N_JV` on, in `jv_which`'s order.
+N_JV = 60;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -696,6 +698,26 @@ pub fn native_handler(name: text) -> integer {
     "n_json_parse" => N_JSON_PARSE,
     "n_json_errors_dest" => N_JSON_ERRORS_DEST,
     "n_parse_errors_of" => N_PARSE_ERRORS_OF,
+    "n_json_null" => N_JV,
+    "n_json_bool" => N_JV + 1,
+    "n_json_number" => N_JV + 2,
+    "n_json_string" => N_JV + 3,
+    "n_json_array" => N_JV + 4,
+    "n_json_object" => N_JV + 5,
+    "t_9JsonValue_fields" => N_JV + 6,
+    "t_9JsonValue_field" => N_JV + 7,
+    "t_9JsonValue_item" => N_JV + 8,
+    "t_9JsonValue_keys" => N_JV + 9,
+    "n_struct_from_jsonvalue" => N_JV + 10,
+    "t_9JsonValue_len" => N_JV + 20,
+    "t_9JsonValue_as_long" => N_JV + 21,
+    "t_9JsonValue_as_bool" => N_JV + 22,
+    "t_9JsonValue_has_field" => N_JV + 23,
+    "t_9JsonValue_as_number" => N_JV + 30,
+    "t_9JsonValue_as_text_dest" => N_JV + 40,
+    "t_9JsonValue_kind_dest" => N_JV + 41,
+    "t_9JsonValue_to_json_dest" => N_JV + 42,
+    "t_9JsonValue_to_json_pretty_dest" => N_JV + 43,
     "n_store_load_key_text" => N_LOAD_KEY,
     "n_store_load_keys" => N_LOAD_KEY,
     "n_store_load_keys_text" => N_LOAD_KEY,
@@ -1696,6 +1718,8 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     crt::parse_errors_of(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     sp += 16;
+  } else if nh >= N_JV && nh < N_JV + 50 {
+    sp = call_jv(nh - N_JV, img, stk, sp, io, tl, ptold);
   } else if nh == N_HASH_SORTED || nh == N_HASH_UNSORTED {
     // A hash's records as a vector, in key order or the hash's own (a scratch vector).
     ensure_table(img.types, tl);
@@ -1711,6 +1735,80 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     return -1;
   }
   sp
+}
+
+// A JsonValue native by its number from `N_JV` (`crt::jv_*`, the C runtime's routines): its
+// arguments popped as Rust's native pops them, its answer pushed.  Answers the new stack top.
+fn call_jv(w: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, ptold: vector<boolean>) -> integer {
+  sp = sp0;
+  ensure_table(img.types, tl);
+  ptypes::json_layout(img.types, ptold);
+  if w >= 40 {
+    // A text answer into the destination text, popped last-pushed first, then the receiver.
+    dest: vector<integer> = [NULL_STORE, 0, 0];
+    crt::slot_ref(dest, stk, sp - 16);
+    crt::slot_ref(io, stk, sp - 32);
+    sp -= 32;
+    crt::ref_text_append(dest[0] ?? NULL_STORE, dest[1] ?? 0, dest[2] ?? 0, crt::jv_text(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    return sp;
+  }
+  if w == 30 {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    set_f(stk, sp, crt::jv_float(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+    return sp + 8;
+  }
+  if w >= 20 {
+    // `has_field` takes a text after the receiver; the others the receiver alone.
+    jt = "";
+    if w == 23 {
+      jt = crt::stack_str(stk, sp - 16) ?? "";
+      sp -= 16;
+    }
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+    jn = crt::jv_int(w, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, jt);
+    if w == 22 || w == 23 {
+      crt::set_w(crt::W_BOOLEAN, stk, 1, 8 + sp, 0, 0, jn);
+    } else {
+      set(stk, sp, jn);
+    }
+    return sp + 8;
+  }
+  // A reference answer.
+  ji = 0;
+  jf = 0.0;
+  jt = "";
+  if w == 1 {
+    ji = if get_bool(stk, sp - 8) { 1 } else { 0 };
+    sp -= 8;
+  } else if w == 2 {
+    jf = get_f(stk, sp - 8) ?? 0.0;
+    sp -= 8;
+  } else if w == 3 {
+    jt = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+  } else if w == 7 {
+    jt = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+  } else if w == 8 || w == 10 {
+    ji = get(stk, sp - 8) ?? 0;
+    sp -= 8;
+  }
+  if w == 10 {
+    ptypes::prepare(img.types, ji, ptold);
+  }
+  if w >= 4 {
+    crt::slot_ref(io, stk, sp - 16);
+    sp -= 16;
+  } else {
+    io[0] = NULL_STORE;
+    io[1] = 0;
+    io[2] = 0;
+  }
+  crt::jv_ref(w, io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, jt, ji, jf);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp + 16
 }
 
 // The operators this runner added after its first slice (handler numbers from `H_PUT_SINGLE`

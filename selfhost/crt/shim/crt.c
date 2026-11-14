@@ -1265,6 +1265,42 @@ int64_t loft_crt_parse_errors_of(int64_t *out, int64_t no, int64_t s, int64_t r,
     return 0;
 }
 
+/* The JsonValue natives (`default/06_json.loft`), by `which`, as the C backend maps each to its
+ * runtime routine (src/c/mod.rs): a reference answer goes to `ro`, a float one to `f[0]`, a text
+ * one to `out` (its length answered), any other is the answer.  `v` is the receiver or the one
+ * reference argument, `t` the text argument, `i` an integer or boolean one (`struct_from_jsonvalue`'s
+ * type), `f[0]` a float one. */
+int64_t loft_crt_jv(int64_t which, int64_t *ro, int64_t nro, int64_t s, int64_t r, int64_t p, const char *t, int64_t tl,
+                    int64_t i, double *f, int64_t nf, char *out, int64_t cap) {
+    loft_ref v = loft_crt_ref(s, r, p);
+    loft_str ts = loft_crt_str(t, tl);
+    loft_text o = { 0, 0, 0 };
+    switch (which) {
+    case 0: loft_crt_put_ref(ro, nro, loft_json_null()); return 0;
+    case 1: loft_crt_put_ref(ro, nro, loft_json_bool((uint8_t) i)); return 0;
+    case 2: loft_crt_put_ref(ro, nro, loft_json_number(nf > 0 ? f[0] : 0.0)); return 0;
+    case 3: loft_crt_put_ref(ro, nro, loft_json_string(ts)); return 0;
+    case 4: loft_crt_put_ref(ro, nro, loft_json_array(v)); return 0;
+    case 5: loft_crt_put_ref(ro, nro, loft_json_object(v)); return 0;
+    case 6: loft_crt_put_ref(ro, nro, loft_jv_fields(v)); return 0;
+    case 7: loft_crt_put_ref(ro, nro, loft_jv_field(v, ts)); return 0;
+    case 8: loft_crt_put_ref(ro, nro, loft_jv_item(v, i)); return 0;
+    case 9: loft_crt_put_ref(ro, nro, loft_jv_keys(v)); return 0;
+    case 10: loft_crt_put_ref(ro, nro, loft_struct_from_jsonvalue(loft_crt_ptypes, v, (uint16_t) i)); return 0;
+    case 20: return loft_jv_len(v);
+    case 21: return loft_jv_as_long(v);
+    case 22: return loft_jv_as_bool(v);
+    case 23: return loft_jv_has_field(v, ts);
+    case 30: if (nf > 0) f[0] = loft_jv_as_number(v); return 0;
+    case 40: o = loft_jv_as_text(v); break;
+    case 41: o = loft_jv_kind(v); break;
+    case 42: o = loft_jv_to_json(v); break;
+    case 43: o = loft_jv_to_json_pretty(v); break;
+    default: return 0;
+    }
+    return loft_crt_out(&o, out, cap);
+}
+
 /* `LOFT_CRT_PTYPES=1`: the parse table's rows on standard error, in the emitter's spelling of
  * `loft_ptypes`, to compare with a `--native-c --native-emit` of the same program. */
 static void loft_crt_ptypes_dump(void) {

@@ -454,6 +454,8 @@ fn c_json_errors(out: vector<u8>) -> integer;
 #c "loft_crt_json_errors" "int64_t(char*, int64_t)"
 fn c_parse_errors_of(out: vector<integer>, s: integer, r: integer, p: integer) -> integer;
 #c "loft_crt_parse_errors_of" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t)"
+fn c_jv(which: integer, ro: vector<integer>, s: integer, r: integer, p: integer, t: text, tl: integer, i: integer, f: vector<float>, out: vector<u8>) -> integer;
+#c "loft_crt_jv" "int64_t(int64_t, int64_t*, int64_t, int64_t, int64_t, int64_t, const char*, int64_t, int64_t, double*, int64_t, char*, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -810,6 +812,34 @@ pub fn json_errors() -> text {
 // `parse_errors_of(r)`: a fresh vector of the errors of the parse that built `r`'s store.
 pub fn parse_errors_of(out: vector<integer>, s: integer, r: integer, p: integer) {
   c_parse_errors_of(out, s, r, p);
+}
+
+// The JsonValue natives, by `which` (`loft_crt_jv`): `jv_ref` answers a reference in `out`,
+// `jv_int` an integer (a boolean as 0, 1 or 255 for null), `jv_float` a float, `jv_text` a text.
+// `s`, `r`, `p` name the receiver or the reference argument, `t` the text argument, `i` an
+// integer or boolean one, `f` a float one.
+pub fn jv_ref(which: integer, out: vector<integer>, s: integer, r: integer, p: integer, t: text, i: integer, f: float) {
+  c_jv(which, out, s, r, p, t, t.size(), i, [f], []);
+}
+
+pub fn jv_int(which: integer, s: integer, r: integer, p: integer, t: text) -> integer {
+  c_jv(which, [], s, r, p, t, t.size(), 0, [0.0], [])
+}
+
+pub fn jv_float(which: integer, s: integer, r: integer, p: integer) -> float {
+  f = [0.0];
+  c_jv(which, [], s, r, p, "", 0, 0, f, []);
+  f[0] ?? 0.0
+}
+
+pub fn jv_text(which: integer, s: integer, r: integer, p: integer) -> text {
+  buf = room(256);
+  n = c_jv(which, [], s, r, p, "", 0, 0, [0.0], buf);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_jv(which, [], s, r, p, "", 0, 0, [0.0], buf);
+  }
+  text_from_byte_range(buf, 0, n)
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
