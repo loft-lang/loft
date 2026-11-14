@@ -9,6 +9,7 @@
 use ir;
 use load;
 use cgen_tidy;
+use cgen_types;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -156,4 +157,23 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
   out += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {main.name}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
   // The finished program names what it uses: what nothing names is not written.
   Unit { code: cgen_tidy::drop_unnamed(out, RUNTIME_END), refused: "" }
+}
+
+// A LAYER of the program in `b`: what an analysis derived, one line per function, in the
+// format the Rust generator traces it in — or null for a layer this generator does not print.
+// `shapes` (`LOFT_TRACE_SHAPES`): every function with a body; one a variable of which has no
+// shape prints no line.
+pub fn layer(b: ir::Bundle, name: text) -> text? {
+  if name != "shapes" {
+    return null;
+  }
+  out = "";
+  for d in b.data.definitions {
+    if len(d.code) == 0 || d.code[0] == NdNull {
+      continue;
+    }
+    line = cgen_types::shapes_line(d) ?? continue;
+    out += "{line}\n";
+  }
+  out
 }

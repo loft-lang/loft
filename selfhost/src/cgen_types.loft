@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft: the C shape of a loft type and of a function's
+// variables (`CType`, `Cx::ctype`, `Cx::local_ctype`, `variable_shapes` in src/c/mod.rs).
+//
+// A shape is held as its word — `int`, `text`, `tuple(int,ref)` — the spelling the trace layer
+// `shapes` compares (`LOFT_TRACE_SHAPES`): a tuple by its members, because the number of its C
+// struct is the order tuples were first met in, which a per-function comparison cannot know.
+
+use ir;
+
+// `Type::base`: the type without its `τ?` marker.
+pub fn base(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => base(inner),
+    _ => t,
+  }
+}
+
+// `Type::is_unknown`: an unresolved stub, or a vector of one.
+pub fn is_unknown(t: ir::TypeT) -> boolean {
+  match t {
+    TyUnknown { n: _ } => true,
+    TyReference { n, dep: _ } => n == 0,
+    TyVector { inner, dep: _ } => is_unknown(inner),
+    _ => false,
+  }
+}
+
+// `IntegerSpec::is_width32`: does a value of this integer type fit 32 bits by declaration?
+fn is_width32(spec: ir::IntegerSpec) -> boolean {
+  if spec.max > 2147483647 {
+    return false;
+  }
+  if spec.forced_size != 0 {
+    return spec.forced_size <= 4;
+  }
+  !(spec.min == -2147483647 && spec.max == 2147483647)
+}
+
+// `LOFT_NO_C_INT32=1` holds every integer in `int64_t`.
+fn no_c_int32() -> boolean {
+  (env_variable("LOFT_NO_C_INT32") ?? "0") != "0"
+}
+
+// `Cx::ctype`: the C shape of `t`, nullable or not — a null is held in the same shape — or
+// null where the C backend has none.  A whole build under `--width 32` is not asked here: the
+// image does not say it.
+pub fn ctype(t: ir::TypeT) -> text? {
+  match base(t) {
+    TyInteger { spec: _ } => "int",
+    TyBoolean => "bool",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "char",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "fn",
+    TyText { dep: _ } => "text",
+    TyReference { n: _, dep: _ } => "ref",
+    TyVector { inner: _, dep: _ } => "ref",
+    TyHash { n: _, names: _, dep: _ } => "ref",
+    TySorted { n: _, keys: _, dep: _ } => "ref",
+    TyIndex { n: _, keys: _, dep: _ } => "ref",
+    TyRadix { n: _, names: _, dep: _ } => "ref",
+    TyTrie { n: _, key: _, dep: _ } => "ref",
+    TyIterator { step: _, inner: _ } => "ref",
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "ref" } else { "enum" },
+    TyTuple { elems } => tuple_shape(elems),
+    TyVoid => "void",
+    _ => null,
+  }
+}
+
+// A tuple's shape by its members; a member without a shape, or a void one, leaves it none.
+fn tuple_shape(elems: vector<ir::TypeT>) -> text? {
+  members: vector<text> = [];
+  for e in elems {
+    m = ctype(e) ?? return null;
+    if m == "void" {
+      return null;
+    }
+    members += [m];
+  }
+  "tuple({members.join(",")})"
+}
+
+// `Cx::local_ctype`: a local of a body under the 32-bit regime holds a 32-bit integer in
+// `int32_t`.
+pub fn local_ctype(t: ir::TypeT, body32: boolean) -> text? {
+  match base(t) {
+    TyInteger { spec } => if body32 && is_width32(spec) && !no_c_int32() { "int32" } else { "int" },
+    _ => ctype(t),
+  }
+}
+
+// `type_word`: `t` in a word, for a refusal.
+fn type_word(t: ir::TypeT) -> text {
+  shown = "{t}";
+  cut = shown.find(" ") ?? shown.size();
+  shown[0..cut]
+}
+
+// `variable_shapes`: the C shape of each of `d`'s variables, in number order — a `&` parameter
+// its target's, a local nothing binds or one only ever bound to `null` the integer null's.
+// Null where a variable has no shape, the reason in `why`.
+pub fn variable_shapes(d: ir::Definition, why: &text) -> vector<text>? {
+  shapes: vector<text> = [];
+  for v in d.variables.variables {
+    whole = base(v.type_def[0]);
+    tp = match whole {
+      TyRefVar { inner } => inner,
+      _ => whole,
+    };
+    // A name the first pass met before its declaration, a local only ever bound to `null`,
+    // and a local bound to a value that never arrives: a placeholder nothing reads.
+    placeholder = match tp {
+      TyNull => true,
+      TyNever => true,
+      _ => is_unknown(tp) && v.scope == 65535,
+    };
+    if placeholder && !v.argument {
+      shapes += ["int"];
+      continue;
+    }
+    shape = if v.argument { ctype(tp) } else { local_ctype(tp, d.width32) };
+    if shape == null || shape == "void" {
+      why = "{if v.argument { "parameter" } else { "local" }} of type {type_word(tp)}";
+      return null;
+    }
+    shapes += [shape];
+  }
+  shapes
+}
+
+// The trace line of `d`'s shapes (`LOFT_TRACE_SHAPES`): `[shapes]<TAB>function<TAB>
+// number:name=shape …`, or null where a variable has no shape.
+pub fn shapes_line(d: ir::Definition) -> text? {
+  why = "";
+  shapes = variable_shapes(d, why) ?? return null;
+  row: vector<text> = [];
+  for s in shapes {
+    row += ["{s#index}:{d.variables.variables[s#index].name}={s}"];
+  }
+  "[shapes]\t{d.name}\t{row.join(" ")}"
+}

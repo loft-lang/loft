@@ -20,6 +20,11 @@ tests' unit where it has no `main`) is compared with a second unit:
 debug tier's own image, a `#line` per statement, no whole-program rewrite), which only a
 generator can be asked for.
 
+`--layer shapes` compares a LAYER instead of the unit: what an analysis derived, one line per
+function (12-c-generator.md § The layers beside the unit).  The Rust side prints it while it
+writes the unit (`LOFT_TRACE_SHAPES=1`), the generator with `<image> <out> --layer shapes`;
+every function the Rust side printed must have the same line on the other side.
+
 A program is counted `agree`; `differ` (the first line that differs, both sides); `refused`
 (the second side wrote no unit: its last line of standard error, ranked); `nounit` (the oracle
 writes none: the C backend refuses the program, which is no program of this corpus).
@@ -62,6 +67,39 @@ def first_difference(a, b):
                 return n, "", ""
 
 
+def layer_one(f, loft, generator, tmp, env, timeout, layer):
+    """One program's `layer`: each line the Rust generator traced against the generator's."""
+    stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
+    want, got, img = stem + ".want.c", stem + ".layer", stem + ".store"
+    switch = {"shapes": "LOFT_TRACE_SHAPES"}[layer]
+    try:
+        rc, err = proc([loft, "--emit-c", want, f], {**env, switch: "1"}, timeout, cwd=os.path.dirname(f))
+        if rc != 0:
+            return f, "nounit", last(err)
+        rust = {}
+        for line in err.splitlines():
+            if line.startswith(f"[{layer}]\t"):
+                rust[line.split("\t")[1]] = line
+        rc, err = proc([loft, "--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
+        if rc == 0:
+            rc, err = proc([generator, img, got, "--layer", layer], env, timeout, cwd=os.path.dirname(f))
+        if rc != 0 or not os.path.exists(got):
+            return f, "refused", last(err)
+        mine = {}
+        with open(got, encoding="utf-8", errors="replace") as fh:
+            for line in fh.read().splitlines():
+                if line.startswith(f"[{layer}]\t"):
+                    mine[line.split("\t")[1]] = line
+        for name, line in sorted(rust.items()):
+            if mine.get(name) != line:
+                return f, "differ", f"{name}\n    oracle: {line[:160]}\n    other:  {(mine.get(name) or '(no line)')[:160]}"
+        return f, "agree", str(len(rust))
+    finally:
+        for p in (want, got, img):
+            if os.path.exists(p):
+                os.unlink(p)
+
+
 def one(f, loft, generator, tmp, env, timeout, debug=False):
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
     want, got, img = stem + ".want.c", stem + ".got.c", stem + ".store"
@@ -99,6 +137,8 @@ def main():
     ap.add_argument("--cgen", action="store_true", help="build selfhost/front/cgen.loft and use it")
     ap.add_argument("--form", choices=["program", "debug"], default="program",
                     help="which unit: the program's, or the debug tier's with its #line marks")
+    ap.add_argument("--layer", choices=["shapes"], default=None,
+                    help="compare what an analysis derived instead of the unit")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
@@ -112,8 +152,8 @@ def main():
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
     tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
-    if o.form == "debug" and not (o.cgen or o.generator):
-        sys.exit("--form debug compares a generator's unit: give --cgen or --generator")
+    if (o.form == "debug" or o.layer) and not (o.cgen or o.generator):
+        sys.exit("--form debug and --layer compare a generator's output: give --cgen or --generator")
     try:
         if o.cgen:
             out = os.path.join(tmp, "cgen")
@@ -131,14 +171,21 @@ def main():
         counts = collections.Counter()
         why = collections.Counter()
         shown = []
+        run = ((lambda f: layer_one(f, loft, o.generator, tmp, env, o.timeout, o.layer)) if o.layer else
+               (lambda f: one(f, loft, o.generator, tmp, env, o.timeout, o.form == "debug")))
+        rows = 0
         with cf.ThreadPoolExecutor(o.jobs) as ex:
-            for f, verdict, what in ex.map(lambda f: one(f, loft, o.generator, tmp, env, o.timeout, o.form == "debug"), files):
+            for f, verdict, what in ex.map(run, files) if o.layer else ex.map(lambda f: one(f, loft, o.generator, tmp, env, o.timeout, o.form == "debug"), files):
                 counts[verdict] += 1
+                if o.layer and verdict == "agree":
+                    rows += int(what)
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what}")
                 if verdict == "refused":
                     why[what] += 1
         units = len(files) - counts["nounit"]
+        if o.layer:
+            print(f"layer {o.layer}: {rows} function rows compared")
         print(f"{counts['agree']} of {units} units agree; " +
               ", ".join(f"{counts[k]} {k}" for k in ("differ", "refused", "nounit") if counts[k]))
         for line in sorted(shown):

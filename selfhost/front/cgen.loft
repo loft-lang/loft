@@ -6,6 +6,10 @@
 // (`loft --emit-image`) is given, or says which construct it does not carry yet and exits 3; a
 // file it cannot read or write is exit 2.  `--debug` asks for the debug unit, each statement
 // marked with its source line, from an image of the debug tier (`--native-debug --emit-image`).
+//
+// `cgen <image> <out> --layer shapes` writes a LAYER instead of the unit: what an analysis of
+// the generator derived, one line per function, in the format the Rust generator traces it in
+// (`LOFT_TRACE_SHAPES`) — compared by `selfhost/bench/cgen_survey.py --layer shapes`.
 
 #cwd
 use load;
@@ -20,6 +24,16 @@ fn main(args: vector<text>) {
   if b == null {
     eprintln("cgen: {args[0]!} is not a program image this build reads");
     exit(2);
+  }
+  if args[2] == "--layer" {
+    lines = if len(args) > 3 { cgen::layer(b, args[3]!) } else { null };
+    if lines == null {
+      eprintln("cgen: the layers are: shapes");
+      exit(2);
+    }
+    layer = file(args[1]!);
+    layer.write(lines);
+    return;
   }
   missing = "";
   runtime = cgen::runtime(args[2]!, missing);

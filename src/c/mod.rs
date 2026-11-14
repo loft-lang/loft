@@ -2955,6 +2955,53 @@ pub(crate) fn variable_shapes(
     Ok(shapes)
 }
 
+/// `c` in a word, for a trace: a tuple by its members, since its number is the order tuples
+/// were first met in.
+fn shape_word(cx: &Cx, c: CType) -> String {
+    match c {
+        CType::Int => "int".into(),
+        CType::Int32 => "int32".into(),
+        CType::Bool => "bool".into(),
+        CType::Text => "text".into(),
+        CType::Ref => "ref".into(),
+        CType::Enum => "enum".into(),
+        CType::Float => "float".into(),
+        CType::Single => "single".into(),
+        CType::Char => "char".into(),
+        CType::Fn => "fn".into(),
+        CType::Tuple(id) => format!(
+            "tuple({})",
+            cx.tuple_shapes(id)
+                .into_iter()
+                .map(|m| shape_word(cx, m))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        CType::Tr(g) => format!("tr{g}"),
+        CType::TrVec => "trvec".into(),
+        CType::Void => "void".into(),
+    }
+}
+
+/// `LOFT_TRACE_SHAPES=1` — the C shape of every variable of function `d` as
+/// [`variable_shapes`] derived it, before a rewrite reshapes any: one line per function on
+/// standard error, `[shapes]<TAB>function<TAB>number:name=shape …`.  The layer the loft-written
+/// generator's own derivation is compared with (`selfhost/bench/cgen_survey.py --layer shapes`,
+/// 12-c-generator.md § The layers beside the unit); its format is that comparison's contract.
+fn trace_shapes(cx: &Cx, d: u32, shapes: &[CType]) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_SHAPES").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let def = cx.data.def(d);
+    let vars = def.variables();
+    let row: Vec<String> = shapes
+        .iter()
+        .enumerate()
+        .map(|(v, c)| format!("{v}:{}={}", vars.name(v as u16), shape_word(cx, *c)))
+        .collect();
+    eprintln!("[shapes]\t{}\t{}", def.name(), row.join(" "));
+}
+
 /// `@FR-R-Inline`: a function of at most twelve statements is declared `inline`.  The hint
 /// raises the compiler's inlining budget for it, so a small helper called from a hot loop —
 /// a push through `put`, an accessor — is taken into its caller, and the caller's locals stay
@@ -3145,6 +3192,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         return Err("parameters that do not match their arguments".into());
     }
     let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
+    if mask == 0 {
+        trace_shapes(cx, d, &shapes);
+    }
     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
     // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
     let apr_at = if mask & APR_BIT == 0 {
