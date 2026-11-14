@@ -1281,22 +1281,27 @@ fn new_record_of(self: State, defaults: boolean) {
   }
   // A keyed collection's routines read its key parts from the loaded table.
   self.load_table();
-  v = self.get_stack_dbref();
-  vp = v.pos + t.at;
-  io: vector<integer> = [NULL_STORE, 0, 0];
+  if !self.can_pop(16) {
+    return;
+  }
+  // The collection's reference read in its slot, the new record's written over it.
+  at = self.stack_pos - 16;
+  vs = crt::stack_get(4, self.stk, at) & 65535;
+  vr = crt::stack_get(4, self.stk, at + 4);
+  vp = crt::stack_get(4, self.stk, at + 8) + t.at;
   if t.how == T_ARRAY {
-    crt::entry_new(io, v.store_nr, v.rec, vp, t.size);
+    crt::entry_new(self.lio, vs, vr, vp, t.size);
   } else if t.how == T_KEYED {
-    crt::keyed_new(io, v.store_nr, v.rec, vp, t.kkind, t.size);
+    crt::keyed_new(self.lio, vs, vr, vp, t.kkind, t.size);
   } else if t.how == T_HASH {
-    crt::hash_entry(io, v.store_nr, v.rec, vp, t.size, t.linked);
+    crt::hash_entry(self.lio, vs, vr, vp, t.size, t.linked);
   } else {
-    crt::vec_append(io, v.store_nr, v.rec, vp, t.size);
+    crt::vec_append(self.lio, vs, vr, vp, t.size);
   }
   if defaults {
-    crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(t.elem));
+    crt::fill(self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, self.default_of(t.elem));
   }
-  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
 }
 
 pub fn new_record(self: State) {
@@ -1318,19 +1323,29 @@ pub fn finish_record(self: State) {
     return;
   }
   self.load_table();
-  r = self.get_stack_dbref();
-  v = self.get_stack_dbref();
-  vp = v.pos + t.at;
+  if !self.can_pop(32) {
+    return;
+  }
+  // The record on top and the collection's reference under it, read in their slots.
+  self.stack_pos -= 32;
+  at = self.stack_pos;
+  vs = crt::stack_get(4, self.stk, at) & 65535;
+  vr = crt::stack_get(4, self.stk, at + 4);
+  vpos = crt::stack_get(4, self.stk, at + 8);
+  rs = crt::stack_get(4, self.stk, at + 16) & 65535;
+  rr = crt::stack_get(4, self.stk, at + 20);
+  rp = crt::stack_get(4, self.stk, at + 24);
+  vp = vpos + t.at;
   if t.group {
-    crt::group_finish(t.content, t.gheld, t.gnull, v.store_nr, v.rec, v.pos, r.store_nr, r.rec, r.pos, t.gm);
+    crt::group_finish(t.content, t.gheld, t.gnull, vs, vr, vpos, rs, rr, rp, t.gm);
   } else if t.how == T_ARRAY {
-    crt::array_append(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos);
+    crt::array_append(vs, vr, vp, rs, rr, rp);
   } else if t.how == T_KEYED {
-    crt::keyed_finish(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, t.kkind, t.elem, t.tp);
+    crt::keyed_finish(vs, vr, vp, rs, rr, rp, t.kkind, t.elem, t.tp);
   } else if t.how == T_HASH {
-    crt::hash_insert(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, t.elem, t.tp);
+    crt::hash_insert(vs, vr, vp, rs, rr, rp, t.elem, t.tp);
   } else {
-    crt::vec_finish(v.store_nr, v.rec, vp);
+    crt::vec_finish(vs, vr, vp);
   }
 }
 
