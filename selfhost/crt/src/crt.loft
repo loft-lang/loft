@@ -224,56 +224,79 @@ pub fn stack_put_float(store: integer, at: integer, v: float?, single: boolean) 
   c_stack_put_float(store, at, [v ?? 0.0 / 0.0], if single { 1 } else { 0 });
 }
 
-fn c_code_base(b: const vector<u8>) -> integer;
-#c "loft_crt_code_base" "int64_t(const uint8_t*, int64_t)"
+fn c_peek(which: integer, base: integer, at: integer) -> integer;
+#c "loft_crt_peek" "int64_t(int64_t, int64_t, int64_t)"
+fn c_peek_f64(base: integer, at: integer) -> float;
+#c "loft_crt_peek_f64" "double(int64_t, int64_t)"
+fn c_poke(which: integer, base: integer, at: integer, v: integer, is_null: boolean);
+#c "loft_crt_poke" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_poke_f64(base: integer, at: integer, v: vector<float>);
+#c "loft_crt_poke_f64" "void(int64_t, int64_t, const double*, int64_t)"
 
-// `(R-CodeBase)` — the bytecode's address for a run's dispatch loop to hold in a local: valid
-// while nothing grows the store the code lies in.
-pub fn code_base(b: const vector<u8>) -> integer {
-  c_code_base(b)
+// `(R-CodeBase)`, `(R-StackBase)` — the value at byte `at` from the address `base`, and one
+// written there, with NO test of the position: for the dispatch loop, which tests its code
+// position and its stack top once a step and each frame slot in its arm's guard.  `base` is
+// the held code's address (`hold_bytes`) or the stack's (`stack_base`).  The twin is one load
+// or store; the integer null is its bit pattern, cut to the width.
+pub fn peek_u8(base: integer, at: integer) -> integer {
+  c_peek(SW_U8, base, at)
 }
+#c_twin "loft_twin_peek_u8" "int64_t(int64_t, int64_t)"
 
-// An operand of the code read at `at` through the base `code_base` gave (`n`: the code's
-// length); the body reads the vector, the twin the base.  Outside the code: 0.
-pub fn cget_u8(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
-  get_u8(b, at)
+pub fn peek_i8(base: integer, at: integer) -> integer {
+  c_peek(SW_I8, base, at)
 }
-#c_twin "loft_twin_cget_u8" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+#c_twin "loft_twin_peek_i8" "int64_t(int64_t, int64_t)"
 
-pub fn cget_i8(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
-  get_i8(b, at)
+pub fn peek_u16(base: integer, at: integer) -> integer {
+  c_peek(SW_U16, base, at)
 }
-#c_twin "loft_twin_cget_i8" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+#c_twin "loft_twin_peek_u16" "int64_t(int64_t, int64_t)"
 
-pub fn cget_u16(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
-  get_u16(b, at)
+pub fn peek_i16(base: integer, at: integer) -> integer {
+  c_peek(SW_I16, base, at)
 }
-#c_twin "loft_twin_cget_u16" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+#c_twin "loft_twin_peek_i16" "int64_t(int64_t, int64_t)"
 
-pub fn cget_i16(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
-  get_i16(b, at)
+pub fn peek_u32(base: integer, at: integer) -> integer {
+  c_peek(SW_U32, base, at)
 }
-#c_twin "loft_twin_cget_i16" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+#c_twin "loft_twin_peek_u32" "int64_t(int64_t, int64_t)"
 
-pub fn cget_u32(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
-  get_u32(b, at)
+pub fn peek_i32(base: integer, at: integer) -> integer {
+  c_peek(SW_I32, base, at)
 }
-#c_twin "loft_twin_cget_u32" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+#c_twin "loft_twin_peek_i32" "int64_t(int64_t, int64_t)"
 
-pub fn cget_i32(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
-  get_i32(b, at)
+pub fn peek_i64(base: integer, at: integer) -> integer {
+  c_peek(SW_I64, base, at)
 }
-#c_twin "loft_twin_cget_i32" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+#c_twin "loft_twin_peek_i64" "int64_t(int64_t, int64_t)"
 
-pub fn cget_i64(b: const vector<u8>, base: integer, n: integer, at: integer) -> integer {
-  get_i64(b, at)
+pub fn peek_f64(base: integer, at: integer) -> float {
+  c_peek_f64(base, at)
 }
-#c_twin "loft_twin_cget_i64" "int64_t(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+#c_twin "loft_twin_peek_f64" "double(int64_t, int64_t)"
 
-pub fn cget_f64(b: const vector<u8>, base: integer, n: integer, at: integer) -> float {
-  get_f64(b, at)
+pub fn poke_i64(base: integer, at: integer, v: integer?) {
+  c_poke(SW_I64, base, at, v ?? 0, v == null);
 }
-#c_twin "loft_twin_cget_f64" "double(const uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+#c_twin "loft_twin_poke_i64" "void(int64_t, int64_t, int64_t)"
+
+pub fn poke_u32(base: integer, at: integer, v: integer) {
+  c_poke(SW_U32, base, at, v, false);
+}
+#c_twin "loft_twin_poke_u32" "void(int64_t, int64_t, int64_t)"
+
+pub fn poke_u8(base: integer, at: integer, v: integer) {
+  c_poke(SW_U8, base, at, v, false);
+}
+#c_twin "loft_twin_poke_u8" "void(int64_t, int64_t, int64_t)"
+
+pub fn poke_f64(base: integer, at: integer, v: float?) {
+  c_poke_f64(base, at, [v ?? 0.0 / 0.0]);
+}
+#c_twin "loft_twin_poke_f64" "void(int64_t, int64_t, double)"
 
 fn c_stack_base(store: integer) -> integer;
 #c "loft_crt_stack_base" "int64_t(int64_t)"
@@ -283,54 +306,6 @@ fn c_stack_base(store: integer) -> integer;
 pub fn stack_base(store: integer) -> integer {
   c_stack_base(store)
 }
-
-// A frame slot at byte `at` read or written through that base (`cap`: the stack's bytes).  The
-// body reads the store; the twin is one compare and one load or store.  Outside the stack a
-// read answers 0 and a write does nothing.
-pub fn fget_i64(stk: integer, base: integer, cap: integer, at: integer) -> integer {
-  if base == 0 || at < 0 || at + 8 > cap {
-    return 0;
-  }
-  stack_get(SW_I64, stk, at)
-}
-#c_twin "loft_twin_fget_i64" "int64_t(int64_t, int64_t, int64_t, int64_t)"
-
-pub fn fput_i64(stk: integer, base: integer, cap: integer, at: integer, v: integer?) {
-  if base != 0 && at >= 0 && at + 8 <= cap {
-    stack_put(SW_I64, stk, at, v);
-  }
-}
-#c_twin "loft_twin_fput_i64" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
-
-pub fn fget_u8(stk: integer, base: integer, cap: integer, at: integer) -> integer {
-  if base == 0 || at < 0 || at >= cap {
-    return 0;
-  }
-  stack_get(SW_U8, stk, at)
-}
-#c_twin "loft_twin_fget_u8" "int64_t(int64_t, int64_t, int64_t, int64_t)"
-
-pub fn fput_u8(stk: integer, base: integer, cap: integer, at: integer, v: integer) {
-  if base != 0 && at >= 0 && at < cap {
-    stack_put(SW_U8, stk, at, v);
-  }
-}
-#c_twin "loft_twin_fput_u8" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
-
-pub fn fget_f64(stk: integer, base: integer, cap: integer, at: integer) -> float {
-  if base == 0 || at < 0 || at + 8 > cap {
-    return 0.0;
-  }
-  stack_get_float(stk, at, false)
-}
-#c_twin "loft_twin_fget_f64" "double(int64_t, int64_t, int64_t, int64_t)"
-
-pub fn fput_f64(stk: integer, base: integer, cap: integer, at: integer, v: float?) {
-  if base != 0 && at >= 0 && at + 8 <= cap {
-    stack_put_float(stk, at, v, false);
-  }
-}
-#c_twin "loft_twin_fput_f64" "void(int64_t, int64_t, int64_t, int64_t, double)"
 
 // `State::grow_stack`: the stack store grown until it holds `bytes` of frame.
 pub fn stack_grow(store: integer, bytes: integer) {
@@ -656,6 +631,24 @@ fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
 pub fn hold_bytes(b: const vector<u8>) -> integer {
   c_hold_bytes(b)
 }
+
+fn c_hold_room(bytes: integer) -> integer;
+#c "loft_crt_hold_room" "int64_t(int64_t)"
+fn c_move(base: integer, from: integer, to: integer, n: integer);
+#c "loft_crt_move" "void(int64_t, int64_t, int64_t, int64_t)"
+
+// `bytes` of zeroed memory of its own, held for the program's life: its address, for
+// `peek_*` / `poke_*`.
+pub fn hold_room(bytes: integer) -> integer {
+  c_hold_room(bytes)
+}
+
+// `n` bytes moved from byte `from` to byte `to` of the address `base`, with no test of the
+// positions, as `peek_*` reads.
+pub fn move_bytes(base: integer, from: integer, to: integer, n: integer) {
+  c_move(base, from, to, n);
+}
+#c_twin "loft_twin_move" "void(int64_t, int64_t, int64_t, int64_t)"
 
 // A view of `len` held bytes at `from` in the frame slot at `at`; the unsigned 32-bit value at
 // `at` of held bytes.

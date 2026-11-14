@@ -224,72 +224,81 @@ int64_t loft_crt_stack_base(int64_t store) {
 #else
 #define LOFT_STEP_FN
 #endif
-/* A frame slot read or written through that base: one compare against the stack's capacity
- * and one load or store; outside the stack a read answers 0 and a write does nothing. */
-#define LOFT_FSLOT(base, at) ((uint8_t *) (uintptr_t) (base) + (at))
-extern int64_t loft_twin_fget_i64(int64_t stk, int64_t base, int64_t cap, int64_t at);
-extern void loft_twin_fput_i64(int64_t stk, int64_t base, int64_t cap, int64_t at, int64_t v);
-extern int64_t loft_twin_fget_u8(int64_t stk, int64_t base, int64_t cap, int64_t at);
-extern void loft_twin_fput_u8(int64_t stk, int64_t base, int64_t cap, int64_t at, int64_t v);
-extern double loft_twin_fget_f64(int64_t stk, int64_t base, int64_t cap, int64_t at);
-extern void loft_twin_fput_f64(int64_t stk, int64_t base, int64_t cap, int64_t at, double v);
-LOFT_STEP_FN int64_t loft_twin_fget_i64(int64_t stk, int64_t base, int64_t cap, int64_t at) {
-    int64_t v = 0;
-    (void) stk;
-    if (at >= 0 && at <= cap - 8) memcpy(&v, LOFT_FSLOT(base, at), 8);
-    return v;
-}
-LOFT_STEP_FN void loft_twin_fput_i64(int64_t stk, int64_t base, int64_t cap, int64_t at, int64_t v) {
-    (void) stk;
-    if (at >= 0 && at <= cap - 8) memcpy(LOFT_FSLOT(base, at), &v, 8);
-}
-LOFT_STEP_FN int64_t loft_twin_fget_u8(int64_t stk, int64_t base, int64_t cap, int64_t at) {
-    (void) stk;
-    return at >= 0 && at < cap ? *LOFT_FSLOT(base, at) : 0;
-}
-LOFT_STEP_FN void loft_twin_fput_u8(int64_t stk, int64_t base, int64_t cap, int64_t at, int64_t v) {
-    (void) stk;
-    if (at >= 0 && at < cap) *LOFT_FSLOT(base, at) = (uint8_t) v;
-}
-LOFT_STEP_FN double loft_twin_fget_f64(int64_t stk, int64_t base, int64_t cap, int64_t at) {
-    double v = 0.0;
-    (void) stk;
-    if (at >= 0 && at <= cap - 8) memcpy(&v, LOFT_FSLOT(base, at), 8);
-    return v;
-}
-LOFT_STEP_FN void loft_twin_fput_f64(int64_t stk, int64_t base, int64_t cap, int64_t at, double v) {
-    (void) stk;
-    if (at >= 0 && at <= cap - 8) memcpy(LOFT_FSLOT(base, at), &v, 8);
-}
-
-/* `(R-CodeBase)` — the bytecode's address, as an integer a loft local holds until its store
- * can have grown, and an operand read through it: `b` and `n` are the
- * vector the loft body reads, unused here. */
-int64_t loft_crt_code_base(const uint8_t *b, int64_t n) {
-    (void) n;
-    return (int64_t) (uintptr_t) b;
-}
-#define LOFT_CODE_GET(name, ctype) \
-    extern int64_t loft_twin_cget_##name(const uint8_t *b, int64_t n, int64_t base, int64_t len, int64_t at); \
-    LOFT_STEP_FN int64_t loft_twin_cget_##name(const uint8_t *b, int64_t n, int64_t base, int64_t len, int64_t at) { \
-        ctype v = 0; \
-        (void) b; (void) n; \
-        if (at >= 0 && at <= len - (int64_t) sizeof v) memcpy(&v, (const uint8_t *) (uintptr_t) base + at, sizeof v); \
+/* The value at byte `at` from the address `base` — held code bytes or the stack's frame area —
+ * and one written there, with no test of the position: the dispatch loop tests its positions
+ * once a step.  `loft_crt_peek` / `loft_crt_poke` are what the loft bodies call (the width as
+ * `loft_crt_stack_get` numbers it); the twins are one load or store each. */
+#define LOFT_AT(base, at) ((uint8_t *) (uintptr_t) (base) + (at))
+#define LOFT_PEEK(name, ctype) \
+    extern int64_t loft_twin_peek_##name(int64_t base, int64_t at); \
+    LOFT_STEP_FN int64_t loft_twin_peek_##name(int64_t base, int64_t at) { \
+        ctype v; \
+        memcpy(&v, LOFT_AT(base, at), sizeof v); \
         return (int64_t) v; \
     }
-LOFT_CODE_GET(u8, uint8_t)
-LOFT_CODE_GET(i8, int8_t)
-LOFT_CODE_GET(u16, uint16_t)
-LOFT_CODE_GET(i16, int16_t)
-LOFT_CODE_GET(u32, uint32_t)
-LOFT_CODE_GET(i32, int32_t)
-LOFT_CODE_GET(i64, int64_t)
-extern double loft_twin_cget_f64(const uint8_t *b, int64_t n, int64_t base, int64_t len, int64_t at);
-LOFT_STEP_FN double loft_twin_cget_f64(const uint8_t *b, int64_t n, int64_t base, int64_t len, int64_t at) {
-    double v = 0.0;
-    (void) b; (void) n;
-    if (at >= 0 && at <= len - 8) memcpy(&v, (const uint8_t *) (uintptr_t) base + at, 8);
+LOFT_PEEK(u8, uint8_t)
+LOFT_PEEK(i8, int8_t)
+LOFT_PEEK(u16, uint16_t)
+LOFT_PEEK(i16, int16_t)
+LOFT_PEEK(u32, uint32_t)
+LOFT_PEEK(i32, int32_t)
+LOFT_PEEK(i64, int64_t)
+#define LOFT_POKE(name, ctype) \
+    extern void loft_twin_poke_##name(int64_t base, int64_t at, int64_t v); \
+    LOFT_STEP_FN void loft_twin_poke_##name(int64_t base, int64_t at, int64_t v) { \
+        ctype w = (ctype) v; \
+        memcpy(LOFT_AT(base, at), &w, sizeof w); \
+    }
+LOFT_POKE(u8, uint8_t)
+LOFT_POKE(u32, uint32_t)
+LOFT_POKE(i64, int64_t)
+extern double loft_twin_peek_f64(int64_t base, int64_t at);
+extern void loft_twin_poke_f64(int64_t base, int64_t at, double v);
+LOFT_STEP_FN double loft_twin_peek_f64(int64_t base, int64_t at) {
+    double v;
+    memcpy(&v, LOFT_AT(base, at), 8);
     return v;
+}
+LOFT_STEP_FN void loft_twin_poke_f64(int64_t base, int64_t at, double v) {
+    memcpy(LOFT_AT(base, at), &v, 8);
+}
+void loft_crt_move(int64_t base, int64_t from, int64_t to, int64_t n) {
+    memmove(LOFT_AT(base, to), LOFT_AT(base, from), (size_t) n);
+}
+extern void loft_twin_move(int64_t base, int64_t from, int64_t to, int64_t n);
+LOFT_STEP_FN void loft_twin_move(int64_t base, int64_t from, int64_t to, int64_t n) {
+    memmove(LOFT_AT(base, to), LOFT_AT(base, from), (size_t) n);
+}
+int64_t loft_crt_peek(int64_t which, int64_t base, int64_t at) {
+    const uint8_t *p = LOFT_AT(base, at);
+    switch (which) {
+    case 0: { uint8_t v; memcpy(&v, p, 1); return v; }
+    case 1: { int8_t v; memcpy(&v, p, 1); return v; }
+    case 2: { uint16_t v; memcpy(&v, p, 2); return v; }
+    case 3: { int16_t v; memcpy(&v, p, 2); return v; }
+    case 4: { uint32_t v; memcpy(&v, p, 4); return v; }
+    case 5: { int32_t v; memcpy(&v, p, 4); return v; }
+    default: { int64_t v; memcpy(&v, p, 8); return v; }
+    }
+}
+double loft_crt_peek_f64(int64_t base, int64_t at) {
+    double v;
+    memcpy(&v, LOFT_AT(base, at), 8);
+    return v;
+}
+void loft_crt_poke(int64_t which, int64_t base, int64_t at, int64_t v, int64_t is_null) {
+    uint8_t *p = LOFT_AT(base, at);
+    if (is_null) v = INT64_MIN; /* the integer null's pattern, cut to the width */
+    switch (which) {
+    case 0: case 1: { uint8_t w = (uint8_t) v; memcpy(p, &w, 1); break; }
+    case 2: case 3: { uint16_t w = (uint16_t) v; memcpy(p, &w, 2); break; }
+    case 4: case 5: { uint32_t w = (uint32_t) v; memcpy(p, &w, 4); break; }
+    default: memcpy(p, &v, 8); break;
+    }
+}
+void loft_crt_poke_f64(int64_t base, int64_t at, const double *v, int64_t n) {
+    double d = n > 0 ? v[0] : 0.0;
+    memcpy(LOFT_AT(base, at), &d, 8);
 }
 
 /* The text a slot holds — a local's (`arg` 0) or an argument's (1) — copied into `out` when it
@@ -373,6 +382,11 @@ int64_t loft_crt_hold_bytes(const uint8_t *b, int64_t n) {
     uint8_t *p = (uint8_t *) malloc(n > 0 ? (size_t) n : 1);
     if (p && n > 0) memcpy(p, b, (size_t) n);
     return (int64_t) (uintptr_t) p;
+}
+
+/* `bytes` of zeroed memory of its own, held for the program's life. */
+int64_t loft_crt_hold_room(int64_t bytes) {
+    return (int64_t) (uintptr_t) calloc(bytes > 0 ? (size_t) bytes : 1, 1);
 }
 
 /* A view of `len` held bytes at `from` (`loft_crt_hold_bytes`) in the frame slot at `at`. */
