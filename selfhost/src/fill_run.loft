@@ -10,7 +10,7 @@ use ir;
 use state;
 use fill;
 use crt;
-use brun;
+use natives;
 
 // The number of the definition named `name` in the program image `b`; -1 for none.
 pub fn def_named(b: ir::Bundle, name: text) -> integer {
@@ -87,9 +87,9 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
   sidecar_ix: vector<integer> = [];
   // `par`: each native's kind, the jobs in flight and the buffers their answers wait in — the
   // hand-built runner's scheduler, its workers run one after another.
-  ptab = brun::par_natives(img);
-  pjobs: vector<brun::ParJob> = [];
-  pbufs: vector<brun::ParBuf> = [];
+  ptab = natives::par_natives(img);
+  pjobs: vector<natives::ParJob> = [];
+  pbufs: vector<natives::ParBuf> = [];
   while s.code_pos != end && !s.stopped {
     if trace {
       first = crt::get_u8(s.code, s.code_pos);
@@ -124,7 +124,7 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       // same depth, or after the last the job's result left for the caller.
       s.native = -1;
       regs = [s.stack_pos, s.code_pos, len(s.frames)];
-      more = brun::par_return(s.stk, regs, pjobs, pbufs, io);
+      more = natives::par_return(s.stk, regs, pjobs, pbufs, io);
       s.stack_pos = regs[0] ?? 0;
       if more {
         back = s.code_pos;
@@ -137,13 +137,13 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       idx = s.native;
       s.native = -1;
       pk = ptab[idx] ?? 0;
-      if brun::par_is_job(pk) {
+      if natives::par_is_job(pk) {
         // A queue's or a fold's native: its first worker entered as a call, or with no rows
         // its empty answer given at once.
         jobs = len(pjobs);
         back = s.code_pos;
         regs = [s.stack_pos, s.code_pos, len(s.frames)];
-        if brun::par_start(pk, img, s.stk, regs, pjobs, pbufs, io, why) < 0 {
+        if natives::par_start(pk, img, s.stk, regs, pjobs, pbufs, io, why) < 0 {
           s.stop("not carried: {why[0] ?? ""}");
         } else {
           s.stack_pos = regs[0] ?? 0;
@@ -154,11 +154,11 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
           }
         }
       } else if pk > 0 {
-        s.stack_pos = brun::par_buf(pk, s.stk, s.stack_pos, pbufs, io);
+        s.stack_pos = natives::par_buf(pk, s.stk, s.stack_pos, pbufs, io);
       } else {
         // The natives are the hand-built runner's ports, over the same stack store.
         tl[0] = s.table_loaded;
-        sp = brun::call_native(brun::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
+        sp = natives::call_native(natives::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
         s.table_loaded = tl[0] ?? false;
         if sp < 0 {
           s.stop("not carried: {img.natives[idx] ?? "native {idx}"}");
