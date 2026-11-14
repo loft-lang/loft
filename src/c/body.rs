@@ -11,6 +11,7 @@
 mod apart;
 mod apart_value;
 mod chain;
+pub(crate) mod cold;
 mod deferred;
 mod files;
 mod generator;
@@ -325,6 +326,16 @@ pub(crate) struct FnWriter<'a> {
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
     wr_call: Option<usize>,
+    /// `@FR-R-Cold`'s loft clause: whether this body may outline its cold exits, the arms it
+    /// outlined (by node address, with the helper's name), and the variables only those arms
+    /// use — which this body neither declares nor initialises, holds or frees.
+    cold_on: bool,
+    cold_arms: std::collections::HashMap<usize, (String, Value)>,
+    undeclared: std::collections::HashSet<u16>,
+    /// The helpers the plan made, written once the body has called them: (name, arm, the
+    /// arm's own variables, the helper's parameter list, its shapes, whether a call was
+    /// written).
+    cold_pending: Vec<cold::Pending<'a>>,
     /// The guards written so far, which numbers each one's flag.
     chain_guards: u32,
     /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
@@ -848,6 +859,10 @@ impl<'a> FnWriter<'a> {
             guarded: None,
             work_ret: None,
             wr_call: None,
+            cold_on: false,
+            cold_arms: std::collections::HashMap::new(),
+            undeclared: std::collections::HashSet::new(),
+            cold_pending: Vec::new(),
             chain_guards: 0,
             rec_ptrs: Vec::new(),
             text_ptrs: std::collections::HashSet::new(),
@@ -1146,6 +1161,7 @@ impl<'a> FnWriter<'a> {
             fired("R-RetAdopt", usize::from(self.adopt.is_some()));
         }
         let code = self.code;
+        self.cold_plan();
         self.dc = self.deferred_plan();
         let mut flags: Vec<u16> = self.dc.vars.keys().copied().collect();
         flags.sort_unstable();
@@ -1184,7 +1200,11 @@ impl<'a> FnWriter<'a> {
         }
         let mut out = String::new();
         // An apart record and a push group's element are no records (`apart.rs`).
-        for v in (0..self.shapes.len()).filter(|v| !self.params[*v] && !self.apr_holds(*v as u16)) {
+        for v in (0..self.shapes.len()).filter(|v| {
+            !self.params[*v]
+                && !self.apr_holds(*v as u16)
+                && !self.undeclared.contains(&(*v as u16))
+        }) {
             let c = self.shapes[v];
             if self.store_links[v] {
                 let name = var_name(self.vars.name(v as u16), v as u16);
@@ -1222,6 +1242,7 @@ impl<'a> FnWriter<'a> {
         if self.marked_line != 0 {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
+        self.cold_finish(&out)?;
         Ok((self.park_work_texts(out), statements))
     }
 
@@ -1441,6 +1462,7 @@ impl<'a> FnWriter<'a> {
                     && !self.links[v]
                     && !self.borrowed[v]
                     && self.shapes[v] == CType::Text
+                    && !self.undeclared.contains(&(v as u16))
             })
             .map(|v| self.var(v as u16))
             .collect();
@@ -5648,6 +5670,10 @@ impl<'a> FnWriter<'a> {
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => {
+                // `@FR-R-Cold`'s loft clause: an outlined arm's own variable is initialised there.
+                if self.undeclared.contains(var) {
+                    return Ok(());
+                }
                 // `@FR-R-Transient`: a lifted text argument served by the transient text it
                 // copies is not bound at all.
                 if self.tr.is_some() && self.tr_text_lift(*var).is_some() {
@@ -5703,6 +5729,21 @@ impl<'a> FnWriter<'a> {
                 self.stmt(arm, ind)?;
                 self.flush(ind);
                 Ok(())
+            }
+            // `@FR-R-Cold`'s loft clause: a variable only an outlined arm uses is the arm's own —
+            // its frees here go with it.
+            Value::Call(..)
+                if cold::text_free(v, self.cx.data)
+                    .is_some_and(|w| self.undeclared.contains(&w)) =>
+            {
+                Ok(())
+            }
+            Value::If(cond, then_arm, else_arm)
+                if self
+                    .cold_arms
+                    .contains_key(&(&raw const **then_arm as usize)) =>
+            {
+                self.cold_if(cond, then_arm, else_arm, ind)
             }
             Value::If(cond, then_arm, else_arm) => {
                 let null_test = self.null_test(cond);

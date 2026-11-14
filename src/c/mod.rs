@@ -3262,9 +3262,12 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             }
         }
     });
-    let body = match tried {
-        Some(b) => b,
-        None => body::FnWriter::new(cx, d, shapes, ret)
+    // `@FR-R-Cold`'s loft clause: the ordinary body only — a twin's carries what its call site
+    // set up.
+    let cold = mask == 0 && places == 0 && inputs.is_empty() && scalar_inputs.is_empty() && !kept;
+    let ordinary = |cold: bool, shapes: Vec<CType>, inputs, scalar_inputs| {
+        body::FnWriter::new(cx, d, shapes, ret)
+            .cold_exits(cold)
             .places(places)
             .inputs(inputs)
             .scalar_inputs(scalar_inputs)
@@ -3277,7 +3280,18 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .append_twin(mask & AP_BIT != 0)
             .destination(mask & DS_BIT != 0)
             .version_fast(mask & VF_BIT != 0)?
-            .write()?,
+            .write()
+    };
+    let body = match tried {
+        Some(b) => b,
+        // `@FR-R-Cold`'s loft clause refused its own plan: the function as written.
+        None if cold => match ordinary(true, shapes.clone(), Vec::new(), Vec::new()) {
+            Err(e) if e == body::cold::COLD_ESCAPED => {
+                ordinary(false, shapes, inputs, scalar_inputs)?
+            }
+            r => r?,
+        },
+        None => ordinary(false, shapes, inputs, scalar_inputs)?,
     };
     let (body, statements) = body;
     let body = tabulated(cx, d, ret, &params, body);

@@ -21,7 +21,7 @@ Collatz (`selfhost/kernels/collatz.loft`, `n_longest 1 100000`), same answer `77
 | the generated runner, shipped (`run_fill.loft`, `--native-c --ship`) | 3.71 s |
 | the generated runner, built as the hand loop is | 4.13 s |
 
-`selfhost/bench/hand/build.sh` reproduces all four lines.  The hand loop runs the SAME bytecode
+The hand loop (its build script is gone with the old loop shape) ran the SAME bytecode
 from the SAME run image on the SAME stack store; it holds `State`'s code position, stack top,
 stack capacity, code base and stack base in locals, switches on the operator, runs the 13
 operators collatz uses inline, and hands every check's slow path (stack growth, a slot outside
@@ -76,6 +76,6 @@ the existing slow path, which builds the message and sets `fault` (and `stopped`
 
 ## The gate
 
-`selfhost/bench/hand/build.sh`: the generated runner at the hand loop's time on collatz, and so
+`selfhost/bench/fill_speed.sh`: the generated runner at the hand loop's time on collatz, and so
 under `loft --interpret`'s.  Then `selfhost/bench/slowest.py` over the corpus: run ratios near
 1×, where an outlier is a defect in one operator, not the design.

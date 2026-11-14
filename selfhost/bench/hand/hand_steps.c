@@ -1,10 +1,15 @@
 /* Copyright (c) 2026 Jurjen Stellingwerff
  * SPDX-License-Identifier: LGPL-3.0-or-later */
-/* HAND-CODED step loop (the target the generator and the C backend should reach): State's
- * code position, stack top, stack capacity, stack base and code base held in locals; the hot
- * operators inline; any case that needs a check's slow path (stack growth, a slot outside the
+/* The bytecode runner's step loop written by hand in C: the target the generated runner was
+ * built to reach, kept as the reference for what its emitted C should come to.  State's code
+ * position, stack top, stack capacity, stack base and code base are locals; the hot operators
+ * are inline; any case that needs a check's slow path (stack growth, a slot outside the
  * stack, division by zero) or an operator not written here hands that one step to the
- * generated loop, with the locals written back first. */
+ * generated loop, with the locals written back first.  It ran collatz in 0.29 s against
+ * `loft --interpret`'s 0.335 s.  The generated `run` (selfhost/src/fill.loft, written by
+ * create.loft) is its port; measure that with selfhost/bench/fill_speed.sh.  This file is
+ * read, not built: it was spliced into run_fill.loft's C before the step loop moved into
+ * `run`. */
 uint8_t *loft_crt_stack_base(int64_t store);
 static inline int64_t hs_ld(const uint8_t *p) { int64_t v; memcpy(&v, p, 8); return v; }
 static inline void hs_st(uint8_t *p, int64_t v) { memcpy(p, &v, 8); }

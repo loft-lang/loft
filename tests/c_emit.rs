@@ -8616,3 +8616,83 @@ fn a_text_call_result_is_read_from_its_work_buffer() {
         .expect("run");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "3 4 x!\n");
 }
+
+/// `@FR-R-Cold`'s loft clause: an `if` arm that builds a text and returns a literal is written
+/// as a `LOFT_NOINLINE LOFT_COLD` helper, and the function keeps no work text of its own.
+#[test]
+fn an_early_exit_that_builds_a_text_is_a_cold_helper() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("cold_exit");
+    let file = dir.join("cold.loft");
+    fa::write(
+        &file,
+        "struct S { pos: integer, fault: text }\n\
+         fn has(s: S, n: integer) -> boolean {\n\
+           if s.pos < 0 || s.pos + n > 10 {\n\
+             if s.fault == \"\" { s.fault = \"position {s.pos} past 10\"; }\n\
+             return false;\n\
+           }\n\
+           true\n\
+         }\n\
+         fn main() { s = S { pos: 4, fault: \"\" }; a = has(s, 2); s.pos = 9;\n\
+           println(\"{a} {has(s, 3)} {s.fault}\"); }\n",
+    )
+    .expect("write program");
+    let c = dir.join("cold.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let mut at = None;
+    let mut pos = 0;
+    for line in text.split_inclusive('\n') {
+        if line.contains(" n_has__fr(") && line.trim_end().ends_with('{') {
+            at = Some(pos);
+            break;
+        }
+        pos += line.len();
+    }
+    let at = at.expect("n_has has no body");
+    let end = text[at..].find("\n}\n").map_or(text.len(), |e| at + e);
+    let body = &text[at..end];
+    assert!(
+        body.contains("n_has__cold0(") && !body.contains("loft_wpark_take"),
+        "the arm is a helper and the function holds no work text:\n{body}"
+    );
+    assert!(
+        text.contains("static LOFT_NOINLINE LOFT_COLD void n_has__cold0("),
+        "the helper is cold and never inlined"
+    );
+    let exe = dir.join("cold");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true false position 9 past 10\n"
+    );
+}

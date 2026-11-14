@@ -88,6 +88,8 @@ pub(crate) struct TrState {
     seals: BTreeSet<u16>,
     /// Each function asked for a `__wr` twin, and whether it was written.
     work_twins: HashMap<u32, bool>,
+    /// `@FR-R-Cold`'s loft clause: the cold-exit helpers written, by function and arm.
+    pub(crate) cold_helpers: HashSet<(u32, usize)>,
     groups: BTreeSet<u16>,
     parents: Option<HashMap<u16, u16>>,
 }
@@ -936,28 +938,12 @@ impl Cx<'_> {
         (ok && tail_ok).then_some(at)
     }
 
-    /// `d`'s `__wr` twin: its body, answering nothing — the caller reads the buffer it filled.
-    pub(crate) fn work_twin(&self, d: u32) -> Option<String> {
-        let name = format!("{}__wr", c_name(self.data, d));
-        if let Some(r) = self.tr.borrow().work_twins.get(&d) {
-            return r.then(|| name.clone());
-        }
-        // Named before it is written: a twin whose body calls itself meets its own name.  A
-        // twin that is then declined took its self-calls with it — they were in its body.
-        self.tr.borrow_mut().work_twins.insert(d, true);
-        let r = self.write_work_twin(d, &name);
-        if trace() {
-            match &r {
-                Ok(()) => eprintln!("[transient] work twin {name}"),
-                Err(why) => eprintln!("[transient] work twin {name} declined: {why}"),
-            }
-        }
-        self.tr.borrow_mut().work_twins.insert(d, r.is_ok());
-        r.ok().map(|()| name)
-    }
-
-    fn write_work_twin(&self, d: u32, name: &str) -> Result<(), String> {
-        let p = self.answers_work(d, true).ok_or("no work return")?;
+    /// `d`'s parameters as a body other than its own declares them — a `__wr` twin, a cold
+    /// exit's helper (`@FR-R-Cold`): each by value, a `&` one by pointer, a value local in its
+    /// struct shape — with the shapes that body is written with.  Refused for a signature such
+    /// a body does not take: pointer-passed records, a value-record result, a hidden return
+    /// buffer, a store text link.
+    pub(crate) fn plain_params(&self, d: u32) -> Result<(String, Vec<CType>), String> {
         let def = self.data.def(d);
         let vars = def.variables();
         let args = vars.arguments();
@@ -988,6 +974,33 @@ impl Cx<'_> {
         } else {
             params.join(", ")
         };
+        Ok((params, shapes))
+    }
+
+    /// `d`'s `__wr` twin: its body, answering nothing — the caller reads the buffer it filled.
+    pub(crate) fn work_twin(&self, d: u32) -> Option<String> {
+        let name = format!("{}__wr", c_name(self.data, d));
+        if let Some(r) = self.tr.borrow().work_twins.get(&d) {
+            return r.then(|| name.clone());
+        }
+        // Named before it is written: a twin whose body calls itself meets its own name.  A
+        // twin that is then declined took its self-calls with it — they were in its body.
+        self.tr.borrow_mut().work_twins.insert(d, true);
+        let r = self.write_work_twin(d, &name);
+        if trace() {
+            match &r {
+                Ok(()) => eprintln!("[transient] work twin {name}"),
+                Err(why) => eprintln!("[transient] work twin {name} declined: {why}"),
+            }
+        }
+        self.tr.borrow_mut().work_twins.insert(d, r.is_ok());
+        r.ok().map(|()| name)
+    }
+
+    fn write_work_twin(&self, d: u32, name: &str) -> Result<(), String> {
+        let p = self.answers_work(d, true).ok_or("no work return")?;
+        let args = self.data.def(d).variables().arguments();
+        let (params, shapes) = self.plain_params(d)?;
         let sig = format!("static inline void {name}({params})");
         let (body, _) = FnWriter::new(self, d, shapes, CType::Void)
             .work_return(args[p])

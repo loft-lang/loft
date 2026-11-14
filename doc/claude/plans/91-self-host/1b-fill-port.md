@@ -30,7 +30,8 @@ closed or left as the need arises.
 | `State` methods for operators with no template (`fn_call`, `var_text`, …) | methods of the same name in `state.loft` |
 | `src/ops.rs` helpers (`fused_int`, `fused_cmp`) | `selfhost/src/ops.loft`, the same names |
 | `Stores` (`src/store.rs`, `src/database/`) | the C runtime's store routines, through `selfhost/crt` (STORE_MODEL.md: the C model is the standard) |
-| the dispatch loop | `selfhost/src/fill_run.loft::call` |
+| the dispatch loop | generated: `fill.loft`'s `run`; `selfhost/src/fill_run.loft` drives it (`call` for one function, `run_main` for a program) and calls the natives |
+| the library functions `static_call` reaches | the hand-built runner's native ports (`brun::call_native`), over the same stack store |
 
 Regenerate the table after changing a template or porting a `State` method:
 
@@ -57,7 +58,11 @@ fn OpAddInt(v1: __word, v2: __word) -> __word;
 - `s` is the `State`.  Braces are doubled, as in `#rust` (`{{ … }}`).
 - An operator with NO `#rust` template is a `State` method that reads its own operands;
   the generator emits it once `state.loft` declares `pub fn <name>(self: State`.
-- A stack boolean arrives as its byte (0, 1, 255 for null), as in `fill.rs`.
+- A stack boolean or enum arrives as its byte (0, 1, 255 for null), as in `fill.rs`; a
+  character as its code point; a reference as a `state::DbRef`.
+- A text answer is a view the template pushes itself (`s.put_field_text(v1, fld);`): a loft
+  text value is not a view into a store or the code.  The generated function is named
+  `op_<operator>`, so none takes a standard-library name.
 - The answer local is typed and nullable, so a template may answer `null`.
 
 Two language features exist for the port:
@@ -76,7 +81,8 @@ Two language features exist for the port:
 | a twin's body and its C routine agree | `tests/c_emit.rs::a_c_twin_runs_its_body_and_the_c_backend_its_routine` |
 | a function answers what the Rust interpreter answers | `selfhost/bench/run_fill.loft <program image> <run image> <function> <args…>` against `loft --interpret` |
 | no kernel function differs from the IR runner; the integer kernels' hand-computed answers | `selfhost/tests/fill.loft`, run by `tests/selfhost.rs` |
-| which operator stops each kernel function (the worklist) | `selfhost/bench/fill_census.loft <program image> <run image>` |
+| which operator stops each kernel function | `selfhost/bench/fill_census.loft <program image> <run image>` |
+| the corpus: each plain program of `tests/scripts` against `loft --interpret`, and the operator that stops each one not run to its end (the worklist) | `python3 selfhost/bench/fill_survey.py` |
 | where the top is after an operator | `LOFT_LOG=full loft --interpret` prints each operator with the top before it; `LOFT_FILL_TRACE=1` prints the runner's |
 
 The first two are run by hand; neither is a test yet.
@@ -85,12 +91,9 @@ The first two are run by hand; neither is a test yet.
 
 | Part | State |
 |---|---|
-| operator templates | arithmetic, comparisons, shifts, casts, locals of every scalar type, jumps, the fused integer operators, calls and frames, reference locals, and the field reads and writes of every width; the rest listed by `--missing` |
-| `State` methods | calls (`fn_call`, `fn_return`, `reserve_frame`), texts (`string_from_code`, `var_text`, `arg_text`, `append_text`, `put_text`, `init_text`, `clear_text`, `free_text`), references and stores (`init_ref`, `init_ref_sentinel`, `database`, `free_ref`, `init_create_stack`); the rest (record and vector building, formatting, text walks, coroutines, `par`, keyed walks) listed by `--missing` as `(State)` |
-| natives (`OpStaticCall`) | none; the hand-built runner `brun.loft` holds ports of about 110 natives over the same `crt` routines, to be moved under `State::static_call` |
-| running a program's `main` | needs the natives and the text operators; today one integer function is called directly |
-| records, vectors, keyed collections | no operator carried; each is a template calling the `crt` routine the C backend calls for it |
-| a survey over the corpus | `selfhost/bench/run_image_survey.py` drives the hand-built runner; it needs a mode for this one |
+| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: file access, constants (`OpConstRef`), fn-refs and closures, keyed lookups and walks, iteration, coroutines, `par` |
+| natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own |
+| a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |
 
 The hand-built runner (`selfhost/src/brun.loft`) stays until this one runs the corpus; it
@@ -112,37 +115,30 @@ with the top just above it.  The differences:
 | 5 | **`fn_return` releases no fn-ref buffer.**  The frames are kept as Rust keeps them (definition, call position, arguments' base and size); the buffers a returning frame releases (`release_fnref_bufs`) are not, as no fn-ref operator is carried. | with the fn-ref operators |
 | 6 | **Texts.**  A local text is a Rust `String` in its 24-byte slot in Rust, a C-runtime text of the same size here; the 16-byte view is the same.  A text popped as a template's argument is copied into a loft text. | nothing, unless a program observes capacity |
 | 7 | **Arithmetic by loft's operators, reports as texts.**  A template writes `v1 + v2`, compiled to the C runtime's routine, where Rust calls `ops::op_add_int`; the kernels compare the values.  What Rust reports through `raise_recoverable` (a division by zero, a dropped write, an overflow) is recorded as a text in `State.reported`, and an overflow's report comes from the C runtime, not from the template. | the corpus survey, once `main` runs; Rust's error kinds when diagnostics are compared |
-| 8 | **One dispatch.**  Rust has three tables (checked, direct, register) and inlines the `#hot` operators; the runner has one `execute`. | see Speed |
+| 8 | **One dispatch.**  Rust has three tables (checked, direct, register); the runner has one loop, `run`, whose arms are the register table and whose fallback, `execute`, is the checked one. | see Speed |
 | 9 | **No instruments.**  Rust's stack verifier, poison of a reserved frame, and text-position tracking have no counterpart. | only if the runner is to host those sweeps |
 
 ## Speed
 
-**The target, written by hand** (`selfhost/bench/hand/hand_steps.c`, `selfhost/bench/hand/build.sh`):
-the step loop with `State`'s code position, stack top, stack capacity, stack base and code base
-in locals, a `switch` on the operator, the hot operators inline, and every check's slow path
-(stack growth, a slot outside the stack, division by zero) and every operator it does not
-write handed to the generated loop for that one step.  On collatz (`kernels/collatz.loft`,
-`longest(1, 100000)`) it runs faster than the Rust interpreter:
+The dispatch loop is generated (`fill.loft`'s `run`) by the Rust interpreter's executor rules
+(`formal/rewrites.md`):
 
-| runner | collatz |
-|---|--:|
-| the hand-coded step loop | 0.29 s |
-| `loft --interpret` | 0.335 s |
-| the generated runner, built the same way | 4.13 s |
+| rule | in the runner |
+|---|---|
+| `(R-RegisterTable)` | the code position, the stack top and the stack's capacity are locals of `run`; an operator whose template needs no more of the `State` is an arm of it, any other templated operator with scalar operands an arm that writes the positions to the `State`, runs, and reads them back |
+| `(R-CodeBase)` | operands are read through the code's address (`crt::code_base`, `crt::cget_*`), taken again after an operator that ran on the `State` |
+| `(R-OperandSpan)` | one test, `ip <= safe`, covers an arm's whole operand span |
+| `(R-StackBase)` | a slot is read through the stack store's base (`crt::stack_base`, `crt::fget_*` / `fput_*`) |
+| `(R-DispatchStop)` | `State.stopped`, set with `fault` by `State::stop` |
+| `(R-FrameHeadroom)` | `fn_call` grows the stack by the default headroom; an arm tests one compare against the capacity |
 
-So the bytecode and the stack image are not what costs; the generated code's shape is.  What
-the generated runner pays per step that the hand loop does not: each `State` field read and
-write is a store lookup; each operand read and stack access is a separate function with its
-own bounds check; each check's fault message is built in a work text whose set-up sits on the
-hot path and keeps the function from being inlined; the loop compares `fault` with `""` on
-every step.  The stack's frame base comes from the C runtime shim (`loft_crt_stack_base`, added
-by `build.sh` to its copy of `crt.c`): the shim keeps the interpreted program's stores in its
-own table.
+Every check the accessors make is a compare in the arm's guard; an arm whose guard fails
+leaves the step to the operator's function, which reports it.  An operator with a text or
+reference argument runs through `execute`.
 
-The generated runner, measured through `run_fill.loft` (the call only) against `loft
---interpret`, takes 11× as long on collatz (3.71 s shipped).  A profile shows why: every
-`State` field access is a store lookup, the accessors and the `crt` wrappers are separate C
-functions, and `execute` is a chain of comparisons.  The cures are in the C backend
-(a struct parameter's fields held in locals across a loop, small functions inlined without
-their stack-trace frame, an integer `match` as a `switch`) or in the generator (the code and
-stack positions as locals of one dispatch function, as Rust's register table passes them).
+Measure with `selfhost/bench/fill_speed.sh` (the generated runner against `loft --interpret`
+on the integer kernels); `selfhost/bench/hand/` holds the step loop written by hand in C, the
+target.  The gate is the generated runner at the
+Rust interpreter's time on the integer kernels; it takes 1.1 to 1.7 times as long.  What is
+left is in the emitted C: checked arithmetic on the positions, and calls and returns through
+the `State`'s fields (the frame list).
