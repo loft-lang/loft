@@ -356,6 +356,8 @@ fn c_local_text_null(store: integer, at: integer, arg: integer) -> integer;
 #c "loft_crt_local_text_null" "int64_t(int64_t, int64_t, int64_t)"
 fn c_ref_text_append_null(s: integer, r: integer, p: integer);
 #c "loft_crt_ref_text_append_null" "void(int64_t, int64_t, int64_t)"
+fn c_stack_text_trim(store: integer, at: integer, which: integer);
+#c "loft_crt_stack_text_trim" "void(int64_t, int64_t, int64_t)"
 fn c_store_known(nr: integer) -> integer;
 #c "loft_crt_store_known" "int64_t(int64_t)"
 fn c_set_store_known(nr: integer, tp: integer);
@@ -464,6 +466,11 @@ pub fn local_text_null(store: integer, at: integer, arg: integer) -> boolean {
 // absent answer, which reads back as null.
 pub fn ref_text_append_null(s: integer, r: integer, p: integer) {
   c_ref_text_append_null(s, r, p);
+}
+
+// `trim` (0), `trim_start` (1) or `trim_end` (2) of the text view at `at`, narrowed in place.
+pub fn stack_text_trim(store: integer, at: integer, which: integer) {
+  c_stack_text_trim(store, at, which);
 }
 
 // The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).

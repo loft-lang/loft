@@ -357,6 +357,15 @@ int64_t loft_crt_local_text_null(int64_t store, int64_t at, int64_t arg) {
     return loft_str_is_null(loft_crt_local_text(store, at, arg)) ? 1 : 0;
 }
 
+/* `text.trim()` / `trim_start()` / `trim_end()` (`which` 0, 1, 2) on the view at `at`: the
+ * view narrowed in place, as Rust's `str::trim*` answers a sub-slice of the same text. */
+void loft_crt_stack_text_trim(int64_t store, int64_t at, int64_t which) {
+    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
+    if (loft_str_is_null(*v)) return;
+    if (which != 2) *v = loft_trim_start_view(*v);
+    if (which != 1) *v = loft_trim_end_view(*v);
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

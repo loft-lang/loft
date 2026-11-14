@@ -198,6 +198,11 @@ H_TEXT_END_JUMP = 173;
 H_CAST_FROM_TEXT = 175;
 H_RANGE_DEFAULT = 176;
 H_FORMAT_DATABASE = 177;
+H_SLICE_VECTOR = 178;
+H_CLEAR_KEYED = 179;
+H_REPLACE_KEYED = 180;
+H_APPEND_CHARACTER = 181;
+H_CONV_FLOAT_FROM_NULL = 182;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -436,6 +441,13 @@ pub fn handler(name: text) -> integer {
     "OpLengthSorted" => H_LENGTH_VECTOR,
     "OpFormatDatabase" => H_FORMAT_DATABASE,
     "OpFormatStackDatabase" => H_FORMAT_DATABASE,
+    "OpSliceVector" => H_SLICE_VECTOR,
+    "OpSliceView" => H_SLICE_VECTOR,
+    "OpClearKeyed" => H_CLEAR_KEYED,
+    "OpReplaceKeyed" => H_REPLACE_KEYED,
+    "OpAppendCharacter" => H_APPEND_CHARACTER,
+    "OpAppendStackCharacter" => H_APPEND_CHARACTER,
+    "OpConvFloatFromNull" => H_CONV_FLOAT_FROM_NULL,
     _ => -1
   }
 }
@@ -463,6 +475,9 @@ N_TEXT_FROM_BYTES_DEST = 18;
 N_HASH_SORTED = 19;
 N_HASH_UNSORTED = 20;
 N_TEXT_FIND = 21;
+N_TEXT_TRIM = 22;
+N_TEXT_TRIM_START = 23;
+N_TEXT_TRIM_END = 24;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -487,6 +502,9 @@ pub fn native_handler(name: text) -> integer {
     "n_hash_sorted" => N_HASH_SORTED,
     "n_hash_unsorted" => N_HASH_UNSORTED,
     "t_4text_find" => N_TEXT_FIND,
+    "t_4text_trim" => N_TEXT_TRIM,
+    "t_4text_trim_start" => N_TEXT_TRIM_START,
+    "t_4text_trim_end" => N_TEXT_TRIM_END,
     _ => -1
   }
 }
@@ -617,6 +635,10 @@ fn layout_of(h: integer) -> text {
     173 => "hbhi",
     176 => "qqq",
     177 => "hhb",
+    178 => "h",
+    179 => "h",
+    180 => "h",
+    181 => "h",
     _ => ""
   }
 }
@@ -907,6 +929,9 @@ fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: 
     sp -= 32;
     set(stk, sp, fself.find(fval));
     sp += 8;
+  } else if nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END {
+    // A view of the same text, narrowed in place (Rust's `str::trim*`).
+    crt::stack_text_trim(stk, sp - 16, if nh == N_TEXT_TRIM { 0 } else if nh == N_TEXT_TRIM_START { 1 } else { 2 });
   } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
     nv = crt::stack_str(stk, sp - 16) ?? "";
     ns2 = crt::stack_str(stk, sp - 32) ?? "";
@@ -1856,7 +1881,9 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       si = get(stk, sp - 8);
       crt::set_float(stk, 1, 8 + sp - 8, 0, if si == null { null } else { si! as float }, true);
     } else if h == H_SET_DB_REF {
-      // The reference value popped, then the record; the field written as a stored reference.
+      // The reference value popped, then the record; the field written as a stored reference,
+      // its target noted as referenced (`Stores::set_db_ref`), so removing that record later
+      // leaves the reference reading null (`@FR-H-Removed`).
       fld3 = u16_at(img.code, pc);
       pc += 2;
       crt::slot_ref(io, stk, sp - 16);
@@ -1865,7 +1892,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       vp = io[2] ?? 0;
       crt::slot_ref(io, stk, sp - 32);
       sp -= 32;
-      crt::set_place_ref(io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + fld3, vs, vr, vp);
+      crt::set_dbref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld3, vs, vr, vp);
     } else if h == H_VECTOR_IS_NULL {
       sp -= 16;
       crt::slot_ref(io, stk, sp);
@@ -2160,11 +2187,12 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       rb2 = get(stk, sp);
       set(stk, sp - 8, if rb2 == 0 { null } else { get(stk, sp - 8) % rb2 });
     } else if h == H_GET_DB_REF {
-      // The reference a record's field stores.
+      // The reference a record's field stores (`Stores::get_db_ref`): null when it names a
+      // removed record (`@FR-H-Removed`).
       gdf = u16_at(img.code, pc);
       pc += 2;
       crt::slot_ref(io, stk, sp - 16);
-      crt::place_ref(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + gdf);
+      crt::get_dbref(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gdf);
       crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     } else if h == H_CONV_INT_FROM_CHAR {
       cc = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0);
@@ -2562,6 +2590,74 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       } else {
         crt::slot_text_append(stk, sp - (fdp - 16), fdpiece);
       }
+    } else if h == H_SLICE_VECTOR {
+      // `v = src[lo..hi]` of scalar elements (the parser emits it for no other): the bounds,
+      // the source and the destination popped; a copy, or for `OpSliceView` a view.
+      svtp = u16_at(img.code, pc);
+      pc += 2;
+      svhi = get(stk, sp - 8) ?? 0;
+      svlo = get(stk, sp - 16) ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      svs = io[0] ?? NULL_STORE;
+      svr = io[1] ?? 0;
+      svp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 48);
+      sp -= 48;
+      crt::vec_slice(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, svs, svr, svp, svlo, svhi, img.types[svtp]?.size ?? 0, (img.ops[op] ?? "") == "OpSliceView");
+    } else if h == H_CLEAR_KEYED {
+      // `s.h = []` of a field (`Stores::remove_claims_keyed`); a linked group's secondary view
+      // (`CLEAR_KEYED_VIEW`, the type's top bit) drops only its own route.
+      ensure_table(img.types, tl);
+      ckraw = u16_at(img.code, pc);
+      pc += 2;
+      cktp = ckraw & 32767;
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      if ckraw & 32768 != 0 {
+        if !types::is_keyed(img.types, cktp) {
+          return Outcome { refused: "a keyed view clear of a type that is not a keyed collection: OpClearKeyed at {at}", steps: steps };
+        }
+        crt::clear_view(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, cktp);
+      } else {
+        crt::clear(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, cktp);
+      }
+    } else if h == H_REPLACE_KEYED {
+      // A keyed local rebound from a call (`h = f()`): `dest` filled again from `src`; the
+      // flags the operator's own bit and whether the element tree may move whole.
+      ensure_table(img.types, tl);
+      rkraw = u16_at(img.code, pc);
+      pc += 2;
+      rktp = rkraw & 32767;
+      if !types::is_keyed(img.types, rktp) {
+        return Outcome { refused: "a keyed replace of a type that is not a keyed collection: OpReplaceKeyed at {at}", steps: steps };
+      }
+      crt::slot_ref(io, stk, sp - 16);
+      rkds = io[0] ?? NULL_STORE;
+      rkdr = io[1] ?? 0;
+      rkdp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      crt::replace_keyed(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rkds, rkdr, rkdp, rktp, (if rkraw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(img.types, rktp) { 2 } else { 0 }));
+    } else if h == H_APPEND_CHARACTER {
+      // A character popped and appended to the text local `pos` back from the stack top before
+      // the pop (or the text its reference names); the null character appends nothing
+      // (`@FR-F-Render`).
+      acp = u16_at(img.code, pc);
+      pc += 2;
+      acc = crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0) ?? 0;
+      sp -= 8;
+      if acc != 0 {
+        acs = "{acc as character}";
+        if (img.ops[op] ?? "") == "OpAppendStackCharacter" {
+          crt::slot_ref(io, stk, sp - (acp - 8));
+          crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acs);
+        } else {
+          crt::slot_text_append(stk, sp - (acp - 8), acs);
+        }
+      }
+    } else if h == H_CONV_FLOAT_FROM_NULL {
+      crt::set_float(stk, 1, 8 + sp, 0, null, false);
+      sp += 8;
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
