@@ -774,8 +774,8 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     line(w, ind, "{shown};");
     return held_value(w, json, "text");
   }
-  if route.starts_with("n_store_") || route == "n_spatial_range" || route == "n_trie_prefix" || route == "t_4hash_len" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase" || route == "n_env_variables" || route == "t_6vector_len" || def.native == "n_swap_world" {
-    refuse(w, "a call the runtime answers by its name");
+  if route == "n_store_persist_copy" || route == "n_store_load" || route == "n_store_load_untrusted" || route == "n_store_load_url" || route == "n_store_load_url_trusted" || route == "n_store_verify" || route == "n_spatial_range" || route == "n_trie_prefix" || route == "t_4hash_len" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
+    refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
     return none();
   }
   native = if route == "" { "" } else { cgen_natives::native_c(route) ?? "" };

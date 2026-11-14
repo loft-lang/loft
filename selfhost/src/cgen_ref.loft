@@ -501,6 +501,14 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     r = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_free_record_in(loft_types, {tp}, {as_ref(w, r)})", kind: K_VOID };
   }
+  if name == "OpConstRef" && count == 1 {
+    d = cgen_fn::literal(w, args[0], "constant") ?? return none();
+    if d < 0 || d >= len(x.b.data.definitions) {
+      refuse(w, "a constant out of range");
+      return none();
+    }
+    return E { code: "loft_const{d}", kind: K_REF };
+  }
   if name == "OpGetBoolean" && count == 2 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
