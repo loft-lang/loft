@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index a2249864d..38c357a54 100644
+index 934986d50..fa851e5aa 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -8962,40 +8962,6 @@ impl Data {
+@@ -9009,40 +9009,6 @@ impl Data {
      }
  
      /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
@@ -44,10 +44,10 @@ index a2249864d..38c357a54 100644
          self.def(d_nr)
              .attributes
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index c7a30c20d..82593bb3a 100644
+index 27f987d4c..7caf99505 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -23568,18 +23568,7 @@ impl Parser {
+@@ -23570,18 +23570,7 @@ impl Parser {
                              if self.data.def(*t).name().starts_with("__tuple<")))
              });
              self.prepare_lambda_argument(name, arg_idx, &arg_aliases); // @PLN187
@@ -55,7 +55,7 @@ index c7a30c20d..82593bb3a 100644
 -            // which set it is for, so an untyped lambda in it is refused naming them.
 -            self.unhinted_set = if self.first_pass
 -                || fn_def_nr.is_some()
--                || self.free_call_hint(name, &types) != u32::MAX
+-                || self.free_call_hint(source, name, &types) != u32::MAX
 -            {
 -                None
 -            } else {
@@ -66,7 +66,7 @@ index c7a30c20d..82593bb3a 100644
              self.tuple_place_wanted = prev_place;
              // A member of a call result handed on as an argument is read where it lives
              // (`call_member_view`): the argument binds without copying, so the copy the terminal
-@@ -23638,10 +23627,6 @@ impl Parser {
+@@ -23640,10 +23629,6 @@ impl Parser {
              self.last_forward_call = (self.data.def_nr(&def) == u32::MAX).then(|| def.clone());
              self.call_def_name = def;
          }
@@ -77,7 +77,7 @@ index c7a30c20d..82593bb3a 100644
          let ret = self.dispatch_call(
              val,
              source,
-@@ -25186,9 +25171,6 @@ impl Parser {
+@@ -25189,9 +25174,6 @@ impl Parser {
          let Some(receiver) = types.first().filter(|t| !t.is_unknown()) else {
              return u32::MAX;
          };
@@ -87,7 +87,7 @@ index c7a30c20d..82593bb3a 100644
          match self.data.candidates(u16::MAX, name, receiver).as_slice() {
              [one] if self.data.def(*one).name().starts_with("t_") => *one,
              _ => u32::MAX,
-@@ -25313,11 +25295,8 @@ impl Parser {
+@@ -25316,11 +25298,8 @@ impl Parser {
                          // The slot holds the SET itself (a `self` set that dispatches past its
                          // receiver, with no enum-level definition): there is no routine to
                          // fall back to, and the answer is the bare spelling's refusal.
@@ -100,7 +100,7 @@ index c7a30c20d..82593bb3a 100644
                          {
                              if !self.first_pass {
                                  self.report_selection(name, &routed, &sel, None);
-@@ -25572,17 +25551,7 @@ impl Parser {
+@@ -25575,17 +25554,7 @@ impl Parser {
              arg_pos.push(*self.lexer.peek_pos());
              let before = self.method_facts.0.clone();
              self.prepare_lambda_argument(method, list.len(), &before); // @PLN187
@@ -118,7 +118,7 @@ index c7a30c20d..82593bb3a 100644
              self.expected = Type::Unknown(0);
              let fact = std::mem::take(&mut self.operand_fact);
              self.method_facts.0.push(fact);
-@@ -25595,10 +25564,6 @@ impl Parser {
+@@ -25598,10 +25567,6 @@ impl Parser {
          self.lexer.token(")");
          // @PLN187 — what the arguments called is not this call (a special form records none)
          self.last_called = u32::MAX;
@@ -192,13 +192,13 @@ index 1152d2cfe..9668d231f 100644
                  _ => r_nr,
              };
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index b6532f1c9..c31f571a5 100644
+index f2208a2ea..59416b1d7 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -1374,13 +1374,6 @@ pub struct Parser {
-     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
-     /// than falling to the ladder and reporting the same site a second way.
-     pub(crate) reported_dynamic_refusal: bool,
+@@ -1380,13 +1380,6 @@ pub struct Parser {
+     /// Whether the function whose annotations are being read was written with a body: a
+     /// `#c` binding has none, a `#c_twin` must have one.
+     pub(crate) fn_has_body: bool,
 -    /// `@FR-Disp-Hint` — while an argument of a call to an overload set is parsed without a
 -    /// hint, the set's definitions as a refusal names them; a short lambda whose parameter
 -    /// thereby has no type takes it and says so, naming them (`parse_lambda_short`).
@@ -209,10 +209,10 @@ index b6532f1c9..c31f571a5 100644
      /// A call refused because two parameters bind one type variable to two types (@PLN165
      /// C1, F9): the refusal names both, and `call` answers nothing further for it.
      pub(crate) reported_binding_clash: bool,
-@@ -2286,8 +2279,6 @@ impl Parser {
-             lambda_counters: HashMap::new(),
+@@ -2294,8 +2287,6 @@ impl Parser {
              expected: Type::Unknown(0),
              reported_dynamic_refusal: false,
+             fn_has_body: false,
 -            unhinted_set: None,
 -            unhinted_set_refused: false,
              reported_binding_clash: false,

@@ -1,21 +1,21 @@
 diff --git a/default/01_code.loft b/default/01_code.loft
-index a1f89a19..856cb81e 100644
+index 40959b490..97fe7256d 100644
 --- a/default/01_code.loft
 +++ b/default/01_code.loft
-@@ -1669,7 +1669,7 @@ pub fn size(self: const index) -> integer {
+@@ -1978,7 +1978,7 @@ pub fn size(self: const index) -> integer {
  #pure
  
  fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
 -#rust"@v1 == @v2"
 +#rust"(@v1 == 1) == (@v2 == 1)"
+ #loft"v1 == v2"
  fn OpNeBool(v1: boolean, v2: boolean) -> boolean;
  #rust"@v1 != @v2"
- // --- Output and Diagnostics ---
 diff --git a/src/fill.rs b/src/fill.rs
-index 4101451b..a161ee0a 100644
+index 22806c8b3..5a48c41f5 100644
 --- a/src/fill.rs
 +++ b/src/fill.rs
-@@ -5769,7 +5769,7 @@ fn size_index_r(s: &mut State, r: Regs) -> Regs {
+@@ -5520,7 +5520,7 @@ fn size_index_r(s: &mut State, r: Regs) -> Regs {
  fn eq_bool<const F: bool>(s: &mut State) {
      let v_v2 = s.get_stack_m::<F, u8>();
      let v_v1 = s.get_stack_m::<F, u8>();
