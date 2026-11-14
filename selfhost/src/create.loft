@@ -177,7 +177,9 @@ fn operator_fn(def: ir::Definition, body: text) -> text {
     if !a.name.starts_with("_") && a.mutable {
       w = width(a.typedef[0] ?? ir::TyVoid);
       // A boolean is tri-state on the stack (0, 1, 255 for null): read as its byte.
-      out += "  {a.name} = s.get_stack_{if w == "bool" { "u8" } else { w }}();\n";
+      // An argument its template does not name is popped unbound (`let _ = @r` in `#rust`).
+      bind = if body.contains(a.name) { "{a.name} = " } else { "" };
+      out += "  {bind}s.get_stack_{if w == "bool" { "u8" } else { w }}();\n";
     }
     k -= 1;
   }
@@ -349,7 +351,9 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
       }
       popped += 8;
       names += [a.name];
-      pops += "        {a.name}{sfx} = crt::fget_{w}(stk, base, cap, sp - {popped});\n";
+      if template.contains(a.name) {
+        pops += "        {a.name}{sfx} = crt::fget_{w}(stk, base, cap, sp - {popped});\n";
+      }
     }
     k -= 1;
   }

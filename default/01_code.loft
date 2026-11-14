@@ -142,6 +142,7 @@ pub interface Printable {
 // General operations
 fn OpGoto(step: const i8);
 #rust"s.code_pos = (s.code_pos as i32 + i32::from(@step)) as u32;"
+#loft"s.code_pos += step;"
 // The wide jump forms carry a 32-bit displacement.  A 16-bit one silently
 // truncated past ~32 KB of function body: the loop's backward jump landed
 // somewhere arbitrary, so the body ran once and fell through with status 0 and
@@ -155,6 +156,7 @@ fn OpGotoWord(step: const i32);
 #loft"s.code_pos += step;"
 fn OpGotoFalse(step: const i8, if_false: boolean);
 #rust"if @if_false != 1 {{s.code_pos = (s.code_pos as i32 + i32::from(@step)) as u32;}}"
+#loft"if if_false != 1 {{ s.code_pos += step; }}"
 fn OpGotoFalseWord(step: const i32, if_false: boolean);
 #hot
 #rust"if @if_false != 1 {{s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32;}}"
@@ -249,8 +251,10 @@ fn OpConstInt(val: const __word) -> __word;
 #loft"val"
 fn OpConstShort(val: const i16) -> __word;
 #rust"i64::from(@val)"
+#loft"val"
 fn OpConstTiny(val: const i8) -> __word;
 #rust"i64::from(@val)"
+#loft"val"
 fn OpVarInt(pos: const u16) -> __word;
 #hot
 #rust"s.get_var::<i64>(@pos)"
@@ -1201,6 +1205,7 @@ fn OpPutEnum(pos: const u16, value: enumerate);
 // variant of any enum.
 fn OpConvBoolFromEnum(v1: enumerate) -> boolean;
 #rust"@v1 != 255 && @v1 != 0"
+#loft"v1 != 255 && v1 != 0"
 // The absent discriminant casts to the null TEXT, as `OpCastTextFromBool` does and for its reason.
 fn OpCastTextFromEnum(v1: enumerate, enum_tp: const u16) -> text;
 #cold
@@ -1214,9 +1219,11 @@ fn OpConvIntFromEnum(v1: enumerate) -> __word;
 fn OpCastEnumFromInt(v1: __word) -> enumerate;
 #cold
 #rust"if @v1 == i64::MIN {{ 255 }} else {{ @v1 as u8 }}"
+#loft"if v1 == null {{ 255 }} else {{ v1 & 255 }}"
 fn OpConvEnumFromNull() -> enumerate;
 #cold
 #rust"255u8"
+#loft"255"
 // A reference to a record, this can 'live' inside an array
 // Might this be a reference to a record field? As It might be a reference to a single value inside an array.
 // This allows a vector to be a reference to a field.
@@ -1306,8 +1313,10 @@ fn OpPutRef(pos: const u16, value: reference);
 #loft"s.put_var_dbref(pos, value);"
 fn OpEqRef(v1: reference, v2: reference) -> boolean;
 #rust"if @v1.rec == 0 || @v2.rec == 0 {{ @v1.rec == 0 && @v2.rec == 0 }} else {{ @v1 == @v2 }}"
+#loft"if v1.rec == 0 || v2.rec == 0 {{ v1.rec == 0 && v2.rec == 0 }} else {{ v1.store_nr == v2.store_nr && v1.rec == v2.rec && v1.pos == v2.pos }}"
 fn OpNeRef(v1: reference, v2: reference) -> boolean;
 #rust"if @v1.rec == 0 || @v2.rec == 0 {{ @v1.rec != 0 || @v2.rec != 0 }} else {{ @v1 != @v2 }}"
+#loft"if v1.rec == 0 || v2.rec == 0 {{ v1.rec != 0 || v2.rec != 0 }} else {{ v1.store_nr != v2.store_nr || v1.rec != v2.rec || v1.pos != v2.pos }}"
 // `@FR-E-Eq`, @C91 — CONTENT equality of two stored values of type `tp`: the one runtime home is
 // `Stores::eq_content` (src/database/equality.rs), which both backends call.
 fn OpEqContent(v1: reference, v2: reference, tp: const u16) -> boolean;
@@ -1456,10 +1465,13 @@ fn OpSetInt4(v1: reference, fld: const u16, val: __word);
 // mirror `OpGetShortRaw` / `OpGetShortFull` / `OpSetShortRaw` one width up.
 fn OpGetInt4Raw(v1: reference, fld: const u16) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld)); if r == u32::MAX {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(8, v1.store_nr, v1.rec, v1.pos, fld, 0) }}"
 fn OpSetInt4Raw(v1: reference, fld: const u16, val: __word);
 #rust"{{let db = @v1; let v = if @val == i64::MIN {{ u32::MAX }} else {{ @val as u32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(8, v1.store_nr, v1.rec, v1.pos, fld, 0, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpGetInt4Full(v1: reference, fld: const u16) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld))) }} }}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(9, v1.store_nr, v1.rec, v1.pos, fld, 0) }}"
 // 2-byte narrow-vector-element read/write for `vector<u16>` /
 // `vector<i16>` / `vector<integer limit(...) size(2)>`.  Direct
 // `(val - min)` encoding parallel to `OpGetByte` / `OpSetByte`, so
@@ -1469,6 +1481,7 @@ fn OpGetInt4Full(v1: reference, fld: const u16) -> __word;
 // `+1` encoding with `raw=0` null sentinel).
 fn OpGetShortRaw(v1: reference, fld: const u16, min: const i32) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_i16_raw(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT_RAW, v1.store_nr, v1.rec, v1.pos, fld, min) }}"
 fn OpSetShortRaw(v1: reference, fld: const u16, min: const i32, val: __word);
 #rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i16_raw(db.rec, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 #loft"if v1.rec != 0 {{ crt::set_w(crt::W_SHORT_RAW, v1.store_nr, v1.rec, v1.pos, fld, min, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
@@ -1484,8 +1497,10 @@ fn OpSetShortRaw(v1: reference, fld: const u16, min: const i32, val: __word);
 // an orphan WITH its verdict.  Do not reach for it for a new narrow read.
 fn OpGetShortSpare(v1: reference, fld: const u16, min: const i32) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).read::<u16>(db.rec, db.pos + u32::from(@fld)); crate::narrow::dec_short_spare(r, (@min)) }} }}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT_RAW, v1.store_nr, v1.rec, v1.pos, fld, min) }}"
 fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_short_full(db.rec, db.pos + u32::from(@fld), (@min))) }} }}"
+#loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT_RAW, v1.store_nr, v1.rec, v1.pos, fld, min) ?? (65535 + min) }}"
 fn OpSetText(v1: reference, fld: const u16, val: text);
 #rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 #loft"if v1.rec != 0 {{ crt::set_text(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
@@ -1538,6 +1553,7 @@ fn OpDistinctStore(a: reference, b: reference) -> boolean;
 // question `Stores::free_named` asks before it frees, and `OpDropFnRef` asks before it runs one.
 fn OpStoreLive(r: reference) -> boolean;
 #rust"s.database.store_live(&@r)"
+#loft"r.rec != 0 && r.store_nr != state::NULL_STORE && crt::store_live(r.store_nr)"
 // A reference as a VALUE: `w = OpRefAlias(v)` makes `w` name the store `v` names, where
 // the plain bind `w = v` COPIES the record (@FR-B-Copy).  Emitted only for the compiler's
 // own owner witness, which has to point at the local's store rather than own a second one.
@@ -1559,6 +1575,7 @@ pub fn len(self: const vector) -> integer {
 fn OpSizeVector(r: vector, stride: const u16) -> __word;
 #cold
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations)) * i64::from(@stride)"
+#loft"crt::vec_len(r.store_nr, r.rec, r.pos) * stride"
 
 // The byte footprint of a struct value: its packed record size, a
 // compile-time constant of the struct type (all instances share one layout).
@@ -1569,6 +1586,7 @@ fn OpSizeVector(r: vector, stride: const u16) -> __word;
 fn OpSizeStruct(r: reference, sz: const u16) -> __word;
 #cold
 #rust"{{ let _ = @r; i64::from(@sz) }}"
+#loft"sz"
 
 // The byte footprint of a scalar value: its storage width — a
 // compile-time constant of the type (boolean 1; character / single 4; integer /
@@ -1579,6 +1597,7 @@ fn OpSizeStruct(r: reference, sz: const u16) -> __word;
 fn OpSizeScalar(v: __word, sz: const u16) -> __word;
 #cold
 #rust"{{ let _ = @v; i64::from(@sz) }}"
+#loft"sz"
 
 // sorted<T[key]> shares vector's length-prefixed allocation layout
 // (length word at offset 4 of the backing record), so the runtime
@@ -1586,6 +1605,7 @@ fn OpSizeScalar(v: __word, sz: const u16) -> __word;
 fn OpLengthSorted(r: sorted) -> __word;
 #cold
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
+#loft"crt::vec_len(r.store_nr, r.rec, r.pos)"
 /// Number of elements in a sorted collection.
 pub fn len(self: const sorted) -> integer {
   OpLengthSorted(self)
@@ -1688,6 +1708,7 @@ fn OpPrependVector(r: vector, g: vector, tp: const u16) -> boolean;
 // The caller has proven 0 <= lo <= hi <= size(t); a null vector takes nothing.
 fn OpAppendTextBytes(r: vector, t: text, lo: __word, hi: __word);
 #rust"s.database.append_text_bytes(&@r, @t, @lo, @hi)"
+#loft"crt::append_text_bytes(r.store_nr, r.rec, r.pos, t, lo, hi);"
 #impure(parent_write)
 // Insert space into a vector, no data written
 fn OpInsertVector(r: vector, size: const u16, index: __word, db_tp: const u16) -> reference[r];
@@ -1900,6 +1921,7 @@ fn OpReserveHash(r: hash, count: __word, db_tp: const u16);
 fn OpSizeHash(r: hash) -> __word;
 #cold
 #rust"i64::from(hash::table_bytes(&@r, &s.database.allocations))"
+#loft"crt::hash_bytes(r.store_nr, r.rec, r.pos)"
 /// The byte footprint of a hash: its full bucket table, holes
 /// included.  The table is the hash's own allocation — `elms` slots (an empty
 /// slot is a hole and still counts, because open addressing's spare capacity IS
