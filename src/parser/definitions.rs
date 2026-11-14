@@ -3657,7 +3657,7 @@ impl Parser {
             // own value: it takes an owned shadow (`__tp_<name>`) from the start of PASS 1, so
             // both passes parse the body against the same local and agree on the signature
             // its returns imply.  Seeded at entry: a copy, or the parameter itself where the
-            // finished body only reads (`passes::tuple_shadow_only_read`).
+            // finished body only reads (`passes::MemberWalk::only_read`).
             // `LOFT_NO_TUPLE_PARAM_COPY=1` leaves the parameter the caller's tuple.
             if self.first_pass
                 && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_PARAM_COPY").is_some())

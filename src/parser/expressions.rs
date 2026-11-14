@@ -883,46 +883,8 @@ impl Parser {
             // inside the closure and may be its sole write.  Text shadows keep the
             // plain copy.
             for (shadow, original) in self.vars.promoted_text_args() {
-                let shadow_tp = self.vars.tp(shadow).clone();
-                let seed = crate::parser::vectors::boxed_cell_def(&shadow_tp, &self.data).and_then(
-                    |cell| self.boxed_cell_alloc_and_set(shadow, cell, Value::Var(original)),
-                );
-                // `@FR-F-ParamTuple` — a tuple shadow with a heap member takes the copy built at
-                // the start of this pass, unless the finished body only reads it: then it is
-                // the alias it would be without the rule, typed as the parameter is.
-                let copy = self
-                    .tuple_param_seeds
-                    .iter()
-                    .find(|(s, _)| *s == shadow)
-                    .map(|(_, v)| v.clone());
-                let seed = seed.or_else(|| {
-                    let copy = copy?;
-                    // A returned record or collection is the caller's join to judge
-                    // (`@FR-O-Oracle`: an answer in an argument's store is copied at the bind);
-                    // a returned TUPLE has no such join, so one that carries a member escapes.
-                    let ret_holds_ref =
-                        Self::tuple_carries_heap(self.data.def(self.context).returned());
-                    if super::passes::tuple_shadow_only_read(
-                        &ls,
-                        &self.data,
-                        &self.vars,
-                        shadow,
-                        &self.pass2_bodies,
-                        ret_holds_ref,
-                    ) {
-                        // A view of the caller's members: each heap member depends on the
-                        // parameter, so the frame never frees what the caller owns.
-                        let tp = Self::tuple_view_of(self.vars.tp(original), original);
-                        self.vars.set_type(shadow, tp);
-                        None
-                    } else {
-                        Some(v_set(shadow, copy))
-                    }
-                });
-                ls.insert(
-                    0,
-                    seed.unwrap_or_else(|| v_set(shadow, Value::Var(original))),
-                );
+                let seed = self.promoted_arg_seed(ls, shadow, original);
+                ls.insert(0, seed);
             }
             for r in self.vars.work_references() {
                 if crate::env_once!(std::env::var("LOFT_TRACE_PREAMBLE").is_ok()) {
@@ -9833,6 +9795,47 @@ use a separate collection or add after the loop"
             members.push(m);
         }
         (Value::Tuple(members), Type::Tuple(types))
+    }
+
+    /// The statement that seeds the promoted shadow `shadow` of argument `original` at function
+    /// entry: a boxed cell's allocation (#685), a tuple's copy ([`Self::tuple_param_seed`]), or
+    /// the plain copy of the argument.
+    fn promoted_arg_seed(&mut self, ops: &[Value], shadow: u16, original: u16) -> Value {
+        let shadow_tp = self.vars.tp(shadow).clone();
+        crate::parser::vectors::boxed_cell_def(&shadow_tp, &self.data)
+            .and_then(|cell| self.boxed_cell_alloc_and_set(shadow, cell, Value::Var(original)))
+            .or_else(|| self.tuple_param_seed(ops, shadow, original))
+            .unwrap_or_else(|| v_set(shadow, Value::Var(original)))
+    }
+
+    /// `@FR-F-ParamTuple` — the entry seed of tuple shadow `shadow` of parameter `original`,
+    /// when it has a heap member: the copy built at the start of this pass, unless the finished
+    /// body `ops` only reads it — then `None`, the plain alias it would be without the rule, and
+    /// the shadow is typed as a view of the parameter's members.
+    fn tuple_param_seed(&mut self, ops: &[Value], shadow: u16, original: u16) -> Option<Value> {
+        let copy = self
+            .tuple_param_seeds
+            .iter()
+            .find(|(s, _)| *s == shadow)
+            .map(|(_, v)| v.clone())?;
+        // A returned record or collection is the caller's join to judge (`@FR-O-Oracle`: an
+        // answer in an argument's store is copied at the bind); a returned TUPLE has no such
+        // join, so one that carries a member escapes.
+        let walk = super::passes::MemberWalk {
+            data: &self.data,
+            p: shadow,
+            done: &self.pass2_bodies,
+            ret_holds_ref: Self::tuple_carries_heap(self.data.def(self.context).returned()),
+        };
+        if walk.only_read(ops) {
+            // A view of the caller's members: each heap member depends on the parameter, so
+            // the frame never frees what the caller owns.
+            let tp = Self::tuple_view_of(self.vars.tp(original), original);
+            self.vars.set_type(shadow, tp);
+            None
+        } else {
+            Some(v_set(shadow, copy))
+        }
     }
 
     /// The type of a tuple that VIEWS parameter `on`'s members: each non-scalar member, at any
