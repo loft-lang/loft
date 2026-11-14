@@ -1,7 +1,7 @@
-diff --git b/src/c/bodies.rs a/src/c/bodies.rs
+diff --git a/src/c/bodies.rs b/src/c/bodies.rs
 index c065880bf..d7580098a 100644
---- b/src/c/bodies.rs
-+++ a/src/c/bodies.rs
+--- a/src/c/bodies.rs
++++ b/src/c/bodies.rs
 @@ -45,17 +45,12 @@
  //! its code names a reporting call.  `LOFT_NO_COMPILED_BODIES=1` at run time makes every lookup
  //! answer -1 (the A/B: the loft bodies, the same answers).
@@ -220,10 +220,10 @@ index c065880bf..d7580098a 100644
      let _ = writeln!(
          e,
          "    memcpy(loft_crt_slot_at(stk, base), &r, sizeof r);\n    return base + {};\n}}",
-diff --git b/src/c/body.rs a/src/c/body.rs
+diff --git a/src/c/body.rs b/src/c/body.rs
 index 999ce42b9..3dc8671d7 100644
---- b/src/c/body.rs
-+++ a/src/c/body.rs
+--- a/src/c/body.rs
++++ b/src/c/body.rs
 @@ -9289,42 +9289,6 @@ impl<'a> FnWriter<'a> {
          crate::opt::range::op_range_at_site(self.cx.data, &facts.0, ranges, name, args).is_some()
      }
@@ -275,10 +275,10 @@ index 999ce42b9..3dc8671d7 100644
                  let f = std::rc::Rc::new((nn, rv));
                  self.range_facts = Some(f.clone());
                  f
-diff --git b/src/c/mod.rs a/src/c/mod.rs
-index 3751e81d3..9a5952782 100644
---- b/src/c/mod.rs
-+++ a/src/c/mod.rs
+diff --git a/src/c/mod.rs b/src/c/mod.rs
+index 17ff56ff6..454c716cc 100644
+--- a/src/c/mod.rs
++++ b/src/c/mod.rs
 @@ -2023,7 +2023,6 @@ pub fn emit_unit_for(
          .collect();
      // The roots first, so a refusal names the function asked for before one it reaches.
@@ -411,10 +411,10 @@ index 3751e81d3..9a5952782 100644
      let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
      // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
      let apr_at = if mask & APR_BIT == 0 {
-diff --git b/src/data.rs a/src/data.rs
+diff --git a/src/data.rs b/src/data.rs
 index 5c15b54f7..934986d50 100644
---- b/src/data.rs
-+++ a/src/data.rs
+--- a/src/data.rs
++++ b/src/data.rs
 @@ -6829,23 +6829,6 @@ impl Data {
          !self.wide_instances.contains(&d) && self.width32_source(self.def(d).source)
      }
@@ -439,10 +439,10 @@ index 5c15b54f7..934986d50 100644
      /// @PLN204 — the sources under the 32-bit regime and the instances minted from a 64-bit
      /// template: parse-time state the IR bundle does not carry, so the program cache's
      /// manifest writes it and a warm load replays it (`startup_cache`).
-diff --git b/src/data_store.rs a/src/data_store.rs
+diff --git a/src/data_store.rs b/src/data_store.rs
 index 92faaa8b0..83534f4a3 100644
---- b/src/data_store.rs
-+++ a/src/data_store.rs
+--- a/src/data_store.rs
++++ b/src/data_store.rs
 @@ -318,7 +318,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
  /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
  /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
@@ -468,10 +468,10 @@ index 92faaa8b0..83534f4a3 100644
  
          // Data record (root).
          assert_eq!(pos(ids.data, "source"), DATA_SOURCE);
-diff --git b/src/ir_read.rs a/src/ir_read.rs
+diff --git a/src/ir_read.rs b/src/ir_read.rs
 index 7c3a79dac..8b93d69dd 100644
---- b/src/ir_read.rs
-+++ a/src/ir_read.rs
+--- a/src/ir_read.rs
++++ b/src/ir_read.rs
 @@ -424,13 +424,10 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
      let mut data = Data::new();
      data.source = r.field_int(stores, ds::DATA_SOURCE) as u16;
@@ -488,10 +488,10 @@ index 7c3a79dac..8b93d69dd 100644
      // The import tables go in BEFORE the rebuild: `rebuild_indices` replays
      // them to recreate the cross-source `def_names` bindings (loft#1359).
      let imports = r.field_recvec(ds::DATA_IMPORTS, ds::IMPORT_STRIDE);
-diff --git b/src/ir_schema_gen.rs a/src/ir_schema_gen.rs
+diff --git a/src/ir_schema_gen.rs b/src/ir_schema_gen.rs
 index f489797a1..54add69c9 100644
---- b/src/ir_schema_gen.rs
-+++ a/src/ir_schema_gen.rs
+--- a/src/ir_schema_gen.rs
++++ b/src/ir_schema_gen.rs
 @@ -757,7 +757,6 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
      db.field(t80, "op_hot", t4);
      db.field(t80, "op_cold", t4);
@@ -500,10 +500,10 @@ index f489797a1..54add69c9 100644
      let t128 = db.vector(t76);
      let _ = t128; // may be unused
      let t129 = db.vector(t79);
-diff --git b/src/ir_store.rs a/src/ir_store.rs
+diff --git a/src/ir_store.rs b/src/ir_store.rs
 index 99382c386..bb2e532b9 100644
---- b/src/ir_store.rs
-+++ a/src/ir_store.rs
+--- a/src/ir_store.rs
++++ b/src/ir_store.rs
 @@ -416,8 +416,7 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
  
  /// Write one native `Definition` into the already-allocated record `r` (the
@@ -526,10 +526,10 @@ index 99382c386..bb2e532b9 100644
      }
      // The import tables: `rebuild_indices` reconstructs `def_names` under each
      // definition's OWN source and then REPLAYS these, so an image without them
-diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
 index a7fe2361a..c51380edf 100644
---- b/src/parser/collections.rs
-+++ a/src/parser/collections.rs
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
 @@ -3933,7 +3933,7 @@ use #count instead"
      pub(crate) fn keyed_snapshot(
          &mut self,
@@ -564,11 +564,11 @@ index a7fe2361a..c51380edf 100644
              {
                  hash_scratch_var = scratch_var;
                  fill = snapshot;
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 92e0629f0..27f987d4c 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -22989,31 +22989,6 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index a5f95f4e5..909451c58 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -23021,28 +23021,6 @@ impl Parser {
                                  // by the zero-trust consumer as a one-line accessor that
                                  // silently corrupted its result.
                                  || self.return_projects_into_local(&v)
@@ -592,18 +592,15 @@ index 92e0629f0..27f987d4c 100644
 -                                            && !own.starts_with("__vdb_")
 -                                            && !own.starts_with("__ref_")
 -                                            && !own.starts_with("__rref_")
--                                            && matches!(
--                                                self.vars.tp(d).base(),
--                                                Type::Reference(_, _) | Type::Enum(_, true, _)
--                                            )
+-                                            && self.names_a_record(d)
 -                                    }))
                                  // A vector LITERAL (`return []`, `return ["q"]`): its value is a
                                  // view of the record the literal minted (`__vdb_N`), which the
                                  // frame frees on this path, so it must reach the caller's buffer
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
 index ee1125562..f856a3f98 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
 @@ -5313,9 +5313,6 @@ use a separate collection or add after the loop"
          // program compiles today and keeps its binding (and its loop-record admission).
          // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
@@ -662,10 +659,10 @@ index ee1125562..f856a3f98 100644
              rebound_to = Value::Var(var_nr);
              &rebound_to
          } else {
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
 index 56503fa5b..957db2066 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
 @@ -4422,14 +4422,14 @@ impl Parser {
              self.lexer.token("in");
              let loop_nr = self.vars.start_loop();
@@ -683,10 +680,10 @@ index 56503fa5b..957db2066 100644
                  .map(|(_, fill)| fill);
              // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
              let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
 index 3135bc647..a42869577 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
 @@ -4234,11 +4234,6 @@ impl Parser {
              // and is asked at the site.
              if t == Type::Null {
@@ -699,10 +696,10 @@ index 3135bc647..a42869577 100644
              }
              if t != Type::Null
                  && !self.convert_store(
-diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
 index d12dd9c61..16a9c4d7b 100644
---- b/src/parser/vectors.rs
-+++ a/src/parser/vectors.rs
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
 @@ -3966,7 +3966,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
              in_type = in_type.depending(vec_var);
              fill = v_set(vec_var, expr);
@@ -712,10 +709,10 @@ index d12dd9c61..16a9c4d7b 100644
              // A keyed source is walked through its ordered snapshot, as a `for` walks it.
              fill = snapshot;
          }
-diff --git b/src/value_record.rs a/src/value_record.rs
+diff --git a/src/value_record.rs b/src/value_record.rs
 index e3048aa37..22382b1b6 100644
---- b/src/value_record.rs
-+++ a/src/value_record.rs
+--- a/src/value_record.rs
++++ b/src/value_record.rs
 @@ -2788,13 +2788,7 @@ impl Exits<'_> {
                  Value::Call(op, a) if *op == ops.ref_alias
                      && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(b) if *b == buf))));
@@ -751,10 +748,10 @@ index e3048aa37..22382b1b6 100644
          match n.unspan_mut() {
              Value::Return(x) => self.value(x, vars),
              Value::Set(l, e) if self.c.delivered.contains(l) => self.value(e, vars),
-diff --git b/src/variables/mod.rs a/src/variables/mod.rs
-index 5b7ddf463..4b39f556b 100644
---- b/src/variables/mod.rs
-+++ a/src/variables/mod.rs
+diff --git a/src/variables/mod.rs b/src/variables/mod.rs
+index 9bd77350f..6b1d9cad2 100644
+--- a/src/variables/mod.rs
++++ b/src/variables/mod.rs
 @@ -2881,31 +2881,6 @@ impl Function {
              .map_or(u16::MAX, |v| v.created_in_loop)
      }
@@ -776,7 +773,7 @@ index 5b7ddf463..4b39f556b 100644
 -        match (&v.type_def, type_def) {
 -            (Type::Optional(_), Type::Optional(_)) => false,
 -            (Type::Optional(inner), other) | (other, Type::Optional(inner)) => {
--                !matches!(other, Type::Null | Type::RefVar(_))
+-                !matches!(other.base(), Type::Null | Type::RefVar(_))
 -                    && !other.is_unknown()
 -                    && inner.is_equal(other)
 -            }
