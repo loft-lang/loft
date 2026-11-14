@@ -13,6 +13,7 @@ use cgen_types;
 use opt_names;
 use loop_shape;
 use opt_iteration;
+use opt_non_sentinel;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -181,6 +182,16 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
       }
     }
     return "";
+  }
+  if name == "nn" {
+    proof = opt_non_sentinel::new_proof(b);
+    facts = "";
+    for d in b.data.definitions {
+      if len(d.code) > 0 && d.code[0] != NdNull {
+        facts += "{opt_non_sentinel::nn_line(b, proof, d#index)}\n";
+      }
+    }
+    return facts;
   }
   if name != "shapes" && name != "counters" && name != "iterations" {
     return null;

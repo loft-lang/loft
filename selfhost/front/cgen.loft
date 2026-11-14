@@ -28,7 +28,7 @@ fn main(args: vector<text>) {
   if args[2] == "--layer" {
     lines = if len(args) > 3 { cgen::layer(b, args[3]!) } else { null };
     if lines == null {
-      eprintln("cgen: the layers are: shapes, reach, functions, counters, iterations");
+      eprintln("cgen: the layers are: shapes, reach, functions, counters, iterations, nn");
       exit(2);
     }
     layer = file(args[1]!);

@@ -1,0 +1,674 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft: the non-sentinel proof (src/opt/non_sentinel.rs).
+// Is a value provably non-sentinel — no NaN as a float, no null as an integer — so that the
+// operator on it may be written plain?
+//
+// The facts of one function are marks, one per variable.  What the Rust module keeps per
+// thread (the callees' answers, the program-wide parameter facts) is one `Proof` record here,
+// made per program.
+
+use ir;
+use loop_shape;
+use opt_iteration;
+
+// `Definition.def_type` ordinal of a function.
+FUNCTION = 1;
+
+// The answers that are facts about ONE program.
+pub struct Proof {
+  // Per definition: does it answer a non-sentinel value on every exit?  -1 not asked yet.
+  returns: vector<integer>,
+  // Per definition, per parameter: proven non-sentinel on entry by every call (empty: none).
+  params: vector<ParamFlags>,
+  // 0 not computed, 1 being computed (the flags are the current assumption), 2 known.
+  params_state: integer,
+  // The release-pass probe: integer `+ - *` wrap, so the integer family closes.
+  probe: boolean,
+}
+
+struct ParamFlags {
+  flags: vector<boolean>,
+}
+
+// The proof of the program in `b`, with the program-wide parameter fact on — as the C
+// generator starts (`begin_c_generation`).
+pub fn new_proof(b: ir::Bundle) -> Proof {
+  n = len(b.data.definitions);
+  Proof {
+    returns: [for _ in 0..n { -1 }],
+    params: [for _ in 0..n { ParamFlags { flags: [] } }],
+    params_state: 0,
+    probe: (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0",
+  }
+}
+
+// `Value::walk`: `f` on every node of `node`, a node before its children, a source span
+// passed through.
+fn walk(node: ir::Node, f: fn(ir::Node)) {
+  match node {
+    NdSpan { pos: _, inner } => walk(inner, f),
+    NdCall { def_nr: _, args } => { f(node); for a in args { walk(a, f); } },
+    NdCallRef { var: _, args } => { f(node); for a in args { walk(a, f); } },
+    NdInsert { items } => { f(node); for a in items { walk(a, f); } },
+    NdTuple { items } => { f(node); for a in items { walk(a, f); } },
+    NdParallel { arms } => { f(node); for a in arms { walk(a, f); } },
+    NdBlock { block } => { f(node); for a in block[0].operators { walk(a, f); } },
+    NdLoop { block } => { f(node); for a in block[0].operators { walk(a, f); } },
+    NdSet { var: _, inner } => { f(node); walk(inner, f); },
+    NdReturn { inner } => { f(node); walk(inner, f); },
+    NdDrop { inner } => { f(node); walk(inner, f); },
+    NdYield { inner } => { f(node); walk(inner, f); },
+    NdTuplePut { var: _, idx: _, inner } => { f(node); walk(inner, f); },
+    NdIf { cond, t, f: other } => {
+      f(node);
+      walk(cond, f);
+      walk(t, f);
+      walk(other, f);
+    },
+    NdIter { var: _, create, next, init } => {
+      f(node);
+      walk(create, f);
+      walk(next, f);
+      walk(init, f);
+    },
+    _ => f(node),
+  }
+}
+
+// Is `code` (a definition's body, a box of one) a block — a loft body?
+fn has_body(d: ir::Definition) -> boolean {
+  if len(d.code) == 0 {
+    return false;
+  }
+  match d.code[0] {
+    NdBlock { block: _ } => true,
+    _ => false,
+  }
+}
+
+// A literal the emitter can bound from above and below: `Int(n)` / `Long(n)` with `n >= 0`.
+fn non_negative_literal(v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n >= 0,
+    NdLong { n } => n != null && n >= 0,
+    _ => false,
+  }
+}
+
+// The parser's null-discharge shape: `if OpConvBoolFrom*(x) x else d` — the condition tests
+// exactly the then-arm, so inside the then branch the value is proven by the test itself.
+fn discharge_guard(defs: vector<ir::Definition>, cond: ir::Node, then: ir::Node) -> boolean {
+  name = loop_shape::call_name(defs, cond);
+  if name != "OpConvBoolFromFloat" && name != "OpConvBoolFromInt" {
+    return false;
+  }
+  tested = match loop_shape::unspan(cond) {
+    NdCall { def_nr: _, args } => if len(args) == 1 { loop_shape::var_of(args[0]) } else { -1 },
+    _ => -1,
+  };
+  tested >= 0 && tested == loop_shape::var_of(then)
+}
+
+// The value of an `Int` literal, or null for any other node.
+fn int_of(n: ir::Node) -> integer? {
+  match loop_shape::unspan(n) {
+    NdInt { n: value } => value,
+    _ => null,
+  }
+}
+
+// `non_sentinel`: is `v` provably non-sentinel under the function's variable facts `vars`?
+pub fn non_sentinel(b: ir::Bundle, p: Proof, vars: vector<boolean>, v: ir::Node) -> boolean {
+  defs = b.data.definitions;
+  match loop_shape::unspan(v) {
+    NdFloat { f } => f != null,
+    NdSingle { f } => f != null,
+    // An `Int` is a 32-bit payload, which never widens to the null; a `Long` carries the
+    // sentinel only literally.
+    NdInt { n: _ } => true,
+    NdLong { n } => n != null,
+    NdVar { n } => vars[n] ?? false,
+    NdIf { cond, t, f } => {
+      // Under the discharge shape the then-arm is proven by the test itself.
+      then_arm = discharge_guard(defs, cond, t) || non_sentinel(b, p, vars, t);
+      else_arm = non_sentinel(b, p, vars, f);
+      then_arm && else_arm
+    },
+    NdBlock { block } => {
+      ops = block[0].operators;
+      len(ops) > 0 && non_sentinel(b, p, vars, ops[len(ops) - 1])
+    },
+    NdCall { def_nr, args } => {
+      name = defs[def_nr].name ?? "";
+      // Unary negation, both families.
+      if (name == "OpMinSingleFloat" || name == "OpMinSingle" || name == "OpMinSingleInt") && len(args) == 1 {
+        return non_sentinel(b, p, vars, args[0]);
+      }
+      // `a & lit` with a non-negative literal lies in [0, lit] whatever the proven operand holds.
+      if name == "OpLandInt" && len(args) == 2 {
+        return (non_negative_literal(args[1]) && non_sentinel(b, p, vars, args[0]))
+          || (non_negative_literal(args[0]) && non_sentinel(b, p, vars, args[1]));
+      }
+      // `a % k` for a literal k other than 0 and -1, `a / k` for a literal |k| >= 2 and
+      // `a >> k` for a literal k in 1..=63 cannot reach the sentinel when `a` is proven.
+      if name == "OpRemInt" && len(args) == 2 {
+        k = int_of(args[1]) ?? return false;
+        return k != 0 && k != -1 && non_sentinel(b, p, vars, args[0]);
+      }
+      if name == "OpDivInt" && len(args) == 2 {
+        k = int_of(args[1]) ?? return false;
+        return (k >= 2 || k <= -2) && non_sentinel(b, p, vars, args[0]);
+      }
+      if name == "OpSRightInt" && len(args) == 2 {
+        k = int_of(args[1]) ?? return false;
+        return k >= 1 && k < 64 && non_sentinel(b, p, vars, args[0]);
+      }
+      // Under the release-pass probe `+`, `-`, `*` wrap, so the integer family closes.
+      if (name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt") && len(args) == 2 && p.probe {
+        return non_sentinel(b, p, vars, args[0]) && non_sentinel(b, p, vars, args[1]);
+      }
+      callee_returns_non_sentinel(b, p, def_nr)
+    },
+    NdReturn { inner } => non_sentinel(b, p, vars, inner),
+    _ => false,
+  }
+}
+
+// `Value::tail`: the value a body answers — the last statement of its block, a span passed.
+fn tail(n: ir::Node) -> ir::Node {
+  match loop_shape::unspan(n) {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        return NdNull;
+      }
+      tail(ops[len(ops) - 1])
+    },
+    _ => loop_shape::unspan(n),
+  }
+}
+
+// `callee_returns_non_sentinel`: does the user function `d` answer a non-sentinel value on
+// EVERY exit?  Its tail and every `return` are judged under the callee's own facts.  Kept per
+// definition for the program; a cycle answers false at the re-entry; a native answers false.
+fn callee_returns_non_sentinel(b: ir::Bundle, p: Proof, d: integer) -> boolean {
+  known = p.returns[d] ?? 0;
+  if known >= 0 {
+    return known == 1;
+  }
+  def = b.data.definitions[d]!;
+  if !has_body(def) {
+    return false;
+  }
+  // Pessimistic entry: a recursive callee reads itself as unproven.
+  p.returns[d] = 0;
+  vars = non_sentinel_vars(b, p, d);
+  code = def.code[0]!;
+  last = tail(code);
+  // A `Loop` tail is no exit: the `return`s below are every exit.
+  every = match last {
+    NdLoop { block: _ } => true,
+    _ => non_sentinel(b, p, vars, last),
+  };
+  failed = [false];
+  walk(code, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner } => {
+        if !non_sentinel(b, p, vars, inner) {
+          failed[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  answer = every && !failed[0];
+  p.returns[d] = if answer { 1 } else { 0 };
+  answer
+}
+
+// `collect_escapes`: every variable something other than a `Set` could write — its address
+// taken, handed to a `&` parameter, given to a call through a function value, a tuple member's
+// destination, an `Iter` variable.
+pub fn collect_escapes(b: ir::Bundle, code: ir::Node, escaped: vector<boolean>) {
+  defs = b.data.definitions;
+  walk(code, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        def = defs[def_nr]!;
+        takes_address = def.name == "OpCreateStack" || def.name == "OpVarRef";
+        for a in args {
+          nr = loop_shape::var_of(a);
+          if nr < 0 || nr >= len(escaped) {
+            continue;
+          }
+          by_ref = false;
+          if a#index < len(def.attributes) {
+            match cgen_base(def.attributes[a#index]!.typedef[0]!) {
+              TyRefVar { inner: _ } => { by_ref = true; },
+              _ => {},
+            }
+          }
+          if takes_address || by_ref {
+            escaped[nr] = true;
+          }
+        }
+      },
+      NdCallRef { var: _, args } => {
+        for a in args {
+          nr = loop_shape::var_of(a);
+          if nr >= 0 && nr < len(escaped) {
+            escaped[nr] = true;
+          }
+        }
+      },
+      NdTuplePut { var, idx: _, inner: _ } => { if var < len(escaped) { escaped[var] = true; } },
+      NdIter { var, create: _, next: _, init: _ } => { if var < len(escaped) { escaped[var] = true; } },
+      _ => {},
+    }
+  });
+}
+
+// `Type::base`: the type without its `τ?` marker.
+fn cgen_base(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => cgen_base(inner),
+    _ => t,
+  }
+}
+
+// Is `t` an integer or a float, its `τ?` peeled?
+fn scalar_number(t: ir::TypeT) -> boolean {
+  match cgen_base(t) {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    _ => false,
+  }
+}
+
+// `candidate_params`: the parameters of `d` the proof may seed — a scalar parameter of a loft
+// body that the body never rebinds and never lends.  Empty where there is none.
+fn candidate_params(b: ir::Bundle, d: integer) -> vector<boolean> {
+  def = b.data.definitions[d]!;
+  if !has_body(def) {
+    return [];
+  }
+  vars = def.variables.variables;
+  code = def.code[0]!;
+  escaped: vector<boolean> = [for _ in 0..len(vars) { false }];
+  collect_escapes(b, code, escaped);
+  assigned: vector<boolean> = [for _ in 0..len(vars) { false }];
+  walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < len(assigned) { assigned[var] = true; } },
+      _ => {},
+    }
+  });
+  flags: vector<boolean> = [];
+  any = false;
+  for a in def.attributes {
+    i = a#index;
+    ok = scalar_number(a.typedef[0]!) && i < len(vars) && vars[i]!.argument && !escaped[i]! && !assigned[i]!;
+    flags += [ok];
+    if ok {
+      any = true;
+    }
+  }
+  if any { flags } else { [] }
+}
+
+// One call site of a candidate: the caller and the arguments.
+struct Site {
+  callee: integer,
+  caller: integer,
+  args: vector<ir::Node>,
+}
+
+// The functions `code` uses as VALUES (a function reference, or a number handed to a `fn(…)`
+// parameter) and the ones it calls directly, marked.
+fn mark_called(code: ir::Node, defs: vector<ir::Definition>, values: vector<boolean>, called: vector<boolean>) {
+  n = len(defs);
+  walk(code, fn(node: ir::Node) {
+    match node {
+      NdFnRef { def_nr, var: _, t: _ } => {
+        f = if def_nr < 0 { -def_nr } else { def_nr };
+        if f < n { values[f] = true; }
+      },
+      NdCall { def_nr, args } => {
+        if def_nr < n {
+          called[def_nr] = true;
+          attrs = defs[def_nr]!.attributes;
+          for a in args {
+            g = int_of(a) ?? continue;
+            if a#index >= len(attrs) {
+              continue;
+            }
+            match cgen_base(attrs[a#index]!.typedef[0]!) {
+              TyFunction { args: _, result: _, dep: _, consts: _ } => {
+                h = if g < 0 { -g } else { g };
+                if h < n { values[h] = true; }
+              },
+              _ => {},
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+}
+
+// The calls of a candidate in `code`, the body of `caller`, added to `sites` in walk order.
+fn sites_in(code: ir::Node, caller: integer, candidate: vector<boolean>, sites: vector<Site>) {
+  walk(code, fn(node: ir::Node) {
+    match node {
+      NdCall { def_nr, args } => {
+        if def_nr < len(candidate) && candidate[def_nr]! {
+          sites += [Site { callee: def_nr, caller: caller, args: args }];
+        }
+      },
+      _ => {},
+    }
+  });
+}
+
+// What `code` assigns to variable `ix`: how many calls (steps), and 1 where anything but a
+// literal or a call is assigned.
+fn index_writes(code: ir::Node, ix: integer) -> vector<integer> {
+  count = [0, 0];
+  walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == ix {
+          match loop_shape::unspan(inner) {
+            NdInt { n: _ } => {},
+            NdLong { n: k } => { if k == null { count[1] = 1; } },
+            NdCall { def_nr: _, args: _ } => { count[0] += 1; },
+            _ => { count[1] = 1; },
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  count
+}
+
+// `proven_params`: the parameters, per function, that hold a non-sentinel value on entry — a
+// candidate parameter of a function never used as a function VALUE and called at least once,
+// where EVERY direct call in the program passes an argument proven non-sentinel.  A greatest
+// fixpoint: every candidate is assumed, each round drops a parameter one call site does not
+// prove under the round's assumption, until nothing drops.  `LOFT_NO_NN_PARAMS=1` proves none.
+fn proven_params(b: ir::Bundle, p: Proof) {
+  if p.params_state != 0 {
+    return;
+  }
+  if (env_variable("LOFT_NO_NN_PARAMS") ?? "0") != "0" {
+    p.params_state = 2;
+    return;
+  }
+  defs = b.data.definitions;
+  n = len(defs);
+  // Functions used as values: their callers are not all visible.
+  values: vector<boolean> = [for _ in 0..n { false }];
+  called: vector<boolean> = [for _ in 0..n { false }];
+  for def in defs {
+    if has_body(def) {
+      mark_called(def.code[0]!, defs, values, called);
+    }
+  }
+  candidate: vector<boolean> = [for _ in 0..n { false }];
+  for d in 0..n {
+    if values[d]! || !called[d]! {
+      continue;
+    }
+    flags = candidate_params(b, d);
+    if len(flags) > 0 {
+      p.params[d]!.flags = flags;
+      candidate[d] = true;
+    }
+  }
+  // The call sites of every candidate: callers in definition order, a caller's in walk order.
+  sites: vector<Site> = [];
+  for def in defs {
+    if has_body(def) {
+      sites_in(def.code[0]!, def#index, candidate, sites);
+    }
+  }
+  p.params_state = 1;
+  for _ in 0..1000000 {
+    // The round reads this assumption: every caller's facts once, the callees' answers anew.
+    for r in p.returns {
+      p.returns[r#index] = -1;
+    }
+    facts: vector<ParamFlags> = [for _ in 0..n { ParamFlags { flags: [] } }];
+    done: vector<boolean> = [for _ in 0..n { false }];
+    dropped: vector<integer> = [];
+    for s in sites {
+      held = p.params[s.callee]!.flags;
+      for h in held {
+        if !h {
+          continue;
+        }
+        i = h#index;
+        if !done[s.caller]! {
+          facts[s.caller]!.flags = non_sentinel_vars(b, p, s.caller);
+          done[s.caller] = true;
+        }
+        if i >= len(s.args) || !non_sentinel(b, p, facts[s.caller]!.flags, s.args[i]!) {
+          dropped += [s.callee * 65536 + i];
+        }
+      }
+    }
+    if len(dropped) == 0 {
+      break;
+    }
+    for x in dropped {
+      p.params[x / 65536]!.flags[x % 65536] = false;
+    }
+  }
+  for r in p.returns {
+    p.returns[r#index] = -1;
+  }
+  p.params_state = 2;
+}
+
+// `seed_range_counters`: every counted loop's index, next-counter and loop variable hold no
+// sentinel when the loop's bound proves the step cannot overflow.
+fn seed_range_counters(b: ir::Bundle, code: ir::Node, vars: vector<boolean>) {
+  defs = b.data.definitions;
+  walk(code, fn(n: ir::Node) {
+    match n {
+      NdLoop { block } => {
+        rc = loop_shape::range_counters(block[0]!, defs);
+        if rc != null {
+          bounded = !rc.inclusive || match loop_shape::unspan(rc.hi) {
+            NdInt { n: k } => k < 2147483647,
+            NdLong { n: k } => k != null && k < 9223372036854775807,
+            _ => false,
+          };
+          if bounded {
+            vars[rc.index] = true;
+            vars[rc.loop_var] = true;
+            if rc.next >= 0 {
+              vars[rc.next] = true;
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+}
+
+// `seed_iteration_indexes`: the `#index` of every `for e in v` loop whose own bound proves its
+// step cannot overflow, when every OTHER assignment to it in the function is a literal and its
+// address is never taken.
+fn seed_iteration_indexes(b: ir::Bundle, code: ir::Node, escaped: vector<boolean>, vars: vector<boolean>) {
+  defs = b.data.definitions;
+  bounded: vector<integer> = [];
+  walk(code, fn(n: ir::Node) {
+    match n {
+      NdLoop { block } => {
+        ix = opt_iteration::bounded_iteration_index(block[0]!, defs);
+        if ix != null {
+          bounded += [ix];
+        }
+      },
+      _ => {},
+    }
+  });
+  for ix in bounded {
+    if escaped[ix] ?? true {
+      continue;
+    }
+    // One step (the loop's own) and any number of literal seeds.
+    count = index_writes(code, ix);
+    if count[0] == 1 && count[1] == 0 {
+      vars[ix] = true;
+    }
+  }
+}
+
+// `scan_sets`: one round — every `Set(var, expr)`'s verdict under the current facts folded
+// into `acc`: 0 no assignment seen, 1 every assignment proven so far, 2 one is not.
+fn scan_sets(b: ir::Bundle, p: Proof, code: ir::Node, vars: vector<boolean>, acc: vector<integer>) {
+  walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        ok = non_sentinel(b, p, vars, inner);
+        if var < len(acc) && (acc[var] ?? 0) != 2 {
+          acc[var] = if ok { 1 } else { 2 };
+        }
+      },
+      _ => {},
+    }
+  });
+}
+
+// `Data::def_nr`: the definition named `name` in the program's own source, else the standard
+// library's; -1 for none.
+fn def_nr(b: ir::Bundle, name: text) -> integer {
+  std = -1;
+  for d in b.data.definitions {
+    if d.name != name {
+      continue;
+    }
+    if d.source == b.data.source {
+      return d#index;
+    }
+    if d.source == 0 {
+      std = d#index;
+    }
+  }
+  std
+}
+
+// `non_sentinel_vars`: the facts of function `d` — a local holds no sentinel iff it has an
+// assignment, EVERY `Set` to it assigns a non-sentinel expression, and nothing else can write
+// it.  A parameter is never proven by shape; the program-wide fact seeds the ones every call
+// proves.  Pessimistic start, re-walked to a fixpoint.
+pub fn non_sentinel_vars(b: ir::Bundle, p: Proof, d: integer) -> vector<boolean> {
+  def = b.data.definitions[d]!;
+  count = len(def.variables.variables);
+  vars: vector<boolean> = [for _ in 0..count { false }];
+  if len(def.code) == 0 {
+    return vars;
+  }
+  code = def.code[0]!;
+  escaped: vector<boolean> = [for _ in 0..count { false }];
+  collect_escapes(b, code, escaped);
+  seed_range_counters(b, code, vars);
+  seed_iteration_indexes(b, code, escaped, vars);
+  // `@FR-R-NonSentinelParam`: the parameters every call proves — for a function its own name
+  // finds (`Data::def_nr`), as the Rust proof asks: an instance or a twin a name lookup of
+  // the program's source does not reach is seeded nothing.
+  proven_params(b, p);
+  if def_nr(b, def.variables.name) == d {
+    for f in p.params[d]!.flags {
+      if f && f#index < count {
+        vars[f#index] = true;
+      }
+    }
+  }
+  for _ in 0..count + 1 {
+    round: vector<integer> = [for _ in 0..count { 0 }];
+    scan_sets(b, p, code, vars, round);
+    changed = false;
+    for r in round {
+      v = r#index;
+      if r == 1 && !escaped[v]! && !def.variables.variables[v]!.argument && !vars[v]! {
+        vars[v] = true;
+        changed = true;
+      }
+    }
+    if !changed {
+      break;
+    }
+  }
+  if p.probe && (env_variable("LOFT_NO_PROBE_FIXPOINT") ?? "0") == "0" {
+    greatest_integer_locals(b, p, d, escaped, vars);
+  }
+  vars
+}
+
+// `greatest_integer_locals`: under the release-pass probe, the integer locals proven as a
+// GREATEST fixpoint — every integer local that is no parameter and does not escape is
+// assumed, and each round drops one with an assignment the proof does not accept.
+fn greatest_integer_locals(b: ir::Bundle, p: Proof, d: integer, escaped: vector<boolean>, vars: vector<boolean>) {
+  def = b.data.definitions[d]!;
+  code = def.code[0]!;
+  count = len(vars);
+  set: vector<boolean> = [for _ in 0..count { false }];
+  walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < count { set[var] = true; } },
+      _ => {},
+    }
+  });
+  assumed: vector<integer> = [];
+  for s in set {
+    v = s#index;
+    integer_local = match cgen_base(def.variables.variables[v]!.type_def[0]!) {
+      TyInteger { spec: _ } => true,
+      _ => false,
+    };
+    if s && !vars[v]! && !escaped[v]! && !def.variables.variables[v]!.argument && integer_local {
+      assumed += [v];
+      vars[v] = true;
+    }
+  }
+  for _ in 0..count + 1 {
+    if len(assumed) == 0 {
+      break;
+    }
+    round: vector<integer> = [for _ in 0..count { 0 }];
+    scan_sets(b, p, code, vars, round);
+    kept: vector<integer> = [];
+    for v in assumed {
+      if (round[v] ?? 0) == 2 {
+        vars[v] = false;
+      } else {
+        kept += [v];
+      }
+    }
+    if len(kept) == len(assumed) {
+      break;
+    }
+    assumed = kept;
+  }
+}
+
+// The trace line of `d`'s facts (`LOFT_TRACE_FACTS`' `[nn]` line): `number=1` for each
+// variable proven, in number order.
+pub fn nn_line(b: ir::Bundle, p: Proof, d: integer) -> text {
+  row: vector<text> = [];
+  for v in non_sentinel_vars(b, p, d) {
+    if v {
+      row += ["{v#index}=1"];
+    }
+  }
+  "[nn]\t{b.data.definitions[d]!.name}\t{row.join(" ")}"
+}

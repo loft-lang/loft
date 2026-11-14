@@ -23000,8 +23000,15 @@ impl Parser {
                                 // a record local.
                                 || matches!(v.unspan(), Value::Var(x)
                                     if self.vars.tp(*x).depend().iter().any(|&d| {
+                                        // A vector's own backing (`__vdb_N`) and a
+                                        // call's work ref are records too, and the local
+                                        // that depends on one OWNS the vector.
+                                        let own = self.vars.name(d);
                                         d != bv
                                             && !self.vars.is_argument(d)
+                                            && !own.starts_with("__vdb_")
+                                            && !own.starts_with("__ref_")
+                                            && !own.starts_with("__rref_")
                                             && matches!(
                                                 self.vars.tp(d).base(),
                                                 Type::Reference(_, _) | Type::Enum(_, true, _)
