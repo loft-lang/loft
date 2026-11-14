@@ -9,6 +9,16 @@
     "commit": "d242b2a4937d4faa21567f91f2c8ab54321ec35a",
     "note": "make falsify-review at d242b2a49: worklist 0 of 1403 receipts unscored, none with an unreachable control. Eight patch receipts went stale in the #2482 join and were re-derived (0f65e006a, 32df480a0), scored by receipts.yml."
   },
+  "M-file-sizes": {
+    "at": "2026-11-14 19:07",
+    "commit": "a81457a79395ff599008c48caee35406b98bfc57",
+    "note": "make file-sizes at a81457a79. DOCS: 535 files, 17 over 1000 lines \u2014 all records, history companions or formal chapters (PROBLEMS.md carries the record exemption); 2 read as several subjects (DESIGN_DECISIONS-history, PERFORMANCE-history); BOTH_BACKEND_SWITCHES.md sits at 999 and needs its split before the next switch. CODE: 1128 files, 151 over 1200, 108 read as several subjects; 28 source files are past the 5000-line rule (control.rs 26317, tests/issues.rs 19378, data.rs 15912, main.rs 14035, expressions.rs 13889, generation/mod.rs 13816, c/body.rs 12118, \u2026 keys.rs 5100; store_records.rs 6439 and control.rs both grew this cycle). The pick for M-file-split: src/parser/control.rs (split value 25074) and tests/issues.rs (19243)."
+  },
+  "M-libs": {
+    "at": "2026-11-14 19:06",
+    "commit": "a81457a79395ff599008c48caee35406b98bfc57",
+    "note": "revalidate-libs run 43620538220 on main 5330b3690 (the #2482 merge): every library leg green after one rerun \u2014 the first attempt's only red was audio 0.2.3's third-party step, the NVD register answering HTTP 503. audio 0.2.3 itself was published this cycle (registry 157fefb)."
+  },
   "M-liveness": {
     "at": "2026-11-14 18:15",
     "commit": "1eed8ab0b08c6126f791c89acf6956fabb9bf370",
