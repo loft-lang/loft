@@ -51,6 +51,28 @@ pub fn format_int(val: integer?, radix: integer, width: integer, token: integer,
   text_from_byte_range(buf, 0, n)
 }
 
+fn c_append_int(store: integer, rec: integer, pos: integer, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer);
+#c "loft_crt_append_int" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_append_float(store: integer, rec: integer, pos: integer, bits: integer, is_null: boolean, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean);
+#c "loft_crt_append_float" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_append_text(store: integer, rec: integer, pos: integer, val: text, bytes: integer, width: integer, dir: integer, token: integer);
+#c "loft_crt_append_text" "void(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t)"
+
+// `format_int`, `format_float` and `format_text` appended in place to the text they are for:
+// the text local in the stack store's frame slot `pos` (`rec` -1) or the text `(store, rec,
+// pos)` names.  No text is built between.
+pub fn append_int(store: integer, rec: integer, pos: integer, val: integer?, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) {
+  c_append_int(store, rec, pos, val ?? 0, val == null, radix, width, token, plus, note, dir);
+}
+
+pub fn append_float(store: integer, rec: integer, pos: integer, val: float?, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) {
+  c_append_float(store, rec, pos, if val == null { 0 } else { val!.bits() }, val == null, width, precision, token, plus, dir, single);
+}
+
+pub fn append_text(store: integer, rec: integer, pos: integer, val: text?, width: integer, dir: integer, token: integer) {
+  c_append_text(store, rec, pos, val ?? "", bytes_of(val), width, dir, token);
+}
+
 // `val` formatted as `OpFormatFloat` (or, with `single`, `OpFormatSingle`) formats it.
 pub fn format_float(val: float?, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) -> text {
   v: vector<float> = [val ?? 0.0];

@@ -415,7 +415,7 @@ fn OpFormatInt(
   note: const boolean,
   dir: const i8
 );
-#loft" #arm crt::slot_text_append(stk, sp - (pos - 16), crt::format_int(val, radix, width, token, plus, note, dir));"
+#loft" #arm crt::append_int(stk, -1, sp - (pos - 16), val, radix, width, token, plus, note, dir);"
 fn OpFormatStackInt(
   pos: const u16,
   val: integer,

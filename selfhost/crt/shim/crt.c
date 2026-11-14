@@ -477,6 +477,36 @@ void loft_crt_ref_text_append(int64_t s, int64_t r, int64_t p, const char *val, 
     if (t) loft_text_concat(t, loft_crt_str(val, bytes));
 }
 
+/* A rendering appended in place to the text a format operator writes: the text local in the
+ * stack store's frame slot `at` (`rec` -1, `store` the stack) or the text `(store, rec, pos)`
+ * names — the runtime's own formatter writing into it, no buffer between (`OpFormatInt`,
+ * `OpFormatFloat`, `OpFormatText` and their stack forms).  A float arrives as its bits. */
+static loft_text *loft_crt_fmt_target(int64_t store, int64_t rec, int64_t pos) {
+    if (rec < 0) return (loft_text *) loft_crt_slot_at(store, pos);
+    return (loft_text *) loft_place(loft_crt_ref(store, rec, pos), 0);
+}
+void loft_crt_append_int(int64_t store, int64_t rec, int64_t pos, int64_t val, int64_t is_null,
+                         int64_t radix, int64_t width, int64_t token, int64_t plus, int64_t note,
+                         int64_t dir) {
+    loft_text *t = loft_crt_fmt_target(store, rec, pos);
+    if (t) loft_format_long(t, is_null ? LOFT_NULL : val, (uint8_t) radix, width, (uint8_t) token,
+                            (int) plus, (int) note, (int) dir);
+}
+void loft_crt_append_float(int64_t store, int64_t rec, int64_t pos, int64_t bits, int64_t is_null,
+                           int64_t width, int64_t prec, int64_t token, int64_t plus, int64_t dir,
+                           int64_t single) {
+    loft_text *t = loft_crt_fmt_target(store, rec, pos);
+    double v;
+    memcpy(&v, &bits, 8);
+    if (is_null) v = NAN;
+    if (t) loft_format_float(t, v, width, prec, (uint8_t) token, (int) plus, (int) dir, (int) single);
+}
+void loft_crt_append_text(int64_t store, int64_t rec, int64_t pos, const char *val, int64_t bytes,
+                          int64_t width, int64_t dir, int64_t token) {
+    loft_text *t = loft_crt_fmt_target(store, rec, pos);
+    if (t) loft_format_text(t, loft_crt_str(val, bytes), width, (int) dir, (uint8_t) token);
+}
+
 /* The null text's one byte appended to the text the reference names: what a Rust native's
  * destination form writes for an absent answer (`STRING_NULL`), so an empty destination reads
  * back as null. */

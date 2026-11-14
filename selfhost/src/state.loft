@@ -1345,7 +1345,7 @@ pub fn format_int(self: State) {
   dir = self.code_i8();
   width = self.get_stack_i64();
   val = self.get_stack_i64();
-  crt::slot_text_append(self.stk, self.stack_pos - (pos - 16), crt::format_int(val, radix, width, token, plus, note, dir));
+  crt::append_int(self.stk, -1, self.stack_pos - (pos - 16), val, radix, width, token, plus, note, dir);
 }
 
 // `State::format_text`: the width and then the view popped, the text formatted and appended to
@@ -1356,7 +1356,7 @@ pub fn format_text(self: State) {
   token = self.code_u8();
   width = self.get_stack_i64();
   val = self.get_stack_str();
-  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_text(val, width, dir, token));
+  crt::append_text(self.stk, -1, self.stack_pos - (pos - 24), val, width, dir, token);
 }
 
 // `State::append_stack_text`: the view popped, appended to the text the reference in the frame
@@ -1480,7 +1480,7 @@ pub fn format_stack_int(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_i64();
   r = self.get_var_dbref(pos - 16);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_int(val, radix, width, token, plus, note, dir));
+  crt::append_int(r.store_nr, r.rec, r.pos, val, radix, width, token, plus, note, dir);
 }
 
 // `State::format_stack_text`: as `format_text`, into the text the slot's reference names.
@@ -1491,7 +1491,7 @@ pub fn format_stack_text(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_str();
   r = self.get_var_dbref(pos - 24);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_text(val, width, dir, token));
+  crt::append_text(r.store_nr, r.rec, r.pos, val, width, dir, token);
 }
 
 // `State::format_float`: the precision, the width and then the value popped, the value
@@ -1504,7 +1504,7 @@ pub fn format_float(self: State) {
   precision = self.get_stack_i64();
   width = self.get_stack_i64();
   val = self.get_stack_f64();
-  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val, width, precision, token, plus, dir, false));
+  crt::append_float(self.stk, -1, self.stack_pos - (pos - 24), val, width, precision, token, plus, dir, false);
 }
 
 // A copy's type operand as flags: the source freed (0x8000), the type holding no stored
@@ -1635,7 +1635,7 @@ pub fn format_stack_float(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_f64();
   r = self.get_var_dbref(pos - 24);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_float(val, width, precision, token, plus, dir, false));
+  crt::append_float(r.store_nr, r.rec, r.pos, val, width, precision, token, plus, dir, false);
 }
 
 // `Stores::remove_vector_at`: element `index` removed, by its type's mode — linked, owning
@@ -1886,7 +1886,7 @@ pub fn format_single(self: State) {
   precision = self.get_stack_i64();
   width = self.get_stack_i64();
   val = self.get_stack_f32();
-  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val as float?, width, precision, token, plus, dir, true));
+  crt::append_float(self.stk, -1, self.stack_pos - (pos - 24), val as float?, width, precision, token, plus, dir, true);
 }
 
 pub fn format_stack_single(self: State) {
@@ -1898,7 +1898,7 @@ pub fn format_stack_single(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_f32();
   r = self.get_var_dbref(pos - 24);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_float(val as float?, width, precision, token, plus, dir, true));
+  crt::append_float(r.store_nr, r.rec, r.pos, val as float?, width, precision, token, plus, dir, true);
 }
 
 // `State::append_character`: a character popped and appended to the text local `pos` back

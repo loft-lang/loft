@@ -3425,7 +3425,7 @@ pub fn run(s: state::State, end: integer) {
         ri5 = crt::peek_i64(base, sp - 16);
         sp -= 16;
         ip += 8;
-        crt::slot_text_append(stk, sp - (ri0 - 16), crt::format_int(ri5, ri1, ri4, ri2, rb0, rb1, ri3));
+        crt::append_int(stk, -1, sp - (ri0 - 16), ri5, ri1, ri4, ri2, rb0, rb1, ri3);
         continue;
       }
     }
