@@ -243,7 +243,8 @@ pub fn push_keys(parts: const vector<integer>, plan: integer, stk: integer, n: i
     if code == KP_FLOAT || code == KP_SINGLE {
       crt::key_float(crt::get_float(stk, 1, 8 + at, 0, code == KP_SINGLE), code == KP_SINGLE);
     } else if code == KP_TEXT {
-      crt::key_text(crt::stack_str(stk, at));
+      // The view in its slot, not a copy: the slot holds it until the operator pops it.
+      crt::key_view(stk, at);
     } else if code == KP_BOOLEAN {
       crt::key_int(crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0));
     } else if code == KP_CHARACTER {

@@ -1935,6 +1935,15 @@ pub fn key_text(v: text?) {
   c_key_text(v ?? "", bytes_of(v));
 }
 
+fn c_key_view(store: integer, at: integer);
+#c "loft_crt_key_view" "void(int64_t, int64_t)"
+
+// A text part as the view in the frame slot at `at` of the stack store, not copied: for a key
+// the operator reads before it pops the slot.
+pub fn key_view(store: integer, at: integer) {
+  c_key_view(store, at);
+}
+
 // `OpGetRecord` on a hash of type `tp`: the record keyed by the top `n` parts, into `out[0..3]`,
 // the null reference on a miss.
 pub fn hash_find(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer, n: integer) {

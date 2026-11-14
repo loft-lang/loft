@@ -2034,6 +2034,12 @@ void loft_crt_key_text(const char *val, int64_t bytes) {
     loft_crt_key_push(loft_kv_text(loft_lit(copy, len)), copy);
 }
 
+/* A text part as the view in the stack store's frame slot at `at`, not copied: the operator
+ * that pushed it reads the key before it pops the slot. */
+void loft_crt_key_view(int64_t store, int64_t at) {
+    loft_crt_key_push(loft_kv_text(*(const loft_str *) loft_crt_slot_at(store, at)), 0);
+}
+
 /* The top `n` parts popped, their text copies released. */
 static void loft_crt_key_pop(int64_t n) {
     while (n-- > 0 && loft_crt_nkv > 0) {

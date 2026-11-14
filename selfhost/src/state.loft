@@ -1600,15 +1600,20 @@ pub fn get_record(self: State) {
     self.stop("not carried: a lookup whose key does not resolve");
     return;
   }
-  self.stack_pos -= bytes;
-  r = self.get_stack_dbref();
-  io: vector<integer> = [NULL_STORE, 0, 0];
+  // The collection's reference read in its slot and the answer written over it: no
+  // reference value between them.
+  self.stack_pos -= bytes + 16;
+  at = self.stack_pos;
+  rs = crt::stack_get(4, self.stk, at) & 65535;
+  rr = crt::stack_get(4, self.stk, at + 4);
+  rp = crt::stack_get(4, self.stk, at + 8);
   if kind != 0 {
-    crt::keyed_find(io, r.store_nr, r.rec, r.pos, kind, db_tp, no_keys);
+    crt::keyed_find(self.lio, rs, rr, rp, kind, db_tp, no_keys);
   } else {
-    crt::hash_find(io, r.store_nr, r.rec, r.pos, db_tp, no_keys);
+    crt::hash_find(self.lio, rs, rr, rp, db_tp, no_keys);
   }
-  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+  self.stack_pos += 16;
 }
 
 // `State::get_text_sub`: the bounds popped, the view below them replaced by its slice.
