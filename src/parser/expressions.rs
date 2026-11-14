@@ -9825,6 +9825,7 @@ use a separate collection or add after the loop"
             data: &self.data,
             p: shadow,
             done: &self.pass2_bodies,
+            stdlib_done: !self.default,
             ret_holds_ref: Self::tuple_carries_heap(self.data.def(self.context).returned()),
         };
         if walk.only_read(ops) {

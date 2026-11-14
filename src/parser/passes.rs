@@ -2399,6 +2399,10 @@ pub(super) struct MemberWalk<'a> {
     pub data: &'a crate::data::Data,
     pub p: u16,
     pub done: &'a std::collections::HashSet<u32>,
+    /// The standard library is finished: the walk reads a program's body, not `default/`'s
+    /// own.  Its functions are then read as written whether this parser read them or a
+    /// cached image supplied them (`done` holds only what this parser's pass 2 read).
+    pub stdlib_done: bool,
     pub ret_holds_ref: bool,
 }
 
@@ -2455,7 +2459,8 @@ impl MemberWalk<'_> {
                 let first = super::op_writes_first_arg(def.name());
                 let second = matches!(def.name(), "OpCopyRecord" | "OpRemove");
                 let user = *def.code() != Value::Null;
-                let callee_writes = if user && self.done.contains(fn_nr) {
+                let finished = self.done.contains(fn_nr) || (self.stdlib_done && def.is_stdlib());
+                let callee_writes = if user && finished {
                     super::callee_param_writes(*fn_nr, self.data, cache)
                 } else if user {
                     vec![true; args.len()]
