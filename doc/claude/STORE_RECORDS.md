@@ -154,6 +154,9 @@ A first bind that joins at run time copies what lies in its witness's store and 
 rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second
 free (`LOFT_RECORDS_NO_JOIN_ADOPT_HELD=1` reads every join as a copy).
+A native is read by its declaration: `-> T[p]` answers a view of parameter `p`, and a public
+native none of whose parameters holds a store answers a store of its own; any other native's
+answer is not followed (`LOFT_RECORDS_NO_NATIVE_ANSWERS=1` follows none).
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through

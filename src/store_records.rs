@@ -2568,6 +2568,56 @@ impl Run<'_> {
             .collect()
     }
 
+    /// A native's answer, as its DECLARATION says it — the one thing known of a function with
+    /// no body, and the author's statement rather than a fact the code generator derived:
+    /// `-> T[p]` answers a view of parameter `p` (`fn field(self: const JsonValue, …) ->
+    /// JsonValue[self]`), so it names what that argument names and owns nothing; a heap answer
+    /// of a native whose parameters hold no store at all is a store of its own (`json_parse`).  Read as unknown,
+    /// a local bound from a view of a lifted native answer was freed beside the lift and no
+    /// finding could say so.  `LOFT_RECORDS_NO_NATIVE_ANSWERS=1` reads every native as unknown.
+    fn native_answer(&mut self, node: &Value, d: u32, vals: &[Val], s: &mut State) -> Val {
+        if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_NATIVE_ANSWERS").is_some()) {
+            return Val::unknown();
+        }
+        let def = self.data.def(d);
+        let deps = def.returned().depend();
+        let viewed: Vec<usize> = deps
+            .iter()
+            .map(|&p| usize::from(p))
+            .filter(|&i| i < def.attributes.len() && !def.attributes[i].name.starts_with("__"))
+            .collect();
+        if viewed.is_empty() {
+            // Only a PUBLIC declaration none of whose parameters holds a store: a native handed a
+            // record or a collection may answer into it without saying so (the keyed runtime's
+            // own helpers do), and a private one may answer a buffer the runtime keeps.
+            let holds_no_store = def.pub_visible
+                && def.attributes.iter().all(|a| {
+                    let b = a.typedef.base();
+                    crate::data::is_scalar(b) || matches!(b, crate::data::Type::Text(_))
+                });
+            if !deps.is_empty() || !holds_no_store {
+                return Val::unknown();
+            }
+            let site = self.site(node, Origin::Call(d));
+            let k = Self::fresh(s, site);
+            return Val {
+                pts: [Pt::Store(k)].into(),
+                corr: [k].into(),
+            };
+        }
+        let mut pts = Pts::new();
+        for i in viewed {
+            match vals.get(i) {
+                Some(v) => pts.extend(v.pts.iter().copied()),
+                None => return Val::unknown(),
+            }
+        }
+        Val {
+            pts,
+            corr: BTreeSet::new(),
+        }
+    }
+
     /// A join whose witness is a TUPLE slot (`use_analysis::join_witness_members` names no
     /// member): the slot holds no store, so the comparison cannot tell a member the callee
     /// handed back from one it minted — the member is adopted beside its holder and released
@@ -5427,7 +5477,7 @@ impl Run<'_> {
             } else if def.name().starts_with("Op") {
                 vals.into_iter().next().unwrap_or_else(Val::unknown)
             } else {
-                Val::unknown()
+                self.native_answer(node, d, &vals, &mut s)
             };
             return Some((s, val));
         }

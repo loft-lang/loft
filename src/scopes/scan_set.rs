@@ -2485,12 +2485,22 @@ impl Scopes<'_> {
             && !lift_projection_view_off()
             && function.tp(v).depend().is_empty()
             && crate::data::is_dbref(function.tp(v).base())
-            && let Some(root) = crate::use_analysis::projection_root(&set_value, data)
+            && let Some(root) = lifted_view_root(&set_value, data)
             && root != v
             && root < function.count()
             && function.is_lift_temp(root)
         {
             function.depend(v, root);
+        } else if self.multi_assigned.contains(&ov)
+            && crate::data::is_dbref(function.tp(v).base())
+            && let Some(root) = call_view_root(&set_value, data)
+            && root != v
+            && root < function.count()
+            && function.is_lift_temp(root)
+        {
+            // Bound again elsewhere, the local keeps its owning type; on THIS bind it names the
+            // lift's store, so its own frees decline while it does (`lift_viewers`).
+            self.note_lift_viewers(v, &[root]);
         }
         // A KEPT local (loft#1522's veto: it adopted a construction buffer's store, which the
         // buffer releases) frees nothing at a rebind.  Since a projection rebound into it is
@@ -2741,6 +2751,45 @@ fn every_arm_tail_is_var(value: &Value) -> bool {
         Value::Var(_) => true,
         _ => false,
     }
+}
+
+/// The variable a value VIEWS: the root of a projection (`mk(n).bounds`), or — through a call
+/// whose answer its declaration says views a parameter (`fn field(self: const JsonValue, …) ->
+/// JsonValue[self]`, a declaration with no loft body) — the root of that argument, to any depth
+/// (`parse(t).field("a").item(0)`).
+/// The parser reads the same declaration when the argument is a variable; an argument that was
+/// a call when it was typed had no variable to name, and the lift gives it one.
+/// `LOFT_NO_LIFT_CALL_VIEW=1` follows projections only.
+fn lifted_view_root(value: &Value, data: &Data) -> Option<u16> {
+    crate::use_analysis::projection_root(value, data).or_else(|| call_view_root(value, data))
+}
+
+/// The call half of [`lifted_view_root`]: the argument a declared view answers into.
+fn call_view_root(value: &Value, data: &Data) -> Option<u16> {
+    if crate::env_once!(std::env::var_os("LOFT_NO_LIFT_CALL_VIEW").is_some()) {
+        return None;
+    }
+    let Value::Call(d, args) = value.unspan() else {
+        return None;
+    };
+    let def = data.def(*d);
+    // A DECLARED view only: a function with a loft body answers what its bind's lowering
+    // decides (a copy, or a join on the argument), and the local then owns it.
+    // Nor an operator: a field or element read is a projection, the other half's.
+    if def.is_loft_defined() || def.name().starts_with("Op") {
+        return None;
+    }
+    let attrs = def.attributes();
+    def.returned().depend().into_iter().find_map(|dep| {
+        let i = usize::from(dep);
+        if i >= args.len() || i >= attrs.len() || attrs[i].name.starts_with("__") {
+            return None;
+        }
+        match args[i].unspan() {
+            Value::Var(r) => Some(*r),
+            other => lifted_view_root(other, data),
+        }
+    })
 }
 
 /// `LOFT_NO_LIFT_PROJECTION_VIEW=1` (STORE_RECORDS.md § The checks): a local bound once to a
