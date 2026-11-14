@@ -767,23 +767,38 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     return none();
   }
   shapes: vector<text> = [];
+  linked: vector<boolean> = [];
   for a in def.attributes {
     link = match cgen_types::base(a.typedef[0]!) {
       TyRefVar { inner: _ } => true,
       _ => false,
     };
-    shape = cgen_types::ctype(a.typedef[0]!) ?? "";
-    if link || held(shape) == "" || shape == "void" {
-      refuse(w, "a call with a parameter of shape {if link { "&" } else { shape }}");
+    shape = cgen_types::ctype(opt_names::peel_link(a.typedef[0]!)) ?? "";
+    if held(shape) == "" || shape == "void" {
+      refuse(w, "a call with a parameter of shape {shape}");
       return none();
     }
     shapes += [shape];
+    linked += [link];
   }
-  xs: vector<text> = [];
+  // A link argument is the address of the caller's variable, written before the values.
+  xs: vector<text> = [for _ in 0..len(args) { "" }];
   for a in args {
     i = a#index;
+    if linked[i]! {
+      xs[i] = link_arg(x, w, a, shapes[i]!, true, ind);
+      if w.why != "" {
+        return none();
+      }
+    }
+  }
+  for a in args {
+    i = a#index;
+    if linked[i]! {
+      continue;
+    }
     if loop_shape::unspan(a) == NdNull {
-      xs += [if shapes[i]! == "text" { "loft_null_text()" } else { "(({held(shapes[i]!)}) {initial(shapes[i]!)})" }];
+      xs[i] = if shapes[i]! == "text" { "loft_null_text()" } else { "(({held(shapes[i]!)}) {initial(shapes[i]!)})" };
       continue;
     }
     match loop_shape::unspan(a) {
@@ -798,11 +813,11 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     }
     later_writes = false;
     for j in i + 1..len(args) {
-      if loop_shape::unspan(args[j]!) != NdNull && may_write(x.b, args[j]!) {
+      if !linked[j]! && loop_shape::unspan(args[j]!) != NdNull && may_write(x.b, args[j]!) {
         later_writes = true;
       }
     }
-    xs += [as_shape(w, arg_with(x, w, a, later_writes, ind), shapes[i]!)];
+    xs[i] = as_shape(w, arg_with(x, w, a, later_writes, ind), shapes[i]!);
     if w.why != "" {
       return none();
     }
@@ -820,6 +835,25 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     name = cgen_names::twin_name(x.b, x.dups, t);
   }
   code = "{name}({xs.join(", ")})";
+  // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
+  // through its `__wr` twin, and the call's value is a view of that buffer.
+  if ret == "text" && cgen_names::is_plain(t) && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
+    at = answers_work(x.b, d, true);
+    if at >= 0 && at < len(xs) && plain_place(xs[at]!) {
+      twin = work_twin(x, d);
+      if x.work_twins[d]! == 3 {
+        refuse(w, "a work twin that is not carried: {x.why_work}");
+        return none();
+      }
+      if twin != "" {
+        line(w, ind, "{twin}({xs.join(", ")});");
+        if call_site_buffer(args[at]!) && xs[at]!.starts_with("&") {
+          w.pending_work += [xs[at]![1..xs[at]!.size()]];
+        }
+        return E { code: "loft_view({xs[at]!})", kind: K_VIEW };
+      }
+    }
+  }
   if ret == "text" {
     held = temp(w, "text");
     line(w, ind, "loft_text_free(&{held});");
@@ -827,6 +861,234 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     return held_value(w, held, "text");
   }
   E { code: code, kind: kind_of(ret) }
+}
+
+// The variable a link argument names (`link_arg`), as its address.  `first`: the outermost
+// call, which also refuses a store place (`place_arg`).
+fn link_arg(x: Cx, w: W, a: ir::Node, shape: text, first: boolean, ind: integer) -> text {
+  v = -1;
+  match loop_shape::unspan(a) {
+    // A text result's buffer: `{ __work = ""; OpCreateStack(__work) }`.
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        refuse(w, "a link block with no operators");
+        return "";
+      }
+      outer = w.pending;
+      w.pending = [];
+      for o in ops {
+        if o#index < len(ops) - 1 {
+          stmt(x, w, o, ind);
+        }
+      }
+      inner = w.pending;
+      w.pending = outer;
+      for t in inner {
+        w.pending += [t];
+      }
+      return link_arg(x, w, ops[len(ops) - 1], shape, false, ind);
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(x.b, def_nr);
+      if name != "OpCreateStack" {
+        // A field, an element or another link's place goes to a twin that takes a place.
+        refuse(w, if first && (name == "OpGetField" || name == "OpGetVector" || name == "OpVarRef") { "a store place handed to a & parameter" } else { "a link made by {name}" });
+        return "";
+      }
+      if len(args) == 1 {
+        v = loop_shape::var_of(loop_shape::unspan(args[0]));
+      }
+      if v < 0 {
+        refuse(w, "a link to a computed place");
+        return "";
+      }
+    },
+    NdVar { n } => {
+      if !(w.links[n] ?? false) {
+        refuse(w, "a link to the value NdVar");
+        return "";
+      }
+      v = n;
+    },
+    _ => {
+      refuse(w, "a link to the value {construct(loop_shape::unspan(a))}");
+      return "";
+    },
+  }
+  if (w.shapes[v] ?? "") != shape || (shape == "text" && !text_held(w, v)) {
+    refuse(w, "a link to a variable of another shape");
+    return "";
+  }
+  var_addr(w, v)
+}
+
+// Is `v` the null text — `OpConvTextFromNull()`, what `return null` is in a text function?
+fn is_null_text(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => len(args) == 0 && def_name(b, def_nr) == "OpConvTextFromNull",
+    _ => false,
+  }
+}
+
+// Does `v` answer the work buffer `param` (`answers`): the parameter itself, the null text,
+// or — through blocks — a block ending in one of those?
+fn answers(b: ir::Bundle, v: ir::Node, param: integer, through: boolean) -> boolean {
+  match loop_shape::unspan(v) {
+    NdVar { n } => n == param,
+    NdBlock { block } => {
+      if through && is_null_text(b, v) {
+        return true;
+      }
+      ops = block[0].operators;
+      through && len(ops) > 0 && answers(b, ops[len(ops) - 1], param, true)
+    },
+    _ => through && is_null_text(b, v),
+  }
+}
+
+// `answers_work`: the place among `d`'s parameters of the one `&text` work buffer every exit
+// of it answers; -1 for any other function.
+fn answers_work(b: ir::Bundle, d: integer, through: boolean) -> integer {
+  if d < 0 || d >= len(b.data.definitions) {
+    return -1;
+  }
+  def = b.data.definitions[d]!;
+  if !def.name.starts_with("n_") || !binds::has_code(def) || len(def.returned) == 0 || (cgen_types::ctype(def.returned[0]!) ?? "") != "text" {
+    return -1;
+  }
+  at = -1;
+  param = -1;
+  pos = 0;
+  for v in def.variables.variables {
+    if !v.argument {
+      continue;
+    }
+    work = match cgen_types::base(v.type_def[0]!) {
+      TyRefVar { inner } => (cgen_types::ctype(inner) ?? "") == "text",
+      _ => false,
+    };
+    if work {
+      if at >= 0 {
+        return -1;
+      }
+      at = pos;
+      param = v#index;
+    }
+    pos += 1;
+  }
+  if at < 0 {
+    return -1;
+  }
+  ok = [true];
+  opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner } => { if !answers(b, inner, param, through) { ok[0] = false; } },
+      _ => {},
+    }
+  });
+  tail_ok = match def.code[0]! {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        return -1;
+      }
+      match loop_shape::unspan(ops[len(ops) - 1]) {
+        NdReturn { inner } => answers(b, inner, param, through),
+        NdVar { n } => n == param,
+        _ => false,
+      }
+    },
+    _ => return -1,
+  };
+  if ok[0]! && tail_ok { at } else { -1 }
+}
+
+// Is `code` a C place that reads the same twice and does nothing else — `name`, `&name`,
+// `&(*name)` (`plain_place`)?
+fn plain_place(code: text) -> boolean {
+  inner = code;
+  if code.starts_with("&(*") && code.ends_with(")") {
+    inner = code[3..code.size() - 1];
+  } else if code.starts_with("&") {
+    inner = code[1..code.size()];
+  }
+  inner != "" && identifier(inner)
+}
+
+// Is `arg` a work buffer made for this one call — the IR's default reference
+// `{ w = ""; ref(w) }` (`call_site_buffer`)?
+fn call_site_buffer(arg: ir::Node) -> boolean {
+  ops = match loop_shape::unspan(arg) {
+    NdBlock { block } => block[0].operators,
+    _ => return false,
+  };
+  if len(ops) != 2 {
+    return false;
+  }
+  work = match ops[0] {
+    NdSet { var, inner } => if loop_shape::unspan(inner) == NdText { s: "" } { var } else { -1 },
+    _ => -1,
+  };
+  if work < 0 {
+    return false;
+  }
+  match ops[1] {
+    NdCall { def_nr: _, args } => len(args) == 1 && args[0] == NdVar { n: work },
+    _ => false,
+  }
+}
+
+// `work_twin`: the name of `d`'s `__wr` twin — its body written answering the caller's
+// buffer — or "" where the twin is declined.  `x.work_twins[d]` is 3 where this writer does
+// not carry the twin's body.
+fn work_twin(x: Cx, d: integer) -> text {
+  name = "{cgen_names::c_name(x.b, x.dups, d)}__wr";
+  state = x.work_twins[d]!;
+  if state != 0 {
+    return if state == 2 { name } else { "" };
+  }
+  // Named before it is written: a twin whose body calls itself meets its own name.
+  x.work_twins[d] = 2;
+  def = x.b.data.definitions[d]!;
+  at = answers_work(x.b, d, true);
+  declined = at < 0;
+  // `plain_params`: a signature the twin does not take.
+  for a in def.attributes {
+    heap = match a.typedef[0]! {
+      TyReference { n: _, dep: _ } => true,
+      TyVector { inner: _, dep: _ } => true,
+      TyEnum { n: _, is_ref, dep: _ } => is_ref,
+      _ => false,
+    };
+    if a.hidden && !a.work_buffer && heap {
+      declined = true;
+    }
+  }
+  param = -1;
+  pos = 0;
+  for v in def.variables.variables {
+    if v.argument {
+      if pos == at {
+        param = v#index;
+      }
+      pos += 1;
+    }
+    if v.store_text_link {
+      declined = true;
+    }
+  }
+  if pos != len(def.attributes) || declined || param < 0 {
+    x.work_twins[d] = 1;
+    return "";
+  }
+  written = write_body(x, cgen_names::plain(d), param);
+  if written.refused != "" {
+    x.work_twins[d] = 3;
+    x.why_work = written.refused;
+    return "";
+  }
+  name
 }
 
 // The C shape a compound evaluates to (`shape_of`), for the compounds carried; "" refuses.
@@ -1168,8 +1430,20 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
       if shape == "text" {
         // A text held in a statement temporary moves into the target: nothing else names it.
         moved = pending_text_temp(w, e.code);
+        // `@FR-R-BufferReturn`'s bind clause: the target takes the call site's own buffer.
+        work = "";
+        if e.code.starts_with("loft_view(&") && e.code.ends_with(")") {
+          named = e.code[11..e.code.size() - 1];
+          for pw in w.pending_work {
+            if pw == named && named != target {
+              work = named;
+            }
+          }
+        }
         if moved != "" {
           line(w, ind, "loft_text_move(&{target}, &{moved});");
+        } else if work != "" {
+          line(w, ind, "loft_text_move(&{target}, &{work});");
         } else {
           line(w, ind, "loft_text_set(&{target}, {as_view(w, e)});");
         }
@@ -1367,7 +1641,12 @@ fn label(w: W, depth: integer) -> integer {
 fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
   absent = loop_shape::unspan(v) == NdNull;
   if w.ret == "void" {
-    if !absent {
+    // A `__wr` twin answers its caller's buffer: nothing to hand back; a null answer is the
+    // null text in that buffer.
+    answered = w.work_ret >= 0 && loop_shape::var_of(loop_shape::unspan(v)) == w.work_ret;
+    if !absent && !answered && w.work_ret >= 0 && is_null_text(x.b, v) {
+      line(w, ind, "loft_text_set(&{w.names[w.work_ret]!}, loft_null_text());");
+    } else if !absent && !answered {
       stmt(x, w, v, ind);
     }
     epilogue(w, ind);
@@ -1405,6 +1684,67 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   stmt_kind(x, w, v, ind);
   w.span_file = saved_file;
   w.span_line = saved_line;
+}
+
+// `scopes::link_set_repoints`: does `var = value` re-point the `&` variable — a bind to a
+// variable, to another link, or (a scalar link) to a store place — rather than write through?
+fn link_set_repoints(b: ir::Bundle, w: W, var: integer, value: ir::Node) -> boolean {
+  def = b.data.definitions[w.index]!;
+  inner = match cgen_types::base(def.variables.variables[var]!.type_def[0]!) {
+    TyRefVar { inner: target } => target,
+    _ => return false,
+  };
+  scalar_link = match cgen_types::base(inner) {
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  };
+  match loop_shape::unspan(value) {
+    NdCall { def_nr, args: _ } => {
+      callee = b.data.definitions[def_nr]!;
+      answers_ref = len(callee.returned) > 0 && (match cgen_types::base(callee.returned[0]!) { TyReference { n: _, dep: _ } => true, _ => false });
+      callee.name == "OpCreateStack" || callee.name == "OpVarRef" || (scalar_link && answers_ref) || def.variables.variables[var]!.store_text_link
+    },
+    _ => false,
+  }
+}
+
+// Is `value` a field or an element — a store place a scalar link may name (`direct_place`)?
+fn store_place(b: ir::Bundle, value: ir::Node) -> boolean {
+  match loop_shape::unspan(value) {
+    NdCall { def_nr, args: _ } => def_name(b, def_nr) == "OpGetVector" || def_name(b, def_nr) == "OpGetField",
+    _ => false,
+  }
+}
+
+// `stack_target`: the address a link bind names — a variable's, or what another link holds;
+// "" for any other value.
+fn stack_target(b: ir::Bundle, w: W, value: ir::Node) -> text {
+  match loop_shape::unspan(value) {
+    NdCall { def_nr, args } => {
+      if len(args) != 1 {
+        return "";
+      }
+      t = match args[0] {
+        NdVar { n } => n,
+        _ => return "",
+      };
+      name = def_name(b, def_nr);
+      // A plain text parameter is the caller's view: no link writes it.
+      if name == "OpCreateStack" && !(w.params[t]! && !w.links[t]! && w.shapes[t]! == "text") {
+        return var_addr(w, t);
+      }
+      if name == "OpVarRef" && w.links[t]! {
+        return w.raw[t]!;
+      }
+      ""
+    },
+    _ => "",
+  }
 }
 
 // `note_site`: a line marker sets the line the statements after it come from; a statement
@@ -1469,6 +1809,25 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
         refuse(w, "a variable of shape {shape}");
         return;
       }
+      // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
+      // every later read and write of it goes through.
+      if w.links[var]! && (!w.params[var]! || link_set_repoints(x.b, w, var, inner)) {
+        to = stack_target(x.b, w, inner);
+        if to == "" && shape != "ref" && store_place(x.b, inner) {
+          refuse(w, "a link to a store place");
+          return;
+        }
+        if to != "" {
+          w.bound[var] = true;
+          line(w, ind, "{w.raw[var]!} = {to};");
+          return;
+        }
+        if !w.bound[var]! {
+          refuse(w, "an & local bound to something other than a variable");
+          return;
+        }
+      }
+      w.bound[var] = true;
       if shape == "text" && (w.borrowed[var] ?? false) {
         cgen_text::borrowed_bind(x, w, var, inner, ind);
         return;
@@ -1550,7 +1909,39 @@ fn statement_count(body: text) -> integer {
 // The C definition of `d`'s body, `<name>__fr` (`function`, `FnWriter::write` and the whole
 // form of `framed`), or the first construct that is not carried.  `index` is `d`'s definition
 // number; `p` and `c` are the program's proof and call memo.
+// Does a `&` local of `d` link a store place (`store_links`): a bind of it that re-points
+// names neither a variable nor another link?
+fn store_linked(b: ir::Bundle, d: ir::Definition, links: vector<boolean>) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(d.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if links[var]! && !d.variables.variables[var]!.argument {
+          match loop_shape::unspan(inner) {
+            NdCall { def_nr, args: _ } => {
+              callee = b.data.definitions[def_nr]!;
+              answers_ref = len(callee.returned) > 0 && (match cgen_types::base(callee.returned[0]!) { TyReference { n: _, dep: _ } => true, _ => false });
+              if callee.name != "OpCreateStack" && callee.name != "OpVarRef" && answers_ref {
+                hit[0] = true;
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
 pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
+  write_body(x, twin, -1)
+}
+
+// The body of twin `twin` (`FnWriter::write`); with `work_ret` a `__wr` twin's — the body
+// alone, answering nothing, its result the caller's buffer `work_ret`.
+fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
   index = twin.d;
   d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
@@ -1558,16 +1949,16 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   }
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
-  ret = if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  ret = if work_ret >= 0 { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
   if held(ret) == "" {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
   params: vector<text> = [];
   names: vector<text> = [];
+  raw: vector<text> = [];
+  links: vector<boolean> = [];
   is_param: vector<boolean> = [];
   for v in d.variables.variables {
-    names += [var_name(v.name, v#index)];
-    is_param += [v.argument];
     shape = shapes[v#index]!;
     if held(shape) == "" || shape == "void" {
       return Written { text: "", refused: "a variable of shape {shape}" };
@@ -1576,12 +1967,21 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
       TyRefVar { inner: _ } => true,
       _ => false,
     };
-    if link || v.store_text_link {
-      return Written { text: "", refused: "a `&` variable" };
+    if v.store_text_link {
+      return Written { text: "", refused: "a link to a text in a store" };
     }
+    own = var_name(v.name, v#index);
+    raw += [own];
+    names += [if link { "(*{own})" } else { own }];
+    links += [link];
+    is_param += [v.argument];
     if v.argument {
-      params += ["{passed(shape)} {var_name(v.name, v#index)}"];
+      params += [if link { "{held(shape)} *{own}" } else { "{passed(shape)} {own}" }];
     }
+  }
+  // A `&` local every bind of which names a field or an element links a store place.
+  if store_linked(x.b, d, links) {
+    return Written { text: "", refused: "a link to a store place" };
   }
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
@@ -1648,6 +2048,11 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
     pending: [],
     work_alias: -1,
     work_dest: "",
+    raw: raw,
+    links: links,
+    bound: is_param,
+    pending_work: [],
+    work_ret: work_ret,
   };
   code = d.code[0]!;
   if ret == "void" {
@@ -1663,7 +2068,9 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   for v in d.variables.variables {
     if !v.argument {
       shape = shapes[v#index]!;
-      if shape == "text" && w.borrowed[v#index]! {
+      if w.links[v#index]! {
+        out += "    {held(shape)} *{w.raw[v#index]!} = 0;\n";
+      } else if shape == "text" && w.borrowed[v#index]! {
         out += "    loft_str {var_name(v.name, v#index)} = {{ 0, 0 }};\n";
       } else {
         out += "    {held(shape)} {var_name(v.name, v#index)} = {initial(shape)};\n";

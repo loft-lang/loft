@@ -98,6 +98,10 @@ pub struct Cx {
   pub guard: opt_frame_calls::GuardFree,
   // The twins a call site asked for, in the order they were first asked (`Cx::twins`).
   pub twins: vector<cgen_names::Twin>,
+  // `@FR-R-BufferReturn`'s `__wr` twins per definition: 0 not asked, 1 declined, 2 written, 3
+  // not carried by this writer (`why_work` says why).
+  pub work_twins: vector<integer>,
+  pub why_work: text,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -109,6 +113,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     gains: opt_ranged_call::new_gains(b),
     guard: opt_frame_calls::new_guard_free(b),
     twins: [],
+    work_twins: [for _ in 0..len(b.data.definitions) { 0 }],
+    why_work: "",
   }
 }
 
@@ -179,6 +185,16 @@ struct W {
   // (`format_into_dest`): the work variable (-1: none) and the destination's C name.
   work_alias: integer,
   work_dest: text,
+  // Per variable: its own C name (`names` spells a link as what it points at, `(*name)`),
+  // whether it is a `&` link, and whether a statement written so far has bound it.
+  raw: vector<text>,
+  links: vector<boolean>,
+  bound: vector<boolean>,
+  // `@FR-R-BufferReturn`'s bind clause: the work buffers a `__wr` call of the current
+  // statement filled that were made for that call alone.
+  pending_work: vector<text>,
+  // A `__wr` twin: the `&text` parameter it answers, -1 for any other body.
+  work_ret: integer,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -187,7 +203,12 @@ EPILOGUE_MARK = "@@loft-epilogue@@";
 
 // A text variable this function holds as a `loft_text` (`text_held`): a local that is no view.
 fn text_held(w: W, v: integer) -> boolean {
-  (w.shapes[v] ?? "") == "text" && !(w.params[v] ?? true) && !(w.borrowed[v] ?? false)
+  (w.shapes[v] ?? "") == "text" && (!(w.params[v] ?? true) || (w.links[v] ?? false)) && !(w.borrowed[v] ?? false)
+}
+
+// `v`'s address (`var_addr`): the variable's own, or the one a link holds.
+fn var_addr(w: W, v: integer) -> text {
+  if w.links[v] ?? false { w.raw[v]! } else { "&{w.names[v]!}" }
 }
 
 // A value held in temporary `t` (`held`): a text as a view of it, freed at the statement's end.
@@ -204,6 +225,7 @@ fn held_value(w: W, t: text, shape: text) -> E {
 
 // Free the owned text temporaries the statement just finished made (`flush`).
 fn flush(w: W, ind: integer) {
+  w.pending_work = [];
   for t in w.pending {
     line(w, ind, "loft_text_free(&{t});");
   }
