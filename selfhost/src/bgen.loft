@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the bytecode writer in loft (1b-frame.md F-2): a port of the Rust interpreter's
+// writer (`src/state/codegen.rs`, `State::def_code`), from the stored IR (`ir.loft`'s
+// `Bundle`) to the bytes the bytecode runner executes.  The gate is the bytes themselves:
+// each function must be written byte for byte as Rust writes it
+// (`selfhost/bench/bgen_check.loft`).  What is not ported yet is answered as null — a function
+// this writer does not write — never as bytes that differ.
+
+use ir;
+use frame;
+
+// The bytes of one function while they are written.
+pub struct Out {
+  pub code: vector<u8>,
+}
+
+// `State::code_add::<u8>` and its wider forms: little-endian, as the runner reads them.
+fn put_u8(o: Out, v: integer) {
+  o.code += [(v & 255) as u8];
+}
+
+fn put_u16(o: Out, v: integer) {
+  o.code += [(v & 255) as u8, ((v >> 8) & 255) as u8];
+}
+
+// The definition number of the operator `name`; -1 for none.
+pub fn op_named(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// The name of definition `d`, for a report.
+pub fn name_of(b: ir::Bundle, d: integer) -> text {
+  b.data.definitions[d]?.name ?? "?"
+}
+
+// `emit_op`: an operator's number — one byte, or 255 and a second for a number past 254.
+fn put_op(o: Out, b: ir::Bundle, op: integer) {
+  nr = b.data.definitions[op]!.op_code;
+  if nr < 255 {
+    put_u8(o, nr);
+  } else {
+    put_u8(o, 255);
+    put_u8(o, nr - 255);
+  }
+}
+
+// Does the function have no body (a native, a declaration): its code is `Value::Null`.
+fn body_null(def: ir::Definition) -> boolean {
+  match def.code[0] {
+    null => true,
+    NdNull => true,
+    _ => false,
+  }
+}
+
+// `size(tp, Context::Argument)` stepped, summed over the parameters: the bytes a call's
+// arguments take.
+fn arguments_size(def: ir::Definition) -> integer {
+  total = 0;
+  for a in def.attributes {
+    total += frame::stepped(frame::width(a.typedef[0] ?? ir::TyVoid, true));
+  }
+  total
+}
+
+// `State::def_code` for definition `d`: its bytes, or null for a function this writer does
+// not write yet.
+pub fn function(b: ir::Bundle, d: integer, op_return: integer) -> vector<u8>? {
+  def = b.data.definitions[d]!;
+  ret = def.returned[0] ?? ir::TyVoid;
+  generator = match ret {
+    TyIterator { step: _, inner: _ } => true,
+    _ => false,
+  };
+  if !body_null(def) || generator || op_return < 0 {
+    return null;
+  }
+  // No body: the arguments, the return slot, and a return of the declared size
+  // (`add_return`).
+  o = Out { code: [] };
+  args = arguments_size(def);
+  put_op(o, b, op_return);
+  put_u16(o, args);
+  put_u16(o, frame::width(ret, true));
+  put_u16(o, args + 8);
+  o.code
+}

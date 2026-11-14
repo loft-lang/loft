@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the gate of the bytecode writer in loft (`bgen.loft`): `bgen_check <program image>
+// <run image>` writes every function of the program image and compares its bytes with the
+// ones the Rust writer left in the run image.  Prints how many functions are identical, how
+// many differ (each named, a defect) and how many the writer does not write yet.
+#cwd
+use ir;
+use load;
+use bgen;
+
+fn main() {
+  a = arguments();
+  b = load::load(a[0] ?? "");
+  img = load::load_run(a[1] ?? "");
+  if b == null || img == null {
+    println("usage: bgen_check <program image> <run image>");
+    exit(2);
+  }
+  op_return = bgen::op_named(b!, "OpReturn");
+  same = 0;
+  differ = 0;
+  unwritten = 0;
+  for d in 0..len(img!.starts) - 1 {
+    from = img!.starts[d] ?? 0;
+    till = img!.starts[d + 1] ?? 0;
+    if till <= from {
+      continue;
+    }
+    bytes = bgen::function(b!, d, op_return);
+    if bytes == null {
+      unwritten += 1;
+      continue;
+    }
+    equal = len(bytes!) == till - from;
+    if equal {
+      for i in 0..len(bytes!) {
+        equal = equal && bytes![i] == img!.code[from + i];
+      }
+    }
+    if equal {
+      same += 1;
+    } else {
+      differ += 1;
+      println("differs: {bgen::name_of(b!, d)} ({len(bytes!)} bytes written, {till - from} in the image)");
+    }
+  }
+  println("{same} functions identical, {differ} differ, {unwritten} not written");
+}
