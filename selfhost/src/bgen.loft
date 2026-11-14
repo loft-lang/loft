@@ -1335,6 +1335,171 @@ fn var_copy(g: Gen, v: integer, src: integer, rec: integer) {
   put_u16(g.o, def_of(g, rec).known_type);
 }
 
+// A definition's number by its name; -1 where the image holds none.
+fn def_named(g: Gen, name: text) -> integer {
+  for d in g.b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// A call of `n_protect_store_frees` or its lifting on a local's store.
+fn protect(g: Gen, v: integer, on: boolean) {
+  f = def_named(g, if on { "n_protect_store_frees" } else { "n_unprotect_store_frees" });
+  if f < 0 {
+    stop(g, "the image holds no store-free protection");
+    return;
+  }
+  generate(g, ir::NdCall { def_nr: f, args: [ir::NdVar { n: v }] }, false);
+}
+
+// The call's arguments that are the caller's own hidden buffers, `v` itself left out.
+fn caller_hidden_args(g: Gen, v: integer, value: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  match unspan(value) {
+    NdCall { def_nr: _, args } => {
+      for a in args {
+        av = match unspan(a) {
+          NdVar { n } => n,
+          _ => -1,
+        };
+        if av >= 0 && av != v && var_of(g, av).caller_hidden_buf {
+          out += [av];
+        }
+      }
+    }
+    _ => {}
+  }
+  out
+}
+
+// `release_caller_hidden_arg`: a buffer the call was handed released — an argument's unless
+// it is its entry's store — and its slot reset.
+fn release_hidden(g: Gen, av: integer) {
+  f = def_of(g, g.d).variables;
+  if var_of(g, av).argument {
+    witness = binds::entry_witness(f, av);
+    if witness == null {
+      return;
+    }
+    init_slot(g, av, "OpVarRef");
+    init_slot(g, witness!, "OpVarRef");
+    add_op(g, "OpFreeRefIfDistinct");
+  } else {
+    init_slot(g, av, "OpVarRef");
+    add_op(g, "OpFreeRef");
+  }
+  init_slot(g, av, "OpInitRefSentinel");
+}
+
+// `gen_set_first_ref_call_copy`: a call's record copied into `v`'s own (`OpCopyRefOrNull`),
+// the stores its reference arguments name protected from the copy's frees meanwhile.
+fn call_copy(g: Gen, v: integer, value: ir::Node, rec: integer) {
+  known = def_of(g, rec).known_type;
+  reserve_ref_slot(g, v);
+  at = var_pos(g, v);
+  add_op(g, "OpInitRef");
+  put_u16(g.o, at);
+  add_op(g, "OpDatabase");
+  put_u16(g.o, at);
+  put_u16(g.o, known);
+  ref_args = binds::protectable_ref_args(g.b, g.defs, value).slots;
+  hidden = caller_hidden_args(g, v, value);
+  raw = if binds::call_return_frees_source(g.b, g.ops, g.d, g.defs, value) { known | 32768 } else { known };
+  generate(g, value, false);
+  for av in ref_args {
+    protect(g, av, true);
+  }
+  add_op(g, "OpCopyRefOrNull");
+  put_u16(g.o, at);
+  put_u16(g.o, raw);
+  for av in ref_args {
+    protect(g, av, false);
+  }
+  for av in hidden {
+    release_hidden(g, av);
+  }
+}
+
+// `gen_set_first_ref_elem_copy`: a record read out of a container copied into `v`'s own
+// record (`OpCopyRefOrNull`); the value first where evaluating it may leave.
+fn elem_copy(g: Gen, v: integer, value: ir::Node, rec: integer, value_first: boolean) {
+  known = def_of(g, rec).known_type;
+  reserve_ref_slot(g, v);
+  if value_first {
+    generate(g, value, false);
+  }
+  at = var_pos(g, v);
+  add_op(g, "OpInitRef");
+  put_u16(g.o, at);
+  add_op(g, "OpDatabase");
+  put_u16(g.o, at);
+  put_u16(g.o, known);
+  if !value_first {
+    generate(g, value, false);
+  }
+  add_op(g, "OpCopyRefOrNull");
+  put_u16(g.o, var_pos(g, v));
+  put_u16(g.o, known);
+}
+
+// `join_witness_members`: the members of a tuple join base that hold a record of their own;
+// none for a base that is no tuple or has a nested tuple member.
+fn join_witness_members(g: Gen, base_var: integer) -> vector<integer> {
+  found: vector<integer> = [];
+  match base(var_of(g, base_var).type_def[0] ?? ir::TyVoid) {
+    TyTuple { elems } => {
+      for e in elems {
+        if binds::heap_leaves(e) == 0 {
+          continue;
+        }
+        nested = match base(e) {
+          TyTuple { elems: _ } => true,
+          _ => false,
+        };
+        if nested {
+          return [];
+        }
+        found += [e#index];
+      }
+    }
+    _ => {}
+  }
+  found
+}
+
+// A value that may be one of its arguments' stores bound into `v`: adopted where it is a
+// store of its own, copied where it is the witness's (`OpBindOrCopy`), each further member
+// of a tuple base rechecked the same way.  `sentinel` for a slot that holds nothing yet.
+fn join_bind(g: Gen, v: integer, value: ir::Node, rec: integer, base_var: integer, sentinel: boolean) {
+  known = def_of(g, rec).known_type;
+  generate(g, value, false);
+  members = join_witness_members(g, base_var);
+  if len(members) > 0 {
+    generate(g, ir::NdTupleGet { var: base_var, idx: members[0]! }, false);
+  } else {
+    init_slot(g, base_var, "OpVarRef");
+  }
+  if sentinel {
+    init_slot(g, v, "OpInitRefSentinel");
+  }
+  add_op(g, "OpBindOrCopy");
+  put_u16(g.o, var_pos(g, v));
+  put_u16(g.o, known);
+  for m in members {
+    if m#index > 0 {
+      init_slot(g, v, "OpVarRef");
+      generate(g, ir::NdTupleGet { var: base_var, idx: m }, false);
+      init_slot(g, v, "OpInitRefSentinel");
+      add_op(g, "OpBindOrCopy");
+      put_u16(g.o, var_pos(g, v));
+      put_u16(g.o, known);
+    }
+  }
+}
+
 // `gen_set_first_at_tos`: a first bind of a value that is no scalar and no text, by the arm
 // `bind_lowering::first_arm` decides, in its order.  An arm not ported yet stops the function
 // under its name.
@@ -1398,7 +1563,7 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
   }
   unwitnessed = binds::has_no_deps(tp) && binds::owner_witness(f, v) == null;
   if hd != null && unwitnessed && binds::projection_container_var(g.b, value) != null {
-    stop(g, "not written yet: a first bind copying an element");
+    elem_copy(g, v, value, hd!, binds::value_can_exit(value));
     return;
   }
   tuple_get = match value {
@@ -1406,7 +1571,16 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     _ => false,
   };
   if reference && tuple_get && unwitnessed {
-    stop(g, "not written yet: a first bind copying a tuple member");
+    // `gen_set_first_ref_tuple_copy`: a tuple member copied into a record of `v`'s own.
+    known = def_of(g, hd ?? 0).known_type;
+    reserve_ref_slot(g, v);
+    at = var_pos(g, v);
+    add_op(g, "OpInitRef");
+    put_u16(g.o, at);
+    add_op(g, "OpDatabase");
+    put_u16(g.o, at);
+    put_u16(g.o, known);
+    generate(g, ir::NdCall { def_nr: op_named(g.b, "OpCopyRecord"), args: [value, ir::NdVar { n: v }, ir::NdInt { n: known }] }, false);
     return;
   }
   call_ref = match u {
@@ -1434,7 +1608,8 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
   if record_like(shape) && callee != null && binds::is_loft_defined(def_of(g, callee!)) {
     jb = own::named_join_base(own::ownership_of(g.b, g.ops, g.d, value));
     if binds::join_record(shape) != null && !var.view_elided && jb != null {
-      stop(g, "not written yet: a first bind that joins on an argument");
+      reserve_ref_slot(g, v);
+      join_bind(g, v, value, binds::join_record(shape)!, jb!, true);
       return;
     }
     if binds::return_adopts_fresh_store(def_of(g, callee!)) || var.view_elided || binds::adopts_minted_at_bind(g.b, g.ops, f, v, value) {
@@ -1442,7 +1617,7 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
       init_slot(g, v, "OpPutRef");
       return;
     }
-    stop(g, "not written yet: a first bind copying a call's record");
+    call_copy(g, v, value, own::heap_def_nr_bare(shape) ?? 0);
     return;
   }
   if binds::join_record(shape) != null && !optional_shape(shape) && unwitnessed && !var.view_elided

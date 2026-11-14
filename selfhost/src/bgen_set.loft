@@ -38,6 +38,8 @@ struct ReBind {
   rec: integer,
   base: integer,
   src: integer,
+  // `copies_into_fresh`: the copy goes into a store taken after the call.
+  fresh: boolean,
 }
 
 fn is_call(n: ir::Node, through_value: boolean) -> boolean {
@@ -81,7 +83,8 @@ fn re_bind(g: bgen::Gen, v: integer, value: ir::Node) -> ReBind {
   rb = ReBind {
     arm: "R3", free: free, pre_witness: pre_witness, s1: s1, reads_v: reads_v, rhs_base: rhs_base,
     alias_v: alias_v, entry_w: entry_w, owned_ref: owned_ref, new_record: new_record,
-    witnessed: witnessed, buffer_kept: buffer_kept, buffer_w: buffer_w, rec: -1, base: -1, src: -1
+    witnessed: witnessed, buffer_kept: buffer_kept, buffer_w: buffer_w, rec: -1, base: -1, src: -1,
+    fresh: (witnessed && reads_v) || (free == "stash" && (alias_v || !reads_v))
   };
   // `re_arm`, one test per arm in the order the chain decides them.
   if binds::owns_keyed_store(tp) && bgen::raw_null(value) {
@@ -212,6 +215,27 @@ pub fn rebind(g: bgen::Gen, v: integer, value: ir::Node) {
   }
   if rb.arm == "R2c" {
     bgen::var_copy(g, v, rb.src, rb.rec);
+    if stash {
+      free_stashed(g, v, rb);
+    }
+    return;
+  }
+  if rb.arm == "R1" {
+    if stash {
+      bgen::init_slot(g, v, "OpInitRefSentinel");
+    }
+    bgen::join_bind(g, v, value, rb.rec, rb.base, false);
+    if stash {
+      free_stashed(g, v, rb);
+    }
+    return;
+  }
+  if rb.arm == "R2b" {
+    call_copy(g, v, value, rb, stash);
+    return;
+  }
+  if rb.arm == "R2d" {
+    bgen::elem_copy(g, v, value, rb.rec, binds::value_can_exit(value) || rb.reads_v);
     if stash {
       free_stashed(g, v, rb);
     }
@@ -424,5 +448,73 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
     bgen::add_op(g, "OpGetStackRef");
     bgen::put_u16(g.o, 0);
     bgen::add_op(g, "OpFreeRefIfDistinct");
+  }
+}
+
+// `ReArm::CallCopy`: a call's record copied into `v`'s — in place, or into a store taken
+// after the call where the call may still read the old one.
+fn call_copy(g: bgen::Gen, v: integer, value: ir::Node, rb: ReBind, stash: boolean) {
+  known = g.b.data.definitions[rb.rec]!.known_type;
+  bgen::reserve_ref_slot(g, v);
+  if !(stash || (rb.witnessed && rb.reads_v)) {
+    at = bgen::var_pos(g, v);
+    bgen::add_op(g, "OpInitRef");
+    bgen::put_u16(g.o, at);
+    bgen::add_op(g, "OpDatabase");
+    bgen::put_u16(g.o, at);
+    bgen::put_u16(g.o, known);
+  }
+  raw = if binds::call_return_frees_source(g.b, g.ops, g.d, g.defs, value) { known | 32768 } else { known };
+  all = binds::protectable_ref_args(g.b, g.defs, value).slots;
+  protects_old = rb.reads_v && own::has(all, v) && (rb.witnessed || rb.fresh);
+  ref_args: vector<integer> = [];
+  for a in all {
+    if !(rb.fresh && a == v) {
+      ref_args += [a];
+    }
+  }
+  hidden = bgen::caller_hidden_args(g, v, value);
+  if protects_old {
+    bgen::init_slot(g, v, "OpVarRef");
+    bgen::protect(g, v, true);
+  }
+  bgen::generate(g, value, false);
+  for av in ref_args {
+    bgen::protect(g, av, true);
+  }
+  if rb.fresh {
+    bgen::init_slot(g, v, "OpInitRef");
+  }
+  at = bgen::var_pos(g, v);
+  bgen::add_op(g, "OpDatabase");
+  bgen::put_u16(g.o, at);
+  bgen::put_u16(g.o, known);
+  bgen::add_op(g, "OpCopyRefOrNull");
+  bgen::put_u16(g.o, bgen::var_pos(g, v));
+  bgen::put_u16(g.o, raw);
+  for av in ref_args {
+    bgen::protect(g, av, false);
+  }
+  if protects_old {
+    // `unprotect_stashed`: the protection lifted from the reference stashed on the stack.
+    lib = -1;
+    for n in g.natives {
+      if n == "n_unprotect_store_frees" {
+        lib = n#index;
+      }
+    }
+    if lib < 0 {
+      bgen::stop(g, "the image holds no store-free protection");
+      return;
+    }
+    bgen::add_op(g, "OpStaticCall");
+    bgen::put_u16(g.o, lib);
+    g.position -= 16;
+  }
+  for av in hidden {
+    bgen::release_hidden(g, av);
+  }
+  if stash {
+    free_stashed(g, v, rb);
   }
 }

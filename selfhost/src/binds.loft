@@ -875,6 +875,16 @@ fn insert_sorted_unique(out: vector<integer>, x: integer) {
   out.insert(at, x);
 }
 
+// src/data.rs fn is_type_var_placeholder — a generic's type variable: a struct of no fields
+// that answers itself.
+fn is_type_var_placeholder(b: ir::Bundle, d: integer) -> boolean {
+  x = b.data.definitions[d]!;
+  x.def_type == 5 && len(x.attributes) == 0 && match x.returned[0] ?? ir::TyVoid {
+    TyReference { n, dep: _ } => n == d,
+    _ => false,
+  }
+}
+
 // src/use_analysis.rs:3225 fn protectable_ref_args — which ref-typed arguments of this call the
 // @P290 bracket can protect, and do they cover every one?  `defs` is the calling function's
 // `own::function_defs`.
@@ -899,6 +909,12 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
   }
   attrs = def(b, fn_nr).attributes;
   r.covers_all = true;
+  // A call answering a record: a scalar vector it is handed cannot be what it answers.
+  returns_record = match base(def(b, fn_nr).returned[0] ?? ir::TyVoid) {
+    TyReference { n, dep: _ } => !is_type_var_placeholder(b, n),
+    TyEnum { n, is_ref, dep: _ } => is_ref && !is_type_var_placeholder(b, n),
+    _ => false,
+  };
   for arg in args {
     at = attrs[arg#index];
     if at == null {
@@ -923,6 +939,22 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
           }
         }
       }
+      continue;
+    }
+    scalar_vector = match base(carried) {
+      TyVector { inner: elem, dep: _ } => match base(elem) {
+        TyInteger { spec: _ } => true,
+        TyBoolean => true,
+        TyFloat => true,
+        TySingle => true,
+        TyCharacter => true,
+        TyText { dep: _ } => true,
+        TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+        _ => false,
+      },
+      _ => false,
+    };
+    if returns_record && scalar_vector {
       continue;
     }
     // src/use_analysis.rs fn is_protectable_store_type — `is_dbref(tp.base())`.
@@ -1076,7 +1108,7 @@ pub fn heap_leaves(t: ir::TypeT) -> integer {
 
 fn view_roots_into(b: ir::Bundle, arg: ir::Node, r: ProtectableArgs) {
   roots: vector<integer> = [];
-  if own::view_root_slots(b, arg, roots) {
+  if own::arg_root_slots(b, arg, roots) {
     for x in roots {
       insert_sorted_unique(r.slots, x);
     }
