@@ -44,7 +44,7 @@ pub fn evacuate(self: state::State, holder: state::DbRef, fld: integer, home: st
   self.load_table();
   live = holder.store_nr != state::NULL_STORE && crt::store_live(holder.store_nr);
   elem = if live { types::root_vector_element(self.types, crt::store_known(holder.store_nr)) } else { null };
-  crt::evacuate(tp, holder.store_nr, holder.rec, holder.pos, fld, home.store_nr, home.rec, home.pos, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+  crt::evacuate(tp, holder.store_nr, holder.rec, holder.pos, fld, home.store_nr, home.rec, home.pos, (self.fact(state::F_PARENT_SIZE, tp) ?? 0), self.default_of(tp), elem != null && elem != tp);
 }
 
 // `Stores::get_dir`: the directory's entries appended to `result`, a vector of `File` records;
@@ -103,7 +103,7 @@ pub fn hash_add(self: state::State) {
   rec = self.get_stack_dbref();
   data = self.get_stack_dbref();
   self.load_table();
-  crt::hash_insert(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp);
+  crt::hash_insert(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(state::F_CONTENT, tp) ?? 0, tp);
 }
 
 // `State::create_stack`: a reference to the frame slot `pos` under the top pushed — the null
@@ -191,7 +191,7 @@ pub fn parallel_join(self: state::State) {
 pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, raw: integer, parent_tp: integer, field: integer) {
   tp = raw & 32767;
   self.load_table();
-  elem = types::content_of(self.types, tp);
+  elem = self.fact(state::F_CONTENT, tp);
   if elem == null {
     self.stop("not carried: a fill of {self.types[tp]?.name ?? "a collection"}");
     return;
@@ -213,12 +213,12 @@ pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, r
       k = 0;
       while k + 2 < len(members) {
         held = held || (members[k + 1] ?? -1) == 0;
-        nullable = nullable || types::nullable_element(self.types, members[k + 2] ?? 0);
+        nullable = nullable || self.has(state::F_NULLABLE_ELEMENT, members[k + 2] ?? 0);
         k += 3;
       }
     }
   }
-  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, types::keyed_kind(self.types, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
+  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, self.fact(state::F_KEYED_KIND, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
 }
 
 // `State::string_from_const_store`: a view of the long text the constant store holds in record

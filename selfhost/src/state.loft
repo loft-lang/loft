@@ -111,7 +111,54 @@ pub struct State {
   // (`natives::KP_*`).
   pub kfacts: vector<integer>,
   pub key_parts: vector<integer>,
+  // Each type's scalar facts (`fact`), `F_COUNT` per type, derived on first use: the value
+  // plus 2 (1 for none), 0 for not yet derived.  The Rust interpreter derives them once
+  // (`Stores::derive_facts`); an operator reads them, never the type tree.
+  pub tfacts: vector<integer>,
+  // Each record target an `OpNewRecord` / `OpFinishRecord` names (`target_of`), by
+  // `parent type * 65536 + field`.
+  pub targets: hash<Target[key]>,
 }
+
+// What `OpNewRecord` / `OpFinishRecord` file a record into, derived once per parent type and
+// field (`State::target_of`): the collection type and its offset in the parent, how it files
+// (`T_*`; a linked group files by its own collection's kind when made, through its members
+// when finished), the element type, its size and the facts the filing routines take; a
+// linked group's members (`types::group_members`) and whether they hold or may be null.
+pub struct Target {
+  key: integer,
+  ok: boolean,
+  tp: integer,
+  at: integer,
+  how: integer,
+  group: boolean,
+  elem: integer,
+  size: integer,
+  kkind: integer,
+  linked: boolean,
+  content: integer,
+  gm: vector<integer>,
+  gheld: boolean,
+  gnull: boolean,
+}
+
+pub T_VECTOR = 0;
+pub T_ARRAY = 1;
+pub T_KEYED = 2;
+pub T_HASH = 3;
+
+// The facts `State::fact` keeps per type.
+pub F_CONTENT = 0;
+pub F_HASH_ELEMENT = 1;
+pub F_KEYED_KIND = 2;
+pub F_ARRAY_ELEMENT = 3;
+pub F_KEYED_ELEMENT = 4;
+pub F_VECTOR_ELEMENT = 5;
+pub F_PARENT_SIZE = 6;
+pub F_OWNS_HEAP = 7;
+pub F_NO_STORED_REFS = 8;
+pub F_NULLABLE_ELEMENT = 9;
+pub F_COUNT = 10;
 
 // `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
 // one of them returned.
@@ -227,7 +274,7 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [] };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
@@ -915,7 +962,7 @@ fn make_store(self: State, at: integer, tp: integer) {
   }
   io: vector<integer> = [NULL_STORE, 0, 0];
   crt::slot_ref(io, self.stk, at);
-  bytes = types::enum_parent_size(self.types, tp);
+  bytes = (self.fact(F_PARENT_SIZE, tp) ?? 0);
   if types::is_vector_wrapper(self.types, tp) {
     self.load_table();
     crt::database_wrapper(io, bytes, tp);
@@ -1102,6 +1149,93 @@ pub fn default_of(self: State, tp: integer) -> vector<u8> {
   self.images[tp] ?? []
 }
 
+// Fact `k` (`F_*`) of type `tp`, derived by its `types::` function on the first ask; null
+// where that function answers none.  A boolean fact is 1 or 0.
+pub fn fact(self: State, k: integer, tp: integer) -> integer? {
+  at = tp * F_COUNT + k;
+  v = self.tfacts[at] ?? 0;
+  if v == 0 {
+    while len(self.tfacts) < (tp + 1) * F_COUNT {
+      self.tfacts += [0];
+    }
+    d = self.derive_fact(k, tp);
+    v = if d == null { 1 } else { d! + 2 };
+    self.tfacts[at] = v;
+  }
+  if v == 1 { null } else { v - 2 }
+}
+
+fn derive_fact(self: State, k: integer, tp: integer) -> integer? {
+  ts = self.types;
+  if k == F_CONTENT {
+    types::content_of(ts, tp)
+  } else if k == F_HASH_ELEMENT {
+    types::hash_element(ts, tp)
+  } else if k == F_KEYED_KIND {
+    types::keyed_kind(ts, tp)
+  } else if k == F_ARRAY_ELEMENT {
+    types::array_element(ts, tp)
+  } else if k == F_KEYED_ELEMENT {
+    types::keyed_element(ts, tp)
+  } else if k == F_VECTOR_ELEMENT {
+    types::vector_element(ts, tp)
+  } else if k == F_PARENT_SIZE {
+    types::enum_parent_size(ts, tp)
+  } else if k == F_OWNS_HEAP {
+    if types::owns_heap(ts, tp) { 1 } else { 0 }
+  } else if k == F_NO_STORED_REFS {
+    if types::holds_no_stored_refs(ts, tp) { 1 } else { 0 }
+  } else if k == F_NULLABLE_ELEMENT {
+    if types::nullable_element(ts, tp) { 1 } else { 0 }
+  } else {
+    null
+  }
+}
+
+// Whether fact `k` of `tp` holds (a boolean fact).
+pub fn has(self: State, k: integer, tp: integer) -> boolean {
+  (self.fact(k, tp) ?? 0) == 1
+}
+
+// The record target `(ptp, fld)` names (`Target`), derived on its first use.
+fn target_of(self: State, ptp: integer, fld: integer) -> integer {
+  key = ptp * 65536 + fld;
+  if self.targets[key] != null {
+    return key;
+  }
+  gm: vector<integer> = [];
+  rc = types::record_collection(self.types, ptp, fld);
+  at = rc.at;
+  ctp = rc.tp;
+  if rc.fld != 65535 && at == null {
+    g = types::group_members(self.types, ptp, fld);
+    if g != null && len(g!) >= 6 {
+      for x in g! {
+        gm += [x];
+      }
+      ctp = g![2] ?? 0;
+      at = g![0] ?? 0;
+    }
+  }
+  aelem = self.fact(F_ARRAY_ELEMENT, ctp);
+  kelem = self.fact(F_KEYED_ELEMENT, ctp);
+  helem = self.fact(F_HASH_ELEMENT, ctp);
+  velem = self.fact(F_VECTOR_ELEMENT, ctp);
+  ok = !(rc.fld != 65535 && at == null) && (velem != null || aelem != null || kelem != null || helem != null);
+  elem = aelem ?? kelem ?? helem ?? velem ?? 0;
+  how = if aelem != null { T_ARRAY } else if kelem != null { T_KEYED } else if helem != null { T_HASH } else { T_VECTOR };
+  gheld = false;
+  gnull = false;
+  gk = 0;
+  while gk + 2 < len(gm) {
+    gheld = gheld || (gm[gk + 1] ?? -1) == 0;
+    gnull = gnull || self.has(F_NULLABLE_ELEMENT, gm[gk + 2] ?? 0);
+    gk += 3;
+  }
+  self.targets += [Target { key: key, ok: ok, tp: ctp, at: at ?? 0, how: how, group: len(gm) >= 6, elem: elem, size: self.types[elem]?.size ?? 0, kkind: self.fact(F_KEYED_KIND, ctp) ?? 0, linked: self.types[elem]?.linked ?? false, content: self.fact(F_CONTENT, ctp) ?? 0, gm: gm, gheld: gheld, gnull: gnull }];
+  key
+}
+
 // Type `tp`'s keyed facts (`State.kfacts`), derived on its first use: answers where they start.
 pub fn keyed_facts(self: State, tp: integer) -> integer {
   at = tp * 4;
@@ -1111,7 +1245,7 @@ pub fn keyed_facts(self: State, tp: integer) -> integer {
   while len(self.kfacts) < at + 4 {
     self.kfacts += [0];
   }
-  kind = types::keyed_kind(self.types, tp) ?? (if types::hash_element(self.types, tp) == null { -1 } else { 0 });
+  kind = self.fact(F_KEYED_KIND, tp) ?? (if self.fact(F_HASH_ELEMENT, tp) == null { -1 } else { 0 });
   plan = -1;
   kc = types::key_contents(self.types, tp);
   if kc != null && kind >= 0 {
@@ -1123,31 +1257,9 @@ pub fn keyed_facts(self: State, tp: integer) -> integer {
   }
   self.kfacts[at + 1] = kind;
   self.kfacts[at + 2] = plan;
-  self.kfacts[at + 3] = types::content_of(self.types, tp) ?? 0;
+  self.kfacts[at + 3] = self.fact(F_CONTENT, tp) ?? 0;
   self.kfacts[at] = 1;
   at
-}
-
-// The collection a record is added to (`OpNewRecord`, `OpFinishRecord`): the parent `ptp`
-// itself or its field `fld`, a linked group's member resolved to the field's own collection.
-// Null where the runner does not add to it, with the reason in `fault`.
-fn record_target(self: State, ptp: integer, fld: integer, gm: vector<integer>) -> types::RecordColl? {
-  rc = types::record_collection(self.types, ptp, fld);
-  if rc.fld != 65535 && rc.at == null {
-    g = types::group_members(self.types, ptp, fld);
-    if g != null && len(g!) >= 6 {
-      for x in g! {
-        gm += [x];
-      }
-      rc = types::RecordColl { tp: g![2] ?? 0, fld: fld, at: g![0] ?? 0 };
-    }
-  }
-  plain = types::vector_element(self.types, rc.tp) != null || types::array_element(self.types, rc.tp) != null || types::keyed_element(self.types, rc.tp) != null || types::hash_element(self.types, rc.tp) != null;
-  if (rc.fld != 65535 && rc.at == null) || !plain {
-    self.stop("not carried: a record added to {self.types[rc.tp]?.name ?? "a collection"}");
-    return null;
-  }
-  rc
 }
 
 // `State::new_record`: a record made in the collection the reference on top holds — a plain
@@ -1156,32 +1268,27 @@ fn record_target(self: State, ptp: integer, fld: integer, gm: vector<integer>) -
 fn new_record_of(self: State, defaults: boolean) {
   ptp = self.code_u16();
   fld = self.code_u16();
-  gm: vector<integer> = [];
-  rc = self.record_target(ptp, fld, gm);
-  if rc == null {
+  t = self.targets[self.target_of(ptp, fld)]!;
+  if !t.ok {
+    self.stop("not carried: a record added to {self.types[t.tp]?.name ?? "a collection"}");
     return;
   }
   // A keyed collection's routines read its key parts from the loaded table.
   self.load_table();
   v = self.get_stack_dbref();
-  vp = v.pos + (rc!.at ?? 0);
-  aelem = types::array_element(self.types, rc!.tp);
-  kelem = types::keyed_element(self.types, rc!.tp);
-  helem = types::hash_element(self.types, rc!.tp);
-  rtp = aelem ?? kelem ?? helem ?? types::vector_element(self.types, rc!.tp) ?? 0;
-  size = self.types[rtp]?.size ?? 0;
+  vp = v.pos + t.at;
   io: vector<integer> = [NULL_STORE, 0, 0];
-  if aelem != null {
-    crt::entry_new(io, v.store_nr, v.rec, vp, size);
-  } else if kelem != null {
-    crt::keyed_new(io, v.store_nr, v.rec, vp, types::keyed_kind(self.types, rc!.tp) ?? 0, size);
-  } else if helem != null {
-    crt::hash_entry(io, v.store_nr, v.rec, vp, size, self.types[rtp]?.linked ?? false);
+  if t.how == T_ARRAY {
+    crt::entry_new(io, v.store_nr, v.rec, vp, t.size);
+  } else if t.how == T_KEYED {
+    crt::keyed_new(io, v.store_nr, v.rec, vp, t.kkind, t.size);
+  } else if t.how == T_HASH {
+    crt::hash_entry(io, v.store_nr, v.rec, vp, t.size, t.linked);
   } else {
-    crt::vec_append(io, v.store_nr, v.rec, vp, size);
+    crt::vec_append(io, v.store_nr, v.rec, vp, t.size);
   }
   if defaults {
-    crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(rtp));
+    crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(t.elem));
   }
   self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
 }
@@ -1199,35 +1306,23 @@ pub fn new_record_n_p(self: State) {
 pub fn finish_record(self: State) {
   ptp = self.code_u16();
   fld = self.code_u16();
-  gm: vector<integer> = [];
-  rc = self.record_target(ptp, fld, gm);
-  if rc == null {
+  t = self.targets[self.target_of(ptp, fld)]!;
+  if !t.ok {
+    self.stop("not carried: a record added to {self.types[t.tp]?.name ?? "a collection"}");
     return;
   }
   self.load_table();
   r = self.get_stack_dbref();
   v = self.get_stack_dbref();
-  vp = v.pos + (rc!.at ?? 0);
-  aelem = types::array_element(self.types, rc!.tp);
-  kelem = types::keyed_element(self.types, rc!.tp);
-  helem = types::hash_element(self.types, rc!.tp);
-  if len(gm) >= 6 {
-    self.load_table();
-    gheld = false;
-    gnull = false;
-    gk = 0;
-    while gk + 2 < len(gm) {
-      gheld = gheld || (gm[gk + 1] ?? -1) == 0;
-      gnull = gnull || types::nullable_element(self.types, gm[gk + 2] ?? 0);
-      gk += 3;
-    }
-    crt::group_finish(types::content_of(self.types, rc!.tp) ?? 0, gheld, gnull, v.store_nr, v.rec, v.pos, r.store_nr, r.rec, r.pos, gm);
-  } else if aelem != null {
+  vp = v.pos + t.at;
+  if t.group {
+    crt::group_finish(t.content, t.gheld, t.gnull, v.store_nr, v.rec, v.pos, r.store_nr, r.rec, r.pos, t.gm);
+  } else if t.how == T_ARRAY {
     crt::array_append(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos);
-  } else if kelem != null {
-    crt::keyed_finish(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, types::keyed_kind(self.types, rc!.tp) ?? 0, kelem!, rc!.tp);
-  } else if helem != null {
-    crt::hash_insert(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, helem!, rc!.tp);
+  } else if t.how == T_KEYED {
+    crt::keyed_finish(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, t.kkind, t.elem, t.tp);
+  } else if t.how == T_HASH {
+    crt::hash_insert(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, t.elem, t.tp);
   } else {
     crt::vec_finish(v.store_nr, v.rec, vp);
   }
@@ -1306,7 +1401,7 @@ pub fn append_copy(self: State) {
   tp = self.code_u16();
   count = self.get_stack_i64();
   r = self.get_stack_dbref();
-  etp = types::content_of(self.types, tp);
+  etp = self.fact(F_CONTENT, tp);
   if etp == null || (self.types[etp!]?.linked ?? false) {
     self.stop("not carried: a repeat of a linked element");
     return;
@@ -1409,7 +1504,7 @@ pub fn format_float(self: State) {
 // A copy's type operand as flags: the source freed (0x8000), the type holding no stored
 // references, the destination fresh (0x4000).
 fn copy_flags(self: State, raw: integer) -> integer {
-  (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(self.types, raw & 16383) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
+  (if raw & 32768 != 0 { 1 } else { 0 }) + (if self.has(F_NO_STORED_REFS, raw & 16383) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
 }
 
 // `State::const_ref_at`: constant `d`'s root, in the store adopted for it.
@@ -1425,7 +1520,7 @@ pub fn clear(self: State, data: DbRef, raw: integer) {
   self.load_table();
   reset = false;
   if raw & 32768 != 0 {
-    reset = crt::reset_pool_root(data.store_nr, data.rec, data.pos, tp, types::enum_parent_size(self.types, tp), self.default_of(tp));
+    reset = crt::reset_pool_root(data.store_nr, data.rec, data.pos, tp, (self.fact(F_PARENT_SIZE, tp) ?? 0), self.default_of(tp));
   }
   if !reset {
     crt::clear(data.store_nr, data.rec, data.pos, tp);
@@ -1474,7 +1569,7 @@ pub fn place_record(self: State, host: DbRef, tp: integer) -> DbRef {
   fresh = host.store_nr == NULL_STORE || host.rec == 0 || !crt::store_live(host.store_nr);
   elem = if fresh { null } else { types::root_vector_element(self.types, crt::store_known(host.store_nr)) };
   io: vector<integer> = [host.store_nr, host.rec, host.pos];
-  crt::place_record(io, host.store_nr, host.rec, host.pos, tp, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+  crt::place_record(io, host.store_nr, host.rec, host.pos, tp, (self.fact(F_PARENT_SIZE, tp) ?? 0), self.default_of(tp), elem != null && elem != tp);
   if fresh {
     crt::set_store_known(io[0] ?? NULL_STORE, tp);
   }
@@ -1537,7 +1632,7 @@ pub fn format_stack_float(self: State) {
 pub fn vec_remove(self: State, r: DbRef, tp: integer, index: integer?) -> boolean {
   et = self.types[tp]!;
   self.load_table();
-  mode = if et.linked { 2 } else if types::owns_heap(self.types, tp) { 1 } else { 0 };
+  mode = if et.linked { 2 } else if self.has(F_OWNS_HEAP, tp) { 1 } else { 0 };
   crt::vec_remove(r.store_nr, r.rec, r.pos, tp, et.size, mode, index)
 }
 
@@ -1715,13 +1810,13 @@ pub fn hash_remove(self: State) {
   self.load_table();
   tp = raw & 32767;
   view = raw & 32768 != 0;
-  kelem = types::keyed_element(self.types, tp);
+  kelem = self.fact(F_KEYED_ELEMENT, tp);
   if kelem != null {
-    crt::keyed_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::keyed_kind(self.types, tp) ?? 0, kelem!, tp, view);
-  } else if types::array_element(self.types, tp) != null {
-    crt::array_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::array_element(self.types, tp) ?? 0, view);
-  } else if types::hash_element(self.types, tp) != null {
-    crt::hash_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp, view);
+    crt::keyed_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(F_KEYED_KIND, tp) ?? 0, kelem!, tp, view);
+  } else if self.fact(F_ARRAY_ELEMENT, tp) != null {
+    crt::array_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(F_ARRAY_ELEMENT, tp) ?? 0, view);
+  } else if self.fact(F_HASH_ELEMENT, tp) != null {
+    crt::hash_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(F_CONTENT, tp) ?? 0, tp, view);
   } else {
     self.stop("not carried: a removal from {self.types[tp]?.name ?? "a collection"}");
   }
@@ -2648,7 +2743,7 @@ pub fn index_group(self: State, primary: DbRef, tp: integer, parent_tp: integer,
     mpos = gm![k] ?? 0;
     mkind = gm![k + 1] ?? 0;
     mtp = gm![k + 2] ?? 0;
-    nullable = nullable || types::nullable_element(self.types, mtp);
+    nullable = nullable || self.has(F_NULLABLE_ELEMENT, mtp);
     if k > 0 {
       if mtp == tp && vpos < 0 {
         vpos = mpos;
@@ -2689,10 +2784,10 @@ pub fn link_record(self: State, data: DbRef, rec: DbRef, parent_tp: integer, fld
   k = 0;
   while k + 2 < len(gm!) {
     held = held || (gm![k + 1] ?? -1) == 0;
-    nullable = nullable || types::nullable_element(self.types, gm![k + 2] ?? 0);
+    nullable = nullable || self.has(F_NULLABLE_ELEMENT, gm![k + 2] ?? 0);
     k += 3;
   }
-  crt::group_finish(types::content_of(self.types, gm![2] ?? 0) ?? 0, held, nullable, data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, siblings);
+  crt::group_finish(self.fact(F_CONTENT, gm![2] ?? 0) ?? 0, held, nullable, data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, siblings);
 }
 
 // `Stores::deliver_reconstruct` (`deliver(tag, value)`): the value's bytes printed by the
