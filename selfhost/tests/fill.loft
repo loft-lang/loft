@@ -75,6 +75,12 @@ fn test_a_deep_recursion_returns() {
   assert(r == 5000, "depth(5000): {r}");
 }
 
+// A character's code point, and null for NUL — a word's null, which `??` replaces.
+fn test_a_nul_character_is_a_null_integer() {
+  r = answer("charcode", "n_codes", [0]);
+  assert(r == 655, "'A' and NUL as integers: {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {

@@ -100,6 +100,14 @@ fn carried(e: el::El, d: integer, state_src: text) -> boolean {
   }
 }
 
+// The width an answer of type `t` is pushed at.  `fill.rs` pushes the value its template
+// computes, and an integer template computes an `i64` whatever size the operator declares
+// (`OpConvIntFromCharacter` declares `i32` and pushes a word, its null the word's).
+fn answer_width(t: ir::TypeT) -> text {
+  w = width(t);
+  if w == "i32" { "i64" } else { w }
+}
+
 // The loft type a template's answer of accessor width `w` is bound as: nullable, as an
 // operator's answer can be null, and named, so a bare `null` has a type.
 fn answer_type(w: text) -> text {
@@ -187,7 +195,7 @@ fn operator_fn(def: ir::Definition, body: text) -> text {
   if void || is_text {
     out += "  {body}\n";
   } else {
-    out += "  new_value: {answer_type(width(ret))} = {body};\n  s.put_stack_{width(ret)}(new_value);\n";
+    out += "  new_value: {answer_type(answer_width(ret))} = {body};\n  s.put_stack_{answer_width(ret)}(new_value);\n";
   }
   out + "}}\n"
 }
@@ -350,7 +358,7 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
     TyVoid => true,
     _ => false,
   };
-  rw = if void { "" } else { width(ret) };
+  rw = if void { "" } else { answer_width(ret) };
   // A text answer is a view its template pushes itself.
   if !void && rw != "str" && slot_width(rw) == "" {
     return "";

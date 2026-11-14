@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a character as an integer: its code point, and null for the NUL character.
+// The answer is a whole word, so its null is the word's null and `??` sees it.
+
+// 'A' is 65; the NUL at index 1 is null and takes the fallback 5: 65 * 10 + 5.
+fn codes(n: integer) -> integer {
+  t = "A\0";
+  ((t[0] as integer) ?? -1) * 10 + ((t[1] as integer) ?? 5) + n - n
+}
+
+fn main() {
+  println("{codes(0)}");
+}

@@ -15,6 +15,7 @@ use crt;
 use ir;
 use types;
 use brun;
+use show;
 
 pub struct State {
   // The bytecode (`State::code_base` / `code_len`) and the position of the next byte to read.
@@ -1291,4 +1292,123 @@ pub fn rget_bool(stk: integer, base: integer, cap: integer, sp: integer, pos: in
 // A boolean answer as its stack byte: 1, 0, or 255 for null.
 pub fn bool_byte(v: boolean?) -> integer {
   if v == null { 255 } else if v! { 1 } else { 0 }
+}
+
+// `OpPutFnRef`: a function reference's 20 bytes popped (a 24-byte step) and written at the
+// frame slot `pos`.
+pub fn put_fn_ref(self: State, pos: integer) {
+  if !self.can_pop(24) || !self.slot_ok(self.stack_pos - pos) {
+    return;
+  }
+  self.stack_pos -= 24;
+  crt::stack_move(self.stk, self.stack_pos, self.stack_pos + 24 - pos, 20);
+}
+
+// `State::text_walk_step`: one step of a walk over a text's characters, on the frame slots
+// its operands name.
+pub fn text_walk_step(self: State) {
+  c = self.code_u16();
+  index = self.code_u16();
+  next = self.code_u16();
+  src = self.code_u16();
+  arg = self.code_u8();
+  crt::text_walk_step(self.stk, self.stack_pos, c, index, next, src, arg);
+}
+
+// The store value popped, rendered as `"{v}"` shows it (bit 1 of the format pretty, bit 2
+// JSON); null with the run stopped for a type the renderer does not show.
+fn rendered(self: State, tp: integer, fmt: integer) -> text? {
+  why = show::refusal(self.types, tp, []);
+  if why != "" {
+    self.stop("not carried: {why}");
+    return null;
+  }
+  self.load_table();
+  val = self.get_stack_dbref();
+  piece = "";
+  show::render(self.types, tp, crt::Pos { s: val.store_nr, r: val.rec, p: val.pos }, fmt, 0, piece);
+  piece
+}
+
+// `State::format_database`: a store value appended as text to the text local `pos` back from
+// the top before the value is popped.
+pub fn format_database(self: State) {
+  pos = self.code_u16();
+  tp = self.code_u16();
+  fmt = self.code_u8();
+  piece = self.rendered(tp, fmt);
+  if piece != null && self.slot_ok(self.stack_pos - (pos - 16)) {
+    crt::slot_text_append(self.stk, self.stack_pos - (pos - 16), piece!);
+  }
+}
+
+// `State::format_stack_database`: as `format_database`, into the text that local's reference
+// names.
+pub fn format_stack_database(self: State) {
+  pos = self.code_u16();
+  tp = self.code_u16();
+  fmt = self.code_u8();
+  piece = self.rendered(tp, fmt);
+  if piece != null {
+    r = self.get_var_dbref(pos - 16);
+    crt::ref_text_append(r.store_nr, r.rec, r.pos, piece!);
+  }
+}
+
+// `Stores::remove_claims_keyed` (`OpClearKeyed`): a keyed field emptied; a linked group's
+// secondary view (the type's top bit) drops only its own route.
+pub fn clear_keyed(self: State, dest: DbRef, raw: integer) {
+  tp = raw & 32767;
+  self.load_table();
+  if raw & 32768 == 0 {
+    crt::clear(dest.store_nr, dest.rec, dest.pos, tp);
+  } else if types::is_keyed(self.types, tp) {
+    crt::clear_view(dest.store_nr, dest.rec, dest.pos, tp);
+  } else {
+    self.stop("not carried: a keyed view clear of a type that is not a keyed collection");
+  }
+}
+
+// `Stores::move_vector` / `vector_replace` (`@FR-R-Place`): `src`'s elements moved into
+// `dest`, or `dest` replaced by them.
+pub fn move_vector(self: State, dest: DbRef, src: DbRef, tp: integer, replace: boolean) {
+  linked = self.types[tp]?.linked ?? false;
+  self.load_table();
+  if replace {
+    crt::vec_replace(dest.store_nr, dest.rec, dest.pos, src.store_nr, src.rec, src.pos, tp, linked);
+  } else {
+    crt::move_vector(dest.store_nr, dest.rec, dest.pos, src.store_nr, src.rec, src.pos, tp, linked);
+  }
+}
+
+// `Stores::move_field_out` / `move_record_out`: a field's, or a whole record's, value moved
+// out of `data` into `dest`.
+pub fn move_field(self: State, data: DbRef, dest: DbRef, tp: integer, record: boolean) {
+  self.load_table();
+  crt::move_field(data.store_nr, data.rec, data.pos, dest.store_nr, dest.rec, dest.pos, tp, record);
+}
+
+// `State::hash_remove`: the record and then the collection popped; the record taken out of a
+// sorted, an index, an array or a hash.  The type's top bit marks a linked group's view
+// member, which only unlinks.
+pub fn hash_remove(self: State) {
+  raw = self.code_u16();
+  rec = self.get_stack_dbref();
+  data = self.get_stack_dbref();
+  if rec.rec == 0 {
+    return;
+  }
+  self.load_table();
+  tp = raw & 32767;
+  view = raw & 32768 != 0;
+  kelem = types::keyed_element(self.types, tp);
+  if kelem != null {
+    crt::keyed_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::keyed_kind(self.types, tp) ?? 0, kelem!, tp, view);
+  } else if types::array_element(self.types, tp) != null {
+    crt::array_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::array_element(self.types, tp) ?? 0, view);
+  } else if types::hash_element(self.types, tp) != null {
+    crt::hash_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp, view);
+  } else {
+    self.stop("not carried: a removal from {self.types[tp]?.name ?? "a collection"}");
+  }
 }

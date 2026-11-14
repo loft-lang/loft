@@ -581,6 +581,12 @@ pub fn op_format_stack_text(s: state::State) {
   s.format_stack_text();
 }
 
+pub fn op_conv_int_from_character(s: state::State) {
+  v1 = s.get_stack_char();
+  new_value: integer? = if v1 == 0 { null } else { v1 };
+  s.put_stack_i64(new_value);
+}
+
 pub fn op_var_enum(s: state::State) {
   pos = s.code_u16();
   new_value: integer? = s.get_var_u8(pos);
@@ -999,6 +1005,27 @@ pub fn op_place_record(s: state::State) {
   s.put_stack_dbref(new_value);
 }
 
+pub fn op_move_record(s: state::State) {
+  tp = s.code_u16();
+  dest = s.get_stack_dbref();
+  data = s.get_stack_dbref();
+  s.move_field(data, dest, tp, true);
+}
+
+pub fn op_move_field(s: state::State) {
+  tp = s.code_u16();
+  dest = s.get_stack_dbref();
+  data = s.get_stack_dbref();
+  s.move_field(data, dest, tp, false);
+}
+
+pub fn op_move_vector(s: state::State) {
+  tp = s.code_u16();
+  src = s.get_stack_dbref();
+  dest = s.get_stack_dbref();
+  s.move_vector(dest, src, tp, false);
+}
+
 pub fn op_free_record_in(s: state::State) {
   tp = s.code_u16();
   rec = s.get_stack_dbref();
@@ -1037,10 +1064,19 @@ pub fn op_clear_stack_text(s: state::State) {
   s.clear_stack_text();
 }
 
+pub fn op_put_fn_ref(s: state::State) {
+  pos = s.code_u16();
+  s.put_fn_ref(pos);
+}
+
 pub fn op_const_ref(s: state::State) {
   d_nr = s.code_i64();
   new_value: state::DbRef? = s.const_ref_at(d_nr);
   s.put_stack_dbref(new_value);
+}
+
+pub fn op_text_walk_step(s: state::State) {
+  s.text_walk_step();
 }
 
 pub fn op_text_null_jump(s: state::State) {
@@ -1135,6 +1171,14 @@ pub fn op_database(s: state::State) {
   s.database();
 }
 
+pub fn op_format_database(s: state::State) {
+  s.format_database();
+}
+
+pub fn op_format_stack_database(s: state::State) {
+  s.format_stack_database();
+}
+
 pub fn op_remove_vector(s: state::State) {
   tp = s.code_u16();
   index = s.get_stack_i64();
@@ -1149,6 +1193,17 @@ pub fn op_keep_vector_range(s: state::State) {
   lo = s.get_stack_i64();
   r = s.get_stack_dbref();
   s.vec_keep(r, tp, lo, hi);
+}
+
+pub fn op_replace_vector(s: state::State) {
+  tp = s.code_u16();
+  other = s.get_stack_dbref();
+  r = s.get_stack_dbref();
+  s.move_vector(r, other, tp, true);
+}
+
+pub fn op_hash_remove(s: state::State) {
+  s.hash_remove();
 }
 
 pub fn op_print(s: state::State) {
@@ -1166,11 +1221,23 @@ pub fn op_copy_record(s: state::State) {
   s.copy_record();
 }
 
+pub fn op_clear_keyed(s: state::State) {
+  tp = s.code_u16();
+  dest = s.get_stack_dbref();
+  s.clear_keyed(dest, tp);
+}
+
 pub fn op_pre_alloc_vector(s: state::State) {
   capacity = s.code_u16();
   elem_size = s.code_u16();
   r = s.get_stack_dbref();
   crt::vec_prealloc(r.store_nr, r.rec, r.pos, capacity, elem_size);
+}
+
+pub fn op_get_file(s: state::State) {
+  file = s.get_stack_dbref();
+  new_value: boolean? = crt::get_file(file.store_nr, file.rec, file.pos);
+  s.put_stack_bool(new_value);
 }
 
 pub fn op_database_n_p(s: state::State) {
@@ -1274,6 +1341,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     119 => op_le_text(s),
     120 => op_format_text(s),
     121 => op_format_stack_text(s),
+    123 => op_conv_int_from_character(s),
     124 => op_var_enum(s),
     125 => op_const_enum(s),
     126 => op_put_enum(s),
@@ -1339,6 +1407,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     213 => op_ne_bool(s),
     216 => op_append_copy(s),
     217 => op_place_record(s),
+    218 => op_move_record(s),
+    219 => op_move_field(s),
+    220 => op_move_vector(s),
     221 => op_free_record_in(s),
     229 => op_copy_ref_or_null(s),
     230 => op_bind_or_copy(s),
@@ -1348,7 +1419,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     238 => op_get_stack_ref(s),
     247 => op_append_stack_text(s),
     249 => op_clear_stack_text(s),
+    254 => op_put_fn_ref(s),
     255 => op_const_ref(s),
+    259 => op_text_walk_step(s),
     260 => op_text_null_jump(s),
     262 => op_vec_get_int(s),
     263 => op_vec_get_int_nullable(s),
@@ -1363,12 +1436,18 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     283 => op_pow_int(s),
     294 => op_size_text(s),
     299 => op_database(s),
+    300 => op_format_database(s),
+    301 => op_format_stack_database(s),
     312 => op_remove_vector(s),
     313 => op_keep_vector_range(s),
+    316 => op_replace_vector(s),
+    318 => op_hash_remove(s),
     323 => op_print(s),
     325 => op_clear(s),
     326 => op_copy_record(s),
+    329 => op_clear_keyed(s),
     339 => op_pre_alloc_vector(s),
+    341 => op_get_file(s),
     365 => op_database_n_p(s),
     _ => return false,
   }
@@ -2228,6 +2307,25 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         nv_213: boolean? = v1_213 != v2_213;
         crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_213));
         sp += 8;
+        continue;
+      }
+    }
+    254 => {
+      pos_254 = crt::cget_u16(code, cbase, clen, ip + 1);
+      if ip <= safe {
+        ip += 3;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.put_fn_ref(pos_254);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        cbase = crt::code_base(code);
         continue;
       }
     }

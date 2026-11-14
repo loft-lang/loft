@@ -1132,6 +1132,7 @@ fn OpFormatStackText(pos: const u16, val: text, width: __word, dir: const i8, to
 fn OpAppendCharacter(pos: const u16, v1: character);
 fn OpConvIntFromCharacter(v1: character) -> i32;
 #rust"if @v1 == char::from(0) {{ i64::MIN }} else {{ i64::from(@v1 as u32) }}"
+#loft"if v1 == 0 {{ null }} else {{ v1 }}"
 // `compare` for text and character sits here, after the operators `<` reads for them.
 /// Where `self` stands against `other`, in the order `<` uses: by bytes, as `<` compares text.
 pub operator compare(self: text, other: text) -> Ordering {
@@ -1733,6 +1734,7 @@ fn OpPushByte(r: vector, min: const i32, val: __word);
 fn OpReplaceVector(r: vector, other: vector, tp: const u16);
 #cold
 #rust"s.database.vector_replace(&@r, &@other, @tp);"
+#loft"s.move_vector(r, other, tp, true);"
 #impure(parent_write)
 // P213: read the rec-id u32 stored at `field` and construct a `DbRef`
 // pointing at the child record (rec, pos=8) co-located in the same
@@ -2012,6 +2014,7 @@ fn OpEvacuate(holder: reference, fld: const u16, home: reference, tp: const u16)
 // deep copy and the source store is released.  The IR sets the local to null right after.
 fn OpMoveRecord(data: reference, dest: reference, tp: const u16);
 #rust"stores.move_record_out(&@data, &@dest, @tp);"
+#loft"s.move_field(data, dest, tp, true);"
 #impure(parent_write)
 // @PLN164 B2 (`@FR-R-MoveLast`, the field clause) — the SHALLOW move: the `tp` record's
 // bytes at `data` relocate into `dest` (the heap handles keep their claims) and the source
@@ -2021,6 +2024,7 @@ fn OpMoveRecord(data: reference, dest: reference, tp: const u16);
 // released, the same end state.
 fn OpMoveField(data: reference, dest: reference, tp: const u16);
 #rust"stores.move_field_out(&@data, &@dest, @tp);"
+#loft"s.move_field(data, dest, tp, false);"
 #impure(parent_write)
 // `(R-ExitVector)` — the exit literal takes a local vector by a HANDLE MOVE: the vector's
 // record number moves from the wrapper's slot to the literal's field slot and the source
@@ -2028,6 +2032,7 @@ fn OpMoveField(data: reference, dest: reference, tp: const u16);
 // stores, or into a field that already holds elements, it is the copy it replaced.
 fn OpMoveVector(dest: vector, src: vector, tp: const u16);
 #rust"stores.move_vector(&@dest, &@src, @tp);"
+#loft"s.move_vector(dest, src, tp, false);"
 #impure(parent_write)
 // @PLN164 B2 — release a placed record inside a store that lives on: the heap it still
 // owns, then its block; null-guarded, and a store-root record frees its whole store.
@@ -2103,6 +2108,7 @@ fn OpReplaceKeyed(src: reference, dest: reference, tp: const u16);
 fn OpClearKeyed(dest: reference, tp: const u16);
 #cold
 #rust"s.database.remove_claims_keyed(&@dest, @tp);"
+#loft"s.clear_keyed(dest, tp);"
 // loft#1152 — index every record the vector `primary` holds into the linked-group
 // member `view` (collection type `tp`).  A whole-vector write (`s.v = rows()`,
 // `s.v += rows()`) moves its records in bulk through `vector_add` and so never reaches

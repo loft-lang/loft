@@ -94,6 +94,7 @@ pub struct File {
 fn OpGetFile(file: File) -> boolean fs#read;
 #cold
 #rust"stores.get_file(&@file)"
+#loft"crt::get_file(file.store_nr, file.rec, file.pos)"
 fn OpGetDir(path: text, result: vector<File>) -> boolean fs#read;
 #cold
 #rust"stores.get_dir(@path, &@result)"
@@ -1100,6 +1101,7 @@ fn OpVarFnRef(pos: const u16) -> text;
 // @PLAN53 cluster 4: MaybeUninit, not [u8; 20] — see OpVarFnRef above.
 fn OpPutFnRef(pos: const u16, _fnref: text);
 #rust"{{ let v = s.get_stack::<[std::mem::MaybeUninit<u8>; 20]>(); s.put_var(@pos, v); }}"
+#loft"s.put_fn_ref(pos);"
 // Push a pre-built constant's DbRef from the constant store.
 // `s.const_ref_at(...)` (vs raw `s.const_refs[...]` indexing) lets the
 // native-codegen substitution rename to `stores.const_ref_at_runtime(`,
