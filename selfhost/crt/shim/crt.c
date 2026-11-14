@@ -2818,4 +2818,13 @@ int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) {
     (void) sp;
     return -1;
 }
+int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, int64_t r, int64_t p) {
+    (void) entry;
+    (void) stk;
+    (void) sp;
+    (void) s;
+    (void) r;
+    (void) p;
+    return -1;
+}
 #endif
