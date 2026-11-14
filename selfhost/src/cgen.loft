@@ -18,6 +18,8 @@ use opt_non_sentinel;
 use opt_range;
 use cgen_fn;
 use opt_lazy_split;
+use opt_text_borrow;
+use opt_writes;
 use opt_split_table;
 use cgen_w;
 use cgen_names;
@@ -218,6 +220,18 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
           out += body_line(cx, asked);
           written += 1;
         }
+      }
+    }
+    return out;
+  }
+  if name == "writes" {
+    // `LOFT_TRACE_WRITES`: per function with a body, whether a call of it may write a store
+    // (`Cx::call_keeps_stores`, negated).
+    out = "";
+    wr = opt_writes::new_writes(b);
+    for def in b.data.definitions {
+      if def.def_type == 1 && len(def.code) > 0 && def.code[0] != NdNull {
+        out += "[writes]\t{def.name}\t{if opt_writes::call_writes_store(b, wr, def#index) { 1 } else { 0 }}\n";
       }
     }
     return out;

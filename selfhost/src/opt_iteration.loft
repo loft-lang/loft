@@ -72,6 +72,47 @@ fn statements(ops: vector<ir::Node>) -> vector<ir::Node> {
   out
 }
 
+// `iteration_step`: the binding `e = { idx = idx + 1; <read> }` a walk opens with — the loop
+// variable, the index it steps and the read, whatever the read is.
+pub struct Step {
+  pub loop_var: integer,
+  pub index: integer,
+  pub read: ir::Node,
+}
+
+pub fn iteration_step(stmt: ir::Node, defs: vector<ir::Definition>) -> Step? {
+  loop_var = -1;
+  iter: ir::Node = NdNull;
+  match loop_shape::unspan(stmt) {
+    NdSet { var, inner } => {
+      loop_var = var;
+      iter = inner;
+    },
+    _ => return null,
+  }
+  ops = match loop_shape::unspan(iter) {
+    NdBlock { block } => statements(block[0].operators),
+    _ => return null,
+  };
+  if len(ops) != 2 {
+    return null;
+  }
+  index = -1;
+  stepped: ir::Node = NdNull;
+  match loop_shape::unspan(ops[0]) {
+    NdSet { var, inner } => {
+      index = var;
+      stepped = inner;
+    },
+    _ => return null,
+  }
+  sargs = call_args(defs, stepped, "OpAddInt", 2) ?? return null;
+  if loop_shape::var_of(sargs[0]) != index || int_of(sargs[1]) != 1 {
+    return null;
+  }
+  Step { loop_var: loop_var, index: index, read: ops[1] }
+}
+
 // The binding `e = { idx = idx + 1; OpGetVectorNullable(vec, size, idx) }` — the first
 // statement of a `for e in v` loop — as its head.  Shape only: anything else answers null.
 pub fn iteration_head(stmt: ir::Node, defs: vector<ir::Definition>) -> VectorIteration? {

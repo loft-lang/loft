@@ -1,0 +1,294 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/text_borrow.rs`: `@FR-R-TextBorrow`'s walk clause.  The loop
+// variable of a `for p in v` walk over a `vector<text>` borrows its element where the loop's
+// body writes no store and reads `p` only as a text value.
+
+use ir;
+use loop_shape;
+use opt_iteration;
+use opt_lazy_split;
+use opt_non_sentinel;
+use opt_split_table;
+use opt_writes;
+use cgen_types;
+
+// A text walk's head (`text_walk_head`): the loop variable, the index and the vector walked.
+struct Head {
+  loop_var: integer,
+  index: integer,
+  vec: integer,
+}
+
+// `text_walk_head`: `p = { idx = idx + 1; OpGetText(OpGetVectorNullable(vec, _, idx), 0) }`.
+fn text_walk_head(b: ir::Bundle, stmt: ir::Node) -> Head? {
+  step = opt_iteration::iteration_step(stmt, b.data.definitions) ?? return null;
+  hit = false;
+  targs = opt_lazy_split::call_named(b, step.read, "OpGetText", hit);
+  if !hit || len(targs) != 2 || loop_shape::unspan(targs[1]) != NdInt { n: 0 } {
+    return null;
+  }
+  rargs = opt_lazy_split::call_named(b, targs[0], "OpGetVectorNullable", hit);
+  if !hit || len(rargs) != 3 || loop_shape::var_of(loop_shape::unspan(rargs[2])) != step.index {
+    return null;
+  }
+  vec = loop_shape::var_of(loop_shape::unspan(rargs[0]));
+  if vec < 0 {
+    return null;
+  }
+  Head { loop_var: step.loop_var, index: step.index, vec: vec }
+}
+
+fn is_text(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyText { dep: _ } => true,
+    _ => false,
+  }
+}
+
+// Does `node` read variable `p` as a `Var` anywhere?
+fn mentions(node: ir::Node, p: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdVar { n: v } => { if v == p { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn any_escapes(b: ir::Bundle, nodes: vector<ir::Node>, p: integer, names: vector<boolean>) -> boolean {
+  for n in nodes {
+    if text_escapes_with(b, n, p, names) {
+      return true;
+    }
+  }
+  false
+}
+
+// `text_escapes`: is `p` read under `node` anywhere but in a text-VALUE position — rebound,
+// handed to a call that keeps or writes it, returned, or mentioned under a shape the borrow
+// does not read?
+pub fn text_escapes(b: ir::Bundle, node: ir::Node, p: integer) -> boolean {
+  text_escapes_with(b, node, p, [])
+}
+
+// Is `to` an element read of one of the vectors `names` marks (`table_read`): a split
+// table's piece?
+fn table_read(b: ir::Bundle, to: ir::Node, names: vector<boolean>) -> boolean {
+  if len(names) == 0 {
+    return false;
+  }
+  hit = false;
+  read = opt_lazy_split::call_named(b, to, "OpGetText", hit);
+  if !hit || len(read) == 0 {
+    return false;
+  }
+  inner = opt_lazy_split::call_named(b, read[0], "OpGetVectorNullable", hit);
+  if !hit {
+    inner = opt_lazy_split::call_named(b, read[0], "OpGetVector", hit);
+  }
+  if !hit || len(inner) == 0 {
+    return false;
+  }
+  names[loop_shape::var_of(loop_shape::unspan(inner[0]))] ?? false
+}
+
+// `text_escapes_with`: the same, where a bind of `p` from a piece of one of the tables
+// `names` marks is no rebind.
+pub fn text_escapes_with(b: ir::Bundle, node: ir::Node, p: integer, names: vector<boolean>) -> boolean {
+  match node {
+    NdVar { n } => n == p,
+    NdSet { var, inner } => {
+      if var == p {
+        if table_read(b, inner, names) {
+          return text_escapes_with(b, inner, p, names);
+        }
+        return true;
+      }
+      // The whole source of a bind into another slot is converted at the bind.
+      if loop_shape::var_of(loop_shape::unspan(inner)) == p {
+        return false;
+      }
+      text_escapes_with(b, inner, p, names)
+    },
+    NdTuplePut { var, idx: _, inner } => {
+      if loop_shape::var_of(loop_shape::unspan(inner)) == p {
+        return false;
+      }
+      if var == p {
+        return true;
+      }
+      text_escapes_with(b, inner, p, names)
+    },
+    NdCall { def_nr, args } => {
+      known = def_nr >= 0 && def_nr < len(b.data.definitions);
+      name = if known { b.data.definitions[def_nr]!.name } else { "" };
+      params = if known { len(b.data.definitions[def_nr]!.attributes) } else { 0 };
+      for a in args {
+        i = a#index;
+        if loop_shape::var_of(loop_shape::unspan(a)) == p {
+          // `OpGetRecord`'s keys trail its declared parameters: each a text VALUE.
+          value_position = name == "OpFreeText" || ((name == "OpGetRecord" || name == "OpSetKeyed") && i >= params);
+          if !value_position && i < params {
+            at = b.data.definitions[def_nr]!.attributes[i]!;
+            value_position = !at.constant && is_text(at.typedef[0]!);
+          }
+          if !value_position {
+            return true;
+          }
+        } else if text_escapes_with(b, a, p, names) {
+          return true;
+        }
+      }
+      false
+    },
+    NdSpan { pos: _, inner } => text_escapes_with(b, inner, p, names),
+    NdBlock { block } => any_escapes(b, block[0].operators, p, names),
+    NdLoop { block } => any_escapes(b, block[0].operators, p, names),
+    NdInsert { items } => any_escapes(b, items, p, names),
+    // The `?` discharge's own value arm — `if OpConvBoolFromText(p) { p } else { d }` — reads
+    // `p` as the value its parent consumes within the statement.
+    NdIf { cond, t, f } => {
+      discharge = false;
+      if loop_shape::var_of(loop_shape::unspan(t)) == p {
+        hit = false;
+        test = opt_lazy_split::call_named(b, cond, "OpConvBoolFromText", hit);
+        discharge = hit && len(test) > 0 && loop_shape::var_of(loop_shape::unspan(test[0])) == p;
+      }
+      if text_escapes_with(b, cond, p, names) {
+        return true;
+      }
+      if !discharge && text_escapes_with(b, t, p, names) {
+        return true;
+      }
+      text_escapes_with(b, f, p, names)
+    },
+    NdDrop { inner } => text_escapes_with(b, inner, p, names),
+    NdReturn { inner } => {
+      if loop_shape::var_of(loop_shape::unspan(inner)) == p {
+        return true;
+      }
+      text_escapes_with(b, inner, p, names)
+    },
+    // A call through a function value, parallel arms, a yield, a keyed cursor, a tuple
+    // literal, a link: any mention of `p` under these is an escape.
+    _ => mentions(node, p),
+  }
+}
+
+// `borrowed_text_walks`: the loop variables of function `d` that borrow their element, by
+// variable number.  `sliced` names the vectors whose pieces are slices of a text (a lazy
+// split's, a split table's aliases); `tables` the function's split tables.
+pub fn borrowed_text_walks(b: ir::Bundle, d: integer, sliced: vector<boolean>, tables: vector<opt_split_table::SplitTable>) -> vector<boolean> {
+  def = b.data.definitions[d]!;
+  count = len(def.variables.variables);
+  out: vector<boolean> = [for _ in 0..count { false }];
+  if len(def.code) == 0 {
+    return out;
+  }
+  body = def.code[0]!;
+  yields = [false];
+  loops: vector<ir::Block> = [];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { yields[0] = true; },
+      NdLoop { block } => { if block[0].name == "For loop" && len(block[0].operators) > 0 { loops += [block[0]]; } },
+      _ => {},
+    }
+  });
+  if yields[0]! {
+    return out;
+  }
+  sets: vector<boolean> = [];
+  bufs: vector<boolean> = [];
+  if len(tables) > 0 {
+    sets = [for _ in 0..count { false }];
+    bufs = [for _ in 0..count { false }];
+    for t in tables {
+      sets[t.var] = true;
+      if t.dead {
+        bufs[t.buf] = true;
+      }
+    }
+  }
+  w = opt_writes::new_writes(b);
+  for lp in loops {
+    head = text_walk_head(b, lp.operators[0]) ?? continue;
+    p = head.loop_var;
+    if p < 0 || p >= count || !is_text(def.variables.variables[p]!.type_def[0]!) {
+      continue;
+    }
+    ok = true;
+    if !(sliced[head.vec] ?? false) {
+      for s in lp.operators {
+        if s#index > 0 && ok && opt_writes::may_write_store_without(b, w, s, sets, bufs) {
+          ok = false;
+        }
+      }
+    }
+    for s in lp.operators {
+      if s#index > 0 && ok && text_escapes(b, s, p) {
+        ok = false;
+      }
+    }
+    if ok {
+      out[p] = true;
+    }
+  }
+  out
+}
+
+// `borrowed_discharge_temps`: the `?` temporaries (`__ncc_N`) of function `d` bound once from a
+// split table's piece and read only as a text value — each borrows the piece.
+pub fn borrowed_discharge_temps(b: ir::Bundle, d: integer, tables: vector<opt_split_table::SplitTable>) -> vector<boolean> {
+  def = b.data.definitions[d]!;
+  count = len(def.variables.variables);
+  out: vector<boolean> = [for _ in 0..count { false }];
+  if len(tables) == 0 || len(def.code) == 0 {
+    return out;
+  }
+  body = def.code[0]!;
+  names: vector<boolean> = [for _ in 0..count { false }];
+  for t in tables {
+    names[t.var] = true;
+    for a in t.aliases {
+      names[a] = true;
+    }
+  }
+  yields = [false];
+  binds: vector<integer> = [for _ in 0..count { 0 }];
+  reads: vector<boolean> = [for _ in 0..count { false }];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { yields[0] = true; },
+      NdSet { var, inner } => {
+        if var < count {
+          if loop_shape::unspan(inner) != NdNull {
+            binds[var] = binds[var]! + 1;
+          }
+          if table_read(b, inner, names) {
+            reads[var] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if yields[0]! {
+    return out;
+  }
+  for v in 0..count {
+    if !reads[v]! || binds[v]! != 1 {
+      continue;
+    }
+    var = def.variables.variables[v]!;
+    if var.name.starts_with("__ncc_") && is_text(var.type_def[0]!) && !text_escapes_with(b, body, v, names) {
+      out[v] = true;
+    }
+  }
+  out
+}

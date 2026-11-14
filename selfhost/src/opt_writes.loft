@@ -1,0 +1,468 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the store-write question of `src/opt/writes.rs`: `may_write_store`,
+// `writes_store` (`blocks_header_hoist` with no tier on and no owned buffers),
+// `call_writes_store` with the memo and cycle guard of `src/opt/facts.rs`, and the allowances
+// it reads (`exit_tail_frees`, `frees_a_record`, `null_buffer_alloc`, `discharge_buffer_set`,
+// `lazy_buffer_mint`, `retbuf_only_writer`, `native_op_is_store_free`).  The tiers a loop's
+// verdict turns on (`@FR-R-InPlace`, `@FR-R-Push`, `@FR-R-Mint`) are not asked here yet.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_names;
+use cgen_types;
+
+const STRUCT = 5;
+
+// What the question keeps per program (`Facts`): the functions known to write no store — a
+// `true` may come from a broken recursion cycle and is asked again — and the definitions
+// being answered, which a call back into one of them meets as a cycle.
+pub struct Writes {
+  free: vector<boolean>,
+  active: vector<boolean>,
+  // What a split table's writer never emits (`as_emitted_by_tables`), read as nothing: the
+  // binds of these variables, and the mints and frees of these buffers.  Empty: nothing.
+  skip_sets: vector<boolean>,
+  skip_bufs: vector<boolean>,
+}
+
+pub fn new_writes(b: ir::Bundle) -> Writes {
+  count = len(b.data.definitions);
+  Writes { free: [for _ in 0..count { false }], active: [for _ in 0..count { false }], skip_sets: [], skip_bufs: [] }
+}
+
+fn env_on(name: text) -> boolean {
+  (env_variable(name) ?? "0") != "0"
+}
+
+fn pure_nullary(name: text) -> boolean {
+  for n in ["OpConvIntFromNull", "OpConvBoolFromNull", "OpConvCharacterFromNull", "OpConvSingleFromNull", "OpConvFloatFromNull", "OpConvTextFromNull", "OpConvEnumFromNull", "OpConvRefFromNull", "OpNullRefSentinel", "OpConstTrue", "OpConstFalse", "OpMathPiFloat", "OpMathEFloat", "OpMathFuncFloat", "OpMathFuncSingle", "OpMathFunc2Float", "OpMathFunc2Single", "OpSizeScalar", "OpRangeDefault"] {
+    if n == name {
+      return true;
+    }
+  }
+  false
+}
+
+fn read_only_collection(name: text) -> boolean {
+  for n in ["OpVectorIsNull", "OpRefIsNull", "OpConvBoolFromRef", "OpDistinctStore", "OpRefAlias", "OpEqRef", "OpNeRef", "OpGetVector", "OpGetVectorNullable", "OpLengthVector", "OpLengthSorted", "OpLengthHash", "OpLengthIndex", "OpLengthSpatial", "OpLengthTrie", "OpSizeVector", "OpSizeHash", "OpSizeIndex", "OpSizeSpatial", "OpSizeTrie", "OpSizeStruct", "OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum", "OpGetRef", "OpGetField", "OpGetDbRef", "OpGetText"] {
+    if n == name {
+      return true;
+    }
+  }
+  false
+}
+
+fn text_variable(name: text) -> boolean {
+  for n in ["OpAppendText", "OpAppendCharacter", "OpPutText", "OpClearText", "OpFreeText", "OpFormatText", "OpFormatInt", "OpFormatSingle", "OpFormatFloat", "OpAppendStackText", "OpAppendStackCharacter", "OpClearStackText", "OpFormatStackText", "OpFormatStackInt", "OpFormatStackSingle", "OpFormatStackFloat"] {
+    if n == name {
+      return true;
+    }
+  }
+  false
+}
+
+fn in_place_set(name: text) -> boolean {
+  for n in ["OpSetBoolean", "OpSetInt", "OpSetInt4", "OpSetInt4Raw", "OpSetCharacter", "OpSetSingle", "OpSetFloat", "OpSetByte", "OpSetByteNullable", "OpSetShort", "OpSetShortRaw", "OpSetEnum"] {
+    if n == name {
+      return true;
+    }
+  }
+  false
+}
+
+// `is_scalar`: a value stored in its own width (`τ?` as `τ`).
+pub fn is_scalar(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  }
+}
+
+fn is_text(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyText { dep: _ } => true,
+    _ => false,
+  }
+}
+
+// `native_op_is_store_free`: a native that reaches no store — one of the named operators, or
+// one whose every operand and whose answer is a scalar or a text value.
+pub fn native_op_is_store_free(def: ir::Definition) -> boolean {
+  if pure_nullary(def.name) || read_only_collection(def.name) || text_variable(def.name) {
+    return true;
+  }
+  if len(def.attributes) == 0 {
+    return false;
+  }
+  for a in def.attributes {
+    if a.constant || !(is_scalar(a.typedef[0]!) || is_text(a.typedef[0]!)) {
+      return false;
+    }
+  }
+  if len(def.returned) == 0 {
+    return true;
+  }
+  r = def.returned[0]!;
+  r == ir::TypeT.TyVoid || is_scalar(r) || is_text(r)
+}
+
+// The variable `args[0]` names, -1 for none.
+fn first_var(args: vector<ir::Node>) -> integer {
+  if len(args) == 0 { -1 } else { loop_shape::var_of(loop_shape::unspan(args[0])) }
+}
+
+// `plain_record_type`: does a variable of this type name a PLAIN struct record whose layout is
+// known — a `Reference` to a struct, reached through any `&` link but not through a `?`?
+fn plain_record(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner: _ } => { return false; },
+    _ => {},
+  }
+  match opt_names::peel_link(t) {
+    TyReference { n, dep: _ } => {
+      if n < 0 || n >= len(b.data.definitions) {
+        return false;
+      }
+      b.data.definitions[n]!.def_type == STRUCT && b.data.definitions[n]!.known_type != 65535
+    },
+    _ => false,
+  }
+}
+
+// `frees_a_record`: a release of a record variable.
+fn frees_a_record(d: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
+  if name != "OpFreeRef" && name != "OpFreeRefIfDistinct" {
+    return false;
+  }
+  v = first_var(args);
+  if v < 0 || v >= len(d.variables.variables) {
+    return false;
+  }
+  match cgen_types::base(d.variables.variables[v]!.type_def[0]!) {
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+// The hidden null-discharge buffer `args[0]` names (`__ref_p2_N`, a plain record), -1 for none.
+fn discharge_buffer(b: ir::Bundle, d: ir::Definition, args: vector<ir::Node>) -> integer {
+  if env_on("LOFT_NO_NULL_BUFFER_HOIST") {
+    return -1;
+  }
+  v = first_var(args);
+  if v < 0 || v >= len(d.variables.variables) || !d.variables.variables[v]!.name.starts_with("__ref_p2_") {
+    return -1;
+  }
+  if plain_record(b, d.variables.variables[v]!.type_def[0]!) { v } else { -1 }
+}
+
+// `callee_allowance` (and the allowances `blocks_header_hoist` gives a native call of function
+// `d`'s body): a null-discharge buffer's allocation or field set, a lazy buffer's mint, a
+// record's release.
+fn allowed(b: ir::Bundle, d: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
+  mint = name == "OpDatabase" || name == "OpDatabaseNP";
+  if (mint || name.starts_with("OpSet")) && discharge_buffer(b, d, args) >= 0 {
+    return true;
+  }
+  if mint {
+    v = first_var(args);
+    if v >= 0 && v < len(d.variables.variables) && d.variables.variables[v]!.lazy_buffer {
+      return true;
+    }
+  }
+  !env_on("LOFT_NO_RETBUF_HOIST") && frees_a_record(d, name, args)
+}
+
+// `exit_tail_frees`: the releases a `return` runs on its way out — the trailing `OpFree…`
+// statements before a block's closing `return` of a variable or a literal that release a
+// local of this frame — as the positions of those statements in `ops`.
+fn exit_tail_frees(b: ir::Bundle, d: ir::Definition, ops: vector<ir::Node>) -> vector<integer> {
+  out: vector<integer> = [];
+  count = len(ops);
+  if env_on("LOFT_NO_EXIT_RELEASE") || count == 0 {
+    return out;
+  }
+  plain = match loop_shape::unspan(ops[count - 1]) {
+    NdReturn { inner } => {
+      match loop_shape::unspan(inner) {
+        NdVar { n: _ } => true,
+        NdNull => true,
+        NdInt { n: _ } => true,
+        NdLong { n: _ } => true,
+        NdBoolean { b: _ } => true,
+        _ => false,
+      }
+    },
+    _ => false,
+  };
+  if !plain {
+    return out;
+  }
+  vars = d.variables.variables;
+  for i in rev(0..count - 1) {
+    match loop_shape::unspan(ops[i]!) {
+      NdCall { def_nr, args } => {
+        if def_nr < 0 || def_nr >= len(b.data.definitions) {
+          break;
+        }
+        name = b.data.definitions[def_nr]!.name;
+        if !name.starts_with("OpFree") {
+          break;
+        }
+        v = first_var(args);
+        w = if len(args) > 1 { loop_shape::var_of(loop_shape::unspan(args[1])) } else { -1 };
+        own = false;
+        if name == "OpFreeRef" && v >= 0 {
+          own = v < len(vars) && !vars[v]!.argument;
+        } else if name == "OpFreeRefIfDistinct" && v >= 0 && w >= 0 {
+          own = v < len(vars) && w < len(vars) && !vars[w]!.argument;
+        }
+        if own {
+          out += [i];
+        }
+      },
+      _ => { break; },
+    }
+  }
+  out
+}
+
+// One call of `writes_store`'s walk: does it block — a native that writes a store and is no
+// allowance of function `vd`'s body (-1: no body is known, as `may_write_store` asks), or a
+// function that writes one?
+fn call_blocks(b: ir::Bundle, w: Writes, vd: integer, callee: integer, args: vector<ir::Node>) -> boolean {
+  if callee < 0 || callee >= len(b.data.definitions) {
+    return true;
+  }
+  if vd >= 0 {
+    d = b.data.definitions[vd]!;
+    name = b.data.definitions[callee]!.name;
+    // The mint of the frame's OWN hidden return buffer claims a fresh store.
+    if name == "OpDatabase" || name == "OpDatabaseNP" {
+      v = first_var(args);
+      if v >= 0 && v < len(d.variables.variables) && d.variables.variables[v]!.argument && (d.variables.variables[v]!.name == "__retbuf" || d.variables.variables[v]!.name.starts_with("__ref_")) {
+        return false;
+      }
+    }
+    if allowed(b, d, name, args) {
+      return false;
+    }
+  }
+  call_writes_store(b, w, callee)
+}
+
+fn any_writes(b: ir::Bundle, w: Writes, nodes: vector<ir::Node>, vd: integer) -> boolean {
+  for n in nodes {
+    if writes_store(b, w, n, vd) {
+      return true;
+    }
+  }
+  false
+}
+
+// `writes_store`: may running `node` write a store?  Descends through called functions; a call
+// through a function value, parallel arms and a `yield` answer yes.
+fn writes_store(b: ir::Bundle, w: Writes, node: ir::Node, vd: integer) -> boolean {
+  n = loop_shape::unspan(node);
+  match n {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      frees: vector<integer> = [];
+      if vd >= 0 {
+        frees = exit_tail_frees(b, b.data.definitions[vd]!, ops);
+      }
+      for op in ops {
+        released = false;
+        for f in frees {
+          if f == op#index {
+            released = true;
+          }
+        }
+        // A release on the way out is no write; its operands are variables.
+        if !released && writes_store(b, w, op, vd) {
+          return true;
+        }
+      }
+      false
+    },
+    NdCall { def_nr, args } => {
+      if len(w.skip_bufs) > 0 && def_nr >= 0 && def_nr < len(b.data.definitions) {
+        name = b.data.definitions[def_nr]!.name;
+        buf = first_var(args);
+        if buf >= 0 && (w.skip_bufs[buf] ?? false) && (name == "OpDatabase" || name == "OpDatabaseNP" || name == "OpFreeRef" || name == "OpFreeRefIfDistinct") {
+          return false;
+        }
+      }
+      call_blocks(b, w, vd, def_nr, args) || any_writes(b, w, args, vd)
+    },
+    NdCallRef { var: _, args: _ } => true,
+    NdParallel { arms: _ } => true,
+    NdYield { inner: _ } => true,
+    NdInsert { items } => any_writes(b, w, items, vd),
+    NdTuple { items } => any_writes(b, w, items, vd),
+    NdLoop { block } => any_writes(b, w, block[0].operators, vd),
+    NdSet { var, inner } => {
+      if w.skip_sets[var] ?? false {
+        return false;
+      }
+      writes_store(b, w, inner, vd)
+    },
+    NdReturn { inner } => writes_store(b, w, inner, vd),
+    NdDrop { inner } => writes_store(b, w, inner, vd),
+    NdTuplePut { var: _, idx: _, inner } => writes_store(b, w, inner, vd),
+    NdIf { cond, t, f } => writes_store(b, w, cond, vd) || writes_store(b, w, t, vd) || writes_store(b, w, f, vd),
+    NdIter { var: _, create, next, init } => writes_store(b, w, create, vd) || writes_store(b, w, next, vd) || writes_store(b, w, init, vd),
+    _ => false,
+  }
+}
+
+// `all_scalar_record`: a record type with no heap in it.
+fn all_scalar_record(b: ir::Bundle, rec: integer) -> boolean {
+  for a in b.data.definitions[rec]!.attributes {
+    routine = match cgen_types::base(a.typedef[0]!) {
+      TyRoutine { n: _ } => true,
+      _ => false,
+    };
+    if !(a.constant || routine || is_scalar(a.typedef[0]!)) {
+      return false;
+    }
+  }
+  true
+}
+
+fn any_beyond_buffer(b: ir::Bundle, w: Writes, d: integer, nodes: vector<ir::Node>, buf: integer) -> boolean {
+  for n in nodes {
+    if writes_beyond_buffer(b, w, d, n, buf) {
+      return true;
+    }
+  }
+  false
+}
+
+// `retbuf_only_writer`'s walk: does `node` write anything but function `d`'s own scalar return
+// buffer `buf`?
+fn writes_beyond_buffer(b: ir::Bundle, w: Writes, d: integer, node: ir::Node, buf: integer) -> boolean {
+  n = loop_shape::unspan(node);
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return true;
+      }
+      callee = b.data.definitions[def_nr]!;
+      beyond = false;
+      if !binds::has_code(callee) {
+        if !native_op_is_store_free(callee) {
+          into_buffer = first_var(args) == buf;
+          beyond = !(into_buffer && (callee.name == "OpDatabase" || in_place_set(callee.name))) && !allowed(b, b.data.definitions[d]!, callee.name, args);
+        }
+      } else {
+        beyond = call_writes_store(b, w, def_nr);
+      }
+      beyond || any_beyond_buffer(b, w, d, args, buf)
+    },
+    NdCallRef { var: _, args: _ } => true,
+    NdParallel { arms: _ } => true,
+    NdYield { inner: _ } => true,
+    NdBlock { block } => any_beyond_buffer(b, w, d, block[0].operators, buf),
+    NdLoop { block } => any_beyond_buffer(b, w, d, block[0].operators, buf),
+    NdInsert { items } => any_beyond_buffer(b, w, d, items, buf),
+    NdTuple { items } => any_beyond_buffer(b, w, d, items, buf),
+    NdSet { var: _, inner } => writes_beyond_buffer(b, w, d, inner, buf),
+    NdReturn { inner } => writes_beyond_buffer(b, w, d, inner, buf),
+    NdDrop { inner } => writes_beyond_buffer(b, w, d, inner, buf),
+    NdTuplePut { var: _, idx: _, inner } => writes_beyond_buffer(b, w, d, inner, buf),
+    NdIf { cond, t, f } => any_beyond_buffer(b, w, d, [cond, t, f], buf),
+    NdIter { var: _, create, next, init } => any_beyond_buffer(b, w, d, [create, next, init], buf),
+    _ => false,
+  }
+}
+
+// `retbuf_only_writer`: a body whose only writes land in its own scalar return buffer.
+fn retbuf_only_writer(b: ir::Bundle, w: Writes, d: integer) -> boolean {
+  def = b.data.definitions[d]!;
+  for a in def.attributes {
+    heap = match a.typedef[0]! {
+      TyReference { n: _, dep: _ } => true,
+      TyVector { inner: _, dep: _ } => true,
+      TyEnum { n: _, is_ref, dep: _ } => is_ref,
+      _ => false,
+    };
+    if !(a.hidden && !a.work_buffer && heap) {
+      continue;
+    }
+    // The first hidden heap parameter is the return buffer.
+    record = match cgen_types::base(a.typedef[0]!) {
+      TyReference { n, dep: _ } => n,
+      TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+      _ => -1,
+    };
+    if record < 0 || !all_scalar_record(b, record) {
+      return false;
+    }
+    buf = binds::var_named(def.variables, a.name);
+    if buf < 0 || buf >= len(def.variables.variables) {
+      return false;
+    }
+    return !writes_beyond_buffer(b, w, d, def.code[0]!, buf);
+  }
+  false
+}
+
+// `call_writes_store`: may a call of definition `d` write a store?  A native by its operands;
+// a function by its body, a recursion cycle answering yes.
+pub fn call_writes_store(b: ir::Bundle, w: Writes, d: integer) -> boolean {
+  if d < 0 || d >= len(b.data.definitions) {
+    return true;
+  }
+  if w.free[d]! {
+    return false;
+  }
+  def = b.data.definitions[d]!;
+  writes = true;
+  if !binds::has_code(def) {
+    writes = !native_op_is_store_free(def);
+  } else if !w.active[d]! {
+    w.active[d] = true;
+    writes = writes_store(b, w, def.code[0]!, d);
+    if writes && !env_on("LOFT_NO_RETBUF_HOIST") && retbuf_only_writer(b, w, d) {
+      writes = false;
+    }
+    w.active[d] = false;
+  }
+  if !writes {
+    w.free[d] = true;
+  }
+  writes
+}
+
+// `may_write_store`: may running `node` write a store?  Asked outside every body being
+// answered (`fresh_guard`).
+pub fn may_write_store(b: ir::Bundle, w: Writes, node: ir::Node) -> boolean {
+  saved = w.active;
+  w.active = [for _ in 0..len(saved) { false }];
+  answer = writes_store(b, w, node, -1);
+  w.active = saved;
+  answer
+}
+
+// `may_write_store` of `node` as a writer with split tables emits it (`as_emitted_by_tables`):
+// the binds of the table variables `sets` and the mints and frees of the dead buffers `bufs`
+// are written as nothing.
+pub fn may_write_store_without(b: ir::Bundle, w: Writes, node: ir::Node, sets: vector<boolean>, bufs: vector<boolean>) -> boolean {
+  w.skip_sets = sets;
+  w.skip_bufs = bufs;
+  answer = may_write_store(b, w, node);
+  w.skip_sets = [];
+  w.skip_bufs = [];
+  answer
+}

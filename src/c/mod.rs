@@ -3256,6 +3256,15 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         trace_shapes(cx, d, &shapes);
         trace_counters(cx, d);
         body::trace_texts(cx, d);
+        // `LOFT_TRACE_WRITES=1` — may a call of this function write a store (`call_keeps_stores`,
+        // negated)?  A layer of the loft-written generator's comparison.
+        if crate::env_once!(std::env::var("LOFT_TRACE_WRITES").is_ok_and(|v| v != "0")) {
+            eprintln!(
+                "[writes]\t{}\t{}",
+                def.name(),
+                u8::from(!cx.call_keeps_stores(d))
+            );
+        }
     }
     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
     // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
