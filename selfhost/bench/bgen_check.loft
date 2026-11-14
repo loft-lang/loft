@@ -9,6 +9,7 @@
 use ir;
 use load;
 use bgen;
+use bgen_image;
 
 fn main() {
   a = arguments();
@@ -27,6 +28,35 @@ fn main() {
   same = 0;
   differ = 0;
   unwritten = 0;
+  // `--stream`: the whole code stream and the starts written in loft against the image's.
+  if (a[2] ?? "") == "--stream" {
+    st = bgen_image::stream(b!, img!.natives);
+    if st.why != "" {
+      println("stream\tunwritten\t{st.why}");
+      return;
+    }
+    first = -1;
+    for d in 0..len(img!.starts) {
+      if first < 0 && (st.starts[d] ?? -1) != (img!.starts[d] ?? -2) {
+        first = d;
+      }
+    }
+    equal = len(st.code) == len(img!.code) && len(st.starts) == len(img!.starts) && first < 0;
+    if equal {
+      for i in 0..len(st.code) {
+        if st.code[i] != img!.code[i] {
+          equal = false;
+          break;
+        }
+      }
+    }
+    if equal {
+      println("stream\tsame\t{len(st.code)} bytes, {len(st.starts)} starts");
+    } else {
+      println("stream\tdiffers\t{len(st.code)} bytes written, {len(img!.code)} in the image; first start that differs: definition {first} {if first >= 0 { bgen::name_of(b!, first) } else { "" }} ({st.starts[first] ?? 0} against {img!.starts[first] ?? 0})");
+    }
+    return;
+  }
   ops = bgen::oracle(b!);
   for d in 0..len(img!.starts) - 1 {
     from = img!.starts[d] ?? 0;

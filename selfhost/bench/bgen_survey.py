@@ -9,7 +9,9 @@ image and its run image; `selfhost/bench/bgen_check.loft`, built `--native-c --s
 every function from the first and compares its bytes with the second.  Printed: the functions
 identical, the functions that DIFFER (a defect, each named with its program) and the ones not
 written yet, with what stops them by count — the order to port in.  The standard library's
-functions are in every image, so a function is counted once, by name.
+functions are in every image, so a function is counted once, by name.  Then, per program
+(step 2), the whole code stream and each definition's start in it written in loft against
+the image's.
 
     python3 selfhost/bench/bgen_survey.py [--scripts-only] [--jobs N] [--top 20]
 """
@@ -30,7 +32,12 @@ def one(f, loft, checker, tmp, env):
                            text=True, encoding="utf-8", errors="replace", env=env, timeout=300)
     except subprocess.TimeoutExpired:
         return f, None
-    return f, p.stdout
+    try:
+        q = subprocess.run([checker, stem + ".store", stem + ".run", "--stream"], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", env=env, timeout=300)
+    except subprocess.TimeoutExpired:
+        return f, p.stdout
+    return f, p.stdout + q.stdout
 
 
 def main():
@@ -64,23 +71,41 @@ def main():
         differ = []
         reasons = collections.Counter()
         programs = 0
+        streams = collections.Counter()
+        stream_differs = []
         with cf.ThreadPoolExecutor(o.jobs) as ex:
             for f, text in ex.map(lambda f: one(f, loft, checker, tmp, env), files):
                 if text is None:
                     continue
                 programs += 1
                 for line in text.splitlines():
+                    if line.startswith("stream\t"):
+                        verdict = line.split("\t")[1]
+                        streams[verdict] += 1
+                        if verdict == "differs":
+                            stream_differs.append(f"{os.path.relpath(f, root)}\t{line.split(chr(9), 2)[2]}")
+                        continue
                     m = re.match(r"(same|differs|unwritten)\t([^\t]+)(?:\t(.*))?$", line)
-                    if not m or m.group(2) in state:
+                    if not m:
+                        continue
+                    # A name is counted once, but a difference in ANY program is one: two
+                    # programs' functions of one name are not the same function.
+                    if m.group(1) == "differs" and state.get(m.group(2)) != "differs":
+                        state[m.group(2)] = "differs"
+                        differ.append(f"{m.group(2)}\t{os.path.relpath(f, root)}")
+                        continue
+                    if m.group(2) in state:
                         continue
                     state[m.group(2)] = m.group(1)
-                    if m.group(1) == "differs":
-                        differ.append(f"{m.group(2)}\t{os.path.relpath(f, root)}")
-                    elif m.group(1) == "unwritten":
+                    if m.group(1) == "unwritten":
                         reasons[m.group(3) or ""] += 1
         n = collections.Counter(state.values())
         print(f"{programs} programs, {len(state)} functions: {n['same']} identical, "
               f"{n['differs']} differ, {n['unwritten']} not written")
+        print(f"whole code stream and starts: {streams['same']} programs identical, "
+              f"{streams['differs']} differ, {streams['unwritten']} hold a function not written")
+        for d in sorted(stream_differs)[:20]:
+            print(f"stream differs\t{d}")
         for d in sorted(differ)[:40]:
             print(f"differs\t{d}")
         for why, k in reasons.most_common(o.top):

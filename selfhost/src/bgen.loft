@@ -1198,7 +1198,18 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
       g.position = was;
       for a in def.attributes {
         if !a.mutable {
-          add_const(g, a.typedef[0] ?? ir::TyVoid, args[a#index]!, before);
+          // `OpIterate`'s till-key count lies past the from-key values.
+          at = a#index;
+          if def.name == "OpIterate" && at == 5 {
+            from_count = match args[4] ?? ir::NdNull {
+              NdInt { n } => n,
+              _ => -1,
+            };
+            if from_count >= 0 {
+              at = 5 + from_count;
+            }
+          }
+          add_const(g, a.typedef[0] ?? ir::TyVoid, args[at] ?? ir::NdNull, before);
         }
       }
       return ret;
@@ -2556,7 +2567,7 @@ pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, n
     hwm = 0;
     for v in def.variables.variables {
       g.slots += [v.stack_pos];
-      g.allocated += [v.argument];
+      g.allocated += [v.argument || v.stack_allocated];
     }
     for v in def.variables.variables {
       t = v.type_def[0] ?? ir::TyVoid;

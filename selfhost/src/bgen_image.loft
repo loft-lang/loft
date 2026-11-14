@@ -1,0 +1,149 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The run image's code stream written in loft (@PLN91,
+// doc/claude/plans/91-self-host/rust-dependencies.md step 2): the port of
+// `compile::byte_code_from`'s loop over the definitions and of `ir_store::run_image_starts`.
+// Every function that gets bytecode is written in definition order into one stream; a call
+// carries its callee's absolute position, so the functions are written twice — once to learn
+// each one's length, once with every start known.
+use ir;
+use own;
+use binds;
+use bgen;
+
+// The stream and each definition's start in it, one more entry for its end; `why` says what
+// stopped the writer where it wrote none.
+pub struct Stream {
+  pub code: vector<u8>,
+  pub starts: vector<u32>,
+  pub why: text,
+}
+
+// `Definition::is_operator`: a function named `Op` and a capital.
+fn is_operator(d: ir::Definition) -> boolean {
+  d.def_type == 1 && len(d.name) > 2 && d.name.starts_with("Op") && d.name[2] >= 'A' && d.name[2] <= 'Z'
+}
+
+// `Data::is_open_instance`: an instance (or a tuple's record, or a variant of one) whose
+// type arguments still name a type variable.
+fn is_open_instance(b: ir::Bundle, d: integer) -> boolean {
+  def = b.data.definitions[d];
+  if def == null {
+    return false;
+  }
+  if def.def_type == 4 && def.instance_of < 0 {
+    parent = b.data.definitions[def.parent];
+    return parent != null && parent.def_type == 3 && is_open_instance(b, def.parent);
+  }
+  tuple = false;
+  for fg in def.field_groups {
+    if fg.kind == 0 {
+      tuple = true;
+    }
+  }
+  if def.instance_of < 0 && !tuple {
+    return false;
+  }
+  for t in def.instance_args {
+    if mentions_type_var(b, t) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Data::mentions_type_var`: does the type name a type variable anywhere in it?
+fn mentions_type_var(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  here = match bgen::base(t) {
+    TyReference { n, dep: _ } => n < len(b.data.definitions) && (binds::is_type_var_placeholder(b, n) || is_open_instance(b, n)),
+    TyEnum { n, is_ref: _, dep: _ } => is_open_instance(b, n),
+    _ => false,
+  };
+  if here {
+    return true;
+  }
+  match t {
+    TyRefVar { inner } => mentions_type_var(b, inner),
+    TyVector { inner, dep: _ } => mentions_type_var(b, inner),
+    TyRewritten { inner } => mentions_type_var(b, inner),
+    TyOptional { inner } => mentions_type_var(b, inner),
+    TyIterator { step, inner } => mentions_type_var(b, step) || mentions_type_var(b, inner),
+    TyFunction { args, result, dep: _, consts: _ } => {
+      for x in args {
+        if mentions_type_var(b, x) {
+          return true;
+        }
+      }
+      mentions_type_var(b, result)
+    }
+    TyTuple { elems } => {
+      for x in elems {
+        if mentions_type_var(b, x) {
+          return true;
+        }
+      }
+      false
+    }
+    _ => false,
+  }
+}
+
+// Does definition `d` get bytecode (`byte_code_from`)?  A function that is no operator and
+// no generic's placeholder instance (`Data::is_placeholder_instance`: an instance one of
+// whose parameters still names a type variable).
+fn coded(b: ir::Bundle, d: integer) -> boolean {
+  def = b.data.definitions[d]!;
+  if def.def_type != 1 || is_operator(def) {
+    return false;
+  }
+  if binds::split_key_kind(def.name) == 3 {
+    for a in def.attributes {
+      if mentions_type_var(b, a.typedef[0] ?? ir::TyVoid) {
+        return false;
+      }
+    }
+  }
+  true
+}
+
+// `State::def_code` for every definition, laid out as the run image holds them.
+pub fn stream(b: ir::Bundle, natives: vector<text>) -> Stream {
+  ops = bgen::oracle(b);
+  n = len(b.data.definitions);
+  out = Stream { code: [], starts: [], why: "" };
+  why: vector<text> = [""];
+  // First the lengths, every call aimed at position zero.
+  blank: vector<u32> = [];
+  for _d in 0..n + 1 {
+    blank += [0];
+  }
+  starts: vector<u32> = [];
+  at = 0;
+  for d in 0..n {
+    starts += [at & 4294967295];
+    if coded(b, d) {
+      bytes = bgen::function(b, ops, d, blank, natives, why);
+      if bytes == null {
+        out.why = "{b.data.definitions[d]!.name}: {why[0] ?? ""}";
+        return out;
+      }
+      at += len(bytes!);
+    }
+  }
+  starts += [at & 4294967295];
+  // Then the stream, every call aimed at its callee.
+  for d in 0..n {
+    if coded(b, d) {
+      bytes = bgen::function(b, ops, d, starts, natives, why);
+      if bytes == null {
+        out.why = "{b.data.definitions[d]!.name}: {why[0] ?? ""}";
+        return out;
+      }
+      out.code += bytes!;
+    }
+  }
+  out.starts = starts;
+  out
+}
