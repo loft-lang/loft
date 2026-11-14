@@ -129,3 +129,40 @@ On `laptop-c-perf` at `ebbfbaa61` (pushed together with the merge of `tuxedo-pln
 - Profiling the runner: `valgrind --tool=callgrind` on the C-built binary, then
   `callgrind_annotate --tree=caller` for a function's callers; `--native-c --native-emit out.c`
   shows the C a loft line became.
+
+## Progress, 2026-11-14 (tuxedo-pln204-int32)
+
+Steps 1–3 are built: `loft --emit-run-image` (step 1), `selfhost/src/run_image.loft` (step 2) and
+`selfhost/src/brun.loft`, the loop over the stored bytecode on one stack store at the Rust
+positions (step 3).  The stored bytecode is the interpreter's byte for byte
+(`selfhost/bench/run_image_bytecode.py`: every plain corpus program identical).
+
+What the runner carries is measured by `selfhost/bench/run_image_survey.py`, which builds the
+runner, runs each program from its run image and compares it with `loft --interpret`: the
+output, and the number of stores left at exit (the runner's own C-runtime leak check against
+the interpreter's report).  On 2026-11-14, `tests/scripts`: 370 of 443 programs agree on both,
+one differs (`store_iter_scratch`: only `store_memory()`'s description of the runtime itself —
+the stack store's size, one store fewer before the program's, each store's creating bytecode
+position), none crash; the rest are refused by name.  The suite's coroutines chapter: 10 of 11.
+
+The image gained, beyond step 1's plan: generator frame facts per generator (`RunGen`, read
+from one home, `src/state/gen_facts.rs`, which the interpreter's coroutine operators now share),
+and per native the definition a compiled-stdlib native (`loft_shared_<def>`) was compiled from
+(`RunImage.shared`), whose loft body the runner runs in its place.
+
+Open:
+
+- **`par` (`n_parallel_queue`, 7 programs) needs a decision**: the runner can run the workers
+  in order (the same answers — a worker shares no mutable state) or on threads, which needs a
+  runner state and isolated stores per worker, as Rust's `WorkerStores`.
+- Store persistence (`n_store_persist_copy`, `n_store_load`, `n_store_verify`,
+  `n_store_load_key`: 11 programs), `n_file_map`, linked-group adds (`G` in the ranking),
+  `n_stack_trace`.
+- loft#2481 (a function's answer that is an element of its parameter, unwrapped with `!`,
+  leaks a store per call, both backends, on main) — the runner's `types.loft` works around it.
+- The Rust compiler's bytecode for two stdlib functions (`t_4File_lines`,
+  `t_4text_char_slice`) differs between runs of the same binary on the same program: the same
+  operators, every stack offset in them shifted by the same amount (two frame layouts).  It
+  came in streaks (ten emissions one way, thirty the other), not per run, and neither a cold
+  nor a warm `.loft` cache reproduced it.  Both layouts run the same; it matters to anything
+  that compares bytecode across processes.  Not yet localised.
