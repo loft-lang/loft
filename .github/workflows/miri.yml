@@ -1380,6 +1380,9 @@ jobs:
         run: cargo test --release --test ownership_fuzz_gate fuzz_gate_map54_full_replay -- --ignored
 
       - name: Ownership oracle — backend fact identity (SI-2)
+        # Every sweep runs whether or not an earlier one failed: in sequence, one red
+        # step skipped the rest, and the tests those name as their run did not run.
+        if: ${{ !cancelled() }}
         run: cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored
 
       # The whole `tests/scripts` corpus in ONE process.  The per-commit run is chunked
@@ -1388,22 +1391,26 @@ jobs:
       # one dies of (how loft#920 was found).  This is that run, nightly; its `#[ignore]`
       # reason names this job.
       - name: Interpreter corpus — whole, in one process
+        if: ${{ !cancelled() }}
         run: cargo test --release --test wrap loft_suite_whole_corpus -- --ignored
 
       # Library artifact code names none of its program's numbers, over the WHOLE corpus.  The
       # per-commit suite checks every 32nd program; its `#[ignore]` reason names this job.
       - name: Library code names no program numbers — whole corpus
+        if: ${{ !cancelled() }}
         run: cargo test --release --test lib_ids -- --ignored
 
       # `[c] shim`s linked into the wasm32 target (wasmtime runs them): one package's, and two
       # packages' in one program.  Whole-program wasm builds, too slow for the per-commit suite.
       - name: C shims link into the wasm target
+        if: ${{ !cancelled() }}
         run: cargo test --release --test native into_the_wasm_target -- --ignored
 
       # The limit guards at the real 300 / 64 KiB (`tests/limits_full/`).  The per-commit corpus
       # proves the same relations under LOWERED limits (`// @LIMIT:`); this run proves the real
       # numbers fit on the runner's thread, on both backends.
       - name: Limit guards at full size
+        if: ${{ !cancelled() }}
         run: |
           cargo test --release --test wrap limits_at_full_size -- --ignored
           cargo test --release --test native native_limits_at_full_size -- --ignored
@@ -1415,21 +1422,27 @@ jobs:
       # first (as ci.yml's test job does).  The fuzzing leg rebuilds the lib with an extra
       # feature, so it runs last.
       - name: Build the native link rlib
+        if: ${{ !cancelled() }}
         run: cargo build --release --lib --bin loft
 
       - name: Leak, cross-mode — both backends leak-free
+        if: ${{ !cancelled() }}
         run: cargo test --release --test leak_cross_mode -- --ignored
 
       - name: Leak corpus — native
+        if: ${{ !cancelled() }}
         run: cargo test --release --test leak_cases leak_cases_native -- --ignored
 
       - name: Keyed collections — wide poison sweep (F2.6)
+        if: ${{ !cancelled() }}
         run: cargo test --release --lib fuzz_keyed::tests::f26_wide_poison_sweep -- --ignored
 
       - name: Seed-corpus replay — no front-end panic on any .loft in the repo (F1)
+        if: ${{ !cancelled() }}
         run: cargo test --release --lib fuzz_oracle::tests::seed_corpus_replay -- --ignored
 
       - name: Keyed collections — generated programs agree across backends (F3)
+        if: ${{ !cancelled() }}
         run: cargo test --release --features fuzzing --test fuzz_differential -- --ignored
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
