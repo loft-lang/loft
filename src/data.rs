@@ -1847,6 +1847,19 @@ impl Type {
     /// left its capture list unparsed ("Expect token ;"), and a `match` on such a literal typed
     /// `void`.
     #[must_use]
+    /// `@FR-N-Shape`'s NULLABILITY question asked through a `&` link: is this `τ?`, or a link to
+    /// one?  [`Type::peel_link`] answers the SHAPE and reads through the `?`, so a site that
+    /// accepts the shape and must refuse the `?` (`rev()` over a `sorted<…>?`, `@FR-I-NullSrc`)
+    /// asks this first.
+    #[must_use]
+    pub fn link_nullable(&self) -> bool {
+        match self {
+            Type::Optional(_) => true,
+            Type::RefVar(inner) | Type::Rewritten(inner) => inner.link_nullable(),
+            _ => false,
+        }
+    }
+
     pub fn peel_link(&self) -> &Type {
         let mut tp = self.base();
         while let Type::RefVar(inner) | Type::Rewritten(inner) = tp {
