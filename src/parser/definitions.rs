@@ -4038,7 +4038,7 @@ impl Parser {
             let link = self.lexer.link();
             self.lexer.has_token("#");
             let id = self.lexer.has_identifier();
-            if id == Some("native".to_string()) {
+            if id.as_deref() == Some("native") {
                 // Capture the cstring's position BEFORE consuming it — once
                 // `has_cstring()` returns, the lexer has advanced past the
                 // closing quote onto the next token, so a diagnostic at the
@@ -4077,19 +4077,19 @@ impl Parser {
                     self.data.definitions[self.context as usize].native = default_sym;
                 }
                 self.record_native_answer_type();
-            } else if self.default && id == Some("rust".to_string()) {
+            } else if self.default && id.as_deref() == Some("rust") {
                 if let Some(c) = self.lexer.has_cstring() {
                     self.data.definitions[self.context as usize].rust = c;
                 } else {
                     diagnostic!(self.lexer, Level::Error, "Expect rust string");
                 }
-            } else if self.default && id == Some("loft".to_string()) {
+            } else if self.default && id.as_deref() == Some("loft") {
                 // An operator's `#loft"…"` template: the loft runner's body for it, read by the
                 // loft generator of `fill.loft` (@PLN91); the Rust compiler skips it.
                 if self.lexer.has_cstring().is_none() {
                     diagnostic!(self.lexer, Level::Error, "Expect loft string");
                 }
-            } else if self.default && id == Some("iterator".to_string()) {
+            } else if self.default && id.as_deref() == Some("iterator") {
                 if let Some(init) = self.lexer.has_cstring() {
                     self.data.definitions[self.context as usize].rust = init;
                 } else {
@@ -4102,7 +4102,7 @@ impl Parser {
                     diagnostic!(self.lexer, Level::Error, "Expect rust next string");
                 }
             } else if !self.default
-                && (id == Some("rust".to_string()) || id == Some("iterator".to_string()))
+                && (id.as_deref() == Some("rust") || id.as_deref() == Some("iterator"))
             {
                 // @C87 — `#rust` / `#iterator` are the standard library's templates for its own
                 // operators, compiled into loft itself; a library's Rust goes through
@@ -4119,7 +4119,7 @@ impl Parser {
                      bind Rust with a bare `#native` and implement the function in the \
                      package's native crate (PACKAGES.md § Function binding model)"
                 );
-            } else if id == Some("c".to_string()) {
+            } else if id.as_deref() == Some("c") {
                 // @PLN24 arc A — `#c "<symbol>" "<c-signature>"` binds this
                 // declaration straight to a C symbol.  Both strings are
                 // required, and the SIGNATURE is the load-bearing one: the
@@ -4144,7 +4144,7 @@ impl Parser {
                     );
                 }
                 self.parse_c_binding();
-            } else if id == Some("c_twin".to_string()) {
+            } else if id.as_deref() == Some("c_twin") {
                 // `#c_twin "<symbol>" "<c-signature>"` (@C-twin): the C backend calls this C
                 // routine in place of the function's loft body, which every other backend runs
                 // and which states what the routine must answer.  The routine comes from the
@@ -4184,13 +4184,13 @@ impl Parser {
                 } else {
                     self.data.definitions[d_nr as usize].op_priority = priority;
                 }
-            } else if id == Some("null_safe".to_string()) {
+            } else if id.as_deref() == Some("null_safe") {
                 // @PLN46 W2 — `#null_safe` asserts every nullable parameter
                 // tolerates null and yields a defined result, so a fault-prone
                 // expression (`s[i]`) passed DIRECTLY as an argument is not flagged
                 // at the call site (the possible-null is the callee's contract).
                 self.data.definitions[self.context as usize].null_safe = true;
-            } else if id == Some("builtin".to_string()) {
+            } else if id.as_deref() == Some("builtin") {
                 // @PLN165 arc E — `#builtin`: the declaration above is a built-in's signature,
                 // and a call selecting it — the method spelling included — lowers through the
                 // compiler's special form of its name.  The standard library's alone: a
@@ -4204,7 +4204,7 @@ impl Parser {
                         "#builtin marks a standard-library declaration the compiler lowers itself; a program's function is its own body"
                     );
                 }
-            } else if id == Some("superseded".to_string()) {
+            } else if id.as_deref() == Some("superseded") {
                 // @PLN102 arc C — `#superseded "Y"` marks this callable as
                 // superseded by the successor symbol Y (a bare name, e.g.
                 // `write_through`).  Step 1 only PARSES + STORES the name;
@@ -4220,12 +4220,12 @@ impl Parser {
                         "Expect #superseded successor name string, e.g. #superseded \"write_through\""
                     );
                 }
-            } else if id == Some("pure".to_string()) {
+            } else if id.as_deref() == Some("pure") {
                 // Plan-06 phase 5a (DESIGN.md D8.1): `#pure`
                 // declares "no observable side effects, no
                 // parent-store writes".  Always par-safe.
                 self.data.definitions[self.context as usize].purity = crate::data::Purity::Pure;
-            } else if id == Some("impure".to_string()) {
+            } else if id.as_deref() == Some("impure") {
                 // Plan-06 phase 5a (DESIGN.md D8.1):
                 // `#impure(category)` classifies the side effect.
                 // Five categories: host_io, prng, io, parent_write,
