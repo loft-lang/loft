@@ -512,9 +512,21 @@ pub fn borrowed_bind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
         return;
       }
     },
-    NdCall { def_nr, args: _ } => {
-      if cgen_fn::def_name(x.b, def_nr) == "OpGetText" {
-        refuse(w, "a text read out of a store");
+    NdCall { def_nr, args } => {
+      // The element's text field read as the view it is: the analysis proved the loop writes
+      // no store, so the bytes stay where they are for as long as the variable is read.
+      if cgen_fn::def_name(x.b, def_nr) == "OpGetText" && len(args) == 2 {
+        fld = cgen_fn::literal(w, args[1], "field") ?? return;
+        held_before = len(w.pending);
+        r = cgen_fn::expr(x, w, args[0], ind);
+        if w.why != "" {
+          return;
+        }
+        if len(w.pending) != held_before {
+          refuse(w, "a borrowed text would view a temporary");
+          return;
+        }
+        line(w, ind, "{w.names[var]!} = loft_get_text({as_ref(w, r)}, {fld});");
         return;
       }
     },
