@@ -135,6 +135,16 @@ The order inside G-2 follows the survey's ranking, not this list, once the ranki
 - `selfhost/tests/cgen*.loft` holds the step's kernels as a guard in the selfhost run
   (`tests/selfhost.rs`).
 
+## Measured
+
+| step | number | command |
+|---|---|---|
+| G-0, image against memory | 1074 of 1075 units agree | `python3 selfhost/bench/cgen_survey.py` |
+
+The one unit that differs is a `#width 32` file: the image does not carry which bodies are
+32-bit (`Data::body_width32`).  It is added to the stored `Definition`; until then that program
+is out of the port's reach.
+
 ## Open questions, answered by the first probes
 
 1. How many corpus programs does the Rust generator write equally from the image and from

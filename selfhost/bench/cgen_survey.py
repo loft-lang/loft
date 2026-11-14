@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Which programs' C units the loft-written generator writes byte for byte as the Rust one.
+
+@PLN91 strand 12, doc/claude/plans/91-self-host/12-c-generator.md § Steps, G-0.  For every
+plain program of the coverage census's corpus (`selfhost/cover/census.py`: tests/scripts and
+the language suite), the unit `loft --emit-c` writes (the ORACLE: a program's unit, or its
+tests' unit where it has no `main`) is compared with a second unit:
+
+  default            the Rust generator's unit written from the program IMAGE
+                     (`LOFT_EMIT_FROM_IMAGE=1`): how many programs the image carries whole —
+                     the corpus a generator that reads the image can reach
+  --generator EXE    the loft-written generator's unit: `EXE <image> <out.c>` on the image
+                     `loft --emit-image` writes
+
+A program is counted `agree`; `differ` (the first line that differs, both sides); `refused`
+(the second side wrote no unit: its last line of standard error, ranked); `nounit` (the oracle
+writes none: the C backend refuses the program, which is no program of this corpus).
+
+    python3 selfhost/bench/cgen_survey.py [--generator EXE] [--scripts-only] [--jobs N] [--top 30]
+"""
+import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
+import census  # noqa: E402  the corpus and the plain-program filter are the census's own
+
+
+def proc(cmd, env, timeout, cwd=None):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=timeout, cwd=cwd)
+        return p.returncode, p.stderr
+    except subprocess.TimeoutExpired:
+        return -9, "timeout"
+
+
+def last(err):
+    lines = [l for l in err.strip().splitlines() if l.strip()]
+    return (lines[-1] if lines else "no message")[:110]
+
+
+def first_difference(a, b):
+    """The first line two files differ at: `(line number, a's line, b's line)`."""
+    with open(a, errors="replace") as fa, open(b, errors="replace") as fb:
+        n = 0
+        while True:
+            n += 1
+            la, lb = fa.readline(), fb.readline()
+            if la != lb:
+                return n, la.rstrip("\n")[:100], lb.rstrip("\n")[:100]
+            if not la:
+                return n, "", ""
+
+
+def one(f, loft, generator, tmp, env, timeout):
+    stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
+    want, got, img = stem + ".want.c", stem + ".got.c", stem + ".store"
+    try:
+        rc, err = proc([loft, "--emit-c", want, f], env, timeout, cwd=os.path.dirname(f))
+        if rc != 0 or not os.path.exists(want):
+            return f, "nounit", last(err)
+        if generator:
+            rc, err = proc([loft, "--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
+            if rc == 0:
+                rc, err = proc([generator, img, got], env, timeout, cwd=os.path.dirname(f))
+        else:
+            rc, err = proc([loft, "--emit-c", got, f], {**env, "LOFT_EMIT_FROM_IMAGE": "1"}, timeout,
+                           cwd=os.path.dirname(f))
+        if rc != 0 or not os.path.exists(got):
+            return f, "refused", last(err)
+        with open(want, "rb") as a, open(got, "rb") as b:
+            if a.read() == b.read():
+                return f, "agree", ""
+        n, la, lb = first_difference(want, got)
+        return f, "differ", f"line {n}\n    oracle: {la}\n    other:  {lb}"
+    finally:
+        for p in (want, got, img):
+            if os.path.exists(p):
+                os.unlink(p)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--loft", default=None, help="the loft binary (default: target/release/loft)")
+    ap.add_argument("--generator", default=None, help="the loft-written generator: EXE <image> <out.c>")
+    ap.add_argument("--jobs", type=int, default=6)
+    ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
+    ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
+    ap.add_argument("--top", type=int, default=30)
+    ap.add_argument("--timeout", type=int, default=120)
+    ap.add_argument("--show", action="append", default=[],
+                    help="list the programs of a verdict (agree, differ, refused, nounit; repeatable)")
+    o = ap.parse_args()
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    loft = o.loft or os.path.join(root, "target", "release", "loft")
+    suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
+    env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
+    tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
+    try:
+        files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
+                                                           o.chapter, o.scripts_only) if census.plain(f)]
+        counts = collections.Counter()
+        why = collections.Counter()
+        shown = []
+        with cf.ThreadPoolExecutor(o.jobs) as ex:
+            for f, verdict, what in ex.map(lambda f: one(f, loft, o.generator, tmp, env, o.timeout), files):
+                counts[verdict] += 1
+                if verdict in o.show:
+                    shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what}")
+                if verdict == "refused":
+                    why[what] += 1
+        units = len(files) - counts["nounit"]
+        print(f"{counts['agree']} of {units} units agree; " +
+              ", ".join(f"{counts[k]} {k}" for k in ("differ", "refused", "nounit") if counts[k]))
+        for line in sorted(shown):
+            print(line)
+        if why:
+            print("why the second unit was not written, by programs:")
+            for name, n in why.most_common(o.top):
+                print(f"  {n:5d}  {name}")
+        return 0 if counts["agree"] == units else 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
