@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2486 — `C { args } => { if … { return args; } … }`: the vector a `match` arm bound is a
+// view of the arm's subject, here the result of a call, which the function frees as it
+// returns.  An early `return` of it must reach the caller's buffer as elements, as the arm's
+// tail does (`@FR-B-View`, `@FR-F-Ret`): returned raw, the caller's vector pointed into the
+// freed store — empty after its next call on the interpreter, and a store freed twice on both
+// backends once the same helper read an element.  Each cell is hand-computed: the record is
+// C { d: 5, args: [V { 3 }, Sp { I { 1 } }] }.
+//
+// @falsified-at: 4fc5b305f — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the asserts, and the run's own report (a store freed twice stops the test).
+// ARMED: nothing to arm — a store freed twice stops any build with its report.
+// WITNESS: each assert message prints what was read.
+// HOLDS: the early return (the defect), read once and twice and after another call; the
+// source record after it; and the forms that always held as controls — the arm's tail, a
+// non-null result, the subject bound first, a returned copy.
+
+enum N { A, Sp { inner: N }, I { n: integer }, C { d: integer, args: vector<N> }, V { n: integer } }
+
+fn un(n: N) -> N { match n { Sp { inner } => un(inner), _ => n } }
+fn var_of(n: N) -> integer { match un(n) { V { n: nr } => nr, _ => -1 } }
+fn int_of(n: N) -> integer? { match un(n) { I { n: value } => value, _ => null } }
+fn mk() -> N { C { d: 5, args: [V { n: 3 }, Sp { inner: I { n: 1 } }] } }
+
+fn early(n: N) -> vector<N>? { match un(n) { C { d: _, args } => { if len(args) == 2 { return args; } null }, _ => null } }
+fn tail(n: N) -> vector<N>? { match un(n) { C { d: _, args } => args, _ => null } }
+fn plain(n: N) -> vector<N> { match un(n) { C { d: _, args } => args, _ => [] } }
+fn bound(n: N) -> vector<N>? { m = un(n); match m { C { d: _, args } => { if len(args) == 2 { return args; } null }, _ => null } }
+fn copied(n: N) -> vector<N>? { match un(n) { C { d: _, args } => { if len(args) == 2 { return [for a in args { a }]; } null }, _ => null } }
+
+// What a caller reads of the answer: the first element's variable, the second's integer, and
+// the length after both reads.
+fn read(a: vector<N>) -> text { "{var_of(a[0]!)} {int_of(a[1]!) ?? -1} {len(a)}" }
+
+fn head(stmt: N) -> integer? {
+  args = early(stmt) ?? return null;
+  if var_of(args[0]!) != 3 || int_of(args[1]!) != 1 { return null; }
+  9
+}
+
+fn test_the_early_return_is_the_callers_own_vector() {
+  s = mk();
+  a = early(s) ?? [];
+  assert(read(a) == "3 1 2", "read once: {read(a)}");
+  assert(read(a) == "3 1 2", "read again: {read(a)}");
+  assert(len(plain(s)) == 2, "the source record keeps its vector: {len(plain(s))}");
+  assert(read(a) == "3 1 2", "after another call on the source: {read(a)}");
+  assert(early(A) == null && early(Sp { inner: s }) != null, "the null arm, and a spanned subject");
+}
+
+fn test_a_caller_that_leaves_early_reads_it_too() {
+  s = mk();
+  assert((head(s) ?? -1) == 9, "first: {head(s) ?? -1}");
+  assert((head(s) ?? -1) == 9, "second: {head(s) ?? -1}");
+  assert(head(A) == null, "no call");
+}
+
+fn test_the_forms_that_always_held() {
+  s = mk();
+  assert(read(tail(s) ?? []) == "3 1 2", "the arm's tail: {read(tail(s) ?? [])}");
+  assert(read(plain(s)) == "3 1 2", "a non-null result: {read(plain(s))}");
+  assert(read(bound(s) ?? []) == "3 1 2", "the subject bound first: {read(bound(s) ?? [])}");
+  assert(read(copied(s) ?? []) == "3 1 2", "a returned copy: {read(copied(s) ?? [])}");
+}

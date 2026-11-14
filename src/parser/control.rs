@@ -22998,8 +22998,8 @@ impl Parser {
                                 // freed twice on both backends (loft#2486).  A local that OWNS
                                 // its vector depends on its own `__vdb_N` or work ref, never on
                                 // a record local.
-                                || (matches!(v.unspan(), Value::Var(_))
-                                    && dep.iter().any(|&d| {
+                                || matches!(v.unspan(), Value::Var(x)
+                                    if self.vars.tp(*x).depend().iter().any(|&d| {
                                         d != bv
                                             && !self.vars.is_argument(d)
                                             && matches!(
