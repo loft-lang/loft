@@ -955,6 +955,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t116, "types", vec_types);
     let vec_gens = db.vector(t115);
     db.field(t116, "gens", vec_gens);
+    let vec_shared = db.vector(t0);
+    db.field(t116, "shared", vec_shared);
     db.field(t116, "main", 0);
     db.field(t116, "cwd", t4);
     let t140 = db.vector(t139);

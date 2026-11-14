@@ -882,6 +882,35 @@ fn default_of(ts: vector<ir::DbType>, images: vector<vector<u8>>, imaged: vector
   }
 }
 
+// A call's hidden return buffers (`RunFnRef.hidden`, `State::fn_call_ref_to`) pushed at `sp`
+// and registered to be released when the call at `at_depth` returns (`release_fnref_bufs`): a
+// record's buffer a store with no root (`Stores::null()`), a vector's a store of its
+// `main_vector<T>` type with its defaults — both FRESH: `crt::database` makes again in place a
+// store `io` already names, so `io` is the null reference first.  Answers the bytes pushed.
+fn push_hidden(img: ir::RunImage, stk: integer, sp: integer, hidden: vector<integer>, io: vector<integer>, images: vector<vector<u8>>, imaged: vector<boolean>, fbd: vector<integer>, fbs: vector<integer>, fbr: vector<integer>, fbp: vector<integer>, at_depth: integer) -> integer {
+  at = sp;
+  for hb in hidden {
+    io[0] = NULL_STORE;
+    io[1] = 0;
+    io[2] = 0;
+    if hb < 0 {
+      crt::database(io, 8, 0);
+      io[1] = 0;
+    } else {
+      crt::database(io, img.types[hb]!.size, hb);
+      default_of(img.types, images, imaged, hb);
+      crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[hb] ?? []);
+    }
+    crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    fbd += [at_depth];
+    fbs += [io[0] ?? NULL_STORE];
+    fbr += [io[1] ?? 0];
+    fbp += [io[2] ?? 0];
+    at += 16;
+  }
+  at - sp
+}
+
 // The `n` key parts of collection type `tp` on the stack under `top` — the first key on top, as
 // `State::stack_keys` pops them — pushed onto the C runtime's key stack in key order, each read
 // as `stack_keys` reads it by its content (`types::key_contents`): an integer of any width, a single, a float, a
@@ -2562,11 +2591,23 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       // and pushes its result on this stack.
       idx = u16_at(img.code, pc);
       pc += 2;
-      nsp = call_native(ns[idx] ?? -1, idx, img, stk, sp, io, tl, nwhy);
-      if nsp < 0 {
-        return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
+      shd = img.shared[idx] ?? -1;
+      if (ns[idx] ?? -1) < 0 && shd >= 0 && shd + 1 < len(img.starts) {
+        // A compiled standard-library function (`loft_shared_<def>`): its loft body run as
+        // bytecode in its place.  The native takes exactly the body's arguments — its hidden
+        // return buffer included, which the caller pushed (`__retbuf`) — so the body is entered
+        // as a plain call, and the stack it leaves is the native's.
+        set(stk, sp, pc);
+        sp += 8;
+        depth += 1;
+        pc = img.starts[shd] ?? 0;
+      } else {
+        nsp = call_native(ns[idx] ?? -1, idx, img, stk, sp, io, tl, nwhy);
+        if nsp < 0 {
+          return Outcome { refused: "{nwhy[0] ?? ""} at {at}", steps: steps };
+        }
+        sp = nsp;
       }
-      sp = nsp;
     } else if h == H_PREALLOC_VECTOR {
       sp -= 16;
       crt::slot_ref(io, stk, sp);
@@ -3160,29 +3201,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
           fv -= shp.drop;
           asz -= shp.drop;
         }
-        for hb in shp.hidden {
-          // A record's buffer is a store with no root (`Stores::null()`), a vector's a store of
-          // its `main_vector<T>` type with its defaults — both FRESH: `crt::database` makes
-          // again in place a store `io` already names, so `io` is the null reference first.
-          io[0] = NULL_STORE;
-          io[1] = 0;
-          io[2] = 0;
-          if hb < 0 {
-            crt::database(io, 8, 0);
-            io[1] = 0;
-          } else {
-            crt::database(io, img.types[hb]!.size, hb);
-            default_of(img.types, images, imaged, hb);
-            crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[hb]!);
-          }
-          crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-          fbd += [depth + 1];
-          fbs += [io[0] ?? NULL_STORE];
-          fbr += [io[1] ?? 0];
-          fbp += [io[2] ?? 0];
-          sp += 16;
-          hsz += 16;
-        }
+        hsz = push_hidden(img, stk, sp, shp.hidden, io, images, imaged, fbd, fbs, fbr, fbp, depth + 1);
+        sp += hsz;
       }
       crt::slot_ref(io, stk, sp - (fv + hsz - 8));
       if (io[1] ?? 0) != 0 {

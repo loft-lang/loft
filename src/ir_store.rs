@@ -925,6 +925,7 @@ fn materialize_run_image(
     consts: &[RunConstBytes],
     fnrefs: &[RunFnRefShape],
     gens: &[RunGenShape],
+    shared: &[i64],
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -1005,6 +1006,17 @@ fn materialize_run_image(
     }
     materialize_run_fnrefs(stores, &rec, &slot(ds::RUNIMG_FNREFS), fnrefs);
     materialize_run_gens(stores, &rec, &slot(ds::RUNIMG_GENS), gens);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_SHARED),
+        count(shared.len()),
+        8,
+        &mut stores.allocations,
+    );
+    let shv = rec.field_recvec(ds::RUNIMG_SHARED, 8);
+    for &d in shared {
+        let e = shv.push(stores);
+        e.set_field_int(stores, 0, d);
+    }
     crate::vector::pre_alloc_vector(
         &slot(ds::RUNIMG_TYPES),
         count(schema.len()),
@@ -1186,8 +1198,34 @@ pub struct RunFnRefShape {
     pub hidden: Vec<i64>,
 }
 
-/// Every function's call-through-a-reference shape that is not a plain call.
+/// Per native index: the definition a `loft_shared_<name>` native (the compiled standard
+/// library, @PLN181) was compiled from, whose bytecode body the loft runner runs in its place;
+/// -1 for every other native: a `#dest` form, or one whose body answers a text.
 #[must_use]
+pub fn run_image_shared(
+    data: &Data,
+    library_names: &crate::fxhash::FxHashMap<String, u16>,
+) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::new();
+    for (name, &idx) in library_names {
+        let i = usize::from(idx);
+        if out.len() <= i {
+            out.resize(i + 1, -1);
+        }
+        if let Some(def) = name.strip_prefix("loft_shared_")
+            && !def.contains('#')
+        {
+            let nr = data.def_nr(def);
+            // A text answer comes back through caller-supplied text buffers that a native's
+            // caller never pushes; those are called through their `#dest` form instead.
+            if nr != u32::MAX && !matches!(data.def(nr).returned().base(), Type::Text(_)) {
+                out[i] = i64::from(nr);
+            }
+        }
+    }
+    out
+}
+
 /// A generator's frame facts for the run image (`RunGen`), from `state::gen_facts` — the same
 /// reads the interpreter's coroutine operators make.
 pub struct RunGenShape {
@@ -1232,6 +1270,8 @@ pub fn run_image_gens(data: &Data) -> Vec<RunGenShape> {
     out
 }
 
+/// Every function's call-through-a-reference shape that is not a plain call.
+#[must_use]
 pub fn run_image_fnrefs(data: &Data, program: &Stores) -> Vec<RunFnRefShape> {
     let buf_span = crate::variables::aligned_stack_step(size_of::<DbRef>() as u32);
     let mut widest: crate::fxhash::FxHashMap<usize, usize> = crate::fxhash::FxHashMap::default();
@@ -1380,6 +1420,7 @@ pub fn save_run_image(
             &run_image_consts(program),
             &run_image_fnrefs(data, program),
             &run_image_gens(data),
+            &run_image_shared(data, library_names),
             library_names,
             &program.types,
             main,

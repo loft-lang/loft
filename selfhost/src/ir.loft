@@ -493,11 +493,15 @@ pub struct RunImage {
   pub fnrefs: vector<RunFnRef>,
   pub types: vector<DbType>,
   pub gens: vector<RunGen>,
+  // Per native: the definition whose loft body a `loft_shared_<name>` native was compiled from
+  // (the compiled standard library, @PLN181), which the runner runs as bytecode; -1 for any
+  // other native.
+  pub shared: vector<integer>,
   pub main: integer,
   pub cwd: boolean,
 }
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], main: 0, cwd: false }
 }
