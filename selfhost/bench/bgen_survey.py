@@ -103,7 +103,8 @@ def main():
         print(f"{programs} programs, {len(state)} functions: {n['same']} identical, "
               f"{n['differs']} differ, {n['unwritten']} not written")
         print(f"whole code stream and starts: {streams['same']} programs identical, "
-              f"{streams['differs']} differ, {streams['unwritten']} hold a function not written")
+              f"{streams['differs']} differ, {streams['unwritten']} hold a function not written, "
+              f"{streams['natives']} with another natives table than loft's")
         for d in sorted(stream_differs)[:20]:
             print(f"stream differs\t{d}")
         for d in sorted(differ)[:40]:

@@ -10,6 +10,7 @@ use ir;
 use load;
 use bgen;
 use bgen_image;
+use native_table;
 
 fn main() {
   a = arguments();
@@ -30,7 +31,21 @@ fn main() {
   unwritten = 0;
   // `--stream`: the whole code stream and the starts written in loft against the image's.
   if (a[2] ?? "") == "--stream" {
-    st = bgen_image::stream(b!, img!.natives);
+    // The natives' table is loft's own (`native_table.loft`); the image's must equal it.
+    own_natives = native_table::names();
+    natives_equal = len(own_natives) == len(img!.natives);
+    if natives_equal {
+      for n in own_natives {
+        if n != (img!.natives[n#index] ?? "") {
+          natives_equal = false;
+        }
+      }
+    }
+    if !natives_equal {
+      println("stream\tnatives\t{len(own_natives)} natives in loft's table, {len(img!.natives)} in the image's");
+      return;
+    }
+    st = bgen_image::stream(b!, own_natives);
     if st.why != "" {
       println("stream\tunwritten\t{st.why}");
       return;
