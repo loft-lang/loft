@@ -18,7 +18,9 @@ fn main() {
     println("usage: bgen_check <program image> <run image>");
     exit(2);
   }
-  op_return = bgen::op_named(b!, "OpReturn");
+  why: vector<text> = [""];
+  reasons: vector<text> = [];
+  counts: vector<integer> = [];
   same = 0;
   differ = 0;
   unwritten = 0;
@@ -28,9 +30,22 @@ fn main() {
     if till <= from {
       continue;
     }
-    bytes = bgen::function(b!, d, op_return);
+    bytes = bgen::function(b!, d, img!.starts, img!.natives, why);
     if bytes == null {
       unwritten += 1;
+      // The reason, counted: what to port next.
+      at = -1;
+      for r in reasons {
+        if r == (why[0] ?? "") {
+          at = r#index;
+        }
+      }
+      if at < 0 {
+        reasons += [why[0] ?? ""];
+        counts += [1];
+      } else {
+        counts[at] += 1;
+      }
       continue;
     }
     equal = len(bytes!) == till - from;
@@ -47,4 +62,7 @@ fn main() {
     }
   }
   println("{same} functions identical, {differ} differ, {unwritten} not written");
+  for r in reasons {
+    println("  {counts[r#index] ?? 0}  {r}");
+  }
 }

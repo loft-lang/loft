@@ -70,25 +70,577 @@ fn arguments_size(def: ir::Definition) -> integer {
   total
 }
 
-// `State::def_code` for definition `d`: its bytes, or null for a function this writer does
-// not write yet.
-pub fn function(b: ir::Bundle, d: integer, op_return: integer) -> vector<u8>? {
-  def = b.data.definitions[d]!;
+// One function while it is written (`Stack` and the writer's own state in `codegen.rs`).
+// `position` is the evaluation position: the bytes of frame and pending values under the next
+// push.  `slots` holds each variable's frame position (65535: none).  `why` names what stopped
+// the writer, "" while the function is still being written whole.
+pub struct Gen {
+  b: ir::Bundle,
+  // Each definition's code start, and the natives' names by their number: the image's, until
+  // this writer lays the whole program out and numbers the natives itself.
+  starts: vector<u32>,
+  natives: vector<text>,
+  d: integer,
+  o: Out,
+  position: integer,
+  arguments: integer,
+  slots: vector<integer>,
+  why: text,
+}
+
+fn stop(g: Gen, why: text) {
+  if g.why == "" {
+    g.why = why;
+  }
+}
+
+fn put_i32(o: Out, v: integer) {
+  put_u16(o, v & 65535);
+  put_u16(o, (v >> 16) & 65535);
+}
+
+// Eight bytes of an integer; the null one is its own bit pattern.
+fn put_i64(o: Out, v: integer?) {
+  if v == null {
+    o.code += [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 128 as u8];
+    return;
+  }
+  put_i32(o, v! & 4294967295);
+  put_i32(o, (v! >> 32) & 4294967295);
+}
+
+// `Type::base`: the type under any `?`.
+fn base(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => base(inner),
+    _ => t,
+  }
+}
+
+// A value's bytes on the evaluation stack: its argument size, stepped.
+fn pushed(t: ir::TypeT) -> integer {
+  frame::stepped(frame::width(t, true))
+}
+
+fn def_of(g: Gen, d: integer) -> ir::Definition {
+  g.b.data.definitions[d]!
+}
+
+fn var_of(g: Gen, v: integer) -> ir::Variable {
+  def_of(g, g.d).variables.variables[v]!
+}
+
+// `Stack::var_pos`: how far under the evaluation position variable `v` lies.
+fn var_pos(g: Gen, v: integer) -> integer {
+  slot = g.slots[v] ?? 65535;
+  if slot == 65535 || slot > g.position {
+    stop(g, "a variable without a slot under the evaluation position");
+    return 0;
+  }
+  g.position - slot
+}
+
+// `Stack::add_op`: the operator's number written, the evaluation position moved by what it
+// pops (its stack arguments) and pushes (its answer).
+fn add_op(g: Gen, name: text) {
+  op = op_named(g.b, name);
+  if op < 0 {
+    stop(g, "an operator the image does not hold: {name}");
+    return;
+  }
+  put_op(g.o, g.b, op);
+  stack_effect(g, op);
+}
+
+fn stack_effect(g: Gen, op: integer) {
+  def = def_of(g, op);
+  popped = 0;
+  for a in def.attributes {
+    if a.mutable {
+      popped += pushed(a.typedef[0] ?? ir::TyVoid);
+    }
+  }
+  if g.position < popped {
+    stop(g, "an operator that pops more than the evaluation position holds");
+    return;
+  }
+  g.position += pushed(def.returned[0] ?? ir::TyVoid) - popped;
+}
+
+// The node under any source span.
+fn unspan(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos: _, inner } => unspan(inner),
+    _ => n,
+  }
+}
+
+// An integer literal's value; null for any other node (`fusable_int`'s `literal`).  The second
+// answer says whether it was one: a `Long` literal may itself be the null integer.
+fn literal(n: ir::Node, found: vector<boolean>) -> integer? {
+  found[0] = true;
+  match unspan(n) {
+    NdInt { n: v } => v,
+    NdLong { n: v } => v,
+    _ => {
+      found[0] = false;
+      null
+    }
+  }
+}
+
+// `int_local`: the integer local a node reads, where it can be read at its slot; -1 otherwise.
+fn int_local(g: Gen, n: ir::Node) -> integer {
+  v = match unspan(n) {
+    NdVar { n: nr } => nr,
+    _ => -1,
+  };
+  if v < 0 {
+    return -1;
+  }
+  var = var_of(g, v);
+  whole = match base(var.type_def[0] ?? ir::TyVoid) {
+    TyInteger { spec: _ } => true,
+    _ => false,
+  };
+  slot = g.slots[v] ?? 65535;
+  if whole && !var.linked_narrow && var.stack_allocated && slot != 65535 && slot <= g.position { v } else { -1 }
+}
+
+// `fusable_int` and `emit_fused_int` (`@FR-R-Fuse`) for a value that is not stored: an integer
+// operator over a local and a local or a literal is one operator reading the frame.  True when
+// it was written.
+fn fused_int(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
+  if len(args) != 2 {
+    return false;
+  }
+  name = def_of(g, op).name;
+  kind = match name {
+    "OpAddInt" => 0,
+    "OpMinInt" => 1,
+    "OpMulInt" => 2,
+    "OpLandInt" => 3,
+    "OpLorInt" => 4,
+    "OpEorInt" => 5,
+    "OpEqInt" => 0,
+    "OpNeInt" => 1,
+    "OpLtInt" => 2,
+    "OpLeInt" => 3,
+    _ => -1,
+  };
+  if kind < 0 {
+    return false;
+  }
+  compare = name == "OpEqInt" || name == "OpNeInt" || name == "OpLtInt" || name == "OpLeInt";
+  found: vector<boolean> = [false];
+  first = literal(args[0]!, found);
+  first_literal = found[0] ?? false;
+  if compare && first_literal {
+    a = int_local(g, args[1]!);
+    if a >= 0 {
+      // The operands change sides: less becomes greater.
+      flipped = if kind == 2 { 4 } else if kind == 3 { 5 } else { kind };
+      at = var_pos(g, a);
+      add_op(g, "OpCmpIntVC");
+      put_u8(g.o, flipped);
+      put_u16(g.o, at);
+      put_i64(g.o, first);
+      return true;
+    }
+  }
+  a = int_local(g, args[0]!);
+  if a < 0 {
+    return false;
+  }
+  second = literal(args[1]!, found);
+  if found[0] ?? false {
+    at = var_pos(g, a);
+    add_op(g, if compare { "OpCmpIntVC" } else { "OpIntVC" });
+    put_u8(g.o, kind);
+    put_u16(g.o, at);
+    put_i64(g.o, second);
+    return true;
+  }
+  b = int_local(g, args[1]!);
+  if b < 0 {
+    return false;
+  }
+  at = var_pos(g, a);
+  bt = var_pos(g, b);
+  add_op(g, if compare { "OpCmpIntVV" } else { "OpIntVV" });
+  put_u8(g.o, kind);
+  put_u16(g.o, at);
+  put_u16(g.o, bt);
+  true
+}
+
+// `State::add_const`: a constant operand, at the width its parameter declares.
+fn add_const(g: Gen, tp: ir::TypeT, p: ir::Node, before: integer) {
+  n = unspan(p);
+  match tp {
+    TyInteger { spec } => {
+      v: integer? = null;
+      known = true;
+      match n {
+        NdInt { n: nr } => { v = nr; }
+        NdLong { n: nr } => { v = nr; }
+        _ => { known = false; }
+      }
+      wide = spec.forced_size != 4 && !(spec.min == 0 && spec.max == 255) && !(spec.min == -128 && spec.max == 127) && !(spec.min == 0 && spec.max == 65535) && !(spec.min == -32768 && spec.max == 32767);
+      if spec.forced_size == 4 {
+        if known {
+          put_i32(g.o, (v ?? 0) & 4294967295);
+        }
+      } else if spec.min == 0 && spec.max == 65535 {
+        if known {
+          put_u16(g.o, v ?? 0);
+        } else {
+          match n {
+            NdVar { n: var } => put_u16(g.o, before - (g.slots[var] ?? 0)),
+            _ => {}
+          }
+        }
+      } else if !wide {
+        if known {
+          if (spec.min == 0 && spec.max == 255) || (spec.min == -128 && spec.max == 127) {
+            put_u8(g.o, v ?? 0);
+          } else {
+            put_u16(g.o, v ?? 0);
+          }
+        }
+      } else if known {
+        put_i64(g.o, v);
+      }
+    }
+    TyEnum { n: _, is_ref: _, dep: _ } => {
+      match n {
+        NdEnum { ord, tp: _ } => put_u8(g.o, ord),
+        _ => {}
+      }
+    }
+    TyBoolean => {
+      match n {
+        NdBoolean { b: v } => put_u8(g.o, if v { 1 } else { 0 }),
+        _ => {}
+      }
+    }
+    TyText { dep: _ } => {
+      match n {
+        NdText { s } => put_str(g.o, s),
+        _ => {}
+      }
+    }
+    _ => stop(g, "a constant operand of a type the writer does not write yet"),
+  }
+}
+
+// `State::code_add_str`: a text's byte count and its bytes.
+fn put_str(o: Out, s: text) {
+  put_u8(o, s.size());
+  for i in 0..s.size() {
+    o.code += [(s.byte_at(i) & 255) as u8];
+  }
+}
+
+// The operators and natives `generate_call` writes in a way of their own, which this writer
+// does not write yet.
+fn special_call(name: text) -> boolean {
+  name == "OpDatabase" || name == "OpSetInt4" || name == "OpPreAllocVector" || name == "OpFreeRef" || name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpFreeRefIfDistinct" || name == "OpGetRecord" || name == "OpSetKeyed" || name == "OpStart" || name == "OpNext" || name == "OpIterate" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpNullRefSentinel" || name == "OpConvRefFromNull" || name == "OpFreeText" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+}
+
+// `State::generate_call`: an operator with its stack arguments written first and its constant
+// operands after its number; a native by its number (`OpStaticCall`); a function by its
+// definition, its arguments' size and its code position (`OpCall`).
+fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
+  def = def_of(g, op);
   ret = def.returned[0] ?? ir::TyVoid;
+  if fused_int(g, op, args) {
+    return ret;
+  }
+  if special_call(def.name) || len(args) < len(def.attributes) {
+    stop(g, "a call the writer does not write yet: {def.name}");
+    return ret;
+  }
   generator = match ret {
     TyIterator { step: _, inner: _ } => true,
     _ => false,
   };
-  if !body_null(def) || generator || op_return < 0 {
+  operator_def = def.name.starts_with("Op");
+  for a in def.attributes {
+    if a.mutable {
+      before = g.position;
+      at = a.typedef[0] ?? ir::TyVoid;
+      generate(g, args[a#index]!, false);
+      if g.position - before != pushed(at) {
+        stop(g, "an argument that does not take its parameter's bytes in a call of {def.name}");
+      }
+    }
+  }
+  if operator_def {
+    before = g.position;
+    put_op(g.o, g.b, op);
+    stack_effect(g, op);
+    for a in def.attributes {
+      if !a.mutable {
+        add_const(g, a.typedef[0] ?? ir::TyVoid, args[a#index]!, before);
+      }
+    }
+    return ret;
+  }
+  body = match def.code[0] {
+    null => false,
+    NdNull => false,
+    _ => true,
+  };
+  lookup = if def.native != "" { def.native } else if body { "" } else { def.name };
+  lib = -1;
+  if lookup != "" {
+    for n in g.natives {
+      if n == lookup {
+        lib = n#index;
+      }
+    }
+  }
+  size = 0;
+  for a in def.attributes {
+    size += pushed(a.typedef[0] ?? ir::TyVoid);
+  }
+  if lib >= 0 {
+    add_op(g, "OpStaticCall");
+    put_u16(g.o, lib);
+  } else {
+    if generator {
+      stop(g, "a generator's creation");
+      return ret;
+    }
+    add_op(g, "OpCall");
+    put_i64(g.o, op);
+    put_u16(g.o, size);
+    put_i64(g.o, g.starts[op] ?? 0);
+  }
+  g.position += pushed(ret) - size;
+  ret
+}
+
+// `State::generate_var`: a variable's value pushed, by its type.
+fn variable(g: Gen, v: integer) -> ir::TypeT {
+  var = var_of(g, v);
+  tp = var.type_def[0] ?? ir::TyVoid;
+  if var.linked_narrow {
+    stop(g, "a linked narrow local");
+    return tp;
+  }
+  at = var_pos(g, v);
+  name = match base(tp) {
+    TyInteger { spec: _ } => "OpVarInt",
+    TyCharacter => "OpVarCharacter",
+    TyBoolean => "OpVarBool",
+    TySingle => "OpVarSingle",
+    TyFloat => "OpVarFloat",
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "OpVarRef" } else { "OpVarEnum" },
+    TyReference { n: _, dep: _ } => "OpVarRef",
+    TyVector { inner: _, dep: _ } => "OpVarVector",
+    TySorted { n: _, keys: _, dep: _ } => "OpVarVector",
+    TyHash { n: _, names: _, dep: _ } => "OpVarVector",
+    TyIndex { n: _, keys: _, dep: _ } => "OpVarVector",
+    TyText { dep: _ } => if var.argument { "OpArgText" } else { "" },
+    _ => "",
+  };
+  if name == "" {
+    stop(g, "a variable of a type the writer does not read yet");
+    return tp;
+  }
+  add_op(g, name);
+  put_u16(g.o, at);
+  tp
+}
+
+// `State::add_return`: the return, with the arguments' bytes, the answer's and the evaluation
+// position.
+fn add_return(g: Gen) {
+  ret = def_of(g, g.d).returned[0] ?? ir::TyVoid;
+  match ret {
+    TyIterator { step: _, inner: _ } => {
+      stop(g, "a generator's return");
+      return;
+    }
+    _ => {}
+  }
+  add_op(g, "OpReturn");
+  put_u16(g.o, g.arguments);
+  put_u16(g.o, frame::width(ret, true));
+  put_u16(g.o, g.position);
+}
+
+// `State::generate_block`.
+fn block(g: Gen, bl: ir::Block, top: boolean) -> ir::TypeT {
+  if len(bl.operators) == 0 {
+    return ir::TyVoid;
+  }
+  to = g.position;
+  tp: ir::TypeT = ir::TyVoid;
+  returned = false;
+  for n in bl.operators {
+    if g.why != "" {
+      return tp;
+    }
+    match unspan(n) {
+      NdReturn { inner } => {
+        generate(g, inner, false);
+        add_return(g);
+        returned = true;
+        tp = ir::TyVoid;
+      }
+      NdLine { n: _ } => {}
+      _ => {
+        returned = false;
+        tp = generate(g, n, false);
+      }
+    }
+  }
+  if top {
+    if !returned {
+      add_return(g);
+    }
+    return tp;
+  }
+  result = bl.result[0] ?? ir::TyVoid;
+  size = pushed(result);
+  after = to + size;
+  if g.position > after {
+    add_op(g, "OpFreeStack");
+    put_u16(g.o, size);
+    put_u16(g.o, g.position - to);
+  } else if g.position < after {
+    stop(g, "a block that leaves less than its result");
+  }
+  g.position = after;
+  tp
+}
+
+// `State::generate_inner`: one node.
+fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
+  if g.why != "" {
+    return ir::TyVoid;
+  }
+  match node {
+    NdSpan { pos: _, inner } => generate(g, inner, top),
+    NdInt { n } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, n);
+      ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 } }
+    }
+    NdLong { n } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, n);
+      ir::TyInteger { spec: ir::IntegerSpec { min: -9223372036854775807, max: 9223372036854775807, not_null: false, forced_size: 0 } }
+    }
+    NdBoolean { b } => {
+      add_op(g, if b { "OpConstTrue" } else { "OpConstFalse" });
+      ir::TyBoolean
+    }
+    NdText { s } => {
+      if s.size() >= 256 {
+        stop(g, "a long text constant");
+      } else {
+        add_op(g, "OpConstText");
+        put_str(g.o, s);
+      }
+      ir::TyText { dep: [] }
+    }
+    NdVar { n } => variable(g, n),
+    NdNull => ir::TyVoid,
+    NdLine { n: _ } => ir::TyVoid,
+    NdInsert { items } => {
+      for i in items {
+        generate(g, i, false);
+      }
+      ir::TyVoid
+    }
+    NdCall { def_nr, args } => call(g, def_nr, args),
+    NdBlock { block: bl } => block(g, bl[0]!, top),
+    NdReturn { inner } => {
+      generate(g, inner, false);
+      add_return(g);
+      ir::TyVoid
+    }
+    NdSet { var: _, inner: _ } => unwritten(g, "an assignment"),
+    NdIf { cond: _, t: _, f: _ } => unwritten(g, "an if"),
+    NdLoop { block: _ } => unwritten(g, "a loop"),
+    NdBreak { n: _ } => unwritten(g, "a break"),
+    NdContinue { n: _ } => unwritten(g, "a continue"),
+    NdDrop { inner: _ } => unwritten(g, "a dropped value"),
+    NdEnum { ord: _, tp: _ } => unwritten(g, "an enum constant"),
+    NdFloat { f: _ } => unwritten(g, "a float constant"),
+    NdSingle { f: _ } => unwritten(g, "a single constant"),
+    NdCallRef { var: _, args: _ } => unwritten(g, "a call through a reference"),
+    _ => unwritten(g, "a node of another kind"),
+  }
+}
+
+fn unwritten(g: Gen, what: text) -> ir::TypeT {
+  stop(g, "not written yet: {what}");
+  ir::TyVoid
+}
+
+// `State::def_code` for definition `d`: its bytes, or null for a function this writer does
+// not write yet (`why[0]` says what stopped it).  `starts` and `natives` are the image's.
+pub fn function(b: ir::Bundle, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
+  def = b.data.definitions[d]!;
+  ret = def.returned[0] ?? ir::TyVoid;
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], why: "" };
+  if body_null(def) {
+    // No body: the arguments, the return slot, and a return of the declared size.
+    g.arguments = arguments_size(def);
+    g.position = g.arguments + 8;
+    add_return(g);
+  } else {
+    hwm = 0;
+    for v in def.variables.variables {
+      g.slots += [v.stack_pos];
+    }
+    for v in def.variables.variables {
+      t = v.type_def[0] ?? ir::TyVoid;
+      if v.argument {
+        g.slots[v#index] = g.position;
+        g.position += pushed(t);
+      } else if v.stack_pos != 65535 {
+        end = v.stack_pos + frame::width(t, false);
+        if end > hwm {
+          hwm = end;
+        }
+      }
+      if v.name.starts_with("__vdb") || (v.argument && v.linked_narrow) {
+        stop(g, "a prologue the writer does not write yet");
+      }
+      tuple = match base(t) {
+        TyTuple { elems: _ } => v.argument,
+        _ => false,
+      };
+      if tuple {
+        stop(g, "a tuple argument");
+      }
+    }
+    g.arguments = g.position;
+    g.position += 8;
+    empty = match def.code[0] {
+      NdBlock { block: bl } => len(bl[0]?.operators ?? []) == 0,
+      _ => false,
+    };
+    if empty {
+      stop(g, "an empty body");
+    }
+    hwm = frame::stepped(hwm);
+    if hwm > g.position {
+      add_op(g, "OpReserveFrame");
+      put_u16(g.o, hwm - g.position);
+      g.position = hwm;
+    }
+    generate(g, def.code[0]!, true);
+  }
+  why[0] = g.why;
+  if g.why != "" {
     return null;
   }
-  // No body: the arguments, the return slot, and a return of the declared size
-  // (`add_return`).
-  o = Out { code: [] };
-  args = arguments_size(def);
-  put_op(o, b, op_return);
-  put_u16(o, args);
-  put_u16(o, frame::width(ret, true));
-  put_u16(o, args + 8);
-  o.code
+  g.o.code
 }
