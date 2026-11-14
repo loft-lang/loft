@@ -4867,6 +4867,19 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    206 => {
+      if sp >= 16 {
+        ri0 = crt::peek_u32(base, sp - 16);
+        ri1 = crt::peek_u32(base, sp - 12);
+        ri2 = crt::peek_u32(base, sp - 8);
+        sp -= 16;
+        ip += 1;
+        ri3 = base + sp;
+        ri4 = crt::get_w(8, ri0, ri1, ri2, 0, 0) ?? 0; crt::poke_ref(ri3, if ri4 == 0 { 65535 } else { ri0 }, ri4, if ri4 == 0 { 0 } else { 8 });
+        sp += 16;
+        continue;
+      }
+    }
     211 => {
       if sp >= 16 {
         ri0 = crt::peek_u32(base, sp - 16);
@@ -5036,6 +5049,50 @@ pub fn run(s: state::State, end: integer) {
         base = crt::stack_base(stk);
         fd = s.depth;
         rp = -1;
+        continue;
+      }
+    }
+    240 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 16 {
+        ri1 = crt::peek_u32(base, sp - 16);
+        ri2 = crt::peek_u32(base, sp - 12);
+        ri3 = crt::peek_u32(base, sp - 8);
+        sp -= 16;
+        ip += 3;
+        ri4 = base + sp;
+        crt::slot_get_to(ri4, ri1, ri2, ri3, ri0);
+        sp += 16;
+        continue;
+      }
+    }
+    241 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 32 && s.table_loaded {
+        ri1 = crt::peek_u32(base, sp - 16);
+        ri2 = crt::peek_u32(base, sp - 12);
+        ri3 = crt::peek_u32(base, sp - 8);
+        ri4 = crt::peek_u32(base, sp - 32);
+        ri5 = crt::peek_u32(base, sp - 28);
+        ri6 = crt::peek_u32(base, sp - 24);
+        sp -= 32;
+        ip += 3;
+        crt::slot_move(ri0, ri4, ri5, ri6, ri1, ri2, ri3);
+        continue;
+      }
+    }
+    242 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 32 && s.table_loaded {
+        ri1 = crt::peek_u32(base, sp - 16);
+        ri2 = crt::peek_u32(base, sp - 12);
+        ri3 = crt::peek_u32(base, sp - 8);
+        ri4 = crt::peek_u32(base, sp - 32);
+        ri5 = crt::peek_u32(base, sp - 28);
+        ri6 = crt::peek_u32(base, sp - 24);
+        sp -= 32;
+        ip += 3;
+        crt::slot_set(ri0, ri4, ri5, ri6, ri1, ri2, ri3);
         continue;
       }
     }

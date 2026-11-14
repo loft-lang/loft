@@ -1832,7 +1832,7 @@ fn OpReplaceVector(r: vector, other: vector, tp: const u16);
 // (non-capturing closure / default-init).
 fn OpRefFromChildRec(field: reference) -> reference[field];
 #rust"s.database.ref_from_child_rec(&@field)"
-#loft"state::ref_from_child_rec(field)"
+#loft"state::ref_from_child_rec(field) #arm tmp0 = crt::get_w(8, field.store_nr, field.rec, field.pos, 0, 0) ?? 0; crt::poke_ref(out_at, if tmp0 == 0 {{ 65535 }} else {{ field.store_nr }}, tmp0, if tmp0 == 0 {{ 0 }} else {{ 8 }});"
 #pure
 // @PLN219 `@FR-F-ParamRef` — the slot-cell content naming the out-of-line field at `field`
 // (`keys::SLOT_FIELD_BIT` set in its position), handed to a `&S` parameter whose `S` is held
@@ -2355,10 +2355,13 @@ fn OpSetStackRef(r: reference, v1: reference);
 // holds and is written as the field (`OpSetChildRec`, `tp` with its free-source bit); any
 // other cell is read and written as `OpGetStackRef` / `OpSetStackRef` do.
 fn OpGetSlotRef(r: reference, fld: const u16) -> reference;
+#loft" #arm crt::slot_get_to(out_at, r.store_nr, r.rec, r.pos, fld);"
 // The move twin of `OpSetSlotRef` (`slot = slot.right`): a field-naming cell takes the child `src`
 // (a field inside its node) by number (`OpMoveChildRec`); any other cell takes the child's view.
 fn OpMoveSlotRef(r: reference, src: reference, tp: const u16);
+#loft" #arm guard(s.table_loaded): crt::slot_move(tp, r.store_nr, r.rec, r.pos, src.store_nr, src.rec, src.pos);"
 fn OpSetSlotRef(r: reference, v1: reference, tp: const u16);
+#loft" #arm guard(s.table_loaded): crt::slot_set(tp, r.store_nr, r.rec, r.pos, v1.store_nr, v1.rec, v1.pos);"
 // Write a fn-ref THROUGH a `&fn(…)` link.  The link's own slot holds a DbRef to the
 // caller's fn-ref slot, so this is the two-step `&text` already performs: read the link
 // at this frame slot, then write the 20-byte blob where it points.  A fn-ref has two

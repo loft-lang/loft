@@ -2741,6 +2741,17 @@ int64_t loft_crt_slot_get(int64_t *out, int64_t no, int64_t s, int64_t r, int64_
     return 0;
 }
 
+/* `slot_get`'s answer a part at a time (0 store, 1 record, 2 position), and written at the
+ * address `to` (`OpGetSlotRef`'s arm). */
+int64_t loft_crt_slot_get_part(int64_t part, int64_t s, int64_t r, int64_t p, int64_t fld) {
+    return loft_crt_slot_part(loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld)), part);
+}
+extern void loft_twin_slot_get_to(int64_t to, int64_t s, int64_t r, int64_t p, int64_t fld);
+LOFT_STEP_FN void loft_twin_slot_get_to(int64_t to, int64_t s, int64_t r, int64_t p, int64_t fld) {
+    loft_ref v = loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld));
+    loft_twin_poke_ref(to, v.store_nr, v.rec, v.pos);
+}
+
 /* OpMoveSlotRef: `slot = slot.f` through the cell at `(s, r, p)` (`slot_move`). */
 void loft_crt_slot_move(int64_t tp, int64_t s, int64_t r, int64_t p, int64_t ss, int64_t sr, int64_t sp) {
     if (!LOFT_CRT_TP_OK(tp)) return;

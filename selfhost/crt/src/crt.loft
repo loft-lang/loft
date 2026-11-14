@@ -692,6 +692,15 @@ pub fn get_dbref_to(to: integer, store: integer, rec: integer, pos: integer, fld
 }
 #c_twin "loft_twin_get_dbref_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_slot_get_part(part: integer, s: integer, r: integer, p: integer, fld: integer) -> integer;
+#c "loft_crt_slot_get_part" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `OpGetSlotRef`'s answer (`slot_get`) written at the address `to`.
+pub fn slot_get_to(to: integer, s: integer, r: integer, p: integer, fld: integer) {
+  poke_ref(to, c_slot_get_part(0, s, r, p, fld), c_slot_get_part(1, s, r, p, fld), c_slot_get_part(2, s, r, p, fld));
+}
+#c_twin "loft_twin_slot_get_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 // `n` bytes moved from byte `from` to byte `to` of the address `base`, with no test of the
 // positions, as `peek_*` reads.
 pub fn move_bytes(base: integer, from: integer, to: integer, n: integer) {
