@@ -539,6 +539,8 @@ fn c_child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: 
 #c "loft_crt_child_rec_in_place" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
 fn c_new_child_rec(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) -> integer;
 #c "loft_crt_new_child_rec" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+fn c_fill_keyed(elem: integer, tp: integer, cs: integer, cr: integer, cp: integer, ss: integer, sr: integer, sp: integer, kind: integer, linked: integer, free_source: integer, held: integer, nullable: integer, ps: integer, pr: integer, pp: integer, members: vector<integer>);
+#c "loft_crt_fill_keyed" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
 fn c_copy_closure(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, owned: vector<integer>) -> integer;
 #c "loft_crt_copy_closure" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
 fn c_demote_rec(tp: integer, store: integer, rec: integer, pos: integer, fld: integer);
@@ -834,6 +836,13 @@ pub fn child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec
 // `OpChildRec`: a new child record of type `tp` for the field, with `image`; in `out`.
 pub fn new_child_rec(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) {
   c_new_child_rec(out, tp, store, rec, pos, image);
+}
+
+// `OpFillKeyed`: every record of the vector at `(ss, sr, sp)` filed into the keyed collection at
+// `(cs, cr, cp)` of type `tp` (elements `elem`, `kind` as `set_keyed` takes it); `members` its
+// linked group as `group_finish` takes one, empty outside a group, held by `(ps, pr, pp)`.
+pub fn fill_keyed(elem: integer, tp: integer, cs: integer, cr: integer, cp: integer, ss: integer, sr: integer, sp: integer, kind: integer, linked: boolean, free_source: boolean, held: boolean, nullable: boolean, ps: integer, pr: integer, pp: integer, members: vector<integer>) {
+  c_fill_keyed(elem, tp, cs, cr, cp, ss, sr, sp, kind, if linked { 1 } else { 0 }, if free_source { 1 } else { 0 }, if held { 1 } else { 0 }, if nullable { 1 } else { 0 }, ps, pr, pp, members);
 }
 
 // `OpCopyClosure`: a closure record of type `tp` copied, each of its `owned` capture slots (a

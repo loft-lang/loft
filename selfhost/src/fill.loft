@@ -2017,6 +2017,15 @@ pub fn op_clear_keyed(s: state::State) {
   s.clear_keyed(dest, tp);
 }
 
+pub fn op_fill_keyed(s: state::State) {
+  tp = s.code_u16();
+  parent_tp = s.code_u16();
+  field = s.code_u16();
+  src = s.get_stack_dbref();
+  parent = s.get_stack_dbref();
+  s.fill_keyed(parent, src, tp, parent_tp, field);
+}
+
 pub fn op_length_spatial(s: state::State) {
   r = s.get_stack_dbref();
   new_value: integer? = crt::index_len(r.store_nr, r.rec, r.pos, 2);
@@ -2542,6 +2551,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     327 => op_evacuate(s),
     328 => op_replace_keyed(s),
     329 => op_clear_keyed(s),
+    330 => op_fill_keyed(s),
     331 => op_length_spatial(s),
     332 => op_size_spatial(s),
     333 => op_length_trie(s),

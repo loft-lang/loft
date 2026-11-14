@@ -184,3 +184,40 @@ pub fn parallel_join(self: state::State) {
   self.native = state::PAR_BLOCK;
 }
 
+// `Stores::fill_keyed_from_vector`: every record of the plain vector `src` filed by key into a
+// keyed collection of type `raw` (its top bit frees the source after).  With `field` 65535 the
+// collection is `parent` itself; otherwise it is field `field` of the `parent_tp` struct at
+// `parent`, and a field of a linked group files each record into every member.
+pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, raw: integer, parent_tp: integer, field: integer) {
+  tp = raw & 32767;
+  self.load_table();
+  elem = types::content_of(self.types, tp);
+  if elem == null {
+    self.stop("not carried: a fill of {self.types[tp]?.name ?? "a collection"}");
+    return;
+  }
+  place = parent.pos;
+  members: vector<integer> = [];
+  held = false;
+  nullable = false;
+  if field != 65535 {
+    f = types::record_fields(self.types, parent_tp)[field];
+    gm = types::group_members(self.types, parent_tp, field);
+    if f == null || gm == null {
+      self.stop("not carried: a fill of a field the type table does not place");
+      return;
+    }
+    place = parent.pos + f!.position;
+    if len(gm!) >= 6 {
+      members = gm!;
+      k = 0;
+      while k + 2 < len(members) {
+        held = held || (members[k + 1] ?? -1) == 0;
+        nullable = nullable || types::nullable_element(self.types, members[k + 2] ?? 0);
+        k += 3;
+      }
+    }
+  }
+  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, types::keyed_kind(self.types, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
+}
+

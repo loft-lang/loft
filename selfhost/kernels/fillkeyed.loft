@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a plain vector assigned to a keyed field: each record is filed by its key,
+// so a lookup finds it, an absent key finds nothing, and a sorted field walks in key order.
+
+struct R { id: integer, n: integer }
+struct Hold { h: hash<R[id]>, o: sorted<R[id]> }
+
+// The value under 2 (20), nothing under 9 (0), three records, and the order 1, 2, 3:
+// 20 * 10000 + 0 * 1000 + 3 * 1000 + 123 = 203123.
+fn filed(k: integer) -> integer {
+  v: vector<R> = [R { id: 3, n: 30 }, R { id: 1, n: 10 }, R { id: 2, n: 20 }];
+  s = Hold {};
+  s.h = v;
+  s.o = v;
+  order = 0;
+  for r in s.o {
+    order = order * 10 + r.id;
+  }
+  (s.h[2].n ?? 0) * 10000 + (s.h[9].n ?? 0) * 1000 + len(s.h) * 1000 + order + k - k
+}
+
+fn main() {
+  println("{filed(0)}");
+}

@@ -1170,6 +1170,35 @@ void loft_crt_group_finish(int64_t elem, int64_t held, int64_t nullable, int64_t
                       loft_crt_ref(rs, rr, rp), rows, n);
 }
 
+/* OpFillKeyed (`Stores::fill_keyed_from_vector`): every record of the vector `src` filed into
+ * the keyed collection at `c`, of type `tp` with elements of type `elem`.  `m` holds the
+ * collection's linked group as `loft_crt_group_finish` takes one — empty outside a group — and
+ * `p` is the struct that holds it.  `kind` as the lowering numbers it (`loft_crt_set_keyed`). */
+void loft_crt_fill_keyed(int64_t elem, int64_t tp, int64_t cs, int64_t cr, int64_t cp, int64_t ss, int64_t sr,
+                         int64_t sp, int64_t kind, int64_t linked, int64_t free_source, int64_t held,
+                         int64_t nullable, int64_t ps, int64_t pr, int64_t pp, const int64_t *m, int64_t nm) {
+    int k = kind == 1 ? LOFT_KEYED_SORTED : kind == 2 ? LOFT_KEYED_ORDERED : kind == 3 ? LOFT_KEYED_INDEX
+          : kind == 4 ? LOFT_KEYED_SPATIAL : kind == 5 ? LOFT_KEYED_TRIE : LOFT_KEYED_HASH;
+    int n = (int) (nm / 3);
+    loft_member rows[64];
+    loft_group g;
+    if (!LOFT_CRT_TP_OK(tp) || !LOFT_CRT_TP_OK(elem) || n > 64) return;
+    for (int i = 0; i < n; i++) {
+        int64_t mt = m[3 * i + 2];
+        rows[i].pos = (uint32_t) m[3 * i];
+        rows[i].kind = (int) m[3 * i + 1];
+        rows[i].keys = LOFT_CRT_TP_OK(mt) ? loft_crt_types[mt].keys : 0;
+        rows[i].nk = LOFT_CRT_TP_OK(mt) ? loft_crt_types[mt].nk : 0;
+    }
+    g.parent = loft_crt_ref(ps, pr, pp);
+    g.m = rows;
+    g.n = n;
+    g.held = (int) held;
+    g.nullable = (int) nullable;
+    loft_fill_keyed(loft_crt_types, (uint16_t) elem, loft_crt_ref(cs, cr, cp), loft_crt_ref(ss, sr, sp), k,
+                    loft_crt_types[tp].keys, loft_crt_types[tp].nk, (int) linked, (int) free_source, n > 0 ? &g : 0);
+}
+
 /* OpSortVector (`Stores::sort_vector`): the primitive vector sorted in place, its elements of
  * `size` bytes compared as floats, texts, unsigned or signed integers. */
 void loft_crt_vec_sort(int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t is_float, int64_t is_text,

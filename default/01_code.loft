@@ -2237,6 +2237,7 @@ fn OpLinkRecord(data: reference, rec: reference, parent_tp: const u16, fld: cons
 fn OpFillKeyed(parent: reference, src: reference, tp: const u16, parent_tp: const u16, field: const u16);
 #cold
 #rust"s.database.fill_keyed_from_vector(&@parent, &@src, @tp, @parent_tp, @field);"
+#loft"s.fill_keyed(parent, src, tp, parent_tp, field);"
 // `coll[key] = value` insert-or-replace into a keyed collection.  loft#1716
 // (`Col-Assign`): the subscript's `no_keys` values trail the parameters as `OpGetRecord`'s
 // do, and the copy is placed under them with its key fields set to them, so `c[k] = v`
