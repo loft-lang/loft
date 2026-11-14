@@ -883,6 +883,20 @@ pub fn op_ne_ref(s: state::State) {
   s.put_stack_bool(new_value);
 }
 
+pub fn op_get_ref(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: state::DbRef? = state_ops::get_ref(v1, fld);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn op_set_ref(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_dbref();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(8, v1.store_nr, v1.rec, v1.pos, fld, 0, val.rec); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
 pub fn op_set_db_ref(s: state::State) {
   fld = s.code_u16();
   val = s.get_stack_dbref();
@@ -1330,6 +1344,10 @@ pub fn op_get_record(s: state::State) {
   s.get_record();
 }
 
+pub fn op_hash_add(s: state::State) {
+  s.hash_add();
+}
+
 pub fn op_length_hash(s: state::State) {
   r = s.get_stack_dbref();
   new_value: integer? = crt::hash_len(r.store_nr, r.rec, r.pos);
@@ -1476,6 +1494,10 @@ pub fn op_static_call(s: state::State) {
   s.static_call();
 }
 
+pub fn op_create_stack(s: state::State) {
+  s.create_stack();
+}
+
 pub fn op_init_create_stack(s: state::State) {
   s.init_create_stack();
 }
@@ -1502,6 +1524,14 @@ pub fn op_move_slot_ref(s: state::State) {
 
 pub fn op_set_slot_ref(s: state::State) {
   s.set_slot_ref();
+}
+
+pub fn op_set_stack_fn_ref(s: state::State) {
+  s.set_stack_fn_ref();
+}
+
+pub fn op_get_stack_fn_ref(s: state::State) {
+  s.get_stack_fn_ref();
 }
 
 pub fn op_drop_fn_ref(s: state::State) {
@@ -1646,6 +1676,12 @@ pub fn op_narrow32(s: state::State) {
 pub fn op_conv_character_from_null(s: state::State) {
   new_value: integer? = null;
   s.put_stack_char(new_value);
+}
+
+pub fn op_const_long_text(s: state::State) {
+  s.code_i64();
+  s.code_i64();
+  s.stop("OpConstLongText is obsolete: long texts are OpConstStoreText");
 }
 
 pub fn op_cast_int_from_text(s: state::State) {
@@ -1812,6 +1848,18 @@ pub fn op_format_stack_database(s: state::State) {
   s.format_stack_database();
 }
 
+pub fn op_store_tag(s: state::State) {
+  s.store_tag();
+}
+
+pub fn op_free_ref_tag(s: state::State) {
+  s.free_ref_tag();
+}
+
+pub fn op_sizeof_ref(s: state::State) {
+  s.sizeof_ref();
+}
+
 pub fn op_eq_content(s: state::State) {
   tp = s.code_u16();
   v2 = s.get_stack_dbref();
@@ -1894,6 +1942,13 @@ pub fn op_replace_vector(s: state::State) {
   other = s.get_stack_dbref();
   r = s.get_stack_dbref();
   s.move_vector(r, other, tp, true);
+}
+
+pub fn op_copy_closure(s: state::State) {
+  tp = s.code_u16();
+  src = s.get_stack_dbref();
+  new_value: state::DbRef? = s.copy_closure(src, tp);
+  s.put_stack_dbref(new_value);
 }
 
 pub fn op_hash_remove(s: state::State) {
@@ -1988,6 +2043,18 @@ pub fn op_size_trie(s: state::State) {
 
 pub fn op_fn_ref_detach_shared(s: state::State) {
   s.fn_ref_detach_shared();
+}
+
+pub fn op_parallel_begin(s: state::State) {
+  s.parallel_begin();
+}
+
+pub fn op_parallel_arm(s: state::State) {
+  s.parallel_arm();
+}
+
+pub fn op_parallel_join(s: state::State) {
+  s.parallel_join();
 }
 
 pub fn op_pre_alloc_vector(s: state::State) {
@@ -2290,6 +2357,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     140 => op_put_ref(s),
     141 => op_eq_ref(s),
     142 => op_ne_ref(s),
+    143 => op_get_ref(s),
+    144 => op_set_ref(s),
     145 => op_set_db_ref(s),
     146 => op_get_db_ref(s),
     147 => op_get_field(s),
@@ -2355,6 +2424,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     207 => op_slot_tag(s),
     208 => op_child_rec(s),
     209 => op_get_record(s),
+    210 => op_hash_add(s),
     211 => op_length_hash(s),
     212 => op_eq_bool(s),
     213 => op_ne_bool(s),
@@ -2379,6 +2449,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     232 => op_link_record(s),
     233 => op_set_keyed(s),
     234 => op_static_call(s),
+    235 => op_create_stack(s),
     236 => op_init_create_stack(s),
     237 => op_get_stack_text(s),
     238 => op_get_stack_ref(s),
@@ -2386,6 +2457,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     240 => op_get_slot_ref(s),
     241 => op_move_slot_ref(s),
     242 => op_set_slot_ref(s),
+    243 => op_set_stack_fn_ref(s),
+    244 => op_get_stack_fn_ref(s),
     245 => op_drop_fn_ref(s),
     246 => op_fn_ref_closure(s),
     247 => op_append_stack_text(s),
@@ -2412,6 +2485,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     270 => op_range_default(s),
     271 => op_narrow32(s),
     272 => op_conv_character_from_null(s),
+    273 => op_const_long_text(s),
     274 => op_cast_int_from_text(s),
     275 => op_cast_single_from_text(s),
     276 => op_cast_float_from_text(s),
@@ -2440,6 +2514,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     299 => op_database(s),
     300 => op_format_database(s),
     301 => op_format_stack_database(s),
+    302 => op_store_tag(s),
+    303 => op_free_ref_tag(s),
+    304 => op_sizeof_ref(s),
     305 => op_eq_content(s),
     306 => op_ne_content(s),
     307 => op_size_vector(s),
@@ -2452,6 +2529,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     314 => op_insert_vector(s),
     315 => op_adopt_vector(s),
     316 => op_replace_vector(s),
+    317 => op_copy_closure(s),
     318 => op_hash_remove(s),
     319 => op_reserve_hash(s),
     320 => op_size_hash(s),
@@ -2469,6 +2547,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     333 => op_length_trie(s),
     334 => op_size_trie(s),
     335 => op_fn_ref_detach_shared(s),
+    336 => op_parallel_begin(s),
+    337 => op_parallel_arm(s),
+    338 => op_parallel_join(s),
     339 => op_pre_alloc_vector(s),
     340 => op_reserve_vector(s),
     341 => op_get_file(s),

@@ -1207,6 +1207,19 @@ int64_t loft_crt_new_child_rec(int64_t *out, int64_t no, int64_t tp, int64_t sto
     return 0;
 }
 
+/* OpCopyClosure (`Stores::copy_closure_record`): a closure record of type `tp` copied, its
+ * owned capture slots (`owned`, their positions) given records of their own; in `out`. */
+int64_t loft_crt_copy_closure(int64_t *out, int64_t no, int64_t tp, int64_t store, int64_t rec, int64_t pos,
+                              const int64_t *owned, int64_t n) {
+    uint16_t slots[64];
+    int64_t i;
+    if (!LOFT_CRT_TP_OK(tp) || n > 64) return 0;
+    for (i = 0; i < n; i++) slots[i] = (uint16_t) owned[i];
+    loft_crt_put_ref(out, no, loft_copy_closure(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+                                                n ? slots : 0, (uint32_t) n));
+    return 0;
+}
+
 /* OpDemoteRec (`Stores::demote_rec`): the record's field `fld` of type `tp` demoted to a child
  * record. */
 void loft_crt_demote_rec(int64_t tp, int64_t store, int64_t rec, int64_t pos, int64_t fld) {

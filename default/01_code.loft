@@ -295,6 +295,7 @@ fn OpConvCharacterFromInt(v1: __word) -> character;
 fn OpConstLongText(start: const __word, size: const __word) -> text;
 #cold
 #rust"s.string_from_texts(@start, @size);"
+#loft"s.stop(\"OpConstLongText is obsolete: long texts are OpConstStoreText\");"
 fn OpCastIntFromText(v1: text) -> __word;
 #cold
 #rust"match @v1.parse::<i64>() {{ Ok(v) if v == i64::MIN => {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }}, Ok(v) => v, Err(_) => i64::MIN }}"
@@ -1339,8 +1340,10 @@ fn OpNeContent(v1: reference, v2: reference, tp: const u16) -> boolean;
 // Can be used to get another record within the same database
 fn OpGetRef(v1: reference, fld: const u16) -> reference[v1];
 #rust"stores.get_ref(&@v1, u32::from(@fld))"
+#loft"state_ops::get_ref(v1, fld)"
 fn OpSetRef(v1: reference, fld: const u16, val: reference);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v.rec); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(8, v1.store_nr, v1.rec, v1.pos, fld, 0, val.rec); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // Plan-06 phase 4d.C step 2 — full 12-byte DbRef store/load.  Used by
 // the closure half of `Type::Function = (u32, DbRef)` slots when stored
 // in vector elements / struct fields.  Layout: u32 store_nr | u32 rec |
@@ -1846,6 +1849,7 @@ fn OpChildRec(field: reference, tp: const u16) -> reference[field];
 fn OpCopyClosure(src: reference, tp: const u16) -> reference;
 #cold
 #rust"s.database.copy_closure_record(&@src, @tp)"
+#loft"s.copy_closure(src, tp)"
 // Get a record from a structure. This operator also reads a dynamic key from stack (not shown here)
 fn OpGetRecord(data: reference, db_tp: const u16, no_keys: const u8) -> reference[data];
 // These types should eventually become unnecessary because of the unified internal database API

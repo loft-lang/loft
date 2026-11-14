@@ -58,3 +58,129 @@ pub fn get_dir(self: state::State, path: text?, result: state::DbRef) -> boolean
   }
   crt::get_dir(path, result.store_nr, result.rec, result.pos, size)
 }
+
+// `Stores::get_ref`: the record a four-byte child pointer field names, in the holder's store;
+// null when the holder has no record or the pointer is zero.
+pub fn get_ref(v1: state::DbRef, fld: integer) -> state::DbRef {
+  rec = if v1.rec == 0 { 0 } else { crt::get_w(8, v1.store_nr, v1.rec, v1.pos, fld, 0) ?? 0 };
+  if rec == 0 {
+    state::DbRef { store_nr: state::NULL_STORE, rec: 0, pos: 0 }
+  } else {
+    state::DbRef { store_nr: v1.store_nr, rec: rec, pos: 8 }
+  }
+}
+
+// `Stores::copy_closure_record`: a closure record of type `tp` copied, the captures it owns —
+// its fields of the owned-reference shape — given records of their own.
+pub fn copy_closure(self: state::State, src: state::DbRef, tp: integer) -> state::DbRef {
+  self.load_table();
+  shape = -1;
+  for t in self.types {
+    if t.name == "dbref" {
+      shape = t#index;
+    }
+  }
+  owned: vector<integer> = [];
+  match self.types[tp]?.parts[0] {
+    PtStruct { fields } => {
+      for f in fields {
+        if f.content == shape {
+          owned += [f.position];
+        }
+      }
+    }
+    _ => {}
+  }
+  io: vector<integer> = [state::NULL_STORE, 0, 0];
+  crt::copy_closure(io, tp, src.store_nr, src.rec, src.pos, owned);
+  out_ref(io)
+}
+
+// `State::hash_add`: the record and then the hash popped; the record filed in the hash of
+// type `tp`.
+pub fn hash_add(self: state::State) {
+  tp = self.code_u16();
+  rec = self.get_stack_dbref();
+  data = self.get_stack_dbref();
+  self.load_table();
+  crt::hash_insert(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp);
+}
+
+// `State::create_stack`: a reference to the frame slot `pos` under the top pushed — the null
+// state of a borrowed reference, overwritten before any field is read through it.
+pub fn create_stack(self: state::State) {
+  pos = self.code_u16();
+  self.put_stack_dbref(state::DbRef { store_nr: self.stk, rec: 1, pos: 8 + self.stack_pos - pos });
+}
+
+// `State::get_stack_fn_ref`: a function reference read through a `&fn(…)` link — the link
+// popped, the 20 bytes it names in the stack pushed in a 24-byte step.
+pub fn get_stack_fn_ref(self: state::State) {
+  r = self.get_stack_dbref();
+  if r.store_nr != self.stk || r.rec != 1 {
+    self.stop("not carried: a function reference read through a link outside the stack");
+    return;
+  }
+  self.put_stack_i64(0);
+  self.put_stack_i64(0);
+  self.put_stack_i64(0);
+  crt::stack_move(self.stk, r.pos - 8, self.stack_pos - 24, 20);
+}
+
+// `State::set_stack_fn_ref`: the function reference popped (a 24-byte step) and written
+// through the `&fn(…)` link in the frame slot `pos` back from the top before the pop.
+pub fn set_stack_fn_ref(self: state::State) {
+  pos = self.code_u16();
+  self.get_stack_i64();
+  self.get_stack_i64();
+  self.get_stack_i64();
+  link = self.get_var_dbref(pos - 24);
+  if link.store_nr != self.stk || link.rec != 1 {
+    self.stop("not carried: a function reference written through a link outside the stack");
+    return;
+  }
+  crt::stack_move(self.stk, self.stack_pos, link.pos - 8, 20);
+}
+
+// `State::store_tag`: the C runtime's stores carry no owner tag (a Rust testing gate's), so
+// the reference and the tag are read and nothing is marked.
+pub fn store_tag(self: state::State) {
+  self.get_stack_dbref();
+  self.code_u16();
+}
+
+// `State::free_ref_tag`: as `free_ref`; the tag the Rust gate checks is read and not compared.
+pub fn free_ref_tag(self: state::State) {
+  r = self.get_stack_dbref();
+  self.code_u16();
+  self.put_stack_dbref(r);
+  self.free_ref();
+}
+
+// `State::sizeof_ref`: the size of the record the reference names, by the type its header
+// carries; 0 for a null one.
+pub fn sizeof_ref(self: state::State) {
+  r = self.get_stack_dbref();
+  size = 0;
+  if r.rec != 0 {
+    tp = crt::get_w(crt::W_INT4, r.store_nr, r.rec, 4, 0, 0) ?? -1;
+    size = self.types[tp]?.size ?? 0;
+  }
+  self.put_stack_i64(size);
+}
+
+// `State::parallel_begin` / `parallel_arm` / `parallel_join` (a `par` block): the arms' code
+// offsets collected, then the run handed back (`native` is `PAR_BLOCK`) to run each arm.
+pub fn parallel_begin(self: state::State) {
+  self.code_u8();
+  self.arm_offsets.clear();
+}
+
+pub fn parallel_arm(self: state::State) {
+  self.arm_offsets += [self.code_u16()];
+}
+
+pub fn parallel_join(self: state::State) {
+  self.native = state::PAR_BLOCK;
+}
+

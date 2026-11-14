@@ -83,10 +83,17 @@ pub struct State {
   // The frame depth each `par` job in flight runs its workers at, innermost last: a return
   // at that depth hands the run back (`native` is `PAR_RETURNED`) for the job's next worker.
   pub par_depths: vector<integer>,
+  // A `par` block: its arms' code offsets as `OpParallelArm` gave them, and the frame depth
+  // whose return ends the arm now running (-1: none).
+  pub arm_offsets: vector<integer>,
+  pub arm_depth: integer,
 }
 
-// `State.native` when a `par` worker returned.
+// `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
+// one of them returned.
 pub PAR_RETURNED = 1000000;
+pub PAR_BLOCK = 1000001;
+pub PAR_ARM_DONE = 1000002;
 
 // A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
 // running, where it resumes, where its caller's stack and code continue, the copies of its
@@ -163,7 +170,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1 };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
@@ -626,6 +633,9 @@ pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
   }
   if len(self.par_depths) > 0 && (self.par_depths[len(self.par_depths) - 1] ?? -1) == len(self.frames) {
     self.native = PAR_RETURNED;
+  }
+  if self.arm_depth == len(self.frames) {
+    self.native = PAR_ARM_DONE;
   }
   if len(self.frames) > 0 {
     self.frames.remove(len(self.frames) - 1);
