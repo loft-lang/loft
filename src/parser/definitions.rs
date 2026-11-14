@@ -4035,6 +4035,12 @@ impl Parser {
                 } else {
                     diagnostic!(self.lexer, Level::Error, "Expect rust string");
                 }
+            } else if self.default && id == Some("loft".to_string()) {
+                // An operator's `#loft"…"` template: the loft runner's body for it, read by the
+                // loft generator of `fill.loft` (@PLN91); the Rust compiler skips it.
+                if self.lexer.has_cstring().is_none() {
+                    diagnostic!(self.lexer, Level::Error, "Expect loft string");
+                }
             } else if self.default && id == Some("iterator".to_string()) {
                 if let Some(init) = self.lexer.has_cstring() {
                     self.data.definitions[self.context as usize].rust = init;

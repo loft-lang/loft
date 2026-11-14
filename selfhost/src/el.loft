@@ -132,7 +132,16 @@ pub struct El {
   pub pending: vector<PendingImport>,
   pub loading: vector<integer>,
   // The forward references' stubs a declaration adopted this pass (`Data::adopted_stubs`).
-  pub adopted: vector<integer>
+  pub adopted: vector<integer>,
+  // The standard library's `#loft"…"` operator templates, by definition (`create.loft` writes
+  // `fill.loft` from them; the Rust compiler skips the annotation).
+  pub loft_ops: vector<LoftOp>
+}
+
+// An operator's `#loft` template: its definition and its loft body.
+pub struct LoftOp {
+  pub def: integer,
+  pub body: text
 }
 
 pub const STD_SOURCE = 0;
@@ -194,7 +203,8 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     private: [],
     pending: [],
     loading: [],
-    adopted: []
+    adopted: [],
+    loft_ops: []
   }
 }
 
