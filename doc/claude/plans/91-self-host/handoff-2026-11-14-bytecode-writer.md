@@ -12,8 +12,8 @@ C, never a `.rs` file; functionality before speed, speed after compatibility.
 |---|---|---|---|
 | The runner (all 366 operators) | `selfhost/src/state*.loft`, `fill.loft` (generated), `fill_run.loft`, `natives.loft`, `selfhost/crt/` | `python3 selfhost/bench/run_image_survey.py` | 1186 of 1194 agree, 1 stores, 6 stopped, 1 fault, 0 differ |
 | The bytecode writer (step 1) | `bgen.loft`, `bgen_set.loft`, `bgen_loop.loft`, `bgen_tuple.loft`, `bgen_text.loft` | `python3 selfhost/bench/bgen_survey.py` | 8506 of 8611 functions byte-identical, 104 not written, 1 differs |
-| The image's code stream and tables (step 2, begun) | `bgen_image.loft`, `native_table.loft` | the same survey's second line; one program: `bgen_check --stream` | 1139 of 1194 whole streams identical; operator, shared-body and entry tables equal for every program |
-| The runner on loft-written code | `run_image_run.loft` with `LOFT_RUN_PROGRAM=<program image>` | `run_image_survey.py --written` | 1135 of 1194 agree, 0 differ, 53 unwritten |
+| The image's code stream and tables (step 2, begun) | `bgen_image.loft`, `native_table.loft` | the same survey's second line; one program: `bgen_check --stream` | 1139 of 1194 whole streams identical; the operator, shared-body, entry, generator and function-value tables equal for every program the check reaches |
+| The runner on loft-written code | `run_image_run.loft` with `LOFT_RUN_PROGRAM=<program image>` | `run_image_survey.py --written` | 1135 of 1194 agree, 0 differ, 53 unwritten, 3 stopped, 2 fault (the NUL key; the one program with `#c` natives of its own, which loft's natives table does not hold) |
 | Shared decisions | `binds.loft`, `own.loft`, `frame.loft`, `ret_adopt.loft`, `char_walk.loft` | the byte gate | — |
 | Speed | — | `selfhost/bench/fill_speed.sh` | fib 1.68×, mix 1.32×, collatz 1.23× of `loft --interpret` (box not quiet) |
 
@@ -44,11 +44,10 @@ In build order ([rust-dependencies.md](rust-dependencies.md) § the build order)
    `store_spans`) — the debug data `stack_trace()` needs (step 2).
 
 **Step 2 — the image in memory.**  Done in loft: code, starts, natives (plain programs),
-operators and layouts, shared bodies, main.  Open, each a port of one `ir_store::run_image_*`
+operators and layouts, shared bodies, main, `gens` (the port of `gen_facts.rs`) and
+`fnrefs`.  Open, each a port of one `ir_store::run_image_*`
 function compared with the image's table in `bgen_check --stream`:
 5. `consts` (the constant vectors' stores and the long texts: `build_const_vectors`).
-6. `fnrefs` (`fnref_visible_params`, `fnref_text_buffers`, the drop cascade).
-7. `gens` (`gen_facts`: zone sizes, text and owned locals, tuple reference offsets).
 8. `workers` (`par` worker shapes and tuple row plans) and `store_insts`.
 9. `sidecars` (persisted root types: layout identity, paged, box and range load plans).
 10. `types` (the store schema — today the program image's), `oldest` / `bridge` / `source` / `cwd`.
@@ -93,7 +92,10 @@ kernels; the cure is in the emitted C and in the generator of `fill.loft`.
   Promised pure moves, in order: `irx.loft` (unspan, base, peel_link, var_of, int_of,
   call_name, call_args, a pre-order walk); `rotation.loft`; `bind_arms.loft`
   (`re_bind`, `first_arm`, Gen-free); `codes.loft` (`coded`, the no-prefill twin, the stack
-  variant, the text-destination predicates).  `char_walk.loft` is done.
+  variant, the text-destination predicates).  `char_walk.loft` is done, with the `scope`, `null_test` and `hoist_null` fields their
+  `opt_range.loft` reads.  Their branch `laptop-c-perf` holds main `5330b3690` and this
+  branch's tip; this checkout could not merge it back because it changes the generated
+  `doc/lib-*.html` files that sit modified and uncommitted here.
   When merging `laptop-c-perf`: keep exactly one `body_find` / `body_call` in
   `selfhost/crt/src/crt.loft`; `Definition.width32` is on that branch (regenerate with
   `make ir-schema-regen`).
