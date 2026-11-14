@@ -340,9 +340,20 @@ fn typed_null(g: Gen, tp: ir::TypeT) {
       add_op(g, "OpConstInt");
       put_i64(g.o, 255);
     }
-    TyFloat => stop(g, "not written yet: a null float"),
-    TySingle => stop(g, "not written yet: a null single"),
-    TyFunction { args: _, result: _, dep: _, consts: _ } => stop(g, "not written yet: a null function"),
+    TyFloat => {
+      // The quiet NaN, as its bits.
+      add_op(g, "OpConstFloat");
+      put_i64(g.o, 9221120237041090560);
+    }
+    TySingle => {
+      add_op(g, "OpConstSingle");
+      put_i32(g.o, 2143289344);
+    }
+    TyFunction { args: _, result: _, dep: _, consts: _ } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, null);
+      push_sentinel(g);
+    }
     _ => push_sentinel(g),
   }
 }
@@ -1381,6 +1392,21 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     TyRefVar { inner: _ } => true,
     _ => false,
   };
+  function = match tp {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  };
+  if function {
+    if null_value {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, null);
+      push_sentinel(g);
+    } else {
+      fn_ref_value(g, value);
+    }
+    put_fn_ref(g, v);
+    return;
+  }
   if !put_ref {
     stop(g, "not written yet: a first bind of {shape_name(tp)}");
     return;
@@ -1531,6 +1557,7 @@ fn variable(g: Gen, v: integer) -> ir::TypeT {
     TyTrie { n: _, key: _, dep: _ } => "OpVarVector",
     TyIterator { step: _, inner: _ } => "OpVarRef",
     TyRefVar { inner: _ } => "OpVarRef",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "OpVarFnRef",
     TyText { dep: _ } => if var.argument { "OpArgText" } else { "OpVarText" },
     _ => "",
   };
@@ -1576,6 +1603,11 @@ fn variable(g: Gen, v: integer) -> ir::TypeT {
   }
   add_op(g, name);
   put_u16(g.o, at);
+  if name == "OpVarFnRef" {
+    // A function value is its definition and its closure: eight bytes past the text the
+    // operator is declared to answer (`Stack::fnref_signature_gap`).
+    g.position += 8;
+  }
   if through != "" {
     add_op(g, through);
     if operand {
@@ -1743,9 +1775,156 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
       put_i32(g.o, f.bits() & 4294967295);
       ir::TySingle
     }
-    NdCallRef { var: _, args: _ } => unwritten(g, "a call through a reference"),
+    NdCallRef { var, args } => call_ref(g, var, args),
+    NdFnRef { def_nr, var, t } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, def_nr);
+      if var == 65535 {
+        add_op(g, "OpNullRefSentinel");
+      } else {
+        init_slot(g, var, "OpVarRef");
+      }
+      t[0] ?? ir::TyVoid
+    }
+    NdFnRefDnr { n } => {
+      init_slot(g, n, "OpVarInt");
+      ir::TyInteger { spec: ir::IntegerSpec { min: 0, max: 0, not_null: false, forced_size: 0 } }
+    }
     _ => unwritten(g, "a node of another kind"),
   }
+}
+
+// `gen_fn_ref_value_node`: a function value written whole — its definition and its closure
+// slot — through an `if` arm by arm.
+fn fn_ref_value(g: Gen, n: ir::Node) {
+  match unspan(n) {
+    NdIf { cond, t, f } => {
+      generate(g, cond, false);
+      add_op(g, "OpGotoFalseWord");
+      step = len(g.o.code);
+      put_i32(g.o, 0);
+      true_pos = len(g.o.code);
+      at = g.position;
+      fn_ref_value(g, t);
+      add_op(g, "OpGotoWord");
+      end = len(g.o.code);
+      put_i32(g.o, 0);
+      false_pos = len(g.o.code);
+      patch_i32(g.o, step, len(g.o.code) - true_pos);
+      g.position = at;
+      fn_ref_value(g, f);
+      patch_i32(g.o, end, len(g.o.code) - false_pos);
+    }
+    _ => {
+      before = g.position;
+      generate(g, unspan(n), false);
+      if g.position - before < 16 {
+        push_sentinel(g);
+      }
+    }
+  }
+}
+
+// A function value stored into its local (`OpPutFnRef`, which takes the whole value).
+fn put_fn_ref(g: Gen, v: integer) {
+  init_slot(g, v, "OpPutFnRef");
+  g.position -= 8;
+}
+
+// `State::generate_call_ref`: a call through a function value, skipped — its arguments
+// dropped and the null of its result pushed — where the value is absent.
+fn call_ref(g: Gen, v: integer, args: vector<ir::Node>) -> ir::TypeT {
+  params: vector<ir::TypeT> = [];
+  ret = ir::TyVoid;
+  found = false;
+  match var_of(g, v).type_def[0] ?? ir::TyVoid {
+    TyFunction { args: ps, result, dep: _, consts: _ } => {
+      params = ps;
+      ret = result;
+      found = true;
+    }
+    _ => {}
+  }
+  if !found {
+    stop(g, "a call through a local that is no function value");
+    return ret;
+  }
+  declared = 0;
+  for p in params {
+    declared += pushed(p);
+    text_link = match base(p) {
+      TyRefVar { inner } => match base(inner) {
+        TyText { dep: _ } => true,
+        _ => false,
+      },
+      _ => false,
+    };
+    if text_link {
+      stop(g, "not written yet: a call through a function value with a text link parameter");
+      return ret;
+    }
+  }
+  for a in args {
+    p = params[a#index];
+    function_param = p != null && match base(p!) {
+      TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+      _ => false,
+    };
+    link_param = p != null && match p! {
+      TyRefVar { inner: _ } => true,
+      _ => false,
+    };
+    forwarded = plain_var(a);
+    link_arg = forwarded >= 0 && match var_of(g, forwarded).type_def[0] ?? ir::TyVoid {
+      TyRefVar { inner: _ } => true,
+      _ => false,
+    };
+    if function_param {
+      fn_ref_value(g, a);
+    } else if link_param && link_arg {
+      init_slot(g, forwarded, "OpVarRef");
+    } else {
+      generate(g, a, false);
+    }
+  }
+  extra = if len(args) > len(params) { (len(args) - len(params)) * 16 } else { 0 };
+  total = declared + extra;
+  args_top = g.position;
+  init_slot(g, v, "OpVarInt");
+  add_op(g, "OpConvBoolFromInt");
+  add_op(g, "OpGotoFalseWord");
+  step = len(g.o.code);
+  put_i32(g.o, 0);
+  dist = var_pos(g, v);
+  add_op(g, "OpCallRef");
+  put_u16(g.o, dist);
+  put_u16(g.o, total);
+  if g.position < total {
+    stop(g, "a call through a function value with fewer argument bytes than it declares");
+    return ret;
+  }
+  g.position -= total;
+  ret_size = pushed(ret);
+  g.position += ret_size;
+  after = g.position;
+  add_op(g, "OpGotoWord");
+  end = len(g.o.code);
+  put_i32(g.o, 0);
+  absent = len(g.o.code);
+  patch_i32(g.o, step, len(g.o.code) - (step + 4));
+  g.position = args_top;
+  if total > 0 {
+    add_op(g, "OpFreeStack");
+    put_u16(g.o, 0);
+    put_u16(g.o, total);
+    g.position -= total;
+  }
+  if ret_size > 0 {
+    typed_null(g, ret);
+  }
+  patch_i32(g.o, end, len(g.o.code) - absent);
+  g.position = after;
+  ret
 }
 
 // `Stack::size_code`: the bytes a node's value takes, read off the node as it stands.

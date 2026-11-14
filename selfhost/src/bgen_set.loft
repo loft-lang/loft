@@ -242,6 +242,23 @@ fn set_var(g: bgen::Gen, v: integer, value: ir::Node) {
     }
     _ => {}
   }
+  function = match bgen::base(tp) {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  };
+  if function {
+    before = g.position;
+    if null_value {
+      bgen::generate(g, value, false);
+    } else {
+      bgen::fn_ref_value(g, value);
+    }
+    if g.position == before && null_value {
+      bgen::typed_null(g, tp);
+    }
+    bgen::put_fn_ref(g, v);
+    return;
+  }
   put_ref = match bgen::base(tp) {
     TyVector { inner: _, dep: _ } => true,
     TyReference { n: _, dep: _ } => true,
