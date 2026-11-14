@@ -5377,9 +5377,18 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  returns `(a, b, …)` in fill order, the local is a tuple read by
                  `TupleGet`, and the buffer's null init, mint guard and frees leave the
                  IR, so the interpreter claims no store for the call.  Its candidates
-                 are this rule's admissions, and native finds only what the IR
-                 declined.  Switch `LOFT_NO_IR_VALUE_RECORD=1`; guard
-                 `a-small-record-returned-to-a-reader-is-a-tuple.loft`.
+                 are this rule's admissions with one gate left out: a site that
+                 consumes the record as an OPERAND (an argument a record parameter
+                 takes, a field value) declines nothing there, because the IR keeps
+                 that site on the record form and serves the carriers with a TWIN
+                 (`value_records_twinned`) — no site runs other code than before.  A
+                 return buffer followed only by hidden WORK buffers (a callee's own
+                 vector the caller hoists) is dropped at its index, the work buffers
+                 kept.  Native finds only what the IR declined.  Switches
+                 `LOFT_NO_IR_VALUE_RECORD=1`, `LOFT_NO_VR_TWIN_SITES=1` (the operand
+                 decline again); guards `a-small-record-returned-to-a-reader-is-a-tuple.loft`,
+                 `a-small-record-handed-on-as-a-record-keeps-its-tuple-elsewhere.loft`,
+                 and `make rewrite-census` for the admissions.
                  NULLABLE CLAUSE (`--native`, `(N-Road)`, C144): a `-> S?` of a record
                  this rule admits returns the tuple of `S`'s fields followed by a
                  PRESENCE word, `(f₁, …, fₙ, bool)`.  An ABSENT tuple holds every

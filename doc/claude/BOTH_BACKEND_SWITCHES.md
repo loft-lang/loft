@@ -435,23 +435,23 @@ kernel admits against the checked add.
 
 **A small record returned as a tuple (@PLN180, `@FR-R-ValueRecord`, default-ON, both
 backends, at the top of `byte_code_from`, `src/value_record.rs`):** a function returning a
-small record of scalars (flat, or with inline sub-records) from object literals returns a
-tuple in schema order, and the locals its callers bind carry it (`@FR-R-ValueLocal`): a field
-read is a `TupleGet`, a field write a `TuplePut`, and the local may be handed whole to an
-admitted parameter (a tuple parameter), copied into a place field by field, or forwarded.  A
-site that owes a record calls a TWIN that keeps it, so that site runs what it ran before.  The
-call's buffer store, its mint and its frees leave the IR, so the interpreter claims no store per
-call.  A program parsed against again after compiling (the REPL, the debugger, live reload, a
-host calling by name, a build that ships the live tier — plain `--native` among them) keeps
-records (`Data::open_world`); `--ship` and `--interpret` run the pass.
+small record of scalars (flat, or with inline sub-records) from object literals returns a tuple
+in schema order, and its callers' locals carry it (`@FR-R-ValueLocal`): a field read is a
+`TupleGet`, a field write a `TuplePut`, and the local may be handed to a tuple parameter,
+copied into a place field by field, or forwarded.  A site that owes a record — an argument a
+record parameter takes among them — calls a TWIN that keeps it and runs what it ran before; it
+declines the function nowhere else.  A return buffer followed by hidden work buffers is dropped
+at its index.  The interpreter claims no store per call.  A program parsed against again (the
+REPL, the debugger, live reload, a host calling by name, the live tier — plain `--native`)
+keeps records (`Data::open_world`); `--ship` and `--interpret` run the pass.
 **`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form, leaving the case to `--native`'s own
 rewrite (`LOFT_NO_VALUE_RECORD`); it is the first bisect step for a wrong field out of a
-small-record call.  **`LOFT_TRACE_IR_VALUEREC=1`** names each carrier the pass declines and why.
-The analysis behind it (`opt::value_records`) skips, in each round of its admission fixpoint,
-a caller with nothing to decline, and remembers a caller's value locals while the verdicts its
-body reads are unchanged.  **`LOFT_NO_VR_SKIP=1`** walks every caller and
-recomputes every one's locals each round; the compiled program is the same either way, so it
-is the control half of an A/B on compile time, never a bisect step for a wrong answer.
+small-record call.  **`LOFT_NO_VR_TWIN_SITES=1`** makes a record-consuming site decline the
+function again (the writers' gate); the second step.  **`LOFT_TRACE_IR_VALUEREC=1`** names each
+carrier the pass declines and why.  The analysis (`opt::value_records`) skips, each round, a
+caller with nothing to decline, and remembers a caller's value locals while the verdicts its
+body reads are unchanged.  **`LOFT_NO_VR_SKIP=1`** walks every caller each round; the compiled
+program is the same, so it is the control half of an A/B on compile time, never a bisect step.
 
 **A scalar leaf's call is its body (`@FR-R-InlineLeaf`, default-ON, both backends, at the
 top of `byte_code_from` after the value records):** a call of a function whose parameters,

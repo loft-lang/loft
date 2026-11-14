@@ -853,9 +853,8 @@ pub fn raise_recoverable(self: State, what: text) {
 
 // The reference in the frame slot at byte `at`.
 fn ref_at(self: State, at: integer) -> DbRef {
-  io: vector<integer> = [NULL_STORE, 0, 0];
-  crt::slot_ref(io, self.stk, at);
-  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+  // Three raw words of the slot, the store number its low 16 bits (`crt::place_ref`).
+  DbRef { store_nr: crt::stack_get(4, self.stk, at) & 65535, rec: crt::stack_get(4, self.stk, at + 4), pos: crt::stack_get(4, self.stk, at + 8) }
 }
 
 // `get_stack::<DbRef>`: a reference popped (a 16-byte step).
