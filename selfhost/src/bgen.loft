@@ -803,7 +803,115 @@ fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
 // The operators and natives `generate_call` writes in a way of their own, which this writer
 // does not write yet.
 fn special_call(name: text) -> boolean {
-  name == "OpDatabase" || name == "OpSetInt4" || name == "OpPreAllocVector" || name == "OpFreeRef" || name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpFreeRefIfDistinct" || name == "OpGetRecord" || name == "OpSetKeyed" || name == "OpStart" || name == "OpNext" || name == "OpIterate" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpNullRefSentinel" || name == "OpConvRefFromNull" || name == "OpFreeText" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+  name == "OpDatabase" || name == "OpSetInt4" || name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpFreeRefIfDistinct" || name == "OpGetRecord" || name == "OpSetKeyed" || name == "OpStart" || name == "OpNext" || name == "OpIterate" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+}
+
+// The local a node names, as it stands (no span looked through); -1 for any other node.
+fn plain_var(n: ir::Node) -> integer {
+  match n {
+    NdVar { n: v } => v,
+    _ => -1,
+  }
+}
+
+fn int_of(n: ir::Node) -> integer {
+  match unspan(n) {
+    NdInt { n: v } => v,
+    _ => -1,
+  }
+}
+
+// A stack-frame reference to a local pushed (`emit_push_create_stack`).
+fn push_create_stack(g: Gen, dep_offset: integer) {
+  add_op(g, "OpReserveFrame");
+  put_u16(g.o, 16);
+  g.position += 16;
+  add_op(g, "OpInitCreateStack");
+  put_u16(g.o, 16);
+  put_u16(g.o, dep_offset + 16);
+}
+
+// The calls `generate_call` writes in a way of their own, in its order.  True when the call
+// was written (or needs nothing written); a form not ported yet stops the function.
+fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
+  name = def_of(g, op).name;
+  first = if len(args) > 0 { plain_var(args[0]!) } else { -1 };
+  if name == "OpPreAllocVector" && len(args) == 3 && first >= 0 {
+    // A first claim of exactly what the first append would claim is left to that append
+    // (`@FR-R-FirstClaim`, `vector::grown_elems(1, size)`).
+    n = int_of(args[1]!);
+    sz = int_of(args[2]!);
+    if n >= 0 && sz >= 0 {
+      start = 88 / (if sz < 1 { 1 } else { sz });
+      grown = if start < 2 { 2 } else { start };
+      if n == grown {
+        return true;
+      }
+    }
+    return false;
+  }
+  if name == "OpFreeRef" && first >= 0 {
+    if var_of(g, first).skip_free {
+      return true;
+    }
+    function = match var_of(g, first).type_def[0] ?? ir::TyVoid {
+      TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+      _ => false,
+    };
+    at = var_pos(g, first);
+    if function {
+      add_op(g, "OpVarRef");
+      put_u16(g.o, at - 8);
+      add_op(g, "OpFreeRef");
+      return true;
+    }
+    generate(g, args[0]!, false);
+    add_op(g, "OpFreeRef");
+    add_op(g, "OpInitRefSentinel");
+    put_u16(g.o, at);
+    return true;
+  }
+  if (name == "OpDropFnRef" || name == "OpFnRefClosure") && first >= 0 {
+    at = var_pos(g, first);
+    add_op(g, name);
+    put_u16(g.o, at);
+    return true;
+  }
+  if name == "OpFnRefDetachShared" && len(args) == 2 && first >= 0 && plain_var(args[1]!) >= 0 {
+    old = var_pos(g, first);
+    new = var_pos(g, plain_var(args[1]!));
+    add_op(g, name);
+    put_u16(g.o, old);
+    put_u16(g.o, new);
+    return true;
+  }
+  if name == "OpNullRefSentinel" {
+    push_sentinel(g);
+    return true;
+  }
+  if name == "OpConvRefFromNull" {
+    add_op(g, "OpReserveFrame");
+    put_u16(g.o, 16);
+    g.position += 16;
+    add_op(g, "OpInitRef");
+    put_u16(g.o, 16);
+    return true;
+  }
+  if name == "OpCreateStack" && first >= 0 {
+    push_create_stack(g, var_pos(g, first));
+    return true;
+  }
+  if name == "OpFreeText" && len(args) == 1 {
+    v = match unspan(args[0]!) {
+      NdVar { n: nr } => nr,
+      _ => -1,
+    };
+    if v < 0 {
+      stop(g, "not written yet: a tuple member's text freed");
+    }
+    return false;
+  }
+  false
 }
 
 // `State::generate_call`: an operator with its stack arguments written first and its constant
@@ -822,6 +930,12 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   }
   if def.name == "OpAppendText" && len(args) >= 2 && dest_call(g, args[1]!) {
     stop(g, "not written yet: a text call that answers into its destination");
+    return ret;
+  }
+  if own_way(g, op, args) {
+    return ret;
+  }
+  if g.why != "" {
     return ret;
   }
   if special_call(def.name) || len(args) < len(def.attributes) {
