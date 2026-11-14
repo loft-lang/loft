@@ -924,7 +924,14 @@ fn pointee_takes(t: Option<&CType>, img: CElement) -> bool {
 #[must_use]
 pub fn shape_for(t: &Type, direct: bool) -> LoftCShape {
     match t {
-        // A nullable float has no C form on either path: `shape_of` refuses it.
+        // A twin's nullable number crosses as its sentinel bits — `i64::MIN`, a NaN — which
+        // its routine stores or reads as they are; the body says what they mean.  A binding's
+        // cannot: there the number is C's, with no null among its values.
+        Type::Optional(inner)
+            if direct && matches!(**inner, Type::Integer(_) | Type::Float | Type::Single) =>
+        {
+            shape_for(inner, true)
+        }
         Type::Optional(_) => shape_of(t),
         Type::Float | Type::Single if direct => LoftCShape::Real,
         _ => shape_of(t),

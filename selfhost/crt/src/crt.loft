@@ -931,8 +931,28 @@ pub fn get_f64(b: const vector<u8>, at: integer) -> float {
 }
 #c_twin "loft_twin_get_f64" "double(const uint8_t*, int64_t, int64_t)"
 
+// The `n` bytes at `from` copied to `to`, within the vector, as a move (overlap allowed);
+// nothing where either range leaves it.
+pub fn copy_within(b: vector<u8>, from: integer, to: integer, n: integer) {
+  if n <= 0 || from < 0 || to < 0 || from + n > len(b) || to + n > len(b) {
+    return;
+  }
+  if to < from {
+    for k in 0..n {
+      b[to + k] = b[from + k] ?? 0 as u8;
+    }
+  } else {
+    k = n - 1;
+    while k >= 0 {
+      b[to + k] = b[from + k] ?? 0 as u8;
+      k -= 1;
+    }
+  }
+}
+#c_twin "loft_twin_copy_within" "void(uint8_t*, int64_t, int64_t, int64_t, int64_t)"
+
 // The `n` low bytes of `v`, least significant first.
-fn put_bytes(b: vector<u8>, at: integer, n: integer, v: integer) {
+fn put_bytes(b: vector<u8>, at: integer, n: integer, v: integer?) {
   if at < 0 || at + n > len(b) {
     return;
   }
@@ -948,48 +968,50 @@ fn put_bytes(b: vector<u8>, at: integer, n: integer, v: integer) {
   }
 }
 
-pub fn put_u8(b: vector<u8>, at: integer, v: integer) {
+pub fn put_u8(b: vector<u8>, at: integer, v: integer?) {
   put_bytes(b, at, 1, v);
 }
 #c_twin "loft_twin_put_u8" "void(uint8_t*, int64_t, int64_t, int64_t)"
 
-pub fn put_i8(b: vector<u8>, at: integer, v: integer) {
+pub fn put_i8(b: vector<u8>, at: integer, v: integer?) {
   put_bytes(b, at, 1, v);
 }
 #c_twin "loft_twin_put_i8" "void(uint8_t*, int64_t, int64_t, int64_t)"
 
-pub fn put_u16(b: vector<u8>, at: integer, v: integer) {
+pub fn put_u16(b: vector<u8>, at: integer, v: integer?) {
   put_bytes(b, at, 2, v);
 }
 #c_twin "loft_twin_put_u16" "void(uint8_t*, int64_t, int64_t, int64_t)"
 
-pub fn put_i16(b: vector<u8>, at: integer, v: integer) {
+pub fn put_i16(b: vector<u8>, at: integer, v: integer?) {
   put_bytes(b, at, 2, v);
 }
 #c_twin "loft_twin_put_i16" "void(uint8_t*, int64_t, int64_t, int64_t)"
 
-pub fn put_u32(b: vector<u8>, at: integer, v: integer) {
+pub fn put_u32(b: vector<u8>, at: integer, v: integer?) {
   put_bytes(b, at, 4, v);
 }
 #c_twin "loft_twin_put_u32" "void(uint8_t*, int64_t, int64_t, int64_t)"
 
-pub fn put_i32(b: vector<u8>, at: integer, v: integer) {
+pub fn put_i32(b: vector<u8>, at: integer, v: integer?) {
   put_bytes(b, at, 4, v);
 }
 #c_twin "loft_twin_put_i32" "void(uint8_t*, int64_t, int64_t, int64_t)"
 
-pub fn put_i64(b: vector<u8>, at: integer, v: integer) {
+pub fn put_i64(b: vector<u8>, at: integer, v: integer?) {
   put_bytes(b, at, 8, v);
 }
 #c_twin "loft_twin_put_i64" "void(uint8_t*, int64_t, int64_t, int64_t)"
 
-pub fn put_f32(b: vector<u8>, at: integer, v: single) {
-  put_bytes(b, at, 4, v.bits());
+pub fn put_f32(b: vector<u8>, at: integer, v: single?) {
+  // Null is the quiet NaN's pattern (`0x7FC00000`), as the C runtime's `NAN` is.
+  put_bytes(b, at, 4, if v == null { 2143289344 } else { v!.bits() });
 }
 #c_twin "loft_twin_put_f32" "void(uint8_t*, int64_t, int64_t, float)"
 
-pub fn put_f64(b: vector<u8>, at: integer, v: float) {
-  put_bytes(b, at, 8, v.bits());
+pub fn put_f64(b: vector<u8>, at: integer, v: float?) {
+  // Null is the quiet NaN's pattern (`0x7FF8000000000000`), as Rust's `f64::NAN` and C's are.
+  put_bytes(b, at, 8, if v == null { 9221120237041090560 } else { v!.bits() });
 }
 #c_twin "loft_twin_put_f64" "void(uint8_t*, int64_t, int64_t, double)"
 

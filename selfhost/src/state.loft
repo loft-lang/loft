@@ -20,11 +20,17 @@ pub struct State {
   // The single stack and its top (`State::stack_pos`), a byte offset into it.
   pub stack: vector<u8>,
   pub stack_pos: integer,
+  // The frames on the stack (`State::call_stack`'s length), and why the run stopped, if it did.
+  pub depth: integer,
+  pub fault: text,
 }
+
+// `State::MAX_CALL_DEPTH`.
+pub MAX_CALL_DEPTH = 10000;
 
 // A state over `code` with a stack of `size` bytes, both positions at 0.
 pub fn new_state(code: vector<u8>, size: integer) -> State {
-  State { code: code, code_pos: 0, stack: [for _ in 0..size { 0 as u8 }], stack_pos: 0 }
+  State { code: code, code_pos: 0, stack: [for _ in 0..size { 0 as u8 }], stack_pos: 0, depth: 0, fault: "" }
 }
 
 // `State::ensure_stack`: room for `step` more bytes above the top, the stack doubled when it has
@@ -150,55 +156,55 @@ pub fn get_stack_f64(self: State) -> float {
 
 // ── `State::put_stack`: a value pushed, the top stepped up by its width. ──────────────────
 
-pub fn put_stack_u8(self: State, v: integer) {
+pub fn put_stack_u8(self: State, v: integer?) {
   self.ensure_stack(8);
   crt::put_u8(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
-pub fn put_stack_i8(self: State, v: integer) {
+pub fn put_stack_i8(self: State, v: integer?) {
   self.ensure_stack(8);
   crt::put_i8(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
-pub fn put_stack_u16(self: State, v: integer) {
+pub fn put_stack_u16(self: State, v: integer?) {
   self.ensure_stack(8);
   crt::put_u16(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
-pub fn put_stack_i16(self: State, v: integer) {
+pub fn put_stack_i16(self: State, v: integer?) {
   self.ensure_stack(8);
   crt::put_i16(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
-pub fn put_stack_u32(self: State, v: integer) {
+pub fn put_stack_u32(self: State, v: integer?) {
   self.ensure_stack(8);
   crt::put_u32(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
-pub fn put_stack_i32(self: State, v: integer) {
+pub fn put_stack_i32(self: State, v: integer?) {
   self.ensure_stack(8);
   crt::put_i32(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
-pub fn put_stack_i64(self: State, v: integer) {
+pub fn put_stack_i64(self: State, v: integer?) {
   self.ensure_stack(8);
   crt::put_i64(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
-pub fn put_stack_f32(self: State, v: single) {
+pub fn put_stack_f32(self: State, v: single?) {
   self.ensure_stack(8);
   crt::put_f32(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
 }
 
-pub fn put_stack_f64(self: State, v: float) {
+pub fn put_stack_f64(self: State, v: float?) {
   self.ensure_stack(8);
   crt::put_f64(self.stack, self.stack_pos, v);
   self.stack_pos += 8;
@@ -221,6 +227,10 @@ pub fn get_var_u8(self: State, pos: integer) -> integer {
 pub fn get_var_bool(self: State, pos: integer) -> boolean? {
   b = crt::get_u8(self.stack, self.stack_pos - pos);
   if b == 255 { null } else { b == 1 }
+}
+
+pub fn get_var_u32(self: State, pos: integer) -> integer {
+  crt::get_u32(self.stack, self.stack_pos - pos)
 }
 
 pub fn get_var_u16(self: State, pos: integer) -> integer {
@@ -268,4 +278,44 @@ pub fn put_var_f32(self: State, pos: integer, v: single) {
 
 pub fn put_var_f64(self: State, pos: integer, v: float) {
   crt::put_f64(self.stack, self.stack_pos + 8 - pos, v);
+}
+
+// ── Calls ───────────────────────────────────────────────────────────────────────────────
+
+// `State::fn_call`: the position after the call pushed as the return position, the code moved
+// to the callee at `to`; past `MAX_CALL_DEPTH` frames the run stops with a stack overflow.
+pub fn fn_call(self: State, d_nr: integer, args_size: integer, to: integer) {
+  if self.depth >= MAX_CALL_DEPTH {
+    self.fault = "stack overflow in definition {d_nr} ({args_size} bytes of arguments)";
+    return;
+  }
+  self.depth += 1;
+  self.ensure_stack(8);
+  crt::put_u32(self.stack, self.stack_pos, self.code_pos);
+  self.stack_pos += 8;
+  self.code_pos = to;
+}
+
+// `State::fn_return`: the frame's `discard` bytes dropped, the code back at the return position
+// (the slot `ret` — the arguments' size — above the frame's base), the `value` bytes of the
+// answer copied down to that base, and the top just above the answer (`copy_result`).
+pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
+  pos = self.stack_pos;
+  self.stack_pos -= discard;
+  fn_stack = self.stack_pos;
+  self.stack_pos += ret;
+  self.code_pos = self.get_var_u32(0);
+  step = (value + 7) / 8 * 8;
+  if value > 0 {
+    crt::copy_within(self.stack, pos - step, fn_stack, value);
+  }
+  self.stack_pos = fn_stack + step;
+  self.depth -= 1;
+}
+
+// `State::reserve_frame`: the frame's locals reserved above the top, at their 8-aligned size.
+pub fn reserve_frame(self: State, size: integer) {
+  step = (size + 7) / 8 * 8;
+  self.ensure_stack(step);
+  self.stack_pos += step;
 }

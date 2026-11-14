@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — one definition of a run image called through the generated operator table
+// (`fill.loft`) on the loft `State`, as the Rust interpreter's dispatch loop runs it: each
+// opcode read (255 and a second byte for a slot past 254), its operator run, until the call
+// returns to the position past the code it was given.
+
+use ir;
+use state;
+use fill;
+use crt;
+
+// The number of the definition named `name` in the program image `b`; -1 for none.
+pub fn def_named(b: ir::Bundle, name: text) -> integer {
+  for d in 0..len(b.data.definitions) {
+    if (b.data.definitions[d]?.name ?? "") == name {
+      return d;
+    }
+  }
+  -1
+}
+
+// Definition `d` called with the integer arguments `args` on `s`, run to its return: its integer
+// answer, or null with the reason in `s.fault`.
+pub fn call(img: ir::RunImage, d: integer, args: vector<integer>, s: state::State) -> integer? {
+  end = len(img.code);
+  s.code_pos = end;
+  for a in args {
+    s.put_stack_i64(a);
+  }
+  s.fn_call(d, 8 * len(args), img.starts[d] ?? 0);
+  trace = env_variable("LOFT_FILL_TRACE") == "1";
+  while s.code_pos != end && s.fault == "" {
+    if trace {
+      eprintln("at {s.code_pos} sp {s.stack_pos} top {if s.stack_pos >= 8 { crt::get_i64(s.stack, s.stack_pos - 8) } else { 0 }}");
+    }
+    op = s.code_u8();
+    if op == 255 {
+      op = 255 + s.code_u8();
+    }
+    if !fill::execute(s, op) {
+      s.fault = "the operator in slot {op} is not carried yet (at {s.code_pos})";
+    }
+  }
+  if s.fault != "" {
+    return null;
+  }
+  s.get_stack_i64()
+}

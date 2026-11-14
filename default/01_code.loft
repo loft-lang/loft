@@ -152,26 +152,33 @@ fn OpGoto(step: const i8);
 fn OpGotoWord(step: const i32);
 #hot
 #rust"s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32;"
+#loft"s.code_pos += step;"
 fn OpGotoFalse(step: const i8, if_false: boolean);
 #rust"if @if_false != 1 {{s.code_pos = (s.code_pos as i32 + i32::from(@step)) as u32;}}"
 fn OpGotoFalseWord(step: const i32, if_false: boolean);
 #hot
 #rust"if @if_false != 1 {{s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32;}}"
+#loft"if if_false != 1 {{ s.code_pos += step; }}"
 fn OpCall(d_nr: const __word, args_size: const u16, to: const __word);
 #rust"s.fn_call(@d_nr as u32, @args_size, @to);"
+#loft"s.fn_call(d_nr, args_size, to);"
 fn OpReturn(ret: const u16, value: const u16, discard: const u16);
 #rust"s.fn_return(@ret, @value, @discard);"
+#loft"s.fn_return(ret, value, discard);"
 fn OpFreeStack(value: const u16, discard: const u16);
 #rust"s.free_stack(@value, @discard);"
 fn OpReserveFrame(size: const u16);
 #rust"s.reserve_frame(@size);"
+#loft"s.reserve_frame(size);"
 // Boolean operations
 fn OpConstTrue() -> boolean;
 #hot
 #rust"true"
+#loft"true"
 fn OpConstFalse() -> boolean;
 #hot
 #rust"false"
+#loft"false"
 // A null boolean casts to the null TEXT (`STRING_NULL`), which a hole renders as `null`: the
 // null stays a null.  The word itself would be a present text no reader can tell from the null.
 fn OpCastTextFromBool(v1: boolean) -> text;
@@ -180,10 +187,12 @@ fn OpCastTextFromBool(v1: boolean) -> text;
 fn OpVarBool(pos: const u16) -> boolean;
 #hot
 #rust"s.get_var::<u8>(@pos)"
+#loft"s.get_var_bool(pos)"
 fn OpPutBool(var: const u16, value: boolean);
 #rust"s.put_var(@var, @value);"
 fn OpNot(v1: boolean) -> boolean;
 #rust"@v1 != 1"
+#loft"v1 != 1"
 // --- Math ---
 /// Functions for numeric computation.
 /// All trigonometric functions work in radians.
@@ -233,6 +242,7 @@ fn OpNarrow32(val: __word) -> __word;
 fn OpConstInt(val: const __word) -> __word;
 #hot
 #rust"@val"
+#loft"val"
 fn OpConstShort(val: const i16) -> __word;
 #rust"i64::from(@val)"
 fn OpConstTiny(val: const i8) -> __word;
@@ -240,11 +250,13 @@ fn OpConstTiny(val: const i8) -> __word;
 fn OpVarInt(pos: const u16) -> __word;
 #hot
 #rust"s.get_var::<i64>(@pos)"
+#loft"s.get_var_i64(pos)"
 fn OpVarCharacter(pos: const u16) -> character;
 #rust"s.get_var::<char>(@pos)"
 fn OpPutInt(pos: const u16, value: __word);
 #hot
 #rust"s.put_var(@pos, @value);"
+#loft"s.put_var_i64(pos, value);"
 // @PLN167 — a LINKED narrow integer local holds its type's FIELD encoding in its 8-byte
 // frame slot (`data::NarrowSlot`); these read and write it through `crate::narrow`, the
 // one home for that encoding on both backends.  `min` and `kind` are the slot's.
@@ -256,6 +268,7 @@ fn OpPutCharacter(pos: const u16, value: character);
 #rust"s.put_var(@pos, @value);"
 fn OpConvIntFromNull() -> __word;
 #rust"i64::MIN"
+#loft"null"
 fn OpConvBoolFromNull() -> boolean;
 #rust"255u8"
 fn OpConvCharacterFromNull() -> character;
@@ -290,25 +303,32 @@ fn OpBitNotSingleInt(v1: __word) -> __word;
 fn OpConvFloatFromInt(v1: __word) -> __fword;
 #hot
 #rust"ops::op_conv_float_from_int(@v1)"
+#loft"v1 as float"
 fn OpConvSingleFromInt(v1: __word) -> single;
 #rust"ops::op_conv_single_from_int(@v1)"
 fn OpConvBoolFromInt(v1: __word) -> boolean;
 #rust"ops::op_conv_bool_from_int(@v1)"
+#loft"v1 != null"
 fn OpAddInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"ops::op_add_int(@v1, @v2)"
+#loft"v1 + v2"
 fn OpMinInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"ops::op_min_int(@v1, @v2)"
+#loft"v1 - v2"
 fn OpMulInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"ops::op_mul_int(@v1, @v2)"
+#loft"v1 * v2"
 fn OpDivInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"if @v2 == 0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); i64::MIN }} else {{ ops::op_div_int(@v1, @v2) }}"
+#loft"v1 / v2"
 fn OpRemInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"if @v2 == 0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); i64::MIN }} else {{ ops::op_rem_int(@v1, @v2) }}"
+#loft"v1 % v2"
 // C54.G-hybrid — nullable integer arithmetic.  Emitted only when the op's
 // result is the immediate LHS of `??` so `??` can discharge the null.
 fn OpAddIntNullable(v1: __word, v2: __word) -> __word;
@@ -324,6 +344,7 @@ fn OpRemIntNullable(v1: __word, v2: __word) -> __word;
 fn OpLandInt(v1: __word, v2: __word) -> __word;
 #hot
 #rust"ops::op_logical_and_int(@v1, @v2)"
+#loft"v1 & v2"
 fn OpLorInt(v1: __word, v2: __word) -> __word;
 #rust"ops::op_logical_or_int(@v1, @v2)"
 fn OpEorInt(v1: __word, v2: __word) -> __word;
@@ -335,14 +356,17 @@ fn OpSRightInt(v1: __word, v2: __word) -> __word;
 fn OpEqInt(v1: __word, v2: __word) -> boolean;
 #hot
 #rust"@v1 == @v2"
+#loft"v1 == v2"
 fn OpNeInt(v1: __word, v2: __word) -> boolean;
 #rust"@v1 != @v2"
 fn OpLtInt(v1: __word, v2: __word) -> boolean;
 #hot
 #rust"@v1 < @v2"
+#loft"v1 < v2"
 fn OpLeInt(v1: __word, v2: __word) -> boolean;
 #hot
 #rust"@v1 <= @v2"
+#loft"v1 <= v2"
 // Post-2c round 10d: OpConstLong/OpVarLong/OpPutLong/OpConvLongFromNull
 // / OpCastIntFromLong were duplicates of their OpXxxInt counterparts
 // (post-2c all integers are i64 at rest) — removed.  Format* renamed
@@ -569,12 +593,15 @@ fn OpFormatStackSingle(
 fn OpConstFloat(val: const __fword) -> __fword;
 #hot
 #rust"@val"
+#loft"val"
 fn OpVarFloat(pos: const u16) -> __fword;
 #hot
 #rust"s.get_var::<f64>(@pos)"
+#loft"s.get_var_f64(pos)"
 fn OpPutFloat(pos: const u16, value: __fword);
 #hot
 #rust"s.put_var(@pos, @value);"
+#loft"s.put_var_f64(pos, value);"
 fn OpConvFloatFromNull() -> __fword;
 #rust"f64::NAN"
 fn OpAbsFloat(v1: __fword) -> __fword;
@@ -780,15 +807,19 @@ fn OpCastIntFromFloat(v1: __fword) -> __word;
 fn OpConvBoolFromFloat(v1: __fword) -> boolean;
 #hot
 #rust"!@v1.is_nan()"
+#loft"v1 != null"
 fn OpAddFloat(v1: __fword, v2: __fword) -> __fword;
 #hot
 #rust"@v1 + @v2"
+#loft"v1 + v2"
 fn OpMinFloat(v1: __fword, v2: __fword) -> __fword;
 #hot
 #rust"@v1 - @v2"
+#loft"v1 - v2"
 fn OpMulFloat(v1: __fword, v2: __fword) -> __fword;
 #hot
 #rust"@v1 * @v2"
+#loft"v1 * v2"
 // C80 / E-Report: a zero divisor CONTINUES, silent — the null is the signal, and it never
 // traps, so the spreadsheet model still degrades one value and lets the rest of the
 // program compute.  The VALUE is IEEE, and NaN is the one float null (`doc/23-safety`:
@@ -814,6 +845,7 @@ fn OpRemFloat(v1: __fword, v2: __fword) -> __fword;
 fn OpDivFloatNullable(v1: __fword, v2: __fword) -> __fword;
 #hot
 #rust"@v1 / @v2"
+#loft"v1 / v2"
 fn OpRemFloatNullable(v1: __fword, v2: __fword) -> __fword;
 #cold
 #rust"@v1 % @v2"
@@ -826,6 +858,7 @@ fn OpNeFloat(v1: __fword, v2: __fword) -> boolean;
 fn OpLtFloat(v1: __fword, v2: __fword) -> boolean;
 #hot
 #rust"{{ let _a = @v1; let _b = @v2; #[allow(clippy::neg_cmp_op_on_partial_ord)] let _lt = !_b.is_nan() && !(_a >= _b); _lt }}"
+#loft"v1 < v2"
 fn OpLeFloat(v1: __fword, v2: __fword) -> boolean;
 #rust"@v1.is_nan() || (!@v2.is_nan() && @v1 <= @v2)"
 fn OpFormatFloat(pos: const u16, val: __fword, width: __word, precision: __word, token: const u8, plus: const boolean, dir: const i8);

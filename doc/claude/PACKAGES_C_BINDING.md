@@ -364,7 +364,10 @@ be one machine operation, such as a typed read of a byte buffer.
   binding is: the same signature string and the same crossing of each
   argument.  A float argument crosses as itself, since only the C backend calls
   the routine, through its prototype; the interpreter's per-arity caller,
-  which cannot pass one, never meets it.
+  which cannot pass one, never meets it.  A nullable integer or float
+  argument crosses as its sentinel bits (`i64::MIN`, a NaN), which the
+  routine stores or reads as they are; for a `#c` binding it stays refused,
+  since there C gives the number its own meaning.
 - To the C backend a twin is the binding: it works from the definitions with
   each twin's body taken out (`Data::with_c_twins_bound`), so no pass of that
   backend hoists into the body, calls a variant of it, or adds an input.

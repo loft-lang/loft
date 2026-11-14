@@ -603,6 +603,10 @@ void loft_twin_put_i64(uint8_t *b, int64_t n, int64_t at, int64_t v) {
     int64_t w = (int64_t) v;
     if (LOFT_TWIN_IN(n, at, 8)) memcpy(b + at, &w, 8);
 }
+void loft_twin_copy_within(uint8_t *b, int64_t n, int64_t from, int64_t to, int64_t len) {
+    if (len <= 0 || from < 0 || to < 0 || from > n - len || to > n - len) return;
+    memmove(b + to, b + from, (size_t) len);
+}
 float loft_twin_get_f32(const uint8_t *b, int64_t n, int64_t at) {
     float v = 0.0f;
     if (LOFT_TWIN_IN(n, at, 4)) memcpy(&v, b + at, 4);
