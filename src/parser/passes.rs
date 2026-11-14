@@ -2391,3 +2391,124 @@ fn type_defs(data: &crate::data::Data, t: &Type, out: &mut Vec<u32>) -> bool {
         _ => true,
     }
 }
+
+/// `@FR-F-ParamTuple`'s copy elision: can no program tell the shadow `p` of a by-value tuple
+/// parameter from the caller's tuple — does the finished body `ops` only READ it?  Then the
+/// shadow is seeded as an alias of the parameter and nothing is copied.
+///
+/// It may not, when any of these holds — each one either writes through a heap member or lets
+/// a member outlive the call:
+/// - a write op, a `&` argument, or a user callee that writes its parameter
+///   (`callee_param_writes`) takes a place inside a member: `TupleGet(p, _)`, or a local
+///   bound from one (`x = t.0`, a loop variable over `t.0`), to a fixed point;
+/// - a callee whose body pass 2 has not read yet (`done` lacks it) takes such a place: its
+///   pass-1 body is not the whole truth, so it is taken to write;
+/// - `p` or such a local is yielded, or returned by a function that answers a tuple with a heap
+///   member (`ret_holds_ref`) — a returned record or collection is the caller's join to judge
+///   (`@FR-O-Oracle` copies an answer in an argument's store), a tuple has no such join;
+/// - the body builds a closure, or calls through a fn-ref: a capture is a place this walk does
+///   not follow.
+///
+/// A whole rebind (`t = …`) and a member rebind (`t.1 = …`) write the shadow's own slots and
+/// are no reason to copy.  Every unknown errs toward copying: a wrong `true` lets a write reach
+/// the caller, a wrong `false` costs one copy.
+pub(super) fn tuple_shadow_only_read(
+    ops: &[Value],
+    data: &crate::data::Data,
+    vars: &crate::variables::Function,
+    p: u16,
+    done: &std::collections::HashSet<u32>,
+    ret_holds_ref: bool,
+) -> bool {
+    let mut aliases = crate::fxhash::FxHashSet::default();
+    loop {
+        let before = aliases.len();
+        for op in ops {
+            collect_member_aliases(op, p, &mut aliases);
+        }
+        if aliases.len() == before {
+            break;
+        }
+    }
+    let mut cache = crate::fxhash::FxHashMap::default();
+    !ops.iter()
+        .any(|op| member_write(op, data, vars, p, &aliases, done, ret_holds_ref, &mut cache))
+}
+
+/// Does `v` name a place inside `p`'s members — a `TupleGet(p, _)`, or a local bound from one
+/// — or, with `whole`, `p` itself?
+fn reaches_member(v: &Value, p: u16, aliases: &crate::fxhash::FxHashSet<u16>, whole: bool) -> bool {
+    match v.unspan() {
+        Value::TupleGet(t, _) if *t == p => true,
+        Value::Var(x) => (*x == p && whole) || aliases.contains(x),
+        other => {
+            let mut hit = false;
+            other.for_each_child(&mut |c| hit |= reaches_member(c, p, aliases, whole));
+            hit
+        }
+    }
+}
+
+fn collect_member_aliases(code: &Value, p: u16, aliases: &mut crate::fxhash::FxHashSet<u16>) {
+    if let Value::Set(x, val) = code.unspan()
+        && *x != p
+        && reaches_member(val, p, aliases, true)
+    {
+        aliases.insert(*x);
+    }
+    code.unspan()
+        .for_each_child(&mut |c| collect_member_aliases(c, p, aliases));
+}
+
+fn member_write(
+    code: &Value,
+    data: &crate::data::Data,
+    vars: &crate::variables::Function,
+    p: u16,
+    aliases: &crate::fxhash::FxHashSet<u16>,
+    done: &std::collections::HashSet<u32>,
+    ret_holds_ref: bool,
+    cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
+) -> bool {
+    let hit = match code.unspan() {
+        Value::Call(fn_nr, args) => {
+            let def = data.def(*fn_nr);
+            if def.name().starts_with("n___lambda_") {
+                return true;
+            }
+            let attrs = def.attributes();
+            let first = super::op_writes_first_arg(def.name());
+            let second = matches!(def.name(), "OpCopyRecord" | "OpRemove");
+            let user = *def.code() != Value::Null;
+            let callee_writes = if user && done.contains(fn_nr) {
+                super::callee_param_writes(*fn_nr, data, cache)
+            } else if user {
+                vec![true; args.len()]
+            } else {
+                Vec::new()
+            };
+            args.iter().enumerate().any(|(i, a)| {
+                let by_ref = attrs
+                    .get(i)
+                    .is_some_and(|at| matches!(at.typedef, Type::RefVar(_)));
+                (by_ref && reaches_member(a, p, aliases, true))
+                    || (((i == 0 && first) || (i == 1 && second))
+                        && reaches_member(a, p, aliases, false))
+                    || (callee_writes.get(i).copied().unwrap_or(false)
+                        && reaches_member(a, p, aliases, false))
+            })
+        }
+        Value::CallRef(..) | Value::FnRef(..) | Value::FnRefDnr(_) => true,
+        Value::Return(v) => ret_holds_ref && reaches_member(v, p, aliases, true),
+        Value::Yield(v) => reaches_member(v, p, aliases, true),
+        _ => false,
+    };
+    if hit {
+        return true;
+    }
+    let mut any = false;
+    code.unspan().for_each_child(&mut |c| {
+        any = any || member_write(c, data, vars, p, aliases, done, ret_holds_ref, cache);
+    });
+    any
+}

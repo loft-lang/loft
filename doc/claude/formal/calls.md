@@ -174,6 +174,13 @@ heap-returning tail discarded 800 000 times holds a flat resident size).
                    (@PLN87 P2.4).  The distinction is mutate-through (visible) vs replace (local),
                    and it is the WHOLE distinction: replace is the one thing `&` adds
                    (F-ParamRef), and it is the only local one.
+  (F-ParamTuple)   a by-value TUPLE parameter is bound to the argument's VALUE, every member
+                   included: a tuple is a value (tuples.md `T-Record` is its layout), so a write
+                   to a member (`t.1 = v`, `t.0 = r`) and a write THROUGH a heap member
+                   (`t.0.x = v`, `t.0 += [x]`, `t.0` handed to a callee that writes it) change
+                   the callee's tuple only; the caller's is UNCHANGED.  `&(…)` (tuples.md
+                   `T-Ref`) is the write-back channel.  A callee that only reads shares the
+                   caller's members — a representation choice no program can observe.
   (F-ParamRef)     a `&`-typed parameter (binding.md) is the EXPLICIT write-back channel: a
                    whole-value `p = e` on a `&T` parameter DOES write through to the caller.
                    It is TRANSITIVE: passing a `&T` parameter on to another `&T` parameter
