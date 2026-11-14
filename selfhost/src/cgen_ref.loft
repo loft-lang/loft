@@ -14,6 +14,7 @@ use loop_shape;
 use cgen_fn;
 use cgen_bind;
 use ptypes;
+use types;
 use cgen_w::*;
 
 // A program write as its `_at` setter (`set_at`): `f(args…, file, line)`.
@@ -339,17 +340,21 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     tp = raw & 16383;
     fresh = raw & 16384 != 0;
     struct_type = tp < len(x.b.types) && (match x.b.types[tp].parts[0] { PtStruct { fields: _ } => true, _ => false });
-    // A fresh destination whose source may be absent takes the type's default image, unless
-    // that image is all zero: the image is not built here.
-    if fresh && struct_type {
-      refuse(w, "a copy into a fresh field");
-      return none();
-    }
     free = (if raw & 32768 != 0 { 1 } else { 0 }) + (if cgen_bind::swap_safe(x.b, tp, []) { 2 } else { 0 }) + (if fresh { 4 } else { 0 });
     pair = [args[0], args[1]];
-    src = cgen_fn::arg(x, w, pair, 0, ind);
-    dst = cgen_fn::arg(x, w, pair, 1, ind);
-    return E { code: "loft_copy_record_at(loft_types, {tp}, {as_ref(w, src)}, {as_ref(w, dst)}, {free}, {cgen_fn::site(w)})", kind: K_VOID };
+    src = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    dst = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    // `fresh_default_tp`: a fresh destination whose source is absent takes the type's
+    // default image — unless that image is all zero, which the minted record already is.
+    if fresh && struct_type && !default_is_zero(x.b, tp) {
+      s_held = temp(w, "ref");
+      d_held = temp(w, "ref");
+      line(w, ind, "{s_held} = {src};");
+      line(w, ind, "{d_held} = {dst};");
+      line(w, ind, "if ({s_held}.store_nr == 0xFFFF) {{ loft_fill({d_held}, loft_dflt{tp}, {x.b.types[tp].size}); }} else {{ loft_copy_record(loft_types, {tp}, {s_held}, {d_held}, {free}); }}");
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+    return E { code: "loft_copy_record_at(loft_types, {tp}, {src}, {dst}, {free}, {cgen_fn::site(w)})", kind: K_VOID };
   }
   if (name == "OpMoveRecord" || name == "OpMoveField") && count == 3 {
     tp = cgen_fn::literal(w, args[2], "type") ?? return none();
@@ -553,6 +558,16 @@ pub fn show_top_call(x: Cx, w: W, tp: integer, s: text, r: text, fmt: text) -> t
     return "loft_show_top({s}, {show_fn(tp)}, {r}, {fmt})";
   }
   "{show_fn(tp)}({s}, {r}, {fmt}, 0)"
+}
+
+// `Cx::default_is_zero`: is record type `tp`'s default image all zero bytes?
+fn default_is_zero(b: ir::Bundle, tp: integer) -> boolean {
+  for byte in types::default_image(b.types, tp) {
+    if byte != 0 {
+      return false;
+    }
+  }
+  true
 }
 
 // `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write
