@@ -83,10 +83,26 @@ pub struct State {
   // The frame depth each `par` job in flight runs its workers at, innermost last: a return
   // at that depth hands the run back (`native` is `PAR_RETURNED`) for the job's next worker.
   pub par_depths: vector<integer>,
+  // A `par` block: its arms' code offsets as `OpParallelArm` gave them, and the frame depth
+  // whose return ends the arm now running (-1: none).
+  pub arm_offsets: vector<integer>,
+  pub arm_depth: integer,
+  // The code and the constant store's long texts, held where no store's growth moves them
+  // (`crt::hold_bytes`): a text view names bytes there, never in this record's own vectors.
+  pub code_held: integer,
+  pub texts_held: integer,
+  // The store instances (`RunImage.store_insts`: definition, mask, instance each), and the
+  // instance the next call through a reference enters in place of the definition its slot
+  // names (`fn_call_ref_store`; -1: none).
+  pub store_insts: vector<integer>,
+  pub call_target: integer,
 }
 
-// `State.native` when a `par` worker returned.
+// `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
+// one of them returned.
 pub PAR_RETURNED = 1000000;
+pub PAR_BLOCK = 1000001;
+pub PAR_ARM_DONE = 1000002;
 
 // A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
 // running, where it resumes, where its caller's stack and code continue, the copies of its
@@ -163,7 +179,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1 };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
@@ -185,6 +201,11 @@ pub fn new_state(img: ir::RunImage, size: integer) -> State {
   }
   // Each constant adopted from the bytes Rust built it as (`RunImage.consts`).
   for c in img.consts {
+    if c.def < 0 {
+      // The constant store itself: its long texts, read by record (`string_from_const_store`).
+      s.texts_held = crt::hold_bytes(c.bytes);
+      continue;
+    }
     while len(s.consts) <= c.def {
       s.consts += [DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }];
     }
@@ -627,6 +648,9 @@ pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
   if len(self.par_depths) > 0 && (self.par_depths[len(self.par_depths) - 1] ?? -1) == len(self.frames) {
     self.native = PAR_RETURNED;
   }
+  if self.arm_depth == len(self.frames) {
+    self.native = PAR_ARM_DONE;
+  }
   if len(self.frames) > 0 {
     self.frames.remove(len(self.frames) - 1);
   }
@@ -654,7 +678,7 @@ pub fn reserve_frame(self: State, size: integer) {
 pub fn string_from_code(self: State) {
   n = self.code_u8();
   self.ensure_stack(16);
-  crt::stack_str_code(self.stk, self.stack_pos, self.code, self.code_pos, n);
+  crt::stack_str_held(self.stk, self.stack_pos, self.code_held, self.code_pos, n);
   self.code_pos += n;
   self.stack_pos += 16;
 }
@@ -978,7 +1002,7 @@ pub fn local_tag(self: State, of: integer, a: integer) -> integer? {
 }
 
 // Type `tp`'s default image, derived on its first use.
-fn default_of(self: State, tp: integer) -> vector<u8> {
+pub fn default_of(self: State, tp: integer) -> vector<u8> {
   while len(self.imaged) <= tp {
     self.images += [[]];
     self.imaged += [false];
@@ -1733,6 +1757,10 @@ pub fn fn_call_ref(self: State, fn_var: integer, arg_size: integer) {
   fv = fn_var;
   asz = arg_size;
   d = self.get_var_i64(fv) ?? -1;
+  if d >= 0 && self.call_target >= 0 {
+    d = self.call_target;
+  }
+  self.call_target = -1;
   if d < 0 || d + 1 >= len(self.starts) {
     self.stop("a call through a reference that names no function");
     return;

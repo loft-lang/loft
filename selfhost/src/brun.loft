@@ -3660,6 +3660,10 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   cr: vector<integer> = [];
   cp: vector<integer> = [];
   for c in img.consts {
+    if c.def < 0 {
+      // The constant store's long texts (`OpConstStoreText`), which this runner does not read.
+      continue;
+    }
     while len(cs) <= c.def {
       cs += [NULL_STORE];
       cr += [0];

@@ -112,7 +112,14 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       s.fault = "not carried: {img.ops[s.unknown] ?? "slot {s.unknown}"}";
       s.unknown = -1;
     }
-    if s.native == state::PAR_RETURNED {
+    if s.native == state::PAR_ARM_DONE {
+      // The arm this loop was started for returned (`par_block`).
+      return;
+    }
+    if s.native == state::PAR_BLOCK {
+      s.native = -1;
+      par_block(img, s);
+    } else if s.native == state::PAR_RETURNED {
       // A `par` worker returned: its answer taken, then the job's next worker entered at the
       // same depth, or after the last the job's result left for the caller.
       s.native = -1;
@@ -161,6 +168,51 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       }
     }
   }
+}
+
+// A `par` block's arms, run one after another where Rust runs them on threads.  Each arm is
+// code of the running function that ends in its `OpReturn`: it runs on the stack as the block
+// found it, and the stack, the top and the frame are put back after it, as each of Rust's
+// workers starts from a snapshot of the parent's stack.  What an arm writes to a store stays
+// written (Rust's worker writes to a copy).
+fn par_block(img: ir::RunImage, s: state::State) {
+  resume = s.code_pos;
+  arms: vector<integer> = [];
+  for off in s.arm_offsets {
+    arms += [resume + off];
+  }
+  s.arm_offsets.clear();
+  depth = len(s.frames);
+  if depth == 0 {
+    s.stop("a par block outside a function");
+    return;
+  }
+  top = s.stack_pos;
+  outer = s.arm_depth;
+  frame = s.frames[depth - 1]!;
+  d_nr = frame.d_nr;
+  call_pos = frame.call_pos;
+  args_base = frame.args_base;
+  args_size = frame.args_size;
+  snapshot = crt::stack_read_bytes(s.stk, 0, top);
+  for arm in arms {
+    if s.stopped {
+      break;
+    }
+    s.arm_depth = depth;
+    s.code_pos = arm;
+    run_to(img, s, -1);
+    s.native = -1;
+    // The arm's return dropped the frame and moved the top: both as they were.
+    while len(s.frames) > depth - 1 {
+      s.frames.remove(len(s.frames) - 1);
+    }
+    s.frames += [state::CallFrame { d_nr: d_nr, call_pos: call_pos, args_base: args_base, args_size: args_size }];
+    crt::stack_code_bytes(s.stk, 0, snapshot, 0, top);
+    s.stack_pos = top;
+  }
+  s.arm_depth = outer;
+  s.code_pos = resume;
 }
 
 // The program's `main` run to its end; false with the reason in `s.fault` where it stops.

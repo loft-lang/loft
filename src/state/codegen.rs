@@ -1166,6 +1166,7 @@ impl State {
             // Store long strings in CONST_STORE via Store::set_str().
             let const_store = &mut self.database.allocations[crate::database::CONST_STORE as usize];
             let rec = const_store.set_str(value);
+            self.database.const_texts.push(rec);
             stack.add_op("OpConstStoreText", self);
             self.code_add(i64::from(rec));
             // set_str stores length at (rec, 4); text bytes start at (rec, 8).

@@ -21,7 +21,11 @@ fn main() {
     eprintln("usage: create <default dir> <state.loft> <fill.loft> [--missing | --slots | --reads | --refused]");
     exit(2);
   }
+  // `state.loft` and, beside it, `state_ops.loft`: the two files that hold the `State`'s methods.
   state_src = file(args[1]).content() ?? "";
+  if args[1]!.ends_with("state.loft") {
+    state_src += file("{args[1]![0..len(args[1]!) - 10]}state_ops.loft").content() ?? "";
+  }
   e = el::new_el(syntax::prepare(lex::lex("")), "", true);
   for n in ["01_code.loft", "02_files.loft", "03_text.loft", "04_stacktrace.loft", "05_coroutine.loft", "06_json.loft", "07_reflect.loft"] {
     f = "{args[0]}/{n}";

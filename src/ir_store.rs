@@ -926,6 +926,7 @@ fn materialize_run_image(
     fnrefs: &[RunFnRefShape],
     gens: &[RunGenShape],
     shared: &[i64],
+    store_insts: &[i64],
     workers: &[RunWorkerShape],
     sidecars: &[RunSidecarShape],
     release: (&str, &str, &str),
@@ -997,7 +998,13 @@ fn materialize_run_image(
     let cv = rec.field_recvec(ds::RUNIMG_CONSTS, ds::RUNCONST_STRIDE);
     for c in consts {
         let e = cv.push(stores);
-        e.set_field_int(stores, ds::RUNCONST_DEF, i64::from(c.def));
+        // The long texts' entry belongs to no definition: -1.
+        let def = if c.def == u32::MAX {
+            -1
+        } else {
+            i64::from(c.def)
+        };
+        e.set_field_int(stores, ds::RUNCONST_DEF, def);
         e.set_field_int(stores, ds::RUNCONST_REC, i64::from(c.rec));
         e.set_field_int(stores, ds::RUNCONST_POS, i64::from(c.pos));
         let b = DbRef {
@@ -1017,6 +1024,17 @@ fn materialize_run_image(
         shared,
         workers,
     );
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_STORE_INSTS),
+        count(store_insts.len()),
+        8,
+        &mut stores.allocations,
+    );
+    let siv = rec.field_recvec(ds::RUNIMG_STORE_INSTS, 8);
+    for &v in store_insts {
+        let e = siv.push(stores);
+        e.set_field_int(stores, 0, v);
+    }
     materialize_run_sidecars(stores, &rec, &slot(ds::RUNIMG_SIDECARS), sidecars);
     rec.set_field_str(stores, ds::RUNIMG_OLDEST, release.0);
     rec.set_field_str(stores, ds::RUNIMG_BRIDGE, release.1);
@@ -1240,7 +1258,8 @@ pub fn run_image_ops(data: &Data) -> (Vec<String>, Vec<String>) {
 }
 
 /// One constant's store as the run image carries it: its definition, its root, and the store's
-/// bytes up to its last live record.
+/// bytes up to its last live record.  `def` `u32::MAX` is the constant store itself, for its
+/// long texts.
 pub struct RunConstBytes {
     pub def: u32,
     pub rec: u32,
@@ -1265,6 +1284,33 @@ pub fn run_image_consts(program: &Stores) -> Vec<RunConstBytes> {
             rec: r.rec,
             pos: r.pos,
             bytes: store.raw_bytes()[..end].to_vec(),
+        });
+    }
+    // The constant store's long texts, where `OpConstStoreText` reads one by its record
+    // (`gen_text`: a text of 256 bytes or more): an entry of no definition (`u32::MAX`), the
+    // store's layout with only those records' bytes in it — each one's length word and its
+    // text — and zeroes everywhere else, so nothing unwritten leaves the process.
+    if let Some(store) = program
+        .allocations
+        .get(crate::database::CONST_STORE as usize)
+        && !program.const_texts.is_empty()
+    {
+        let mut bytes = Vec::new();
+        for &rec in &program.const_texts {
+            let text = store.get_str(rec).as_bytes();
+            let at = rec as usize * 8;
+            if bytes.len() < at + 8 + text.len() {
+                bytes.resize(at + 8 + text.len(), 0);
+            }
+            bytes[at + 4..at + 8]
+                .copy_from_slice(&u32::try_from(text.len()).unwrap_or(0).to_ne_bytes());
+            bytes[at + 8..at + 8 + text.len()].copy_from_slice(text);
+        }
+        out.push(RunConstBytes {
+            def: u32::MAX,
+            rec: 0,
+            pos: 0,
+            bytes,
         });
     }
     out
@@ -1305,6 +1351,32 @@ pub fn run_image_shared(
             let nr = data.def_nr(def);
             if nr != u32::MAX {
                 out[i] = i64::from(nr);
+            }
+        }
+    }
+    out
+}
+
+/// The store instances of the program (`parser/store_text.rs`), as triples of the function's
+/// definition, the mask and the instance: what `OpCallRefStore` resolves at run time
+/// (`Data::store_text_instance`), since a run image carries no definition names.
+#[must_use]
+pub fn run_image_store_insts(data: &Data) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !def.is_store_text_instance() {
+            continue;
+        }
+        let Some((base, mask)) = def.name.rsplit_once("@st") else {
+            continue;
+        };
+        let Ok(mask) = mask.parse::<u64>() else {
+            continue;
+        };
+        for b in 0..data.definitions() {
+            if data.def(b).name == base && data.store_text_instance(b, mask) == d {
+                out.extend([i64::from(b), mask.cast_signed(), i64::from(d)]);
             }
         }
     }
@@ -1727,6 +1799,7 @@ pub fn save_run_image(
             &run_image_fnrefs(data, program),
             &run_image_gens(data),
             &run_image_shared(data, library_names),
+            &run_image_store_insts(data),
             &run_image_workers(data, program),
             &run_image_sidecars(data, program),
             (

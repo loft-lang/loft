@@ -98,6 +98,7 @@ fn OpGetFile(file: File) -> boolean fs#read;
 fn OpGetDir(path: text, result: vector<File>) -> boolean fs#read;
 #cold
 #rust"stores.get_dir(@path, &@result)"
+#loft"s.get_dir(path, result)"
 fn OpGetFileText(file: File, content: &text) fs#read;
 #cold
 fn OpWriteFile(file: File, val: reference, db_tp: const u16) fs#update;
@@ -1131,12 +1132,14 @@ fn OpConstRef(d_nr: const __word) -> reference;
 // Push a Str pointing into the constant store for integer string literals.
 fn OpConstStoreText(rec: const __word, pos: const __word) -> text;
 #rust"s.string_from_const_store(@rec as u32, @pos as u32)"
+#loft"s.string_from_const_store(rec);"
 // A call through a function value whose `&text` parameters in `mask` are handed text fields or
 // elements (@PLN167 C3, loft#1656): dispatch to the STORE instance of whichever function the
 // value holds — the one whose parameter reads and writes through the field ops.  Operands as
 // `OpCallRef`'s.  Declared last so that it renumbers no earlier operator.
 fn OpCallRefStore(fn_var: const u16, arg_size: const u16, mask: const __word);
 #rust"s.fn_call_ref_store(@fn_var, @arg_size, @mask as u64);"
+#loft"s.fn_call_ref_store(fn_var, arg_size, mask);"
 // Bind the record a fn-ref call with an unresolved target handed back (loft#1659): copy it into
 // a fresh store at `pos` when it predates the call (a capture or an argument), adopt it
 // otherwise and take it off the frame's hand-up list.  Declared last, so it renumbers no
@@ -1227,6 +1230,7 @@ fn OpVecEndJump(vec: const u16, idx: const u16, step: const i32);
 // `write_dropped` report (`DbRef::NULL_REPORTED`, @FR-E-Report), because the arm is the report.
 fn OpNullReported() -> reference;
 #rust"DbRef::NULL_REPORTED"
+#loft"state_ops::null_reported()"
 // `@FR-R-Fuse`'s tag clause — a variant test of a local as one compare-and-jump: jump unless
 // the tag is `c`.  `of` 0 reads a plain-enum local (`OpEqInt(OpConvIntFromEnum(a), c)`), `of` 1
 // the tag of the record a struct-enum local names (`OpEqInt(OpConvIntFromEnum(OpGetEnum(a, 0)),

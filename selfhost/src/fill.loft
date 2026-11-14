@@ -2,6 +2,7 @@
 // default/*.loft — DO NOT EDIT BY HAND; regenerate with selfhost/front/create.loft.
 
 use state;
+use state_ops;
 use ops;
 use crt;
 
@@ -362,6 +363,12 @@ pub fn op_abs_int(s: state::State) {
 pub fn op_min_single_int(s: state::State) {
   v1 = s.get_stack_i64();
   new_value: integer? = -v1;
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_bit_not_single_int(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: integer? = if v1 == null { 9223372036854775807 } else { -v1 - 1 };
   s.put_stack_i64(new_value);
 }
 
@@ -804,6 +811,11 @@ pub fn op_conv_bool_from_ref(s: state::State) {
   s.put_stack_bool(new_value);
 }
 
+pub fn op_conv_ref_from_null(s: state::State) {
+  new_value: state::DbRef? = state::DbRef { store_nr: state::NULL_STORE, rec: 0, pos: 0 };
+  s.put_stack_dbref(new_value);
+}
+
 pub fn op_init_ref(s: state::State) {
   s.init_ref();
 }
@@ -825,6 +837,12 @@ pub fn op_free_ref_if_distinct(s: state::State) {
   witness = s.get_stack_dbref();
   placeholder = s.get_stack_dbref();
   s.load_table(); crt::free_displaced(placeholder.store_nr, placeholder.rec, placeholder.pos, witness.store_nr, witness.rec, witness.pos);
+}
+
+pub fn op_free_ref_or_hand_up(s: state::State) {
+  witness = s.get_stack_dbref();
+  placeholder = s.get_stack_dbref();
+  crt::free_displaced(placeholder.store_nr, placeholder.rec, placeholder.pos, witness.store_nr, witness.rec, witness.pos);
 }
 
 pub fn op_free_ref_unless_entry(s: state::State) {
@@ -863,6 +881,20 @@ pub fn op_ne_ref(s: state::State) {
   v1 = s.get_stack_dbref();
   new_value: boolean? = if v1.rec == 0 || v2.rec == 0 { v1.rec != 0 || v2.rec != 0 } else { v1.store_nr != v2.store_nr || v1.rec != v2.rec || v1.pos != v2.pos };
   s.put_stack_bool(new_value);
+}
+
+pub fn op_get_ref(s: state::State) {
+  fld = s.code_u16();
+  v1 = s.get_stack_dbref();
+  new_value: state::DbRef? = state_ops::get_ref(v1, fld);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn op_set_ref(s: state::State) {
+  fld = s.code_u16();
+  val = s.get_stack_dbref();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(8, v1.store_nr, v1.rec, v1.pos, fld, 0, val.rec); } else { s.raise_recoverable("a write to an absent record was dropped"); }
 }
 
 pub fn op_set_db_ref(s: state::State) {
@@ -1232,6 +1264,14 @@ pub fn op_slice_view(s: state::State) {
   s.vec_slice(r, src, lo, hi, tp, true);
 }
 
+pub fn op_keep_range(s: state::State) {
+  tp = s.code_u16();
+  hi = s.get_stack_i64();
+  lo = s.get_stack_i64();
+  r = s.get_stack_dbref();
+  s.vec_keep(r, tp, lo, hi);
+}
+
 pub fn op_push_int(s: state::State) {
   val = s.get_stack_i64();
   r = s.get_stack_dbref();
@@ -1293,8 +1333,19 @@ pub fn op_slot_tag(s: state::State) {
   s.put_stack_dbref(new_value);
 }
 
+pub fn op_child_rec(s: state::State) {
+  tp = s.code_u16();
+  field = s.get_stack_dbref();
+  new_value: state::DbRef? = s.new_child_rec(field, tp);
+  s.put_stack_dbref(new_value);
+}
+
 pub fn op_get_record(s: state::State) {
   s.get_record();
+}
+
+pub fn op_hash_add(s: state::State) {
+  s.hash_add();
 }
 
 pub fn op_length_hash(s: state::State) {
@@ -1363,11 +1414,44 @@ pub fn op_free_record_in(s: state::State) {
   s.load_table(); crt::free_record_in(rec.store_nr, rec.rec, rec.pos, tp);
 }
 
+pub fn op_demote_rec(s: state::State) {
+  fld = s.code_u16();
+  tp = s.code_u16();
+  r = s.get_stack_dbref();
+  s.load_table(); crt::demote_rec(tp, r.store_nr, r.rec, r.pos, fld);
+}
+
 pub fn op_move_child_rec(s: state::State) {
   tp = s.code_u16();
   src = s.get_stack_dbref();
   field = s.get_stack_dbref();
   s.load_table(); crt::move_child_rec(tp, field.store_nr, field.rec, field.pos, src.store_nr, src.rec, src.pos);
+}
+
+pub fn op_store_buf(s: state::State) {
+  host = s.get_stack_dbref();
+  new_value: state::DbRef? = state_ops::store_buf(host, false);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn op_adopt_child_rec(s: state::State) {
+  tp = s.code_u16();
+  value = s.get_stack_dbref();
+  field = s.get_stack_dbref();
+  s.load_table(); crt::adopt_child_rec(tp, field.store_nr, field.rec, field.pos, value.store_nr, value.rec, value.pos);
+}
+
+pub fn op_store_buf_only(s: state::State) {
+  buf = s.get_stack_dbref();
+  new_value: state::DbRef? = state_ops::store_buf(buf, true);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn op_release_rec_if_distinct(s: state::State) {
+  tp = s.code_u16();
+  answer = s.get_stack_dbref();
+  rec = s.get_stack_dbref();
+  s.load_table(); crt::release_rec_if_distinct(tp, rec.store_nr, rec.rec, rec.pos, answer.store_nr, answer.rec, answer.pos);
 }
 
 pub fn op_child_rec_in_place(s: state::State) {
@@ -1410,6 +1494,10 @@ pub fn op_static_call(s: state::State) {
   s.static_call();
 }
 
+pub fn op_create_stack(s: state::State) {
+  s.create_stack();
+}
+
 pub fn op_init_create_stack(s: state::State) {
   s.init_create_stack();
 }
@@ -1436,6 +1524,14 @@ pub fn op_move_slot_ref(s: state::State) {
 
 pub fn op_set_slot_ref(s: state::State) {
   s.set_slot_ref();
+}
+
+pub fn op_set_stack_fn_ref(s: state::State) {
+  s.set_stack_fn_ref();
+}
+
+pub fn op_get_stack_fn_ref(s: state::State) {
+  s.get_stack_fn_ref();
 }
 
 pub fn op_drop_fn_ref(s: state::State) {
@@ -1490,6 +1586,19 @@ pub fn op_const_ref(s: state::State) {
   s.put_stack_dbref(new_value);
 }
 
+pub fn op_const_store_text(s: state::State) {
+  rec = s.code_i64();
+  s.code_i64();
+  s.string_from_const_store(rec);
+}
+
+pub fn op_call_ref_store(s: state::State) {
+  fn_var = s.code_u16();
+  arg_size = s.code_u16();
+  mask = s.code_i64();
+  s.fn_call_ref_store(fn_var, arg_size, mask);
+}
+
 pub fn op_bind_fn_ref_result(s: state::State) {
   s.bind_fn_ref_result();
 }
@@ -1540,6 +1649,11 @@ pub fn op_vec_end_jump(s: state::State) {
   if ops::fused_cmp(ops::LT, s.get_var_i64(idx), s.local_vec_len(vec)) { s.code_pos += step; }
 }
 
+pub fn op_null_reported(s: state::State) {
+  new_value: state::DbRef? = state_ops::null_reported();
+  s.put_stack_dbref(new_value);
+}
+
 pub fn op_tag_v_c_jump(s: state::State) {
   of = s.code_u8();
   a = s.code_u16();
@@ -1575,6 +1689,12 @@ pub fn op_narrow32(s: state::State) {
 pub fn op_conv_character_from_null(s: state::State) {
   new_value: integer? = null;
   s.put_stack_char(new_value);
+}
+
+pub fn op_const_long_text(s: state::State) {
+  s.code_i64();
+  s.code_i64();
+  s.stop("OpConstLongText is obsolete: long texts are OpConstStoreText");
 }
 
 pub fn op_cast_int_from_text(s: state::State) {
@@ -1741,6 +1861,18 @@ pub fn op_format_stack_database(s: state::State) {
   s.format_stack_database();
 }
 
+pub fn op_store_tag(s: state::State) {
+  s.store_tag();
+}
+
+pub fn op_free_ref_tag(s: state::State) {
+  s.free_ref_tag();
+}
+
+pub fn op_sizeof_ref(s: state::State) {
+  s.sizeof_ref();
+}
+
 pub fn op_eq_content(s: state::State) {
   tp = s.code_u16();
   v2 = s.get_stack_dbref();
@@ -1811,11 +1943,25 @@ pub fn op_insert_vector(s: state::State) {
   s.insert_vector();
 }
 
+pub fn op_adopt_vector(s: state::State) {
+  tp = s.code_u16();
+  src = s.get_stack_dbref();
+  r = s.get_stack_dbref();
+  s.load_table(); crt::vec_adopt(tp, r.store_nr, r.rec, r.pos, src.store_nr, src.rec, src.pos);
+}
+
 pub fn op_replace_vector(s: state::State) {
   tp = s.code_u16();
   other = s.get_stack_dbref();
   r = s.get_stack_dbref();
   s.move_vector(r, other, tp, true);
+}
+
+pub fn op_copy_closure(s: state::State) {
+  tp = s.code_u16();
+  src = s.get_stack_dbref();
+  new_value: state::DbRef? = s.copy_closure(src, tp);
+  s.put_stack_dbref(new_value);
 }
 
 pub fn op_hash_remove(s: state::State) {
@@ -1866,6 +2012,14 @@ pub fn op_copy_record(s: state::State) {
   s.copy_record();
 }
 
+pub fn op_evacuate(s: state::State) {
+  fld = s.code_u16();
+  tp = s.code_u16();
+  home = s.get_stack_dbref();
+  holder = s.get_stack_dbref();
+  s.evacuate(holder, fld, home, tp);
+}
+
 pub fn op_replace_keyed(s: state::State) {
   s.replace_keyed();
 }
@@ -1874,6 +2028,15 @@ pub fn op_clear_keyed(s: state::State) {
   tp = s.code_u16();
   dest = s.get_stack_dbref();
   s.clear_keyed(dest, tp);
+}
+
+pub fn op_fill_keyed(s: state::State) {
+  tp = s.code_u16();
+  parent_tp = s.code_u16();
+  field = s.code_u16();
+  src = s.get_stack_dbref();
+  parent = s.get_stack_dbref();
+  s.fill_keyed(parent, src, tp, parent_tp, field);
 }
 
 pub fn op_length_spatial(s: state::State) {
@@ -1894,8 +2057,26 @@ pub fn op_length_trie(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn op_size_trie(s: state::State) {
+  r = s.get_stack_dbref();
+  new_value: integer? = crt::index_len(r.store_nr, r.rec, r.pos, 3);
+  s.put_stack_i64(new_value);
+}
+
 pub fn op_fn_ref_detach_shared(s: state::State) {
   s.fn_ref_detach_shared();
+}
+
+pub fn op_parallel_begin(s: state::State) {
+  s.parallel_begin();
+}
+
+pub fn op_parallel_arm(s: state::State) {
+  s.parallel_arm();
+}
+
+pub fn op_parallel_join(s: state::State) {
+  s.parallel_join();
 }
 
 pub fn op_pre_alloc_vector(s: state::State) {
@@ -1905,9 +2086,23 @@ pub fn op_pre_alloc_vector(s: state::State) {
   crt::vec_prealloc(r.store_nr, r.rec, r.pos, capacity, elem_size);
 }
 
+pub fn op_reserve_vector(s: state::State) {
+  elem_size = s.code_u16();
+  count = s.get_stack_i64();
+  r = s.get_stack_dbref();
+  crt::vec_reserve(r.store_nr, r.rec, r.pos, count, elem_size);
+}
+
 pub fn op_get_file(s: state::State) {
   file = s.get_stack_dbref();
   new_value: boolean? = crt::get_file(file.store_nr, file.rec, file.pos);
+  s.put_stack_bool(new_value);
+}
+
+pub fn op_get_dir(s: state::State) {
+  result = s.get_stack_dbref();
+  path = s.get_stack_str();
+  new_value: boolean? = s.get_dir(path, result);
   s.put_stack_bool(new_value);
 }
 
@@ -2096,6 +2291,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     52 => op_conv_character_from_int(s),
     53 => op_abs_int(s),
     54 => op_min_single_int(s),
+    55 => op_bit_not_single_int(s),
     56 => op_conv_single_from_int(s),
     57 => op_conv_bool_from_int(s),
     58 => op_add_int_nullable(s),
@@ -2170,17 +2366,21 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     127 => op_conv_bool_from_enum(s),
     128 => op_conv_int_from_enum(s),
     129 => op_conv_bool_from_ref(s),
+    130 => op_conv_ref_from_null(s),
     131 => op_init_ref(s),
     132 => op_null_ref_sentinel(s),
     133 => op_init_ref_sentinel(s),
     134 => op_free_ref(s),
     135 => op_free_ref_if_distinct(s),
+    136 => op_free_ref_or_hand_up(s),
     137 => op_free_ref_unless_entry(s),
     138 => op_free_scratch(s),
     139 => op_var_ref(s),
     140 => op_put_ref(s),
     141 => op_eq_ref(s),
     142 => op_ne_ref(s),
+    143 => op_get_ref(s),
+    144 => op_set_ref(s),
     145 => op_set_db_ref(s),
     146 => op_get_db_ref(s),
     147 => op_get_field(s),
@@ -2233,6 +2433,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     194 => op_append_vector(s),
     195 => op_slice_vector(s),
     196 => op_slice_view(s),
+    197 => op_keep_range(s),
     198 => op_push_int(s),
     199 => op_push_int4(s),
     200 => op_push_float(s),
@@ -2243,7 +2444,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     205 => op_push_byte(s),
     206 => op_ref_from_child_rec(s),
     207 => op_slot_tag(s),
+    208 => op_child_rec(s),
     209 => op_get_record(s),
+    210 => op_hash_add(s),
     211 => op_length_hash(s),
     212 => op_eq_bool(s),
     213 => op_ne_bool(s),
@@ -2255,7 +2458,12 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     219 => op_move_field(s),
     220 => op_move_vector(s),
     221 => op_free_record_in(s),
+    222 => op_demote_rec(s),
     223 => op_move_child_rec(s),
+    224 => op_store_buf(s),
+    225 => op_adopt_child_rec(s),
+    226 => op_store_buf_only(s),
+    227 => op_release_rec_if_distinct(s),
     228 => op_child_rec_in_place(s),
     229 => op_copy_ref_or_null(s),
     230 => op_bind_or_copy(s),
@@ -2263,6 +2471,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     232 => op_link_record(s),
     233 => op_set_keyed(s),
     234 => op_static_call(s),
+    235 => op_create_stack(s),
     236 => op_init_create_stack(s),
     237 => op_get_stack_text(s),
     238 => op_get_stack_ref(s),
@@ -2270,6 +2479,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     240 => op_get_slot_ref(s),
     241 => op_move_slot_ref(s),
     242 => op_set_slot_ref(s),
+    243 => op_set_stack_fn_ref(s),
+    244 => op_get_stack_fn_ref(s),
     245 => op_drop_fn_ref(s),
     246 => op_fn_ref_closure(s),
     247 => op_append_stack_text(s),
@@ -2281,6 +2492,8 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     253 => op_var_fn_ref(s),
     254 => op_put_fn_ref(s),
     255 => op_const_ref(s),
+    256 => op_const_store_text(s),
+    257 => op_call_ref_store(s),
     258 => op_bind_fn_ref_result(s),
     259 => op_text_walk_step(s),
     260 => op_text_null_jump(s),
@@ -2289,12 +2502,14 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     263 => op_vec_get_int_nullable(s),
     264 => op_vec_set_int(s),
     265 => op_vec_end_jump(s),
+    266 => op_null_reported(s),
     267 => op_tag_v_c_jump(s),
     268 => op_new_record_n_p(s),
     269 => op_cast_text_from_bool(s),
     270 => op_range_default(s),
     271 => op_narrow32(s),
     272 => op_conv_character_from_null(s),
+    273 => op_const_long_text(s),
     274 => op_cast_int_from_text(s),
     275 => op_cast_single_from_text(s),
     276 => op_cast_float_from_text(s),
@@ -2323,6 +2538,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     299 => op_database(s),
     300 => op_format_database(s),
     301 => op_format_stack_database(s),
+    302 => op_store_tag(s),
+    303 => op_free_ref_tag(s),
+    304 => op_sizeof_ref(s),
     305 => op_eq_content(s),
     306 => op_ne_content(s),
     307 => op_size_vector(s),
@@ -2333,7 +2551,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     312 => op_remove_vector(s),
     313 => op_keep_vector_range(s),
     314 => op_insert_vector(s),
+    315 => op_adopt_vector(s),
     316 => op_replace_vector(s),
+    317 => op_copy_closure(s),
     318 => op_hash_remove(s),
     319 => op_reserve_hash(s),
     320 => op_size_hash(s),
@@ -2343,14 +2563,22 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     324 => op_remove(s),
     325 => op_clear(s),
     326 => op_copy_record(s),
+    327 => op_evacuate(s),
     328 => op_replace_keyed(s),
     329 => op_clear_keyed(s),
+    330 => op_fill_keyed(s),
     331 => op_length_spatial(s),
     332 => op_size_spatial(s),
     333 => op_length_trie(s),
+    334 => op_size_trie(s),
     335 => op_fn_ref_detach_shared(s),
+    336 => op_parallel_begin(s),
+    337 => op_parallel_arm(s),
+    338 => op_parallel_join(s),
     339 => op_pre_alloc_vector(s),
+    340 => op_reserve_vector(s),
     341 => op_get_file(s),
+    342 => op_get_dir(s),
     343 => op_get_file_text(s),
     344 => op_write_file(s),
     345 => op_read_file(s),
@@ -3009,6 +3237,17 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         ip += 1;
         nv_54: integer? = -v1_54;
         crt::fput_i64(stk, base, cap, sp, nv_54);
+        sp += 8;
+        continue;
+      }
+    }
+    55 => {
+      if ip <= safe && sp >= 8 {
+        v1_55 = crt::fget_i64(stk, base, cap, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nv_55: integer? = if v1_55 == null { 9223372036854775807 } else { -v1_55 - 1 };
+        crt::fput_i64(stk, base, cap, sp, nv_55);
         sp += 8;
         continue;
       }

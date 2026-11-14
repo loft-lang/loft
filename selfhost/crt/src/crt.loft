@@ -465,6 +465,12 @@ pub fn bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: inte
 }
 
 // The run image's runner (@PLN91 run image, step 3): the Rust stack image at its positions.
+fn c_hold_bytes(b: const vector<u8>) -> integer;
+#c "loft_crt_hold_bytes" "int64_t(const uint8_t*, int64_t)"
+fn c_stack_str_held(store: integer, at: integer, base: integer, from: integer, len: integer);
+#c "loft_crt_stack_str_held" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_held_u32(base: integer, at: integer) -> integer;
+#c "loft_crt_held_u32" "int64_t(int64_t, int64_t)"
 fn c_stack_str_code(store: integer, at: integer, code: vector<u8>, from: integer, len: integer);
 #c "loft_crt_stack_str_code" "void(int64_t, int64_t, const char*, int64_t, int64_t)"
 fn c_stack_str_of_text(store: integer, at: integer, src: integer);
@@ -537,6 +543,28 @@ fn c_vec_insert(out: vector<integer>, store: integer, rec: integer, pos: integer
 #c "loft_crt_vec_insert" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) -> integer;
 #c "loft_crt_child_rec_in_place" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+fn c_new_child_rec(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) -> integer;
+#c "loft_crt_new_child_rec" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+fn c_fill_keyed(elem: integer, tp: integer, cs: integer, cr: integer, cp: integer, ss: integer, sr: integer, sp: integer, kind: integer, linked: integer, free_source: integer, held: integer, nullable: integer, ps: integer, pr: integer, pp: integer, members: vector<integer>);
+#c "loft_crt_fill_keyed" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
+fn c_copy_closure(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, owned: vector<integer>) -> integer;
+#c "loft_crt_copy_closure" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t)"
+fn c_demote_rec(tp: integer, store: integer, rec: integer, pos: integer, fld: integer);
+#c "loft_crt_demote_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_store_buf(out: vector<integer>, store: integer, rec: integer, pos: integer, only: integer) -> integer;
+#c "loft_crt_store_buf" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_adopt_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer);
+#c "loft_crt_adopt_child_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_release_rec_if_distinct(tp: integer, rs: integer, rr: integer, rp: integer, a_s: integer, ar: integer, ap: integer);
+#c "loft_crt_release_rec_if_distinct" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_vec_adopt(tp: integer, vs: integer, vr: integer, vp: integer, os: integer, o_r: integer, op: integer);
+#c "loft_crt_vec_adopt" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_evacuate(tp: integer, hs: integer, hr: integer, hp: integer, fld: integer, ms: integer, mr: integer, mp: integer, size: integer, image: vector<u8>, foreign: integer);
+#c "loft_crt_evacuate" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t, int64_t)"
+fn c_get_dir(path: text, bytes: integer, store: integer, rec: integer, pos: integer, size: integer) -> integer;
+#c "loft_crt_get_dir" "int64_t(const char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_null_reported(out: vector<integer>) -> integer;
+#c "loft_crt_null_reported" "int64_t(int64_t*, int64_t)"
 fn c_set_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer, free_source: integer);
 #c "loft_crt_set_child_rec" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_sidecar_add(tp: integer, hash: integer, walks: integer, before: text, blen: integer, after: text, alen: integer, dump: text, dlen: integer, oldest: text, olen: integer, bridge: text, brlen: integer) -> integer;
@@ -621,6 +649,22 @@ fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
 #c "loft_crt_stack_str" "int64_t(char*, int64_t, int64_t, int64_t)"
 
 // `OpConstText`: a view of `len` bytes of the image's `code` at `from`, pushed at `at`.
+// Bytes held for a run's text views — the code, the constant store's texts — in memory of their
+// own, which no store's growth moves: its address.  Held for the program's life.
+pub fn hold_bytes(b: const vector<u8>) -> integer {
+  c_hold_bytes(b)
+}
+
+// A view of `len` held bytes at `from` in the frame slot at `at`; the unsigned 32-bit value at
+// `at` of held bytes.
+pub fn stack_str_held(store: integer, at: integer, base: integer, from: integer, len: integer) {
+  c_stack_str_held(store, at, base, from, len);
+}
+
+pub fn held_u32(base: integer, at: integer) -> integer {
+  c_held_u32(base, at)
+}
+
 pub fn stack_str_code(store: integer, at: integer, code: vector<u8>, from: integer, len: integer) {
   c_stack_str_code(store, at, code, from, len);
 }
@@ -809,6 +853,66 @@ pub fn vec_insert(out: vector<integer>, store: integer, rec: integer, pos: integ
 // `OpChildRecInPlace`: the field's child record, made with `image` when it has none; in `out`.
 pub fn child_rec_in_place(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) {
   c_child_rec_in_place(out, tp, store, rec, pos, image);
+}
+
+// `OpChildRec`: a new child record of type `tp` for the field, with `image`; in `out`.
+pub fn new_child_rec(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, image: vector<u8>) {
+  c_new_child_rec(out, tp, store, rec, pos, image);
+}
+
+// `OpFillKeyed`: every record of the vector at `(ss, sr, sp)` filed into the keyed collection at
+// `(cs, cr, cp)` of type `tp` (elements `elem`, `kind` as `set_keyed` takes it); `members` its
+// linked group as `group_finish` takes one, empty outside a group, held by `(ps, pr, pp)`.
+pub fn fill_keyed(elem: integer, tp: integer, cs: integer, cr: integer, cp: integer, ss: integer, sr: integer, sp: integer, kind: integer, linked: boolean, free_source: boolean, held: boolean, nullable: boolean, ps: integer, pr: integer, pp: integer, members: vector<integer>) {
+  c_fill_keyed(elem, tp, cs, cr, cp, ss, sr, sp, kind, if linked { 1 } else { 0 }, if free_source { 1 } else { 0 }, if held { 1 } else { 0 }, if nullable { 1 } else { 0 }, ps, pr, pp, members);
+}
+
+// `OpCopyClosure`: a closure record of type `tp` copied, each of its `owned` capture slots (a
+// position) given a record of its own; in `out`.
+pub fn copy_closure(out: vector<integer>, tp: integer, store: integer, rec: integer, pos: integer, owned: vector<integer>) {
+  c_copy_closure(out, tp, store, rec, pos, owned);
+}
+
+// `OpDemoteRec`: the record's field `fld` of type `tp` demoted to a child record.
+pub fn demote_rec(tp: integer, store: integer, rec: integer, pos: integer, fld: integer) {
+  c_demote_rec(tp, store, rec, pos, fld);
+}
+
+// `OpStoreBuf` / `OpStoreBufOnly`: a return buffer in the host's store, or (`only`) the buffer
+// as its own; in `out`.
+pub fn store_buf(out: vector<integer>, store: integer, rec: integer, pos: integer, only: boolean) {
+  c_store_buf(out, store, rec, pos, if only { 1 } else { 0 });
+}
+
+// `OpAdoptChildRec`: the field's child record adopted from the value.
+pub fn adopt_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer) {
+  c_adopt_child_rec(tp, fs, fr, fp, vs, vr, vp);
+}
+
+// `OpReleaseRecIfDistinct`: the record released unless the answer is it.
+pub fn release_rec_if_distinct(tp: integer, rs: integer, rr: integer, rp: integer, a_s: integer, ar: integer, ap: integer) {
+  c_release_rec_if_distinct(tp, rs, rr, rp, a_s, ar, ap);
+}
+
+// `OpAdoptVector`: the vector takes the other's elements as its own.
+pub fn vec_adopt(tp: integer, vs: integer, vr: integer, vp: integer, os: integer, o_r: integer, op: integer) {
+  c_vec_adopt(tp, vs, vr, vp, os, o_r, op);
+}
+
+// `OpEvacuate`: the holder's field `fld` moved out to a record of its own at the home.
+pub fn evacuate(tp: integer, hs: integer, hr: integer, hp: integer, fld: integer, ms: integer, mr: integer, mp: integer, size: integer, image: vector<u8>, foreign: boolean) {
+  c_evacuate(tp, hs, hr, hp, fld, ms, mr, mp, size, image, if foreign { 1 } else { 0 });
+}
+
+// `OpGetDir`: the directory's entries appended to a vector of `File` records of `size` bytes;
+// whether the path is a directory that was read.
+pub fn get_dir(path: text?, store: integer, rec: integer, pos: integer, size: integer) -> boolean {
+  c_get_dir(path ?? "", bytes_of(path), store, rec, pos, size) != 0
+}
+
+// `DbRef::NULL_REPORTED`: a null whose absence is accounted for; in `out`.
+pub fn null_reported(out: vector<integer>) {
+  c_null_reported(out);
 }
 
 // `OpSetChildRec`: the field's child record set from `(ss, sr, sp)` as a `tp` record.

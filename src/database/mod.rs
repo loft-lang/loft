@@ -538,6 +538,10 @@ pub struct Stores {
     /// `src/generation/calls.rs`) resolves from any function context
     /// that only has `&mut Stores`.
     pub const_refs: Vec<DbRef>,
+    /// The records of the constant store that hold a long text (`gen_text`, a text of 256
+    /// bytes or more), in the order they were written — what a run image carries of that
+    /// store (`ir_store::run_image_consts`).
+    pub const_texts: Vec<u32>,
     /// errors from the last `json_parse()` call, read via
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
@@ -819,6 +823,7 @@ impl Clone for Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             const_refs: Vec::new(),
+            const_texts: Vec::new(),
             last_json_errors: Vec::new(),
             child_copies: Vec::new(),
             child_copy_depth: 0,
@@ -1616,6 +1621,7 @@ impl Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             const_refs: Vec::new(),
+            const_texts: Vec::new(),
             last_json_errors: Vec::new(),
             child_copies: Vec::new(),
             child_copy_depth: 0,

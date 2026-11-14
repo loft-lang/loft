@@ -105,6 +105,25 @@ fn test_a_par_loop_answers_in_order() {
   assert(r == 354, "the cubes of 1..4 weighted by their order: {r}");
 }
 
+// A plain vector assigned to a keyed field files each record by its key.
+fn test_a_vector_fills_a_keyed_field() {
+  r = answer("fillkeyed", "n_filed", [0]);
+  assert(r == 203123, "the lookup, the absent key, the count and the sorted order: {r}");
+}
+
+// A long text constant is read from the constant store, and a text constant is still read where
+// it lies after a deep recursion.
+fn test_text_constants_stay_readable() {
+  r = answer("longtext", "n_texts", [0]);
+  assert(r == 370193034, "the long text's length and tail, and the recursion's count: {r}");
+}
+
+// A `&text` function called through a reference writes the struct field it is given.
+fn test_a_reference_call_links_a_stored_text() {
+  r = answer("storetext", "n_linked", [0]);
+  assert(r == 31, "the field's length and its exact text: {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {
