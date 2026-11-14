@@ -92,8 +92,7 @@ The first two are run by hand; neither is a test yet.
 | Part | State |
 |---|---|
 | operator templates and `State` methods | every operator is carried (`create.loft` prints the count; `--missing` lists none).  The `State`'s methods are in `state.loft` and `state_ops.loft`.  Operators no program of the corpus runs are checked by the build only: the child-record and store-buffer families beyond `OpStoreBuf`, `OpEvacuate`, `OpAdoptVector`, `OpCopyClosure`, the slot-cell writes, the store tags |
-| natives (`OpStaticCall`) | `natives.loft`.  Not ported, and what still stops corpus programs: `file_map`, `stack_trace`, the store-lock pair, `type_named`, a C-library native |
-| rendering a value (`show.loft`) | two parts of the C renderer are not ported, each failing one corpus program: references written as JSON pointers with a `$refs` section (`@FR-F-Render-Ref`, `loft_show_top`), and a long child chain rendered without a call per link (`@FR-F-Render-Child`) |
+| natives (`OpStaticCall`) | `natives.loft`.  Not ported, and what still stops corpus programs: `stack_trace` and `type_named` (both need the definitions' names, which the run image does not carry), and a `#c` function a program declares itself |
 | a paged load by a text key that holds a NUL byte | fails one corpus program (`store_load_key_text`, Col-Trie 2241); not diagnosed |
 | `par` | a queue's or a fold's workers run one after another by `natives.loft`'s scheduler (`par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return |
 | compiled library code | not built: every library function runs as bytecode (difference 9).  To build: the standard library's and each `use`d library's compiled bodies linked into the runner and called at `OpStaticCall`, as Rust calls its bridges |

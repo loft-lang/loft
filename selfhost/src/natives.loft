@@ -74,6 +74,9 @@ N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
 N_CHAR_PREDICATE = 31;
+N_FILE_MAP = 61;
+N_GET_STORE_LOCK = 62;
+N_SET_STORE_LOCK = 63;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -82,6 +85,9 @@ pub fn native_handler(name: text) -> integer {
     "n_now" => N_NOW,
     "n_ticks" => N_TICKS,
     "n_protect_store_frees" => N_PROTECT,
+    "n_file_map" => N_FILE_MAP,
+    "n_get_store_lock" => N_GET_STORE_LOCK,
+    "n_set_store_lock" => N_SET_STORE_LOCK,
     "n_unprotect_store_frees" => N_UNPROTECT,
     "t_4text_starts_with" => N_STARTS_WITH,
     "t_4text_ends_with" => N_ENDS_WITH,
@@ -342,6 +348,26 @@ pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, s
     sp -= 16;
     set_bool(stk, sp, if nh == N_IS_DIR { is_dir(idp) } else { is_file(idp) });
     sp += 8;
+  } else if nh == N_FILE_MAP {
+    // The file's bytes as a read-only vector (the C runtime's `file_map`); null where it
+    // cannot be mapped.
+    fmp = crt::stack_str(stk, sp - 16) ?? "";
+    sp -= 16;
+    crt::file_map(io, fmp);
+    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    sp += 16;
+  } else if nh == N_GET_STORE_LOCK {
+    // `d#lock`: is the store the reference names locked?
+    sp -= 16;
+    crt::slot_ref(io, stk, sp);
+    set_bool(stk, sp, crt::store_native(2, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0) != 0);
+    sp += 8;
+  } else if nh == N_SET_STORE_LOCK {
+    // `d#lock = v`: the lock popped, then the reference.
+    slk = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp - 8, 0, 0) ?? 0;
+    sp -= 24;
+    crt::slot_ref(io, stk, sp);
+    crt::store_native(3, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if slk == 1 { 1 } else { 0 });
   } else if nh == N_LIST_DIR {
     // The directory's entries, a vector in a store of its own (the C runtime's `list_dir`).
     ldp = crt::stack_str(stk, sp - 16) ?? "";

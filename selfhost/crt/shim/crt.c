@@ -17,6 +17,8 @@
  * without it, shares the stores unchanged). */
 #define LOFT_JSON 1
 #define LOFT_PARSE 1
+/* A mapped file (`file_map`): a store whose bytes are the mapping's, read-only. */
+#define LOFT_FOREIGN 1
 #include "../../../src/c/loft_crt.h"
 /* The file routines (@PLN91 S6's files): a File record of the interpreted program is read and
  * written by the runtime's own `loft_get_file`, `loft_write_file`, `loft_read_file`, …, and a
@@ -1321,6 +1323,13 @@ int64_t loft_crt_get_dir(const char *path, int64_t bytes, int64_t store, int64_t
     return loft_get_dir(loft_crt_str(path, bytes), loft_crt_ref(store, rec, pos), (uint32_t) size);
 }
 
+/* `Stores::reference_removed` (`@FR-H-Removed`): does a reference to record `rec` of store
+ * `store` name a record that was removed?  Such a reference reads as null. */
+int64_t loft_crt_ref_removed(int64_t store, int64_t rec) {
+    return rec != 0 && store >= 0 && (uint64_t) store < loft_nstores
+        && loft_st_is_removed(&loft_stores[store], (uint32_t) rec);
+}
+
 /* `DbRef::NULL_REPORTED`: a null whose absence is accounted for; in `out`. */
 int64_t loft_crt_null_reported(int64_t *out, int64_t no) {
     loft_crt_put_ref(out, no, loft_ref_null_reported());
@@ -2412,6 +2421,13 @@ int64_t loft_crt_write_text_raw(int64_t store, int64_t rec, int64_t pos, const c
  * a path that is not a readable directory. */
 int64_t loft_crt_list_dir(int64_t *out, int64_t no, const char *path, int64_t bytes) {
     loft_crt_put_ref(out, no, loft_list_dir(loft_crt_str(path, bytes)));
+    return 0;
+}
+
+/* `file_map(path)` (`Stores::fs_file_map`): the file's bytes as a read-only vector, null where
+ * it cannot be mapped; its reference in `out`. */
+int64_t loft_crt_file_map(int64_t *out, int64_t no, const char *path, int64_t bytes) {
+    loft_crt_put_ref(out, no, loft_file_map(loft_crt_str(path, bytes)));
     return 0;
 }
 
