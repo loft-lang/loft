@@ -547,6 +547,19 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     if (free_source && value.store_nr != c.store_nr && !loft_free_protected(value)) loft_free_ref(value);
 }
 
+/* The text key fields of a freshly claimed element `e`, emptied.  A claim is not zeroed
+ * (`@FR-H-Claim`: in a store without `defined` it holds whatever the slot held before), and
+ * `loft_key_set` releases the text a key field holds, as `keys::set_key` does — so a field
+ * nothing wrote must read as no text, or the release frees a record some other value owns. */
+static void loft_key_texts_clear(loft_ref e, const loft_key *keys, int nk) {
+    if (e.rec == 0) return;
+    for (int i = 0; i < nk; i++)
+        if ((keys[i].type < 0 ? -keys[i].type : keys[i].type) == 6) {
+            uint32_t none = 0;
+            memcpy(loft_at(loft_store_of(e), e.rec, e.pos + keys[i].pos), &none, 4);
+        }
+}
+
 /* `@FR-R-InPlaceLiteral`'s keyed clause, the first half of `c[k…] = R { … }` written in place
  * (Stores::keyed_place_begin): the element the FULL subscript names removed, as `loft_set_keyed`
  * removes it, and a fresh one claimed in the collection's store, not yet filed — the literal's
@@ -559,9 +572,15 @@ static loft_ref loft_keyed_place_begin(const loft_tdesc *T, uint16_t etp, loft_r
     if (existing.rec != 0) {
         loft_keyed_remove_at(T, etp, c, existing, kind, keys, nk, size);
     }
-    return kind == LOFT_KEYED_SORTED ? loft_sorted_new(c, size)
-           : kind == LOFT_KEYED_HASH ? loft_hash_entry(c, size, T[etp].linked)
-                                     : loft_entry_new(c, size);
+    loft_ref e = kind == LOFT_KEYED_SORTED ? loft_sorted_new(c, size)
+                 : kind == LOFT_KEYED_HASH ? loft_hash_entry(c, size, T[etp].linked)
+                                           : loft_entry_new(c, size);
+    /* A claim is not zeroed (`@FR-H-Claim`), and `loft_key_set` releases the text a key field
+     * holds: a text key field starts empty here, so finishing an element whose key nothing
+     * wrote (a subscript entry, `c["k"].n += 1`) releases nothing, while one a literal wrote is
+     * released as `keys::set_key` releases it. */
+    loft_key_texts_clear(e, keys, nk);
+    return e;
 }
 
 /* The second half (Stores::keyed_place_finish): the subscript's key written into the claimed
@@ -617,6 +636,7 @@ static loft_ref loft_keyed_entry_ints(const loft_tdesc *T, uint16_t etp, loft_re
     loft_ref e = loft_keyed_place_begin(T, etp, c, LOFT_KEYED_HASH, keys, nk, kv, nk);
     if (e.rec == 0) return e;
     loft_st_fresh(loft_store_of(e), e.rec, e.pos, T[etp].size);
+        loft_key_texts_clear(e, keys, nk);
     loft_keyed_place_finish(T, etp, c, e, LOFT_KEYED_HASH, keys, nk, kv, nk);
     return loft_h_find_ints(c, keys, nk, ks);
 }
@@ -653,6 +673,7 @@ static loft_ref loft_keyed_entry_text(const loft_tdesc *T, uint16_t etp, loft_re
     loft_ref e = loft_keyed_place_begin(T, etp, c, LOFT_KEYED_HASH, keys, nk, &kv, 1);
     if (e.rec != 0) {
         loft_st_fresh(loft_store_of(e), e.rec, e.pos, T[etp].size);
+        loft_key_texts_clear(e, keys, nk);
         loft_keyed_place_finish(T, etp, c, e, LOFT_KEYED_HASH, keys, nk, &kv, 1);
         e = loft_h_find_text(c, keys, loft_view(&own));
     }

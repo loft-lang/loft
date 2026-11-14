@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-BufferReturn`: a call to a function that answers its `&text` work buffer is read from that
+// buffer — the C writes the callee's `__wr` twin and the call's value is a view of the buffer,
+// and a text local bound from a call takes the call site's own buffer — so the text is not
+// copied on its way out.  Every cell reads a result where the buffer could be refilled or
+// handed on: two sites, one site in a loop with the previous result kept, two calls in one
+// expression, recursion, a buffer passed down, appends, stores, branches, formats, a constant,
+// the self-hosted interpreter's `slot_text` shape, a local rebound from its own call, and a
+// callee that may answer null.
+// Values hand-computed.
+//
+// @falsified-at: none — no earlier build reads the buffer, so the receipt is a defect planted
+//   (2026-11-13) in the writer: the view read without the twin's fill fails the 13 cells c1-c13.  The
+//   bind clause's own-buffer check has no receipt: every bound call the parser writes is
+//   handed a buffer of its own (a buffer passed down only reaches a returned call), so taking
+//   any buffer passes every cell.
+//   CHANNEL: an assertion.
+
+struct Box { name: text }
+K = "kconst";
+
+fn built(s: text) -> text { s + "!" }
+fn constant() -> text { K }
+fn grow(n: integer) -> text { if n == 0 { "x" } else { grow(n - 1) + "y" } }
+fn pass_on(s: text) -> text { built(s) }
+fn put(st: vector<text>, sp: integer, v: text) { st[sp] = v; }
+fn cmp(a: text, b: text) -> integer { len(a) * 10 + len(b) }
+fn from_bytes(s: text) -> text {
+  buf: vector<u8> = [];
+  for c in s { buf += [c as u8]; }
+  text_from_byte_range(buf, 0, len(buf))
+}
+
+// c1 passed on as an argument
+fn test_c1() { st: vector<text> = [""]; put(st, 0, built("ab")); assert(st[0] == "ab!", "c1 {st[0]}"); }
+// c2 two sites bound, both read after
+fn test_c2() { t = built("a"); u = built("bb"); assert(t == "a!" && u == "bb!", "c2 {t} {u}"); }
+// c3 same site in a loop, previous kept
+fn test_c3() {
+  prev = ""; t = "";
+  for i in 0..3 { prev = t; t = built("{i}"); }
+  assert(prev == "1!" && t == "2!", "c3 {prev} {t}");
+}
+// c4 two calls in one expression
+fn test_c4() {
+  s = built("a") + built("bcd");
+  assert(s == "a!bcd!", "c4a {s}");
+  n = cmp(built("a"), built("bcd"));
+  assert(n == 24, "c4b {n}");
+}
+// c5 recursion appending to the inner result
+fn test_c5() { g = grow(4); assert(g == "xyyyy", "c5 {g}"); }
+// c6 returned straight on
+fn test_c6() { p = pass_on("q"); assert(p == "q!", "c6 {p}"); }
+// c7 appended in a loop
+fn test_c7() { s = ""; for i in 0..3 { s += built("{i}"); } assert(s == "0!1!2!", "c7 {s}"); }
+// c8 stored into a vector and a field
+fn test_c8() {
+  v: vector<text> = [];
+  for i in 0..2 { v += [built("{i}")]; }
+  b = Box { name: built("n") };
+  b.name = built("m");
+  assert(v[0] == "0!" && v[1] == "1!" && b.name == "m!", "c8 {v[0]} {v[1]} {b.name}");
+}
+// c9 a branch choosing between two calls
+fn test_c9() {
+  for c in [true, false] {
+    x = if c { built("t") } else { built("ff") };
+    assert(x == (if c { "t!" } else { "ff!" }), "c9 {x}");
+  }
+}
+// c10 a format reading two results
+fn test_c10() { f = "{built("a")}-{built("b")}"; assert(f == "a!-b!", "c10 {f}"); }
+// c11 a constant read and bound
+fn test_c11() {
+  assert(len(constant()) == 6, "c11a");
+  k = constant(); k += "+";
+  assert(k == "kconst+" && constant() == "kconst", "c11b {k}");
+}
+// c12 the interpreter's slot_text shape: bytes made text, stored on a stack
+fn test_c12() {
+  st: vector<text> = [""];
+  for w in ["ab", "cde"] { put(st, 0, from_bytes(w)); assert(st[0] == w, "c12 {st[0]}"); }
+}
+// c13 a bound result rebound while the next call at that site runs
+fn test_c13() {
+  t = "";
+  for i in 0..3 { t = built(t); }
+  assert(t == "!!!", "c13 {t}");
+}
+// c14 a callee that may answer null: read, bound, and defaulted
+fn maybe(s: text) -> text? {
+  if s == "" { return null; }
+  s + "?"
+}
+fn test_c14() {
+  a = maybe("");
+  b = maybe("q");
+  assert(a == null && b == "q?", "c14a {b}");
+  assert((maybe("") ?? "d") == "d" && len(maybe("xy") ?? "") == 3, "c14b");
+  s = "";
+  for w in ["", "k", ""] { s += maybe(w) ?? "-"; }
+  assert(s == "-k?-", "c14c {s}");
+}

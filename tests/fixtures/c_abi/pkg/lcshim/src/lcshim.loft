@@ -28,3 +28,20 @@ pub fn shim_rgb_sum(v: vector<Px>) -> integer;                  #c "lcs_shim_rgb
 
 // From the shim's SECOND source file (`lc_shim_two.c`).
 pub fn shim_half(a: integer) -> integer;                       #c "lcs_shim_half" "int64_t(int64_t)"
+
+// `#c_twin` — a loft body and the C version the C backend calls in its place; the other backends
+// run the body, and the two answer the same (`tests/c_emit.rs`).  A twin may take a float: only
+// the C backend calls the routine, through its prototype.
+pub fn twin_weigh(v: vector<integer>, k: integer) -> integer {
+  t = 0;
+  for i in 0..len(v) {
+    t += (v[i] ?? 0) * (i + k);
+  }
+  t
+}
+#c_twin "lcs_twin_weigh" "int64_t(const int64_t*, int64_t, int64_t)"
+
+pub fn twin_scale(x: float, by: integer) -> float {
+  x * (by as float)
+}
+#c_twin "lcs_twin_scale" "double(double, int64_t)"

@@ -19,7 +19,14 @@ gates T and S on nearly every file, and its elaborator is gate E's work: the gat
 program and by formal rule, is [1a-parser.md § Where it stands](1a-parser.md#where-it-stands).
 1b's interpreter runs programs from the RUST front end's image (766 of the 1,078 corpus
 programs at its last census, in an earlier `handoff-*.md`; not re-measured since); the IR
-passes and the bytecode writer are not ported yet.
+passes and the bytecode writer are not ported yet.  The bytecode runner built as a port of
+the Rust interpreter — its generated operator table, what is still to build and where it
+differs from Rust — is [1b-fill-port.md](1b-fill-port.md).
+
+**1b is behind the reference (owner,
+2026-11-12):** the IR lifetime work (@PLN211) landed after its last census and its port of the
+optimisations is half done, so its open items start with a fresh run of the comparison, worked
+under [§ The port method](#the-port-method--the-diff-is-the-work-the-reference-is-the-truth).
 
 **One rule for every stage — a reimplementation, not a new language (owner,
 2026-10-30):** the same IR, the same bytecode, the same memory structures, the same
@@ -211,6 +218,54 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
 **Beside the path:** strands 2–4 (bundles) ride stage 2 — 4 falls out of it.  Strand 7 is
 the small-board lead, with 5 and 6 as its enablers; its probes P-footprint and P-dbref-perf
 are its own.  P-cemit is done (@PLN200 B5, `scripts/c_sweep.py` the diff).
+
+### The port method — the diff is the work, the reference is the truth
+
+Every stage above is worked the same way (owner, 2026-11-12).  The method is what lets an
+agent run a stage on its own for as long as the diff is non-empty, and what makes the port
+find defects in the implementation it copies.
+
+- **Every layer equal, no normaliser.**  The gate is the comparison instrument's verdict
+  over every layer it has ([1b-compare.md § The layers](1b-compare.md#the-layers)) and,
+  from strand 12, the emitted C byte for byte.  No layer's difference is tolerated as
+  incidental: the order of allocations, the numbering of slots and the spelling of a
+  generated name all count.  A layer that cannot be made equal is a design question for
+  the owner, asked in prose; a normaliser is never added to make a diff go green.
+- **A mismatch is a queue item, not a judgement.**  The agent needs no opinion on whether
+  a difference matters: every differing program is a task until the diff is empty, and the
+  result is read as a count (how many programs agree), never as a review.  That is why the
+  gate has this shape.
+- **A mismatch is first a question to the formal rules.**  The two sides are independent
+  implementations of a written rule, and a reimplementation seldom reproduces a specific
+  defect of the original, so a disagreement is where the reference's own defects show.
+  Before the port's side changes, the rule under the disagreement is read
+  (`doc/claude/formal/`, the chapter the cell is filed under) and the cell is hand-computed.
+  When the rule sides with the port, the reference has the defect.
+- **A defect in the reference is fixed in the reference, never matched.**  The Rust
+  implementation is the single source of truth for the language until stage 6 retires it.
+  Its fix lands there, under the CLAUDE.md matrix-first protocol, with its cell in the
+  language suite under the rule; only then does the port follow the corrected result
+  exactly.  The port never closes a mismatch on its own side by matching a behaviour the
+  rule rejects, and never carries a behaviour the reference does not have.  So the port has
+  no authority over the language: its whole job is to make the diff empty, and the one
+  thing it may not do is make it empty by itself.  This is
+  [1b-interpreter.md § The dogfood rule](1b-interpreter.md#the-dogfood-rule-governs-every-step)
+  applied to the reference as well as to the language.
+- **The reference's output is kept as a frozen corpus.**  The comparison reads the
+  reference's layers from a stored run over the corpus and the language suite, regenerated
+  whenever a reference fix lands, so the gate outlives the reference: after stage 6 the
+  frozen corpus is what the port is compared with, and the bootstrap gate (stage 2's C
+  equals stage 1's) is the same comparison over the compiler's own sources.  Where the
+  corpus lives is strand 11's decision, beside the suite's recorded answers.
+- **Deterministic output is a precondition, on both sides.**  Byte-identical layers
+  cannot depend on a hash map's iteration order or on an address.  The reproducible-build
+  workflow already asks this of the binary; a port that meets a non-deterministic order
+  fixes it in the reference first, as any defect.
+
+What the method leaves behind is a language whose remaining defects are shallow in one
+exact sense: each is a disagreement between two independent implementations of a written
+rule, caught by a byte diff, with a cell that pins it — never a decision buried in a writer
+nobody can rebuild.
 
 ## Honest floors + costs (do not design these away)
 

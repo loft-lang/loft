@@ -498,15 +498,81 @@ pub(crate) const BUNDLE_STRIDE: u32 = 40;
 #[cfg(feature = "mmap")] // only `save_bundle` claims a bundle root
 pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
-/// `RunImage { code: vector<u8>, starts: vector<u32>, natives: vector<text>, types:
-/// vector<DbType>, main: integer, cwd: boolean }` — the run image's store root (@PLN91).
+/// `RunImage { code: vector<u8>, starts: vector<u32>, ops, layouts, natives: vector<text>,
+/// consts: vector<RunConst>, fnrefs: vector<RunFnRef>, types: vector<DbType>,
+/// gens: vector<RunGen>, shared: vector<integer>, workers: vector<RunWorker>,
+/// sidecars: vector<RunSidecar>, oldest, bridge, source: text, main: integer, cwd: boolean }` — the run
+/// image's store root (@PLN91).
 pub(crate) const RUNIMG_MAIN: u32 = 0;
 pub(crate) const RUNIMG_CODE: u32 = 8;
 pub(crate) const RUNIMG_STARTS: u32 = 12;
-pub(crate) const RUNIMG_NATIVES: u32 = 16;
-pub(crate) const RUNIMG_TYPES: u32 = 20;
-pub(crate) const RUNIMG_CWD: u32 = 24;
-pub(crate) const RUNIMG_STRIDE: u32 = 32;
+pub(crate) const RUNIMG_OPS: u32 = 16;
+pub(crate) const RUNIMG_LAYOUTS: u32 = 20;
+pub(crate) const RUNIMG_NATIVES: u32 = 24;
+pub(crate) const RUNIMG_CONSTS: u32 = 28;
+pub(crate) const RUNIMG_FNREFS: u32 = 32;
+pub(crate) const RUNIMG_TYPES: u32 = 36;
+pub(crate) const RUNIMG_GENS: u32 = 40;
+pub(crate) const RUNIMG_SHARED: u32 = 44;
+pub(crate) const RUNIMG_WORKERS: u32 = 48;
+pub(crate) const RUNIMG_SIDECARS: u32 = 52;
+pub(crate) const RUNIMG_OLDEST: u32 = 56;
+pub(crate) const RUNIMG_BRIDGE: u32 = 60;
+pub(crate) const RUNIMG_SOURCE: u32 = 64;
+pub(crate) const RUNIMG_STORE_INSTS: u32 = 68;
+pub(crate) const RUNIMG_CWD: u32 = 72;
+pub(crate) const RUNIMG_STRIDE: u32 = 80;
+/// `RunFnRef { def, drop, kind, cascade: integer, hidden: vector<integer> }` — a call through a function
+/// reference's shape.
+pub(crate) const RUNFNREF_DEF: u32 = 0;
+pub(crate) const RUNFNREF_DROP: u32 = 8;
+pub(crate) const RUNFNREF_KIND: u32 = 16;
+pub(crate) const RUNFNREF_CASCADE: u32 = 24;
+pub(crate) const RUNFNREF_HIDDEN: u32 = 32;
+pub(crate) const RUNFNREF_STRIDE: u32 = 40;
+/// `RunGen { def, zone2: integer, text_args, ref_args, text_locals, owned_locals, tuple_refs:
+/// vector<integer> }` — a generator's frame facts (`gen_facts`).
+/// `RunSidecar { tp, hash, pcoll, pcontent, pkind, prangecontent: integer, prefusal,
+/// pboxrefusal, prangerefusal: text, walks, refs, rekey: boolean, before, after, dump: text }` —
+/// a persisted root type's sidecar and paged-load plans.
+pub(crate) const RUNSIDECAR_TP: u32 = 0;
+pub(crate) const RUNSIDECAR_HASH: u32 = 8;
+pub(crate) const RUNSIDECAR_PCOLL: u32 = 16;
+pub(crate) const RUNSIDECAR_PCONTENT: u32 = 24;
+pub(crate) const RUNSIDECAR_PKIND: u32 = 32;
+pub(crate) const RUNSIDECAR_PRANGECONTENT: u32 = 40;
+pub(crate) const RUNSIDECAR_PREFUSAL: u32 = 48;
+pub(crate) const RUNSIDECAR_PBOXREFUSAL: u32 = 52;
+pub(crate) const RUNSIDECAR_PRANGEREFUSAL: u32 = 56;
+pub(crate) const RUNSIDECAR_BEFORE: u32 = 60;
+pub(crate) const RUNSIDECAR_AFTER: u32 = 64;
+pub(crate) const RUNSIDECAR_DUMP: u32 = 68;
+pub(crate) const RUNSIDECAR_WALKS: u32 = 72;
+pub(crate) const RUNSIDECAR_REFS: u32 = 73;
+pub(crate) const RUNSIDECAR_REKEY: u32 = 74;
+pub(crate) const RUNSIDECAR_STRIDE: u32 = 80;
+/// `RunWorker { def, input, ret, texts, dests: integer }` — a `par` worker's call shape.
+pub(crate) const RUNWORKER_DEF: u32 = 0;
+pub(crate) const RUNWORKER_INPUT: u32 = 8;
+pub(crate) const RUNWORKER_RET: u32 = 16;
+pub(crate) const RUNWORKER_TEXTS: u32 = 24;
+pub(crate) const RUNWORKER_DESTS: u32 = 32;
+pub(crate) const RUNWORKER_ROW: u32 = 40;
+pub(crate) const RUNWORKER_STRIDE: u32 = 48;
+pub(crate) const RUNGEN_DEF: u32 = 0;
+pub(crate) const RUNGEN_ZONE2: u32 = 8;
+pub(crate) const RUNGEN_TEXT_ARGS: u32 = 16;
+pub(crate) const RUNGEN_REF_ARGS: u32 = 20;
+pub(crate) const RUNGEN_TEXT_LOCALS: u32 = 24;
+pub(crate) const RUNGEN_OWNED_LOCALS: u32 = 28;
+pub(crate) const RUNGEN_TUPLE_REFS: u32 = 32;
+pub(crate) const RUNGEN_STRIDE: u32 = 40;
+/// `RunConst { def, rec, pos: integer, bytes: vector<u8> }` — one constant's store as bytes.
+pub(crate) const RUNCONST_DEF: u32 = 0;
+pub(crate) const RUNCONST_REC: u32 = 8;
+pub(crate) const RUNCONST_POS: u32 = 16;
+pub(crate) const RUNCONST_BYTES: u32 = 24;
+pub(crate) const RUNCONST_STRIDE: u32 = 32;
 #[cfg(feature = "mmap")] // only `save_run_image` claims a run-image root
 pub(crate) const RUNIMG_ROOT_WORDS: u32 = (8 + RUNIMG_STRIDE).div_ceil(8);
 
@@ -1772,8 +1838,68 @@ mod tests {
         assert_eq!(pos(ids.run_image, "main"), RUNIMG_MAIN);
         assert_eq!(pos(ids.run_image, "code"), RUNIMG_CODE);
         assert_eq!(pos(ids.run_image, "starts"), RUNIMG_STARTS);
+        assert_eq!(pos(ids.run_image, "ops"), RUNIMG_OPS);
+        assert_eq!(pos(ids.run_image, "layouts"), RUNIMG_LAYOUTS);
         assert_eq!(pos(ids.run_image, "natives"), RUNIMG_NATIVES);
         assert_eq!(pos(ids.run_image, "types"), RUNIMG_TYPES);
         assert_eq!(pos(ids.run_image, "cwd"), RUNIMG_CWD);
+        assert_eq!(pos(ids.run_image, "consts"), RUNIMG_CONSTS);
+        assert_eq!(pos(ids.run_image, "fnrefs"), RUNIMG_FNREFS);
+        assert_eq!(pos(ids.run_image, "gens"), RUNIMG_GENS);
+        assert_eq!(pos(ids.run_image, "shared"), RUNIMG_SHARED);
+        assert_eq!(pos(ids.run_image, "workers"), RUNIMG_WORKERS);
+        assert_eq!(pos(ids.run_image, "sidecars"), RUNIMG_SIDECARS);
+        assert_eq!(pos(ids.run_image, "oldest"), RUNIMG_OLDEST);
+        assert_eq!(pos(ids.run_image, "bridge"), RUNIMG_BRIDGE);
+        assert_eq!(pos(ids.run_image, "source"), RUNIMG_SOURCE);
+        assert_eq!(pos(ids.run_image, "store_insts"), RUNIMG_STORE_INSTS);
+        assert_eq!(u32::from(stores.size(ids.run_sidecar)), RUNSIDECAR_STRIDE);
+        assert_eq!(pos(ids.run_sidecar, "tp"), RUNSIDECAR_TP);
+        assert_eq!(pos(ids.run_sidecar, "hash"), RUNSIDECAR_HASH);
+        assert_eq!(pos(ids.run_sidecar, "pcoll"), RUNSIDECAR_PCOLL);
+        assert_eq!(pos(ids.run_sidecar, "pcontent"), RUNSIDECAR_PCONTENT);
+        assert_eq!(pos(ids.run_sidecar, "pkind"), RUNSIDECAR_PKIND);
+        assert_eq!(pos(ids.run_sidecar, "prefusal"), RUNSIDECAR_PREFUSAL);
+        assert_eq!(pos(ids.run_sidecar, "pboxrefusal"), RUNSIDECAR_PBOXREFUSAL);
+        assert_eq!(
+            pos(ids.run_sidecar, "prangecontent"),
+            RUNSIDECAR_PRANGECONTENT
+        );
+        assert_eq!(
+            pos(ids.run_sidecar, "prangerefusal"),
+            RUNSIDECAR_PRANGEREFUSAL
+        );
+        assert_eq!(pos(ids.run_sidecar, "before"), RUNSIDECAR_BEFORE);
+        assert_eq!(pos(ids.run_sidecar, "after"), RUNSIDECAR_AFTER);
+        assert_eq!(pos(ids.run_sidecar, "dump"), RUNSIDECAR_DUMP);
+        assert_eq!(pos(ids.run_sidecar, "walks"), RUNSIDECAR_WALKS);
+        assert_eq!(pos(ids.run_sidecar, "refs"), RUNSIDECAR_REFS);
+        assert_eq!(pos(ids.run_sidecar, "rekey"), RUNSIDECAR_REKEY);
+        assert_eq!(u32::from(stores.size(ids.run_worker)), RUNWORKER_STRIDE);
+        assert_eq!(pos(ids.run_worker, "def"), RUNWORKER_DEF);
+        assert_eq!(pos(ids.run_worker, "input"), RUNWORKER_INPUT);
+        assert_eq!(pos(ids.run_worker, "ret"), RUNWORKER_RET);
+        assert_eq!(pos(ids.run_worker, "texts"), RUNWORKER_TEXTS);
+        assert_eq!(pos(ids.run_worker, "dests"), RUNWORKER_DESTS);
+        assert_eq!(pos(ids.run_worker, "row"), RUNWORKER_ROW);
+        assert_eq!(u32::from(stores.size(ids.run_gen)), RUNGEN_STRIDE);
+        assert_eq!(pos(ids.run_gen, "def"), RUNGEN_DEF);
+        assert_eq!(pos(ids.run_gen, "zone2"), RUNGEN_ZONE2);
+        assert_eq!(pos(ids.run_gen, "text_args"), RUNGEN_TEXT_ARGS);
+        assert_eq!(pos(ids.run_gen, "ref_args"), RUNGEN_REF_ARGS);
+        assert_eq!(pos(ids.run_gen, "text_locals"), RUNGEN_TEXT_LOCALS);
+        assert_eq!(pos(ids.run_gen, "owned_locals"), RUNGEN_OWNED_LOCALS);
+        assert_eq!(pos(ids.run_gen, "tuple_refs"), RUNGEN_TUPLE_REFS);
+        assert_eq!(u32::from(stores.size(ids.run_fn_ref)), RUNFNREF_STRIDE);
+        assert_eq!(pos(ids.run_fn_ref, "def"), RUNFNREF_DEF);
+        assert_eq!(pos(ids.run_fn_ref, "drop"), RUNFNREF_DROP);
+        assert_eq!(pos(ids.run_fn_ref, "kind"), RUNFNREF_KIND);
+        assert_eq!(pos(ids.run_fn_ref, "cascade"), RUNFNREF_CASCADE);
+        assert_eq!(pos(ids.run_fn_ref, "hidden"), RUNFNREF_HIDDEN);
+        assert_eq!(u32::from(stores.size(ids.run_const)), RUNCONST_STRIDE);
+        assert_eq!(pos(ids.run_const, "def"), RUNCONST_DEF);
+        assert_eq!(pos(ids.run_const, "rec"), RUNCONST_REC);
+        assert_eq!(pos(ids.run_const, "pos"), RUNCONST_POS);
+        assert_eq!(pos(ids.run_const, "bytes"), RUNCONST_BYTES);
     }
 }

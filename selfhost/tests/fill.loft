@@ -1,0 +1,148 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the generated operator table (`src/fill.loft`, from the `#loft` templates) on the
+// loft `State`, against the kernels' run images (1b-fill-port.md).  Hand-computed answers for
+// the integer kernels, and one rule over every kernel: a function the table runs to its end
+// answers what the IR runner answers (which `tests/run.loft` holds to the Rust interpreter).
+
+use ir;
+use load;
+use run;
+use state;
+use fill_run;
+
+fn images(name: text) -> (ir::Bundle, ir::RunImage) {
+  dir = env_variable("LOFT_SELFHOST_KERNELS");
+  b = load::load("{dir}/{name}.store");
+  img = load::load_run("{dir}/{name}.run");
+  assert(b != null && img != null, "the {name} kernel's images open");
+  (b!, img!)
+}
+
+fn answer(name: text, function: text, args: vector<integer>) -> integer? {
+  (b, img) = images(name);
+  d = fill_run::def_named(b, function);
+  assert(d >= 0, "{name} has {function}");
+  s = state::new_state(img, 1 << 16);
+  r = fill_run::call(img, d, args, s);
+  assert(s.fault == "", "{function} stopped: {s.fault}");
+  assert(s.stack_pos == 0, "{function} left {s.stack_pos} bytes on the stack");
+  r
+}
+
+fn test_fib_runs_through_the_generated_table() {
+  got = "";
+  for n in 0..11 {
+    got += "{answer("fib", "n_fib", [n])} ";
+  }
+  assert(got == "0 1 1 2 3 5 8 13 21 34 55 ", "fib(0..10): {got}");
+}
+
+fn test_mix_and_collatz_answer_as_the_rust_interpreter() {
+  // `loft --interpret kernels/mix.loft` and `collatz.loft` print these for the same arguments.
+  m = answer("mix", "n_mix", [5000, 1]);
+  c = answer("collatz", "n_longest", [1, 1000]);
+  (b, _i) = images("mix");
+  want_m = run::run(b, fill_run::def_named(b, "n_mix"), [5000, 1]).value;
+  (b2, _j) = images("collatz");
+  want_c = run::run(b2, fill_run::def_named(b2, "n_longest"), [1, 1000]).value;
+  assert(m == want_m && c == want_c, "mix {m} (want {want_m}), collatz {c} (want {want_c})");
+}
+
+// A record rebuilt in a loop starts each pass with empty vectors: 1, 2, 3 and 4 elements.
+fn test_a_reused_record_starts_empty() {
+  r = answer("reuse", "n_loop_record", [4]);
+  assert(r == 100200300400, "four passes: {r}");
+}
+
+// A null text appended to a result buffer leaves it null, so the `??` default is taken.
+fn test_a_null_text_takes_its_default() {
+  r = answer("nulltext", "n_defaults", [3]);
+  assert(r == 424, "none, ab, none: {r}");
+}
+
+// Records filed in a hash under a narrow key are found under it, and an absent key is not.
+fn test_a_hash_finds_what_was_filed() {
+  r = answer("keyedfind", "n_found", [5]);
+  assert(r == 1230, "the values under -100, 7, 100 and 5: {r}");
+}
+
+// A recursion 5000 deep: the frame list grows under the loop, and the code is still read
+// where it lies.
+fn test_a_deep_recursion_returns() {
+  r = answer("deep", "n_depth", [5000]);
+  assert(r == 5000, "depth(5000): {r}");
+}
+
+// A character's code point, and null for NUL — a word's null, which `??` replaces.
+fn test_a_nul_character_is_a_null_integer() {
+  r = answer("charcode", "n_codes", [0]);
+  assert(r == 655, "'A' and NUL as integers: {r}");
+}
+
+// A function called through a reference held in a parameter.
+fn test_a_call_through_a_reference() {
+  r = answer("fnref", "n_apply", [4]);
+  assert(r == 636, "inc twice and triple twice of 4: {r}");
+}
+
+// A walk visits every record of a hash once, and a sorted collection's in key order.
+fn test_a_walk_visits_every_record() {
+  r = answer("walk", "n_walked", [0]);
+  assert(r == 42123, "the hash's sum and the sorted order: {r}");
+}
+
+// A generator keeps its locals across its yields, and a walk over it ends at its return.
+fn test_a_generator_yields_and_ends() {
+  r = answer("gen", "n_walked", [4]);
+  assert(r == 145, "the squares below 4 summed, and five values counted: {r}");
+}
+
+// A `par` loop calls its worker for every element and reads the answers in element order.
+fn test_a_par_loop_answers_in_order() {
+  r = answer("parq", "n_weighed", [0]);
+  assert(r == 354, "the cubes of 1..4 weighted by their order: {r}");
+}
+
+// A plain vector assigned to a keyed field files each record by its key.
+fn test_a_vector_fills_a_keyed_field() {
+  r = answer("fillkeyed", "n_filed", [0]);
+  assert(r == 203123, "the lookup, the absent key, the count and the sorted order: {r}");
+}
+
+// A long text constant is read from the constant store, and a text constant is still read where
+// it lies after a deep recursion.
+fn test_text_constants_stay_readable() {
+  r = answer("longtext", "n_texts", [0]);
+  assert(r == 370193034, "the long text's length and tail, and the recursion's count: {r}");
+}
+
+// A `&text` function called through a reference writes the struct field it is given.
+fn test_a_reference_call_links_a_stored_text() {
+  r = answer("storetext", "n_linked", [0]);
+  assert(r == 31, "the field's length and its exact text: {r}");
+}
+
+// Every integer function of these kernels: where the table runs it to its end, its answer is
+// the IR runner's.  A function stopped at an operator not carried yet is not judged.
+fn test_no_kernel_function_differs() {
+  judged = 0;
+  for name in ["fib", "mix", "collatz", "small_ops", "frames", "repeats", "records", "structs", "refs", "reuse"] {
+    (b, img) = images(name);
+    for d in fill_run::integer_functions(b) {
+      args: vector<integer> = [for _ in 0..fill_run::arity(b, d) { 3 }];
+      want = run::run(b, d, args);
+      if want.refused != "" {
+        continue;
+      }
+      s = state::new_state(img, 1 << 16);
+      got = fill_run::call(img, d, args, s);
+      if s.fault == "" {
+        assert(got == want.value, "{name} {fill_run::name_of(b, d)}: the table {got}, the IR runner {want.value}");
+        judged += 1;
+      }
+    }
+  }
+  assert(judged >= 10, "only {judged} functions ran to their end");
+}

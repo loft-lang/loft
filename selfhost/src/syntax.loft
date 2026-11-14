@@ -713,7 +713,8 @@ fn cap_link(p: Syntax) -> integer? {
   }
 }
 
-// Annotation <- '#' ( 'native' Str? / 'rust' Str / 'iterator' Str Str / 'c' Str Str / 'hot' /
+// Annotation <- '#' ( 'native' Str? / 'rust' Str / 'loft' Str / 'iterator' Str Str / 'c' Str Str /
+//   'c_twin' Str Str / 'hot' /
 //   'cold' / 'null_safe' / 'builtin' / 'pure' / 'superseded' Str / 'impure' '(' Ident ')' )
 //                                                              parse_rust, parse_c_binding
 fn annotation(p: Syntax) -> integer? {
@@ -722,8 +723,10 @@ fn annotation(p: Syntax) -> integer? {
     [Hash, "native", Str { s }] => add(p, SAnnot { at: at, name: "native", args: [s] }),
     [Hash, "native"] => add(p, SAnnot { at: at, name: "native", args: [] }),
     [Hash, "rust", s: plain_string] => add(p, SAnnot { at: at, name: "rust", args: [name_of(p, s)] }),
+    [Hash, "loft", s: plain_string] => add(p, SAnnot { at: at, name: "loft", args: [name_of(p, s)] }),
     [Hash, "iterator", Str { s }, Str { s: t }] => add(p, SAnnot { at: at, name: "iterator", args: [s, t] }),
     [Hash, "c", Str { s }, Str { s: t }] => add(p, SAnnot { at: at, name: "c", args: [s, t] }),
+    [Hash, "c_twin", Str { s }, Str { s: t }] => add(p, SAnnot { at: at, name: "c_twin", args: [s, t] }),
     [Hash, "superseded", Str { s }] => add(p, SAnnot { at: at, name: "superseded", args: [s] }),
     [Hash, "impure", LParen, Ident { name }, RParen] => add(p, SAnnot { at: at, name: "impure", args: [name] }),
     [Hash, Ident { name }] => add(p, SAnnot { at: at, name: name, args: [] }),

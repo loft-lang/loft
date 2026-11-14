@@ -1193,6 +1193,8 @@ pub fn run_parallel_queue_fn(
     element_size: u32,
     n_threads: usize,
     extra_args: &[u64],
+    primitive_input_size: u32,
+    tuple_input_types: Option<&[crate::data::Type]>,
 ) -> Vec<u8> {
     const FN_REF_SIZE: usize = 20;
     let n_rows = vector::length_vector(input, &stores.allocations) as usize;
@@ -1219,9 +1221,18 @@ pub fn run_parallel_queue_fn(
             // (start..end ranges from `parallel_workers` are
             // non-overlapping), so concurrent writes via raw
             // pointer are safe.
+            // The row reaches the worker as every queue hands it (`worker_row_arg`): a
+            // primitive as its value, never the element's reference.
+            let arg = worker_row_arg(
+                &state.database,
+                &row_ref,
+                primitive_input_size,
+                element_size,
+                tuple_input_types,
+            );
             unsafe {
                 let dst = buf_ptr.0.add(row_idx * FN_REF_SIZE);
-                state.execute_at_raw_to(fn_pos, &row_ref, &extras, FN_REF_SIZE as u32, dst);
+                state.execute_at_raw_to(fn_pos, arg, &extras, FN_REF_SIZE as u32, dst);
             }
         }
     });
@@ -1325,86 +1336,65 @@ pub(crate) fn read_tuple_at_wide(
 ) -> [u8; 64] {
     let mut buf = [0u8; 64];
     let store = &stores.allocations[row_ref.store_nr as usize];
-    // @PLN114 — the row is STORAGE, so its offsets and widths are the storage view.
-    // This read used the STACK view, which was indistinguishable while the two
-    // coincided (every integer 8 bytes); once narrow elements got their declared
-    // width (`u8` = 1) the reader walked the row at the wrong stride and returned
-    // garbage — a `par` over `vector<(u8,u16)>` summed to 1012184093813119760.
-    // `@FR-L-Tuple` — the `__tuple<…>` record's own finished positions where the program's
-    // types are at hand (a stored tuple packs largest alignment first, and an inline struct
-    // member has a width the hand-computed view cannot know); that view otherwise.
-    let in_vec_offsets: Vec<usize> = ParallelCtx::of(stores)
-        .and_then(|ctx| crate::data::stored_tuple_offsets(ctx.data(), stores, elem_types))
-        .map_or_else(
-            || crate::data::element_storage_offsets(elem_types),
-            |o| o.into_iter().map(usize::from).collect(),
-        );
+    let plan = crate::par_facts::tuple_row_plan(
+        ParallelCtx::of(stores).map(ParallelCtx::data),
+        stores,
+        elem_types,
+    );
     // The row's address is the store's to answer (`block_src`, bounded by the row's
     // storage width): a foreign store's rows lie outside its block.
-    let row_width = elem_types
-        .iter()
-        .enumerate()
-        .map(|(i, t)| in_vec_offsets[i] + crate::data::element_storage_size(t))
-        .max()
-        .unwrap_or(0);
+    let row_width = plan.iter().map(|m| m.at + m.stored).max().unwrap_or(0);
     let row = store.block_src(row_ref.rec, row_ref.pos as isize, row_width as isize);
     let mut arg_offset: usize = 0;
-    for (i, t) in elem_types.iter().enumerate() {
-        let in_off = in_vec_offsets[i];
-        let in_sz = crate::data::element_storage_size(t);
-        let arg_sz = crate::variables::size(t, &crate::data::Context::Argument) as usize;
+    for m in &plan {
         debug_assert!(
-            arg_offset + arg_sz <= 64,
+            arg_offset + m.arg <= 64,
             "read_tuple_at_wide: tuple slot exceeds 64-byte cap"
         );
         unsafe {
-            let src = row.add(in_off);
-            if matches!(t, crate::data::Type::Text(_)) {
-                // Inflate the 4-byte heap text-pointer into a 16-byte
-                // Str for the worker's argument slot.
-                let text_rec = src.cast::<u32>().read_unaligned();
-                let s = store.get_str(text_rec);
-                let str_val = crate::keys::Str::new(s);
-                std::ptr::copy_nonoverlapping(
-                    (&raw const str_val).cast::<u8>(),
-                    buf.as_mut_ptr().add(arg_offset),
-                    arg_sz,
-                );
-            } else if matches!(t, crate::data::Type::Function(..)) {
-                // ARC.md A6.c — fn-ref vector elements are 4-byte
-                // d_nr in storage (`element_size(Type::Function) = 4`)
-                // but the worker's argument slot is 20 bytes
-                // (`variables::size(.., Argument) = 8B i64 d_nr + 12B
-                // closure DbRef`).  A plain memcpy of 4 bytes leaves
-                // the remaining 16 bytes zero; the worker's OpCallRef
-                // would then dereference closure `(0, 0, 0)` (a real
-                // DbRef pointing into store 0) and SIGSEGV.
-                //
-                // vector<fn> can only store non-capturing functions
-                // (capturing-lambda storage is part of the open 4d.C
-                // closure-storage redesign), so the correct closure
-                // representation here is the u16::MAX sentinel.
-                let d_nr = src.cast::<u32>().read_unaligned();
-                let d_nr_i64: i64 = i64::from(d_nr);
-                std::ptr::copy_nonoverlapping(
-                    (&raw const d_nr_i64).cast::<u8>(),
-                    buf.as_mut_ptr().add(arg_offset),
-                    8,
-                );
-                let sentinel = DbRef::NULL;
-                std::ptr::copy_nonoverlapping(
-                    (&raw const sentinel).cast::<u8>(),
-                    buf.as_mut_ptr().add(arg_offset + 8),
-                    12,
-                );
-            } else {
-                // Plain memcpy — in-vector and worker-slot widths
-                // match for primitives, references, and fn-refs.
-                let copy_n = in_sz.min(arg_sz);
-                std::ptr::copy_nonoverlapping(src, buf.as_mut_ptr().add(arg_offset), copy_n);
+            let src = row.add(m.at);
+            match m.kind {
+                crate::par_facts::TupleMove::Text => {
+                    // Inflate the 4-byte heap text-pointer into a 16-byte
+                    // Str for the worker's argument slot.
+                    let text_rec = src.cast::<u32>().read_unaligned();
+                    let s = store.get_str(text_rec);
+                    let str_val = crate::keys::Str::new(s);
+                    std::ptr::copy_nonoverlapping(
+                        (&raw const str_val).cast::<u8>(),
+                        buf.as_mut_ptr().add(arg_offset),
+                        m.arg,
+                    );
+                }
+                crate::par_facts::TupleMove::FnRef => {
+                    // ARC.md A6.c — fn-ref vector elements are 4-byte d_nr in storage but
+                    // the worker's argument slot is 20 bytes (8B i64 d_nr + 12B closure
+                    // DbRef).  `vector<fn>` stores only non-capturing functions, so the
+                    // closure is the null sentinel; a zero closure `(0, 0, 0)` would name a
+                    // real record in store 0 and the worker's OpCallRef would SIGSEGV.
+                    let d_nr = src.cast::<u32>().read_unaligned();
+                    let d_nr_i64: i64 = i64::from(d_nr);
+                    std::ptr::copy_nonoverlapping(
+                        (&raw const d_nr_i64).cast::<u8>(),
+                        buf.as_mut_ptr().add(arg_offset),
+                        8,
+                    );
+                    let sentinel = DbRef::NULL;
+                    std::ptr::copy_nonoverlapping(
+                        (&raw const sentinel).cast::<u8>(),
+                        buf.as_mut_ptr().add(arg_offset + 8),
+                        12,
+                    );
+                }
+                crate::par_facts::TupleMove::Copy => {
+                    // In-vector and worker-slot widths match for primitives, references
+                    // and fn-refs.
+                    let copy_n = m.stored.min(m.arg);
+                    std::ptr::copy_nonoverlapping(src, buf.as_mut_ptr().add(arg_offset), copy_n);
+                }
             }
         }
-        arg_offset += arg_sz;
+        arg_offset += m.arg;
     }
     buf
 }

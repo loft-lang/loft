@@ -433,7 +433,12 @@ impl CSignature {
 /// that consumes a count wherever C offers one is the alignment the author most
 /// likely intended. It reports every position it can, not the first, because an
 /// author fixing a long signature wants the whole list.
-fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<String> {
+fn position_mismatches(
+    data: &Data,
+    sig: &CSignature,
+    params: &[Type],
+    direct: bool,
+) -> Vec<String> {
     let mut errs = Vec::new();
     let mut c = 0usize;
     for (i, p) in params.iter().enumerate() {
@@ -443,7 +448,18 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
                 CType::spelling,
             )
         };
-        match shape_of(p) {
+        match shape_for(p, direct) {
+            LoftCShape::Real => {
+                if !matches!(sig.params.get(c), Some(CType::Float { .. })) {
+                    errs.push(format!(
+                        "loft parameter {} is a float, but C position {} is {}",
+                        i + 1,
+                        c + 1,
+                        spelling(c)
+                    ));
+                }
+                c += 1;
+            }
             LoftCShape::Scalar => {
                 if !matches!(
                     sig.params.get(c),
@@ -699,6 +715,9 @@ fn parse_type(src: &str, target: CTarget) -> Result<CType, String> {
 pub enum LoftCShape {
     /// One integer-class C parameter.
     Scalar,
+    /// One floating C parameter: a `#c_twin`'s alone ([`shape_for`]), which only the C backend
+    /// calls, through a prototype — the interpreter's per-arity caller cannot pass one.
+    Real,
     /// One pointer.
     Pointer,
     /// A loft vector: an element pointer, optionally followed by a count. Which
@@ -794,9 +813,19 @@ pub enum PlanFailure {
 ///
 /// @C107 — the C signature, not the loft type, decides whether a `vector` carries a count.
 pub fn plan(params: &[Type], sig: &CSignature) -> Result<Vec<CArg>, PlanFailure> {
+    plan_for(params, sig, false)
+}
+
+/// [`plan`] for a binding called `direct`ly — a `#c_twin`, which only the C backend calls —
+/// where a float crosses as itself ([`shape_for`]).
+///
+/// # Errors
+///
+/// [`PlanFailure`] when no reading fits.
+pub fn plan_for(params: &[Type], sig: &CSignature, direct: bool) -> Result<Vec<CArg>, PlanFailure> {
     let p = params.len();
     let a = sig.params.len();
-    let shapes: Vec<LoftCShape> = params.iter().map(shape_of).collect();
+    let shapes: Vec<LoftCShape> = params.iter().map(|t| shape_for(t, direct)).collect();
     let (mut min, mut max) = (0usize, 0usize);
     for s in &shapes {
         match s {
@@ -858,7 +887,9 @@ fn options(shape: &LoftCShape, sig: &CSignature, c: usize) -> Vec<CArg> {
     let at = |i: usize| sig.params.get(i);
     let is_ptr = |i: usize| matches!(at(i), Some(CType::Pointer { .. }));
     let is_int = |i: usize| matches!(at(i), Some(CType::Int { .. }));
+    let is_float = |i: usize| matches!(at(i), Some(CType::Float { .. }));
     match shape {
+        LoftCShape::Real if is_float(c) => vec![CArg::Scalar],
         // A C POINTER is allowed here, and deliberately: it is the handle
         // convention (`PGconn *` held as a loft `integer`), which has to work
         // in both directions or it is not a convention at all.
@@ -886,6 +917,24 @@ fn pointee_takes(t: Option<&CType>, img: CElement) -> bool {
     match t {
         Some(CType::Pointer { elem, .. }) => elem.is_none_or(|e| e == img),
         _ => false,
+    }
+}
+
+/// [`shape_of`] for a binding called `direct`ly (a `#c_twin`): a float is a [`LoftCShape::Real`].
+#[must_use]
+pub fn shape_for(t: &Type, direct: bool) -> LoftCShape {
+    match t {
+        // A twin's nullable number crosses as its sentinel bits — `i64::MIN`, a NaN — which
+        // its routine stores or reads as they are; the body says what they mean.  A binding's
+        // cannot: there the number is C's, with no null among its values.
+        Type::Optional(inner)
+            if direct && matches!(**inner, Type::Integer(_) | Type::Float | Type::Single) =>
+        {
+            shape_for(inner, true)
+        }
+        Type::Optional(_) => shape_of(t),
+        Type::Float | Type::Single if direct => LoftCShape::Real,
+        _ => shape_of(t),
     }
 }
 
@@ -978,10 +1027,29 @@ pub fn check(
     ret: &Type,
     void_return: bool,
 ) -> Vec<String> {
-    let mut errs = sig.boundary_refusals();
+    check_for(data, sig, params, ret, void_return, false)
+}
+
+/// [`check`] for a binding called `direct`ly — a `#c_twin`, which only the C backend calls —
+/// where a float crosses as itself.
+#[must_use]
+pub fn check_for(
+    data: &Data,
+    sig: &CSignature,
+    params: &[Type],
+    ret: &Type,
+    void_return: bool,
+    direct: bool,
+) -> Vec<String> {
+    // A float argument is the interpreter's caller's limit; a `direct` binding never meets it.
+    let mut errs = if direct {
+        Vec::new()
+    } else {
+        sig.boundary_refusals()
+    };
 
     for (i, p) in params.iter().enumerate() {
-        if let LoftCShape::Refused(why) = shape_of(p) {
+        if let LoftCShape::Refused(why) = shape_for(p, direct) {
             errs.push(format!("parameter {} cannot be bound: {why}", i + 1));
         }
     }
@@ -990,7 +1058,7 @@ pub fn check(
     // cross either way they are one question: `plan` succeeds exactly when some
     // reading of the C signature both fits and type-checks.
     if errs.is_empty() {
-        match plan(params, sig) {
+        match plan_for(params, sig, direct) {
             Ok(_) => {}
             Err(PlanFailure::Arity { min, max }) => errs.push(if min == max {
                 format!(
@@ -1010,7 +1078,9 @@ pub fn check(
             // declaration greedily and name the first C position that
             // disagrees: which parameter is wrong is far more use than the fact
             // that the whole reading failed.
-            Err(PlanFailure::NoMatch) => errs.extend(position_mismatches(data, sig, params)),
+            Err(PlanFailure::NoMatch) => {
+                errs.extend(position_mismatches(data, sig, params, direct));
+            }
         }
     }
 

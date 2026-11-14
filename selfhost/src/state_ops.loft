@@ -1,0 +1,258 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — `State` methods and helpers of the operators the hand-built runner never carried:
+// ported from the Rust interpreter's `State` and `Stores`, over the C runtime's routines.
+// A second file of `state.loft`'s kind: `create.loft` reads both for the ported methods.
+
+use state;
+use crt;
+use types;
+
+// A reference out of the three integers a `crt` routine answers.
+fn out_ref(io: vector<integer>) -> state::DbRef {
+  state::DbRef { store_nr: io[0] ?? state::NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}
+
+// `DbRef::NULL_REPORTED`: a null whose absence is accounted for.
+pub fn null_reported() -> state::DbRef {
+  io: vector<integer> = [state::NULL_STORE, 0, 0];
+  crt::null_reported(io);
+  out_ref(io)
+}
+
+// `Stores::store_buf` / `store_buf_only`: a call's return buffer in the host's store, or
+// (`only`) the buffer as its own.
+pub fn store_buf(host: state::DbRef, only: boolean) -> state::DbRef {
+  io: vector<integer> = [state::NULL_STORE, 0, 0];
+  crt::store_buf(io, host.store_nr, host.rec, host.pos, only);
+  out_ref(io)
+}
+
+// `Stores::new_child_rec`: a new child record of type `tp` for the field, with its defaults.
+pub fn new_child_rec(self: state::State, field: state::DbRef, tp: integer) -> state::DbRef {
+  self.load_table();
+  io: vector<integer> = [state::NULL_STORE, 0, 0];
+  crt::new_child_rec(io, tp, field.store_nr, field.rec, field.pos, self.default_of(tp));
+  out_ref(io)
+}
+
+// `Stores::evacuate`: the holder's field `fld` moved out to a record of its own at `home`,
+// placed as `OpPlaceRecord` places one — foreign where the holder's store is a vector of
+// another element type.
+pub fn evacuate(self: state::State, holder: state::DbRef, fld: integer, home: state::DbRef, tp: integer) {
+  self.load_table();
+  live = holder.store_nr != state::NULL_STORE && crt::store_live(holder.store_nr);
+  elem = if live { types::root_vector_element(self.types, crt::store_known(holder.store_nr)) } else { null };
+  crt::evacuate(tp, holder.store_nr, holder.rec, holder.pos, fld, home.store_nr, home.rec, home.pos, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+}
+
+// `Stores::get_dir`: the directory's entries appended to `result`, a vector of `File` records;
+// whether the path is a directory that was read.
+pub fn get_dir(self: state::State, path: text?, result: state::DbRef) -> boolean {
+  size = 0;
+  for t in self.types {
+    if t.name == "File" {
+      size = t.size;
+    }
+  }
+  crt::get_dir(path, result.store_nr, result.rec, result.pos, size)
+}
+
+// `Stores::get_ref`: the record a four-byte child pointer field names, in the holder's store;
+// null when the holder has no record or the pointer is zero.
+pub fn get_ref(v1: state::DbRef, fld: integer) -> state::DbRef {
+  rec = if v1.rec == 0 { 0 } else { crt::get_w(8, v1.store_nr, v1.rec, v1.pos, fld, 0) ?? 0 };
+  if rec == 0 {
+    state::DbRef { store_nr: state::NULL_STORE, rec: 0, pos: 0 }
+  } else {
+    state::DbRef { store_nr: v1.store_nr, rec: rec, pos: 8 }
+  }
+}
+
+// `Stores::copy_closure_record`: a closure record of type `tp` copied, the captures it owns —
+// its fields of the owned-reference shape — given records of their own.
+pub fn copy_closure(self: state::State, src: state::DbRef, tp: integer) -> state::DbRef {
+  self.load_table();
+  shape = -1;
+  for t in self.types {
+    if t.name == "dbref" {
+      shape = t#index;
+    }
+  }
+  owned: vector<integer> = [];
+  match self.types[tp]?.parts[0] {
+    PtStruct { fields } => {
+      for f in fields {
+        if f.content == shape {
+          owned += [f.position];
+        }
+      }
+    }
+    _ => {}
+  }
+  io: vector<integer> = [state::NULL_STORE, 0, 0];
+  crt::copy_closure(io, tp, src.store_nr, src.rec, src.pos, owned);
+  out_ref(io)
+}
+
+// `State::hash_add`: the record and then the hash popped; the record filed in the hash of
+// type `tp`.
+pub fn hash_add(self: state::State) {
+  tp = self.code_u16();
+  rec = self.get_stack_dbref();
+  data = self.get_stack_dbref();
+  self.load_table();
+  crt::hash_insert(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp);
+}
+
+// `State::create_stack`: a reference to the frame slot `pos` under the top pushed — the null
+// state of a borrowed reference, overwritten before any field is read through it.
+pub fn create_stack(self: state::State) {
+  pos = self.code_u16();
+  self.put_stack_dbref(state::DbRef { store_nr: self.stk, rec: 1, pos: 8 + self.stack_pos - pos });
+}
+
+// `State::get_stack_fn_ref`: a function reference read through a `&fn(…)` link — the link
+// popped, the 20 bytes it names in the stack pushed in a 24-byte step.
+pub fn get_stack_fn_ref(self: state::State) {
+  r = self.get_stack_dbref();
+  if r.store_nr != self.stk || r.rec != 1 {
+    self.stop("not carried: a function reference read through a link outside the stack");
+    return;
+  }
+  self.put_stack_i64(0);
+  self.put_stack_i64(0);
+  self.put_stack_i64(0);
+  crt::stack_move(self.stk, r.pos - 8, self.stack_pos - 24, 20);
+}
+
+// `State::set_stack_fn_ref`: the function reference popped (a 24-byte step) and written
+// through the `&fn(…)` link in the frame slot `pos` back from the top before the pop.
+pub fn set_stack_fn_ref(self: state::State) {
+  pos = self.code_u16();
+  self.get_stack_i64();
+  self.get_stack_i64();
+  self.get_stack_i64();
+  link = self.get_var_dbref(pos - 24);
+  if link.store_nr != self.stk || link.rec != 1 {
+    self.stop("not carried: a function reference written through a link outside the stack");
+    return;
+  }
+  crt::stack_move(self.stk, self.stack_pos, link.pos - 8, 20);
+}
+
+// `State::store_tag`: the C runtime's stores carry no owner tag (a Rust testing gate's), so
+// the reference and the tag are read and nothing is marked.
+pub fn store_tag(self: state::State) {
+  self.get_stack_dbref();
+  self.code_u16();
+}
+
+// `State::free_ref_tag`: as `free_ref`; the tag the Rust gate checks is read and not compared.
+pub fn free_ref_tag(self: state::State) {
+  r = self.get_stack_dbref();
+  self.code_u16();
+  self.put_stack_dbref(r);
+  self.free_ref();
+}
+
+// `State::sizeof_ref`: the size of the record the reference names, by the type its header
+// carries; 0 for a null one.
+pub fn sizeof_ref(self: state::State) {
+  r = self.get_stack_dbref();
+  size = 0;
+  if r.rec != 0 {
+    tp = crt::get_w(crt::W_INT4, r.store_nr, r.rec, 4, 0, 0) ?? -1;
+    size = self.types[tp]?.size ?? 0;
+  }
+  self.put_stack_i64(size);
+}
+
+// `State::parallel_begin` / `parallel_arm` / `parallel_join` (a `par` block): the arms' code
+// offsets collected, then the run handed back (`native` is `PAR_BLOCK`) to run each arm.
+pub fn parallel_begin(self: state::State) {
+  self.code_u8();
+  self.arm_offsets.clear();
+}
+
+pub fn parallel_arm(self: state::State) {
+  self.arm_offsets += [self.code_u16()];
+}
+
+pub fn parallel_join(self: state::State) {
+  self.native = state::PAR_BLOCK;
+}
+
+// `Stores::fill_keyed_from_vector`: every record of the plain vector `src` filed by key into a
+// keyed collection of type `raw` (its top bit frees the source after).  With `field` 65535 the
+// collection is `parent` itself; otherwise it is field `field` of the `parent_tp` struct at
+// `parent`, and a field of a linked group files each record into every member.
+pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, raw: integer, parent_tp: integer, field: integer) {
+  tp = raw & 32767;
+  self.load_table();
+  elem = types::content_of(self.types, tp);
+  if elem == null {
+    self.stop("not carried: a fill of {self.types[tp]?.name ?? "a collection"}");
+    return;
+  }
+  place = parent.pos;
+  members: vector<integer> = [];
+  held = false;
+  nullable = false;
+  if field != 65535 {
+    f = types::record_fields(self.types, parent_tp)[field];
+    gm = types::group_members(self.types, parent_tp, field);
+    if f == null || gm == null {
+      self.stop("not carried: a fill of a field the type table does not place");
+      return;
+    }
+    place = parent.pos + f!.position;
+    if len(gm!) >= 6 {
+      members = gm!;
+      k = 0;
+      while k + 2 < len(members) {
+        held = held || (members[k + 1] ?? -1) == 0;
+        nullable = nullable || types::nullable_element(self.types, members[k + 2] ?? 0);
+        k += 3;
+      }
+    }
+  }
+  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, types::keyed_kind(self.types, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
+}
+
+// `State::string_from_const_store`: a view of the long text the constant store holds in record
+// `rec` pushed — its length in the record's second word-half, its bytes after the header.
+pub fn string_from_const_store(self: state::State, rec: integer) {
+  if self.texts_held == 0 {
+    self.stop("a long text where the image carries no constant store");
+    return;
+  }
+  self.put_stack_i64(0);
+  self.put_stack_i64(0);
+  crt::stack_str_held(self.stk, self.stack_pos - 16, self.texts_held, rec * 8 + 8, crt::held_u32(self.texts_held, rec * 8 + 4));
+}
+
+// `State::fn_call_ref_store`: a call through a reference whose `&text` parameters in `mask`
+// are given a stored text — the store instance minted for that mask is entered in place of
+// the function the slot names.
+pub fn fn_call_ref_store(self: state::State, fn_var: integer, arg_size: integer, mask: integer) {
+  d = self.get_var_i64(fn_var) ?? -1;
+  if d >= 0 {
+    inst = -1;
+    k = 0;
+    while k + 2 < len(self.store_insts) {
+      if (self.store_insts[k] ?? -1) == d && (self.store_insts[k + 1] ?? -1) == mask {
+        inst = self.store_insts[k + 2] ?? -1;
+      }
+      k += 3;
+    }
+    if inst < 0 {
+      self.stop("a text field or element cannot be linked through this function's `&text` parameter — it has no loft body");
+      return;
+    }
+    self.call_target = inst;
+  }
+  self.fn_call_ref(fn_var, arg_size);
+}
+

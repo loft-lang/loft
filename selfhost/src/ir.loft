@@ -440,18 +440,125 @@ fn empty_bundle() -> Bundle {
 // is laid out in definition order, so `starts` rises: a definition with no bytecode (a native,
 // a type, an operator) starts where the one before it ended, and one more entry holds the
 // stream's end — definition `d`'s code is `code[starts[d]..starts[d + 1]]`.  Beside it the
-// natives by the index `OpStaticCall` carries, the type schema of the program's stores, the
-// entry definition and whether the program declared `#cwd`.
+// operators by opcode — each one's name and the layout of its constant operands, one letter
+// per operand (`ir_store::operand_layout`) — the natives by the index `OpStaticCall` carries,
+// the type schema of the program's stores, the entry definition and whether the program
+// declared `#cwd`.
+// One constant of the run image (`OpConstRef`): its definition, where its root sits in its store
+// and the store's bytes as Rust built them (`const_literal::build_const_vectors`) — the runner
+// adopts them as a store of its own, nothing rebuilt from IR.
+pub struct RunConst {
+  pub def: integer,
+  pub rec: integer,
+  pub pos: integer,
+  pub bytes: vector<u8>,
+}
+
+// A function's shape as a call through a function reference needs it
+// (`State::fn_call_ref_to`), for one that is not a plain call: the text-buffer bytes the call
+// drops (a reference type pushes as many as the widest text answer needs), the hidden return
+// buffers it allocates in order (-1 a record's, a type number a vector's of that type), its
+// kind — 0 bytecode, 1 a native, 2 a generator — and the drop cascade of its closure record
+// (`OpDropFnRef`, -1 for none).
+pub struct RunFnRef {
+  pub def: integer,
+  pub drop: integer,
+  pub kind: integer,
+  pub cascade: integer,
+  pub hidden: vector<integer>,
+}
+
+// A generator's frame as its definition describes it (`state::gen_facts`), for the coroutine
+// operators: the byte offsets of its text and reference arguments, the size of its locals region
+// (zeroed at first resume), the slots of its text locals and of the locals whose stores an
+// abandoned suspended frame frees, and the offsets of the reference elements of the tuple it
+// yields, nulled in the value an exhausted generator answers.
+pub struct RunGen {
+  pub def: integer,
+  pub zone2: integer,
+  pub text_args: vector<integer>,
+  pub ref_args: vector<integer>,
+  pub text_locals: vector<integer>,
+  pub owned_locals: vector<integer>,
+  pub tuple_refs: vector<integer>,
+}
+
+// A `par` worker (`parallel_natives::parallel_queue_dispatch`): its definition, how it takes
+// its row — 0 a reference to the row, -1 a text, `n` a primitive of `n` bytes, `1000 + n` a
+// tuple of `n` bytes — the byte size of its answer as an argument, its hidden text work
+// buffers and return destinations (`parallel_natives::worker_hidden_counts`), and for a tuple
+// row how each element moves from the row to the argument (`parallel::tuple_row_plan`): per
+// element its offset in the row, its stored width, its argument width and its kind (0 copied,
+// 1 a text inflated to a `Str`, 2 a function number widened to a fn-ref with no closure).
+pub struct RunWorker {
+  pub def: integer,
+  pub input: integer,
+  pub ret: integer,
+  pub texts: integer,
+  pub dests: integer,
+  pub row: vector<integer>,
+}
+
+// A persisted root type's sidecar (`schema_sidecar::LayoutIdentity`, as the C backend's
+// `sidecar_table` writes it): the sidecar text split where its slot line goes, the layout hash
+// and dump a load gates on, whether a load walks the type (`load_walks_type`), whether it holds
+// a stored reference (written through the converter, which the runner does not carry) and
+// whether its key order moved (converted by a whole load, likewise).
+pub struct RunSidecar {
+  pub tp: integer,
+  pub hash: integer,
+  // A paged load's plan (`paged_plan`): the collection the store holds, its element type (-1
+  // when it serves no `load_key`), its kind (0 a hash, 1 a trie, 2 a spatial index), and the
+  // reason a load is refused (empty for none).
+  pub pcoll: integer,
+  pub pcontent: integer,
+  pub pkind: integer,
+  pub prefusal: text,
+  // The refusal of a box load, which wants a spatial index (empty for none).
+  pub pboxrefusal: text,
+  // A range load's plan: the sorted collection's element type (the root type itself is the
+  // collection), -1 for none, and its refusal (empty for none).
+  pub prangecontent: integer,
+  pub prangerefusal: text,
+  pub walks: boolean,
+  pub refs: boolean,
+  pub rekey: boolean,
+  pub before: text,
+  pub after: text,
+  pub dump: text,
+}
+
 pub struct RunImage {
   pub code: vector<u8>,
   pub starts: vector<u32>,
+  pub ops: vector<text>,
+  pub layouts: vector<text>,
   pub natives: vector<text>,
+  pub consts: vector<RunConst>,
+  pub fnrefs: vector<RunFnRef>,
   pub types: vector<DbType>,
+  pub gens: vector<RunGen>,
+  // Per native: the definition whose loft body a `loft_shared_<name>` native was compiled from
+  // (the compiled standard library, @PLN181), which the runner runs as bytecode; -1 for any
+  // other native, a `#dest` form included.
+  pub shared: vector<integer>,
+  pub workers: vector<RunWorker>,
+  pub sidecars: vector<RunSidecar>,
+  // The release's oldest readable layout and its bridge (`Stores::release`), which a load gates
+  // an older image on.
+  pub oldest: text,
+  pub bridge: text,
+  // The program's own directory as `source_dir()` answers it (`file_access::given`).
+  pub source: text,
+  // The store instances of the functions that take a `&text` (`OpCallRefStore`), as triples:
+  // the function's definition, the mask of its parameters given a stored text, and the
+  // instance minted for that mask (`Data::store_text_instance`).
+  pub store_insts: vector<integer>,
   pub main: integer,
   pub cwd: boolean,
 }
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], natives: [], types: [], main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], sidecars: [], oldest: "", bridge: "", source: "", store_insts: [], main: 0, cwd: false }
 }

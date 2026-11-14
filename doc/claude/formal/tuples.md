@@ -182,7 +182,9 @@ names. So everything a struct field does, a member does: a `u8` member holds a `
 member is the tuple's own text, copying a tuple copies its members, and a `&` link can name a
 member (`c = &t.0`) exactly as it names a field. The compiler may keep a tuple in a faster form — a
 plain Rust tuple on `--native`, a stack form in the interpreter — but only where nothing the
-program does can tell that form from the record.
+program does can tell that form from the record.  The record is the LAYOUT, not the passing rule:
+a tuple is a value, so a tuple handed to a by-value parameter is the callee's own, members
+included ([calls.md](calls.md) `F-ParamTuple`), where a record parameter shares its store.
 
 ### Reference tuples — `&(…)` writes the caller's elements in place
 

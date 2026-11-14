@@ -8551,6 +8551,30 @@ impl DoubleMove<'_> {
         self.proj.retain(|r, _| !written.contains(r));
     }
 
+    /// `@FR-F-ParamTuple` — the parameter a tuple shadow (`__tp_<name>`) VIEWS, else `root`.
+    /// A body that only reads its by-value tuple parameter keeps the caller's members behind
+    /// the shadow (the alias seed: each heap member depends on the parameter), so a member
+    /// copied off it is a member of the parameter, and the caller still releases it.
+    fn viewed_tuple_parameter(&self, root: u16) -> u16 {
+        fn views(tp: &Type, on: u16) -> bool {
+            match tp.base() {
+                Type::Tuple(ms) => ms.iter().any(|m| views(m, on)),
+                b => b.depend().contains(&on),
+            }
+        }
+        if (root as usize) >= self.func.count() as usize
+            || !self.func.name(root).starts_with("__tp_")
+        {
+            return root;
+        }
+        let param = self.func.promoted_from(root);
+        if param != u16::MAX && self.func.is_argument(param) && views(self.func.tp(root), param) {
+            param
+        } else {
+            root
+        }
+    }
+
     /// Record one `OpCopyRecord` that hands its source's ownership away, and report the
     /// SECOND such hand-off of the same variable.
     fn record(&mut self, args: &[Value], st: &mut Handoffs) {
@@ -8567,7 +8591,9 @@ impl DoubleMove<'_> {
             Value::Var(p) if self.is_caller_owned(*p) => Some(*p),
             _ => None,
         };
-        if let Some(root) = projection_root(&args[0], self.data).or(whole_parameter)
+        if let Some(root) = projection_root(&args[0], self.data)
+            .map(|r| self.viewed_tuple_parameter(r))
+            .or(whole_parameter)
             && (crate::scopes::copy_hands_off(&args[1], self.func, self.data)
                 || crate::scopes::appends_to_element(&args[1], self.func, self.data))
             && (root as usize) < self.func.count() as usize
@@ -9088,7 +9114,8 @@ pub fn c_binding_call_unsupported(
     /// Why this binding is outside the contract, or `None` when it is inside.
     fn uncovered(data: &Data, d_nr: u32) -> Option<String> {
         let def = data.def(d_nr);
-        if def.c_sig.is_empty() {
+        // A twin's body is what the interpreter runs; only the C backend calls its routine.
+        if !def.is_c_binding() {
             return None;
         }
         let sig = match crate::c_signature::of(data, d_nr, crate::c_signature::CTarget::host()) {
@@ -9113,7 +9140,7 @@ pub fn c_binding_call_unsupported(
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
         let own = def.source == crate::data::STD_SOURCE || data.source_is_owned(def.source);
-        if own && !def.c_sig.is_empty() && uncovered(data, d_nr).is_some() {
+        if own && def.is_c_binding() && uncovered(data, d_nr).is_some() {
             reported.push(d_nr);
         }
     }

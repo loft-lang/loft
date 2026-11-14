@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>drawing source</h1>
 <article>
-<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · version 0.4.3</p>
-<p class="lib-legend">11 file(s), 3717 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · version 0.5.0</p>
+<p class="lib-legend">11 file(s), 3718 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -75,11 +75,11 @@
 <tr><td><code>seed_wave</code> <span class="search-kind">fn</span></td><td><a href="#src-noise-loft-L44">44</a></td><td>—</td><td><a href="#src-brush-loft-L128">128</a> <a href="#src-brush-loft-L132">132</a> <a href="#src-drawing-loft-L1580">1580</a></td></tr>
 <tr><td><code>Pt</code> <span class="search-kind">struct</span></td><td><a href="#src-raster-loft-L41">41</a></td><td>—</td><td><a href="#src-drawing-loft-L119">119</a> <a href="#src-drawing-loft-L355">355</a> <a href="#src-drawing-loft-L413">413</a> <a href="#src-drawing-loft-L415">415</a> <a href="#src-drawing-loft-L429">429</a> <a href="#src-drawing-loft-L439">439</a> … (35 total)</td></tr>
 <tr><td><code>pt</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L47">47</a></td><td>—</td><td><a href="#src-drawing-loft-L394">394</a> <a href="#src-drawing-loft-L418">418</a> <a href="#src-drawing-loft-L442">442</a> <a href="#src-drawing-loft-L475">475</a> <a href="#src-drawing-loft-L476">476</a> <a href="#src-drawing-loft-L485">485</a> … (26 total)</td></tr>
-<tr><td><code>round_up</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L66">66</a></td><td>—</td><td><a href="#src-raster-loft-L227">227</a> <a href="#src-raster-loft-L308">308</a> <a href="#tests-raster-agreement-loft-L104">104</a> <a href="#tests-raster-agreement-loft-L105">105</a></td></tr>
-<tr><td><code>round_down</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L77">77</a></td><td>—</td><td><a href="#src-raster-loft-L228">228</a> <a href="#src-raster-loft-L309">309</a> <a href="#src-raster-loft-L310">310</a> <a href="#src-raster-loft-L311">311</a> <a href="#src-raster-loft-L312">312</a> <a href="#src-raster-loft-L313">313</a> … (9 total)</td></tr>
-<tr><td><code>fill_poly</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L240">240</a></td><td>—</td><td><a href="#src-drawing-loft-L1347">1347</a> <a href="#src-drawing-loft-L1446">1446</a> <a href="#src-drawing-loft-L1515">1515</a> <a href="#tests-raster-agreement-loft-L36">36</a> <a href="#tests-raster-agreement-loft-L48">48</a> <a href="#tests-raster-agreement-loft-L60">60</a> … (7 total)</td></tr>
-<tr><td><code>wide_line</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L294">294</a></td><td>—</td><td><a href="#src-drawing-loft-L1469">1469</a> <a href="#tests-raster-agreement-loft-L82">82</a></td></tr>
-<tr><td><code>thin_line</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L330">330</a></td><td>—</td><td><a href="#src-drawing-loft-L1339">1339</a> <a href="#src-drawing-loft-L1467">1467</a> <a href="#tests-raster-agreement-loft-L93">93</a></td></tr>
+<tr><td><code>round_up</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L66">66</a></td><td>—</td><td><a href="#src-raster-loft-L228">228</a> <a href="#src-raster-loft-L309">309</a> <a href="#tests-raster-agreement-loft-L104">104</a> <a href="#tests-raster-agreement-loft-L105">105</a></td></tr>
+<tr><td><code>round_down</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L77">77</a></td><td>—</td><td><a href="#src-raster-loft-L229">229</a> <a href="#src-raster-loft-L310">310</a> <a href="#src-raster-loft-L311">311</a> <a href="#src-raster-loft-L312">312</a> <a href="#src-raster-loft-L313">313</a> <a href="#src-raster-loft-L314">314</a> … (9 total)</td></tr>
+<tr><td><code>fill_poly</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L241">241</a></td><td>—</td><td><a href="#src-drawing-loft-L1347">1347</a> <a href="#src-drawing-loft-L1446">1446</a> <a href="#src-drawing-loft-L1515">1515</a> <a href="#tests-raster-agreement-loft-L36">36</a> <a href="#tests-raster-agreement-loft-L48">48</a> <a href="#tests-raster-agreement-loft-L60">60</a> … (7 total)</td></tr>
+<tr><td><code>wide_line</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L295">295</a></td><td>—</td><td><a href="#src-drawing-loft-L1469">1469</a> <a href="#tests-raster-agreement-loft-L82">82</a></td></tr>
+<tr><td><code>thin_line</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L331">331</a></td><td>—</td><td><a href="#src-drawing-loft-L1339">1339</a> <a href="#src-drawing-loft-L1467">1467</a> <a href="#tests-raster-agreement-loft-L93">93</a></td></tr>
 <tr><td><code>Scan</code> <span class="search-kind">struct</span></td><td><a href="#src-scan-loft-L23">23</a></td><td>—</td><td><a href="#src-drawing-loft-L627">627</a> <a href="#src-drawing-loft-L629">629</a> <a href="#src-drawing-loft-L631">631</a> <a href="#src-drawing-loft-L1159">1159</a> <a href="#src-drawing-loft-L1169">1169</a> <a href="#src-scan-loft-L31">31</a> … (16 total)</td></tr>
 <tr><td><code>scan_fail</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L31">31</a></td><td>—</td><td><a href="#src-drawing-loft-L1174">1174</a> <a href="#src-scan-loft-L99">99</a> <a href="#src-scan-loft-L114">114</a> <a href="#src-scan-loft-L121">121</a> <a href="#src-scan-loft-L123">123</a> <a href="#src-scan-loft-L145">145</a> … (7 total)</td></tr>
 <tr><td><code>is_digit</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L35">35</a></td><td>—</td><td><a href="#src-scan-loft-L88">88</a> <a href="#src-scan-loft-L107">107</a> <a href="#src-scan-loft-L120">120</a></td></tr>
@@ -144,7 +144,7 @@
 <span id="src-brush-loft-L45">  <span class="kw">pub</span> bw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-brush-loft-L46">  <span class="kw">pub</span> bh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-brush-loft-L47">  <span class="kw">pub</span> period: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-brush-loft-L48">  <span class="kw">pub</span> img: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-brush-loft-L48">  <span class="kw">pub</span> img: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;,</span>
 <span id="src-brush-loft-L49">}</span>
 <span id="src-brush-loft-L50"></span>
 <span id="src-brush-loft-L51"><span class="cm">/// Everything a `Lock` line says past its points.  Widths and `period` are in</span></span>
@@ -179,7 +179,7 @@
 <span id="src-brush-loft-L80">  y0: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-brush-loft-L81">  <span class="kw">pub</span> lw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-brush-loft-L82">  <span class="kw">pub</span> lh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L83">  <span class="kw">pub</span> px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-brush-loft-L83">  <span class="kw">pub</span> px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;,</span>
 <span id="src-brush-loft-L84">}</span>
 <span id="src-brush-loft-L85"></span>
 <span id="src-brush-loft-L86"><span class="cm">/// The style with its canvas-px lengths scaled by `k` — the supersample factor.</span></span>
@@ -210,8 +210,8 @@
 <span id="src-brush-loft-L111"><span class="cm">/// lays); the outermost columns are soft so the silhouette frays.  Greyscale</span></span>
 <span id="src-brush-loft-L112"><span class="cm">/// value × alpha — the stroke's colour ramp multiplies in at resolve time.</span></span>
 <span id="src-brush-loft-L113"><span class="cm">/// @FR-Brush-Image — the built-in footprint.</span></span>
-<span id="src-brush-loft-L114"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hair_brush</span>(bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>, seed: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gap: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
-<span id="src-brush-loft-L115">  hb_img = [<span class="kw">for</span> _i <span class="kw">in</span> <span class="nm">0..</span>bw * bh { <span class="nm">0</span> }];</span>
+<span id="src-brush-loft-L114"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hair_brush</span>(bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>, seed: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gap: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="src-brush-loft-L115">  hb_img: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>; bw * bh];</span>
 <span id="src-brush-loft-L116">  hb_x = <span class="nm">0</span>;</span>
 <span id="src-brush-loft-L117">  hb_ci = <span class="nm">0</span>;</span>
 <span id="src-brush-loft-L118">  while hb_x &lt; bw {</span>
@@ -232,7 +232,7 @@
 <span id="src-brush-loft-L133">        }</span>
 <span id="src-brush-loft-L134">        hb_g = (<span class="nm">255.0</span> * hb_v + <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
 <span id="src-brush-loft-L135">        hb_ai = (<span class="nm">255.0</span> * hb_a + <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-brush-loft-L136">        hb_img[y * bw + hb_xx] = (hb_ai &lt;&lt; <span class="nm">24</span>) | (hb_g &lt;&lt; <span class="nm">16</span>) | (hb_g &lt;&lt; <span class="nm">8</span>) | hb_g;</span>
+<span id="src-brush-loft-L136">        hb_img[y * bw + hb_xx] = ((hb_ai &lt;&lt; <span class="nm">24</span>) | (hb_g &lt;&lt; <span class="nm">16</span>) | (hb_g &lt;&lt; <span class="nm">8</span>) | hb_g) &amp; <span class="nm">4294967295</span>;</span>
 <span id="src-brush-loft-L137">      }</span>
 <span id="src-brush-loft-L138">    }</span>
 <span id="src-brush-loft-L139">    hb_x += hb_cw;</span>
@@ -247,7 +247,7 @@
 <span id="src-brush-loft-L148"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">load_brush</span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>, bname: <span class="ty"><a href="stdlib-types.html">text</a></span>, period: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Brush</span> {</span>
 <span id="src-brush-loft-L149">  lb_im = <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(path).<span class="fn-call">png</span>();</span>
 <span id="src-brush-loft-L150">  <span class="kw">if</span> lb_im == <span class="kw">null</span> { <span class="kw">return</span> <span class="en">Brush</span> { bname: bname, bw: <span class="nm">0</span>, bh: <span class="nm">0</span>, period: <span class="nm">0.0</span>, img: [] } }</span>
-<span id="src-brush-loft-L151">  lb_px = [<span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(lb_im.data) { imaging::<span class="fn-call">rgba</span>(lb_im.data[i]?) }];</span>
+<span id="src-brush-loft-L151">  lb_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [<span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(lb_im.data) { imaging::<span class="fn-call">rgba</span>(lb_im.data[i]?) &amp; <span class="nm">4294967295</span> }];</span>
 <span id="src-brush-loft-L152">  <span class="en">Brush</span> { bname: bname, bw: lb_im.width, bh: lb_im.height,</span>
 <span id="src-brush-loft-L153">          period: <span class="kw">if</span> period &gt; <span class="nm">0.0</span> { period } <span class="kw">else</span> { lb_im.height <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> }, img: lb_px }</span>
 <span id="src-brush-loft-L154">}</span>
@@ -481,7 +481,7 @@
 <span id="src-brush-loft-L382"></span>
 <span id="src-brush-loft-L383"><span class="cm">/// Bilinear: clamp across (`fu`), wrap along (`fv`, already non-negative).</span></span>
 <span id="src-brush-loft-L384"><span class="cm">/// @FR-Brush-Image — the sampling half.</span></span>
-<span id="src-brush-loft-L385"><span class="kw">fn</span> <span class="fn-call">brush_sample</span>(img: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>, fu: <span class="ty"><a href="stdlib-types.html">float</a></span>, fv: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Smp</span> {</span>
+<span id="src-brush-loft-L385"><span class="kw">fn</span> <span class="fn-call">brush_sample</span>(img: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>, fu: <span class="ty"><a href="stdlib-types.html">float</a></span>, fv: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Smp</span> {</span>
 <span id="src-brush-loft-L386">  bs_iu = <span class="fn-call">floor_i</span>(fu);</span>
 <span id="src-brush-loft-L387">  bs_tu = fu - (bs_iu <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>);</span>
 <span id="src-brush-loft-L388">  bs_iv = fv <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
@@ -572,7 +572,7 @@
 <span id="src-brush-loft-L473">  ll_phase = (noise::<span class="fn-call">seed_hash</span>(st.seed, <span class="nm">0</span>, <span class="nm">44</span>) + <span class="nm">1.0</span>) * <span class="nm">0.5</span> * ll_period;</span>
 <span id="src-brush-loft-L474">  ll_bw = br.bw <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
 <span id="src-brush-loft-L475">  ll_bh = br.bh <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
-<span id="src-brush-loft-L476">  ll_out = [<span class="kw">for</span> _i <span class="kw">in</span> <span class="nm">0..l</span>l_n { <span class="nm">0</span> }];</span>
+<span id="src-brush-loft-L476">  ll_out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>; ll_n];</span>
 <span id="src-brush-loft-L477">  <span class="kw">for</span> idx <span class="kw">in</span> <span class="nm">0..l</span>l_n {</span>
 <span id="src-brush-loft-L478">    <span class="kw">if</span> ll_lay.best[idx]? &gt; <span class="nm">1.5</span> { <span class="kw">continue</span> }</span>
 <span id="src-brush-loft-L479">    ll_s = ll_lay.sb[idx]?;</span>
@@ -602,8 +602,8 @@
 <span id="src-brush-loft-L503">    ll_r = <span class="fn-call">ramp</span>(graphics::<span class="fn-call">color_r</span>(ll_c0), graphics::<span class="fn-call">color_r</span>(ll_c1), ll_f, ll_smp.r);</span>
 <span id="src-brush-loft-L504">    ll_g = <span class="fn-call">ramp</span>(graphics::<span class="fn-call">color_g</span>(ll_c0), graphics::<span class="fn-call">color_g</span>(ll_c1), ll_f, ll_smp.g);</span>
 <span id="src-brush-loft-L505">    ll_b = <span class="fn-call">ramp</span>(graphics::<span class="fn-call">color_b</span>(ll_c0), graphics::<span class="fn-call">color_b</span>(ll_c1), ll_f, ll_smp.b);</span>
-<span id="src-brush-loft-L506">    ll_out[idx] = (((ll_ia + <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &lt;&lt; <span class="nm">24</span>) | (<span class="fn-call">clampi</span>(ll_r, <span class="nm">0</span>, <span class="nm">255</span>) &lt;&lt; <span class="nm">16</span>)</span>
-<span id="src-brush-loft-L507">                  | (<span class="fn-call">clampi</span>(ll_g, <span class="nm">0</span>, <span class="nm">255</span>) &lt;&lt; <span class="nm">8</span>) | <span class="fn-call">clampi</span>(ll_b, <span class="nm">0</span>, <span class="nm">255</span>);</span>
+<span id="src-brush-loft-L506">    ll_out[idx] = ((((ll_ia + <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &lt;&lt; <span class="nm">24</span>) | (<span class="fn-call">clampi</span>(ll_r, <span class="nm">0</span>, <span class="nm">255</span>) &lt;&lt; <span class="nm">16</span>)</span>
+<span id="src-brush-loft-L507">                  | (<span class="fn-call">clampi</span>(ll_g, <span class="nm">0</span>, <span class="nm">255</span>) &lt;&lt; <span class="nm">8</span>) | <span class="fn-call">clampi</span>(ll_b, <span class="nm">0</span>, <span class="nm">255</span>)) &amp; <span class="nm">4294967295</span>;</span>
 <span id="src-brush-loft-L508">  }</span>
 <span id="src-brush-loft-L509">  <span class="en">Layer</span> { x0: ll_x0, y0: ll_y0, lw: ll_lw, lh: ll_lh, px: ll_out }</span>
 <span id="src-brush-loft-L510">}</span>
@@ -2490,279 +2490,280 @@
 <span id="src-raster-loft-L118">  <span class="kw">if</span> hl_lo &gt; hl_hi { <span class="kw">return</span> }</span>
 <span id="src-raster-loft-L119">  hl_d = &amp;cv.data;</span>
 <span id="src-raster-loft-L120">  hl_base = hy * cv.width;</span>
-<span id="src-raster-loft-L121">  <span class="kw">for</span> hl_x <span class="kw">in</span> hl_lo..=hl_hi {</span>
-<span id="src-raster-loft-L122">    hl_d[hl_base + hl_x] = ink;</span>
-<span id="src-raster-loft-L123">  }</span>
-<span id="src-raster-loft-L124">}</span>
-<span id="src-raster-loft-L125"></span>
-<span id="src-raster-loft-L126"><span class="cm">/// `polygon_generic` from `Draw.c`, in the non-blending 32-bit form</span></span>
-<span id="src-raster-loft-L127"><span class="cm">/// `ImageDraw.Draw(rgba_image)` selects.</span></span>
-<span id="src-raster-loft-L128"><span class="cm">///</span></span>
-<span id="src-raster-loft-L129"><span class="cm">/// Three things here look like mistakes and are the contract:</span></span>
-<span id="src-raster-loft-L130"><span class="cm">///</span></span>
-<span id="src-raster-loft-L131"><span class="cm">///  * a HORIZONTAL edge is drawn immediately, as a span from its own `xmin` to</span></span>
-<span id="src-raster-loft-L132"><span class="cm">///    its own `xmax`, and takes no part in the scanline crossings;</span></span>
-<span id="src-raster-loft-L133"><span class="cm">///  * an edge ending on this row contributes its crossing TWICE (unless the row</span></span>
-<span id="src-raster-loft-L134"><span class="cm">///    is the polygon's last), which is how a vertex the outline passes through</span></span>
-<span id="src-raster-loft-L135"><span class="cm">///    keeps the parity right;</span></span>
-<span id="src-raster-loft-L136"><span class="cm">///  * the "connect discontiguous corners" repair writes back to `xx[k]` where</span></span>
-<span id="src-raster-loft-L137"><span class="cm">///    `k` is an EDGE index, not a crossing index — so it can move a crossing</span></span>
-<span id="src-raster-loft-L138"><span class="cm">///    belonging to a different edge.  Reproduced verbatim, because the goldens</span></span>
-<span id="src-raster-loft-L139"><span class="cm">///    were rendered through it.</span></span>
-<span id="src-raster-loft-L140"><span class="cm">///</span></span>
-<span id="src-raster-loft-L141"><span class="cm">/// ⚠ It scores 124 for control-flow complexity and that is deliberate: this is a</span></span>
-<span id="src-raster-loft-L142"><span class="cm">/// line-for-line port of one C function, and the thing a reader needs to be able to</span></span>
-<span id="src-raster-loft-L143"><span class="cm">/// do is put the two side by side.  Splitting it would make the correspondence</span></span>
-<span id="src-raster-loft-L144"><span class="cm">/// unverifiable and would buy nothing — there is no second caller and no variation</span></span>
-<span id="src-raster-loft-L145"><span class="cm">/// to factor out.</span></span>
-<span id="src-raster-loft-L146"><span class="kw">fn</span> <span class="fn-call">polygon_generic</span>(cv: graphics::<span class="en">Canvas</span>, edges: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-raster-loft-L147">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(edges) &lt;= <span class="nm">0</span> { <span class="kw">return</span> }</span>
-<span id="src-raster-loft-L148">  pg_table: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt; = [];</span>
-<span id="src-raster-loft-L149">  pg_ymin = cv.height - <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L150">  pg_ymax = <span class="nm">0</span>;</span>
-<span id="src-raster-loft-L151">  <span class="kw">for</span> e <span class="kw">in</span> edges {</span>
-<span id="src-raster-loft-L152">    <span class="kw">if</span> pg_ymin &gt; e.eymin { pg_ymin = e.eymin; }</span>
-<span id="src-raster-loft-L153">    <span class="kw">if</span> pg_ymax &lt; e.eymax { pg_ymax = e.eymax; }</span>
-<span id="src-raster-loft-L154">    <span class="kw">if</span> e.eymin == e.eymax {</span>
-<span id="src-raster-loft-L155">      <span class="fn-call">pil_hline</span>(cv, e.exmin, e.eymin, e.exmax, ink);</span>
-<span id="src-raster-loft-L156">      <span class="kw">continue</span></span>
-<span id="src-raster-loft-L157">    }</span>
-<span id="src-raster-loft-L158">    pg_table += [e];</span>
-<span id="src-raster-loft-L159">  }</span>
-<span id="src-raster-loft-L160">  <span class="kw">if</span> pg_ymin &lt; <span class="nm">0</span> { pg_ymin = <span class="nm">0</span>; }</span>
-<span id="src-raster-loft-L161">  <span class="kw">if</span> pg_ymax &gt; cv.height { pg_ymax = cv.height; }</span>
-<span id="src-raster-loft-L162">  pg_ec = <span class="bi"><a href="stdlib-text.html">len</a></span>(pg_table);</span>
-<span id="src-raster-loft-L163">  <span class="kw">if</span> pg_ec == <span class="nm">0</span> { <span class="kw">return</span> }</span>
-<span id="src-raster-loft-L164">  <span class="cm">// One crossing buffer for the whole polygon, exactly as `Draw.c` allocates it:</span></span>
-<span id="src-raster-loft-L165">  <span class="cm">// the corner repair reaches back into it by edge index, so it must persist</span></span>
-<span id="src-raster-loft-L166">  <span class="cm">// across the row and must be at least two slots per edge.</span></span>
-<span id="src-raster-loft-L167">  pg_xx: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt; = [];</span>
-<span id="src-raster-loft-L168">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>(pg_ec * <span class="nm">2</span>) { pg_xx += [<span class="nm">0.0f</span>]; }</span>
-<span id="src-raster-loft-L169">  pg_y = pg_ymin;</span>
-<span id="src-raster-loft-L170">  while pg_y &lt;= pg_ymax {</span>
-<span id="src-raster-loft-L171">    pg_j = <span class="nm">0</span>;</span>
-<span id="src-raster-loft-L172">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>pg_ec {</span>
-<span id="src-raster-loft-L173">      pg_cur = pg_table[i]?;</span>
-<span id="src-raster-loft-L174">      <span class="kw">if</span> pg_y &gt;= pg_cur.eymin &amp;&amp; pg_y &lt;= pg_cur.eymax {</span>
-<span id="src-raster-loft-L175">        pg_xx[pg_j] = <span class="fn-call">edge_x</span>(pg_cur, pg_y);</span>
-<span id="src-raster-loft-L176">        pg_j += <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L177">        <span class="kw">if</span> pg_y == pg_cur.eymax &amp;&amp; pg_y &lt; pg_ymax {</span>
-<span id="src-raster-loft-L178">          pg_xx[pg_j] = pg_xx[pg_j - <span class="nm">1</span>]?;</span>
-<span id="src-raster-loft-L179">          pg_j += <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L180">        } <span class="kw">else</span> <span class="kw">if</span> pg_cur.edx != <span class="nm">0.0f</span> &amp;&amp; <span class="fn-call">roundf</span>(pg_xx[pg_j - <span class="nm">1</span>]?) == pg_xx[pg_j - <span class="nm">1</span>]? {</span>
-<span id="src-raster-loft-L181">          <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>i {</span>
-<span id="src-raster-loft-L182">            pg_oth = pg_table[k]?;</span>
-<span id="src-raster-loft-L183">            <span class="kw">if</span> (pg_cur.edx &gt; <span class="nm">0.0f</span> &amp;&amp; pg_oth.edx &lt;= <span class="nm">0.0f</span>)</span>
-<span id="src-raster-loft-L184">               || (pg_cur.edx &lt; <span class="nm">0.0f</span> &amp;&amp; pg_oth.edx &gt;= <span class="nm">0.0f</span>) { <span class="kw">continue</span> }</span>
-<span id="src-raster-loft-L185">            <span class="kw">if</span> ((pg_y == pg_cur.eymin &amp;&amp; pg_y == pg_oth.eymin)</span>
-<span id="src-raster-loft-L186">                || (pg_y == pg_cur.eymax &amp;&amp; pg_y == pg_oth.eymax))</span>
-<span id="src-raster-loft-L187">               &amp;&amp; pg_xx[pg_j - <span class="nm">1</span>]? == <span class="fn-call">edge_x</span>(pg_oth, pg_y) {</span>
-<span id="src-raster-loft-L188">              <span class="cm">// The row below (or above, on the last row) says which side the</span></span>
-<span id="src-raster-loft-L189">              <span class="cm">// two edges leave the corner on.</span></span>
-<span id="src-raster-loft-L190">              pg_off = <span class="kw">if</span> pg_y == pg_ymax { -<span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">1</span> };</span>
-<span id="src-raster-loft-L191">              pg_ac = <span class="fn-call">edge_x</span>(pg_cur, pg_y + pg_off);</span>
-<span id="src-raster-loft-L192">              pg_ao = <span class="fn-call">edge_x</span>(pg_oth, pg_y + pg_off);</span>
-<span id="src-raster-loft-L193">              <span class="kw">if</span> pg_y == pg_cur.eymax {</span>
-<span id="src-raster-loft-L194">                <span class="kw">if</span> pg_cur.edx &gt; <span class="nm">0.0f</span> {</span>
-<span id="src-raster-loft-L195">                  pg_xx[k] = (<span class="kw">if</span> pg_ac &gt; pg_ao { pg_ac } <span class="kw">else</span> { pg_ao }) + <span class="nm">1.0f</span>;</span>
-<span id="src-raster-loft-L196">                } <span class="kw">else</span> {</span>
-<span id="src-raster-loft-L197">                  pg_xx[k] = (<span class="kw">if</span> pg_ac &lt; pg_ao { pg_ac } <span class="kw">else</span> { pg_ao }) - <span class="nm">1.0f</span>;</span>
-<span id="src-raster-loft-L198">                }</span>
-<span id="src-raster-loft-L199">              } <span class="kw">else</span> {</span>
-<span id="src-raster-loft-L200">                <span class="kw">if</span> pg_cur.edx &gt; <span class="nm">0.0f</span> {</span>
-<span id="src-raster-loft-L201">                  pg_xx[k] = <span class="kw">if</span> pg_ac &lt; pg_ao { pg_ac } <span class="kw">else</span> { pg_ao };</span>
-<span id="src-raster-loft-L202">                } <span class="kw">else</span> {</span>
-<span id="src-raster-loft-L203">                  pg_xx[k] = (<span class="kw">if</span> pg_ac &gt; pg_ao { pg_ac } <span class="kw">else</span> { pg_ao }) + <span class="nm">1.0f</span>;</span>
-<span id="src-raster-loft-L204">                }</span>
-<span id="src-raster-loft-L205">              }</span>
-<span id="src-raster-loft-L206">              <span class="kw">break</span></span>
-<span id="src-raster-loft-L207">            }</span>
-<span id="src-raster-loft-L208">          }</span>
-<span id="src-raster-loft-L209">        }</span>
-<span id="src-raster-loft-L210">      }</span>
-<span id="src-raster-loft-L211">    }</span>
-<span id="src-raster-loft-L212">    <span class="cm">// Insertion sort over `xx[0 .. j)` — a row holds a handful of crossings, and</span></span>
-<span id="src-raster-loft-L213">    <span class="cm">// equal ones are interchangeable, so this and `Draw.c`'s `qsort` agree.</span></span>
-<span id="src-raster-loft-L214">    pg_s = <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L215">    while pg_s &lt; pg_j {</span>
-<span id="src-raster-loft-L216">      pg_v = pg_xx[pg_s]?;</span>
-<span id="src-raster-loft-L217">      pg_t = pg_s;</span>
-<span id="src-raster-loft-L218">      while pg_t &gt; <span class="nm">0</span> &amp;&amp; pg_xx[pg_t - <span class="nm">1</span>]? &gt; pg_v {</span>
-<span id="src-raster-loft-L219">        pg_xx[pg_t] = pg_xx[pg_t - <span class="nm">1</span>]?;</span>
-<span id="src-raster-loft-L220">        pg_t -= <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L221">      }</span>
-<span id="src-raster-loft-L222">      pg_xx[pg_t] = pg_v;</span>
-<span id="src-raster-loft-L223">      pg_s += <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L224">    }</span>
-<span id="src-raster-loft-L225">    pg_p = <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L226">    while pg_p &lt; pg_j {</span>
-<span id="src-raster-loft-L227">      <span class="fn-call">pil_hline</span>(cv, <span class="fn-call">round_up</span>(pg_xx[pg_p - <span class="nm">1</span>]? <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>), pg_y,</span>
-<span id="src-raster-loft-L228">                <span class="fn-call">round_down</span>(pg_xx[pg_p]? <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>), ink);</span>
-<span id="src-raster-loft-L229">      pg_p += <span class="nm">2</span>;</span>
-<span id="src-raster-loft-L230">    }</span>
-<span id="src-raster-loft-L231">    pg_y += <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L232">  }</span>
-<span id="src-raster-loft-L233">}</span>
-<span id="src-raster-loft-L234"></span>
-<span id="src-raster-loft-L235"><span class="cm">/// Fill a polygon the way `ImageDraw.polygon(pts, fill=…)` does.</span></span>
-<span id="src-raster-loft-L236"><span class="cm">///</span></span>
-<span id="src-raster-loft-L237"><span class="cm">/// The outline closes itself only when the last point is not already the first —</span></span>
-<span id="src-raster-loft-L238"><span class="cm">/// a circle handed in with its start repeated gets no extra edge, which is how</span></span>
-<span id="src-raster-loft-L239"><span class="cm">/// `draw.py` passes one.</span></span>
-<span id="src-raster-loft-L240"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fill_poly</span>(cv: graphics::<span class="en">Canvas</span>, pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pt</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-raster-loft-L241">  fp_count = <span class="bi"><a href="stdlib-text.html">len</a></span>(pts);</span>
-<span id="src-raster-loft-L242">  <span class="kw">if</span> fp_count &lt;= <span class="nm">0</span> { <span class="kw">return</span> }</span>
-<span id="src-raster-loft-L243">  fp_xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-raster-loft-L244">  fp_ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-raster-loft-L245">  <span class="kw">for</span> p <span class="kw">in</span> pts {</span>
-<span id="src-raster-loft-L246">    fp_xs += [p.ptx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>];</span>
-<span id="src-raster-loft-L247">    fp_ys += [p.pty <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>];</span>
-<span id="src-raster-loft-L248">  }</span>
-<span id="src-raster-loft-L249">  fp_edges: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt; = [];</span>
-<span id="src-raster-loft-L250">  fp_i = <span class="nm">0</span>;</span>
-<span id="src-raster-loft-L251">  while fp_i &lt; fp_count - <span class="nm">1</span> {</span>
-<span id="src-raster-loft-L252">    fp_x0 = fp_xs[fp_i]?;</span>
-<span id="src-raster-loft-L253">    fp_y0 = fp_ys[fp_i]?;</span>
-<span id="src-raster-loft-L254">    fp_x1 = fp_xs[fp_i + <span class="nm">1</span>]?;</span>
-<span id="src-raster-loft-L255">    fp_y1 = fp_ys[fp_i + <span class="nm">1</span>]?;</span>
-<span id="src-raster-loft-L256">    fp_merged = <span class="kw">false</span>;</span>
-<span id="src-raster-loft-L257">    <span class="cm">// Two horizontal steps running the same way are ONE span in Pillow, so the</span></span>
-<span id="src-raster-loft-L258">    <span class="cm">// second widens the first edge instead of adding its own.</span></span>
-<span id="src-raster-loft-L259">    <span class="kw">if</span> fp_y0 == fp_y1 &amp;&amp; fp_i != <span class="nm">0</span> &amp;&amp; fp_y0 == fp_ys[fp_i - <span class="nm">1</span>]? &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(fp_edges) &gt; <span class="nm">0</span> {</span>
-<span id="src-raster-loft-L260">      fp_prev = fp_xs[fp_i - <span class="nm">1</span>]?;</span>
-<span id="src-raster-loft-L261">      fp_last = <span class="bi"><a href="stdlib-text.html">len</a></span>(fp_edges) - <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L262">      fp_e = fp_edges[fp_last]?;</span>
-<span id="src-raster-loft-L263">      <span class="kw">if</span> fp_x1 &gt; fp_x0 &amp;&amp; fp_x0 &gt; fp_prev {</span>
-<span id="src-raster-loft-L264">        fp_edges[fp_last] = <span class="en">Edge</span> { exmin: fp_e.exmin, exmax: fp_x1, eymin: fp_e.eymin,</span>
-<span id="src-raster-loft-L265">                                   eymax: fp_e.eymax, edx: fp_e.edx, ex0: fp_e.ex0,</span>
-<span id="src-raster-loft-L266">                                   ey0: fp_e.ey0 };</span>
-<span id="src-raster-loft-L267">        fp_merged = <span class="kw">true</span>;</span>
-<span id="src-raster-loft-L268">      } <span class="kw">else</span> <span class="kw">if</span> fp_x1 &lt; fp_x0 &amp;&amp; fp_x0 &lt; fp_prev {</span>
-<span id="src-raster-loft-L269">        fp_edges[fp_last] = <span class="en">Edge</span> { exmin: fp_x1, exmax: fp_e.exmax, eymin: fp_e.eymin,</span>
-<span id="src-raster-loft-L270">                                   eymax: fp_e.eymax, edx: fp_e.edx, ex0: fp_e.ex0,</span>
-<span id="src-raster-loft-L271">                                   ey0: fp_e.ey0 };</span>
-<span id="src-raster-loft-L272">        fp_merged = <span class="kw">true</span>;</span>
-<span id="src-raster-loft-L273">      }</span>
-<span id="src-raster-loft-L274">    }</span>
-<span id="src-raster-loft-L275">    <span class="kw">if</span> !fp_merged {</span>
-<span id="src-raster-loft-L276">      fp_edges += [<span class="fn-call">make_edge</span>(fp_x0, fp_y0, fp_x1, fp_y1)];</span>
-<span id="src-raster-loft-L277">    }</span>
-<span id="src-raster-loft-L278">    fp_i += <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L279">  }</span>
-<span id="src-raster-loft-L280">  fp_end = fp_count - <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L281">  <span class="kw">if</span> fp_xs[fp_end]? != fp_xs[<span class="nm">0</span>]? || fp_ys[fp_end]? != fp_ys[<span class="nm">0</span>]? {</span>
-<span id="src-raster-loft-L282">    fp_edges += [<span class="fn-call">make_edge</span>(fp_xs[fp_end]?, fp_ys[fp_end]?, fp_xs[<span class="nm">0</span>]?, fp_ys[<span class="nm">0</span>]?)];</span>
-<span id="src-raster-loft-L283">  }</span>
-<span id="src-raster-loft-L284">  <span class="fn-call">polygon_generic</span>(cv, fp_edges, ink);</span>
-<span id="src-raster-loft-L285">}</span>
-<span id="src-raster-loft-L286"></span>
-<span id="src-raster-loft-L287"><span class="cm">/// One thick segment, the way `ImageDraw.line(…, width=w)` draws it for `w &gt; 1`.</span></span>
-<span id="src-raster-loft-L288"><span class="cm">///</span></span>
-<span id="src-raster-loft-L289"><span class="cm">/// Pillow does not stroke — it builds a four-cornered quad around the segment</span></span>
-<span id="src-raster-loft-L290"><span class="cm">/// and fills that, with the two half-widths rounded APART (`ROUND_UP` one side,</span></span>
-<span id="src-raster-loft-L291"><span class="cm">/// `ROUND_DOWN` the other) so an even width still lands on whole pixels.  A</span></span>
-<span id="src-raster-loft-L292"><span class="cm">/// polyline is therefore a series of independent quads with no joins, and the</span></span>
-<span id="src-raster-loft-L293"><span class="cm">/// overlap at a bend is what rounds the corner.</span></span>
-<span id="src-raster-loft-L294"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wide_line</span>(cv: graphics::<span class="en">Canvas</span>, wx0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wx1: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-raster-loft-L295">                 ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, wwidth: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-raster-loft-L296">  wl_x0 = wx0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-raster-loft-L297">  wl_y0 = wy0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-raster-loft-L298">  wl_x1 = wx1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-raster-loft-L299">  wl_y1 = wy1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-raster-loft-L300">  wl_dx = wl_x1 - wl_x0;</span>
-<span id="src-raster-loft-L301">  wl_dy = wl_y1 - wl_y0;</span>
-<span id="src-raster-loft-L302">  <span class="kw">if</span> wl_dx == <span class="nm">0</span> &amp;&amp; wl_dy == <span class="nm">0</span> {</span>
-<span id="src-raster-loft-L303">    cv.<span class="fn-call">set_pixel</span>(wl_x0, wl_y0, ink);</span>
-<span id="src-raster-loft-L304">    <span class="kw">return</span></span>
-<span id="src-raster-loft-L305">  }</span>
-<span id="src-raster-loft-L306">  wl_big = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(((wl_dx * wl_dx + wl_dy * wl_dy) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
-<span id="src-raster-loft-L307">  wl_small = (((wwidth - <span class="nm">1</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span> ?? <span class="nm">0.0</span>);</span>
-<span id="src-raster-loft-L308">  wl_rmax = ((<span class="fn-call">round_up</span>(wl_small) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / wl_big ?? <span class="nm">0.0</span>);</span>
-<span id="src-raster-loft-L309">  wl_rmin = ((<span class="fn-call">round_down</span>(wl_small) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / wl_big ?? <span class="nm">0.0</span>);</span>
-<span id="src-raster-loft-L310">  wl_dxmin = <span class="fn-call">round_down</span>(wl_rmin * (wl_dy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
-<span id="src-raster-loft-L311">  wl_dxmax = <span class="fn-call">round_down</span>(wl_rmax * (wl_dy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
-<span id="src-raster-loft-L312">  wl_dymin = <span class="fn-call">round_down</span>(wl_rmin * (wl_dx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
-<span id="src-raster-loft-L313">  wl_dymax = <span class="fn-call">round_down</span>(wl_rmax * (wl_dx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
-<span id="src-raster-loft-L314">  wl_vx: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [wl_x0 - wl_dxmin, wl_x1 - wl_dxmin,</span>
-<span id="src-raster-loft-L315">                            wl_x1 + wl_dxmax, wl_x0 + wl_dxmax];</span>
-<span id="src-raster-loft-L316">  wl_vy: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [wl_y0 + wl_dymax, wl_y1 + wl_dymax,</span>
-<span id="src-raster-loft-L317">                            wl_y1 - wl_dymin, wl_y0 - wl_dymin];</span>
-<span id="src-raster-loft-L318">  wl_edges: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt; = [];</span>
-<span id="src-raster-loft-L319">  <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..4</span> {</span>
-<span id="src-raster-loft-L320">    wl_edges += [<span class="fn-call">make_edge</span>(wl_vx[k]?, wl_vy[k]?, wl_vx[(k + <span class="nm">1</span>) % <span class="nm">4</span>]?, wl_vy[(k + <span class="nm">1</span>) % <span class="nm">4</span>]?)];</span>
-<span id="src-raster-loft-L321">  }</span>
-<span id="src-raster-loft-L322">  <span class="fn-call">polygon_generic</span>(cv, wl_edges, ink);</span>
-<span id="src-raster-loft-L323">}</span>
-<span id="src-raster-loft-L324"></span>
-<span id="src-raster-loft-L325"><span class="cm">/// `line32` from `Draw.c` — Bresenham, and it stops one pixel SHORT of the end.</span></span>
-<span id="src-raster-loft-L326"><span class="cm">///</span></span>
-<span id="src-raster-loft-L327"><span class="cm">/// `draw_lines` puts that missing pixel back after the last segment, which is</span></span>
-<span id="src-raster-loft-L328"><span class="cm">/// why this is a polyline call rather than a segment one: split it into</span></span>
-<span id="src-raster-loft-L329"><span class="cm">/// segments and each one grows a pixel Pillow never drew.</span></span>
-<span id="src-raster-loft-L330"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">thin_line</span>(cv: graphics::<span class="en">Canvas</span>, pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pt</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-raster-loft-L331">  tl_n = <span class="bi"><a href="stdlib-text.html">len</a></span>(pts);</span>
-<span id="src-raster-loft-L332">  <span class="kw">if</span> tl_n &lt; <span class="nm">2</span> { <span class="kw">return</span> }</span>
-<span id="src-raster-loft-L333">  tl_lx = <span class="nm">0</span>;</span>
-<span id="src-raster-loft-L334">  tl_ly = <span class="nm">0</span>;</span>
-<span id="src-raster-loft-L335">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>(tl_n - <span class="nm">1</span>) {</span>
-<span id="src-raster-loft-L336">    tl_a = pts[i]?;</span>
-<span id="src-raster-loft-L337">    tl_b = pts[i + <span class="nm">1</span>]?;</span>
-<span id="src-raster-loft-L338">    tl_lx = tl_b.ptx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-raster-loft-L339">    tl_ly = tl_b.pty <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-raster-loft-L340">    <span class="fn-call">bresenham</span>(cv, tl_a.ptx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, tl_a.pty <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, tl_lx, tl_ly, ink);</span>
-<span id="src-raster-loft-L341">  }</span>
-<span id="src-raster-loft-L342">  cv.<span class="fn-call">set_pixel</span>(tl_lx, tl_ly, ink);</span>
-<span id="src-raster-loft-L343">}</span>
-<span id="src-raster-loft-L344"></span>
-<span id="src-raster-loft-L345"><span class="cm">/// The Bresenham walk itself, end-exclusive.</span></span>
-<span id="src-raster-loft-L346"><span class="kw">fn</span> <span class="fn-call">bresenham</span>(cv: graphics::<span class="en">Canvas</span>, bx0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, by0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bx1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, by1: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-raster-loft-L347">             ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-raster-loft-L348">  br_x = bx0;</span>
-<span id="src-raster-loft-L349">  br_y = by0;</span>
-<span id="src-raster-loft-L350">  br_dx = bx1 - bx0;</span>
-<span id="src-raster-loft-L351">  br_xs = <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L352">  <span class="kw">if</span> br_dx &lt; <span class="nm">0</span> { br_dx = -br_dx; br_xs = -<span class="nm">1</span>; }</span>
-<span id="src-raster-loft-L353">  br_dy = by1 - by0;</span>
-<span id="src-raster-loft-L354">  br_ys = <span class="nm">1</span>;</span>
-<span id="src-raster-loft-L355">  <span class="kw">if</span> br_dy &lt; <span class="nm">0</span> { br_dy = -br_dy; br_ys = -<span class="nm">1</span>; }</span>
-<span id="src-raster-loft-L356">  <span class="kw">if</span> br_dx == <span class="nm">0</span> {</span>
-<span id="src-raster-loft-L357">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>br_dy {</span>
-<span id="src-raster-loft-L358">      cv.<span class="fn-call">set_pixel</span>(br_x, br_y, ink);</span>
-<span id="src-raster-loft-L359">      br_y += br_ys;</span>
-<span id="src-raster-loft-L360">    }</span>
-<span id="src-raster-loft-L361">    <span class="kw">return</span></span>
-<span id="src-raster-loft-L362">  }</span>
-<span id="src-raster-loft-L363">  <span class="kw">if</span> br_dy == <span class="nm">0</span> {</span>
-<span id="src-raster-loft-L364">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>br_dx {</span>
-<span id="src-raster-loft-L365">      cv.<span class="fn-call">set_pixel</span>(br_x, br_y, ink);</span>
-<span id="src-raster-loft-L366">      br_x += br_xs;</span>
-<span id="src-raster-loft-L367">    }</span>
-<span id="src-raster-loft-L368">    <span class="kw">return</span></span>
-<span id="src-raster-loft-L369">  }</span>
-<span id="src-raster-loft-L370">  <span class="kw">if</span> br_dx &gt; br_dy {</span>
-<span id="src-raster-loft-L371">    br_n = br_dx;</span>
-<span id="src-raster-loft-L372">    br_dy += br_dy;</span>
-<span id="src-raster-loft-L373">    br_e = br_dy - br_dx;</span>
-<span id="src-raster-loft-L374">    br_dx += br_dx;</span>
-<span id="src-raster-loft-L375">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>br_n {</span>
-<span id="src-raster-loft-L376">      cv.<span class="fn-call">set_pixel</span>(br_x, br_y, ink);</span>
-<span id="src-raster-loft-L377">      <span class="kw">if</span> br_e &gt;= <span class="nm">0</span> { br_y += br_ys; br_e -= br_dx; }</span>
-<span id="src-raster-loft-L378">      br_e += br_dy;</span>
-<span id="src-raster-loft-L379">      br_x += br_xs;</span>
-<span id="src-raster-loft-L380">    }</span>
-<span id="src-raster-loft-L381">    <span class="kw">return</span></span>
-<span id="src-raster-loft-L382">  }</span>
-<span id="src-raster-loft-L383">  br_n2 = br_dy;</span>
-<span id="src-raster-loft-L384">  br_dx += br_dx;</span>
-<span id="src-raster-loft-L385">  br_e2 = br_dx - br_dy;</span>
-<span id="src-raster-loft-L386">  br_dy += br_dy;</span>
-<span id="src-raster-loft-L387">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>br_n2 {</span>
-<span id="src-raster-loft-L388">    cv.<span class="fn-call">set_pixel</span>(br_x, br_y, ink);</span>
-<span id="src-raster-loft-L389">    <span class="kw">if</span> br_e2 &gt;= <span class="nm">0</span> { br_x += br_xs; br_e2 -= br_dy; }</span>
-<span id="src-raster-loft-L390">    br_e2 += br_dx;</span>
-<span id="src-raster-loft-L391">    br_y += br_ys;</span>
-<span id="src-raster-loft-L392">  }</span>
-<span id="src-raster-loft-L393">}</span>
+<span id="src-raster-loft-L121">  hl_ink: <span class="ty"><a href="stdlib-types.html">u32</a></span> = ink &amp; <span class="nm">4294967295</span>;</span>
+<span id="src-raster-loft-L122">  <span class="kw">for</span> hl_x <span class="kw">in</span> hl_lo..=hl_hi {</span>
+<span id="src-raster-loft-L123">    hl_d[hl_base + hl_x] = hl_ink;</span>
+<span id="src-raster-loft-L124">  }</span>
+<span id="src-raster-loft-L125">}</span>
+<span id="src-raster-loft-L126"></span>
+<span id="src-raster-loft-L127"><span class="cm">/// `polygon_generic` from `Draw.c`, in the non-blending 32-bit form</span></span>
+<span id="src-raster-loft-L128"><span class="cm">/// `ImageDraw.Draw(rgba_image)` selects.</span></span>
+<span id="src-raster-loft-L129"><span class="cm">///</span></span>
+<span id="src-raster-loft-L130"><span class="cm">/// Three things here look like mistakes and are the contract:</span></span>
+<span id="src-raster-loft-L131"><span class="cm">///</span></span>
+<span id="src-raster-loft-L132"><span class="cm">///  * a HORIZONTAL edge is drawn immediately, as a span from its own `xmin` to</span></span>
+<span id="src-raster-loft-L133"><span class="cm">///    its own `xmax`, and takes no part in the scanline crossings;</span></span>
+<span id="src-raster-loft-L134"><span class="cm">///  * an edge ending on this row contributes its crossing TWICE (unless the row</span></span>
+<span id="src-raster-loft-L135"><span class="cm">///    is the polygon's last), which is how a vertex the outline passes through</span></span>
+<span id="src-raster-loft-L136"><span class="cm">///    keeps the parity right;</span></span>
+<span id="src-raster-loft-L137"><span class="cm">///  * the "connect discontiguous corners" repair writes back to `xx[k]` where</span></span>
+<span id="src-raster-loft-L138"><span class="cm">///    `k` is an EDGE index, not a crossing index — so it can move a crossing</span></span>
+<span id="src-raster-loft-L139"><span class="cm">///    belonging to a different edge.  Reproduced verbatim, because the goldens</span></span>
+<span id="src-raster-loft-L140"><span class="cm">///    were rendered through it.</span></span>
+<span id="src-raster-loft-L141"><span class="cm">///</span></span>
+<span id="src-raster-loft-L142"><span class="cm">/// ⚠ It scores 124 for control-flow complexity and that is deliberate: this is a</span></span>
+<span id="src-raster-loft-L143"><span class="cm">/// line-for-line port of one C function, and the thing a reader needs to be able to</span></span>
+<span id="src-raster-loft-L144"><span class="cm">/// do is put the two side by side.  Splitting it would make the correspondence</span></span>
+<span id="src-raster-loft-L145"><span class="cm">/// unverifiable and would buy nothing — there is no second caller and no variation</span></span>
+<span id="src-raster-loft-L146"><span class="cm">/// to factor out.</span></span>
+<span id="src-raster-loft-L147"><span class="kw">fn</span> <span class="fn-call">polygon_generic</span>(cv: graphics::<span class="en">Canvas</span>, edges: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L148">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(edges) &lt;= <span class="nm">0</span> { <span class="kw">return</span> }</span>
+<span id="src-raster-loft-L149">  pg_table: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt; = [];</span>
+<span id="src-raster-loft-L150">  pg_ymin = cv.height - <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L151">  pg_ymax = <span class="nm">0</span>;</span>
+<span id="src-raster-loft-L152">  <span class="kw">for</span> e <span class="kw">in</span> edges {</span>
+<span id="src-raster-loft-L153">    <span class="kw">if</span> pg_ymin &gt; e.eymin { pg_ymin = e.eymin; }</span>
+<span id="src-raster-loft-L154">    <span class="kw">if</span> pg_ymax &lt; e.eymax { pg_ymax = e.eymax; }</span>
+<span id="src-raster-loft-L155">    <span class="kw">if</span> e.eymin == e.eymax {</span>
+<span id="src-raster-loft-L156">      <span class="fn-call">pil_hline</span>(cv, e.exmin, e.eymin, e.exmax, ink);</span>
+<span id="src-raster-loft-L157">      <span class="kw">continue</span></span>
+<span id="src-raster-loft-L158">    }</span>
+<span id="src-raster-loft-L159">    pg_table += [e];</span>
+<span id="src-raster-loft-L160">  }</span>
+<span id="src-raster-loft-L161">  <span class="kw">if</span> pg_ymin &lt; <span class="nm">0</span> { pg_ymin = <span class="nm">0</span>; }</span>
+<span id="src-raster-loft-L162">  <span class="kw">if</span> pg_ymax &gt; cv.height { pg_ymax = cv.height; }</span>
+<span id="src-raster-loft-L163">  pg_ec = <span class="bi"><a href="stdlib-text.html">len</a></span>(pg_table);</span>
+<span id="src-raster-loft-L164">  <span class="kw">if</span> pg_ec == <span class="nm">0</span> { <span class="kw">return</span> }</span>
+<span id="src-raster-loft-L165">  <span class="cm">// One crossing buffer for the whole polygon, exactly as `Draw.c` allocates it:</span></span>
+<span id="src-raster-loft-L166">  <span class="cm">// the corner repair reaches back into it by edge index, so it must persist</span></span>
+<span id="src-raster-loft-L167">  <span class="cm">// across the row and must be at least two slots per edge.</span></span>
+<span id="src-raster-loft-L168">  pg_xx: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt; = [];</span>
+<span id="src-raster-loft-L169">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>(pg_ec * <span class="nm">2</span>) { pg_xx += [<span class="nm">0.0f</span>]; }</span>
+<span id="src-raster-loft-L170">  pg_y = pg_ymin;</span>
+<span id="src-raster-loft-L171">  while pg_y &lt;= pg_ymax {</span>
+<span id="src-raster-loft-L172">    pg_j = <span class="nm">0</span>;</span>
+<span id="src-raster-loft-L173">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>pg_ec {</span>
+<span id="src-raster-loft-L174">      pg_cur = pg_table[i]?;</span>
+<span id="src-raster-loft-L175">      <span class="kw">if</span> pg_y &gt;= pg_cur.eymin &amp;&amp; pg_y &lt;= pg_cur.eymax {</span>
+<span id="src-raster-loft-L176">        pg_xx[pg_j] = <span class="fn-call">edge_x</span>(pg_cur, pg_y);</span>
+<span id="src-raster-loft-L177">        pg_j += <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L178">        <span class="kw">if</span> pg_y == pg_cur.eymax &amp;&amp; pg_y &lt; pg_ymax {</span>
+<span id="src-raster-loft-L179">          pg_xx[pg_j] = pg_xx[pg_j - <span class="nm">1</span>]?;</span>
+<span id="src-raster-loft-L180">          pg_j += <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L181">        } <span class="kw">else</span> <span class="kw">if</span> pg_cur.edx != <span class="nm">0.0f</span> &amp;&amp; <span class="fn-call">roundf</span>(pg_xx[pg_j - <span class="nm">1</span>]?) == pg_xx[pg_j - <span class="nm">1</span>]? {</span>
+<span id="src-raster-loft-L182">          <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>i {</span>
+<span id="src-raster-loft-L183">            pg_oth = pg_table[k]?;</span>
+<span id="src-raster-loft-L184">            <span class="kw">if</span> (pg_cur.edx &gt; <span class="nm">0.0f</span> &amp;&amp; pg_oth.edx &lt;= <span class="nm">0.0f</span>)</span>
+<span id="src-raster-loft-L185">               || (pg_cur.edx &lt; <span class="nm">0.0f</span> &amp;&amp; pg_oth.edx &gt;= <span class="nm">0.0f</span>) { <span class="kw">continue</span> }</span>
+<span id="src-raster-loft-L186">            <span class="kw">if</span> ((pg_y == pg_cur.eymin &amp;&amp; pg_y == pg_oth.eymin)</span>
+<span id="src-raster-loft-L187">                || (pg_y == pg_cur.eymax &amp;&amp; pg_y == pg_oth.eymax))</span>
+<span id="src-raster-loft-L188">               &amp;&amp; pg_xx[pg_j - <span class="nm">1</span>]? == <span class="fn-call">edge_x</span>(pg_oth, pg_y) {</span>
+<span id="src-raster-loft-L189">              <span class="cm">// The row below (or above, on the last row) says which side the</span></span>
+<span id="src-raster-loft-L190">              <span class="cm">// two edges leave the corner on.</span></span>
+<span id="src-raster-loft-L191">              pg_off = <span class="kw">if</span> pg_y == pg_ymax { -<span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">1</span> };</span>
+<span id="src-raster-loft-L192">              pg_ac = <span class="fn-call">edge_x</span>(pg_cur, pg_y + pg_off);</span>
+<span id="src-raster-loft-L193">              pg_ao = <span class="fn-call">edge_x</span>(pg_oth, pg_y + pg_off);</span>
+<span id="src-raster-loft-L194">              <span class="kw">if</span> pg_y == pg_cur.eymax {</span>
+<span id="src-raster-loft-L195">                <span class="kw">if</span> pg_cur.edx &gt; <span class="nm">0.0f</span> {</span>
+<span id="src-raster-loft-L196">                  pg_xx[k] = (<span class="kw">if</span> pg_ac &gt; pg_ao { pg_ac } <span class="kw">else</span> { pg_ao }) + <span class="nm">1.0f</span>;</span>
+<span id="src-raster-loft-L197">                } <span class="kw">else</span> {</span>
+<span id="src-raster-loft-L198">                  pg_xx[k] = (<span class="kw">if</span> pg_ac &lt; pg_ao { pg_ac } <span class="kw">else</span> { pg_ao }) - <span class="nm">1.0f</span>;</span>
+<span id="src-raster-loft-L199">                }</span>
+<span id="src-raster-loft-L200">              } <span class="kw">else</span> {</span>
+<span id="src-raster-loft-L201">                <span class="kw">if</span> pg_cur.edx &gt; <span class="nm">0.0f</span> {</span>
+<span id="src-raster-loft-L202">                  pg_xx[k] = <span class="kw">if</span> pg_ac &lt; pg_ao { pg_ac } <span class="kw">else</span> { pg_ao };</span>
+<span id="src-raster-loft-L203">                } <span class="kw">else</span> {</span>
+<span id="src-raster-loft-L204">                  pg_xx[k] = (<span class="kw">if</span> pg_ac &gt; pg_ao { pg_ac } <span class="kw">else</span> { pg_ao }) + <span class="nm">1.0f</span>;</span>
+<span id="src-raster-loft-L205">                }</span>
+<span id="src-raster-loft-L206">              }</span>
+<span id="src-raster-loft-L207">              <span class="kw">break</span></span>
+<span id="src-raster-loft-L208">            }</span>
+<span id="src-raster-loft-L209">          }</span>
+<span id="src-raster-loft-L210">        }</span>
+<span id="src-raster-loft-L211">      }</span>
+<span id="src-raster-loft-L212">    }</span>
+<span id="src-raster-loft-L213">    <span class="cm">// Insertion sort over `xx[0 .. j)` — a row holds a handful of crossings, and</span></span>
+<span id="src-raster-loft-L214">    <span class="cm">// equal ones are interchangeable, so this and `Draw.c`'s `qsort` agree.</span></span>
+<span id="src-raster-loft-L215">    pg_s = <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L216">    while pg_s &lt; pg_j {</span>
+<span id="src-raster-loft-L217">      pg_v = pg_xx[pg_s]?;</span>
+<span id="src-raster-loft-L218">      pg_t = pg_s;</span>
+<span id="src-raster-loft-L219">      while pg_t &gt; <span class="nm">0</span> &amp;&amp; pg_xx[pg_t - <span class="nm">1</span>]? &gt; pg_v {</span>
+<span id="src-raster-loft-L220">        pg_xx[pg_t] = pg_xx[pg_t - <span class="nm">1</span>]?;</span>
+<span id="src-raster-loft-L221">        pg_t -= <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L222">      }</span>
+<span id="src-raster-loft-L223">      pg_xx[pg_t] = pg_v;</span>
+<span id="src-raster-loft-L224">      pg_s += <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L225">    }</span>
+<span id="src-raster-loft-L226">    pg_p = <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L227">    while pg_p &lt; pg_j {</span>
+<span id="src-raster-loft-L228">      <span class="fn-call">pil_hline</span>(cv, <span class="fn-call">round_up</span>(pg_xx[pg_p - <span class="nm">1</span>]? <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>), pg_y,</span>
+<span id="src-raster-loft-L229">                <span class="fn-call">round_down</span>(pg_xx[pg_p]? <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>), ink);</span>
+<span id="src-raster-loft-L230">      pg_p += <span class="nm">2</span>;</span>
+<span id="src-raster-loft-L231">    }</span>
+<span id="src-raster-loft-L232">    pg_y += <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L233">  }</span>
+<span id="src-raster-loft-L234">}</span>
+<span id="src-raster-loft-L235"></span>
+<span id="src-raster-loft-L236"><span class="cm">/// Fill a polygon the way `ImageDraw.polygon(pts, fill=…)` does.</span></span>
+<span id="src-raster-loft-L237"><span class="cm">///</span></span>
+<span id="src-raster-loft-L238"><span class="cm">/// The outline closes itself only when the last point is not already the first —</span></span>
+<span id="src-raster-loft-L239"><span class="cm">/// a circle handed in with its start repeated gets no extra edge, which is how</span></span>
+<span id="src-raster-loft-L240"><span class="cm">/// `draw.py` passes one.</span></span>
+<span id="src-raster-loft-L241"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fill_poly</span>(cv: graphics::<span class="en">Canvas</span>, pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pt</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L242">  fp_count = <span class="bi"><a href="stdlib-text.html">len</a></span>(pts);</span>
+<span id="src-raster-loft-L243">  <span class="kw">if</span> fp_count &lt;= <span class="nm">0</span> { <span class="kw">return</span> }</span>
+<span id="src-raster-loft-L244">  fp_xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-raster-loft-L245">  fp_ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-raster-loft-L246">  <span class="kw">for</span> p <span class="kw">in</span> pts {</span>
+<span id="src-raster-loft-L247">    fp_xs += [p.ptx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>];</span>
+<span id="src-raster-loft-L248">    fp_ys += [p.pty <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>];</span>
+<span id="src-raster-loft-L249">  }</span>
+<span id="src-raster-loft-L250">  fp_edges: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt; = [];</span>
+<span id="src-raster-loft-L251">  fp_i = <span class="nm">0</span>;</span>
+<span id="src-raster-loft-L252">  while fp_i &lt; fp_count - <span class="nm">1</span> {</span>
+<span id="src-raster-loft-L253">    fp_x0 = fp_xs[fp_i]?;</span>
+<span id="src-raster-loft-L254">    fp_y0 = fp_ys[fp_i]?;</span>
+<span id="src-raster-loft-L255">    fp_x1 = fp_xs[fp_i + <span class="nm">1</span>]?;</span>
+<span id="src-raster-loft-L256">    fp_y1 = fp_ys[fp_i + <span class="nm">1</span>]?;</span>
+<span id="src-raster-loft-L257">    fp_merged = <span class="kw">false</span>;</span>
+<span id="src-raster-loft-L258">    <span class="cm">// Two horizontal steps running the same way are ONE span in Pillow, so the</span></span>
+<span id="src-raster-loft-L259">    <span class="cm">// second widens the first edge instead of adding its own.</span></span>
+<span id="src-raster-loft-L260">    <span class="kw">if</span> fp_y0 == fp_y1 &amp;&amp; fp_i != <span class="nm">0</span> &amp;&amp; fp_y0 == fp_ys[fp_i - <span class="nm">1</span>]? &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(fp_edges) &gt; <span class="nm">0</span> {</span>
+<span id="src-raster-loft-L261">      fp_prev = fp_xs[fp_i - <span class="nm">1</span>]?;</span>
+<span id="src-raster-loft-L262">      fp_last = <span class="bi"><a href="stdlib-text.html">len</a></span>(fp_edges) - <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L263">      fp_e = fp_edges[fp_last]?;</span>
+<span id="src-raster-loft-L264">      <span class="kw">if</span> fp_x1 &gt; fp_x0 &amp;&amp; fp_x0 &gt; fp_prev {</span>
+<span id="src-raster-loft-L265">        fp_edges[fp_last] = <span class="en">Edge</span> { exmin: fp_e.exmin, exmax: fp_x1, eymin: fp_e.eymin,</span>
+<span id="src-raster-loft-L266">                                   eymax: fp_e.eymax, edx: fp_e.edx, ex0: fp_e.ex0,</span>
+<span id="src-raster-loft-L267">                                   ey0: fp_e.ey0 };</span>
+<span id="src-raster-loft-L268">        fp_merged = <span class="kw">true</span>;</span>
+<span id="src-raster-loft-L269">      } <span class="kw">else</span> <span class="kw">if</span> fp_x1 &lt; fp_x0 &amp;&amp; fp_x0 &lt; fp_prev {</span>
+<span id="src-raster-loft-L270">        fp_edges[fp_last] = <span class="en">Edge</span> { exmin: fp_x1, exmax: fp_e.exmax, eymin: fp_e.eymin,</span>
+<span id="src-raster-loft-L271">                                   eymax: fp_e.eymax, edx: fp_e.edx, ex0: fp_e.ex0,</span>
+<span id="src-raster-loft-L272">                                   ey0: fp_e.ey0 };</span>
+<span id="src-raster-loft-L273">        fp_merged = <span class="kw">true</span>;</span>
+<span id="src-raster-loft-L274">      }</span>
+<span id="src-raster-loft-L275">    }</span>
+<span id="src-raster-loft-L276">    <span class="kw">if</span> !fp_merged {</span>
+<span id="src-raster-loft-L277">      fp_edges += [<span class="fn-call">make_edge</span>(fp_x0, fp_y0, fp_x1, fp_y1)];</span>
+<span id="src-raster-loft-L278">    }</span>
+<span id="src-raster-loft-L279">    fp_i += <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L280">  }</span>
+<span id="src-raster-loft-L281">  fp_end = fp_count - <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L282">  <span class="kw">if</span> fp_xs[fp_end]? != fp_xs[<span class="nm">0</span>]? || fp_ys[fp_end]? != fp_ys[<span class="nm">0</span>]? {</span>
+<span id="src-raster-loft-L283">    fp_edges += [<span class="fn-call">make_edge</span>(fp_xs[fp_end]?, fp_ys[fp_end]?, fp_xs[<span class="nm">0</span>]?, fp_ys[<span class="nm">0</span>]?)];</span>
+<span id="src-raster-loft-L284">  }</span>
+<span id="src-raster-loft-L285">  <span class="fn-call">polygon_generic</span>(cv, fp_edges, ink);</span>
+<span id="src-raster-loft-L286">}</span>
+<span id="src-raster-loft-L287"></span>
+<span id="src-raster-loft-L288"><span class="cm">/// One thick segment, the way `ImageDraw.line(…, width=w)` draws it for `w &gt; 1`.</span></span>
+<span id="src-raster-loft-L289"><span class="cm">///</span></span>
+<span id="src-raster-loft-L290"><span class="cm">/// Pillow does not stroke — it builds a four-cornered quad around the segment</span></span>
+<span id="src-raster-loft-L291"><span class="cm">/// and fills that, with the two half-widths rounded APART (`ROUND_UP` one side,</span></span>
+<span id="src-raster-loft-L292"><span class="cm">/// `ROUND_DOWN` the other) so an even width still lands on whole pixels.  A</span></span>
+<span id="src-raster-loft-L293"><span class="cm">/// polyline is therefore a series of independent quads with no joins, and the</span></span>
+<span id="src-raster-loft-L294"><span class="cm">/// overlap at a bend is what rounds the corner.</span></span>
+<span id="src-raster-loft-L295"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wide_line</span>(cv: graphics::<span class="en">Canvas</span>, wx0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wx1: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-raster-loft-L296">                 ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, wwidth: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L297">  wl_x0 = wx0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-raster-loft-L298">  wl_y0 = wy0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-raster-loft-L299">  wl_x1 = wx1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-raster-loft-L300">  wl_y1 = wy1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-raster-loft-L301">  wl_dx = wl_x1 - wl_x0;</span>
+<span id="src-raster-loft-L302">  wl_dy = wl_y1 - wl_y0;</span>
+<span id="src-raster-loft-L303">  <span class="kw">if</span> wl_dx == <span class="nm">0</span> &amp;&amp; wl_dy == <span class="nm">0</span> {</span>
+<span id="src-raster-loft-L304">    cv.<span class="fn-call">set_pixel</span>(wl_x0, wl_y0, ink);</span>
+<span id="src-raster-loft-L305">    <span class="kw">return</span></span>
+<span id="src-raster-loft-L306">  }</span>
+<span id="src-raster-loft-L307">  wl_big = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(((wl_dx * wl_dx + wl_dy * wl_dy) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
+<span id="src-raster-loft-L308">  wl_small = (((wwidth - <span class="nm">1</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span> ?? <span class="nm">0.0</span>);</span>
+<span id="src-raster-loft-L309">  wl_rmax = ((<span class="fn-call">round_up</span>(wl_small) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / wl_big ?? <span class="nm">0.0</span>);</span>
+<span id="src-raster-loft-L310">  wl_rmin = ((<span class="fn-call">round_down</span>(wl_small) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / wl_big ?? <span class="nm">0.0</span>);</span>
+<span id="src-raster-loft-L311">  wl_dxmin = <span class="fn-call">round_down</span>(wl_rmin * (wl_dy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
+<span id="src-raster-loft-L312">  wl_dxmax = <span class="fn-call">round_down</span>(wl_rmax * (wl_dy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
+<span id="src-raster-loft-L313">  wl_dymin = <span class="fn-call">round_down</span>(wl_rmin * (wl_dx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
+<span id="src-raster-loft-L314">  wl_dymax = <span class="fn-call">round_down</span>(wl_rmax * (wl_dx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>));</span>
+<span id="src-raster-loft-L315">  wl_vx: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [wl_x0 - wl_dxmin, wl_x1 - wl_dxmin,</span>
+<span id="src-raster-loft-L316">                            wl_x1 + wl_dxmax, wl_x0 + wl_dxmax];</span>
+<span id="src-raster-loft-L317">  wl_vy: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [wl_y0 + wl_dymax, wl_y1 + wl_dymax,</span>
+<span id="src-raster-loft-L318">                            wl_y1 - wl_dymin, wl_y0 - wl_dymin];</span>
+<span id="src-raster-loft-L319">  wl_edges: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt; = [];</span>
+<span id="src-raster-loft-L320">  <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..4</span> {</span>
+<span id="src-raster-loft-L321">    wl_edges += [<span class="fn-call">make_edge</span>(wl_vx[k]?, wl_vy[k]?, wl_vx[(k + <span class="nm">1</span>) % <span class="nm">4</span>]?, wl_vy[(k + <span class="nm">1</span>) % <span class="nm">4</span>]?)];</span>
+<span id="src-raster-loft-L322">  }</span>
+<span id="src-raster-loft-L323">  <span class="fn-call">polygon_generic</span>(cv, wl_edges, ink);</span>
+<span id="src-raster-loft-L324">}</span>
+<span id="src-raster-loft-L325"></span>
+<span id="src-raster-loft-L326"><span class="cm">/// `line32` from `Draw.c` — Bresenham, and it stops one pixel SHORT of the end.</span></span>
+<span id="src-raster-loft-L327"><span class="cm">///</span></span>
+<span id="src-raster-loft-L328"><span class="cm">/// `draw_lines` puts that missing pixel back after the last segment, which is</span></span>
+<span id="src-raster-loft-L329"><span class="cm">/// why this is a polyline call rather than a segment one: split it into</span></span>
+<span id="src-raster-loft-L330"><span class="cm">/// segments and each one grows a pixel Pillow never drew.</span></span>
+<span id="src-raster-loft-L331"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">thin_line</span>(cv: graphics::<span class="en">Canvas</span>, pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pt</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L332">  tl_n = <span class="bi"><a href="stdlib-text.html">len</a></span>(pts);</span>
+<span id="src-raster-loft-L333">  <span class="kw">if</span> tl_n &lt; <span class="nm">2</span> { <span class="kw">return</span> }</span>
+<span id="src-raster-loft-L334">  tl_lx = <span class="nm">0</span>;</span>
+<span id="src-raster-loft-L335">  tl_ly = <span class="nm">0</span>;</span>
+<span id="src-raster-loft-L336">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>(tl_n - <span class="nm">1</span>) {</span>
+<span id="src-raster-loft-L337">    tl_a = pts[i]?;</span>
+<span id="src-raster-loft-L338">    tl_b = pts[i + <span class="nm">1</span>]?;</span>
+<span id="src-raster-loft-L339">    tl_lx = tl_b.ptx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-raster-loft-L340">    tl_ly = tl_b.pty <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-raster-loft-L341">    <span class="fn-call">bresenham</span>(cv, tl_a.ptx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, tl_a.pty <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, tl_lx, tl_ly, ink);</span>
+<span id="src-raster-loft-L342">  }</span>
+<span id="src-raster-loft-L343">  cv.<span class="fn-call">set_pixel</span>(tl_lx, tl_ly, ink);</span>
+<span id="src-raster-loft-L344">}</span>
+<span id="src-raster-loft-L345"></span>
+<span id="src-raster-loft-L346"><span class="cm">/// The Bresenham walk itself, end-exclusive.</span></span>
+<span id="src-raster-loft-L347"><span class="kw">fn</span> <span class="fn-call">bresenham</span>(cv: graphics::<span class="en">Canvas</span>, bx0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, by0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bx1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, by1: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-raster-loft-L348">             ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L349">  br_x = bx0;</span>
+<span id="src-raster-loft-L350">  br_y = by0;</span>
+<span id="src-raster-loft-L351">  br_dx = bx1 - bx0;</span>
+<span id="src-raster-loft-L352">  br_xs = <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L353">  <span class="kw">if</span> br_dx &lt; <span class="nm">0</span> { br_dx = -br_dx; br_xs = -<span class="nm">1</span>; }</span>
+<span id="src-raster-loft-L354">  br_dy = by1 - by0;</span>
+<span id="src-raster-loft-L355">  br_ys = <span class="nm">1</span>;</span>
+<span id="src-raster-loft-L356">  <span class="kw">if</span> br_dy &lt; <span class="nm">0</span> { br_dy = -br_dy; br_ys = -<span class="nm">1</span>; }</span>
+<span id="src-raster-loft-L357">  <span class="kw">if</span> br_dx == <span class="nm">0</span> {</span>
+<span id="src-raster-loft-L358">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>br_dy {</span>
+<span id="src-raster-loft-L359">      cv.<span class="fn-call">set_pixel</span>(br_x, br_y, ink);</span>
+<span id="src-raster-loft-L360">      br_y += br_ys;</span>
+<span id="src-raster-loft-L361">    }</span>
+<span id="src-raster-loft-L362">    <span class="kw">return</span></span>
+<span id="src-raster-loft-L363">  }</span>
+<span id="src-raster-loft-L364">  <span class="kw">if</span> br_dy == <span class="nm">0</span> {</span>
+<span id="src-raster-loft-L365">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>br_dx {</span>
+<span id="src-raster-loft-L366">      cv.<span class="fn-call">set_pixel</span>(br_x, br_y, ink);</span>
+<span id="src-raster-loft-L367">      br_x += br_xs;</span>
+<span id="src-raster-loft-L368">    }</span>
+<span id="src-raster-loft-L369">    <span class="kw">return</span></span>
+<span id="src-raster-loft-L370">  }</span>
+<span id="src-raster-loft-L371">  <span class="kw">if</span> br_dx &gt; br_dy {</span>
+<span id="src-raster-loft-L372">    br_n = br_dx;</span>
+<span id="src-raster-loft-L373">    br_dy += br_dy;</span>
+<span id="src-raster-loft-L374">    br_e = br_dy - br_dx;</span>
+<span id="src-raster-loft-L375">    br_dx += br_dx;</span>
+<span id="src-raster-loft-L376">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>br_n {</span>
+<span id="src-raster-loft-L377">      cv.<span class="fn-call">set_pixel</span>(br_x, br_y, ink);</span>
+<span id="src-raster-loft-L378">      <span class="kw">if</span> br_e &gt;= <span class="nm">0</span> { br_y += br_ys; br_e -= br_dx; }</span>
+<span id="src-raster-loft-L379">      br_e += br_dy;</span>
+<span id="src-raster-loft-L380">      br_x += br_xs;</span>
+<span id="src-raster-loft-L381">    }</span>
+<span id="src-raster-loft-L382">    <span class="kw">return</span></span>
+<span id="src-raster-loft-L383">  }</span>
+<span id="src-raster-loft-L384">  br_n2 = br_dy;</span>
+<span id="src-raster-loft-L385">  br_dx += br_dx;</span>
+<span id="src-raster-loft-L386">  br_e2 = br_dx - br_dy;</span>
+<span id="src-raster-loft-L387">  br_dy += br_dy;</span>
+<span id="src-raster-loft-L388">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>br_n2 {</span>
+<span id="src-raster-loft-L389">    cv.<span class="fn-call">set_pixel</span>(br_x, br_y, ink);</span>
+<span id="src-raster-loft-L390">    <span class="kw">if</span> br_e2 &gt;= <span class="nm">0</span> { br_x += br_xs; br_e2 -= br_dy; }</span>
+<span id="src-raster-loft-L391">    br_e2 += br_dx;</span>
+<span id="src-raster-loft-L392">    br_y += br_ys;</span>
+<span id="src-raster-loft-L393">  }</span>
+<span id="src-raster-loft-L394">}</span>
 </code></pre>
 <h2 id="src-scan-loft">src/scan.loft</h2>
 <pre class="src"><code><span id="src-scan-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

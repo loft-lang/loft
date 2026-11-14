@@ -250,7 +250,11 @@ fn release_shim_lto(
         flags.push("-flto".to_string());
         let inc =
             loft::platform::scratch_dir().join(format!("loft_shim_inc_{}", std::process::id()));
-        if fa::create_dir_all(&inc).is_ok() && loft::c_shim::put_width_header(&inc).is_ok() {
+        let paths: Vec<std::path::PathBuf> = sources.iter().map(std::path::PathBuf::from).collect();
+        if fa::create_dir_all(&inc).is_ok()
+            && loft::c_shim::put_width_header(&inc).is_ok()
+            && loft::c_shim::put_bodies(&inc, &paths).is_ok()
+        {
             flags.push("-I".to_string());
             flags.push(inc.to_string_lossy().into_owned());
         }

@@ -97,6 +97,22 @@
 <p>Absolute value for double-precision floats.</p>
 </div>
 <div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">bits</a></span>(self: f64) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span></code></pre>
+<p>The 64 bits of a double as they are stored (IEEE-754 binary64), moved, not converted: what a byte format writes for it.  <code>float_from_bits</code> takes them back.  <code>-0.0</code>'s pattern is the integer null's, so <code>(-0.0).bits()</code> reads as null and still comes back as <code>-0.0</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">float_from_bits</a></span>(v: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; f64</code></pre>
+<p>The double whose stored bits are <code>v</code> (IEEE-754 binary64): <code>bits()</code> taken back.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">bits</a></span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The 32 bits of a single as they are stored (IEEE-754 binary32), as a signed 32-bit value.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">single_from_bits</a></span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span></code></pre>
+<p>The single whose stored bits are <code>v</code> (IEEE-754 binary32): <code>bits()</code> taken back.</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="en"><a href="stdlib-math.html">PI</a></span> = <span class="en">OpMathPiFloat</span>() <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
 <p>The ratio of a circle's circumference to its diameter (3.14159...).</p>
 </div>

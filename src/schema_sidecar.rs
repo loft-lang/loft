@@ -553,6 +553,70 @@ pub fn check_against_baseline(
 /// the signature is a single sidecar line.
 pub(crate) const SCHEMA_MARKER: &str = "nn/1";
 
+// The facts about a persisted type the C backend and the run image both read: where its
+// records hold stored references or a trie, and whether a load re-keys it.
+
+/// the C backend\'s `holds_stored_refs` over the program's stores, for a reader without the C backend's context (the run
+/// image's sidecars, @PLN91).
+pub(crate) fn holds_stored_refs_in(stores: &crate::database::Stores, tp: u16) -> bool {
+    use crate::database::Parts;
+    fn walk(s: &crate::database::Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
+        if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
+            return false;
+        }
+        seen.push(tp);
+        match &s.types[tp as usize].parts {
+            Parts::DbRef => true,
+            Parts::Struct(f) | Parts::EnumValue(_, f) => f.iter().any(|f| walk(s, f.content, seen)),
+            Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
+            Parts::Vector(c)
+            | Parts::Sorted(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Array(c)
+            | Parts::ChildRec(c)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _) => walk(s, *c, seen),
+            _ => false,
+        }
+    }
+    walk(stores, tp, &mut Vec::new())
+}
+
+/// the C backend\'s `holds_trie` over the program's stores.
+pub(crate) fn holds_trie_in(stores: &crate::database::Stores, tp: u16) -> bool {
+    use crate::database::Parts;
+    fn walk(s: &crate::database::Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
+        if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
+            return false;
+        }
+        seen.push(tp);
+        match &s.types[tp as usize].parts {
+            Parts::Trie(..) => true,
+            Parts::Struct(f) | Parts::EnumValue(_, f) => f.iter().any(|f| walk(s, f.content, seen)),
+            Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
+            Parts::Vector(c)
+            | Parts::Sorted(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Array(c)
+            | Parts::ChildRec(c)
+            | Parts::Radix(c, _) => walk(s, *c, seen),
+            _ => false,
+        }
+    }
+    walk(stores, tp, &mut Vec::new())
+}
+
+/// Does `tp`'s layout hold a collection whose key order moved (the C backend's `needs_rekey`)?
+pub(crate) fn needs_rekey_in(stores: &crate::database::Stores, tp: u16) -> bool {
+    crate::schema_sidecar::LayoutIdentity::of_store(stores, u16::MAX, tp)
+        .dump
+        .contains(crate::placement::KEY_ORDER)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

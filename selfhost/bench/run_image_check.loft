@@ -5,7 +5,9 @@
 // `loft --emit-run-image` wrote and print each function's byte count and the FNV-1a hash of its
 // bytes, read from the image's code stream through its start table, in definition order.  They
 // must equal `LOFT_TRACE_BYTECODE`'s `fn` lines without the name column (the image keeps no
-// names).  Usage: `loft --lib selfhost/src selfhost/bench/run_image_check.loft <image>`.
+// names), and its operator table the trace's `op` lines' number and name.  Usage: `loft --lib
+// selfhost/src selfhost/bench/run_image_check.loft <image> [<code out>]` — with the second
+// argument it also writes the image's code stream there, byte for byte.
 use ir;
 use load;
 
@@ -44,6 +46,19 @@ fn main() {
     return;
   }
   r = img!;
+  // With a second argument, the image's whole code stream written there byte for byte — to be
+  // compared with the interpreter's own (`LOFT_TRACE_BYTECODE_RAW`).
+  if len(args) > 1 {
+    if !write_bytes(args[1] ?? "", r.code) {
+      println("cannot write the code to {args[1] ?? ""}");
+    }
+  }
+  // The operator table, as the trace lists it: number and name.
+  for i in 0..len(r.ops) {
+    if (r.ops[i] ?? "") != "" {
+      println("op\t{i}\t{r.ops[i] ?? ""}");
+    }
+  }
   // Definition `d`'s code is `code[starts[d]..starts[d + 1]]`; one with none is skipped, as the
   // trace skips it.
   for d in 0..len(r.starts) - 1 {

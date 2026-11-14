@@ -1,8 +1,8 @@
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index 34789b6ab..354a23537 100644
+index 876dee069..e018fe02e 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -1303,11 +1303,6 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
+@@ -1818,11 +1818,6 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
          stores.mark_collection_absent(&dest);
          return;
      }
@@ -15,10 +15,10 @@ index 34789b6ab..354a23537 100644
      // the call in `State::replace_keyed`.
      if free_source && stores.try_swap_keyed(&src, &dest, tp) {
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index c37c42481..4a8542e72 100644
+index 549c21bd4..c49f55302 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -6934,14 +6934,11 @@ use a separate collection or add after the loop"
+@@ -8508,14 +8508,11 @@ use a separate collection or add after the loop"
              // assignment cannot read its own local, so a right-hand side that does is a
              // reassignment, and there the prepend is dropped: `OpReplaceKeyed` clears as part
              // of its copy, after the right-hand side ran.
@@ -37,12 +37,12 @@ index c37c42481..4a8542e72 100644
 +                .collect();
              // A JOIN's witnesses are its ARMS' — `protectable_ref_args` reads a call's
              // arguments and a join has none of its own (loft#1154).
-             let guarded: Vec<u16> = if tp_val & 0x8000 == 0 {
+             let mut guarded: Vec<u16> = if tp_val & 0x8000 == 0 {
 diff --git a/src/state/io.rs b/src/state/io.rs
-index 0b09a14f9..e44f64ca2 100644
+index c70839717..bed69fa93 100644
 --- a/src/state/io.rs
 +++ b/src/state/io.rs
-@@ -2019,13 +2019,6 @@ impl State {
+@@ -2134,13 +2134,6 @@ impl State {
              self.database.mark_collection_absent(&dest);
              return;
          }

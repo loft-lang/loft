@@ -243,7 +243,7 @@ what the slot takes instead of the type's default (`health = (health + 10) ?? 25
 A write lands nowhere when its place is not there — an index past the end, a key the
 collection does not hold, a field reached through a null — and the program continues
 (the spreadsheet model).  An assignment statement may end in `else { … }`, and that block
-runs exactly when the write did not land; the place is spelled once:
+runs exactly when the write did not land; the place is spelled once (@C130):
 
 <!-- from tests/reference/store-else.loft -->
 ```loft

@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a record rebuilt in a loop reuses its store: from the second pass its vectors
+// are cleared, not made, and must start empty (`OpClearVector`).
+
+struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
+
+fn fm_len(f: const Fm) -> integer { len(f.lens) * 100 + len(f.turns) }
+
+// Pass i holds i + 1 elements: 100, 200, … read as one number, three digits a pass.
+fn loop_record(n: integer) -> integer {
+  r = 0;
+  for i in 0..n {
+    ef = Fm { h0: i, lens: [i], turns: [] };
+    for k in 0..i { ef.lens += [k]; }
+    r = r * 1000 + fm_len(ef);
+  }
+  r
+}
+
+fn main() {
+  println("{loop_record(4)}");
+}

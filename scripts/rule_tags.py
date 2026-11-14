@@ -576,7 +576,6 @@ CENSUS_EXEMPT = {
     "R-StackBase": ("executor", "a slot addressed from a cached base"),
     "R-WorkerLean": ("executor", "par workers on the lean loop"),
     "R-Prefill": ("runtime", "admitted per TYPE at its first mint"),
-    "R-Cold": ("runtime", "the runtime helpers' own shape"),
     "R-DeadResult": ("unbuilt", "designed; its switch is planned"),
     "R-PathRelease": ("unbuilt", "designed, not built"),
     "R-SharedCall": ("unbuilt", "only its narrow case is built, counted as R-PureReuse/shared"),

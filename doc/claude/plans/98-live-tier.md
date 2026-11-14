@@ -350,9 +350,9 @@ feeds (`InputFrame::Debug(reply)`); anything else is `InputFrame::Program(msg)` 
 **The tier CORE is now verified ON wasm (2026-07-08).** The `--html --debug` client runs headlessly
 under Node (`tools/wasm_repro.mjs` / `wasm_debug_selftest.mjs`) — the wasm32 toolchain works here, and
 Chromium works unsandboxed (`html_asyncify` passes). Two tests prove the interpreter tier runs on wasm:
-- `html_wasm::html_debug_client_dispatches_to_the_interpreter_on_wasm` — a compiled call DISPATCHES into
+- `html_wasm::html_debug_tier_runs_on_wasm` — a compiled call DISPATCHES into
   the interpreter over the shared store in wasm (`flip_all_dispatch_debug`; the one primitive).
-- `html_wasm::html_debug_cooperative_pause_cycle_runs_on_wasm` — the P3.2 breakpoint pause + frame read +
+- `html_wasm::html_debug_tier_runs_on_wasm` — the P3.2 breakpoint pause + frame read +
   resume run identically on wasm32 (`PAUSE n=40 STEP m=42 DONE=true`, via `wasm_debug_selftest` + the
   `loft_debug_selftest` export). So the make-or-break cooperative pause is CONFIRMED on wasm, not just
   native.
@@ -365,7 +365,7 @@ Chromium works unsandboxed (`html_asyncify` passes). Two tests prove the interpr
    `State`'s own debug methods directly (NOT the native `debug_cmd_dispatch` / TCP machinery), so the
    whole path is wasm-safe. `apply(session, frame)` (bp / run|resume|step / eval) is native-unit-tested;
    the `--html --debug` build exports `loft_debug_start` + `loft_debug_pump`. **Verified on wasm**
-   (`html_wasm::html_debug_client_applies_relayed_control_frames_on_wasm`): `D!:bp compute`→`D:ok`;
+   (`html_wasm::html_debug_tier_runs_on_wasm`): `D!:bp compute`→`D:ok`;
    `D!:run`→`D:hit compute n=40`; `D!:eval n`→`D:eval n=40`; `D!:resume`→`D:terminated`.
 3. **Server relay ✅ LANDED (2026-07-08).** The kernel's `D!:` handler gained: `D!:iam <name>` (client
    registers its debug name), `D!:@<name>:<cmd>` (a loopback agent forwards to that client's socket +
@@ -423,7 +423,7 @@ stays the runtime activation within a live-capable (default) build.
    --debug` build (`flip_all` flips `reader`+`writer`, `main` stays compiled): main writes `w.a=777`
    (compiled) → `reader` reads it (interpreted) → `r=777`; `writer` writes `w.b=999` (interpreted) → main
    reads it (compiled) → `b=999` — identical to the all-compiled baseline. Guard:
-   `html_wasm::html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm` (+ native
+   `html_wasm::html_debug_tier_runs_on_wasm` (+ native
    `LOFT_FLIP_FNS=reader,writer`).
 3. **"Opt-in is zero-cost-absent."** Grep the lean build's emitted Rust for `live_flipped` → must be 0.
 

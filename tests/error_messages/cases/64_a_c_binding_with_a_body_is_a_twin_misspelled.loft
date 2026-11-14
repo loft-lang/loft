@@ -1,0 +1,11 @@
+// `#c` binds a C symbol as the whole function, so a function with a loft body cannot carry it:
+// written after a body the binding was ignored on every backend.  The refusal names `#c_twin`,
+// the annotation for a C version of a loft body.
+fn twice(x: integer) -> integer {
+  x * 2
+}
+#c "llabs" "long long(long long)"
+
+fn main() {
+  println("{twice(-21)}");
+}

@@ -1,21 +1,21 @@
 diff --git a/default/01_code.loft b/default/01_code.loft
-index bcad6981b..694d18ef4 100644
+index 40959b490..a3e2a8664 100644
 --- a/default/01_code.loft
 +++ b/default/01_code.loft
-@@ -752,7 +752,7 @@ fn OpCastIntFromFloat(v1: __fword) -> __word;
- #rust"if @v1.is_nan() {{ i64::MIN }} else if !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&@v1) {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ let r = ops::op_cast_int_from_float(@v1); if r == i64::MIN {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ r }} }}"
+@@ -878,7 +878,7 @@ fn OpCastIntFromFloat(v1: __fword) -> __word;
+ #loft"v1 as integer"
  fn OpConvBoolFromFloat(v1: __fword) -> boolean;
  #hot
 -#rust"!@v1.is_nan()"
 +#rust"@v1.is_finite()"
+ #loft"v1 != null"
  fn OpAddFloat(v1: __fword, v2: __fword) -> __fword;
  #hot
- #rust"@v1 + @v2"
 diff --git a/src/fill.rs b/src/fill.rs
-index 6c760d3ad..83eea1f1f 100644
+index 22806c8b3..88114b249 100644
 --- a/src/fill.rs
 +++ b/src/fill.rs
-@@ -2782,7 +2782,7 @@ fn cast_int_from_float_r(s: &mut State, r: Regs) -> Regs {
+@@ -2881,7 +2881,7 @@ fn cast_int_from_float_r(s: &mut State, r: Regs) -> Regs {
  #[inline(always)]
  fn conv_bool_from_float<const F: bool>(s: &mut State) {
      let v_v1 = s.get_stack_m::<F, f64>();

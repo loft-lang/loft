@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — a text constant of 256 bytes or more lives in the constant store, not in the
+// code (`OpConstStoreText`), and a text constant handed down a recursion is still read where
+// it lies when the runner's own records have grown many times.
+
+// The numbers 0 to 119 joined by `x`: 369 bytes.
+fn long() -> text {
+  "0x1x2x3x4x5x6x7x8x9x10x11x12x13x14x15x16x17x18x19x20x21x22x23x24x25x26x27x28x29x30x31x32x33x34x35x36x37x38x39x40x41x42x43x44x45x46x47x48x49x50x51x52x53x54x55x56x57x58x59x60x61x62x63x64x65x66x67x68x69x70x71x72x73x74x75x76x77x78x79x80x81x82x83x84x85x86x87x88x89x90x91x92x93x94x95x96x97x98x99x100x101x102x103x104x105x106x107x108x109x110x111x112x113x114x115x116x117x118x119"
+}
+
+// The length a recursion `n` deep finds at its end, with one added on the way back in every
+// frame that still reads the same text.
+fn down(s: text, n: integer) -> integer {
+  if n == 0 {
+    return len(s);
+  }
+  down(s, n - 1) + (if s == "a text constant viewed in the code" { 1 } else { 1000000 })
+}
+
+// The long text's length (369) and its last three bytes as a number (119), then the short
+// text's 34 bytes and 3000 frames: 369 * 1000000 + 119 * 10000 + 3034 = 370193034.
+fn texts(k: integer) -> integer {
+  t = long();
+  tail = (t[366..369] as integer?) ?? -1;
+  len(t) * 1000000 + tail * 10000 + down("a text constant viewed in the code", 3000) + k - k
+}
+
+fn main() {
+  println("{texts(0)}");
+}

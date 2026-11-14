@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the loft counterpart of the `src/ops.rs` helpers the operator templates call
+// (`ops::fused_int`, `ops::fused_cmp`), under the same names, for the generated `fill.loft`.
+// Integer arithmetic is loft's own, which is the operators' meaning: a null operand or an
+// overflow answers null.
+
+// `ops::fused` — the operation a fused operator's `kind` names.
+pub ADD = 0;
+pub MIN = 1;
+pub MUL = 2;
+pub LAND = 3;
+pub LOR = 4;
+pub EQ = 0;
+pub NE = 1;
+pub LT = 2;
+pub LE = 3;
+pub GT = 4;
+pub GE = 5;
+
+// `ops::fused_int`: the arithmetic `kind` of a fused operator applied to `v1` and `v2`.
+pub fn fused_int(kind: integer, v1: integer, v2: integer) -> integer {
+  if kind == ADD {
+    v1 + v2
+  } else if kind == MIN {
+    v1 - v2
+  } else if kind == MUL {
+    v1 * v2
+  } else if kind == LAND {
+    v1 & v2
+  } else if kind == LOR {
+    v1 | v2
+  } else {
+    v1 ^ v2
+  }
+}
+
+// `ops::fused_cmp`: the comparison `kind` of a fused operator applied to `v1` and `v2`.
+pub fn fused_cmp(kind: integer, v1: integer, v2: integer) -> boolean {
+  if kind == EQ {
+    v1 == v2
+  } else if kind == NE {
+    v1 != v2
+  } else if kind == LT {
+    v1 < v2
+  } else if kind == GT {
+    v1 > v2
+  } else if kind == GE {
+    v1 >= v2
+  } else {
+    v1 <= v2
+  }
+}
+
+// A stored boolean as `crt::get_w` answers it (1, 0 or null) as a boolean.
+pub fn tri(b: integer?) -> boolean? {
+  if b == null { null } else { b! == 1 }
+}
+
+// A stack byte whose 255 is null (a boolean, an enum) as the value a field write takes.
+pub fn byte_or_null(v: integer) -> integer? {
+  if v == 255 { null } else { v }
+}
+
+// A float comparison as the operators define it (`OpEqFloat` … `OpLeFloat`): NaN — the float
+// null — is the least value and equals itself.  `kind`: 0 equal, 1 not equal, 2 less, 3 less or
+// equal.
+pub fn cmp_float(kind: integer, a: float?, b: float?) -> boolean {
+  d = if a == null && b == null { 0 } else if a == null { -1 } else if b == null { 1 } else if a! < b! { -1 } else if a! > b! { 1 } else { 0 };
+  if kind == 0 { d == 0 } else if kind == 1 { d != 0 } else if kind == 2 { d < 0 } else { d <= 0 }
+}
+
+// `ops::op_lt_text` / `op_le_text`: a null text is below every other.
+pub fn lt_text(a: text?, b: text?) -> boolean {
+  if a == null || b == null { a == null && b != null } else { a! < b! }
+}
+
+pub fn le_text(a: text?, b: text?) -> boolean {
+  if a == null || b == null { a == null } else { a! <= b! }
+}
+
+// `State::text_char_or_raise`: the character at `i` of `t` as its code point; null for a null
+// text or index, or one outside the text.
+pub fn text_char(t: text?, i: integer?) -> integer? {
+  if t == null || i == null {
+    return null;
+  }
+  c = t![i!];
+  if c == null { null } else { c! as integer }
+}
+
+// `OpMathFuncFloat`'s functions by number, as the operator's own table names them; any other
+// number is null.
+pub fn math_func(id: integer, x: float) -> float? {
+  if id == 0 { x.cos() } else if id == 1 { x.sin() } else if id == 2 { x.tan() } else if id == 3 { x.acos() } else if id == 4 { x.asin() } else if id == 5 { x.atan() } else if id == 6 { x.ceil() } else if id == 7 { x.floor() } else if id == 8 { x.round() } else if id == 9 { x.sqrt() } else if id == 10 { x.exp() } else { null }
+}
+
+// `OpMathFunc2Float`: 0 the arc tangent of `a / b`, 1 the logarithm of `a` in base `b`.
+pub fn math_func2(id: integer, a: float, b: float) -> float? {
+  if id == 0 { a.atan2(b) } else if id == 1 { a.log(b) } else { null }
+}
+
+// `OpMathFuncSingle` / `OpMathFunc2Single`: the same tables in single precision.
+pub fn math_func_single(id: integer, x: single) -> single? {
+  if id == 0 { x.cos() } else if id == 1 { x.sin() } else if id == 2 { x.tan() } else if id == 3 { x.acos() } else if id == 4 { x.asin() } else if id == 5 { x.atan() } else if id == 6 { x.ceil() } else if id == 7 { x.floor() } else if id == 8 { x.round() } else if id == 9 { x.sqrt() } else if id == 10 { x.exp() } else { null }
+}
+
+pub fn math_func2_single(id: integer, a: single, b: single) -> single? {
+  if id == 0 { a.atan2(b) } else if id == 1 { a.log(b) } else { null }
+}
+
+// A single-precision comparison, as `cmp_float` compares.
+pub fn cmp_single(kind: integer, a: single?, b: single?) -> boolean {
+  d = if a == null && b == null { 0 } else if a == null { -1 } else if b == null { 1 } else if a! < b! { -1 } else if a! > b! { 1 } else { 0 };
+  if kind == 0 { d == 0 } else if kind == 1 { d != 0 } else if kind == 2 { d < 0 } else { d <= 0 }
+}
+
+// `ops::op_narrow32`: a value that does not fit a 32-bit integer becomes null.
+pub fn narrow32(v: integer?) -> integer? {
+  if v != null && v! > -2147483648 && v! <= 2147483647 { v } else { null }
+}
+

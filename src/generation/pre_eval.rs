@@ -1263,10 +1263,14 @@ impl Output<'_> {
         // the @P274 path where `parse_append_text` (in vectors.rs) keeps
         // intervening OpFreeRef ops in place rather than allowing
         // `patch_hoisted_returns` to inline the Call into the Return.
-        let target_type: &Type = match &bl.result {
-            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _) => &bl.result,
+        // `@FR-N-Shape` — a SHAPE question, read through the `?`: a `τ?` result is the same
+        // `DbRef` as a `τ` one, and a nullable heap tail dropped its value just the same
+        // (`-> Lit?` whose last `match` arm reads a local's field after an arm that may
+        // return early: the function always answered null on `--native`).
+        let target_type: &Type = match bl.result.base() {
+            t @ (Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)) => t,
             Type::Never => {
-                let fn_ret = self.data.def(self.def_nr).returned();
+                let fn_ret = self.data.def(self.def_nr).returned().base();
                 match fn_ret {
                     Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _) => fn_ret,
                     _ => return None,
@@ -1352,7 +1356,7 @@ impl Output<'_> {
     }
 
     fn heap_shape_matches(&self, callee_ret: &Type, block_result: &Type) -> bool {
-        match (callee_ret, block_result) {
+        match (callee_ret.base(), block_result.base()) {
             (Type::Reference(d1, _), Type::Reference(d2, _)) => d1 == d2,
             (Type::Vector(d1, _), Type::Vector(d2, _)) => d1 == d2,
             (Type::Enum(d1, true, _), Type::Enum(d2, true, _)) => d1 == d2,

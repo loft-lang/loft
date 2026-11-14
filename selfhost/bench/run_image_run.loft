@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Run a program from its run image (@PLN91, 1b-fill-port.md): load the image
+// `loft --emit-run-image` wrote and run `main`'s bytecode through the generated operator table
+// (`fill.loft`) on the loft `State`.  The program's output is its own.  Where the run stops it
+// writes `stopped: <reason>` on standard error and exits 3 (an operator or native not carried)
+// or 1 (a fault); with `LOFT_RUN_TIMED=1` it writes `timed load=<µs> run=<µs>` when it ends.
+#cwd
+use ir;
+use load;
+use state;
+use fill_run;
+use crt;
+
+fn main() {
+  a = arguments();
+  path = a[0] ?? "";
+  t0 = ticks();
+  img = load::load_run(path);
+  if img == null {
+    eprintln("stopped: no run image at {path}");
+    exit(2);
+  }
+  // Relative paths resolve against the working directory: the runner is not where the program
+  // lives, so it is run from the program's directory, as the program itself is.
+  crt::fs_anchor(false);
+  s = state::new_state(img!, 1 << 16);
+  t1 = ticks();
+  ok = fill_run::run_main(img!, s);
+  t2 = ticks();
+  if !ok {
+    eprintln("stopped: {s.fault}");
+    exit(if s.fault.starts_with("not carried") { 3 } else { 1 });
+  }
+  // The stack is the runner's own store: freed, so the stores left at exit are the program's.
+  crt::stack_free(s.stk);
+  if env_variable("LOFT_RUN_TIMED") == "1" {
+    eprintln("timed load={t1 - t0} run={t2 - t1}");
+  }
+}

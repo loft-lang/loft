@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 kernel — records filed in a hash under a narrow key are found again under it: the
+// keyed routines read the key's place and width from the type table, which must be loaded
+// before the first record is filed.
+
+struct B { k: integer limit(-100, 100), v: integer }
+
+// The values under -100, 7 and 100, and 0 for the key 5, not filed: 1, 2, 3, 0 as one number.
+fn found(n: integer) -> integer {
+  h: hash<B[k]> = [B { k: -100, v: 1 }, B { k: 7, v: 2 }, B { k: 100, v: 3 }];
+  (h[-100].v ?? 0) * 1000 + (h[7].v ?? 0) * 100 + (h[100].v ?? 0) * 10 + (h[5].v ?? 0) + n - n
+}
+
+fn main() {
+  println("{found(5)}");
+}

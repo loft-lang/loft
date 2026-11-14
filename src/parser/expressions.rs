@@ -240,6 +240,16 @@ pub(crate) fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
 
 /// The right-hand side `code` binds to `dst`: the statement's own `Set(dst, rhs)`, found
 /// through the `Insert` a lowering may wrap it in (the last `Set` to `dst` is the bind).
+/// The variables `node` binds to a VALUE — a `Set` whose value is not a bare null pre-init.
+fn bound_to_a_value_in(node: &Value, out: &mut Vec<u16>) {
+    if let Value::Set(v, value) = node.unspan()
+        && !matches!(value.unspan(), Value::Null)
+    {
+        out.push(*v);
+    }
+    node.for_each_child(&mut |c| bound_to_a_value_in(c, out));
+}
+
 fn bound_rhs(code: &Value, dst: u16) -> Option<&Value> {
     match code.unspan() {
         Value::Set(v, rhs) if *v == dst => Some(rhs.as_ref()),
@@ -873,14 +883,8 @@ impl Parser {
             // inside the closure and may be its sole write.  Text shadows keep the
             // plain copy.
             for (shadow, original) in self.vars.promoted_text_args() {
-                let shadow_tp = self.vars.tp(shadow).clone();
-                let seed = crate::parser::vectors::boxed_cell_def(&shadow_tp, &self.data).and_then(
-                    |cell| self.boxed_cell_alloc_and_set(shadow, cell, Value::Var(original)),
-                );
-                ls.insert(
-                    0,
-                    seed.unwrap_or_else(|| v_set(shadow, Value::Var(original))),
-                );
+                let seed = self.promoted_arg_seed(ls, shadow, original);
+                ls.insert(0, seed);
             }
             for r in self.vars.work_references() {
                 if crate::env_once!(std::env::var("LOFT_TRACE_PREAMBLE").is_ok()) {
@@ -4671,6 +4675,27 @@ use a separate collection or add after the loop"
         )
     }
 
+    /// Pass 1: an inferred local bound from a call whose return type is not known yet — a
+    /// callee declared further down — is recorded for [`Self::widen_late_call_joins`].
+    fn note_late_call_join(&mut self, op: &str, to: &Value) {
+        if !self.first_pass
+            || op != "="
+            || crate::env_once!(std::env::var_os("LOFT_NO_LATE_CALL_JOIN").is_some())
+        {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        if self.vars.is_declared(*v) || self.vars.is_argument(*v) {
+            return;
+        }
+        if let Some(callee) = self.last_forward_call.take() {
+            self.late_call_joins
+                .push((self.context, *v, callee, self.lexer.at().0));
+        }
+    }
+
     /// `(F-ParamRebind)` — a WHOLE-VALUE reassignment of a user-visible heap PARAMETER
     /// rebinds LOCALLY, and the rule is about the BINDING, not about the right-hand side's
     /// spelling: `p = other` is named in the rule's own text beside `p = [..]`.
@@ -4697,27 +4722,6 @@ use a separate collection or add after the loop"
     /// caller's VALUE either way — which is what made the gap easy to read as covered — while
     /// the store the callee minted had no owner: forty calls, forty leaked records.  A
     /// nullable parameter is still a parameter (loft#1295).
-    /// Pass 1: an inferred local bound from a call whose return type is not known yet — a
-    /// callee declared further down — is recorded for [`Self::widen_late_call_joins`].
-    fn note_late_call_join(&mut self, op: &str, to: &Value) {
-        if !self.first_pass
-            || op != "="
-            || crate::env_once!(std::env::var_os("LOFT_NO_LATE_CALL_JOIN").is_some())
-        {
-            return;
-        }
-        let Value::Var(v) = to.unspan() else {
-            return;
-        };
-        if self.vars.is_declared(*v) || self.vars.is_argument(*v) {
-            return;
-        }
-        if let Some(callee) = self.last_forward_call.take() {
-            self.late_call_joins
-                .push((self.context, *v, callee, self.lexer.at().0));
-        }
-    }
-
     fn rebind_local_heap_param(&mut self, code: &mut Value, op: &str, to: &Value, var_nr: u16) {
         if self.first_pass
             || op != "="
@@ -5546,25 +5550,9 @@ use a separate collection or add after the loop"
             && let Type::Tuple(elems) = self.vars.tp(*src).clone()
             && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
         {
-            let src = *src;
-            let mut types = elems.clone();
-            let mut members: Vec<Value> = Vec::with_capacity(elems.len());
-            for (i, t) in elems.iter().enumerate() {
-                let mut m = Value::TupleGet(src, i as u16);
-                if let Some(owned) = self.tuple_member_owned_copy(&mut m, t) {
-                    types[i] = owned;
-                    // `(H-Move)`: a whole-tuple bind MOVES the members of a tuple this function
-                    // owns, while a member read written into a literal (`(t.0, 2)`) is a COPY.
-                    // The two lower onto the same IR, so the builder names the difference and
-                    // the scope pass reads the name (loft#1563).
-                    if let Value::Block(b) = m.unspan_mut() {
-                        b.name = "tuple_member_move";
-                    }
-                }
-                members.push(m);
-            }
-            *code = Value::Tuple(members);
-            s_type = Type::Tuple(types);
+            let (copy, owned) = self.tuple_whole_bind_copy(*src, &elems);
+            *code = copy;
+            s_type = owned;
         } else if op == "="
             && !self.amp_pending
             && matches!(to, Value::Var(_))
@@ -8546,16 +8534,8 @@ use a separate collection or add after the loop"
             // its store when the bracket is set: dropping it re-freed that store (G-Mono's
             // `addi([], 4)`).  `LOFT_KEYED_BRACKET_NAMES_INNER=1` keeps them all.
             if !crate::env_once!(std::env::var_os("LOFT_KEYED_BRACKET_NAMES_INNER").is_some()) {
-                fn bound_in(node: &Value, out: &mut Vec<u16>) {
-                    if let Value::Set(v, value) = node.unspan()
-                        && !matches!(value.unspan(), Value::Null)
-                    {
-                        out.push(*v);
-                    }
-                    node.for_each_child(&mut |c| bound_in(c, out));
-                }
                 let mut inner = Vec::new();
-                bound_in(code, &mut inner);
+                bound_to_a_value_in(code, &mut inner);
                 guarded.retain(|v| !inner.contains(v));
             }
             for av in &guarded {
@@ -9789,6 +9769,99 @@ use a separate collection or add after the loop"
         }
         self.vars.remap_name(&name, shadow);
         Some(shadow)
+    }
+
+    /// `@FR-B-Copy` with `@FR-T-Cons` — the whole-tuple bind `u = src` as the tuple of its
+    /// member reads, each heap member given a frame-local backing by
+    /// [`tuple_member_owned_copy`](Self::tuple_member_owned_copy), so the bound value is
+    /// INDEPENDENT of `src`.  Answers the value and its type.  The one home for that lowering:
+    /// a user's bind and the entry seed of a by-value tuple parameter's shadow
+    /// (`@FR-F-ParamTuple`) read it.
+    pub(crate) fn tuple_whole_bind_copy(&mut self, src: u16, elems: &[Type]) -> (Value, Type) {
+        let mut types = elems.to_vec();
+        let mut members: Vec<Value> = Vec::with_capacity(elems.len());
+        for (i, t) in elems.iter().enumerate() {
+            let mut m = Value::TupleGet(src, i as u16);
+            if let Some(owned) = self.tuple_member_owned_copy(&mut m, t) {
+                types[i] = owned;
+                // `(H-Move)`: a whole-tuple bind MOVES the members of a tuple this function
+                // owns, while a member read written into a literal (`(t.0, 2)`) is a COPY.
+                // The two lower onto the same IR, so the builder names the difference and
+                // the scope pass reads the name (loft#1563).
+                if let Value::Block(b) = m.unspan_mut() {
+                    b.name = "tuple_member_move";
+                }
+            }
+            members.push(m);
+        }
+        (Value::Tuple(members), Type::Tuple(types))
+    }
+
+    /// The statement that seeds the promoted shadow `shadow` of argument `original` at function
+    /// entry: a boxed cell's allocation (#685), a tuple's copy ([`Self::tuple_param_seed`]), or
+    /// the plain copy of the argument.
+    fn promoted_arg_seed(&mut self, ops: &[Value], shadow: u16, original: u16) -> Value {
+        let shadow_tp = self.vars.tp(shadow).clone();
+        crate::parser::vectors::boxed_cell_def(&shadow_tp, &self.data)
+            .and_then(|cell| self.boxed_cell_alloc_and_set(shadow, cell, Value::Var(original)))
+            .or_else(|| self.tuple_param_seed(ops, shadow, original))
+            .unwrap_or_else(|| v_set(shadow, Value::Var(original)))
+    }
+
+    /// `@FR-F-ParamTuple` — the entry seed of tuple shadow `shadow` of parameter `original`,
+    /// when it has a heap member: the copy built at the start of this pass, unless the finished
+    /// body `ops` only reads it — then `None`, the plain alias it would be without the rule, and
+    /// the shadow is typed as a view of the parameter's members.
+    fn tuple_param_seed(&mut self, ops: &[Value], shadow: u16, original: u16) -> Option<Value> {
+        let copy = self
+            .tuple_param_seeds
+            .iter()
+            .find(|(s, _)| *s == shadow)
+            .map(|(_, v)| v.clone())?;
+        // A returned record or collection is the caller's join to judge (`@FR-O-Oracle`: an
+        // answer in an argument's store is copied at the bind); a returned TUPLE has no such
+        // join, so one that carries a member escapes.
+        let walk = super::passes::MemberWalk {
+            data: &self.data,
+            p: shadow,
+            done: &self.pass2_bodies,
+            stdlib_done: !self.default,
+            ret_holds_ref: Self::tuple_carries_heap(self.data.def(self.context).returned()),
+        };
+        if walk.only_read(ops) {
+            // A view of the caller's members: each heap member depends on the parameter, so
+            // the frame never frees what the caller owns.
+            let tp = Self::tuple_view_of(self.vars.tp(original), original);
+            self.vars.set_type(shadow, tp);
+            None
+        } else {
+            Some(v_set(shadow, copy))
+        }
+    }
+
+    /// The type of a tuple that VIEWS parameter `on`'s members: each non-scalar member, at any
+    /// tuple depth, depends on `on`, so a frame holding it frees none of them
+    /// (`@FR-F-ParamTuple`'s alias seed).
+    fn tuple_view_of(tp: &Type, on: u16) -> Type {
+        match tp.base() {
+            Type::Tuple(ms) => Type::Tuple(ms.iter().map(|m| Self::tuple_view_of(m, on)).collect()),
+            b if crate::data::is_scalar(b) => tp.clone(),
+            _ => tp.depending(on),
+        }
+    }
+
+    /// Does a by-value tuple of this type hold a member a write can reach THROUGH — a record,
+    /// a collection, at any tuple depth?  A `text` member is the tuple's own value
+    /// (`promote_written_tuple_param`), and a scalar one is copied with the slot.
+    pub(crate) fn tuple_carries_heap(tp: &Type) -> bool {
+        match tp.base() {
+            Type::Tuple(members) => members.iter().any(|m| {
+                let b = m.base();
+                (!crate::data::is_scalar(b) && !matches!(b, Type::Text(_) | Type::Tuple(_)))
+                    || Self::tuple_carries_heap(m)
+            }),
+            _ => false,
+        }
     }
 
     fn tuple_carries_text(tp: &Type) -> bool {

@@ -46,6 +46,102 @@ pub fn put_width_header(dir: &std::path::Path) -> Result<(), String> {
 /// Build (or reuse) the shim for `pkg_dir` from `sources`, returning the shared
 /// library's path.
 ///
+/// @PLN91 — the loft runner's C runtime shim (`selfhost/crt`) includes `<loft_bodies.c>`: the
+/// standard library's compiled bodies (`c::bodies`).  They are written by THIS binary, into the
+/// directory the shim compiles in, so their Unicode tables and code are the ones this binary's
+/// interpreter and C programs use — a fragment committed from one toolchain answered otherwise
+/// on another for a code point one Unicode version added.  Written for a shim whose source names
+/// it; a child `loft --emit-c-bodies` writes it, so no global state of this process is touched.
+/// When that fails the file holds the two calls answering -1: the runner then runs every loft
+/// body, slower, never wrong.
+const BODIES: &str = "loft_bodies.c";
+
+/// The contract with nothing carried: every lookup and call answers -1.  What a shim is built
+/// with when the fragment (`c::bodies::emit_bodies`) cannot be written.
+pub const BODY_STUBS: &str = "int64_t loft_body_find(const char *name, int64_t len) { (void) name; (void) len; return -1; }\n\
+     int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) { (void) entry; (void) stk; (void) sp; return -1; }\n\
+     int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, int64_t r, int64_t p) { (void) entry; (void) stk; (void) sp; (void) s; (void) r; (void) p; return -1; }\n";
+
+/// Does any of `paths` name [`BODIES`]?
+fn wants_bodies(paths: &[std::path::PathBuf]) -> bool {
+    paths
+        .iter()
+        .any(|p| crate::file_access::read_to_string(p).is_ok_and(|t| t.contains(BODIES)))
+}
+
+/// The bodies' text, written once per process.
+fn bodies_text() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(|| {
+        let stubs = BODY_STUBS;
+        let Ok(exe) = std::env::current_exe() else {
+            return stubs.to_string();
+        };
+        let dir =
+            crate::platform::scratch_dir().join(format!("loft_bodies_{}", std::process::id()));
+        if crate::file_access::create_dir_all(&dir).is_err() {
+            return stubs.to_string();
+        }
+        let stub = dir.join("stub.loft");
+        let out = dir.join(BODIES);
+        let ran = if crate::file_access::write(&stub, "fn main() {\n}\n").is_ok() {
+            let mut cmd = Spawn::new(Program::os(&exe)).env("LOFT_NO_WARNINGS", "1");
+            cmd.push_arg("--emit-c-bodies")
+                .push_arg(&out)
+                .push_arg(&stub);
+            cmd.run(b"").ok()
+        } else {
+            None
+        };
+        let written = ran.as_ref().is_some_and(|o| o.status.success());
+        if !written {
+            // Said once: the runner still runs every function, as its loft body.
+            let why = ran.map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string());
+            eprintln!(
+                "loft: the compiled standard-library bodies were not written ({}); the loft \
+                 runner runs their loft bodies",
+                why.filter(|w| !w.is_empty())
+                    .unwrap_or_else(|| "no output".to_string())
+            );
+        }
+        let text = if written {
+            crate::file_access::read_to_string(&out).unwrap_or_else(|_| stubs.to_string())
+        } else {
+            stubs.to_string()
+        };
+        let _ = crate::file_access::remove_dir_all(&dir);
+        text
+    })
+}
+
+/// Write [`BODIES`] into `dir` when one of `paths` names it.
+///
+/// # Errors
+/// When the file cannot be written.
+pub fn put_bodies(dir: &std::path::Path, paths: &[std::path::PathBuf]) -> Result<(), String> {
+    if !wants_bodies(paths) {
+        return Ok(());
+    }
+    crate::file_access::write(dir.join(BODIES), bodies_text())
+        .map_err(|e| format!("cannot write {BODIES}: {e}"))
+}
+
+/// What the bodies depend on beyond the shim's sources: this binary, which writes them.
+fn bodies_identity() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| crate::file_access::metadata(&e).ok().map(|m| (e, m)))
+        .map(|(e, m)| {
+            let t = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            format!("{}:{}:{t}", e.display(), m.len())
+        })
+        .unwrap_or_default()
+}
+
 /// The artifact is **content-addressed**: its name carries a hash of the shim
 /// sources, so editing a shim produces a different file rather than racing to
 /// overwrite the one another process may be reading — the same reasoning that
@@ -90,6 +186,7 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     // `@C158`: these fixed flags are a shim's only ones — a package declares none.
     cmd.push_arg("-O2").push_arg("-fPIC").push_arg("-shared");
     put_width_header(&stage)?;
+    put_bodies(&stage, &paths)?;
     cmd.push_arg("-I").push_arg(&stage);
     if crate::keys::width32_all() {
         cmd.push_arg("-DLOFT_WIDTH32");
@@ -268,6 +365,10 @@ fn identity(
     if crate::keys::width32_all() {
         hasher.update(b"w32");
     }
+    // The compiled bodies a shim includes are this binary's (`put_bodies`).
+    if wants_bodies(&paths) {
+        hasher.update(bodies_identity().as_bytes());
+    }
     let digest = hasher.finalize();
     let key = u64::from_le_bytes(digest[..8].try_into().unwrap_or([0; 8]));
     Ok((
@@ -325,6 +426,7 @@ fn archive_with(
     let stage = out_dir.join(format!(".stage-a.{}", std::process::id()));
     crate::file_access::create_dir_all(&stage).map_err(|e| format!("cannot create {e}"))?;
     put_width_header(&stage)?;
+    put_bodies(&stage, &paths)?;
     let fail = |msg: String| {
         let _ = crate::file_access::remove_dir_all(&stage);
         Err(msg)

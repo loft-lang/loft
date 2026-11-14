@@ -1051,6 +1051,9 @@ pub struct Parser {
     /// answer did not widen the local.  `widen_late_call_joins` widens it between the passes,
     /// so pass 2 reads every use against the join, whatever order the two functions are in.
     late_call_joins: Vec<(u32, u16, String, u32)>,
+    /// `@FR-F-ParamTuple` — the entry seed of each tuple parameter shadow with a heap member in
+    /// the function pass 2 is reading: the shadow and its whole-tuple bind copy.
+    tuple_param_seeds: Vec<(u16, Value)>,
     /// Pass 1: the definition name of the last call parsed, when no such function was declared
     /// yet (`parse_call`); `None` after a call to a known one.  Taken by the assignment whose
     /// value it was (`note_late_call_join`).
@@ -1374,6 +1377,9 @@ pub struct Parser {
     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
     /// than falling to the ladder and reporting the same site a second way.
     pub(crate) reported_dynamic_refusal: bool,
+    /// Whether the function whose annotations are being read was written with a body: a
+    /// `#c` binding has none, a `#c_twin` must have one.
+    pub(crate) fn_has_body: bool,
     /// `@FR-Disp-Hint` — while an argument of a call to an overload set is parsed without a
     /// hint, the set's definitions as a refusal names them; a short lambda whose parameter
     /// thereby has no type takes it and says so, naming them (`parse_lambda_short`).
@@ -2192,6 +2198,7 @@ impl Parser {
             par_replay_body: None,
             late_text_tails: Vec::new(),
             late_call_joins: Vec::new(),
+            tuple_param_seeds: Vec::new(),
             last_forward_call: None,
             call_def_name: String::new(),
             infer_ret_defs: std::collections::HashSet::new(),
@@ -2286,6 +2293,7 @@ impl Parser {
             lambda_counters: HashMap::new(),
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
+            fn_has_body: false,
             unhinted_set: None,
             unhinted_set_refused: false,
             reported_binding_clash: false,

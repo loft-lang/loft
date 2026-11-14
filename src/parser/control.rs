@@ -23418,10 +23418,12 @@ impl Parser {
             }
             return self.call(val, source, name, &list, &Vec::new(), &[], &[], name_pos);
         }
+        // The callee as the call names it: a qualified `pkg::f(…)` is `pkg`'s `f`, not a
+        // same-named function of the calling source.
         let fn_def_nr = if self.first_pass {
             None
         } else {
-            let d_nr = self.data.def_nr(&format!("n_{name}"));
+            let d_nr = self.data.source_nr(source, &format!("n_{name}"));
             (d_nr != u32::MAX).then_some(d_nr)
         };
         let mut arg_idx = 0usize;
@@ -23441,7 +23443,7 @@ impl Parser {
                 // #432 — a named vector-literal argument (`f(v: [10, 255, 20])`)
                 // builds at the parameter's element width too.  Map the name to its
                 // parameter to seed the hint, then clear it after parsing.
-                let hint_d_nr = self.free_call_hint(name, &types);
+                let hint_d_nr = self.free_call_hint(source, name, &types);
                 if hint_d_nr != u32::MAX {
                     for a in 0..self.data.attributes(hint_d_nr) {
                         if self.data.attr_name(hint_d_nr, a) == arg_name {
@@ -23509,7 +23511,7 @@ impl Parser {
                 // IDENTICAL declared parameter type, with a message whose cure ("give the
                 // target an enum type") the target already satisfied (loft#1280).  It is
                 // the fn-ref call-site position of loft#1122's family.
-                let hint_d_nr = self.free_call_hint(name, &types);
+                let hint_d_nr = self.free_call_hint(source, name, &types);
                 let hinted = if hint_d_nr != u32::MAX && arg_idx < self.data.attributes(hint_d_nr) {
                     Some(self.callee_param_hint(hint_d_nr, arg_idx, &types))
                 } else {
@@ -23572,7 +23574,7 @@ impl Parser {
             // which set it is for, so an untyped lambda in it is refused naming them.
             self.unhinted_set = if self.first_pass
                 || fn_def_nr.is_some()
-                || self.free_call_hint(name, &types) != u32::MAX
+                || self.free_call_hint(source, name, &types) != u32::MAX
             {
                 None
             } else {
@@ -25174,12 +25176,13 @@ impl Parser {
         self.seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
     }
 
-    /// The definition a FREE call's arguments parse under: the free function `n_<name>`, or
-    /// — for the free spelling of a method (`m(x, …)`, `@FR-F-Recv`) — the one method of
-    /// that name at the first argument's type, the candidate the dot spelling parses under
-    /// (`Disp-Hint`).  `u32::MAX` when neither names one definition.
-    pub(crate) fn free_call_hint(&self, name: &str, types: &[Type]) -> u32 {
-        let free = self.data.def_nr(&format!("n_{name}"));
+    /// The definition a FREE call's arguments parse under: the free function `n_<name>` of
+    /// the source the call names (`source`, `u16::MAX` for a bare call), or — for the free
+    /// spelling of a method (`m(x, …)`, `@FR-F-Recv`) — the one method of that name at the
+    /// first argument's type, the candidate the dot spelling parses under (`Disp-Hint`).
+    /// `u32::MAX` when neither names one definition.
+    pub(crate) fn free_call_hint(&self, source: u16, name: &str, types: &[Type]) -> u32 {
+        let free = self.data.source_nr(source, &format!("n_{name}"));
         if free != u32::MAX {
             return free;
         }

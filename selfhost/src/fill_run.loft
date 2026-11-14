@@ -1,0 +1,225 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — one definition of a run image called through the generated operator table
+// (`fill.loft`) on the loft `State`, as the Rust interpreter's dispatch loop runs it: each
+// opcode read (255 and a second byte for a slot past 254), its operator run, until the call
+// returns to the position past the code it was given.
+
+use ir;
+use state;
+use fill;
+use crt;
+use natives;
+
+// The number of the definition named `name` in the program image `b`; -1 for none.
+pub fn def_named(b: ir::Bundle, name: text) -> integer {
+  for d in 0..len(b.data.definitions) {
+    if (b.data.definitions[d]?.name ?? "") == name {
+      return d;
+    }
+  }
+  -1
+}
+
+// Definition `d` called with the integer arguments `args` on `s`, run to its return: its integer
+// answer, or null with the reason in `s.fault`.
+pub fn call(img: ir::RunImage, d: integer, args: vector<integer>, s: state::State) -> integer? {
+  end = len(img.code);
+  s.code_pos = end;
+  for a in args {
+    s.put_stack_i64(a);
+  }
+  s.fn_call(d, 8 * len(args), img.starts[d] ?? 0);
+  run_to(img, s, end);
+  if s.fault != "" {
+    return null;
+  }
+  s.get_stack_i64()
+}
+
+// The program's own functions that take only integers and answer an integer — what `call` can
+// be given — as definition numbers.
+pub fn integer_functions(b: ir::Bundle) -> vector<integer> {
+  out: vector<integer> = [];
+  for d in 0..len(b.data.definitions) {
+    def = b.data.definitions[d]!;
+    if def.source == 0 || def.def_type != 1 || !def.name.starts_with("n_") || def.name == "n_main" {
+      continue;
+    }
+    plain = is_integer(def.returned[0] ?? ir::TyVoid);
+    for a in def.attributes {
+      plain = plain && is_integer(a.typedef[0] ?? ir::TyVoid);
+    }
+    if plain {
+      out += [d];
+    }
+  }
+  out
+}
+
+fn is_integer(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec } => spec.max - spec.min > 65536,
+    _ => false,
+  }
+}
+
+// The name of definition `d` and how many parameters it takes.
+pub fn name_of(b: ir::Bundle, d: integer) -> text {
+  b.data.definitions[d]?.name ?? ""
+}
+
+pub fn arity(b: ir::Bundle, d: integer) -> integer {
+  def = b.data.definitions[d];
+  if def == null { 0 } else { len(def!.attributes) }
+}
+
+// The dispatch loop: each opcode read (255 and a second byte for a slot past 254) and its
+// operator run, a native `static_call` named called from the natives' table, until the code
+// reaches `end` or the run stops.
+fn run_to(img: ir::RunImage, s: state::State, end: integer) {
+  trace = env_variable("LOFT_FILL_TRACE") == "1";
+  io: vector<integer> = [0, 0, 0];
+  tl: vector<boolean> = [false];
+  why: vector<text> = [""];
+  // The C runtime's index of each image sidecar, made at the first persistence native and kept.
+  sidecar_ix: vector<integer> = [];
+  // `par`: each native's kind, the jobs in flight and the buffers their answers wait in — the
+  // hand-built runner's scheduler, its workers run one after another.
+  ptab = natives::par_natives(img);
+  pjobs: vector<natives::ParJob> = [];
+  pbufs: vector<natives::ParBuf> = [];
+  while s.code_pos != end && !s.stopped {
+    if trace {
+      first = crt::get_u8(s.code, s.code_pos);
+      slot = if first == 255 { 255 + crt::get_u8(s.code, s.code_pos + 1) } else { first };
+      eprintln("at {s.code_pos} sp {s.stack_pos} {img.ops[slot] ?? ""}");
+      op = s.code_u8();
+      if op == 255 {
+        op = 255 + s.code_u8();
+      }
+      if !fill::execute(s, op) {
+        s.unknown = op;
+        s.stop("not carried");
+      }
+    } else {
+      // The image's code, not the State's copy: `run` holds its address (`(R-CodeBase)`).
+      fill::run(s, img.code, end);
+    }
+    if s.unknown >= 0 {
+      // The reason names the operator: the table knows only its slot.
+      s.fault = "not carried: {img.ops[s.unknown] ?? "slot {s.unknown}"}";
+      s.unknown = -1;
+    }
+    if s.native == state::PAR_ARM_DONE {
+      // The arm this loop was started for returned (`par_block`).
+      return;
+    }
+    if s.native == state::PAR_BLOCK {
+      s.native = -1;
+      par_block(img, s);
+    } else if s.native == state::PAR_RETURNED {
+      // A `par` worker returned: its answer taken, then the job's next worker entered at the
+      // same depth, or after the last the job's result left for the caller.
+      s.native = -1;
+      regs = [s.stack_pos, s.code_pos, len(s.frames)];
+      more = natives::par_return(s.stk, regs, pjobs, pbufs, io);
+      s.stack_pos = regs[0] ?? 0;
+      if more {
+        back = s.code_pos;
+        s.code_pos = regs[1] ?? 0;
+        s.enter(-1, back);
+      } else {
+        s.par_depths.remove(len(s.par_depths) - 1);
+      }
+    } else if s.native >= 0 {
+      idx = s.native;
+      s.native = -1;
+      pk = ptab[idx] ?? 0;
+      if natives::par_is_job(pk) {
+        // A queue's or a fold's native: its first worker entered as a call, or with no rows
+        // its empty answer given at once.
+        jobs = len(pjobs);
+        back = s.code_pos;
+        regs = [s.stack_pos, s.code_pos, len(s.frames)];
+        if natives::par_start(pk, img, s.stk, regs, pjobs, pbufs, io, why) < 0 {
+          s.stop("not carried: {why[0] ?? ""}");
+        } else {
+          s.stack_pos = regs[0] ?? 0;
+          if len(pjobs) > jobs {
+            s.code_pos = regs[1] ?? 0;
+            s.enter(-1, back);
+            s.par_depths += [len(s.frames)];
+          }
+        }
+      } else if pk > 0 {
+        s.stack_pos = natives::par_buf(pk, s.stk, s.stack_pos, pbufs, io);
+      } else {
+        // The natives are the hand-built runner's ports, over the same stack store.
+        tl[0] = s.table_loaded;
+        sp = natives::call_native(natives::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
+        s.table_loaded = tl[0] ?? false;
+        if sp < 0 {
+          s.stop("not carried: {img.natives[idx] ?? "native {idx}"}");
+        } else {
+          s.stack_pos = sp;
+        }
+      }
+    }
+  }
+}
+
+// A `par` block's arms, run one after another where Rust runs them on threads.  Each arm is
+// code of the running function that ends in its `OpReturn`: it runs on the stack as the block
+// found it, and the stack, the top and the frame are put back after it, as each of Rust's
+// workers starts from a snapshot of the parent's stack.  What an arm writes to a store stays
+// written (Rust's worker writes to a copy).
+fn par_block(img: ir::RunImage, s: state::State) {
+  resume = s.code_pos;
+  arms: vector<integer> = [];
+  for off in s.arm_offsets {
+    arms += [resume + off];
+  }
+  s.arm_offsets.clear();
+  depth = len(s.frames);
+  if depth == 0 {
+    s.stop("a par block outside a function");
+    return;
+  }
+  top = s.stack_pos;
+  outer = s.arm_depth;
+  frame = s.frames[depth - 1]!;
+  d_nr = frame.d_nr;
+  call_pos = frame.call_pos;
+  args_base = frame.args_base;
+  args_size = frame.args_size;
+  snapshot = crt::stack_read_bytes(s.stk, 0, top);
+  for arm in arms {
+    if s.stopped {
+      break;
+    }
+    s.arm_depth = depth;
+    s.code_pos = arm;
+    run_to(img, s, -1);
+    s.native = -1;
+    // The arm's return dropped the frame and moved the top: both as they were.
+    while len(s.frames) > depth - 1 {
+      s.frames.remove(len(s.frames) - 1);
+    }
+    s.frames += [state::CallFrame { d_nr: d_nr, call_pos: call_pos, args_base: args_base, args_size: args_size }];
+    crt::stack_code_bytes(s.stk, 0, snapshot, 0, top);
+    s.stack_pos = top;
+  }
+  s.arm_depth = outer;
+  s.code_pos = resume;
+}
+
+// The program's `main` run to its end; false with the reason in `s.fault` where it stops.
+pub fn run_main(img: ir::RunImage, s: state::State) -> boolean {
+  end = len(img.code);
+  s.code_pos = end;
+  s.fn_call(img.main, 0, img.starts[img.main] ?? 0);
+  run_to(img, s, end);
+  s.fault == ""
+}
