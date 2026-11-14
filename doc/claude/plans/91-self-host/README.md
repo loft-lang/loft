@@ -21,7 +21,8 @@ program and by formal rule, is [1a-parser.md § Where it stands](1a-parser.md#wh
 programs at its last census, in an earlier `handoff-*.md`; not re-measured since); the IR
 passes and the bytecode writer are not ported yet.  The bytecode runner built as a port of
 the Rust interpreter — its generated operator table, what is still to build and where it
-differs from Rust — is [1b-fill-port.md](1b-fill-port.md).
+differs from Rust — is [1b-fill-port.md](1b-fill-port.md).  What it still takes from Rust, and
+the order that ends in, is [rust-dependencies.md](rust-dependencies.md).
 
 **1b is behind the reference (owner,
 2026-11-12):** the IR lifetime work (@PLN211) landed after its last census and its port of the

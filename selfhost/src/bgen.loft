@@ -1,0 +1,2620 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the bytecode writer in loft (1b-frame.md F-2): a port of the Rust interpreter's
+// writer (`src/state/codegen.rs`, `State::def_code`), from the stored IR (`ir.loft`'s
+// `Bundle`) to the bytes the bytecode runner executes.  The gate is the bytes themselves:
+// each function must be written byte for byte as Rust writes it
+// (`selfhost/bench/bgen_check.loft`).  What is not ported yet is answered as null — a function
+// this writer does not write — never as bytes that differ.
+
+use ir;
+use frame;
+use own;
+use binds;
+use lower;
+use ret_adopt;
+use bgen_set;
+use bgen_loop;
+use bgen_tuple;
+use bgen_text;
+
+// The bytes of one function while they are written.
+pub struct Out {
+  pub code: vector<u8>,
+}
+
+// `State::code_add::<u8>` and its wider forms: little-endian, as the runner reads them.
+fn put_u8(o: Out, v: integer) {
+  o.code += [(v & 255) as u8];
+}
+
+fn put_u16(o: Out, v: integer) {
+  o.code += [(v & 255) as u8, ((v >> 8) & 255) as u8];
+}
+
+// The definition number of the operator `name`; -1 for none.
+pub fn op_named(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// The name of definition `d`, for a report.
+pub fn name_of(b: ir::Bundle, d: integer) -> text {
+  b.data.definitions[d]?.name ?? "?"
+}
+
+// `emit_op`: an operator's number — one byte, or 255 and a second for a number past 254.
+fn put_op(o: Out, b: ir::Bundle, op: integer) {
+  nr = b.data.definitions[op]!.op_code;
+  if nr < 255 {
+    put_u8(o, nr);
+  } else {
+    put_u8(o, 255);
+    put_u8(o, nr - 255);
+  }
+}
+
+// Does the function have no body (a native, a declaration): its code is `Value::Null`.
+fn body_null(def: ir::Definition) -> boolean {
+  match def.code[0] {
+    null => true,
+    NdNull => true,
+    _ => false,
+  }
+}
+
+// `size(tp, Context::Argument)` stepped, summed over the parameters: the bytes a call's
+// arguments take.
+fn arguments_size(def: ir::Definition) -> integer {
+  total = 0;
+  for a in def.attributes {
+    total += frame::stepped(frame::width(a.typedef[0] ?? ir::TyVoid, true));
+  }
+  total
+}
+
+// One function while it is written (`Stack` and the writer's own state in `codegen.rs`).
+// `position` is the evaluation position: the bytes of frame and pending values under the next
+// push.  `slots` holds each variable's frame position (65535: none).  `why` names what stopped
+// the writer, "" while the function is still being written whole.
+pub struct Gen {
+  b: ir::Bundle,
+  // Each definition's code start, and the natives' names by their number: the image's, until
+  // this writer lays the whole program out and numbers the natives itself.
+  starts: vector<u32>,
+  natives: vector<text>,
+  d: integer,
+  o: Out,
+  position: integer,
+  arguments: integer,
+  slots: vector<integer>,
+  // Whether each variable has been given its value yet (`is_stack_allocated`): an argument
+  // from the start, a local from its first assignment.
+  allocated: vector<boolean>,
+  // The loops being written, innermost last (`Stack::loops`): where each starts, the
+  // evaluation position it runs at, whether it tests at its bottom; and the jumps out of and
+  // on in them still to be given their step, as pairs of loop and code position.
+  loop_start: vector<integer>,
+  loop_stack: vector<integer>,
+  loop_rotated: vector<boolean>,
+  breaks: vector<integer>,
+  continues: vector<integer>,
+  // The ownership oracle's operator table (once per image) and this function's def table.
+  ops: own::Ops,
+  defs: own::Defs,
+  // The locals a reassignment released the old store of (`Stack::owned_reassigned`).
+  owned_reassigned: vector<integer>,
+  // The function's character walks (`opt::char_walk::char_walks`), gathered at the first
+  // bind that asks.
+  walks: vector<lower::CharWalk>,
+  walks_known: boolean,
+  // `@FR-R-RetAdopt`: the local that is built in the caller's buffer (`v` -1: none).
+  adopt: ret_adopt::RetAdopt,
+  why: text,
+}
+
+fn stop(g: Gen, why: text) {
+  if g.why == "" {
+    g.why = why;
+  }
+}
+
+fn put_i32(o: Out, v: integer) {
+  put_u16(o, v & 65535);
+  put_u16(o, (v >> 16) & 65535);
+}
+
+// Eight bytes of an integer; the null one is its own bit pattern.
+fn put_i64(o: Out, v: integer?) {
+  if v == null {
+    o.code += [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 128 as u8];
+    return;
+  }
+  put_i32(o, v! & 4294967295);
+  put_i32(o, (v! >> 32) & 4294967295);
+}
+
+// `Type::base`: the type under any `?`.
+fn base(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => base(inner),
+    _ => t,
+  }
+}
+
+// A value's bytes on the evaluation stack: its argument size, stepped.
+fn pushed(t: ir::TypeT) -> integer {
+  frame::stepped(frame::width(t, true))
+}
+
+fn def_of(g: Gen, d: integer) -> ir::Definition {
+  g.b.data.definitions[d]!
+}
+
+fn var_of(g: Gen, v: integer) -> ir::Variable {
+  def_of(g, g.d).variables.variables[v]!
+}
+
+// `Stack::var_pos`: how far under the evaluation position variable `v` lies.
+fn var_pos(g: Gen, v: integer) -> integer {
+  slot = g.slots[v] ?? 65535;
+  if slot == 65535 || slot > g.position {
+    stop(g, "a variable without a slot under the evaluation position");
+    return 0;
+  }
+  g.position - slot
+}
+
+// `Stack::add_op`: the operator's number written, the evaluation position moved by what it
+// pops (its stack arguments) and pushes (its answer).
+fn add_op(g: Gen, name: text) {
+  op = op_named(g.b, name);
+  if op < 0 {
+    stop(g, "an operator the image does not hold: {name}");
+    return;
+  }
+  put_op(g.o, g.b, op);
+  stack_effect(g, op);
+}
+
+fn stack_effect(g: Gen, op: integer) {
+  def = def_of(g, op);
+  popped = 0;
+  for a in def.attributes {
+    if a.mutable {
+      popped += pushed(a.typedef[0] ?? ir::TyVoid);
+    }
+  }
+  if g.position < popped {
+    stop(g, "an operator that pops more than the evaluation position holds");
+    return;
+  }
+  g.position += pushed(def.returned[0] ?? ir::TyVoid) - popped;
+}
+
+// The node under any source span.
+fn unspan(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos: _, inner } => unspan(inner),
+    _ => n,
+  }
+}
+
+// An integer literal's value; null for any other node (`fusable_int`'s `literal`).  The second
+// answer says whether it was one: a `Long` literal may itself be the null integer.
+fn literal(n: ir::Node, found: vector<boolean>) -> integer? {
+  found[0] = true;
+  match unspan(n) {
+    NdInt { n: v } => v,
+    NdLong { n: v } => v,
+    _ => {
+      found[0] = false;
+      null
+    }
+  }
+}
+
+// `int_local`: the integer local a node reads, where it can be read at its slot; -1 otherwise.
+fn int_local(g: Gen, n: ir::Node) -> integer {
+  v = match unspan(n) {
+    NdVar { n: nr } => nr,
+    _ => -1,
+  };
+  if v < 0 {
+    return -1;
+  }
+  var = var_of(g, v);
+  whole = match base(var.type_def[0] ?? ir::TyVoid) {
+    TyInteger { spec: _ } => true,
+    _ => false,
+  };
+  slot = g.slots[v] ?? 65535;
+  if whole && !var.linked_narrow && (g.allocated[v] ?? false) && slot != 65535 && slot <= g.position { v } else { -1 }
+}
+
+// A fused integer operator (`FusedInt`): `kind` among the arithmetic or the comparison kinds
+// of `ops::fused`, the local `a`, and a second local `b` or — `b` -1 — the literal `c`.
+struct Fused {
+  ok: boolean,
+  compare: boolean,
+  kind: integer,
+  a: integer,
+  b: integer,
+  c: integer?,
+}
+
+fn no_fuse() -> Fused {
+  Fused { ok: false, compare: false, kind: 0, a: -1, b: -1, c: null }
+}
+
+// `fusable_int` (`@FR-R-Fuse`): an integer operator over a local and a local or a literal can
+// be one operator reading the frame.
+fn fusable(g: Gen, op: integer, args: vector<ir::Node>) -> Fused {
+  if len(args) != 2 {
+    return no_fuse();
+  }
+  name = def_of(g, op).name;
+  kind = match name {
+    "OpAddInt" => 0,
+    "OpMinInt" => 1,
+    "OpMulInt" => 2,
+    "OpLandInt" => 3,
+    "OpLorInt" => 4,
+    "OpEorInt" => 5,
+    "OpEqInt" => 0,
+    "OpNeInt" => 1,
+    "OpLtInt" => 2,
+    "OpLeInt" => 3,
+    _ => -1,
+  };
+  if kind < 0 {
+    return no_fuse();
+  }
+  compare = name == "OpEqInt" || name == "OpNeInt" || name == "OpLtInt" || name == "OpLeInt";
+  found: vector<boolean> = [false];
+  first = literal(args[0]!, found);
+  if compare && (found[0] ?? false) {
+    a = int_local(g, args[1]!);
+    if a >= 0 {
+      // The operands change sides: less becomes greater.
+      return Fused { ok: true, compare: true, kind: if kind == 2 { 4 } else if kind == 3 { 5 } else { kind }, a: a, b: -1, c: first };
+    }
+  }
+  a = int_local(g, args[0]!);
+  if a < 0 {
+    return no_fuse();
+  }
+  second = literal(args[1]!, found);
+  if found[0] ?? false {
+    return Fused { ok: true, compare: compare, kind: kind, a: a, b: -1, c: second };
+  }
+  b = int_local(g, args[1]!);
+  if b < 0 {
+    return no_fuse();
+  }
+  Fused { ok: true, compare: compare, kind: kind, a: a, b: b, c: null }
+}
+
+// `emit_fused_int` for a value that is pushed, or — `jump` — the test of a branch
+// (`OpCmpIntVVJump` / `OpCmpIntVCJump`, whose step the caller writes after it).
+fn put_fused(g: Gen, f: Fused, jump: boolean) {
+  at = var_pos(g, f.a);
+  bt = if f.b >= 0 { var_pos(g, f.b) } else { 0 };
+  stem = if f.compare { "OpCmpInt" } else { "OpInt" };
+  add_op(g, "{stem}{if f.b >= 0 { "VV" } else { "VC" }}{if jump { "Jump" } else { "" }}");
+  put_u8(g.o, f.kind);
+  put_u16(g.o, at);
+  if f.b >= 0 {
+    put_u16(g.o, bt);
+  } else {
+    put_i64(g.o, f.c);
+  }
+}
+
+// `State::code_put`: a jump's 4-byte step written where its place was kept.
+fn patch_i32(o: Out, at: integer, v: integer) {
+  w = v & 4294967295;
+  o.code[at] = (w & 255) as u8;
+  o.code[at + 1] = ((w >> 8) & 255) as u8;
+  o.code[at + 2] = ((w >> 16) & 255) as u8;
+  o.code[at + 3] = ((w >> 24) & 255) as u8;
+}
+
+// `emit_push_sentinel`: a reference slot reserved above the top and made the sentinel null.
+fn push_sentinel(g: Gen) {
+  add_op(g, "OpReserveFrame");
+  put_u16(g.o, 16);
+  g.position += 16;
+  add_op(g, "OpInitRefSentinel");
+  put_u16(g.o, 16);
+}
+
+// `emit_typed_null`: the null of a type pushed.
+fn typed_null(g: Gen, tp: ir::TypeT) {
+  match base(tp) {
+    TyText { dep: _ } => add_op(g, "OpConvTextFromNull"),
+    TyInteger { spec: _ } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, null);
+    }
+    TyCharacter => add_op(g, "OpConvCharacterFromNull"),
+    TyBoolean => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, 255);
+    }
+    TyFloat => {
+      // The quiet NaN, as its bits.
+      add_op(g, "OpConstFloat");
+      put_i64(g.o, 9221120237041090560);
+    }
+    TySingle => {
+      add_op(g, "OpConstSingle");
+      put_i32(g.o, 2143289344);
+    }
+    TyFunction { args: _, result: _, dep: _, consts: _ } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, null);
+      push_sentinel(g);
+    }
+    _ => push_sentinel(g),
+  }
+}
+
+// `is_divergent`: does the node leave by a return, a break or a continue?  Asked of the node
+// as it stands: one under a source span is not seen as leaving, as in the Rust writer.
+fn divergent(n: ir::Node) -> boolean {
+  match n {
+    NdReturn { inner: _ } => true,
+    NdBreak { n: _ } => true,
+    NdContinue { n: _ } => true,
+    NdInsert { items } => len(items) > 0 && divergent(items[len(items) - 1]!),
+    NdBlock { block: bl } => {
+      ops = bl[0]?.operators ?? [];
+      len(ops) > 0 && divergent(ops[len(ops) - 1]!)
+    }
+    _ => false,
+  }
+}
+
+// The name of the operator a node calls, "" for any other node.
+fn called(g: Gen, n: ir::Node) -> text {
+  match unspan(n) {
+    NdCall { def_nr, args: _ } => def_of(g, def_nr).name,
+    _ => "",
+  }
+}
+
+fn call_args(n: ir::Node) -> vector<ir::Node> {
+  match unspan(n) {
+    NdCall { def_nr: _, args } => args,
+    _ => [],
+  }
+}
+
+// `text_local`: the text local a node reads, where it can be read at its slot; -1 otherwise.
+fn text_local(g: Gen, n: ir::Node) -> integer {
+  v = match unspan(n) {
+    NdVar { n: nr } => nr,
+    _ => -1,
+  };
+  if v < 0 {
+    return -1;
+  }
+  text = match base(var_of(g, v).type_def[0] ?? ir::TyVoid) {
+    TyText { dep: _ } => true,
+    _ => false,
+  };
+  slot = g.slots[v] ?? 65535;
+  if text && (g.allocated[v] ?? false) && slot != 65535 && slot <= g.position { v } else { -1 }
+}
+
+// `fused_pure_int`: an integer value that reads only literals and integer locals through
+// the operators that cannot fail.
+fn fused_pure_int(g: Gen, n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdVar { n: _ } => int_local(g, n) >= 0,
+    NdCall { def_nr, args } => {
+      name = def_of(g, def_nr).name;
+      if name != "OpAddInt" && name != "OpMinInt" && name != "OpMulInt" && name != "OpLandInt" && name != "OpLorInt" && name != "OpEorInt" {
+        return false;
+      }
+      for a in args {
+        if !fused_pure_int(g, a) {
+          return false;
+        }
+      }
+      true
+    }
+    _ => false,
+  }
+}
+
+// `vector_local`: the vector local a node reads, where it can be read at its slot; -1 otherwise.
+fn vector_local(g: Gen, n: ir::Node) -> integer {
+  v = match unspan(n) {
+    NdVar { n: nr } => nr,
+    _ => -1,
+  };
+  if v < 0 {
+    return -1;
+  }
+  vector = match base(var_of(g, v).type_def[0] ?? ir::TyVoid) {
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  };
+  slot = g.slots[v] ?? 65535;
+  if vector && (g.allocated[v] ?? false) && slot != 65535 && slot <= g.position { v } else { -1 }
+}
+
+// `State::clear_stack`: what the loop `nr` out left on the evaluation stack dropped.
+fn clear_stack(g: Gen, nr: integer) {
+  at = g.loop_stack[len(g.loop_stack) - 1 - nr] ?? 0;
+  if g.position > at {
+    add_op(g, "OpFreeStack");
+    put_u16(g.o, 0);
+    put_u16(g.o, g.position - at);
+    g.position = at;
+  }
+}
+
+// `gen_break` and `gen_continue`: the stack the loop left dropped, then the jump — its step
+// written when the loop's end, or its bottom test, is.
+fn leave(g: Gen, nr: integer, out: boolean) -> ir::TypeT {
+  if nr >= len(g.loop_start) {
+    stop(g, "a break or continue outside its loop");
+    return ir::TyVoid;
+  }
+  old = g.position;
+  clear_stack(g, nr);
+  add_op(g, "OpGotoWord");
+  target = len(g.loop_start) - 1 - nr;
+  if out {
+    g.breaks += [target, len(g.o.code)];
+    put_i32(g.o, 0);
+  } else if g.loop_rotated[target] ?? false {
+    g.continues += [target, len(g.o.code)];
+    put_i32(g.o, 0);
+  } else {
+    put_i32(g.o, (g.loop_start[target] ?? 0) - len(g.o.code) - 4);
+  }
+  g.position = old;
+  ir::TyVoid
+}
+
+// `gen_if_test`: the test and its jump over the true arm; answers where the jump's step is
+// to be written.
+fn if_test(g: Gen, test: ir::Node) -> integer {
+  // The test as it stands: a call under a source span is written as any value is.
+  spanned = match test {
+    NdSpan { pos: _, inner: _ } => true,
+    _ => false,
+  };
+  name = if spanned { "" } else { called(g, test) };
+  args = if spanned { [] } else { call_args(test) };
+  // `emit_text_end_test`: a text local's null test, or its length against an index local,
+  // as one compare-and-jump (`OpTextNullJump`, `OpTextEndJump`).
+  null_test = name == "OpNot" && len(args) == 1 && called(g, args[0]!) == "OpConvBoolFromText";
+  end_test = name == "OpLeInt" && len(args) == 2 && called(g, args[0]!) == "OpSizeText";
+  if null_test || end_test {
+    inner = call_args(args[0]!);
+    src = if len(inner) == 1 { text_local(g, inner[0]!) } else { -1 };
+    idx = if end_test { int_local(g, args[1]!) } else { -1 };
+    if src >= 0 && (null_test || idx >= 0) {
+      sp = var_pos(g, src);
+      ip = if idx >= 0 { var_pos(g, idx) } else { 0 };
+      add_op(g, if end_test { "OpTextEndJump" } else { "OpTextNullJump" });
+      put_u16(g.o, sp);
+      put_u8(g.o, if var_of(g, src).argument { 1 } else { 0 });
+      if end_test {
+        put_u16(g.o, ip);
+      }
+      at = len(g.o.code);
+      put_i32(g.o, 0);
+      return at;
+    }
+  }
+  if name == "OpLeInt" && called(g, args[0] ?? ir::NdNull) == "OpLengthVector" {
+    // A walk's end (`OpVecEndJump`): the vector's length against an index, both locals.
+    vec = vector_local(g, call_args(args[0]!)[0] ?? ir::NdNull);
+    idx = int_local(g, args[1] ?? ir::NdNull);
+    if vec >= 0 && idx >= 0 {
+      vp = var_pos(g, vec);
+      ip = var_pos(g, idx);
+      add_op(g, "OpVecEndJump");
+      put_u16(g.o, vp);
+      put_u16(g.o, ip);
+      at = len(g.o.code);
+      put_i32(g.o, 0);
+      return at;
+    }
+  }
+  if name == "OpEqInt" && called(g, args[0] ?? ir::NdNull) == "OpConvIntFromEnum" {
+    // A tag against a constant (`OpTagVCJump`): a plain enum local, or the tag of the record
+    // a local names.
+    found: vector<boolean> = [false];
+    c = match unspan(args[1] ?? ir::NdNull) {
+      NdInt { n } => {
+        found[0] = true;
+        n
+      }
+      _ => 0,
+    };
+    read = call_args(args[0]!)[0] ?? ir::NdNull;
+    of = -1;
+    local = -1;
+    match unspan(read) {
+      NdVar { n } => {
+        of = 0;
+        local = n;
+      }
+      NdCall { def_nr, args: ga } => {
+        if def_of(g, def_nr).name == "OpGetEnum" && len(ga) == 2 {
+          zero = match unspan(ga[1]!) {
+            NdInt { n } => n == 0,
+            _ => false,
+          };
+          match unspan(ga[0]!) {
+            NdVar { n } => {
+              if zero {
+                of = 1;
+                local = n;
+              }
+            }
+            _ => {}
+          }
+        }
+      }
+      _ => {}
+    }
+    if (found[0] ?? false) && local >= 0 {
+      fits = match base(var_of(g, local).type_def[0] ?? ir::TyVoid) {
+        TyEnum { n: _, is_ref, dep: _ } => if is_ref { of == 1 } else { of == 0 },
+        TyReference { n: _, dep: _ } => of == 1,
+        _ => false,
+      };
+      slot = g.slots[local] ?? 65535;
+      if fits && (g.allocated[local] ?? false) && slot != 65535 && slot <= g.position {
+        a = var_pos(g, local);
+        add_op(g, "OpTagVCJump");
+        put_u8(g.o, of);
+        put_u16(g.o, a);
+        put_i64(g.o, c);
+        at = len(g.o.code);
+        put_i32(g.o, 0);
+        return at;
+      }
+    }
+  }
+  fused = no_fuse();
+  if name == "OpEqInt" || name == "OpNeInt" || name == "OpLtInt" || name == "OpLeInt" {
+    match unspan(test) {
+      NdCall { def_nr, args: a } => {
+        fused = fusable(g, def_nr, a);
+      }
+      _ => {}
+    }
+  }
+  if fused.ok && fused.compare {
+    put_fused(g, fused, true);
+  } else {
+    generate(g, test, false);
+    add_op(g, "OpGotoFalseWord");
+  }
+  at = len(g.o.code);
+  put_i32(g.o, 0);
+  at
+}
+
+// `State::gen_if`.
+fn branch(g: Gen, test: ir::Node, t_val: ir::Node, f_val: ir::Node) -> ir::TypeT {
+  step_at = if_test(g, test);
+  true_pos = len(g.o.code);
+  before = g.position;
+  tp = generate(g, t_val, false);
+  true_stack = g.position;
+  no_else = match unspan(f_val) {
+    NdNull => true,
+    _ => false,
+  };
+  void = match tp {
+    TyVoid => true,
+    TyNever => true,
+    _ => false,
+  };
+  null_else = no_else && !divergent(t_val) && !void && true_stack != before;
+  if no_else && !null_else {
+    patch_i32(g.o, step_at, len(g.o.code) - true_pos);
+    if divergent(t_val) {
+      g.position = before;
+    }
+    return tp;
+  }
+  add_op(g, "OpGotoWord");
+  end_at = len(g.o.code);
+  put_i32(g.o, 0);
+  false_pos = len(g.o.code);
+  patch_i32(g.o, step_at, len(g.o.code) - true_pos);
+  g.position = before;
+  if null_else {
+    typed_null(g, tp);
+    patch_i32(g.o, end_at, len(g.o.code) - false_pos);
+    g.position = true_stack;
+    return tp;
+  }
+  fp = generate(g, f_val, false);
+  false_stack = g.position;
+  if !divergent(f_val) && g.position == before && true_stack > before && !void {
+    typed_null(g, tp);
+    g.position = true_stack;
+    false_stack = true_stack;
+  }
+  if !divergent(t_val) && !divergent(f_val) && true_stack != false_stack {
+    stop(g, "not written yet: an if whose arms leave different heights");
+    return tp;
+  }
+  patch_i32(g.o, end_at, len(g.o.code) - false_pos);
+  if divergent(t_val) {
+    g.position = false_stack;
+  } else if divergent(f_val) {
+    g.position = true_stack;
+  }
+  match tp {
+    TyNever => fp,
+    _ => tp,
+  }
+}
+
+// `State::add_const`: a constant operand, at the width its parameter declares.
+fn add_const(g: Gen, tp: ir::TypeT, p: ir::Node, before: integer) {
+  n = unspan(p);
+  match tp {
+    TyInteger { spec } => {
+      v: integer? = null;
+      known = true;
+      match n {
+        NdInt { n: nr } => { v = nr; }
+        NdLong { n: nr } => { v = nr; }
+        _ => { known = false; }
+      }
+      wide = spec.forced_size != 4 && !(spec.min == 0 && spec.max == 255) && !(spec.min == -128 && spec.max == 127) && !(spec.min == 0 && spec.max == 65535) && !(spec.min == -32768 && spec.max == 32767);
+      if spec.forced_size == 4 {
+        if known {
+          put_i32(g.o, (v ?? 0) & 4294967295);
+        }
+      } else if spec.min == 0 && spec.max == 65535 {
+        if known {
+          put_u16(g.o, v ?? 0);
+        } else {
+          match n {
+            NdVar { n: var } => put_u16(g.o, before - (g.slots[var] ?? 0)),
+            _ => {}
+          }
+        }
+      } else if !wide {
+        if known {
+          if (spec.min == 0 && spec.max == 255) || (spec.min == -128 && spec.max == 127) {
+            put_u8(g.o, v ?? 0);
+          } else {
+            put_u16(g.o, v ?? 0);
+          }
+        }
+      } else if known {
+        put_i64(g.o, v);
+      }
+    }
+    TyEnum { n: _, is_ref: _, dep: _ } => {
+      match n {
+        NdEnum { ord, tp: _ } => put_u8(g.o, ord),
+        _ => {}
+      }
+    }
+    TyBoolean => {
+      match n {
+        NdBoolean { b: v } => put_u8(g.o, if v { 1 } else { 0 }),
+        _ => {}
+      }
+    }
+    TyText { dep: _ } => {
+      match n {
+        NdText { s } => put_str(g.o, s),
+        _ => {}
+      }
+    }
+    TyFloat => {
+      match n {
+        NdFloat { f } => put_i64(g.o, f.bits()),
+        _ => {}
+      }
+    }
+    TySingle => {
+      match n {
+        NdSingle { f } => put_i32(g.o, f.bits() & 4294967295),
+        _ => {}
+      }
+    }
+    TyKeys => {
+      match n {
+        NdKeys { keys } => {
+          put_u8(g.o, len(keys));
+          for k in keys {
+            put_u8(g.o, k.type_nr & 255);
+            put_u16(g.o, k.position);
+            put_i32(g.o, k.start & 4294967295);
+          }
+        }
+        _ => {}
+      }
+    }
+    // Any other type takes no operand bytes, as in the Rust writer.
+    _ => {}
+  }
+}
+
+// `State::code_add_str`: a text's byte count and its bytes.
+fn put_str(o: Out, s: text) {
+  put_u8(o, s.size());
+  for i in 0..s.size() {
+    o.code += [(s.byte_at(i) & 255) as u8];
+  }
+}
+
+// `emit_fused_vec` (`@FR-R-Fuse`): an integer element of a vector local at an index local is
+// read by one operator (`OpVecGetInt`, `OpVecGetIntNullable`).  True when it was written.
+fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
+  name = def_of(g, op).name;
+  if (name != "OpGetInt" && name != "OpSetInt") || len(args) < 2 {
+    return false;
+  }
+  fld = match unspan(args[1]!) {
+    NdInt { n } => n,
+    _ => -1,
+  };
+  inner = called(g, args[0]!);
+  ga = call_args(args[0]!);
+  if fld < 0 || fld > 65535 || len(ga) != 3 || (inner != "OpGetVector" && inner != "OpGetVectorNullable") {
+    return false;
+  }
+  size = match unspan(ga[1]!) {
+    NdInt { n } => n,
+    _ => -1,
+  };
+  vec = vector_local(g, ga[0]!);
+  idx = int_local(g, ga[2]!);
+  if size < 0 || size > 65535 || vec < 0 || idx < 0 {
+    return false;
+  }
+  store = name == "OpSetInt";
+  if store && (inner != "OpGetVector" || len(args) != 3 || !fused_pure_int(g, args[2]!)) {
+    return false;
+  }
+  if !store && len(args) != 2 {
+    return false;
+  }
+  // The positions are taken before the stored value is pushed, as the Rust writer takes them.
+  vp = var_pos(g, vec);
+  ip = var_pos(g, idx);
+  if store {
+    generate(g, args[2]!, false);
+  }
+  add_op(g, if store { "OpVecSetInt" } else if inner == "OpGetVector" { "OpVecGetInt" } else { "OpVecGetIntNullable" });
+  put_u16(g.o, vp);
+  put_u16(g.o, size);
+  put_u16(g.o, ip);
+  put_u16(g.o, fld);
+  true
+}
+
+// The operators and natives `generate_call` writes in a way of their own, which this writer
+// does not write yet.
+fn special_call(name: text) -> boolean {
+  name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpCreateStack"
+}
+
+// Is `n` in the list a `NoPrefill` fact keeps under `tag` (`l` locals, `m` mints;
+// `NoPrefill::encode` writes `l1,2;m3`)?
+fn no_prefill_lists(fact: text, tag: character, n: integer) -> boolean {
+  for part in fact.split(';') {
+    if len(part) > 0 && part[0] == tag {
+      for nr in part[1..].split(',') {
+        if nr == "{n}" {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// `refvar_text_stack_variant`: a text operator whose destination is a link to a text writes
+// through the link, by its stack twin.
+fn stack_variant(g: Gen, op: integer, args: vector<ir::Node>) -> integer {
+  v = if len(args) > 0 { plain_var(args[0]!) } else { -1 };
+  if v < 0 {
+    return op;
+  }
+  link = match var_of(g, v).type_def[0] ?? ir::TyVoid {
+    TyRefVar { inner } => match base(inner) {
+      TyText { dep: _ } => true,
+      _ => false,
+    },
+    _ => false,
+  };
+  if !link {
+    return op;
+  }
+  name = def_of(g, op).name;
+  twin = if name == "OpAppendText" { "OpAppendStackText" }
+    else if name == "OpClearText" { "OpClearStackText" }
+    else if name == "OpAppendCharacter" { "OpAppendStackCharacter" }
+    else if name == "OpFormatText" { "OpFormatStackText" }
+    else if name == "OpFormatInt" { "OpFormatStackInt" }
+    else if name == "OpFormatFloat" { "OpFormatStackFloat" }
+    else if name == "OpFormatSingle" { "OpFormatStackSingle" }
+    else if name == "OpFormatDatabase" { "OpFormatStackDatabase" }
+    else { "" };
+  if twin == "" {
+    return op;
+  }
+  nr = op_named(g.b, twin);
+  if nr < 0 { op } else { nr }
+}
+
+// `no_prefill_twin` (`@FR-R-CompleteWrite`): the mint whose literal writes every field runs
+// as its no-prefill twin; any other call as itself.
+fn no_prefill_twin(g: Gen, op: integer, args: vector<ir::Node>) -> integer {
+  fact = def_of(g, g.d).no_prefill;
+  if fact == "" {
+    return op;
+  }
+  name = def_of(g, op).name;
+  twin = "";
+  if name == "OpDatabase" && len(args) > 0 {
+    v = match unspan(args[0]!) {
+      NdVar { n } => n,
+      _ => -1,
+    };
+    if v >= 0 && no_prefill_lists(fact, 'l', v) {
+      twin = "OpDatabaseNP";
+    }
+  } else if name == "OpNewRecord" && len(args) > 1 {
+    t = int_of(args[1]!);
+    if t >= 0 && t <= 65535 && no_prefill_lists(fact, 'm', t) {
+      twin = "OpNewRecordNP";
+    }
+  }
+  if twin == "" {
+    return op;
+  }
+  nr = op_named(g.b, twin);
+  if nr < 0 { op } else { nr }
+}
+
+// The local a node names, as it stands (no span looked through); -1 for any other node.
+fn plain_var(n: ir::Node) -> integer {
+  match n {
+    NdVar { n: v } => v,
+    _ => -1,
+  }
+}
+
+fn int_of(n: ir::Node) -> integer {
+  match unspan(n) {
+    NdInt { n: v } => v,
+    _ => -1,
+  }
+}
+
+// A stack-frame reference to a local pushed (`emit_push_create_stack`).
+fn push_create_stack(g: Gen, dep_offset: integer) {
+  add_op(g, "OpReserveFrame");
+  put_u16(g.o, 16);
+  g.position += 16;
+  add_op(g, "OpInitCreateStack");
+  put_u16(g.o, 16);
+  put_u16(g.o, dep_offset + 16);
+}
+
+// The calls `generate_call` writes in a way of their own, in its order.  True when the call
+// was written (or needs nothing written); a form not ported yet stops the function.
+fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
+  name = def_of(g, op).name;
+  first = if len(args) > 0 { plain_var(args[0]!) } else { -1 };
+  if name == "OpPreAllocVector" && len(args) == 3 && first >= 0 {
+    // A first claim of exactly what the first append would claim is left to that append
+    // (`@FR-R-FirstClaim`, `vector::grown_elems(1, size)`).
+    n = int_of(args[1]!);
+    sz = int_of(args[2]!);
+    if n >= 0 && sz >= 0 {
+      start = 88 / (if sz < 1 { 1 } else { sz });
+      grown = if start < 2 { 2 } else { start };
+      if n == grown {
+        return true;
+      }
+    }
+    return false;
+  }
+  if name == "OpFreeRef" && first >= 0 {
+    if var_of(g, first).skip_free {
+      return true;
+    }
+    function = match var_of(g, first).type_def[0] ?? ir::TyVoid {
+      TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+      _ => false,
+    };
+    at = var_pos(g, first);
+    if function {
+      add_op(g, "OpVarRef");
+      put_u16(g.o, at - 8);
+      add_op(g, "OpFreeRef");
+      return true;
+    }
+    generate(g, args[0]!, false);
+    add_op(g, "OpFreeRef");
+    add_op(g, "OpInitRefSentinel");
+    put_u16(g.o, at);
+    return true;
+  }
+  if (name == "OpDropFnRef" || name == "OpFnRefClosure") && first >= 0 {
+    at = var_pos(g, first);
+    add_op(g, name);
+    put_u16(g.o, at);
+    return true;
+  }
+  if name == "OpFnRefDetachShared" && len(args) == 2 && first >= 0 && plain_var(args[1]!) >= 0 {
+    old = var_pos(g, first);
+    new = var_pos(g, plain_var(args[1]!));
+    add_op(g, name);
+    put_u16(g.o, old);
+    put_u16(g.o, new);
+    return true;
+  }
+  if name == "OpFreeRefIfDistinct" && len(args) == 2 && first >= 0 {
+    w = plain_var(args[1]!);
+    if var_of(g, first).name.starts_with("__lift_") || own::has(g.owned_reassigned, first) {
+      // A lifted call's temp: released unless it is the buffer's store, and reset either way.
+      at = var_pos(g, first);
+      generate(g, args[0]!, false);
+      generate(g, args[1]!, false);
+      add_op(g, name);
+      add_op(g, "OpInitRefSentinel");
+      put_u16(g.o, at);
+      return true;
+    }
+    if w >= 0 {
+      // Released unless it is the witness's store, and reset where it was released.
+      init_slot(g, first, "OpVarRef");
+      init_slot(g, w, "OpVarRef");
+      add_op(g, name);
+      reset = ir::NdIf {
+        cond: ir::NdCall { def_nr: op_named(g.b, "OpDistinctStore"), args: [ir::NdVar { n: first }, ir::NdVar { n: w }] },
+        t: ir::NdCall { def_nr: op_named(g.b, "OpInitRefSentinel"), args: [ir::NdVar { n: first }] },
+        f: ir::NdNull
+      };
+      generate(g, reset, false);
+      return true;
+    }
+    return false;
+  }
+  if name == "OpSetInt4" {
+    for a in args {
+      member = match unspan(a) {
+        NdTupleGet { var: _, idx: _ } => true,
+        _ => false,
+      };
+      if member {
+        stop(g, "not written yet: a tuple member written through OpSetInt4");
+      }
+    }
+    return false;
+  }
+  if name == "OpCoroutineNext" && len(args) >= 2 {
+    generate(g, args[0]!, false);
+    size = match args[1]! {
+      NdInt { n } => n & 65535,
+      _ => 4,
+    };
+    put_op(g.o, g.b, op);
+    put_u16(g.o, size);
+    g.position += frame::stepped(size & 255) - 16;
+    return true;
+  }
+  if name == "OpNullRefSentinel" {
+    push_sentinel(g);
+    return true;
+  }
+  if name == "OpConvRefFromNull" {
+    add_op(g, "OpReserveFrame");
+    put_u16(g.o, 16);
+    g.position += 16;
+    add_op(g, "OpInitRef");
+    put_u16(g.o, 16);
+    return true;
+  }
+  if name == "OpCreateStack" && first >= 0 {
+    push_create_stack(g, var_pos(g, first));
+    return true;
+  }
+  if name == "OpFreeText" && len(args) == 1 {
+    v = match unspan(args[0]!) {
+      NdVar { n: nr } => nr,
+      _ => -1,
+    };
+    if v < 0 {
+      member = match unspan(args[0]!) {
+        NdTupleGet { var, idx } => bgen_tuple::free_member(g, var, idx),
+        _ => false,
+      };
+      if !member {
+        stop(g, "not written yet: a text freed that is no local and no tuple member");
+      }
+      return true;
+    }
+    return false;
+  }
+  false
+}
+
+// `gather_key`: the key values a keyed call names after position `from`, last first.
+fn gather_key(g: Gen, args: vector<ir::Node>, from: integer) {
+  keys = match args[from] ?? ir::NdNull {
+    NdInt { n } => n,
+    _ => 0,
+  };
+  k = 0;
+  while k < keys {
+    generate(g, args[keys + from - k] ?? ir::NdNull, false);
+    k += 1;
+  }
+}
+
+// `State::generate_call`: an operator with its stack arguments written first and its constant
+// operands after its number; a native by its number (`OpStaticCall`); a function by its
+// definition, its arguments' size and its code position (`OpCall`).
+fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
+  def = def_of(g, op);
+  ret = def.returned[0] ?? ir::TyVoid;
+  fused = fusable(g, op, args);
+  if fused.ok {
+    put_fused(g, fused, false);
+    return ret;
+  }
+  if fused_vec(g, op, args) {
+    return ret;
+  }
+  if def.name == "OpAppendText" && len(args) >= 2 && bgen_text::text_dest_pass(g, args) {
+    return ret;
+  }
+  if g.adopt.v >= 0 && len(args) > 0 && (def.name == "OpDatabase" || def.name == "OpSetInt4") {
+    // The adopted local's witness is never minted, nor zeroed.
+    witness = match unspan(args[0]!) {
+      NdVar { n } => n,
+      _ => -1,
+    };
+    if witness == g.adopt.vdb {
+      return ir::TyVoid;
+    }
+  }
+  if own_way(g, op, args) {
+    return ret;
+  }
+  if g.why != "" {
+    return ret;
+  }
+  if special_call(def.name) || len(args) < len(def.attributes) {
+    stop(g, "a call the writer does not write yet: {def.name}");
+    return ret;
+  }
+  generator = match ret {
+    TyIterator { step: _, inner: _ } => true,
+    _ => false,
+  };
+  operator_def = def.name.starts_with("Op");
+  for a in def.attributes {
+    if a.mutable {
+      before = g.position;
+      at = a.typedef[0] ?? ir::TyVoid;
+      arg = args[a#index]!;
+      // `push_forwarded_link`: a link handed on to a link parameter goes as it is.
+      forwarded = plain_var(arg);
+      link_param = match at {
+        TyRefVar { inner: _ } => true,
+        _ => false,
+      };
+      link_arg = forwarded >= 0 && match var_of(g, forwarded).type_def[0] ?? ir::TyVoid {
+        TyRefVar { inner: _ } => true,
+        _ => false,
+      };
+      if link_param && link_arg {
+        init_slot(g, forwarded, "OpVarRef");
+      } else {
+        generate(g, arg, false);
+        if raw_null(arg) && g.position == before {
+          typed_null(g, at);
+        }
+        function_param = match at {
+          TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+          _ => false,
+        };
+        if function_param && g.position - before < 16 {
+          push_sentinel(g);
+        }
+      }
+      if g.position - before != pushed(at) {
+        stop(g, "an argument that does not take its parameter's bytes in a call of {def.name}");
+      }
+    }
+  }
+  // A `par` call's arguments past the declared ones are written after them, a word each.
+  par_call = def.name == "n_parallel_for" || def.name == "n_parallel_for_light" || def.name == "n_parallel_discard"
+    || def.name == "n_parallel_queue" || def.name == "n_parallel_queue_text" || def.name == "n_parallel_queue_ref"
+    || def.name == "n_parallel_queue_narrow" || def.name == "n_parallel_queue_fn" || def.name == "n_parallel_fold";
+  extras = 0;
+  if par_call {
+    for a in args {
+      if a#index >= len(def.attributes) {
+        generate(g, a, false);
+        extras += 1;
+      }
+    }
+  }
+  if operator_def {
+    // The keyed calls take their key values after their declared arguments (`gather_key`),
+    // and leave the evaluation position where the call's own rule puts it.
+    was = -1;
+    if def.name == "OpGetRecord" {
+      was = g.position;
+      gather_key(g, args, 2);
+    } else if def.name == "OpSetKeyed" {
+      was = g.position - 32;
+      gather_key(g, args, 3);
+    } else if def.name == "OpStart" {
+      was = g.position + 8 - 16;
+      gather_key(g, args, 2);
+    } else if def.name == "OpNext" {
+      was = g.position;
+      gather_key(g, args, 3);
+    } else if def.name == "OpIterate" {
+      was = g.position + 8 - 16;
+      first_keys = match args[4] ?? ir::NdNull {
+        NdInt { n } => n,
+        _ => -1,
+      };
+      if first_keys >= 0 {
+        gather_key(g, args, 4);
+        gather_key(g, args, 5 + first_keys);
+      }
+    }
+    if was >= 0 {
+      before = g.position;
+      put_op(g.o, g.b, op);
+      g.position = was;
+      for a in def.attributes {
+        if !a.mutable {
+          // `OpIterate`'s till-key count lies past the from-key values.
+          at = a#index;
+          if def.name == "OpIterate" && at == 5 {
+            from_count = match args[4] ?? ir::NdNull {
+              NdInt { n } => n,
+              _ => -1,
+            };
+            if from_count >= 0 {
+              at = 5 + from_count;
+            }
+          }
+          add_const(g, a.typedef[0] ?? ir::TyVoid, args[at] ?? ir::NdNull, before);
+        }
+      }
+      return ret;
+    }
+    before = g.position;
+    actual = no_prefill_twin(g, stack_variant(g, op, args), args);
+    put_op(g.o, g.b, actual);
+    stack_effect(g, actual);
+    for a in def.attributes {
+      if !a.mutable {
+        add_const(g, a.typedef[0] ?? ir::TyVoid, args[a#index]!, before);
+      }
+    }
+    return ret;
+  }
+  body = match def.code[0] {
+    null => false,
+    NdNull => false,
+    _ => true,
+  };
+  lookup = if def.native != "" { def.native } else if body { "" } else { def.name };
+  lib = -1;
+  if lookup != "" {
+    for n in g.natives {
+      if n == lookup {
+        lib = n#index;
+      }
+    }
+  }
+  size = 0;
+  for a in def.attributes {
+    size += pushed(a.typedef[0] ?? ir::TyVoid);
+  }
+  if lib >= 0 {
+    add_op(g, "OpStaticCall");
+    put_u16(g.o, lib);
+    size += extras * 8;
+  } else {
+    add_op(g, if generator { "OpCoroutineCreate" } else { "OpCall" });
+    put_i64(g.o, op);
+    put_u16(g.o, size);
+    put_i64(g.o, g.starts[op] ?? 0);
+  }
+  g.position += pushed(ret) - size;
+  ret
+}
+
+// The operator that stores a scalar into its frame slot; "" for a type whose assignment this
+// writer does not write yet.
+fn put_op_of(t: ir::TypeT) -> text {
+  match base(t) {
+    TyInteger { spec: _ } => "OpPutInt",
+    TyCharacter => "OpPutCharacter",
+    TyBoolean => "OpPutBool",
+    TySingle => "OpPutSingle",
+    TyFloat => "OpPutFloat",
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "" } else { "OpPutEnum" },
+    _ => "",
+  }
+}
+
+// `gen_set_first_text` and a text local's later assignments (`set_var`): its slot made a
+// text at its first value, emptied before a later one, and the value appended.  Written for
+// the writer's `LOFT_NO_TEXT_BORROW=1` form: no text local is a view.
+fn assign_text(g: Gen, v: integer, value: ir::Node) {
+  pos = g.slots[v] ?? 65535;
+  if pos == 65535 {
+    stop(g, "a text without a slot");
+    return;
+  }
+  if !(g.allocated[v] ?? false) {
+    g.allocated[v] = true;
+    slot_end = pos + 24;
+    if g.position < slot_end {
+      advance = frame::stepped(slot_end) - g.position;
+      add_op(g, "OpReserveFrame");
+      put_u16(g.o, advance);
+      g.position += advance;
+    }
+    add_op(g, "OpInitText");
+    put_u16(g.o, g.position - pos);
+    empty = match value {
+      NdText { s: t } => t == "",
+      _ => false,
+    };
+    if empty {
+      return;
+    }
+  } else {
+    add_op(g, "OpClearText");
+    put_u16(g.o, g.position - pos);
+  }
+  if bgen_text::set_text_call(g, v, value, "") {
+    return;
+  }
+  empty = match value {
+    NdText { s: t } => t == "",
+    _ => false,
+  };
+  if empty {
+    return;
+  }
+  before = g.position;
+  generate(g, value, false);
+  if g.position == before {
+    match unspan(value) {
+      NdNull => typed_null(g, ir::TyText { dep: [] }),
+      _ => {}
+    }
+  }
+  at = var_pos(g, v);
+  add_op(g, "OpAppendText");
+  put_u16(g.o, at);
+}
+
+// A reference slot that lies above the evaluation position is reserved up to its end.
+fn reserve_ref_slot(g: Gen, v: integer) {
+  // A reference's own twelve bytes; the reserve is stepped, the test is not.
+  slot_end = (g.slots[v] ?? 0) + 12;
+  if g.position < slot_end {
+    bump = frame::stepped(slot_end) - g.position;
+    add_op(g, "OpReserveFrame");
+    put_u16(g.o, bump);
+    g.position += bump;
+  }
+}
+
+fn init_slot(g: Gen, v: integer, op: text) {
+  at = var_pos(g, v);
+  add_op(g, op);
+  put_u16(g.o, at);
+}
+
+fn raw_null(n: ir::Node) -> boolean {
+  match n {
+    NdNull => true,
+    _ => false,
+  }
+}
+
+fn record_like(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+// `gen_owned_vector_store`: the local's own wrapper record, its one field zeroed.
+fn owned_vector_store(g: Gen, v: integer) {
+  known = lower::main_vector_of(g.b, var_of(g, v).type_def);
+  if known == null {
+    stop(g, "an owned vector whose wrapper type the image does not name");
+    return;
+  }
+  at = var_pos(g, v);
+  add_op(g, "OpDatabase");
+  put_u16(g.o, at);
+  put_u16(g.o, known!);
+  init_slot(g, v, "OpVarRef");
+  add_op(g, "OpConstInt");
+  put_i64(g.o, 0);
+  add_op(g, "OpSetInt4");
+  put_u16(g.o, 0);
+}
+
+// `gen_keyed_null`: a keyed collection's null — its own empty store, unless it borrows an
+// outer one or is overwritten by its view (`keyed_null_mints`).
+fn keyed_null(g: Gen, v: integer, first: boolean) {
+  f = def_of(g, g.d).variables;
+  if first {
+    reserve_ref_slot(g, v);
+  }
+  if binds::is_inline_ref(f, v) || binds::is_overwritten_view(f, v) {
+    if first {
+      init_slot(g, v, "OpInitRefSentinel");
+    }
+    return;
+  }
+  known = lower::hash_type_of(g.b, var_of(g, v).type_def);
+  if known == null {
+    stop(g, "a keyed collection whose type the image does not name");
+    return;
+  }
+  if first {
+    init_slot(g, v, "OpInitRef");
+  }
+  at = var_pos(g, v);
+  add_op(g, "OpDatabase");
+  put_u16(g.o, at);
+  put_u16(g.o, known!);
+}
+
+// A record local copied into `v` (`OpBindOrCopy`): `v` nulled, the source and its witness
+// pushed, and the copy made unless the two are one store.
+fn var_copy(g: Gen, v: integer, src: integer, rec: integer) {
+  reserve_ref_slot(g, v);
+  init_slot(g, v, "OpInitRef");
+  generate(g, ir::NdVar { n: src }, false);
+  // `push_copy_witness`: a link's is the record it names, any other local's its own slot.
+  link = match base(var_of(g, src).type_def[0] ?? ir::TyVoid) {
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  };
+  if link {
+    generate(g, ir::NdVar { n: src }, false);
+  } else {
+    init_slot(g, src, "OpVarRef");
+  }
+  add_op(g, "OpBindOrCopy");
+  put_u16(g.o, var_pos(g, v));
+  put_u16(g.o, def_of(g, rec).known_type);
+}
+
+// A definition's number by its name; -1 where the image holds none.
+fn def_named(g: Gen, name: text) -> integer {
+  for d in g.b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// A call of `n_protect_store_frees` or its lifting on a local's store.
+fn protect(g: Gen, v: integer, on: boolean) {
+  f = def_named(g, if on { "n_protect_store_frees" } else { "n_unprotect_store_frees" });
+  if f < 0 {
+    stop(g, "the image holds no store-free protection");
+    return;
+  }
+  generate(g, ir::NdCall { def_nr: f, args: [ir::NdVar { n: v }] }, false);
+}
+
+// The call's arguments that are the caller's own hidden buffers, `v` itself left out.
+fn caller_hidden_args(g: Gen, v: integer, value: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  match unspan(value) {
+    NdCall { def_nr: _, args } => {
+      for a in args {
+        av = match unspan(a) {
+          NdVar { n } => n,
+          _ => -1,
+        };
+        if av >= 0 && av != v && var_of(g, av).caller_hidden_buf {
+          out += [av];
+        }
+      }
+    }
+    _ => {}
+  }
+  out
+}
+
+// `release_caller_hidden_arg`: a buffer the call was handed released — an argument's unless
+// it is its entry's store — and its slot reset.
+fn release_hidden(g: Gen, av: integer) {
+  f = def_of(g, g.d).variables;
+  if var_of(g, av).argument {
+    witness = binds::entry_witness(f, av);
+    if witness == null {
+      return;
+    }
+    init_slot(g, av, "OpVarRef");
+    init_slot(g, witness!, "OpVarRef");
+    add_op(g, "OpFreeRefIfDistinct");
+  } else {
+    init_slot(g, av, "OpVarRef");
+    add_op(g, "OpFreeRef");
+  }
+  init_slot(g, av, "OpInitRefSentinel");
+}
+
+// `gen_set_first_ref_call_copy`: a call's record copied into `v`'s own (`OpCopyRefOrNull`),
+// the stores its reference arguments name protected from the copy's frees meanwhile.
+fn call_copy(g: Gen, v: integer, value: ir::Node, rec: integer) {
+  known = def_of(g, rec).known_type;
+  reserve_ref_slot(g, v);
+  at = var_pos(g, v);
+  add_op(g, "OpInitRef");
+  put_u16(g.o, at);
+  add_op(g, "OpDatabase");
+  put_u16(g.o, at);
+  put_u16(g.o, known);
+  ref_args = binds::protectable_ref_args(g.b, g.defs, value).slots;
+  hidden = caller_hidden_args(g, v, value);
+  raw = if binds::call_return_frees_source(g.b, g.ops, g.d, g.defs, value) { known | 32768 } else { known };
+  generate(g, value, false);
+  for av in ref_args {
+    protect(g, av, true);
+  }
+  add_op(g, "OpCopyRefOrNull");
+  put_u16(g.o, at);
+  put_u16(g.o, raw);
+  for av in ref_args {
+    protect(g, av, false);
+  }
+  for av in hidden {
+    release_hidden(g, av);
+  }
+}
+
+// `gen_set_first_ref_elem_copy`: a record read out of a container copied into `v`'s own
+// record (`OpCopyRefOrNull`); the value first where evaluating it may leave.
+fn elem_copy(g: Gen, v: integer, value: ir::Node, rec: integer, value_first: boolean) {
+  known = def_of(g, rec).known_type;
+  reserve_ref_slot(g, v);
+  if value_first {
+    generate(g, value, false);
+  }
+  at = var_pos(g, v);
+  add_op(g, "OpInitRef");
+  put_u16(g.o, at);
+  add_op(g, "OpDatabase");
+  put_u16(g.o, at);
+  put_u16(g.o, known);
+  if !value_first {
+    generate(g, value, false);
+  }
+  add_op(g, "OpCopyRefOrNull");
+  put_u16(g.o, var_pos(g, v));
+  put_u16(g.o, known);
+}
+
+// `gen_set_first_ref_fnref`: the record a call through an opaque function value answers,
+// bound into `v` (`OpBindFnRefResult`).
+fn fnref_bind(g: Gen, v: integer, value: ir::Node, rec: integer) {
+  generate(g, value, false);
+  init_slot(g, v, "OpInitRefSentinel");
+  add_op(g, "OpBindFnRefResult");
+  put_u16(g.o, var_pos(g, v));
+  put_u16(g.o, def_of(g, rec).known_type);
+}
+
+// `join_witness_members`: the members of a tuple join base that hold a record of their own;
+// none for a base that is no tuple or has a nested tuple member.
+fn join_witness_members(g: Gen, base_var: integer) -> vector<integer> {
+  found: vector<integer> = [];
+  match base(var_of(g, base_var).type_def[0] ?? ir::TyVoid) {
+    TyTuple { elems } => {
+      for e in elems {
+        if binds::heap_leaves(e) == 0 {
+          continue;
+        }
+        nested = match base(e) {
+          TyTuple { elems: _ } => true,
+          _ => false,
+        };
+        if nested {
+          return [];
+        }
+        found += [e#index];
+      }
+    }
+    _ => {}
+  }
+  found
+}
+
+// A value that may be one of its arguments' stores bound into `v`: adopted where it is a
+// store of its own, copied where it is the witness's (`OpBindOrCopy`), each further member
+// of a tuple base rechecked the same way.  `sentinel` for a slot that holds nothing yet.
+fn join_bind(g: Gen, v: integer, value: ir::Node, rec: integer, base_var: integer, sentinel: boolean) {
+  known = def_of(g, rec).known_type;
+  generate(g, value, false);
+  members = join_witness_members(g, base_var);
+  if len(members) > 0 {
+    generate(g, ir::NdTupleGet { var: base_var, idx: members[0]! }, false);
+  } else {
+    init_slot(g, base_var, "OpVarRef");
+  }
+  if sentinel {
+    init_slot(g, v, "OpInitRefSentinel");
+  }
+  add_op(g, "OpBindOrCopy");
+  put_u16(g.o, var_pos(g, v));
+  put_u16(g.o, known);
+  for m in members {
+    if m#index > 0 {
+      init_slot(g, v, "OpVarRef");
+      generate(g, ir::NdTupleGet { var: base_var, idx: m }, false);
+      init_slot(g, v, "OpInitRefSentinel");
+      add_op(g, "OpBindOrCopy");
+      put_u16(g.o, var_pos(g, v));
+      put_u16(g.o, known);
+    }
+  }
+}
+
+// `gen_set_first_at_tos`: a first bind of a value that is no scalar and no text, by the arm
+// `bind_lowering::first_arm` decides, in its order.  An arm not ported yet stops the function
+// under its name.
+fn first_bind(g: Gen, v: integer, value: ir::Node) {
+  f = def_of(g, g.d).variables;
+  var = var_of(g, v);
+  tp = var.type_def[0] ?? ir::TyVoid;
+  bs = base(tp);
+  null_value = raw_null(value);
+  u = unspan(value);
+  if record_like(bs) && null_value {
+    // `gen_set_first_ref_null`: an owner starts null, anything else as the sentinel.
+    reserve_ref_slot(g, v);
+    deps = match tp {
+      TyReference { n: _, dep } => len(dep),
+      TyEnum { n: _, is_ref: _, dep } => len(dep),
+      _ => 0,
+    };
+    plain = deps == 0 && !(var.name.starts_with("__vdb") || binds::is_inline_ref(f, v) || var.skip_free);
+    init_slot(g, v, if plain { "OpInitRef" } else { "OpInitRefSentinel" });
+    return;
+  }
+  iterator = match bs {
+    TyIterator { step: _, inner: _ } => true,
+    _ => false,
+  };
+  if iterator && null_value {
+    reserve_ref_slot(g, v);
+    init_slot(g, v, "OpInitRefSentinel");
+    return;
+  }
+  reference = match tp {
+    TyReference { n: _, dep: _ } => true,
+    _ => false,
+  };
+  copy_call = match u {
+    NdCall { def_nr, args: _ } => def_of(g, def_nr).name == "OpCopyRecord",
+    _ => false,
+  };
+  if reference && copy_call {
+    stop(g, "not written yet: a first bind from a record copy");
+    return;
+  }
+  hd = own::heap_def_nr(tp);
+  src = plain_var(value);
+  if hd != null && src >= 0 {
+    sd = own::record_copy_source(g.b, f, v, src);
+    if sd != null && own::copies_as(g.b, hd!, sd!) {
+      // `gen_set_first_ref_var_copy`: a source read once that owns its store hands it over
+      // and is never freed; any other is copied unless it is the same store.
+      if binds::uses(f, src) == 1 && binds::proxy_says_owned(f, src) && !var_of(g, src).argument && !binds::is_captured(f, src) {
+        init_slot(g, src, "OpVarRef");
+        g.position += 16;
+        g.b.data.definitions[g.d]!.variables.variables[src].skip_free = true;
+        init_slot(g, v, "OpPutRef");
+        return;
+      }
+      var_copy(g, v, src, hd!);
+      return;
+    }
+  }
+  unwitnessed = binds::has_no_deps(tp) && binds::owner_witness(f, v) == null;
+  if hd != null && unwitnessed && binds::projection_container_var(g.b, value) != null {
+    elem_copy(g, v, value, hd!, binds::value_can_exit(value));
+    return;
+  }
+  tuple_get = match value {
+    NdTupleGet { var: _, idx: _ } => true,
+    _ => false,
+  };
+  if reference && tuple_get && unwitnessed {
+    // `gen_set_first_ref_tuple_copy`: a tuple member copied into a record of `v`'s own.
+    known = def_of(g, hd ?? 0).known_type;
+    reserve_ref_slot(g, v);
+    at = var_pos(g, v);
+    add_op(g, "OpInitRef");
+    put_u16(g.o, at);
+    add_op(g, "OpDatabase");
+    put_u16(g.o, at);
+    put_u16(g.o, known);
+    generate(g, ir::NdCall { def_nr: op_named(g.b, "OpCopyRecord"), args: [value, ir::NdVar { n: v }, ir::NdInt { n: known }] }, false);
+    return;
+  }
+  call_ref = match u {
+    NdCallRef { var: _, args: _ } => true,
+    _ => false,
+  };
+  if call_ref && record_like(bs) {
+    // `callref_join_first_bind`: a call through a function value that may answer one of
+    // its arguments' stores.
+    jb = own::named_join_base(own::ownership_of(g.b, g.ops, g.d, value));
+    rec = match bs {
+      TyReference { n, dep: _ } => n,
+      TyEnum { n, is_ref: _, dep: _ } => n,
+      _ => -1,
+    };
+    if jb != null && rec >= 0 {
+      reserve_ref_slot(g, v);
+      join_bind(g, v, value, rec, jb!, true);
+      return;
+    }
+  }
+  optional = match tp {
+    TyOptional { inner: _ } => true,
+    _ => false,
+  };
+  // `nullable_join_first_bind` answers none while a nullable answer has its return buffer
+  // (`LOFT_NO_NULLABLE_RETBUF` unset), so a nullable local takes the arms below.
+  opaque = binds::opaque_callref_bind(g.b, g.defs, tp, value);
+  if opaque != null {
+    reserve_ref_slot(g, v);
+    fnref_bind(g, v, value, opaque!);
+    return;
+  }
+  shape = binds::first_bind_shape(tp);
+  callee = binds::callee_of(g.b, g.defs, value);
+  if record_like(shape) && callee != null && binds::is_loft_defined(def_of(g, callee!)) {
+    jb = own::named_join_base(own::ownership_of(g.b, g.ops, g.d, value));
+    if binds::join_record(shape) != null && !var.view_elided && jb != null {
+      reserve_ref_slot(g, v);
+      join_bind(g, v, value, binds::join_record(shape)!, jb!, true);
+      return;
+    }
+    if binds::return_adopts_fresh_store(def_of(g, callee!)) || var.view_elided || binds::adopts_minted_at_bind(g.b, g.ops, f, v, value) {
+      generate(g, value, false);
+      init_slot(g, v, "OpPutRef");
+      return;
+    }
+    call_copy(g, v, value, own::heap_def_nr_bare(shape) ?? 0);
+    return;
+  }
+  if binds::join_record(shape) != null && !optional_shape(shape) && unwitnessed && !var.view_elided
+      && binds::choice_var_arm(g.b, g.ops, g.d, f, value, v) != null {
+    stop(g, "not written yet: a first bind that joins on a choice");
+    return;
+  }
+  vector_base = match bs {
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  };
+  if null_value && optional && vector_base {
+    reserve_ref_slot(g, v);
+    init_slot(g, v, "OpInitRefSentinel");
+    return;
+  }
+  vector_dep = match tp {
+    TyVector { inner: _, dep } => len(dep),
+    _ => -1,
+  };
+  if null_value && vector_dep >= 0 {
+    // `gen_set_first_vector_null`: an owner gets its own wrapper record, its one field zero.
+    reserve_ref_slot(g, v);
+    if vector_dep == 0 && !(var.skip_free || binds::is_inline_ref(f, v) || var.lazy_buffer) {
+      init_slot(g, v, "OpInitRef");
+      owned_vector_store(g, v);
+    } else {
+      init_slot(g, v, "OpInitRefSentinel");
+    }
+    return;
+  }
+  if null_value && binds::owns_keyed_store(tp) {
+    keyed_null(g, v, true);
+    return;
+  }
+  tuple = match bs {
+    TyTuple { elems: _ } => true,
+    _ => false,
+  };
+  if tuple && null_value {
+    bgen_tuple::first_null(g, v);
+    return;
+  }
+  ref_var = match tp {
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  };
+  if ref_var && src >= 0 {
+    link = match var_of(g, src).type_def[0] ?? ir::TyVoid {
+      TyRefVar { inner: _ } => true,
+      _ => false,
+    };
+    if link {
+      init_slot(g, src, "OpVarRef");
+      init_slot(g, v, "OpPutRef");
+      return;
+    }
+  }
+  put_ref = match bs {
+    TyVector { inner: _, dep: _ } => true,
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TyIterator { step: _, inner: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  };
+  function = match tp {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  };
+  if function {
+    if null_value {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, null);
+      push_sentinel(g);
+    } else {
+      fn_ref_value(g, value);
+    }
+    put_fn_ref(g, v);
+    return;
+  }
+  if tuple {
+    bgen_tuple::first_bind(g, v, value);
+    return;
+  }
+  if !put_ref {
+    stop(g, "not written yet: a first bind of {shape_name(tp)}");
+    return;
+  }
+  before = g.position;
+  generate(g, value, false);
+  if g.position == before {
+    return;
+  }
+  init_slot(g, v, "OpPutRef");
+}
+
+// What a type the writer does not store yet is, for the count of what is left.
+fn shape_name(t: ir::TypeT) -> text {
+  match base(t) {
+    TyTuple { elems: _ } => "a tuple",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "a function value",
+    TyRefVar { inner: _ } => "a link",
+    TyText { dep: _ } => "a text link",
+    TyInteger { spec: _ } => "a linked narrow integer",
+    _ => "another shape",
+  }
+}
+
+fn optional_shape(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner: _ } => true,
+    _ => false,
+  }
+}
+
+// `State::generate_set` for a scalar local: its first value written where it is pushed and
+// stored (`FirstArm::Plain`), a later one through `set_var` — an integer operator over locals
+// stored by the operator itself (`OpIntVVPut` / `OpIntVCPut`).
+fn assign(g: Gen, v: integer, value: ir::Node) {
+  var = var_of(g, v);
+  tp = var.type_def[0] ?? ir::TyVoid;
+  if bgen_loop::walk_step(g, v, value) || bgen_loop::loop_slot(g, v, value) {
+    return;
+  }
+  text = match base(tp) {
+    TyText { dep: _ } => true,
+    _ => false,
+  };
+  if text && !var.store_text_link {
+    assign_text(g, v, value);
+    return;
+  }
+  if frame::width(tp, false) == 0 {
+    g.allocated[v] = true;
+    return;
+  }
+  if put_op_of(tp) == "" && !var.linked_narrow && (g.slots[v] ?? 65535) != 65535 {
+    if g.allocated[v] ?? false {
+      bgen_set::rebind(g, v, value);
+    } else {
+      g.allocated[v] = true;
+      first_bind(g, v, value);
+    }
+    return;
+  }
+  put = put_op_of(tp);
+  block = match unspan(value) {
+    NdBlock { block: _ } => true,
+    _ => false,
+  };
+  if put == "" || var.linked_narrow || (g.slots[v] ?? 65535) == 65535 {
+    stop(g, "not written yet: an assignment of a value that is no scalar");
+    return;
+  }
+  if !(g.allocated[v] ?? false) {
+    g.allocated[v] = true;
+    before = g.position;
+    generate(g, value, false);
+    if g.position == before {
+      return;
+    }
+    at = var_pos(g, v);
+    add_op(g, put);
+    put_u16(g.o, at);
+    return;
+  }
+  before = g.position;
+  integer_var = put == "OpPutInt";
+  if integer_var {
+    match unspan(value) {
+      NdCall { def_nr, args } => {
+        f = fusable(g, def_nr, args);
+        if f.ok && !f.compare {
+          // The store's position is the one an `OpPutInt` would carry after the push.
+          at = var_pos(g, f.a);
+          bt = if f.b >= 0 { var_pos(g, f.b) } else { 0 };
+          dst = g.position + 8 - (g.slots[v] ?? 0);
+          add_op(g, if f.b >= 0 { "OpIntVVPut" } else { "OpIntVCPut" });
+          put_u8(g.o, f.kind);
+          put_u16(g.o, dst);
+          put_u16(g.o, at);
+          if f.b >= 0 {
+            put_u16(g.o, bt);
+          } else {
+            put_i64(g.o, f.c);
+          }
+          return;
+        }
+      }
+      _ => {}
+    }
+  }
+  generate(g, value, false);
+  if g.position == before {
+    match unspan(value) {
+      NdNull => typed_null(g, tp),
+      _ => {}
+    }
+  }
+  at = var_pos(g, v);
+  add_op(g, put);
+  put_u16(g.o, at);
+}
+
+// `State::generate_var`: a variable's value pushed, by its type.
+fn variable(g: Gen, v: integer) -> ir::TypeT {
+  var = var_of(g, v);
+  tp = var.type_def[0] ?? ir::TyVoid;
+  if var.linked_narrow {
+    stop(g, "a linked narrow local");
+    return tp;
+  }
+  match base(tp) {
+    TyRefVar { inner } => {
+      match base(inner) {
+        TyTuple { elems: _ } => { return bgen_tuple::read_link(g, v, inner); }
+        _ => {}
+      }
+    }
+    TyTuple { elems: _ } => { return bgen_tuple::read(g, v); }
+    _ => {}
+  }
+  at = var_pos(g, v);
+  name = match base(tp) {
+    TyInteger { spec: _ } => "OpVarInt",
+    TyCharacter => "OpVarCharacter",
+    TyBoolean => "OpVarBool",
+    TySingle => "OpVarSingle",
+    TyFloat => "OpVarFloat",
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "OpVarRef" } else { "OpVarEnum" },
+    TyReference { n: _, dep: _ } => "OpVarRef",
+    TyVector { inner: _, dep: _ } => "OpVarVector",
+    TySorted { n: _, keys: _, dep: _ } => "OpVarVector",
+    TyHash { n: _, names: _, dep: _ } => "OpVarVector",
+    TyIndex { n: _, keys: _, dep: _ } => "OpVarVector",
+    TyRadix { n: _, names: _, dep: _ } => "OpVarVector",
+    TyTrie { n: _, key: _, dep: _ } => "OpVarVector",
+    TyIterator { step: _, inner: _ } => "OpVarRef",
+    TyRefVar { inner: _ } => "OpVarRef",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "OpVarFnRef",
+    TyText { dep: _ } => if var.argument { "OpArgText" } else { "OpVarText" },
+    _ => "",
+  };
+  if name == "" {
+    stop(g, "not written yet: a read of {shape_name(tp)}");
+    return tp;
+  }
+  // A link is read through: the reference its slot holds, then the value it names.
+  through = "";
+  operand = true;
+  match tp {
+    TyRefVar { inner } => {
+      nullable = optional_shape(inner);
+      through = match base(inner) {
+        TyInteger { spec } => {
+          codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+          width = if spec.forced_size > 0 { spec.forced_size } else if codes <= 65536 { 2 } else { 8 };
+          if width < 8 { "narrow" } else { "OpGetInt" }
+        }
+        TyCharacter => "OpGetCharacter",
+        TySingle => "OpGetSingle",
+        TyFloat => "OpGetFloat",
+        TyBoolean => "OpGetBoolean",
+        TyEnum { n: _, is_ref, dep: _ } => if is_ref { "record" } else { "OpGetEnum" },
+        TyText { dep: _ } => "OpGetStackText",
+        TyFunction { args: _, result: _, dep: _, consts: _ } => "OpGetStackFnRef",
+        TyReference { n: _, dep: _ } => "record",
+        TyVector { inner: _, dep: _ } => "OpGetStackRef",
+        TySorted { n: _, keys: _, dep: _ } => "OpGetStackRef",
+        TyHash { n: _, names: _, dep: _ } => "OpGetStackRef",
+        TyIndex { n: _, keys: _, dep: _ } => "OpGetStackRef",
+        TyRadix { n: _, names: _, dep: _ } => "OpGetStackRef",
+        TyTrie { n: _, key: _, dep: _ } => "OpGetStackRef",
+        TyTuple { elems: _ } => "tuple",
+        _ => "other",
+      };
+      operand = through != "OpGetStackText" && through != "OpGetStackFnRef";
+      if through == "record" {
+        // A link to a record held out of line points at a slot cell (`@FR-F-ParamRef`).
+        through = if binds::slot_link_def(g.b, tp) != null { "OpGetSlotRef" } else { "OpGetStackRef" };
+      }
+    }
+    _ => {}
+  }
+  if through != "" && !through.starts_with("Op") {
+    stop(g, "not written yet: a read through a link to {if through == "narrow" { "a narrow integer" } else if through == "record" { "a record" } else if through == "tuple" { "a tuple" } else { "another shape" }}");
+    return tp;
+  }
+  add_op(g, name);
+  put_u16(g.o, at);
+  if name == "OpVarFnRef" {
+    // A function value is its definition and its closure: eight bytes past the text the
+    // operator is declared to answer (`Stack::fnref_signature_gap`).
+    g.position += 8;
+  }
+  if through != "" {
+    add_op(g, through);
+    if through == "OpGetStackFnRef" {
+      g.position += 8;
+    }
+    if operand {
+      put_u16(g.o, 0);
+    }
+  }
+  tp
+}
+
+// A returned value written, and for a function-valued return that pushed only its definition
+// the null closure slot beside it (`pad_fn_ref_return`).
+fn returned_value(g: Gen, inner: ir::Node) {
+  before = g.position;
+  generate(g, inner, false);
+  function = match def_of(g, g.d).returned[0] ?? ir::TyVoid {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  };
+  if function && g.position - before < 16 {
+    push_sentinel(g);
+  }
+}
+
+// The packed size a generator's next and return carry for an element; -1 for one the port
+// of `next_operands` does not carry.
+fn yield_size(step: ir::TypeT) -> integer {
+  // `channel_tag`, of the type as it stands; a tuple's member kinds are not ported.
+  tag = match step {
+    TyTuple { elems: _ } => -1,
+    TyFunction { args: _, result: _, dep: _, consts: _ } => 2,
+    TyFloat => 3,
+    TySingle => 4,
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { 0 } else { 5 },
+    _ => 0,
+  };
+  if tag < 0 {
+    return -1;
+  }
+  tag * 256 + frame::width(step, true)
+}
+
+// `State::add_return`: the return, with the arguments' bytes, the answer's and the evaluation
+// position.
+fn add_return(g: Gen) {
+  ret = def_of(g, g.d).returned[0] ?? ir::TyVoid;
+  match ret {
+    TyIterator { step, inner: _ } => {
+      // A generator ends: `coroutine_layout::next_operands`' packed size of what it yields.
+      size = yield_size(step);
+      if size < 0 {
+        stop(g, "not written yet: a generator of an element the port does not carry");
+        return;
+      }
+      add_op(g, "OpCoroutineReturn");
+      put_u16(g.o, size);
+      return;
+    }
+    _ => {}
+  }
+  add_op(g, "OpReturn");
+  put_u16(g.o, g.arguments);
+  put_u16(g.o, frame::width(ret, true));
+  put_u16(g.o, g.position);
+}
+
+// `State::generate_block`.
+fn block(g: Gen, bl: ir::Block, top: boolean) -> ir::TypeT {
+  if len(bl.operators) == 0 {
+    return ir::TyVoid;
+  }
+  to = g.position;
+  tp: ir::TypeT = ir::TyVoid;
+  returned = false;
+  // The adopted local is already in the buffer: its delivery is not written.
+  delivery = ret_adopt::delivery(g.b, g.adopt, bl.operators);
+  for n in bl.operators {
+    if g.why != "" {
+      return tp;
+    }
+    if own::has(delivery, n#index) {
+      continue;
+    }
+    match unspan(n) {
+      NdReturn { inner } => {
+        returned_value(g, inner);
+        add_return(g);
+        returned = true;
+        tp = ir::TyVoid;
+      }
+      NdLine { n: _ } => {}
+      _ => {
+        // A release after a return leaves the block returned (`OpSets::frees`).
+        cleanup = match n {
+          NdCall { def_nr, args: _ } => {
+            nm = def_of(g, def_nr).name;
+            nm == "OpFreeRef" || nm == "OpFreeRefTag" || nm == "OpFreeRecordIn" || nm == "OpFreeRefIfDistinct" || nm == "OpFreeRefOrHandUp" || nm == "OpFreeText"
+          }
+          _ => false,
+        };
+        if !cleanup {
+          returned = false;
+        }
+        tp = generate(g, n, false);
+      }
+    }
+  }
+  if top {
+    if !returned {
+      add_return(g);
+    }
+    return tp;
+  }
+  result = bl.result[0] ?? ir::TyVoid;
+  size = pushed(result);
+  after = to + size;
+  if g.position < after {
+    // A block ending in a dropped local hands that local out as its value.
+    last = bl.operators[len(bl.operators) - 1]!;
+    match last {
+      NdDrop { inner } => {
+        match inner {
+          NdVar { n: _ } => { generate(g, inner, false); }
+          _ => {}
+        }
+      }
+      _ => {}
+    }
+  }
+  function = match result {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  };
+  if g.position > after {
+    add_op(g, "OpFreeStack");
+    put_u16(g.o, size);
+    put_u16(g.o, g.position - to);
+  } else if function && g.position < after {
+    push_sentinel(g);
+  } else if g.position == to && to < after {
+    typed_null(g, result);
+  }
+  g.position = after;
+  tp
+}
+
+// `State::generate_inner`: one node.
+fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
+  if g.why != "" {
+    return ir::TyVoid;
+  }
+  match node {
+    NdSpan { pos: _, inner } => generate(g, inner, top),
+    NdInt { n } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, n);
+      ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 } }
+    }
+    NdLong { n } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, n);
+      ir::TyInteger { spec: ir::IntegerSpec { min: -9223372036854775807, max: 9223372036854775807, not_null: false, forced_size: 0 } }
+    }
+    NdBoolean { b } => {
+      add_op(g, if b { "OpConstTrue" } else { "OpConstFalse" });
+      ir::TyBoolean
+    }
+    NdText { s } => {
+      if s.size() >= 256 {
+        stop(g, "a long text constant");
+      } else {
+        add_op(g, "OpConstText");
+        put_str(g.o, s);
+      }
+      ir::TyText { dep: [] }
+    }
+    NdVar { n } => variable(g, n),
+    NdNull => ir::TyVoid,
+    NdLine { n: _ } => ir::TyVoid,
+    NdInsert { items } => {
+      for i in items {
+        generate(g, i, false);
+      }
+      ir::TyVoid
+    }
+    NdCall { def_nr, args } => call(g, def_nr, args),
+    NdBlock { block: bl } => block(g, bl[0]!, top),
+    NdReturn { inner } => {
+      returned_value(g, inner);
+      add_return(g);
+      ir::TyVoid
+    }
+    NdSet { var, inner } => {
+      if !adopted_bind(g, var, inner) {
+        assign(g, var, inner);
+      }
+      ir::TyVoid
+    }
+    NdIf { cond, t, f } => branch(g, cond, t, f),
+    NdLoop { block: bl } => bgen_loop::loop_of(g, bl[0]!),
+    NdBreak { n } => leave(g, n, true),
+    NdContinue { n } => leave(g, n, false),
+    NdDrop { inner } => {
+      // `gen_drop`: the value, then its bytes taken off the stack.
+      generate(g, inner, false);
+      size = frame::stepped(size_code(g, inner));
+      if size > 0 {
+        add_op(g, "OpFreeStack");
+        put_u16(g.o, 0);
+        put_u16(g.o, size);
+      }
+      g.position -= size;
+      ir::TyVoid
+    }
+    NdEnum { ord, tp: _ } => {
+      add_op(g, "OpConstEnum");
+      put_u8(g.o, ord);
+      ir::TyEnum { n: 0, is_ref: false, dep: [] }
+    }
+    NdFloat { f } => {
+      add_op(g, "OpConstFloat");
+      put_i64(g.o, f.bits());
+      ir::TyFloat
+    }
+    NdSingle { f } => {
+      add_op(g, "OpConstSingle");
+      put_i32(g.o, f.bits() & 4294967295);
+      ir::TySingle
+    }
+    NdCallRef { var, args } => call_ref(g, var, args),
+    NdFnRef { def_nr, var, t } => {
+      add_op(g, "OpConstInt");
+      put_i64(g.o, def_nr);
+      if var == 65535 {
+        add_op(g, "OpNullRefSentinel");
+      } else {
+        init_slot(g, var, "OpVarRef");
+      }
+      // The node's own type (`t[0]`) is not answered: no caller reads it, and answering it
+      // here left its record unfreed where the caller dropped the value (a C-build leak of
+      // one `TypeT` per node, seen with `LOFT_NATIVE_LEAK_CHECK=1`; not reduced yet).
+      ir::TyVoid
+    }
+    NdYield { inner } => {
+      // A scalar or text handed out; a record's or function's temporaries are handed over
+      // with it (`yield_handed_temps`), which is not written yet.
+      step = match def_of(g, g.d).returned[0] ?? ir::TyVoid {
+        TyIterator { step: st, inner: _ } => st,
+        _ => ir::TyVoid,
+      };
+      plain = match base(step) {
+        TyInteger { spec: _ } => true,
+        TyBoolean => true,
+        TyFloat => true,
+        TySingle => true,
+        TyCharacter => true,
+        TyText { dep: _ } => true,
+        TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+        _ => false,
+      };
+      if !plain {
+        return unwritten(g, "a yield that hands a record or a function value over");
+      }
+      t = generate(g, inner, false);
+      value_tp = match base(t) {
+        TyRefVar { inner: under } => under,
+        _ => t,
+      };
+      size = frame::width(value_tp, true);
+      add_op(g, "OpCoroutineYield");
+      put_u16(g.o, size);
+      g.position -= frame::stepped(size);
+      ir::TyVoid
+    }
+    NdTuple { items } => bgen_tuple::value(g, items),
+    NdTupleGet { var, idx } => bgen_tuple::get(g, var, idx),
+    NdTuplePut { var, idx, inner } => bgen_tuple::put(g, var, idx, inner),
+    NdFnRefDnr { n } => {
+      init_slot(g, n, "OpVarInt");
+      ir::TyInteger { spec: ir::IntegerSpec { min: 0, max: 0, not_null: false, forced_size: 0 } }
+    }
+    _ => unwritten(g, "a node of another kind"),
+  }
+}
+
+// `gen_fn_ref_value_node`: a function value written whole — its definition and its closure
+// slot — through an `if` arm by arm.
+fn fn_ref_value(g: Gen, n: ir::Node) {
+  match unspan(n) {
+    NdIf { cond, t, f } => {
+      generate(g, cond, false);
+      add_op(g, "OpGotoFalseWord");
+      step = len(g.o.code);
+      put_i32(g.o, 0);
+      true_pos = len(g.o.code);
+      at = g.position;
+      fn_ref_value(g, t);
+      add_op(g, "OpGotoWord");
+      end = len(g.o.code);
+      put_i32(g.o, 0);
+      false_pos = len(g.o.code);
+      patch_i32(g.o, step, len(g.o.code) - true_pos);
+      g.position = at;
+      fn_ref_value(g, f);
+      patch_i32(g.o, end, len(g.o.code) - false_pos);
+    }
+    _ => {
+      before = g.position;
+      generate(g, unspan(n), false);
+      if g.position - before < 16 {
+        push_sentinel(g);
+      }
+    }
+  }
+}
+
+// A function value stored into its local (`OpPutFnRef`, which takes the whole value).
+fn put_fn_ref(g: Gen, v: integer) {
+  init_slot(g, v, "OpPutFnRef");
+  g.position -= 8;
+}
+
+// `State::generate_call_ref`: a call through a function value, skipped — its arguments
+// dropped and the null of its result pushed — where the value is absent.
+fn call_ref(g: Gen, v: integer, args: vector<ir::Node>) -> ir::TypeT {
+  params: vector<ir::TypeT> = [];
+  ret = ir::TyVoid;
+  found = false;
+  match var_of(g, v).type_def[0] ?? ir::TyVoid {
+    TyFunction { args: ps, result, dep: _, consts: _ } => {
+      params = ps;
+      ret = result;
+      found = true;
+    }
+    _ => {}
+  }
+  if !found {
+    stop(g, "a call through a local that is no function value");
+    return ret;
+  }
+  declared = 0;
+  for p in params {
+    declared += pushed(p);
+    text_link = match base(p) {
+      TyRefVar { inner } => match base(inner) {
+        TyText { dep: _ } => true,
+        _ => false,
+      },
+      _ => false,
+    };
+    if text_link {
+      stop(g, "not written yet: a call through a function value with a text link parameter");
+      return ret;
+    }
+  }
+  for a in args {
+    p = params[a#index];
+    function_param = p != null && match base(p!) {
+      TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+      _ => false,
+    };
+    link_param = p != null && match p! {
+      TyRefVar { inner: _ } => true,
+      _ => false,
+    };
+    forwarded = plain_var(a);
+    link_arg = forwarded >= 0 && match var_of(g, forwarded).type_def[0] ?? ir::TyVoid {
+      TyRefVar { inner: _ } => true,
+      _ => false,
+    };
+    if function_param {
+      fn_ref_value(g, a);
+    } else if link_param && link_arg {
+      init_slot(g, forwarded, "OpVarRef");
+    } else {
+      generate(g, a, false);
+    }
+  }
+  extra = if len(args) > len(params) { (len(args) - len(params)) * 16 } else { 0 };
+  total = declared + extra;
+  args_top = g.position;
+  init_slot(g, v, "OpVarInt");
+  add_op(g, "OpConvBoolFromInt");
+  add_op(g, "OpGotoFalseWord");
+  step = len(g.o.code);
+  put_i32(g.o, 0);
+  dist = var_pos(g, v);
+  add_op(g, "OpCallRef");
+  put_u16(g.o, dist);
+  put_u16(g.o, total);
+  if g.position < total {
+    stop(g, "a call through a function value with fewer argument bytes than it declares");
+    return ret;
+  }
+  g.position -= total;
+  ret_size = pushed(ret);
+  g.position += ret_size;
+  after = g.position;
+  add_op(g, "OpGotoWord");
+  end = len(g.o.code);
+  put_i32(g.o, 0);
+  absent = len(g.o.code);
+  patch_i32(g.o, step, len(g.o.code) - (step + 4));
+  g.position = args_top;
+  if total > 0 {
+    add_op(g, "OpFreeStack");
+    put_u16(g.o, 0);
+    put_u16(g.o, total);
+    g.position -= total;
+  }
+  if ret_size > 0 {
+    typed_null(g, ret);
+  }
+  patch_i32(g.o, end, len(g.o.code) - absent);
+  g.position = after;
+  ret
+}
+
+// `Stack::size_code`: the bytes a node's value takes, read off the node as it stands.
+fn size_code(g: Gen, n: ir::Node) -> integer {
+  match n {
+    NdInt { n: _ } => 4,
+    NdSingle { f: _ } => 4,
+    NdLong { n: _ } => 8,
+    NdFloat { f: _ } => 8,
+    NdBoolean { b: _ } => 1,
+    NdEnum { ord: _, tp: _ } => 1,
+    NdBlock { block: bl } => {
+      ops = bl[0]!.operators;
+      if len(ops) == 0 { 0 } else { size_code(g, ops[len(ops) - 1]!) }
+    }
+    NdInsert { items } => if len(items) == 0 { 0 } else { size_code(g, items[len(items) - 1]!) },
+    NdCall { def_nr, args: _ } => frame::width(def_of(g, def_nr).returned[0] ?? ir::TyVoid, true),
+    NdIf { cond: _, t, f: _ } => size_code(g, t),
+    NdText { s: _ } => 16,
+    NdVar { n: v } => frame::width(var_of(g, v).type_def[0] ?? ir::TyVoid, true),
+    NdSpan { pos: _, inner } => size_code(g, inner),
+    _ => 0,
+  }
+}
+
+fn unwritten(g: Gen, what: text) -> ir::TypeT {
+  stop(g, "not written yet: {what}");
+  ir::TyVoid
+}
+
+// The ownership oracle's operator table for an image: built once, handed to every `function`.
+pub fn oracle(b: ir::Bundle) -> own::Ops {
+  own::ops_of(b)
+}
+
+// `retbuf_adopt`'s clause: is the adopted local bound to its witness's field somewhere?
+fn adopt_bound(g: Gen, n: ir::Node, a: ret_adopt::RetAdopt) -> boolean {
+  here = match n {
+    NdSet { var, inner } => var == a.v && match unspan(inner) {
+      NdCall { def_nr, args } => {
+        ints = len(args) == 3 && match args[1]! { NdInt { n: _ } => true, _ => false }
+          && match args[2]! { NdInt { n: _ } => true, _ => false };
+        witness = len(args) == 3 && match unspan(args[0]!) { NdVar { n: w } => w == a.vdb, _ => false };
+        def_of(g, def_nr).name == "OpGetField" && ints && witness
+      }
+      _ => false,
+    },
+    _ => false,
+  };
+  if here {
+    return true;
+  }
+  for c in ret_adopt::children(n) {
+    if adopt_bound(g, c, a) {
+      return true;
+    }
+  }
+  false
+}
+
+// `adopted_bind`: the adopted local bound to the caller's buffer instead of its own witness
+// — the buffer minted where it is null, cleared where it is not.  True when that was written.
+fn adopted_bind(g: Gen, v: integer, value: ir::Node) -> boolean {
+  a = g.adopt;
+  if a.v < 0 || v != a.v {
+    return false;
+  }
+  match value {
+    NdCall { def_nr, args } => {
+      witness = len(args) > 0 && match unspan(args[0]!) { NdVar { n: w } => w == a.vdb, _ => false };
+      if !witness {
+        return false;
+      }
+      buf = ir::NdVar { n: a.buf };
+      mint = ir::NdBlock { block: [ir::Block {
+        name: "adopted buffer",
+        operators: [
+          ir::NdCall { def_nr: op_named(g.b, "OpDatabase"), args: [buf, ir::NdInt { n: a.db_tp }] },
+          ir::NdCall { def_nr: op_named(g.b, "OpSetInt4"), args: [buf, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }] }
+        ],
+        result: [ir::TyVoid], scope: 65535, var_size: 0
+      }] };
+      reuse = ir::NdIf {
+        cond: ir::NdCall { def_nr: op_named(g.b, "OpRefIsNull"), args: [buf] },
+        t: mint,
+        f: ir::NdCall { def_nr: op_named(g.b, "OpClearVector"), args: [buf] }
+      };
+      generate(g, reuse, false);
+      rest: vector<ir::Node> = [buf];
+      for x in args {
+        if x#index > 0 {
+          rest += [x];
+        }
+      }
+      assign(g, v, ir::NdCall { def_nr: def_nr, args: rest });
+      true
+    }
+    _ => false,
+  }
+}
+
+// `State::def_code` for definition `d`: its bytes, or null for a function this writer does
+// not write yet (`why[0]` says what stopped it).  `starts` and `natives` are the image's.
+pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
+  def = b.data.definitions[d]!;
+  ret = def.returned[0] ?? ir::TyVoid;
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), owned_reassigned: [], walks: [], walks_known: false, adopt: ret_adopt::RetAdopt {}, why: "" };
+  if !body_null(def) {
+    g.defs = own::function_defs(b, d, ops);
+    a = ret_adopt::ret_adopt(b, d);
+    if a.v >= 0 && def.code[0] != null && adopt_bound(g, def.code[0]!, a) {
+      g.adopt = a;
+    }
+  }
+  if body_null(def) {
+    // No body: the arguments, the return slot, and a return of the declared size.
+    g.arguments = arguments_size(def);
+    g.position = g.arguments + 8;
+    add_return(g);
+  } else {
+    hwm = 0;
+    for v in def.variables.variables {
+      g.slots += [v.stack_pos];
+      g.allocated += [v.argument || v.stack_allocated];
+    }
+    for v in def.variables.variables {
+      t = v.type_def[0] ?? ir::TyVoid;
+      if v.argument {
+        g.slots[v#index] = g.position;
+        g.position += pushed(t);
+      } else if v.stack_pos != 65535 {
+        end = v.stack_pos + frame::width(t, false);
+        if end > hwm {
+          hwm = end;
+        }
+      }
+      if v.argument && v.linked_narrow {
+        stop(g, "not written yet: a linked narrow argument");
+      }
+    }
+    g.arguments = g.position;
+    g.position += 8;
+    empty = match def.code[0] {
+      NdBlock { block: bl } => len(bl[0]?.operators ?? []) == 0,
+      _ => false,
+    };
+    if empty {
+      stop(g, "an empty body");
+    }
+    hwm = frame::stepped(hwm);
+    if hwm > g.position {
+      add_op(g, "OpReserveFrame");
+      put_u16(g.o, hwm - g.position);
+      g.position = hwm;
+    }
+    // A record a literal is built in (`__vdb…`) starts as the sentinel null.
+    for v in def.variables.variables {
+      if !v.argument && v.name.starts_with("__vdb") && v.stack_pos != 65535 {
+        at = var_pos(g, v#index);
+        add_op(g, "OpInitRefSentinel");
+        put_u16(g.o, at);
+      }
+    }
+    generate(g, def.code[0]!, true);
+  }
+  why[0] = g.why;
+  if g.why != "" {
+    return null;
+  }
+  g.o.code
+}

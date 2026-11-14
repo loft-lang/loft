@@ -1,0 +1,417 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The bytecode writer in loft, its loops (@PLN91,
+// doc/claude/plans/91-self-host/rust-dependencies.md step 1): the port of `State::gen_loop`,
+// `gen_rotated_loop`, `rotation`, `start_step` and `start_step_holds`
+// (`src/state/codegen.rs`).  A loop whose first statement is its exit test — or a range step
+// that holds one — is tested at its bottom (`@FR-R-Rotate`); a counted loop with a computed
+// start steps one counter (`@FR-R-StartStep`); any other runs its body and jumps back.
+use ir;
+use binds;
+use ret_adopt;
+use bgen;
+use lower;
+
+// `Rotation`: what runs before the bottom test, the test, what the range step runs after it
+// at the top of the body, the loop variable and the index it is stored from (`store`), and
+// the index seeded from the counter before the loop (`seed`); -1 for none.
+struct Rotation {
+  ok: boolean,
+  pre: vector<ir::Node>,
+  test: ir::Node,
+  post: vector<ir::Node>,
+  lv: integer,
+  ix: integer,
+  seed_ix: integer,
+  seed_nxt: integer,
+}
+
+fn none() -> Rotation {
+  Rotation { ok: false, pre: [], test: ir::NdNull, post: [], lv: -1, ix: -1, seed_ix: -1, seed_nxt: -1 }
+}
+
+// `exit_test`: the condition of `if c { break }` with no else; `found[0]` says it was one.
+fn exit_test(n: ir::Node, found: vector<boolean>) -> ir::Node {
+  found[0] = false;
+  match bgen::unspan(n) {
+    NdIf { cond, t, f } => {
+      brk = match bgen::unspan(t) {
+        NdBreak { n: nr } => nr == 0,
+        NdBlock { block: bl } => {
+          ops = bl[0]!.operators;
+          len(ops) == 1 && match bgen::unspan(ops[0]!) {
+            NdBreak { n: nr } => nr == 0,
+            _ => false,
+          }
+        }
+        _ => false,
+      };
+      none = match bgen::unspan(f) {
+        NdNull => true,
+        _ => false,
+      };
+      found[0] = brk && none;
+      cond
+    }
+    _ => ir::NdNull,
+  }
+}
+
+// Does the node hold a `continue` or a loop anywhere?
+fn continues_or_loops(n: ir::Node) -> boolean {
+  here = match n {
+    NdContinue { n: _ } => true,
+    NdLoop { block: _ } => true,
+    _ => false,
+  };
+  if here {
+    return true;
+  }
+  for c in ret_adopt::children(n) {
+    if continues_or_loops(c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn var_under(n: ir::Node) -> integer {
+  match bgen::unspan(n) {
+    NdVar { n: v } => v,
+    _ => -1,
+  }
+}
+
+// `rotation`: the loop's first statement as a bottom test.
+fn rotation(first: ir::Node) -> Rotation {
+  found: vector<boolean> = [false];
+  c = exit_test(first, found);
+  if found[0] ?? false {
+    return Rotation { ok: true, pre: [], test: c, post: [], lv: -1, ix: -1, seed_ix: -1, seed_nxt: -1 };
+  }
+  lv = -1;
+  ops: vector<ir::Node> = [];
+  match bgen::unspan(first) {
+    NdSet { var, inner } => {
+      match bgen::unspan(inner) {
+        NdBlock { block: bl } => {
+          if bl[0]!.name == "Iter range" {
+            lv = var;
+            ops = bl[0]!.operators;
+          }
+        }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  if lv < 0 || len(ops) == 0 {
+    return none();
+  }
+  ix = var_under(ops[len(ops) - 1]!);
+  if ix < 0 {
+    return none();
+  }
+  k = -1;
+  for o in ops {
+    if o#index < len(ops) - 1 {
+      exit_test(o, found);
+      if found[0] ?? false {
+        k = o#index;
+      }
+    }
+  }
+  if k < 0 {
+    return none();
+  }
+  for o in ops {
+    if o#index < len(ops) - 1 && o#index != k && continues_or_loops(o) {
+      return none();
+    }
+  }
+  pre: vector<ir::Node> = [];
+  post: vector<ir::Node> = [];
+  for o in ops {
+    if o#index < k {
+      pre += [o];
+    } else if o#index > k && o#index < len(ops) - 1 {
+      post += [o];
+    }
+  }
+  Rotation { ok: true, pre: pre, test: exit_test(ops[k]!, found), post: post, lv: lv, ix: ix, seed_ix: -1, seed_nxt: -1 }
+}
+
+// `start_step`: a range step that copies the counter to the index and steps the counter,
+// rewritten to step the index itself and test it.
+fn start_step(r: Rotation) -> Rotation {
+  if r.lv < 0 || len(r.pre) > 0 || r.seed_ix >= 0 || len(r.post) != 2 {
+    return none();
+  }
+  ix = r.ix;
+  cix = -1;
+  nxt = -1;
+  match bgen::unspan(r.post[0]!) {
+    NdSet { var, inner } => {
+      cix = var;
+      nxt = var_under(inner);
+    }
+    _ => {}
+  }
+  snxt = -1;
+  add = -1;
+  steps = false;
+  match bgen::unspan(r.post[1]!) {
+    NdSet { var, inner } => {
+      snxt = var;
+      match bgen::unspan(inner) {
+        NdCall { def_nr, args } => {
+          add = def_nr;
+          one = len(args) == 2 && match args[1]! {
+            NdInt { n } => n == 1,
+            _ => false,
+          };
+          steps = one && var_under(args[0]!) == nxt;
+        }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  if nxt < 0 || add < 0 || cix != ix || snxt != nxt || nxt == ix || !steps {
+    return none();
+  }
+  match bgen::unspan(r.test) {
+    NdCall { def_nr: cmp, args } => {
+      if len(args) != 2 || var_under(args[1]!) != nxt || binds::reads_var(args[0]!, nxt) || binds::reads_var(args[0]!, ix) {
+        return none();
+      }
+      step = ir::NdSet { var: ix, inner: ir::NdCall { def_nr: add, args: [ir::NdVar { n: ix }, ir::NdInt { n: 1 }] } };
+      Rotation {
+        ok: true, pre: [step], test: ir::NdCall { def_nr: cmp, args: [args[0]!, ir::NdVar { n: ix }] },
+        post: [], lv: r.lv, ix: ix, seed_ix: ix, seed_nxt: nxt
+      }
+    }
+    _ => none(),
+  }
+}
+
+// `start_step_holds`: the body names neither counter (the index only where the loop variable
+// shares its slot).
+fn start_step_holds(g: bgen::Gen, ops: vector<ir::Node>, s: Rotation) -> boolean {
+  if s.seed_ix < 0 || s.lv < 0 {
+    return false;
+  }
+  pos = g.slots[s.lv] ?? 65535;
+  shared = pos != 65535 && pos == (g.slots[s.seed_ix] ?? 65535);
+  for n in ops {
+    if n#index > 0 && (binds::reads_var(n, s.seed_nxt) || (!shared && binds::reads_var(n, s.seed_ix))) {
+      return false;
+    }
+  }
+  true
+}
+
+// `generate_set_inner`'s loop slot: a range step that was not rotated, whose loop variable
+// shares its index's slot, runs its step and stores nothing.  True when that was written.
+pub fn loop_slot(g: bgen::Gen, v: integer, value: ir::Node) -> boolean {
+  match bgen::unspan(value) {
+    NdBlock { block: bl } => {
+      ops = bl[0]!.operators;
+      if bl[0]!.name != "Iter range" || len(ops) == 0 {
+        return false;
+      }
+      w = var_under(ops[len(ops) - 1]!);
+      pos = g.slots[v] ?? 65535;
+      if w < 0 || w == v || pos == 65535 || pos != (g.slots[w] ?? 65535) {
+        return false;
+      }
+      step: vector<ir::Node> = [];
+      for o in ops {
+        if o#index < len(ops) - 1 {
+          step += [o];
+        }
+      }
+      bgen::generate(g, ir::NdBlock { block: [ir::Block { name: bl[0]!.name, operators: step, result: [ir::TyVoid], scope: bl[0]!.scope, var_size: bl[0]!.var_size }] }, false);
+      g.allocated[v] = true;
+      true
+    }
+    _ => false,
+  }
+}
+
+// The jumps of loop `me` still waiting for their step, written to land here.
+fn land(g: bgen::Gen, waiting: vector<integer>, me: integer) {
+  k = 0;
+  while k + 1 < len(waiting) {
+    if waiting[k] == me {
+      at = waiting[k + 1] ?? 0;
+      bgen::patch_i32(g.o, at, len(g.o.code) - at - 4);
+      waiting.remove(k + 1);
+      waiting.remove(k);
+    } else {
+      k += 2;
+    }
+  }
+}
+
+// `State::gen_loop`.
+pub fn loop_of(g: bgen::Gen, bl: ir::Block) -> ir::TypeT {
+  ops = bl.operators;
+  r = if len(ops) > 0 { rotation(ops[0]!) } else { none() };
+  if r.ok {
+    s = start_step(r);
+    if s.ok && start_step_holds(g, ops, s) {
+      return rotated(g, ops, s);
+    }
+    return rotated(g, ops, r);
+  }
+  g.loop_start += [len(g.o.code)];
+  g.loop_stack += [g.position];
+  g.loop_rotated += [false];
+  me = len(g.loop_start) - 1;
+  start = len(g.o.code);
+  for n in ops {
+    bgen::generate(g, n, false);
+  }
+  bgen::clear_stack(g, 0);
+  bgen::add_op(g, "OpGotoWord");
+  bgen::put_i32(g.o, start - len(g.o.code) - 4);
+  land(g, g.breaks, me);
+  g.loop_start.remove(me);
+  g.loop_stack.remove(me);
+  g.loop_rotated.remove(me);
+  ir::TyVoid
+}
+
+// `State::gen_rotated_loop`: entered by a jump to its test, which sits under the body.
+fn rotated(g: bgen::Gen, ops: vector<ir::Node>, r: Rotation) -> ir::TypeT {
+  seeded = r.seed_ix >= 0;
+  if seeded {
+    bgen::generate(g, ir::NdSet { var: r.seed_ix, inner: ir::NdVar { n: r.seed_nxt } }, false);
+  }
+  g.loop_start += [len(g.o.code)];
+  g.loop_stack += [g.position];
+  g.loop_rotated += [true];
+  me = len(g.loop_start) - 1;
+  bgen::add_op(g, "OpGotoWord");
+  entry = len(g.o.code);
+  bgen::put_i32(g.o, 0);
+  body = len(g.o.code);
+  for p in r.post {
+    bgen::generate(g, p, false);
+  }
+  if r.lv >= 0 {
+    pos = g.slots[r.lv] ?? 65535;
+    if pos != 65535 && pos == (g.slots[r.ix] ?? 65535) {
+      g.allocated[r.lv] = true;
+    } else {
+      bgen::generate(g, ir::NdSet { var: r.lv, inner: ir::NdVar { n: r.ix } }, false);
+    }
+  }
+  for n in ops {
+    if n#index > 0 {
+      bgen::generate(g, n, false);
+    }
+  }
+  bgen::clear_stack(g, 0);
+  if !seeded {
+    bgen::patch_i32(g.o, entry, len(g.o.code) - entry - 4);
+  }
+  land(g, g.continues, me);
+  for p in r.pre {
+    bgen::generate(g, p, false);
+  }
+  if seeded {
+    bgen::patch_i32(g.o, entry, len(g.o.code) - entry - 4);
+  }
+  step = bgen::if_test(g, r.test);
+  bgen::patch_i32(g.o, step, body - len(g.o.code));
+  bgen::clear_stack(g, 0);
+  land(g, g.breaks, me);
+  g.loop_start.remove(me);
+  g.loop_stack.remove(me);
+  g.loop_rotated.remove(me);
+  ir::TyVoid
+}
+
+// Every loop of a node offered to `lower::char_walk`, and whether a `yield` was met.
+fn gather_walks(b: ir::Bundle, d: integer, n: ir::Node, out: vector<lower::CharWalk>, yields: vector<boolean>) {
+  match n {
+    NdLoop { block } => {
+      w = lower::char_walk(b, d, block[0]!);
+      if w != null {
+        out += [w!];
+      }
+    }
+    NdYield { inner: _ } => {
+      yields[0] = true;
+    }
+    _ => {}
+  }
+  for c in ret_adopt::children(n) {
+    gather_walks(b, d, c, out, yields);
+  }
+}
+
+// `emit_walk_step` (`@FR-R-Fuse`): the step of a character walk over a text local — the index
+// kept, the character read, the position advanced — as one operator.  True when it was
+// written.  A generator declines whole, as `char_walks` does.
+pub fn walk_step(g: bgen::Gen, c: integer, value: ir::Node) -> boolean {
+  block = match bgen::unspan(value) {
+    NdBlock { block: _ } => true,
+    _ => false,
+  };
+  character = match bgen::base(bgen::var_of(g, c).type_def[0] ?? ir::TyVoid) {
+    TyCharacter => true,
+    _ => false,
+  };
+  if !block || !character {
+    return false;
+  }
+  if !g.walks_known {
+    g.walks_known = true;
+    yields: vector<boolean> = [false];
+    out: vector<lower::CharWalk> = [];
+    code = g.b.data.definitions[g.d]!.code[0];
+    if code != null {
+      gather_walks(g.b, g.d, code!, out, yields);
+    }
+    if !(yields[0] ?? false) {
+      g.walks = out;
+    }
+  }
+  found = -1;
+  for w in g.walks {
+    if w.loop_var == c && found < 0 {
+      found = w#index;
+    }
+  }
+  if found < 0 {
+    return false;
+  }
+  w = g.walks[found]!;
+  for v in [w.index, w.next, w.src] {
+    slot = g.slots[v] ?? 65535;
+    if !(g.allocated[v] ?? false) || slot == 65535 || slot + 8 > g.position {
+      return false;
+    }
+  }
+  slot = g.slots[c] ?? 65535;
+  text = match bgen::base(bgen::var_of(g, w.src).type_def[0] ?? ir::TyVoid) {
+    TyText { dep: _ } => true,
+    _ => false,
+  };
+  if slot == 65535 || slot + 8 > g.position || !text {
+    return false;
+  }
+  g.allocated[c] = true;
+  bgen::add_op(g, "OpTextWalkStep");
+  bgen::put_u16(g.o, bgen::var_pos(g, c));
+  bgen::put_u16(g.o, bgen::var_pos(g, w.index));
+  bgen::put_u16(g.o, bgen::var_pos(g, w.next));
+  bgen::put_u16(g.o, bgen::var_pos(g, w.src));
+  bgen::put_u8(g.o, if bgen::var_of(g, w.src).argument { 1 } else { 0 });
+  true
+}

@@ -6,12 +6,15 @@
 // (`fill.loft`) on the loft `State`.  The program's output is its own.  Where the run stops it
 // writes `stopped: <reason>` on standard error and exits 3 (an operator or native not carried)
 // or 1 (a fault); with `LOFT_RUN_TIMED=1` it writes `timed load=<µs> run=<µs>` when it ends.
+// With `LOFT_RUN_PROGRAM` it runs the code the bytecode writer in loft writes instead.
 #cwd
 use ir;
 use load;
 use state;
 use fill_run;
 use crt;
+use bgen_image;
+use native_table;
 
 fn main() {
   a = arguments();
@@ -21,6 +24,27 @@ fn main() {
   if img == null {
     eprintln("stopped: no run image at {path}");
     exit(2);
+  }
+  // `LOFT_RUN_PROGRAM=<program image>`: the code is not the image's but what the bytecode
+  // writer in loft (`bgen_image.loft`) writes from the program's stored IR; the image's other
+  // tables are used as they are.  A function the writer does not write yet stops the run.
+  program = env_variable("LOFT_RUN_PROGRAM") ?? "";
+  if program != "" {
+    b = load::load(program);
+    if b == null {
+      eprintln("stopped: no program image at {program}");
+      exit(2);
+    }
+    // The natives by number are loft's own table, which the runner then dispatches on.
+    img!.natives = native_table::names();
+    st = bgen_image::stream(b!, img!.natives);
+    if st.why != "" {
+      eprintln("stopped: not carried by the bytecode writer in loft: {st.why}");
+      exit(3);
+    }
+    bgen_image::tables(b!, img!);
+    img!.code = st.code;
+    img!.starts = st.starts;
   }
   // Relative paths resolve against the working directory: the runner is not where the program
   // lives, so it is run from the program's directory, as the program itself is.

@@ -163,6 +163,194 @@ fn is_inline_ref(f: ir::Function, v: integer) -> boolean {
   own::has(f.inline_refs, v)
 }
 
+// ── out-of-line fields (src/data.rs, `@FR-L-OutOfLine`) ──
+
+// src/data.rs fn inline_field_defs — the definitions a field of type `t` holds in its host's
+// own bytes: an embedded struct or struct enum (a `reference<T>` carries the pointer marker
+// and is none), through a `Rewritten` wrapper and a tuple's members.
+fn inline_field_defs(t: ir::TypeT, out: vector<integer>) {
+  match base(t) {
+    TyReference { n, dep } => {
+      if !own::has(dep, own::MAX) {
+        out += [n];
+      }
+    }
+    // An enum field stores its variant inline; a plain enum's variants yield no edge.
+    TyEnum { n, is_ref: _, dep: _ } => {
+      out += [n];
+    }
+    TyRewritten { inner } => inline_field_defs(inner, out),
+    TyTuple { elems } => {
+      for e in elems {
+        inline_field_defs(e, out);
+      }
+    }
+    _ => {}
+  }
+}
+
+// src/data.rs fn reaches_inline — does definition `from` hold `goal` in its own bytes, through
+// embedded fields, tuple members and enum variants?
+fn reaches_inline(b: ir::Bundle, from: integer, goal: integer, seen: vector<integer>) -> boolean {
+  if from == goal {
+    return true;
+  }
+  if own::has(seen, from) {
+    return false;
+  }
+  seen += [from];
+  d = b.data.definitions[from]!;
+  if d.def_type == 3 {
+    for c in b.data.definitions {
+      if c.parent == from && c.def_type == 4 && reaches_inline(b, c#index, goal, seen) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if d.def_type != 5 && d.def_type != 4 {
+    return false;
+  }
+  for a in d.attributes {
+    if a.constant {
+      continue;
+    }
+    children: vector<integer> = [];
+    inline_field_defs(a.typedef[0] ?? ir::TyVoid, children);
+    for c in children {
+      if reaches_inline(b, c, goal, seen) {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// src/data.rs fn field_is_out_of_line — is field `a` of `d` a record that inline layout
+// could not hold, because it reaches `d` again?
+fn field_is_out_of_line(b: ir::Bundle, d: integer, a: ir::Attribute) -> boolean {
+  if a.constant {
+    return false;
+  }
+  target = match base(a.typedef[0] ?? ir::TyVoid) {
+    TyReference { n, dep } => if own::has(dep, own::MAX) { -1 } else { n },
+    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+    _ => -1,
+  };
+  if target < 0 {
+    return false;
+  }
+  td = b.data.definitions[target]!;
+  if (td.def_type != 5 && td.def_type != 3 && td.def_type != 4) || td.name.starts_with("__") {
+    return false;
+  }
+  seen: vector<integer> = [];
+  reaches_inline(b, target, d, seen)
+}
+
+// src/data.rs fn held_out_of_line — does a record of definition `d` (or a variant of the enum
+// `d`) hold a field out of line?
+fn held_out_of_line(b: ir::Bundle, d: integer) -> boolean {
+  def = b.data.definitions[d];
+  if def == null {
+    return false;
+  }
+  if def.def_type == 5 || def.def_type == 4 {
+    for a in def.attributes {
+      if field_is_out_of_line(b, d, a) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if def.def_type != 3 {
+    return false;
+  }
+  for c in b.data.definitions {
+    if c.parent == d && c.def_type == 4 {
+      for a in c.attributes {
+        if field_is_out_of_line(b, c#index, a) {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// src/data.rs fn slot_link_def — the record a link names where that record is held out of
+// line, so the link points at a slot cell; null for any other link.
+fn slot_link_def(b: ir::Bundle, t: ir::TypeT) -> integer? {
+  match base(t) {
+    TyRefVar { inner } => {
+      d = match base(inner) {
+        TyReference { n, dep } => if own::has(dep, own::MAX) { -1 } else { n },
+        TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+        _ => -1,
+      };
+      if d >= 0 && held_out_of_line(b, d) { d } else { null }
+    }
+    _ => null,
+  }
+}
+
+// src/variables/mod.rs fn link_targets — every local a link `v` may name, through links to
+// links; `v` itself is never one.
+fn link_targets(f: ir::Function, v: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  todo: vector<integer> = [v];
+  while len(todo) > 0 {
+    x = todo[len(todo) - 1]!;
+    todo.remove(len(todo) - 1);
+    if !in_range(f, x) || !(base(tp(f, x)) is TyRefVar) {
+      continue;
+    }
+    for d in own::tp_depend(f, x) {
+      if d != v && !own::has(out, d) {
+        out += [d];
+        todo += [d];
+      }
+    }
+  }
+  out
+}
+
+// src/variables/mod.rs fn link_target_owns — does the place a link names own its store?  An
+// argument's does; a local link's when what it depends on is a link or an owning local.
+fn link_target_owns(f: ir::Function, v: integer) -> boolean {
+  if own::is_argument(f, v) {
+    return true;
+  }
+  match base(tp(f, v)) {
+    TyRefVar { inner } => {
+      deps: vector<integer> = [];
+      own::depend(inner, deps);
+      if len(deps) == 0 {
+        return true;
+      }
+      for d in deps {
+        if (base(tp(f, d)) is TyRefVar) || (!own::is_argument(f, d) && proxy_says_owned(f, d)) {
+          return true;
+        }
+      }
+      false
+    }
+    _ => true,
+  }
+}
+
+// src/variables/mod.rs fn link_write_releases — does a write through link `v` release what it
+// displaces?  Not where the link reaches a plain parameter, which borrows
+// (`@FR-F-ParamRebind`; `LOFT_LINK_PARAM_RELEASES` unset).
+fn link_write_releases(f: ir::Function, v: integer) -> boolean {
+  for t in link_targets(f, v) {
+    if own::is_argument(f, t) && !(base(tp(f, t)) is TyRefVar) {
+      return false;
+    }
+  }
+  link_target_owns(f, v)
+}
+
 // src/variables/mod.rs:4495 fn rebind_orig — the map is stored per variable (`u16::MAX` none);
 // null for `None`.
 fn rebind_orig(f: ir::Function, v: integer) -> integer? {
@@ -687,6 +875,16 @@ fn insert_sorted_unique(out: vector<integer>, x: integer) {
   out.insert(at, x);
 }
 
+// src/data.rs fn is_type_var_placeholder — a generic's type variable: a struct of no fields
+// that answers itself.
+fn is_type_var_placeholder(b: ir::Bundle, d: integer) -> boolean {
+  x = b.data.definitions[d]!;
+  x.def_type == 5 && len(x.attributes) == 0 && match x.returned[0] ?? ir::TyVoid {
+    TyReference { n, dep: _ } => n == d,
+    _ => false,
+  }
+}
+
 // src/use_analysis.rs:3225 fn protectable_ref_args — which ref-typed arguments of this call the
 // @P290 bracket can protect, and do they cover every one?  `defs` is the calling function's
 // `own::function_defs`.
@@ -711,6 +909,12 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
   }
   attrs = def(b, fn_nr).attributes;
   r.covers_all = true;
+  // A call answering a record: a scalar vector it is handed cannot be what it answers.
+  returns_record = match base(def(b, fn_nr).returned[0] ?? ir::TyVoid) {
+    TyReference { n, dep: _ } => !is_type_var_placeholder(b, n),
+    TyEnum { n, is_ref, dep: _ } => is_ref && !is_type_var_placeholder(b, n),
+    _ => false,
+  };
   for arg in args {
     at = attrs[arg#index];
     if at == null {
@@ -735,6 +939,22 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
           }
         }
       }
+      continue;
+    }
+    scalar_vector = match base(carried) {
+      TyVector { inner: elem, dep: _ } => match base(elem) {
+        TyInteger { spec: _ } => true,
+        TyBoolean => true,
+        TyFloat => true,
+        TySingle => true,
+        TyCharacter => true,
+        TyText { dep: _ } => true,
+        TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+        _ => false,
+      },
+      _ => false,
+    };
+    if returns_record && scalar_vector {
       continue;
     }
     // src/use_analysis.rs fn is_protectable_store_type — `is_dbref(tp.base())`.
@@ -888,7 +1108,7 @@ pub fn heap_leaves(t: ir::TypeT) -> integer {
 
 fn view_roots_into(b: ir::Bundle, arg: ir::Node, r: ProtectableArgs) {
   roots: vector<integer> = [];
-  if own::view_root_slots(b, arg, roots) {
+  if own::arg_root_slots(b, arg, roots) {
     for x in roots {
       insert_sorted_unique(r.slots, x);
     }

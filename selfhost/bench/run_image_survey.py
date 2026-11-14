@@ -28,17 +28,26 @@ def proc(cmd, env, timeout, cwd=None):
         return -9, "", "timeout"
 
 
-def one(f, loft, runner, tmp, env, timeout):
+def one(f, loft, runner, tmp, env, timeout, written=False):
     img = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f) + ".run")
     rc, _, err = proc([loft, "--emit-run-image", img, f], env, timeout)
     if rc != 0:
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
+    run_env = {**env, "LOFT_NATIVE_LEAK_CHECK": "1"}
+    if written:
+        # The code is the bytecode writer in loft's, from the program's stored IR.
+        store = img[:-4] + ".store"
+        rc, _, err = proc([loft, "--emit-image", store, f], env, timeout)
+        if rc != 0:
+            return f, "noimage", err.strip().splitlines()[-1:] or [""]
+        run_env["LOFT_RUN_PROGRAM"] = store
     rc, want, err = proc([loft, "--interpret", f], env, timeout, cwd=os.path.dirname(f))
     # The runner shares one C runtime with the program it runs, so its exit leak check
     # (`LOFT_NATIVE_LEAK_CHECK`) counts the program's stores left at exit, as the interpreter's
     # own report does: the two counts are compared too.
-    rc2, got, err2 = proc([runner, img], {**env, "LOFT_NATIVE_LEAK_CHECK": "1"}, timeout,
-                          cwd=os.path.dirname(f))
+    rc2, got, err2 = proc([runner, img], run_env, timeout, cwd=os.path.dirname(f))
+    if "stopped: not carried by the bytecode writer in loft" in err2:
+        return f, "unwritten", [""]
     m = re.search(r"stopped: not carried: (\S+)", err2)
     if m:
         return f, "stopped", [m.group(1)]
@@ -69,6 +78,8 @@ def main():
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--timeout", type=int, default=60)
+    ap.add_argument("--written", action="store_true",
+                    help="run the code the bytecode writer in loft writes (bgen_image.loft), not the image's")
     ap.add_argument("--show", action="append", default=[],
                     help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage; repeatable)")
     o = ap.parse_args()
@@ -76,6 +87,10 @@ def main():
     loft = o.loft or os.path.join(root, "target", "release", "loft")
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
+    if o.written:
+        # The loft writer holds every text local as its own text; the image's tables are
+        # written for that same form.
+        env["LOFT_NO_TEXT_BORROW"] = "1"
     tmp = tempfile.mkdtemp(prefix="loft-runimg-", dir=os.environ.get("TMPDIR"))
     try:
         out = os.path.join(tmp, "runner")
@@ -96,14 +111,14 @@ def main():
         ops = collections.Counter()
         shown = []
         with cf.ThreadPoolExecutor(o.jobs) as ex:
-            for f, verdict, what in ex.map(lambda f: one(f, loft, runner, tmp, env, o.timeout), files):
+            for f, verdict, what in ex.map(lambda f: one(f, loft, runner, tmp, env, o.timeout, o.written), files):
                 counts[verdict] += 1
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what[0]}")
                 if verdict == "stopped":
                     ops[what[0]] += 1
         print(f"{counts['agree']} of {len(files)} programs agree; " +
-              ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "differ", "fault", "noimage") if counts[k]))
+              ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "unwritten", "differ", "fault", "noimage") if counts[k]))
         for line in sorted(shown):
             print(line)
         if ops:

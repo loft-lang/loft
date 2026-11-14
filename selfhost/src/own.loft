@@ -1028,21 +1028,72 @@ fn is_projection_op(b: ir::Bundle, d: integer) -> boolean {
   n == "OpGetField" || n == "OpGetVector" || n == "OpVectorRef" || n == "OpGetRecord" || n == "OpRefFromChildRec"
 }
 
-// src/use_analysis.rs:3365 fn view_root_slots — false for `None`, else the slots in `out`.
+// src/use_analysis.rs fn view_root_slots — false for `None`, else the slots in `out`.
 fn view_root_slots(b: ir::Bundle, arg: ir::Node, out: vector<integer>) -> boolean {
+  view_roots(b, arg, out, false)
+}
+
+// src/use_analysis.rs fn arg_root_slots — `view_root_slots` for a CALL ARGUMENT, read after the
+// call: a join arm's owning call has put its value in its frame buffer by then, and an
+// argument's block or insert has run, so its last operator names its value.
+fn arg_root_slots(b: ir::Bundle, arg: ir::Node, out: vector<integer>) -> boolean {
+  view_roots(b, arg, out, true)
+}
+
+// src/use_analysis.rs fn view_roots — the arms in the Rust's order.
+fn view_roots(b: ir::Bundle, arg: ir::Node, out: vector<integer>, join_arm_buffers: boolean) -> boolean {
   match arg {
-    NdSpan { pos: _, inner } => view_root_slots(b, inner, out),
+    NdSpan { pos: _, inner } => view_roots(b, inner, out, join_arm_buffers),
     NdVar { n: v } => {
       out += [v];
       true
     }
     NdNull => true,
-    NdIf { cond: _, t, f } => view_root_slots(b, t, out) && view_root_slots(b, f, out),
+    NdIf { cond: _, t, f } => view_roots(b, t, out, join_arm_buffers) && view_roots(b, f, out, join_arm_buffers),
     NdBlock { block } => {
       bl = block[0]!;
-      if len(bl.operators) == 1 {
+      n = len(bl.operators);
+      if join_arm_buffers && bl.name == "join-arm-owner" {
+        buf = if n > 0 { var_of(bl.operators[n - 1]!) ?? -1 } else { -1 };
+        if buf < 0 {
+          return false;
+        }
+        out += [buf];
+        return true;
+      }
+      if n == 1 {
         // Bound first: a tail call whose argument a local holds cannot jump.
-        r = view_root_slots(b, bl.operators[0]!, out);
+        r = view_roots(b, bl.operators[0]!, out, join_arm_buffers);
+        return r;
+      }
+      if join_arm_buffers && n > 0 {
+        r = view_roots(b, bl.operators[n - 1]!, out, join_arm_buffers);
+        return r;
+      }
+      if bl.name == "ncr" {
+        // The `!` unwrap's block: its value is the projection it bound.
+        t = if n > 0 { var_of(bl.operators[n - 1]!) ?? -1 } else { -1 };
+        if t < 0 {
+          return false;
+        }
+        for op in bl.operators {
+          match bare(op) {
+            NdSet { var, inner } => {
+              if var == t {
+                r = view_roots(b, inner, out, join_arm_buffers);
+                return r;
+              }
+            }
+            _ => {}
+          }
+        }
+        return false;
+      }
+      false
+    }
+    NdInsert { items } => {
+      if join_arm_buffers && len(items) > 0 {
+        r = view_roots(b, items[len(items) - 1]!, out, join_arm_buffers);
         return r;
       }
       false
@@ -1051,10 +1102,10 @@ fn view_root_slots(b: ir::Bundle, arg: ir::Node, out: vector<integer>) -> boolea
       if len(args) == 0 && def_name(b, def_nr) == "OpNullRefSentinel" {
         return true;
       }
-      if !is_projection_op(b, def_nr) || len(args) == 0 {
+      if (!is_projection_op(b, def_nr) && def_name(b, def_nr) != "OpGetVectorNullable") || len(args) == 0 {
         return false;
       }
-      view_root_slots(b, args[0], out)
+      view_roots(b, args[0], out, join_arm_buffers)
     }
     _ => false,
   }

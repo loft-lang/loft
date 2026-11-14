@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the gate of the bytecode writer in loft (`bgen.loft`): `bgen_check <program image>
+// <run image>` writes every function of the program image and compares its bytes with the
+// ones the Rust writer left in the run image.  Prints how many functions are identical, how
+// many differ (each named, a defect) and how many the writer does not write yet.
+#cwd
+use ir;
+use load;
+use bgen;
+use bgen_image;
+use native_table;
+
+fn main() {
+  a = arguments();
+  b = load::load(a[0] ?? "");
+  img = load::load_run(a[1] ?? "");
+  if b == null || img == null {
+    println("usage: bgen_check <program image> <run image>");
+    exit(2);
+  }
+  // `--names`: a line per function (`same`, `differs` or `unwritten` with its reason), for
+  // `bgen_survey.py` to count each function once over a corpus.
+  names = (a[2] ?? "") == "--names";
+  why: vector<text> = [""];
+  reasons: vector<text> = [];
+  counts: vector<integer> = [];
+  same = 0;
+  differ = 0;
+  unwritten = 0;
+  // `--stream`: the whole code stream and the starts written in loft against the image's.
+  if (a[2] ?? "") == "--stream" {
+    // The natives' table is loft's own (`native_table.loft`); the image's must equal it.
+    own_natives = native_table::names();
+    natives_equal = len(own_natives) == len(img!.natives);
+    if natives_equal {
+      for n in own_natives {
+        if n != (img!.natives[n#index] ?? "") {
+          natives_equal = false;
+        }
+      }
+    }
+    if !natives_equal {
+      println("stream\tnatives\t{len(own_natives)} natives in loft's table, {len(img!.natives)} in the image's");
+      return;
+    }
+    st = bgen_image::stream(b!, own_natives);
+    if st.why != "" {
+      println("stream\tunwritten\t{st.why}");
+      return;
+    }
+    first = -1;
+    for d in 0..len(img!.starts) {
+      if first < 0 && (st.starts[d] ?? -1) != (img!.starts[d] ?? -2) {
+        first = d;
+      }
+    }
+    equal = len(st.code) == len(img!.code) && len(st.starts) == len(img!.starts) && first < 0;
+    if equal {
+      for i in 0..len(st.code) {
+        if st.code[i] != img!.code[i] {
+          equal = false;
+          break;
+        }
+      }
+    }
+    // The tables that follow from the definitions alone, against the image's.
+    mine = ir::empty_run_image();
+    mine.natives = own_natives;
+    bgen_image::tables(b!, mine);
+    wrong = "";
+    if len(mine.ops) != len(img!.ops) || len(mine.layouts) != len(img!.layouts) {
+      wrong = "the operators' count";
+    }
+    for o in mine.ops {
+      if wrong == "" && (o != (img!.ops[o#index] ?? "?") || (mine.layouts[o#index] ?? "") != (img!.layouts[o#index] ?? "?")) {
+        wrong = "operator {o#index} {o}";
+      }
+    }
+    if wrong == "" && len(mine.shared) != len(img!.shared) {
+      wrong = "the shared bodies' count";
+    }
+    for x in mine.shared {
+      if wrong == "" && x != (img!.shared[x#index] ?? -2) {
+        wrong = "the shared body of native {x#index}";
+      }
+    }
+    if wrong == "" && mine.main != img!.main {
+      wrong = "main";
+    }
+    if wrong != "" {
+      println("stream\ttables\t{wrong}");
+      return;
+    }
+    if equal {
+      println("stream\tsame\t{len(st.code)} bytes, {len(st.starts)} starts");
+    } else {
+      println("stream\tdiffers\t{len(st.code)} bytes written, {len(img!.code)} in the image; first start that differs: definition {first} {if first >= 0 { bgen::name_of(b!, first) } else { "" }} ({st.starts[first] ?? 0} against {img!.starts[first] ?? 0})");
+    }
+    return;
+  }
+  ops = bgen::oracle(b!);
+  for d in 0..len(img!.starts) - 1 {
+    from = img!.starts[d] ?? 0;
+    till = img!.starts[d + 1] ?? 0;
+    if till <= from {
+      continue;
+    }
+    bytes = bgen::function(b!, ops, d, img!.starts, img!.natives, why);
+    if bytes == null {
+      unwritten += 1;
+      if names {
+        println("unwritten\t{bgen::name_of(b!, d)}\t{why[0] ?? ""}");
+      }
+      // The reason, counted: what to port next.
+      at = -1;
+      for r in reasons {
+        if r == (why[0] ?? "") {
+          at = r#index;
+        }
+      }
+      if at < 0 {
+        reasons += [why[0] ?? ""];
+        counts += [1];
+      } else {
+        counts[at] += 1;
+      }
+      continue;
+    }
+    equal = len(bytes!) == till - from;
+    if equal {
+      for i in 0..len(bytes!) {
+        equal = equal && bytes![i] == img!.code[from + i];
+      }
+    }
+    if names {
+      println("{if equal { "same" } else { "differs" }}\t{bgen::name_of(b!, d)}");
+    }
+    // `--dump <function>`: the bytes written and the image's, to see where they part.
+    if (a[2] ?? "") == "--dump" && bgen::name_of(b!, d) == (a[3] ?? "") {
+      mine = "";
+      for x in bytes! {
+        mine += " {x}";
+      }
+      theirs = "";
+      for i in from..till {
+        theirs += " {img!.code[i] ?? 0}";
+      }
+      println("written:{mine}");
+      println("image:  {theirs}");
+    }
+    if equal {
+      same += 1;
+    } else if !names {
+      differ += 1;
+      println("differs: {bgen::name_of(b!, d)} ({len(bytes!)} bytes written, {till - from} in the image)");
+    }
+  }
+  println("{same} functions identical, {differ} differ, {unwritten} not written");
+  for r in reasons {
+    println("  {counts[r#index] ?? 0}  {r}");
+  }
+}
