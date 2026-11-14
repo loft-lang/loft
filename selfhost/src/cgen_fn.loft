@@ -21,6 +21,8 @@ use cgen_w::*;
 use cgen_loop;
 use cgen_text;
 use cgen_ref;
+use cgen_bind;
+use own;
 use cgen_texts;
 use cgen_natives;
 use opt_names;
@@ -1829,6 +1831,7 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
           return;
         }
       }
+      first = !w.bound[var]!;
       w.bound[var] = true;
       if shape == "text" && (w.borrowed[var] ?? false) {
         cgen_text::borrowed_bind(x, w, var, inner, ind);
@@ -1842,7 +1845,11 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
         return;
       }
       if shape == "ref" {
-        refuse(w, "binds a record or a vector");
+        if w.links[var]! {
+          refuse(w, "a rebind of a & record");
+          return;
+        }
+        cgen_bind::ref_set(x, w, var, inner, first, ind);
         return;
       }
       assign(x, w, inner, w.names[var]!, shape, ind);
@@ -1976,7 +1983,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
     if v.store_text_link {
       return Written { text: "", refused: "a link to a text in a store" };
     }
-    if shape == "ref" && (!plain_rules() || !v.argument) {
+    if shape == "ref" && !plain_rules() {
       return Written { text: "", refused: "a variable of shape ref" };
     }
     own = var_name(v.name, v#index);
@@ -2063,6 +2070,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
     pending_work: [],
     work_ret: work_ret,
     field_view: false,
+    defs: own::function_defs(x.b, index, x.ops),
+    room_minted: [for _ in 0..len(d.variables.variables) { -1 }],
   };
   code = d.code[0]!;
   if ret == "void" {

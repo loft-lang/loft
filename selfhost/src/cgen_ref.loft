@@ -46,6 +46,18 @@ pub fn is_vector_wrapper(b: ir::Bundle, tp: integer) -> boolean {
   tp >= 0 && tp < len(b.types) && b.types[tp].name.starts_with("main_vector<")
 }
 
+// `Stores::wrapper_field_pos`: the offset of a vector wrapper's one field, -1 for any other
+// type.
+fn wrapper_field_pos(b: ir::Bundle, tp: integer) -> integer {
+  if !is_vector_wrapper(b, tp) {
+    return -1;
+  }
+  match b.types[tp].parts[0] {
+    PtStruct { fields } => if len(fields) == 1 { fields[0].position } else { -1 },
+    _ => -1,
+  }
+}
+
 // The operators over a record or a vector; `done` says whether `name` is one of them.
 pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = true;
@@ -87,6 +99,7 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     size = enum_parent_size(x.b, tp);
     if is_vector_wrapper(x.b, tp) {
+      w.room_minted[v] = tp;
       return E { code: "loft_database_room(loft_types, loft_ntypes, &{w.names[v]!}, {size}, {tp})", kind: K_VOID };
     }
     return E { code: "loft_database_typed(&{w.names[v]!}, {size}, {tp})", kind: K_VOID };
@@ -109,6 +122,16 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_get_int({as_ref(w, r)}, {fld})", kind: K_INT };
+  }
+  // `keep_room_operator`: the empty handle written into a room that was just minted.
+  if name == "OpSetInt4" && count == 3 {
+    v = match args[0] { NdVar { n } => n, _ => -1 };
+    off = match args[1] { NdInt { n } => n, _ => -1 };
+    zero = match args[2] { NdInt { n } => n == 0, _ => false };
+    if v >= 0 && zero && w.room_minted[v]! >= 0 && wrapper_field_pos(x.b, w.room_minted[v]!) == off {
+      w.room_minted[v] = -1;
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
   }
   if (name == "OpSetInt" || name == "OpSetInt4" || name == "OpSetInt4Raw") && count == 3 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();

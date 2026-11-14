@@ -16,6 +16,7 @@ use opt_frame_calls;
 use opt_non_sentinel;
 use opt_range;
 use opt_writes;
+use own;
 use opt_ranged_call;
 
 // The shape of a C expression's value (`K`).
@@ -106,6 +107,8 @@ pub struct Cx {
   pub why_work: text,
   // The memo of the store-write question (`Cx::hoist_memo.stores_written`).
   pub writes: opt_writes::Writes,
+  // The operators the ownership oracle reads by number (`own::Ops`).
+  pub ops: own::Ops,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -120,6 +123,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     work_twins: [for _ in 0..len(b.data.definitions) { 0 }],
     why_work: "",
     writes: opt_writes::new_writes(b),
+    ops: own::ops_of(b),
   }
 }
 
@@ -202,6 +206,11 @@ struct W {
   work_ret: integer,
   // The next text field read is a view of the field in place (`field_view`).
   field_view: boolean,
+  // The function's definitions, as the ownership oracle reads them (`use_analysis::Defs`).
+  defs: own::Defs,
+  // Per variable: the wrapper type its vector's room was minted with (`room_minted`), -1
+  // for none — the write of the vector's empty handle that follows is then nothing.
+  room_minted: vector<integer>,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -364,7 +373,7 @@ fn held(shape: text) -> text {
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
 // what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_RECORD_PTR", "LOFT_NO_VECTOR_HOIST", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_RETBUF_ADOPT"];
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_RECORD_PTR", "LOFT_NO_VECTOR_HOIST", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_RETBUF_ADOPT", "LOFT_NO_PUSH_FILL", "LOFT_NO_PUSH_RUN_RESERVE", "LOFT_NO_HELD_PUSH_RUN", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_DEEP_WINDOW", "LOFT_NO_MINT_WINDOW", "LOFT_NO_PUSH_HOIST"];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {

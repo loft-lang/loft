@@ -1491,7 +1491,10 @@ fn peel_loop(x: Cx, w: W, lp: ir::Block, p: Peel, ind: integer) {
   next = if p.next >= 0 { w.names[p.next]! } else { "" };
   labels: vector<integer> = [];
   body = lp.operators[1..len(lp.operators)];
+  // Each copy is written from the binding state the loop starts with.
+  bound_at_entry = w.bound;
   for k in p.lo..p.hi {
+    w.bound = bound_at_entry;
     w.labels += 1;
     m = w.labels;
     labels += [m];
