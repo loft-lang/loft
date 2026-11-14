@@ -12,6 +12,7 @@
 use ir;
 use loop_shape;
 use cgen_fn;
+use cgen_bind;
 use cgen_w::*;
 
 // A program write as its `_at` setter (`set_at`): `f(args…, file, line)`.
@@ -302,6 +303,213 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     return E { code: "loft_vec_get({as_ref(w, v)}, {size}, {as_int(w, idx)})", kind: K_REF };
   }
+  if (name == "OpNewRecord" || name == "OpNewRecordNP") && count == 3 {
+    place = vector_place(x, w, args[0], args[1], args[2], ind);
+    if w.why != "" {
+      return none();
+    }
+    ptp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    elem = w.elem;
+    size = x.b.types[elem].size;
+    t = temp(w, "ref");
+    line(w, ind, "{t} = loft_vec_append({place}, {size});");
+    if !(name == "OpNewRecordNP" || mint_complete(x.b, w, ptp)) {
+      line(w, ind, "loft_fill({t}, loft_dflt{elem}, {size});");
+    }
+    return E { code: t, kind: K_REF };
+  }
+  if name == "OpFinishRecord" && count == 4 {
+    place = vector_place(x, w, args[0], args[2], args[3], ind);
+    if w.why != "" {
+      return none();
+    }
+    return E { code: "loft_vec_finish({place})", kind: K_VOID };
+  }
+  if name == "OpClearVector" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_clear_release(loft_types, loft_ntypes, {as_ref(w, v)})", kind: K_VOID };
+  }
+  if name == "OpCopyRecord" && count == 3 {
+    raw = cgen_fn::literal(w, args[2], "type") ?? return none();
+    if raw < 0 || raw > 65535 {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    tp = raw & 16383;
+    fresh = raw & 16384 != 0;
+    struct_type = tp < len(x.b.types) && (match x.b.types[tp].parts[0] { PtStruct { fields: _ } => true, _ => false });
+    // A fresh destination whose source may be absent takes the type's default image, unless
+    // that image is all zero: the image is not built here.
+    if fresh && struct_type {
+      refuse(w, "a copy into a fresh field");
+      return none();
+    }
+    free = (if raw & 32768 != 0 { 1 } else { 0 }) + (if cgen_bind::swap_safe(x.b, tp, []) { 2 } else { 0 }) + (if fresh { 4 } else { 0 });
+    pair = [args[0], args[1]];
+    src = cgen_fn::arg(x, w, pair, 0, ind);
+    dst = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "loft_copy_record_at(loft_types, {tp}, {as_ref(w, src)}, {as_ref(w, dst)}, {free}, {cgen_fn::site(w)})", kind: K_VOID };
+  }
+  if (name == "OpMoveRecord" || name == "OpMoveField") && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    pair = [args[0], args[1]];
+    src = cgen_fn::arg(x, w, pair, 0, ind);
+    dst = cgen_fn::arg(x, w, pair, 1, ind);
+    f = if name == "OpMoveRecord" { "loft_move_record_out" } else { "loft_move_field" };
+    return E { code: "{f}(loft_types, {tp}, {as_ref(w, src)}, {as_ref(w, dst)})", kind: K_VOID };
+  }
+  if (name == "OpPrependVector" || name == "OpAppendVector") && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    linked = x.b.types[tp].linked;
+    pair = [args[0], args[1]];
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    from = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    if name == "OpPrependVector" {
+      return E { code: "loft_vec_prepend(loft_types, {tp}, {into}, {from}, {if linked { 1 } else { 0 }})", kind: K_BOOL };
+    }
+    if linked {
+      return E { code: "loft_vec_add_array(loft_types, {tp}, {into}, {from})", kind: K_VOID };
+    }
+    return E { code: "loft_vec_add(loft_types, {tp}, {into}, {from})", kind: K_VOID };
+  }
+  if name == "OpGetBoolean" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_bool({as_ref(w, r)}, {fld})", kind: K_BOOL };
+  }
+  if name == "OpSetBoolean" && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, "loft_set_byte_at", [as_ref(w, r), "{fld}", as_bool(w, val)]);
+  }
+  if name == "OpPushByte" && count == 3 {
+    min = cgen_fn::literal(w, args[1], "byte minimum") ?? return none();
+    pair = [args[0], args[2]];
+    v = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "loft_vec_push_byte({as_ref(w, v)}, loft_byte_raw({min}, {as_int(w, val)}))", kind: K_VOID };
+  }
+  if name == "OpVectorIsNull" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_absent({as_ref(w, v)})", kind: K_COND };
+  }
+  if name == "OpLengthSorted" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_len({as_ref(w, v)})", kind: K_INT };
+  }
+  if (name == "OpEqRef" || name == "OpNeRef") && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "{if name == "OpNeRef" { "!" } else { "" }}loft_ref_eq({as_ref(w, a)}, {as_ref(w, b)})", kind: K_COND };
+  }
+  if name == "OpClear" && count == 2 {
+    raw = cgen_fn::literal(w, args[1], "type") ?? return none();
+    tp = raw & 32767;
+    root = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    walk = "loft_remove_claims(loft_types, {tp}, {root})";
+    if raw & 32768 == 0 {
+      return E { code: walk, kind: K_VOID };
+    }
+    if tp >= len(x.b.types) {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    return E { code: "if (!loft_reset_pool_root({root}, {tp}, {enum_parent_size(x.b, tp)}, loft_dflt{tp}, {x.b.types[tp].size})) {walk}", kind: K_VOID };
+  }
+  if name == "OpGetCharacter" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_char({as_ref(w, r)}, {fld})", kind: K_CHAR };
+  }
+  if name == "OpSetCharacter" && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    c = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, "loft_set_char_at", [as_ref(w, r), "{fld}", as_char(w, c)]);
+  }
+  if name == "OpPushCharacter" && count == 2 {
+    v = cgen_fn::arg(x, w, args, 0, ind);
+    c = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "loft_vec_push_char({as_ref(w, v)}, {as_char(w, c)})", kind: K_VOID };
+  }
   done = false;
   none()
+}
+
+// `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write
+// every field, so the minted element needs no default image first?
+fn mint_complete(b: ir::Bundle, w: W, tp: integer) -> boolean {
+  fact = b.data.definitions[w.index]!.no_prefill;
+  for part in fact.split(';') {
+    if part.starts_with("m") {
+      for n in part[1..part.size()].split(',') {
+        if n == "{tp}" {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// `record_collection` for a plain vector: the vector `OpNewRecord(data, ptp, fld)` appends to
+// — `data` itself (`fld` 65535) or its vector field — with the element type left in `w.elem`.
+// A keyed collection and a linked group are not carried.
+fn vector_place(x: Cx, w: W, data: ir::Node, ptp_node: ir::Node, fld_node: ir::Node, ind: integer) -> text {
+  ptp = cgen_fn::literal(w, ptp_node, "type") ?? return "";
+  fld = cgen_fn::literal(w, fld_node, "field") ?? return "";
+  if ptp < 0 || ptp >= len(x.b.types) {
+    refuse(w, "a type out of range");
+    return "";
+  }
+  base = as_ref(w, cgen_fn::expr(x, w, data, ind));
+  if fld == 65535 {
+    match x.b.types[ptp].parts[0] {
+      PtVector { content } => {
+        w.elem = content;
+        return base;
+      },
+      _ => {
+        refuse(w, "a new record in a keyed collection");
+        return "";
+      },
+    }
+  }
+  fields = match x.b.types[ptp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    PtEnumValue { value: _, fields: fs } => fs,
+    _ => {
+      refuse(w, "a new record in a field of a non-struct");
+      return "";
+    },
+  };
+  if fld < 0 || fld >= len(fields) {
+    refuse(w, "a field out of range");
+    return "";
+  }
+  for o in fields[fld]!.other_indexes {
+    if o != 65535 {
+      refuse(w, "a new record in a linked group");
+      return "";
+    }
+  }
+  vtp = fields[fld]!.content;
+  if vtp >= 0 && vtp < len(x.b.types) {
+    match x.b.types[vtp].parts[0] {
+      PtVector { content } => {
+        w.elem = content;
+        return "loft_field({base}, {fields[fld]!.position})";
+      },
+      _ => {},
+    }
+  }
+  refuse(w, "a new record in a keyed collection");
+  ""
 }

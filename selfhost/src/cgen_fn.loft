@@ -2072,6 +2072,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer) -> Written {
     field_view: false,
     defs: own::function_defs(x.b, index, x.ops),
     room_minted: [for _ in 0..len(d.variables.variables) { -1 }],
+    elem: -1,
   };
   code = d.code[0]!;
   if ret == "void" {
