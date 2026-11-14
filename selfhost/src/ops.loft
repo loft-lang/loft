@@ -90,3 +90,29 @@ pub fn text_char(t: text?, i: integer?) -> integer? {
   if c == null { null } else { c! as integer }
 }
 
+// `OpMathFuncFloat`'s functions by number, as the operator's own table names them; any other
+// number is null.
+pub fn math_func(id: integer, x: float) -> float? {
+  if id == 0 { x.cos() } else if id == 1 { x.sin() } else if id == 2 { x.tan() } else if id == 3 { x.acos() } else if id == 4 { x.asin() } else if id == 5 { x.atan() } else if id == 6 { x.ceil() } else if id == 7 { x.floor() } else if id == 8 { x.round() } else if id == 9 { x.sqrt() } else if id == 10 { x.exp() } else { null }
+}
+
+// `OpMathFunc2Float`: 0 the arc tangent of `a / b`, 1 the logarithm of `a` in base `b`.
+pub fn math_func2(id: integer, a: float, b: float) -> float? {
+  if id == 0 { a.atan2(b) } else if id == 1 { a.log(b) } else { null }
+}
+
+// `OpMathFuncSingle` / `OpMathFunc2Single`: the same tables in single precision.
+pub fn math_func_single(id: integer, x: single) -> single? {
+  if id == 0 { x.cos() } else if id == 1 { x.sin() } else if id == 2 { x.tan() } else if id == 3 { x.acos() } else if id == 4 { x.asin() } else if id == 5 { x.atan() } else if id == 6 { x.ceil() } else if id == 7 { x.floor() } else if id == 8 { x.round() } else if id == 9 { x.sqrt() } else if id == 10 { x.exp() } else { null }
+}
+
+pub fn math_func2_single(id: integer, a: single, b: single) -> single? {
+  if id == 0 { a.atan2(b) } else if id == 1 { a.log(b) } else { null }
+}
+
+// A single-precision comparison, as `cmp_float` compares.
+pub fn cmp_single(kind: integer, a: single?, b: single?) -> boolean {
+  d = if a == null && b == null { 0 } else if a == null { -1 } else if b == null { 1 } else if a! < b! { -1 } else if a! > b! { 1 } else { 0 };
+  if kind == 0 { d == 0 } else if kind == 1 { d != 0 } else if kind == 2 { d < 0 } else { d <= 0 }
+}
+

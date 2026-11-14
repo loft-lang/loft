@@ -295,9 +295,11 @@ fn OpCastIntFromText(v1: text) -> __word;
 fn OpCastSingleFromText(v1: text) -> single;
 #cold
 #rust"@v1.parse().unwrap_or(f32::NAN)"
+#loft"if v1 == null {{ null }} else {{ v1! as single? }}"
 fn OpCastFloatFromText(v1: text) -> __fword;
 #cold
 #rust"@v1.parse().unwrap_or(f64::NAN)"
+#loft"if v1 == null {{ null }} else {{ v1! as float? }}"
 fn OpAbsInt(v1: __word) -> __word;
 #rust"ops::op_abs_int(@v1)"
 #loft"if v1 == null {{ null }} else {{ v1.abs() }}"
@@ -440,6 +442,7 @@ fn OpConvSingleFromNull() -> single;
 #rust"f32::NAN"
 fn OpAbsSingle(v1: single) -> single;
 #rust"@v1.abs()"
+#loft"v1.abs()"
 /// Absolute value for single-precision floats.
 pub fn abs(self: single) -> single {
   OpAbsSingle(self)
@@ -448,6 +451,7 @@ pub fn abs(self: single) -> single {
 
 fn OpMinSingleSingle(v1: single) -> single;
 #rust"-@v1"
+#loft"-v1"
 fn OpCastIntFromSingle(v1: single) -> __word;
 // @PLN102 pre-freeze (E2 Tier-1) — mirror OpCastIntFromFloat: an out-of-range
 // (or NaN) `single as integer` reads NULL (the i64::MIN sentinel + soft
@@ -456,32 +460,43 @@ fn OpCastIntFromSingle(v1: single) -> __word;
 // while `1e30 as integer` (float) was already null — an inconsistency (C80: an
 // undefined narrowing reads null, never a saturated value).
 #rust"{{ let f = f64::from(@v1); if f.is_nan() {{ i64::MIN }} else if !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&f) {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ let r = ops::op_cast_int_from_single(@v1); if r == i64::MIN {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ r }} }} }}"
+#loft"v1 as integer"
 fn OpConvFloatFromSingle(v1: single) -> __fword;
 #rust"f64::from(@v1)"
+#loft"v1 as float"
 fn OpConvBoolFromSingle(v1: single) -> boolean;
 #rust"!@v1.is_nan()"
+#loft"v1 != null"
 fn OpAddSingle(v1: single, v2: single) -> single;
 #rust"@v1 + @v2"
+#loft"v1 + v2"
 fn OpMinSingle(v1: single, v2: single) -> single;
 #rust"@v1 - @v2"
+#loft"v1 - v2"
 fn OpMulSingle(v1: single, v2: single) -> single;
 #rust"@v1 * @v2"
+#loft"v1 * v2"
 // C80 / E-Uncomp: single-precision div / mod by zero yields the float null
 // sentinel (NaN) and CONTINUES (raise_recoverable, no halt); mirror of float.
 fn OpDivSingle(v1: single, v2: single) -> single;
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 / @v2 }}"
+#loft"if v2 == 0.0f {{ s.raise_recoverable(\"division by zero\"); v1 / v2 }} else {{ v1 / v2 }}"
 fn OpRemSingle(v1: single, v2: single) -> single;
 #cold
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 % @v2 }}"
+#loft"if v2 == 0.0f {{ s.raise_recoverable(\"division by zero\"); v1 % v2 }} else {{ v1 % v2 }}"
 fn OpDivSingleNullable(v1: single, v2: single) -> single;
 #cold
 #rust"@v1 / @v2"
+#loft"v1 / v2"
 fn OpRemSingleNullable(v1: single, v2: single) -> single;
 #cold
 #rust"@v1 % @v2"
+#loft"v1 % v2"
 fn OpMathFuncSingle(fn_id: const i8, v1: single) -> single;
 #cold
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), 10 => @v1.exp(), _ => f32::NAN }}"
+#loft"ops::math_func_single(fn_id, v1)"
 /// Cosine. Use for circular motion: x = r * cos(angle).
 pub fn cos(self: single) -> single {
   OpMathFuncSingle(0, self)
@@ -549,6 +564,7 @@ pub fn sqrt(self: single) -> single? {
 fn OpMathFunc2Single(fn_id: const i8, v1: single, v2: single) -> single;
 #cold
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => {{ let __b = @v2; if __b.to_bits() == 10.0_f32.to_bits() {{ @v1.log10() }} else if __b.to_bits() == 2.0_f32.to_bits() {{ @v1.log2() }} else {{ @v1.log(__b) }} }}, _ => f32::NAN }}"
+#loft"ops::math_func2_single(fn_id, v1, v2)"
 /// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
 /// Use instead of atan when you have separate x/y components.
 pub fn atan2(self: single, v2: single) -> single {
@@ -578,6 +594,7 @@ pub fn pow(self: integer, v2: integer) -> integer? {
 fn OpPowSingle(v1: single, v2: single) -> single;
 #cold
 #rust"@v1.powf(@v2)"
+#loft"v1.pow(v2)"
 /// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
 /// is not a real number (`pow(-8.0, 0.5)`).
 /// Use for exponential growth curves and scaling.
@@ -588,8 +605,10 @@ pub fn pow(self: single, v2: single) -> single? {
 
 fn OpEqSingle(v1: single, v2: single) -> boolean;
 #rust"(@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1)"
+#loft"ops::cmp_single(0, v1, v2)"
 fn OpNeSingle(v1: single, v2: single) -> boolean;
 #rust"!((@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1))"
+#loft"ops::cmp_single(1, v1, v2)"
 // Null sorts first: a null left is less than any non-null right, a null right is greater
 // than nothing.  Spelled as ONE null test and one compare — `!(a >= b)` is `a < b` for
 // non-null operands and true for a null left — with both operands bound FIRST, left then
@@ -601,8 +620,10 @@ fn OpNeSingle(v1: single, v2: single) -> boolean;
 // the same row — LLVM lowers `!(a >= b)` to one compare and the others to two.
 fn OpLtSingle(v1: single, v2: single) -> boolean;
 #rust"{{ let _a = @v1; let _b = @v2; #[allow(clippy::neg_cmp_op_on_partial_ord)] let _lt = !_b.is_nan() && !(_a >= _b); _lt }}"
+#loft"ops::cmp_single(2, v1, v2)"
 fn OpLeSingle(v1: single, v2: single) -> boolean;
 #rust"@v1.is_nan() || (!@v2.is_nan() && @v1 <= @v2)"
+#loft"ops::cmp_single(3, v1, v2)"
 fn OpFormatSingle(pos: const u16, val: single, width: __word, precision: __word, token: const u8, plus: const boolean, dir: const i8);
 #cold
 fn OpFormatStackSingle(
@@ -634,6 +655,7 @@ fn OpConvFloatFromNull() -> __fword;
 #loft"null"
 fn OpAbsFloat(v1: __fword) -> __fword;
 #rust"@v1.abs()"
+#loft"v1.abs()"
 /// Absolute value for double-precision floats.
 pub fn abs(self: f64) -> f64 {
   OpAbsFloat(self)
@@ -643,15 +665,19 @@ pub fn abs(self: f64) -> f64 {
 fn OpFloatBits(v1: __fword) -> i64;
 #cold
 #rust"@v1.to_bits() as i64"
+#loft"v1.bits()"
 fn OpFloatFromBits(v1: i64) -> __fword;
 #cold
 #rust"f64::from_bits(@v1 as u64)"
+#loft"float_from_bits(v1)"
 fn OpSingleBits(v1: single) -> __word;
 #cold
 #rust"i64::from(@v1.to_bits() as i32)"
+#loft"v1.bits()"
 fn OpSingleFromBits(v1: __word) -> single;
 #cold
 #rust"f32::from_bits(@v1 as i32 as u32)"
+#loft"single_from_bits(v1)"
 /// The 64 bits of a double as they are stored (IEEE-754 binary64), moved, not converted: what
 /// a byte format writes for it.  `float_from_bits` takes them back.  `-0.0`'s pattern is the
 /// integer null's, so `(-0.0).bits()` reads as null and still comes back as `-0.0`.
@@ -678,15 +704,18 @@ pub fn single_from_bits(v: integer) -> single {
 fn OpMathPiFloat() -> __fword;
 #cold
 #rust"std::f64::consts::PI"
+#loft"PI"
 /// The ratio of a circle's circumference to its diameter (3.14159...).
 pub PI = OpMathPiFloat() as float;
 fn OpMathEFloat() -> __fword;
 #cold
 #rust"std::f64::consts::E"
+#loft"E"
 /// Euler's number, the base of natural logarithms (2.71828...).
 pub E = OpMathEFloat() as float;
 fn OpMathFuncFloat(fn_id: const i8, v1: __fword) -> __fword;
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), 10 => @v1.exp(), _ => f64::NAN }}"
+#loft"ops::math_func(fn_id, v1)"
 /// Cosine. Use for circular motion: x = r * cos(angle).
 pub fn cos(self: f64) -> f64 {
   OpMathFuncFloat(0, self)
@@ -753,6 +782,7 @@ pub fn sqrt(self: f64) -> f64? {
 // logarithms, which can miss an exact power by one unit in the last place (loft#1799).
 fn OpMathFunc2Float(fn_id: const i8, v1: __fword, v2: __fword) -> __fword;
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => {{ let __b = @v2; if __b.to_bits() == 10.0_f64.to_bits() {{ @v1.log10() }} else if __b.to_bits() == 2.0_f64.to_bits() {{ @v1.log2() }} else {{ @v1.log(__b) }} }}, _ => f64::NAN }}"
+#loft"ops::math_func2(fn_id, v1, v2)"
 /// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
 /// Use instead of atan when you have separate x/y components.
 pub fn atan2(self: f64, v2: f64) -> f64 {
@@ -769,6 +799,7 @@ pub fn log(self: f64, v2: f64) -> f64? {
 
 fn OpPowFloat(v1: __fword, v2: __fword) -> __fword;
 #rust"@v1.powf(@v2)"
+#loft"v1.pow(v2)"
 /// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
 /// is not a real number (`pow(-8.0, 0.5)`).
 /// Use for exponential growth curves and scaling.
@@ -873,6 +904,7 @@ fn OpDivFloat(v1: __fword, v2: __fword) -> __fword;
 #loft"if v2 == 0.0 {{ s.raise_recoverable(\"division by zero\"); v1 / v2 }} else {{ v1 / v2 }}"
 fn OpRemFloat(v1: __fword, v2: __fword) -> __fword;
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 % @v2 }}"
+#loft"if v2 == 0.0 {{ s.raise_recoverable(\"division by zero\"); v1 % v2 }} else {{ v1 % v2 }}"
 // IEEE-behaviour peers — emitted only when defended.
 fn OpDivFloatNullable(v1: __fword, v2: __fword) -> __fword;
 #hot
@@ -881,6 +913,7 @@ fn OpDivFloatNullable(v1: __fword, v2: __fword) -> __fword;
 fn OpRemFloatNullable(v1: __fword, v2: __fword) -> __fword;
 #cold
 #rust"@v1 % @v2"
+#loft"v1 % v2"
 fn OpEqFloat(v1: __fword, v2: __fword) -> boolean;
 #rust"(@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1)"
 #loft"ops::cmp_float(0, v1, v2)"
@@ -1113,6 +1146,7 @@ fn OpTextCharacterNullable(v1: text, v2: __word) -> character;
 #rust"ops::text_character(@v1, @v2)"
 fn OpConvBoolFromCharacter(v1: character) -> boolean;
 #rust"ops::op_conv_bool_from_character(@v1)"
+#loft"v1 != 0"
 fn OpClearText(pos: const u16);
 fn OpFreeText(pos: const u16);
 fn OpEqText(v1: text, v2: text) -> boolean;
@@ -1392,6 +1426,7 @@ fn OpSetByte(v1: reference, fld: const u16, min: const i32, val: __word);
 #loft"if v1.rec != 0 {{ crt::set_w(crt::W_BYTE, v1.store_nr, v1.rec, v1.pos, fld, min, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpSetByteNullable(v1: reference, fld: const u16, min: const i32, val: __word);
 #rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_byte_nullable(&db, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(crt::W_BYTE_NULLABLE, v1.store_nr, v1.rec, v1.pos, fld, min, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 fn OpSetShort(v1: reference, fld: const u16, min: const i32, val: __word);
 #rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_short_nullable(&db, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 #loft"if v1.rec != 0 {{ crt::set_w(crt::W_SHORT, v1.store_nr, v1.rec, v1.pos, fld, min, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
@@ -1433,6 +1468,7 @@ fn OpGetShortRaw(v1: reference, fld: const u16, min: const i32) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_i16_raw(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpSetShortRaw(v1: reference, fld: const u16, min: const i32, val: __word);
 #rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i16_raw(db.rec, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#loft"if v1.rec != 0 {{ crt::set_w(crt::W_SHORT_RAW, v1.store_nr, v1.rec, v1.pos, fld, min, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // NOT-NULL `u16`/`i16` struct fields: direct `(val - min)` encoding with NO null
 // sentinel, so the full 65536-value range round-trips (`OpGetShort`'s `+1` and
 // `OpGetShortRaw`'s `u16::MAX` both swallow the max value as null).  The write
@@ -1591,6 +1627,7 @@ fn OpVectorRef(r: vector, index: __word) -> reference[r];
 // @P321d + @P338: bind both the receiver and the index to locals before
 // the call (see OpGetVector above).
 #rust"{{let __vr = @r; let __vi = @index; s.vec_ref_or_raise(&__vr, __vi)}}"
+#loft"state::vec_ref(r, index)"
 // Plan-07 phase 4 step 4.6/4.7 — nullable peers of OpGetVector /
 // OpVectorRef.  Same body (return null DbRef on OOB), used by
 // for-loop iteration codegen which depends on the null result as
@@ -1607,6 +1644,7 @@ fn OpGetVectorNullable(r: vector, size: const u16, index: __word) -> reference[r
 #loft"state::vec_get(r, size, index)"
 fn OpVectorRefNullable(r: vector, index: __word) -> reference[r];
 #rust"{{ let el = vector::get_vector(&@r, 4, @index, &s.database.allocations); stores.get_ref(&el, 0) }}"
+#loft"state::vec_ref(r, index)"
 fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
 #cold
 #rust"s.db_from_text(@val, @db_tp)"

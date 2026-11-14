@@ -1412,3 +1412,46 @@ pub fn hash_remove(self: State) {
     self.stop("not carried: a removal from {self.types[tp]?.name ?? "a collection"}");
   }
 }
+
+// `State::text_end_jump`: a text walk's loop test — the jump taken while the text in the
+// frame slot `src` is longer than the index in the slot `idx`.
+pub fn text_end_jump(self: State) {
+  src = self.code_u16();
+  arg = self.code_u8();
+  idx = self.code_u16();
+  step = self.code_i32();
+  if !self.slot_ok(self.stack_pos - src) {
+    return;
+  }
+  at = self.get_var_i64(idx);
+  if crt::local_text_len(self.stk, self.stack_pos - src, arg) > (at ?? (-9223372036854775807 - 1)) {
+    self.code_pos += step;
+  }
+}
+
+// `OpVarFnRef`: a function reference's 20 bytes pushed from the frame slot `pos`, in a
+// 24-byte step.
+pub fn var_fn_ref(self: State, pos: integer) {
+  if !self.slot_ok(self.stack_pos - pos) {
+    return;
+  }
+  self.ensure_stack(24);
+  crt::stack_move(self.stk, self.stack_pos - pos, self.stack_pos, 20);
+  self.stack_pos += 24;
+}
+
+// `State::get_file_text`: the file's text read into the text the `&text` reference names;
+// that reference and then the File popped.
+pub fn get_file_text(self: State) {
+  content = self.get_stack_dbref();
+  file = self.get_stack_dbref();
+  crt::file_text_ref(file.store_nr, file.rec, file.pos, content.store_nr, content.rec, content.pos);
+}
+
+// `Stores::get_ref` of a vector's element (`OpVectorRef`, `OpVectorRefNullable`): the record
+// an array's slot `index` names; null outside it.
+pub fn vec_ref(r: DbRef, index: integer?) -> DbRef {
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::array_get(io, r.store_nr, r.rec, r.pos, index);
+  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+}

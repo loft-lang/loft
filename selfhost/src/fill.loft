@@ -434,8 +434,122 @@ pub fn op_put_single(s: state::State) {
   s.put_var_f32(pos, value);
 }
 
+pub fn op_abs_single(s: state::State) {
+  v1 = s.get_stack_f32();
+  new_value: single? = v1.abs();
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_min_single_single(s: state::State) {
+  v1 = s.get_stack_f32();
+  new_value: single? = -v1;
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_cast_int_from_single(s: state::State) {
+  v1 = s.get_stack_f32();
+  new_value: integer? = v1 as integer;
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_conv_float_from_single(s: state::State) {
+  v1 = s.get_stack_f32();
+  new_value: float? = v1 as float;
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_conv_bool_from_single(s: state::State) {
+  v1 = s.get_stack_f32();
+  new_value: boolean? = v1 != null;
+  s.put_stack_bool(new_value);
+}
+
+pub fn op_add_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = v1 + v2;
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_min_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = v1 - v2;
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_mul_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = v1 * v2;
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_div_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = if v2 == 0.0f { s.raise_recoverable("division by zero"); v1 / v2 } else { v1 / v2 };
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_eq_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: boolean? = ops::cmp_single(0, v1, v2);
+  s.put_stack_bool(new_value);
+}
+
+pub fn op_ne_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: boolean? = ops::cmp_single(1, v1, v2);
+  s.put_stack_bool(new_value);
+}
+
+pub fn op_lt_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: boolean? = ops::cmp_single(2, v1, v2);
+  s.put_stack_bool(new_value);
+}
+
+pub fn op_le_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: boolean? = ops::cmp_single(3, v1, v2);
+  s.put_stack_bool(new_value);
+}
+
 pub fn op_conv_float_from_null(s: state::State) {
   new_value: float? = null;
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_abs_float(s: state::State) {
+  v1 = s.get_stack_f64();
+  new_value: float? = v1.abs();
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_math_func_float(s: state::State) {
+  fn_id = s.code_i8();
+  v1 = s.get_stack_f64();
+  new_value: float? = ops::math_func(fn_id, v1);
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_math_func2_float(s: state::State) {
+  fn_id = s.code_i8();
+  v2 = s.get_stack_f64();
+  v1 = s.get_stack_f64();
+  new_value: float? = ops::math_func2(fn_id, v1, v2);
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_pow_float(s: state::State) {
+  v2 = s.get_stack_f64();
+  v1 = s.get_stack_f64();
+  new_value: float? = v1.pow(v2);
   s.put_stack_f64(new_value);
 }
 
@@ -455,6 +569,13 @@ pub fn op_cast_int_from_float(s: state::State) {
   v1 = s.get_stack_f64();
   new_value: integer? = v1 as integer;
   s.put_stack_i64(new_value);
+}
+
+pub fn op_rem_float(s: state::State) {
+  v2 = s.get_stack_f64();
+  v1 = s.get_stack_f64();
+  new_value: float? = if v2 == 0.0 { s.raise_recoverable("division by zero"); v1 % v2 } else { v1 % v2 };
+  s.put_stack_f64(new_value);
 }
 
 pub fn op_eq_float(s: state::State) {
@@ -535,6 +656,12 @@ pub fn op_text_character(s: state::State) {
   v1 = s.get_stack_str();
   new_value: integer? = ops::text_char(v1, v2);
   s.put_stack_char(new_value);
+}
+
+pub fn op_conv_bool_from_character(s: state::State) {
+  v1 = s.get_stack_char();
+  new_value: boolean? = v1 != 0;
+  s.put_stack_bool(new_value);
 }
 
 pub fn op_clear_text(s: state::State) {
@@ -794,6 +921,14 @@ pub fn op_set_byte(s: state::State) {
   if v1.rec != 0 { crt::set_w(crt::W_BYTE, v1.store_nr, v1.rec, v1.pos, fld, min, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
 }
 
+pub fn op_set_byte_nullable(s: state::State) {
+  fld = s.code_u16();
+  min = s.code_i32();
+  val = s.get_stack_i64();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(crt::W_BYTE_NULLABLE, v1.store_nr, v1.rec, v1.pos, fld, min, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
 pub fn op_set_short(s: state::State) {
   fld = s.code_u16();
   min = s.code_i32();
@@ -814,6 +949,14 @@ pub fn op_set_int4(s: state::State) {
   val = s.get_stack_i64();
   v1 = s.get_stack_dbref();
   if v1.rec != 0 { crt::set_w(crt::W_INT4, v1.store_nr, v1.rec, v1.pos, fld, 0, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
+}
+
+pub fn op_set_short_raw(s: state::State) {
+  fld = s.code_u16();
+  min = s.code_i32();
+  val = s.get_stack_i64();
+  v1 = s.get_stack_dbref();
+  if v1.rec != 0 { crt::set_w(crt::W_SHORT_RAW, v1.store_nr, v1.rec, v1.pos, fld, min, val); } else { s.raise_recoverable("a write to an absent record was dropped"); }
 }
 
 pub fn op_set_text(s: state::State) {
@@ -880,11 +1023,25 @@ pub fn op_get_vector(s: state::State) {
   s.put_stack_dbref(new_value);
 }
 
+pub fn op_vector_ref(s: state::State) {
+  index = s.get_stack_i64();
+  r = s.get_stack_dbref();
+  new_value: state::DbRef? = state::vec_ref(r, index);
+  s.put_stack_dbref(new_value);
+}
+
 pub fn op_get_vector_nullable(s: state::State) {
   size = s.code_u16();
   index = s.get_stack_i64();
   r = s.get_stack_dbref();
   new_value: state::DbRef? = state::vec_get(r, size, index);
+  s.put_stack_dbref(new_value);
+}
+
+pub fn op_vector_ref_nullable(s: state::State) {
+  index = s.get_stack_i64();
+  r = s.get_stack_dbref();
+  new_value: state::DbRef? = state::vec_ref(r, index);
   s.put_stack_dbref(new_value);
 }
 
@@ -1064,6 +1221,11 @@ pub fn op_clear_stack_text(s: state::State) {
   s.clear_stack_text();
 }
 
+pub fn op_var_fn_ref(s: state::State) {
+  pos = s.code_u16();
+  s.var_fn_ref(pos);
+}
+
 pub fn op_put_fn_ref(s: state::State) {
   pos = s.code_u16();
   s.put_fn_ref(pos);
@@ -1081,6 +1243,10 @@ pub fn op_text_walk_step(s: state::State) {
 
 pub fn op_text_null_jump(s: state::State) {
   s.text_null_jump();
+}
+
+pub fn op_text_end_jump(s: state::State) {
+  s.text_end_jump();
 }
 
 pub fn op_vec_get_int(s: state::State) {
@@ -1154,11 +1320,107 @@ pub fn op_cast_int_from_text(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn op_cast_single_from_text(s: state::State) {
+  v1 = s.get_stack_str();
+  new_value: single? = if v1 == null { null } else { v1! as single? };
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_cast_float_from_text(s: state::State) {
+  v1 = s.get_stack_str();
+  new_value: float? = if v1 == null { null } else { v1! as float? };
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_rem_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = if v2 == 0.0f { s.raise_recoverable("division by zero"); v1 % v2 } else { v1 % v2 };
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_div_single_nullable(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = v1 / v2;
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_rem_single_nullable(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = v1 % v2;
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_math_func_single(s: state::State) {
+  fn_id = s.code_i8();
+  v1 = s.get_stack_f32();
+  new_value: single? = ops::math_func_single(fn_id, v1);
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_math_func2_single(s: state::State) {
+  fn_id = s.code_i8();
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = ops::math_func2_single(fn_id, v1, v2);
+  s.put_stack_f32(new_value);
+}
+
 pub fn op_pow_int(s: state::State) {
   v2 = s.get_stack_i64();
   v1 = s.get_stack_i64();
   new_value: integer? = if v1 == null || v2 == null || v2 < 0 { null } else { v1.pow(v2) };
   s.put_stack_i64(new_value);
+}
+
+pub fn op_pow_single(s: state::State) {
+  v2 = s.get_stack_f32();
+  v1 = s.get_stack_f32();
+  new_value: single? = v1.pow(v2);
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_float_bits(s: state::State) {
+  v1 = s.get_stack_f64();
+  new_value: integer? = v1.bits();
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_float_from_bits(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: float? = float_from_bits(v1);
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_single_bits(s: state::State) {
+  v1 = s.get_stack_f32();
+  new_value: integer? = v1.bits();
+  s.put_stack_i64(new_value);
+}
+
+pub fn op_single_from_bits(s: state::State) {
+  v1 = s.get_stack_i64();
+  new_value: single? = single_from_bits(v1);
+  s.put_stack_f32(new_value);
+}
+
+pub fn op_math_pi_float(s: state::State) {
+  new_value: float? = PI;
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_math_e_float(s: state::State) {
+  new_value: float? = E;
+  s.put_stack_f64(new_value);
+}
+
+pub fn op_rem_float_nullable(s: state::State) {
+  v2 = s.get_stack_f64();
+  v1 = s.get_stack_f64();
+  new_value: float? = v1 % v2;
+  s.put_stack_f64(new_value);
 }
 
 pub fn op_size_text(s: state::State) {
@@ -1240,6 +1502,10 @@ pub fn op_get_file(s: state::State) {
   s.put_stack_bool(new_value);
 }
 
+pub fn op_get_file_text(s: state::State) {
+  s.get_file_text();
+}
+
 pub fn op_database_n_p(s: state::State) {
   s.database_n_p();
 }
@@ -1313,10 +1579,28 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     70 => op_const_single(s),
     71 => op_var_single(s),
     72 => op_put_single(s),
+    73 => op_abs_single(s),
+    74 => op_min_single_single(s),
+    75 => op_cast_int_from_single(s),
+    76 => op_conv_float_from_single(s),
+    77 => op_conv_bool_from_single(s),
+    78 => op_add_single(s),
+    79 => op_min_single(s),
+    80 => op_mul_single(s),
+    81 => op_div_single(s),
+    82 => op_eq_single(s),
+    83 => op_ne_single(s),
+    84 => op_lt_single(s),
+    85 => op_le_single(s),
     86 => op_conv_float_from_null(s),
+    87 => op_abs_float(s),
+    88 => op_math_func_float(s),
+    89 => op_math_func2_float(s),
+    90 => op_pow_float(s),
     91 => op_min_single_float(s),
     92 => op_cast_single_from_float(s),
     93 => op_cast_int_from_float(s),
+    94 => op_rem_float(s),
     95 => op_eq_float(s),
     96 => op_ne_float(s),
     97 => op_le_float(s),
@@ -1333,6 +1617,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     109 => op_put_text(s),
     110 => op_get_text_sub(s),
     111 => op_text_character(s),
+    113 => op_conv_bool_from_character(s),
     114 => op_clear_text(s),
     115 => op_free_text(s),
     116 => op_eq_text(s),
@@ -1374,9 +1659,11 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     162 => op_set_single(s),
     163 => op_set_float(s),
     164 => op_set_byte(s),
+    165 => op_set_byte_nullable(s),
     166 => op_set_short(s),
     167 => op_get_int4(s),
     168 => op_set_int4(s),
+    173 => op_set_short_raw(s),
     176 => op_set_text(s),
     177 => op_set_text_replace(s),
     178 => op_var_vector(s),
@@ -1387,7 +1674,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     184 => op_ref_alias(s),
     185 => op_clear_vector(s),
     186 => op_get_vector(s),
+    187 => op_vector_ref(s),
     188 => op_get_vector_nullable(s),
+    189 => op_vector_ref_nullable(s),
     192 => op_new_record(s),
     193 => op_finish_record(s),
     194 => op_append_vector(s),
@@ -1419,10 +1708,12 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     238 => op_get_stack_ref(s),
     247 => op_append_stack_text(s),
     249 => op_clear_stack_text(s),
+    253 => op_var_fn_ref(s),
     254 => op_put_fn_ref(s),
     255 => op_const_ref(s),
     259 => op_text_walk_step(s),
     260 => op_text_null_jump(s),
+    261 => op_text_end_jump(s),
     262 => op_vec_get_int(s),
     263 => op_vec_get_int_nullable(s),
     264 => op_vec_set_int(s),
@@ -1433,7 +1724,22 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     270 => op_range_default(s),
     272 => op_conv_character_from_null(s),
     274 => op_cast_int_from_text(s),
+    275 => op_cast_single_from_text(s),
+    276 => op_cast_float_from_text(s),
+    278 => op_rem_single(s),
+    279 => op_div_single_nullable(s),
+    280 => op_rem_single_nullable(s),
+    281 => op_math_func_single(s),
+    282 => op_math_func2_single(s),
     283 => op_pow_int(s),
+    284 => op_pow_single(s),
+    287 => op_float_bits(s),
+    288 => op_float_from_bits(s),
+    289 => op_single_bits(s),
+    290 => op_single_from_bits(s),
+    291 => op_math_pi_float(s),
+    292 => op_math_e_float(s),
+    293 => op_rem_float_nullable(s),
     294 => op_size_text(s),
     299 => op_database(s),
     300 => op_format_database(s),
@@ -1448,6 +1754,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     329 => op_clear_keyed(s),
     339 => op_pre_alloc_vector(s),
     341 => op_get_file(s),
+    343 => op_get_file_text(s),
     365 => op_database_n_p(s),
     _ => return false,
   }
@@ -2151,6 +2458,54 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         continue;
       }
     }
+    87 => {
+      if ip <= safe && sp >= 8 {
+        v1_87 = crt::fget_f64(stk, base, cap, sp - 8);
+        sp -= 8;
+        ip += 1;
+        nv_87: float? = v1_87.abs();
+        crt::fput_f64(stk, base, cap, sp, nv_87);
+        sp += 8;
+        continue;
+      }
+    }
+    88 => {
+      fn_id_88 = crt::cget_i8(code, cbase, clen, ip + 1);
+      if ip <= safe && sp >= 8 {
+        v1_88 = crt::fget_f64(stk, base, cap, sp - 8);
+        sp -= 8;
+        ip += 2;
+        nv_88: float? = ops::math_func(fn_id_88, v1_88);
+        crt::fput_f64(stk, base, cap, sp, nv_88);
+        sp += 8;
+        continue;
+      }
+    }
+    89 => {
+      fn_id_89 = crt::cget_i8(code, cbase, clen, ip + 1);
+      if ip <= safe && sp >= 16 {
+        v2_89 = crt::fget_f64(stk, base, cap, sp - 8);
+        v1_89 = crt::fget_f64(stk, base, cap, sp - 16);
+        sp -= 16;
+        ip += 2;
+        nv_89: float? = ops::math_func2(fn_id_89, v1_89, v2_89);
+        crt::fput_f64(stk, base, cap, sp, nv_89);
+        sp += 8;
+        continue;
+      }
+    }
+    90 => {
+      if ip <= safe && sp >= 16 {
+        v2_90 = crt::fget_f64(stk, base, cap, sp - 8);
+        v1_90 = crt::fget_f64(stk, base, cap, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nv_90: float? = v1_90.pow(v2_90);
+        crt::fput_f64(stk, base, cap, sp, nv_90);
+        sp += 8;
+        continue;
+      }
+    }
     91 => {
       if ip <= safe && sp >= 8 {
         v1_91 = crt::fget_f64(stk, base, cap, sp - 8);
@@ -2169,6 +2524,18 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         ip += 1;
         nv_93: integer? = v1_93 as integer;
         crt::fput_i64(stk, base, cap, sp, nv_93);
+        sp += 8;
+        continue;
+      }
+    }
+    94 => {
+      if ip <= safe && sp >= 16 {
+        v2_94 = crt::fget_f64(stk, base, cap, sp - 8);
+        v1_94 = crt::fget_f64(stk, base, cap, sp - 16);
+        sp -= 16;
+        ip += 1;
+        nv_94: float? = if v2_94 == 0.0 { s.raise_recoverable("division by zero"); v1_94 % v2_94 } else { v1_94 % v2_94 };
+        crt::fput_f64(stk, base, cap, sp, nv_94);
         sp += 8;
         continue;
       }
@@ -2307,6 +2674,25 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         nv_213: boolean? = v1_213 != v2_213;
         crt::fput_u8(stk, base, cap, sp, state::bool_byte(nv_213));
         sp += 8;
+        continue;
+      }
+    }
+    253 => {
+      pos_253 = crt::cget_u16(code, cbase, clen, ip + 1);
+      if ip <= safe {
+        ip += 3;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.var_fn_ref(pos_253);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        cbase = crt::code_base(code);
         continue;
       }
     }

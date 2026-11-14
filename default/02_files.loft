@@ -1096,6 +1096,7 @@ fn OpCoroutineExhausted(gen: reference) -> boolean;
 // MaybeUninit copies the bytes without requiring them initialised — byte-identical.
 fn OpVarFnRef(pos: const u16) -> text;
 #rust"s.get_var::<[std::mem::MaybeUninit<u8>; 20]>(@pos)"
+#loft"s.var_fn_ref(pos);"
 // A5.6-1: Pop 20-byte fn-ref value from stack into frame variable at pos.
 // WARNING (C40): same type mismatch as OpVarFnRef above — see C30 guard.
 // @PLAN53 cluster 4: MaybeUninit, not [u8; 20] — see OpVarFnRef above.
