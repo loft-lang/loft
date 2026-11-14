@@ -8,6 +8,7 @@
 // did not compile: `field 'count' of '__closure_marked_0' has no storage in that type's layout`.
 // Each cell is hand-computed: of `[0, 2, 7]` two values are below the length 3.
 //
+// @falsified-at: 0de1794d4 — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: the asserts; before the fix the file does not compile.
 
 fn each(v: vector<integer>, f: fn(integer)) {
