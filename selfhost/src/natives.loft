@@ -450,7 +450,9 @@ pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, s
       lklp = io[2] ?? 0;
       sp -= 16;
     } else if lktext {
-      lkt = crt::stack_str(stk, sp - 16) ?? "";
+      // A null text is its one NUL byte to the Rust native (`STRING_NULL`), which is also the
+      // key a caller writes as `"\0"`: the key that byte files a record under.
+      lkt = crt::stack_str(stk, sp - 16) ?? "\0";
       sp -= 16;
     } else {
       lkint = get(stk, sp - 8) ?? 0;
@@ -1249,7 +1251,13 @@ pub fn par_buf(pk: integer, stk: integer, sp: integer, pbufs: vector<ParBuf>, io
   if pk == PAR_BUF_GET_TEXT_DEST {
     crt::slot_ref(io, stk, sp - 16);
     tidx = get(stk, sp - 24) ?? 0;
-    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, pbufs[bi]!.texts[tidx] ?? "");
+    answer = pbufs[bi]!.texts[tidx];
+    if answer == null {
+      // A worker's null text: the null text's byte, so the destination reads back as null.
+      crt::ref_text_append_null(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else {
+      crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, answer!);
+    }
     return sp - 24;
   }
   idx = get(stk, sp - 8) ?? 0;

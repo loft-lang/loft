@@ -1534,10 +1534,9 @@ pub fn clear_keyed(self: State, dest: DbRef, raw: integer) {
   self.load_table();
   if raw & 32768 == 0 {
     crt::clear(dest.store_nr, dest.rec, dest.pos, tp);
-  } else if types::is_keyed(self.types, tp) {
-    crt::clear_view(dest.store_nr, dest.rec, dest.pos, tp);
   } else {
-    self.stop("not carried: a keyed view clear of a type that is not a keyed collection");
+    // Any member of a linked group, a vector one too (`remove_claims_mode`'s view mode).
+    crt::clear_view(dest.store_nr, dest.rec, dest.pos, tp);
   }
 }
 
@@ -1948,7 +1947,11 @@ pub fn iterate(self: State) {
     kinds += [kt.abs()];
     pos = self.code_u16();
     min = self.code_i32();
-    crt::walk_key(kt, pos, min);
+    // Only a keyed walk consumes the list (`keyed_iterate` clears it): a snapshot's key parts
+    // would stay for the next keyed walk to read.
+    if on & 63 != 4 {
+      crt::walk_key(kt, pos, min);
+    }
   }
   from = self.code_u8();
   till = self.code_u8();
