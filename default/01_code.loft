@@ -169,10 +169,10 @@ fn OpReturn(ret: const u16, value: const u16, discard: const u16);
 #loft"s.fn_return(ret, value, discard);"
 fn OpFreeStack(value: const u16, discard: const u16);
 #rust"s.free_stack(@value, @discard);"
-#loft"s.free_stack(value, discard);"
+#loft"s.free_stack(value, discard); #arm guard(discard <= sp && (value + 7) / 8 * 8 <= discard): tmp0 = (value + 7) / 8 * 8; if value > 0 {{ crt::move_bytes(base, sp - tmp0, sp - discard, value); }} sp = sp - discard + tmp0;"
 fn OpReserveFrame(size: const u16);
 #rust"s.reserve_frame(@size);"
-#loft"s.reserve_frame(size);"
+#loft"s.reserve_frame(size); #arm guard(sp + (size + 7) / 8 * 8 <= top): sp += (size + 7) / 8 * 8;"
 // Boolean operations
 fn OpConstTrue() -> boolean;
 #hot
@@ -415,6 +415,7 @@ fn OpFormatInt(
   note: const boolean,
   dir: const i8
 );
+#loft" #arm crt::slot_text_append(stk, sp - (pos - 16), crt::format_int(val, radix, width, token, plus, note, dir));"
 fn OpFormatStackInt(
   pos: const u16,
   val: integer,
@@ -1091,11 +1092,13 @@ pub fn approx(self: single, b: single, eps: single) -> boolean {
 // Read the value of a variable and put a reference to it on the stack
 
 fn OpVarText(pos: const u16) -> text;
+#loft" #arm slots: guard(sp <= top - 8): crt::stack_str_of_text(stk, sp, sp - pos); sp += 16;"
 // Put a reference copy of an argument on stack
 fn OpArgText(pos: const u16) -> text;
+#loft" #arm slots: guard(sp <= top - 8): crt::move_bytes(base, sp - pos, sp, 16); sp += 16;"
 fn OpConstText(_value: const text) -> text;
 #rust"s.string_from_code();"
-#loft"s.string_from_code();"
+#loft"s.string_from_code(); #arm guard(sp <= top - 8): tmp0 = crt::peek_u8(cbase, ip); crt::stack_str_held(stk, sp, cbase, ip + 1, tmp0); ip += tmp0 + 1; sp += 16;"
 fn OpConvTextFromNull() -> text;
 #rust"Str::new(crate::state::STRING_NULL)"
 #loft"s.push_null_text();"
@@ -1103,7 +1106,7 @@ fn OpConvTextFromNull() -> text;
 // the content: it has no characters, as `for c in t` over it makes no trips (loft#1795).
 fn OpLengthText(v1: text) -> __word;
 #rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
-#loft"if v1 == null {{ 0 }} else {{ len(v1!) }}"
+#loft"if v1 == null {{ 0 }} else {{ len(v1!) }} #arm crt::view_length(stk, v1_pos)"
 /// Number of characters (Unicode code points) in the text — the human
 /// count, as in every mainstream language. For a byte length (bounds checks, the
 /// limit of byte-positioned indexing / slicing) use `size`.
@@ -1116,7 +1119,7 @@ pub fn len(self: text) -> integer {
 fn OpSizeText(v1: text) -> __word;
 #cold
 #rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
-#loft"if v1 == null {{ 0 }} else {{ v1!.size() }}"
+#loft"if v1 == null {{ 0 }} else {{ v1!.size() }} #arm crt::view_size(stk, v1_pos)"
 /// Number of bytes in the text. This is the bound for byte-positioned
 /// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
 /// For the human character count use `len`.
@@ -1134,18 +1137,21 @@ pub fn len(self: character) -> integer {
 
 fn OpConvBoolFromText(v1: text) -> boolean;
 #rust"@v1 != crate::state::STRING_NULL"
-#loft"v1 != null"
+#loft"v1 != null #arm crt::view_some(stk, v1_pos)"
 // Plan-04 Phase B: positional init-op; writes an empty String at
 // the frame slot `stack_pos - pos`.  Does not advance the eval stack.
 // Replaces the removed `OpText` compound op — callers combine with
 // `OpReserveFrame(24)` when a stack push is needed.
 fn OpInitText(pos: const u16);
+#loft" #arm slots: crt::slot_text_init(stk, sp - pos);"
 fn OpAppendText(pos: const u16, v1: text);
+#loft" #arm slots: crt::stack_text_append_str(stk, sp + 16 - pos, sp);"
 fn OpPutText(pos: const u16, value: text);
+#loft" #arm slots: crt::move_bytes(base, sp, sp + 16 - pos, 16);"
 fn OpGetTextSub(v1: text, from: __word, till: __word) -> text[v1];
 fn OpTextCharacter(v1: text, v2: __word) -> character;
 #rust"s.text_char_or_raise(@v1, @v2)"
-#loft"ops::text_char(v1, v2)"
+#loft"ops::text_char(v1, v2) #arm crt::view_char(stk, v1_pos, v2)"
 // Plan-07 phase 4 step 4.8 — nullable peer of OpTextCharacter for
 // for-loop iteration over text (`for c in s`).  Returns char(0) on
 // out-of-bounds; the loop driver in
@@ -1154,24 +1160,26 @@ fn OpTextCharacter(v1: text, v2: __word) -> character;
 // OpGetVector / OpGetVectorNullable split.
 fn OpTextCharacterNullable(v1: text, v2: __word) -> character;
 #rust"ops::text_character(@v1, @v2)"
-#loft"ops::text_char(v1, v2)"
+#loft"ops::text_char(v1, v2) #arm crt::view_char(stk, v1_pos, v2)"
 fn OpConvBoolFromCharacter(v1: character) -> boolean;
 #rust"ops::op_conv_bool_from_character(@v1)"
 #loft"v1 != 0"
 fn OpClearText(pos: const u16);
+#loft" #arm slots: crt::slot_text_clear(stk, sp - pos);"
 fn OpFreeText(pos: const u16);
+#loft" #arm slots: crt::slot_text_free(stk, sp - pos);"
 fn OpEqText(v1: text, v2: text) -> boolean;
 #rust"ops::op_eq_text(@v1, @v2)"
-#loft"v1 == v2"
+#loft"v1 == v2 #arm crt::view_eq(stk, v1_pos, v2_pos)"
 fn OpNeText(v1: text, v2: text) -> boolean;
 #rust"ops::op_ne_text(@v1, @v2)"
-#loft"v1 != v2"
+#loft"v1 != v2 #arm !crt::view_eq(stk, v1_pos, v2_pos)"
 fn OpLtText(v1: text, v2: text) -> boolean;
 #rust"ops::op_lt_text(@v1, @v2)"
-#loft"ops::lt_text(v1, v2)"
+#loft"ops::lt_text(v1, v2) #arm crt::view_lt(stk, v1_pos, v2_pos)"
 fn OpLeText(v1: text, v2: text) -> boolean;
 #rust"ops::op_le_text(@v1, @v2)"
-#loft"ops::le_text(v1, v2)"
+#loft"ops::le_text(v1, v2) #arm crt::view_le(stk, v1_pos, v2_pos)"
 fn OpFormatText(pos: const u16, val: text, width: __word, dir: const i8, token: const u8);
 fn OpFormatStackText(pos: const u16, val: text, width: __word, dir: const i8, token: const u8);
 fn OpAppendCharacter(pos: const u16, v1: character);
@@ -1252,6 +1260,7 @@ fn OpConvRefFromNull() -> reference;
 // frame slot `stack_pos - pos`.  Does not push onto the eval stack.
 // Complements `OpConvRefFromNull` for writes to pre-reserved slots.
 fn OpInitRef(pos: const u16);
+#loft" #arm slots: crt::poke_ref(base + sp - pos, 65535, 0, 0);"
 fn OpNullRefSentinel() -> reference;
 #rust"DbRef::NULL"
 #loft"null"
@@ -1262,6 +1271,7 @@ fn OpNullRefSentinel() -> reference;
 // push-and-init effect when needed; or used alone for first-init
 // to a pre-reserved slot.
 fn OpInitRefSentinel(pos: const u16);
+#loft" #arm slots: crt::poke_ref(base + sp - pos, 65535, 0, 0);"
 fn OpFreeRef(v1: reference);
 // Plan-57 store-identity gate (verification builds only — emitted by the gated
 // `LOFT_STORE_TAG` IR post-pass, never in normal builds, so the bytecode stays
@@ -1317,10 +1327,10 @@ fn OpSizeofRef(val: reference) -> __word;
 #cold
 fn OpVarRef(pos: const u16) -> reference;
 #rust"{{let r = s.get_var::<DbRef>(@pos); stores.valid(&r); r}}"
-#loft"s.get_var_dbref(pos)"
+#loft"s.get_var_dbref(pos) #arm slots: crt::copy_ref(base + sp - pos, out_at);"
 fn OpPutRef(pos: const u16, value: reference);
 #rust"s.put_var(@pos, @value);"
-#loft"s.put_var_dbref(pos, value);"
+#loft"s.put_var_dbref(pos, value); #arm slots: crt::copy_ref(value_at, base + sp + 16 - pos);"
 fn OpEqRef(v1: reference, v2: reference) -> boolean;
 #rust"if @v1.rec == 0 || @v2.rec == 0 {{ @v1.rec == 0 && @v2.rec == 0 }} else {{ @v1 == @v2 }}"
 #loft"if v1.rec == 0 || v2.rec == 0 {{ v1.rec == 0 && v2.rec == 0 }} else {{ v1.store_nr == v2.store_nr && v1.rec == v2.rec && v1.pos == v2.pos }}"
@@ -1353,12 +1363,12 @@ fn OpSetDbRef(v1: reference, fld: const u16, val: reference);
 #loft"crt::set_dbref(v1.store_nr, v1.rec, v1.pos, fld, val.store_nr, val.rec, val.pos);"
 fn OpGetDbRef(v1: reference, fld: const u16) -> reference;
 #rust"stores.get_db_ref(&@v1, u32::from(@fld))"
-#loft"state::db_ref(v1, fld)"
+#loft"state::db_ref(v1, fld) #arm crt::get_dbref_to(out_at, v1.store_nr, v1.rec, v1.pos, fld);"
 // Get a direct field reference for a structure: vector, index, hash or spatial
 // These always point to a field what value can change depending on the content.
 fn OpGetField(v1: reference, fld: const u16) -> reference[v1];
 #rust"DbRef {{store_nr: @v1.store_nr, rec: @v1.rec, pos: @v1.pos + u32::from(@fld)}}"
-#loft"state::DbRef {{ store_nr: v1.store_nr, rec: v1.rec, pos: v1.pos + fld }}"
+#loft"state::DbRef {{ store_nr: v1.store_nr, rec: v1.rec, pos: v1.pos + fld }} #arm crt::poke_ref(out_at, v1.store_nr, v1.rec, v1.pos + fld);"
 // Simple type value write and read, vector elements always have fld=0.
 // All these types are passed by value instead of by reference.
 //
@@ -1434,7 +1444,7 @@ fn OpGetShort(v1: reference, fld: const u16, min: const i32) -> __word;
 #loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT, v1.store_nr, v1.rec, v1.pos, fld, min) }}"
 fn OpGetText(v1: reference, fld: const u16) -> text[v1];
 #rust"{{let db = @v1; if db.rec == 0 {{ Str::new(crate::state::STRING_NULL) }} else {{ let store = stores.store(&db); Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(@fld)))) }} }}"
-#loft"s.put_field_text(v1, fld);"
+#loft"s.put_field_text(v1, fld); #arm if v1.rec == 0 {{ crt::stack_str_null(stk, sp); }} else {{ crt::stack_str_of_field(stk, sp, v1.store_nr, v1.rec, v1.pos, fld); }} sp += 16;"
 fn OpSetInt(v1: reference, fld: const u16, val: __word);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 #loft"if v1.rec != 0 {{ crt::set_int(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
@@ -1517,7 +1527,7 @@ fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> __word;
 #loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT_RAW, v1.store_nr, v1.rec, v1.pos, fld, min) ?? (65535 + min) }}"
 fn OpSetText(v1: reference, fld: const u16, val: text);
 #rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
-#loft"if v1.rec != 0 {{ crt::set_text(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
+#loft"if v1.rec != 0 {{ crt::set_text(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }} #arm if v1.rec != 0 {{ crt::set_text_view(v1.store_nr, v1.rec, v1.pos, fld, stk, val_pos, false); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // `@FR-H-TextReplace` — an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`):
 // the slot already holds 0 or a text block it owns, so the block is written over when `t`
 // fits its claim and released and claimed anew when it does not.  `OpSetText` stays the
@@ -1536,7 +1546,7 @@ type sorted size(4);
 // All vectors are referenced by the field that points towards them.
 fn OpVarVector(pos: const u16) -> vector;
 #rust"s.get_var::<DbRef>(@pos)"
-#loft"s.get_var_dbref(pos)"
+#loft"s.get_var_dbref(pos) #arm slots: crt::copy_ref(base + sp - pos, out_at);"
 // The length of vectors is written at the start of their allocation.
 fn OpLengthVector(r: vector) -> __word;
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
@@ -1658,7 +1668,7 @@ fn OpGetVector(r: vector, size: const u16, index: __word) -> reference[r];
 // live → E0499.  Binding it first (after `@r`, preserving left-to-right
 // eval order) ends that borrow before the outer call.
 #rust"{{let __vr = @r; let __vi = @index; s.vec_get_or_raise(&__vr, u32::from(@size), __vi)}}"
-#loft"s.vec_get_or_raise(r, size, index)"
+#loft"s.vec_get_or_raise(r, size, index) #arm if state::vec_has(r.store_nr, r.rec, r.pos, index) {{ crt::vec_get_to(out_at, r.store_nr, r.rec, r.pos, size, index); }} else {{ s.raise_vec_index(r.store_nr, r.rec, r.pos, index); crt::poke_ref(out_at, 65535, 0, 0); }}"
 // This returns the position inside the vector of a record or a value, get the actual value with fld=0
 fn OpVectorRef(r: vector, index: __word) -> reference[r];
 // @P321d + @P338: bind both the receiver and the index to locals before
@@ -1678,7 +1688,7 @@ fn OpVectorRef(r: vector, index: __word) -> reference[r];
 // OpDivInt / OpDivIntNullable C54.G-hybrid pattern.
 fn OpGetVectorNullable(r: vector, size: const u16, index: __word) -> reference[r];
 #rust"vector::get_vector(&@r, u32::from(@size), @index, &s.database.allocations)"
-#loft"state::vec_get(r, size, index)"
+#loft"state::vec_get(r, size, index) #arm crt::vec_get_to(out_at, r.store_nr, r.rec, r.pos, size, index);"
 fn OpVectorRefNullable(r: vector, index: __word) -> reference[r];
 #rust"{{ let el = vector::get_vector(&@r, 4, @index, &s.database.allocations); stores.get_ref(&el, 0) }}"
 #loft"state::vec_ref(r, index)"
