@@ -14,6 +14,11 @@
     "commit": "a81457a79395ff599008c48caee35406b98bfc57",
     "note": "make file-sizes at a81457a79. DOCS: 535 files, 17 over 1000 lines \u2014 all records, history companions or formal chapters (PROBLEMS.md carries the record exemption); 2 read as several subjects (DESIGN_DECISIONS-history, PERFORMANCE-history); BOTH_BACKEND_SWITCHES.md sits at 999 and needs its split before the next switch. CODE: 1128 files, 151 over 1200, 108 read as several subjects; 28 source files are past the 5000-line rule (control.rs 26317, tests/issues.rs 19378, data.rs 15912, main.rs 14035, expressions.rs 13889, generation/mod.rs 13816, c/body.rs 12118, \u2026 keys.rs 5100; store_records.rs 6439 and control.rs both grew this cycle). The pick for M-file-split: src/parser/control.rs (split value 25074) and tests/issues.rs (19243)."
   },
+  "M-ignores": {
+    "at": "2026-11-14 20:20",
+    "commit": "6b1224bd1c1e65be72bf8babb39a695dd3033b68",
+    "note": "Read at 6b1224bd1 by a review agent, findings applied (5b54b2417 and the commit after): all 42 ignore reasons name a run that exists and selects its test; six said 'release-gate' for miri.yml's release-gate-sweeps; two multi-line cfg_attr ignores were missing from the baseline (both scanners now read them); four html_wasm skip entries were inert and are gone; live skips: 75-native-stub.loft (the rustc generator refuses a whole file; no issue, a by-design limit of the shelved lane) and process/{run,start,lines}.loft on wasm. The nightly job that carries 16 ignored tests was red on main four nights and its sweeps ran in sequence; each now runs on its own, and the job was green on PR #2482's head (PR-head nightly 43606691124) \u2014 main's first nightly after the merge is still to read."
+  },
   "M-libs": {
     "at": "2026-11-14 19:06",
     "commit": "a81457a79395ff599008c48caee35406b98bfc57",
