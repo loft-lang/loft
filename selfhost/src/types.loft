@@ -835,14 +835,10 @@ pub fn group_members(ts: vector<ir::DbType>, ptp: integer, fld: integer) -> vect
 
 pub fn record_collection(ts: vector<ir::DbType>, ptp: integer, fld: integer) -> RecordColl {
   if fld != 65535 {
-    match ts[ptp]!.parts[0]! {
-      PtStruct { fields } => {
-        f = fields[fld]!;
-        if len(f.other_indexes) == 0 {
-          return RecordColl { tp: f.content, fld: fld, at: f.position };
-        }
-      }
-      _ => {}
+    // A struct's field or an enum variant's.
+    f = record_fields(ts, ptp)[fld];
+    if f != null && len(f.other_indexes) == 0 {
+      return RecordColl { tp: f.content, fld: fld, at: f.position };
     }
   }
   RecordColl { tp: ptp, fld: fld, at: null }
