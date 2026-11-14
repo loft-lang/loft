@@ -91,8 +91,10 @@ The first two are run by hand; neither is a test yet.
 
 | Part | State |
 |---|---|
-| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: `par` (its operators and the `parallel_*` natives), the child-record and slot-reference families, narrow locals |
+| operator templates and `State` methods | `create.loft … --missing` lists what is not carried, `(State)` marking a method; the survey orders them by the programs each stops.  Not started: the `OpParallel*` operators (a `par` block of arms; a `par` loop runs), the slot-reference family (`OpGetSlotRef`, …), the store-buffer family (`OpStoreBuf`, …) |
 | natives (`OpStaticCall`) | called from the hand-built runner's ports (`brun::call_native`); to move into a module of their own |
+| `par` | a queue's or a fold's workers run one after another by the hand-built runner's scheduler (`brun::par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return |
+| compiled library code | not built: every library function runs as bytecode (difference 9).  To build: the standard library's and each `use`d library's compiled bodies linked into the runner and called at `OpStaticCall`, as Rust calls its bridges |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |
 
@@ -116,6 +118,7 @@ with the top just above it.  The differences:
 | 6 | **Arithmetic by loft's operators, reports as texts.**  A template writes `v1 + v2`, compiled to the C runtime's routine, where Rust calls `ops::op_add_int`; the kernels compare the values.  What Rust reports through `raise_recoverable` (a division by zero, a dropped write, an overflow) is recorded as a text in `State.reported`, and an overflow's report comes from the C runtime, not from the template. | the corpus survey, once `main` runs; Rust's error kinds when diagnostics are compared |
 | 7 | **One dispatch.**  Rust has three tables (checked, direct, register); the runner has one loop, `run`, whose arms are the register table and whose fallback, `execute`, is the checked one. | see Speed |
 | 8 | **No instruments.**  Rust's stack verifier, poison of a reserved frame, and text-position tracking have no counterpart. | only if the runner is to host those sweeps |
+| 9 | **The standard library is interpreted.**  Rust calls a standard-library function it compiled into its binary through a bridge (`loft_shared_<def>`, `src/compiled_stdlib.rs`), and interprets the loft body only where the program's type table does not start as the compiled one does.  The runner always runs the loft body as bytecode (`State::static_call`), which is Rust under `LOFT_NO_COMPILED_STDLIB=1`: the same answers, slower. | compiled standard-library bodies linked into the runner, if its speed on library-heavy programs matters |
 
 ## Speed
 
@@ -125,7 +128,7 @@ The dispatch loop is generated (`fill.loft`'s `run`) by the Rust interpreter's e
 | rule | in the runner |
 |---|---|
 | `(R-RegisterTable)` | the code position, the stack top and the stack's capacity are locals of `run`; an operator whose template needs no more of the `State` is an arm of it, any other templated operator with scalar operands an arm that writes the positions to the `State`, runs, and reads them back |
-| `(R-CodeBase)` | operands are read through the code's address (`crt::code_base`, `crt::cget_*`), taken again after an operator that ran on the `State` |
+| `(R-CodeBase)` | operands are read through the code's address (`crt::code_base`, `crt::cget_*`), taken once: `run` is given the run image's code, whose store nothing grows during a run (the `State`'s copy lies in a store the frame list grows) |
 | `(R-OperandSpan)` | one test, `ip <= safe`, covers an arm's whole operand span |
 | `(R-StackBase)` | a slot is read through the stack store's base (`crt::stack_base`, `crt::fget_*` / `fput_*`) |
 | `(R-DispatchStop)` | `State.stopped`, set with `fault` by `State::stop` |

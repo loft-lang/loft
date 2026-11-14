@@ -668,6 +668,10 @@ pub fn op_length_text(s: state::State) {
   s.put_stack_i64(new_value);
 }
 
+pub fn op_length_character(s: state::State) {
+  s.length_character();
+}
+
 pub fn op_conv_bool_from_text(s: state::State) {
   v1 = s.get_stack_str();
   new_value: boolean? = v1 != null;
@@ -1422,6 +1426,18 @@ pub fn op_set_stack_ref(s: state::State) {
   s.set_stack_ref();
 }
 
+pub fn op_get_slot_ref(s: state::State) {
+  s.get_slot_ref();
+}
+
+pub fn op_move_slot_ref(s: state::State) {
+  s.move_slot_ref();
+}
+
+pub fn op_set_slot_ref(s: state::State) {
+  s.set_slot_ref();
+}
+
 pub fn op_drop_fn_ref(s: state::State) {
   s.drop_fn_ref();
 }
@@ -2129,6 +2145,7 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     102 => op_const_text(s),
     103 => op_conv_text_from_null(s),
     104 => op_length_text(s),
+    105 => op_length_character(s),
     106 => op_conv_bool_from_text(s),
     107 => op_init_text(s),
     108 => op_append_text(s),
@@ -2250,6 +2267,9 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     237 => op_get_stack_text(s),
     238 => op_get_stack_ref(s),
     239 => op_set_stack_ref(s),
+    240 => op_get_slot_ref(s),
+    241 => op_move_slot_ref(s),
+    242 => op_set_slot_ref(s),
     245 => op_drop_fn_ref(s),
     246 => op_fn_ref_closure(s),
     247 => op_append_stack_text(s),
@@ -2809,7 +2829,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -2830,7 +2849,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -2850,7 +2868,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -2869,7 +2886,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -2932,7 +2948,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -2955,7 +2970,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -3271,7 +3285,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -3289,7 +3302,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -3385,7 +3397,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -3404,7 +3415,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -3423,7 +3433,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -3442,7 +3451,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -3461,7 +3469,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
         cap = s.stack_cap;
         top = cap - 8;
         base = crt::stack_base(stk);
-        cbase = crt::code_base(code);
         continue;
       }
     }
@@ -3485,7 +3492,6 @@ pub fn run(s: state::State, code: const vector<u8>, end: integer) {
     cap = s.stack_cap;
     top = cap - 8;
     base = crt::stack_base(stk);
-    cbase = crt::code_base(code);
   }
   s.code_pos = ip;
   s.stack_pos = sp;

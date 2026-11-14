@@ -74,7 +74,19 @@ pub struct State {
   // variant), the interned text and its length.
   pub ptold: vector<boolean>,
   pub interned: vector<integer>,
+  // Per native: the definition whose loft body stands for it — a standard-library function
+  // the Rust build compiled (`loft_shared_<def>`) — or -1; the same for its destination form
+  // (`…#dest`); and the destinations such calls in flight append their answer to.
+  pub shared: vector<integer>,
+  pub shared_dest: vector<integer>,
+  pub dest_calls: vector<FnBuf>,
+  // The frame depth each `par` job in flight runs its workers at, innermost last: a return
+  // at that depth hands the run back (`native` is `PAR_RETURNED`) for the job's next worker.
+  pub par_depths: vector<integer>,
 }
+
+// `State.native` when a `par` worker returned.
+pub PAR_RETURNED = 1000000;
 
 // A generator's frame while it lives (`CoroutineFrame`): its stack bytes while it is not
 // running, where it resumes, where its caller's stack and code continue, the copies of its
@@ -151,7 +163,23 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [] };
+  for i in 0..len(img.natives) {
+    name = img.natives[i] ?? "";
+    // A native the runner carries itself keeps its own port.
+    carried = brun::native_handler(name) >= 0;
+    s.shared += [if carried { -1 } else { img.shared[i] ?? -1 }];
+    twin = -1;
+    if !carried && name.starts_with("loft_shared_") && name.ends_with("#dest") {
+      plain = name[0..len(name) - 5];
+      for j in 0..len(img.natives) {
+        if (img.natives[j] ?? "") == plain {
+          twin = img.shared[j] ?? -1;
+        }
+      }
+    }
+    s.shared_dest += [twin];
+  }
   for f in s.fnrefs {
     s.fnref_of[f.def] = f#index;
   }
@@ -585,9 +613,30 @@ pub fn fn_return(self: State, ret: integer, value: integer, discard: integer) {
   if len(self.fn_bufs) > 0 || len(self.fn_calls) > 0 {
     self.release_fnref_bufs(fn_stack, value);
   }
+  if len(self.dest_calls) > 0 {
+    // A destination-form call returning: the text the body answered, on top of the stack,
+    // appended to the destination and popped, as the native does.
+    last = len(self.dest_calls) - 1;
+    if self.dest_calls[last]!.depth == len(self.frames) {
+      dest = self.dest_calls[last]!.at;
+      crt::ref_text_append(dest.store_nr, dest.rec, dest.pos, crt::stack_str(self.stk, self.stack_pos - 16));
+      self.stack_pos -= 16;
+      self.dest_calls.remove(last);
+    }
+  }
+  if len(self.par_depths) > 0 && (self.par_depths[len(self.par_depths) - 1] ?? -1) == len(self.frames) {
+    self.native = PAR_RETURNED;
+  }
   if len(self.frames) > 0 {
     self.frames.remove(len(self.frames) - 1);
   }
+}
+
+// A frame entered whose arguments and return slot are on the stack already (a `par` worker's):
+// the frame recorded and its height kept in reach, as `fn_call` does.
+pub fn enter(self: State, d_nr: integer, call_pos: integer) {
+  self.ensure_stack(FRAME_HEADROOM);
+  self.frames += [CallFrame { d_nr: d_nr, call_pos: call_pos, args_base: self.stack_pos, args_size: 0 }];
 }
 
 // `State::reserve_frame`: the frame's locals reserved above the top, at their 8-aligned size.
@@ -836,7 +885,22 @@ pub fn init_create_stack(self: State) {
 // `State::static_call`: the native numbered by the operand is called — by the dispatch loop,
 // which holds the natives' table.
 pub fn static_call(self: State) {
-  self.native = self.code_u16();
+  idx = self.code_u16();
+  d = self.shared[idx] ?? -1;
+  if d < 0 && (self.shared_dest[idx] ?? -1) >= 0 {
+    // The destination form: the destination parked until the body returns (`fn_return`),
+    // then the body called as the plain form is.
+    d = self.shared_dest[idx] ?? -1;
+    dest = self.get_stack_dbref();
+    self.dest_calls += [FnBuf { depth: len(self.frames) + 1, at: dest }];
+  }
+  if d >= 0 && d + 1 < len(self.starts) {
+    // A compiled standard-library function: its loft body run as bytecode in its place.
+    // The native takes exactly the body's arguments, so the body is entered as a plain call.
+    self.fn_call(d, 0, self.starts[d] ?? 0);
+    return;
+  }
+  self.native = idx;
 }
 
 // `State::clear_stack_text`: the text the reference in the frame slot at `pos` names emptied.
@@ -2449,4 +2513,38 @@ pub fn deliver(self: State, tag: integer?, val: DbRef, tp: integer) {
   self.load_table();
   ptypes::prepare(self.types, tp, self.ptold);
   crt::deliver(tag ?? 0, val.store_nr, val.rec, val.pos, tp, self.types[tp]?.name ?? "#{tp}");
+}
+
+// `State::length_character`: a character's UTF-8 length, 0 for the null character.
+pub fn length_character(self: State) {
+  c = self.get_stack_char();
+  self.put_stack_i64(if c == 0 { 0 } else if c < 128 { 1 } else if c < 2048 { 2 } else if c < 65536 { 3 } else { 4 });
+}
+
+// `State::get_slot_ref`: the reference a slot cell at field `fld` of the record on top names,
+// in its place.
+pub fn get_slot_ref(self: State) {
+  fld = self.code_u16();
+  r = self.get_stack_dbref();
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::slot_get(io, r.store_nr, r.rec, r.pos, fld);
+  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+}
+
+// `State::set_slot_ref` / `move_slot_ref`: the value popped, then the cell's place; the value
+// written into the slot cell, or moved there.
+pub fn set_slot_ref(self: State) {
+  raw = self.code_u16();
+  v = self.get_stack_dbref();
+  r = self.get_stack_dbref();
+  self.load_table();
+  crt::slot_set(raw, r.store_nr, r.rec, r.pos, v.store_nr, v.rec, v.pos);
+}
+
+pub fn move_slot_ref(self: State) {
+  raw = self.code_u16();
+  src = self.get_stack_dbref();
+  r = self.get_stack_dbref();
+  self.load_table();
+  crt::slot_move(raw, r.store_nr, r.rec, r.pos, src.store_nr, src.rec, src.pos);
 }

@@ -3050,7 +3050,7 @@ pub fn narrow_decode(kind: integer, mn: integer, bits: integer) -> integer? {
 // (`par_start`) and continued at each worker's return (`par_return`); a queue's answers go onto a
 // buffer stack the `parallel_buf_*` natives read, the topmost of their kind as Rust's per-kind
 // `par_*_buffer_stack`s.
-struct ParJob {
+pub struct ParJob {
   // A tuple row's plan (`RunWorker.row`): how each element moves into the worker's argument.
   plan: vector<integer>,
   kind: integer,
@@ -3085,7 +3085,7 @@ struct ParJob {
   phase: integer,
 }
 
-struct ParBuf {
+pub struct ParBuf {
   kind: integer,
   res: vector<integer?>,
   stride: integer,
@@ -3115,7 +3115,13 @@ PAR_BUF_GET_FN = 17;
 PAR_BUF_DROP_FN = 18;
 
 // Per native: which `par` entry it is, 0 for none.
-fn par_natives(img: ir::RunImage) -> vector<integer> {
+// Does the native of par kind `pk` start a job (a queue or a fold), where every other kind
+// reads or drops a buffer?
+pub fn par_is_job(pk: integer) -> boolean {
+  pk == PAR_QUEUE || pk == PAR_QUEUE_NARROW || pk == PAR_QUEUE_TEXT || pk == PAR_QUEUE_REF || pk == PAR_QUEUE_FN || pk == PAR_FOLD
+}
+
+pub fn par_natives(img: ir::RunImage) -> vector<integer> {
   [for nm in img.natives {
     match nm {
       "n_parallel_queue" => PAR_QUEUE,
@@ -3158,10 +3164,10 @@ fn par_buf_kind(pk: integer) -> integer {
 
 // The row's argument pushed at `at` as `push_worker_arg` pushes it: a reference to the row, its
 // primitive read at the row's width and passed at the worker's, a wide value's bytes as they lie,
-// or a view of its text.  A function queue always passes the reference.  Answers the stack top.
+// or a view of its text.  Answers the stack top.
 fn par_row_arg(stk: integer, at: integer, job: ParJob, io: vector<integer>) -> integer {
   crt::vec_get(io, job.in_s, job.in_r, job.in_p, job.esize, job.row);
-  if job.input == 0 || job.kind == PAR_QUEUE_FN {
+  if job.input == 0 {
     crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     return at + 16;
   }
@@ -3251,7 +3257,7 @@ fn par_call(stk: integer, sp: integer, pjobs: vector<ParJob>, k: integer, io: ve
 // threads, answer size, row size, rows; a fold's extras count and extras, threads, worker, init,
 // rows — then the first worker called, or with no rows the empty answer given at once.  -1 with
 // the reason in `why[0]` for a worker the runner does not call.
-fn par_start(pk: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>, why: vector<text>) -> integer {
+pub fn par_start(pk: integer, img: ir::RunImage, stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>, why: vector<text>) -> integer {
   sp = regs[0] ?? 0;
   next = get(stk, sp - 8) ?? 0;
   sp -= 8;
@@ -3321,7 +3327,7 @@ fn par_start(pk: integer, img: ir::RunImage, stk: integer, regs: vector<integer>
 // in released), a function reference's 20 bytes, a fold's accumulator — then the next worker
 // called (true, `regs` updated), or after the last the job's buffer pushed and its count
 // answered, a fold its result (false).
-fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>) -> boolean {
+pub fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>) -> boolean {
   sp = regs[0] ?? 0;
   k = len(pjobs) - 1;
   kind = pjobs[k]!.kind;
@@ -3435,7 +3441,7 @@ fn par_top(pbufs: vector<ParBuf>, kind: integer) -> integer {
 
 // The `parallel_buf_*` readers and drops on the topmost buffer of their kind, at `sp`: answers
 // the stack top.
-fn par_buf(pk: integer, stk: integer, sp: integer, pbufs: vector<ParBuf>, io: vector<integer>) -> integer {
+pub fn par_buf(pk: integer, stk: integer, sp: integer, pbufs: vector<ParBuf>, io: vector<integer>) -> integer {
   bi = par_top(pbufs, par_buf_kind(pk));
   if bi < 0 {
     return sp;

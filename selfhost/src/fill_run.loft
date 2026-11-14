@@ -85,6 +85,11 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
   why: vector<text> = [""];
   // The C runtime's index of each image sidecar, made at the first persistence native and kept.
   sidecar_ix: vector<integer> = [];
+  // `par`: each native's kind, the jobs in flight and the buffers their answers wait in — the
+  // hand-built runner's scheduler, its workers run one after another.
+  ptab = brun::par_natives(img);
+  pjobs: vector<brun::ParJob> = [];
+  pbufs: vector<brun::ParBuf> = [];
   while s.code_pos != end && !s.stopped {
     if trace {
       first = crt::get_u8(s.code, s.code_pos);
@@ -99,24 +104,60 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
         s.stop("not carried");
       }
     } else {
-      fill::run(s, s.code, end);
+      // The image's code, not the State's copy: `run` holds its address (`(R-CodeBase)`).
+      fill::run(s, img.code, end);
     }
     if s.unknown >= 0 {
       // The reason names the operator: the table knows only its slot.
       s.fault = "not carried: {img.ops[s.unknown] ?? "slot {s.unknown}"}";
       s.unknown = -1;
     }
-    if s.native >= 0 {
-      // The natives are the hand-built runner's ports, over the same stack store.
+    if s.native == state::PAR_RETURNED {
+      // A `par` worker returned: its answer taken, then the job's next worker entered at the
+      // same depth, or after the last the job's result left for the caller.
+      s.native = -1;
+      regs = [s.stack_pos, s.code_pos, len(s.frames)];
+      more = brun::par_return(s.stk, regs, pjobs, pbufs, io);
+      s.stack_pos = regs[0] ?? 0;
+      if more {
+        back = s.code_pos;
+        s.code_pos = regs[1] ?? 0;
+        s.enter(-1, back);
+      } else {
+        s.par_depths.remove(len(s.par_depths) - 1);
+      }
+    } else if s.native >= 0 {
       idx = s.native;
       s.native = -1;
-      tl[0] = s.table_loaded;
-      sp = brun::call_native(brun::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
-      s.table_loaded = tl[0] ?? false;
-      if sp < 0 {
-        s.stop("not carried: {img.natives[idx] ?? "native {idx}"}");
+      pk = ptab[idx] ?? 0;
+      if brun::par_is_job(pk) {
+        // A queue's or a fold's native: its first worker entered as a call, or with no rows
+        // its empty answer given at once.
+        jobs = len(pjobs);
+        back = s.code_pos;
+        regs = [s.stack_pos, s.code_pos, len(s.frames)];
+        if brun::par_start(pk, img, s.stk, regs, pjobs, pbufs, io, why) < 0 {
+          s.stop("not carried: {why[0] ?? ""}");
+        } else {
+          s.stack_pos = regs[0] ?? 0;
+          if len(pjobs) > jobs {
+            s.code_pos = regs[1] ?? 0;
+            s.enter(-1, back);
+            s.par_depths += [len(s.frames)];
+          }
+        }
+      } else if pk > 0 {
+        s.stack_pos = brun::par_buf(pk, s.stk, s.stack_pos, pbufs, io);
       } else {
-        s.stack_pos = sp;
+        // The natives are the hand-built runner's ports, over the same stack store.
+        tl[0] = s.table_loaded;
+        sp = brun::call_native(brun::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
+        s.table_loaded = tl[0] ?? false;
+        if sp < 0 {
+          s.stop("not carried: {img.natives[idx] ?? "native {idx}"}");
+        } else {
+          s.stack_pos = sp;
+        }
       }
     }
   }
