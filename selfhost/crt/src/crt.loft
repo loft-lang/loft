@@ -187,6 +187,43 @@ pub fn stack_new(io: vector<integer>, bytes: integer) {
   c_stack_new(io, bytes);
 }
 
+fn c_stack_get(which: integer, store: integer, at: integer) -> integer;
+#c "loft_crt_stack_get" "int64_t(int64_t, int64_t, int64_t)"
+fn c_stack_put(which: integer, store: integer, at: integer, v: integer, is_null: boolean);
+#c "loft_crt_stack_put" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_stack_get_float(store: integer, at: integer, single: integer) -> float;
+#c "loft_crt_stack_get_float" "double(int64_t, int64_t, int64_t)"
+fn c_stack_put_float(store: integer, at: integer, v: vector<float>, single: integer);
+#c "loft_crt_stack_put_float" "void(int64_t, int64_t, const double*, int64_t, int64_t)"
+
+// The raw widths of `stack_get` / `stack_put`, as `State::get_stack::<T>` names them.
+pub SW_U8 = 0;
+pub SW_I8 = 1;
+pub SW_U16 = 2;
+pub SW_I16 = 3;
+pub SW_U32 = 4;
+pub SW_I32 = 5;
+pub SW_I64 = 6;
+
+// The frame bytes at `at` of the stack store, raw, of width `which` (`SW_*`): what
+// `State::get_stack` / `get_var` read; the integer null is its bit pattern.
+pub fn stack_get(which: integer, store: integer, at: integer) -> integer {
+  c_stack_get(which, store, at)
+}
+
+pub fn stack_put(which: integer, store: integer, at: integer, v: integer?) {
+  c_stack_put(which, store, at, v ?? 0, v == null);
+}
+
+// A float frame slot (`single`: 4 bytes), its own bytes; NaN is null.
+pub fn stack_get_float(store: integer, at: integer, single: boolean) -> float {
+  c_stack_get_float(store, at, if single { 1 } else { 0 })
+}
+
+pub fn stack_put_float(store: integer, at: integer, v: float?, single: boolean) {
+  c_stack_put_float(store, at, [v ?? 0.0 / 0.0], if single { 1 } else { 0 });
+}
+
 // `State::grow_stack`: the stack store grown until it holds `bytes` of frame.
 pub fn stack_grow(store: integer, bytes: integer) {
   c_stack_grow(store, bytes);

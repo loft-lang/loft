@@ -33,7 +33,7 @@ pub fn call(img: ir::RunImage, d: integer, args: vector<integer>, s: state::Stat
   trace = env_variable("LOFT_FILL_TRACE") == "1";
   while s.code_pos != end && s.fault == "" {
     if trace {
-      eprintln("at {s.code_pos} sp {s.stack_pos} top {if s.stack_pos >= 8 { crt::get_i64(s.stack, s.stack_pos - 8) } else { 0 }}");
+      eprintln("at {s.code_pos} sp {s.stack_pos} top {if s.stack_pos >= 8 { crt::stack_get(crt::SW_I64, s.stk, s.stack_pos - 8) } else { 0 }}");
     }
     op = s.code_u8();
     if op == 255 {
