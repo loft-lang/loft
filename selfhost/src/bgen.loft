@@ -10,6 +10,10 @@
 
 use ir;
 use frame;
+use own;
+use binds;
+use lower;
+use ret_adopt;
 
 // The bytes of one function while they are written.
 pub struct Out {
@@ -96,6 +100,9 @@ pub struct Gen {
   loop_rotated: vector<boolean>,
   breaks: vector<integer>,
   continues: vector<integer>,
+  // The ownership oracle's operator table (once per image) and this function's def table.
+  ops: own::Ops,
+  defs: own::Defs,
   why: text,
 }
 
@@ -803,7 +810,52 @@ fn fused_vec(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
 // The operators and natives `generate_call` writes in a way of their own, which this writer
 // does not write yet.
 fn special_call(name: text) -> boolean {
-  name == "OpDatabase" || name == "OpSetInt4" || name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpFreeRefIfDistinct" || name == "OpGetRecord" || name == "OpSetKeyed" || name == "OpStart" || name == "OpNext" || name == "OpIterate" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+  name == "OpSetInt4" || name == "OpDropFnRef" || name == "OpFnRefClosure" || name == "OpFnRefDetachShared" || name == "OpGetRecord" || name == "OpSetKeyed" || name == "OpStart" || name == "OpNext" || name == "OpIterate" || name == "OpCoroutineNext" || name == "OpCoroutineExhausted" || name == "OpCreateStack" || name.starts_with("n_parallel_")
+}
+
+// Is `n` in the list a `NoPrefill` fact keeps under `tag` (`l` locals, `m` mints;
+// `NoPrefill::encode` writes `l1,2;m3`)?
+fn no_prefill_lists(fact: text, tag: character, n: integer) -> boolean {
+  for part in fact.split(';') {
+    if len(part) > 0 && part[0] == tag {
+      for nr in part[1..].split(',') {
+        if nr == "{n}" {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// `no_prefill_twin` (`@FR-R-CompleteWrite`): the mint whose literal writes every field runs
+// as its no-prefill twin; any other call as itself.
+fn no_prefill_twin(g: Gen, op: integer, args: vector<ir::Node>) -> integer {
+  fact = def_of(g, g.d).no_prefill;
+  if fact == "" {
+    return op;
+  }
+  name = def_of(g, op).name;
+  twin = "";
+  if name == "OpDatabase" && len(args) > 0 {
+    v = match unspan(args[0]!) {
+      NdVar { n } => n,
+      _ => -1,
+    };
+    if v >= 0 && no_prefill_lists(fact, 'l', v) {
+      twin = "OpDatabaseNP";
+    }
+  } else if name == "OpNewRecord" && len(args) > 1 {
+    t = int_of(args[1]!);
+    if t >= 0 && t <= 65535 && no_prefill_lists(fact, 'm', t) {
+      twin = "OpNewRecordNP";
+    }
+  }
+  if twin == "" {
+    return op;
+  }
+  nr = op_named(g.b, twin);
+  if nr < 0 { op } else { nr }
 }
 
 // The local a node names, as it stands (no span looked through); -1 for any other node.
@@ -885,6 +937,33 @@ fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
     put_u16(g.o, new);
     return true;
   }
+  if name == "OpFreeRefIfDistinct" && len(args) == 2 && first >= 0 {
+    w = plain_var(args[1]!);
+    if var_of(g, first).name.starts_with("__lift_") {
+      // A lifted call's temp: released unless it is the buffer's store, and reset either way.
+      at = var_pos(g, first);
+      generate(g, args[0]!, false);
+      generate(g, args[1]!, false);
+      add_op(g, name);
+      add_op(g, "OpInitRefSentinel");
+      put_u16(g.o, at);
+      return true;
+    }
+    if w >= 0 {
+      // Released unless it is the witness's store, and reset where it was released.
+      init_slot(g, first, "OpVarRef");
+      init_slot(g, w, "OpVarRef");
+      add_op(g, name);
+      reset = ir::NdIf {
+        cond: ir::NdCall { def_nr: op_named(g.b, "OpDistinctStore"), args: [ir::NdVar { n: first }, ir::NdVar { n: w }] },
+        t: ir::NdCall { def_nr: op_named(g.b, "OpInitRefSentinel"), args: [ir::NdVar { n: first }] },
+        f: ir::NdNull
+      };
+      generate(g, reset, false);
+      return true;
+    }
+    return false;
+  }
   if name == "OpNullRefSentinel" {
     push_sentinel(g);
     return true;
@@ -959,8 +1038,9 @@ fn call(g: Gen, op: integer, args: vector<ir::Node>) -> ir::TypeT {
   }
   if operator_def {
     before = g.position;
-    put_op(g.o, g.b, op);
-    stack_effect(g, op);
+    actual = no_prefill_twin(g, op, args);
+    put_op(g.o, g.b, actual);
+    stack_effect(g, actual);
     for a in def.attributes {
       if !a.mutable {
         add_const(g, a.typedef[0] ?? ir::TyVoid, args[a#index]!, before);
@@ -1088,6 +1168,233 @@ fn assign_text(g: Gen, v: integer, value: ir::Node) {
   put_u16(g.o, at);
 }
 
+// A reference slot that lies above the evaluation position is reserved up to its end.
+fn reserve_ref_slot(g: Gen, v: integer) {
+  // A reference's own twelve bytes; the reserve is stepped, the test is not.
+  slot_end = (g.slots[v] ?? 0) + 12;
+  if g.position < slot_end {
+    bump = frame::stepped(slot_end) - g.position;
+    add_op(g, "OpReserveFrame");
+    put_u16(g.o, bump);
+    g.position += bump;
+  }
+}
+
+fn init_slot(g: Gen, v: integer, op: text) {
+  at = var_pos(g, v);
+  add_op(g, op);
+  put_u16(g.o, at);
+}
+
+fn raw_null(n: ir::Node) -> boolean {
+  match n {
+    NdNull => true,
+    _ => false,
+  }
+}
+
+fn record_like(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+// `gen_set_first_at_tos`: a first bind of a value that is no scalar and no text, by the arm
+// `bind_lowering::first_arm` decides, in its order.  An arm not ported yet stops the function
+// under its name.
+fn first_bind(g: Gen, v: integer, value: ir::Node) {
+  f = def_of(g, g.d).variables;
+  var = var_of(g, v);
+  tp = var.type_def[0] ?? ir::TyVoid;
+  bs = base(tp);
+  null_value = raw_null(value);
+  u = unspan(value);
+  if record_like(bs) && null_value {
+    // `gen_set_first_ref_null`: an owner starts null, anything else as the sentinel.
+    reserve_ref_slot(g, v);
+    deps = match tp {
+      TyReference { n: _, dep } => len(dep),
+      TyEnum { n: _, is_ref: _, dep } => len(dep),
+      _ => 0,
+    };
+    plain = deps == 0 && !(var.name.starts_with("__vdb") || binds::is_inline_ref(f, v) || var.skip_free);
+    init_slot(g, v, if plain { "OpInitRef" } else { "OpInitRefSentinel" });
+    return;
+  }
+  iterator = match bs {
+    TyIterator { step: _, inner: _ } => true,
+    _ => false,
+  };
+  if iterator && null_value {
+    reserve_ref_slot(g, v);
+    init_slot(g, v, "OpInitRefSentinel");
+    return;
+  }
+  reference = match tp {
+    TyReference { n: _, dep: _ } => true,
+    _ => false,
+  };
+  copy_call = match u {
+    NdCall { def_nr, args: _ } => def_of(g, def_nr).name == "OpCopyRecord",
+    _ => false,
+  };
+  if reference && copy_call {
+    stop(g, "not written yet: a first bind from a record copy");
+    return;
+  }
+  hd = own::heap_def_nr(tp);
+  src = plain_var(value);
+  if hd != null && src >= 0 {
+    sd = own::record_copy_source(g.b, f, v, src);
+    if sd != null && own::copies_as(g.b, hd!, sd!) {
+      stop(g, "not written yet: a first bind copying a record local");
+      return;
+    }
+  }
+  unwitnessed = binds::has_no_deps(tp) && binds::owner_witness(f, v) == null;
+  if hd != null && unwitnessed && binds::projection_container_var(g.b, value) != null {
+    stop(g, "not written yet: a first bind copying an element");
+    return;
+  }
+  tuple_get = match value {
+    NdTupleGet { var: _, idx: _ } => true,
+    _ => false,
+  };
+  if reference && tuple_get && unwitnessed {
+    stop(g, "not written yet: a first bind copying a tuple member");
+    return;
+  }
+  call_ref = match u {
+    NdCallRef { var: _, args: _ } => true,
+    _ => false,
+  };
+  if call_ref && (record_like(bs) || hd != null) {
+    stop(g, "not written yet: a first bind from a call through a function value");
+    return;
+  }
+  optional = match tp {
+    TyOptional { inner: _ } => true,
+    _ => false,
+  };
+  direct = match u {
+    NdCall { def_nr, args: _ } => def_nr,
+    _ => -1,
+  };
+  if optional && record_like(bs) && direct >= 0 && binds::is_loft_defined(def_of(g, direct)) && own::returns_borrowed_view(def_of(g, direct)) {
+    stop(g, "not written yet: a nullable first bind from a call that may answer a view");
+    return;
+  }
+  shape = binds::first_bind_shape(tp);
+  callee = binds::callee_of(g.b, g.defs, value);
+  if record_like(shape) && callee != null && binds::is_loft_defined(def_of(g, callee!)) {
+    jb = own::named_join_base(own::ownership_of(g.b, g.ops, g.d, value));
+    if binds::join_record(shape) != null && !var.view_elided && jb != null {
+      stop(g, "not written yet: a first bind that joins on an argument");
+      return;
+    }
+    if binds::return_adopts_fresh_store(def_of(g, callee!)) || var.view_elided || binds::adopts_minted_at_bind(g.b, g.ops, f, v, value) {
+      generate(g, value, false);
+      init_slot(g, v, "OpPutRef");
+      return;
+    }
+    stop(g, "not written yet: a first bind copying a call's record");
+    return;
+  }
+  if binds::join_record(shape) != null && !optional_shape(shape) && unwitnessed && !var.view_elided
+      && binds::choice_var_arm(g.b, g.ops, g.d, f, value, v) != null {
+    stop(g, "not written yet: a first bind that joins on a choice");
+    return;
+  }
+  vector_base = match bs {
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  };
+  if null_value && optional && vector_base {
+    reserve_ref_slot(g, v);
+    init_slot(g, v, "OpInitRefSentinel");
+    return;
+  }
+  vector_dep = match tp {
+    TyVector { inner: _, dep } => len(dep),
+    _ => -1,
+  };
+  if null_value && vector_dep >= 0 {
+    // `gen_set_first_vector_null`: an owner gets its own wrapper record, its one field zero.
+    reserve_ref_slot(g, v);
+    if vector_dep == 0 && !(var.skip_free || binds::is_inline_ref(f, v) || var.lazy_buffer) {
+      init_slot(g, v, "OpInitRef");
+      known = lower::main_vector_of(g.b, var.type_def);
+      if known == null {
+        stop(g, "an owned vector whose wrapper type the image does not name");
+        return;
+      }
+      at = var_pos(g, v);
+      add_op(g, "OpDatabase");
+      put_u16(g.o, at);
+      put_u16(g.o, known!);
+      init_slot(g, v, "OpVarRef");
+      add_op(g, "OpConstInt");
+      put_i64(g.o, 0);
+      add_op(g, "OpSetInt4");
+      put_u16(g.o, 0);
+    } else {
+      init_slot(g, v, "OpInitRefSentinel");
+    }
+    return;
+  }
+  if null_value && binds::owns_keyed_store(tp) {
+    stop(g, "not written yet: a keyed collection's first null");
+    return;
+  }
+  ref_var = match tp {
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  };
+  if ref_var && src >= 0 {
+    link = match var_of(g, src).type_def[0] ?? ir::TyVoid {
+      TyRefVar { inner: _ } => true,
+      _ => false,
+    };
+    if link {
+      init_slot(g, src, "OpVarRef");
+      init_slot(g, v, "OpPutRef");
+      return;
+    }
+  }
+  put_ref = match bs {
+    TyVector { inner: _, dep: _ } => true,
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TyIterator { step: _, inner: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  };
+  if !put_ref {
+    stop(g, "not written yet: a first bind of a tuple or a function value");
+    return;
+  }
+  before = g.position;
+  generate(g, value, false);
+  if g.position == before {
+    return;
+  }
+  init_slot(g, v, "OpPutRef");
+}
+
+fn optional_shape(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner: _ } => true,
+    _ => false,
+  }
+}
+
 // `State::generate_set` for a scalar local: its first value written where it is pushed and
 // stored (`FirstArm::Plain`), a later one through `set_var` — an integer operator over locals
 // stored by the operator itself (`OpIntVVPut` / `OpIntVCPut`).
@@ -1100,6 +1407,25 @@ fn assign(g: Gen, v: integer, value: ir::Node) {
   };
   if text && !var.store_text_link {
     assign_text(g, v, value);
+    return;
+  }
+  if frame::width(tp, false) == 0 {
+    g.allocated[v] = true;
+    return;
+  }
+  if put_op_of(tp) == "" && !var.linked_narrow && (g.slots[v] ?? 65535) != 65535 {
+    range = match unspan(value) {
+      NdBlock { block: bl } => (bl[0]?.name ?? "") == "Iter range",
+      _ => false,
+    };
+    if range {
+      stop(g, "not written yet: a range loop");
+    } else if g.allocated[v] ?? false {
+      stop(g, "not written yet: a rebind of a value that is no scalar");
+    } else {
+      g.allocated[v] = true;
+      first_bind(g, v, value);
+    }
     return;
   }
   put = put_op_of(tp);
@@ -1351,12 +1677,24 @@ fn unwritten(g: Gen, what: text) -> ir::TypeT {
   ir::TyVoid
 }
 
+// The ownership oracle's operator table for an image: built once, handed to every `function`.
+pub fn oracle(b: ir::Bundle) -> own::Ops {
+  own::ops_of(b)
+}
+
 // `State::def_code` for definition `d`: its bytes, or null for a function this writer does
 // not write yet (`why[0]` says what stopped it).  `starts` and `natives` are the image's.
-pub fn function(b: ir::Bundle, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
+pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
   def = b.data.definitions[d]!;
   ret = def.returned[0] ?? ir::TyVoid;
-  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], why: "" };
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), why: "" };
+  if !body_null(def) {
+    g.defs = own::function_defs(b, d, ops);
+    if ret_adopt::ret_adopt(b, d).v >= 0 {
+      why[0] = "not written yet: a function that adopts its return buffer";
+      return null;
+    }
+  }
   if body_null(def) {
     // No body: the arguments, the return slot, and a return of the declared size.
     g.arguments = arguments_size(def);

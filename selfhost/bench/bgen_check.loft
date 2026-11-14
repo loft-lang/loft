@@ -27,13 +27,14 @@ fn main() {
   same = 0;
   differ = 0;
   unwritten = 0;
+  ops = bgen::oracle(b!);
   for d in 0..len(img!.starts) - 1 {
     from = img!.starts[d] ?? 0;
     till = img!.starts[d + 1] ?? 0;
     if till <= from {
       continue;
     }
-    bytes = bgen::function(b!, d, img!.starts, img!.natives, why);
+    bytes = bgen::function(b!, ops, d, img!.starts, img!.natives, why);
     if bytes == null {
       unwritten += 1;
       if names {
