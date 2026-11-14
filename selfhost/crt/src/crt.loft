@@ -465,6 +465,12 @@ pub fn bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: inte
 }
 
 // The run image's runner (@PLN91 run image, step 3): the Rust stack image at its positions.
+fn c_hold_bytes(b: const vector<u8>) -> integer;
+#c "loft_crt_hold_bytes" "int64_t(const uint8_t*, int64_t)"
+fn c_stack_str_held(store: integer, at: integer, base: integer, from: integer, len: integer);
+#c "loft_crt_stack_str_held" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_held_u32(base: integer, at: integer) -> integer;
+#c "loft_crt_held_u32" "int64_t(int64_t, int64_t)"
 fn c_stack_str_code(store: integer, at: integer, code: vector<u8>, from: integer, len: integer);
 #c "loft_crt_stack_str_code" "void(int64_t, int64_t, const char*, int64_t, int64_t)"
 fn c_stack_str_of_text(store: integer, at: integer, src: integer);
@@ -643,6 +649,22 @@ fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
 #c "loft_crt_stack_str" "int64_t(char*, int64_t, int64_t, int64_t)"
 
 // `OpConstText`: a view of `len` bytes of the image's `code` at `from`, pushed at `at`.
+// Bytes held for a run's text views — the code, the constant store's texts — in memory of their
+// own, which no store's growth moves: its address.  Held for the program's life.
+pub fn hold_bytes(b: const vector<u8>) -> integer {
+  c_hold_bytes(b)
+}
+
+// A view of `len` held bytes at `from` in the frame slot at `at`; the unsigned 32-bit value at
+// `at` of held bytes.
+pub fn stack_str_held(store: integer, at: integer, base: integer, from: integer, len: integer) {
+  c_stack_str_held(store, at, base, from, len);
+}
+
+pub fn held_u32(base: integer, at: integer) -> integer {
+  c_held_u32(base, at)
+}
+
 pub fn stack_str_code(store: integer, at: integer, code: vector<u8>, from: integer, len: integer) {
   c_stack_str_code(store, at, code, from, len);
 }

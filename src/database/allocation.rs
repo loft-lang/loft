@@ -3266,6 +3266,7 @@ impl Stores {
             free_bits,
             bridge_text_dest: None,
             const_refs: self.const_refs.clone(),
+            const_texts: self.const_texts.clone(),
             last_json_errors: Vec::new(),
             child_copies: Vec::new(),
             child_copy_depth: 0,

@@ -87,6 +87,10 @@ pub struct State {
   // whose return ends the arm now running (-1: none).
   pub arm_offsets: vector<integer>,
   pub arm_depth: integer,
+  // The code and the constant store's long texts, held where no store's growth moves them
+  // (`crt::hold_bytes`): a text view names bytes there, never in this record's own vectors.
+  pub code_held: integer,
+  pub texts_held: integer,
 }
 
 // `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
@@ -170,7 +174,7 @@ pub MAX_CALL_DEPTH = 10000;
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1 };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, frames: [], fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0 };
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
@@ -192,6 +196,11 @@ pub fn new_state(img: ir::RunImage, size: integer) -> State {
   }
   // Each constant adopted from the bytes Rust built it as (`RunImage.consts`).
   for c in img.consts {
+    if c.def < 0 {
+      // The constant store itself: its long texts, read by record (`string_from_const_store`).
+      s.texts_held = crt::hold_bytes(c.bytes);
+      continue;
+    }
     while len(s.consts) <= c.def {
       s.consts += [DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 }];
     }
@@ -664,7 +673,7 @@ pub fn reserve_frame(self: State, size: integer) {
 pub fn string_from_code(self: State) {
   n = self.code_u8();
   self.ensure_stack(16);
-  crt::stack_str_code(self.stk, self.stack_pos, self.code, self.code_pos, n);
+  crt::stack_str_held(self.stk, self.stack_pos, self.code_held, self.code_pos, n);
   self.code_pos += n;
   self.stack_pos += 16;
 }

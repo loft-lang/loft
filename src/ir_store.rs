@@ -997,7 +997,13 @@ fn materialize_run_image(
     let cv = rec.field_recvec(ds::RUNIMG_CONSTS, ds::RUNCONST_STRIDE);
     for c in consts {
         let e = cv.push(stores);
-        e.set_field_int(stores, ds::RUNCONST_DEF, i64::from(c.def));
+        // The long texts' entry belongs to no definition: -1.
+        let def = if c.def == u32::MAX {
+            -1
+        } else {
+            i64::from(c.def)
+        };
+        e.set_field_int(stores, ds::RUNCONST_DEF, def);
         e.set_field_int(stores, ds::RUNCONST_REC, i64::from(c.rec));
         e.set_field_int(stores, ds::RUNCONST_POS, i64::from(c.pos));
         let b = DbRef {
@@ -1240,7 +1246,8 @@ pub fn run_image_ops(data: &Data) -> (Vec<String>, Vec<String>) {
 }
 
 /// One constant's store as the run image carries it: its definition, its root, and the store's
-/// bytes up to its last live record.
+/// bytes up to its last live record.  `def` `u32::MAX` is the constant store itself, for its
+/// long texts.
 pub struct RunConstBytes {
     pub def: u32,
     pub rec: u32,
@@ -1265,6 +1272,33 @@ pub fn run_image_consts(program: &Stores) -> Vec<RunConstBytes> {
             rec: r.rec,
             pos: r.pos,
             bytes: store.raw_bytes()[..end].to_vec(),
+        });
+    }
+    // The constant store's long texts, where `OpConstStoreText` reads one by its record
+    // (`gen_text`: a text of 256 bytes or more): an entry of no definition (`u32::MAX`), the
+    // store's layout with only those records' bytes in it — each one's length word and its
+    // text — and zeroes everywhere else, so nothing unwritten leaves the process.
+    if let Some(store) = program
+        .allocations
+        .get(crate::database::CONST_STORE as usize)
+        && !program.const_texts.is_empty()
+    {
+        let mut bytes = Vec::new();
+        for &rec in &program.const_texts {
+            let text = store.get_str(rec).as_bytes();
+            let at = rec as usize * 8;
+            if bytes.len() < at + 8 + text.len() {
+                bytes.resize(at + 8 + text.len(), 0);
+            }
+            bytes[at + 4..at + 8]
+                .copy_from_slice(&u32::try_from(text.len()).unwrap_or(0).to_ne_bytes());
+            bytes[at + 8..at + 8 + text.len()].copy_from_slice(text);
+        }
+        out.push(RunConstBytes {
+            def: u32::MAX,
+            rec: 0,
+            pos: 0,
+            bytes,
         });
     }
     out

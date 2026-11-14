@@ -365,6 +365,28 @@ void loft_crt_stack_str_code(int64_t store, int64_t at, const char *code, int64_
     v->len = (size_t) len;
 }
 
+/* Bytes held for a run's text views — the code, the constant store's texts — in memory of their
+ * own, which no store's growth moves; its address as an integer.  Held for the program's life. */
+int64_t loft_crt_hold_bytes(const uint8_t *b, int64_t n) {
+    uint8_t *p = (uint8_t *) malloc(n > 0 ? (size_t) n : 1);
+    if (p && n > 0) memcpy(p, b, (size_t) n);
+    return (int64_t) (uintptr_t) p;
+}
+
+/* A view of `len` held bytes at `from` (`loft_crt_hold_bytes`) in the frame slot at `at`. */
+void loft_crt_stack_str_held(int64_t store, int64_t at, int64_t base, int64_t from, int64_t len) {
+    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
+    v->p = (const char *) (uintptr_t) base + from;
+    v->len = (size_t) len;
+}
+
+/* The unsigned 32-bit value at `at` of held bytes. */
+int64_t loft_crt_held_u32(int64_t base, int64_t at) {
+    uint32_t v = 0;
+    if (base) memcpy(&v, (const uint8_t *) (uintptr_t) base + at, 4);
+    return (int64_t) v;
+}
+
 /* `OpVarText`: a view of the text local at `src`. */
 void loft_crt_stack_str_of_text(int64_t store, int64_t at, int64_t src) {
     *(loft_str *) loft_crt_slot_at(store, at) = loft_view((loft_text *) loft_crt_slot_at(store, src));

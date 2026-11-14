@@ -221,3 +221,15 @@ pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, r
   crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, types::keyed_kind(self.types, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
 }
 
+// `State::string_from_const_store`: a view of the long text the constant store holds in record
+// `rec` pushed — its length in the record's second word-half, its bytes after the header.
+pub fn string_from_const_store(self: state::State, rec: integer) {
+  if self.texts_held == 0 {
+    self.stop("a long text where the image carries no constant store");
+    return;
+  }
+  self.put_stack_i64(0);
+  self.put_stack_i64(0);
+  crt::stack_str_held(self.stk, self.stack_pos - 16, self.texts_held, rec * 8 + 8, crt::held_u32(self.texts_held, rec * 8 + 4));
+}
+

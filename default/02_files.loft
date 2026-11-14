@@ -1132,6 +1132,7 @@ fn OpConstRef(d_nr: const __word) -> reference;
 // Push a Str pointing into the constant store for integer string literals.
 fn OpConstStoreText(rec: const __word, pos: const __word) -> text;
 #rust"s.string_from_const_store(@rec as u32, @pos as u32)"
+#loft"s.string_from_const_store(rec);"
 // A call through a function value whose `&text` parameters in `mask` are handed text fields or
 // elements (@PLN167 C3, loft#1656): dispatch to the STORE instance of whichever function the
 // value holds — the one whose parameter reads and writes through the field ops.  Operands as
