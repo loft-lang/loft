@@ -468,44 +468,7 @@ pub(crate) fn may_write_existing(
             let def = data.def(*d);
             let name = def.name();
             if !matches!(def.code(), Value::Null) {
-                let callee = if let Some(&k) = memo.get(d) {
-                    k
-                } else if !active.insert(*d) {
-                    // A call back into a function still being walked: the least fixpoint.
-                    // That function's writes are what its own walk finds, so this call adds
-                    // none; the answer is provisional until that walk ends (`assumed`), and
-                    // nothing computed under it is memoised.
-                    assumed.insert(*d);
-                    false
-                } else {
-                    // The callee's own hidden return buffer is a record that does not
-                    // exist before the call — minted from its sentinel, or the CALLER's
-                    // owned local under `(R-Rebind)`, never a parameter's record — so its
-                    // mint and every write into it are writes of a FRESH record.
-                    let own = own_return_buffer(def);
-                    let mut inner_fresh: HashSet<u16> = own.into_iter().collect();
-                    let k = may_write_existing(
-                        def.code(),
-                        tp,
-                        data,
-                        stores,
-                        def.variables(),
-                        &mut inner_fresh,
-                        own,
-                        memo,
-                        active,
-                        assumed,
-                    );
-                    active.remove(d);
-                    // Its own assumption is discharged by its walk: a `false` is the fixpoint,
-                    // and a `true` makes every caller's answer `true` regardless.  A result
-                    // that still leans on an enclosing walk's assumption is not kept.
-                    assumed.remove(d);
-                    if assumed.is_empty() {
-                        memo.insert(*d, k);
-                    }
-                    k
-                };
+                let callee = callee_writes_existing(*d, tp, data, stores, memo, active, assumed);
                 if callee {
                     crate::rewrite_census::declined(
                         "R-ValueRecord",
@@ -561,6 +524,56 @@ pub(crate) fn may_write_existing(
         _ => false,
     });
     hit
+}
+
+/// [`may_write_existing`] for a call to the loft function `d`: its memoised answer, or its body
+/// walked.  A call back into a function still being walked is the least fixpoint: that
+/// function's writes are what its own walk finds, so this call adds none, and the answer is
+/// provisional until that walk ends (`assumed`) — nothing computed under it is memoised.
+#[allow(clippy::too_many_arguments)]
+fn callee_writes_existing(
+    d: u32,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+    memo: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+    assumed: &mut HashSet<u32>,
+) -> bool {
+    if let Some(&k) = memo.get(&d) {
+        return k;
+    }
+    if !active.insert(d) {
+        assumed.insert(d);
+        return false;
+    }
+    let def = data.def(d);
+    // The callee's own hidden return buffer is a record that does not exist before the call —
+    // minted from its sentinel, or the CALLER's owned local under `(R-Rebind)`, never a
+    // parameter's record — so its mint and every write into it are writes of a FRESH record.
+    let own = own_return_buffer(def);
+    let mut inner_fresh: HashSet<u16> = own.into_iter().collect();
+    let k = may_write_existing(
+        def.code(),
+        tp,
+        data,
+        stores,
+        def.variables(),
+        &mut inner_fresh,
+        own,
+        memo,
+        active,
+        assumed,
+    );
+    active.remove(&d);
+    // Its own assumption is discharged by its walk: a `false` is the fixpoint, and a `true`
+    // makes every caller's answer `true` regardless.  A result that still leans on an
+    // enclosing walk's assumption is not kept.
+    assumed.remove(&d);
+    if assumed.is_empty() {
+        memo.insert(d, k);
+    }
+    k
 }
 
 /// Does `v` own the store it names — a user or compiler local that is no parameter, no
