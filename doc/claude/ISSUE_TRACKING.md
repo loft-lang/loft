@@ -671,7 +671,8 @@ scripts/claim.py check N           # who holds it
   it cannot `release` it; once the agent has finished, that session takes it over
   (`take N --take-over`) and then fixes, watches or releases it as its own.
 - **One stream keeps the list near green.**  Outside the PR gatherings, the stream the owner
-  names for it sweeps the open issues about every two hours: each one without a live claim is
+  names for it sweeps the open issues about every two hours, reading the whole list `make work`
+  prints, never only what was filed since the last sweep: each one without a live claim is
   taken and fixed, or handed to the agent whose branch or area it is, which is better: that
   agent makes a thorough fix on its own branch.  A red on an open PR is different: it is handed
   over only when that agent can cut a clean fix, one commit that applies alone without its
