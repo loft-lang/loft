@@ -427,12 +427,58 @@ header.  Two things are kept true in public so that it can be:
    Recommended: the second.  Pipelines and passes cost a small machine with no GPU, and the
    frame tier is already the floor every game is held to; H4 then earns its place as the
    shader test path.  The owner's "like the Tanmatsu" may mean the first: the owner's call.
+   tile-world-game's two views are evidence for the second (§ The CPU tier and `gpu` side by
+   side).
 2. **The name** — settled (owner, 2026-11-15): the layer is `gpu`, a backend `gpu_<stack>`.
    `gpu` 0.1.0 is ready to publish from the libraries' `main` (`scripts/registry_maintain.sh
    --only gpu`; its dry run lists that one version and nothing else) and is not published yet.
    `gpu_record` and `gpu_gl` follow once a released loft has @C164, with their include
    changed to `"gpu/gpu_backend.h"` and their `loft` floor raised; `gpu_paint` when stage
    needs it.
+
+## The CPU tier and `gpu` side by side (read from tile-world-game at `f1b5bf1`, 2026-11-15)
+
+Bears on open question 1.  The game already has both tiers over one scene, and shows where
+the seam is:
+
+- **One builder, two renderers.**  `render3d`'s `faces_box`, `cards_box`, `cells` and
+  `light_box` build the place as `Face` records (a picture on 3 or 4 corners, with the cell
+  its light comes from).  `fixedview` gives them to `raster3d` (C, the CPU, the fixed
+  parallel camera) and shows its 800 x 480 frame through `screen::show`; `render3d`'s own
+  draw flattens them to 8 floats a vertex for graphics 0.12 (the free, perspective camera).
+- **The seam is above both, at the scene.**  `raster3d` is fast because it keeps the
+  landscape as a picture and shifts it, which only a fixed parallel camera allows; a
+  pipeline and a pass cannot say that, and it cannot offer a free camera.  So neither sits
+  under the other: the recommendation on open question 1 stands, now with a caller behind it.
+- **The CPU side has the better contract.**  `raster3d` takes tiles by key (`set_tile`,
+  `drop_tile`), the light as cell data (`set_light`: a torch builds no tile), actors each
+  frame, groups hidden for the cut-away, an overlay.  The GPU side rebuilds the whole place
+  on any change and bakes the light into the vertices.  The owner's ruling there (one scene
+  contract, each implementation saying what it offers) is best cut from `raster3d`'s API.
+
+What a `gpu` implementation of that contract needs, against what exists:
+
+| Scene call | On `gpu` | State |
+|---|---|---|
+| a picture by number | a slot of an atlas texture, `put` in place | there |
+| `set_tile(key, faces)`, `drop_tile` | a buffer a tile, with its bounds | L4's `GroupMeshes` part: build it here |
+| `set_light(cells)` | a texture of one texel a cell, sampled nearest by a per-vertex cell reference | expressible (two texture slots); not built |
+| actors | copies of one card (`draw_copies`), a record a copy | there |
+| the cut-away | per camera; a free camera may offer none | the implementation's to say |
+| the overlay | `gpu_paint`'s `image` over the pass | there |
+| the camera | a matrix in the block | there |
+
+What stands between the two on one machine is the window, not the drawing:
+
+- **One window for every view.**  On a desktop the CPU frame is shown by `screen` and the GPU
+  view opens a second window.  With the device as the window, a CPU frame is one texture put
+  and one `gpu_paint` image, as a page does it today: the game then has one window whether
+  the frame came from the CPU or the GPU.  This is what P4 asked for.
+- **It needs two things the layer lacks:** the device's keys, pointer and typed text reaching
+  `screen` and `input` (the table's host part has events and size only), and a texture taken
+  from RGB565 (`raster3d` and `screen` speak it; `gpu` takes `0xAARRGGBB`, and turning
+  384,000 pixels a frame in loft is not measured and unlikely to be free).
+- **On the Tanmatsu nothing changes:** no device opens, `screen` shows the frame.
 
 ## Review
 
