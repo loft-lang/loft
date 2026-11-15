@@ -2314,7 +2314,7 @@ pub fn size(self: const trie) -> integer {
 #pure
 // Call a predefined system function (but not an operator).
 fn OpStaticCall(call: const u16);
-#loft" #arm guard((s.lights[call] ?? -1) >= 0): s.light_call(s.lights[call] ?? -1);"
+#loft" #arm guard((s.lights[call] ?? -1) >= 0): s.light_call(s.lights[call] ?? -1, call);"
 // Create a DbRef that points INTO the current stack frame (not into a data store).
 //
 // `pos` is a compile-time u16 offset.  At runtime the produced DbRef is:

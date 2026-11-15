@@ -857,6 +857,15 @@ pub fn ref_text_append_view(s: integer, r: integer, p: integer, stk: integer, at
   c_ref_text_append_view(s, r, p, stk, at);
 }
 
+fn c_c_call(stk: integer, top: integer, sym: text, symlen: integer, args: text, nargs: integer, ret_bits: integer, ret_signed: boolean, idx: integer, ok: vector<integer>) -> integer;
+#c "loft_crt_c_call" "int64_t(int64_t, int64_t, const char*, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t*, int64_t)"
+
+// A program's own `#c` binding called on its arguments under `top` (`State::c_call_native`):
+// the answer, `ok[0]` -1 where the symbol was not found.
+pub fn c_call(stk: integer, top: integer, sym: text, args: text, ret_bits: integer, ret_signed: boolean, idx: integer, ok: vector<integer>) -> integer {
+  c_c_call(stk, top, sym, sym.size(), args, args.size(), ret_bits, ret_signed, idx, ok)
+}
+
 fn c_view_float(stk: integer, at: integer) -> float;
 #c "loft_crt_view_float" "double(int64_t, int64_t)"
 fn c_view_single(stk: integer, at: integer) -> float;

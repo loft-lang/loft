@@ -556,9 +556,21 @@ pub struct RunImage {
   pub store_insts: vector<integer>,
   pub main: integer,
   pub cwd: boolean,
+  // Per definition: the name a stack trace shows (`Definition::trace_name`, "" for none) and
+  // the index in `files` of the file it is declared in.
+  pub names: vector<text>,
+  pub def_files: vector<u32>,
+  pub files: vector<text>,
+  // The line table (`State::line_numbers`): (code position, line) pairs in position order; a
+  // position's line is the last pair's at or before it.
+  pub lines: vector<u32>,
+  // Per native: a program's own `#c` binding as `symbol;args;ret;answer` — each argument's slot
+  // width (`b` a byte, `c` four bytes, `i` eight), the return's C width and sign (`s8`…`u64`,
+  // `v` for none) and the answer's slot width — or "".
+  pub cnatives: vector<text>,
 }
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], sidecars: [], oldest: "", bridge: "", source: "", store_insts: [], main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], sidecars: [], oldest: "", bridge: "", source: "", store_insts: [], main: 0, cwd: false, names: [], def_files: [], files: [], lines: [], cnatives: [] }
 }

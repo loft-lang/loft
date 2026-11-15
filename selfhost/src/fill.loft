@@ -5160,7 +5160,7 @@ pub fn run(s: state::State, end: integer) {
         s.code_pos = ip;
         s.stack_pos = sp;
         s.depth = fd;
-        s.light_call(s.lights[ri0] ?? -1);
+        s.light_call(s.lights[ri0] ?? -1, ri0);
         if s.stopped || s.native >= 0 {
           return;
         }

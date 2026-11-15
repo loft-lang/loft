@@ -935,6 +935,7 @@ fn materialize_run_image(
     schema: &[SchemaType],
     main: i64,
     cwd: bool,
+    debug: &RunDebug,
 ) {
     stores
         .store_mut(&root)
@@ -1049,6 +1050,118 @@ fn materialize_run_image(
     materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
     rec.set_field_int(stores, ds::RUNIMG_MAIN, main);
     rec.set_field_bool(stores, ds::RUNIMG_CWD, cwd);
+    for (off, list) in [
+        (ds::RUNIMG_NAMES, &debug.names),
+        (ds::RUNIMG_FILES, &debug.files),
+        (ds::RUNIMG_CNATIVES, &debug.cnatives),
+    ] {
+        crate::vector::pre_alloc_vector(&slot(off), count(list.len()), 4, &mut stores.allocations);
+        let v = rec.field_recvec(off, 4);
+        for n in list {
+            let e = v.push(stores);
+            e.set_field_str(stores, 0, n);
+        }
+    }
+    for (off, list) in [(ds::RUNIMG_DEF_FILES, &debug.def_files), (ds::RUNIMG_LINES, &debug.lines)] {
+        crate::vector::pre_alloc_vector(&slot(off), count(list.len()), 4, &mut stores.allocations);
+        let v = rec.field_recvec(off, 4);
+        for &at in list {
+            let e = v.push(stores).db_ref();
+            stores.store_mut(&e).set_u32_raw(e.rec, e.pos, at);
+        }
+    }
+}
+
+/// What a run image carries for `stack_trace()` and a program's own `#c` bindings: each
+/// definition's trace name and file, the line table, and per native its C call.
+pub struct RunDebug {
+    pub names: Vec<String>,
+    pub def_files: Vec<u32>,
+    pub files: Vec<String>,
+    pub lines: Vec<u32>,
+    pub cnatives: Vec<String>,
+}
+
+/// [`RunDebug`] of a program: `lines` is the interpreter's line table (`State::line_table`).
+#[must_use]
+pub fn run_image_debug(
+    data: &Data,
+    library_names: &crate::fxhash::FxHashMap<String, u16>,
+    lines: &[(u32, u32)],
+) -> RunDebug {
+    let mut files: Vec<String> = Vec::new();
+    let mut file_of: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut names = Vec::with_capacity(data.definitions.len());
+    let mut def_files = Vec::with_capacity(data.definitions.len());
+    for def in &data.definitions {
+        let is_fn = matches!(def.def_type, crate::data::DefType::Function);
+        names.push(if is_fn { def.trace_name() } else { String::new() });
+        let file = def.position().file.to_string();
+        let n = u32::try_from(file_of.len()).unwrap_or(u32::MAX);
+        let at = *file_of.entry(file.clone()).or_insert_with(|| {
+            files.push(file);
+            n
+        });
+        def_files.push(at);
+    }
+    let mut cnatives: Vec<String> = Vec::new();
+    for (name, &idx) in library_names {
+        let i = usize::from(idx);
+        if cnatives.len() <= i {
+            cnatives.resize(i + 1, String::new());
+        }
+        cnatives[i] = run_image_c_call(data, name).unwrap_or_default();
+    }
+    RunDebug {
+        names,
+        def_files,
+        files,
+        lines: lines.iter().flat_map(|&(p, l)| [p, l]).collect(),
+        cnatives,
+    }
+}
+
+/// A program's own `#c` binding named `name` as the runner calls it: `symbol;args;ret;answer`,
+/// each argument the width its stack slot holds (`b` a byte — a boolean or plain enum, `c` a
+/// character's four, `i` an integer's eight), the return's C width and sign (`s8`…`u64`, `v`
+/// for none) and the slot the answer is pushed at (the same letters, `v` for none).  `None` for a native that is no such binding, or one with an argument or
+/// return this scalar caller does not carry (a text, a vector, a float).
+fn run_image_c_call(data: &Data, name: &str) -> Option<String> {
+    use crate::c_signature::CType;
+    let d = data.def_nr(name);
+    if d == u32::MAX {
+        return None;
+    }
+    let def = data.def(d);
+    if def.c_sig.is_empty() || *def.code() != Value::Null {
+        return None;
+    }
+    let sig = crate::c_signature::of(data, d, crate::c_signature::CTarget::host())?.ok()?;
+    let mut args = String::new();
+    for a in def.attributes().iter().filter(|a| !a.name.starts_with("__") && !a.name.starts_with('#')) {
+        args.push(match a.typedef.base() {
+            Type::Boolean | Type::Enum(_, false, _) => 'b',
+            Type::Character => 'c',
+            Type::Integer(..) => 'i',
+            _ => return None,
+        });
+    }
+    if args.len() != sig.params.len() || !sig.params.iter().all(|p| matches!(p, CType::Int { .. })) {
+        return None;
+    }
+    let ret = match sig.ret {
+        CType::Void => "v".to_string(),
+        CType::Int { bits, signed } => format!("{}{bits}", if signed { 's' } else { 'u' }),
+        _ => return None,
+    };
+    let answer = match def.returned().base() {
+        Type::Void => 'v',
+        Type::Boolean | Type::Enum(_, false, _) => 'b',
+        Type::Character => 'c',
+        Type::Integer(..) => 'i',
+        _ => return None,
+    };
+    Some(format!("{};{args};{ret};{answer}", sig.symbol))
 }
 
 /// The run image's rows for calls through function references (`RunFnRef`), into the root's
@@ -1757,6 +1870,7 @@ pub fn save_run_image(
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     program: &Stores,
     data: &Data,
+    lines: &[(u32, u32)],
     path: &str,
 ) -> std::io::Result<()> {
     let Some(starts) = run_image_starts(data, code.len()) else {
@@ -1812,6 +1926,7 @@ pub fn save_run_image(
             &program.types,
             main,
             !program.program_relative,
+            &run_image_debug(data, library_names, lines),
         );
         // The image is the bytes it holds: the store's growth room past its last record is cut
         // off before the file is published (`Store::shrink_to`, which refuses anything else).

@@ -996,6 +996,16 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t118, "store_insts", vec_store_insts);
     db.field(t118, "main", 0);
     db.field(t118, "cwd", t4);
+    let vec_names = db.vector(t5);
+    db.field(t118, "names", vec_names);
+    let vec_def_files = db.vector(t141);
+    db.field(t118, "def_files", vec_def_files);
+    let vec_files = db.vector(t5);
+    db.field(t118, "files", vec_files);
+    let vec_lines = db.vector(t141);
+    db.field(t118, "lines", vec_lines);
+    let vec_cnatives = db.vector(t5);
+    db.field(t118, "cnatives", vec_cnatives);
     let t142 = db.vector(t141);
     let _ = t142; // may be unused
     let t143 = db.vector(t113);

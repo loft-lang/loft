@@ -70,6 +70,9 @@ N_JSON_ERRORS_DEST = 52;
 N_PARSE_ERRORS_OF = 53;
 // The JsonValue natives: one number each, from `N_JV` on, in `jv_which`'s order.
 N_JV = 60;
+// Natives the `State` carries itself (`is_state_native`), past the `N_JV` range.
+pub N_STACK_TRACE = 200;
+pub N_C_CALL = 201;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -81,6 +84,7 @@ N_SET_STORE_LOCK = 63;
 pub fn native_handler(name: text) -> integer {
   match name {
     "n_assert" => N_ASSERT,
+    "n_stack_trace" => N_STACK_TRACE,
     "n_env_variable_dest" => N_ENV_VARIABLE_DEST,
     "n_now" => N_NOW,
     "n_ticks" => N_TICKS,
@@ -406,9 +410,10 @@ pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: v
 }
 
 // Whether native handler `nh` is one the `State` carries itself (`State::light_call`): the
-// keyed entries, which read the record target's facts it derives once.
+// keyed entries, which read the record target's facts it derives once; `stack_trace`, which
+// reads the frame list; a program's own `#c` binding, which the image describes.
 pub fn is_state_native(nh: integer) -> boolean {
-  nh == N_KEYED_ENTRY_INTS || nh == N_KEYED_ENTRY_TEXT
+  nh == N_KEYED_ENTRY_INTS || nh == N_KEYED_ENTRY_TEXT || nh == N_STACK_TRACE || nh == N_C_CALL
 }
 
 // Whether `light` carries native handler `nh`.

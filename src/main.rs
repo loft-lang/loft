@@ -151,6 +151,7 @@ fn emit_program_run_image(state: &State, data: &loft::data::Data, out: &str) -> 
         &state.library_names,
         &state.database,
         data,
+        &state.line_table(),
         out,
     ) {
         eprintln!("loft: cannot write the run image to {out}: {e}");

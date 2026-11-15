@@ -520,8 +520,13 @@ pub(crate) const RUNIMG_OLDEST: u32 = 56;
 pub(crate) const RUNIMG_BRIDGE: u32 = 60;
 pub(crate) const RUNIMG_SOURCE: u32 = 64;
 pub(crate) const RUNIMG_STORE_INSTS: u32 = 68;
-pub(crate) const RUNIMG_CWD: u32 = 72;
-pub(crate) const RUNIMG_STRIDE: u32 = 80;
+pub(crate) const RUNIMG_NAMES: u32 = 72;
+pub(crate) const RUNIMG_DEF_FILES: u32 = 76;
+pub(crate) const RUNIMG_FILES: u32 = 80;
+pub(crate) const RUNIMG_LINES: u32 = 84;
+pub(crate) const RUNIMG_CNATIVES: u32 = 88;
+pub(crate) const RUNIMG_CWD: u32 = 92;
+pub(crate) const RUNIMG_STRIDE: u32 = 96;
 /// `RunFnRef { def, drop, kind, cascade: integer, hidden: vector<integer> }` — a call through a function
 /// reference's shape.
 pub(crate) const RUNFNREF_DEF: u32 = 0;
@@ -1853,6 +1858,11 @@ mod tests {
         assert_eq!(pos(ids.run_image, "bridge"), RUNIMG_BRIDGE);
         assert_eq!(pos(ids.run_image, "source"), RUNIMG_SOURCE);
         assert_eq!(pos(ids.run_image, "store_insts"), RUNIMG_STORE_INSTS);
+        assert_eq!(pos(ids.run_image, "names"), RUNIMG_NAMES);
+        assert_eq!(pos(ids.run_image, "def_files"), RUNIMG_DEF_FILES);
+        assert_eq!(pos(ids.run_image, "files"), RUNIMG_FILES);
+        assert_eq!(pos(ids.run_image, "lines"), RUNIMG_LINES);
+        assert_eq!(pos(ids.run_image, "cnatives"), RUNIMG_CNATIVES);
         assert_eq!(u32::from(stores.size(ids.run_sidecar)), RUNSIDECAR_STRIDE);
         assert_eq!(pos(ids.run_sidecar, "tp"), RUNSIDECAR_TP);
         assert_eq!(pos(ids.run_sidecar, "hash"), RUNSIDECAR_HASH);

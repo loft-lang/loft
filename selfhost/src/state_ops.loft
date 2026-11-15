@@ -98,7 +98,15 @@ pub fn copy_closure(self: state::State, src: state::DbRef, tp: integer) -> state
 }
 
 // A native `natives::light` carries, called by `OpStaticCall`'s arm on the stack as it stands.
-pub fn light_call(self: state::State, h: integer) {
+pub fn light_call(self: state::State, h: integer, idx: integer) {
+  if h == natives::N_STACK_TRACE {
+    self.stack_trace();
+    return;
+  }
+  if h == natives::N_C_CALL {
+    self.c_call_native(idx);
+    return;
+  }
   if natives::is_state_native(h) {
     self.keyed_entry(h == natives::N_KEYED_ENTRY_TEXT);
     return;
@@ -108,6 +116,123 @@ pub fn light_call(self: state::State, h: integer) {
     self.stop("not carried: native handler {h}");
   } else {
     self.stack_pos = sp;
+  }
+}
+
+// The number of the type the schema calls `name`, -1 for none.
+pub fn type_nr(self: state::State, name: text) -> integer {
+  for i in 0..len(self.types) {
+    if (self.types[i]?.name ?? "") == name {
+      return i;
+    }
+  }
+  -1
+}
+
+// `State::call_line`: the line of the call made at `call_pos` — the last line-table entry
+// STRICTLY before it (an entry at it belongs to the next statement), 0 for none.
+pub fn call_line(self: state::State, call_pos: integer) -> integer {
+  lo = 0;
+  hi = len(self.lines) / 2;
+  // The first pair at or past `call_pos`; the one before it is the line.
+  while lo < hi {
+    mid = (lo + hi) / 2;
+    if (self.lines[2 * mid] ?? 0) < call_pos {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if lo == 0 { 0 } else { self.lines[2 * lo - 1] ?? 0 }
+}
+
+// `stack_trace()` (`n_stack_trace`): the frames outermost first, each its function, file and
+// the line of the call that entered it (0 for the entry frame) — a `vector<StackFrame>` in a
+// store of its own, the field positions read from the program's schema.  A frame's arguments
+// and variables are not carried (STACKTRACE.md ST-6: empty, as a native frame's are).
+pub fn stack_trace(self: state::State) {
+  self.load_table();
+  sf = self.type_nr("StackFrame");
+  if sf < 0 {
+    self.stop("not carried: stack_trace without a StackFrame type");
+    return;
+  }
+  size = self.types[sf]?.size ?? 0;
+  fpos = -1;
+  filepos = -1;
+  lpos = -1;
+  lwide = true;
+  for f in types::record_fields(self.types, sf) {
+    if f.name == "function" {
+      fpos = f.position;
+    } else if f.name == "file" {
+      filepos = f.position;
+    } else if f.name == "line" {
+      lpos = f.position;
+      lwide = (self.types[f.content]?.size ?? 8) == 8;
+    }
+  }
+  vt = self.type_nr("vector<StackFrame>");
+  // `database` remakes a store its argument already names: the scratch vector is cleared to the
+  // null reference first, or the last operator's store would be the one remade.
+  self.lio[0] = state::NULL_STORE;
+  self.lio[1] = 0;
+  self.lio[2] = 0;
+  crt::database(self.lio, 8, if vt < 0 { sf } else { vt });
+  vs = self.lio[0] ?? state::NULL_STORE;
+  vr = self.lio[1] ?? 0;
+  vp = self.lio[2] ?? 0;
+  self.image_ready(sf);
+  for k in 0..self.depth {
+    fr = self.frame_at(k);
+    d = fr.d_nr;
+    crt::vec_append(self.lio, vs, vr, vp, size);
+    es = self.lio[0] ?? state::NULL_STORE;
+    er = self.lio[1] ?? 0;
+    ep = self.lio[2] ?? 0;
+    crt::fill(es, er, ep, self.images[sf]!);
+    crt::set_text(es, er, ep, fpos, self.names[d] ?? "<worker>");
+    crt::set_text(es, er, ep, filepos, self.files[self.def_files[d] ?? 0] ?? "");
+    line = if k == 0 { 0 } else { self.call_line(fr.call_pos) };
+    if lwide {
+      crt::set_int(es, er, ep, lpos, line);
+    } else {
+      crt::set_w(crt::W_INT4, es, er, ep, lpos, 0, line);
+    }
+    crt::vec_finish(vs, vr, vp);
+  }
+  self.ensure_stack(16);
+  crt::set_slot_ref(self.stk, self.stack_pos, vs, vr, vp);
+  self.stack_pos += 16;
+}
+
+// A program's own `#c` binding (`RunImage.cnatives`): its arguments popped at their slot
+// widths, the C function called through `crt::c_call`, the answer pushed at its slot's width.
+pub fn c_call_native(self: state::State, idx: integer) {
+  desc = self.cnatives[idx] ?? "";
+  parts = desc.split(';');
+  sym = parts[0] ?? "";
+  args = parts[1] ?? "";
+  ret = parts[2] ?? "v";
+  answer = parts[3] ?? "v";
+  n = args.size();
+  if !self.can_pop(8 * n) {
+    return;
+  }
+  bits = if ret == "v" { 0 } else { ret[1..ret.size()] as integer ?? 64 };
+  self.lio[0] = 0;
+  v = crt::c_call(self.stk, self.stack_pos, sym, args, bits, ret.starts_with("s"), idx, self.lio);
+  if (self.lio[0] ?? -1) < 0 {
+    self.stop("not carried: the C function {sym} (not found in the process)");
+    return;
+  }
+  self.stack_pos -= 8 * n;
+  if answer == "i" {
+    self.put_stack_i64(v);
+  } else if answer == "b" {
+    self.put_stack_u8(v);
+  } else if answer == "c" {
+    self.put_stack_u32(v);
   }
 }
 

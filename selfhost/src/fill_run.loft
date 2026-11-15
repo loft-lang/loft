@@ -157,6 +157,9 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
         }
       } else if pk > 0 {
         s.stack_pos = natives::par_buf(pk, s.stk, s.stack_pos, pbufs, io);
+      } else if natives::is_state_native(s.handlers[idx] ?? -1) {
+        // The natives the `State` carries itself (`OpStaticCall`'s arm calls them too).
+        s.light_call(s.handlers[idx] ?? -1, idx);
       } else {
         // The natives are the hand-built runner's ports, over the same stack store.
         tl[0] = s.table_loaded;

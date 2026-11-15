@@ -666,6 +666,49 @@ void loft_crt_ref_text_append_view(int64_t s, int64_t r, int64_t p, int64_t stk,
     if (t) loft_text_concat(t, v);
 }
 
+/* A program's own `#c` binding, called as the interpreter's `c_call` calls it: the symbol looked
+ * up once per native (`idx`) in what the process has loaded, each argument read at its stack
+ * slot's width (`args`: `b` a byte, `c` four bytes, `i` eight; the first deepest under `top`)
+ * and handed over as a 64-bit integer, the answer narrowed to the C return's width and sign
+ * (`ret_bits` 0 for none).  -1 in `*ok` where the symbol is not found or the arity is past the
+ * ladder; the caller stops the run then. */
+#include <dlfcn.h>
+#define LOFT_CRT_CCALLS 4096
+static void *loft_crt_cfn[LOFT_CRT_CCALLS];
+int64_t loft_crt_c_call(int64_t stk, int64_t top, const char *sym, int64_t symlen, const char *args,
+                        int64_t nargs, int64_t ret_bits, int64_t ret_signed, int64_t idx, int64_t *ok,
+                        int64_t okn) {
+    if (okn < 1) return 0;
+    ok[0] = -1;
+    if (nargs < 0 || nargs > 8 || idx < 0 || idx >= LOFT_CRT_CCALLS || symlen <= 0) return 0;
+    void *f = loft_crt_cfn[idx];
+    if (!f) {
+        f = dlsym(RTLD_DEFAULT, sym);
+        if (!f) return 0;
+        loft_crt_cfn[idx] = f;
+    }
+    int64_t a[8] = { 0 };
+    for (int64_t k = 0; k < nargs; k++) {
+        const uint8_t *q = loft_crt_slot_at(stk, top - 8 * (nargs - k));
+        if (args[k] == 'b') { uint8_t v; memcpy(&v, q, 1); a[k] = v; }
+        else if (args[k] == 'c') { uint32_t v; memcpy(&v, q, 4); a[k] = v; }
+        else { memcpy(&a[k], q, 8); }
+    }
+    typedef int64_t (*f0)(void);
+    typedef int64_t (*f8)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
+    int64_t r;
+    if (nargs == 0) r = ((f0) f)();
+    else r = ((f8) f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+    ok[0] = 0;
+    switch (ret_bits) {
+    case 0: return 0;
+    case 8: return ret_signed ? (int64_t) (int8_t) r : (int64_t) (uint8_t) r;
+    case 16: return ret_signed ? (int64_t) (int16_t) r : (int64_t) (uint16_t) r;
+    case 32: return ret_signed ? (int64_t) (int32_t) r : (int64_t) (uint32_t) r;
+    default: return r;
+    }
+}
+
 /* `OpCastFloatFromText` / `OpCastSingleFromText` on the view in its frame slot: the runtime's
  * own parse (`loft_float_of_text`, as the C backend casts), NaN — null — where it is not a
  * number, the null text included. */
