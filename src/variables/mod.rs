@@ -501,6 +501,12 @@ pub(crate) struct CaptureBuilds {
     /// outlive what it captured, so it BORROWS every capture and the frame keeps its release,
     /// at the local's own scope end ([`pass_confined_records`]).
     pub(crate) pass_confined: crate::fxhash::FxHashSet<u32>,
+    /// loft#2504, `@FR-L-CapOwn` — every local this body ASSIGNS somewhere.  A variable of a
+    /// capture's name that is not among them is no binding of this frame: a lambda nested in a
+    /// lambda relays the capture out of its own closure record, and a write through it
+    /// (`ok[0] = …`) leaves an unassigned variable of the name behind.  The record its build
+    /// makes borrows that capture (`scopes::capture_adoption::record_adopts_capture`).
+    pub(crate) assigned: crate::fxhash::FxHashSet<u16>,
     /// Captures whose closure BUILD does not DOMINATE the scope exit — it sits inside an `if`
     /// arm, a `match` arm or a loop body, so on some runs no record is ever built.
     ///

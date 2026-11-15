@@ -1706,6 +1706,19 @@ pub(super) fn record_adopts_capture(
     if v == u16::MAX || function.is_argument(v) {
         return false;
     }
+    // loft#2504 — the same RELAY as the `__cell_` arm above, for a capture of any kind: a
+    // lambda nested in a lambda reads the capture out of its own closure record
+    // (`OpGetDbRef(__closure, off)`), a store that belongs further out.  The enclosing lambda
+    // can still carry a variable of the name — a write through the capture (`ok[0] = …`)
+    // resolves the name and leaves the variable behind — but no statement of this frame
+    // assigns it, so it is no binding of this frame and its empty dep list says nothing.  Read
+    // as owned, the record adopted the store and the enclosing lambda's end freed it under the
+    // record that holds it.  `LOFT_NO_RELAY_CAPTURE_BORROW=1` reads the variable instead.
+    if !builds.assigned.contains(&v)
+        && !crate::env_once!(std::env::var_os("LOFT_NO_RELAY_CAPTURE_BORROW").is_some())
+    {
+        return false;
+    }
     // loft#2131 — a WITNESSED capture with an owner slot.  Its empty dep list says nothing: the
     // witness is there because what the local holds changes from run to run.  The capture slot
     // is the record's only where the build named a FRAME-OWNED backing (`x = b.inner`, `b` a
