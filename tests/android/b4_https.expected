@@ -1,0 +1,4 @@
+https://badssl.com/ -> 200
+https://expired.badssl.com/ -> 0
+https://self-signed.badssl.com/ -> 0
+https://wrong.host.badssl.com/ -> 0

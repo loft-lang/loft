@@ -10799,12 +10799,6 @@ fn main() {
                     eprintln!("loft: {e}");
                     std::process::exit(1);
                 });
-            let package = android::Package {
-                staging: &staging,
-                keystore_dir: &work,
-                debuggable: !ship_build,
-                assets: &assets,
-            };
             let result = c_driver::build_android(
                 &c,
                 &built,
@@ -10812,7 +10806,17 @@ fn main() {
                 &target.glue_dir(),
                 ship_build,
             )
-            .and_then(|()| target.finish(&built, &package, std::path::Path::new(&android_out)));
+            .and_then(|libs| {
+                let package = android::Package {
+                    staging: &staging,
+                    keystore_dir: &work,
+                    debuggable: !ship_build,
+                    assets: &assets,
+                    libs: &libs,
+                    internet: android::needs_internet(&c),
+                };
+                target.finish(&built, &package, std::path::Path::new(&android_out))
+            });
             if let Err(e) = result {
                 eprintln!("loft: {e}");
                 std::process::exit(1);

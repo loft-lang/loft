@@ -1681,6 +1681,17 @@ impl Cx<'_> {
     }
 }
 
+/// The TLS client's sources when `link` (a unit's `link:` input) names its archive, for a build
+/// that compiles the client for another machine (`--native-android`) and so cannot link the
+/// host's archive; `None` for any other input.
+///
+/// # Errors
+/// The sources cannot be written.
+pub fn tls_sources_for(link: &str) -> Option<Result<Vec<std::path::PathBuf>, String>> {
+    let archive = tls::archive().ok()?;
+    (std::path::Path::new(link) == archive).then(tls::sources)
+}
+
 pub fn c_name(data: &Data, d: u32) -> String {
     let dups = crate::opt::names::duplicate_fn_names(data);
     crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))

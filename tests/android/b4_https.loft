@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Android guard (scripts/android_guards.py): an `https://` fetch on the device answers as on the
+// desktop.  The web library's natives (the `net` component) and the TLS client are built for the
+// device and shipped beside the app; the certificates trusted are Android's own store.  A good
+// server answers 200; an expired, a self-signed and a wrong-host certificate are refused (status
+// 0), which says the chain and the name are checked, not only that a socket opens.
+use web;
+
+fn main() {
+  for u in ["https://badssl.com/", "https://expired.badssl.com/", "https://self-signed.badssl.com/", "https://wrong.host.badssl.com/"] {
+    r = web::http_get(u);
+    println("{u} -> {r.status}");
+  }
+}

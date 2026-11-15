@@ -126,6 +126,31 @@ entry makes that work unchanged:
   why.  A `#cwd` program resolves against the working directory, which an app does not have:
   its files are not packed.
 
+### 4. The library shims — one `__ANDROID__` section each
+
+- **graphics** (`graphics_gl.c`, graphics 0.13.0): a `GG_ANDROID` back end beside `GG_X11`,
+  `GG_COCOA` and `GG_BROWSER`, chosen before the X11 line under `__ANDROID__`:
+  - EGL and GLES 3.0 on `loft_android_app()->window`, both opened at run time; the shaders take
+    the page's `#version 300 es` rewrite.
+  - The surface follows the lifecycle: `APP_CMD_TERM_WINDOW` drops it and `APP_CMD_INIT_WINDOW`
+    makes it again with the same context; `Window.poll` waits while there is none, and a
+    rotation arrives as a `Resize`.
+  - Input from `app->onInputEvent`: each pointer is `TouchBegin` / `TouchMove` / `TouchEnd`,
+    the first also mouse button 1; a key is its 0.9 code and types its `Text`.
+- **audio** (`audio_out.c`): the desktop section is miniaudio, which opens AAudio (OpenSL ES the
+  fallback) at run time; it builds and plays unchanged (`b4_audio`).
+- **imaging, tiles** and every other pure-C shim compile unchanged; the driver's existing
+  "a shim that does not compile for this target" message names any exception.
+- **TLS and the components.**  A unit that fetches a URL links the TLS client's host archive
+  (`src/c/tls.rs`); the Android build compiles its sources for the device in its place
+  (`loft::c::tls_sources_for`).  A program using the web, server or ssh libraries calls the
+  `net` component, which the host opens from beside loft: the Android build compiles it with
+  the TLS sources into `libloft_net.so`, ships it in the APK's `lib/<abi>/`, and the unit's
+  `loft_ffi_sym` asks for it there by name.  The trust store is Android's directory of CA
+  files: the updatable `/apex/com.android.conscrypt/cacerts`, else `/system/etc/security/cacerts`
+  (`loft_tls_load`).  An app whose C reaches the network asks for the `INTERNET` permission;
+  any other asks for none (`android::needs_internet`).
+
 ## Selecting the path, and retiring the old one
 
 - While both exist, `--native-android` builds through the C path whenever the C backend is
@@ -158,7 +183,8 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
    `scripts/android_guards.py` on the nightly's first emulator shard): `b3_rects` (a painter),
    `b3_render` (the program's own `#version 330 core` shaders), `b4_touch` (a tap the runner
    sends), `b4_audio` (the frames the audio device took) and `b4_stack` (a recursion that needs
-   more than 2 MiB), `b3_text` (a font and an image the app carries).  Each prints what it read
+   more than 2 MiB), `b3_text` (a font and an image the app carries), `b4_https` (a fetch that
+   answers 200, and three bad certificates refused).  Each prints what it read
    back, so the comparison with its hand-computed `.expected` is exact: no screenshot and no
    pixel tolerance.  `b4_ime` waits for a soft-keyboard call, which the published `graphics`
    does not have.
@@ -171,7 +197,7 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
 | **A1** | the build test (verification 1) and the emulator differential (verification 2) over the headless corpus | every headless corpus program agrees, 0 differ; the differ list is a committed baseline that only shrinks (main-switch.md phase 0's rule) |
 | **A2** | `GG_ANDROID` in `graphics_gl.c`; the `__ANDROID__` guard on X11; audio through miniaudio | the guards `b3_rects`, `b3_render`, `b4_touch`, `b4_audio`, `b4_stack` pass on the PUBLISHED `graphics` and `audio`; each library republished through its own CI (the `loft-library` skill) |
 | **A3** | files: `internalDataPath`, the program's files packed and extracted (@C164), the program directory | `b3_text` (a font and an image the program names, opened by its PC paths) passes; the corpus programs left in the baseline read repo-root paths under `#cwd` |
-| **A4** | TLS for the triple and the Android trust store | an `https://` fetch answers the same in the emulator as on the desktop |
+| **A4** | TLS for the device, the `net` component shipped in the APK, Android's trust store, the `INTERNET` permission | `b4_https` passes: an `https://` fetch answers the same in the emulator as on the desktop, a bad certificate refused alike |
 | **A5** | the flip: `--native-android` on the C path by default; the rustc Android path deleted with the rustc writer | one release cycle in which the Android build test and the nightly emulator run used only the C path |
 
 A0 and A1 need no library change and prove the claim the rest stands on.  A2 is the largest

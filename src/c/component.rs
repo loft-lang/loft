@@ -118,6 +118,36 @@ pub fn build(name: &str, out_dir: &std::path::Path) -> Result<std::path::PathBuf
     Ok(lib)
 }
 
+/// Component `name`'s sources written into `dir`, its own file first, then the TLS client's
+/// (`src/c/tls.rs`, in their own directory beside their headers): for a build that compiles the
+/// component for another machine (`--native-android`) and ships it beside the program as the
+/// host ships its own.
+///
+/// # Errors
+/// An unknown component, or a source that cannot be written.
+pub fn sources_for_device(
+    name: &str,
+    dir: &std::path::Path,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let sources = match name {
+        "net" => NET,
+        _ => {
+            return Err(format!(
+                "no component `{name}` (known: {})",
+                NAMES.join(", ")
+            ));
+        }
+    };
+    for (n, text) in sources {
+        let path = dir.join(n);
+        crate::file_access::write(&path, text)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+    let mut out = vec![dir.join(sources[0].0)];
+    out.extend(super::tls::sources()?);
+    Ok(out)
+}
+
 /// Write `sources` into `stage` and compile the component there, every symbol hidden but the
 /// ones its C marks for export (`NET_EXPORT`): the TLS archive's are kept inside it.
 fn compile(

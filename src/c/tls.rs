@@ -341,7 +341,21 @@ fn source_dir() -> std::path::PathBuf {
         .join(format!("{key:016x}"))
 }
 
-fn build() -> Result<std::path::PathBuf, String> {
+/// The archive's `.c` sources, written out as [`build`] writes them, for a build that compiles
+/// them for another machine (`--native-android`) rather than linking the host's archive.
+///
+/// # Errors
+/// A source that cannot be written.
+pub(crate) fn sources() -> Result<Vec<std::path::PathBuf>, String> {
+    let dir = write_sources()?;
+    Ok(SOURCES
+        .iter()
+        .filter(|(name, _)| crate::file_access::has_extension(*name, "c"))
+        .map(|(name, _)| dir.join(name))
+        .collect())
+}
+
+fn write_sources() -> Result<std::path::PathBuf, String> {
     let dir = source_dir();
     crate::file_access::create_dir_all(&dir).map_err(|e| format!("cannot create {e}"))?;
     // Each file is written beside its final name and renamed into place, so a concurrent build
@@ -358,6 +372,11 @@ fn build() -> Result<std::path::PathBuf, String> {
         crate::file_access::rename(&stage, &path)
             .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     }
+    Ok(dir)
+}
+
+fn build() -> Result<std::path::PathBuf, String> {
+    let dir = write_sources()?;
     let compiled: Vec<String> = SOURCES
         .iter()
         .filter(|(name, _)| crate::file_access::has_extension(*name, "c"))

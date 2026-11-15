@@ -605,10 +605,13 @@ const ANDROID_MAIN_C: &str = include_str!("c/android/loft_android_main.c");
 ///   entry's `loft_android_glue_thread` (`-D`, that one object only), which gives its app
 ///   thread the desktop's 8 MiB stack;
 /// - each `[c] shim` the unit links, compiled from its sources for the target, as the wasm
-///   build compiles them.
+///   build compiles them, and the TLS client's sources in place of its host archive.
 ///
 /// Linked `-shared` against the platform's `android`, `log`, `m` and `dl`, with
-/// `ANativeActivity_onCreate` (the glue's) kept as the library's entry.
+/// `ANativeActivity_onCreate` (the glue's) kept as the library's entry.  Each component the unit
+/// binds (`libloft_net`: the web, server and ssh libraries' natives) is a library of its own on
+/// the device too, built beside `out` as `lib<stem>.so` from its sources and the TLS client's,
+/// as the host ships it beside loft; the answer is their paths, for the APK's `lib/<abi>/`.
 ///
 /// # Errors
 /// A link input that is a host archive and not a shim's sources (A0 builds none for Android),
@@ -619,9 +622,18 @@ pub(crate) fn build_android(
     cc: &std::path::Path,
     glue_dir: &std::path::Path,
     ship: bool,
-) -> Result<(), String> {
+) -> Result<Vec<std::path::PathBuf>, String> {
     let links = link_inputs(c);
     let (links, sources) = shims_as_sources(c, &links, &marked(c, "shim-archive"));
+    // The TLS client's host archive is its sources here, compiled for the device like a shim's.
+    let mut device_links = Vec::new();
+    for l in links {
+        match loft::c::tls_sources_for(&l) {
+            Some(tls) => device_links.extend(tls?.iter().map(|p| p.to_string_lossy().into_owned())),
+            None => device_links.push(l),
+        }
+    }
+    let links = device_links;
     if let Some(host) = links.iter().find(|l| !is_c_source(l)) {
         return Err(format!(
             "--native-android: this program links `{host}`, a library built for this machine; \
@@ -710,10 +722,60 @@ pub(crate) fn build_android(
             .map(|a| (*a).to_string()),
     );
     run(link, "linking the activity library")?;
+    let components = android_components(c, out, &dir, &run)?;
     if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
         let _ = fa::remove_dir_all(&dir);
     }
-    Ok(())
+    Ok(components)
+}
+
+/// The components the unit `c` binds (it names each by its library file, `loft_ffi_sym`), each
+/// built for the device beside `out` as `lib<stem>.so` — the name an APK's `lib/<abi>/` takes and
+/// the unit's Android lookup asks for (`loft_ffi_sym`).  Every symbol is hidden but the ones the
+/// component's C marks for export, as the host build hides them.
+fn android_components(
+    c: &str,
+    out: &std::path::Path,
+    dir: &std::path::Path,
+    run: &dyn Fn(Vec<String>, &str) -> Result<(), String>,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let beside = out.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let mut libs = Vec::new();
+    for name in loft::c::component::NAMES {
+        if !c.contains(&format!("\"{}\"", loft::components::file_name(name))) {
+            continue;
+        }
+        let src = dir.join(format!("component_{name}"));
+        fa::create_dir_all(&src).map_err(|e| format!("cannot create {}: {e}", src.display()))?;
+        let sources = loft::c::component::sources_for_device(name, &src)?;
+        let lib = beside.join(format!("lib{}.so", loft::components::stem(name)));
+        let mut args: Vec<String> = [
+            "-shared",
+            "-fPIC",
+            "-O2",
+            "-w",
+            "-fvisibility=hidden",
+            "-DLOFT_ANDROID",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        args.extend(["-I".to_string(), src.to_string_lossy().into_owned()]);
+        args.extend(["-o".to_string(), lib.to_string_lossy().into_owned()]);
+        args.extend(sources.iter().map(|p| p.to_string_lossy().into_owned()));
+        args.extend(["-lm", "-llog", "-ldl"].iter().map(|s| (*s).to_string()));
+        args.extend(
+            loft::platform::c_thread_link_args()
+                .iter()
+                .map(|a| (*a).to_string()),
+        );
+        run(
+            args,
+            &format!("building the `{name}` component for the device"),
+        )?;
+        libs.push(lib);
+    }
+    Ok(libs)
 }
 
 /// Run the NDK clang `cc` with `args`; a failure names `what` and keeps nothing hidden: the
