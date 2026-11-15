@@ -1708,7 +1708,7 @@ fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
 fn OpRemoveVector(r: vector, tp: const u16, index: __word) -> boolean;
 #cold
 #rust"s.database.remove_vector_at(&@r, @tp, @index)"
-#loft"s.vec_remove(r, tp, index)"
+#loft"s.vec_remove(r, tp, index) #arm s.vec_remove_at(r.store_nr, r.rec, r.pos, tp, index)"
 #impure(parent_write)
 // `@FR-R-Compact` — the vector becomes the elements it held at [lo, hi), in place: every
 // other element is released where it stands, the kept run moves to the front as one block,

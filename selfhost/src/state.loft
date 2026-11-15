@@ -286,7 +286,7 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code) };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code) };
   ptab = natives::par_natives(img);
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
@@ -1688,10 +1688,15 @@ pub fn format_stack_float(self: State) {
 // `Stores::remove_vector_at`: element `index` removed, by its type's mode — linked, owning
 // heap, or plain; whether one was removed.
 pub fn vec_remove(self: State, r: DbRef, tp: integer, index: integer?) -> boolean {
-  et = self.types[tp]!;
+  self.vec_remove_at(r.store_nr, r.rec, r.pos, tp, index)
+}
+
+// `vec_remove` on the reference's parts (`OpRemoveVector`'s arm): the element type's size and
+// mode read where the table keeps them, no type record bound.
+pub fn vec_remove_at(self: State, rs: integer, rr: integer, rp: integer, tp: integer, index: integer?) -> boolean {
   self.load_table();
-  mode = if et.linked { 2 } else if self.has(F_OWNS_HEAP, tp) { 1 } else { 0 };
-  crt::vec_remove(r.store_nr, r.rec, r.pos, tp, et.size, mode, index)
+  mode = if self.types[tp]?.linked ?? false { 2 } else if self.has(F_OWNS_HEAP, tp) { 1 } else { 0 };
+  crt::vec_remove(rs, rr, rp, tp, self.types[tp]?.size ?? 0, mode, index)
 }
 
 // `Stores::keep_vector_range`: the vector cut to its elements `lo..hi`.
@@ -2280,20 +2285,28 @@ pub fn step(self: State) {
   on = self.code_u8();
   arg = self.code_u16();
   cursor = self.get_var_i64(state_var) ?? 0;
-  data = self.slot_dbref(self.stack_pos - 16);
-  out: vector<integer> = [NULL_STORE, 0, 0, 0];
+  // The collection's reference read in its slot, the step's answer written over it; the step
+  // answers through the scratch vector (its fourth part the walk's next state).
+  at = self.stack_pos - 16;
+  if !self.slot_ok(at) {
+    return;
+  }
+  crt::slot_ref(self.lio, self.stk, at);
+  ds = self.lio[0] ?? NULL_STORE;
+  dr = self.lio[1] ?? 0;
+  dp = self.lio[2] ?? 0;
   kind = on & 63;
   if kind == 4 {
-    crt::scratch_step(out, cursor, data.store_nr, data.rec, data.pos, on & 64 != 0);
+    crt::scratch_step(self.lio, cursor, ds, dr, dp, on & 64 != 0);
   } else if kind >= 1 && kind <= 3 {
     self.load_table();
-    crt::keyed_step(out, cursor, data.store_nr, data.rec, data.pos, on, arg);
+    crt::keyed_step(self.lio, cursor, ds, dr, dp, on, arg);
   } else {
     self.stop("not carried: a walk of kind {kind}");
     return;
   }
-  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, out[3]);
-  crt::set_slot_ref(self.stk, self.stack_pos - 16, out[0] ?? NULL_STORE, out[1] ?? 0, out[2] ?? 0);
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, self.lio[3]);
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
 }
 
 // `State::remove`: the walk's current record removed — the state in the slot `state_var`

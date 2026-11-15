@@ -5871,6 +5871,33 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    57 => {
+      ri0 = crt::peek_u16(cbase, ip + 2);
+      if sp >= 24 {
+        ri1 = crt::peek_i64(base, sp - 8);
+        ri2 = crt::peek_u32(base, sp - 24);
+        ri3 = crt::peek_u32(base, sp - 20);
+        ri4 = crt::peek_u32(base, sp - 16);
+        sp -= 24;
+        ip += 4;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        nv_312: boolean? = s.vec_remove_at(ri2, ri3, ri4, ri0, ri1);
+        s.put_stack_bool(nv_312);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
+        continue;
+      }
+    }
     60 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 32 {
