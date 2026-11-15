@@ -732,9 +732,17 @@ impl Parser {
                     // inline `OpGetVectorNullable(size=4)` and reads the rec-id
                     // slot AS the record → every field offset is junk.  An INLINE
                     // `vector<__nullable<S>>` (not linked) keeps the inline read.
+                    //
+                    // A STRUCT-ENUM element is a record too: a `reference<E>` field links `E`
+                    // (`@FR-H-LongRef`, loft#2163), and its vector becomes an `array<E>` of the
+                    // same 4-byte slots.  Read inline, the loop variable named the SLOT as
+                    // the record — its discriminant junk, so a `match` on it took no arm and
+                    // answered null, while `v[i]` (which asks `is_linked`) read it right.
                     let elem_ref_like = matches!(&**vtp, Type::Reference(_, _))
                         || matches!(&**vtp, Type::Enum(d, true, _)
-                            if self.data.def(*d).name.starts_with("__nullable<"));
+                            if self.data.def(*d).name.starts_with("__nullable<"))
+                        || (matches!(&**vtp, Type::Enum(_, true, _))
+                            && self.database.is_linked(db_tp));
                     if elem_ref_like {
                         if self.database.is_linked(db_tp) {
                             ref_expr = self.cl("OpVectorRefNullable", &[code.clone(), i.clone()]);
