@@ -281,6 +281,22 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
       refuse(w, "OpFreeText without one operand");
       return none();
     }
+    // A member that is itself a tuple frees each text it holds, at any depth.
+    match loop_shape::unspan(args[0]) {
+      NdTupleGet { var, idx } => {
+        members = tuple_members(w.shapes[var] ?? "");
+        if idx < len(members) && is_tuple(members[idx]!) {
+          leaves: vector<text> = [];
+          tuple_text_leaves("{w.names[var]!}.f{idx}", members[idx]!, leaves);
+          frees: vector<text> = [];
+          for t in leaves {
+            frees += ["loft_text_free(&{t})"];
+          }
+          return E { code: if len(frees) == 0 { "((void) 0)" } else { "({frees.join(", ")})" }, kind: K_VOID };
+        }
+      },
+      _ => {},
+    }
     // A borrowed walk variable views the element: its release frees nothing.
     v = loop_shape::var_of(loop_shape::unspan(args[0]));
     if v >= 0 && (w.borrowed[v] ?? false) {
@@ -554,9 +570,21 @@ fn held_texts(w: W) -> vector<text> {
       texts += [w.names[v]!];
     }
   }
+  // The text members of the tuple locals, then of the tuple temporaries after the texts.
+  for s in w.shapes {
+    v = s#index;
+    if is_tuple(s) && !w.params[v]! && !w.links[v]! {
+      tuple_text_leaves(w.names[v]!, s, texts);
+    }
+  }
   for t in w.temps {
     if t.shape == "text" {
       texts += [t.name];
+    }
+  }
+  for t in w.temps {
+    if is_tuple(t.shape) {
+      tuple_text_leaves(t.name, t.shape, texts);
     }
   }
   texts

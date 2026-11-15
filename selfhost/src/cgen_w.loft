@@ -32,11 +32,14 @@ K_CHAR = 8;
 K_VIEW = 9;
 K_REF = 10;
 K_FN = 11;
+K_TUP = 12;
 
 // A C expression and the shape of its value (`E`).
 struct E {
   code: text,
   kind: integer,
+  // A tuple value's shape (`K::Tup`'s struct), "" for any other kind.
+  tup: text = "",
 }
 
 // A temporary and its shape; `verify`: only a `LOFT_VERIFY` proof reads it.
@@ -123,6 +126,8 @@ pub struct Cx {
   // The signatures the unit calls function values through, in the order they were first
   // used (`Cx::fn_sigs`): `loft_call{n}`.
   pub sigs: vector<text>,
+  // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
+  pub tuples: vector<text>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -139,6 +144,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     writes: opt_writes::new_writes(b),
     ops: own::ops_of(b),
     sigs: [],
+    tuples: [],
   }
 }
 
@@ -232,6 +238,8 @@ struct W {
   // them (or, in a helper, to the function) — it is then neither declared nor bound here.
   cold: vector<ColdArm>,
   undeclared: vector<boolean>,
+  // The bind being written is of a local that owns its tuple's texts (`frees_old_tuple`).
+  frees_old_tuple: boolean,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -257,7 +265,7 @@ fn held_value(w: W, t: text, shape: text) -> E {
   if shape == "void" {
     return E { code: "(void) 0", kind: K_VOID };
   }
-  E { code: t, kind: kind_of(shape) }
+  E { code: t, kind: kind_of(shape), tup: if is_tuple(shape) { shape } else { "" } }
 }
 
 // Free the owned text temporaries the statement just finished made (`flush`).
@@ -307,6 +315,15 @@ fn text_dest(w: W, v: ir::Node) -> text {
   }
   if n >= 0 && text_held(w, n) {
     return w.names[n]!;
+  }
+  match loop_shape::unspan(v) {
+    NdTupleGet { var, idx } => {
+      members = tuple_members(w.shapes[var] ?? "");
+      if idx < len(members) && members[idx]! == "text" {
+        return "{w.names[var]!}.f{idx}";
+      }
+    },
+    _ => {},
   }
   refuse(w, "a text operator writing into what is no text local");
   ""
@@ -365,8 +382,96 @@ fn var_name(name: text, v: integer) -> text {
   "v{v}_{clean}"
 }
 
+// Is `shape` a tuple's — `tuple(member,…)`, as `cgen_types::ctype` spells it?
+fn is_tuple(shape: text) -> boolean {
+  shape.starts_with("tuple(")
+}
+
+// A tuple shape's members, in order (`Cx::tuple_shapes`).
+fn tuple_members(shape: text) -> vector<text> {
+  out: vector<text> = [];
+  if !is_tuple(shape) {
+    return out;
+  }
+  depth = 0;
+  start = 6;
+  end = shape.size() - 1;
+  for i in 6..end {
+    c = shape.byte_at(i);
+    if c == 40 {
+      depth += 1;
+    } else if c == 41 {
+      depth -= 1;
+    } else if c == 44 && depth == 0 {
+      out += [shape[start..i]];
+      start = i + 1;
+    }
+  }
+  out += [shape[start..end]];
+  out
+}
+
+// Does a tuple of `shape` hold a text at any depth (`Cx::tuple_has_text`)?
+fn tuple_has_text(shape: text) -> boolean {
+  for m in tuple_members(shape) {
+    if m == "text" || (is_tuple(m) && tuple_has_text(m)) {
+      return true;
+    }
+  }
+  false
+}
+
+// The texts a tuple at `at` holds, at any depth (`tuple_text_leaves`).
+fn tuple_text_leaves(at: text, shape: text, out: vector<text>) {
+  for m in tuple_members(shape) {
+    if m == "text" {
+      out += ["{at}.f{m#index}"];
+    } else if is_tuple(m) {
+      tuple_text_leaves("{at}.f{m#index}", m, out);
+    }
+  }
+}
+
+// A tuple struct's name before the unit numbers it: `resolve_tuples` replaces each by
+// `loft_tup<n>`, `n` the unit's first-use number of the shape.
+fn tuple_placeholder(shape: text) -> text {
+  "loft_tup@{shape}@"
+}
+
+// Every tuple placeholder of `code` as its numbered name (`Cx::tuple_id`).
+pub fn resolve_tuples(x: Cx, code: text) -> text {
+  out = "";
+  rest = code;
+  for _ in 0..code.size() {
+    at = rest.find("loft_tup@") ?? break;
+    close = rest[at + 9..rest.size()].find("@") ?? break;
+    shape = rest[at + 9..at + 9 + close];
+    id = -1;
+    for t in x.tuples {
+      if t == shape {
+        id = t#index;
+      }
+    }
+    if id < 0 {
+      x.tuples += [shape];
+      id = len(x.tuples) - 1;
+    }
+    out += "{rest[0..at]}loft_tup{id}";
+    rest = rest[at + 10 + close..rest.size()];
+  }
+  out + rest
+}
+
 // The C type a value of `shape` is held in (`held`); "" for a shape this writer does not carry.
 fn held(shape: text) -> text {
+  if is_tuple(shape) {
+    for m in tuple_members(shape) {
+      if held(m) == "" || m == "void" {
+        return "";
+      }
+    }
+    return tuple_placeholder(shape);
+  }
   if shape == "int" {
     "int64_t"
   } else if shape == "bool" {
@@ -396,7 +501,7 @@ fn held(shape: text) -> text {
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
 // what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_RECORD_PTR", "LOFT_NO_VECTOR_HOIST", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_RETBUF_ADOPT", "LOFT_NO_PUSH_FILL", "LOFT_NO_PUSH_RUN_RESERVE", "LOFT_NO_HELD_PUSH_RUN", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_DEEP_WINDOW", "LOFT_NO_MINT_WINDOW", "LOFT_NO_PUSH_HOIST", "LOFT_NO_FLAT_COPY", "LOFT_NO_PLAIN_CLEAR", "LOFT_NO_TABLE_HANDLE", "LOFT_NO_PROLOGUE_CLEAR_DROP", "LOFT_NO_APPEND_TWIN", "LOFT_NO_HAND_OVER"];
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_RECORD_PTR", "LOFT_NO_VECTOR_HOIST", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_RETBUF_ADOPT", "LOFT_NO_PUSH_FILL", "LOFT_NO_PUSH_RUN_RESERVE", "LOFT_NO_HELD_PUSH_RUN", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_DEEP_WINDOW", "LOFT_NO_MINT_WINDOW", "LOFT_NO_PUSH_HOIST", "LOFT_NO_FLAT_COPY", "LOFT_NO_PLAIN_CLEAR", "LOFT_NO_TABLE_HANDLE", "LOFT_NO_PROLOGUE_CLEAR_DROP", "LOFT_NO_APPEND_TWIN", "LOFT_NO_HAND_OVER", "LOFT_NO_VR_PTR"];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {
@@ -415,6 +520,13 @@ fn passed(shape: text) -> text {
 
 // The initial value of a local of `shape`: its null (`Cx::initial`).
 fn initial(shape: text) -> text {
+  if is_tuple(shape) {
+    parts: vector<text> = [];
+    for m in tuple_members(shape) {
+      parts += [initial(m)];
+    }
+    return "{{ {parts.join(", ")} }}";
+  }
   if shape == "int" {
     "LOFT_NULL"
   } else if shape == "bool" {
@@ -437,6 +549,9 @@ fn initial(shape: text) -> text {
 }
 
 fn kind_of(shape: text) -> integer {
+  if is_tuple(shape) {
+    return K_TUP;
+  }
   if shape == "int" {
     K_INT
   } else if shape == "bool" {
@@ -706,6 +821,12 @@ fn as_shape(w: W, e: E, shape: text) -> text {
     as_ref(w, e)
   } else if shape == "fn" {
     as_fn(w, e)
+  } else if is_tuple(shape) {
+    if e.kind != K_TUP || e.tup != shape {
+      refuse(w, "a tuple expected, a {kind_name(e.kind)} found");
+      return "";
+    }
+    e.code
   } else {
     refuse(w, "a value of shape {shape}");
     ""
