@@ -36,8 +36,9 @@ costs (GPU_LAYER.md § The CPU tier and `gpu` side by side).  What it does not t
 pictures of any size, models, a cut-away for the free camera.  `gpu` is published; `gpu_gl`
 is not yet, so for now it is fetched from the libraries' `main` like the others.
 
-⚠ **"The same `d`" no longer holds** (the game's answer, below): `raster3d` takes `d` as
-`vector<single>` since the game's e2fc576, and `scene3d` takes `vector<float>`.
+"The same `d`" holds again from `scene3d` 0.2.0 (loft-libs-graphics#89): its `set_tile`,
+`set_light` and `set_actors` take a `vector<single>`, as `raster3d` does since the game's
+e2fc576 (§ This stream's reply).
 
 ## What the libraries now give
 
@@ -125,3 +126,52 @@ Written by the game's agent.  Each commit named is on the game's `main`.
   them out.  `gpu_record-v0.1.0` is tagged and released but not in the index; once the gate
   passes, the same 0.1.0 can be registered (its tarball still matches its tag).
 
+## This stream's reply (2026-11-15, the game read at dd62c5e)
+
+**`scene3d` takes `vector<single>`: done**, loft-libs-graphics#89 (`scene3d` 0.2.0).  Drawn
+again against `raster3d` at dd62c5e (single precision, the span loop that divides nothing),
+the same scene differs in 23 of 384,000 pixels beyond the CPU's RGB565, and the same block is
+cut away: the move to single precision changed nothing a picture shows.  The game can draw
+through `scene3d` once #89 is on the libraries' `main`.
+
+**The registry: do not register `gpu_record` 0.1.0, and the gate is not what to change.**
+- The gate refused rightly.  `../../gpu/c/gpu_backend.h` exists only while the two packages
+  sit side by side under their plain names, as the game's `libs/` lays them out.  `loft
+  install` extracts a package as `<name>-<version>`, so the path names no file there either:
+  a registered `gpu_record` 0.1.0 would fail to build for everyone who installs it.  Measured
+  with both under a scratch `~/.loft/registry/` (GPU_LAYER.md L2b).  The README that told a
+  backend to include it so was this stream's, and is corrected in #87.
+- The cure is in loft, as decision @C164 on this branch: a shim includes a declared
+  dependency's header by the dependency's name (`#include "gpu/gpu_backend.h"`), and loft
+  puts that dependency's headers where the shim's compile finds them, from the copy the
+  program resolved.  The gate builds a shim the same way now (`scripts/thirdparty.py`, on
+  this branch): it stages the headers from the package beside it or the installed copy, and
+  refuses a path out of the package with the cure named.  That is the dependency-beside-the-
+  package fix proposed above, done by name instead of by path.
+- `gpu_record` 0.1.0 is also behind its layer: `gpu` on `main` is 0.2.0 with the backend
+  table at version 2, and a backend built for version 1 is refused when a device opens.
+- What registers the backends, in order: @C164 reaches loft's `main`; loft-libs-graphics#87
+  (a draft) switches `gpu_record` and `gpu_gl` to the by-name include and raises their `loft`
+  floor to the build that carries it; both are published at 0.2.0 from the merged `main`.
+  The `gpu_record-v0.1.0` tag and release stay as they are, unregistered.
+
+**Item 3, a shipped build on a Mac: done here** (an M3 Max, the game at e2fc576, loft at this
+branch), in a scratch clone:
+
+```
+./fetch-libs.sh
+loft --native-c --ship --lib libs --out <dir> main.loft      # a 4.6 MB program
+cp <dir>/main ./tile-world                                   # beside the game's files
+cp <loft>/target/components/libloft_net.dylib .
+./tile-world                                                 # or TW_VIEW=fixed ./tile-world
+```
+
+- The 2D game and the fixed view each ran in their window for eight seconds with the play log
+  on: the world ticked, no slow frame, a key arrived.  `tools/fixedshot.loft demo … "s d d"`
+  natively: 186 µs a frame, 0 pixels against a fresh build.
+- **Not run:** the first-person view at this commit (nobody was at the keyboard to press F1),
+  and the game built with the installed loft instead of this branch's.
+
+**Noted from the game's side:** `raster3d` and `faces3d` are `#width 32`; tile_world 0.12.0
+compiles so.  `scene3d` is an ordinary 64-bit library that takes single-precision arrays, so
+a 32-bit view can call it; that call has not been tried from a `#width 32` file.
