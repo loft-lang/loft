@@ -1,0 +1,432 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/apart.rs`: `@FR-R-Header`'s apart clause.  A loop the header
+// gate declines still holds the headers of the vectors it only READS when the stores they
+// live in are this activation's alone and nothing in the body can reach them another way.
+
+use ir;
+use binds;
+use loop_shape;
+use own;
+use opt_facts;
+use opt_non_sentinel;
+use opt_split_table;
+use opt_writes;
+
+// How a mention is used: an operand that is no read, a discarded value, a vector read, an
+// element read, a growth statement's operand; `FLOW + v` is a value bound to variable `v`.
+OTHER = 0;
+DISCARD = 1;
+READ_VEC = 2;
+READ_ELEM = 3;
+GROW = 4;
+FLOW = 16;
+
+// The walk's state: the owners it judges, the ones a mention tainted, the variables used as
+// operands that are no read, the owners a growth statement grew, and (owner, variable) pairs
+// naming which variables mentioned each owner.
+struct Walk {
+  d: integer,
+  facts: opt_facts::Facts,
+  owners: vector<boolean>,
+  tainted: vector<boolean>,
+  writers: vector<boolean>,
+  growth: boolean,
+  depth: integer,
+  grown: vector<boolean>,
+  names: vector<integer>,
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d >= 0 && d < len(b.data.definitions) { b.data.definitions[d]!.name } else { "" }
+}
+
+fn growth_op(name: text) -> boolean {
+  name == "OpPreAllocVector" || name == "OpPushBoolean" || name == "OpPushByte" || name == "OpPushCharacter" || name == "OpPushEnum" || name == "OpPushFloat" || name == "OpPushInt4" || name == "OpPushInt" || name == "OpPushSingle" || name == "OpAppendVector"
+}
+
+fn in_place_setter(name: text) -> boolean {
+  name == "OpSetBoolean" || name == "OpSetByte" || name == "OpSetByteNullable" || name == "OpSetCharacter" || name == "OpSetEnum" || name == "OpSetFloat" || name == "OpSetInt4" || name == "OpSetInt4Raw" || name == "OpSetInt" || name == "OpSetShort" || name == "OpSetShortRaw" || name == "OpSetSingle"
+}
+
+fn scalar_getter(name: text) -> boolean {
+  name == "OpGetInt" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetSingle" || name == "OpGetFloat" || name == "OpGetBoolean" || name == "OpGetCharacter" || name == "OpGetEnum"
+}
+
+// The call a growth statement is — a `Drop` peeled — or `NdNull`.
+fn growth_call(b: ir::Bundle, stmt: ir::Node) -> ir::Node {
+  v = loop_shape::unspan(stmt);
+  match v {
+    NdDrop { inner } => v = loop_shape::unspan(inner),
+    _ => {},
+  }
+  match v {
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return ir::NdNull;
+      }
+      def = b.data.definitions[def_nr]!;
+      if !growth_op(def.name) && !binds::has_code(def) {
+        return ir::NdNull;
+      }
+      for a in args {
+        if loop_shape::unspan(a) is NdVar {
+          return v;
+        }
+      }
+      ir::NdNull
+    },
+    _ => ir::NdNull,
+  }
+}
+
+// The owners variable `x` may name: every owner its dependency lists reach.
+fn owners_of(b: ir::Bundle, s: Walk, x: integer) -> vector<integer> {
+  f = b.data.definitions[s.d]!.variables;
+  out: vector<integer> = [];
+  seen: vector<boolean> = [for _ in 0..len(f.variables) { false }];
+  stack: vector<integer> = [x];
+  for _ in 0..len(f.variables) * len(f.variables) + 2 {
+    if len(stack) == 0 {
+      break;
+    }
+    v = stack[len(stack) - 1];
+    stack = stack[0..len(stack) - 1];
+    if v < 0 || v >= len(f.variables) || seen[v]! {
+      continue;
+    }
+    seen[v] = true;
+    if s.owners[v]! {
+      out += [v];
+    }
+    for dep in own::tp_depend(f, v) {
+      if dep != v {
+        stack += [dep];
+      }
+    }
+  }
+  out
+}
+
+fn has(list: vector<integer>, x: integer) -> boolean {
+  for l in list {
+    if l == x {
+      return true;
+    }
+  }
+  false
+}
+
+fn mention(b: ir::Bundle, s: Walk, x: integer, ctx: integer) {
+  f = b.data.definitions[s.d]!.variables;
+  inside = x >= 0 && x < len(f.variables);
+  tp = if inside { binds::base(f.variables[x]!.type_def[0] ?? ir::TyVoid) } else { ir::TyVoid };
+  if inside && ((tp is TyText) || opt_writes::is_scalar(tp)) {
+    return;
+  }
+  named = owners_of(b, s, x);
+  if ctx == OTHER && inside && (own::is_dbref(tp) || (tp is TyRefVar)) {
+    s.writers[x] = true;
+  }
+  if len(named) == 0 {
+    return;
+  }
+  if s.growth {
+    for t in named {
+      known = false;
+      for n in s.names {
+        if n#index % 2 == 0 && n == t && s.names[n#index + 1]! == x {
+          known = true;
+        }
+      }
+      if !known {
+        s.names += [t, x];
+      }
+    }
+  }
+  admitted = false;
+  if ctx == READ_VEC || ctx == READ_ELEM || ctx == DISCARD {
+    admitted = true;
+  } else if ctx == GROW {
+    for t in named {
+      s.grown[t] = true;
+    }
+    admitted = true;
+  } else if ctx >= FLOW {
+    to = ctx - FLOW;
+    holder = owners_of(b, s, to);
+    admitted = !(to < len(s.owners) && s.owners[to]!);
+    for t in named {
+      if !has(holder, t) {
+        admitted = false;
+      }
+    }
+  }
+  if !admitted {
+    for t in named {
+      s.tainted[t] = true;
+    }
+  }
+}
+
+// The operator a call is: a one-operator standard wrapper over its first parameter names
+// that operator.
+fn op_name(b: ir::Bundle, d: integer) -> text {
+  operands: vector<ir::Node> = [];
+  op = opt_split_table::one_op_wrapper(b, d, operands);
+  if op >= 0 && len(operands) > 0 && loop_shape::unspan(operands[0]) == NdVar { n: 0 } {
+    again = false;
+    for o in operands {
+      if o#index > 0 && loop_shape::unspan(o) == NdVar { n: 0 } {
+        again = true;
+      }
+    }
+    if !again {
+      return def_name(b, op);
+    }
+  }
+  def_name(b, d)
+}
+
+fn store_free_call(b: ir::Bundle, w: opt_writes::Writes, d: integer) -> boolean {
+  def = b.data.definitions[d]!;
+  binds::has_code(def) && !own::is_dbref(binds::base(def.returned[0] ?? ir::TyVoid)) && !opt_writes::call_writes_store(b, w, d)
+}
+
+fn list(b: ir::Bundle, w: opt_writes::Writes, s: Walk, ops: vector<ir::Node>, tail: integer) {
+  exits = s.growth && len(ops) > 0 && (loop_shape::unspan(ops[len(ops) - 1]) is NdReturn);
+  for op in ops {
+    ctx = if op#index + 1 == len(ops) { tail } else { DISCARD };
+    if exits && loop_shape::call_name(b.data.definitions, loop_shape::unspan(op)).starts_with("OpFreeRef") {
+      continue;
+    }
+    if s.growth && ctx == DISCARD && growth_stmt(b, w, s, op) {
+      continue;
+    }
+    node(b, w, s, op, ctx);
+  }
+}
+
+fn growth_stmt(b: ir::Bundle, w: opt_writes::Writes, s: Walk, op: ir::Node) -> boolean {
+  match growth_call(b, op) {
+    NdCall { def_nr, args } => {
+      if s.depth > 0 && growth_op(def_name(b, def_nr)) {
+        return false;
+      }
+      for a in args {
+        match loop_shape::unspan(a) {
+          NdVar { n: x } => mention(b, s, x, GROW),
+          _ => node(b, w, s, a, OTHER),
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+fn node(b: ir::Bundle, w: opt_writes::Writes, s: Walk, n: ir::Node, ctx: integer) {
+  match loop_shape::unspan(n) {
+    NdVar { n: x } => mention(b, s, x, ctx),
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        for a in args {
+          node(b, w, s, a, OTHER);
+        }
+        return;
+      }
+      name = op_name(b, def_nr);
+      plain = def_name(b, def_nr);
+      first = OTHER;
+      if (plain == "OpGetVector" || plain == "OpGetVectorNullable") && len(args) == 3 {
+        first = if ctx == READ_ELEM || ctx == DISCARD { READ_VEC } else if ctx >= FLOW { ctx } else { OTHER };
+      } else if name == "OpLengthVector" || name == "OpVectorIsNull" {
+        first = READ_VEC;
+      } else if scalar_getter(name) || name == "OpGetText" || name == "OpConvBoolFromRef" || (s.growth && in_place_setter(name)) {
+        first = READ_ELEM;
+      } else if name == "OpGetField" && len(args) == 3 {
+        first = if ctx == READ_VEC || ctx == READ_ELEM || ctx == DISCARD { READ_ELEM } else if ctx >= FLOW { ctx } else { OTHER };
+      } else if store_free_call(b, w, def_nr) {
+        for a in args {
+          node(b, w, s, a, READ_ELEM);
+        }
+        return;
+      }
+      for a in args {
+        node(b, w, s, a, if a#index == 0 { first } else { OTHER });
+      }
+    },
+    NdSet { var, inner } => {
+      if var < len(s.owners) && s.owners[var]! {
+        s.tainted[var] = true;
+      }
+      if loop_shape::unspan(inner) != NdNull {
+        node(b, w, s, inner, FLOW + var);
+      }
+    },
+    NdBlock { block } => list(b, w, s, block[0].operators, ctx),
+    NdLoop { block } => {
+      s.depth += 1;
+      list(b, w, s, block[0].operators, DISCARD);
+      s.depth -= 1;
+    },
+    NdInsert { items } => list(b, w, s, items, ctx),
+    NdIf { cond, t, f } => {
+      node(b, w, s, cond, OTHER);
+      node(b, w, s, t, ctx);
+      node(b, w, s, f, ctx);
+    },
+    NdDrop { inner } => node(b, w, s, inner, DISCARD),
+    NdReturn { inner } => node(b, w, s, inner, OTHER),
+    NdYield { inner } => node(b, w, s, inner, OTHER),
+    NdIter { var, create, next, init } => {
+      mention(b, s, var, OTHER);
+      node(b, w, s, create, OTHER);
+      node(b, w, s, next, OTHER);
+      node(b, w, s, init, OTHER);
+    },
+    NdTupleGet { var, idx: _ } => mention(b, s, var, OTHER),
+    NdTuplePut { var, idx: _, inner } => {
+      mention(b, s, var, OTHER);
+      node(b, w, s, inner, OTHER);
+    },
+    NdCallRef { var, args } => {
+      mention(b, s, var, OTHER);
+      for a in args {
+        node(b, w, s, a, OTHER);
+      }
+    },
+    NdFnRef { def_nr: _, var, t: _ } => mention(b, s, var, OTHER),
+    NdFnRefDnr { n: x } => mention(b, s, x, OTHER),
+    NdTuple { items } => {
+      for a in items {
+        node(b, w, s, a, OTHER);
+      }
+    },
+    NdParallel { arms } => {
+      for a in arms {
+        node(b, w, s, a, OTHER);
+      }
+    },
+    _ => {},
+  }
+}
+
+// `minted_here`: a local with no dependencies whose every binding is a store mint.
+fn minted_here(b: ir::Bundle, d: ir::Definition, v: integer) -> boolean {
+  f = d.variables;
+  if v < 0 || v >= len(f.variables) || f.variables[v]!.argument || len(own::tp_depend(f, v)) != 0 || len(d.code) == 0 {
+    return false;
+  }
+  state = [false, false];
+  opt_non_sentinel::walk(d.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => { if var == v && loop_shape::unspan(inner) != NdNull { state[1] = true; } },
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if (name == "OpDatabase" || name == "OpDatabaseNP") && len(args) > 0 && loop_shape::var_of(loop_shape::unspan(args[0])) == v {
+          state[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  state[0]! && !state[1]!
+}
+
+// A parameter the clause may consider: a by-value record or vector argument.
+fn param(f: ir::Function, t: integer) -> boolean {
+  v = f.variables[t]!;
+  tp = binds::base(v.type_def[0] ?? ir::TyVoid);
+  (env_variable("LOFT_NO_APART_PARAM") ?? "0") == "0" && v.argument && !v.captured && !(tp is TyRefVar) && own::is_dbref(tp)
+}
+
+// `apart_headers`: of the candidate vectors (`paths`, `roots`), which keep a header in loop
+// `lp` — per candidate, true for a kept one.  `lent[t]` says `t` is a work buffer.
+pub fn apart_headers(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block, paths: vector<text>, roots: vector<integer>, lent: vector<boolean>) -> vector<boolean> {
+  d = b.data.definitions[vd]!;
+  f = d.variables;
+  count = len(f.variables);
+  none: vector<boolean> = [for _ in 0..len(paths) { false }];
+  // owner_of each candidate
+  owner: vector<integer> = [];
+  owners: vector<boolean> = [for _ in 0..count { false }];
+  any = false;
+  for p in paths {
+    t = opt_facts::terminal(b, facts, roots[p#index]!);
+    o = -1;
+    if t >= 0 {
+      if p.ends_with(":") && (opt_facts::fresh(b, facts, t) || lent[t]!) {
+        o = t;
+      } else if param(f, t) {
+        o = t;
+      }
+    }
+    owner += [o];
+    if o >= 0 {
+      owners[o] = true;
+      any = true;
+    }
+  }
+  if !any {
+    return none;
+  }
+  // A store with a captured or a linked name in its alias set is not this loop's alone.
+  probe = Walk { d: vd, facts: facts, owners: owners, tainted: [], writers: [], growth: false, depth: 0, grown: [], names: [] };
+  reached: vector<integer> = [];
+  for v in f.variables {
+    if v.captured || (binds::base(v.type_def[0] ?? ir::TyVoid) is TyRefVar) {
+      for t in owners_of(b, probe, v#index) {
+        reached += [t];
+      }
+    }
+  }
+  kept_owners: vector<boolean> = [for o in owners { o }];
+  for t in reached {
+    kept_owners[t] = false;
+  }
+  any = false;
+  for o in kept_owners {
+    if o {
+      any = true;
+    }
+  }
+  suspended = [false];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { suspended[0] = true; },
+      NdParallel { arms: _ } => { suspended[0] = true; },
+      _ => {},
+    }
+  });
+  if !any || suspended[0]! {
+    return none;
+  }
+  s = Walk { d: vd, facts: facts, owners: kept_owners, tainted: [for _ in 0..count { false }], writers: [for _ in 0..count { false }], growth: false, depth: 0, grown: [for _ in 0..count { false }], names: [] };
+  list(b, w, s, lp.operators, DISCARD);
+  // The parameter clause: every store the body can write or grow is proven apart from the
+  // parameter's.
+  for t in 0..count {
+    if !kept_owners[t]! || !param(f, t) || opt_facts::fresh(b, facts, t) {
+      continue;
+    }
+    for x in 0..count {
+      if !s.writers[x]! {
+        continue;
+      }
+      end = opt_facts::terminal(b, facts, x);
+      apart = end >= 0 && end != t && !f.variables[end]!.argument && opt_facts::fresh(b, facts, end);
+      if !(end == t || apart || minted_here(b, d, x)) {
+        s.tainted[t] = true;
+      }
+    }
+  }
+  out: vector<boolean> = [];
+  for o in owner {
+    out += [o >= 0 && kept_owners[o]! && !s.tainted[o]!];
+  }
+  out
+}

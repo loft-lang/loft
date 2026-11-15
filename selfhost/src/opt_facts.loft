@@ -104,7 +104,7 @@ pub fn terminal(b: ir::Bundle, facts: Facts, x: integer) -> integer {
 
 // `fresh`: a chain end that owns its store alone — a hidden store witness, or a plain local
 // record the frame made.
-fn fresh(b: ir::Bundle, facts: Facts, t: integer) -> boolean {
+pub fn fresh(b: ir::Bundle, facts: Facts, t: integer) -> boolean {
   f = b.data.definitions[facts.d]!.variables;
   if facts.placed[t]! || facts.hosts[t]! {
     return false;

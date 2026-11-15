@@ -18,6 +18,7 @@ use opt_non_sentinel;
 use opt_push;
 use opt_writes;
 use opt_facts;
+use opt_apart;
 
 // One vector a loop may hold: its path, the path's root variable, the expression naming it.
 pub struct Held {
@@ -243,7 +244,7 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
   fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
   for op in lp.operators {
     if opt_writes::blocks_under(b, w, vd, op, tier, fresh) {
-      return nothing();
+      return apart_hoist(b, w, facts, vd, lp);
     }
   }
   out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false, movers: [] };
@@ -328,12 +329,12 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
   rebound = rebound_vars(b, d, lp);
   for p in pushes {
     if rebound[p.root]! {
-      return nothing();
+      return apart_hoist(b, w, facts, vd, lp);
     }
   }
   for p in mints {
     if rebound[p.root]! {
-      return nothing();
+      return apart_hoist(b, w, facts, vd, lp);
     }
   }
   // The movers: every pushed and every minted path.
@@ -364,7 +365,7 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
     any_retbuf = false;
     for p in moved {
       if !(owned_local(d, p.root) || p.root == retbuf || work_buffer_arg(d, p.root)) {
-        return nothing();
+        return apart_hoist(b, w, facts, vd, lp);
       }
       if p.root == retbuf {
         any_retbuf = true;
@@ -532,4 +533,31 @@ pub fn mint_size(b: ir::Bundle, vd: integer, lp: ir::Block, path: text) -> integ
     }
   });
   size[0]!
+}
+
+// `apart_hoist`: what a loop the gate declines still holds — the headers of the vectors it
+// only reads, in stores proved apart from everything that declined it.
+fn apart_hoist(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
+  if !opt_facts::enabled() || (env_variable("LOFT_NO_APART_HEADERS") ?? "0") != "0" {
+    return nothing();
+  }
+  d = b.data.definitions[vd]!;
+  candidates = vector_candidates(b, d, lp);
+  paths: vector<text> = [];
+  roots: vector<integer> = [];
+  for c in candidates {
+    paths += [c.path];
+    roots += [c.root];
+  }
+  lent: vector<boolean> = [for v in d.variables.variables { work_buffer_arg(d, v#index) }];
+  keep = opt_apart::apart_headers(b, w, facts, vd, lp, paths, roots, lent);
+  out = nothing();
+  for c in candidates {
+    if keep[c#index]! {
+      out.vectors += [c];
+    }
+  }
+  // The loop grows no store these headers live in, so each carries its base.
+  out.growth_free = len(out.vectors) > 0;
+  out
 }
