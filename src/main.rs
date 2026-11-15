@@ -10759,6 +10759,46 @@ fn main() {
             );
             std::process::exit(1);
         }
+        // Through the C and the NDK's clang when the C backend drives native builds
+        // (doc/claude/plans/106-android-build-target/c-backend.md): the unit the host build
+        // compiles, linked with the Android entry and the NDK's app glue, then packaged as the
+        // rustc path packages its library.  `.loft/android/` beside the program keeps the
+        // debug keystore, so every later build of the app signs with the same key.
+        if native_c {
+            let ann =
+                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
+            let expected = |name: &str| ann.expected_failure(name);
+            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+                Ok(c) => c,
+                Err(r) => {
+                    eprintln!("loft: {}", r.message());
+                    std::process::exit(2);
+                }
+            };
+            let work = std::path::Path::new(&abs_file)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(".loft")
+                .join("android");
+            if let Err(e) = fa::create_dir_all(&work) {
+                eprintln!("loft: cannot create {}: {e}", work.display());
+                std::process::exit(1);
+            }
+            let built = work.join("libloft_android_app.so");
+            let result = c_driver::build_android(
+                &c,
+                &built,
+                &target.c_compiler(),
+                &target.glue_dir(),
+                ship_build,
+            )
+            .and_then(|()| target.finish(&built, &work, std::path::Path::new(&android_out)));
+            if let Err(e) = result {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
         // Per-process scratch so parallel --native-android runs never share the
         // generated source (one rustc reading another's program).
         let build_dir = platform::build_scratch_dir("android");

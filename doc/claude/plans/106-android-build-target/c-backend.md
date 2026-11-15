@@ -38,9 +38,9 @@ untouched.
 ```
 prog.loft ──emit_program──▶ unit.c ─┐
                                     ├─ NDK clang  --target=<triple><api>  -fPIC -shared
-src/c/loft_android.h (entry, logcat,│   -DLOFT_ANDROID -std=c99 -O3
-   files, the app handle) ──────────┤
-src/c/vendor/android_native_app_glue.c (NDK glue, one change: the app thread's stack)
+src/c/android/loft_android_main.c  │   -DLOFT_ANDROID -std=c99, the host tier's flags
+   (entry, logcat, files, the app) ─┤
+<NDK>/sources/android/native_app_glue (compiled with -Dpthread_create=…: an 8 MiB app thread)
 each [c] shim, compiled from source ┘   -llog -landroid -lEGL -lGLESv3 -lm -ldl
                                     │
                          libloft_android_app.so ──package_apk (unchanged)──▶ app.apk
@@ -49,20 +49,20 @@ each [c] shim, compiled from source ┘   -llog -landroid -lEGL -lGLESv3 -lm -ld
 - **The driver** (`src/c_driver.rs`): `build_android(c, out, shim_sources, ship, target)`, the
   sibling of `build_wasm`.  The toolchain comes from the `AndroidTarget` descriptor, which keeps
   every Android path: `detect()` and `linker()` already name the NDK clang wrapper for
-  `<triple><api>`, and it serves as the C compiler unchanged.  The flags are the host release
+  `<triple><api>`, and it serves as the C compiler unchanged.  The flags are the host build's
   tier plus `-fPIC -shared -DLOFT_ANDROID`.  No `-lc++_shared`: no C++ is left once oboe is gone.
-- **The entry**: the unit's `int main(int argc, char **argv)` is renamed under `LOFT_ANDROID`
-  (`#define main loft_program_main` ahead of the unit, the one line the C writer adds).  The
-  glue's `android_main` calls it.
+- **The entry**: the unit's `int main(int argc, char **argv)` is renamed by the unit's own
+  compile (`-Dmain=loft_program_main`, that object only), so the C writer changes nothing.  The
+  entry's `android_main` calls it.
 - **Packaging**: `AndroidTarget::package_apk` takes any `.so` and stays as it is.  The manifest,
   the keystore and the ABI directory are backend-agnostic.
 
 ## The four pieces of C
 
-### 1. The runtime entry — `src/c/loft_android.h` (new, ~200 lines)
+### 1. The runtime entry — `src/c/android/loft_android_main.c`
 
-Included by the unit when `LOFT_ANDROID` is defined.  It owns the OS entry, the way
-`android-activity` owns it for the rustc path:
+A C file of its own, compiled beside the unit (the driver writes it out of the binary).  It
+owns the OS entry, the way `android-activity` owns it for the rustc path:
 
 - `void android_main(struct android_app *app)`: keep `app` in a runtime global; redirect
   stdout and stderr into logcat (a pipe, a reader thread, `__android_log_write` per line, tag
@@ -75,21 +75,29 @@ Included by the unit when `LOFT_ANDROID` is defined.  It owns the OS entry, the 
 - `loft_program_directory()`: on Android `/proc/self/exe` is the VM launcher (`app_process64`),
   so the `__linux__` branch answers the app's files directory there instead.
 
-### 2. The glue — `src/c/vendor/android_native_app_glue.c` (vendored, one change)
+### 2. The glue — the NDK's `android_native_app_glue.c`, compiled from the NDK
 
-The NDK's `native_app_glue` (Apache-2.0, ~450 lines) turns `ANativeActivity_onCreate`'s
-callbacks into an event queue and runs `android_main` on a thread of its own, holding the
-`ALooper`.  The graphics shim's poll must run on that thread: the rustc path learned this as
-"`__run` runs INLINE on the `android_main` ALooper thread".  That thread is created with the
-default 1 MiB stack, and a loft program's deep recursion needs the desktop's
-`NATIVE_MAIN_STACK` (512 MiB; the `b4_stack` golden).  **Vendor the glue with one change**: a
-`pthread_attr_setstacksize` before its `pthread_create`.
+The NDK's `native_app_glue` (Apache-2.0, ~450 lines, in every NDK since r5) turns
+`ANativeActivity_onCreate`'s callbacks into an event queue and runs `android_main` on a thread
+of its own, holding the `ALooper`.  The graphics shim's poll must run on that thread: the
+rustc path learned this as "`__run` runs INLINE on the `android_main` ALooper thread".
 
-Rejected alternative: compile the NDK's own copy and run `loft_program_main` on a second
-thread with a large stack.  That moves the program off the looper's thread, and the graphics
-poll then waits on a looper it does not own.
+That thread starts with bionic's default stack of about 1 MiB.  A C-backend program on the
+desktop has 8 MiB: the main thread's usual limit, and `LOFT_PAR_STACK` for a `par` worker.
+**The glue is compiled from the NDK unchanged, with `-Dpthread_create=loft_android_glue_thread`
+on that one object**: the entry's function sets 8 MiB on the attributes the glue built, then
+calls the real `pthread_create`.  No copy of the glue is kept, so there is nothing to keep
+current with the NDK.
 
-The vendored copy is recorded in [THIRDPARTY.md](../../THIRDPARTY.md) with its NDK version.
+Measured (A0): a recursion every frame of which stays live (each argument is read after the
+call, so clang cannot turn it into a loop) needs more than 1 MiB and less than 2 MiB at 9,000
+frames on x86_64.  It fails on the default stack and passes on 8 MiB.
+
+Two alternatives are rejected:
+- running `loft_program_main` on a second thread with a large stack: that moves the program off
+  the looper's thread, and the graphics poll then waits on a looper it does not own;
+- the Rust writer's 512 MiB (`NATIVE_MAIN_STACK`): the C runtime's own frames never needed it,
+  and a reservation that large can fail on a 32-bit device, leaving the app thread unstarted.
 
 ### 3. Files — the program sees a normal directory
 
@@ -163,7 +171,7 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
 
 | phase | what | gate |
 |---|---|---|
-| **A0** | `build_android` in the driver; `loft_android.h` with the entry, logcat and the renamed `main`; the vendored glue with the large stack | a headless program's APK prints, in logcat, exactly what `loft --interpret` prints; `b4_stack` passes |
+| **A0** | `build_android` in the driver; `src/c/android/loft_android_main.c` with the entry, logcat and the renamed `main`; the NDK's glue with the 8 MiB app thread | a headless program's APK prints, in logcat, exactly what `loft --interpret` prints; a recursion that needs more than the default 1 MiB stack passes, and fails without the change |
 | **A1** | the build test (verification 1) and the emulator differential (verification 2) over the headless corpus | every headless corpus program agrees, 0 differ; the differ list is a committed baseline that only shrinks (main-switch.md phase 0's rule) |
 | **A2** | `GG_ANDROID` in `graphics_gl.c`; the `__ANDROID__` guard on X11; audio through miniaudio | `b3_*`, `b4_touch`, `b4_ime` and `b4_audio` pass on the PUBLISHED `graphics` and `audio`; each library republished through its own CI (the `loft-library` skill) |
 | **A3** | files: `internalDataPath`, assets packaged and extracted, the program directory | a program that loads a font and an image from its package draws `b3_text` with no path changed |
@@ -173,18 +181,17 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
 A0 and A1 need no library change and prove the claim the rest stands on.  A2 is the largest
 piece (the graphics back end), and the only one that changes a published library.
 
-## Decisions for the owner
+## Decisions (owner: the recommendations, taken)
 
-1. **Which files go into the APK.**  The recommendation: a package's `[android] assets = [...]`
+1. **Which files go into the APK.**  Decided: a package's `[android] assets = [...]`
    list in `loft.toml` (directories or globs relative to the package), defaulting to the
    package's `assets/` directory when it has one, with each `use`d library's own declared
    assets added.  Nothing is guessed from string literals in the program.
 2. **Whether armv7 (32-bit) ships.**  It compiles (measured), and loft's store is 32-bit
-   already.  The recommendation: build it on request (`LOFT_ANDROID_TARGET`) but test only
+   already.  Decided: build it on request (`LOFT_ANDROID_TARGET`) but test only
    `aarch64` and the `x86_64` emulator twin; arm64 is every Android device sold since 2019.
-3. **The minimum API.**  API 21 compiles (measured); 24 is today's default.  The
-   recommendation: keep 24, since nothing measured needs a lower one.
-4. **Who builds it.**  The recommendation: the gathering stream (loft3).  The work is the
+3. **The minimum API.**  API 21 compiles (measured); 24 is today's default.  Decided: keep 24, since nothing measured needs a lower one.
+4. **Who builds it.**  Decided: the gathering stream (loft3).  The work is the
    driver, one runtime header and two library shims, and the libraries are this stream's.
    The C writer's own change is the one `#define`.
 

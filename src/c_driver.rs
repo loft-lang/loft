@@ -591,6 +591,197 @@ pub(crate) fn build_wasm(
     ))
 }
 
+/// The Android entry the unit is linked with (`android_main`, stdout into logcat, the glue's
+/// app thread at the desktop's 8 MiB stack): `src/c/android/loft_android_main.c`.
+const ANDROID_MAIN_C: &str = include_str!("c/android/loft_android_main.c");
+
+/// `--native-android` through the C (doc/claude/plans/106-android-build-target/c-backend.md,
+/// A0): the unit built by the NDK's clang into the activity library `out`.  Four objects, one
+/// link:
+/// - the unit, its `main` renamed `loft_program_main`, at the host build's own flags for the
+///   tier, plus `-fPIC -DLOFT_ANDROID`;
+/// - [`ANDROID_MAIN_C`], the entry that calls it;
+/// - the NDK's `android_native_app_glue.c` from `glue_dir`, whose `pthread_create` is the
+///   entry's `loft_android_glue_thread` (`-D`, that one object only), which gives its app
+///   thread the desktop's 8 MiB stack;
+/// - each `[c] shim` the unit links, compiled from its sources for the target, as the wasm
+///   build compiles them.
+///
+/// Linked `-shared` against the platform's `android`, `log`, `m` and `dl`, with
+/// `ANativeActivity_onCreate` (the glue's) kept as the library's entry.
+///
+/// # Errors
+/// A link input that is a host archive and not a shim's sources (A0 builds none for Android),
+/// or a compile or link that fails, with the compiler's output.
+pub(crate) fn build_android(
+    c: &str,
+    out: &std::path::Path,
+    cc: &std::path::Path,
+    glue_dir: &std::path::Path,
+    ship: bool,
+) -> Result<(), String> {
+    let links = link_inputs(c);
+    let (links, sources) = shims_as_sources(c, &links, &marked(c, "shim-archive"));
+    if let Some(host) = links.iter().find(|l| !is_c_source(l)) {
+        return Err(format!(
+            "--native-android: this program links `{host}`, a library built for this machine; \
+             the Android build compiles only a `[c] shim`'s sources for the device so far"
+        ));
+    }
+    let dir = loft::platform::scratch_dir().join(format!("loft_android_c_{}", std::process::id()));
+    fa::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let unit = dir.join("unit.c");
+    let entry = dir.join("loft_android_main.c");
+    fa::write(&unit, c).map_err(|e| format!("cannot write {}: {e}", unit.display()))?;
+    fa::write(&entry, ANDROID_MAIN_C)
+        .map_err(|e| format!("cannot write {}: {e}", entry.display()))?;
+    let glue = glue_dir.join("android_native_app_glue.c");
+    if !fa::exists(&glue) {
+        return Err(format!(
+            "--native-android: the NDK has no `{}`; an NDK {} or later carries it",
+            glue.display(),
+            crate::android::NDK_MIN
+        ));
+    }
+    let tier = if ship { Tier::Release } else { Tier::Check };
+    let mut flags = cc_flags(tier);
+    flags.extend(["-fPIC".to_string(), "-DLOFT_ANDROID".to_string()]);
+    // A shim's sources include the build's width header and the compiled-bodies fragment, as
+    // the host's link-time build of them does (`release_shim_lto`).
+    if !sources.is_empty() {
+        let inc = dir.join("inc");
+        let paths: Vec<std::path::PathBuf> = links.iter().map(std::path::PathBuf::from).collect();
+        fa::create_dir_all(&inc).map_err(|e| format!("cannot create {}: {e}", inc.display()))?;
+        loft::c_shim::put_width_header(&inc)?;
+        loft::c_shim::put_bodies(&inc, &paths)?;
+        flags.push("-I".to_string());
+        flags.push(inc.to_string_lossy().into_owned());
+    }
+    let run = |args: Vec<String>, what: &str| android_cc(cc, &dir, &args, what);
+    let obj = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    android_fixed_objects(
+        &run,
+        &glue,
+        glue_dir,
+        &entry,
+        &obj("glue.o"),
+        &obj("entry.o"),
+    )?;
+    let mut unit_args = flags.clone();
+    unit_args.extend([
+        "-Dmain=loft_program_main".to_string(),
+        "-c".to_string(),
+        unit.to_string_lossy().into_owned(),
+        "-o".to_string(),
+        obj("unit.o"),
+    ]);
+    run(unit_args, "compiling the program's C")?;
+    let mut objects = vec![obj("unit.o"), obj("entry.o"), obj("glue.o")];
+    for (k, src) in links.iter().enumerate() {
+        let mut args = flags.clone();
+        let o = obj(&format!("shim_{k}.o"));
+        args.extend(["-c".to_string(), src.clone(), "-o".to_string(), o.clone()]);
+        run(args, &format!("compiling the shim `{src}`"))?;
+        objects.push(o);
+    }
+    let mut link = vec![
+        "-shared".to_string(),
+        "-o".to_string(),
+        out.to_string_lossy().into_owned(),
+    ];
+    link.extend(objects);
+    link.extend(
+        [
+            "-u",
+            "ANativeActivity_onCreate",
+            "-landroid",
+            "-llog",
+            "-lm",
+            "-ldl",
+        ]
+        .iter()
+        .map(|s| (*s).to_string()),
+    );
+    link.extend(
+        loft::platform::c_thread_link_args()
+            .iter()
+            .map(|a| (*a).to_string()),
+    );
+    run(link, "linking the activity library")?;
+    if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
+        let _ = fa::remove_dir_all(&dir);
+    }
+    Ok(())
+}
+
+/// Run the NDK clang `cc` with `args`; a failure names `what` and keeps nothing hidden: the
+/// compiler's output, and `LOFT_KEEP_NATIVE_C=1` to keep the build directory `dir`.
+fn android_cc(
+    cc: &std::path::Path,
+    dir: &std::path::Path,
+    args: &[String],
+    what: &str,
+) -> Result<(), String> {
+    let mut cmd = Spawn::new(Program::os(cc));
+    cmd.push_args(args.iter().map(String::as_str));
+    let ran = cmd
+        .run(b"")
+        .map_err(|e| format!("--native-android: cannot run `{}`: {e}", cc.display()))?;
+    if ran.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "--native-android: {what} failed (LOFT_KEEP_NATIVE_C=1 keeps {}).\n{}",
+        dir.display(),
+        String::from_utf8_lossy(&ran.stderr).trim_end()
+    ))
+}
+
+/// The two objects every Android build links whatever the program: the NDK's app glue, whose
+/// `pthread_create` is the entry's `loft_android_glue_thread`, and the entry itself.  They are
+/// the NDK's and ours, not the program's, so they take a fixed optimisation with warnings off,
+/// outside the tier's flags.
+fn android_fixed_objects(
+    run: &dyn Fn(Vec<String>, &str) -> Result<(), String>,
+    glue: &std::path::Path,
+    glue_dir: &std::path::Path,
+    entry: &std::path::Path,
+    glue_o: &str,
+    entry_o: &str,
+) -> Result<(), String> {
+    let glue_inc = glue_dir.to_string_lossy().into_owned();
+    run(
+        vec![
+            "-c".into(),
+            glue.to_string_lossy().into_owned(),
+            "-I".into(),
+            glue_inc.clone(),
+            "-fPIC".into(),
+            "-O2".into(),
+            "-w".into(),
+            "-Dpthread_create=loft_android_glue_thread".into(),
+            "-o".into(),
+            glue_o.into(),
+        ],
+        "compiling the NDK's app glue",
+    )?;
+    run(
+        vec![
+            "-c".into(),
+            entry.to_string_lossy().into_owned(),
+            "-I".into(),
+            glue_inc,
+            "-std=c99".into(),
+            "-fPIC".into(),
+            "-O2".into(),
+            "-w".into(),
+            "-o".into(),
+            entry_o.into(),
+        ],
+        "compiling the Android entry",
+    )
+}
+
 /// Why [`build`] made no binary: no C compiler to run at all — which a run that did not ask for
 /// native answers by interpreting, as the rustc path does without rustc — or a compiler that
 /// rejected the unit, a defect of the backend.

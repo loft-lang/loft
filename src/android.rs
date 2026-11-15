@@ -31,6 +31,10 @@ use crate::file_access::PathText;
 use crate::platform::process::{Program, Spawn};
 use std::path::{Path, PathBuf};
 
+/// The oldest NDK release `--native-android` is built and tested with: its `clang` wrappers and
+/// its `native_app_glue` (thirdparty.toml `android-ndk` pins this).
+pub(crate) const NDK_MIN: &str = "r26";
+
 /// A resolved Android cross-compile descriptor: the NDK, the API level, and the
 /// Rust/NDK target triple. Build one with [`AndroidTarget::detect`]; the linker,
 /// the generated crate, and the `.so` all derive from these three.
@@ -54,10 +58,11 @@ impl AndroidTarget {
             .or_else(|| std::env::var_os("ANDROID_NDK_ROOT"))
             .map(PathBuf::from)
             .ok_or_else(|| {
-                "loft: --native-android needs the Android NDK — set ANDROID_NDK_HOME \
-                 (or ANDROID_NDK_ROOT) to an NDK r26+ install (the `clang` linker + \
-                 sysroot live there)."
-                    .to_string()
+                format!(
+                    "loft: --native-android needs the Android NDK — set ANDROID_NDK_HOME \
+                     (or ANDROID_NDK_ROOT) to an NDK {NDK_MIN} or later (the `clang` \
+                     linker + sysroot live there)."
+                )
             })?;
         if !crate::file_access::is_dir(&ndk) {
             return Err(format!(
@@ -105,6 +110,20 @@ impl AndroidTarget {
     fn linker(&self) -> PathBuf {
         self.toolchain_bin()
             .join(format!("{}{}-clang", self.triple, self.api))
+    }
+
+    /// The C compiler the C backend's Android build runs: the NDK clang wrapper, which knows
+    /// the sysroot and the target (c-backend.md).
+    pub(crate) fn c_compiler(&self) -> PathBuf {
+        self.linker()
+    }
+
+    /// The NDK's `native_app_glue` sources, which the C backend's Android build compiles.
+    pub(crate) fn glue_dir(&self) -> PathBuf {
+        self.ndk
+            .join("sources")
+            .join("android")
+            .join("native_app_glue")
     }
 
     /// The NDK's `libc++_shared.so` for this triple — bundled into the APK because
@@ -236,12 +255,20 @@ impl AndroidTarget {
             .join(&self.triple)
             .join("release")
             .join("libloft_android_app.so");
+        self.finish(&built, &crate_dir, out_path)
+    }
 
+    /// The activity library `built` delivered as `out_path`: packaged into a signed APK when
+    /// the output names one, else copied as the bare `.so`.  `work` holds the APK's staging
+    /// and the debug keystore, which stays there so every later build signs with the same key.
+    /// Shared by the rustc path and the C path: neither the manifest nor the signing knows
+    /// which compiler wrote the library.
+    pub(crate) fn finish(&self, built: &Path, work: &Path, out_path: &Path) -> Result<(), String> {
         if crate::file_access::extension(out_path).is_some_and(|e| e.eq_ignore_ascii_case("apk")) {
             let sdk = AndroidSdk::detect()?;
-            self.package_apk(&sdk, &built, &crate_dir, out_path)
+            self.package_apk(&sdk, built, work, out_path)
         } else {
-            crate::file_access::copy(&built, out_path)
+            crate::file_access::copy(built, out_path)
                 .map(|_| ())
                 .map_err(|e| format!("loft: copy to {}: {e}", out_path.display()))
         }
@@ -284,9 +311,14 @@ impl AndroidTarget {
         crate::file_access::create_dir_all(&lib_dir).map_err(|e| format!("loft: create {e}"))?;
         crate::file_access::copy(so_path, lib_dir.join(format!("lib{LIB_NAME}.so")))
             .map_err(|e| format!("loft: stage .so: {e}"))?;
-        // Bundle libc++_shared.so (the app .so links it for oboe's C++).
+        // Bundle libc++_shared.so when the app .so links it (the rustc path's oboe is C++; the
+        // C backend's library names no C++ runtime and gets none).
         let libcxx = self.libcxx_shared();
-        if crate::file_access::is_file(&libcxx) {
+        let needs_libcxx = crate::file_access::read(so_path).is_ok_and(|b| {
+            b.windows(b"libc++_shared.so".len())
+                .any(|w| w == b"libc++_shared.so")
+        });
+        if needs_libcxx && crate::file_access::is_file(&libcxx) {
             crate::file_access::copy(&libcxx, lib_dir.join("libc++_shared.so"))
                 .map_err(|e| format!("loft: stage libc++_shared.so: {e}"))?;
         }
