@@ -122,10 +122,6 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     }
   }
   match bare_value {
-    NdCallRef { var: _, args: _ } => {
-      refuse(w, "a record bound from a call through a function value");
-      return;
-    },
     NdTupleGet { var: _, idx: _ } => {
       refuse(w, "a record bound from a tuple member");
       return;
@@ -177,6 +173,43 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       }
       line(w, ind, "if ({keep}) loft_free_ref({old});");
     }
+    flush(w, ind);
+    return;
+  }
+  // `opaque_callref_stmt`: a record from a call through a function value — adopted where the
+  // callee minted it, copied where it answers a store that is not its to give.
+  fv = match bare_value {
+    NdCallRef { var: through, args: _ } => through,
+    _ => -1,
+  };
+  opaque = if fv >= 0 { binds::opaque_callref_bind(b, w.defs, tp, bare_value) } else { null };
+  if opaque != null {
+    known = b.data.definitions[opaque!]!.known_type;
+    size = cgen_ref::enum_parent_size(b, known);
+    witnessed = binds::owner_witness(f, var) != null;
+    dst = temp(w, "ref");
+    src_held = temp(w, "ref");
+    since = temp(w, "int");
+    line(w, ind, "{dst} = {name};");
+    line(w, ind, "{since} = (int64_t) loft_stores_allocated;");
+    e = cgen_fn::expr(x, w, value, ind);
+    line(w, ind, "{src_held} = {as_ref(w, e)};");
+    line(w, ind, "if (loft_fnref_minted({src_held}, (uint64_t) {since}, {w.names[fv]!}.clos)) {{");
+    line(w, ind + 1, "loft_fnref_adopt({src_held});");
+    entry = binds::entry_witness(f, var);
+    if !witnessed && !v.argument {
+      line(w, ind + 1, "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src_held}.store_nr) loft_free_ref({dst});");
+    } else if !witnessed && entry != null {
+      line(w, ind + 1, "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src_held}.store_nr && {dst}.store_nr != {w.names[entry!]!}.store_nr) loft_free_ref({dst});");
+    }
+    line(w, ind + 1, "{name} = {src_held};");
+    line(w, ind, "}} else {{");
+    if witnessed && !first {
+      line(w, ind + 1, "{name} = loft_ref_null();");
+    }
+    line(w, ind + 1, "loft_database_typed(&{name}, {size}, {known});");
+    line(w, ind + 1, "loft_copy_record(loft_types, {known}, {src_held}, {name}, 4);");
+    line(w, ind, "}}");
     flush(w, ind);
     return;
   }
@@ -266,6 +299,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     entry = binds::entry_witness(f, var);
     compound = match bare_value {
       NdCall { def_nr: _, args: _ } => true,
+      NdCallRef { var: _, args: _ } => true,
       NdInsert { items: _ } => true,
       NdBlock { block: _ } => true,
       NdIf { cond: _, t: _, f: _ } => true,

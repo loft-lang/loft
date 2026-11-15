@@ -521,6 +521,67 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     return E { code: "loft_const{d}", kind: K_REF };
   }
+  // The file operators (`file_operator`), but for the reads and writes of a value.
+  if (name == "OpGetFile" || name == "OpSizeFile" || name == "OpSyncFile") && count == 1 {
+    file = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    if name == "OpGetFile" {
+      return E { code: "loft_get_file({file})", kind: K_BOOL };
+    }
+    if name == "OpSizeFile" {
+      return E { code: "loft_size_file({file})", kind: K_INT };
+    }
+    return E { code: "loft_sync_file({file})", kind: K_BOOL };
+  }
+  if (name == "OpDelete" || name == "OpRmdir" || name == "OpMkdir" || name == "OpMkdirAll") && count == 1 {
+    path = as_view(w, cgen_fn::expr(x, w, args[0], ind));
+    if name == "OpDelete" {
+      return E { code: "loft_fs_delete({path})", kind: K_INT };
+    }
+    if name == "OpRmdir" {
+      return E { code: "loft_fs_rmdir({path})", kind: K_INT };
+    }
+    return E { code: "loft_fs_mkdir({path}, {if name == "OpMkdir" { 0 } else { 1 }})", kind: K_INT };
+  }
+  if name == "OpMoveFile" && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "loft_fs_move({as_view(w, a)}, {as_view(w, b)})", kind: K_INT };
+  }
+  if (name == "OpSeekFile" || name == "OpTruncateFile") && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    if name == "OpSeekFile" {
+      return E { code: "loft_seek_file({as_ref(w, a)}, {as_int(w, b)})", kind: K_VOID };
+    }
+    return E { code: "loft_truncate_file({as_ref(w, a)}, {as_int(w, b)})", kind: K_BOOL };
+  }
+  if name == "OpGetFileText" && count == 2 {
+    // The text the file's contents go into: a local, by its own name or through its place.
+    target = match loop_shape::unspan(args[1]) {
+      NdCall { def_nr, args: inner } => if cgen_fn::def_name(x.b, def_nr) == "OpCreateStack" && len(inner) == 1 { inner[0] } else { args[1] },
+      _ => args[1],
+    };
+    dest = text_dest(w, target);
+    file = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    return E { code: "loft_get_file_text({file}, &{dest})", kind: K_VOID };
+  }
+  if name == "OpGetDir" && count == 2 {
+    size = -1;
+    for t in x.b.types {
+      if t.name == "File" && size < 0 {
+        size = t.size;
+      }
+    }
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "loft_get_dir({as_view(w, a)}, {as_ref(w, b)}, {size})", kind: K_BOOL };
+  }
+  if (name == "OpExpose" || name == "OpRelease") && count == 3 {
+    pair = [args[0], args[1]];
+    a = cgen_fn::arg(x, w, pair, 0, ind);
+    b = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "((void) ({as_int(w, a)}), loft_set_store_lock({as_ref(w, b)}, {if name == "OpExpose" { 1 } else { 0 }}))", kind: K_VOID };
+  }
   if name == "OpGetBoolean" && count == 2 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
