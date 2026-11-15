@@ -334,3 +334,68 @@ the note for it goes in the commit message it will merge.
 4. Hash iteration order: wherever the Rust generator walks a `HashMap` or `HashSet`, its
    output is sorted first or the unit would not be reproducible; each such site is ported with
    its sort, and a site found unsorted is a defect of the Rust generator, fixed there.
+
+## Review 2026-11-15 — the strand against the port method, and the interpreter stream beside it
+
+Read on `laptop-c-perf` at its 81st strand-12 commit, two days after the design landed, with
+the interpreter stream (`tuxedo-pln204-int32`, strand 1b) measured against the same items.
+
+**The position.**  25,000 lines of loft in 42 files against the 66,000 of `src/c` and
+`src/opt`; every analysis layer equal over the corpus (shapes, reach, functions, counters,
+iterations, nn, writes, texts on every function row; ranges on 444 of 444 scripts); under the
+plain switches about 11,300 to 12,100 of 13,300 bodies equal and none different; with every
+rule on, 2,633; whole units byte-identical, the empty program only.  Twelve language defects
+met, ten fixed with a guard.  Six of the 81 commits touched the Rust reference, each adding a
+trace and none changing what it writes.  What the execution got right: the layers before the
+text, so a differing body names the first analysis whose state differs; equal or refused by
+name, never different, so the count reads as progress; and the reference kept as the truth,
+with the one design question (a rule keyed on node identity) raised rather than settled
+locally.
+
+**What the strand owes, in order.**
+
+1. **The position is committed and gated.**  Every number above was measured by hand and
+   typed into this plan; no committed file and no CI step would notice a push under which
+   five hundred bodies stop agreeing.  `cgen_survey.py` writes its per-layer counts and the
+   plain-switch list to a baseline beside it, compares the next run against it, and fails on
+   any drop or any `differ`; the run is a nightly's size (1,075 units), so it is a nightly
+   job, and the selfhost cargo test keeps the kernels.  This is the port method's rule for
+   every port, and the interpreter stream owes the same (below).
+2. **No workaround for an open defect in the port's source.**  loft#2487 and loft#2497 are
+   open and the generator's shape carries a detour for each (a function per walk; the shared
+   records declared before the files that walk them), against rule 2 and the dogfood rule's
+   "not even a temporary one".  Both are lifetime defects of the kind @PLN211 is clearing;
+   they are fixed now and the detours taken out, or the port waits on them.
+3. **Unit assembly before the next switch.**  Bodies are the bulk of the work and not the
+   goal: the first-use numbering of `loft_call<n>` and `loft_tup<n>`, the framed wrapper, the
+   twins and `split` are what turn equal bodies into a unit `cmp` accepts.  A whole unit also
+   lets `scripts/c_sweep.py` compile the loft-written C and run it against the interpreter — a
+   second oracle at no cost — and is where the 3× bar is actually carried across.
+4. **The generator's own speed, per unit, beside the Rust generator's** — open question 3,
+   promised from G-2a, has no number.  The pivot was made for compile time, and a survey runs
+   that cost over 1,075 units each cycle.
+5. **The helpers are committed.**  `cycle.sh` and `one.sh` live in a session's scratch
+   directory, to be rebuilt from a paragraph; they belong in `selfhost/bench` beside the
+   survey (BUS_FACTOR.md: everything needed is in the repository).
+
+**The interpreter stream against the same five** (`tuxedo-pln204-int32`, 477 commits since
+2026-11-12, 71,000 lines of loft, the C runtime shim 3,200 lines of C):
+
+| item | strand 12 | strand 1b |
+|---|---|---|
+| position committed and gated | no | no — `run_image_survey.py` reads 1,193 of 1,194 and `compare.py` runs strict per layer, but neither carries an expected count, and `tests/selfhost.rs` keeps one emitted-image program |
+| workaround for an open defect in the source | two | none found (`selfhost/src` carries the word nowhere); X23 is a register row, not a detour |
+| the whole-artefact gate | not started | reached: the runner on loft-written code 1,135 of 1,194 agree, 0 differ; the rest of the layers measured per program (1b-compare.md) |
+| speed measured against the reference | no | yes, continuously: `bench_speed.py` geometric mean 0.92 of `loft --interpret` over 94 routines, worst 2.25, from 2.03 two days before |
+| helpers committed | `cycle.sh`, `one.sh` missing | `bench_speed.py`, `run_image_survey.py`, `fill_speed.sh` committed |
+
+So the interpreter stream already does what items 2 to 5 ask, and the strand takes its
+practice: the survey as the first thing a session runs, the speed number beside every
+position, the scripts in the tree.  What neither stream has is item 1, and it is the one that
+matters most as the commit rate rises: at forty commits a day a count that is only re-typed
+by hand is a streak, not a gate.
+
+On starting this strand before the interpreter is complete, which this epic's README ruled out
+until 2026-11-14: it costs nothing, since the oracle is the Rust image and not the loft
+interpreter; the one coupling is the shared IR files, and the one addition made there
+(`Definition.width32`) is the kind the layout rule says to announce first.
