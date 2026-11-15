@@ -10,7 +10,8 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 
 ## Status
 
-P1, P2, P3, L0, L1 and M0 are done and L2 is in review (2026-11-15); none changed § The shape.
+P1, P2, P3, L0, L1, L2, L2b and M0 are done (2026-11-15).  L2b amended § The shape's reach:
+a backend names the layer's header by the layer's name (@C164).
 Next: L3 (`gpu_gl`); publishing waits for the name (open question 2) and for @C164 in a
 released loft.  V0
 waits for a Linux machine.
@@ -18,7 +19,7 @@ waits for a Linux machine.
 | Track | Steps | State |
 |---|---|---|
 | P — the game on a Mac, on the GL that is there | P1–P5 | P1–P3 done; P4 stood in for until L3; P5 measured standing still |
-| L — the neutral layer | L0–L8 | L0, L1, L2b done; L2 in review; L3–L8 open |
+| L — the neutral layer | L0–L8 | L0–L2b done; L3–L8 open |
 | M — the Metal backend | M0–M4 | M0 done; M1–M4 open |
 | V — the Vulkan backend | V0–V4 | Open |
 | H — one shader source | H1–H4 | Open |
@@ -206,7 +207,7 @@ Nothing here waits for the neutral layer or for Metal.
   writes down every call it receives.  It needs no display, so it runs in every CI job.
   Goes red when: a scripted frame's record differs from the hand-written one; a buffer, texture
   or pipeline is still held after its owner died.
-  **Built (2026-11-15), in review: loft-libs-graphics#83** (`gpu` 0.1.0, `gpu_record` 0.1.0).
+  **Done (2026-11-15): loft-libs-graphics#83, merged** (`gpu` 0.1.0, `gpu_record` 0.1.0).
   `gpu`'s 3 tests and `gpu_record`'s 9 pass on the interpreter, `--native-c` and `--native`
   with warnings denied; one frame's log is byte-equal on the interpreter, `--native-c`,
   `--native-c --ship`, wasm under wasmtime and both writers' pages.  Six planted breaks each
@@ -244,8 +245,8 @@ Nothing here waits for the neutral layer or for Metal.
     after it: the first form failed on every second `--native-c` run;
   - the C writer's wasm build compiles shim sources with the unit and had no directory of
     loft's on its search path, so it is a seventh site.
-  **Open:** loft-libs-graphics#83 keeps the relative include, which loft's `main` can build
-  side by side.  `gpu_record` moves to `"gpu/gpu_backend.h"` and raises its `loft` floor in
+  **Open:** `gpu_record` on the libraries' `main` keeps the relative include, which loft's
+  `main` can build side by side.  `gpu_record` moves to `"gpu/gpu_backend.h"` and raises its `loft` floor in
   the change that follows @C164 reaching loft's `main`.
 - **L3 — `gpu_gl` (M).**  Today's GL code behind the table; graphics 0.12's own API untouched
   beside it.  Shaders arrive as a set: one declaration (inputs, the uniform block, the texture
