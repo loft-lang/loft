@@ -9,6 +9,7 @@
 use ir;
 use loop_shape;
 use opt_non_sentinel;
+use binds;
 
 // One scalar push as a rule reads it: the vector's path, the vector and value nodes, the
 // element's size.  `size` 0: no fusable push.
@@ -278,4 +279,210 @@ pub fn known_empty(b: ir::Bundle, ops: vector<ir::Node>, count: integer, vector:
     }
   }
   false
+}
+
+// `simple_invariant` (`opt::push_window`): an expression the loop cannot change — a variable
+// not in `banned`, a literal, a sum, difference or product of such, a scalar read of a field
+// or an element of a record held in a variable not in `banned`.
+pub fn simple_invariant(b: ir::Bundle, v: ir::Node, banned: vector<integer>) -> boolean {
+  match loop_shape::unspan(v) {
+    NdVar { n } => !has(banned, n),
+    NdBlock { block } => block[0].name == "ncc" && literal_discharge(block[0].operators),
+    NdInt { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdEnum { ord: _, tp: _ } => true,
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt" || name == "OpAddFloat" || name == "OpMinFloat" || name == "OpMulFloat" {
+        return len(args) == 2 && simple_invariant(b, args[0], banned) && simple_invariant(b, args[1], banned);
+      }
+      getters = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
+      scalar = false;
+      for g in getters {
+        if g == name {
+          scalar = true;
+        }
+      }
+      if scalar && len(args) == 3 {
+        root = loop_shape::var_of(loop_shape::unspan(args[0]));
+        return root >= 0 && !has(banned, root) && (loop_shape::unspan(args[1]) is NdInt) && (loop_shape::unspan(args[2]) is NdInt);
+      }
+      if (name == "OpGetInt" || name == "OpGetLong" || name == "OpGetFloat" || name == "OpGetSingle") && len(args) == 2 {
+        root = loop_shape::var_of(loop_shape::unspan(args[0]));
+        return root >= 0 && !has(banned, root) && (loop_shape::unspan(args[1]) is NdInt);
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
+fn has(list: vector<integer>, x: integer) -> boolean {
+  for l in list {
+    if l == x {
+      return true;
+    }
+  }
+  false
+}
+
+// `lit ?? d` over a literal that is not the sentinel is that literal (`literal_discharge`).
+fn literal_discharge(ops: vector<ir::Node>) -> boolean {
+  if len(ops) != 2 {
+    return false;
+  }
+  t = -1;
+  lit_ok = false;
+  match ops[0] {
+    NdSet { var, inner } => {
+      t = var;
+      lit_ok = match loop_shape::unspan(inner) {
+        NdInt { n: _ } => true,
+        NdBoolean { b: _ } => true,
+        NdLong { n } => n != null,
+        NdFloat { f } => f != null,
+        _ => false,
+      };
+    },
+    _ => return false,
+  }
+  match ops[1] {
+    NdIf { cond: _, t: then, f: other } => {
+      plain = match loop_shape::unspan(other) {
+        NdInt { n: _ } => true,
+        NdLong { n: _ } => true,
+        NdFloat { f: _ } => true,
+        NdBoolean { b: _ } => true,
+        _ => false,
+      };
+      lit_ok && loop_shape::unspan(then) == NdVar { n: t } && plain
+    },
+    _ => false,
+  }
+}
+
+// `@FR-R-PushFill`'s hash clause: a counted loop whose body files records into ONE hash.
+pub struct HashFill {
+  pub hash: integer,
+  pub tp: integer,
+  pub per_pass: integer,
+  pub index: integer,
+  pub next: integer,
+  pub inclusive: boolean,
+  pub hi: ir::Node,
+}
+
+// The hash a node files a record into, with its type in `tp`; -1 for any other node.
+fn mint_of(b: ir::Bundle, n: ir::Node, tp: &integer) -> integer {
+  match loop_shape::unspan(n) {
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if !(name == "OpNewRecord" || name == "n_keyed_entry_ints" || name == "n_keyed_entry_text") || len(args) < 2 {
+        return -1;
+      }
+      h = match loop_shape::unspan(args[0]) { NdVar { n: x } => x, _ => -1 };
+      t = match loop_shape::unspan(args[1]) { NdInt { n: x } => x, _ => -1 };
+      if h < 0 || t < 0 || t >= len(b.types) {
+        return -1;
+      }
+      match b.types[t].parts[0] {
+        PtHash { content: _, fields: _ } => {
+          tp = t;
+          h
+        },
+        _ => -1,
+      }
+    },
+    _ => -1,
+  }
+}
+
+// The most records one pass of `n` files: both arms of a choice are not both taken.
+fn most(b: ir::Bundle, n: ir::Node) -> integer {
+  tp = 0;
+  if mint_of(b, n, tp) >= 0 {
+    return 1;
+  }
+  match loop_shape::unspan(n) {
+    NdIf { cond, t, f } => {
+      a = most(b, t);
+      c = most(b, f);
+      return most(b, cond) + (if a > c { a } else { c });
+    },
+    _ => {},
+  }
+  total = 0;
+  for child in binds::children(n) {
+    total += most(b, child);
+  }
+  total
+}
+
+// `hash_fill_loop`: the hash a plain counted loop fills, or null.
+pub fn hash_fill_loop(b: ir::Bundle, lp: ir::Block) -> HashFill? {
+  if lp.name != "For loop" || len(lp.operators) != 2 {
+    return null;
+  }
+  body = match loop_shape::unspan(lp.operators[1]) {
+    NdBlock { block } => block[0].operators,
+    _ => return null,
+  };
+  rc = loop_shape::range_counters(lp, b.data.definitions) ?? return null;
+  // The body block walked whole: a lambda in a loop that captures a vector is loft#2487.
+  state = [-1, 0, 0, 0, 0];
+  whole = lp.operators[1];
+  {
+    opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+      match n {
+        NdBreak { n: _ } => { state[2] = 1; },
+        NdReturn { inner: _ } => { state[2] = 1; },
+        NdContinue { n: _ } => { state[2] = 1; },
+        NdLoop { block: _ } => { state[2] = 1; },
+        NdYield { inner: _ } => { state[2] = 1; },
+        NdParallel { arms: _ } => { state[2] = 1; },
+        _ => {},
+      }
+      tp = 0;
+      h = mint_of(b, n, tp);
+      if h >= 0 {
+        if state[0]! >= 0 && (state[0]! != h || state[1]! != tp) {
+          state[3] = 1;
+        } else {
+          state[0] = h;
+          state[1] = tp;
+        }
+      }
+    });
+  }
+  hash = state[0]!;
+  if state[2]! == 1 || hash < 0 || state[3]! == 1 {
+    return null;
+  }
+  {
+    opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+      match n {
+        NdSet { var, inner: _ } => { if var == hash { state[4] = 1; } },
+        _ => {},
+      }
+    });
+  }
+  if state[4]! == 1 {
+    return null;
+  }
+  banned = [rc.loop_var, rc.index, hash];
+  if rc.next >= 0 {
+    banned += [rc.next];
+  }
+  if !simple_invariant(b, rc.hi, banned) {
+    return null;
+  }
+  per_pass = 0;
+  for s in body {
+    per_pass += most(b, s);
+  }
+  if per_pass == 0 {
+    return null;
+  }
+  HashFill { hash: hash, tp: state[1]!, per_pass: per_pass, index: rc.index, next: rc.next, inclusive: rc.inclusive, hi: rc.hi }
 }

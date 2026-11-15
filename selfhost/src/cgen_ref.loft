@@ -1825,6 +1825,20 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
   run_end
 }
 
+// `hash_reserve` (`@FR-R-PushFill`'s hash clause): a counted loop that files records into one
+// hash reserves the table's room for its trips before it runs.
+pub fn hash_reserve(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  if (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_HASH_RESERVE") ?? "0") != "0" {
+    return;
+  }
+  hf = opt_push::hash_fill_loop(x.b, lp) ?? return;
+  hi = as_int(w, cgen_fn::expr(x, w, hf.hi, ind));
+  lo = if hf.next >= 0 { w.names[hf.next]! } else { "loft_add({w.names[hf.index]!}, INT64_C(1))" };
+  h = w.names[hf.hash]!;
+  flush(w, ind);
+  line(w, ind, "{{ int64_t pn = loft_add(loft_sub({hi}, {lo}), INT64_C({if hf.inclusive { 1 } else { 0 }})); if (pn > 0 && pn != LOFT_NULL && {h}.store_nr != 0xFFFF && {h}.rec != 0) loft_hash_reserve(loft_types, {hf.tp}, {h}, loft_add(loft_hash_len({h}), loft_mul(pn, INT64_C({hf.per_pass})))); }}");
+}
+
 // `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write
 // every field, so the minted element needs no default image first?
 fn mint_complete(b: ir::Bundle, w: W, tp: integer) -> boolean {
