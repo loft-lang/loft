@@ -261,6 +261,7 @@ fn release_shim_lto(
         if fa::create_dir_all(&inc).is_ok()
             && loft::c_shim::put_width_header(&inc).is_ok()
             && loft::c_shim::put_bodies(&inc, &paths).is_ok()
+            && loft::c_shim::put_dep_headers_of(&inc, &paths).is_ok()
         {
             flags.push("-I".to_string());
             flags.push(inc.to_string_lossy().into_owned());

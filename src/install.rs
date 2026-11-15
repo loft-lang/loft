@@ -350,7 +350,16 @@ fn install_resolved(
             // again — with the source position of the `use` — if the package is
             // actually used. Refusing the install would make a missing `cc`
             // block packages the user may never call into.
-            if !m.c_shim.is_empty() {
+            let deps: Vec<String> = m.dependencies.iter().map(|(d, _)| d.clone()).collect();
+            let wanted = crate::c_shim::wanted_deps(&dir.to_string_lossy(), &m.c_shim, &deps);
+            if !wanted.is_empty() {
+                // @C164 — it includes a dependency's header, and which copy of that
+                // dependency a program loads is the program's resolution to make.
+                report.surface.push(format!(
+                    "  C shim builds on first use: it includes a header of `{}`",
+                    wanted.join("`, `")
+                ));
+            } else if !m.c_shim.is_empty() {
                 match crate::c_shim::build(&dir.to_string_lossy(), &m.c_shim) {
                     Ok(so) => report.surface.push(format!(
                         "  C shim built: {}",

@@ -836,6 +836,13 @@ pub struct Parser {
     /// searched in `dir`, and the dep is only pulled in while the lexer is back
     /// on the file that named the package (loft#714).
     pending_pkg_deps: Vec<(String, String, String)>,
+    /// @C164 — every package registered so far, by name: its directory and the directories of
+    /// its `[c] shim` sources, where a dependant's shim finds its headers.
+    c_header_dirs: Vec<(String, String, Vec<String>)>,
+    /// @C164 — shims that include a header of a dependency not yet registered: (package
+    /// directory, shim sources, the dependencies wanted).  Built once the package's own file
+    /// has resolved its `use`s (`build_pending_shims`).
+    pending_shims: Vec<(String, Vec<String>, Vec<String>)>,
     /// Auto-`use` per-file scan cache: a file's `(lib:: refs, .method() calls)`
     /// are deterministic, so it is read + scanned at most once (keyed by path)
     /// and reused across the second pass and any `todo_files` re-parse.
@@ -2259,6 +2266,8 @@ impl Parser {
             library_bridges: true,
             pending_placed_libs: Vec::new(),
             pending_pkg_deps: Vec::new(),
+            c_header_dirs: Vec::new(),
+            pending_shims: Vec::new(),
             auto_use_scan_cache: std::collections::HashMap::new(),
             pkg_dep_cache: std::collections::HashMap::new(),
             use_paths: std::collections::HashMap::new(),
@@ -3111,6 +3120,12 @@ impl Parser {
         // The dependencies are resolved: a manifest read on the way is reported as itself
         // before what it failed to declare is reported as undefined.
         self.report_manifest_errors();
+        // A shim still waiting for a dependency's headers on the second pass waits for a
+        // package that did not load: it is built as it is, and the compiler names the header
+        // it does not find (@C164).
+        if !self.first_pass {
+            self.build_pending_shims(true);
+        }
         // Apply wildcard/selective imports queued for this source now that the while-use loop
         // has resolved all libraries.  Must run before the definitions loop so that imported
         // names are visible when function bodies and type annotations are parsed.

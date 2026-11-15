@@ -5732,6 +5732,8 @@ fn main() {\n\
 ///
 /// @falsified-at fb83c7c2e + this change: a fixture without its `[c] shim` line fails every
 /// mode (the `#c` symbol is not found); `lctab_b` multiplying by 6 fails the `b` line.
+/// A backend includes the layer's header as `"lctab/lctab_backend.h"` (@C164), so this guard
+/// also fails on a loft that does not put a dependency's headers before a shim's compile.
 #[test]
 fn a_backend_table_crosses_libraries_in_every_build() {
     if !have_cc() {
@@ -5771,6 +5773,99 @@ fn main() {\n\
             "{mode:?}: {}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+}
+
+/// Copy the package directory `from` to `to`, without what a build left in it.
+fn copy_package(from: &std::path::Path, to: &std::path::Path) {
+    fa::create_dir_all(to).expect("package dir");
+    for entry in fa::read_dir(from).expect("list package") {
+        let name = fa::file_name(&entry).expect("entry name");
+        if name == "native-auto" || name == ".loft" {
+            continue;
+        }
+        if fa::is_dir(&entry) {
+            copy_package(&from.join(&name), &to.join(&name));
+        } else {
+            fa::write(to.join(&name), fa::read(&entry).expect("read")).expect("write");
+        }
+    }
+}
+
+/// A backend's C includes the layer's header by the layer's NAME, wherever the two packages
+/// are installed (@C164, @PLN209 GPU_LAYER.md L2b): `lctab_a.c` writes
+/// `#include "lctab/lctab_backend.h"`, and loft puts the headers of each dependency a shim
+/// includes one of where its compile finds them.  The two packages sit here in directories
+/// named as the registry names an installed one (`<name>-<version>`), where no path relative
+/// to the backend's source reaches the layer.  Each mode runs twice: the second run starts
+/// from the first one's cached parse, which must hand the C build the same headers.  By hand:
+/// `lctab_a` is 4 * 3 + 7 = 19.
+///
+/// @falsified-at 836e4aa97: every run fails with "'lctab/lctab_backend.h' file not found";
+/// with the startup cache's `chdr` lines left out, the second `--native-c` run fails so.
+#[test]
+fn a_backend_finds_the_layers_header_wherever_the_two_are_installed() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = scratch("installed");
+    copy_package(&fixtures.join("lctab"), &dir.join("lctab-0.1.0"));
+    copy_package(&fixtures.join("lctab_a"), &dir.join("lctab_a-0.1.0"));
+    let toml = dir.join("lctab_a-0.1.0/loft.toml");
+    let text = String::from_utf8(fa::read(&toml).expect("read manifest")).expect("utf-8");
+    assert!(
+        text.contains("lctab = \">=0.1.0\""),
+        "the fixture declares its dependency"
+    );
+    fa::write(
+        &toml,
+        text.replace(
+            "lctab = \">=0.1.0\"",
+            "lctab = { path = \"../lctab-0.1.0\" }",
+        ),
+    )
+    .expect("write manifest");
+    let app = dir.join("app");
+    fa::create_dir_all(app.join("src")).expect("app dir");
+    fa::write(
+        app.join("loft.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
+         lctab = { path = \"../lctab-0.1.0\" }\nlctab_a = { path = \"../lctab_a-0.1.0\" }\n",
+    )
+    .expect("write app manifest");
+    // The backend is named first: its shim then waits for the layer to register.
+    let file = app.join("src/main.loft");
+    fa::write(
+        &file,
+        "use lctab_a;\nuse lctab;\nfn main() {\n  \
+         println(\"{lctab::use_backend(lctab_a::table())} {lctab::apply(4)} {lctab::name()}\");\n}\n",
+    )
+    .expect("write program");
+    for mode in ["--interpret", "--native-c"] {
+        for run in ["cold", "warm"] {
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+                .env("LOFT_TIMEOUT", "600")
+                .env("LOFT_TRACE_WARM", "1")
+                .env("XDG_CACHE_HOME", dir.join("cache"))
+                .arg(mode)
+                .arg(&file)
+                .output()
+                .expect("run loft");
+            let said = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                "true 19 lctab_a\n",
+                "{mode} {run}: {said}"
+            );
+            assert_eq!(
+                said.contains("[warm] hit"),
+                run == "warm",
+                "{mode} {run}: the second run of a mode, and only it, starts from the cache: {said}"
+            );
+        }
     }
 }
 
