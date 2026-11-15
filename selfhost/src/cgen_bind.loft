@@ -82,6 +82,59 @@ fn fresh_unless_owned(x: Cx, w: W, f: ir::Function, var: integer, value: ir::Nod
   }
 }
 
+// `link_rebind`: a write through a `&` record or collection parameter — the caller's variable
+// takes the value, and the store it displaces is released where the link owns the write-back.
+pub fn link_rebind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
+  b = x.b;
+  f = b.data.definitions[w.index]!.variables;
+  tp = f.variables[var]!.type_def[0] ?? ir::TyVoid;
+  inner = match binds::base(tp) {
+    TyRefVar { inner: target } => binds::base(target),
+    _ => {
+      refuse(w, "a link that is not a parameter");
+      return;
+    },
+  };
+  record = match inner {
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  };
+  collection = match inner {
+    TyVector { inner: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    _ => false,
+  };
+  if !record && !collection {
+    refuse(w, "a rebind of a & parameter of another kind");
+    return;
+  }
+  // A slot cell (`@FR-F-ParamRef`) is written through its own routines: not carried.
+  if binds::slot_link_def(b, tp) != null {
+    refuse(w, "a rebind of a slot cell");
+    return;
+  }
+  owned = own::ownership_of(b, x.ops, w.index, value) is Owned;
+  displaces = (owned || record) && binds::link_write_releases(f, var);
+  e = cgen_fn::expr(x, w, value, ind);
+  r = temp(w, "ref");
+  line(w, ind, "{r} = {as_ref(w, e)};");
+  name = w.names[var]!;
+  if displaces {
+    old = temp(w, "ref");
+    line(w, ind, "{old} = {name};");
+    line(w, ind, "{name} = {r};");
+    line(w, ind, "loft_free_displaced({old}, {name});");
+  } else {
+    line(w, ind, "{name} = {r};");
+  }
+  flush(w, ind);
+}
+
 // `v = value` for a record or vector variable (`set_stmt_arms` from the first bind on).
 pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: integer) {
   b = x.b;

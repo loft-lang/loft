@@ -324,8 +324,25 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     ptp = cgen_fn::literal(w, args[1], "type") ?? return none();
     elem = w.elem;
+    if elem < 0 || elem >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
     size = x.b.types[elem].size;
     t = temp(w, "ref");
+    if w.keyed >= 0 {
+      // `keyed_new`: the record a keyed collection takes, from its default image.
+      kind = keyed_kind(x.b, w.keyed);
+      if kind == "sorted" {
+        line(w, ind, "{t} = loft_sorted_new({place}, {size});");
+      } else if kind == "hash" {
+        line(w, ind, "{t} = loft_hash_entry({place}, {size}, {if x.b.types[elem].linked { 1 } else { 0 }});");
+      } else {
+        line(w, ind, "{t} = loft_entry_new({place}, {size});");
+      }
+      line(w, ind, "loft_fill({t}, loft_dflt{elem}, {size});");
+      return E { code: t, kind: K_REF };
+    }
     line(w, ind, "{t} = loft_vec_append({place}, {size});");
     if !(name == "OpNewRecordNP" || mint_complete(x.b, w, ptp)) {
       line(w, ind, "loft_fill({t}, loft_dflt{elem}, {size});");
@@ -336,6 +353,27 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     place = vector_place(x, w, args[0], args[2], args[3], ind);
     if w.why != "" {
       return none();
+    }
+    if w.keyed >= 0 {
+      // `keyed_finish`: the filled record entered by its keys.
+      tp = w.keyed;
+      elem = w.elem;
+      kind = keyed_kind(x.b, tp);
+      rec = as_ref(w, cgen_fn::expr(x, w, args[1], ind));
+      keys = "loft_keys{tp}, {len(x.b.types[tp].keys)}";
+      if kind == "sorted" {
+        return E { code: "loft_sorted_finish({place}, {x.b.types[elem].size}, {keys})", kind: K_VOID };
+      }
+      if kind == "hash" {
+        return E { code: "(void) loft_hash_insert(loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
+      }
+      if kind == "index" || kind == "ordered" {
+        return E { code: "(void) {if kind == "index" { "loft_ix_insert" } else { "loft_ordered_insert" }}(loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
+      }
+      if kind == "array" {
+        return E { code: "loft_array_append({place}, {rec})", kind: K_VOID };
+      }
+      return E { code: "(void) loft_rx_insert_record(loft_types, {elem}, {place}, {rec}, {keys}, {if kind == "trie" { 1 } else { 0 }}, 0)", kind: K_VOID };
     }
     return E { code: "loft_vec_finish({place})", kind: K_VOID };
   }
@@ -699,6 +737,36 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
   }
   if name == "OpReadFile" && count == 4 {
     return read_file(x, w, args, ind);
+  }
+  if name == "OpClearKeyed" && count == 2 {
+    raw = cgen_fn::literal(w, args[1], "type") ?? return none();
+    dest_c = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    if raw & 32768 != 0 {
+      // A view member releases its own storage; the member that holds the records frees them.
+      tp = raw & 32767;
+      if keyed_kind(x.b, tp) == "" {
+        refuse(w, "a keyed operation on another kind of type");
+        return none();
+      }
+      return E { code: "loft_remove_claims_mode(loft_types, {tp}, {dest_c}, 1)", kind: K_VOID };
+    }
+    return E { code: "loft_remove_claims(loft_types, {raw}, {dest_c})", kind: K_VOID };
+  }
+  if (name == "OpLengthSpatial" || name == "OpLengthTrie" || name == "OpLengthHash" || name == "OpSizeSpatial" || name == "OpSizeTrie" || name == "OpSizeIndex" || name == "OpLengthIndex") && count == 1 {
+    coll_c = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    if name == "OpLengthHash" {
+      return E { code: "loft_hash_len({coll_c})", kind: K_INT };
+    }
+    if name == "OpLengthIndex" {
+      return E { code: "(int64_t) loft_bt_len({coll_c})", kind: K_INT };
+    }
+    if name == "OpSizeIndex" {
+      return E { code: "loft_bt_table_bytes({coll_c})", kind: K_INT };
+    }
+    if name == "OpLengthSpatial" || name == "OpLengthTrie" {
+      return E { code: "loft_rx_count({coll_c})", kind: K_INT };
+    }
+    return E { code: "loft_rx_table_bytes({coll_c})", kind: K_INT };
   }
   if name == "OpGetBoolean" && count == 2 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
@@ -1102,6 +1170,7 @@ fn vector_place(x: Cx, w: W, data: ir::Node, ptp_node: ir::Node, fld_node: ir::N
     return "";
   }
   base = as_ref(w, cgen_fn::expr(x, w, data, ind));
+  w.keyed = -1;
   if fld == 65535 {
     match x.b.types[ptp].parts[0] {
       PtVector { content } => {
@@ -1109,8 +1178,13 @@ fn vector_place(x: Cx, w: W, data: ir::Node, ptp_node: ir::Node, fld_node: ir::N
         return base;
       },
       _ => {
-        refuse(w, "a new record in a keyed collection");
-        return "";
+        if keyed_kind(x.b, ptp) == "" {
+          refuse(w, "a new record in a collection other than a vector");
+          return "";
+        }
+        w.elem = content_of(x.b, ptp);
+        w.keyed = ptp;
+        return base;
       },
     }
   }
@@ -1141,7 +1215,29 @@ fn vector_place(x: Cx, w: W, data: ir::Node, ptp_node: ir::Node, fld_node: ir::N
       },
       _ => {},
     }
+    if keyed_kind(x.b, vtp) != "" {
+      w.elem = content_of(x.b, vtp);
+      w.keyed = vtp;
+      return "loft_field({base}, {fields[fld]!.position})";
+    }
   }
-  refuse(w, "a new record in a keyed collection");
+  refuse(w, "a new record in a field that is not a vector");
   ""
+}
+
+// `Cx::keyed`: the kind of keyed collection type `tp` is, "" for any other type.
+fn keyed_kind(b: ir::Bundle, tp: integer) -> text {
+  if tp < 0 || tp >= len(b.types) {
+    return "";
+  }
+  match b.types[tp].parts[0] {
+    PtHash { content: _, fields: _ } => "hash",
+    PtSorted { content: _, keys: _ } => "sorted",
+    PtIndex { content: _, keys: _ } => "index",
+    PtOrdered { content: _, keys: _ } => "ordered",
+    PtArray { content: _ } => "array",
+    PtRadix { content: _, fields: _ } => "spatial",
+    PtTrie { content: _, key: _ } => "trie",
+    _ => "",
+  }
 }

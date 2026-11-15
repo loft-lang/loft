@@ -779,7 +779,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     line(w, ind, "{shown};");
     return held_value(w, json, "text");
   }
-  if route == "n_store_persist_copy" || route == "n_store_load" || route == "n_store_load_untrusted" || route == "n_store_load_url" || route == "n_store_load_url_trusted" || route == "n_store_verify" || route == "n_spatial_range" || route == "n_trie_prefix" || route == "t_4hash_len" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
+  if (route.starts_with("n_store_") && route != "n_store_upgrade_owed_next") || route == "n_spatial_range" || route == "n_trie_prefix" || route == "t_4hash_len" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
     refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
     return none();
   }
@@ -2239,7 +2239,7 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       }
       if shape == "ref" {
         if w.links[var]! {
-          refuse(w, "a rebind of a & record");
+          cgen_bind::link_rebind(x, w, var, inner, ind);
           return;
         }
         cgen_bind::ref_set(x, w, var, inner, first, ind);
@@ -2296,6 +2296,13 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       }
     },
     NdCall { def_nr: _, args: _ } => dropped(x, w, v, ind),
+    NdCallRef { var: _, args: _ } => dropped(x, w, v, ind),
+    // A tuple in statement position is a dropped value: each member runs for its effect.
+    NdTuple { items } => {
+      for m in items {
+        stmt(x, w, ir::NdDrop { inner: m }, ind);
+      }
+    },
     _ => refuse(w, "the construct {construct(v)}"),
   }
 }
@@ -2498,6 +2505,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     defs: own::function_defs(x.b, index, x.ops),
     room_minted: [for _ in 0..len(d.variables.variables) { -1 }],
     elem: -1,
+    keyed: -1,
     cold: [],
     undeclared: [for _ in 0..len(d.variables.variables) { false }],
     frees_old_tuple: false,

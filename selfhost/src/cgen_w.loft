@@ -232,8 +232,10 @@ struct W {
   // Per variable: the wrapper type its vector's room was minted with (`room_minted`), -1
   // for none — the write of the vector's empty handle that follows is then nothing.
   room_minted: vector<integer>,
-  // The element type the last `vector_place` found.
+  // The element type the last `vector_place` found, and the keyed collection's type where
+  // the place is one (-1 for a plain vector).
   elem: integer,
+  keyed: integer,
   // `@FR-R-Cold`: the outlined arms, and per variable whether the body leaves it to one of
   // them (or, in a helper, to the function) — it is then neither declared nor bound here.
   cold: vector<ColdArm>,
