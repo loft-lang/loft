@@ -20,6 +20,18 @@ pub fn moved(at: Pos, off: integer) -> Pos {
   Pos { s: at.s, r: at.r, p: at.p + off }
 }
 
+// The place the reference stored at `(store, rec, pos)` names, by value: `place_ref` without
+// an out-vector, so a caller mints no store for the answer.
+pub fn place_pos(store: integer, rec: integer, pos: integer) -> Pos {
+  Pos { s: c_place_ref_part(store, rec, pos, 0), r: c_place_ref_part(store, rec, pos, 1), p: c_place_ref_part(store, rec, pos, 2) }
+}
+
+// Element `idx` (`size` bytes each) of the vector at `(store, rec, pos)`, by value: `vec_get`
+// without an out-vector; the null reference past either end.
+pub fn vec_pos(store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> Pos {
+  Pos { s: c_vec_get_part(0, store, rec, pos, size, idx), r: c_vec_get_part(1, store, rec, pos, size, idx), p: c_vec_get_part(2, store, rec, pos, size, idx) }
+}
+
 fn c_format_int(out: vector<u8>, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) -> integer;
 #c "loft_crt_format_int" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 

@@ -104,16 +104,12 @@ pub fn eq_content(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, tp: integer)
 
 // The element `i` of `size` bytes of the vector at `at`.
 fn element(at: crt::Pos, size: integer, i: integer) -> crt::Pos {
-  e: vector<integer> = [0, 0, 0];
-  crt::vec_get(e, at.s, at.r, at.p, size, i);
-  crt::Pos { s: e[0] ?? 65535, r: e[1] ?? 0, p: e[2] ?? 0 }
+  crt::vec_pos(at.s, at.r, at.p, size, i)
 }
 
 // The place the stored reference at `at` names.
 fn followed(at: crt::Pos) -> crt::Pos {
-  e: vector<integer> = [0, 0, 0];
-  crt::place_ref(e, at.s, at.r, at.p);
-  crt::Pos { s: e[0] ?? 65535, r: e[1] ?? 0, p: e[2] ?? 0 }
+  crt::place_pos(at.s, at.r, at.p)
 }
 
 // The `i`-th place of a flat `[s, r, p, s, r, p, …]` list (`crt::hash_refs`).
