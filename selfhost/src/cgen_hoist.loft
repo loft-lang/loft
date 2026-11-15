@@ -766,6 +766,12 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
       return E { code: "({held_proof(x, w, el.vec, held)}, {if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" }}({held}, {size}, {counted}, {fld}))", kind: k };
     }
     i = as_int(w, cgen_fn::expr(x, w, el.idx, ind));
+    fits = grid_index(x, w, el.idx, held);
+    if fits != "" {
+      raw = if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" };
+      checked = if name == "OpGetInt" { "loft_vh_get_int" } else { "loft_vh_get_float" };
+      return E { code: "({held_proof(x, w, el.vec, held)}, {fits} ? {raw}({held}, {size}, {i}, {fld}) : {checked}{if el.report { "_at" } else { "" }}({held}, {size}, {i}, {fld}{if el.report { ", {cgen_fn::site(w)}" } else { "" }}))", kind: k };
+    }
     nn = "";
     index = index_arg(x, w, el.idx, i, nn);
     proof = held_proof(x, w, el.vec, held);
@@ -862,4 +868,264 @@ pub fn refresh_rebound(w: W, var: integer, ind: integer) {
 // Are the vector hoists on (`verdict`'s own switch)?
 pub fn hoists() -> boolean {
   enabled()
+}
+
+// The variable a bound names, -1 for a literal.
+fn bound_var(n: ir::Node) -> integer {
+  loop_shape::var_of(loop_shape::unspan(n))
+}
+
+// Does `body` assign any of `vars`?
+fn assigns_any(body: ir::Node, vars: vector<integer>) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => {
+        for v in vars {
+          if v == var {
+            hit[0] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `grid_bind`: an integer local set in one place from variables each set in one place is its
+// expression wherever the block that binds it encloses the read.
+pub fn grid_bind(x: Cx, w: W, var: integer, value: ir::Node) {
+  if len(w.set_many) == 0 {
+    def = x.b.data.definitions[w.index]!;
+    counts: vector<integer> = [for _ in 0..len(def.variables.variables) + 1 { 0 }];
+    if len(def.code) > 0 {
+      opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+        match n {
+          NdSet { var: v, inner: _ } => { if v < len(counts) { counts[v] = counts[v]! + 1; } },
+          _ => {},
+        }
+      });
+    }
+    w.set_many = [for c in counts { c > 1 }];
+  }
+  if var < len(w.set_many) && w.set_many[var]! {
+    return;
+  }
+  once = [true];
+  opt_non_sentinel::walk(value, fn(n: ir::Node) {
+    match n {
+      NdVar { n: v } => { if v < len(w.set_many) && w.set_many[v]! { once[0] = false; } },
+      _ => {},
+    }
+  });
+  if once[0]! {
+    w.grid_binds += [GridFact { var: var, node: value }];
+  }
+}
+
+// `peel::range_ends`: the binds of the two statements before a loop.
+pub fn range_ends(w: W, ops: vector<ir::Node>, i: integer) {
+  w.range_ends = [];
+  if !(loop_shape::unspan(ops[i]!) is NdLoop) {
+    return;
+  }
+  for k in (if i >= 2 { i - 2 } else { 0 })..i {
+    match loop_shape::unspan(ops[k]!) {
+      NdSet { var, inner } => { w.range_ends += [GridFact { var: var, node: inner }]; },
+      _ => {},
+    }
+  }
+}
+
+// `grid_counter_facts`: in `for i in 0..n` — counter seeded at 0, `n` a variable or a literal
+// the body assigns no more than the counters — `0 <= i < n` and `0 <= i#index < n`.
+pub fn grid_counter_facts(x: Cx, w: W, lp: ir::Block) {
+  rc = loop_shape::range_counters(lp, x.b.data.definitions) ?? return;
+  if rc.inclusive {
+    return;
+  }
+  counter = if rc.next >= 0 { rc.next } else { rc.index };
+  start = if rc.next >= 0 { 0 } else { -1 };
+  seeded = false;
+  for s in w.peel_seeds {
+    if s.var == counter && s.value == start {
+      seeded = true;
+    }
+  }
+  end = bound_var(rc.hi);
+  if !seeded || end < 0 {
+    return;
+  }
+  bounds: vector<ir::Node> = [ir::NdVar { n: end }];
+  for r in w.range_ends {
+    if r.var == end && len(bounds) == 1 {
+      src = loop_shape::unspan(r.node);
+      if (src is NdVar) || (src is NdInt) {
+        bounds += [src];
+      }
+      break;
+    }
+  }
+  watched: vector<integer> = [rc.index, rc.loop_var];
+  if rc.next >= 0 {
+    watched += [rc.next];
+  }
+  for bnd in bounds {
+    if bound_var(bnd) >= 0 {
+      watched += [bound_var(bnd)];
+    }
+  }
+  for op in lp.operators {
+    if op#index > 0 && assigns_any(op, watched) {
+      return;
+    }
+  }
+  for bnd in bounds {
+    w.grid_facts += [GridFact { var: rc.loop_var, node: bnd }];
+    w.grid_facts += [GridFact { var: rc.index, node: bnd }];
+  }
+}
+
+// `grid_test_facts`: under `0 <= x && x < w` the then arm knows `0 <= x < w`, while it
+// assigns neither.
+pub fn grid_test_facts(x: Cx, w: W, cond: ir::Node, then: ir::Node) {
+  conjuncts: vector<ir::Node> = [];
+  stack: vector<ir::Node> = [cond];
+  for _ in 0..4096 {
+    if len(stack) == 0 {
+      break;
+    }
+    c = loop_shape::unspan(stack[len(stack) - 1]);
+    stack = stack[0..len(stack) - 1];
+    split = false;
+    match c {
+      NdIf { cond: a, t, f } => {
+        if loop_shape::unspan(f) == NdBoolean { b: false } {
+          stack += [a];
+          stack += [t];
+          split = true;
+        }
+      },
+      _ => {},
+    }
+    if !split {
+      conjuncts += [c];
+    }
+  }
+  lower: vector<integer> = [];
+  upper: vector<GridFact> = [];
+  for c in conjuncts {
+    match c {
+      NdCall { def_nr, args } => {
+        if len(args) == 2 && def_nr >= 0 && def_nr < len(x.b.data.definitions) {
+          name = x.b.data.definitions[def_nr]!.name;
+          a0 = loop_shape::unspan(args[0]);
+          a1 = loop_shape::unspan(args[1]);
+          if name == "OpLeInt" && a0 == NdInt { n: 0 } && (a1 is NdVar) {
+            lower += [bound_var(a1)];
+          } else if name == "OpGeInt" && (a0 is NdVar) && a1 == NdInt { n: 0 } {
+            lower += [bound_var(a0)];
+          } else if name == "OpLtInt" && (a0 is NdVar) && ((a1 is NdVar) || (a1 is NdInt)) {
+            upper += [GridFact { var: bound_var(a0), node: a1 }];
+          } else if name == "OpGtInt" && (a1 is NdVar) && ((a0 is NdVar) || (a0 is NdInt)) {
+            upper += [GridFact { var: bound_var(a1), node: a0 }];
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  for u in upper {
+    watched: vector<integer> = [u.var];
+    if bound_var(u.node) >= 0 {
+      watched += [bound_var(u.node)];
+    }
+    known = false;
+    for l in lower {
+      if l == u.var {
+        known = true;
+      }
+    }
+    if known && !assigns_any(then, watched) {
+      w.grid_facts += [GridFact { var: u.var, node: u.node }];
+    }
+  }
+}
+
+fn grid_c(w: W, n: ir::Node) -> text {
+  match loop_shape::unspan(n) {
+    NdVar { n: v } => w.names[v]!,
+    NdInt { n: k } => "INT64_C({k})",
+    _ => "",
+  }
+}
+
+// `grid_index`: the test that proves `row * width + column` inside the vector `held`
+// describes, "" where the index is no such sum of facts.
+fn grid_index(x: Cx, w: W, idx: ir::Node, held: text) -> text {
+  if (env_variable("LOFT_NO_GRID_INDEX") ?? "0") != "0" || len(w.grid_facts) == 0 {
+    return "";
+  }
+  e = loop_shape::unspan(idx);
+  bound_to = bound_var(e);
+  if bound_to >= 0 {
+    for i in rev(0..len(w.grid_binds)) {
+      if w.grid_binds[i]!.var == bound_to {
+        e = loop_shape::unspan(w.grid_binds[i]!.node);
+        break;
+      }
+    }
+  }
+  terms: vector<ir::Node> = match e {
+    NdCall { def_nr, args } => {
+      name = cgen_fn::def_name(x.b, def_nr);
+      if (name == "OpAddInt" || name == "OpAddIntNullable") && len(args) == 2 { args } else { [] }
+    },
+    _ => [],
+  };
+  if len(terms) != 2 {
+    return "";
+  }
+  for side in 0..2 {
+    prod = terms[side]!;
+    other = terms[1 - side]!;
+    factors: vector<ir::Node> = match loop_shape::unspan(prod) {
+      NdCall { def_nr, args } => {
+        name = cgen_fn::def_name(x.b, def_nr);
+        if (name == "OpMulInt" || name == "OpMulIntNullable") && len(args) == 2 { args } else { [] }
+      },
+      _ => [],
+    };
+    if len(factors) != 2 {
+      continue;
+    }
+    for pick in 0..2 {
+      a = bound_var(factors[pick]!);
+      width = loop_shape::unspan(factors[1 - pick]!);
+      col = bound_var(other);
+      if a < 0 || col < 0 {
+        continue;
+      }
+      height = -1;
+      for i in rev(0..len(w.grid_facts)) {
+        if w.grid_facts[i]!.var == a {
+          height = i;
+          break;
+        }
+      }
+      below = false;
+      for f in w.grid_facts {
+        if f.var == col && loop_shape::unspan(f.node) == width {
+          below = true;
+        }
+      }
+      if height >= 0 && below {
+        h = grid_c(w, w.grid_facts[height]!.node);
+        wd = grid_c(w, width);
+        return if h == "" || wd == "" { "" } else { "loft_grid_fits({held}, {h}, {wd})" };
+      }
+    }
+  }
+  ""
 }

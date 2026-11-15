@@ -1635,8 +1635,10 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   verdict = if plain_rules() { cgen_hoist::hold_vectors(x, w, lp, ind) } else { opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true } };
   ranged_counters = len(w.in_range);
   ranged_lens = len(w.in_range_lens);
+  grid_known = len(w.grid_facts);
   if plain_rules() {
     cgen_hoist::counters_in_range(x, w, lp);
+    cgen_hoist::grid_counter_facts(x, w, lp);
   }
   window = plain_rules() && cgen_win::open_window(x, w, lp, ind);
   if plain_rules() && !window {
@@ -1659,6 +1661,7 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   w.in_range_lens = w.in_range_lens[0..ranged_lens];
   cgen_hoist::release(w, held_headers, held_pushes);
   w.scalars = w.scalars[0..held_scalars];
+  w.grid_facts = w.grid_facts[0..grid_known];
   if window {
     cgen_win::close_window(x, w, ind);
   }

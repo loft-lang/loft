@@ -1899,6 +1899,7 @@ fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind
   // so it closes after the value, with the block.
   held = len(w.rec_ptrs);
   frames = len(w.headers);
+  grid_bound = len(w.grid_binds);
   stmts_upto(x, w, ops, at, ind);
   assign(x, w, ops[at]!, target, shape, ind);
   flush(w, ind);
@@ -1907,6 +1908,7 @@ fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind
       stmt(x, w, o, ind);
     }
   }
+  w.grid_binds = w.grid_binds[0..grid_bound];
   w.rec_ptrs = w.rec_ptrs[0..held];
   if len(w.headers) > frames {
     w.headers = w.headers[0..frames];
@@ -2015,7 +2017,9 @@ fn stmts(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
   // The record pointers and view headers this block bound close with it.
   held = len(w.rec_ptrs);
   frames = len(w.headers);
+  grid_bound = len(w.grid_binds);
   stmts_upto(x, w, ops, len(ops), ind);
+  w.grid_binds = w.grid_binds[0..grid_bound];
   w.rec_ptrs = w.rec_ptrs[0..held];
   if len(w.headers) > frames {
     w.headers = w.headers[0..frames];
@@ -2061,9 +2065,16 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
     if cgen_ref::clear_before_mint(x.b, ops, o#index, end) {
       continue;
     }
+    if plain_rules() {
+      match loop_shape::unspan(o) {
+        NdSet { var: bound_var, inner: bound_to } => cgen_hoist::grid_bind(x, w, bound_var, bound_to),
+        _ => {},
+      }
+    }
     w.peel_seeds = cgen_loop::peel_seeds(ops, o#index);
     if plain_rules() {
       cgen_hoist::range_facts(x, w, ops, o#index);
+      cgen_hoist::range_ends(w, ops, o#index);
     }
     // A loop's first statement is its iterator: no guard of that loop admits its operators.
     if o#index == 0 && w.iter_pending {
@@ -2433,7 +2444,12 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       cold = null_test(x.b, cond) && !int_literal_fallback(x.b, cond, f);
       test = as_cond(w, expr(x, w, cond, ind));
       line(w, ind, "if ({bare(test)}) {{");
+      grid_known = len(w.grid_facts);
+      if plain_rules() {
+        cgen_hoist::grid_test_facts(x, w, cond, t);
+      }
       stmt(x, w, t, ind + 1);
+      w.grid_facts = w.grid_facts[0..grid_known];
       if loop_shape::unspan(f) != NdNull {
         line(w, ind, "}} else {{");
         if cold {
@@ -2678,6 +2694,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     headers: [],
     push_heads: [],
     windows: [],
+    grid_facts: [],
+    grid_binds: [],
+    range_ends: [],
+    set_many: [],
     table_places: if plain_rules() { cgen_table::places(x.b, index) } else { [] },
     table_paths: [],
     table_names: [],

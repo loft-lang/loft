@@ -125,6 +125,13 @@ struct HeldScalar {
   shape: text,
 }
 
+// `@FR-R-Base`'s grid clause: a variable and what it is known to be below (a fact), or the
+// expression it was bound to (a bind, a range end).
+struct GridFact {
+  var: integer,
+  node: ir::Node,
+}
+
 struct PushHead {
   path: text,
   name: text,
@@ -317,6 +324,11 @@ struct W {
   // `@FR-R-Push`: the push headers the enclosing loops hold, innermost last.
   push_heads: vector<PushHead>,
   windows: vector<Window>,
+  grid_facts: vector<GridFact>,
+  grid_binds: vector<GridFact>,
+  range_ends: vector<GridFact>,
+  // The variables the function sets in more than one place; empty until first asked.
+  set_many: vector<boolean>,
   // `@FR-R-TableHandle`: the places that take a handle, and the handles declared so far.
   table_places: vector<text>,
   table_paths: vector<text>,
@@ -600,7 +612,7 @@ fn held(shape: text) -> text {
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
 // what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_DISTINCT_VERSION", "LOFT_NO_REBOUND_MOVER", "LOFT_NO_APART_MINT", "LOFT_NO_CALLEE_INPUTS", "LOFT_NO_GROWN_HEADER", "LOFT_NO_LENGTH_LOCAL", "LOFT_NO_LOCKSTEP", "LOFT_NO_GRID_INDEX", "LOFT_NO_GUARD_BOUND", "LOFT_NO_VERSION", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_APPEND_TWIN", "LOFT_NO_HAND_OVER", "LOFT_NO_VR_PTR", "LOFT_NO_FNREF_PARK", "LOFT_NO_FNREF_BUFFER", "LOFT_NO_FILE_HOLD"];
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_DISTINCT_VERSION", "LOFT_NO_REBOUND_MOVER", "LOFT_NO_APART_MINT", "LOFT_NO_CALLEE_INPUTS", "LOFT_NO_GROWN_HEADER", "LOFT_NO_LENGTH_LOCAL", "LOFT_NO_LOCKSTEP", "LOFT_NO_GUARD_BOUND", "LOFT_NO_VERSION", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_APPEND_TWIN", "LOFT_NO_HAND_OVER", "LOFT_NO_VR_PTR", "LOFT_NO_FNREF_PARK", "LOFT_NO_FNREF_BUFFER", "LOFT_NO_FILE_HOLD"];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {
