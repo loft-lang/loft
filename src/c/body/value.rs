@@ -1041,16 +1041,6 @@ impl FnWriter<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_leaf_is_keyed_by_both_its_addresses() {
-        let v = crate::data::Value::Var(3);
-        let (a, b) = super::at(&v);
-        assert_eq!(a, b, "an unspanned node is its own unspanned self");
-    }
-}
-
 /// `LOFT_NO_LEND_HANDOFF=1` — a lend handed to a tuple parameter is minted and read back as
 /// it was: the first bisect step for a wrong field in a tuple a lent carrier became.
 fn lend_handoff_on() -> bool {
@@ -1092,4 +1082,14 @@ fn lent_carrier(arg: &Value, offsets: &[i64]) -> Option<(u16, Vec<u16>)> {
         .map(|o| at.iter().find(|(off, _)| off == o).map(|(_, i)| *i))
         .collect::<Option<Vec<u16>>>()?;
     Some((carrier?, order))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_leaf_is_keyed_by_both_its_addresses() {
+        let v = crate::data::Value::Var(3);
+        let (a, b) = super::at(&v);
+        assert_eq!(a, b, "an unspanned node is its own unspanned self");
+    }
 }

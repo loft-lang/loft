@@ -518,6 +518,24 @@ pub fn explain_interpreted(data: &Data, d_nr: u32) -> Option<String> {
     }
     bridge_decline(data, d_nr)
 }
+/// The standard-library functions that are compiled: the ones the shared-store bridge can
+/// carry, that have a loft body, and whose body LOOPS.  A body without a loop is one or two
+/// operations the interpreter already runs as such (`sin` is one `OpMathFuncFloat`), where the
+/// bridge would add a call and win nothing, and it is where output and file primitives sit.
+/// Derived from the IR, so a function joins the set the day its body starts to loop — which is
+/// how a kernel's loft body, restored, is compiled (@PLN181 P2).
+#[must_use]
+pub fn export_set(data: &Data) -> HashSet<u32> {
+    shared_store_dispatchable(data)
+        .into_iter()
+        .filter(|&d| {
+            let code = &data.def(d).code;
+            *code != Value::Null
+                && code.any_node(&mut |n| matches!(n, Value::Loop(_) | Value::Iter(..)))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -619,22 +637,4 @@ mod tests {
             "not every native function is scalar-only (text/vector/ref signatures exist)"
         );
     }
-}
-
-/// The standard-library functions that are compiled: the ones the shared-store bridge can
-/// carry, that have a loft body, and whose body LOOPS.  A body without a loop is one or two
-/// operations the interpreter already runs as such (`sin` is one `OpMathFuncFloat`), where the
-/// bridge would add a call and win nothing, and it is where output and file primitives sit.
-/// Derived from the IR, so a function joins the set the day its body starts to loop — which is
-/// how a kernel's loft body, restored, is compiled (@PLN181 P2).
-#[must_use]
-pub fn export_set(data: &Data) -> HashSet<u32> {
-    shared_store_dispatchable(data)
-        .into_iter()
-        .filter(|&d| {
-            let code = &data.def(d).code;
-            *code != Value::Null
-                && code.any_node(&mut |n| matches!(n, Value::Loop(_) | Value::Iter(..)))
-        })
-        .collect()
 }
