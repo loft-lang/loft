@@ -1645,7 +1645,16 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   if plain_rules() {
     cgen_hoist::hold_pushes(x, w, lp, verdict, ind);
   }
-  guarded_copies(x, w, lp, ind);
+  // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
+  // so both copies are its fallback.
+  fill = if plain_rules() { cgen_win::fill_head(x, w, lp, ind) } else { "" };
+  if fill != "" {
+    line(w, ind, "if (!{fill}) {{");
+    guarded_copies(x, w, lp, ind + 1);
+    cgen_win::fill_tail(x, w, lp, ind);
+  } else {
+    guarded_copies(x, w, lp, ind);
+  }
   w.in_range = w.in_range[0..ranged_counters];
   w.in_range_lens = w.in_range_lens[0..ranged_lens];
   cgen_hoist::release(w, held_headers, held_pushes);
