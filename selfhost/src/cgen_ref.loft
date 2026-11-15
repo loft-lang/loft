@@ -64,28 +64,74 @@ fn wrapper_field_pos(b: ir::Bundle, tp: integer) -> integer {
 
 // The operators over a record or a vector; `done` says whether `name` is one of them.
 pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  answer0 = ref_ops_0(x, w, name, args, ind, done);
+  if done {
+    return answer0;
+  }
+  answer1 = ref_ops_1(x, w, name, args, ind, done);
+  if done {
+    return answer1;
+  }
+  answer2 = ref_ops_2(x, w, name, args, ind, done);
+  if done {
+    return answer2;
+  }
+  answer3 = ref_ops_3(x, w, name, args, ind, done);
+  if done {
+    return answer3;
+  }
+  answer4 = ref_ops_4(x, w, name, args, ind, done);
+  if done {
+    return answer4;
+  }
+  answer5 = ref_ops_5(x, w, name, args, ind, done);
+  if done {
+    return answer5;
+  }
+  answer6 = ref_ops_6(x, w, name, args, ind, done);
+  if done {
+    return answer6;
+  }
+  answer7 = ref_ops_7(x, w, name, args, ind, done);
+  if done {
+    return answer7;
+  }
+  answer8 = ref_ops_8(x, w, name, args, ind, done);
+  if done {
+    return answer8;
+  }
+  answer9 = ref_ops_9(x, w, name, args, ind, done);
+  if done {
+    return answer9;
+  }
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_0(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = true;
   count = len(args);
   if name == "OpFreeRef" && count == 1 {
-    v = loop_shape::var_of(loop_shape::unspan(args[0]));
-    if v >= 0 && (w.shapes[v] ?? "") == "ref" {
-      return E { code: "loft_free_var(&{w.names[v]!})", kind: K_VOID };
+    slot = loop_shape::var_of(loop_shape::unspan(args[0]));
+    if slot >= 0 && (w.shapes[slot] ?? "") == "ref" {
+      return E { code: "loft_free_var(&{w.names[slot]!})", kind: K_VOID };
     }
-    if v >= 0 && (w.shapes[v] ?? "") == "fn" {
-      return E { code: "loft_free_var(&{w.names[v]!}.clos)", kind: K_VOID };
+    if slot >= 0 && (w.shapes[slot] ?? "") == "fn" {
+      return E { code: "loft_free_var(&{w.names[slot]!}.clos)", kind: K_VOID };
     }
-    if v >= 0 {
-      refuse(w, "a release of a variable of shape {w.shapes[v] ?? ""}");
+    if slot >= 0 {
+      refuse(w, "a release of a variable of shape {w.shapes[slot] ?? ""}");
       return none();
     }
     r = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_free_ref({as_ref(w, r)})", kind: K_VOID };
   }
   if name == "OpFreeRefIfDistinct" && count == 2 {
-    v = loop_shape::var_of(loop_shape::unspan(args[0]));
-    if v >= 0 && (w.shapes[v] ?? "") == "ref" {
+    slot = loop_shape::var_of(loop_shape::unspan(args[0]));
+    if slot >= 0 && (w.shapes[slot] ?? "") == "ref" {
       other = cgen_fn::expr(x, w, args[1], ind);
-      return E { code: "loft_free_var_distinct(&{w.names[v]!}, {as_ref(w, other)})", kind: K_VOID };
+      return E { code: "loft_free_var_distinct(&{w.names[slot]!}, {as_ref(w, other)})", kind: K_VOID };
     }
   }
   if (name == "OpFreeRefIfDistinct" || name == "OpFreeRefOrHandUp") && count == 2 {
@@ -94,8 +140,8 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     return E { code: "loft_free_displaced({as_ref(w, p)}, {as_ref(w, other)})", kind: K_VOID };
   }
   if (name == "OpDatabase" || name == "OpDatabaseNP") && count == 2 {
-    v = loop_shape::var_of(args[0]);
-    if v < 0 {
+    slot = loop_shape::var_of(args[0]);
+    if slot < 0 {
       refuse(w, "{name} of no variable");
       return none();
     }
@@ -106,10 +152,10 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     size = enum_parent_size(x.b, tp);
     if is_vector_wrapper(x.b, tp) {
-      w.room_minted[v] = tp;
-      return E { code: "loft_database_room(loft_types, loft_ntypes, &{w.names[v]!}, {size}, {tp})", kind: K_VOID };
+      w.room_minted[slot] = tp;
+      return E { code: "loft_database_room(loft_types, loft_ntypes, &{w.names[slot]!}, {size}, {tp})", kind: K_VOID };
     }
-    return E { code: "loft_database_typed(&{w.names[v]!}, {size}, {tp})", kind: K_VOID };
+    return E { code: "loft_database_typed(&{w.names[slot]!}, {size}, {tp})", kind: K_VOID };
   }
   if name == "OpRefIsNull" && count == 1 {
     r = cgen_fn::expr(x, w, args[0], ind);
@@ -132,14 +178,23 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
   }
   // `keep_room_operator`: the empty handle written into a room that was just minted.
   if name == "OpSetInt4" && count == 3 {
-    v = match args[0] { NdVar { n } => n, _ => -1 };
+    slot = match args[0] { NdVar { n } => n, _ => -1 };
     off = match args[1] { NdInt { n } => n, _ => -1 };
     zero = match args[2] { NdInt { n } => n == 0, _ => false };
-    if v >= 0 && zero && w.room_minted[v]! >= 0 && wrapper_field_pos(x.b, w.room_minted[v]!) == off {
-      w.room_minted[v] = -1;
+    if slot >= 0 && zero && w.room_minted[slot]! >= 0 && wrapper_field_pos(x.b, w.room_minted[slot]!) == off {
+      w.room_minted[slot] = -1;
       return E { code: "((void) 0)", kind: K_VOID };
     }
   }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_1(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
   if (name == "OpSetInt" || name == "OpSetInt4" || name == "OpSetInt4Raw") && count == 3 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     pair = [args[0], args[2]];
@@ -166,10 +221,10 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     return set_at(w, "loft_set_dbref_at", [as_ref(w, r), "{fld}", as_ref(w, val)]);
   }
   if name == "OpPutRef" && count == 2 {
-    v = loop_shape::var_of(args[0]);
-    if v >= 0 {
+    slot = loop_shape::var_of(args[0]);
+    if slot >= 0 {
       val = cgen_fn::expr(x, w, args[1], ind);
-      return E { code: "{w.names[v]!} = {as_ref(w, val)}", kind: K_VOID };
+      return E { code: "{w.names[slot]!} = {as_ref(w, val)}", kind: K_VOID };
     }
   }
   if (name == "OpDropFnRef" || name == "OpFnRefClosure") && count == 1 {
@@ -202,6 +257,15 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     val = cgen_fn::arg(x, w, pair, 1, ind);
     return set_at(w, "loft_set_byte_at", [as_ref(w, r), "{fld}", as_enum(w, val)]);
   }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_2(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
   if name == "OpGetText" && count == 2 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     view = w.field_view;
@@ -293,11 +357,20 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     return E { code: "(loft_vec_len({as_ref(w, v)}) * {stride})", kind: K_INT };
   }
   if name == "OpInitRefSentinel" && count == 1 {
-    v = loop_shape::var_of(args[0]);
-    if v >= 0 && (w.shapes[v] ?? "") == "ref" {
-      return E { code: "{w.names[v]!} = loft_ref_null()", kind: K_VOID };
+    slot = loop_shape::var_of(args[0]);
+    if slot >= 0 && (w.shapes[slot] ?? "") == "ref" {
+      return E { code: "{w.names[slot]!} = loft_ref_null()", kind: K_VOID };
     }
   }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
   if name == "OpLengthVector" && count == 1 {
     v = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_vec_len({as_ref(w, v)})", kind: K_INT };
@@ -448,6 +521,15 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     val = cgen_fn::expr(x, w, args[1], ind);
     return E { code: show_top_call(x, w, tp, "&{dest}", as_ref(w, val), "{fmt}"), kind: K_VOID };
   }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
   if name == "OpReplaceVector" && count == 3 {
     tp = cgen_fn::literal(w, args[2], "element type") ?? return none();
     if tp < 0 || tp >= len(x.b.types) {
@@ -581,6 +663,15 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     return E { code: "loft_fs_mkdir({path}, {if name == "OpMkdir" { 0 } else { 1 }})", kind: K_INT };
   }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_5(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
   if name == "OpMoveFile" && count == 2 {
     a = cgen_fn::arg(x, w, args, 0, ind);
     b = cgen_fn::arg(x, w, args, 1, ind);
@@ -649,6 +740,15 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
   if name == "OpNullReported" && count == 0 {
     return E { code: "loft_ref_null_reported()", kind: K_REF };
   }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_6(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
   if name == "OpSizeStruct" && count == 2 {
     sz = cgen_fn::literal(w, args[1], "size") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
@@ -733,6 +833,15 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     from = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
     return E { code: "loft_adopt_child_rec(loft_types, {tp}, {into}, {from})", kind: K_VOID };
   }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_7(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
   if name == "OpWriteFile" && count == 3 {
     return write_file(x, w, args, ind);
   }
@@ -786,6 +895,116 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     return E { code: "loft_array_get({as_ref(w, a)}, {as_int(w, b)})", kind: K_REF };
   }
+  if name == "OpIterate" && count >= 4 {
+    return iterate(x, w, args, ind);
+  }
+  if name == "OpStep" && count == 4 {
+    state = loop_shape::var_of(args[0]);
+    if state >= 0 {
+      on = cgen_fn::literal(w, args[2], "walk kind") ?? return none();
+      walk_arg = cgen_fn::literal(w, args[3], "walk argument") ?? return none();
+      coll_c = as_ref(w, cgen_fn::expr(x, w, args[1], ind));
+      reverse = if on & 64 != 0 { 1 } else { 0 };
+      kind = on & 63;
+      st = w.names[state]!;
+      if kind == 1 {
+        // `arg` is the index type: a step finds its record again by key.
+        if walk_arg < 0 || walk_arg >= len(x.b.types) {
+          refuse(w, "a type number out of range");
+          return none();
+        }
+        return E { code: "loft_ix_step(&{st}, {coll_c}, loft_keys{walk_arg}, {len(x.b.types[walk_arg].keys)}, {reverse})", kind: K_REF };
+      }
+      if kind == 3 {
+        return E { code: "loft_seq_step(&{st}, {coll_c}, 0, {reverse})", kind: K_REF };
+      }
+      if kind == 2 {
+        return E { code: "loft_seq_step(&{st}, {coll_c}, {walk_arg}, {reverse})", kind: K_REF };
+      }
+      if kind == 4 {
+        return E { code: "loft_scratch_step(&{st}, {coll_c}, {reverse})", kind: K_REF };
+      }
+      refuse(w, "a walk of kind {kind}");
+      return none();
+    }
+  }
+  if name == "OpFreeScratch" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_free_scratch({as_ref(w, r)})", kind: K_VOID };
+  }
+  if name == "OpReplaceKeyed" && count == 3 {
+    raw = cgen_fn::literal(w, args[2], "type") ?? return none();
+    tp = raw & 32767;
+    if keyed_kind(x.b, tp) == "" {
+      refuse(w, "a keyed operation on another kind of type");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    from = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    // Bit 1: the element tree may move whole.
+    mode = (if raw & 32768 != 0 { 1 } else { 0 }) + (if cgen_bind::swap_safe(x.b, tp, []) { 2 } else { 0 });
+    return E { code: "loft_replace_keyed(loft_types, {tp}, {from}, {into}, {mode})", kind: K_VOID };
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_8(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpReserveHash" && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    if keyed_kind(x.b, tp) == "" {
+      refuse(w, "a keyed operation on another kind of type");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    coll_c = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    count_c = as_int(w, cgen_fn::arg(x, w, pair, 1, ind));
+    return E { code: "loft_hash_reserve(loft_types, {tp}, {coll_c}, {count_c})", kind: K_VOID };
+  }
+  if name == "OpHashRemove" && count == 3 {
+    raw = cgen_fn::literal(w, args[2], "type") ?? return none();
+    view = if raw & 32768 != 0 { 1 } else { 0 };
+    tp = raw & 32767;
+    kind = keyed_kind(x.b, tp);
+    if kind == "" {
+      refuse(w, "a keyed operation on another kind of type");
+      return none();
+    }
+    elem = content_of(x.b, tp);
+    nk = len(x.b.types[tp].keys);
+    // The typed removal of a hash entry its own lookup found starts at that lookup's walk: it
+    // asks that both name one path, which is not read here.
+    looked_up = match loop_shape::unspan(args[1]) {
+      NdCall { def_nr, args: inner } => cgen_fn::def_name(x.b, def_nr) == "OpGetRecord" && len(inner) == 4,
+      _ => false,
+    };
+    if kind == "hash" && nk == 1 && looked_up && (x.b.types[tp].keys[0].type_nr == 1 || x.b.types[tp].keys[0].type_nr == 2) {
+      refuse(w, "a removal of the entry a lookup found");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    coll_c = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    rec_c = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    keys_c = "loft_keys{tp}, {nk}";
+    if kind == "hash" {
+      return E { code: "loft_hash_remove(loft_types, {elem}, {coll_c}, {rec_c}, {keys_c}, {view})", kind: K_VOID };
+    }
+    if kind == "sorted" {
+      return E { code: "loft_sorted_remove_owned(loft_types, {elem}, {coll_c}, {rec_c}, {x.b.types[elem].size})", kind: K_VOID };
+    }
+    if kind == "index" {
+      return E { code: "loft_ix_remove(loft_types, {elem}, {coll_c}, {rec_c}, {keys_c}, {view})", kind: K_VOID };
+    }
+    if kind == "ordered" || kind == "array" {
+      return E { code: "loft_ordered_remove(loft_types, {elem}, {coll_c}, {rec_c}, {if kind == "array" { 1 } else { 0 }}, {view})", kind: K_VOID };
+    }
+    return E { code: "loft_rx_remove_owned(loft_types, {elem}, {coll_c}, {rec_c}, {keys_c}, {if kind == "trie" { 1 } else { 0 }}, {view})", kind: K_VOID };
+  }
   if name == "OpGetRecord" && count >= 3 {
     return get_record(x, w, args, ind);
   }
@@ -835,6 +1054,15 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     return E { code: "if (!loft_reset_pool_root({root}, {tp}, {enum_parent_size(x.b, tp)}, loft_dflt{tp}, {x.b.types[tp].size})) {walk}", kind: K_VOID };
   }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_9(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
   if name == "OpGetCharacter" && count == 2 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
@@ -1318,6 +1546,83 @@ fn key_value(w: W, e: E, type_nr: integer) -> text {
     return "loft_kv_int((int64_t) {as_char(w, e)})";
   }
   "loft_kv_int({as_int(w, e)})"
+}
+
+// `iterate`: the start of a walk over a keyed collection between two key bounds —
+// `OpIterate(data, on, arg, keys, nfrom, from…, ntill, till…)`.
+fn iterate(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  keys = match args[3] {
+    NdKeys { keys: ks } => ks,
+    _ => {
+      refuse(w, "operator OpIterate");
+      return none();
+    },
+  };
+  on = cgen_fn::literal(w, args[1], "walk kind") ?? return none();
+  walk_arg = cgen_fn::literal(w, args[2], "walk argument") ?? return none();
+  if len(args) < 5 {
+    refuse(w, "a walk without its bounds");
+    return none();
+  }
+  nfrom = cgen_fn::literal(w, args[4], "bound count") ?? return none();
+  till_at = 5 + nfrom;
+  if nfrom < 0 || till_at >= len(args) {
+    refuse(w, "a walk without its upper bound");
+    return none();
+  }
+  ntill = cgen_fn::literal(w, args[till_at]!, "bound count") ?? return none();
+  if ntill < 0 || till_at + 1 + ntill > len(args) {
+    refuse(w, "a walk without its upper bound");
+    return none();
+  }
+  if nfrom > len(keys) || ntill > len(keys) {
+    refuse(w, "a walk bound with more values than keys");
+    return none();
+  }
+  all: vector<ir::Node> = [args[0]];
+  for k in 0..nfrom {
+    all += [args[5 + k]!];
+  }
+  for k in 0..ntill {
+    all += [args[till_at + 1 + k]!];
+  }
+  data = as_ref(w, cgen_fn::arg(x, w, all, 0, ind));
+  from_values: vector<text> = [];
+  till_values: vector<text> = [];
+  for k in 0..nfrom {
+    from_values += [key_value(w, cgen_fn::arg(x, w, all, 1 + k, ind), keys[k]!.type_nr)];
+  }
+  for k in 0..ntill {
+    till_values += [key_value(w, cgen_fn::arg(x, w, all, 1 + nfrom + k, ind), keys[k]!.type_nr)];
+  }
+  if w.why != "" {
+    return none();
+  }
+  parts: vector<text> = [];
+  for k in keys {
+    parts += ["{{ {k.type_nr}, {k.position}, {k.start} }}"];
+  }
+  ka = if len(keys) == 0 { "0" } else { "(const loft_key[]){{ {parts.join(", ")} }}" };
+  f = if nfrom == 0 { "0" } else { "(loft_kv[]){{ {from_values.join(", ")} }}" };
+  t = if ntill == 0 { "0" } else { "(loft_kv[]){{ {till_values.join(", ")} }}" };
+  ex = if on & 128 == 0 { 1 } else { 0 };
+  reverse = if on & 64 != 0 { 1 } else { 0 };
+  nk = len(keys);
+  kind = on & 63;
+  if kind == 1 {
+    return E { code: "loft_ix_iterate({data}, {ex}, {reverse}, {ka}, {nk}, {f}, {nfrom}, {t}, {ntill})", kind: K_INT };
+  }
+  if kind == 3 {
+    return E { code: "loft_seq_iterate({data}, 0, {ex}, {ka}, {nk}, {f}, {nfrom}, {t}, {ntill})", kind: K_INT };
+  }
+  if kind == 2 {
+    return E { code: "loft_seq_iterate({data}, {walk_arg}, {ex}, {ka}, {nk}, {f}, {nfrom}, {t}, {ntill})", kind: K_INT };
+  }
+  if kind == 4 && nfrom == 0 && ntill == 0 {
+    return E { code: "loft_scratch_iterate({data})", kind: K_INT };
+  }
+  refuse(w, "a walk of kind {kind}");
+  none()
 }
 
 // `get_record`: the record a keyed collection holds under the given key values.  Under the
