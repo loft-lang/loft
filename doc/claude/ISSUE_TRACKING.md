@@ -688,7 +688,11 @@ scripts/claim.py check N           # who holds it
   `Flaky test (passed only on retry)` annotations, on that run and on main's push runs: a pass
   on retry is a finding, and the race is deleted as [GUARDS.md](GUARDS.md) § A fixed delay is
   not synchronisation describes (sequence the steps, never widen the margin), so a green run
-  stays evidence.
+  stays evidence.  And it checks the weekly stability series: when the last row of
+  `index/stability_weekly.tsv` is more than seven days old, it records one
+  (`make stability-read ARGS="--record"`, [STABILITY_METHOD.md](STABILITY_METHOD.md)
+  § The weekly read), and when the read shows the performance portal's row older than a week,
+  it asks the performance stream for `make perf-check ARGS="--record"`.
 
 A claim written in prose ("claimed by the … stream") is invisible to the script, the work queue
 and the hook.  Write it with the script.
