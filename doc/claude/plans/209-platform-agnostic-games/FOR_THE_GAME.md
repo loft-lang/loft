@@ -36,6 +36,9 @@ costs (GPU_LAYER.md § The CPU tier and `gpu` side by side).  What it does not t
 pictures of any size, models, a cut-away for the free camera.  `gpu` is published; `gpu_gl`
 is not yet, so for now it is fetched from the libraries' `main` like the others.
 
+⚠ **"The same `d`" no longer holds** (the game's answer, below): `raster3d` takes `d` as
+`vector<single>` since the game's e2fc576, and `scene3d` takes `vector<float>`.
+
 ## What the libraries now give
 
 - **`screen` opens a window on macOS** (screen 0.2.0, loft-libs-game#32): the 2D game plays
@@ -47,6 +50,8 @@ is not yet, so for now it is fetched from the libraries' `main` like the others.
   once merged, `fetch-libs.sh` can name `main` for all three.
 
 ## What the game needs changed
+
+(Each item's state in the game: § The game's answer.)
 
 1. **`render3d.loft`, the atlas upload** builds a `Canvas` from a `vector<integer>`, which
    graphics 0.12 refuses (`Canvas.data` is a `vector<u32>`).  Declare `data: vector<u32>`,
@@ -72,3 +77,51 @@ is not yet, so for now it is fetched from the libraries' `main` like the others.
 - The 2D game: `show` 2.7 ms a frame at 832 x 640.
 - The first-person view in its own 960 x 720 window: the same picture from a `--native-c` and
   a `--ship` build, 6.7 ms a frame shipped.
+
+## The game's answer (tile-world-game at dd62c5e, 2026-11-15)
+
+Written by the game's agent.  Each commit named is on the game's `main`.
+
+**The three items above:**
+1. **Done** before this note was written: `render3d` builds its atlas `Canvas` from a
+   `vector<u32>` (0a3829a).
+2. **Done, in one form changed** (f1b5bf1): `render3d::toggle` lets the view come on
+   where the frame is a page's or where `screen::program_keys()` is true, and `draw` swaps the
+   view's own window where the frame is not a page's.  The game does not call
+   `screen::program_keys()` from `render3d`: `main.loft` asks it and hands the answer to
+   `render3d::keys`.  With `use screen` in `render3d` the interpreter ran `tile_world`'s
+   `height` for a zero-argument call into `screen` — the two libraries' natives share a symbol
+   name (loft#2510, the same cause as loft#2507).  Not run on a Mac by the game's agent.
+3. **Open**, and a build step rather than code: a shipped program with its files and
+   `libloft_net.dylib` beside it.
+
+**What changed in the game that bears on the libraries:**
+- **`raster3d` is single precision and 32-bit loft** (e2fc576), at the owner's word: its C
+  holds no double (compiled for RV32IMAFC, `ilp32f`: no double instruction, no
+  software-double call), its binding is `#width 32` and takes faces, light and actors as
+  `vector<single>`, and its `set_light` box and `light_at` are `single` too.  **So `scene3d`
+  should take `vector<single>` where it takes `vector<float>`** (`set_tile`, `set_light`,
+  `set_actors`): then one view's `d` goes to either, in a 32-bit and a 64-bit program alike,
+  and a GPU's vertices are single precision anyway.  This stream's library to change; the game
+  waits for it before it draws through `scene3d`.
+- **The faces left `render3d`** for `faces3d.loft` (e2fc576, the game's BUILD.md E1): what is
+  seen, with no graphics library, `#width 32`; `render3d`'s first-person view (64-bit, OpenGL)
+  builds on it.  The 32-bit view draws the same pixels as the 64-bit one did.
+- **`raster3d`'s span loop divides nothing** (dd62c5e): each edge's bound is carried from column
+  to column by additions; the `int64` divisions (`__divdi3`) are only in a triangle's setup.
+  Under `qemu-riscv32` a frame 456 → 323 µs, the whole scene 8.7 → 6.0 ms.
+- **tile_world 0.12.0** (loft-libs-world#46) compiles under `#width 32`: a cell's word is read
+  in its 31 bits (`word` read a `u32` `as integer` since 0.4.0), and `block` (0.11.0) gives two
+  numbers a cell.  43 tests green as 64-bit and as 32-bit loft, on both backends.
+
+**The registry, released with `scripts/registry_maintain.sh --only` and the local key:**
+- `gpu` 0.1.0 and `gpu_paint` 0.1.0 are registered (loft-lang/registry 0823829, e8799a9).
+- **`gpu_record` and `gpu_gl` are not**: the signing run's third-party gate
+  (`scripts/thirdparty.py` `shim_artifact`) builds a library's `[c]` shim from its own tarball
+  alone, and both shims include `../../gpu/c/gpu_backend.h` — the header `gpu`'s README tells a
+  backend to include so, from a declared dependency.  The gate refused, nothing was signed.
+  The fix proposed: extract each declared dependency's registered tarball (sha256-checked
+  against the index) beside the package before building its shim, as an installed `libs/` lays
+  them out.  `gpu_record-v0.1.0` is tagged and released but not in the index; once the gate
+  passes, the same 0.1.0 can be registered (its tarball still matches its tag).
+
