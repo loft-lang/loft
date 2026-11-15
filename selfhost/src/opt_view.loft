@@ -277,7 +277,7 @@ fn free_before_use(b: ir::Bundle, d: ir::Definition, stmts: vector<ir::Node>, fr
 // `view_extent_verdict`: may the address of view `r` serve the statements `stmts[from..]` of
 // function `vd`?  They read or write a scalar field of it, none of them may move a store or
 // rebind the view, and no record is released before a use of it.
-pub fn view_extent_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, from: integer, r: integer) -> boolean {
+pub fn view_extent_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, from: integer, r: integer, extra_use: boolean) -> boolean {
   d = b.data.definitions[vd]!;
   targets = binds::link_targets(d.variables, r);
   state = [false, false];
@@ -330,7 +330,8 @@ pub fn view_extent_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: 
       _ => {},
     }
   });
-  if !state[1]! {
+  // `extra_use`: the writer's own count of the uses this walk does not see.
+  if !state[1]! && !extra_use {
     return false;
   }
   for op in stmts {
@@ -372,12 +373,12 @@ pub fn param_view_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: v
   if (tp is TyOptional) || !opt_writes::is_plain_record(b, tp) {
     return false;
   }
-  view_extent_ok(b, w, vd, stmts, 0, p)
+  view_extent_ok(b, w, vd, stmts, 0, p, false)
 }
 
 // `record_view_ptr`: may the address of the view statement `at` binds be taken there, for the
 // statements `stmts[at + 1..]`?
-pub fn record_view_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, at: integer) -> boolean {
+pub fn record_view_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, at: integer, extra_use: boolean) -> boolean {
   r = -1;
   bound_null = false;
   match loop_shape::unspan(stmts[at]!) {
@@ -398,5 +399,22 @@ pub fn record_view_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: 
   if bound_null {
     return false;
   }
-  view_extent_ok(b, w, vd, stmts, at + 1, r)
+  view_extent_ok(b, w, vd, stmts, at + 1, r, extra_use)
+}
+
+// `reads_text_field`: do the statements `stmts[from..]` read a text field of view `r`?
+pub fn reads_text_field(b: ir::Bundle, stmts: vector<ir::Node>, from: integer, r: integer) -> boolean {
+  hit = [false];
+  rest = ir::NdInsert { items: stmts[from..len(stmts)] };
+  opt_non_sentinel::walk(rest, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr) == "OpGetText" && len(args) > 1 && loop_shape::unspan(args[0]) == NdVar { n: r } && (loop_shape::unspan(args[1]) is NdInt) {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
 }

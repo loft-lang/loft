@@ -154,7 +154,7 @@ fn held_element_bind(x: Cx, w: W, op: ir::Node) -> HeldElem {
   }
 }
 
-fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: integer) {
+fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: integer, texts: boolean) {
   slot = len(w.decls);
   pa = "loft_pa{r}_{slot}";
   pl = "loft_pl{r}_{slot}";
@@ -186,7 +186,7 @@ fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: inte
   if writes {
     line(w, ind, "{pl} = loft_rec_locked({rec});");
   }
-  w.rec_ptrs += [RecPtr { var: r, pa: pa, pl: pl }];
+  w.rec_ptrs += [RecPtr { var: r, pa: pa, pl: pl, texts: texts }];
 }
 
 // `bind_param_ptrs`: a plain-record parameter read or written at least twice takes its
@@ -207,7 +207,7 @@ pub fn bind_param_ptrs(x: Cx, w: W, code: ir::Node) {
     if !opt_view::param_view_ok(x.b, x.writes, w.index, stmts, v) {
       continue;
     }
-    bind(x, w, v, stmts, 0, 1);
+    bind(x, w, v, stmts, 0, 1, false);
   }
 }
 
@@ -242,10 +242,13 @@ pub fn bind_record_ptr(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: int
     return;
   }
   remainder: vector<ir::Node> = ops[0..last + 1];
-  if !opt_view::record_view_ok(x.b, x.writes, w.index, remainder, at) {
+  // The text clause: an element of a held vector serves its text field reads through the
+  // address — a record element's texts are records of its vector's store.
+  texts = (env_variable("LOFT_NO_TEXT_FIELD") ?? "0") == "0" && held_element_bind(x, w, ops[at]!).header != "" && opt_view::reads_text_field(x.b, remainder, at + 1, r);
+  if !opt_view::record_view_ok(x.b, x.writes, w.index, remainder, at, texts) {
     return;
   }
-  bind(x, w, r, ops, at + 1, ind);
+  bind(x, w, r, ops, at + 1, ind, texts);
 }
 
 // `rec_ptr_access`: a scalar field read or in-place write of a view whose address is held
@@ -253,6 +256,31 @@ pub fn bind_record_ptr(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: int
 pub fn rec_ptr_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = false;
   count = len(args);
+  // `rec_ptr_text`: a text field of a view whose address serves its texts.
+  if name == "OpGetText" && count == 2 {
+    root_var = loop_shape::var_of(loop_shape::unspan(args[0]));
+    held = -1;
+    for p in w.rec_ptrs {
+      if p.var == root_var {
+        held = p#index;
+      }
+    }
+    if root_var < 0 || held < 0 || !w.rec_ptrs[held].texts {
+      return none();
+    }
+    done = true;
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    read = "loft_pa_text({w.rec_ptrs[held].pa}, {fld}, {w.names[root_var]!}.store_nr)";
+    view = w.field_view;
+    w.field_view = false;
+    if view {
+      return E { code: read, kind: K_VIEW };
+    }
+    t = temp(w, "text");
+    line(w, ind, "loft_text_free(&{t});");
+    line(w, ind, "{t} = loft_text_own({read});");
+    return held_value(w, t, "text");
+  }
   getter = ((name == "OpGetInt" || name == "OpGetFloat" || name == "OpGetSingle" || name == "OpGetEnum" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full") && count == 2) || ((name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull") && count == 3);
   setter = (name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetSingle" || name == "OpSetEnum") && count == 3;
   if !getter && !setter {
