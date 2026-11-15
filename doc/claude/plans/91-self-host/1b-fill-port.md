@@ -186,7 +186,9 @@ on the integer kernels) and `selfhost/bench/bench_speed.py` (every routine of th
 suite, `bench/NN_*`, each timed by the program itself).  Compare builds by user-mode
 instruction counts (`perf stat -e instructions:u`, a large run less a tiny one): on a busy
 machine the times and the cycle counts move by a factor of two, the instruction counts not at
-all.  The gate is the generated runner at the Rust interpreter's time.  On the integer kernels
+all.  A timed price runs the SAME image four times or more on each build: one runner binary can
+settle in two speeds on one image (the `sum` row read 564 µs and 405 µs on alternate runs),
+and a single run of each build then prices the layout, not the change.  The gate is the generated runner at the Rust interpreter's time.  On the integer kernels
 it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles); over the
 benchmark suite's 94 routines the geometric mean is 0.88 of the Rust interpreter's time (0.99
 on a second machine, a few commits earlier), the worst 1.8 (`map_json`, rendering records
