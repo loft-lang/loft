@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C — the compiled stdlib bodies the loft runner's shim carries
 //! @PLN91 — compiled standard-library bodies for the loft bytecode runner (`loft --emit-c-bodies`).
 //!
 //! The Rust interpreter runs a standard-library function the Rust build compiled through its
