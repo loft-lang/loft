@@ -14,6 +14,7 @@ use loop_shape;
 use cgen_fn;
 use cgen_bind;
 use ptypes;
+use opt_push;
 use binds;
 use opt_non_sentinel;
 use types;
@@ -1783,6 +1784,45 @@ pub fn clear_before_mint(b: ir::Bundle, ops: vector<ir::Node>, i: integer, end: 
     }
   }
   false
+}
+
+// `reserve_push_run` (`@FR-R-PushFill`'s run clause): a run of two or more scalar pushes onto
+// one vector known to be empty reserves the run's room once.  Answers the statement after the
+// run, -1 where statement `at` starts none.  The run's header (its pushes written through one
+// held header) is the vector hoist's, which is not carried.
+pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer) -> integer {
+  if (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
+    return -1;
+  }
+  shown: vector<ir::Node> = ops[0..end];
+  first = opt_push::push_at(x.b, shown, at);
+  if first.size == 0 {
+    return -1;
+  }
+  count = 1;
+  next = first.next;
+  run_end = next;
+  for _ in 0..end {
+    for _ in 0..end {
+      if next >= end || !(loop_shape::unspan(shown[next]!) is NdLine) {
+        break;
+      }
+      next += 1;
+    }
+    p = opt_push::push_at(x.b, shown, next);
+    if p.size == 0 || p.path != first.path || p.size != first.size || loop_shape::unspan(p.vector) != loop_shape::unspan(first.vector) {
+      break;
+    }
+    count += 1;
+    next = p.next;
+    run_end = next;
+  }
+  if count < 2 || !opt_push::known_empty(x.b, shown, at, first.vector) {
+    return -1;
+  }
+  v = as_ref(w, cgen_fn::expr(x, w, first.vector, ind));
+  line(w, ind, "loft_vec_reserve_run({v}, INT64_C({count}), {first.size});");
+  run_end
 }
 
 // `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write

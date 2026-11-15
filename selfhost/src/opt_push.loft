@@ -1,0 +1,281 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the scalar pushes a rule may fuse (`opt::writes::fused_push`,
+// `vector_path`, `push_operands`) and `src/empty_slot.rs`: is a vector known to be empty where
+// a statement list ends?
+
+use ir;
+use loop_shape;
+use opt_non_sentinel;
+
+// One scalar push as a rule reads it: the vector's path, the vector and value nodes, the
+// element's size.  `size` 0: no fusable push.
+pub struct Push {
+  pub path: text,
+  pub root: integer,
+  pub vector: ir::Node,
+  pub val: ir::Node,
+  pub size: integer,
+  // The index of the statement after the push.
+  pub next: integer,
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `vector_path`: a vector expression as the path it names — a variable, then the offsets of
+// the fields read off it — as `root:off,off`; "" for any other expression.  `root` takes the
+// variable.
+pub fn vector_path(b: ir::Bundle, v: ir::Node, root: &integer) -> text {
+  match loop_shape::unspan(v) {
+    NdVar { n } => {
+      root = n;
+      "{n}:"
+    },
+    NdCall { def_nr, args } => {
+      if len(args) != 3 || def_name(b, def_nr) != "OpGetField" {
+        return "";
+      }
+      off = match loop_shape::unspan(args[1]) {
+        NdInt { n } => n,
+        _ => return "",
+      };
+      base = vector_path(b, args[0], root);
+      if base == "" { "" } else { "{base}{off}," }
+    },
+    _ => "",
+  }
+}
+
+// The element size of a fusable push operator (`FUSABLE_PUSHES`), 0 for any other operator.
+fn push_size(name: text) -> integer {
+  if name == "OpPushByte" || name == "OpPushBoolean" || name == "OpPushEnum" {
+    1
+  } else if name == "OpPushInt4" || name == "OpPushCharacter" || name == "OpPushSingle" {
+    4
+  } else if name == "OpPushInt" || name == "OpPushFloat" {
+    8
+  } else {
+    0
+  }
+}
+
+fn none(ops: vector<ir::Node>) -> Push {
+  Push { path: "", root: -1, vector: ir::NdNull, val: ir::NdNull, size: 0, next: len(ops) }
+}
+
+fn is_pre_alloc(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args: _ } => def_name(b, def_nr) == "OpPreAllocVector",
+    _ => false,
+  }
+}
+
+// `push_at`: the scalar push starting at statement `at` — a bare push, or the
+// `OpPreAllocVector(v, 1, w)` a push onto a local is lowered with, in an `Insert` pair or as
+// the statement before the push.
+pub fn push_at(b: ir::Bundle, ops: vector<ir::Node>, at: integer) -> Push {
+  if at < 0 || at >= len(ops) {
+    return none(ops);
+  }
+  push = ops[at]!;
+  next = at + 1;
+  match loop_shape::unspan(ops[at]!) {
+    NdInsert { items } => {
+      if len(items) != 2 || !is_pre_alloc(b, items[0]) {
+        return none(ops);
+      }
+      push = items[1];
+    },
+    _ => {
+      if is_pre_alloc(b, ops[at]!) {
+        if at + 1 >= len(ops) {
+          return none(ops);
+        }
+        push = ops[at + 1]!;
+        next = at + 2;
+      }
+    },
+  }
+  match loop_shape::unspan(push) {
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      size = push_size(name);
+      if size == 0 {
+        return none(ops);
+      }
+      // `push_operands`: a byte push carries its bias between the vector and the value.
+      if (name == "OpPushByte" && len(args) != 3) || (name != "OpPushByte" && len(args) != 2) {
+        return none(ops);
+      }
+      root = -1;
+      path = vector_path(b, args[0], root);
+      if path == "" {
+        return none(ops);
+      }
+      Push { path: path, root: root, vector: args[0], val: args[len(args) - 1], size: size, next: next }
+    },
+    _ => none(ops),
+  }
+}
+
+// The arguments of `v` when it is a call of `name`; `hit` says whether it is one.
+fn call_args(b: ir::Bundle, v: ir::Node, name: text, hit: &boolean) -> vector<ir::Node> {
+  hit = false;
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == name {
+        hit = true;
+        return args;
+      }
+      []
+    },
+    _ => [],
+  }
+}
+
+// Do `a`'s first two operands name the slot — `Var(root)`, `Int(off)`?
+fn on_slot(a: vector<ir::Node>, root: integer, off: integer) -> boolean {
+  if len(a) < 2 {
+    return false;
+  }
+  loop_shape::unspan(a[0]) == NdVar { n: root } && loop_shape::unspan(a[1]) == NdInt { n: off }
+}
+
+// `empties`: does statement `op` leave the vector in slot `(root, off)` empty?
+pub fn empties(b: ir::Bundle, op: ir::Node, root: integer, off: integer) -> boolean {
+  hit = false;
+  set = call_args(b, op, "OpSetInt4", hit);
+  if hit {
+    return on_slot(set, root, off) && len(set) > 2 && loop_shape::unspan(set[2]) == NdInt { n: 0 };
+  }
+  clear = call_args(b, op, "OpClearVector", hit);
+  if hit {
+    if len(clear) == 0 {
+      return false;
+    }
+    field = call_args(b, clear[0], "OpGetField", hit);
+    return hit && on_slot(field, root, off);
+  }
+  match loop_shape::unspan(op) {
+    NdIf { cond: _, t, f } => loop_shape::unspan(f) != NdNull && empties(b, t, root, off) && empties(b, f, root, off),
+    NdBlock { block } => block_empties(b, block[0].operators, root, off),
+    _ => false,
+  }
+}
+
+fn names_var(o: ir::Node, v: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(o, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == v { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn block_empties(b: ir::Bundle, ops: vector<ir::Node>, root: integer, off: integer) -> boolean {
+  for i in rev(0..len(ops)) {
+    op = ops[i]!;
+    if empties(b, op, root, off) {
+      return true;
+    }
+    if names_var(op, root) && !only_elsewhere(b, op, root, off) {
+      return false;
+    }
+  }
+  false
+}
+
+// Does every mention of `root` in `o` only reach ANOTHER field — `OpGetField(root, off2, …)`
+// or a write `OpSet…(root, off2, …)`?
+fn only_elsewhere(b: ir::Bundle, o: ir::Node, root: integer, off: integer) -> boolean {
+  all = [0];
+  other = [0];
+  opt_non_sentinel::walk(o, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == root { all[0] = all[0]! + 1; } },
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if (name == "OpGetField" || name.starts_with("OpSet")) && len(args) > 1 && loop_shape::unspan(args[0]) == NdVar { n: root } {
+          match loop_shape::unspan(args[1]) {
+            NdInt { n: at } => { if at != off { other[0] = other[0]! + 1; } },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  all[0]! == other[0]!
+}
+
+// The slot `OpGetField(Var(r), Int(off), …)` names; `root` -1 for any other node.
+fn field_of(b: ir::Bundle, v: ir::Node, off: &integer) -> integer {
+  hit = false;
+  a = call_args(b, v, "OpGetField", hit);
+  if !hit || len(a) < 2 {
+    return -1;
+  }
+  r = loop_shape::var_of(loop_shape::unspan(a[0]));
+  match loop_shape::unspan(a[1]) {
+    NdInt { n } => {
+      off = n;
+      r
+    },
+    _ => -1,
+  }
+}
+
+// `known_empty`: is `vector` EMPTY where the first `count` statements of `ops` end?
+pub fn known_empty(b: ir::Bundle, ops: vector<ir::Node>, count: integer, vector: ir::Node) -> boolean {
+  // The slot: the field itself, or the wrapper field a local vector is bound to.
+  local = loop_shape::var_of(loop_shape::unspan(vector));
+  root = -1;
+  off = 0;
+  if local >= 0 {
+    for o in ops {
+      if o#index >= count || root >= 0 {
+        continue;
+      }
+      match loop_shape::unspan(o) {
+        NdSet { var, inner } => {
+          if var == local {
+            // The first bind of the local that names a field.
+            root = field_of(b, inner, off);
+          }
+        },
+        _ => {},
+      }
+    }
+    if root < 0 {
+      return false;
+    }
+  } else {
+    root = field_of(b, vector, off);
+    if root < 0 {
+      return false;
+    }
+  }
+  for i in rev(0..count) {
+    op = ops[i]!;
+    if empties(b, op, root, off) {
+      return true;
+    }
+    rebinds = match loop_shape::unspan(op) {
+      NdSet { var, inner: _ } => local >= 0 && var == local,
+      _ => false,
+    };
+    if rebinds {
+      continue;
+    }
+    if (names_var(op, root) && !only_elsewhere(b, op, root, off)) || (local >= 0 && names_var(op, local)) {
+      return false;
+    }
+  }
+  false
+}
