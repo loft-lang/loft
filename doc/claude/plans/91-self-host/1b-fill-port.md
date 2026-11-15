@@ -164,13 +164,22 @@ worker or arm — runs `fn_return` (`State::plain_return`, asked once after each
 ran on the `State`).  A function binds at most 300 variables, so an arm's locals come from a
 pool by type (`ri0`…, `rf0`…, `rb0`…).
 
-What an operator outside the arms costs: a `state::DbRef` it takes or answers is a record in
-a store of its own and the vector its parts are read into another, so each such operator
-mints two stores — 5 to 18 times the Rust interpreter's time on record and vector programs.
-The C writer's `(R-ValueRecord)` declines `DbRef` (`LOFT_TRACE_VALUEREC=1`); until it admits
-it, the cure for a hot operator is an arm.  A native that takes a text copies it out
-(`crt::stack_str`, which also validates it); the ones a loop calls read their views in place
-(`crt::view_find`, `view_starts`, `view_byte`).
+What an operator outside the arms costs, and the cures that hold everywhere in the runner:
+
+- A `state::DbRef` value is a record in a store of its own.  The IR's `(R-ValueRecord)` carries
+  the `State`'s reference getters as tuples (their record-owing sites keep the record form,
+  `value_records_twinned`); a method that takes or answers a reference reads and writes it in
+  its slot (`get_record`, `new_record_at`, `step`), the answer through the scratch vector
+  `State.lio`.
+- A fact about a type is derived once per type, never per execution: `State::fact` (scalar
+  facts), `keyed_facts` (key plans), `target_of` (record targets, behind a direct-mapped cache).
+  A `types::` walk per operator copies the type table's vectors out by value.
+- A text argument is read as its view in place (`crt::view_*`, `*_view`); where a copy is
+  owed it goes through `State.tbuf` (`crt::stack_str_in`), never a vector minted per call.  A
+  formatted value is rendered into its destination (`crt::append_int` / `append_float` /
+  `append_text`).
+- A native that needs only the stack is `natives::light`, called from `OpStaticCall`'s arm;
+  each native is a function of its own, so a call initialises only its own locals.
 
 Measure with `selfhost/bench/fill_speed.sh` (the generated runner against `loft --interpret`
 on the integer kernels) and `selfhost/bench/bench_speed.py` (every routine of the benchmark
@@ -179,6 +188,8 @@ instruction counts (`perf stat -e instructions:u`, a large run less a tiny one):
 machine the times and the cycle counts move by a factor of two, the instruction counts not at
 all.  The gate is the generated runner at the Rust interpreter's time.  On the integer kernels
 it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles); over the
-benchmark suite's 94 routines the geometric mean is 2.1 times the Rust interpreter's time,
-the worst 13.7 — the routines over 3 are the worklist, by what their operators and natives
-are (`LOFT_FILL_TRACE=1` prints each operator and each native the run reaches).
+benchmark suite's 94 routines the geometric mean is 0.92 of the Rust interpreter's time on this
+machine, 1.10 on a second (before the last arms), the worst 2.3 (`map_json`, rendering records
+through `show`'s text buffers) — the routines over 1.3 are the worklist, by what their
+operators and natives are (`LOFT_FILL_TRACE=1` prints each operator and each native the run
+reaches).
