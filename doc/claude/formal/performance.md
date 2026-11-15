@@ -202,7 +202,7 @@ different matter and `(Perf-Like)`'s.
 
 OPEN: **1**
 
-- **D-perf-2 (OPEN, [#1743](https://github.com/loft-lang/loft/issues/1743), @PLN158) — not resolvable in a release** (owner's ruling) —
+- **D-perf-2 (OPEN, @PLN210, @PLN158) — not resolvable in a release** (owner's ruling) —
   violates (Perf-Weight): the shipped routines as a POPULATION are over both bars.  Judged on
   the C lanes (owner's ruling): the population is judged on the C ship lane under gcc and clang
   (`bench/stats.py --lanes rust,c,cship [--cc clang]` with every library bench, which builds its C
@@ -212,5 +212,7 @@ OPEN: **1**
   release can close it; each routine that crosses the bar is
   fixed on its own, and the release reads the position instead (`M-perf-pass`, `make
   perf-portal`, [PERF_PORTAL.md](../PERF_PORTAL.md)).  The entry closes when the portal's
-  population meets both bars; `drawing`, the first library judged, already does (D-perf-1, in
+  population meets both bars.  Its first tracking issue, [#1743](https://github.com/loft-lang/loft/issues/1743),
+  ended when the bar moved to the C lanes: a routine over the bar is filed on its
+  own since, and @PLN210 owns the population.  `drawing`, the first library judged, already meets them (D-perf-1, in
   [performance-history.md](performance-history.md)).

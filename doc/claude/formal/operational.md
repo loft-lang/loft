@@ -510,12 +510,14 @@ drift apart; verified both backends —
   divergence it catches is filed on its own.
 - **D-op-2** — interpreter/native divergences are test-caught, not definition-caught.  Not
   resolvable in a release, for D-op-1's reason.
-- **D-op-3** — `(E-Left)` for a VECTOR operand: `v[set(v)]`, with `set(w: &vector<integer>)`
+- **D-op-3 (OPEN, loft#2503)** — `(E-Left)` for a VECTOR operand: `v[set(v)]`, with `set(w: &vector<integer>)`
   replacing the vector, reads the NEW vector on all three backends (7 for `[1, 2, 3]` replaced
   by `[7, 8, 9]`) where the rule reads the old one (1).  A text operand takes its value into a
   temp first (`scopes::args::copy_written_text_operands`); a vector's temp needs a store minted
   and freed for it, and a vector parameter that is not `const` is written by more calls than a
-  `&` text is, so the write test is wider.  The design is open.
+  `&` text is, so the write test is wider.  The design is open.  An ELEMENT written through
+  the `&` parameter (`w[0] = 7`) is seen the same way, and a text operand takes its value
+  first on both backends: the matrix is on the issue.
 
 The full register — these entries in full, plus every closed one with its dates and
 issue numbers — is the companion [operational-history.md](operational-history.md).
