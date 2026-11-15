@@ -390,14 +390,21 @@ fn reference_marker(c: Ctx, at: crt::Pos, target: integer, o: &text) -> boolean 
 // `write_struct` over `fields` (`loft_showf{tp}`): the fields `show.rs` keeps — not the enum tag,
 // not a hidden `#` field, not a link — framed as `loft_show_open`, `_sep`, `_name` and `_close`
 // frame them.  `complex` is the rendered type's.
+// Is field `f` one a record's text shows: not the enum tag, not a `#` field, not a linked
+// group's view member.
+fn shown_field(f: const ir::DbField) -> boolean {
+  f.name != "enum" && !f.name.starts_with("#") && (f.other_indexes[0] ?? 0) != 65535
+}
+
 fn show_fields(c: Ctx, ts: vector<ir::DbType>, fields: vector<ir::DbField>, at: crt::Pos, fmt: integer, ind: integer, complex: boolean, o: &text) {
-  shown: vector<ir::DbField> = [];
+  // The shown fields are read where they lie: a list of them would copy each record.
+  last = -1;
   for f in fields {
-    if f.name != "enum" && !f.name.starts_with("#") && (f.other_indexes[0] ?? 0) != 65535 {
-      shown += [f];
+    if shown_field(f) {
+      last = f#index;
     }
   }
-  any = len(shown) > 0;
+  any = last >= 0;
   pretty = fmt & 1 != 0;
   json = fmt & 2 != 0;
   lines = pretty && (json || complex);
@@ -408,7 +415,10 @@ fn show_fields(c: Ctx, ts: vector<ir::DbType>, fields: vector<ir::DbField>, at: 
     o += " ";
   }
   first = true;
-  for f in shown {
+  for f in fields {
+    if !shown_field(f) {
+      continue;
+    }
     if !first {
       o += ",";
       if lines {
@@ -435,7 +445,7 @@ fn show_fields(c: Ctx, ts: vector<ir::DbType>, fields: vector<ir::DbField>, at: 
       }
     }
     // The LAST field's out-of-line child is rendered by `write`'s loop.
-    if f#index == len(shown) - 1 {
+    if f#index == last {
       content = match ts[f.content]?.parts[0] {
         PtChildRec { content: ct } => ct,
         _ => -1,

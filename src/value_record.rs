@@ -366,12 +366,28 @@ struct World {
 /// by value (`c::Cx::vr_ptr_params`, `@FR-R-ValueRecord`).  Here, below both readers: the
 /// C passes such a parameter by pointer and [`World::lendable`] lends a carrier to it.
 pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
+    param_read_only(data, body, a, None)
+}
+
+/// [`vr_param_read_only`] for a RECORD parameter, which shares its caller's store
+/// (`@FR-F-ParamHeap`): a user function handed it — whole, or inside an argument expression
+/// (`f(x ?? a.inner)`) — at a parameter that takes a record writes the caller's record unless
+/// that parameter is read-only too, so with `lent` (the parameters already known read-only)
+/// such a hand-off reads only where `lent` holds the callee's parameter; a call through a
+/// function reference, whose callee is not known, does not.
+fn param_read_only(
+    data: &crate::data::Data,
+    body: &Value,
+    a: u16,
+    lent: Option<&HashSet<(u32, usize)>>,
+) -> bool {
     let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
     let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
     let mut ok = true;
     body.any_node(&mut |n| {
         match n {
             Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == a => ok = false,
+            Value::CallRef(_, args) if lent.is_some() && args.iter().any(&mentions) => ok = false,
             Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
                 let def = data.def(*op);
                 let name = def.name();
@@ -380,6 +396,16 @@ pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16)
                         (name.starts_with("OpSet") && i == 0) || (name == "OpCopyRecord" && i == 1);
                     if writes_into && mentions(x) {
                         ok = false;
+                    } else if let Some(ro) = lent
+                        && !name.starts_with("Op")
+                        && mentions(x)
+                    {
+                        let shares = def.attributes().get(i).is_none_or(|p| {
+                            matches!(p.typedef.base(), Type::Reference(..) | Type::RefVar(_))
+                        });
+                        if shares && !ro.contains(&(*op, i)) {
+                            ok = false;
+                        }
                     } else if is_a(x) {
                         let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
                             || matches!(
@@ -428,13 +454,23 @@ fn lendable_params(data: &Data) -> HashMap<(u32, usize), u32> {
                 continue;
             }
             let p = def.variables.var(&a.name);
-            if !a.hidden
-                && p != u16::MAX
-                && !def.returned().depend().contains(&p)
-                && vr_param_read_only(data, def.code(), p)
-            {
+            if !a.hidden && p != u16::MAX && !def.returned().depend().contains(&p) {
                 out.insert((d, i), *rec);
             }
+        }
+    }
+    // Read-only is TRANSITIVE: a parameter handed on to another function's record parameter
+    // is written where that one is.  Optimistic, then pruned until nothing changes.
+    loop {
+        let ro: HashSet<(u32, usize)> = out.keys().copied().collect();
+        let before = out.len();
+        out.retain(|&(d, i), _| {
+            let def = data.def(d);
+            let p = def.variables.var(&def.attributes[i].name);
+            param_read_only(data, def.code(), p, Some(&ro))
+        });
+        if out.len() == before {
+            break;
         }
     }
     out

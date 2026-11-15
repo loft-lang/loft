@@ -51,6 +51,28 @@ pub fn format_int(val: integer?, radix: integer, width: integer, token: integer,
   text_from_byte_range(buf, 0, n)
 }
 
+fn c_append_int(store: integer, rec: integer, pos: integer, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer);
+#c "loft_crt_append_int" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_append_float(store: integer, rec: integer, pos: integer, bits: integer, is_null: boolean, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean);
+#c "loft_crt_append_float" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_append_text(store: integer, rec: integer, pos: integer, val: text, bytes: integer, width: integer, dir: integer, token: integer);
+#c "loft_crt_append_text" "void(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t)"
+
+// `format_int`, `format_float` and `format_text` appended in place to the text they are for:
+// the text local in the stack store's frame slot `pos` (`rec` -1) or the text `(store, rec,
+// pos)` names.  No text is built between.
+pub fn append_int(store: integer, rec: integer, pos: integer, val: integer?, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) {
+  c_append_int(store, rec, pos, val ?? 0, val == null, radix, width, token, plus, note, dir);
+}
+
+pub fn append_float(store: integer, rec: integer, pos: integer, val: float?, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) {
+  c_append_float(store, rec, pos, if val == null { 0 } else { val!.bits() }, val == null, width, precision, token, plus, dir, single);
+}
+
+pub fn append_text(store: integer, rec: integer, pos: integer, val: text?, width: integer, dir: integer, token: integer) {
+  c_append_text(store, rec, pos, val ?? "", bytes_of(val), width, dir, token);
+}
+
 // `val` formatted as `OpFormatFloat` (or, with `single`, `OpFormatSingle`) formats it.
 pub fn format_float(val: float?, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) -> text {
   v: vector<float> = [val ?? 0.0];
@@ -278,6 +300,12 @@ pub fn peek_f64(base: integer, at: integer) -> float {
 }
 #c_twin "loft_twin_peek_f64" "double(int64_t, int64_t)"
 
+// A single: its four bytes, the quiet NaN's pattern for null (`put_f32`).
+pub fn peek_f32(base: integer, at: integer) -> single {
+  single_from_bits(c_peek(SW_U32, base, at))
+}
+#c_twin "loft_twin_peek_f32" "float(int64_t, int64_t)"
+
 pub fn poke_i64(base: integer, at: integer, v: integer?) {
   c_poke(SW_I64, base, at, v ?? 0, v == null);
 }
@@ -297,6 +325,11 @@ pub fn poke_f64(base: integer, at: integer, v: float?) {
   c_poke_f64(base, at, [v ?? 0.0 / 0.0]);
 }
 #c_twin "loft_twin_poke_f64" "void(int64_t, int64_t, double)"
+
+pub fn poke_f32(base: integer, at: integer, v: single?) {
+  c_poke(SW_U32, base, at, if v == null { 2143289344 } else { v!.bits() }, false);
+}
+#c_twin "loft_twin_poke_f32" "void(int64_t, int64_t, float)"
 
 fn c_stack_base(store: integer) -> integer;
 #c "loft_crt_stack_base" "int64_t(int64_t)"
@@ -698,6 +731,15 @@ pub fn get_dbref_to(to: integer, store: integer, rec: integer, pos: integer, fld
   poke_ref(to, c_get_dbref_part(0, store, rec, pos, fld), c_get_dbref_part(1, store, rec, pos, fld), c_get_dbref_part(2, store, rec, pos, fld));
 }
 #c_twin "loft_twin_get_dbref_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_slot_get_part(part: integer, s: integer, r: integer, p: integer, fld: integer) -> integer;
+#c "loft_crt_slot_get_part" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `OpGetSlotRef`'s answer (`slot_get`) written at the address `to`.
+pub fn slot_get_to(to: integer, s: integer, r: integer, p: integer, fld: integer) {
+  poke_ref(to, c_slot_get_part(0, s, r, p, fld), c_slot_get_part(1, s, r, p, fld), c_slot_get_part(2, s, r, p, fld));
+}
+#c_twin "loft_twin_slot_get_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
 
 // `n` bytes moved from byte `from` to byte `to` of the address `base`, with no test of the
 // positions, as `peek_*` reads.
@@ -1424,6 +1466,20 @@ pub fn stack_move(store: integer, from: integer, to: integer, n: integer) {
   c_stack_move(store, from, to, n);
 }
 
+// `stack_str` into the caller's scratch buffer `buf`, grown when the text is longer: no store
+// is made per call.
+pub fn stack_str_in(buf: vector<u8>, store: integer, at: integer) -> text? {
+  n = c_stack_str(buf, store, at);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf += room(n - len(buf));
+    n = c_stack_str(buf, store, at);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
 // The text the view at `at` shows, or null.
 pub fn stack_str(store: integer, at: integer) -> text? {
   buf = room(64);
@@ -1931,6 +1987,15 @@ pub fn key_float(v: float?, single: boolean) {
 
 pub fn key_text(v: text?) {
   c_key_text(v ?? "", bytes_of(v));
+}
+
+fn c_key_view(store: integer, at: integer);
+#c "loft_crt_key_view" "void(int64_t, int64_t)"
+
+// A text part as the view in the frame slot at `at` of the stack store, not copied: for a key
+// the operator reads before it pops the slot.
+pub fn key_view(store: integer, at: integer) {
+  c_key_view(store, at);
 }
 
 // `OpGetRecord` on a hash of type `tp`: the record keyed by the top `n` parts, into `out[0..3]`,

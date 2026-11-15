@@ -262,6 +262,16 @@ LOFT_STEP_FN double loft_twin_peek_f64(int64_t base, int64_t at) {
 LOFT_STEP_FN void loft_twin_poke_f64(int64_t base, int64_t at, double v) {
     memcpy(LOFT_AT(base, at), &v, 8);
 }
+extern float loft_twin_peek_f32(int64_t base, int64_t at);
+extern void loft_twin_poke_f32(int64_t base, int64_t at, float v);
+LOFT_STEP_FN float loft_twin_peek_f32(int64_t base, int64_t at) {
+    float v;
+    memcpy(&v, LOFT_AT(base, at), 4);
+    return v;
+}
+LOFT_STEP_FN void loft_twin_poke_f32(int64_t base, int64_t at, float v) {
+    memcpy(LOFT_AT(base, at), &v, 4);
+}
 void loft_crt_move(int64_t base, int64_t from, int64_t to, int64_t n) {
     memmove(LOFT_AT(base, to), LOFT_AT(base, from), (size_t) n);
 }
@@ -465,6 +475,36 @@ void loft_crt_stack_str_of_field(int64_t store, int64_t at, int64_t s, int64_t r
 void loft_crt_ref_text_append(int64_t s, int64_t r, int64_t p, const char *val, int64_t bytes) {
     loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
     if (t) loft_text_concat(t, loft_crt_str(val, bytes));
+}
+
+/* A rendering appended in place to the text a format operator writes: the text local in the
+ * stack store's frame slot `at` (`rec` -1, `store` the stack) or the text `(store, rec, pos)`
+ * names — the runtime's own formatter writing into it, no buffer between (`OpFormatInt`,
+ * `OpFormatFloat`, `OpFormatText` and their stack forms).  A float arrives as its bits. */
+static loft_text *loft_crt_fmt_target(int64_t store, int64_t rec, int64_t pos) {
+    if (rec < 0) return (loft_text *) loft_crt_slot_at(store, pos);
+    return (loft_text *) loft_place(loft_crt_ref(store, rec, pos), 0);
+}
+void loft_crt_append_int(int64_t store, int64_t rec, int64_t pos, int64_t val, int64_t is_null,
+                         int64_t radix, int64_t width, int64_t token, int64_t plus, int64_t note,
+                         int64_t dir) {
+    loft_text *t = loft_crt_fmt_target(store, rec, pos);
+    if (t) loft_format_long(t, is_null ? LOFT_NULL : val, (uint8_t) radix, width, (uint8_t) token,
+                            (int) plus, (int) note, (int) dir);
+}
+void loft_crt_append_float(int64_t store, int64_t rec, int64_t pos, int64_t bits, int64_t is_null,
+                           int64_t width, int64_t prec, int64_t token, int64_t plus, int64_t dir,
+                           int64_t single) {
+    loft_text *t = loft_crt_fmt_target(store, rec, pos);
+    double v;
+    memcpy(&v, &bits, 8);
+    if (is_null) v = NAN;
+    if (t) loft_format_float(t, v, width, prec, (uint8_t) token, (int) plus, (int) dir, (int) single);
+}
+void loft_crt_append_text(int64_t store, int64_t rec, int64_t pos, const char *val, int64_t bytes,
+                          int64_t width, int64_t dir, int64_t token) {
+    loft_text *t = loft_crt_fmt_target(store, rec, pos);
+    if (t) loft_format_text(t, loft_crt_str(val, bytes), width, (int) dir, (uint8_t) token);
 }
 
 /* The null text's one byte appended to the text the reference names: what a Rust native's
@@ -2024,6 +2064,12 @@ void loft_crt_key_text(const char *val, int64_t bytes) {
     loft_crt_key_push(loft_kv_text(loft_lit(copy, len)), copy);
 }
 
+/* A text part as the view in the stack store's frame slot at `at`, not copied: the operator
+ * that pushed it reads the key before it pops the slot. */
+void loft_crt_key_view(int64_t store, int64_t at) {
+    loft_crt_key_push(loft_kv_text(*(const loft_str *) loft_crt_slot_at(store, at)), 0);
+}
+
 /* The top `n` parts popped, their text copies released. */
 static void loft_crt_key_pop(int64_t n) {
     while (n-- > 0 && loft_crt_nkv > 0) {
@@ -2729,6 +2775,17 @@ static void loft_crt_cell_set(loft_ref at, loft_ref x) {
 int64_t loft_crt_slot_get(int64_t *out, int64_t no, int64_t s, int64_t r, int64_t p, int64_t fld) {
     loft_crt_put_ref(out, no, loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld)));
     return 0;
+}
+
+/* `slot_get`'s answer a part at a time (0 store, 1 record, 2 position), and written at the
+ * address `to` (`OpGetSlotRef`'s arm). */
+int64_t loft_crt_slot_get_part(int64_t part, int64_t s, int64_t r, int64_t p, int64_t fld) {
+    return loft_crt_slot_part(loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld)), part);
+}
+extern void loft_twin_slot_get_to(int64_t to, int64_t s, int64_t r, int64_t p, int64_t fld);
+LOFT_STEP_FN void loft_twin_slot_get_to(int64_t to, int64_t s, int64_t r, int64_t p, int64_t fld) {
+    loft_ref v = loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld));
+    loft_twin_poke_ref(to, v.store_nr, v.rec, v.pos);
 }
 
 /* OpMoveSlotRef: `slot = slot.f` through the cell at `(s, r, p)` (`slot_move`). */

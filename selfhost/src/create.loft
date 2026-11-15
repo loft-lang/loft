@@ -382,6 +382,7 @@ fn operand_bytes(w: text) -> integer {
     "i32" => 4,
     "i64" => 8,
     "f64" => 8,
+    "f32" => 4,
     _ => 0,
   }
 }
@@ -392,6 +393,8 @@ fn slot_width(w: text) -> text {
   match w {
     "i64" => "i64",
     "f64" => "f64",
+    // A single: its four bytes in the slot (`crt::peek_f32`).
+    "f32" => "f32",
     "bool" => "u8",
     "u8" => "u8",
     // A character: its code point in four bytes, 0 for null.
@@ -451,8 +454,8 @@ fn return_arm(slot: integer) -> text {
 
 // Every arm's locals are the function's, and a function binds a limited number of variables:
 // an arm's locals are taken from a pool by type — `ri0`… for an integer, `rf0`… for a float,
-// `rb0`… for a boolean — in the order the arm binds them.  `names` and `locals` are the arm's
-// names and what each is spelled as; `kind` is "i", "f" or "b".
+// `rs0`… for a single, `rb0`… for a boolean — in the order the arm binds them.  `names` and
+// `locals` are the arm's names and what each is spelled as; `kind` is "i", "f", "s" or "b".
 fn pool(names: vector<text>, locals: vector<text>, name: text, kind: text) -> text {
   n = 0;
   for l in locals {
@@ -553,7 +556,7 @@ fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
       if n == 0 {
         return "";
       }
-      local = pool(names, locals, a.name, if w == "bool" { "b" } else if w == "f64" { "f" } else { "i" });
+      local = pool(names, locals, a.name, if w == "bool" { "b" } else if w == "f64" { "f" } else if w == "f32" { "s" } else { "i" });
       if !template.contains(a.name) {
         span += n;
         continue;
@@ -592,7 +595,7 @@ fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
         return "";
       }
       popped += 8;
-      local = pool(names, locals, a.name, if w == "f64" { "f" } else { "i" });
+      local = pool(names, locals, a.name, if w == "f64" { "f" } else if w == "f32" { "s" } else { "i" });
       if template.contains(a.name) {
         pops += "        {local} = crt::peek_{w}(base, sp - {popped});\n";
       }
@@ -621,7 +624,7 @@ fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
   body = rename(template, names, locals);
   body = body.replace("s.code_pos", "ip");
   // A frame slot: `get_var` reads at the top less its position, `put_var` writes a step above.
-  for w in ["i64", "f64", "u8"] {
+  for w in ["i64", "f64", "f32", "u8"] {
     body = body.replace("s.get_var_{w}(", "crt::peek_{w}(base, sp - ");
     body = body.replace("s.put_var_{w}(", "crt::poke_{w}(base, sp + 8 - ");
   }
@@ -678,7 +681,7 @@ fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
   if void || rw == "str" {
     out += "        {body}\n";
   } else {
-    nv = if rw == "bool" { "nvb" } else if rw == "f64" { "nvf" } else { "nvi" };
+    nv = if rw == "bool" { "nvb" } else if rw == "f64" { "nvf" } else if rw == "f32" { "nvs" } else { "nvi" };
     out += "        {nv}: {answer_type(rw)} = {body};\n";
     put = if rw == "bool" {
       "crt::poke_u8(base, sp, state::bool_byte({nv}))"
