@@ -256,3 +256,40 @@ G1), `gpu::open` changes inside the host, not in the game.
 measured: keys arriving through `dev.keys()` in a running game — `gpu_gl`'s window code is
 graphics' own, whose injected-key check passes on a Mac, but no game has read a device's keys
 yet.
+
+## Where things stand (2026-11-15, late)
+
+**The owner confirmed the premise of the answer above:** the 2D version "is almost gone right
+now" — the town cannot be drawn correctly in it.  So the answer stands as written: the 3D view
+is the game, it draws in the device's own window on a machine with a GPU, and it reads its
+keys from the device.  Nothing is to be built for a window the 2D frame and the 3D view share.
+
+**What the game can build on:**
+
+| Piece | State |
+|---|---|
+| `gpu` 0.2.0: a device's input, an RGB565 frame, a target read back | on the libraries' `main` (#86) |
+| `scene3d` 0.2.0: `vector<single>` | on the libraries' `main` (#89) |
+| A table and a colour as `i64`, for a `#width 32` view; `dev.keys()` | loft-libs-graphics#90, open, auto-merge armed |
+| `gpu_gl`, the backend that draws | on `main`, fetched by branch; not in the registry until @C164 is on loft's `main` and #87 lands |
+
+So the game's step — the fixed view giving its scene to `raster3d` or to `scene3d` — can
+start when #90 has merged.
+
+**What a playable Mac build then is.**  The owner built and ran the game's `main` natively
+here (§ This stream's reply); with the 2D going, the build that matters is the same program
+with its view drawn through `scene3d` in the device's window.  With the fixed camera that
+looks as `raster3d`'s view does, drawn at the window's size.
+
+**What this stream does next, in this order:**
+
+1. **The free camera made usable** in `scene3d`: the walls between the eye and the hero cut
+   away (SCENE_CONTRACT.md rule 2: a group a line from the eye to the card crosses), and cards
+   turned to face the camera.  Today the free camera cuts nothing and cards face south.
+2. **The host**: one value that says where the keys are read, what draws and how the frame is
+   shown, so the game's loop has no branch for the machine.
+3. `raster3d` as a library beside `scene3d`, when the game's agent says its API has settled.
+
+**Open on the game's side, as this stream sees it:** how the player steers a free camera
+(the view states an intent, SCENE_CONTRACT.md § The camera), and the first-person view on a
+Mac at the game's current commit, which nobody has run.
