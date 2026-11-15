@@ -1052,13 +1052,22 @@ fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
     return false;
   }
   if name == "OpSetInt4" {
+    // #493 — only a FUNCTION-VALUE member stored into a 4-byte field takes its own form (its
+    // d_nr projected, `OpVarInt` at the element's offset); any other member is the default
+    // argument push below.
     for a in args {
-      member = match unspan(a) {
-        NdTupleGet { var: _, idx: _ } => true,
+      fn_member = match unspan(a) {
+        NdTupleGet { var: tv, idx: ti } => match var_of(g, tv).type_def[0] ?? ir::TyVoid {
+          TyTuple { elems } => ti < len(elems) && match base(elems[ti]!) {
+            TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+            _ => false,
+          },
+          _ => false,
+        },
         _ => false,
       };
-      if member {
-        stop(g, "not written yet: a tuple member written through OpSetInt4");
+      if fn_member {
+        stop(g, "not written yet: a function-value tuple member written through OpSetInt4");
       }
     }
     return false;
@@ -1781,10 +1790,16 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
     call_copy(g, v, value, own::heap_def_nr_bare(shape) ?? 0);
     return;
   }
-  if binds::join_record(shape) != null && !optional_shape(shape) && unwitnessed && !var.view_elided
-      && binds::choice_var_arm(g.b, g.ops, g.d, f, value, v) != null {
-    stop(g, "not written yet: a first bind that joins on a choice");
-    return;
+  // `first_bind_choice_join` (`@FR-B-Copy`): a choice handing another heap variable over whole
+  // on one arm and a store of its own on the others joins on that variable — `FirstArm::CallJoin`
+  // with the choice's variable as the base, as the rebind does.
+  if binds::join_record(shape) != null && !optional_shape(shape) && unwitnessed && !var.view_elided {
+    cj = binds::choice_var_arm(g.b, g.ops, g.d, f, value, v);
+    if cj != null {
+      reserve_ref_slot(g, v);
+      join_bind(g, v, value, binds::join_record(shape)!, cj!, true);
+      return;
+    }
   }
   vector_base = match bs {
     TyVector { inner: _, dep: _ } => true,
@@ -2611,6 +2626,42 @@ fn put_fn_ref(g: Gen, v: integer) {
 
 // `State::generate_call_ref`: a call through a function value, skipped — its arguments
 // dropped and the null of its result pushed — where the value is absent.
+// src/data.rs fn store_text_mask — the positions among `params` where a `&text` parameter is
+// handed the STORE kind of a text link (`is_store_text_arg`: a call answering a reference that
+// is not `OpCreateStack` — a place in a record), as a bit mask; 0 when every one is the stack kind.
+fn store_text_mask(g: Gen, params: vector<ir::TypeT>, args: vector<ir::Node>) -> integer {
+  mask = 0;
+  for p in params {
+    i = p#index;
+    a = args[i];
+    if i >= 64 || a == null {
+      continue;
+    }
+    text_link = match base(p) {
+      TyRefVar { inner } => match base(inner) { TyText { dep: _ } => true, _ => false },
+      _ => false,
+    };
+    if text_link && is_store_text_arg(g, a!) {
+      mask = mask | (1 << i);
+    }
+  }
+  mask
+}
+
+// src/data.rs fn is_store_text_arg.
+fn is_store_text_arg(g: Gen, arg: ir::Node) -> boolean {
+  match unspan(arg) {
+    NdCall { def_nr, args: _ } => {
+      d = def_of(g, def_nr);
+      d.name != "OpCreateStack" && match base(d.returned[0] ?? ir::TyVoid) {
+        TyReference { n: _, dep: _ } => true,
+        _ => false,
+      }
+    },
+    _ => false
+  }
+}
+
 fn call_ref(g: Gen, v: integer, args: vector<ir::Node>) -> ir::TypeT {
   params: vector<ir::TypeT> = [];
   ret = ir::TyVoid;
@@ -2663,9 +2714,19 @@ fn call_ref(g: Gen, v: integer, args: vector<ir::Node>) -> ir::TypeT {
   step = len(g.o.code);
   put_i32(g.o, 0);
   dist = var_pos(g, v);
-  add_op(g, "OpCallRef");
-  put_u16(g.o, dist);
-  put_u16(g.o, total);
+  // @PLN167 C3 (loft#1656) — a text field or element handed to a `&text` parameter picks the
+  // STORE instance of whichever function the slot holds (`Data::store_text_mask`).
+  mask = store_text_mask(g, params, args);
+  if mask == 0 {
+    add_op(g, "OpCallRef");
+    put_u16(g.o, dist);
+    put_u16(g.o, total);
+  } else {
+    add_op(g, "OpCallRefStore");
+    put_u16(g.o, dist);
+    put_u16(g.o, total);
+    put_i64(g.o, mask);
+  }
   if g.position < total {
     stop(g, "a call through a function value with fewer argument bytes than it declares");
     return ret;

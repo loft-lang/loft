@@ -23,7 +23,7 @@ nearly the whole corpus, and the bytecode writer in loft writes all but two of t
 functions byte for byte; both positions are committed baselines checked by
 `selfhost/bench/run_image_survey.py --check` and `bgen_survey.py --check`, and the latest
 numbers and the next step (the front end) are in
-[handoff-2026-11-15-front-end-start.md](handoff-2026-11-15-front-end-start.md).  The IR passes
+[handoff-2026-11-15-night.md](handoff-2026-11-15-night.md).  The IR passes
 are not ported yet.  The bytecode runner built as a port of
 the Rust interpreter — its generated operator table, what is still to build and where it
 differs from Rust — is [1b-fill-port.md](1b-fill-port.md).  What it still takes from Rust, and
