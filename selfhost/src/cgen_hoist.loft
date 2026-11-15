@@ -238,7 +238,7 @@ fn in_list(list: vector<InRange>, var: integer, held: text) -> boolean {
 
 // `counter_index`: the index `idx` as a counter proved inside the vector `held` describes —
 // the counter itself, or `(counter + step) % len` — else "".
-fn counter_index(x: Cx, w: W, idx: ir::Node, held: text) -> text {
+pub fn counter_index(x: Cx, w: W, idx: ir::Node, held: text) -> text {
   ctr = loop_shape::var_of(loop_shape::unspan(idx));
   if ctr >= 0 {
     return if in_list(w.in_range, ctr, held) { w.names[ctr]! } else { "" };

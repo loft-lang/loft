@@ -14,10 +14,144 @@ use ir;
 use loop_shape;
 use opt_view;
 use cgen_fn;
+use cgen_hoist;
+use cgen_names;
 use cgen_w::*;
 
 fn enabled() -> boolean {
   (env_variable("LOFT_NO_RECORD_PTR") ?? "0") == "0"
+}
+
+// An element of a vector held for the loop, read at a variable index or one the loop proves
+// inside the vector: the header, the element size, the index, and whether the index needs no
+// bounds test.  `header` "" for any other node.
+struct HeldElem {
+  header: text,
+  size: integer,
+  index: text,
+  raw: boolean,
+  // The discharge's tested temporary, "" for none.
+  ncc: text,
+}
+
+fn no_elem() -> HeldElem {
+  HeldElem { header: "", size: 0, index: "", raw: false, ncc: "" }
+}
+
+fn element_read(x: Cx, w: W, node: ir::Node) -> HeldElem {
+  match loop_shape::unspan(node) {
+    NdCall { def_nr, args } => {
+      name = cgen_fn::def_name(x.b, def_nr);
+      if len(args) != 3 || !(name == "OpGetVector" || name == "OpGetVectorNullable") {
+        return no_elem();
+      }
+      size = match loop_shape::unspan(args[1]) {
+        NdInt { n } => n,
+        _ => return no_elem(),
+      };
+      header = cgen_hoist::held_vector(x, w, args[0]);
+      if header == "" {
+        return no_elem();
+      }
+      counted = cgen_hoist::counter_index(x, w, args[2], header);
+      if counted != "" {
+        return HeldElem { header: header, size: size, index: counted, raw: true, ncc: "" };
+      }
+      at = loop_shape::var_of(loop_shape::unspan(args[2]));
+      if at < 0 {
+        return no_elem();
+      }
+      HeldElem { header: header, size: size, index: w.names[at]!, raw: false, ncc: "" }
+    },
+    _ => no_elem(),
+  }
+}
+
+// `held_element_bind`: the element of a held vector statement `op` binds — directly, as a
+// `for e in v` step and read, or through a null discharge that answers the element.
+fn held_element_bind(x: Cx, w: W, op: ir::Node) -> HeldElem {
+  if (env_variable("LOFT_NO_RECPTR_HELD") ?? "0") != "0" {
+    return no_elem();
+  }
+  value = match loop_shape::unspan(op) {
+    NdSet { var: _, inner } => inner,
+    _ => return no_elem(),
+  };
+  direct = element_read(x, w, value);
+  if direct.header != "" {
+    return direct;
+  }
+  all = match loop_shape::unspan(value) {
+    NdBlock { block } => block[0].operators,
+    _ => return no_elem(),
+  };
+  ops: vector<ir::Node> = [];
+  for o in all {
+    if !(loop_shape::unspan(o) is NdLine) {
+      ops += [o];
+    }
+  }
+  if len(ops) != 2 {
+    return no_elem();
+  }
+  // A `for e in v` element: the iterator's step of its index, then the read at it.
+  stepped = match loop_shape::unspan(ops[0]) {
+    NdSet { var, inner: _ } => var,
+    _ => -1,
+  };
+  reads_step = match loop_shape::unspan(ops[1]) {
+    NdCall { def_nr: _, args } => len(args) > 2 && stepped >= 0 && loop_shape::unspan(args[2]) == NdVar { n: stepped },
+    _ => false,
+  };
+  if reads_step {
+    walked = element_read(x, w, ops[1]);
+    if walked.header != "" {
+      return walked;
+    }
+  }
+  // `{ ncc = v[i]; if ncc { ncc } else { … } }`: the element where it is present.
+  ncc = -1;
+  found = no_elem();
+  match loop_shape::unspan(ops[0]) {
+    NdSet { var, inner } => {
+      ncc = var;
+      found = element_read(x, w, inner);
+    },
+    _ => return no_elem(),
+  }
+  if found.header == "" {
+    return no_elem();
+  }
+  match loop_shape::unspan(ops[1]) {
+    NdIf { cond, t, f: _ } => {
+      tests = match loop_shape::unspan(cond) {
+        NdCall { def_nr, args } => len(args) == 1 && cgen_fn::def_name(x.b, def_nr) == "OpConvBoolFromRef" && loop_shape::unspan(args[0]) == NdVar { n: ncc },
+        _ => false,
+      };
+      // The arm's value: a block's one statement that is no line marker, else the arm.
+      arm = t;
+      match loop_shape::unspan(t) {
+        NdBlock { block } => {
+          only: vector<ir::Node> = [];
+          for o in block[0].operators {
+            if !(loop_shape::unspan(o) is NdLine) {
+              only += [o];
+            }
+          }
+          if len(only) == 1 {
+            arm = only[0];
+          }
+        },
+        _ => {},
+      }
+      if tests && loop_shape::unspan(arm) == NdVar { n: ncc } {
+        found.ncc = w.names[ncc]!;
+        return found;
+      }
+      no_elem()
+    },
+    _ => no_elem(),
+  }
 }
 
 fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: integer) {
@@ -27,7 +161,21 @@ fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: inte
   w.decls += ["uint8_t *{pa} = 0;"];
   w.decls += ["int {pl} = 0;"];
   rec = w.names[r]!;
-  line(w, ind, "{pa} = loft_rec_ptr({rec});");
+  // `record_ptr_line`: an element of a held vector takes its address from the header.
+  he = if from > 0 { held_element_bind(x, w, ops[from - 1]!) } else { no_elem() };
+  if he.header == "" {
+    line(w, ind, "{pa} = loft_rec_ptr({rec});");
+  } else {
+    addr = if he.raw { "loft_vh_at_addr({he.header}, {he.size}, {he.index})" } else { "loft_vh_addr({he.header}, {he.size}, {he.index})" };
+    if he.ncc != "" {
+      line(w, ind, "if (LOFT_LIKELY({he.ncc}.rec != 0)) {pa} = {addr}; else {pa} = loft_rec_ptr({rec});");
+    } else {
+      line(w, ind, "{pa} = {addr};");
+    }
+    def = x.b.data.definitions[w.index]!;
+    site = "{cgen_names::original_name(def)}:{def.variables.variables[r]!.name}";
+    line(w, ind, "LOFT_PROVED({pa} == loft_rec_ptr({rec}), {c_string(site)});");
+  }
   writes = false;
   for op in ops {
     if op#index >= from && !writes {
