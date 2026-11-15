@@ -6,7 +6,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # 209 — the GPU boundary: `gpu`'s loft API and the backend table
 
 Step L1 of [GPU_LAYER.md](GPU_LAYER.md): the boundary on paper, tried on every caller there is.
-Nothing here is built; L2 builds it against a recording backend.
+L2 built it as written here, with one name changed: `use` is a loft keyword, so a pipeline
+is bound with `bind`.
 
 ## The rule it rests on
 
@@ -41,7 +42,7 @@ pass on one stack and fail on another.
 | `Device` | One window (or page canvas) and its GPU | `gpu::open(table, width, height, title)`; a game calls `gpu_host::open(width, height, title)` | `close()`, or with its owner; everything it made is freed with it |
 | `Buffer` | Floats for vertices or instances, or an index list | `dev.buffer(data)`, `dev.index_buffer(list)` | with its owner |
 | `Texture` | A colour image (RGBA, 8 bits a channel) or a depth image | `dev.texture(w, h)`, `dev.depth_texture(w, h)`, `dev.texture_from(pixels, w, h)` | with its owner |
-| `Target` | What a pass draws into, other than the window: a colour texture, a depth texture, or both | `dev.target(colour, depth)` | with its owner; its textures live on |
+| `Target` | What a pass draws into, other than the window: a colour texture, a depth texture, or both | `dev.target(colour, depth)`, `dev.colour_target(colour)`, `dev.depth_target(depth)` | with its owner; its textures live on |
 | `Program` | A shader set: one declaration, a source per shading language | a struct literal (below) | a value |
 | `Pipeline` | A program, its vertex layout and its render state, built for one target shape | `dev.pipeline(program, state)`, null when no source fits the backend or it does not compile | with its owner |
 | `Block` | The values of a program's uniform block | `pipeline.block()` | a value (`vector<single>` inside) |
@@ -70,10 +71,10 @@ u     = solid.block();
 while dev.poll() {
   u.mat4(0, mvp);  u.f4(1, ex, ey, ez, 0.0);  u.f1(2, fog);  u.f4(3, fr, fg, fb, 0.0);
   dev.begin_window(gpu::CLEAR, sky);           // a pass: the target, and what it starts from
-  dev.use(solid);  dev.uniforms(u);  dev.sample(0, atlas);
-  dev.vertices(place);  dev.draw(0, place.count());
-  dev.use(hand);  dev.uniforms(u);  dev.sample(0, atlas);
-  dev.vertices(hand_mesh);  dev.draw(0, hand_mesh.count());
+  dev.bind(solid);  dev.uniforms(u);  dev.sample(0, atlas);
+  dev.vertices(place);  dev.draw(0, place.floats() / 8);
+  dev.bind(hand);  dev.uniforms(u);  dev.sample(0, atlas);
+  dev.vertices(hand_mesh);  dev.draw(0, hand_mesh.floats() / 8);
   dev.end();
   dev.present();                               // waits for the display's next frame
 }
@@ -81,10 +82,10 @@ while dev.poll() {
 
 | Group | Calls |
 |---|---|
-| Device | `open`, `poll`, `events`, `width`, `height`, `close`, `present`, `capture() -> vector<u32>` |
+| Device | `open`, `poll`, `events` (from L3), `width`, `height`, `close`, `present`, `capture() -> vector<u32>` |
 | Pass | `begin_window(load, colour)`, `begin(target, load, colour)`, `end()`; `load` is `CLEAR` or `KEEP` |
-| In a pass | `use(pipeline)`, `uniforms(block)`, `sample(slot, texture)`, `vertices(buffer)`, `instances(buffer, first_float)`, `indices(buffer)`, `viewport(x, y, w, h)`, `scissor(x, y, w, h)`, `no_scissor()`, `draw(first, count)`, `draw_indexed(count)`, `draw_copies(count, copies)` |
-| Buffer | `update(data)`, `count()` |
+| In a pass | `bind(pipeline)`, `uniforms(block)`, `sample(slot, texture)`, `vertices(buffer)`, `instances(buffer, first_float)`, `indices(buffer)`, `viewport(x, y, w, h)`, `scissor(x, y, w, h)`, `no_scissor()`, `draw(first, count)`, `draw_indexed(count)`, `draw_copies(count, copies)` |
+| Buffer | `update(data)`, `floats()`, `count()` (an index buffer's) |
 | Texture | `put(x, y, pixels, w, h)`, `nearest(on)`, `mipmaps()`, `width()`, `height()` |
 | Block | `f1(field, x)`, `f2`, `f4`, `mat4(field, m)`, `f4_at(field, index, x, y, z, w)` |
 

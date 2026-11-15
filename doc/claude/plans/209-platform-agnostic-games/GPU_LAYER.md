@@ -10,14 +10,14 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 
 ## Status
 
-P1, P2, P3, L0, L1 and M0 are done (2026-11-15), and none changed § The shape.  Next: L2, from
-[API_GPU.md § What L2 builds from this](API_GPU.md#what-l2-builds-from-this).  V0 waits for a
-Linux machine.
+P1, P2, P3, L0, L1 and M0 are done and L2 is in review (2026-11-15); none changed § The shape.
+Next: L3 (`gpu_gl`), which needs the name question answered before anything is published.  V0
+waits for a Linux machine.
 
 | Track | Steps | State |
 |---|---|---|
 | P — the game on a Mac, on the GL that is there | P1–P5 | P1–P3 done; P4 stood in for until L3; P5 measured standing still |
-| L — the neutral layer | L0–L8 | L0, L1 done; L2–L8 open |
+| L — the neutral layer | L0–L8 | L0, L1 done; L2 in review; L3–L8 open |
 | M — the Metal backend | M0–M4 | M0 done; M1–M4 open |
 | V — the Vulkan backend | V0–V4 | Open |
 | H — one shader source | H1–H4 | Open |
@@ -205,6 +205,18 @@ Nothing here waits for the neutral layer or for Metal.
   writes down every call it receives.  It needs no display, so it runs in every CI job.
   Goes red when: a scripted frame's record differs from the hand-written one; a buffer, texture
   or pipeline is still held after its owner died.
+  **Built (2026-11-15), in review: loft-libs-graphics#83** (`gpu` 0.1.0, `gpu_record` 0.1.0).
+  `gpu`'s 3 tests and `gpu_record`'s 9 pass on the interpreter, `--native-c` and `--native`
+  with warnings denied; one frame's log is byte-equal on the interpreter, `--native-c`,
+  `--native-c --ship`, wasm under wasmtime and both writers' pages.  Six planted breaks each
+  turn a guard red (a pair aligned on 1, the no-vertices check off, `bind` keeping the block,
+  the target kind unchecked, a buffer never released, `F3` allowed in a block).  Two things
+  it met: a wasm build's `printf` formats no float, so the recorder writes thousandths as
+  whole numbers; and a backtick text drops the indentation of its first content line from
+  every line, not the common one, so an expected log is built from a list of lines.
+  **Open:** `gpu_record` is not in the library CI's package list — CI resolves `gpu` from the
+  registry, and `gpu` is not published while its name is a working name (open question 2).
+  C1's mode is `gpu_record::refuse_source`.
 - **L3 — `gpu_gl` (M).**  Today's GL code behind the table; graphics 0.12's own API untouched
   beside it.  Shaders arrive as a set: one declaration (inputs, the uniform block, the texture
   slots) with a source per shading language, until track H replaces the sources.
