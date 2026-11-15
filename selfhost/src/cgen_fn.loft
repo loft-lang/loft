@@ -297,11 +297,18 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     }
   }
   count = len(args);
-  if len(w.headers) > 0 {
+  if len(w.headers) > 0 || len(w.push_heads) > 0 {
     through_header = false;
     held_read = cgen_hoist::held_access(x, w, name, args, ind, through_header);
     if through_header {
       return held_read;
+    }
+  }
+  if len(w.push_heads) > 0 {
+    through_push = false;
+    pushed = cgen_hoist::pushed_op(x, w, name, args, ind, through_push);
+    if through_push {
+      return pushed;
     }
   }
   if len(w.rec_ptrs) > 0 {
@@ -783,10 +790,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     return held_value(w, report, "text");
   }
   // The length of a vector whose header a loop holds is the header's (`held_len`).
-  if route == "t_6vector_len" && len(args) == 1 && len(w.headers) > 0 {
+  if route == "t_6vector_len" && len(args) == 1 && (len(w.headers) > 0 || len(w.push_heads) > 0) {
     held_header = cgen_hoist::held_vector(x, w, args[0]);
     if held_header != "" {
       return E { code: "{held_header}.len", kind: K_INT };
+    }
+    pushing = cgen_hoist::push_head(x, w, args[0]);
+    if pushing >= 0 {
+      return E { code: "((int64_t) {w.push_heads[pushing].name}.len)", kind: K_INT };
     }
   }
   if plain_rules() {
@@ -2592,6 +2603,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     frees_old_tuple: false,
     rec_ptrs: [],
     headers: [],
+    push_heads: [],
     range_lens: [],
     alias_var: -1,
     alias_vec: ir::NdNull,

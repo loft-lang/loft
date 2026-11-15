@@ -24,11 +24,38 @@ fn enabled() -> boolean {
 // The header an enclosing loop holds for `path`, "" for none.
 fn held_path(w: W, path: text) -> text {
   for i in rev(0..len(w.headers)) {
-    if w.headers[i]!.path == path && w.headers[i]!.frame >= 0 {
-      return w.headers[i]!.name;
+    if w.headers[i]!.path == path {
+      // A header held without its base derives it at each use.
+      return if w.headers[i]!.frame == 1 { w.headers[i]!.name } else { "loft_vh_fresh({w.headers[i]!.name})" };
     }
   }
   ""
+}
+
+// The push header held for the vector `v` names: its position in `w.push_heads`, -1 for none.
+pub fn push_head(x: Cx, w: W, v: ir::Node) -> integer {
+  root = -1;
+  path = opt_push::vector_path(x.b, v, root);
+  if path == "" {
+    return -1;
+  }
+  for i in rev(0..len(w.push_heads)) {
+    if w.push_heads[i]!.path == path {
+      return i;
+    }
+  }
+  -1
+}
+
+// `read_header`: the header an element READ of `v` goes through — the held header, or the
+// push header's view of its vector.
+fn read_header(x: Cx, w: W, v: ir::Node) -> text {
+  h = held_vector(x, w, v);
+  if h != "" || (env_variable("LOFT_NO_PUSH_HEADER_READ") ?? "0") != "0" {
+    return h;
+  }
+  at = push_head(x, w, v);
+  if at < 0 { "" } else { "loft_ph_vh(&{w.push_heads[at].name})" }
 }
 
 // `held_vector`: the header held for the vector `v` names, "" for none.
@@ -38,35 +65,143 @@ pub fn held_vector(x: Cx, w: W, v: ir::Node) -> text {
   if path == "" { "" } else { held_path(w, path) }
 }
 
-// `hold_vectors`: open loop `lp`'s frame of headers.  Answers how many it holds.
-pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
+// `hold_vectors` and `hold_pushes`: open loop `lp`'s frames — the headers of the vectors it
+// reads, then the push headers of the paths it pushes to.  The loop's caller closes them
+// with `release`, by the two lengths it saved.
+pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::LoopHoist {
   if !enabled() {
-    return 0;
+    return opt_hoist::LoopHoist { vectors: [], pushes: [], growth_free: false, sole_push: false };
   }
-  count = 0;
-  for v in opt_hoist::held_vectors(x.b, x.writes, w.index, lp) {
-    // A path an enclosing loop holds keeps that header.
-    if held_path(w, v.path) != "" {
+  verdict = opt_hoist::hoistable(x.b, x.writes, w.index, lp);
+  // A loop that grows a store holds its headers without their base (`kept_bases` without the
+  // store facts).
+  base = if verdict.growth_free { 1 } else { 0 };
+  for v in verdict.vectors {
+    // A path an enclosing loop holds keeps that header, unless this one carries a base the
+    // outer one lacks.
+    outer = -1;
+    for i in rev(0..len(w.headers)) {
+      if w.headers[i]!.path == v.path {
+        outer = w.headers[i]!.frame;
+        break;
+      }
+    }
+    if outer == 1 || (outer == 0 && base == 0) {
       continue;
     }
-    outer = w.pending;
+    saved = w.pending;
     w.pending = [];
     e = cgen_fn::expr(x, w, v.vector, ind);
     inner = w.pending;
-    w.pending = outer;
+    w.pending = saved;
     for t in inner {
       w.pending += [t];
     }
     if w.why != "" {
-      return count;
+      return verdict;
     }
     h = "h{len(w.decls) + 1}";
     w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
     line(w, ind, "{h} = loft_vh_of({as_ref(w, e)});");
-    w.headers += [Header { path: v.path, name: h, frame: 0 }];
-    count += 1;
+    w.headers += [Header { path: v.path, name: h, frame: base }];
   }
-  count
+  verdict
+}
+
+// `hold_pushes`: a scalar pushed path the verdict admits keeps a push header the push itself
+// keeps current.
+pub fn hold_pushes(x: Cx, w: W, lp: ir::Block, verdict: opt_hoist::LoopHoist, ind: integer) {
+  // The sole-growth clause: the loop's one growth is this path's pushes, so its header
+  // writes through the record address it holds.
+  based = verdict.sole_push && len(verdict.pushes) == 1 && (env_variable("LOFT_NO_PUSH_BASE") ?? "0") == "0";
+  for p in verdict.pushes {
+    if push_head(x, w, p.vector) >= 0 {
+      continue;
+    }
+    size = opt_hoist::push_size(x.b, lp, p.path);
+    if size == 0 {
+      continue;
+    }
+    saved = w.pending;
+    w.pending = [];
+    e = cgen_fn::expr(x, w, p.vector, ind);
+    inner = w.pending;
+    w.pending = saved;
+    for t in inner {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return;
+    }
+    h = "ph{len(w.decls) + 1}";
+    w.decls += ["loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"];
+    line(w, ind, "{h} = loft_ph_of({as_ref(w, e)}, {size});");
+    w.push_heads += [PushHead { path: p.path, name: h, size: size, based: based }];
+  }
+}
+
+// `pushed_mint`: the length of, the reservation on and a scalar push onto a path a push
+// header is held for go through the header.  `done` says whether `name` over `args` is one.
+pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if (name == "OpLengthVector" || name == "OpPreAllocVector") && len(args) > 0 {
+    at = push_head(x, w, args[0]);
+    if at < 0 {
+      return none();
+    }
+    done = true;
+    if name == "OpLengthVector" {
+      return E { code: "((int64_t) {w.push_heads[at].name}.len)", kind: K_INT };
+    }
+    // The reservation is capacity, observably nothing; the header's push grows the record.
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  path = "";
+  root = -1;
+  size = opt_push::fused(x.b, name, args, path, root);
+  if size == 0 {
+    return none();
+  }
+  at = push_head(x, w, args[0]);
+  if at < 0 || w.push_heads[at].size != size {
+    return none();
+  }
+  done = true;
+  h = w.push_heads[at].name;
+  val = cgen_fn::expr(x, w, args[len(args) - 1], ind);
+  put = "";
+  bits = "";
+  if name == "OpPushInt" {
+    put = "loft_ph_put8";
+    bits = "(uint64_t) {as_int(w, val)}";
+  } else if name == "OpPushFloat" {
+    put = "loft_ph_put8";
+    bits = "loft_f64_bits({as_float(w, val)})";
+  } else if name == "OpPushSingle" {
+    put = "loft_ph_put4";
+    bits = "loft_f32_bits({as_single(w, val)})";
+  } else if name == "OpPushInt4" {
+    put = "loft_ph_put4";
+    bits = "loft_i4_bits({as_int(w, val)})";
+  } else if name == "OpPushCharacter" {
+    put = "loft_ph_put4";
+    bits = "(uint32_t) {as_char(w, val)}";
+  } else if name == "OpPushBoolean" {
+    put = "loft_ph_put1";
+    bits = "(uint8_t) {as_bool(w, val)}";
+  } else if name == "OpPushEnum" {
+    put = "loft_ph_put1";
+    bits = "(uint8_t) {as_enum(w, val)}";
+  } else {
+    min = cgen_fn::literal(w, args[1], "byte minimum") ?? return none();
+    put = "loft_ph_put1";
+    bits = "loft_byte_raw({min}, {as_int(w, val)})";
+  }
+  site = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{h}";
+  if w.push_heads[at].based {
+    return E { code: "(LOFT_PROVED(loft_phb_same({h}, {size}), {c_string(site)}), {put.replace("loft_ph_put", "loft_ph_putb")}(&{h}, {bits}))", kind: K_VOID };
+  }
+  E { code: "(LOFT_PROVED(loft_ph_same({h}, {size}), {c_string(site)}), {put}(&{h}, {bits}))", kind: K_VOID }
 }
 
 // `bind_view_header` (`@FR-R-View`): after statement `at` binds a vector view the rest of
@@ -80,10 +215,25 @@ pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: in
   if d < 0 || held_path(w, "{d}:") != "" {
     return;
   }
-  source = match loop_shape::unspan(ops[at]!) {
-    NdSet { var: _, inner } => held_vector(x, w, inner),
+  // The header the view's source is held under, with whether that one carries its base.
+  source = "";
+  base = 1;
+  match loop_shape::unspan(ops[at]!) {
+    NdSet { var: _, inner } => {
+      root = -1;
+      path = opt_push::vector_path(x.b, inner, root);
+      if path != "" {
+        for i in rev(0..len(w.headers)) {
+          if w.headers[i]!.path == path {
+            source = w.headers[i]!.name;
+            base = w.headers[i]!.frame;
+            break;
+          }
+        }
+      }
+    },
     _ => return,
-  };
+  }
   h = "h{len(w.decls) + 1}";
   w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
   if source != "" {
@@ -91,13 +241,16 @@ pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: in
   } else {
     line(w, ind, "{h} = loft_vh_of({w.names[d]!});");
   }
-  w.headers += [Header { path: "{d}:", name: h, frame: 0 }];
+  w.headers += [Header { path: "{d}:", name: h, frame: base }];
 }
 
-// Close a loop's frame of `count` headers.
-pub fn release(w: W, count: integer) {
-  if count > 0 {
-    w.headers = w.headers[0..len(w.headers) - count];
+// Close a loop's frames: back to the headers and push headers held before it.
+pub fn release(w: W, headers: integer, pushes: integer) {
+  if len(w.headers) > headers {
+    w.headers = w.headers[0..headers];
+  }
+  if len(w.push_heads) > pushes {
+    w.push_heads = w.push_heads[0..pushes];
   }
 }
 
@@ -391,7 +544,7 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
   done = false;
   count = len(args);
   if (name == "OpGetVector" || name == "OpGetVectorNullable") && count == 3 {
-    h = held_vector(x, w, args[0]);
+    h = read_header(x, w, args[0]);
     if h == "" {
       return none();
     }
@@ -423,7 +576,7 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     if !el.found {
       return none();
     }
-    held = held_vector(x, w, el.vec);
+    held = read_header(x, w, el.vec);
     if held == "" {
       return none();
     }
@@ -440,6 +593,10 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     index = index_arg(x, w, el.idx, i, nn);
     proof = held_proof(x, w, el.vec, held);
     f = if name == "OpGetInt" { "loft_vh_get_int" } else { "loft_vh_get_float" };
+    // An unreported read with no proof on its index goes through the push header itself.
+    if !el.report && nn == "" && held.starts_with("loft_ph_vh(&") && held.ends_with(")") {
+      return E { code: "({proof}, {f.replace("loft_vh_", "loft_ph_")}(&{held[12..held.size() - 1]}, {size}, {index}, {fld}))", kind: k };
+    }
     if el.report {
       return E { code: "({proof}, {f}_at{nn}({held}, {size}, {index}, {fld}, {cgen_fn::site(w)}))", kind: k };
     }
@@ -451,7 +608,7 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     if !el.found {
       return none();
     }
-    held = held_vector(x, w, el.vec);
+    held = read_header(x, w, el.vec);
     if held == "" {
       return none();
     }

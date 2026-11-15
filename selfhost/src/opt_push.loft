@@ -486,3 +486,40 @@ pub fn hash_fill_loop(b: ir::Bundle, lp: ir::Block) -> HashFill? {
   }
   HashFill { hash: hash, tp: state[1]!, per_pass: per_pass, index: rc.index, next: rc.next, inclusive: rc.inclusive, hi: rc.hi }
 }
+
+// The movers `blocks_header_hoist` admits under its push tier: a fusable scalar push over a
+// pure path, the reservation a push onto a local is lowered with, a self-slice pop.
+pub fn mover(b: ir::Bundle, name: text, args: vector<ir::Node>) -> boolean {
+  root = -1;
+  size = push_size(name);
+  if size > 0 {
+    if (name == "OpPushByte" && len(args) != 3) || (name != "OpPushByte" && len(args) != 2) {
+      return false;
+    }
+    return vector_path(b, args[0], root) != "";
+  }
+  if name == "OpPreAllocVector" && len(args) == 3 {
+    return vector_path(b, args[0], root) != "";
+  }
+  keep_range(b, name, args, root) != ""
+}
+
+// `keep_range_path`: the path a self-slice pop `OpKeepRange(v, lo, hi, tp)` keeps, "" for any
+// other operator.
+pub fn keep_range(b: ir::Bundle, name: text, args: vector<ir::Node>, root: &integer) -> text {
+  if name != "OpKeepRange" || len(args) != 4 || (env_variable("LOFT_NO_KEEP_RANGE_REFRESH") ?? "0") != "0" {
+    return "";
+  }
+  vector_path(b, args[0], root)
+}
+
+// The element size of the fusable push `name` over `args` with its vector's path in `path`
+// and root in `root`; 0 for any other call.
+pub fn fused(b: ir::Bundle, name: text, args: vector<ir::Node>, path: &text, root: &integer) -> integer {
+  size = push_size(name);
+  if size == 0 || (name == "OpPushByte" && len(args) != 3) || (name != "OpPushByte" && len(args) != 2) {
+    return 0;
+  }
+  path = vector_path(b, args[0], root);
+  if path == "" { 0 } else { size }
+}

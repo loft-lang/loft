@@ -14,6 +14,7 @@ use binds;
 use loop_shape;
 use types;
 use opt_names;
+use opt_push;
 use cgen_types;
 
 const STRUCT = 5;
@@ -584,7 +585,7 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
       }
     }
   }
-  if tier == 0 {
+  if tier & 3 == 0 {
     return false;
   }
   if in_place_set(name) || scalar_stack_ref(def, name, args) {
@@ -612,7 +613,7 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
       return true;
     }
     // Without the schema no record is known flat.
-    if tier == 1 && plain_record(b, tp) {
+    if tier & 3 == 1 && plain_record(b, tp) {
       known = match opt_names::peel_link(tp) {
         TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
         _ => -1,
@@ -622,7 +623,7 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
       }
     }
   }
-  if tier == 1 && name == "OpCopyRecord" && len(args) == 3 && !env_on("LOFT_NO_COPY_IN_PLACE") {
+  if tier & 3 == 1 && name == "OpCopyRecord" && len(args) == 3 && !env_on("LOFT_NO_COPY_IN_PLACE") {
     match loop_shape::unspan(args[2]) {
       NdInt { n: raw } => {
         if raw >= 0 && raw <= 65535 && raw & 32768 == 0 && flat_struct(b, raw & 16383) {
@@ -654,6 +655,13 @@ pub fn blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) ->
 // to a record local are not in place.
 pub fn blocks_in_place_untyped(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
   blocks_tier(b, w, vd, node, 2)
+}
+
+// `blocks_header_hoist` under the tiers `tier` names: 1 the in-place tier, 2 the in-place
+// tier asked without the schema, +4 the push tier (a fusable push, a reservation, a kept
+// range).
+pub fn blocks_under(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, tier: integer) -> boolean {
+  blocks_tier(b, w, vd, node, tier)
 }
 
 // `blocks_header_hoist` under no tier at all: may running `node` write a store, but for a
@@ -688,7 +696,7 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
       if def_nr >= 0 && def_nr < len(b.data.definitions) {
         def = b.data.definitions[vd]!;
         name = b.data.definitions[def_nr]!.name;
-        if !(in_place_native(b, def, name, args, in_place) || allowed(b, def, name, args)) && call_writes_store(b, w, def_nr) && !(in_place != 0 && !env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
+        if !(in_place_native(b, def, name, args, in_place) || allowed(b, def, name, args) || (in_place & 4 != 0 && opt_push::mover(b, name, args))) && call_writes_store(b, w, def_nr) && !(in_place & 3 != 0 && !env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
           return true;
         }
       }
