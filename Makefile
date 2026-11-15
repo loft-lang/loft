@@ -2616,6 +2616,12 @@ docs-lint:
 docs-lint-baseline:
 	@python3 scripts/doc_lint.py --all --write-baseline doc/claude/releases/docs-lint.baseline
 
+.PHONY: scripts-named scripts-named-bless
+scripts-named:  ## The tests/scripts files nothing in this repository names — the backlog to move into the language suite (TESTING.md)
+	@python3 scripts/scripts_named.py list
+scripts-named-bless:  ## Re-record tests/scripts_unpinned.baseline after a move (the ratchet only shrinks)
+	@python3 scripts/scripts_named.py bless
+
 # The PR gate, run locally: findings this branch ADDS since it left origin/main.
 docs-lint-gate:
 	@python3 scripts/doc_lint.py --gate --since "$$(git merge-base origin/main HEAD)" --changed

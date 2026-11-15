@@ -591,9 +591,32 @@ close, `silent-wrong` open on main at the week's end), the consumers' own commit
 beside the consumer-hit count (a dormant consumer reads as a stable language, and only
 the commit count tells the two apart), the register at the week's last commit (rules
 defined, the rewrite family and its growth that week, annotated, guarded by a test or the
-rewrite census), the deviation registers, the design decisions, the consumer gate's
+rewrite census), the deviation registers and the open entries whose tracking reference is
+dead or missing (`deviations_stale`, the `rule_tags.py registers --issues` check read every
+week instead of by hand), the script tests added here beside the suite's cells added and the
+scripts nothing in the repository names (`scripts/scripts_named.py`, the backlog to move), the
+design decisions, the consumer gate's
 scheduled nights green, the release gate's age, and the portal's median and release cut
-per host.  The series file is the trend; the script's docstring is the column key.  A
+per host.  The series file is the trend; the script's docstring is the column key.
+
+**Who runs it, and who reads it (owner, 2026-11-15).**  The read is not a cadence of the
+owner's: the gathering stream — the one that joins the work branches and builds the pull
+requests, not a feature stream — runs `make stability-read ARGS="--record"` with each
+gather, at least once a week, and the row lands in `index/stability_weekly.tsv` with the
+join.  The owner's half-month pass and the release pass READ the series: its last rows and
+the summary line are the position, so a pass triggered by observation starts from the
+numbers rather than recomputing them.  A week with no row is itself a finding of the next
+pass.  The read MEASURES nothing: its portal column reads the rows committed under
+`bench/portal/results/` and prints each row's date, so a stale measurement shows as its age.
+A measurement needs a quiet box, which the gathering stream's does not have, so the
+performance stream (the laptop) records the row — `make perf-check ARGS="--record"` on the
+judged lanes — and the gathering stream asks for one whenever the read shows the laptop row
+older than a week.  **A change of instrument is written on its week** in
+`index/stability_notes.tsv`, which the read carries as the row's `note` column: a stream moving
+from a sample to the whole corpus, a gate added, a consumer going quiet.  The filed count steps
+on such a week by instrument and not by the language — the self-host streams' move to
+whole-corpus runs filed the defects their samples had deferred in one week — and a December
+read that does not see the note reads it as the language getting worse.  A
 report, never a gate: it reads the tracker through `gh api` when signed in and the public
 endpoint when not, and the tracker labels as they are NOW, so a past week's `open_sw_main`
 is an approximation from the filing and closing stamps.

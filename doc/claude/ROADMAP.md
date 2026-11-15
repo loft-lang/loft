@@ -56,7 +56,9 @@ reachable as `--native-rust`, for one purpose: it is the reference the self-host
 compared with byte for byte ([@PLN91 § The port method](plans/91-self-host/README.md#the-port-method--the-diff-is-the-work-the-reference-is-the-truth)),
 so a defect it shares with the language is still fixed in it under that method.  `--native` flips to
 the C backend at [@PLN203](https://github.com/loft-lang/plans/issues/203)'s last phase, and the
-writer leaves the tree at @PLN91's stage 6, with Cargo.  The reasons are measured in
+writer leaves the tree at @PLN91's stage 6, with Cargo — a stage its
+[double-implementation ledger](plans/91-self-host/README.md#the-double-implementation--why-the-rust-side-stays-live)
+decides, not a date.  The reasons are measured in
 [plans/203-c99-default-backend.md](plans/203-c99-default-backend.md) § The position and
 [ROADMAP-history.md § The rustc backend](ROADMAP-history.md#the-rustc-backend--the-order-as-it-read-until-2026-11-12).
 

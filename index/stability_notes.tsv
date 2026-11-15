@@ -1,0 +1,4 @@
+# A change of INSTRUMENT, one line per ISO week (week_of<TAB>note), read into the weekly
+# series' `note` column by scripts/stability_read.py.  A step in the counts on such a week is
+# the instrument's, not the language's: write the note the week the instrument changes.
+2026-11-09	the self-host streams moved from sampled runs to the whole corpus (strand 12's survey, strand 1b's run-image survey): defects the samples had deferred are filed here, a step by instrument

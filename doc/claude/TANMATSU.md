@@ -412,6 +412,11 @@ not yet published), where the pixel-by-pixel path took 63 ms.
   through `tiles`' camera (zoom 3) and prints `@t frame` lines with its draw, copy and show
   times; on a PC the rasteriser takes 1.7 ms for such a frame, and the device's time, sound and
   area switch are unmeasured.
+- The frame tier has no golden-frame guard yet: the game's scripted run rendered to its RGB565
+  surface on the interpreter, on `--native-c` and under the riscv32 QEMU leg, byte for byte
+  against committed frames — the rasteriser is the same deterministic code everywhere, so the
+  board adds nothing a PC cannot compute
+  ([plans/209 § The frame tier off the device](plans/209-platform-agnostic-games/GPU_LAYER-review.md#the-frame-tier-off-the-device--one-guard-makes-it-tested-not-testable)).
 - The I2S output task (`audio`) has not run on the device.
 - From reset to the app's start the panel shows blue, before any of the app's code runs.
 - The P4's pixel accelerator (PPA) can scale and rotate a frame in hardware, which `screen`
