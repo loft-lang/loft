@@ -1866,6 +1866,14 @@ pub fn run_image_starts(data: &Data, code_len: usize) -> Option<Vec<u32>> {
     Some(starts)
 }
 
+/// The run image's format, written into `RunImage.format` (offset 0): the loft runner refuses an
+/// image of another format before it reads anything else (`selfhost/src/load.loft` `load_run`).
+/// It equals `selfhost/src/ir.loft`'s `RUN_IMAGE_FORMAT`, the one the runner is built with —
+/// `the_run_image_format_is_the_loft_schemas` holds the two equal.  Raised when what the image's
+/// bytes or tables MEAN changes under an unchanged layout; a layout change is the store load's
+/// conversion's (`.dschema`).
+pub const RUN_IMAGE_FORMAT: i64 = 1;
+
 /// Write the run image of a compiled program to `path` — its bytecode `code`, the natives by
 /// index, the `program`'s stores' schema and `#cwd` — with its layout sidecar (`RunImage` of
 /// the IR schema), atomically as [`save_bundle`] writes a bundle.  The parts arrive as data:
@@ -1879,14 +1887,6 @@ pub fn run_image_starts(data: &Data, code_len: usize) -> Option<Vec<u32>> {
 /// # Panics
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`].
 #[cfg(feature = "mmap")]
-/// The run image's format, written into `RunImage.format` (offset 0): the loft runner refuses an
-/// image of another format before it reads anything else (`selfhost/src/load.loft` `load_run`).
-/// It equals `selfhost/src/ir.loft`'s `RUN_IMAGE_FORMAT`, the one the runner is built with —
-/// `the_run_image_format_is_the_loft_schemas` holds the two equal.  Raised when what the image's
-/// bytes or tables MEAN changes under an unchanged layout; a layout change is the store load's
-/// conversion's (`.dschema`).
-pub const RUN_IMAGE_FORMAT: i64 = 1;
-
 pub fn save_run_image(
     code: &[u8],
     library_names: &crate::fxhash::FxHashMap<String, u16>,
@@ -2160,9 +2160,11 @@ mod tests {
     /// spells it `pub RUN_IMAGE_FORMAT = <n>;`.
     #[test]
     fn the_run_image_format_is_the_loft_schemas() {
-        let src =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/selfhost/src/ir.loft"))
-                .expect("selfhost/src/ir.loft");
+        let src = crate::file_access::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/selfhost/src/ir.loft"
+        ))
+        .expect("selfhost/src/ir.loft");
         let n: i64 = src
             .lines()
             .find_map(|l| {
