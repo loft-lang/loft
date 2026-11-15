@@ -128,3 +128,6 @@ tools/indexer/fix_broken_links.py	--help
 tools/indexer/migrate.py	--help
 tools/indexer/rewrite_links.py	--help
 selfhost/bench/bench_speed.py	--help
+selfhost/bench/run_image_libtests.py	--help
+selfhost/seed/build.sh	--help
+selfhost/seed/make_seed.py	--help
