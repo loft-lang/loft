@@ -31,6 +31,7 @@ use opt_facts;
 use opt_adopt;
 use opt_hoist;
 use cgen_win;
+use cgen_table;
 use cgen_texts;
 use cgen_natives;
 use opt_names;
@@ -2677,6 +2678,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     headers: [],
     push_heads: [],
     windows: [],
+    table_places: if plain_rules() { cgen_table::places(x.b, index) } else { [] },
+    table_paths: [],
+    table_names: [],
     adopt_v: -1,
     adopt_vdb: -1,
     adopt_buf: -1,

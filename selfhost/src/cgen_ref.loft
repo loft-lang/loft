@@ -14,6 +14,7 @@ use loop_shape;
 use cgen_fn;
 use cgen_bind;
 use cgen_hoist;
+use cgen_table;
 use ptypes;
 use opt_push;
 use binds;
@@ -452,6 +453,12 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
         return E { code: "loft_sorted_finish({place}, {x.b.types[elem].size}, {keys})", kind: K_VOID };
       }
       if kind == "hash" {
+        ptp_at = match loop_shape::unspan(args[2]) { NdInt { n } => n, _ => -1 };
+        fld_at = match loop_shape::unspan(args[3]) { NdInt { n } => n, _ => -1 };
+        filed_in = cgen_table::handle_at(w, cgen_table::finish_place(x.b, args[0], ptp_at, fld_at));
+        if filed_in != "" {
+          return E { code: "(void) loft_hh_insert(&{filed_in}, loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
+        }
         return E { code: "(void) loft_hash_insert(loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
       }
       if kind == "index" || kind == "ordered" {
@@ -902,9 +909,10 @@ fn ref_ops_7(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     return E { code: "loft_remove_claims(loft_types, {raw}, {dest_c})", kind: K_VOID };
   }
   if (name == "OpLengthSpatial" || name == "OpLengthTrie" || name == "OpLengthHash" || name == "OpSizeSpatial" || name == "OpSizeTrie" || name == "OpSizeIndex" || name == "OpLengthIndex") && count == 1 {
+    counted = if name == "OpLengthHash" { cgen_table::handle(x, w, args[0]) } else { "" };
     coll_c = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
     if name == "OpLengthHash" {
-      return E { code: "loft_hash_len({coll_c})", kind: K_INT };
+      return E { code: if counted != "" { "loft_hh_len(&{counted}, {coll_c})" } else { "loft_hash_len({coll_c})" }, kind: K_INT };
     }
     if name == "OpLengthIndex" {
       return E { code: "(int64_t) loft_bt_len({coll_c})", kind: K_INT };
@@ -1715,7 +1723,9 @@ fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
       }
     }
     if len(ints) == given {
-      typed = if given == 1 { "loft_h_find_i64({data}, {key_table}, {ints[0]})" } else { "loft_h_find_ints({data}, {key_table}, {given}, (int64_t[]){{ {ints.join(", ")} }})" };
+      // `(R-TableHandle)`: the one-integer lookup goes through the place's handle.
+      found = if given == 1 { cgen_table::handle(x, w, args[0]) } else { "" };
+      typed = if given == 1 { if found != "" { "loft_hh_find_i64(&{found}, {data}, {key_table}, {ints[0]})" } else { "loft_h_find_i64({data}, {key_table}, {ints[0]})" } } else { "loft_h_find_ints({data}, {key_table}, {given}, (int64_t[]){{ {ints.join(", ")} }})" };
     }
   }
   if typed == "" && kind == "hash" && given == 1 && nk == 1 && keys[0].type_nr == 6 && values[0].starts_with("loft_kv_text(") && values[0].ends_with(")") {
