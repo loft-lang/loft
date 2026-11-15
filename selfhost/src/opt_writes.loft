@@ -572,7 +572,7 @@ fn flat_struct(b: ir::Bundle, tp: integer) -> boolean {
 // `allowed`: an in-place setter, a scalar read from a file, a reference to a scalar, text or
 // flat-record local, the mint of the frame's own return buffer, a flag-free copy of a flat
 // record.
-fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<ir::Node>, in_place: boolean) -> boolean {
+fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<ir::Node>, tier: integer) -> boolean {
   // The mint of the frame's own return buffer moves nothing a header describes, under any
   // tier.
   if name == "OpDatabase" || name == "OpDatabaseNP" {
@@ -584,7 +584,7 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
       }
     }
   }
-  if !in_place {
+  if tier == 0 {
     return false;
   }
   if in_place_set(name) || scalar_stack_ref(def, name, args) {
@@ -611,7 +611,8 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
     if is_text_local && !env_on("LOFT_NO_FRESH_TEXT_SET") {
       return true;
     }
-    if plain_record(b, tp) {
+    // Without the schema no record is known flat.
+    if tier == 1 && plain_record(b, tp) {
       known = match opt_names::peel_link(tp) {
         TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
         _ => -1,
@@ -621,7 +622,7 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
       }
     }
   }
-  if name == "OpCopyRecord" && len(args) == 3 && !env_on("LOFT_NO_COPY_IN_PLACE") {
+  if tier == 1 && name == "OpCopyRecord" && len(args) == 3 && !env_on("LOFT_NO_COPY_IN_PLACE") {
     match loop_shape::unspan(args[2]) {
       NdInt { n: raw } => {
         if raw >= 0 && raw <= 65535 && raw & 32768 == 0 && flat_struct(b, raw & 16383) {
@@ -634,7 +635,7 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
   false
 }
 
-fn any_blocks(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>, in_place: boolean) -> boolean {
+fn any_blocks(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>, in_place: integer) -> boolean {
   for n in nodes {
     if blocks_tier(b, w, vd, n, in_place) {
       return true;
@@ -645,19 +646,26 @@ fn any_blocks(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>, in
 
 // `blocks_header_hoist` under the in-place tier alone.
 pub fn blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
-  blocks_tier(b, w, vd, node, true)
+  blocks_tier(b, w, vd, node, 1)
+}
+
+// `blocks_header_hoist` under the in-place tier, asked WITHOUT the type schema (as
+// `view_def_header` asks it): no record is known to be flat, so a record copy and a reference
+// to a record local are not in place.
+pub fn blocks_in_place_untyped(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
+  blocks_tier(b, w, vd, node, 2)
 }
 
 // `blocks_header_hoist` under no tier at all: may running `node` write a store, but for a
 // release and the allocation of a buffer no header describes?
 pub fn blocks_plain(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
-  blocks_tier(b, w, vd, node, false)
+  blocks_tier(b, w, vd, node, 0)
 }
 
 // `blocks_header_hoist` under the in-place tier alone (no push, no mint, nothing the emitter
 // owns): may running `node` of function `vd` MOVE or grow a store — anything but a write in
 // place, a release, or the allocation of a buffer no header describes?
-fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: boolean) -> boolean {
+fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: integer) -> boolean {
   n = loop_shape::unspan(node);
   match n {
     NdBlock { block } => {
@@ -680,7 +688,7 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
       if def_nr >= 0 && def_nr < len(b.data.definitions) {
         def = b.data.definitions[vd]!;
         name = b.data.definitions[def_nr]!.name;
-        if !(in_place_native(b, def, name, args, in_place) || allowed(b, def, name, args)) && call_writes_store(b, w, def_nr) && !(in_place && !env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
+        if !(in_place_native(b, def, name, args, in_place) || allowed(b, def, name, args)) && call_writes_store(b, w, def_nr) && !(in_place != 0 && !env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
           return true;
         }
       }

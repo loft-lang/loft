@@ -114,8 +114,10 @@ fn vector_candidates(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<
 // `hoistable`, its base clause: the vectors loop `lp` of function `vd` may hold for its run —
 // none where a statement of its body may write a store.
 pub fn held_vectors(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Block) -> vector<Held> {
+  // The write tier (`LOFT_NO_WRITE_HOIST` turns it off): a write in place moves no record.
+  in_place = (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0";
   for op in lp.operators {
-    if opt_writes::blocks_plain(b, w, vd, op) {
+    if (if in_place { opt_writes::blocks_in_place(b, w, vd, op) } else { opt_writes::blocks_plain(b, w, vd, op) }) {
       return [];
     }
   }
@@ -148,7 +150,7 @@ pub fn view_def_header(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts:
     return -1;
   }
   for op in stmts {
-    if op#index > at && (if in_place { opt_writes::blocks_in_place(b, w, vd, op) } else { opt_writes::blocks_plain(b, w, vd, op) }) {
+    if op#index > at && (if in_place { opt_writes::blocks_in_place_untyped(b, w, vd, op) } else { opt_writes::blocks_plain(b, w, vd, op) }) {
       return -1;
     }
   }
