@@ -2251,7 +2251,7 @@ pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
 
 // `Type::name`: the type as the definition table keys it (`render` with `source` false), or
 // null for a keyed collection, whose key spells its key list as a Rust value.
-fn type_key(b: ir::Bundle, t: ir::TypeT) -> text? {
+pub fn type_key(b: ir::Bundle, t: ir::TypeT) -> text? {
   match t {
     TyOptional { inner } => {
       k = type_key(b, inner);

@@ -373,6 +373,8 @@ fn held_type(x: Cx, w: W, v: ir::Node) -> ir::TypeT? {
             }
             return null;
           },
+          // A stored tuple's member (`stored_tuple_offsets`): not carried — the first port
+          // double-freed a store in this function on both backends (handoff-2026-11-15b.md).
           TyTuple { elems: _ } => return null,
           _ => return if pos == 0 { tp } else { null },
         }

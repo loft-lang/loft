@@ -940,7 +940,9 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     return none();
   }
   native = if route == "" { "" } else { cgen_natives::native_c(route) ?? "" };
-  if native == "" && def.c_sig == "" && !binds::is_loft_defined(def) && !cgen_clibs::is_forwarded(x.b, d) {
+  // A synthesized function (`__frames_<collection>`, loft#1601) has a body without an `n_`
+  // name: it is called as any written function.
+  if native == "" && def.c_sig == "" && !binds::is_loft_defined(def) && !binds::has_code(def) && !cgen_clibs::is_forwarded(x.b, d) {
     refuse(w, "a call of a function without a loft body");
     return none();
   }
@@ -2371,11 +2373,27 @@ fn stack_target(b: ir::Bundle, w: W, value: ir::Node) -> text {
       if len(args) != 1 {
         return "";
       }
+      name = def_name(b, def_nr);
+      // A member of a tuple local is a place a link names (`@FR-B-Ref-Lvalue`); a text member
+      // of a tuple parameter is the caller's: no link writes it.
+      match args[0] {
+        NdTupleGet { var: tv, idx } => {
+          if name != "OpCreateStack" {
+            return "";
+          }
+          members = tuple_members(w.shapes[tv] ?? "");
+          text_member = idx < len(members) && members[idx]! == "text";
+          if !w.params[tv]! || w.links[tv]! || !text_member {
+            return "&{w.names[tv]!}.f{idx}";
+          }
+          return "";
+        },
+        _ => {},
+      }
       t = match args[0] {
         NdVar { n } => n,
         _ => return "",
       };
-      name = def_name(b, def_nr);
       // A plain text parameter is the caller's view: no link writes it.
       if name == "OpCreateStack" && !(w.params[t]! && !w.links[t]! && w.shapes[t]! == "text") {
         return var_addr(w, t);
@@ -2585,6 +2603,13 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       }
     },
     NdYield { inner } => cgen_gen::gen_yield(x, w, inner, ind),
+    // `parallel { … }`: the arms run one after another — each arm's effect is the one its
+    // thread has.
+    NdParallel { arms } => {
+      for a in arms {
+        stmt(x, w, a, ind);
+      }
+    },
     NdDrop { inner } => {
       whole = match loop_shape::unspan(inner) {
         NdIf { cond: _, t: _, f: _ } => true,
@@ -2667,6 +2692,44 @@ fn store_linked(b: ir::Bundle, d: ir::Definition, links: vector<boolean>) -> boo
     }
   });
   hit[0]!
+}
+
+// `empty_stub_default` (loft#1254): the value a stub with an empty body answers — its type's
+// default (`Data::to_default`), a collection's the null reference — or null for any other body
+// or a type this writer does not build the default of (a record, which `has_default` walks).
+fn empty_stub_default(b: ir::Bundle, d: ir::Definition, code: ir::Node) -> ir::Node? {
+  empty = match code {
+    NdBlock { block } => len(block[0]!.operators) == 0,
+    _ => false,
+  };
+  if !empty || len(d.returned) == 0 {
+    return null;
+  }
+  match d.returned[0]! {
+    TyInteger { spec } => ir::NdInt { n: if spec.min <= 0 && spec.max >= 0 { 0 } else if spec.min > 0 { spec.min } else { spec.max } },
+    TyFloat => ir::NdFloat { f: 0.0 },
+    TySingle => ir::NdSingle { f: 0.0f },
+    TyBoolean => ir::NdBoolean { b: false },
+    TyCharacter => ir::NdInt { n: 0 },
+    TyText { dep: _ } => ir::NdText { s: "" },
+    TyEnum { n, is_ref, dep: _ } => if is_ref { null } else { ir::NdEnum { ord: 0, tp: b.data.definitions[n]!.known_type } },
+    TyVector { inner: _, dep: _ } => null_ref_sentinel(b),
+    TyHash { n: _, names: _, dep: _ } => null_ref_sentinel(b),
+    TySorted { n: _, keys: _, dep: _ } => null_ref_sentinel(b),
+    TyIndex { n: _, keys: _, dep: _ } => null_ref_sentinel(b),
+    TyRadix { n: _, names: _, dep: _ } => null_ref_sentinel(b),
+    TyTrie { n: _, key: _, dep: _ } => null_ref_sentinel(b),
+    _ => null,
+  }
+}
+
+fn null_ref_sentinel(b: ir::Bundle) -> ir::Node? {
+  for def in b.data.definitions {
+    if def.name == "OpNullRefSentinel" {
+      return ir::NdCall { def_nr: def#index, args: [] };
+    }
+  }
+  null
 }
 
 // `link_kind`: a kind a store link carries — the place's own get and set read and write it
@@ -2920,7 +2983,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     stmt(x, w, code, 1);
     epilogue(w, 1);
   } else {
-    ret_value(x, w, code, 1);
+    // loft#1254 — a stub with an empty body answers its type's default.
+    ret_value(x, w, empty_stub_default(x.b, d, code) ?? code, 1);
   }
   if w.why != "" {
     return Written { text: "", refused: w.why };
