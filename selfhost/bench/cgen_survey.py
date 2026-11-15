@@ -185,6 +185,10 @@ def main():
     ap.add_argument("--plain", action="store_true",
                     help="both sides under the switches of cgen_w.loft's PLAIN_SWITCHES: the rules "
                          "the loft writer does not carry yet, off")
+    ap.add_argument("--assume", default=None, metavar="SWITCH",
+                    help="with --plain: leave SWITCH out, so the oracle runs that rule, and tell the "
+                         "generator to write as if it carried it (LOFT_CGEN_ASSUME): the bodies that "
+                         "differ are the ones the rule changes")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
@@ -201,7 +205,10 @@ def main():
         with open(os.path.join(root, "selfhost", "src", "cgen_w.loft"), encoding="utf-8") as fh:
             row = re.search(r"^PLAIN_SWITCHES = \[(.*)\];$", fh.read(), re.M)
         for name in re.findall(r'"(LOFT_NO_[A-Z0-9_]+)"', row.group(1)):
-            env[name] = "1"
+            if name != o.assume:
+                env[name] = "1"
+        if o.assume:
+            env["LOFT_CGEN_ASSUME"] = o.assume
     tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
     if (o.form == "debug" or o.layer) and not (o.cgen or o.generator):
         sys.exit("--form debug and --layer compare a generator's output: give --cgen or --generator")
