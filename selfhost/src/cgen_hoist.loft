@@ -140,6 +140,103 @@ pub fn hold_pushes(x: Cx, w: W, lp: ir::Block, verdict: opt_hoist::LoopHoist, in
   }
 }
 
+// `push_bits`: the value a scalar push writes, as the bits its header routine takes; the
+// routine in `put`.
+fn push_bits(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, put: &text) -> text {
+  val = cgen_fn::expr(x, w, args[len(args) - 1], ind);
+  if name == "OpPushInt" {
+    put = "loft_ph_put8";
+    return "(uint64_t) {as_int(w, val)}";
+  }
+  if name == "OpPushFloat" {
+    put = "loft_ph_put8";
+    return "loft_f64_bits({as_float(w, val)})";
+  }
+  if name == "OpPushSingle" {
+    put = "loft_ph_put4";
+    return "loft_f32_bits({as_single(w, val)})";
+  }
+  if name == "OpPushInt4" {
+    put = "loft_ph_put4";
+    return "loft_i4_bits({as_int(w, val)})";
+  }
+  if name == "OpPushCharacter" {
+    put = "loft_ph_put4";
+    return "(uint32_t) {as_char(w, val)}";
+  }
+  if name == "OpPushBoolean" {
+    put = "loft_ph_put1";
+    return "(uint8_t) {as_bool(w, val)}";
+  }
+  if name == "OpPushEnum" {
+    put = "loft_ph_put1";
+    return "(uint8_t) {as_enum(w, val)}";
+  }
+  min = cgen_fn::literal(w, args[1], "byte minimum") ?? return "";
+  put = "loft_ph_put1";
+  "loft_byte_raw({min}, {as_int(w, val)})"
+}
+
+// `held_push_run` (`@FR-R-PushFill`'s held-run clause): a run of two or more plain scalar
+// pushes onto a path a push header is held for is one call — one room test for the run.
+// Answers the statement after the run, -1 where statement `at` starts none.
+pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer) -> integer {
+  if (env_variable("LOFT_NO_HELD_PUSH_RUN") ?? "0") != "0" {
+    return -1;
+  }
+  shown: vector<ir::Node> = ops[0..end];
+  first = opt_push::push_at(x.b, shown, at);
+  if first.size == 0 {
+    return -1;
+  }
+  head = push_head(x, w, first.vector);
+  if head < 0 || w.push_heads[head].size != first.size {
+    return -1;
+  }
+  run: vector<opt_push::Push> = [first];
+  stop = first.next;
+  for _ in 0..end {
+    p = opt_push::push_at(x.b, shown, stop);
+    if p.size == 0 || p.path != first.path || p.size != first.size || loop_shape::unspan(p.vector) != loop_shape::unspan(first.vector) {
+      break;
+    }
+    run += [p];
+    stop = p.next;
+  }
+  if len(run) < 2 {
+    return -1;
+  }
+  def = x.b.data.definitions[w.index]!;
+  for p in run {
+    if !opt_push::run_value_plain(x.b, def, p.root, p.val) {
+      return -1;
+    }
+  }
+  // The values are computed into temporaries first, in the run's order.
+  temps: vector<text> = [];
+  put = "";
+  for p in run {
+    bits = push_bits(x, w, p.op, p.args, ind, put);
+    if w.why != "" {
+      return -1;
+    }
+    t = "pb{len(w.decls) + 1}";
+    w.decls += ["{bits_type(put)} {t} = 0;"];
+    line(w, ind, "{t} = {bits};");
+    temps += [t];
+  }
+  h = w.push_heads[head].name;
+  site = "{cgen_names::original_name(def)}:{h}";
+  based = w.push_heads[head].based;
+  line(w, ind, "LOFT_PROVED({if based { "loft_phb_same" } else { "loft_ph_same" }}({h}, {first.size}), {c_string(site)});");
+  line(w, ind, "{if based { put.replace("loft_ph_put", "loft_ph_putb") } else { put }}_run(&{h}, {len(temps)}, (const {bits_type(put)}[]) {{ {temps.join(", ")} }});");
+  stop
+}
+
+fn bits_type(put: text) -> text {
+  if put == "loft_ph_put8" { "uint64_t" } else if put == "loft_ph_put4" { "uint32_t" } else { "uint8_t" }
+}
+
 // `pushed_mint`: the length of, the reservation on and a scalar push onto a path a push
 // header is held for go through the header.  `done` says whether `name` over `args` is one.
 pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
@@ -168,34 +265,10 @@ pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
   }
   done = true;
   h = w.push_heads[at].name;
-  val = cgen_fn::expr(x, w, args[len(args) - 1], ind);
   put = "";
-  bits = "";
-  if name == "OpPushInt" {
-    put = "loft_ph_put8";
-    bits = "(uint64_t) {as_int(w, val)}";
-  } else if name == "OpPushFloat" {
-    put = "loft_ph_put8";
-    bits = "loft_f64_bits({as_float(w, val)})";
-  } else if name == "OpPushSingle" {
-    put = "loft_ph_put4";
-    bits = "loft_f32_bits({as_single(w, val)})";
-  } else if name == "OpPushInt4" {
-    put = "loft_ph_put4";
-    bits = "loft_i4_bits({as_int(w, val)})";
-  } else if name == "OpPushCharacter" {
-    put = "loft_ph_put4";
-    bits = "(uint32_t) {as_char(w, val)}";
-  } else if name == "OpPushBoolean" {
-    put = "loft_ph_put1";
-    bits = "(uint8_t) {as_bool(w, val)}";
-  } else if name == "OpPushEnum" {
-    put = "loft_ph_put1";
-    bits = "(uint8_t) {as_enum(w, val)}";
-  } else {
-    min = cgen_fn::literal(w, args[1], "byte minimum") ?? return none();
-    put = "loft_ph_put1";
-    bits = "loft_byte_raw({min}, {as_int(w, val)})";
+  bits = push_bits(x, w, name, args, ind, put);
+  if w.why != "" {
+    return none();
   }
   site = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{h}";
   if w.push_heads[at].based {

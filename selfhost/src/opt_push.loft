@@ -21,6 +21,9 @@ pub struct Push {
   pub size: integer,
   // The index of the statement after the push.
   pub next: integer,
+  // The push operator and its operands (a byte push carries its bias).
+  pub op: text,
+  pub args: vector<ir::Node>,
 }
 
 fn def_name(b: ir::Bundle, d: integer) -> text {
@@ -65,7 +68,7 @@ fn push_size(name: text) -> integer {
 }
 
 fn none(ops: vector<ir::Node>) -> Push {
-  Push { path: "", root: -1, vector: ir::NdNull, val: ir::NdNull, size: 0, next: len(ops) }
+  Push { path: "", root: -1, vector: ir::NdNull, val: ir::NdNull, size: 0, next: len(ops), op: "", args: [] }
 }
 
 fn is_pre_alloc(b: ir::Bundle, v: ir::Node) -> boolean {
@@ -117,7 +120,7 @@ pub fn push_at(b: ir::Bundle, ops: vector<ir::Node>, at: integer) -> Push {
       if path == "" {
         return none(ops);
       }
-      Push { path: path, root: root, vector: args[0], val: args[len(args) - 1], size: size, next: next }
+      Push { path: path, root: root, vector: args[0], val: args[len(args) - 1], size: size, next: next, op: name, args: args }
     },
     _ => none(ops),
   }

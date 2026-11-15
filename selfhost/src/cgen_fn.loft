@@ -1999,13 +1999,25 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
   // for it.
   run_end = 0;
   run_head = false;
+  // The statements a held push run already wrote.
+  skip_to = 0;
   for o in ops {
     if o#index >= end || w.why != "" {
       break;
     }
+    if o#index < skip_to {
+      continue;
+    }
     if run_head && o#index >= run_end {
       w.push_heads = w.push_heads[0..len(w.push_heads) - 1];
       run_head = false;
+    }
+    if o#index >= run_end && plain_rules() && len(w.push_heads) > 0 {
+      past = cgen_hoist::held_push_run(x, w, ops, o#index, end, ind);
+      if past >= 0 {
+        skip_to = past;
+        continue;
+      }
     }
     if o#index >= run_end && plain_rules() {
       opened = false;
