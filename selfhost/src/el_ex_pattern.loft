@@ -663,7 +663,8 @@ pub fn struct_alternative(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, pn
             // `field_pattern_rename`: `field: name` with a binding name binds the field as `name`.
             bname = if pat == null { fname } else { rename_of(e, pat!) };
             if bname != "" {
-              if !el_convert::plain_scalar(el_types::base(ft)) {
+              // A text field binds a text of its own, typed as the field (`s#1 = OpGetText(b, 8)`).
+              if !el_convert::plain_scalar(el_types::base(ft)) && !(el_types::base(ft) is TyText) {
                 el::refuse(e, "a struct pattern binding of this type: {type_kind(ft)}");
                 return null;
               }
@@ -743,6 +744,11 @@ pub fn sub_pattern_cond(e: el::El, vars: el_vars::Vars, pat: integer, tmp: integ
   if e.p.nodes[pat] is PRange {
     c = pattern_cond(e, vars, pat, tmp, ft, false);
     return if c == null { null } else { el_ir::v_block([c!], ir::TyBoolean, "range_pattern") };
+  }
+  // A field's group keeps its block (`parse_match_pattern`'s `or_pattern`).
+  if e.p.nodes[pat] is PGroup {
+    c = pattern_cond(e, vars, pat, tmp, ft, false);
+    return if c == null { null } else { el_ir::v_block([c!], ir::TyBoolean, "or_pattern") };
   }
   match e.p.nodes[pat] {
     PAlt { alts } => {
@@ -1078,6 +1084,46 @@ pub fn pattern_cond(e: el::El, vars: el_vars::Vars, pn: integer, v: integer, st:
       lc = call_op(e, vars, "<=", [l.code, ir::NdVar { n: v }], [st, st]);
       hc = call_op(e, vars, if inclusive { "<=" } else { "<" }, [ir::NdVar { n: v }, h.code], [st, st]);
       el_ir::v_if(lc.code, hc.code, ir::NdBoolean { b: false })
+    },
+    // `parse_scalar_match`'s `null` arm: the subject's null test, `!subject` (`null_pattern`).
+    PNull => {
+      if enum_subject {
+        el::refuse(e, "a `null` pattern on an enum");
+        return null;
+      }
+      r = call_op(e, vars, "!", [ir::NdVar { n: v }], [st]);
+      if el_types::is_unknown(r.tp) {
+        return null;
+      }
+      r.code
+    },
+    // `@FR-G-Pat-Group`: `(2 | 3)` is the alternation of its patterns and `(2..=5)` the range,
+    // one condition either way (`parse_match_pattern`'s `(`): each alternative's test, the later
+    // ones joined as `if c true else one` (`build_scalar_cond` unwraps the group's block).  A
+    // quantified group, a sequence of more than one pattern and a wildcard alternative are
+    // refused by name.
+    PGroup { seqs, quant } => {
+      if quant != "" {
+        el::refuse(e, "a quantified pattern group outside a slice pattern");
+        return null;
+      }
+      c: ir::Node? = null;
+      for s in seqs {
+        items = match e.p.nodes[s] { PSeq { items } => items, _ => [s] };
+        if len(items) != 1 {
+          el::refuse(e, "a pattern group alternative of more than one pattern");
+          return null;
+        }
+        one = pattern_cond(e, vars, items[0]!, v, st, enum_subject);
+        if one == null {
+          if e.p.nodes[items[0]!] is PWild {
+            el::refuse(e, "a wildcard alternative in a pattern group");
+          }
+          return null;
+        }
+        c = if c == null { one } else { el_ir::v_if(c!, ir::NdBoolean { b: true }, one!) };
+      }
+      c
     },
     _ => {
       el::refuse(e, "a pattern of this form: {syn_kind(e, pn)}");

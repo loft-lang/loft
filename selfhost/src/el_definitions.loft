@@ -17,6 +17,8 @@ use el_ex_base;
 use el_ex_assign;
 use el_dispatch;
 use el_schema;
+use el_cell;
+
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
 pub fn elab_file(e: el::El, file: integer) {
@@ -1261,6 +1263,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       cv = el_vars::add_variable(vars, "__closure", ct);
       el_vars::become_argument(vars, cv);
       e.closure_var = cv;
+    }
+    // `flip_scalars_to_box_types`: a local a closure writes takes its cell's type before the body.
+    if !e.first_pass && !starts_with(name, "__lambda_") {
+      el_cell::flip(e, vars);
     }
     code = el_expressions::parse_code(e, vars, body ?? 0);
     // A body answering a function value is typed as the declared function type: the closure

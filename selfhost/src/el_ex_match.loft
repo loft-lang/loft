@@ -1287,6 +1287,12 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     TyRefVar { inner } => { st = inner; },
     _ => {}
   }
+  // `@PLN25`: a `τ?` scalar subject matches as its base (`peel_link` starts at `base()`), its
+  // null reaching the `_` arm.
+  match st {
+    TyOptional { inner } => if el_convert::plain_scalar(inner) || inner is TyText || el_convert::plain_enum(inner) { st = inner; },
+    _ => {}
+  }
   scalar_subject = el_convert::plain_scalar(st) || st is TyText;
   enum_subject = el_convert::plain_enum(st);
   // A struct enum, or one of its variants, is matched on its record: the ordinal its `enum`

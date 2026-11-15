@@ -28,6 +28,7 @@ use el_ex_null;
 use el_ex_match;
 use el_ex_pattern;
 use el_ex_vector;
+use el_cell;
 
 // Where an inline container's buffer is nulled: before statement `at` of the body.
 pub struct InlineNull {
@@ -591,9 +592,26 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       // first meets them.  Carried for a plain scalar or a text the lambda only reads, in a
       // lambda with none nested in it; any other capture is refused by name.
       caps: vector<el::Capture> = [];
+      // `collect_mutated_captures`: a capture the lambda writes is boxed in a cell
+      // (`@FR-L-CapWrite`) — on the first pass a scalar that takes one, on the second the cell
+      // its local became; any other written capture is refused below.
+      written: vector<text> = [];
       for c in captured_names(e, vars, body!, own) {
         cv = el_vars::var(vars, c);
         ct = el_vars::tp(vars, cv);
+        if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) {
+          boxable = if e.first_pass { el_cell::cell_name(e, ct) != "" } else { el_cell::cell_of(e, ct) >= 0 };
+          if !boxable || vars.vars[cv].argument || starts_with(el::def(e, e.context).name, "n___lambda_") || starts_with(el::def(e, e.context).name, "__lambda_") {
+            el::refuse(e, "a lambda that captures a local of its function: written by it, or around another lambda");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          written += [c];
+          if e.first_pass {
+            el_cell::box_in(e, e.context, c);
+          }
+          caps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
+          continue;
+        }
         // A record or a vector is shared through a pointer field of the record (`@FR-L-CapHeap`).
         heap = !(ct is TyOptional) && (record_type(e, ct) || ct is TyVector);
         if !heap && (!(el_convert::plain_scalar(ct) || el_types::base(ct) is TyText) || ct is TyOptional || el_convert::plain_enum(ct)) {
@@ -608,7 +626,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       // (`Deps::callee_frame1`): neither carried.
       shares = false;
       for c in caps {
-        if record_type(e, c.tp) || c.tp is TyVector {
+        if (record_type(e, c.tp) || c.tp is TyVector) && !written.contains(c.name) {
           shares = true;
         }
       }
@@ -617,7 +635,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         el::refuse(e, "a lambda answering a record or a collection beside a shared capture");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
-      if len(caps) > 0 && (writes_a_name(e, body!, caps) || holds_lambda(e, body!)) {
+      if len(caps) > 0 && holds_lambda(e, body!) {
         el::refuse(e, "a lambda that captures a local of its function: written by it, or around another lambda");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
@@ -648,7 +666,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       if len(caps) == 0 {
         return ex(ir::NdInt { n: d }, lambda_value_type(e, d));
       }
-      return closure_value(e, vars, d, rec_nm, caps, body!);
+      return closure_value(e, vars, d, rec_nm, caps, body!, written);
     },
     _ => ex(ir::NdNull, ir::TyUnknown { n: 0 })
   }
@@ -659,7 +677,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // expression, a fresh `___clos_N` record of it filled from the captured locals
 // (`fn_ref_with_closure`), answering `FnRef(lambda, ___clos_N)` typed as the function borrowing
 // that record.
-pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer) -> Ex {
+pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> Ex {
   // A closure answering a text is not carried: the borrows of its body's answer (a parameter's
   // view) and of its capture fields are not reproduced yet.
   if !e.first_pass && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText {
@@ -668,10 +686,17 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
   }
   if e.first_pass {
     end = match e.p.nodes[body] { SBlock { end: be } => be, _ => 0 };
+    // The cells of the written captures, made before the record (`synthesize_cell_structs`);
+    // each record field shares its cell (`box_captured_names_for_outer_scalars`).
+    cells: vector<integer> = [];
+    for c in caps {
+      cells += [if written.contains(c.name) { el_cell::ensure_cell(e, c.tp, el::pos_at(e, end + 1)) } else { -1 }];
+    }
     rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
     e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
     for c in caps {
-      e.b.data.definitions[rd].attributes += [el::attribute(c.name, closure_attr_type(e, c.tp))];
+      ft = if cells[c#index]! >= 0 { ir::TyReference { n: cells[c#index]!, dep: [el_types::MARKER] } } else { closure_attr_type(e, c.tp) };
+      e.b.data.definitions[rd].attributes += [el::attribute(c.name, ft)];
     }
     e.b.data.definitions[d].closure_record = rd;
     return ex(ir::NdNull, lambda_value_type(e, d));
@@ -1394,6 +1419,11 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
           el::refuse(e, "a captured local with no field in its closure record");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
+        // A captured cell reads its value through the shared pointer.
+        cc = el_cell::cell_of(e, el::def(e, e.closure_rec).attributes[a]!.typedef[0] ?? ir::TyVoid);
+        if cc >= 0 {
+          return el_cell::read(e, got!, cc);
+        }
         // A shared record or vector reads as the captured value's own type.
         if record_type(e, c.tp) || c.tp is TyVector {
           return ex(got!, c.tp);
@@ -1409,6 +1439,11 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
   // to a scalar (`link = &a`) reads as the scalar it names (`@FR-B-Ref-Uniform`); a text link
   // into a store as the text there (`OpGetText(OpVarRef(t), 0)`), borrowing the link.
   t = el_vars::tp(vars, v);
+  // A boxed local reads its cell's value (`auto_deref_boxed_scalar`).
+  bc = el_cell::cell_of(e, t);
+  if bc >= 0 {
+    return el_cell::read(e, ir::NdVar { n: v }, bc);
+  }
   if el_ex_vector::store_text_link(vars, v) {
     return ex(el_ir::cl(e, "OpGetText", [el_ir::cl(e, "OpVarRef", [ir::NdVar { n: v }]), ir::NdInt { n: 0 }]), ir::TyText { dep: [v] });
   }
@@ -1843,6 +1878,11 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       }
     },
     _ => {}
+  }
+  // A local a closure writes lives in its cell (`@FR-L-CapWrite`), written through it.
+  boxed = el_cell::assign(e, vars, op, target, rhs!);
+  if boxed != null {
+    return boxed!;
   }
   if op != "=" {
     return el_ex_place::compound(e, vars, op, target, rhs!);
