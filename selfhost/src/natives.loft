@@ -1239,11 +1239,9 @@ fn native_text_replace_dest(_nh: integer, stk: integer, sp0: integer, io: vector
   sp = sp0;
   // `self.replace(value, with)` appended to the destination.
   crt::slot_ref(io, stk, sp - 16);
-  rwith = crt::stack_str(stk, sp - 32) ?? "";
-  rval = crt::stack_str(stk, sp - 48) ?? "";
-  rself = crt::stack_str(stk, sp - 64) ?? "";
+  // The three views read where they lie.
   sp -= 64;
-  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rself.replace(rval, rwith));
+  crt::ref_text_replace_view(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, stk, sp, sp + 16, sp + 32);
   sp
 }
 

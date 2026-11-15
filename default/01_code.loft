@@ -426,6 +426,7 @@ fn OpFormatStackInt(
   note: const boolean,
   dir: const i8
 );
+#loft" #arm guard(pos >= 32 && pos <= sp): tmp0 = sp - (pos - 16); crt::append_int(crt::peek_u32(base, tmp0) & 65535, crt::peek_u32(base, tmp0 + 4), crt::peek_u32(base, tmp0 + 8), val, radix, width, token, plus, note, dir);"
 /// Floor modulo — the remainder that takes the sign of the DIVISOR, so
 /// `x.floor_mod(n)` lands in `[0, n)` for a positive `n`.  The `%` operator
 /// truncates toward zero and keeps the DIVIDEND's sign (`-1 % 3 == -1`);
@@ -1273,6 +1274,7 @@ fn OpNullRefSentinel() -> reference;
 fn OpInitRefSentinel(pos: const u16);
 #loft" #arm slots: crt::poke_ref(base + sp - pos, 65535, 0, 0);"
 fn OpFreeRef(v1: reference);
+#loft" #arm guard(s.table_loaded && crt::peek_u32(base, sp - 16) != 65535): crt::free_ref(v1.store_nr, v1.rec, v1.pos);"
 // Plan-57 store-identity gate (verification builds only — emitted by the gated
 // `LOFT_STORE_TAG` IR post-pass, never in normal builds, so the bytecode stays
 // byte-identical).  OpStoreTag stamps the store with an allocation-site id;
@@ -2345,10 +2347,12 @@ fn OpCreateStack(pos: const u16) -> reference;
 // must be overwritten by OpPutRef before any field access (same
 // contract as OpCreateStack).
 fn OpInitCreateStack(pos: const u16, dep_pos: const u16);
+#loft" #arm guard(pos >= 8 && pos <= sp && dep_pos <= sp): crt::poke_ref(base + sp - pos, stk, 1, 8 + sp - dep_pos);"
 // Read a text from a stack position.
 fn OpGetStackText(r: reference) -> text[r];
 // Read a reference from a stack position.
 fn OpGetStackRef(r: reference, fld: const u16) -> reference;
+#loft" #arm crt::place_ref_to(out_at, r.store_nr, r.rec, r.pos + fld);"
 // Write a reference from a stack position.
 fn OpSetStackRef(r: reference, v1: reference);
 // @PLN219 `@FR-F-ParamRef` — read / whole-write through a slot cell (a `&S` parameter whose
@@ -2393,10 +2397,12 @@ fn OpFnRefDetachShared(old: const u16, new: const u16);
 fn OpFnRefClosure(fn_var: const u16) -> reference;
 // Append a text to a stack text variable.
 fn OpAppendStackText(pos: const u16, v1: text);
+#loft" #arm guard(pos >= 32 && pos <= sp): tmp0 = sp - (pos - 16); crt::ref_text_append_view(crt::peek_u32(base, tmp0) & 65535, crt::peek_u32(base, tmp0 + 4), crt::peek_u32(base, tmp0 + 8), stk, v1_pos);"
 // Append a character to a stack text variable.
 fn OpAppendStackCharacter(pos: const u16, v1: character);
 // Clear a stack text variable.
 fn OpClearStackText(pos: const u16);
+#loft" #arm guard(pos >= 16 && pos <= sp): crt::ref_text_clear(crt::peek_u32(base, sp - pos) & 65535, crt::peek_u32(base, sp - pos + 4), crt::peek_u32(base, sp - pos + 8));"
 // Read the lock state of the store containing a reference.
 // Returns true when the store is locked against writes.
 fn get_store_lock(r: reference) -> boolean;
