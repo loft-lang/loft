@@ -726,11 +726,21 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
             }
             Value::Set(h, rhs) if keep.holders.contains(h) => match rhs.unspan() {
                 Value::Var(x) if keep.holders.contains(x) => *shared = true,
+                // A holder set from a call that is handed a fn-ref may hold the record that
+                // fn-ref names: another holder (`g = pass(f)`), or a record built in the
+                // argument itself (`g = pass(fn(x) {…})`, loft#2512) — the two spellings of one
+                // sharing, whose release is then decided by store identity (`@FR-L-CapKeep`).
                 Value::Call(d, args) if !data.def(*d).name().starts_with("Op") => {
-                    if args
-                        .iter()
-                        .any(|a| matches!(a.unspan(), Value::Var(x) if keep.holders.contains(x)))
-                    {
+                    if args.iter().any(|a| match a.unspan() {
+                        Value::Var(x) => keep.holders.contains(x),
+                        Value::Block(b) => {
+                            b.name == "fn_ref_with_closure"
+                                && !crate::env_once!(
+                                    std::env::var_os("LOFT_NO_ARGUMENT_BUILD_SHARE").is_some()
+                                )
+                        }
+                        _ => false,
+                    }) {
                         *shared = true;
                     }
                 }
@@ -947,6 +957,13 @@ pub(super) fn pass_confined_records(
         held_in: Vec::new(),
         argument_builds: Vec::new(),
         leaving: HashSet::default(),
+        flows: Vec::new(),
+        argument_flows: Vec::new(),
+        fn_refs: (0..function.count())
+            .filter(|&v| {
+                !function.is_argument(v) && matches!(function.tp(v).base(), Type::Function(..))
+            })
+            .collect(),
         loft_fns: if crate::env_once!(
             std::env::var_os("LOFT_NO_ARGUMENT_CLOSURE_CONFINED").is_some()
         ) {
@@ -996,8 +1013,17 @@ struct ConfinementWalk {
     argument_builds: Vec<(u16, u32, usize, usize)>,
     /// Record locals a closure build leaves the function through (`return`, `yield`).
     leaving: HashSet<u16>,
+    /// `(fn-ref local, holder, callee, argument index)`: `g = callee(…, f, …)` inside a loop
+    /// (loft#2514) — `f`'s record reaches `g` if the callee hands it back, so `f` is confined
+    /// only where the callee calls or returns it and `g` is confined itself.
+    flows: Vec<(u16, u16, u32, usize)>,
+    /// `(record local, holder, callee, argument index, loop id)`: `g = callee(…, fn… , …)`, a
+    /// record built in the argument and handed back to `g` the same way.
+    argument_flows: Vec<(u16, u16, u32, usize, usize)>,
     /// The functions with a loft body: only a call to one of these is such an argument site.
     loft_fns: HashSet<u32>,
+    /// The frame's fn-typed locals: an argument that is one of these is a flow (`flows`).
+    fn_refs: HashSet<u16>,
 }
 
 impl ConfinementWalk {
@@ -1039,6 +1065,34 @@ impl ConfinementWalk {
             // A null write stores no record — the scope pass writes them at a head and after a
             // loop, and the reading after it must agree with the one before (loft#1869).
             Value::Set(_, rhs) if matches!(rhs.unspan(), Value::Null) => return,
+            // `g = callee(…, f, …)` or `g = callee(…, fn…, …)` in a loop (loft#2514): the
+            // argument is a flow into `g`, judged in `confined`, not a value read of `f`.
+            Value::Set(g, rhs)
+                if loop_id != usize::MAX
+                    // `LOFT_NO_RETURNED_CLOSURE_CONFINED=1` reads the argument as a value read.
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_NO_RETURNED_CLOSURE_CONFINED").is_some()
+                    )
+                    && matches!(rhs.unspan(), Value::Call(d, _) if self.loft_fns.contains(d)) =>
+            {
+                self.sets.entry(*g).or_default().insert(loop_id);
+                let Value::Call(d, args) = rhs.unspan() else {
+                    return;
+                };
+                for (i, a) in args.iter().enumerate() {
+                    if let Value::Var(f) = a.unspan()
+                        && self.fn_refs.contains(f)
+                    {
+                        self.flows.push((*f, *g, *d, i));
+                        continue;
+                    }
+                    if let Some(rec) = Self::built_record(a) {
+                        self.argument_flows.push((rec, *g, *d, i, loop_id));
+                    }
+                    self.walk(a, loop_id);
+                }
+                return;
+            }
             Value::Set(v, rhs) => {
                 self.sets.entry(*v).or_default().insert(loop_id);
                 if loop_id != usize::MAX
@@ -1087,6 +1141,28 @@ impl ConfinementWalk {
     /// The record types every build of which is confined, given what is read as a value.
     fn confined(&self, data: &Data, function: &Function) -> HashSet<u32> {
         let mut out = HashSet::default();
+        // A holder confined to loop `loop_id`: set only there and never read as a value.
+        let holder_confined = |g: u16, loop_id: usize| {
+            self.sets
+                .get(&g)
+                .is_some_and(|ids| ids.len() == 1 && ids.contains(&loop_id))
+                && !self.read_as_value.contains(&g)
+        };
+        // A flow `g = callee(…, f, …)` keeps `f` confined only where the callee hands its
+        // parameter back or calls it, and `g` is confined to the loop `f` is built in.
+        let mut flowed_out: HashSet<u16> = HashSet::default();
+        for &(f, g, callee, arg) in &self.flows {
+            let f_loop = self
+                .builds
+                .iter()
+                .find(|&&(b, _, _)| b == f)
+                .map(|&(_, _, l)| l);
+            let kept = f_loop.is_some_and(|l| holder_confined(g, l))
+                && returns_or_calls(data, callee, arg, &self.release_ops, &self.loft_fns);
+            if !kept {
+                flowed_out.insert(f);
+            }
+        }
         for &(f, rec, loop_id) in &self.builds {
             let only_this_loop = self
                 .sets
@@ -1094,6 +1170,7 @@ impl ConfinementWalk {
                 .is_some_and(|ids| ids.len() == 1 && ids.contains(&loop_id));
             if only_this_loop
                 && !self.read_as_value.contains(&f)
+                && !flowed_out.contains(&f)
                 && let Type::Reference(record, _) = function.tp(rec).base()
                 && data.def(*record).name.starts_with("__closure_")
             {
@@ -1112,18 +1189,119 @@ impl ConfinementWalk {
                 // A capture that loop assigns is another store every pass (`s = build(|i|
                 // s.a + i)`): what the record holds is settled by identity there
                 // (`rebound_captures`), not by this verdict.
-                && !(0..data.attributes(*record)).any(|a| {
-                    let c = function
-                        .var(&super::capture_builds::capture_name(data, *record, a));
-                    c != u16::MAX
-                        && self.sets.get(&c).is_some_and(|ids| ids.contains(&loop_id))
-                })
+                && !self.capture_set_in(data, function, *record, loop_id)
+            {
+                out.insert(*record);
+            }
+        }
+        // …and one built in the argument of `g = callee(…, fn…, …)`: the record reaches `g`
+        // and nothing else, so it dies with `g` where `g` dies every pass (loft#2514).
+        for &(rec, g, callee, arg, loop_id) in &self.argument_flows {
+            if !self.leaving.contains(&rec)
+                && holder_confined(g, loop_id)
+                && returns_or_calls(data, callee, arg, &self.release_ops, &self.loft_fns)
+                && let Type::Reference(record, _) = function.tp(rec).base()
+                && data.def(*record).name.starts_with("__closure_")
+                && !self.capture_set_in(data, function, *record, loop_id)
             {
                 out.insert(*record);
             }
         }
         out
     }
+
+    /// Does loop `loop_id` assign a capture of record type `record`?
+    fn capture_set_in(
+        &self,
+        data: &Data,
+        function: &Function,
+        record: u32,
+        loop_id: usize,
+    ) -> bool {
+        (0..data.attributes(record)).any(|a| {
+            let c = function.var(&super::capture_builds::capture_name(data, record, a));
+            c != u16::MAX && self.sets.get(&c).is_some_and(|ids| ids.contains(&loop_id))
+        })
+    }
+}
+
+/// Does `node` read parameter `p` as a value, other than handing it to a loft function that only
+/// calls ITS parameter ([`only_called_in`])?
+fn escapes_in(
+    node: &Value,
+    p: u16,
+    data: &Data,
+    release: &HashSet<u32>,
+    loft_fns: &HashSet<u32>,
+    asked: &mut HashSet<(u32, usize)>,
+) -> bool {
+    match node.unspan() {
+        Value::Var(v) if *v == p => return true,
+        Value::Call(d, _) if release.contains(d) => return false,
+        Value::Call(d, args) if loft_fns.contains(d) => {
+            return args.iter().enumerate().any(|(j, a)| {
+                if matches!(a.unspan(), Value::Var(v) if *v == p) {
+                    !only_called_in(data, *d, j, release, loft_fns, asked)
+                } else {
+                    escapes_in(a, p, data, release, loft_fns, asked)
+                }
+            });
+        }
+        _ => {}
+    }
+    let mut any = false;
+    node.unspan().for_each_child(&mut |c| {
+        any = any || escapes_in(c, p, data, release, loft_fns, asked);
+    });
+    any
+}
+
+/// Does `callee` hand its parameter `arg` back or only call it (loft#2514): every value read of it
+/// is in TAIL position — the function's answer, a `return`, an arm of an answering `if` — and
+/// every other use a call through it or one [`only_called_in`] accepts.  A record handed back
+/// this way reaches the caller's holder and nothing else.
+fn returns_or_calls(
+    data: &Data,
+    callee: u32,
+    arg: usize,
+    release: &HashSet<u32>,
+    loft_fns: &HashSet<u32>,
+) -> bool {
+    let Ok(p) = u16::try_from(arg) else {
+        return false;
+    };
+    let def = data.def(callee);
+    if !def.variables.is_argument(p) || !matches!(def.returned.base(), Type::Function(..)) {
+        return false;
+    }
+    // The code with every tail read of `p` taken out: what is left must not read it.
+    fn strip(node: &Value, p: u16, tail: bool) -> Value {
+        match node.unspan() {
+            Value::Var(v) if *v == p && tail => Value::Null,
+            Value::Return(inner) => Value::Return(Box::new(strip(inner, p, true))),
+            Value::If(c, t, e) => Value::If(
+                Box::new(strip(c, p, false)),
+                Box::new(strip(t, p, tail)),
+                Box::new(strip(e, p, tail)),
+            ),
+            Value::Block(bl) => {
+                let mut bl = bl.clone();
+                let n = bl.operators.len();
+                for (k, op) in bl.operators.iter_mut().enumerate() {
+                    *op = strip(op, p, tail && k + 1 == n);
+                }
+                Value::Block(bl)
+            }
+            other => {
+                let mut copy = other.clone();
+                copy.for_each_child_mut(&mut |c| *c = strip(c, p, false));
+                copy
+            }
+        }
+    }
+    let stripped = strip(&def.code, p, true);
+    let mut asked = HashSet::default();
+    !escapes_in(&stripped, p, data, release, loft_fns, &mut asked)
 }
 
 /// [`ConfinementWalk::only_called`]: does `callee` only CALL its parameter `arg`?  A call
@@ -1147,34 +1325,6 @@ fn only_called_in(
     let Ok(p) = u16::try_from(arg) else {
         return false;
     };
-    fn escapes(
-        node: &Value,
-        p: u16,
-        data: &Data,
-        release: &HashSet<u32>,
-        loft_fns: &HashSet<u32>,
-        asked: &mut HashSet<(u32, usize)>,
-    ) -> bool {
-        match node.unspan() {
-            Value::Var(v) if *v == p => return true,
-            Value::Call(d, _) if release.contains(d) => return false,
-            Value::Call(d, args) if loft_fns.contains(d) => {
-                return args.iter().enumerate().any(|(j, a)| {
-                    if matches!(a.unspan(), Value::Var(v) if *v == p) {
-                        !only_called_in(data, *d, j, release, loft_fns, asked)
-                    } else {
-                        escapes(a, p, data, release, loft_fns, asked)
-                    }
-                });
-            }
-            _ => {}
-        }
-        let mut any = false;
-        node.unspan().for_each_child(&mut |c| {
-            any = any || escapes(c, p, data, release, loft_fns, asked);
-        });
-        any
-    }
     let def = data.def(callee);
-    def.variables.is_argument(p) && !escapes(&def.code, p, data, release, loft_fns, asked)
+    def.variables.is_argument(p) && !escapes_in(&def.code, p, data, release, loft_fns, asked)
 }

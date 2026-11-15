@@ -5444,7 +5444,20 @@ impl Run<'_> {
                 }
             }
         }
-        if def.returned().heap_dep().is_none() {
+        // A fn-ref answer carries its closure record's store (`FnRef(_, w)` reads `w`), which
+        // its type does not say: a callee handing its fn-typed parameter back (`fn pass(f) ->
+        // fn(…) { f }`, summary `Arg`) answers the record its CALLER built, and the caller's
+        // holder then names it beside the record's own local (loft#2512).  A closure the callee
+        // builds and answers (`Fresh`) still reads as holding nothing: following it through a
+        // rebind and a branch join is a step the records do not take yet.
+        // `LOFT_RECORDS_NO_FN_RETURN=1` reads every fn-ref answer as holding nothing.
+        let fn_answer = matches!(def.returned().base(), crate::data::Type::Function(..))
+            && matches!(
+                self.summaries.get(&d),
+                Some(Summary::Arg(_) | Summary::Args(_))
+            )
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_FN_RETURN").is_some());
+        if def.returned().heap_dep().is_none() && !fn_answer {
             return Some((s, Val::null()));
         }
         let bodied = !matches!(def.code.unspan(), Value::Null) && !def.name().starts_with("Op");

@@ -140,7 +140,11 @@ stores of the frame's own is one too: nothing at run time tells the paths apart
 (`OpGetDbRef(__closure, off)`) is the caller's store, and a closure record this frame builds
 that holds one in a slot its cascade frees releases the caller's store: a wrong end, the
 record having adopted a capture it only relays (`@FR-L-CapOwn`;
-`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).
+`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).  A fn-ref a callee hands
+back holds the closure record its caller built, though a function type names no store: a call
+whose summary answers a view of its arguments (`fn pass(f) -> fn(…) { f }`) is read through
+that summary, so the holder and the record's own local are two names for one store
+(`LOFT_RECORDS_NO_FN_RETURN=1` reads such an answer as holding nothing).
 A finding names the source line it was first seen at, and a re-free or a use after the end names
 the free that ended the store (`(ended at line L by OpFreeRefIfDistinct(x))`).  Which statement
 of a block is its value is one reading shared with the C and rustc writers
