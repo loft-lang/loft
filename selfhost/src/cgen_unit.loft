@@ -134,17 +134,6 @@ fn reaches(b: ir::Bundle, reached: vector<boolean>, name: text) -> boolean {
   false
 }
 
-// Does this body run a `par` loop (`Cx::threads`)?
-fn runs_parallel(code: ir::Node) -> boolean {
-  hit = [false];
-  opt_non_sentinel::walk(code, fn(n: ir::Node) {
-    if n is NdParallel {
-      hit[0] = true;
-    }
-  });
-  hit[0]!
-}
-
 // `unit_defines` for a unit that reaches no library needing a define of its own: no locked
 // store, one thread, the call-depth cap.  A reached function that would add a define refuses
 // the unit, naming it.
@@ -186,8 +175,6 @@ fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, r
       refused = "the unit's define for a runtime ({n})";
     } else if d.width32 {
       refused = "a function under the 32-bit regime ({n})";
-    } else if len(d.code) > 0 && runs_parallel(d.code[0]!) {
-      refused = "the unit's define for threads (par)";
     }
     if refused != "" {
       return "";

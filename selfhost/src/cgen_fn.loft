@@ -2695,8 +2695,8 @@ fn store_linked(b: ir::Bundle, d: ir::Definition, links: vector<boolean>) -> boo
 }
 
 // `empty_stub_default` (loft#1254): the value a stub with an empty body answers — its type's
-// default (`Data::to_default`), a collection's the null reference — or null for any other body
-// or a type this writer does not build the default of (a record, which `has_default` walks).
+// default (`Data::to_default`), a handle-carried result's (a record, a collection, a
+// reference enum) the null reference — or null for any other body or type.
 fn empty_stub_default(b: ir::Bundle, d: ir::Definition, code: ir::Node) -> ir::Node? {
   empty = match code {
     NdBlock { block } => len(block[0]!.operators) == 0,
@@ -2712,7 +2712,8 @@ fn empty_stub_default(b: ir::Bundle, d: ir::Definition, code: ir::Node) -> ir::N
     TyBoolean => ir::NdBoolean { b: false },
     TyCharacter => ir::NdInt { n: 0 },
     TyText { dep: _ } => ir::NdText { s: "" },
-    TyEnum { n, is_ref, dep: _ } => if is_ref { null } else { ir::NdEnum { ord: 0, tp: b.data.definitions[n]!.known_type } },
+    TyEnum { n, is_ref, dep: _ } => if is_ref { null_ref_sentinel(b) } else { ir::NdEnum { ord: 0, tp: b.data.definitions[n]!.known_type } },
+    TyReference { n: _, dep: _ } => null_ref_sentinel(b),
     TyVector { inner: _, dep: _ } => null_ref_sentinel(b),
     TyHash { n: _, names: _, dep: _ } => null_ref_sentinel(b),
     TySorted { n: _, keys: _, dep: _ } => null_ref_sentinel(b),
