@@ -10767,12 +10767,8 @@ impl Data {
                 // was refused and `v = chains(k);` broke the statement after it (loft#2497).
                 if self.definitions[d_nr].def_type == DefType::Function {
                     let ret = &self.definitions[d_nr].returned;
-                    let bare = match ret {
-                        Type::Optional(inner) => inner.as_ref(),
-                        other => other,
-                    };
-                    let nested = !matches!(bare, Type::Unknown(_))
-                        && !ret.any_node(&mut |t| matches!(t, Type::Tuple(_)));
+                    let nested = !matches!(ret.base(), Type::Unknown(_))
+                        && !ret.any_node(&mut |t| matches!(t.base(), Type::Tuple(_)));
                     if nested && let Some(new_ty) = Self::rewrite_type_opt(ret, stub_nr, &target) {
                         self.definitions[d_nr].returned = new_ty;
                     }

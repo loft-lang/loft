@@ -10173,9 +10173,9 @@ use a separate collection or add after the loop"
                 // stub is the type's own name: `resolve_adopted_stubs` makes it the record
                 // between the passes, as it does for a parameter's.
                 let annotated_stub = self.first_pass
-                    && matches!(self.vars.tp(v_nr), Type::Unknown(0))
-                    && matches!(tp, Type::Vector(..))
-                    && tp.any_node(&mut |t| matches!(t, Type::Unknown(n) if *n != 0));
+                    && matches!(self.vars.tp(v_nr).base(), Type::Unknown(0))
+                    && matches!(tp.base(), Type::Vector(..))
+                    && tp.any_node(&mut |t| matches!(t.base(), Type::Unknown(n) if *n != 0));
                 if annotated_stub {
                     self.vars.set_type(v_nr, tp.clone());
                 } else if !place_view {
