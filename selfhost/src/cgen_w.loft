@@ -579,6 +579,8 @@ fn held(shape: text) -> text {
   }
   if shape == "int" {
     "int64_t"
+  } else if shape == "int32" {
+    "int32_t"
   } else if shape == "bool" {
     "uint8_t"
   } else if shape == "enum" {
@@ -637,6 +639,8 @@ fn initial(shape: text) -> text {
   }
   if shape == "int" {
     "LOFT_NULL"
+  } else if shape == "int32" {
+    "LOFT_NULL32"
   } else if shape == "bool" {
     "LOFT_BOOL_NULL"
   } else if shape == "enum" {
@@ -662,6 +666,8 @@ fn kind_of(shape: text) -> integer {
   }
   if shape == "int" {
     K_INT
+  } else if shape == "int32" {
+    K_INT32
   } else if shape == "bool" {
     K_BOOL
   } else if shape == "enum" {
@@ -688,6 +694,8 @@ fn kind_of(shape: text) -> integer {
 fn shape_of_kind(k: integer) -> text {
   if k == K_INT {
     "int"
+  } else if k == K_INT32 {
+    "int32"
   } else if k == K_ENUM {
     "enum"
   } else if k == K_FLOAT {
@@ -827,6 +835,12 @@ fn as_int(w: W, e: E) -> text {
   }
 }
 
+// @PLN204 — a value as a 32-bit integer: a 32-bit one as it is, any other narrowed
+// (`loft_n32`, a value that does not fit reading null).
+fn as_int32(w: W, e: E) -> text {
+  if e.kind == K_INT32 { e.code } else { "loft_n32({as_int(w, e)})" }
+}
+
 fn as_enum(w: W, e: E) -> text {
   if e.kind == K_ENUM {
     return e.code;
@@ -913,6 +927,8 @@ fn as_fn(w: W, e: E) -> text {
 fn as_shape(w: W, e: E, shape: text) -> text {
   if shape == "int" {
     as_int(w, e)
+  } else if shape == "int32" {
+    as_int32(w, e)
   } else if shape == "bool" {
     as_bool(w, e)
   } else if shape == "enum" {

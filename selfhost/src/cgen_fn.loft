@@ -213,10 +213,6 @@ fn arg_with(x: Cx, w: W, operand: ir::Node, later_writes: boolean, ind: integer)
     return value;
   }
   shape = shape_of_kind(value.kind);
-  if value.kind == K_INT32 {
-    refuse(w, "a 32-bit operand");
-    return value;
-  }
   if value.kind == K_TUP {
     held_tuple = temp(w, value.tup);
     line(w, ind, "{held_tuple} = {value.code};");
@@ -343,7 +339,42 @@ fn typed_nulls(b: ir::Bundle, d: integer, args: vector<ir::Node>) -> vector<ir::
 
 // An operator call (`operator`): the plain form where the range proof holds, else the checked
 // helper; a comparison; the boolean operators.
+// @PLN204 — `OpNarrow32(x)`, the 32-bit regime's arithmetic (`narrow32`): `x` computed and
+// narrowed to `int32_t`, a value that does not fit reading null.  An add, subtract, multiply,
+// divide or remainder of two 32-bit operands is written in 32 bits (`loft_add32` …), which
+// answers the same: the 64-bit operation of two `int32_t` values cannot overflow, so
+// narrowing its result is exactly the 32-bit operation's overflow check.
+fn narrow32(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
+  node = loop_shape::unspan(v);
+  match node {
+    NdInt { n } => if n != -2147483648 { return E { code: "INT32_C({n})", kind: K_INT32 }; },
+    NdCall { def_nr, args } => {
+      name = def_name(x.b, def_nr);
+      op32 = if name == "OpAddInt" || name == "OpAddIntNullable" { "loft_add32" } else if name == "OpMinInt" || name == "OpMinIntNullable" { "loft_sub32" } else if name == "OpMulInt" || name == "OpMulIntNullable" { "loft_mul32" } else if name == "OpDivInt" || name == "OpDivIntNullable" { "loft_div32" } else if name == "OpRemInt" || name == "OpRemIntNullable" { "loft_rem32" } else { "" };
+      if op32 != "" && len(args) == 2 {
+        first = literal32(args[0]!, arg(x, w, args, 0, ind));
+        second = literal32(args[1]!, arg(x, w, args, 1, ind));
+        // `@FR-E-Report` — the unguarded division reports a zero divisor.
+        guarded = name == "OpDivInt" || name == "OpRemInt";
+        at = if guarded { "_at" } else { "" };
+        where = if guarded { ", {site(w)}" } else { "" };
+        if first.kind == K_INT32 && second.kind == K_INT32 {
+          return E { code: "{op32}{at}({first.code}, {second.code}{where})", kind: K_INT32 };
+        }
+        wide = op32[0..op32.size() - 2];
+        return E { code: "loft_n32({wide}{at}({as_int(w, first)}, {as_int(w, second)}{where}))", kind: K_INT32 };
+      }
+    },
+    _ => {},
+  }
+  e = expr(x, w, v, ind);
+  E { code: as_int32(w, e), kind: K_INT32 }
+}
+
 fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  if name == "OpNarrow32" && len(args) == 1 {
+    return narrow32(x, w, args[0]!, ind);
+  }
   // A store link's place (`OpVarRef(v)`): the `loft_ref` it holds.
   if name == "OpVarRef" && len(args) == 1 {
     lv = loop_shape::var_of(loop_shape::unspan(args[0]));
@@ -1923,6 +1954,8 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
   }
   if shape == "int" {
     line(w, ind, "{target} = LOFT_NULL;");
+  } else if shape == "int32" {
+    line(w, ind, "{target} = LOFT_NULL32;");
   } else if shape == "bool" {
     line(w, ind, "{target} = LOFT_BOOL_NULL;");
   } else if shape == "enum" {
@@ -2027,6 +2060,16 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
       };
       if tail_loop {
         stmt(x, w, node, ind);
+        return;
+      }
+      // @PLN204 — a value stored into a 32-bit local is narrowed, so an operation of two
+      // 32-bit operands it stores is the 32-bit operation (`narrow32`): a loop's `i = i + 1`
+      // runs in `int32_t`.
+      if shape == "int32" && (node is NdCall || node is NdInt) {
+        n32 = narrow32(x, w, node, ind);
+        if w.why == "" {
+          line(w, ind, "{target} = {as_int32(w, n32)};");
+        }
         return;
       }
       e = expr(x, w, node, ind);

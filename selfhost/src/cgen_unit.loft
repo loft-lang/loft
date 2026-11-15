@@ -188,8 +188,6 @@ fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, r
       frames = true;
     } else if d.native.starts_with("loft_kernel_") || d.native.starts_with("loft_swap_") || d.native.starts_with("loft_rebuild_") || d.native == "loft_live_flip" || d.native == "loft_process_run" || d.native == "loft_git_query" {
       refused = "the unit's define for a runtime ({n})";
-    } else if d.width32 {
-      refused = "a function under the 32-bit regime ({n})";
     }
     if refused != "" {
       return "";
