@@ -14,6 +14,7 @@ use cgen::(Cx);
 use cgen_w::*;
 use cgen_show;
 use cgen_eq;
+use cgen_ser;
 use cgen_unicode;
 use consts;
 use crt;
@@ -274,7 +275,7 @@ pub fn typedefs(x: Cx, names: text) -> text {
     done += 1;
   }
   // …the render functions (`show_code`), then the Unicode tables (`unicode_code`).
-  out + cgen_show::show_code(x) + cgen_eq::eq_code(x) + cgen_unicode::unicode_code(x) + const_code(x)
+  out + cgen_show::show_code(x) + cgen_eq::eq_code(x) + cgen_ser::ser_code(x) + cgen_unicode::unicode_code(x) + const_code(x)
 }
 
 // `const_code`: each constant's store as words, and `loft_init`, which loads them before `main`

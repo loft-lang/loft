@@ -21,6 +21,7 @@ use cgen_fn;
 use cgen_bind;
 use cgen_hoist;
 use cgen_table;
+use cgen_ser;
 use cgen_file;
 use ptypes;
 use opt_push;
@@ -1589,8 +1590,11 @@ fn write_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   } else if plain_enum {
     "loft_push_char(&loft_b, (char) {as_enum(w, value)});"
   } else {
-    refuse(w, "a file write of a record");
-    ""
+    why = cgen_ser::ser_type(x, tp);
+    if why != "" {
+      refuse(w, why);
+    }
+    "loft_ser{tp}(&loft_b, {as_ref(w, value)}, loft_le);"
   };
   if w.why != "" {
     return none();
@@ -1708,8 +1712,12 @@ fn read_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   } else if plain_enum {
     set = "{name} = loft_d[0];";
   } else {
-    refuse(w, "a file read of a record");
-    return none();
+    why = cgen_ser::ser_type(x, tp);
+    if why != "" {
+      refuse(w, why);
+      return none();
+    }
+    set = "loft_de{tp}({name}, loft_le, loft_d, (size_t) loft_n);";
   }
   line(w, ind, "{{");
   // A read of up to 15 bytes lands in a stack buffer: no allocation per value.

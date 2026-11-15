@@ -153,6 +153,8 @@ pub struct Cx {
   // (`Cx::par_sites`, each its context and body)?
   pub threads: boolean,
   pub par_sites: integer,
+  // The types the unit writes to or reads from a file (`Cx::ser_types`), per type number.
+  pub sers: vector<boolean>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -181,6 +183,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     eqs: [for _ in 0..len(b.types) { false }],
     threads: false,
     par_sites: 0,
+    sers: [for _ in 0..len(b.types) { false }],
   }
 }
 
