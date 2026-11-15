@@ -165,7 +165,8 @@ Holds at `(L-CapRef)`, [formal/closures.md](formal/closures.md).
 ## C116 — a collection element holds a plain fn-ref, never a capturing closure
 
 **Decision.** A `vector` or keyed collection over a fn type refuses a capturing closure, at the
-literal and at an element assignment.  Per-element state goes in a struct FIELD, which may hold
+literal, at an element assignment, and at a call's argument whose callee keeps that parameter
+in a collection or a fn field (loft#2492: the callee cannot see what its caller passes).  Per-element state goes in a struct FIELD, which may hold
 one: `Stepper { advance: fn(x: integer) -> integer { x + step } }`.  **Why.** A collection has one
 element layout and a closure's environment differs per lambda; carrying it would widen every
 fn-typed collection and give the collection a second ownership discipline.  A struct field
