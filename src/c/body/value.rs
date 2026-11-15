@@ -855,6 +855,24 @@ impl FnWriter<'_> {
         {
             return Ok(format!("(({}) {})", held(c), self.cx.initial(c)));
         }
+        // `@FR-R-ValueRecord` — the IR pass's own LEND of a dense tuple carrier, handed to a
+        // parameter this writer takes as a tuple: the carrier already is that tuple, so its
+        // elements are handed as they are and no lend record is minted for the call.
+        if !crate::opt::value_records::layout::is_nullable_layout(key) && lend_handoff_on() {
+            let offsets: Vec<i64> = self.vr_layout(key)?.fields.iter().map(|f| f.0).collect();
+            if let Some((x, order)) = lent_carrier(arg, &offsets) {
+                let t = self.temp(c);
+                let mut parts = Vec::with_capacity(order.len());
+                for i in order {
+                    parts.push(self.expr(&Value::TupleGet(x, i), ind)?.code);
+                }
+                self.line(
+                    ind,
+                    &format!("{t} = ({}) {{ {} }};", held(c), parts.join(", ")),
+                );
+                return Ok(t);
+            }
+        }
         let form = {
             let vr = self.cx.value_records();
             let locals = self
@@ -1031,4 +1049,47 @@ mod tests {
         let (a, b) = super::at(&v);
         assert_eq!(a, b, "an unspanned node is its own unspanned self");
     }
+}
+
+/// `LOFT_NO_LEND_HANDOFF=1` — a lend handed to a tuple parameter is minted and read back as
+/// it was: the first bisect step for a wrong field in a tuple a lent carrier became.
+fn lend_handoff_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_LEND_HANDOFF").is_ok_and(|v| v != "0"))
+}
+
+/// The carrier of a lend `value_record::lend` built — the block it names `vr_lend`: a mint
+/// of the null lend record, one write per field of a tuple element of ONE carrier, then the
+/// record — with, for each of `offsets` (a parameter layout's fields in order), the carrier
+/// element written at that offset.  `None` for any other argument, and for a lend whose
+/// writes do not cover the layout field for field: the record is then read as any record is.
+fn lent_carrier(arg: &Value, offsets: &[i64]) -> Option<(u16, Vec<u16>)> {
+    let Value::Block(b) = arg.unspan() else {
+        return None;
+    };
+    if b.name != "vr_lend" {
+        return None;
+    }
+    let mut carrier: Option<u16> = None;
+    let mut at: Vec<(i64, u16)> = Vec::new();
+    for op in &b.operators {
+        if let Value::Call(_, a) = op.unspan()
+            && let [_, off, elem] = a.as_slice()
+            && let (Value::Int(off), Value::TupleGet(x, i)) = (off.unspan(), elem.unspan())
+        {
+            if carrier.is_some_and(|c| c != *x) {
+                return None;
+            }
+            carrier = Some(*x);
+            at.push((i64::from(*off), *i));
+        }
+    }
+    if at.len() != offsets.len() {
+        return None;
+    }
+    let order = offsets
+        .iter()
+        .map(|o| at.iter().find(|(off, _)| off == o).map(|(_, i)| *i))
+        .collect::<Option<Vec<u16>>>()?;
+    Some((carrier?, order))
 }
