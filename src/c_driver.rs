@@ -1168,7 +1168,12 @@ pub(crate) fn loft_written_unit(
     let image = format!("{}.store", stem.display());
     let unit = format!("{}.c", stem.display());
     let written = (|| {
-        loft::ir_store::save_bundle_with(data, stores, &image, &loft::c::c_library_facts(data))
+        loft::ir_store::save_bundle_with(
+            data,
+            stores,
+            &image,
+            &loft::ir_store::bundle_facts(data, stores, loft::c::c_library_facts(data)),
+        )
             .map_err(|e| format!("the program image could not be written: {e}"))?;
         let out = Spawn::new(Program::os(&generator))
             .args([&image, &unit, &runtime])

@@ -427,6 +427,17 @@ struct Bundle {
   // @PLN91 strand 12: the program's C libraries (an image of another layout is refused by its
   // `.dschema` and written again).
   c_libraries: vector<ImageCLib>,
+  // @PLN91 strand 12: the layout facts of every root type a store is persisted, loaded or
+  // verified as (`ir_store::run_image_sidecars`, the run image's rows), each root's converter
+  // description for a load of another layout, the `upgrade` routines' types as (item, old,
+  // version) triples, and the release names a sidecar carries — what `schema_sidecar` and
+  // `Stores::release` answer for the Rust writer.
+  sidecars: vector<RunSidecar>,
+  upgrades: vector<ImageUpgrade>,
+  upgrade_types: vector<integer>,
+  oldest: text,
+  bridge: text,
+  version: text,
 }
 
 // @FTR-078 — the compiler's whole IR vocabulary written as loft types: 24 `Type` variants,
@@ -434,7 +445,7 @@ struct Bundle {
 // schema for the same graph falls out of it
 // The empty bundle a program image is read into (`load.loft`).
 fn empty_bundle() -> Bundle {
-  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [] }
+  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [], sidecars: [], upgrades: [], upgrade_types: [], oldest: "", bridge: "", version: "" }
 }
 
 // @PLN91 the RUN image (`loft --emit-run-image`): the bytecode the Rust writer produced
@@ -614,4 +625,14 @@ struct ImageCLib {
   package: text,
   version: text,
   export_dynamic: text,
+}
+
+// A converting load's description of root type `tp` (`Cx::upgrade_table`): the layout the
+// converter derives its map against (`Stores::layout_descriptor` of the root and every
+// `upgrade` routine's `old`), rendered as its dump and facts, and its type numbers by name.
+struct ImageUpgrade {
+  tp: integer,
+  desc: text,
+  names: vector<text>,
+  ids: vector<integer>,
 }

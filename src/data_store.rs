@@ -493,16 +493,31 @@ pub(crate) const DBTYPE_LINKED: u32 = 33;
 /// the program declared `#cwd` at `BUNDLE_CWD`.
 pub(crate) const BUNDLE_DATA: u32 = 0;
 pub(crate) const BUNDLE_TYPES: u32 = 32; // right after the inlined 32-byte `Data`
-pub(crate) const BUNDLE_CWD: u32 = 40;
+pub(crate) const BUNDLE_CWD: u32 = 64;
 /// `c_libraries: vector<ImageCLib>` (@PLN91 strand 12): the program's C libraries, for the
 /// loft-written C writer's `#c` bindings.
 pub(crate) const BUNDLE_C_LIBRARIES: u32 = 36;
+/// The persisted roots' layout facts and converter descriptions, the `upgrade` routines'
+/// types and the release names (@PLN91 strand 12, `ir_store::BundleFacts`).
+pub(crate) const BUNDLE_SIDECARS: u32 = 40;
+pub(crate) const BUNDLE_UPGRADES: u32 = 44;
+pub(crate) const BUNDLE_UPGRADE_TYPES: u32 = 48;
+pub(crate) const BUNDLE_OLDEST: u32 = 52;
+pub(crate) const BUNDLE_BRIDGE: u32 = 56;
+pub(crate) const BUNDLE_VERSION: u32 = 60;
 /// The bundle root's size in bytes, and its claim in words (see `DATA_ROOT_WORDS`).
-pub(crate) const BUNDLE_STRIDE: u32 = 48;
+pub(crate) const BUNDLE_STRIDE: u32 = 72;
 
 /// `ImageCLib { name, pkg_dir: text, optional: boolean, shim: text, … }` — one `c_libs::CLibrary`
 /// (the shim's sources, one path per line) and what the host resolved for the C writer.
 pub(crate) const IMAGECLIB_STRIDE: u32 = 48;
+/// `ImageUpgrade { tp: integer, desc: text, names: vector<text>, ids: vector<integer> }` — one
+/// root's converter description (`ir_store::UpgradeShape`).
+pub(crate) const IMAGEUPGRADE_STRIDE: u32 = 24;
+pub(crate) const IMAGEUPGRADE_TP: u32 = 0;
+pub(crate) const IMAGEUPGRADE_DESC: u32 = 8;
+pub(crate) const IMAGEUPGRADE_NAMES: u32 = 12;
+pub(crate) const IMAGEUPGRADE_IDS: u32 = 16;
 pub(crate) const IMAGECLIB_NAME: u32 = 0;
 pub(crate) const IMAGECLIB_PKG_DIR: u32 = 4;
 pub(crate) const IMAGECLIB_SHIM: u32 = 8;
@@ -1861,6 +1876,17 @@ mod tests {
         assert_eq!(pos(ids.bundle, "types"), BUNDLE_TYPES);
         assert_eq!(pos(ids.bundle, "cwd"), BUNDLE_CWD);
         assert_eq!(pos(ids.bundle, "c_libraries"), BUNDLE_C_LIBRARIES);
+        assert_eq!(pos(ids.bundle, "sidecars"), BUNDLE_SIDECARS);
+        assert_eq!(pos(ids.bundle, "upgrades"), BUNDLE_UPGRADES);
+        assert_eq!(pos(ids.bundle, "upgrade_types"), BUNDLE_UPGRADE_TYPES);
+        assert_eq!(pos(ids.bundle, "oldest"), BUNDLE_OLDEST);
+        assert_eq!(pos(ids.bundle, "bridge"), BUNDLE_BRIDGE);
+        assert_eq!(pos(ids.bundle, "version"), BUNDLE_VERSION);
+        assert_eq!(u32::from(stores.size(ids.image_upgrade)), IMAGEUPGRADE_STRIDE);
+        assert_eq!(pos(ids.image_upgrade, "tp"), IMAGEUPGRADE_TP);
+        assert_eq!(pos(ids.image_upgrade, "desc"), IMAGEUPGRADE_DESC);
+        assert_eq!(pos(ids.image_upgrade, "names"), IMAGEUPGRADE_NAMES);
+        assert_eq!(pos(ids.image_upgrade, "ids"), IMAGEUPGRADE_IDS);
         assert_eq!(u32::from(stores.size(ids.image_c_lib)), IMAGECLIB_STRIDE);
         assert_eq!(pos(ids.image_c_lib, "name"), IMAGECLIB_NAME);
         assert_eq!(pos(ids.image_c_lib, "pkg_dir"), IMAGECLIB_PKG_DIR);

@@ -18,6 +18,7 @@ use cgen_ser;
 use cgen_unicode;
 use consts;
 use crt;
+use cgen_store;
 
 // What the bodies registered (`Cx::copy_types`, `described`, `names_types`, `defaults`,
 // `enum_names`, `key_types`): per type number whether it is in the set.
@@ -28,11 +29,13 @@ pub struct Tables {
   pub defaults: vector<boolean>,
   pub enums: vector<boolean>,
   pub keys: vector<boolean>,
+  // The types a parse reaches (`Cx::parse_types`), each a row of `loft_ptypes`.
+  pub parse: vector<boolean>,
 }
 
 pub fn new_tables(b: ir::Bundle) -> Tables {
   n = len(b.types);
-  Tables { copy: [for _ in 0..n { false }], described: [for _ in 0..n { false }], names: false, defaults: [for _ in 0..n { false }], enums: [for _ in 0..n { false }], keys: [for _ in 0..n { false }] }
+  Tables { copy: [for _ in 0..n { false }], described: [for _ in 0..n { false }], names: false, defaults: [for _ in 0..n { false }], enums: [for _ in 0..n { false }], keys: [for _ in 0..n { false }], parse: [for _ in 0..n { false }] }
 }
 
 // `copy_type`: type `tp` and every type it reaches, in the copy table.
@@ -243,6 +246,7 @@ pub fn typedefs(x: Cx, names: text) -> text {
     out += "static const loft_key loft_keys{tp}[] = {{ {body} }};\n";
   }
   out += table;
+  out += cgen_store::sidecar_table(x);
   out += names;
   for e in x.tables.enums {
     if !e {

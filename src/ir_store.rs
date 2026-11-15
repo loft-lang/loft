@@ -812,7 +812,7 @@ pub fn materialize_bundle(
     data: &Data,
     schema: &[SchemaType],
     cwd: bool,
-    facts: &[CLibFacts],
+    facts: &BundleFacts,
 ) {
     stores
         .store_mut(&root)
@@ -833,7 +833,7 @@ pub fn materialize_bundle(
         r.set_field_str(stores, ds::IMAGECLIB_PKG_DIR, &c.pkg_dir);
         r.set_field_str(stores, ds::IMAGECLIB_SHIM, &c.shim.join("\n"));
         r.set_field_bool(stores, ds::IMAGECLIB_OPTIONAL, c.optional);
-        if let Some(f) = facts.get(i) {
+        if let Some(f) = facts.clibs.get(i) {
             for (off, v) in [
                 (ds::IMAGECLIB_SHIPPED, &f.shipped),
                 (ds::IMAGECLIB_LINKS, &f.links),
@@ -847,6 +847,105 @@ pub fn materialize_bundle(
                 r.set_field_str(stores, off, v);
             }
         }
+    }
+    // The persisted roots' layout facts, their converters' descriptions and the release names
+    // (the loft-written C writer's `sidecar_table` and `upgrade_table`).
+    let slot = |field: u32| DbRef {
+        store_nr: root.store_nr,
+        rec: root.rec,
+        pos: root.pos + field,
+    };
+    materialize_run_sidecars(
+        stores,
+        &Record::new(root),
+        &slot(ds::BUNDLE_SIDECARS),
+        ds::BUNDLE_SIDECARS,
+        &facts.sidecars,
+    );
+    let ups = Record::new(root).field_recvec(ds::BUNDLE_UPGRADES, ds::IMAGEUPGRADE_STRIDE);
+    for u in &facts.upgrades {
+        let r = ups.push(stores);
+        r.set_field_int(stores, ds::IMAGEUPGRADE_TP, i64::from(u.tp));
+        r.set_field_str(stores, ds::IMAGEUPGRADE_DESC, &u.desc);
+        let names = r.field_recvec(ds::IMAGEUPGRADE_NAMES, 4);
+        for n in &u.names {
+            names.push(stores).set_field_str(stores, 0, n);
+        }
+        let ids = r.field_recvec(ds::IMAGEUPGRADE_IDS, 8);
+        for &id in &u.ids {
+            ids.push(stores).set_field_int(stores, 0, i64::from(id));
+        }
+    }
+    let uts = Record::new(root).field_recvec(ds::BUNDLE_UPGRADE_TYPES, 8);
+    for &t in &facts.upgrade_types {
+        uts.push(stores).set_field_int(stores, 0, i64::from(t));
+    }
+    let rec = Record::new(root);
+    rec.set_field_str(stores, ds::BUNDLE_OLDEST, &facts.oldest);
+    rec.set_field_str(stores, ds::BUNDLE_BRIDGE, &facts.bridge);
+    rec.set_field_str(stores, ds::BUNDLE_VERSION, &facts.version);
+}
+
+/// What the host resolved for the loft-written C writer beside the IR (@PLN91 strand 12): the
+/// file system's and the toolchain's answers about the C libraries, and the layout facts of the
+/// persisted roots that `schema_sidecar` and `Stores::release` answer for the Rust writer.
+#[derive(Clone, Debug, Default)]
+pub struct BundleFacts {
+    /// One entry per `data.c_libraries`.
+    pub clibs: Vec<CLibFacts>,
+    /// Every root type a store is persisted, loaded or verified as ([`run_image_sidecars`]).
+    pub sidecars: Vec<RunSidecarShape>,
+    /// Each of those roots' converter description (`Cx::upgrade_table`).
+    pub upgrades: Vec<UpgradeShape>,
+    /// The `upgrade` routines' types, (item, old, version) triples.
+    pub upgrade_types: Vec<u16>,
+    pub oldest: String,
+    pub bridge: String,
+    pub version: String,
+}
+
+/// A converting load's description of root `tp`: the layout of the root and every `upgrade`
+/// routine's `old` as its dump and facts, and its type numbers by name.
+#[derive(Clone, Debug, Default)]
+pub struct UpgradeShape {
+    pub tp: u16,
+    pub desc: String,
+    pub names: Vec<String>,
+    pub ids: Vec<u16>,
+}
+
+/// [`BundleFacts`] for `data` laid out in `program`, with the C libraries' facts `clibs`.
+#[must_use]
+pub fn bundle_facts(data: &Data, program: &Stores, clibs: Vec<CLibFacts>) -> BundleFacts {
+    let sidecars = run_image_sidecars(data, program);
+    let routines = crate::parser::Parser::upgrade_routines(data);
+    let mut upgrade_types = Vec::new();
+    for (item, r) in &routines {
+        upgrade_types.extend([*item, r.old, r.version]);
+    }
+    let upgrades = sidecars
+        .iter()
+        .map(|c| {
+            let mut roots = vec![c.tp];
+            roots.extend(routines.values().map(|r| r.old));
+            let desc = program.layout_descriptor(&roots);
+            UpgradeShape {
+                tp: c.tp,
+                desc: format!("{}--facts--\n{}", desc.render_dump(), desc.render_facts()),
+                names: desc.names.values().cloned().collect(),
+                ids: desc.names.keys().copied().collect(),
+            }
+        })
+        .collect();
+    let release = program.release();
+    BundleFacts {
+        clibs,
+        sidecars,
+        upgrades,
+        upgrade_types,
+        oldest: release.oldest.clone(),
+        bridge: release.bridge.clone(),
+        version: release.version.clone(),
     }
 }
 
@@ -889,7 +988,7 @@ pub struct CLibFacts {
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`].
 #[cfg(feature = "mmap")]
 pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result<()> {
-    save_bundle_with(data, program, path, &[])
+    save_bundle_with(data, program, path, &BundleFacts::default())
 }
 
 /// [`save_bundle`] with what the host resolved about the program's C libraries, one entry per
@@ -905,7 +1004,7 @@ pub fn save_bundle_with(
     data: &Data,
     program: &Stores,
     path: &str,
-    facts: &[CLibFacts],
+    facts: &BundleFacts,
 ) -> std::io::Result<()> {
     let tmp = format!("{path}.{}.tmp", std::process::id());
     match crate::file_access::remove_file(&tmp) {
@@ -1097,7 +1196,13 @@ fn materialize_run_image(
         let e = siv.push(stores);
         e.set_field_int(stores, 0, v);
     }
-    materialize_run_sidecars(stores, &rec, &slot(ds::RUNIMG_SIDECARS), sidecars);
+    materialize_run_sidecars(
+        stores,
+        &rec,
+        &slot(ds::RUNIMG_SIDECARS),
+        ds::RUNIMG_SIDECARS,
+        sidecars,
+    );
     rec.set_field_str(stores, ds::RUNIMG_OLDEST, release.0);
     rec.set_field_str(stores, ds::RUNIMG_BRIDGE, release.1);
     rec.set_field_str(stores, ds::RUNIMG_SOURCE, release.2);
@@ -1318,12 +1423,13 @@ fn materialize_run_tables(
     }
 }
 
-/// The run image's persisted-type sidecars (`RunSidecar`).
-#[cfg(feature = "mmap")]
+/// The persisted-type sidecars (`RunSidecar`) into the vector field `field` of `rec`: the run
+/// image's, and the bundle's for the loft-written C writer.
 fn materialize_run_sidecars(
     stores: &mut Stores,
     rec: &Record,
     slot: &DbRef,
+    field: u32,
     sidecars: &[RunSidecarShape],
 ) {
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
@@ -1333,7 +1439,7 @@ fn materialize_run_sidecars(
         ds::RUNSIDECAR_STRIDE,
         &mut stores.allocations,
     );
-    let sv = rec.field_recvec(ds::RUNIMG_SIDECARS, ds::RUNSIDECAR_STRIDE);
+    let sv = rec.field_recvec(field, ds::RUNSIDECAR_STRIDE);
     for c in sidecars {
         let e = sv.push(stores);
         e.set_field_int(stores, ds::RUNSIDECAR_TP, i64::from(c.tp));
@@ -1648,6 +1754,7 @@ pub struct RunWorkerShape {
 }
 
 /// A persisted root type's sidecar, as the C backend's `sidecar_table` writes it.
+#[derive(Clone, Debug)]
 pub struct RunSidecarShape {
     pub tp: u16,
     pub hash: u64,

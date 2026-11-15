@@ -22,6 +22,8 @@ use opt_non_sentinel;
 use binds;
 use types;
 use cgen_tables;
+use cgen_parse;
+use cgen_store;
 use cgen_fnval;
 use cgen_unicode;
 
@@ -112,7 +114,7 @@ fn resolve_hot(code: text, candidates: vector<integer>) -> text {
 }
 
 // The tables a written body names that this file does not write yet, by their C prefix.
-UNIT_TABLES = ["loft_sc_", "loft_ptypes", "loft_uc_"];
+UNIT_TABLES = ["loft_uc_"];
 
 // `Stores::position`: the byte offset of field `name` of record type `tp`.
 fn field_at(b: ir::Bundle, tp: integer, name: text) -> integer {
@@ -122,6 +124,16 @@ fn field_at(b: ir::Bundle, tp: integer, name: text) -> integer {
     }
   }
   0
+}
+
+// Does the unit reach the function called `name`?
+fn reaches(b: ir::Bundle, reached: vector<boolean>, name: text) -> boolean {
+  for d in b.data.definitions {
+    if (reached[d#index] ?? false) && d.name == name {
+      return true;
+    }
+  }
+  false
 }
 
 // Does this body run a `par` loop (`Cx::threads`)?
@@ -140,6 +152,8 @@ fn runs_parallel(code: ir::Node) -> boolean {
 // the unit, naming it.
 fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, refused: &text) -> text {
   fold = false;
+  json_tree = false;
+  parse_errors = false;
   frames = false;
   foreign = false;
   locked = false;
@@ -160,8 +174,10 @@ fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, r
       // `@FR-Path-Case`: a name is compared with its directory's entries through the full
       // lowercase mapping, the table `to_lowercase` registers.
       fold = true;
-    } else if n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue" || n == "n_parse_errors_of" {
-      refused = "the unit's define for JSON ({n})";
+    } else if n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue" {
+      json_tree = true;
+    } else if n == "n_parse_errors_of" {
+      parse_errors = true;
     } else if n == "n_reflect_type" || n == "n_type_named" || n == "n_reflect_field" || n == "n_reflect_field_path" {
       refused = "the unit's define for reflection ({n})";
     } else if n == "n_store_bind_lazy" {
@@ -204,7 +220,23 @@ fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, r
   }
   // `@FR-R-NoThreads`: a unit whose `par` sites all run in order keeps its tables plain.
   no_threads = if x.threads { "" } else { "#define LOFT_NO_THREADS 1\n" };
-  "{head}{no_locks}{no_threads}{frame_defs}#define LOFT_MAX_CALL_DEPTH {max_depth}\n"
+  // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
+  // tree with its layout read from this program's type table for one that reaches a JSON
+  // native, the typed walk (`loft_parse.h`) for one that parses a type.
+  parses = cgen_parse::parses(x) || parse_errors;
+  json = if json_tree || parses { "#define LOFT_JSON 1\n" } else { "" };
+  if json_tree {
+    json += cgen_parse::json_layout(b);
+  }
+  if parses {
+    json += "#define LOFT_PARSE 1\n";
+  }
+  // A unit that converts a store of another layout on load carries the converter; it builds
+  // records through the parse writer, which `upgrade_of` made this unit hold.
+  if parses && cgen_store::upgrades(x) {
+    json += "#define LOFT_UPGRADE 1\n";
+  }
+  "{head}{no_locks}{no_threads}{json}{frame_defs}#define LOFT_MAX_CALL_DEPTH {max_depth}\n"
 }
 
 // What `emit_unit_for` gathers: the bodies' declarations (`gen_decls`), the wrappers'
@@ -297,6 +329,13 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     }
   }
   typedefs = cgen_tables::typedefs(x, names);
+  // The parse table after the type tables it names (`parse_table`, `main_vector_test`).
+  if cgen_parse::parses(x) || reaches(b, reached, "n_parse_errors_of") {
+    typedefs += cgen_parse::parse_table(x) + cgen_parse::main_vector_test(x);
+  }
+  if cgen_store::upgrades(x) {
+    typedefs += "static const loft_ptype *loft_up_ptypes(void) {{ return loft_ptypes; }}\n";
+  }
   written = "{head}{typedefs}{resolve_hot(decls, candidates)}{resolve_hot(protos, candidates)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates)}{resolve_hot(bodies, candidates)}";
   Assembled { defines: defs, written: written, refused: "", tables: cgen_tables::tables_line(x) }
 }

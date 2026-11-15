@@ -17,6 +17,7 @@ use lower;
 use loop_shape;
 use cgen_fn;
 use cgen_ref;
+use cgen_tables;
 use cgen_w::*;
 
 // `Cx::swap_safe`: may a record of type `tp` take a call's result by swapping the stores —
@@ -114,16 +115,36 @@ pub fn link_rebind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
     refuse(w, "a rebind of a & parameter of another kind");
     return;
   }
-  // A slot cell (`@FR-F-ParamRef`) is written through its own routines: not carried.
-  if binds::slot_link_def(b, tp) != null {
-    refuse(w, "a rebind of a slot cell");
-    return;
-  }
   owned = own::ownership_of(b, x.ops, w.index, value) is Owned;
-  displaces = (owned || record) && binds::link_write_releases(f, var);
+  releases = binds::link_write_releases(f, var);
+  displaces = (owned || record) && releases;
   e = cgen_fn::expr(x, w, value, ind);
   r = temp(w, "ref");
   line(w, ind, "{r} = {as_ref(w, e)};");
+  // @PLN219 `@FR-F-ParamRef` — a slot cell: the field write when it names a field (an owned
+  // value given up there), the write-back otherwise.  A field-naming cell is the same before
+  // and after, so the displaced-store release finds nothing to free.
+  slot_def = binds::slot_link_def(b, tp);
+  if slot_def != null {
+    stp = b.data.definitions[slot_def!]!.known_type;
+    cgen_tables::copy_type(x, stp);
+    cell = w.raw[var]!;
+    src = if releases { slot_self_step(b, value, var) } else { null };
+    if src != null {
+      moved = cgen_fn::expr(x, w, src!, ind);
+      line(w, ind, "loft_slot_move(loft_types, {stp}, {cell}, {as_ref(w, moved)});");
+      flush(w, ind);
+      return;
+    }
+    old = temp(w, "ref");
+    line(w, ind, "{old} = (*{cell});");
+    line(w, ind, "loft_slot_write(loft_types, {stp}, &(*{cell}), {r}, {if owned { 1 } else { 0 }});");
+    if displaces {
+      line(w, ind, "loft_free_displaced({old}, (*{cell}));");
+    }
+    flush(w, ind);
+    return;
+  }
   name = w.names[var]!;
   if displaces {
     old = temp(w, "ref");
@@ -134,6 +155,40 @@ pub fn link_rebind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
     line(w, ind, "{name} = {r};");
   }
   flush(w, ind);
+}
+
+// `Data::slot_self_step` (@PLN219): the field a whole write through slot parameter `var`
+// moves from — `X` for the value `OpRefFromChildRec(X)` with `X = OpGetField(var, pos, kt)`, a
+// child of the node the parameter names; null for any other value or under
+// `LOFT_NO_MOVE_CHILD`.
+fn slot_self_step(b: ir::Bundle, value: ir::Node, var: integer) -> ir::Node? {
+  if (env_variable("LOFT_NO_MOVE_CHILD") ?? "0") != "0" {
+    return null;
+  }
+  match loop_shape::unspan(value) {
+    NdCall { def_nr, args } => {
+      if b.data.definitions[def_nr]!.name != "OpRefFromChildRec" || len(args) < 1 {
+        return null;
+      }
+      fx = args[0]!;
+      match loop_shape::unspan(fx) {
+        NdCall { def_nr: gf, args: ga } => {
+          if b.data.definitions[gf]!.name != "OpGetField" || len(ga) != 3 {
+            return null;
+          }
+          if loop_shape::var_of(loop_shape::unspan(ga[0]!)) != var {
+            return null;
+          }
+          match loop_shape::unspan(ga[1]!) {
+            NdInt { n: _ } => fx,
+            _ => null,
+          }
+        },
+        _ => null,
+      }
+    },
+    _ => null,
+  }
 }
 
 // `v = value` for a record or vector variable (`set_stmt_arms` from the first bind on).

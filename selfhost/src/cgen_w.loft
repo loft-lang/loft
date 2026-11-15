@@ -256,6 +256,11 @@ struct W {
   // the place is one (-1 for a plain vector).
   elem: integer,
   keyed: integer,
+  // Where the last `vector_place` was a member of a linked group (`@FR-Col-Group`): the
+  // temporary the parent was read into ("" outside a group) and each member's byte position
+  // and type, in pairs, the place's own member first.
+  group: text,
+  group_members: vector<integer>,
   // `@FR-R-SameRead`'s filed clause: the hash type the previous statement filed a record
   // into (-1 for none), and the one a lookup's binding may read it from.
   filed: integer,

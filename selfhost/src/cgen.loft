@@ -155,6 +155,10 @@ pub struct Cx {
   pub par_sites: integer,
   // The types the unit writes to or reads from a file (`Cx::ser_types`), per type number.
   pub sers: vector<boolean>,
+  // The roots whose sidecar a persist or load names (`Cx::sidecars`), and those of them a load
+  // converts from another layout (`Cx::upgrades`), per type number.
+  pub sidecars: vector<boolean>,
+  pub upgrades: vector<boolean>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -184,6 +188,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     threads: false,
     par_sites: 0,
     sers: [for _ in 0..len(b.types) { false }],
+    sidecars: [for _ in 0..len(b.types) { false }],
+    upgrades: [for _ in 0..len(b.types) { false }],
   }
 }
 

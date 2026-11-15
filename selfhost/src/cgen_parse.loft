@@ -1,0 +1,363 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN91 strand 12 — the C generator written in loft: `T.parse(text)` (`src/c/parse.rs`).
+//
+// `Stores::record_from_text` in C.  The runtime's walk (`loft_parse.h`) reads what each type
+// accepts and what an absent value leaves from `loft_ptypes`, a row per type the parse reaches,
+// written here from the program's own type table: a record's fields with their names,
+// nullability and declared defaults, an enum's variants, a narrow integer's encoding, a
+// collection's content.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_tables;
+use cgen_ref;
+use ptypes;
+use types;
+
+// `Cx::parse_type`: type `tp` and every type a parse of it reaches registered, or a refusal
+// for a kind the C walk does not read.
+pub fn parse_type(x: Cx, w: W, tp: integer) {
+  if tp < 0 || tp >= len(x.b.types) {
+    refuse(w, "a parse of a type not laid out");
+    return;
+  }
+  if x.tables.parse[tp]! {
+    return;
+  }
+  x.tables.parse[tp] = true;
+  // `loft_parse_types` names the type table, which then exists.
+  cgen_tables::name_types(x);
+  if tp <= 6 {
+    return;
+  }
+  match x.b.types[tp].parts[0] {
+    PtStruct { fields } => parse_record(x, w, tp, fields),
+    PtEnumValue { value: _, fields } => parse_record(x, w, tp, fields),
+    PtVector { content } => parse_type(x, w, content),
+    // `@FR-L-OutOfLine` — an out-of-line field reads its content's value.
+    PtChildRec { content } => {
+      if ptypes::child_rec_is_value(x.b.types, content) {
+        cgen_tables::name_types(x);
+        cgen_tables::describe_type(x, content);
+        parse_type(x, w, content);
+      }
+    },
+    PtEnum { values } => {
+      cgen_tables::enum_name(x, tp);
+      for v in values {
+        if v.nr != 65535 && w.why == "" {
+          parse_type(x, w, v.nr);
+        }
+      }
+    },
+    // A keyed collection: each element is filed under its key as it is read, and a displaced
+    // one is released through the type table.
+    PtHash { content, fields: _ } => parse_keyed(x, w, tp, content),
+    PtSorted { content, keys: _ } => parse_keyed(x, w, tp, content),
+    PtIndex { content, keys: _ } => parse_keyed(x, w, tp, content),
+    PtOrdered { content, keys: _ } => parse_keyed(x, w, tp, content),
+    PtRadix { content, fields: _ } => parse_keyed(x, w, tp, content),
+    PtTrie { content, key: _ } => parse_keyed(x, w, tp, content),
+    PtArray { content } => parse_keyed(x, w, tp, content),
+    _ => {},
+  }
+}
+
+fn parse_keyed(x: Cx, w: W, tp: integer, content: integer) {
+  cgen_tables::keys_name(x, tp);
+  cgen_tables::name_types(x);
+  cgen_tables::describe_type(x, content);
+  parse_type(x, w, content);
+}
+
+// A record's fields: a linked group's members are filed together (`parse_group`), each of a
+// kind a group carries; a declared default is read from the default image; a reference
+// field's target type is read too (`@FR-F-Read-Ref`: a `$refs` entry is built as one).
+fn parse_record(x: Cx, w: W, tp: integer, fields: vector<ir::DbField>) {
+  for f in fields {
+    if len(f.other_indexes) == 0 {
+      continue;
+    }
+    cgen_ref::member_row(x, w, f.position, f.content);
+    if w.why != "" {
+      return;
+    }
+    siblings = cgen_ref::group_siblings(x, tp, f#index);
+    k = 0;
+    while k + 1 < len(siblings) {
+      cgen_ref::member_row(x, w, siblings[k]!, siblings[k + 1]!);
+      if w.why != "" {
+        return;
+      }
+      k += 2;
+    }
+  }
+  if !ptypes::zero_default(x.b.types, tp, []) {
+    cgen_tables::default_name(x, tp);
+  }
+  for f in fields {
+    parse_type(x, w, f.content);
+    if w.why != "" {
+      return;
+    }
+    rt = reference_target(x, f);
+    if rt >= 0 {
+      parse_type(x, w, rt);
+      if w.why != "" {
+        return;
+      }
+    }
+  }
+}
+
+// The record type a stored `reference<T>` field names, when it is one this parse can build
+// (`@FR-F-Read-Ref`); -1 for any other field.
+fn reference_target(x: Cx, f: ir::DbField) -> integer {
+  if f.content < 0 || f.content >= len(x.b.types) || !(x.b.types[f.content].parts[0] is PtDbRef) {
+    return -1;
+  }
+  if f.target < 0 || f.target >= len(x.b.types) {
+    return -1;
+  }
+  match x.b.types[f.target].parts[0] {
+    PtStruct { fields: _ } => f.target,
+    PtEnumValue { value: _, fields: _ } => f.target,
+    _ => -1,
+  }
+}
+
+// The group the `i`-th field of struct `tp` is a member of (`@FR-Col-Group`): its members —
+// the field itself first — written as `loft_pg{tp}_{i}`, and the initializer tail a field row
+// carries for it; the empty tail outside a group, or when a member is a kind a group does not
+// carry (the record finish then files the field alone).
+fn parse_group(x: Cx, out: &text, tp: integer, f: ir::DbField, i: integer) -> text {
+  siblings = cgen_ref::group_siblings(x, tp, i);
+  if len(siblings) == 0 {
+    return "";
+  }
+  members = [f.position, f.content];
+  for s in siblings {
+    members += [s];
+  }
+  rows: vector<text> = [];
+  k = 0;
+  while k + 1 < len(members) {
+    row = cgen_ref::member_text(x, members[k]!, members[k + 1]!);
+    if row == "" {
+      return "";
+    }
+    rows += [row];
+    k += 2;
+  }
+  rel = cgen_ref::group_release(x, members);
+  out += "static const loft_member loft_pg{tp}_{i}[] = {{ {rows.join(", ")} }};\n";
+  ", loft_pg{tp}_{i}, {len(rows)}, {rel[0]!}, {rel[1]!}, {rel[2]!}"
+}
+
+// A field's row: its name, type, position, declared nullability, whether the absent pass
+// passes it over (`enum`, a view of a linked group), whether it is the `type` tag a prefill
+// stamps, and its declared default as the literal `write_declared_default` walks in.
+fn parse_field(x: Cx, f: ir::DbField, group: text) -> text {
+  dkind = "LOFT_PD_NONE";
+  di = "INT64_C(0)";
+  dbits = "0x0";
+  ds = "";
+  if len(f.default) > 0 {
+    match f.default[0]! {
+      DcLong { v } => {
+        vals = match x.b.types[f.content].parts[0] {
+          PtEnum { values } => values,
+          _ => [],
+        };
+        if len(vals) > 0 && v != null && v > 0 && v <= len(vals) {
+          dkind = "LOFT_PD_STR";
+          ds = vals[v - 1]!.name;
+        } else {
+          dkind = if len(vals) == 0 && f.content == 4 { "LOFT_PD_BOOL" } else { "LOFT_PD_INT" };
+          di = if v == null { "INT64_MIN" } else { "INT64_C({v})" };
+        }
+      },
+      DcFloat { v } => {
+        dkind = "LOFT_PD_NUMBER";
+        dbits = "{v.bits():#x}";
+      },
+      DcSingle { v } => {
+        dkind = "LOFT_PD_NUMBER";
+        dbits = "{(v as float).bits():#x}";
+      },
+      // The empty text is the wire's absent default (`Field::default_from_wire`).
+      DcStr { v } => {
+        if v != "" {
+          dkind = "LOFT_PD_STR";
+          ds = v;
+        }
+      },
+    }
+  }
+  // Every field written, positionally: a row that stopped early would leave the group and the
+  // target to the compiler's zero, which `-Wextra` reports at every row.
+  tail = if group == "" { ", 0, 0, 0, 0, 0" } else { group };
+  rt = reference_target(x, f);
+  target = if rt >= 0 { rt } else { 0 };
+  skip = f.name == "enum" || (len(f.other_indexes) > 0 && f.other_indexes[0]! == 65535);
+  tag = f.name == "type" && f.position == 0;
+  "{{ {c_string(f.name)}, {f.content}, {f.position}, {flag(f.nullable)}, {flag(skip)}, {flag(tag)}, {dkind}, {di}, UINT64_C({dbits}), {c_string(ds)}, {len(ds)}{tail}, {target} }}"
+}
+
+fn flag(b: boolean) -> integer {
+  if b { 1 } else { 0 }
+}
+
+// A record's row (a struct or an enum's variant): its field table `loft_pf{tp}`, written into
+// `out`, and the row's members.
+fn record_row(x: Cx, out: &text, tp: integer, fields: vector<ir::DbField>) -> text {
+  rows: vector<text> = [];
+  for f in fields {
+    g = parse_group(x, out, tp, f, f#index);
+    rows += [parse_field(x, f, g)];
+  }
+  body = if len(rows) == 0 { "{{ \"\", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }}" } else { rows.join(", ") };
+  out += "static const loft_pfield loft_pf{tp}[] = {{ {body} }};\n";
+  zero = ptypes::zero_default(x.b.types, tp, []);
+  prefill = if zero { "" } else { ", .prefill = {cgen_tables::default_name(x, tp)}" };
+  variant = x.b.types[tp].parts[0] is PtEnumValue;
+  ".kind = LOFT_P_RECORD, .n = {len(fields)}, .fields = loft_pf{tp}, .variant = {flag(variant)}, .zero_default = {flag(zero)}{prefill}"
+}
+
+// A synthetic `__nullable<S>`: its `Some` variant's value and the type and position of that
+// variant's `payload` field, which a present object is read into; nothing for another enum.
+fn nullable_some(x: Cx, tp: integer, values: vector<ir::EnumPair>) -> text {
+  if !x.b.types[tp].name.starts_with("__nullable<") {
+    return "";
+  }
+  for v in values {
+    if v.name != "Some" {
+      continue;
+    }
+    for f in types::record_fields(x.b.types, v.nr) {
+      if f.name == "payload" {
+        return ", .some = {v#index + 1}, .payload_tp = {f.content}, .payload_pos = {f.position}";
+      }
+    }
+    return "";
+  }
+  ""
+}
+
+// A collection's row: its kind, element, key parts and whether its records are linked.
+fn keyed_row(x: Cx, tp: integer, c: integer) -> text {
+  keyed = match x.b.types[tp].parts[0] {
+    PtArray { content: _ } => "LOFT_P_ARRAY",
+    PtHash { content: _, fields: _ } => "LOFT_KEYED_HASH",
+    PtSorted { content: _, keys: _ } => "LOFT_KEYED_SORTED",
+    PtIndex { content: _, keys: _ } => "LOFT_KEYED_INDEX",
+    PtOrdered { content: _, keys: _ } => "LOFT_KEYED_ORDERED",
+    PtRadix { content: _, fields: _ } => "LOFT_KEYED_SPATIAL",
+    _ => "LOFT_KEYED_TRIE",
+  };
+  ".kind = LOFT_P_KEYED, .elem = {c}, .keyed = {keyed}, .keys = {cgen_tables::keys_name(x, tp)}, .nk = {len(x.b.types[tp].keys)}, .linked = {flag(x.b.types[c].linked)}"
+}
+
+fn narrow(kind: text, min: integer, nullable: boolean) -> text {
+  ".kind = {kind}, .min = {min}, .nullable = {flag(nullable)}"
+}
+
+// Does this unit parse a type (`Cx::parse_types` not empty)?
+pub fn parses(x: Cx) -> boolean {
+  for p in x.tables.parse {
+    if p {
+      return true;
+    }
+  }
+  false
+}
+
+// `Cx::parse_table`: `loft_ptypes`, indexed by type number; nothing when no parse is written.
+pub fn parse_table(x: Cx) -> text {
+  out = "";
+  rows: vector<text> = [];
+  last = -1;
+  for p in x.tables.parse {
+    if !p {
+      continue;
+    }
+    tp = p#index;
+    last = tp;
+    t = x.b.types[tp];
+    row = if tp <= 6 { ".kind = {tp}" } else {
+      match t.parts[0] {
+        PtStruct { fields } => record_row(x, out, tp, fields),
+        PtEnumValue { value: _, fields } => record_row(x, out, tp, fields),
+        PtVector { content } => ".kind = LOFT_P_VECTOR, .elem = {content}",
+        PtHash { content, fields: _ } => keyed_row(x, tp, content),
+        PtSorted { content, keys: _ } => keyed_row(x, tp, content),
+        PtIndex { content, keys: _ } => keyed_row(x, tp, content),
+        PtOrdered { content, keys: _ } => keyed_row(x, tp, content),
+        PtRadix { content, fields: _ } => keyed_row(x, tp, content),
+        PtTrie { content, key: _ } => keyed_row(x, tp, content),
+        PtArray { content } => keyed_row(x, tp, content),
+        PtEnum { values } => {
+          vt = [for v in values { "{v.nr}" }].join(", ");
+          out += "static const uint16_t loft_pv{tp}[] = {{ {if vt == "" { "0" } else { vt }} }};\n";
+          strict = !t.name.starts_with("__") && t.name != "JsonValue";
+          ".kind = LOFT_P_ENUM, .n = {len(values)}, .vnames = {cgen_tables::enum_name(x, tp)}, .vtypes = loft_pv{tp}, .strict_enum = {flag(strict)}{nullable_some(x, tp, values)}"
+        },
+        PtByte { start, nullable } => narrow("LOFT_P_BYTE", start, nullable),
+        PtShort { start, nullable } => narrow("LOFT_P_SHORT", start, nullable),
+        PtShortRaw { start, nullable } => narrow("LOFT_P_SHORTRAW", start, nullable),
+        PtInt { start, nullable } => narrow("LOFT_P_NINT", start, nullable),
+        PtIntRaw { start, nullable } => narrow("LOFT_P_NINTRAW", start, nullable),
+        PtDbRef => ".kind = LOFT_P_DBREF",
+        PtChildRec { content } => ".kind = LOFT_P_CHILD, .elem = {if ptypes::child_rec_is_value(x.b.types, content) { content } else { 65535 }}",
+        _ => ".kind = LOFT_P_OTHER",
+      }
+    };
+    refs = if tp > 6 && ptypes::reaches_reference(x.b.types, tp, []) { ", .refs = 1" } else { "" };
+    rows += ["[{tp}] = {{ {row}, .size = {t.size}, .name = {c_string(t.name)}{refs} }}"];
+  }
+  if last < 0 {
+    return "";
+  }
+  out + "static const loft_ptype loft_ptypes[{last + 1}] = {{ {rows.join(", ")} }};\nstatic const loft_tdesc *loft_parse_types(void) {{ return loft_types; }}\n"
+}
+
+// `loft_is_main_vector`: the types a vector variable's own store is minted as
+// (`main_vector<T>`), which a whole-vector write delivers parse errors into.
+pub fn main_vector_test(x: Cx) -> text {
+  cases: vector<text> = [];
+  for t in x.b.types {
+    if t.name.starts_with("main_vector<") {
+      cases += ["    case {t#index}:"];
+    }
+  }
+  if len(cases) == 0 {
+    return "static int loft_is_main_vector(uint16_t tp) {{\n    (void) tp;\n    return 0;\n}}\n";
+  }
+  "static int loft_is_main_vector(uint16_t tp) {{\n    switch (tp) {{\n{cases.join("\n")}\n        return 1;\n    default:\n        return 0;\n    }}\n}}\n"
+}
+
+// `json_layout`: the offsets of the JsonValue tree — each variant's payload, a JsonField's name
+// and value, and the sizes of a JsonValue, a JsonField and a text.
+pub fn json_layout(b: ir::Bundle) -> text {
+  "#define LOFT_JV_SIZE {size_of(b, "JsonValue")}\n#define LOFT_JF_SIZE {size_of(b, "JsonField")}\n#define LOFT_TEXT_SIZE {size_of(b, "text")}\n#define LOFT_JF_NAME {at(b, "JsonField", "name")}\n#define LOFT_JF_VALUE {at(b, "JsonField", "value")}\n#define LOFT_JV_BOOL_VALUE {at(b, "JBool", "value")}\n#define LOFT_JV_NUMBER_VALUE {at(b, "JNumber", "value")}\n#define LOFT_JV_INT_VALUE {at(b, "JInteger", "value")}\n#define LOFT_JV_STRING_VALUE {at(b, "JString", "value")}\n#define LOFT_JV_ITEMS {at(b, "JArray", "items")}\n#define LOFT_JV_FIELDS {at(b, "JObject", "fields")}\n"
+}
+
+fn size_of(b: ir::Bundle, name: text) -> integer {
+  tp = types::named(b.types, name) ?? -1;
+  if tp < 0 { 0 } else { b.types[tp].size }
+}
+
+fn at(b: ir::Bundle, name: text, field: text) -> integer {
+  tp = types::named(b.types, name) ?? -1;
+  if tp < 0 {
+    return 0;
+  }
+  for f in types::record_fields(b.types, tp) {
+    if f.name == field {
+      return f.position;
+    }
+  }
+  0
+}

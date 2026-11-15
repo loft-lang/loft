@@ -1,0 +1,249 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN91 strand 12 — the C generator written in loft: the natives over a whole store (its
+// image written and loaded, its verify — `store_native` in `src/c/body/keyed.rs`) and the
+// sidecars and converters those name (`Cx::sidecar_of`, `Cx::upgrade_of`, `sidecar_table`,
+// `upgrade_table` in `src/c/mod.rs`).
+//
+// What `schema_sidecar` derives for the Rust writer — a root's layout identity, whether its
+// load walks the type, whether its key order moved — and the converter's layout description
+// the host resolved into the image (`Bundle.sidecars`, `Bundle.upgrades`): the generator
+// formats them.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_ref;
+use cgen_tables;
+use cgen_parse;
+use loop_shape;
+
+// `placement::KEY_ORDER`: a layout dump that holds it has a collection whose key order moved.
+KEY_ORDER = ",order=1";
+
+// The image's layout facts of root type `tp`, null when the host wrote none for it.
+fn row_of(x: Cx, tp: integer) -> ir::RunSidecar? {
+  for s in x.b.sidecars {
+    if s.tp == tp {
+      return s;
+    }
+  }
+  null
+}
+
+// `store_value_type`: the static type of the value whose store `v` names — a variable's, and
+// for a field of a record (`OpGetField`) the record's, whose store's root a whole-store native
+// reads; empty for any other value.
+fn store_value_type(x: Cx, w: W, v: ir::Node) -> vector<ir::TypeT> {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if x.b.data.definitions[def_nr]!.name == "OpGetField" && len(args) > 0 {
+        return store_value_type(x, w, args[0]!);
+      }
+      []
+    },
+    NdVar { n } => x.b.data.definitions[w.index]!.variables.variables[n]!.type_def,
+    _ => [],
+  }
+}
+
+// The root type of the store `v` names, or -1 with `why` refused.
+fn root_of(x: Cx, w: W, v: ir::Node, why: text) -> integer {
+  ts = store_value_type(x, w, v);
+  tp = if len(ts) == 0 { -1 } else { cgen_ref::root_type(x.b, ts) };
+  if tp < 0 || tp >= len(x.b.types) {
+    refuse(w, why);
+    return -1;
+  }
+  tp
+}
+
+// `Cx::sidecar_of`: the C name of the sidecar a persist of a store minted as `tp` writes, the
+// root registered for the unit's `sidecar_table`.  A layout with a moved key order is converted
+// by a whole load, whose walk reads every type of the tree off the table.
+fn sidecar_of(x: Cx, w: W, tp: integer) -> text {
+  row = row_of(x, tp);
+  if row == null {
+    refuse(w, "a persisted root the image has no layout facts for");
+    return "";
+  }
+  x.sidecars[tp] = true;
+  if row!.rekey {
+    cgen_tables::copy_type(x, tp);
+  }
+  "&loft_sidecar{tp}"
+}
+
+// `Cx::upgrade_of`: a whole-image load of a store minted as `tp` converts an image of another
+// layout — its closure and each `upgrade` routine's types in the parse and the type tables.
+// A closure the parse table cannot describe keeps the load refusing such an image.
+fn upgrade_of(x: Cx, w: W, tp: integer) {
+  if x.upgrades[tp]! {
+    return;
+  }
+  types: vector<integer> = [tp];
+  for t in x.b.upgrade_types {
+    types += [t];
+  }
+  saved = w.why;
+  w.why = "";
+  ok = true;
+  for t in types {
+    cgen_parse::parse_type(x, w, t);
+    if w.why != "" {
+      ok = false;
+      break;
+    }
+    cgen_tables::copy_type(x, t);
+  }
+  w.why = saved;
+  if ok {
+    x.upgrades[tp] = true;
+    cgen_tables::name_types(x);
+  }
+}
+
+// `store_native`: the natives over a whole store, `done` false for any other call.
+pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  if route == "n_store_persist_copy" && len(args) == 2 {
+    // The image's sidecar is the store's root type's; the image is a deep copy of its root.
+    tp = root_of(x, w, args[0]!, "a persisted value whose store type is not known here");
+    if tp < 0 {
+      return none();
+    }
+    cgen_tables::copy_type(x, tp);
+    cgen_tables::name_types(x);
+    // A store holding a stored reference is written through the converter, which re-points
+    // each reference at the copy.
+    if row_of(x, tp)?.refs ?? false {
+      upgrade_of(x, w, tp);
+    }
+    sc = sidecar_of(x, w, tp);
+    if w.why != "" {
+      return none();
+    }
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    return E { code: "(uint8_t) loft_image_write(loft_types, loft_ntypes, {r}, {path}, {sc})", kind: K_BOOL };
+  }
+  if (route == "n_store_load" || route == "n_store_load_untrusted") && len(args) == 2 {
+    // The gate reads the layout of the store's root type, the value's static type.
+    tp = root_of(x, w, args[0]!, "a loaded value whose store type is not known here");
+    if tp < 0 {
+      return none();
+    }
+    // A store holding references or a trie is loaded by a walk of its type.
+    if row_of(x, tp)?.walks ?? false {
+      cgen_tables::copy_type(x, tp);
+      cgen_tables::name_types(x);
+    }
+    // An image of another layout is converted.
+    upgrade_of(x, w, tp);
+    sc = sidecar_of(x, w, tp);
+    if w.why != "" {
+      return none();
+    }
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    return E { code: "(uint8_t) loft_image_load({r}, {path}, {sc}, {if route == "n_store_load_untrusted" { 1 } else { 0 }})", kind: K_BOOL };
+  }
+  if route == "n_store_verify" && len(args) == 1 {
+    // The walk reads the store's own type: every type the value reaches is described.
+    tp = root_of(x, w, args[0]!, "a verified value whose store type is not known here");
+    if tp < 0 {
+      return none();
+    }
+    cgen_tables::name_types(x);
+    cgen_tables::describe_type(x, tp);
+    r = as_ref(w, cgen_fn::expr(x, w, args[0]!, ind));
+    return E { code: "loft_store_verify(loft_types, loft_ntypes, {r})", kind: K_BOOL };
+  }
+  done = false;
+  none()
+}
+
+// A text as a C byte array initializer, its terminating zero included: a layout dump passes
+// the 4095 characters a C99 literal is guaranteed.
+fn bytes(t: text) -> text {
+  out: vector<text> = [];
+  for i in 0..t.size() {
+    out += ["{t.byte_at(i)}"];
+  }
+  out += ["0"];
+  "{{ {out.join(", ")} }}"
+}
+
+// `v`, the bits of a 64-bit unsigned integer the image holds as a signed one, in decimal.
+fn u64_dec(v: integer) -> text {
+  if v >= 0 {
+    return "{v}";
+  }
+  hi = (v >> 32) & 4294967295;
+  lo = v & 4294967295;
+  // hi * 2^32 + lo, with 2^32 = 4 * 10^9 + 294967296: the billions and the rest apart.
+  low = hi * 294967296 + lo;
+  billions = hi * 4 + low / 1000000000;
+  rest = low % 1000000000;
+  "{billions}{rest:09}"
+}
+
+// `table_rows`: one past the highest type the copy table describes.
+fn table_rows(x: Cx) -> integer {
+  rows = 0;
+  for c in x.tables.copy {
+    if c || x.tables.described[c#index]! {
+      rows = c#index + 1;
+    }
+  }
+  rows
+}
+
+// `upgrade_table`: root `tp`'s description for a converting load (`loft_upgrade`).
+fn upgrade_table(x: Cx, tp: integer) -> text {
+  for u in x.b.upgrades {
+    if u.tp != tp {
+      continue;
+    }
+    names = [for n in u.names { c_string(n) }].join(", ");
+    ids = [for i in u.ids { "{i}" }].join(", ");
+    return "static const char loft_upd{tp}[] = {bytes(u.desc)};\nstatic const char *const loft_upn{tp}[] = {{ {names} }};\nstatic const uint16_t loft_upt{tp}[] = {{ {ids} }};\nstatic const loft_upgrade loft_up{tp} = {{ loft_upd{tp}, loft_upn{tp}, loft_upt{tp}, {len(u.names)}, {c_string(x.b.version)} }};\n";
+  }
+  ""
+}
+
+// `sidecar_table`: each root's `.dschema` text split where its slot line goes, and the layout
+// the loader gates on.
+pub fn sidecar_table(x: Cx) -> text {
+  out = "";
+  for on in x.sidecars {
+    if !on {
+      continue;
+    }
+    tp = on#index;
+    row = row_of(x, tp) ?? continue;
+    out += "static const char loft_scb{tp}[] = {bytes(row.before)};\n";
+    out += "static const char loft_sca{tp}[] = {bytes(row.after)};\n";
+    out += "static const char loft_scd{tp}[] = {bytes(row.dump)};\n";
+    up = "0";
+    if x.upgrades[tp]! {
+      out += upgrade_table(x, tp);
+      up = "&loft_up{tp}";
+    }
+    walks = if row.walks { "loft_types" } else { "0" };
+    rekey = if row.dump.find(KEY_ORDER) != null { "loft_types, {table_rows(x)}" } else { "0, 0" };
+    out += "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({u64_dec(row.hash)}), loft_scd{tp}, {c_string(x.b.oldest)}, {c_string(x.b.bridge)}, {walks}, {rekey}, {up} }};\n";
+  }
+  out
+}
+
+// Does the unit convert a store of another layout on load?
+pub fn upgrades(x: Cx) -> boolean {
+  for u in x.upgrades {
+    if u {
+      return true;
+    }
+  }
+  false
+}

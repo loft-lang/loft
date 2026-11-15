@@ -35,6 +35,7 @@ use cgen_win;
 use cgen_table;
 use cgen_clibs;
 use cgen_par;
+use cgen_store;
 use lower;
 use cgen_file;
 use cgen_texts;
@@ -910,6 +911,13 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     hh = cgen_table::handle(x, w, args[0]);
     h = as_ref(w, expr(x, w, args[0], ind));
     return E { code: if hh != "" { "loft_hh_len(&{hh}, {h})" } else { "loft_hash_len({h})" }, kind: K_INT };
+  }
+  if route.starts_with("n_store_") {
+    is_store_native = false;
+    stored = cgen_store::store_native(x, w, route, args, ind, is_store_native);
+    if is_store_native {
+      return stored;
+    }
   }
   if (route.starts_with("n_store_") && route != "n_store_upgrade_owed_next") || route == "n_spatial_range" || route == "n_trie_prefix" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
     refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
@@ -2617,7 +2625,7 @@ fn store_linked(b: ir::Bundle, d: ir::Definition, links: vector<boolean>) -> boo
   opt_non_sentinel::walk(d.code[0]!, fn(n: ir::Node) {
     match n {
       NdSet { var, inner } => {
-        if links[var]! && !d.variables.variables[var]!.argument {
+        if links[var]! && !d.variables.variables[var]!.argument && link_kind(d.variables.variables[var]!.type_def[0] ?? ir::TyVoid) {
           match loop_shape::unspan(inner) {
             NdCall { def_nr, args: _ } => {
               callee = b.data.definitions[def_nr]!;
@@ -2634,6 +2642,25 @@ fn store_linked(b: ir::Bundle, d: ir::Definition, links: vector<boolean>) -> boo
     }
   });
   hit[0]!
+}
+
+// `link_kind`: a kind a store link carries — the place's own get and set read and write it
+// (an integer, a character, a single, a float, a boolean, a plain enum, a text); a link to a
+// record or a collection is a link of another kind.
+fn link_kind(tp: ir::TypeT) -> boolean {
+  match cgen_types::base(tp) {
+    TyRefVar { inner } => match cgen_types::base(inner) {
+      TyInteger { spec: _ } => true,
+      TyCharacter => true,
+      TySingle => true,
+      TyFloat => true,
+      TyBoolean => true,
+      TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+      TyText { dep: _ } => true,
+      _ => false,
+    },
+    _ => false,
+  }
 }
 
 pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
@@ -2690,7 +2717,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     }
     own = var_name(v.name, v#index);
     raw += [own];
-    names += [if link { "(*{own})" } else { own }];
+    // @PLN219 — a `&S` whose `S` is held out of line points at a slot cell, which may name a
+    // field: read through the test.
+    names += [if link && binds::slot_link_def(x.b, v.type_def[0]!) != null { "loft_slot_read(*{own})" } else if link { "(*{own})" } else { own }];
     links += [link];
     is_param += [v.argument];
     if v.argument {
@@ -2776,6 +2805,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     room_minted: [for _ in 0..len(d.variables.variables) { -1 }],
     elem: -1,
     keyed: -1,
+    group: "",
+    group_members: [],
     filed: -1,
     filed_next: -1,
     filed_path: "",
