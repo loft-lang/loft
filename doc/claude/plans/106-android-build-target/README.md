@@ -28,6 +28,8 @@ below runs an **UNCHANGED** loft program. All proven on the KVM-accelerated Andr
 Commits `b270145b`→`17938565` (this session) on top of the B0–B2 arc. Reference for
 **using** the target lives in [NATIVE.md § Android target](../../NATIVE.md#android-target);
 the implementation is `src/android.rs` + the cfg-gated `android_gl.rs` in the graphics fixture.
+**On the C backend:** the design that takes this target off rustc and onto the published
+libraries' C shims is [c-backend.md](c-backend.md).
 **Known follow-up (not blocking):** B4 IME covers `KeyEvent`s only — NativeActivity has no
 `TextEvent`, so IME *composing* text would need a new `gl_text_input()` text-stream API.
 

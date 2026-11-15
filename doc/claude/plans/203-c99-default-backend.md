@@ -112,6 +112,8 @@ WASI libc gives files for `--native-wasm`; the browser needs the host imports th
 declares (`emit_file_header`'s `loft_gl` block), the `loft_start` export, the html shell and
 the threaded page (`html_embed.rs`, `html_fonts.rs`).  `c_shim::wasm_objects` and
 `src/c/wasm/` already carry a package's C into both targets.
+Android is the third target of C6, designed in
+[106-android-build-target/c-backend.md](106-android-build-target/c-backend.md).
 
 The browser half, one contract with the Rust writer's page rather than a page of its own:
 
