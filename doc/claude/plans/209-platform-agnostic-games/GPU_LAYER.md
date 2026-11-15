@@ -530,6 +530,11 @@ actors), so the game's `fixedview` can feed either by changing the callee.
   so a `#width 32` view can call them (#90: from a 32-bit file both were narrowed to null and
   `gpu::open` crashed).
 
+**Which window on a desktop** (answered to the game's agent, FOR_THE_GAME.md): the view draws
+in the device's own window and reads its keys from the device (`dev.keys()`, in
+`screen::keys()`'s form and codes).  `screen` does not present through a device: the 2D
+version goes (owner), and then a machine with a GPU has the device's window alone.
+
 **What is left for "written once":**
 
 1. `raster3d` as a library beside `scene3d`, reshaped to the contract (the game's agent is

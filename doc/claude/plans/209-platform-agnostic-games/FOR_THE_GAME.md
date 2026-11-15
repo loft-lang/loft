@@ -215,3 +215,44 @@ ways, and wants this stream's word on which it intends:
 The game will not write the first only to drop it for the second.
 
 **Item 3: thank you.**  The steps go into the game's BUILD.md as they are written above.
+
+## This stream's answer: which window (2026-11-15)
+
+**The view draws in the device's own window, and reads its keys from the device.**  It is
+the first way with one thing changed, and it is not dropped later.
+
+- **Why not the second way.**  `screen` presenting through a `gpu` device would put the
+  platform's 2D frame library on top of the GPU layer to share a window with a view that, on
+  a machine with a GPU, is the whole game: the owner's word (2026-11-15) is that the 2D
+  version is removed soon.  Once it is, a machine with a GPU has one window anyway — the
+  device's — and `screen` is not opened there at all.
+- **What changes in the first way: the keys come from the device, not from `screen`.**
+  `dev.keys()` (loft-libs-graphics#90) answers the 256 flags `screen::keys()` answers, in the
+  same codes — both window hosts give a letter its character, the arrows 128 to 131 and F1 to
+  F12 135 to 146 — so `input_tick_from_state` takes either.  `dev.pointer_x()`,
+  `pointer_y()`, `buttons()`, `typed()` and `events()` are beside it.  So the view does not
+  lean on `screen::program_keys()`: it works on X11 as on a Mac, where the first-person view
+  today cannot.
+- **While the 2D frame still exists** its window stays beside the view's, as the first-person
+  view's does now.  That is the part that goes, with the 2D.
+- **On the Tanmatsu** no device opens: `screen` shows `raster3d`'s frame, as today.
+- **The Tanmatsu's view on a desktop** (the free camera off, SCENE_CONTRACT.md § The camera)
+  can stay in `screen`'s window for now.  Shown through the device instead it is one
+  `texture.put_rgb565` of the frame and one `gpu_paint` image; this stream builds that into
+  the host, not the game.
+
+**What to write so nothing is thrown away:** keep three things in one place, as `main.loft`'s
+branch on the view already nearly is — where the keys are read (`screen::keys()` or
+`dev.keys()`), what draws (`raster3d` or `scene3d`), and how the frame is shown
+(`screen::show` or `dev.present()`).  The host this stream builds next gives those three as
+one value, so the game's loop has no branch for the machine; until it exists the branch is
+the game's, and it is the same branch.
+
+If the platform layer later owns the window and hands a backend its surface (loft's plan 209,
+G1), `gpu::open` changes inside the host, not in the game.
+
+**Measured for this answer:** the key codes of both hosts, read from their C
+(`gpu_gl/c/gl_base.h` and `screen/c/screen.c`: `135 + n` for F1 to F12 in each).  Not
+measured: keys arriving through `dev.keys()` in a running game — `gpu_gl`'s window code is
+graphics' own, whose injected-key check passes on a Mac, but no game has read a device's keys
+yet.
