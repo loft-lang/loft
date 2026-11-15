@@ -12,6 +12,7 @@
 use ir;
 use binds;
 use loop_shape;
+use opt_names;
 use opt_non_sentinel;
 use opt_push;
 use opt_writes;
@@ -119,4 +120,71 @@ pub fn held_vectors(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::B
     }
   }
   vector_candidates(b, b.data.definitions[vd]!, lp)
+}
+
+// `view_def_header`: statement `at` of `stmts` binds a vector local `d` to another vector's
+// path, and the statements after it index `d`, never rebind it and write no store (in place
+// only, with `in_place`): `d`'s header may be taken at the bind.  The local, or -1.
+pub fn view_def_header(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, at: integer, in_place: boolean) -> integer {
+  def = b.data.definitions[vd]!;
+  d = -1;
+  rhs = ir::NdNull;
+  match loop_shape::unspan(stmts[at]!) {
+    NdSet { var, inner } => {
+      d = var;
+      rhs = inner;
+    },
+    _ => return -1,
+  }
+  is_vector = match opt_names::peel_link(def.variables.variables[d]!.type_def[0] ?? ir::TyVoid) {
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  };
+  if !is_vector {
+    return -1;
+  }
+  root = -1;
+  if opt_push::vector_path(b, rhs, root) == "" || root == d {
+    return -1;
+  }
+  for op in stmts {
+    if op#index > at && (if in_place { opt_writes::blocks_in_place(b, w, vd, op) } else { opt_writes::blocks_plain(b, w, vd, op) }) {
+      return -1;
+    }
+  }
+  targets = binds::link_targets(def.variables, d);
+  state = [false, false];
+  rest = ir::NdInsert { items: stmts[at + 1..len(stmts)] };
+  opt_non_sentinel::walk(rest, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => {
+        if var == d {
+          state[0] = true;
+        }
+        for t in targets {
+          if t == var {
+            state[0] = true;
+          }
+        }
+      },
+      NdTuplePut { var, idx: _, inner: _ } => {
+        if var == d {
+          state[0] = true;
+        }
+        for t in targets {
+          if t == var {
+            state[0] = true;
+          }
+        }
+      },
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable") && loop_shape::unspan(args[0]) == NdVar { n: d } {
+          state[1] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  if state[1]! && !state[0]! { d } else { -1 }
 }

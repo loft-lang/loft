@@ -1857,6 +1857,7 @@ fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind
   // What the statements before the value bind — a record pointer — serves the value as well,
   // so it closes after the value, with the block.
   held = len(w.rec_ptrs);
+  frames = len(w.headers);
   stmts_upto(x, w, ops, at, ind);
   assign(x, w, ops[at]!, target, shape, ind);
   flush(w, ind);
@@ -1866,6 +1867,9 @@ fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind
     }
   }
   w.rec_ptrs = w.rec_ptrs[0..held];
+  if len(w.headers) > frames {
+    w.headers = w.headers[0..frames];
+  }
 }
 
 // The last statement of `ops` before `end` that is no line marker (and, with `value`, no
@@ -1967,10 +1971,14 @@ fn ret_held(w: W, r: text, ind: integer) {
 
 // A block's statements in order (`stmts`, `stmts_in`).
 fn stmts(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
-  // The record pointers this block bound close with it.
+  // The record pointers and view headers this block bound close with it.
   held = len(w.rec_ptrs);
+  frames = len(w.headers);
   stmts_upto(x, w, ops, len(ops), ind);
   w.rec_ptrs = w.rec_ptrs[0..held];
+  if len(w.headers) > frames {
+    w.headers = w.headers[0..frames];
+  }
 }
 
 // `ops[..end]`, the statements of a list whose remainder the caller writes (`stmts_upto`).
@@ -2007,6 +2015,7 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
     }
     if plain_rules() && w.why == "" {
       cgen_recptr::bind_record_ptr(x, w, ops, o#index, ind);
+      cgen_hoist::bind_view_header(x, w, ops, o#index, ind);
     }
   }
 }

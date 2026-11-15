@@ -69,6 +69,31 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
   count
 }
 
+// `bind_view_header` (`@FR-R-View`): after statement `at` binds a vector view the rest of
+// the block indexes and never rebinds, hold its header — a copy of the header its source is
+// held under, or one taken from the view itself.  The frame closes with the block.
+pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer) {
+  if !enabled() || (env_variable("LOFT_NO_VIEW_HOIST") ?? "0") != "0" {
+    return;
+  }
+  d = opt_hoist::view_def_header(x.b, x.writes, w.index, ops, at, (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0");
+  if d < 0 || held_path(w, "{d}:") != "" {
+    return;
+  }
+  source = match loop_shape::unspan(ops[at]!) {
+    NdSet { var: _, inner } => held_vector(x, w, inner),
+    _ => return,
+  };
+  h = "h{len(w.decls) + 1}";
+  w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
+  if source != "" {
+    line(w, ind, "{h} = {source};");
+  } else {
+    line(w, ind, "{h} = loft_vh_of({w.names[d]!});");
+  }
+  w.headers += [Header { path: "{d}:", name: h, frame: 0 }];
+}
+
 // Close a loop's frame of `count` headers.
 pub fn release(w: W, count: integer) {
   if count > 0 {
