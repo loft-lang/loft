@@ -25,6 +25,7 @@ use cgen_fn;
 use cgen_text;
 use cgen_ref;
 use cgen_hoist;
+use cgen_win;
 use opt_hoist;
 use cgen_w::*;
 
@@ -1590,7 +1591,8 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   if plain_rules() {
     cgen_hoist::counters_in_range(x, w, lp);
   }
-  if plain_rules() {
+  window = plain_rules() && cgen_win::open_window(x, w, lp, ind);
+  if plain_rules() && !window {
     cgen_ref::hash_reserve(x, w, lp, ind);
   }
   if plain_rules() {
@@ -1600,6 +1602,9 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   w.in_range = w.in_range[0..ranged_counters];
   w.in_range_lens = w.in_range_lens[0..ranged_lens];
   cgen_hoist::release(w, held_headers, held_pushes);
+  if window {
+    cgen_win::close_window(x, w, ind);
+  }
   w.memos = w.memos[0..len(w.memos) - 1];
   if pushed {
     w.over = w.over[0..len(w.over) - 1];

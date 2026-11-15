@@ -127,7 +127,7 @@ pub fn hold_pushes(x: Cx, w: W, lp: ir::Block, verdict: opt_hoist::LoopHoist, in
   // writes through the record address it holds.
   based = verdict.sole_push && len(verdict.pushes) == 1 && (env_variable("LOFT_NO_PUSH_BASE") ?? "0") == "0";
   for p in verdict.pushes {
-    if push_head(x, w, p.vector) >= 0 {
+    if push_head(x, w, p.vector) >= 0 || windowed_path(w, p.path) {
       continue;
     }
     size = opt_hoist::push_size(x.b, lp, p.path);
@@ -152,7 +152,7 @@ pub fn hold_pushes(x: Cx, w: W, lp: ir::Block, verdict: opt_hoist::LoopHoist, in
   }
   // `@FR-R-PushRec`: a minted path keeps a push header too, never a based one.
   for p in verdict.mint_pushes {
-    if push_head(x, w, p.vector) >= 0 {
+    if push_head(x, w, p.vector) >= 0 || windowed_path(w, p.path) {
       continue;
     }
     size = opt_hoist::mint_size(x.b, w.index, lp, p.path);
@@ -227,7 +227,7 @@ pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integ
     return -1;
   }
   head = push_head(x, w, first.vector);
-  if head < 0 || w.push_heads[head].size != first.size {
+  if head < 0 || w.push_heads[head].size != first.size || windowed_path(w, first.path) {
     return -1;
   }
   run: vector<opt_push::Push> = [first];
@@ -805,4 +805,14 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     return E { code: "({proof}, {f}{nn}({held}, {size}, {index}, {fld}, {code}))", kind: K_VOID };
   }
   none()
+}
+
+// Is a push window open for `path`?
+pub fn windowed_path(w: W, path: text) -> boolean {
+  for win in w.windows {
+    if win.path == path {
+      return true;
+    }
+  }
+  false
 }

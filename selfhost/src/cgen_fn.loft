@@ -28,6 +28,7 @@ use cgen_recptr;
 use cgen_hoist;
 use own;
 use opt_facts;
+use cgen_win;
 use cgen_texts;
 use cgen_natives;
 use opt_names;
@@ -303,6 +304,13 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     held_read = cgen_hoist::held_access(x, w, name, args, ind, through_header);
     if through_header {
       return held_read;
+    }
+  }
+  if len(w.windows) > 0 {
+    through_window = false;
+    in_window = cgen_win::windowed(x, w, name, args, ind, through_window);
+    if through_window {
+      return in_window;
     }
   }
   if len(w.push_heads) > 0 {
@@ -2628,6 +2636,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     rec_ptrs: [],
     headers: [],
     push_heads: [],
+    windows: [],
     facts: opt_facts::facts_of(x.b, index),
     range_lens: [],
     alias_var: -1,

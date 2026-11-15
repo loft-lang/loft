@@ -779,3 +779,8 @@ pub fn releases_record(d: ir::Definition, name: text, args: vector<ir::Node>) ->
 pub fn is_plain_record(b: ir::Bundle, t: ir::TypeT) -> boolean {
   plain_record(b, t)
 }
+
+// `IN_PLACE_SET_OPS`, for the walks of other modules.
+pub fn is_in_place_set(name: text) -> boolean {
+  in_place_set(name)
+}

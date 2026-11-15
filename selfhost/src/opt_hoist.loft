@@ -133,7 +133,7 @@ fn nothing() -> LoopHoist {
 
 // `owned_local`: a local that owns its store — no parameter, no link, not captured, and
 // depending on nothing but its own hidden store witness.
-fn owned_local(d: ir::Definition, r: integer) -> boolean {
+pub fn owned_local(d: ir::Definition, r: integer) -> boolean {
   v = d.variables.variables[r]!;
   if v.argument || v.captured || (binds::base(v.type_def[0] ?? ir::TyVoid) is TyRefVar) {
     return false;
@@ -147,7 +147,7 @@ fn owned_local(d: ir::Definition, r: integer) -> boolean {
 }
 
 // `work_buffer_arg`: is `r` a parameter that is a hidden work buffer?
-fn work_buffer_arg(d: ir::Definition, r: integer) -> boolean {
+pub fn work_buffer_arg(d: ir::Definition, r: integer) -> boolean {
   pos = 0;
   for v in d.variables.variables {
     if v.argument {
@@ -161,7 +161,7 @@ fn work_buffer_arg(d: ir::Definition, r: integer) -> boolean {
 }
 
 // `retbuf_var`: the variable of the function's hidden return buffer, -1 for none.
-fn retbuf_var(d: ir::Definition) -> integer {
+pub fn retbuf_var(d: ir::Definition) -> integer {
   attr = binds::hidden_return_buffer_attr(d) ?? return -1;
   binds::var_named(d.variables, d.attributes[attr]!.name)
 }
