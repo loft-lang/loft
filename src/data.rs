@@ -10773,9 +10773,7 @@ impl Data {
                     };
                     let nested = !matches!(bare, Type::Unknown(_))
                         && !ret.any_node(&mut |t| matches!(t, Type::Tuple(_)));
-                    if nested
-                        && let Some(new_ty) = Self::rewrite_type_opt(ret, stub_nr, &target)
-                    {
+                    if nested && let Some(new_ty) = Self::rewrite_type_opt(ret, stub_nr, &target) {
                         self.definitions[d_nr].returned = new_ty;
                     }
                 }
