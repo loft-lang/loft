@@ -609,7 +609,12 @@ pass.  The read MEASURES nothing: its portal column reads the rows committed und
 A measurement needs a quiet box, which the gathering stream's does not have, so the
 performance stream (the laptop) records the row — `make perf-check ARGS="--record"` on the
 judged lanes — and the gathering stream asks for one whenever the read shows the laptop row
-older than a week.  A
+older than a week.  **A change of instrument is written on its week** in
+`index/stability_notes.tsv`, which the read carries as the row's `note` column: a stream moving
+from a sample to the whole corpus, a gate added, a consumer going quiet.  The filed count steps
+on such a week by instrument and not by the language — the self-host streams' move to
+whole-corpus runs filed the defects their samples had deferred in one week — and a December
+read that does not see the note reads it as the language getting worse.  A
 report, never a gate: it reads the tracker through `gh api` when signed in and the public
 endpoint when not, and the tracker labels as they are NOW, so a past week's `open_sw_main`
 is an approximation from the filing and closing stamps.

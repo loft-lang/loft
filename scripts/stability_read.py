@@ -68,6 +68,10 @@ One row per ISO week (Monday).  The columns, by source:
   the portal (bench/portal/results at the week's last commit, one entry per host; a
   ratio compares within one machine only):
     portal             host=date:median/over3/over5 …
+  a note on the week (`index/stability_notes.tsv`, `week_of<TAB>note`, kept by hand):
+    note               a change of INSTRUMENT that week — a stream moving from a sample to
+                       the whole corpus, a gate added, a consumer going quiet — so a step
+                       in the counts is read as the instrument's, not the language's
 
 A REPORT, never a gate.  `--record` is the only write.
 """
@@ -88,6 +92,7 @@ import rule_tags as rt  # noqa: E402 — the register's one home (`open_register
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERIES = os.path.join(ROOT, "index", "stability_weekly.tsv")
+NOTES = os.path.join(ROOT, "index", "stability_notes.tsv")
 REPO = "loft-lang/loft"
 CONSUMERS = ["jjstwerff/moros", "jjstwerff/dryopea", "jjstwerff/crawler"]
 DEF_INLINE = re.compile(r"^\s*\(([A-Z][A-Za-z0-9-]{1,40})\)\s", re.M)
@@ -96,7 +101,7 @@ COLUMNS = ["week_of", "partial", "filed", "silent_wrong", "sev_high", "consumer_
            "ci_shaped", "closed", "strained", "settled", "strained_pct", "zero_streak",
            "close_h_median", "open_sw_main", "consumer_commits", "rules", "rules_R", "rules_R_new",
            "annotated", "guarded", "census_only", "deviations_open", "deviations_stale", "decisions",
-           "consumer_green", "release_gate_age", "portal"]
+           "consumer_green", "release_gate_age", "portal", "note"]
 
 
 # ── sources ───────────────────────────────────────────────────────────────────────────────
@@ -366,7 +371,7 @@ def rows(since, until, cache=None):
     consumer_runs = workflow_runs("consumer-main-health.yml")
     gate_runs = workflow_runs("release-gate.yml", pages=1)
     ref = main_ref()
-    out, streak, prev_r, memo, signed = [], 0, None, {}, gh_signed_in()
+    out, streak, prev_r, memo, signed, notes = [], 0, None, {}, gh_signed_in(), read_notes()
     for w in weeks:
         end = w + dt.timedelta(days=6)
         filed = [i for i in issues if w <= parse_day(i["created_at"]) <= end]
@@ -408,8 +413,21 @@ def rows(since, until, cache=None):
             deviations_stale=len(stale) if sha else "-", _stale=stale,
             decisions=r.get("decisions", "-"),
             consumer_green=f"{sum(c == 'success' for c in sched)}/{len(sched)}",
-            release_gate_age=gate_age, portal=r.get("portal", "-")))
+            release_gate_age=gate_age, portal=r.get("portal", "-"),
+            note=notes.get(w.isoformat(), "-")))
         prev_r = r.get("rules_R") if r else prev_r
+    return out
+
+
+def read_notes():
+    """{week_of: note} from NOTES — a hand-kept line per week whose instrument changed."""
+    out = {}
+    if os.path.exists(NOTES):
+        for line in open(NOTES, encoding="utf-8"):
+            if line.startswith("#") or "\t" not in line:
+                continue
+            w, note = line.rstrip("\n").split("\t", 1)
+            out[w.strip()] = note.strip()
     return out
 
 
