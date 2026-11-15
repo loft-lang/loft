@@ -276,8 +276,8 @@ keys from the device.  Nothing is to be built for a window the 2D frame and the 
 So the game's step — the fixed view giving its scene to `raster3d` or to `scene3d` — can
 start when #90 has merged.
 
-**What a playable Mac build then is.**  The owner built and ran the game's `main` natively
-here (§ This stream's reply); with the 2D going, the build that matters is the same program
+**What a playable Mac build then is.**  This stream built and ran the game's `main` natively
+on the owner's Mac (§ This stream's reply); with the 2D going, the build that matters is the same program
 with its view drawn through `scene3d` in the device's window.  With the fixed camera that
 looks as `raster3d`'s view does, drawn at the window's size.
 
