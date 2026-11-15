@@ -19,7 +19,7 @@ starts at `main`, covers what `loft --tests` runs.
 
     python3 selfhost/bench/run_image_survey.py [--scripts-only] [--functions] [--jobs N] [--top 30]
 """
-import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, hashlib, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
@@ -52,11 +52,15 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     if test:
         # The test file with a `main` that calls the one test, beside the other programs; it runs
         # from the test file's own directory, where its relative paths resolve.
-        prog = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f"{f}::{test}") + ".loft")
+        # A file name past the file system's 255 bytes is no file: a long one keeps its end and a hash.
+        stem = re.sub(r"[^A-Za-z0-9]", "_", f"{f}::{test}")
+        if len(stem) > 150:
+            stem = stem[-120:] + "_" + hashlib.sha1(stem.encode()).hexdigest()[:12]
+        prog = os.path.join(tmp, stem + ".loft")
         with open(prog, "w", encoding="utf-8") as fh:
             fh.write(open(f, encoding="utf-8", errors="replace").read() + f"\n\nfn main() {{\n  {test}();\n}}\n")
         f = prog
-    img = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f) + ".run")
+    img = f[:-5] + ".run" if test else os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f) + ".run")
     rc, _, err = proc([loft, *libargs, "--emit-run-image", img, f], env, timeout, cwd=src_dir)
     if rc != 0:
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
