@@ -7,6 +7,7 @@
 // through a handle that remembers its table.
 
 use ir;
+use cgen::(Cx);
 use cgen_w::*;
 use el_ir;
 use loop_shape;

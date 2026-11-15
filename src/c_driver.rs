@@ -1158,3 +1158,63 @@ mod tests {
         );
     }
 }
+
+/// @PLN91 strand 12 U-0 — `LOFT_CGEN=<generator>`: the unit the LOFT-written C generator
+/// (`selfhost/front/cgen.loft`, built) writes from this program's image, in place of the Rust
+/// generator's.  `None` when the variable is not set.  A generator that refuses the program,
+/// fails or writes nothing is an `Err` naming why — never a fallback to the Rust unit, which
+/// would let a refusal pass as a run.  The generator reads the runtime headers from
+/// `LOFT_CGEN_RUNTIME`, else this tree's `src/c`; `LOFT_CGEN_IMAGE=<path>` keeps the image.
+#[cfg(feature = "mmap")]
+pub(crate) fn loft_written_unit(
+    data: &loft::data::Data,
+    stores: &loft::database::Stores,
+) -> Option<Result<String, String>> {
+    let generator = std::env::var("LOFT_CGEN").ok().filter(|g| !g.is_empty())?;
+    let runtime = std::env::var("LOFT_CGEN_RUNTIME")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/src/c").to_string());
+    let stem = std::env::temp_dir().join(format!("loft_cgen_{}", std::process::id()));
+    let image = format!("{}.store", stem.display());
+    let unit = format!("{}.c", stem.display());
+    let written = (|| {
+        loft::ir_store::save_bundle_with(data, stores, &image, &loft::c::c_library_facts(data))
+            .map_err(|e| format!("the program image could not be written: {e}"))?;
+        let out = Spawn::new(Program::os(&generator))
+            .args([&image, &unit, &runtime])
+            .run(&[])
+            .map_err(|e| format!("the C generator {generator} did not start: {e}"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let last = err
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("no message");
+            return Err(format!("the loft C generator wrote no unit: {last}"));
+        }
+        fa::read_to_string(&unit).map_err(|e| format!("the loft C generator's unit: {e}"))
+    })();
+    // `LOFT_CGEN_IMAGE=<path>`: keep the image the generator read, to run it again by hand
+    // (`<generator> <path> <out> --layer bodies`).
+    if let Some(keep) = std::env::var_os("LOFT_CGEN_IMAGE") {
+        let keep = keep.to_string_lossy().to_string();
+        let _ = fa::copy(&image, &keep);
+        let _ = fa::copy(format!("{image}.dschema"), format!("{keep}.dschema"));
+    }
+    for p in [&image, &format!("{image}.dschema"), &unit] {
+        let _ = fa::remove_file(p);
+    }
+    Some(written)
+}
+
+/// A build without file-backed stores writes no image, so it has no loft generator to run.
+#[cfg(not(feature = "mmap"))]
+pub(crate) fn loft_written_unit(
+    _data: &loft::data::Data,
+    _stores: &loft::database::Stores,
+) -> Option<Result<String, String>> {
+    std::env::var("LOFT_CGEN")
+        .ok()
+        .filter(|g| !g.is_empty())
+        .map(|_| Err("LOFT_CGEN needs file-backed stores, which this build leaves out".to_string()))
+}

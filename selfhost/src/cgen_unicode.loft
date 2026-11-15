@@ -1,0 +1,63 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — `src/c/unicode.rs`: the Unicode tables a unit carries.  A text's case
+// mapping (`loft_text_lower`, `loft_text_upper`) reads a table of every code point whose mapping
+// is not itself, written once per unit that asks for it: a `to_lowercase` / `to_uppercase` call,
+// or the file library's name folding (`LOFT_PATH_FOLD`).  The mapping is the language's own,
+// a character's `to_lowercase()` — what `str::to_lowercase` answers, through whichever backend
+// runs the generator.  The character classes (`loft_uc_*`) are not carried yet.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+
+// `unicode_case`: the case table of `upper` registered for the unit, and the function that
+// reads it.
+pub fn unicode_case(x: Cx, upper: boolean) -> text {
+  name = if upper { "upper" } else { "lower" };
+  for n in x.unicode {
+    if n == name {
+      return "loft_text_{name}";
+    }
+  }
+  // Kept in name order, as the Rust writer's set is iterated.
+  at = len(x.unicode);
+  for n in x.unicode {
+    if n > name && at == len(x.unicode) {
+      at = n#index;
+    }
+  }
+  x.unicode.insert(at, name);
+  "loft_text_{name}"
+}
+
+// `case_code`: the table of every code point whose mapping is not itself, and its reader.
+fn case_code(upper: boolean) -> text {
+  name = if upper { "upper" } else { "lower" };
+  rows: vector<text> = [];
+  for u in 0..1114112 {
+    if u >= 55296 && u <= 57343 {
+      continue;
+    }
+    c = u as character;
+    one = "{c}";
+    mapped = if upper { one.to_uppercase() } else { one.to_lowercase() };
+    if mapped == one {
+      continue;
+    }
+    rows += ["{{ {u}u, {c_string(mapped)} }}"];
+  }
+  inverse = if upper { 0 } else { 1 };
+  "static const loft_umap loft_um_{name}[] = {{ {rows.join(", ")} }};\nstatic loft_text loft_text_{name}(loft_str s) {{ return loft_text_case(s, loft_um_{name}, {len(rows)}, {inverse}); }}\n"
+}
+
+// `unicode_code`: every registered table and the function that reads it.
+pub fn unicode_code(x: Cx) -> text {
+  out = "";
+  for name in x.unicode {
+    out += case_code(name == "upper");
+  }
+  out
+}

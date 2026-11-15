@@ -535,6 +535,10 @@ fn c_stack_text_trim(store: integer, at: integer, which: integer);
 #c "loft_crt_stack_text_trim" "void(int64_t, int64_t, int64_t)"
 fn c_stack_read_bytes(out: vector<u8>, store: integer, at: integer, n: integer);
 #c "loft_crt_stack_read_bytes" "void(char*, int64_t, int64_t, int64_t)"
+fn c_store_words(store: integer) -> integer;
+#c "loft_crt_store_words" "int64_t(int64_t)"
+fn c_store_bytes(out: vector<u8>, store: integer, n: integer);
+#c "loft_crt_store_bytes" "void(char*, int64_t, int64_t)"
 fn c_stack_zero(store: integer, at: integer, n: integer);
 #c "loft_crt_stack_zero" "void(int64_t, int64_t, int64_t)"
 fn c_stack_str_own(store: integer, at: integer) -> integer;
@@ -983,6 +987,16 @@ pub fn ref_text_append_null(s: integer, r: integer, p: integer) {
 // `trim` (0), `trim_start` (1) or `trim_end` (2) of the text view at `at`, narrowed in place.
 pub fn stack_text_trim(store: integer, at: integer, which: integer) {
   c_stack_text_trim(store, at, which);
+}
+
+// Store `store`'s words, as a byte vector of `8 * words` bytes (`Store::capacity_words`).
+pub fn store_bytes(store: integer) -> vector<u8> {
+  n = c_store_words(store);
+  buf = room(n * 8);
+  if n > 0 {
+    c_store_bytes(buf, store, n);
+  }
+  buf
 }
 
 // `n` stack bytes at `at`, as a byte vector (a suspended generator's frame).

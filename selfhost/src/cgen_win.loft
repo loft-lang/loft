@@ -6,6 +6,8 @@
 // counted push loop reserves its trips once and writes its pushes through a window.
 
 use ir;
+use cgen_tables;
+use cgen::(Cx);
 use cgen_w::*;
 use cgen_fn;
 use cgen_names;
@@ -176,7 +178,7 @@ pub fn windowed(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, d
     made = temp(w, "ref");
     line(w, ind, "{made} = (LOFT_PROVED(loft_win_same({mw}, {mv}, {msize}), {c_string(msite)}), loft_win_slot(&{mw}, {mv}, {msize}));");
     if !(name == "OpNewRecordNP" || cgen_ref::mint_complete(x.b, w, ptp)) && elem >= 0 {
-      line(w, ind, "loft_fill({made}, loft_dflt{elem}, {x.b.types[elem].size});");
+      line(w, ind, "loft_fill({made}, {cgen_tables::default_name(x, elem)}, {x.b.types[elem].size});");
     }
     return E { code: made, kind: K_REF };
   }

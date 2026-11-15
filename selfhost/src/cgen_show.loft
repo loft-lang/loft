@@ -1,0 +1,265 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — `src/c/show.rs`: a value of a store rendered as text, the `{v}` of a
+// record or a vector.  The unit writes one `loft_show{tp}` per type a program renders, with the
+// type's field and variant names in it; the runtime's `loft_show_*` helpers are the parts every
+// type shares.  `show_type` registers a type and every type its rendering reaches while a body
+// is written; `show_code` writes them with the unit's tables.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_tables;
+
+// `child_rec_is_value`: an out-of-line child of a type the program declared renders as its
+// content.
+fn child_is_value(b: ir::Bundle, c: integer) -> boolean {
+  c >= 0 && c < len(b.types) && !b.types[c]!.name.starts_with("__")
+}
+
+// `is_reference_field`: a stored `reference<T>` field whose target type is known.
+fn is_reference_field(b: ir::Bundle, f: ir::DbField) -> boolean {
+  f.content >= 0 && f.content < len(b.types) && (b.types[f.content]!.parts[0]! is PtDbRef) && f.target < len(b.types) && f.target > 6
+}
+
+// `show_type`: type `tp` and every type its rendering reaches, registered.  The writer asked
+// `show_refusal` first, so every kind met here is one the renderer writes.
+pub fn show_type(x: Cx, tp: integer) {
+  if tp <= 6 || tp >= len(x.b.types) || x.shows[tp]! {
+    return;
+  }
+  x.shows[tp] = true;
+  match x.b.types[tp]!.parts[0]! {
+    PtEnum { values } => { for v in values { if v.nr != 65535 { show_type(x, v.nr); } } },
+    PtStruct { fields } => show_fields(x, fields),
+    PtEnumValue { value: _, fields } => show_fields(x, fields),
+    PtVector { content } => show_type(x, content),
+    PtChildRec { content } => { if child_is_value(x.b, content) { show_type(x, content); } },
+    PtSorted { content, keys: _ } => { cgen_tables::keys_name(x, tp); show_type(x, content); },
+    PtHash { content, fields: _ } => { cgen_tables::keys_name(x, tp); show_type(x, content); },
+    PtIndex { content, keys: _ } => { cgen_tables::keys_name(x, tp); show_type(x, content); },
+    PtOrdered { content, keys: _ } => { cgen_tables::keys_name(x, tp); show_type(x, content); },
+    PtArray { content } => { cgen_tables::keys_name(x, tp); show_type(x, content); },
+    PtRadix { content, fields: _ } => { cgen_tables::keys_name(x, tp); show_type(x, content); },
+    PtTrie { content, key: _ } => { cgen_tables::keys_name(x, tp); show_type(x, content); },
+    _ => {},
+  }
+}
+
+fn show_fields(x: Cx, fields: vector<ir::DbField>) {
+  for f in fields {
+    show_type(x, f.content);
+    if is_reference_field(x.b, f) {
+      show_type(x, f.target);
+    }
+  }
+}
+
+// `show_fn`: the C function that renders a value of type `tp`.
+pub fn show_fn(tp: integer) -> text {
+  if tp == 0 || tp == 1 {
+    "loft_show_long"
+  } else if tp == 2 {
+    "loft_show_single"
+  } else if tp == 3 {
+    "loft_show_float"
+  } else if tp == 4 {
+    "loft_show_bool"
+  } else if tp == 5 {
+    "loft_show_text"
+  } else if tp == 6 {
+    "loft_show_char"
+  } else {
+    "loft_show{tp}"
+  }
+}
+
+fn is_record(p: ir::DbParts) -> boolean {
+  match p {
+    PtStruct { fields: _ } => true,
+    PtEnumValue { value: _, fields: _ } => true,
+    _ => false,
+  }
+}
+
+fn flag(on: boolean) -> integer {
+  if on { 1 } else { 0 }
+}
+
+// `fields_fn`: `write_struct` over `fields` as `loft_showf{tp}`, framed by the `complex` flag
+// of the type the caller renders.
+fn fields_fn(x: Cx, tp: integer, fields: vector<ir::DbField>, chains: boolean) -> text {
+  shown: vector<ir::DbField> = [];
+  for f in fields {
+    if f.name != "enum" && !f.name.starts_with("#") && (f.other_indexes[0] ?? 0) != 65535 {
+      shown += [f];
+    }
+  }
+  any = flag(len(shown) > 0);
+  out = "static void loft_showf{tp}(loft_text *s, loft_ref r, int fmt, int ind, int complex_type) {{\n";
+  out += "    int c = loft_show_open(s, fmt, ind, complex_type, {any});\n";
+  for f in shown {
+    if f#index > 0 {
+      out += "    loft_show_sep(s, fmt, ind, c);\n";
+    }
+    out += "    loft_show_name(s, fmt, {c_string(f.name)});\n";
+    out += "    loft_rr_push({c_string(f.name)});\n";
+    if chains && f#index + 1 == len(shown) {
+      tail = match x.b.types[f.content]!.parts[0]! {
+        PtChildRec { content } => if child_is_value(x.b, content) { content } else { -1 },
+        _ => -1,
+      };
+      if tail >= 0 {
+        out += "    loft_show_tail(s, loft_show1_{tail}, loft_ref_from_child_rec(loft_field(r, {f.position})), ind + 1);\n";
+        continue;
+      }
+    }
+    if is_reference_field(x.b, f) {
+      out += "    loft_show_ref_field(s, loft_field(r, {f.position}), fmt, ind + 1, {show_fn(f.target)});\n";
+    } else {
+      out += "    {show_fn(f.content)}(s, loft_field(r, {f.position}), fmt, ind + 1);\n";
+    }
+    out += "    loft_rr_pop();\n";
+  }
+  out + "    loft_show_close(s, fmt, ind, c, {any});\n}}\n"
+}
+
+// `enum_body`: an enum's variant name (and fields), or a `__nullable<S>`'s dense value.
+fn enum_body(x: Cx, name: text, values: vector<ir::EnumPair>, complex: integer, brace: text) -> text {
+  if name.starts_with("__nullable<") {
+    out = "    switch (*loft_at(loft_store_of(r), r.rec, r.pos)) {{\n";
+    for v in values {
+      if v.nr >= 0 && v.nr < len(x.b.types) {
+        match x.b.types[v.nr]!.parts[0]! {
+          PtEnumValue { value: _, fields } => {
+            for pf in fields {
+              if pf.name == "payload" {
+                out += "    case {v#index + 1}: {show_fn(pf.content)}(s, loft_field(r, {pf.position}), fmt, ind); return;\n";
+                break;
+              }
+            }
+          },
+          _ => {},
+        }
+      }
+    }
+    return out + "    case 0: loft_push(s, \"null\", 4); return;\n    default: return;\n    }}\n";
+  }
+  out = "    uint8_t v = *loft_at(loft_store_of(r), r.rec, r.pos);\n    switch (v) {{\n";
+  for v in values {
+    payload = v.nr >= 0 && v.nr < len(x.b.types) && (x.b.types[v.nr]!.parts[0]! is PtEnumValue);
+    json_open = c_string("{{\"{v.name}\":");
+    body = if payload { "loft_showf{v.nr}(s, r, fmt, ind, {complex});" } else { "loft_push(s, \"{{}}\", 2);" };
+    plain = if payload { " loft_push_char(s, ' '); loft_showf{v.nr}(s, r, fmt, ind, {complex});" } else { "" };
+    out += "    case {v#index + 1}:\n        if (fmt & 2) {{ loft_push_cstr(s, {json_open}); {body} {brace} }}\n        else {{ loft_push_cstr(s, {c_string(v.name)});{plain} }}\n        return;\n";
+  }
+  out + "    default:\n        loft_push_cstr(s, (fmt & 2) || v == 0 || v == 255 ? \"null\" : \"?\");\n    }}\n"
+}
+
+// `show_body`: the render of one registered type.
+fn show_body(x: Cx, tp: integer, chains: boolean) -> text {
+  brace = if chains { "loft_show_brace(s);" } else { "loft_push_char(s, '}}');" };
+  t = x.b.types[tp]!;
+  complex = flag(t.complex);
+  match t.parts[0]! {
+    PtStruct { fields: _ } => "    loft_showf{tp}(s, r, fmt, ind, {complex});\n",
+    PtEnumValue { value: _, fields: _ } => {
+      open = c_string("{{\"{t.name}\":");
+      "    if (fmt & 2) {{ loft_push_cstr(s, {open}); loft_showf{tp}(s, r, fmt, ind, {complex}); {brace} }}\n    else loft_showf{tp}(s, r, fmt, ind, {complex});\n"
+    },
+    PtEnum { values } => enum_body(x, t.name, values, complex, brace),
+    PtHash { content, fields: _ } => keyed_body(x, tp, content, 1),
+    PtIndex { content, keys: _ } => keyed_body(x, tp, content, 2),
+    PtOrdered { content, keys: _ } => keyed_body(x, tp, content, 0),
+    PtArray { content } => keyed_body(x, tp, content, 0),
+    PtRadix { content, fields: _ } => keyed_body(x, tp, content, 3),
+    PtTrie { content, key: _ } => keyed_body(x, tp, content, 3),
+    PtVector { content } => list_body(x, content),
+    PtSorted { content, keys: _ } => list_body(x, content),
+    PtByte { start, nullable } => "    (void) fmt; (void) ind;\n    loft_show_byte(s, r, {start}, {flag(nullable)});\n",
+    PtShort { start, nullable } => "    (void) fmt; (void) ind;\n    loft_show_short(s, r, {start}, {flag(nullable)});\n",
+    PtShortRaw { start, nullable } => "    (void) fmt; (void) ind;\n    loft_show_short_raw(s, r, {start}, {flag(nullable)});\n",
+    PtInt { start: _, nullable } => "    (void) fmt; (void) ind;\n    loft_show_int4(s, r, {flag(nullable)});\n",
+    PtIntRaw { start: _, nullable } => "    (void) fmt; (void) ind;\n    loft_show_int_raw(s, r, {flag(nullable)});\n",
+    PtDbRef => "    (void) fmt; (void) ind;\n    loft_show_dbref(s, r);\n",
+    PtChildRec { content } => {
+      if child_is_value(x.b, content) {
+        "    {show_fn(content)}(s, loft_ref_from_child_rec(r), fmt, ind);\n"
+      } else {
+        "    (void) fmt; (void) ind;\n    loft_show_child(s, r);\n"
+      }
+    },
+    _ => "    (void) fmt; (void) ind;\n    loft_show_child(s, r);\n",
+  }
+}
+
+fn keyed_body(x: Cx, tp: integer, elem: integer, kind: integer) -> text {
+  e = x.b.types[elem]!;
+  keys = cgen_tables::keys_name(x, tp);
+  "    loft_show_keyed(s, r, fmt, ind, {kind}, {keys}, {len(x.b.types[tp]!.keys)}, {flag(e.complex)}, {flag(is_record(e.parts[0]!))}, {show_fn(elem)});\n"
+}
+
+fn list_body(x: Cx, elem: integer) -> text {
+  e = x.b.types[elem]!;
+  "    if (loft_vec_absent(r)) {{ loft_push(s, \"null\", 4); return; }}\n    loft_show_list(s, r, fmt, ind, {e.size}, {flag(e.complex)}, {flag(is_record(e.parts[0]!))}, {show_fn(elem)});\n"
+}
+
+// `show_code`: every registered type's render function, and the field writer of every struct
+// and variant among them.
+pub fn show_code(x: Cx) -> text {
+  chains = false;
+  for on in x.shows {
+    if on {
+      match x.b.types[on#index]!.parts[0]! {
+        PtChildRec { content } => { if child_is_value(x.b, content) { chains = true; } },
+        _ => {},
+      }
+    }
+  }
+  out = "";
+  for on in x.shows {
+    if !on {
+      continue;
+    }
+    tp = on#index;
+    out += "static void loft_show{tp}(loft_text *s, loft_ref r, int fmt, int ind);\n";
+    if chains {
+      out += "static void loft_show1_{tp}(loft_text *s, loft_ref r, int fmt, int ind);\n";
+    }
+  }
+  for on in x.shows {
+    if !on {
+      continue;
+    }
+    tp = on#index;
+    match x.b.types[tp]!.parts[0]! {
+      PtStruct { fields } => { out += fields_fn(x, tp, fields, chains); },
+      PtEnumValue { value: _, fields } => { out += fields_fn(x, tp, fields, chains); },
+      _ => {},
+    }
+  }
+  for on in x.shows {
+    if !on {
+      continue;
+    }
+    tp = on#index;
+    body = "loft_show{tp}";
+    if chains {
+      out += "static void loft_show{tp}(loft_text *s, loft_ref r, int fmt, int ind) {{\n    loft_show_run(s, loft_show1_{tp}, r, fmt, ind);\n}}\n";
+      body = "loft_show1_{tp}";
+    }
+    out += "static void {body}(loft_text *s, loft_ref r, int fmt, int ind) {{\n";
+    out += "    if (r.rec == 0) {{ loft_push(s, \"null\", 4); return; }}\n";
+    match x.b.types[tp]!.parts[0]! {
+      PtStruct { fields: _ } => { out += "    loft_rr_record(r);\n"; },
+      PtEnumValue { value: _, fields: _ } => { out += "    loft_rr_record(r);\n"; },
+      PtEnum { values: _ } => { out += "    loft_rr_record(r);\n"; },
+      _ => {},
+    }
+    out += show_body(x, tp, chains);
+    out += "}}\n";
+  }
+  out
+}

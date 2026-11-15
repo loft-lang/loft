@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#2501's context record, declared in a module that uses its walker back: the cycle.
+#package
+use bvc2501_shapes;
+use bvc2501_walker::*;
+
+pub struct BvcCx {
+  pub b: bvc2501_shapes::BvcBundle,
+}
+
+pub fn bvc_counts() -> text {
+  x = BvcCx { b: bvc2501_shapes::bvc_sample() };
+  "{bvc_nil_first(x)} {bvc_nil_first_inline(x)} {bvc_not_nil_first(x)} {bvc_sum_first(x)}"
+}

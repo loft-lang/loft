@@ -1012,6 +1012,17 @@ void loft_crt_stack_free(int64_t store) {
     loft_free_ref(loft_crt_ref(store, LOFT_ST_PRIMARY, 8));
 }
 
+/* A store's length in 8-byte words (`Store::capacity_words`). */
+int64_t loft_crt_store_words(int64_t store) {
+    return store >= 0 && store < loft_nstores ? (int64_t) loft_stores[store].size : 0;
+}
+
+/* A store's first `n` words copied into `out` (a byte vector's buffer, `n * 8` bytes): the
+ * words `const_code` writes for a constant's store (`loft_cwords<d>`). */
+void loft_crt_store_bytes(char *out, int64_t store, int64_t n) {
+    memcpy(out, loft_stores[store].buf, (size_t) n * 8);
+}
+
 /* A constant's store built (`consts.loft`): pinned and read-only, as `Store::lock_constant` and
  * `loft_const_store` leave it. */
 void loft_crt_lock_constant(int64_t store) {

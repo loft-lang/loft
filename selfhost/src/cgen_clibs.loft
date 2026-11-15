@@ -1,0 +1,644 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — `#c` bindings (@PLN24) and the unit's C library tables: `c_binding`,
+// `c_binding_result`, `bound_by` and `c_libraries` of `src/c/mod.rs`, with the part of
+// `src/c_signature.rs` they read (`CSignature::parse` for the host, `plan_for`, `shape_of`).
+// What the Rust writer asks the file system and the toolchain while it writes — the library a
+// package ships, a shim's archive, the link lines, the package's identity — the host resolved
+// into the image (`ImageCLib`, `c::c_library_facts`); this formats it.  A `#c_twin` is not
+// carried: its C routine replaces a loft body the reach still walks.
+
+use ir;
+use binds;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_types;
+use cgen_names;
+
+// A C type of a signature (`c_signature::CType`, host target): `kind` is "void", "int",
+// "ptr" or "float"; a pointer's element is `ebytes` (0 for a pointee of no C scalar, a
+// `void*`) and `efloat`.
+struct CT {
+  kind: text,
+  bits: integer,
+  signed: boolean,
+  ebytes: integer,
+  efloat: boolean,
+}
+
+fn ct(kind: text, bits: integer, signed: boolean) -> CT {
+  CT { kind: kind, bits: bits, signed: signed, ebytes: 0, efloat: false }
+}
+
+// The words of `s` joined by one space (`split_whitespace` + `join`).
+fn words(s: text) -> text {
+  out: vector<text> = [];
+  for w in s.split(' ') {
+    t = w.trim();
+    if t != "" {
+      out += [t];
+    }
+  }
+  out.join(" ")
+}
+
+// `parse_type` for the host (x86-64 / aarch64 LP64: a signed `char`, a 64-bit `long`); null
+// for a spelling the binding does not understand.
+fn parse_type(src: text) -> CT? {
+  s = src.trim();
+  if s.ends_with("*") {
+    base = s[0..s.size() - 1].trim();
+    pointee = if base.starts_with("const ") { base[6..base.size()].trim() } else { base };
+    if pointee == "" {
+      return null;
+    }
+    p = ct("ptr", 64, false);
+    e = parse_type(pointee);
+    if e != null && (e.kind == "int" || e.kind == "float") {
+      p.ebytes = e.bits / 8;
+      p.efloat = e.kind == "float";
+    }
+    return p;
+  }
+  n = words(s);
+  if n == "void" {
+    return ct("void", 0, false);
+  }
+  if n == "char" || n == "signed char" || n == "int8_t" {
+    return ct("int", 8, true);
+  }
+  if n == "unsigned char" || n == "uint8_t" || n == "_Bool" || n == "bool" {
+    return ct("int", 8, false);
+  }
+  if n == "short" || n == "short int" || n == "signed short" || n == "int16_t" {
+    return ct("int", 16, true);
+  }
+  if n == "unsigned short" || n == "unsigned short int" || n == "uint16_t" {
+    return ct("int", 16, false);
+  }
+  if n == "int" || n == "signed" || n == "signed int" || n == "int32_t" {
+    return ct("int", 32, true);
+  }
+  if n == "unsigned" || n == "unsigned int" || n == "uint32_t" {
+    return ct("int", 32, false);
+  }
+  if n == "long" || n == "long int" || n == "signed long" || n == "long long" || n == "long long int" || n == "signed long long" || n == "ssize_t" || n == "intptr_t" || n == "ptrdiff_t" || n == "int64_t" || n == "loft_int" {
+    return ct("int", 64, true);
+  }
+  if n == "unsigned long" || n == "unsigned long int" || n == "unsigned long long" || n == "unsigned long long int" || n == "size_t" || n == "uintptr_t" || n == "uint64_t" || n == "loft_uint" {
+    return ct("int", 64, false);
+  }
+  if n == "float" {
+    return ct("float", 32, false);
+  }
+  if n == "double" || n == "loft_float" {
+    return ct("float", 64, false);
+  }
+  null
+}
+
+// A signature `ret(params)` taken apart: the return first, then each parameter's text and
+// type; why not, in `why`.
+struct CSig {
+  ret: CT,
+  texts: vector<text>,
+  params: vector<CT>,
+  ret_text: text,
+}
+
+fn parse_sig(text_: text, why: &text) -> CSig? {
+  t = text_.trim();
+  open = t.find("(") ?? -1;
+  if open < 0 || !t.ends_with(")") {
+    why = "a C binding whose signature does not parse";
+    return null;
+  }
+  ret_text = t[0..open].trim();
+  inner = t[open + 1..t.size() - 1].trim();
+  ret = parse_type(ret_text);
+  if ret == null {
+    why = "a C binding whose signature does not parse";
+    return null;
+  }
+  texts: vector<text> = [];
+  params: vector<CT> = [];
+  if inner != "" && inner != "void" {
+    for piece in inner.split(',') {
+      p = piece.trim();
+      c = parse_type(p);
+      if p == "..." || c == null || c.kind == "void" {
+        why = "a C binding whose signature does not parse";
+        return null;
+      }
+      texts += [p];
+      params += [c];
+    }
+  }
+  CSig { ret: ret, texts: texts, params: params, ret_text: ret_text }
+}
+
+// `shape_of` (no twin, so never `direct`): "scalar", "pointer", "vector" (its element in
+// `ebytes` / `efloat`, `ebytes` 0 for a record) or "refused".
+struct Shape {
+  kind: text,
+  ebytes: integer,
+  efloat: boolean,
+}
+
+fn shape_of(t: ir::TypeT) -> Shape {
+  refused = Shape { kind: "refused", ebytes: 0, efloat: false };
+  match binds::base(t) {
+    TyInteger { spec: _ } => Shape { kind: "scalar", ebytes: 0, efloat: false },
+    TyBoolean => Shape { kind: "scalar", ebytes: 0, efloat: false },
+    TyCharacter => Shape { kind: "scalar", ebytes: 0, efloat: false },
+    TyEnum { n: _, is_ref: _, dep: _ } => Shape { kind: "scalar", ebytes: 0, efloat: false },
+    TyText { dep: _ } => Shape { kind: "pointer", ebytes: 0, efloat: false },
+    TyVector { inner, dep: _ } => match inner {
+      TyOptional { inner: _ } => refused,
+      TyInteger { spec } => {
+        bytes = stored_width(spec);
+        if bytes >= 4 || spec.min == 0 { Shape { kind: "vector", ebytes: bytes, efloat: false } } else { refused }
+      },
+      TyBoolean => Shape { kind: "vector", ebytes: 1, efloat: false },
+      TyCharacter => Shape { kind: "vector", ebytes: 4, efloat: false },
+      TyFloat => Shape { kind: "vector", ebytes: 8, efloat: true },
+      TySingle => Shape { kind: "vector", ebytes: 4, efloat: true },
+      TyReference { n: _, dep: _ } => Shape { kind: "vector", ebytes: 0, efloat: false },
+      _ => refused,
+    },
+    _ => refused,
+  }
+}
+
+// The bytes a vector element of `spec` is stored in (`element_storage_size`, nullable).
+fn stored_width(spec: ir::IntegerSpec) -> integer {
+  if spec.forced_size > 0 {
+    return spec.forced_size;
+  }
+  codes = spec.max - spec.min + 2;
+  if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 }
+}
+
+// `options`: the ways loft parameter shape `s` can take C parameters from `c` on — "s"
+// (scalar), "t" (text pointer), "vc" (vector pointer and count), "v" (vector pointer).
+fn options(s: Shape, sig: CSig, c: integer) -> vector<text> {
+  out: vector<text> = [];
+  n = len(sig.params);
+  at_kind = if c < n { sig.params[c]!.kind } else { "" };
+  if s.kind == "scalar" && (at_kind == "int" || at_kind == "ptr") {
+    out += ["s"];
+  } else if s.kind == "pointer" && at_kind == "ptr" {
+    out += ["t"];
+  } else if s.kind == "vector" && at_kind == "ptr" {
+    p = sig.params[c]!;
+    if p.ebytes == 0 || (s.ebytes != 0 && p.ebytes == s.ebytes && p.efloat == s.efloat) {
+      next_int = c + 1 < n && sig.params[c + 1]!.kind == "int";
+      if next_int {
+        out += ["vc", "v"];
+      } else {
+        out += ["v"];
+      }
+    }
+  }
+  out
+}
+
+fn slots(o: text) -> integer {
+  if o == "vc" { 2 } else { 1 }
+}
+
+// `plan_for`: one option per loft parameter that consumes the C parameters exactly; empty
+// with `ok` false where none does.
+fn plan(shapes: vector<Shape>, sig: CSig, ok: &boolean) -> vector<text> {
+  p = len(shapes);
+  a = len(sig.params);
+  lo = 0;
+  hi = 0;
+  for s in shapes {
+    if s.kind == "vector" {
+      lo += 1;
+      hi += 2;
+    } else if s.kind != "refused" {
+      lo += 1;
+      hi += 1;
+    }
+  }
+  out: vector<text> = [];
+  if a < lo || a > hi {
+    ok = false;
+    return out;
+  }
+  // `ways[i * (a + 1) + c]`: the readings of loft parameters `i..` against C ones `c..`,
+  // saturating at 2.
+  ways: vector<integer> = [for _ in 0..(p + 1) * (a + 1) { 0 }];
+  ways[p * (a + 1) + a] = 1;
+  i = p - 1;
+  while i >= 0 {
+    c = a;
+    while c >= 0 {
+      w = 0;
+      for o in options(shapes[i]!, sig, c) {
+        nc = c + slots(o);
+        if nc <= a {
+          w += ways[(i + 1) * (a + 1) + nc]!;
+        }
+      }
+      ways[i * (a + 1) + c] = if w > 2 { 2 } else { w };
+      c -= 1;
+    }
+    i -= 1;
+  }
+  if ways[0]! == 0 {
+    ok = false;
+    return out;
+  }
+  c = 0;
+  for s in shapes {
+    k = s#index;
+    pick = "";
+    for o in options(s, sig, c) {
+      nc = c + slots(o);
+      if pick == "" && nc <= a && ways[(k + 1) * (a + 1) + nc]! > 0 {
+        pick = o;
+      }
+    }
+    if pick == "" {
+      ok = false;
+      return out;
+    }
+    c += slots(pick);
+    out += [pick];
+  }
+  ok = true;
+  out
+}
+
+fn lines(t: text) -> vector<text> {
+  out: vector<text> = [];
+  if t != "" {
+    for l in t.split('\n') {
+      out += [l];
+    }
+  }
+  out
+}
+
+// `Data::c_owner_pkg`: the package directory that declares the C library of `file`, "" for
+// none (the longest that holds it).
+pub fn owner_pkg(b: ir::Bundle, file: text) -> text {
+  best = "";
+  for c in b.c_libraries {
+    if c.pkg_dir != "" && file.starts_with(c.pkg_dir) && c.pkg_dir.size() >= best.size() {
+      best = c.pkg_dir;
+    }
+  }
+  best
+}
+
+// `Data::c_symbol_is_lazy`: the package of `file` declares an optional library.
+fn is_lazy(b: ir::Bundle, file: text) -> boolean {
+  pkg = owner_pkg(b, file);
+  if pkg == "" {
+    return false;
+  }
+  for c in b.c_libraries {
+    if c.pkg_dir == pkg && c.optional {
+      return true;
+    }
+  }
+  false
+}
+
+// `bound_by`: the define under which the symbols of `file`'s package are bound at start — the
+// package ships its library (`LOFT_BIND_LIBS`) or a shim's (`LOFT_BIND_SHIMS`) — "" for none.
+fn bound_by(b: ir::Bundle, file: text) -> text {
+  pkg = owner_pkg(b, file);
+  if pkg == "" {
+    return "";
+  }
+  shim = false;
+  for c in b.c_libraries {
+    if !c.optional && c.shipped != "" && c.pkg_dir == pkg {
+      if c.shim == "" {
+        return "LOFT_BIND_LIBS";
+      }
+      shim = true;
+    }
+  }
+  if shim { "LOFT_BIND_SHIMS" } else { "" }
+}
+
+// `binding`: a `#c` binding's signature and body, or why not.
+pub fn binding(x: Cx, d: integer) -> Written {
+  def = x.b.data.definitions[d]!;
+  why = "";
+  if len(def.code) > 0 && def.code[0]! != NdNull {
+    return Written { text: "", refused: "a #c_twin" };
+  }
+  sig = parse_sig(def.c_sig, why) ?? return Written { text: "", refused: why };
+  shapes: vector<Shape> = [];
+  for a in def.attributes {
+    shapes += [shape_of(a.typedef[0] ?? ir::TyVoid)];
+  }
+  ok = false;
+  picks = plan(shapes, sig, ok);
+  if !ok {
+    return Written { text: "", refused: "a C binding whose arguments do not fit" };
+  }
+  ret = if len(def.returned) == 0 { "void" } else { cgen_types::ctype(def.returned[0]!) ?? "" };
+  if ret == "" || held(ret) == "" {
+    return Written { text: "", refused: "a C binding whose result has no C shape" };
+  }
+  decl_params: vector<text> = [];
+  body = "";
+  args: vector<text> = [];
+  frees: vector<text> = [];
+  for pick in picks {
+    i = pick#index;
+    c = cgen_types::ctype(def.attributes[i]!.typedef[0] ?? ir::TyVoid) ?? "void";
+    if c == "void" || passed(c) == "" {
+      return Written { text: "", refused: "a C binding parameter of no C shape" };
+    }
+    decl_params += ["{passed(c)} a{i}"];
+    cty = if len(args) < len(sig.texts) { sig.texts[len(args)]! } else { "int" };
+    if pick == "s" {
+      args += ["({cty}) a{i}"];
+    } else if pick == "t" {
+      body += "    char *s{i} = loft_cstr_own(a{i});\n";
+      args += ["s{i}"];
+      frees += ["    free(s{i});"];
+    } else {
+      args += ["({cty}) loft_cvec_ptr(a{i})"];
+      if pick == "vc" {
+        cn = if len(args) < len(sig.texts) { sig.texts[len(args)]! } else { "int64_t" };
+        args += ["({cn}) loft_vec_len(a{i})"];
+      }
+    }
+  }
+  params_text = if len(sig.texts) == 0 { "void" } else { sig.texts.join(", ") };
+  rt = sig.ret_text;
+  file = def.position.file;
+  sym = c_string(def.c_symbol);
+  decl = "";
+  call = "loft_cfp({args.join(", ")})";
+  when = bound_by(x.b, file);
+  if is_lazy(x.b, file) {
+    decl = "    static {rt} (*loft_cfp)({params_text}) = 0;\n    if (!loft_cfp) {{ void *loft_p = loft_c_lazy_sym({sym}, {c_string(owner_pkg(x.b, file))}); memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    if (!loft_cfp) loft_c_missing_symbol({sym});";
+  } else if when != "" {
+    decl = "#if defined({when})\n    static {rt} (*loft_cfp)({params_text}) = 0;\n    if (!loft_cfp) {{ void *loft_p = loft_c_bound_sym({sym}); memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    if (!loft_cfp) loft_c_missing_symbol({sym});\n#else\n    extern {rt} ({def.c_symbol})({params_text});\n    {rt} (*const loft_cfp)({params_text}) = ({def.c_symbol});\n#endif";
+  } else {
+    decl = "    extern {rt} ({def.c_symbol})({params_text});";
+    call = "({def.c_symbol})({args.join(", ")})";
+  }
+  out = "{decl}\n{body}" + result(sig.ret, ret, call, frees);
+  name = cgen_names::c_name(x.b, x.dups, d);
+  list = if len(decl_params) == 0 { "void" } else { decl_params.join(", ") };
+  Written { text: out, refused: "", name: name, ret: held(ret), list: list, storage: "LOFT_HOT_INLINE" }
+}
+
+// `c_binding_result`: the call, its arguments' frees and the answer as loft holds it.
+fn result(c_ret: CT, ret: text, call: text, frees: vector<text>) -> text {
+  out = "";
+  if c_ret.kind == "void" || ret == "void" {
+    out += "    {call};\n";
+    for f in frees {
+      out += "{f}\n";
+    }
+    if ret != "void" {
+      out += "    {{ {held(ret)} r = {initial(ret)}; return r; }}\n";
+    }
+    return out;
+  }
+  if c_ret.kind == "ptr" && ret == "text" {
+    out += "    loft_text r = loft_text_from_cstr({call});\n";
+    for f in frees {
+      out += "{f}\n";
+    }
+    return out + "    return r;\n";
+  }
+  widened = if c_ret.kind == "int" && !c_ret.signed { "(int64_t) (uint64_t) {call}" } else if c_ret.kind == "int" { "(int64_t) {call}" } else if c_ret.kind == "ptr" { "(int64_t) (intptr_t) {call}" } else { "(double) {call}" };
+  value = if ret == "float" { "(double) ({widened})" } else if ret == "single" { "(float) ({widened})" } else if ret == "bool" { "(uint8_t) (({widened}) != 0)" } else { "(int64_t) ({widened})" };
+  out += "    {held(ret)} r = {value};\n";
+  for f in frees {
+    out += "{f}\n";
+  }
+  out + "    return r;\n"
+}
+
+// The C symbols the bindings of package `pkg` name, sorted and once each (`pkg_syms`).
+fn pkg_syms(b: ir::Bundle, pkg: text) -> vector<text> {
+  own: vector<text> = [];
+  for def in b.data.definitions {
+    if def.c_sig == "" || owner_pkg(b, def.position.file) != pkg {
+      continue;
+    }
+    why = "";
+    if parse_sig(def.c_sig, why) == null {
+      continue;
+    }
+    s = c_string(def.c_symbol);
+    at = len(own);
+    seen = false;
+    for o in own {
+      if o == s {
+        seen = true;
+      }
+      if !seen && o > s && at == len(own) {
+        at = o#index;
+      }
+    }
+    if !seen {
+      own.insert(at, s);
+    }
+  }
+  own
+}
+
+fn file_name(path: text) -> text {
+  at = 0;
+  for c in path {
+    if c == '/' {
+      at = c#index + 1;
+    }
+  }
+  path[at..path.size()]
+}
+
+fn lazy_pkg(b: ir::Bundle, pkg: text) -> boolean {
+  for o in b.c_libraries {
+    if o.optional && o.pkg_dir == pkg {
+      return true;
+    }
+  }
+  false
+}
+
+// `c_libraries`: the unit's tables of the program's C libraries and the link lines the C
+// compiler driver reads (`/* link: */`, `/* bound: */`, a shim's sources and archive).
+pub fn tables(b: ir::Bundle) -> text {
+  out = "";
+  links: vector<text> = [];
+  carried: vector<text> = [];
+  syms: vector<vector<text>> = [];
+  optional: vector<text> = [];
+  bound: vector<text> = [];
+  for lib in b.c_libraries {
+    if lib.shim != "" {
+      continue;
+    }
+    if lib.optional {
+      cands: vector<text> = [];
+      if lib.shipped != "" {
+        cands += [c_string(lib.shipped)];
+      }
+      for v in lines(lib.variants) {
+        c = c_string(v);
+        seen = false;
+        for k in cands {
+          if k == c {
+            seen = true;
+          }
+        }
+        if !seen {
+          cands += [c];
+        }
+      }
+      cands += ["0"];
+      own = pkg_syms(b, lib.pkg_dir);
+      own += ["0"];
+      i = len(optional);
+      out += "static const char *const loft_coptc{i}[] = {{ {cands.join(", ")} }};\nstatic const char *const loft_copts{i}[] = {{ {own.join(", ")} }};\n";
+      optional += ["{{ {c_string(lib.name)}, {c_string(lib.pkg_dir)}, loft_coptc{i}, loft_copts{i} }}"];
+      continue;
+    }
+    for l in lines(lib.bound) {
+      bound += [l];
+    }
+    for l in lines(lib.links) {
+      links += [l];
+    }
+    carried += [c_string(lib.name)];
+    syms += [pkg_syms(b, lib.pkg_dir)];
+  }
+  none4 = "{{ 0, 0, 0, 0 }}";
+  out += "static const loft_c_optlib loft_coptlibs[] = {{ {if len(optional) == 0 { none4 } else { optional.join(", ") }} }};\nstatic const uint32_t loft_ncoptlibs = {len(optional)};\n";
+  rows: vector<text> = [];
+  for lib in b.c_libraries {
+    if !lib.optional && lib.shipped != "" {
+      rows += ["{{ {c_string(lib.package)}, {c_string(lib.version)}, {c_string(file_name(lib.shipped))}, {if lib.shim != "" { 1 } else { 0 }} }}"];
+    }
+  }
+  out += "static const loft_c_boundlib loft_cboundlibs[] = {{ {if len(rows) == 0 { none4 } else { rows.join(", ") }} }};\nstatic const uint32_t loft_ncboundlibs = {len(rows)};\n";
+  export = false;
+  for lib in b.c_libraries {
+    if lib.shim != "" && lazy_pkg(b, lib.pkg_dir) && lib.export_dynamic != "" && !export {
+      export = true;
+      links += [lib.export_dynamic];
+    }
+  }
+  for lib in b.c_libraries {
+    if lib.shim != "" {
+      carried += [c_string(lib.name)];
+      syms += [[]];
+    }
+  }
+  tabs: vector<text> = [];
+  for own in syms {
+    i = own#index;
+    list = own.join(", ");
+    out += "static const char *const loft_clibsym{i}[] = {{ {if list == "" { "0" } else { list + ", 0" }} }};\n";
+    tabs += ["loft_clibsym{i}"];
+  }
+  out += "static const char *const *const loft_clibsyms[] = {{ {if len(tabs) == 0 { "0" } else { tabs.join(", ") }} }};\n";
+  out += "static const char *const loft_clibs[] = {{ {if len(carried) == 0 { "0" } else { carried.join(", ") }} }};\nstatic const uint32_t loft_nclibs = {len(carried)};\n";
+  for lib in b.c_libraries {
+    if lib.shim == "" {
+      out += "/* `#c` library {lib.name} (package {lib.pkg_dir}) */\n";
+    } else if lib.archive != "" {
+      sources = lines(lib.shim);
+      out += "/* `[c] shim` of package {lib.pkg_dir}, {len(sources)} sources */\n";
+      if !lazy_pkg(b, lib.pkg_dir) {
+        out += "/* shim-archive: {lib.archive} */\n";
+      }
+      for a in lines(lib.links) {
+        out += "/* link: {a} */\n";
+      }
+      for s in sources {
+        out += "/* shim-source: {s} */\n";
+      }
+    } else {
+      out += "/* `[c] shim` of package {lib.pkg_dir}: compile and link these sources with this unit */\n";
+      for s in lines(lib.shim) {
+        out += "/* link: {s} */\n";
+      }
+    }
+  }
+  for l in bound {
+    out += "/* bound: {l} */\n";
+  }
+  for l in links {
+    out += "/* link: {l} */\n";
+  }
+  out
+}
+
+// `in_binary_native`, the part a unit needs no define for: web's byte builder and reader
+// (`src/web_bytes.rs`), a per-thread buffer in the runtime.  "" for another native.
+fn in_binary(native: text) -> text {
+  if native == "n_pack_reset" {
+    "loft_pack_reset"
+  } else if native == "n_pack_u8" {
+    "loft_pack_u8"
+  } else if native == "n_pack_u16_le" {
+    "loft_pack_u16_le"
+  } else if native == "n_pack_u32_le" {
+    "loft_pack_u32_le"
+  } else if native == "n_pack_take" {
+    "loft_pack_take"
+  } else if native == "n_byte_at" {
+    "loft_web_byte_at"
+  } else {
+    ""
+  }
+}
+
+// Is `d` a native of loft's binary the unit forwards to its runtime (`forwarded_native`)?
+pub fn is_forwarded(b: ir::Bundle, d: integer) -> boolean {
+  def = b.data.definitions[d]!;
+  (len(def.code) == 0 || def.code[0]! == NdNull) && def.native != "" && in_binary(def.native) != ""
+}
+
+// `forwarded_native`: a one-line forward to the runtime, `static inline`.
+pub fn forwarded(x: Cx, d: integer) -> Written {
+  def = x.b.data.definitions[d]!;
+  ret = if len(def.returned) == 0 { "void" } else { cgen_types::ctype(def.returned[0]!) ?? "" };
+  if ret == "" || held(ret) == "" {
+    return Written { text: "", refused: "a native whose result has no C shape" };
+  }
+  params: vector<text> = [];
+  args: vector<text> = [];
+  for a in def.attributes {
+    i = a#index;
+    t = a.typedef[0] ?? ir::TyVoid;
+    link = false;
+    inner = t;
+    match binds::base(t) {
+      TyRefVar { inner: v } => {
+        link = true;
+        inner = v;
+      },
+      _ => {},
+    }
+    c = cgen_types::ctype(inner) ?? "void";
+    if c == "void" || held(c) == "" {
+      return Written { text: "", refused: "a native parameter of no C shape" };
+    }
+    params += [if link { "{held(c)} *a{i}" } else { "{passed(c)} a{i}" }];
+    args += ["a{i}"];
+  }
+  call = "{in_binary(def.native)}({args.join(", ")})";
+  body = if ret == "void" { "    {call};\n" } else { "    return {call};\n" };
+  Written { text: body, refused: "", name: cgen_names::c_name(x.b, x.dups, d), ret: held(ret), list: if len(params) == 0 { "void" } else { params.join(", ") }, storage: "static inline" }
+}

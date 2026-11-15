@@ -10,6 +10,7 @@
 // struct is the order tuples were first met in, which a per-function comparison cannot know.
 
 use ir;
+use cgen::(Cx);
 
 // `Type::base`: the type without its `τ?` marker.
 pub fn base(t: ir::TypeT) -> ir::TypeT {

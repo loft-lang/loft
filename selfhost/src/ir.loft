@@ -424,6 +424,9 @@ struct Bundle {
   data: Data,
   types: vector<DbType>,
   cwd: boolean,
+  // @PLN91 strand 12: the program's C libraries (an image of another layout is refused by its
+  // `.dschema` and written again).
+  c_libraries: vector<ImageCLib>,
 }
 
 // @FTR-078 — the compiler's whole IR vocabulary written as loft types: 24 `Type` variants,
@@ -431,7 +434,7 @@ struct Bundle {
 // schema for the same graph falls out of it
 // The empty bundle a program image is read into (`load.loft`).
 fn empty_bundle() -> Bundle {
-  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false }
+  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [] }
 }
 
 // @PLN91 the RUN image (`loft --emit-run-image`): the bytecode the Rust writer produced
@@ -585,4 +588,30 @@ pub struct RunImage {
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
   RunImage { format: RUN_IMAGE_FORMAT, code: [], starts: [], ops: [], layouts: [], natives: [], consts: [], fnrefs: [], types: [], gens: [], shared: [], workers: [], sidecars: [], oldest: "", bridge: "", source: "", store_insts: [], main: 0, cwd: false, names: [], def_files: [], files: [], lines: [], cnatives: [] }
+}
+
+// One C library a package declares (`src/c_libs.rs` `CLibrary`): its soname or the path of a
+// library it ships beside its `loft.toml`, the declaring package's directory, whether it is an
+// `[c] optional-libs` entry, and the sources of a `[c] shim`, one absolute path per line ("" for
+// a declared library).  The C writer reads them for a `#c` binding (`bound_by`,
+// `c_symbol_is_lazy`) and the unit's library tables.  The rest is what the host resolved for
+// the C writer from the file system and the toolchain, "" where it has nothing (the Rust
+// writer asks the same questions while it writes; `c::c_library_facts`): the library file the
+// package ships beside its `loft.toml` (`existing_lib_beside`, a portable path), the link lines
+// it adds and the `bound:` lines among them, a shim's built archive, the names an optional
+// library is looked up by, the package's name and version, and the platform's export-dynamic
+// link argument.  Lists are one entry per line.
+struct ImageCLib {
+  name: text,
+  pkg_dir: text,
+  optional: boolean,
+  shim: text,
+  shipped: text,
+  links: text,
+  bound: text,
+  archive: text,
+  variants: text,
+  package: text,
+  version: text,
+  export_dynamic: text,
 }

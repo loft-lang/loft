@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#2501's records: an enum and the records that hold it, seen bare by the package's files.
+#package
+
+enum BvcNode {
+  BvcNil,
+  BvcNum { n: integer },
+}
+
+struct BvcDef {
+  code: vector<BvcNode>,
+}
+
+struct BvcBundle {
+  defs: vector<BvcDef>,
+}
+
+// Three definitions whose first node is `BvcNil` and two whose first is a number (3 and 9).
+pub fn bvc_sample() -> BvcBundle {
+  BvcBundle { defs: [BvcDef { code: [BvcNil] }, BvcDef { code: [BvcNum { n: 3 }] }, BvcDef { code: [BvcNil, BvcNil] }, BvcDef { code: [BvcNum { n: 9 }, BvcNil] }, BvcDef { code: [BvcNil] }] }
+}

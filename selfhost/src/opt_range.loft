@@ -93,6 +93,11 @@ pub struct Walk {
 // The character walks of function `d` (`char_walk::walks`) as this analysis reads them.
 pub fn walks_of(b: ir::Bundle, d: integer) -> vector<Walk> {
   out: vector<Walk> = [];
+  // `LOFT_NO_CHAR_WALK=1`: the writer holds no walk (`FnWriter::char_walks`), and the range
+  // facts it asks are taken without one.
+  if (env_variable("LOFT_NO_CHAR_WALK") ?? "0") != "0" {
+    return out;
+  }
   for w in char_walk::walks(b, d) {
     out += [Walk { scope: w.scope, hoist_null: w.hoist_null }];
   }

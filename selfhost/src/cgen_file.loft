@@ -7,6 +7,7 @@
 // and gives it back on every exit; its typed reads go through the held cursor.
 
 use ir;
+use cgen::(Cx);
 use cgen_w::*;
 use cgen_fn;
 use loop_shape;

@@ -493,9 +493,28 @@ pub(crate) const DBTYPE_LINKED: u32 = 33;
 /// the program declared `#cwd` at `BUNDLE_CWD`.
 pub(crate) const BUNDLE_DATA: u32 = 0;
 pub(crate) const BUNDLE_TYPES: u32 = 32; // right after the inlined 32-byte `Data`
-pub(crate) const BUNDLE_CWD: u32 = 36;
+pub(crate) const BUNDLE_CWD: u32 = 40;
+/// `c_libraries: vector<ImageCLib>` (@PLN91 strand 12): the program's C libraries, for the
+/// loft-written C writer's `#c` bindings.
+pub(crate) const BUNDLE_C_LIBRARIES: u32 = 36;
 /// The bundle root's size in bytes, and its claim in words (see `DATA_ROOT_WORDS`).
-pub(crate) const BUNDLE_STRIDE: u32 = 40;
+pub(crate) const BUNDLE_STRIDE: u32 = 48;
+
+/// `ImageCLib { name, pkg_dir: text, optional: boolean, shim: text, … }` — one `c_libs::CLibrary`
+/// (the shim's sources, one path per line) and what the host resolved for the C writer.
+pub(crate) const IMAGECLIB_STRIDE: u32 = 48;
+pub(crate) const IMAGECLIB_NAME: u32 = 0;
+pub(crate) const IMAGECLIB_PKG_DIR: u32 = 4;
+pub(crate) const IMAGECLIB_SHIM: u32 = 8;
+pub(crate) const IMAGECLIB_SHIPPED: u32 = 12;
+pub(crate) const IMAGECLIB_LINKS: u32 = 16;
+pub(crate) const IMAGECLIB_BOUND: u32 = 20;
+pub(crate) const IMAGECLIB_ARCHIVE: u32 = 24;
+pub(crate) const IMAGECLIB_VARIANTS: u32 = 28;
+pub(crate) const IMAGECLIB_PACKAGE: u32 = 32;
+pub(crate) const IMAGECLIB_VERSION: u32 = 36;
+pub(crate) const IMAGECLIB_EXPORT_DYNAMIC: u32 = 40;
+pub(crate) const IMAGECLIB_OPTIONAL: u32 = 44;
 #[cfg(feature = "mmap")] // only `save_bundle` claims a bundle root
 pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
@@ -1841,6 +1860,23 @@ mod tests {
         assert_eq!(pos(ids.bundle, "data"), BUNDLE_DATA);
         assert_eq!(pos(ids.bundle, "types"), BUNDLE_TYPES);
         assert_eq!(pos(ids.bundle, "cwd"), BUNDLE_CWD);
+        assert_eq!(pos(ids.bundle, "c_libraries"), BUNDLE_C_LIBRARIES);
+        assert_eq!(u32::from(stores.size(ids.image_c_lib)), IMAGECLIB_STRIDE);
+        assert_eq!(pos(ids.image_c_lib, "name"), IMAGECLIB_NAME);
+        assert_eq!(pos(ids.image_c_lib, "pkg_dir"), IMAGECLIB_PKG_DIR);
+        assert_eq!(pos(ids.image_c_lib, "shim"), IMAGECLIB_SHIM);
+        assert_eq!(pos(ids.image_c_lib, "optional"), IMAGECLIB_OPTIONAL);
+        assert_eq!(pos(ids.image_c_lib, "shipped"), IMAGECLIB_SHIPPED);
+        assert_eq!(pos(ids.image_c_lib, "links"), IMAGECLIB_LINKS);
+        assert_eq!(pos(ids.image_c_lib, "bound"), IMAGECLIB_BOUND);
+        assert_eq!(pos(ids.image_c_lib, "archive"), IMAGECLIB_ARCHIVE);
+        assert_eq!(pos(ids.image_c_lib, "variants"), IMAGECLIB_VARIANTS);
+        assert_eq!(pos(ids.image_c_lib, "package"), IMAGECLIB_PACKAGE);
+        assert_eq!(pos(ids.image_c_lib, "version"), IMAGECLIB_VERSION);
+        assert_eq!(
+            pos(ids.image_c_lib, "export_dynamic"),
+            IMAGECLIB_EXPORT_DYNAMIC
+        );
 
         // The run image (@PLN91, the stored bytecode the loft runner executes).
         assert_eq!(u32::from(stores.size(ids.run_image)), RUNIMG_STRIDE);

@@ -15,6 +15,7 @@
 // loop is walked by neither analysis, so that loop is the only one whose answer a node has.
 
 use ir;
+use cgen::(Cx);
 use binds;
 use loop_shape;
 use opt_names;

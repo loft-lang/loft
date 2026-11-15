@@ -2150,7 +2150,44 @@ pub fn emit_unit_for(
             out.insert_str(at - RUNTIME_END.len(), &width);
         }
     }
+    trace_tables(&cx);
     Ok(out)
+}
+
+/// `LOFT_TRACE_TABLES=1` — the unit's type tables as the bodies registered them: the copy
+/// table's types, the described ones, whether the code names the table at all, the default
+/// images, the enum names, the key tables, the rendered types and the Unicode tables.  A layer of the loft-written generator's
+/// comparison (`cgen_survey.py --layer tables`), one line per unit.
+fn trace_tables(cx: &Cx) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_TABLES").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let list = |s: &std::collections::BTreeSet<u16>| {
+        s.iter().map(u16::to_string).collect::<Vec<_>>().join(",")
+    };
+    let defaults: std::collections::BTreeSet<u16> = cx.defaults.borrow().keys().copied().collect();
+    eprintln!(
+        "[tables]\tunit\tcopy={}\tdescribed={}\tnames={}\tdefaults={}\tenums={}\tkeys={}\tshows={}\tunicode={}\tconsts={}",
+        list(&cx.copy_types.borrow()),
+        list(&cx.described.borrow()),
+        u8::from(cx.names_types.get()),
+        list(&defaults),
+        list(&cx.enum_names.borrow()),
+        list(&cx.key_types.borrow()),
+        list(&cx.show_types.borrow()),
+        cx.unicode
+            .borrow()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(","),
+        cx.consts
+            .borrow()
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+    );
 }
 
 /// Whether `code` names one of `loft_width.h`'s types as a whole identifier.
@@ -2468,6 +2505,66 @@ fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, Strin
 
 /// A package's name and version as its manifest states them — the directory's name and `0`
 /// where it states none, as the Rust writer's bind table spells them.
+/// What the host resolves about each of the program's C libraries for the loft-written C
+/// writer, one entry per `data.c_libraries` — the answers [`c_libraries`] and [`bound_by`] take
+/// from the file system and the toolchain while they write (a `[c] shim`'s archive is built
+/// here, as `c_libraries` builds it), carried in the program image (`ImageCLib`).
+#[must_use]
+#[cfg(feature = "mmap")]
+pub fn c_library_facts(data: &Data) -> Vec<crate::ir_store::CLibFacts> {
+    let os = crate::platform::host_lib_os();
+    let export = crate::platform::c_export_dynamic_arg()
+        .unwrap_or("")
+        .to_string();
+    data.c_libraries
+        .iter()
+        .map(|lib| {
+            let dir = std::path::Path::new(&lib.pkg_dir);
+            let found = crate::platform::existing_lib_beside(dir, &lib.name, os);
+            let (package, version) = package_identity(&lib.pkg_dir);
+            let mut f = crate::ir_store::CLibFacts {
+                shipped: found
+                    .as_ref()
+                    .map(|file| crate::file_access::portable(&dir.join(file)))
+                    .unwrap_or_default(),
+                package,
+                version,
+                export_dynamic: export.clone(),
+                ..Default::default()
+            };
+            if lib.optional {
+                f.variants = crate::platform::lib_variants(&lib.name, os).join("\n");
+            } else if lib.shim.is_empty() {
+                let links = match &found {
+                    Some(file) => {
+                        let args = crate::platform::c_link_args_for_file(&dir.join(file));
+                        f.bound = args.join("\n");
+                        args
+                    }
+                    None => vec![crate::platform::c_link_arg_for_soname(&lib.name)],
+                };
+                f.links = links.join("\n");
+            }
+            if !lib.shim.is_empty()
+                && let Ok(archive) = crate::c_shim::cc_archive(&lib.pkg_dir, &lib.shim)
+            {
+                let path = crate::file_access::portable(&archive);
+                let lazy = data
+                    .c_libraries
+                    .iter()
+                    .any(|o| o.optional && o.pkg_dir == lib.pkg_dir);
+                f.links = if lazy {
+                    crate::platform::c_whole_archive_args(&path).join("\n")
+                } else {
+                    path.clone()
+                };
+                f.archive = path;
+            }
+            f
+        })
+        .collect()
+}
+
 fn package_identity(pkg_dir: &str) -> (String, String) {
     let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
     let package = manifest

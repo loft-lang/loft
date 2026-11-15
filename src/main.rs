@@ -9822,7 +9822,10 @@ fn main() {
     // run never looked up, and cold-parsed forever.  The directories the parse adds are
     // derived from the sources, which the manifest pins by hash.
     let cache_key_dirs: Vec<String> = p.lib_dirs.clone();
+    // A `LOFT_CGEN` run builds the loft-written generator's unit: a binary the source key
+    // names was built from the Rust one, so it is not served (@PLN91 strand 12 U-0).
     let native_fast_path_wanted = native_mode
+        && std::env::var_os("LOFT_CGEN").is_none()
         && native_emit.is_none()
         && html_out.is_none()
         && native_wasm.is_none()
@@ -12357,7 +12360,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             let expected = |name: &str| ann.expected_failure(name);
             // The debug tier marks every statement with its loft line, so the binary's debug
             // information names the loft source (`#line`).
-            let emitted = if tier == c_driver::Tier::Debug {
+            let emitted = if let Some(unit) = c_driver::loft_written_unit(&p.data, &state.database)
+            {
+                // @PLN91 strand 12 U-0: the loft-written generator's unit, refused by name.
+                unit.map_err(|why| loft::c::Refusal {
+                    function: "main".to_string(),
+                    why,
+                })
+            } else if tier == c_driver::Tier::Debug {
                 loft::c::emit_program_with_source_lines(&p.data, &state.database, &expected)
             } else {
                 loft::c::emit_program(&p.data, &state.database, &expected)
@@ -12437,7 +12447,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 .is_some_and(|d| d == cache_dir.as_path());
             // The next run of this program under the same inputs execs the binary without
             // parsing, as a rustc build's does (@PLN166 B3).
-            if durable && program_cache_on && !has_auto_native && !any_dev_interpret {
+            if durable
+                && program_cache_on
+                && !has_auto_native
+                && !any_dev_interpret
+                && std::env::var_os("LOFT_CGEN").is_none()
+            {
                 loft::startup_cache::save_native_sidecar(
                     &abs_file,
                     &cache_key_dirs,

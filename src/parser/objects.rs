@@ -1702,7 +1702,18 @@ impl Parser {
                     } else {
                         None
                     };
-                    if let Some(msg) = import_cure {
+                    // loft#2497's cycle: the context IS there but its type is not known in the
+                    // first pass — `x.b.code[0] == Nil` with `x` a record declared in a module
+                    // that `use`s this one back, still its forward stub.  The second pass types
+                    // the context and resolves the name against it, and reports here only when
+                    // it still has none.  No context at all (`p = Nil`) is reported at once,
+                    // for the reason above.
+                    let deferred = self.first_pass
+                        && variant_enums.len() == 1
+                        && matches!(parent_tp.peel_link(), Type::Unknown(_));
+                    if deferred {
+                        // recovered below, reported by the second pass if it must be
+                    } else if let Some(msg) = import_cure {
                         diagnostic!(self.lexer, Level::Error, "{msg}");
                     } else if variant_enums.len() == 1 {
                         diagnostic!(

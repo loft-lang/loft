@@ -812,6 +812,7 @@ pub fn materialize_bundle(
     data: &Data,
     schema: &[SchemaType],
     cwd: bool,
+    facts: &[CLibFacts],
 ) {
     stores
         .store_mut(&root)
@@ -823,6 +824,45 @@ pub fn materialize_bundle(
     materialize_data_at(stores, data_root, data);
     materialize_schema(stores, &Record::new(root), ds::BUNDLE_TYPES, schema);
     Record::new(root).set_field_bool(stores, ds::BUNDLE_CWD, cwd);
+    // @PLN91 strand 12 — the program's C libraries, which the loft-written C writer reads for
+    // a `#c` binding; a shim's sources travel one path per line.
+    let libs = Record::new(root).field_recvec(ds::BUNDLE_C_LIBRARIES, ds::IMAGECLIB_STRIDE);
+    for (i, c) in data.c_libraries.iter().enumerate() {
+        let r = libs.push(stores);
+        r.set_field_str(stores, ds::IMAGECLIB_NAME, &c.name);
+        r.set_field_str(stores, ds::IMAGECLIB_PKG_DIR, &c.pkg_dir);
+        r.set_field_str(stores, ds::IMAGECLIB_SHIM, &c.shim.join("\n"));
+        r.set_field_bool(stores, ds::IMAGECLIB_OPTIONAL, c.optional);
+        if let Some(f) = facts.get(i) {
+            for (off, v) in [
+                (ds::IMAGECLIB_SHIPPED, &f.shipped),
+                (ds::IMAGECLIB_LINKS, &f.links),
+                (ds::IMAGECLIB_BOUND, &f.bound),
+                (ds::IMAGECLIB_ARCHIVE, &f.archive),
+                (ds::IMAGECLIB_VARIANTS, &f.variants),
+                (ds::IMAGECLIB_PACKAGE, &f.package),
+                (ds::IMAGECLIB_VERSION, &f.version),
+                (ds::IMAGECLIB_EXPORT_DYNAMIC, &f.export_dynamic),
+            ] {
+                r.set_field_str(stores, off, v);
+            }
+        }
+    }
+}
+
+/// What the host resolved about one of the program's C libraries for the loft-written C
+/// writer (`ImageCLib`'s resolved fields, `c::c_library_facts`): the file system and the
+/// toolchain answer these, not the IR.  Lists are one entry per line.
+#[derive(Clone, Debug, Default)]
+pub struct CLibFacts {
+    pub shipped: String,
+    pub links: String,
+    pub bound: String,
+    pub archive: String,
+    pub variants: String,
+    pub package: String,
+    pub version: String,
+    pub export_dynamic: String,
 }
 
 /// Serialize a bundle (`data` + database type `schema`) to a file-backed store
@@ -849,6 +889,24 @@ pub fn materialize_bundle(
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`].
 #[cfg(feature = "mmap")]
 pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result<()> {
+    save_bundle_with(data, program, path, &[])
+}
+
+/// [`save_bundle`] with what the host resolved about the program's C libraries, one entry per
+/// `data.c_libraries` (the image the loft-written C writer reads).
+///
+/// # Errors
+/// As [`save_bundle`].
+///
+/// # Panics
+/// As [`save_bundle`].
+#[cfg(feature = "mmap")]
+pub fn save_bundle_with(
+    data: &Data,
+    program: &Stores,
+    path: &str,
+    facts: &[CLibFacts],
+) -> std::io::Result<()> {
     let tmp = format!("{path}.{}.tmp", std::process::id());
     match crate::file_access::remove_file(&tmp) {
         Ok(()) => {}
@@ -876,6 +934,7 @@ pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result
             data,
             &program.types,
             !program.program_relative,
+            facts,
         );
         // Leaving the block drops `stores`: the file-backed Store unmaps and flushes
         // `tmp` fully before the atomic rename publishes it at `path`.

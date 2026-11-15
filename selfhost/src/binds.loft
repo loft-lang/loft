@@ -743,17 +743,18 @@ fn any_reads_var(ns: vector<ir::Node>, v: integer) -> boolean {
 
 // src/data.rs fn is_null_sentinel_detach — the null-sentinel DETACH `Scopes::convert`
 // emits: a literal-backing accumulator, a work-ref, a `??` temp or a closure record assigned
-// the bare `OpNullRefSentinel()`; and a local whose one bind adopts its callee's record
-// (`deferred_first_bind`), which `@FR-R-HostStore`'s result clause lets go once a field adopted
-// that record — the store lives on for the answer.
+// the bare `OpNullRefSentinel()` — and a local whose one bind adopts its callee's record
+// (`deferred_first_bind`), let go once a field adopted it (`@FR-R-HostStore`'s result clause,
+// `host_result::adopt_and_release`): the store lives on for the answer.
 fn is_null_sentinel_detach(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   nm = own::var_name(f, v);
+  deferred = v >= 0 && v < len(f.variables) && f.variables[v]!.deferred_first_bind;
   (owns_literal_backing_store(nm)
     || nm.starts_with("__ref_")
     || nm.starts_with("__rref_")
     || nm.starts_with("__ncc_")
     || nm.starts_with("___clos_")
-    || (f.variables[v]?.deferred_first_bind ?? false))
+    || deferred)
     && own::is_null_sentinel(b, value)
 }
 
