@@ -90,6 +90,9 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
   ptab = natives::par_natives(img);
   pjobs: vector<natives::ParJob> = [];
   pbufs: vector<natives::ParBuf> = [];
+  // The scheduler's registers `[sp, pc, depth]`, one vector for every hand-off: a literal per
+  // worker return made a store per element.
+  regs: vector<integer> = [0, 0, 0];
   while s.code_pos != end && !s.stopped {
     if trace {
       first = crt::get_u8(s.code, s.code_pos);
@@ -122,8 +125,10 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       // A `par` worker returned: its answer taken, then the job's next worker entered at the
       // same depth, or after the last the job's result left for the caller.
       s.native = -1;
-      regs = [s.stack_pos, s.code_pos, s.depth];
-      more = natives::par_return(s.stk, regs, pjobs, pbufs, io);
+      regs[0] = s.stack_pos;
+      regs[1] = s.code_pos;
+      regs[2] = s.depth;
+      more = natives::par_return(s.stk, regs, pjobs, pbufs, io, s.tbuf);
       s.stack_pos = regs[0] ?? 0;
       if more {
         back = s.code_pos;
@@ -144,7 +149,9 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
         // its empty answer given at once.
         jobs = len(pjobs);
         back = s.code_pos;
-        regs = [s.stack_pos, s.code_pos, s.depth];
+        regs[0] = s.stack_pos;
+        regs[1] = s.code_pos;
+        regs[2] = s.depth;
         if natives::par_start(pk, img, s.stk, regs, pjobs, pbufs, io, why) < 0 {
           s.stop("not carried: {why[0] ?? ""}");
         } else {

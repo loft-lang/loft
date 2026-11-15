@@ -918,12 +918,12 @@ pub fn par_start(pk: integer, img: ir::RunImage, stk: integer, regs: vector<inte
 // in released), a function reference's 20 bytes, a fold's accumulator — then the next worker
 // called (true, `regs` updated), or after the last the job's buffer pushed and its count
 // answered, a fold its result (false).
-pub fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>) -> boolean {
+pub fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>, tb: vector<u8>) -> boolean {
   sp = regs[0] ?? 0;
   k = len(pjobs) - 1;
   kind = pjobs[k]!.kind;
   if kind == PAR_QUEUE_TEXT {
-    pjobs[k].texts += [crt::stack_str(stk, sp - 16)];
+    pjobs[k].texts += [crt::stack_str_in(tb, stk, sp - 16)];
     sp -= 16;
     for w in 0..pjobs[k]!.wtexts {
       crt::slot_text_free(stk, pjobs[k]!.wbase + w * 24);

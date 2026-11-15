@@ -304,15 +304,17 @@ static void loft_format_long(loft_text *s, int64_t val, uint8_t radix, int64_t w
         for (n = 0; n < k; n++) buf[n] = rev[k - 1 - n];
         buf[n] = 0;
         prefix = note ? "0b" : "";
-    } else if (radix == 8) {
-        n = snprintf(buf, sizeof buf, "%llo", (unsigned long long) u);
-        prefix = note ? "0o" : "";
-    } else if (radix == 16) {
-        n = snprintf(buf, sizeof buf, "%llx", (unsigned long long) u);
-        prefix = note ? "0x" : "";
-    } else if (radix == LOFT_HEX_UPPER) {
-        n = snprintf(buf, sizeof buf, "%llX", (unsigned long long) u);
-        prefix = note ? "0x" : "";
+    } else if (radix == 8 || radix == 16 || radix == LOFT_HEX_UPPER) {
+        /* The digits written from the end of `buf`, as `{:o}` / `{:x}` / `{:X}` print them. */
+        const char *digits = radix == LOFT_HEX_UPPER ? "0123456789ABCDEF" : "0123456789abcdef";
+        unsigned shift = radix == 8 ? 3 : 4;
+        uint64_t mask = radix == 8 ? 7 : 15;
+        char *end = buf + sizeof buf, *at = end;
+        do { *--at = digits[u & mask]; u >>= shift; } while (u);
+        n = (int) (end - at);
+        memmove(buf, at, (size_t) n);
+        buf[n] = 0;
+        prefix = radix == 8 ? (note ? "0o" : "") : (note ? "0x" : "");
     } else {
         fputs("loft: unknown radix\n", stderr);
         abort();
