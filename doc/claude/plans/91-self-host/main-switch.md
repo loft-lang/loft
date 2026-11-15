@@ -16,8 +16,9 @@ edit — the live ones are in rust-free-build.md § Where it stands (`rust-free-
 [1a-parser.md § Where it stands](1a-parser.md#where-it-stands) and
 [12-c-generator.md § Measured](12-c-generator.md#measured).
 
-> `rust-free-build.md` and `rust-dependencies.md` are the interpreter stream's pages and live on
-> `tuxedo-pln204-int32` until its next join; they are named here, not linked, until then.
+> The interpreter stream's own pages for this path: [rust-free-build.md](rust-free-build.md)
+> (the three levels of a build without Rust, and the end state) and
+> [rust-dependencies.md](rust-dependencies.md) (what the runner still takes from Rust).
 
 ## Where each part stands (2026-11-15)
 
