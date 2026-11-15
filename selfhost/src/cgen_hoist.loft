@@ -1,0 +1,285 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Header` in the function writer: `hold_vectors`, `held_access`,
+// `held_proof`, `place_of`, `held_len` and `index_arg` of `src/c/body.rs`, for the base
+// clause — a loop that writes no store holds the header of each vector it indexes, and the
+// element reads, the length and the scalar element writes go through it.
+
+use ir;
+use loop_shape;
+use opt_hoist;
+use opt_push;
+use opt_range;
+use cgen_fn;
+use cgen_names;
+use cgen_w::*;
+
+fn enabled() -> boolean {
+  (env_variable("LOFT_NO_VECTOR_HOIST") ?? "0") == "0"
+}
+
+// The header an enclosing loop holds for `path`, "" for none.
+fn held_path(w: W, path: text) -> text {
+  for i in rev(0..len(w.headers)) {
+    if w.headers[i]!.path == path && w.headers[i]!.frame >= 0 {
+      return w.headers[i]!.name;
+    }
+  }
+  ""
+}
+
+// `held_vector`: the header held for the vector `v` names, "" for none.
+pub fn held_vector(x: Cx, w: W, v: ir::Node) -> text {
+  root = -1;
+  path = opt_push::vector_path(x.b, v, root);
+  if path == "" { "" } else { held_path(w, path) }
+}
+
+// `hold_vectors`: open loop `lp`'s frame of headers.  Answers how many it holds.
+pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
+  if !enabled() {
+    return 0;
+  }
+  count = 0;
+  for v in opt_hoist::held_vectors(x.b, x.writes, w.index, lp) {
+    // A path an enclosing loop holds keeps that header.
+    if held_path(w, v.path) != "" {
+      continue;
+    }
+    outer = w.pending;
+    w.pending = [];
+    e = cgen_fn::expr(x, w, v.vector, ind);
+    inner = w.pending;
+    w.pending = outer;
+    for t in inner {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return count;
+    }
+    h = "h{len(w.decls) + 1}";
+    w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
+    line(w, ind, "{h} = loft_vh_of({as_ref(w, e)});");
+    w.headers += [Header { path: v.path, name: h, frame: 0 }];
+    count += 1;
+  }
+  count
+}
+
+// Close a loop's frame of `count` headers.
+pub fn release(w: W, count: integer) {
+  if count > 0 {
+    w.headers = w.headers[0..len(w.headers) - count];
+  }
+}
+
+// `place_of`: the C place the vector `v` names, "" where it names none the writer can spell.
+fn place_of(x: Cx, w: W, v: ir::Node) -> text {
+  match loop_shape::unspan(v) {
+    NdVar { n } => if (w.shapes[n] ?? "") == "ref" { w.names[n]! } else { "" },
+    NdCall { def_nr, args } => {
+      if len(args) != 3 || cgen_fn::def_name(x.b, def_nr) != "OpGetField" {
+        return "";
+      }
+      fld = match loop_shape::unspan(args[1]) {
+        NdInt { n } => n,
+        _ => return "",
+      };
+      base = place_of(x, w, args[0]);
+      if base == "" { "" } else { "loft_field({base}, {fld})" }
+    },
+    _ => "",
+  }
+}
+
+// `held_proof`: the proof that header `held` still describes the vector `v` names.
+fn held_proof(x: Cx, w: W, v: ir::Node, held: text) -> text {
+  place = place_of(x, w, v);
+  if place == "" {
+    return "((void) 0)";
+  }
+  site = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{held}";
+  "LOFT_PROVED(loft_vh_same({held}, {place}), {c_string(site)})"
+}
+
+// `index_arg`: an index the range facts prove non-negative is passed as such; the second
+// answer, in `nn`, is the suffix of the routine that takes it.
+fn index_arg(x: Cx, w: W, idx: ir::Node, code: text, nn: &text) -> text {
+  nn = "";
+  if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+    return code;
+  }
+  facts = if len(w.over) > 0 { w.over[len(w.over) - 1]! } else { w.rv };
+  r = opt_range::range(x.b, x.p, x.c, w.nn, facts, idx, 0) ?? return code;
+  if r.lo < 0 {
+    return code;
+  }
+  nn = "_nn";
+  "loft_nonneg({code}, \"R-Range:{w.name}\")"
+}
+
+// The parts of an element read `OpGetVector(vec, size, idx)` or its nullable twin; `count`
+// 0 for any other node.
+struct Elem {
+  vec: ir::Node,
+  size: ir::Node,
+  idx: ir::Node,
+  report: boolean,
+  found: boolean,
+}
+
+fn elem_of(x: Cx, v: ir::Node) -> Elem {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      name = cgen_fn::def_name(x.b, def_nr);
+      if len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable") {
+        return Elem { vec: args[0], size: args[1], idx: args[2], report: name == "OpGetVector", found: true };
+      }
+    },
+    _ => {},
+  }
+  Elem { vec: ir::NdNull, size: ir::NdNull, idx: ir::NdNull, report: false, found: false }
+}
+
+// The routine that reads a narrow field through an element's address (`pa_reader`), with its
+// kind in `kind`; "" for a getter that has none.
+fn pa_reader(name: text, kind: &integer) -> text {
+  kind = K_INT;
+  if name == "OpGetSingle" {
+    kind = K_SINGLE;
+    "loft_pa_f32"
+  } else if name == "OpGetEnum" {
+    kind = K_ENUM;
+    "loft_pa_enum"
+  } else if name == "OpGetInt4" {
+    "loft_pa_int4"
+  } else if name == "OpGetInt4Raw" {
+    "loft_pa_int4_raw"
+  } else if name == "OpGetInt4Full" {
+    "loft_pa_int4_full"
+  } else if name == "OpGetByte" {
+    "loft_pa_byte"
+  } else if name == "OpGetByteNullable" {
+    "loft_pa_byte_nullable"
+  } else if name == "OpGetShort" {
+    "loft_pa_short"
+  } else if name == "OpGetShortRaw" || name == "OpGetShortFull" {
+    "loft_pa_short_raw"
+  } else if name == "OpGetBoolean" {
+    kind = K_BOOL;
+    "loft_pa_bool"
+  } else {
+    ""
+  }
+}
+
+// `held_access`: an access of a vector whose header a loop holds goes through the header.
+// `done` says whether `name` over `args` is one.
+pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  count = len(args);
+  if (name == "OpGetVector" || name == "OpGetVectorNullable") && count == 3 {
+    h = held_vector(x, w, args[0]);
+    if h == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, args[1], "element size") ?? return none();
+    i = as_int(w, cgen_fn::expr(x, w, args[2], ind));
+    nn = "";
+    index = index_arg(x, w, args[2], i, nn);
+    proof = held_proof(x, w, args[0], h);
+    if name == "OpGetVector" {
+      return E { code: "({proof}, loft_vh_get_at{nn}({h}, {size}, {index}, {cgen_fn::site(w)}))", kind: K_REF };
+    }
+    return E { code: "({proof}, loft_vh_get{nn}({h}, {size}, {index}))", kind: K_REF };
+  }
+  if name == "OpLengthVector" && count == 1 {
+    h = held_vector(x, w, args[0]);
+    if h == "" {
+      return none();
+    }
+    done = true;
+    return E { code: "{h}.len", kind: K_INT };
+  }
+  if (name == "OpGetInt" || name == "OpGetFloat") && count == 2 {
+    el = elem_of(x, args[0]);
+    if !el.found {
+      return none();
+    }
+    held = held_vector(x, w, el.vec);
+    if held == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, el.size, "element size") ?? return none();
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    i = as_int(w, cgen_fn::expr(x, w, el.idx, ind));
+    nn = "";
+    index = index_arg(x, w, el.idx, i, nn);
+    proof = held_proof(x, w, el.vec, held);
+    f = if name == "OpGetInt" { "loft_vh_get_int" } else { "loft_vh_get_float" };
+    k = if name == "OpGetInt" { K_INT } else { K_FLOAT };
+    if el.report {
+      return E { code: "({proof}, {f}_at{nn}({held}, {size}, {index}, {fld}, {cgen_fn::site(w)}))", kind: k };
+    }
+    return E { code: "({proof}, {f}{nn}({held}, {size}, {index}, {fld}))", kind: k };
+  }
+  narrow = ((name == "OpGetSingle" || name == "OpGetEnum" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetBoolean") && count == 2) || ((name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull") && count == 3);
+  if narrow {
+    el = elem_of(x, args[0]);
+    if !el.found {
+      return none();
+    }
+    held = held_vector(x, w, el.vec);
+    if held == "" {
+      return none();
+    }
+    kind = K_INT;
+    reader = pa_reader(name, kind);
+    if reader == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, el.size, "element size") ?? return none();
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    proof = held_proof(x, w, el.vec, held);
+    i = as_int(w, cgen_fn::expr(x, w, el.idx, ind));
+    nn = "";
+    index = index_arg(x, w, el.idx, i, nn);
+    addr = if el.report { "loft_vh_addr_at{nn}({held}, {size}, {index}, {cgen_fn::site(w)})" } else { "loft_vh_addr{nn}({held}, {size}, {index})" };
+    if count == 3 {
+      min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
+      return E { code: "({proof}, {reader}({addr}, {fld}, {c_long(min)}))", kind: kind };
+    }
+    return E { code: "({proof}, {reader}({addr}, {fld}))", kind: kind };
+  }
+  if (name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetInt4Raw") && count == 3 {
+    el = elem_of(x, args[0]);
+    if !el.found {
+      return none();
+    }
+    held = held_vector(x, w, el.vec);
+    if held == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, el.size, "element size") ?? return none();
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [el.idx, args[2]];
+    i = as_int(w, cgen_fn::arg(x, w, pair, 0, ind));
+    value = cgen_fn::arg(x, w, pair, 1, ind);
+    f = if name == "OpSetInt" { "loft_vh_set_int" } else if name == "OpSetInt4Raw" { "loft_vh_set_u32" } else { "loft_vh_set_float" };
+    code = if name == "OpSetFloat" { as_float(w, value) } else { as_int(w, value) };
+    proof = held_proof(x, w, el.vec, held);
+    nn = "";
+    index = index_arg(x, w, el.idx, i, nn);
+    if el.report {
+      return E { code: "({proof}, {f}_at{nn}({held}, {size}, {index}, {fld}, {code}, {cgen_fn::site(w)}))", kind: K_VOID };
+    }
+    return E { code: "({proof}, {f}{nn}({held}, {size}, {index}, {fld}, {code}))", kind: K_VOID };
+  }
+  none()
+}

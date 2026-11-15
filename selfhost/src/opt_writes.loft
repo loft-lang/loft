@@ -572,7 +572,21 @@ fn flat_struct(b: ir::Bundle, tp: integer) -> boolean {
 // `allowed`: an in-place setter, a scalar read from a file, a reference to a scalar, text or
 // flat-record local, the mint of the frame's own return buffer, a flag-free copy of a flat
 // record.
-fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
+fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<ir::Node>, in_place: boolean) -> boolean {
+  // The mint of the frame's own return buffer moves nothing a header describes, under any
+  // tier.
+  if name == "OpDatabase" || name == "OpDatabaseNP" {
+    own = first_var(args);
+    if own >= 0 && own < len(def.variables.variables) {
+      buffer = def.variables.variables[own]!;
+      if buffer.argument && (buffer.name == "__retbuf" || buffer.name.starts_with("__ref_")) {
+        return true;
+      }
+    }
+  }
+  if !in_place {
+    return false;
+  }
   if in_place_set(name) || scalar_stack_ref(def, name, args) {
     return true;
   }
@@ -607,12 +621,6 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
       }
     }
   }
-  if (name == "OpDatabase" || name == "OpDatabaseNP") && in_frame {
-    var = def.variables.variables[v]!;
-    if var.argument && (var.name == "__retbuf" || var.name.starts_with("__ref_")) {
-      return true;
-    }
-  }
   if name == "OpCopyRecord" && len(args) == 3 && !env_on("LOFT_NO_COPY_IN_PLACE") {
     match loop_shape::unspan(args[2]) {
       NdInt { n: raw } => {
@@ -626,19 +634,30 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
   false
 }
 
-fn any_blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>) -> boolean {
+fn any_blocks(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>, in_place: boolean) -> boolean {
   for n in nodes {
-    if blocks_in_place(b, w, vd, n) {
+    if blocks_tier(b, w, vd, n, in_place) {
       return true;
     }
   }
   false
 }
 
+// `blocks_header_hoist` under the in-place tier alone.
+pub fn blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
+  blocks_tier(b, w, vd, node, true)
+}
+
+// `blocks_header_hoist` under no tier at all: may running `node` write a store, but for a
+// release and the allocation of a buffer no header describes?
+pub fn blocks_plain(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
+  blocks_tier(b, w, vd, node, false)
+}
+
 // `blocks_header_hoist` under the in-place tier alone (no push, no mint, nothing the emitter
 // owns): may running `node` of function `vd` MOVE or grow a store — anything but a write in
 // place, a release, or the allocation of a buffer no header describes?
-pub fn blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
+fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: boolean) -> boolean {
   n = loop_shape::unspan(node);
   match n {
     NdBlock { block } => {
@@ -651,7 +670,7 @@ pub fn blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) ->
             released = true;
           }
         }
-        if !released && blocks_in_place(b, w, vd, op) {
+        if !released && blocks_tier(b, w, vd, op, in_place) {
           return true;
         }
       }
@@ -661,24 +680,24 @@ pub fn blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) ->
       if def_nr >= 0 && def_nr < len(b.data.definitions) {
         def = b.data.definitions[vd]!;
         name = b.data.definitions[def_nr]!.name;
-        if !(in_place_native(b, def, name, args) || allowed(b, def, name, args)) && call_writes_store(b, w, def_nr) && !(!env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
+        if !(in_place_native(b, def, name, args, in_place) || allowed(b, def, name, args)) && call_writes_store(b, w, def_nr) && !(in_place && !env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
           return true;
         }
       }
-      any_blocks_in_place(b, w, vd, args)
+      any_blocks(b, w, vd, args, in_place)
     },
     NdCallRef { var: _, args: _ } => true,
     NdParallel { arms: _ } => true,
     NdYield { inner: _ } => true,
-    NdInsert { items } => any_blocks_in_place(b, w, vd, items),
-    NdTuple { items } => any_blocks_in_place(b, w, vd, items),
-    NdLoop { block } => any_blocks_in_place(b, w, vd, block[0].operators),
-    NdSet { var: _, inner } => blocks_in_place(b, w, vd, inner),
-    NdReturn { inner } => blocks_in_place(b, w, vd, inner),
-    NdDrop { inner } => blocks_in_place(b, w, vd, inner),
-    NdTuplePut { var: _, idx: _, inner } => blocks_in_place(b, w, vd, inner),
-    NdIf { cond, t, f } => blocks_in_place(b, w, vd, cond) || blocks_in_place(b, w, vd, t) || blocks_in_place(b, w, vd, f),
-    NdIter { var: _, create, next, init } => blocks_in_place(b, w, vd, create) || blocks_in_place(b, w, vd, next) || blocks_in_place(b, w, vd, init),
+    NdInsert { items } => any_blocks(b, w, vd, items, in_place),
+    NdTuple { items } => any_blocks(b, w, vd, items, in_place),
+    NdLoop { block } => any_blocks(b, w, vd, block[0].operators, in_place),
+    NdSet { var: _, inner } => blocks_tier(b, w, vd, inner, in_place),
+    NdReturn { inner } => blocks_tier(b, w, vd, inner, in_place),
+    NdDrop { inner } => blocks_tier(b, w, vd, inner, in_place),
+    NdTuplePut { var: _, idx: _, inner } => blocks_tier(b, w, vd, inner, in_place),
+    NdIf { cond, t, f } => blocks_tier(b, w, vd, cond, in_place) || blocks_tier(b, w, vd, t, in_place) || blocks_tier(b, w, vd, f, in_place),
+    NdIter { var: _, create, next, init } => blocks_tier(b, w, vd, create, in_place) || blocks_tier(b, w, vd, next, in_place) || blocks_tier(b, w, vd, init, in_place),
     _ => false,
   }
 }

@@ -1,0 +1,122 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the BASE clause of `hoist::hoistable` (`src/opt/hoist.rs`,
+// `src/opt/header.rs`): a loop whose body writes no store may hold the header of each vector
+// it indexes for its whole run (`@FR-R-Header`).
+//
+// Every tier above the base is off (the switches of `cgen_w::PLAIN_SWITCHES`): no write in
+// place, no held scalar, no push or mint, no callee inputs, no header held apart.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_non_sentinel;
+use opt_push;
+use opt_writes;
+
+// One vector a loop may hold: its path, the path's root variable, the expression naming it.
+pub struct Held {
+  pub path: text,
+  pub root: integer,
+  pub vector: ir::Node,
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `rebound_vars` with `close_over_links`: the variables the loop rebinds — a `Set`, a tuple
+// write, the re-mint of a hidden pass-2 buffer — and every link that may name one of them.
+fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boolean> {
+  count = len(d.variables.variables);
+  rebound: vector<boolean> = [for _ in 0..count { false }];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < count { rebound[var] = true; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if var < count { rebound[var] = true; } },
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if (name == "OpDatabase" || name == "OpDatabaseNP") && len(args) > 0 {
+          buf = loop_shape::var_of(loop_shape::unspan(args[0]));
+          if buf >= 0 && buf < count && d.variables.variables[buf]!.name.starts_with("__ref_p2_") {
+            rebound[buf] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  for _ in 0..count {
+    grew = false;
+    for v in 0..count {
+      if rebound[v]! {
+        continue;
+      }
+      for t in binds::link_targets(d.variables, v) {
+        if t >= 0 && t < count && rebound[t]! {
+          rebound[v] = true;
+          grew = true;
+        }
+      }
+    }
+    if !grew {
+      break;
+    }
+  }
+  rebound
+}
+
+// `vector_candidates`: the vectors the loop's body indexes (`OpGetVector`, its nullable twin)
+// by a pure path, in first-appearance order, but for those rooted at a variable the body
+// rebinds.
+fn vector_candidates(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<Held> {
+  found: vector<Held> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable") {
+          root = -1;
+          path = opt_push::vector_path(b, args[0], root);
+          if path != "" {
+            // A bare variable must TYPE as a vector; a field path is shape-trusted.
+            typed = !path.ends_with(":") || (match binds::base(d.variables.variables[root]!.type_def[0] ?? ir::TyVoid) { TyVector { inner: _, dep: _ } => true, _ => false });
+            seen = false;
+            for f in found {
+              if f.path == path {
+                seen = true;
+              }
+            }
+            if typed && !seen {
+              found += [Held { path: path, root: root, vector: args[0] }];
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  rebound = rebound_vars(b, d, lp);
+  out: vector<Held> = [];
+  for f in found {
+    if !rebound[f.root]! {
+      out += [f];
+    }
+  }
+  out
+}
+
+// `hoistable`, its base clause: the vectors loop `lp` of function `vd` may hold for its run —
+// none where a statement of its body may write a store.
+pub fn held_vectors(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Block) -> vector<Held> {
+  for op in lp.operators {
+    if opt_writes::blocks_plain(b, w, vd, op) {
+      return [];
+    }
+  }
+  vector_candidates(b, b.data.definitions[vd]!, lp)
+}

@@ -24,6 +24,7 @@ use opt_ranged_call;
 use cgen_fn;
 use cgen_text;
 use cgen_ref;
+use cgen_hoist;
 use cgen_w::*;
 
 // The trips a peeled loop may have, and the IR nodes its copies may hold together.
@@ -1580,10 +1581,12 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
     }
   }
   hold_invariants(x, w, lp, ind);
+  held_headers = if plain_rules() { cgen_hoist::hold_vectors(x, w, lp, ind) } else { 0 };
   if plain_rules() {
     cgen_ref::hash_reserve(x, w, lp, ind);
   }
   guarded_copies(x, w, lp, ind);
+  cgen_hoist::release(w, held_headers);
   w.memos = w.memos[0..len(w.memos) - 1];
   if pushed {
     w.over = w.over[0..len(w.over) - 1];
