@@ -51,7 +51,7 @@ filesystem).
 | `Format.BigEndian`    | Binary mode, most-significant byte first. |
 | `Format.Directory`    | Represents a directory path. |
 
-**`File`**: A handle to a filesystem entry. Fields: `path: text`, `size: integer`, `format: Format`.
+**`File`**: A handle to a filesystem entry. Fields: `path: text`, `size: i64`, `format: Format`.
 
 ### Opening Files
 

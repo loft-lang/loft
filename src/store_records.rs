@@ -318,7 +318,7 @@ fn normal_alts(mut alts: Vec<BTreeSet<u16>>, live: &BTreeSet<u16>) -> Vec<BTreeS
     }
 }
 
-/// `v` names the store no more: no longer a must-holder, nor in any alternative (one left
+/// `v` stops naming the store: it is not a must-holder, nor in any alternative (one left
 /// empty leaves nothing known).
 fn forget_holder(info: &mut SInfo, v: u16) {
     info.live.remove(&v);
@@ -1639,7 +1639,7 @@ impl Run<'_> {
                 }
             }
             if strong {
-                // The slot no longer holds what it held: `w` is no holder of that any more.
+                // The slot holds another value from here: `w` is not a holder of the one it held.
                 let before: Vec<SKey> = st
                     .slots
                     .get(&k)
@@ -2496,17 +2496,126 @@ impl Run<'_> {
                 FirstArm::CallRefJoin { .. }
                 | FirstArm::NullableCallJoin { .. }
                 | FirstArm::CallJoin { .. }
-                | FirstArm::OpaqueCallRef { .. } => {
-                    self.tuple_witness(&s, arm, &value);
-                    Self::consume(&mut s, &value);
-                    self.copied(&mut s, node)
-                }
+                | FirstArm::OpaqueCallRef { .. } => self.join_bound(&mut s, arm, x, node, &value),
                 FirstArm::CallAdopt | FirstArm::Plain => value,
             };
             self.bind(&mut s, x, &bound);
             return Some((s, Val::null()));
         }
         self.reassign(node, x, val, st)
+    }
+
+    /// What a runtime-join bind leaves in `x`: its own copy, and beside it every store the
+    /// join adopted while another variable held it ([`Self::join_adopts_held`]).
+    fn join_bound(
+        &mut self,
+        s: &mut State,
+        arm: crate::bind_lowering::FirstArm,
+        x: u16,
+        node: &Value,
+        value: &Val,
+    ) -> Val {
+        self.tuple_witness(s, arm, value);
+        let held = Self::join_adopts_held(s, arm, x, value);
+        let mut owned = value.clone();
+        owned.corr.retain(|k| !held.contains(k));
+        Self::consume(s, &owned);
+        let mut bound = self.copied(s, node);
+        // Adopted on the paths where the value names them, so they stay correlated with the
+        // bound value as they were with the source.
+        bound
+            .corr
+            .extend(held.iter().copied().filter(|k| value.corr.contains(k)));
+        bound.pts.extend(held.into_iter().map(Pt::Store));
+        bound
+    }
+
+    /// A runtime join copies only what lies in its witness's store and ADOPTS everything
+    /// else.  A store the value names that ANOTHER variable holds (a branch arm's call that
+    /// answered into the frame's own buffer) is therefore `x`'s as well from here on, not a
+    /// store consumed into `x`'s copy: the two holders' frees are one store's, which is the
+    /// fault to report.  Answers those stores.
+    /// `LOFT_RECORDS_NO_JOIN_ADOPT_HELD=1` reads every join as a copy.
+    fn join_adopts_held(
+        s: &State,
+        arm: crate::bind_lowering::FirstArm,
+        x: u16,
+        value: &Val,
+    ) -> Vec<SKey> {
+        use crate::bind_lowering::FirstArm;
+        let (FirstArm::CallRefJoin { base, .. }
+        | FirstArm::NullableCallJoin { base, .. }
+        | FirstArm::CallJoin { base, .. }) = arm
+        else {
+            return Vec::new();
+        };
+        if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_ADOPT_HELD").is_some()) {
+            return Vec::new();
+        }
+        let witness = if base == u16::MAX {
+            Pts::new()
+        } else {
+            Self::pts(s, base)
+        };
+        Self::stores_of(&value.pts)
+            .into_iter()
+            .filter(|k| {
+                !witness.contains(&Pt::Store(*k))
+                    && s.vars
+                        .iter()
+                        .any(|(&w, p)| w != x && w != base && p.contains(&Pt::Store(*k)))
+            })
+            .collect()
+    }
+
+    /// A native's answer, as its DECLARATION says it — the one thing known of a function with
+    /// no body, and the author's statement rather than a fact the code generator derived:
+    /// `-> T[p]` answers a view of parameter `p` (`fn field(self: const JsonValue, …) ->
+    /// JsonValue[self]`), so it names what that argument names and owns nothing; a heap answer
+    /// of a native whose parameters hold no store at all is a store of its own (`json_parse`).  Read as unknown,
+    /// a local bound from a view of a lifted native answer was freed beside the lift and no
+    /// finding could say so.  `LOFT_RECORDS_NO_NATIVE_ANSWERS=1` reads every native as unknown.
+    fn native_answer(&mut self, node: &Value, d: u32, vals: &[Val], s: &mut State) -> Val {
+        if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_NATIVE_ANSWERS").is_some()) {
+            return Val::unknown();
+        }
+        let def = self.data.def(d);
+        let deps = def.returned().depend();
+        let viewed: Vec<usize> = deps
+            .iter()
+            .map(|&p| usize::from(p))
+            .filter(|&i| i < def.attributes.len() && !def.attributes[i].name.starts_with("__"))
+            .collect();
+        if viewed.is_empty() {
+            // Only a PUBLIC declaration none of whose parameters holds a store: a native handed a
+            // record or a collection may answer into it without saying so (the keyed runtime's
+            // own helpers do), and a private one may answer a buffer the runtime keeps.
+            let holds_no_store = def.pub_visible
+                && def.attributes.iter().all(|a| {
+                    crate::data::is_scalar(a.typedef.base())
+                        || matches!(a.typedef.base(), crate::data::Type::Text(_))
+                });
+            if !deps.is_empty() || !holds_no_store {
+                return Val::unknown();
+            }
+            let site = self.site(node, Origin::Call(d));
+            let k = Self::fresh(s, site);
+            return Val {
+                pts: [Pt::Store(k)].into(),
+                corr: [k].into(),
+            };
+        }
+        let mut pts = Pts::new();
+        for i in viewed {
+            match vals.get(i) {
+                Some(v) => pts.extend(v.pts.iter().copied()),
+                None => return Val::unknown(),
+            }
+        }
+        Val {
+            pts,
+            corr: BTreeSet::new(),
+        }
     }
 
     /// A join whose witness is a TUPLE slot (`use_analysis::join_witness_members` names no
@@ -3743,11 +3852,11 @@ impl Run<'_> {
         Some(distinct)
     }
 
-    /// On a path where `x` is known to name only `to`: a store it no longer names, and that
+    /// On a path where `x` is known to name only `to`: a store it does not name there, and that
     /// is live only where `x` names it, is not live on this path.
     /// Keep, in the slot `off` of every record `w` names, only the stores `keep` admits — a
     /// path-sensitive refinement of what the slot holds on one arm of an identity test.  Its
-    /// `corr` follows: a store dropped from the slot is no longer live through it.
+    /// `corr` follows: a store dropped from the slot is not live through it.
     /// `OpDistinctStore(OpGetDbRef(w, off), v)` where `v` names one store `y` and the slot may
     /// hold `y` or others (a loop rebuild's guarded free of the record's old capture): where
     /// DISTINCT, the slot does not hold `y`; where SAME, only `y` — as a variable first operand
@@ -5368,7 +5477,7 @@ impl Run<'_> {
             } else if def.name().starts_with("Op") {
                 vals.into_iter().next().unwrap_or_else(Val::unknown)
             } else {
-                Val::unknown()
+                self.native_answer(node, d, &vals, &mut s)
             };
             return Some((s, val));
         }

@@ -625,7 +625,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // The dep was cleared on first assignment only when codegen will
     // deep-copy (gen_set_first_ref_call_copy). O-B2 adopted stores
     // keep their dep, so this won't fire for them.
-    // @P377-CORRUPTION: skip when this is an S1-substituted call
+    // Skip when this is an S1-substituted call
     // (`Set(v, Call(fn, [.., Var(v), ..]))` — the inner Call's
     // hidden-buffer arg has been substituted to be v itself by
     // `nrvo_collapse_tail_set`).  In that shape, the Call writes
@@ -641,7 +641,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // wiped it while `x` still pointed there — every later
     // iteration read null.  Pairs with the evaluate-call-first
     // re-init order in the deep-copy emission below (the interp
-    // half of @P290).  Bails for every other shape
+    // half of loft#290).  Bails for every other shape
     // (struct-literal RHS, non-S1 calls, non-tail patterns) —
     // those keep the load-bearing pre-Set FreeRef intact, so
     // `tests/scripts/130-gridmesh-crystal-equiv.loft` and the
@@ -655,7 +655,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     } else {
         false
     };
-    // @PLAN51 Cluster II/III — also skip the pre-Set OpFreeRef
+    // Also skip the pre-Set OpFreeRef
     // when `v` is a hidden-buffer parameter AND the call IS S1-
     // substituted (the call's args contain `v` itself).  In that
     // case the callee's OpDatabase routes through
@@ -762,7 +762,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     //
     // The five KEYED kinds are here for the same reason `Vector` is, and were missing:
     // a keyed local's handle is the same store-backed slot, so `c = null` (which lowers
-    // to `OpNullRefSentinel`, NOT to the @P302 in-place clear above) displaced its store
+    // to `OpNullRefSentinel`, NOT to the in-place clear above) displaced its store
     // with nothing naming it — one orphan per evaluation on BOTH backends, values right
     // throughout.  Read through `base()`, because the shape that reaches this is the
     // NULLABLE one: a dense keyed local cannot be assigned the sentinel at all.

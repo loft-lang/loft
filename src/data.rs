@@ -6829,6 +6829,23 @@ impl Data {
         !self.wide_instances.contains(&d) && self.width32_source(self.def(d).source)
     }
 
+    /// @PLN204 — the regime restored from what an image stores per definition
+    /// ([`Self::body_width32`], one answer each, in definition order): a source with a 32-bit
+    /// body is under the regime, and a body of such a source that is not 32-bit is a wide
+    /// instance.  [`Self::body_width32`] then answers for every definition as it did when the
+    /// image was written.
+    pub fn restore_body_width32(&mut self, bodies: &[bool]) {
+        for (d, _) in bodies.iter().enumerate().filter(|(_, on)| **on) {
+            let src = self.def(d as u32).source;
+            self.width32_sources.insert(src);
+        }
+        for (d, _) in bodies.iter().enumerate().filter(|(_, on)| !**on) {
+            if self.width32_source(self.def(d as u32).source) {
+                self.wide_instances.insert(d as u32);
+            }
+        }
+    }
+
     /// @PLN204 — the sources under the 32-bit regime and the instances minted from a 64-bit
     /// template: parse-time state the IR bundle does not carry, so the program cache's
     /// manifest writes it and a warm load replays it (`startup_cache`).
@@ -10738,6 +10755,29 @@ impl Data {
                 for attr in &mut self.definitions[d_nr].attributes {
                     if let Some(new_ty) = Self::rewrite_type_opt(&attr.typedef, stub_nr, &target) {
                         attr.typedef = new_ty;
+                    }
+                }
+                // …except that "pass 2 re-parses a signature" is not what `parse_function`
+                // does: it stores `returned` on pass 1 only.  The TUPLE case above is why a
+                // swept tuple return is unsound, and `refuse_forward_tuple_returns` refuses
+                // it; a stub NESTED in any other return (`-> vector<Memo>` with `Memo`
+                // declared below) has no promotion to redo and nothing else re-resolves it
+                // — `fill_all` peels only a bare `Unknown` and its `?`.  Left in place, every
+                // caller read the call as `vector<unknown>`: `for m in chains(k) { m.name }`
+                // was refused and `v = chains(k);` broke the statement after it (loft#2497).
+                if self.definitions[d_nr].def_type == DefType::Function {
+                    let ret = &self.definitions[d_nr].returned;
+                    // Rewrite only a return that names this stub: `rewrite_type_opt` builds a
+                    // fresh argument list for a function type even when nothing in it
+                    // changes, which cost the cold stdlib parse an allocation.
+                    if !matches!(ret.base(), Type::Unknown(_))
+                        && ret.any_node(
+                            &mut |t| matches!(t.base(), Type::Unknown(n) if *n == stub_nr),
+                        )
+                        && !ret.any_node(&mut |t| matches!(t.base(), Type::Tuple(_)))
+                        && let Some(new_ty) = Self::rewrite_type_opt(ret, stub_nr, &target)
+                    {
+                        self.definitions[d_nr].returned = new_ty;
                     }
                 }
                 // …and the function's variable table, which the two-pass parser

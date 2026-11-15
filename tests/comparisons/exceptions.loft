@@ -35,7 +35,7 @@ fn divide(a: float, b: float) -> float {
 // Reading: check f#exists before using content
 f = file("data.txt");
 if f#exists {
-    data = f.content();
+    data = f.content() ?? "";
     print("{len(data)} characters\n");
 } else {
     print("file not found\n");

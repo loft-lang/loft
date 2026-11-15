@@ -85,6 +85,6 @@ fn test_a_hash_field_is_keyed_by_its_declaration() {
   assert((t.data["x"].value ?? -1) == 2 and seen == "", "found, and written through the view");
   t.data["x"] = null;   // remove entry
   t.data += [Entry { key: "b", value: 2 }, Entry { key: "a", value: 1 }];
-  for row in t.data { seen += row.key; }  // iterates in key order (C60)
+  for row in t.data { seen += row.key; }  // iterates in key order (@C151)
   assert(seen == "ab" and t.data["x"] == null, "removed, then walked in key order");
 }

@@ -907,6 +907,29 @@ pub(crate) enum Pos {
     Operand,
 }
 
+/// Where a statement list's VALUE stands and the position it is read at.  The value is the
+/// last statement that is neither a line marker nor a scope-exit free: the scope pass frees a
+/// block's locals AFTER its value (`{ …; if c { f(…) } else { g(…) }; OpFreeRef(t) }`), so
+/// the last operator is not always it.  A value the frees follow is a record its block holds
+/// across them — the shape helpers (`value_shape`, the body gate) read a block's LAST
+/// operator and see no tuple there — so it is consumed as an `Operand`, whatever the block's
+/// own position; read as a discarded statement, an admitted call there kept its tuple form at
+/// a site that binds a record.
+fn value_position(ops: &[Value], pos: Pos, data: &Data) -> (Option<usize>, Pos) {
+    let cleanup = |o: &Value| match o.unspan() {
+        Value::Line(_) => true,
+        Value::Call(d, _) => data.op_sets().frees.contains(d),
+        _ => false,
+    };
+    let at = ops.iter().rposition(|o| !cleanup(o));
+    let frees_follow = at.is_some_and(|i| {
+        ops[i + 1..]
+            .iter()
+            .any(|o| !matches!(o.unspan(), Value::Line(_)))
+    });
+    (at, if frees_follow { Pos::Operand } else { pos })
+}
+
 /// The SITE gate: every admitted call in `v` that stands at an `Operand` position — an
 /// argument, a field value, a return of a non-admitted function, the right of a local
 /// that is not a value local — is declined into `declined`.  Result positions carry the
@@ -974,10 +997,11 @@ pub(crate) fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut H
             site_walk(rhs, pos_here, ctx, declined);
         }
         Value::Block(bl) => {
-            let count = bl.operators.len();
+            let void = matches!(bl.result.base(), Type::Void);
+            let (at, pos_value) = value_position(&bl.operators, pos, ctx.data);
             for (idx, op) in bl.operators.iter().enumerate() {
-                let pos_here = if idx + 1 == count && !matches!(bl.result.base(), Type::Void) {
-                    pos
+                let pos_here = if Some(idx) == at && !void {
+                    pos_value
                 } else {
                     Pos::Discard
                 };
@@ -985,9 +1009,13 @@ pub(crate) fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut H
             }
         }
         Value::Insert(ops) => {
-            let count = ops.len();
+            let (at, pos_value) = value_position(ops, pos, ctx.data);
             for (idx, op) in ops.iter().enumerate() {
-                let pos_here = if idx + 1 == count { pos } else { Pos::Discard };
+                let pos_here = if Some(idx) == at {
+                    pos_value
+                } else {
+                    Pos::Discard
+                };
                 site_walk(op, pos_here, ctx, declined);
             }
         }

@@ -34,7 +34,7 @@ pub type i16 = integer limit(-32768, 32767) size(2);
 /// (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold — C127's
 /// pragmatic exemption: an `i32` overflow reads `null`, where every other narrow type's reads
 /// its default.  Pinned by
-/// `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
+/// the language suite's `1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
 pub type i32 = integer size(4);
 /// 4-byte unsigned: 0 – 4_294_967_295, the whole width.  It has no null: an overflow reads
 /// `0`, the type's default (C127).  `u32?` keeps the top code for its null, as `u8?` does, and
@@ -1048,7 +1048,7 @@ pub operator times(self: single, other: single) -> single { self * other }
 /// The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
 pub operator negate(self: single) -> single { 0.0f - self }
 #pure
-/// `/` as a method: `a.divided_by(b)` is `a / b`, null on a zero divisor.
+/// `/` as a method: `a.divided_by(b)` is `a / b`: infinite on a zero divisor, null for `0.0 / 0.0`.
 pub operator divided_by(self: single, other: single) -> single? { self / other }
 #pure
 /// `%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
@@ -1066,7 +1066,7 @@ pub operator times(self: f64, other: f64) -> f64 { self * other }
 /// The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
 pub operator negate(self: f64) -> f64 { 0.0 - self }
 #pure
-/// `/` as a method: `a.divided_by(b)` is `a / b`, null on a zero divisor.
+/// `/` as a method: `a.divided_by(b)` is `a / b`: infinite on a zero divisor, null for `0.0 / 0.0`.
 pub operator divided_by(self: f64, other: f64) -> f64? { self / other }
 #pure
 /// `%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.

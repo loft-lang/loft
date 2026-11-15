@@ -471,7 +471,7 @@ Named test entrypoints in `tests/wrap.rs`:
 | `last` | `tests/docs/16-parser.loft` | — |
 | `threading` / `logging` | `tests/docs/19-threading.loft` / `20-logging.loft` | — |
 | `file_debug` | `tests/docs/13-file.loft` with execution trace | — |
-| `parser_debug` | `tests/docs/16-parser.loft` with execution trace | `#[ignore]` — run with `cargo test -- parser_debug --ignored` |
+| `parser_debug` | `tests/docs/16-parser.loft` with execution trace | — |
 
 Run one topic file with `cargo test --test wrap <name>`, e.g. `cargo test --test wrap files`.
 
@@ -516,11 +516,11 @@ named condition removes the entry. Each class has one home and a guard.
   LIB_PKGS_WASMTIME_SKIP}`. An entry carries the open issue that explains it and the
   condition that removes it.  A test that fails on one backend and passes on the other is
   never simplified, split or rephrased to pass: the failure is the signal of the backend's
-  gap, so the backend is fixed or the test takes a skip entry. Today every list is empty except the `html_wasm` platform
-  limits: `server` (a listener; a browser/WASI guest has no accept — by
-  construction), `hex_world` on node (no filesystem; ends with a JS-host VirtFS bridge),
-  `imaging` on wasmtime (no canvas codec; ends with a pure-wasm PNG decoder), `input` on
-  wasmtime (the graphics crate is absent from the wasip2 sysroot; ends when it is packaged).
+  gap, so the backend is fixed or the test takes a skip entry. The live entries are two: `75-native-stub.loft` in
+  `SCRIPTS_NATIVE_SKIP` (the native generator refuses a whole file for one `#native` function
+  with no library; a limit of that generator by design, ended when it answers per function),
+  and `process/{run,start,lines}.loft` in `LIB_TESTS_WASM_SKIP` (a browser page and a WASI
+  guest have no processes — the platform's limit, with no end condition).
   **Check an entry's blocker STATE before trusting it**: an entry outlives its blocker
   silently, and an inert entry reads exactly like an open gap.
 - **`tests-network/`** — the `web` fixture keeps its live-network tests

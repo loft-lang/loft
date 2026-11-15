@@ -1,0 +1,170 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 — the compiled standard-library bodies that work on RECORDS (`src/c/bodies.rs`,
+// compiled into the C runtime shim): `split` and `split_text` fill the vector the caller's
+// destination names, `join` reads one.  Each is called through the runner's stack as
+// the bytecode's call leaves it, on a program's own type table, and answers what this
+// program's own call of the same function answers.  Such a body does not answer before the
+// table is loaded.  (The text predicates and the text answers: `tests/crt_bodies.rs`.)
+
+use ir;
+use load;
+use state;
+use types;
+use crt;
+
+// The arguments' base: above a destination text at 0 and a work cell at 24.
+BASE = 80;
+
+fn machine() -> state::State {
+  dir = env_variable("LOFT_SELFHOST_KERNELS");
+  img = load::load_run("{dir}/vectors.run");
+  assert(img != null, "the vectors kernel's run image opens");
+  state::new_state(img!, 1 << 16)
+}
+
+// The texts of the vector the reference in the slot at `at` names.
+fn texts_at(s: state::State, at: integer) -> vector<text> {
+  io: vector<integer> = [65535, 0, 0];
+  crt::slot_ref(io, s.stk, at);
+  out: vector<text> = [];
+  el: vector<integer> = [65535, 0, 0];
+  for i in 0..crt::vec_len(io[0] ?? 65535, io[1] ?? 0, io[2] ?? 0) {
+    crt::vec_get(el, io[0] ?? 65535, io[1] ?? 0, io[2] ?? 0, 4, i);
+    out += [crt::get_text(el[0] ?? 65535, el[1] ?? 0, el[2] ?? 0, 0) ?? "(null)"];
+  }
+  out
+}
+
+// The vector answer's store released.
+fn drop_at(s: state::State, at: integer) {
+  io: vector<integer> = [65535, 0, 0];
+  crt::slot_ref(io, s.stk, at);
+  crt::free_ref(io[0] ?? 65535, io[1] ?? 0, io[2] ?? 0);
+}
+
+// `t.split(sep)` through the compiled body: the destination a null reference, which the body
+// gives a store.  Null when no body answered.
+fn split_compiled(s: state::State, t: text, sep: character) -> vector<text>? {
+  e = crt::body_find("t_4text_split");
+  crt::set_slot_arg(s.stk, BASE, t);
+  crt::stack_put(6, s.stk, BASE + 16, sep as integer);
+  crt::set_slot_ref(s.stk, BASE + 24, 65535, 0, 0);
+  top = crt::body_call(e, s.stk, BASE + 40);
+  if top < 0 {
+    crt::slot_arg_free(s.stk, BASE);
+    return null;
+  }
+  assert(top == BASE + 16, "split leaves one reference: top {top}");
+  out = texts_at(s, BASE);
+  drop_at(s, BASE);
+  out
+}
+
+fn split_text_compiled(s: state::State, t: text, sep: text) -> vector<text>? {
+  e = crt::body_find("loft_shared_t_4text_split_text");
+  crt::set_slot_arg(s.stk, BASE, t);
+  crt::set_slot_arg(s.stk, BASE + 16, sep);
+  crt::set_slot_ref(s.stk, BASE + 32, 65535, 0, 0);
+  top = crt::body_call(e, s.stk, BASE + 48);
+  if top < 0 {
+    return null;
+  }
+  assert(top == BASE + 16, "split_text leaves one reference: top {top}");
+  out = texts_at(s, BASE);
+  drop_at(s, BASE);
+  out
+}
+
+// `t.split(sep).join(with)`: the vector the compiled `split` made handed to the compiled
+// `join`, both forms — the destination form appends to the text at 0, which holds `<`; the
+// plain form answers a view of its work cell at 24.
+fn join_compiled(s: state::State, t: text, sep: character, with: text) -> text {
+  crt::set_slot_arg(s.stk, BASE, t);
+  crt::stack_put(6, s.stk, BASE + 16, sep as integer);
+  crt::set_slot_ref(s.stk, BASE + 24, 65535, 0, 0);
+  top = crt::body_call(crt::body_find("t_4text_split"), s.stk, BASE + 40);
+  assert(top == BASE + 16, "split answers: top {top}");
+  // The vector stays at BASE; `with` and the work cell's reference follow it.
+  e = crt::body_find("t_6vector_join");
+  crt::set_slot_arg(s.stk, BASE + 16, with);
+  crt::set_slot_ref(s.stk, BASE + 32, s.stk, 1, 8 + 24);
+  crt::set_slot_text(s.stk, 0, "<");
+  crt::slot_text_clear(s.stk, 24);
+  io: vector<integer> = [65535, 0, 0];
+  crt::slot_ref(io, s.stk, BASE);
+  top = crt::body_call_dest(e, s.stk, BASE + 48, s.stk, 1, 8);
+  assert(top == BASE, "join's destination form pushes nothing: top {top}");
+  dest = crt::slot_text(s.stk, 0, false) ?? "(null)";
+  // The destination form left the arguments' slots as they were.
+  top = crt::body_call(e, s.stk, BASE + 48);
+  assert(top == BASE + 16, "join's plain form pushes a view: top {top}");
+  plain = crt::stack_str(s.stk, BASE) ?? "(null)";
+  crt::free_ref(io[0] ?? 65535, io[1] ?? 0, io[2] ?? 0);
+  "{dest}|{plain}"
+}
+
+fn test_a_body_on_records_waits_for_the_type_table() {
+  s = machine();
+  assert(crt::body_find("t_4text_split") >= 0, "split is carried");
+  assert(split_compiled(s, "a,b", ',') == null, "no table loaded: the loft body runs");
+  // A predicate names no type: it answers at once.
+  crt::set_slot_arg(s.stk, BASE, "12");
+  assert(crt::body_call(crt::body_find("t_4text_is_numeric"), s.stk, BASE + 16) == BASE + 8, "a predicate answers without the table");
+  s.load_table();
+  assert(split_compiled(s, "a,b", ',') != null, "the table loaded: the compiled body answers");
+}
+
+// A program whose types are not the ones the bodies were written against — here the text
+// type a byte wider — is not served: the loft body runs.  Its own table loaded, it is.
+fn test_a_body_on_records_refuses_another_type_table() {
+  s = machine();
+  rows: vector<types::Row> = [];
+  for tp in 0..len(s.types) {
+    if len(s.types[tp]!.parts) > 0 {
+      r = types::row(s.types, tp);
+      if tp == 5 {
+        r.size += 1;
+      }
+      rows += [r];
+    }
+  }
+  assert(crt::load_types(types::flat(rows), len(s.types)) == len(rows), "the altered table loads");
+  assert(split_compiled(s, "a,b", ',') == null, "another text type: the loft body runs");
+  s.load_table();
+  assert(split_compiled(s, "a,b", ',') != null, "the program's own table: the compiled body answers");
+}
+
+fn test_the_compiled_splits_answer_what_the_loft_bodies_answer() {
+  s = machine();
+  s.load_table();
+  n = 0;
+  for t in ["a,b,,c", "", ",", "abc", ",a,", "é,ö,,", "a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z"] {
+    for sep in [',', 'b', 'é'] {
+      got = split_compiled(s, t, sep);
+      assert(got != null, "split({t}, {sep}) answers");
+      assert("{got}" == "{t.split(sep)}", "split({t}, {sep}): compiled {got}, loft {t.split(sep)}");
+      n += 1;
+    }
+    for sep in [",", ",,", "", "b,", "é"] {
+      got = split_text_compiled(s, t, sep);
+      assert(got != null, "split_text({t}, {sep}) answers");
+      assert("{got}" == "{t.split_text(sep)}", "split_text({t}, {sep}): compiled {got}, loft {t.split_text(sep)}");
+      n += 1;
+    }
+  }
+  assert(n == 56, "every cell ran: {n}");
+}
+
+fn test_the_compiled_join_reads_the_vector_a_compiled_split_made() {
+  s = machine();
+  s.load_table();
+  for t in ["a,b,,c", "", "abc", ",", "é,ö"] {
+    for with in ["-", "", ", ", "é"] {
+      want = t.split(',').join(with);
+      got = join_compiled(s, t, ',', with);
+      assert(got == "<{want}|{want}", "join({t}, {with}): compiled {got}, loft {want}");
+    }
+  }
+}

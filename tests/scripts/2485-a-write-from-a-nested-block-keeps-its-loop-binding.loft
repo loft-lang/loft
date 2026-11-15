@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2485, its two follow-ups (`@FR-B-Scope`, `@FR-N-Join`).
+// (1) A loop body's local written from a NESTED block with a variant literal: the per-loop
+//     split judged the bind by loop numbers, which differ between the two passes, so the write
+//     became a binding of the `if` block and the read after it was refused
+//     (`local-out-of-scope`).  The split asks the name's own ended note now.
+// (2) A bind after the name's block ended, from a function declared BELOW: pass 1 has no type
+//     for it, and the late join widened the ENDED binding's variable between the passes, so the
+//     ended block's own dense bind read as nullable.  The new bind is a binding of its own.
+// Each cell is hand-computed.
+//
+// @falsified-at: d73454cd3 — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: leak, panic and refusals are clean on both trees (`falsify` requires HERE clean);
+//   the exit is the whole measurement.
+// CHANNEL: the asserts; (1) did not compile before the fix.
+
+enum Ty { TNever, TInt { min: integer }, TText { dep: vector<integer> } }
+
+struct Ex { n: integer }
+
+fn kind(t: Ty) -> integer {
+  match t {
+    TInt { min } => min + 10,
+    TText { dep } => 100 + len(dep),
+    _ => 2,
+  }
+}
+
+fn pick(s: integer) -> Ty? {
+  if s % 3 == 0 { TInt { min: s } } else if s % 3 == 1 { TText { dep: [s] } } else { TNever }
+}
+
+// 60 for s % 3 == 0 (the literal's 50 + 10), 101 for 1, 2 for 2.
+fn unwrapped(k: integer) -> integer {
+  acc = 0;
+  for s in 0..k {
+    t = pick(s);
+    tp = t!;
+    if tp is TInt { tp = TInt { min: 50 }; }
+    acc += kind(tp);
+  }
+  acc
+}
+
+fn one(k: integer) -> Ex { Ex { n: k } }
+
+// The ended block's `rb` is dense; the bind after it is another binding, nullable.
+fn below(k: integer) -> integer {
+  if k > 5 {
+    rb = one(k);
+    return rb.n;
+  }
+  rb = maybe_below(k);
+  if rb == null { return -1; }
+  rb!.n
+}
+
+fn maybe_below(k: integer) -> Ex? { if k > 2 { Ex { n: k * 2 } } else { null } }
+
+fn test_a_nested_write_and_a_bind_after_the_block() {
+  assert(unwrapped(3) == 163, "unwrapped(3): {unwrapped(3)}");
+  assert(unwrapped(7) == 386, "unwrapped(7): {unwrapped(7)}");
+  assert(below(7) == 7 && below(3) == 6 && below(1) == -1, "below: {below(7)} {below(3)} {below(1)}");
+}

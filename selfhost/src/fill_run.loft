@@ -104,8 +104,7 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
         s.stop("not carried");
       }
     } else {
-      // The image's code, not the State's copy: `run` holds its address (`(R-CodeBase)`).
-      fill::run(s, img.code, end);
+      fill::run(s, end);
     }
     if s.unknown >= 0 {
       // The reason names the operator: the table knows only its slot.
@@ -123,7 +122,7 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       // A `par` worker returned: its answer taken, then the job's next worker entered at the
       // same depth, or after the last the job's result left for the caller.
       s.native = -1;
-      regs = [s.stack_pos, s.code_pos, len(s.frames)];
+      regs = [s.stack_pos, s.code_pos, s.depth];
       more = natives::par_return(s.stk, regs, pjobs, pbufs, io);
       s.stack_pos = regs[0] ?? 0;
       if more {
@@ -142,7 +141,7 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
         // its empty answer given at once.
         jobs = len(pjobs);
         back = s.code_pos;
-        regs = [s.stack_pos, s.code_pos, len(s.frames)];
+        regs = [s.stack_pos, s.code_pos, s.depth];
         if natives::par_start(pk, img, s.stk, regs, pjobs, pbufs, io, why) < 0 {
           s.stop("not carried: {why[0] ?? ""}");
         } else {
@@ -150,7 +149,7 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
           if len(pjobs) > jobs {
             s.code_pos = regs[1] ?? 0;
             s.enter(-1, back);
-            s.par_depths += [len(s.frames)];
+            s.par_depths += [s.depth];
           }
         }
       } else if pk > 0 {
@@ -182,14 +181,14 @@ fn par_block(img: ir::RunImage, s: state::State) {
     arms += [resume + off];
   }
   s.arm_offsets.clear();
-  depth = len(s.frames);
+  depth = s.depth;
   if depth == 0 {
     s.stop("a par block outside a function");
     return;
   }
   top = s.stack_pos;
   outer = s.arm_depth;
-  frame = s.frames[depth - 1]!;
+  frame = s.frame_at(depth - 1);
   d_nr = frame.d_nr;
   call_pos = frame.call_pos;
   args_base = frame.args_base;
@@ -204,10 +203,8 @@ fn par_block(img: ir::RunImage, s: state::State) {
     run_to(img, s, -1);
     s.native = -1;
     // The arm's return dropped the frame and moved the top: both as they were.
-    while len(s.frames) > depth - 1 {
-      s.frames.remove(len(s.frames) - 1);
-    }
-    s.frames += [state::CallFrame { d_nr: d_nr, call_pos: call_pos, args_base: args_base, args_size: args_size }];
+    s.depth = depth - 1;
+    s.push_frame(d_nr, call_pos, args_base, args_size);
     crt::stack_code_bytes(s.stk, 0, snapshot, 0, top);
     s.stack_pos = top;
   }

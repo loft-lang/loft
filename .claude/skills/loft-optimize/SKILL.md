@@ -40,8 +40,9 @@ symptom.
 
 ## Two backends, one direction
 
-loft runs a program two ways. The compiled build is what ships — the C backend through `cc`
-or the Rust writer through rustc — so it is the optimisation target. The interpreter is what people use while they develop and debug; its
+loft runs a program two ways. The compiled build is what ships — the C backend through `cc`,
+judged on its ship lane (PERFORMANCE.md § What is judged); the Rust writer is shelved and no
+new rewrite lands in it — so the C build is the optimisation target. The interpreter is what people use while they develop and debug; its
 job is to never be so slow that it becomes unusable — roughly, not more than a hundred times
 slower than the compiled program on the same code. So:
 
@@ -197,8 +198,10 @@ the copy — it was no faster for this workload, so no rewrite was built for it.
 
 The loop with this repository's commands, benchmarks and rules is
 [`doc/claude/PERFORMANCE.md` § How to optimise](../../../doc/claude/PERFORMANCE.md#how-to-optimise--the-checklist);
-the bench and perf `make` targets are in `CLAUDE.md`'s key commands. Beyond those:
+the bench and perf `make` targets are in `doc/claude/COMMANDS.md`. Beyond those:
 `make gap-report ARGS="--bench N --fn F"` (where one routine's distance to its Rust twin lives),
-`bench/portal/hand_price.sh` (time a hand-edited generated Rust file), and
+`bench/portal/hand_price.sh` (time a hand-edited generated Rust file — the Rust writer's
+emission, the lane that is not judged), `make c-profile` (where a bench routine's time goes in
+the C build), and
 `loft --interpret --dump` / `loft --native-emit` / `loft --native-c --native-emit out.c`
 (what a program compiles to).

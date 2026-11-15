@@ -73,7 +73,7 @@ compile-checks it rather than linking.
 ## CLI invocation
 
 ```bash
-loft --path /path/to/repo/ file.loft                        # interpreter
+loft --interpret --path /path/to/repo/ file.loft            # interpreter
 loft --native --path /path/to/repo/ file.loft               # compile + run native
 loft --native-wasm out.wasm --path /path/to/repo/ file.loft # compile to wasm
 ```

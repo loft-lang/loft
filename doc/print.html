@@ -4134,7 +4134,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">type</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> = <span class="ty"><a href="stdlib-types.html">integer</a></span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(<span class="nm">4</span>)</code></pre>
-<p>4-byte signed: -2_147_483_647 – 2_147_483_647.  The bottom of the 32-bit range (<code>-2147483648</code>) is the null sentinel, so it is not a value an <code>i32</code> can hold — C127's pragmatic exemption: an <code>i32</code> overflow reads <code>null</code>, where every other narrow type's reads its default.  Pinned by <code>tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value</code>.</p>
+<p>4-byte signed: -2_147_483_647 – 2_147_483_647.  The bottom of the 32-bit range (<code>-2147483648</code>) is the null sentinel, so it is not a value an <code>i32</code> can hold — C127's pragmatic exemption: an <code>i32</code> overflow reads <code>null</code>, where every other narrow type's reads its default.  Pinned by the language suite's <code>1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">type</span> <span class="ty"><a href="stdlib-types.html">u32</a></span> = <span class="ty"><a href="stdlib-types.html">integer</a></span> <span class="kw">limit</span>(<span class="nm">0</span>, <span class="nm">4294967295</span>) <span class="fn-call"><a href="stdlib-text.html">size</a></span>(<span class="nm">4</span>)</code></pre>
@@ -4482,7 +4482,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">divided_by</span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>, other: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span>?</code></pre>
-<p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>, null on a zero divisor.</p>
+<p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>: infinite on a zero divisor, null for <code>0.0 / 0.0</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">remainder</span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>, other: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span>?</code></pre>
@@ -4506,7 +4506,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">divided_by</span>(self: f64, other: f64) -&gt; f64?</code></pre>
-<p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>, null on a zero divisor.</p>
+<p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>: infinite on a zero divisor, null for <code>0.0 / 0.0</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">remainder</span>(self: f64, other: f64) -&gt; f64?</code></pre>

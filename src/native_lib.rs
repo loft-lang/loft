@@ -283,8 +283,7 @@ pub(crate) use crate::cargo_layout::{
 ///
 /// Only the running binary's own build counts, so the rlib carries the features compiled into
 /// this test: a later `cargo build --no-default-features` writes another `libloft` whose
-/// png/random functions are stubs, and linking that one answered wrong values in silence
-/// (S33).  Classic layout: the newest `libloft*.rlib` in the binary's own `deps/`.  Per-unit
+/// png/random functions are stubs, and linking that one answers wrong values in silence.  Classic layout: the newest `libloft*.rlib` in the binary's own `deps/`.  Per-unit
 /// layout (cargo 1.100): the binary runs from `build/<crate>/<hash>/out/` and the runtime is a
 /// sibling unit `build/loft/<hash>/out/libloft.rlib`; of those, the newest one not built after
 /// this binary — the one it was linked against — never a later build's.

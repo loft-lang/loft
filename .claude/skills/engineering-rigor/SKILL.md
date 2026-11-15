@@ -305,7 +305,7 @@ debugging policy and test layout.
   files, `--interpret`-first seeing loop, native-env traps that fake failures.
 - **The build outputs that lag independently** (calibration) — the debug rlib, the release
   rlib, the wasm rlib and the fixture cdylibs; `make check-rlib` is the pre-flight for the
-  first, and the `code-quality-validator` agent names the rebuild for the others.
+  release and wasm rlibs, and the `code-quality-validator` agent names the rebuild for the others.
 - **DESIGN reference** — `doc/claude/DESIGN_VERIFICATION.md` § C1: the six
   verification questions (name-the-invariant, consequence/cause ratio,
   cost-of-next-case, one-home-per-fact, subtraction-not-a-guard, matched-to-domain)

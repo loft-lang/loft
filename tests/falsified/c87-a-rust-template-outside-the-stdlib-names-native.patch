@@ -1,13 +1,13 @@
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
-index 923e7cde7..a733ffc22 100644
+index 495816456..c8dfc8cfa 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -3722,24 +3722,8 @@ impl Parser {
+@@ -4101,24 +4101,8 @@ impl Parser {
                  } else {
                      diagnostic!(self.lexer, Level::Error, "Expect rust next string");
                  }
 -            } else if !self.default
--                && (id == Some("rust".to_string()) || id == Some("iterator".to_string()))
+-                && (id.as_deref() == Some("rust") || id.as_deref() == Some("iterator"))
 -            {
 -                // @C87 — `#rust` / `#iterator` are the standard library's templates for its own
 -                // operators, compiled into loft itself; a library's Rust goes through
@@ -26,6 +26,6 @@ index 923e7cde7..a733ffc22 100644
 -                );
 +            } else if false {
 +
-             } else if id == Some("c".to_string()) {
+             } else if id.as_deref() == Some("c") {
                  // @PLN24 arc A — `#c "<symbol>" "<c-signature>"` binds this
                  // declaration straight to a C symbol.  Both strings are

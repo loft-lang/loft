@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-ValueRecord`'s site gate: a call that is its block's VALUE is consumed where the
+// block is, also when the block frees a local after it.  `match pick(v) { … }` holds its
+// subject in a local of the match block, freed after the arms; `B { n } => vr(rv, n)` is then
+// a call standing BEFORE the block's last operator.  Read as a discarded statement, `vr` kept
+// its tuple form although `ranged` binds its record, and the shipped C build refused the
+// program ("a reference expected, a Tup(0) found").  Each cell is hand-computed:
+// `rv.vars` is [3..9, -2..4]; `pick` turns `G { k: 7 }` into `A { n: 70 }`.
+//
+// @falsified-at: 5330b3690 — the shipped C build refuses the program ("ranged: a reference expected, a Tup(0) found") -> prints `ship_value_before_frees ok`; the interpreter passes on both
+// CHANNEL: the asserts, on the build that carries value records (`--native-c --ship`, run by
+// `tests/c_split.rs::a_call_before_its_blocks_frees_is_the_blocks_value_in_a_shipped_unit`;
+// `--ship` runs a program, not its tests, so this cell has a `main`); the interpreter run of
+// the same test is the control.
+// ARMED: nothing to arm.
+// WITNESS: each assert message prints what was read.
+// HOLDS: every arm of the match, present and null.
+
+struct R { lo: integer, hi: integer }
+struct Rs { vars: vector<R> }
+enum N { A { n: integer }, B { n: integer }, G { k: integer }, D }
+
+fn vr(rv: Rs, v: integer) -> R? {
+  if v < 0 || v >= len(rv.vars) { return null; }
+  R { lo: rv.vars[v]!.lo, hi: rv.vars[v]!.hi }
+}
+
+fn pick(v: N) -> N { match v { G { k } => if k == 7 { A { n: 70 } } else { v }, _ => v } }
+
+fn ranged(rv: Rs, v: N) -> R? {
+  match pick(v) {
+    A { n } => R { lo: n, hi: n },
+    B { n } => vr(rv, n),
+    G { k } => {
+      name = "x{k}";
+      if name == "x9" {
+        return null;
+      }
+      vr(rv, k)
+    },
+    _ => null,
+  }
+}
+
+fn show(r: R?) -> text { if r == null { "null" } else { "{r.lo}..{r.hi}" } }
+
+fn main() {
+  rv = Rs { vars: [R { lo: 3, hi: 9 }, R { lo: -2, hi: 4 }] };
+  assert(show(ranged(rv, A { n: 7 })) == "7..7", "a literal arm: {show(ranged(rv, A { n: 7 }))}");
+  assert(show(ranged(rv, B { n: 1 })) == "-2..4", "the call arm: {show(ranged(rv, B { n: 1 }))}");
+  assert(show(ranged(rv, B { n: 5 })) == "null", "the call arm, absent: {show(ranged(rv, B { n: 5 }))}");
+  assert(show(ranged(rv, G { k: 0 })) == "3..9", "a block arm's tail call: {show(ranged(rv, G { k: 0 }))}");
+  assert(show(ranged(rv, G { k: 9 })) == "null", "its early return: {show(ranged(rv, G { k: 9 }))}");
+  assert(show(ranged(rv, G { k: 7 })) == "70..70", "the subject rewritten: {show(ranged(rv, G { k: 7 }))}");
+  assert(show(ranged(rv, D)) == "null", "the default arm: {show(ranged(rv, D))}");
+  println("ship_value_before_frees ok");
+}

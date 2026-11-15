@@ -30,7 +30,7 @@ recorded in [LOFT-history.md](LOFT-history.md), not here.
 | Construct              | Convention         | Examples               |
 |------------------------|--------------------|------------------------|
 | Functions, variables   | `lower_case`       | `my_fn`, `count`       |
-| Types, structs, enums  | `CamelCase`        | `Terrain`, `Format`    |
+| Enums (structs and aliases by convention) | `CamelCase` | `Terrain`, `Format` |
 | Enum values            | `CamelCase`        | `Text`, `FileName`     |
 | Constants              | `UPPER_CASE`       | `PI`, `MAX_SIZE`       |
 | Operator definitions   | `OpXxx` prefix     | `OpAdd`, `OpEqInt`     |
@@ -47,13 +47,13 @@ recorded in [LOFT-history.md](LOFT-history.md), not here.
 | `integer`   | 64-bit signed integer end-to-end (stack, fields, arithmetic).  Range can be constrained with `limit(...)`; narrow widths (`u8`/`u16`/`i8`/`i16`/`i32`) keep compact storage.  Overflow yields null and continues (the spreadsheet model).  See "Arithmetic safety" below. |
 | `float`     | 64-bit floating-point; literals contain a `.`    |
 | `single`    | 32-bit float; literals end with `f`              |
+| `character` | A single Unicode character                       |
+| `text`      | A UTF-8 string; `len()` counts characters, `size()` bytes |
 
 A file that starts with `#width 32` (or every file but the standard library under
 `--width 32`) reads `integer` as `i32` and `float` as `single`, keeps arithmetic on 32-bit
 values 32-bit, and spells the 64-bit forms `i64` / `123l` and `f64` / `2.5d`:
 [WIDTH32.md](WIDTH32.md).
-| `character` | A single Unicode character                       |
-| `text`      | A UTF-8 string; `len()` counts characters, `size()` bytes |
 
 A type is **non-null by default**: a plain `integer` / `text` / `Row` is not a slot for
 `null`, and the compiler says so wherever one is written — discharge it (`??`, `?`,
@@ -90,7 +90,7 @@ Loft uses in-band sentinel values to represent `null`. Each type has a dedicated
 | `character` | `'\0'` (NUL) | The null character is not a valid loft character value |
 | `text` | internal null pointer | Opaque; `!t` and `t == null` detect it.  `len` / `size` take a non-null `text`, so passing a `text?` warns — discharge it first (`len(t?)`) |
 | `reference` | record 0 | Opaque; `!r` detects it |
-| plain `enum` | byte `255` **or** byte `0` | Limits plain enums to 255 variants.  **Two bytes mean absent, and every test accepts both:** an explicit `null` writes `255`, while zero-initialised storage and a read of an absent record produce `0`.  Variants are numbered from 1, so `0` is a variant of no enum — which is why the renderer has always shown both as `null`.  A `??` that recognised only `255` let `v[9] ?? d` and a field never set answer `null` through a coalesce. |
+| plain `enum` | byte `255` **or** byte `0` | Limits plain enums to 254 variants.  **Two bytes mean absent, and every test accepts both:** an explicit `null` writes `255`, while zero-initialised storage and a read of an absent record produce `0`.  Variants are numbered from 1, so `0` is a variant of no enum — which is why the renderer has always shown both as `null`.  A `??` that recognised only `255` let `v[9] ?? d` and a field never set answer `null` through a coalesce. |
 | narrow int (`u8`/`u16`/`i8`/`i16`) | top of the packed range | e.g. `i8::MIN` for `i8`; stored compactly in `Parts::Byte`/`Short` |
 | `i32` / `integer size(4)` | `i32::MIN` | 4-byte storage via `Parts::Int`; widens to i64 on the stack |
 
@@ -540,7 +540,7 @@ print("{twice(21)}\n")                      // → 42, even though `twice` is de
   the loose statements regardless of order.
 - **A file is not a script** when it has a `fn main`, or contains only definitions (a library) —
   those are compiled exactly as before. A file with a mistyped def keyword (`funcion main()`)
-  is also not treated as a script, so the parser's real "unknown keyword" error still surfaces
+  is also not treated as a script, so the parser's own errors still surface
   instead of being buried inside a synthesized `main`.
 - **`--script` forces script mode**; auto-detection is the default and can only affect source
   that loft rejects today.

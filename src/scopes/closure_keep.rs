@@ -887,7 +887,9 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
 ///
 /// Confined: a `Set(f, …)` inside a loop whose value builds a closure (`FnRef` over a
 /// `___clos_N`), where every `Set` of `f` lies in that loop and `f` is never read as a VALUE
-/// anywhere.  A call through it is `CallRef(f, …)`, whose callee is an index and not a `Var`.
+/// anywhere; and a closure built as an ARGUMENT of a call inside a loop to a loft function
+/// that only calls it, which no local holds (`LOFT_NO_ARGUMENT_CLOSURE_CONFINED=1` leaves
+/// that one out).  A call through it is `CallRef(f, …)`, whose callee is an index and not a `Var`.
 /// The operands of a release (`OpFreeRef`, `OpConvBoolFromRef`, `OpRefIsNull`, …) are not
 /// escapes: this is asked of the body before the scope pass and after it, and the two readings
 /// must agree.
@@ -898,7 +900,10 @@ pub(super) fn pass_confined_records(
 ) -> HashSet<u32> {
     // Only a fn-ref local can be confined, and most functions hold none: answered before any of
     // the walk's sets is built, since this runs twice per function on every compile.
-    if !(0..function.count()).any(|v| matches!(function.tp(v).base(), Type::Function(..))) {
+    if !(0..function.count()).any(|v| {
+        matches!(function.tp(v).base(), Type::Function(..))
+            || function.name(v).starts_with("___clos_")
+    }) {
         return HashSet::default();
     }
     let ops = |names: &[&str]| -> HashSet<u32> {
@@ -940,6 +945,17 @@ pub(super) fn pass_confined_records(
         sets: HashMap::default(),
         read_as_value: HashSet::default(),
         held_in: Vec::new(),
+        argument_builds: Vec::new(),
+        leaving: HashSet::default(),
+        loft_fns: if crate::env_once!(
+            std::env::var_os("LOFT_NO_ARGUMENT_CLOSURE_CONFINED").is_some()
+        ) {
+            HashSet::default()
+        } else {
+            (0..data.definitions())
+                .filter(|&d| data.def(d).is_loft_defined())
+                .collect()
+        },
     };
     walk.walk(code, usize::MAX);
     // A fn-ref held in a record that is not confined escapes with it; repeat until nothing
@@ -974,6 +990,14 @@ struct ConfinementWalk {
     read_as_value: HashSet<u16>,
     /// `(fn-ref, record local)`: a build that captured the fn-ref's closure (loft#1869).
     held_in: Vec<(u16, u16)>,
+    /// `(record local, callee, argument index, loop id)`: a closure built as an ARGUMENT of a
+    /// call to a loft function inside a loop — no local holds it, so it is released with the
+    /// statement.
+    argument_builds: Vec<(u16, u32, usize, usize)>,
+    /// Record locals a closure build leaves the function through (`return`, `yield`).
+    leaving: HashSet<u16>,
+    /// The functions with a loft body: only a call to one of these is such an argument site.
+    loft_fns: HashSet<u32>,
 }
 
 impl ConfinementWalk {
@@ -1027,9 +1051,44 @@ impl ConfinementWalk {
                 self.read_as_value.insert(*v);
             }
             Value::Call(d, _) if self.release_ops.contains(d) => return,
+            // A lambda written as an argument (`each(xs, fn(x) { seen[x] += 1; })`).
+            Value::Call(d, args) if loop_id != usize::MAX && self.loft_fns.contains(d) => {
+                for (i, a) in args.iter().enumerate() {
+                    if let Some(rec) = Self::built_record(a) {
+                        self.argument_builds.push((rec, *d, i, loop_id));
+                    }
+                }
+            }
+            Value::Return(v) | Value::Yield(v) => {
+                if let Some(rec) = Self::built_record(v) {
+                    self.leaving.insert(rec);
+                }
+            }
             _ => {}
         }
         node.unspan().for_each_child(&mut |c| self.walk(c, loop_id));
+    }
+
+    /// Does `callee` only CALL its parameter `arg` — never read it as a value, so it can store
+    /// it nowhere and hand it to nobody?  A call through it is `CallRef`, which names the
+    /// parameter by number; any `Var` of it outside a release is a value read.
+    fn only_called(&self, data: &Data, callee: u32, arg: usize) -> bool {
+        let Ok(p) = u16::try_from(arg) else {
+            return false;
+        };
+        fn reads(node: &Value, p: u16, release: &HashSet<u32>) -> bool {
+            match node.unspan() {
+                Value::Var(v) if *v == p => return true,
+                Value::Call(d, _) if release.contains(d) => return false,
+                _ => {}
+            }
+            let mut any = false;
+            node.unspan()
+                .for_each_child(&mut |c| any = any || reads(c, p, release));
+            any
+        }
+        let def = data.def(callee);
+        def.variables.is_argument(p) && !reads(&def.code, p, &self.release_ops)
     }
 
     /// The record types every build of which is confined, given what is read as a value.
@@ -1044,6 +1103,28 @@ impl ConfinementWalk {
                 && !self.read_as_value.contains(&f)
                 && let Type::Reference(record, _) = function.tp(rec).base()
                 && data.def(*record).name.starts_with("__closure_")
+            {
+                out.insert(*record);
+            }
+        }
+        // …and a record built as a call's argument in a loop, bound to no fn-ref local,
+        // leaving through no `return`, to a callee that only calls it: it is released with
+        // its statement, every pass, and nothing can hold it past that.
+        for &(rec, callee, arg, loop_id) in &self.argument_builds {
+            if !self.leaving.contains(&rec)
+                && !self.builds.iter().any(|&(_, r, _)| r == rec)
+                && self.only_called(data, callee, arg)
+                && let Type::Reference(record, _) = function.tp(rec).base()
+                && data.def(*record).name.starts_with("__closure_")
+                // A capture that loop assigns is another store every pass (`s = build(|i|
+                // s.a + i)`): what the record holds is settled by identity there
+                // (`rebound_captures`), not by this verdict.
+                && !(0..data.attributes(*record)).any(|a| {
+                    let c = function
+                        .var(&super::capture_builds::capture_name(data, *record, a));
+                    c != u16::MAX
+                        && self.sets.get(&c).is_some_and(|ids| ids.contains(&loop_id))
+                })
             {
                 out.insert(*record);
             }

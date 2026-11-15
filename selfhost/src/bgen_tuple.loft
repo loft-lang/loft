@@ -1,0 +1,519 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The bytecode writer in loft, its tuples (@PLN91,
+// doc/claude/plans/91-self-host/rust-dependencies.md step 1): the port of the tuple arms of
+// `src/state/codegen.rs` — a tuple value, a member read and stored (`TupleGet`, `TuplePut`),
+// a tuple local read, stored, first bound and nulled, and its text members freed.  A tuple
+// local lies in its frame slot one stepped slot per member (`@FR-L-Tuple`,
+// `frame::member_step`); a local owns its text members and an argument borrows them
+// (`@FR-T-Record`).
+//
+// A member that may be held narrow (`tuple_links::member_slot`) stops the function: the
+// narrow links of a tuple's members are not ported yet.
+use ir;
+use frame;
+use binds;
+use bgen;
+
+// The members of a tuple type; none for any other type.
+fn elems_of(t: ir::TypeT) -> vector<ir::TypeT> {
+  match bgen::base(t) {
+    TyTuple { elems } => elems,
+    _ => [],
+  }
+}
+
+// `tuple_slot_owned` (`Function::tuple_owns_text`): does tuple local `v` hold its own texts?
+fn owned(g: bgen::Gen, v: integer) -> boolean {
+  if v < 0 {
+    return false;
+  }
+  f = g.b.data.definitions[g.d]!.variables;
+  var = f.variables[v]!;
+  tuple = match bgen::base(var.type_def[0] ?? ir::TyVoid) {
+    TyTuple { elems: _ } => true,
+    _ => false,
+  };
+  tuple && !var.argument && (!binds::is_compiler_generated(f, v) || var.name.starts_with("__tp_"))
+}
+
+// `element_stack_offsets_in`: where member `idx` starts.
+fn offset(elems: vector<ir::TypeT>, idx: integer, own: boolean) -> integer {
+  at = 0;
+  for e in elems {
+    if e#index < idx {
+      at += frame::member_step(e, own);
+    }
+  }
+  at
+}
+
+// `NarrowSlot::of_type`: could this member be held in fewer than eight bytes?
+fn narrow(t: ir::TypeT) -> boolean {
+  nullable = bgen::optional_shape(t);
+  match bgen::base(t) {
+    TyInteger { spec } => {
+      codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+      width = if spec.forced_size > 0 { spec.forced_size } else if codes <= 65536 { 2 } else { 8 };
+      width < 8
+    }
+    _ => false,
+  }
+}
+
+// `is_dbref_slot`, of the member as it stands.
+fn dbref_slot(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _, dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TyIterator { step: _, inner: _ } => true,
+    _ => false,
+  }
+}
+
+fn is_function(t: ir::TypeT) -> boolean {
+  match bgen::base(t) {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  }
+}
+
+// One member read from its frame position `abs`.
+fn push_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean) {
+  if narrow(e) {
+    bgen::stop(g, "not written yet: a tuple with a narrow integer member");
+    return;
+  }
+  op = match bgen::base(e) {
+    TyInteger { spec: _ } => "OpVarInt",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "OpVarFnRef",
+    TyBoolean => "OpVarBool",
+    TyFloat => "OpVarFloat",
+    TySingle => "OpVarSingle",
+    TyCharacter => "OpVarCharacter",
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "OpVarRef" } else { "OpVarEnum" },
+    TyText { dep: _ } => if own { "OpVarText" } else { "OpArgText" },
+    TyReference { n: _, dep: _ } => "OpVarRef",
+    TyVector { inner: _, dep: _ } => "OpVarRef",
+    TyHash { n: _, names: _, dep: _ } => "OpVarRef",
+    TyIndex { n: _, keys: _, dep: _ } => "OpVarRef",
+    TyRadix { n: _, names: _, dep: _ } => "OpVarRef",
+    TyTrie { n: _, key: _, dep: _ } => "OpVarRef",
+    TySorted { n: _, keys: _, dep: _ } => "OpVarRef",
+    TyIterator { step: _, inner: _ } => "OpVarRef",
+    _ => "",
+  };
+  if op == "" || abs > g.position {
+    bgen::stop(g, "a tuple member the writer cannot read");
+    return;
+  }
+  pos = g.position - abs;
+  bgen::add_op(g, op);
+  if op == "OpVarFnRef" {
+    g.position += 8;
+  }
+  bgen::put_u16(g.o, pos);
+}
+
+// `emit_tuple_var_push_recursive`: every member of a tuple at frame position `base` pushed.
+fn push_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean) {
+  for e in elems {
+    abs = base + offset(elems, e#index, own);
+    match e {
+      TyTuple { elems: inner } => push_all(g, inner, abs, own),
+      _ => push_member(g, e, abs, own),
+    }
+  }
+}
+
+// One member popped into its frame position `abs`; `first` for a slot that holds no text yet.
+fn put_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean, first: boolean) {
+  if narrow(e) {
+    bgen::stop(g, "not written yet: a tuple with a narrow integer member");
+    return;
+  }
+  op = match bgen::base(e) {
+    TyInteger { spec: _ } => "OpPutInt",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "OpPutFnRef",
+    TyBoolean => "OpPutBool",
+    TyFloat => "OpPutFloat",
+    TySingle => "OpPutSingle",
+    TyCharacter => "OpPutCharacter",
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "" } else { "OpPutEnum" },
+    TyText { dep: _ } => if own { "OpAppendText" } else { "OpPutText" },
+    _ => "",
+  };
+  if op == "" && dbref_slot(e) {
+    op = "OpPutRef";
+  }
+  if op == "" || abs > g.position {
+    bgen::stop(g, "a tuple member the writer cannot store");
+    return;
+  }
+  pos = g.position - abs;
+  if op == "OpAppendText" {
+    bgen::add_op(g, if first { "OpInitText" } else { "OpClearText" });
+    bgen::put_u16(g.o, pos);
+  }
+  bgen::add_op(g, op);
+  if op == "OpPutFnRef" {
+    g.position -= 8;
+  }
+  bgen::put_u16(g.o, pos);
+}
+
+// `emit_tuple_var_pop_put` and `emit_tuple_put_ops`: the members on the stack stored into
+// the tuple at `base`, last first.
+fn put_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean, first: boolean) {
+  i = len(elems) - 1;
+  while i >= 0 {
+    e = elems[i]!;
+    abs = base + offset(elems, i, own);
+    match e {
+      TyTuple { elems: inner } => put_all(g, inner, abs, own, first),
+      _ => put_member(g, e, abs, own, first),
+    }
+    i -= 1;
+  }
+}
+
+// A tuple local read whole (`generate_var`'s tuple arm).
+pub fn read(g: bgen::Gen, v: integer) -> ir::TypeT {
+  tp = bgen::var_of(g, v).type_def[0] ?? ir::TyVoid;
+  push_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v));
+  tp
+}
+
+// A link to a tuple read whole: each member through the link.
+pub fn read_link(g: bgen::Gen, v: integer, inner: ir::TypeT) -> ir::TypeT {
+  items: vector<ir::Node> = [];
+  for e in elems_of(inner) {
+    items += [ir::NdTupleGet { var: v, idx: e#index }];
+  }
+  bgen::generate(g, ir::NdTuple { items: items }, false)
+}
+
+// `Value::Tuple`: each member's value in turn.
+pub fn value(g: bgen::Gen, items: vector<ir::Node>) -> ir::TypeT {
+  types: vector<ir::TypeT> = [];
+  for i in items {
+    types += [bgen::generate(g, i, false)];
+  }
+  ir::TyTuple { elems: types }
+}
+
+// The record operator that reads or writes a member through a link to a tuple.
+fn link_op(e: ir::TypeT, get: boolean) -> text {
+  match bgen::base(e) {
+    TyInteger { spec: _ } => if get { "OpGetInt" } else { "OpSetInt" },
+    TyFunction { args: _, result: _, dep: _, consts: _ } => if get { "OpGetInt" } else { "OpSetInt" },
+    TyFloat => if get { "OpGetFloat" } else { "OpSetFloat" },
+    TySingle => if get { "OpGetSingle" } else { "OpSetSingle" },
+    TyCharacter => if get { "OpGetCharacter" } else { "OpSetCharacter" },
+    TyBoolean => if get { "OpGetBoolean" } else { "OpSetBoolean" },
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "" } else if get { "OpGetEnum" } else { "OpSetEnum" },
+    _ => "",
+  }
+}
+
+// The members of the tuple a link names; none where the local is no such link.
+fn link_elems(t: ir::TypeT) -> vector<ir::TypeT> {
+  match t {
+    TyRefVar { inner } => match inner {
+      TyTuple { elems } => elems,
+      _ => [],
+    },
+    _ => [],
+  }
+}
+
+// `Value::TupleGet`: one member of tuple local `v`.
+pub fn get(g: bgen::Gen, v: integer, idx: integer) -> ir::TypeT {
+  tp = bgen::var_of(g, v).type_def[0] ?? ir::TyVoid;
+  linked = link_elems(tp);
+  if len(linked) > 0 {
+    e = linked[idx] ?? ir::TyVoid;
+    op = link_op(e, true);
+    if op == "" {
+      bgen::stop(g, "a member the writer cannot read through a link to a tuple");
+      return e;
+    }
+    bgen::init_slot(g, v, "OpVarRef");
+    bgen::add_op(g, op);
+    bgen::put_u16(g.o, offset(linked, idx, false));
+    return e;
+  }
+  elems = elems_of(tp);
+  e = elems[idx] ?? ir::TyVoid;
+  own = owned(g, v);
+  abs = (g.slots[v] ?? 0) + offset(elems, idx, own);
+  match e {
+    TyTuple { elems: inner } => push_all(g, inner, abs, own),
+    _ => push_member(g, e, abs, own),
+  }
+  e
+}
+
+// `Value::TuplePut`: one member of tuple local `v` stored.
+pub fn put(g: bgen::Gen, v: integer, idx: integer, value: ir::Node) -> ir::TypeT {
+  tp = bgen::var_of(g, v).type_def[0] ?? ir::TyVoid;
+  linked = link_elems(tp);
+  if len(linked) > 0 {
+    op = link_op(linked[idx] ?? ir::TyVoid, false);
+    if op == "" {
+      bgen::stop(g, "a member the writer cannot write through a link to a tuple");
+      return ir::TyVoid;
+    }
+    bgen::init_slot(g, v, "OpVarRef");
+    bgen::generate(g, value, false);
+    bgen::add_op(g, op);
+    bgen::put_u16(g.o, offset(linked, idx, false));
+    return ir::TyVoid;
+  }
+  elems = elems_of(tp);
+  e = elems[idx] ?? ir::TyVoid;
+  own = owned(g, v);
+  if is_function(e) {
+    bgen::fn_ref_value(g, value);
+  } else {
+    bgen::generate(g, value, false);
+  }
+  abs = (g.slots[v] ?? 0) + offset(elems, idx, own);
+  match e {
+    TyTuple { elems: inner } => put_all(g, inner, abs, own, false),
+    _ => {
+      // A single member's reference kinds are named, not derived (`TuplePut`'s own list).
+      store = match bgen::base(e) {
+        TyReference { n: _, dep: _ } => true,
+        TyVector { inner: _, dep: _ } => true,
+        TyEnum { n: _, is_ref, dep: _ } => is_ref,
+        _ => binds::is_keyed(e),
+      };
+      if store {
+        if narrow(e) || abs > g.position {
+          bgen::stop(g, "a tuple member the writer cannot store");
+          return ir::TyVoid;
+        }
+        pos = g.position - abs;
+        bgen::add_op(g, "OpPutRef");
+        bgen::put_u16(g.o, pos);
+      } else {
+        put_member(g, e, abs, own, false);
+      }
+    }
+  }
+  ir::TyVoid
+}
+
+// Does a tuple type hold a function value anywhere (`tuple_carries_fn_ref`)?
+fn carries_fn_ref(t: ir::TypeT) -> boolean {
+  match bgen::base(t) {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    TyTuple { elems } => {
+      for e in elems {
+        if carries_fn_ref(e) {
+          return true;
+        }
+      }
+      false
+    }
+    _ => false,
+  }
+}
+
+// `gen_tuple_members_with_fn_refs`: a tuple literal whose function members are written whole.
+fn members_with_fn_refs(g: bgen::Gen, elems: vector<ir::TypeT>, items: vector<ir::Node>) {
+  for e in elems {
+    item = items[e#index];
+    if item == null {
+      return;
+    }
+    if is_function(e) {
+      bgen::fn_ref_value(g, item!);
+      continue;
+    }
+    nested = false;
+    match bgen::base(e) {
+      TyTuple { elems: inner } => {
+        if carries_fn_ref(e) {
+          match bgen::unspan(item!) {
+            NdTuple { items: inner_items } => {
+              if len(inner_items) == len(inner) {
+                members_with_fn_refs(g, inner, inner_items);
+                nested = true;
+              }
+            }
+            _ => {}
+          }
+        }
+      }
+      _ => {}
+    }
+    if !nested {
+      bgen::generate(g, item!, false);
+    }
+  }
+}
+
+// A tuple local's first value (`FirstArm::Plain`'s tuple arm).
+pub fn first_bind(g: bgen::Gen, v: integer, value: ir::Node) {
+  tp = bgen::var_of(g, v).type_def[0] ?? ir::TyVoid;
+  elems = elems_of(tp);
+  before = g.position;
+  literal = false;
+  match bgen::unspan(value) {
+    NdTuple { items } => {
+      if len(items) == len(elems) && carries_fn_ref(tp) {
+        members_with_fn_refs(g, elems, items);
+        literal = true;
+      }
+    }
+    _ => {}
+  }
+  if !literal {
+    bgen::generate(g, value, false);
+  }
+  if g.position == before {
+    return;
+  }
+  put_all(g, elems, g.slots[v] ?? 0, owned(g, v), true);
+}
+
+// A tuple local's later value (`set_var`'s tuple arm).
+pub fn set(g: bgen::Gen, v: integer, value: ir::Node) {
+  tp = bgen::var_of(g, v).type_def[0] ?? ir::TyVoid;
+  before = g.position;
+  bgen::generate(g, value, false);
+  if g.position == before {
+    bgen::stop(g, "not written yet: a tuple set to a value that pushes nothing");
+    return;
+  }
+  put_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v), false);
+}
+
+// `emit_tuple_null_init`: each member's zero stored, a text member's slot made a text.
+fn null_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean) {
+  for e in elems {
+    abs = base + offset(elems, e#index, own);
+    nested = false;
+    match e {
+      TyTuple { elems: inner } => {
+        null_all(g, inner, abs, own);
+        nested = true;
+      }
+      _ => {}
+    }
+    if nested {
+      continue;
+    }
+    if narrow(e) {
+      bgen::stop(g, "not written yet: a tuple with a narrow integer member");
+      return;
+    }
+    put = "";
+    match bgen::base(e) {
+      TyInteger { spec: _ } => {
+        bgen::add_op(g, "OpConstInt");
+        bgen::put_i64(g.o, 0);
+        put = "OpPutInt";
+      }
+      TyFunction { args: _, result: _, dep: _, consts: _ } => {
+        bgen::add_op(g, "OpConstInt");
+        bgen::put_i64(g.o, 0);
+        put = "OpPutInt";
+      }
+      TyBoolean => {
+        bgen::add_op(g, "OpConstFalse");
+        put = "OpPutBool";
+      }
+      TySingle => {
+        bgen::add_op(g, "OpConstSingle");
+        bgen::put_i32(g.o, 0);
+        put = "OpPutSingle";
+      }
+      TyFloat => {
+        bgen::add_op(g, "OpConstFloat");
+        bgen::put_i64(g.o, 0);
+        put = "OpPutFloat";
+      }
+      TyText { dep: _ } => {
+        bgen::add_op(g, "OpConvTextFromNull");
+        put = if own { "OpAppendText" } else { "OpPutText" };
+      }
+      TyCharacter => {
+        bgen::add_op(g, "OpConvCharacterFromNull");
+        put = "OpPutCharacter";
+      }
+      TyEnum { n: _, is_ref, dep: _ } => {
+        if !is_ref {
+          bgen::add_op(g, "OpConvEnumFromNull");
+          put = "OpPutEnum";
+        }
+      }
+      _ => {}
+    }
+    if put == "" && dbref_slot(e) {
+      bgen::push_sentinel(g);
+      put = "OpPutRef";
+    }
+    if put == "" || abs > g.position {
+      bgen::stop(g, "a tuple member the writer cannot null");
+      return;
+    }
+    pos = g.position - abs;
+    if put == "OpAppendText" {
+      bgen::add_op(g, "OpInitText");
+      bgen::put_u16(g.o, pos);
+    }
+    bgen::add_op(g, put);
+    bgen::put_u16(g.o, pos);
+  }
+}
+
+// `gen_set_first_tuple_null`.
+pub fn first_null(g: bgen::Gen, v: integer) {
+  tp = bgen::var_of(g, v).type_def[0] ?? ir::TyVoid;
+  null_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v));
+}
+
+// `emit_tuple_text_free`: every text an owned tuple member holds released.
+fn free_texts(g: bgen::Gen, t: ir::TypeT, base: integer, own: boolean) {
+  if !own {
+    return;
+  }
+  match bgen::base(t) {
+    TyText { dep: _ } => {
+      pos = g.position - base;
+      bgen::add_op(g, "OpFreeText");
+      bgen::put_u16(g.o, pos);
+    }
+    TyTuple { elems } => {
+      for e in elems {
+        free_texts(g, e, base + offset(elems, e#index, own), own);
+      }
+    }
+    _ => {}
+  }
+}
+
+// `OpFreeText` of a tuple member.  True when it was written.
+pub fn free_member(g: bgen::Gen, v: integer, idx: integer) -> boolean {
+  elems = match bgen::base(bgen::var_of(g, v).type_def[0] ?? ir::TyVoid) {
+    TyTuple { elems: es } => es,
+    _ => { return false; }
+  };
+  if idx >= len(elems) {
+    return false;
+  }
+  own = owned(g, v);
+  free_texts(g, elems[idx]!, (g.slots[v] ?? 0) + offset(elems, idx, own), own);
+  true
+}

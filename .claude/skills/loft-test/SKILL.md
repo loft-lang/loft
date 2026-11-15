@@ -216,7 +216,7 @@ language-suite cell is the lighter-weight option.
 ### Where to put a new `.loft` test
 
 A new language test is a CELL in the language suite by default — `doc/claude/TESTING.md` §
-the three homes.  `tests/scripts/` keeps only the programs something in this repository names.
+Overview.  `tests/scripts/` keeps only the programs something in this repository names.
 
 | Location | Purpose | Doc fields required? |
 |---|---|---|
@@ -240,7 +240,7 @@ specific `fn`.
 | `// @EXPECT_WARNING: <substring>` | Anywhere | Like `@EXPECT_ERROR` but for warnings — execution proceeds. |
 | `// @EXPECT_FAIL` | File-level (header) **or** fn-level (the comment block immediately above a `fn`) | Tolerate a panic.  File-level: parse / scope-check / runtime failures are accepted anywhere.  Fn-level: only the named fn's panic is tolerated; sibling fns still must pass.  Add a colon-trailing reason when known: `// @EXPECT_FAIL: native function not loaded`.  Native runs skip the file only for a FILE-LEVEL `@EXPECT_FAIL`; a fn-level one skips just that fn and the siblings still run natively (loft#1311). |
 | `// #warn <text>` | Anywhere | Older-style expected warning.  Still supported; `@EXPECT_WARNING:` is preferred for new tests. |
-| `// @falsified-at: <ref>` | Header — **GATED** for every `tests/scripts/*.loft`, and written into every new suite cell | The falsification receipt: `make falsify GUARD=<file> [REF=<commit>]` proves the guard FAILS on the build it was written to catch (without `REF`, against the installed main — `make install-main`), and this records the answer (`@falsified-at: none — <reason>` when no such build exists).  `tests/doc_hygiene.rs` fails any scripts file without it (pre-existing files ride `tests/falsified.baseline`, a shrink-only ratchet).  The receipt also says how to score the guard again — CHANNEL, WITNESS and HOLDS, plus ARMED for a leak guard — checked by `scripts/falsify-review.py --check` with its own shrink-only `tests/falsified_docs.baseline`.  GUARDS.md § A guard that never failed is not a guard. |
+| `// @falsified-at: <ref>` | Header — **GATED** for every `tests/scripts/*.loft`, and written into every new suite cell | The falsification receipt: `make falsify GUARD=<file> [REF=<commit>]` proves the guard FAILS on the build it was written to catch (without `REF`, against the installed main — `make install-main`), and this records the answer (`@falsified-at: none — <reason>` when no such build exists).  `tests/doc_hygiene.rs` fails any scripts file without it (pre-existing files ride `tests/falsified.baseline`, a shrink-only ratchet).  The receipt also says how to score the guard again — CHANNEL, WITNESS and HOLDS, plus ARMED for a leak guard — checked by `scripts/falsify-review.py --check` with its own shrink-only `tests/falsified_docs.baseline`.  A ref run also WRITES the `@falsified-by:` patch `tests/falsified/<guard>.patch` (it replaces an older guard's receipt); a stale patch is refreshed on a runner (`scripts/derive-ci.sh --workflow receipts.yml`), by hand only where the runner reports a wild swing — GUARDS.md § The patch receipt.  GUARDS.md § A guard that never failed is not a guard. |
 
 **Diagnostic-format rule:** the `<substring>` for `@EXPECT_ERROR` and
 `@EXPECT_WARNING` is a substring match against the rendered diagnostic.
@@ -408,7 +408,7 @@ for runtime panics that have no diagnostic-printing path.
 
 - [ ] Picked the right binary (matches the failing-shape).
 - [ ] Used `code!` for unit tests, `cross_mode!` for runtime + cross-backend, `expr!` for one-liner expression results.
-- [ ] If `#[ignore]`, the reason follows the conventions table above.
+- [ ] If `#[ignore]`, the reason follows § `#[ignore]` conventions above.
 - [ ] If pinning a P-id fix, the test name starts with `p<NNN>_`.
 - [ ] If un-ignoring, the commit message names the reason being retired.
 - [ ] Ran the targeted-suite list, not the full suite, unless the change is multi-subsystem.

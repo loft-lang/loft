@@ -39,7 +39,7 @@ Write `operator` in place of `fn`, `self` first, in the type's own package only:
 `next` → `"{x}"` / `for`.  `==` / `!=` stay structural for every type, and a plain `fn` named
 like one drives nothing — nor does a user `fn Op…`: `OpXxx` names are the stdlib's operator
 table only (@C132).  `[…]` is the built-in collections' (a type reads through a named method,
-`x.at(i)`).  Full list and rules: LOFT.md § Operators on your own type, `formal/operators.md`,
+`x.at(i)`).  Full list and rules: LOFT_OPERATORS.md § Operators on your own type, `formal/operators.md`,
 feature @F124.
 
 ## `==` compares content; `&a == &b` asks identity

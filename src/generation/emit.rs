@@ -691,7 +691,12 @@ impl Output<'_> {
                     if as_block {
                         write!(w, "{{ ")?;
                     }
-                    let prev_elem = std::mem::replace(&mut self.tuple_text_elem, elem_is_text);
+                    // `tuple_text_elem` asks a block tail to CLONE an outer text variable, so a
+                    // slot that owns its text takes a copy instead of moving the variable out.
+                    // A `&str` slot (`tuple_text(…)`) borrows it, and a clone there is a
+                    // temporary the borrow outlives (E0716, loft#2494).
+                    let prev_elem =
+                        std::mem::replace(&mut self.tuple_text_elem, elem_is_text && !as_str);
                     // Asked only of a function member: `fn_number_code` takes a table slot
                     // for the number, and an integer member's value is no function.
                     match e

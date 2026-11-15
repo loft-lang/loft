@@ -4690,6 +4690,15 @@ use a separate collection or add after the loop"
         if self.vars.is_declared(*v) || self.vars.is_argument(*v) {
             return;
         }
+        // `@FR-B-Scope` — a bind after the name's block ended starts a new binding, which pass
+        // 2 gives a variable of its own once it knows the type (`rebind_after_block`).
+        // Joined here, the ENDED binding's variable was widened between the passes: pass 2
+        // then met a `τ?` variable and a `τ?` value, saw no difference to split on, and the
+        // ended block's own non-null bind read as nullable (loft#2485).
+        if self.late_join_ended.take() == Some(*v) {
+            self.last_forward_call = None;
+            return;
+        }
         if let Some(callee) = self.last_forward_call.take() {
             self.late_call_joins
                 .push((self.context, *v, callee, self.lexer.at().0));
@@ -5313,6 +5322,9 @@ use a separate collection or add after the loop"
         // program compiles today and keeps its binding (and its loop-record admission).
         // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
         // A loop's VARIABLE is never that body local: its binding ended with its own loop.
+        // The same note before that filter: the per-loop split asks it too, of a bind that
+        // differs from the ended one only in absence.
+        let ended_any = self.bind_after_end.map(|(v, _)| v);
         let ended_bind = self
             .bind_after_end
             .take()
@@ -5505,6 +5517,9 @@ use a separate collection or add after the loop"
         // the value's type yet: it views an element of the walked collection, so a bind that
         // reused it wrote the new value through that view into the collection, or made the
         // view an owner that freed the walked store on every pass of an enclosing loop.
+        // The bind this statement makes stands after its name's block ended: a late join
+        // (`note_late_call_join`) is of ONE binding, and this one is new.
+        self.late_join_ended = ended_any;
         let ended_loop_var = ended_bind == Some(var_nr) && self.vars.was_loop_var(var_nr);
         let (new_binding, new_binding_type);
         let (to, f_type) = if op == "="
@@ -5513,9 +5528,14 @@ use a separate collection or add after the loop"
             && ended_bind == Some(var_nr)
             && (ended_loop_var
                 || (!s_type.is_unknown()
-                    && self
+                    && (self
                         .vars
-                        .retype_would_be_refused(var_nr, &s_type, &self.data)))
+                        .retype_would_be_refused(var_nr, &s_type, &self.data)
+                        // `@FR-N-Join` joins the writes of ONE binding.  Asked of a binding
+                        // that has ended, it widened the ended one's variable: every read in
+                        // the block that bound it non-null then stored "a nullable" value,
+                        // and a later block's non-null bind stayed nullable.
+                        || self.vars.rebind_differs_in_absence(var_nr, &s_type))))
         {
             var_nr = self.rebind_after_block(var_nr, &s_type);
             new_binding = Value::Var(var_nr);
@@ -7202,9 +7222,19 @@ use a separate collection or add after the loop"
             && cur_loop != u16::MAX
             && born_in != u16::MAX
             && born_in != cur_loop
-            && self
+            // Only of a binding the name's own resolution saw ENDED (`bind_after_end`,
+            // `@FR-B-Scope`: another loop's body local cannot be read here).  A loop NUMBER is
+            // not the same on both passes, so `born_in` alone also holds for the LIVE binding
+            // of this very loop: split there, a write to it from a nested block (`if c { tp =
+            // TInt { min: 50 } }`) became a binding of that block, and the read after the
+            // block was refused as out of scope.
+            && ended_any == Some(var_nr)
+            && (self
                 .vars
                 .retype_would_be_refused(var_nr, &s_type, &self.data)
+                // A bind that differs from the ended one in absence starts a binding too:
+                // `@FR-N-Join` joins the writes of one binding, not of two loops.
+                || self.vars.rebind_differs_in_absence(var_nr, &s_type))
         {
             // The SOURCE spelling, not the bound one.  A variable already split once is
             // named `e#b1`, and registering the next split under that would key the third
@@ -7216,6 +7246,10 @@ use a separate collection or add after the loop"
             var_nr = self
                 .vars
                 .body_local_binding(&name, var_nr, &s_type, &mut self.lexer);
+            // Bound HERE, in this loop's body (`@FR-B-Scope`): without the record the new
+            // binding never ended, and a later loop could not take the spelling for its
+            // variable ("shadows a local still in scope").
+            self.record_binding(var_nr);
             rebound_to = Value::Var(var_nr);
             &rebound_to
         } else {
@@ -10130,7 +10164,21 @@ use a separate collection or add after the loop"
                         (Type::RefVar(inner), Type::Reference(have, _) | Type::Enum(have, true, _))
                             if matches!(inner.base(), Type::Reference(want, _)
                                 | Type::Enum(want, true, _) if want == have));
-                if !place_view {
+                // loft#2497 — an annotation naming a record declared BELOW is written, not a
+                // guess: `out: vector<Memo>` is `vector<Unknown(stub)>` on pass 1, which
+                // `change_var_type` reads as unknown and drops, so the local stayed `Unknown`.
+                // Pass 1 then never promoted it onto `__retbuf` (the tail had no vector type)
+                // and pass 2 did, after the local had minted its own backing store — the
+                // two passes disagreed on the frame and the store leaked once per call.  The
+                // stub is the type's own name: `resolve_adopted_stubs` makes it the record
+                // between the passes, as it does for a parameter's.
+                let annotated_stub = self.first_pass
+                    && matches!(self.vars.tp(v_nr).base(), Type::Unknown(0))
+                    && matches!(tp.base(), Type::Vector(..))
+                    && tp.any_node(&mut |t| matches!(t.base(), Type::Unknown(n) if *n != 0));
+                if annotated_stub {
+                    self.vars.set_type(v_nr, tp.clone());
+                } else if !place_view {
                     self.change_var_type(v_nr, &tp);
                 }
                 // (I-Join) — an EXPLICIT `: Type` annotation pins the variable's type, so

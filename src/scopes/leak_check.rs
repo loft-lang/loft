@@ -355,6 +355,12 @@ impl FrameReleases {
             .iter()
             .chain(sets.conditional_ref_frees.iter())
             .copied()
+            // A keyed walk's snapshot scratch is released by `OpFreeScratch` — on the loop's
+            // epilogue and, for a `return` out of the loop, at scope exit (`get_free_vars`).
+            // A walk over a place carries the place as its dependency and never reaches the
+            // assert; a walk over a FRESH collection (`for c in f()`, `@FR-B-View`) names no
+            // place, so this is the op that explains its scratch.
+            .chain(std::iter::once(data.def_nr("OpFreeScratch")))
             .collect();
         let mut freed: HashSet<u16> = HashSet::default();
         collect_freed_vars(ir, &free_ops, &mut freed);

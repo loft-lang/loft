@@ -10,6 +10,7 @@
     scripts/after.py fix --no-tests       # everything but the test binaries
     scripts/after.py join --tests         # a join runs no test binaries unless asked
     scripts/after.py fix --dispatch       # …then push-check and dispatch the runner's workflows
+    scripts/after.py fix --pr --since <PR head>   # before a push to an open PR (scripts/pr_push.py)
 
 Why
 ---
@@ -27,6 +28,11 @@ How
 The changed set is `git diff --name-only <base>` plus the untracked files.  `join` takes the
 head the join plan recorded (`.git/loft-join/plan.json`), else `origin/main`; `fix` takes the
 sha of the last green run (`.git/loft-after/last`), else the branch's upstream, else `HEAD~1`.
+`--pr` adds the checks only the PR's run would otherwise make — the front-end allocation pins
+and the platform census — because there a miss costs a whole run, and on green it records
+`.git/loft-after/last-pr` (HEAD and the base it covered), which `scripts/pr_push.py` reads.
+A test this box always fails for its own reasons (a stale fixture) is named one per line in
+`.git/loft-after/known-red`: kept out of the run, and listed, so a NEW red stands out.
 The seconds-long checks that need no binary run concurrently while the dev binary builds;
 the build-dependent steps run one at a time (one cargo at a time on this box).  A red step's
 output is kept under `.git/loft-after/` and its tail printed.  The marker advances on green.
@@ -144,7 +150,37 @@ def artefact_steps(paths):
     return ratchets, runner
 
 
-def plan(mode, paths, base, want_tests):
+def known_red():
+    """The tests this box fails for its own reasons, one name per line (machine-local)."""
+    f = STATE / "known-red"
+    if not f.exists():
+        return []
+    return [l.strip() for l in f.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.startswith("#")]
+
+
+def without_known_red(expr):
+    names = known_red()
+    if not names:
+        return expr
+    return f"({expr}) - ({' | '.join(f'test(={n})' for n in names)})"
+
+
+def suite_note():
+    """Say when the language suite the checks read is not the commit the tree pins: a guard
+    that lives only in the newer suite is then invisible to the receipts and the hygiene."""
+    pin = (ROOT / "tests" / "loft-suite.pin").read_text(encoding="utf-8").strip()
+    suite = Path(os.environ.get("LOFT_SUITE_DIR") or ROOT.parent / "loft-suite")
+    if not suite.is_absolute():
+        suite = ROOT / suite
+    head = subprocess.run(["git", "-C", str(suite), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    if head != pin:
+        print(f"  note  the suite at {suite} is {head[:9] or 'missing'}, the pin is {pin[:9]}: "
+              "point LOFT_SUITE_DIR at a checkout of the pin, or suite-backed checks read the wrong cells")
+
+
+def plan(mode, paths, base, want_tests, pr=False):
     steps = []
     rs = first_match(paths, r"\.rs$|^Cargo\.(toml|lock)$")
     src = first_match(paths, r"^src/")
@@ -165,6 +201,11 @@ def plan(mode, paths, base, want_tests):
         steps.append(Step("o_proxy", "python3 scripts/o_proxy_check.py", src, "A"))
     if receipts:
         steps.append(Step("receipts review", "python3 scripts/falsify-review.py --check", receipts, "A"))
+    code = first_match(paths, r"^src/|^default/")
+    if code:
+        # A receipt whose patch the code moved under is refreshed on the PR's run, and one
+        # that no longer merges fails it; that merge is seconds here.
+        steps.append(Step("receipts reach", f"python3 scripts/receipts_ci.py --check --base {base}", code, "A"))
     if added:
         steps.append(Step("feature coverage", "scripts/feature_coverage.sh --check",
                           ", ".join(added[:2]) + (f" +{len(added) - 2}" if len(added) > 2 else ""), "A"))
@@ -186,6 +227,17 @@ def plan(mode, paths, base, want_tests):
         steps.append(Step("clippy tests", "cargo clippy -q --tests -- -D warnings", tests_rs, "B"))
     ratchets, runner = artefact_steps(paths)
     steps.extend(ratchets)
+    if pr and (src or stdlib):
+        # Advisory on the PR (never failing a test leg), so a miss shows only as a red there.
+        # The dev profile reads the `linux-debug` row, which the runner pins beside the
+        # release one; no release build here.
+        steps.append(Step("allocation pins", "cargo test -q --test frontend_counts -- --ignored",
+                          src or stdlib, "B"))
+    census = first_match(paths, r"\.(py|sh)$|^scripts/windows_smoke\.tsv$|^\.github/")
+    if pr and (census or added):
+        steps.append(Step("platform census",
+                          "cargo nextest run --no-fail-fast --status-level fail -E 'test(/^platform_census::/)'",
+                          census or ", ".join(added[:2]), "B"))
     if guards:
         # `--tests` takes ONE target per run, so the guards run one after another.
         files = " ".join(f"'{g}'" for g in guards)
@@ -200,11 +252,12 @@ def plan(mode, paths, base, want_tests):
         # on a second line, which nextest would read as unparsed input.
         filt = filt.strip().splitlines()[0] if filt.strip() else ""
         if ok and filt.strip():
-            steps.append(Step("tests", f"LOFT_NATIVE_BACKEND=${{LOFT_NATIVE_BACKEND-c}} cargo nextest run --no-fail-fast --status-level fail -E \"{filt.strip()}\"",
+            steps.append(Step("tests", f"LOFT_NATIVE_BACKEND=${{LOFT_NATIVE_BACKEND-c}} cargo nextest run --no-fail-fast --status-level fail -E \"{without_known_red(filt.strip())}\"",
                               f"the subjects the diff touches ({filt.strip()[:60]}…)", "B"))
         else:
+            expr = without_known_red("$(bash -c 'source scripts/test_subjects.sh; curated_filter')")
             steps.append(Step("tests", "LOFT_NATIVE_BACKEND=${LOFT_NATIVE_BACKEND-c} cargo nextest run --no-fail-fast --status-level fail "
-                              "-E \"$(bash -c 'source scripts/test_subjects.sh; curated_filter')\"",
+                              f"-E \"{expr}\"",
                               "the diff touches what every binary depends on — the curated set", "B"))
     return steps, runner
 
@@ -230,6 +283,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="print the plan and stop")
     ap.add_argument("--tests", action="store_true", help="run the test binaries (a join's default is off)")
     ap.add_argument("--no-tests", action="store_true", help="skip the test binaries (a fix's default is on)")
+    ap.add_argument("--pr", action="store_true",
+                    help="before a push to an open PR: add the PR-only checks, record last-pr on green")
     ap.add_argument("--dispatch", action="store_true",
                     help="after a green run: check the branch is pushed, dispatch the runner's workflows")
     args = ap.parse_args()
@@ -244,7 +299,10 @@ def main():
     if not paths:
         print("nothing changed — nothing to run")
         return 0
-    steps, runner = plan(args.mode, paths, base, want_tests)
+    steps, runner = plan(args.mode, paths, base, want_tests, pr=args.pr)
+    suite_note()
+    if known_red() and want_tests:
+        print(f"  note  kept out as this box's known reds ({STATE / 'known-red'}): {', '.join(known_red())}")
     if args.dry_run:
         for s in steps:
             print(f"  plan  {s.name:18} {s.phase}   {s.why}\n        {s.cmd[:110]}")
@@ -302,6 +360,13 @@ def main():
     if failed:
         return 1
     (STATE / "last").write_text(git("rev-parse", "HEAD").strip() + f" {stamp}\n", encoding="utf-8")
+    if args.pr:
+        dirty = git("status", "--porcelain", "--untracked-files=no").strip()
+        if dirty:
+            print("last-pr not recorded: the tree has uncommitted changes, so HEAD is not what was checked")
+        else:
+            record = f"{git('rev-parse', 'HEAD').strip()} {git('rev-parse', base).strip()} {stamp}\n"
+            (STATE / "last-pr").write_text(record, encoding="utf-8")
     if args.dispatch:
         local, remote = git("rev-parse", "HEAD").strip(), git("rev-parse", f"origin/{branch}").strip()
         if local != remote or git("status", "--porcelain", "--untracked-files=no").strip():

@@ -124,6 +124,13 @@ fn test_a_reference_call_links_a_stored_text() {
   assert(r == 31, "the field's length and its exact text: {r}");
 }
 
+// A stored reference renders as a pointer with its target under `$refs`, and a chain of
+// out-of-line children renders at any length.
+fn test_a_render_writes_references_and_chains() {
+  r = answer("render", "n_rendered", [0]);
+  assert(r == 111, "the reference form, the three-link chain, the long chain: {r}");
+}
+
 // Every integer function of these kernels: where the table runs it to its end, its answer is
 // the IR runner's.  A function stopped at an operator not carried yet is not judged.
 fn test_no_kernel_function_differs() {

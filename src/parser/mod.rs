@@ -1226,6 +1226,9 @@ pub struct Parser {
     /// With the loop ordinal the ended binding was made in, which decides whether loft#1145's
     /// per-loop split owns the bind instead.
     pub(crate) bind_after_end: Option<(u16, Option<u16>)>,
+    /// The variable the assignment being finished binds after its name's block ended, for
+    /// `note_late_call_join`.
+    pub(crate) late_join_ended: Option<u16>,
     /// @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an
     /// integer `pos`): `(cursor_var, cursor_def, pos_field_idx, pos_var)`.  `pos_var` holds the
     /// current position (reads are offset by it); the match PREFIX-consumes (gate `pos + fixed <=
@@ -2233,6 +2236,7 @@ impl Parser {
             bound_in_block: std::collections::HashMap::new(),
             block_rebinds: Vec::new(),
             bind_after_end: None,
+            late_join_ended: None,
             match_cursor: None,
             match_cursor_farthest: None,
             subrule_edges: Vec::new(),

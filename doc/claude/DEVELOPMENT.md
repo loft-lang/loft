@@ -168,7 +168,12 @@ on their own branches at the same time: no step waits on them, and none touches 
    red, and one the PR already fixes needs only that check.
 6. **Push those fixes to the PR branch only after its current run has finished**, all at once.
    Each run is then read whole, and its red steps are fixed before the next run starts.
-   Cancel the runs a push made obsolete (`gh run cancel`).
+   Cancel the runs a push made obsolete (`gh run cancel`).  **Push with `scripts/pr_push.py
+   <N>`**: it refuses while any check is still running, without a fast-forward, or off current
+   main, and runs `scripts/after.py fix --pr` over everything since the PR's head first.
+   That is the dev loop's checks plus what only the PR's run otherwise makes (the patch
+   receipts' merge, the allocation pins, the platform census).  A miss there costs a whole
+   run, where `find_problems.sh --changed`, the debugging loop, runs only tests.
 7. **Once it has merged, install the new main as the box's `loft`**: `make install-main`
    (into `~/.local`, from main's daily build when this machine's rustc built it, else
    rebuilt where only what changed is compiled; [GUARDS.md](GUARDS.md) § The control is
@@ -215,10 +220,14 @@ auto-merge does not wait for it.  Dispatched with the PR (step 4) it runs beside
 on `main` the night after the merge.  It costs about one nightly's runner time per PR (about
 1150 runner-minutes, most of them on macOS and Windows).
 
-It competes for runners with the PR's own run, so dispatch it on a head that already carries
-every known fix, and not while that run's CI or revalidate-libs jobs are still queued (`gh run
-list --status queued`).  One dispatched on a head a push was about to replace left the
-library revalidation running 2 jobs at a time; cancelled, it ran 10 or more.
+It competes for runners with the PR's own run, and runners are handed out in queue order.
+The workflow keeps the order itself: every job a pull_request run skips needs `pr-ci-started`,
+which waits until the CI and revalidate-libs runs on the same commit have no job left in the
+queue (two looks a minute apart, since a run adds jobs as the ones they need finish), and
+starts the nightly all the same after 45 minutes.  So the dispatch may be sent at any moment,
+beside the push included.  What stays a judgement is the head: dispatch on one that already
+carries every known fix, because a push replaces the head and the run on the old one is
+runner time spent on nothing (`gh run cancel` it).
 
 A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
 it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the

@@ -1,0 +1,654 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the C generator in loft: `src/c/tidy.rs`, function for function
+// (doc/claude/plans/91-self-host/12-c-generator.md).
+//
+// The written body of one C function, without the names it declares and never uses.
+//
+// The writer declares every local of the loft function and a label for every loop, then writes
+// the statements; a rewrite that removes the last use of a local, or a loop no `continue`
+// leaves early, leaves the declaration or the label behind, which the C compiler reports.  A
+// warning can mean a wrong program, so the written C carries none.  This pass reads the body
+// the writer produced and drops only what nothing names: a label no `goto` names; a top-level
+// declaration whose name appears nowhere else and whose initializer has no effect; a local that
+// is only ever assigned, whose assignments keep their right-hand side as `(void) (…);`.  A
+// parameter the body never names is marked `(void)`.  Nothing it removes is read, so the
+// program does what it did.
+
+// How often one identifier occurs.
+pub struct Count {
+  pub name: text,
+  pub n: integer,
+}
+
+fn bump(counts: hash<Count[name]>, name: text) {
+  e = counts[name];
+  if e == null {
+    counts += [Count { name: name, n: 1 }];
+  } else {
+    e.n += 1;
+  }
+}
+
+fn count_of(counts: hash<Count[name]>, name: text) -> integer {
+  counts[name].n ?? 0
+}
+
+fn alpha(b: integer) -> boolean {
+  (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+}
+
+fn digit(b: integer) -> boolean {
+  b >= 48 && b <= 57
+}
+
+// A byte of an identifier after its first.
+fn word(b: integer) -> boolean {
+  alpha(b) || digit(b) || b == 95
+}
+
+// Every identifier in `body` with how often it occurs, string and character literals and
+// comments skipped.
+pub fn identifier_counts(body: text) -> hash<Count[name]> {
+  counts: hash<Count[name]> = [];
+  n = body.size();
+  i = 0;
+  while i < n {
+    c = body.byte_at(i);
+    if c == 34 || c == 39 {
+      i += 1;
+      while i < n && body.byte_at(i) != c {
+        if body.byte_at(i) == 92 {
+          i += 1;
+        }
+        i += 1;
+      }
+      i += 1;
+    } else if c == 47 && body.byte_at(i + 1) == 42 {
+      i += 2;
+      while i + 1 < n && !(body.byte_at(i) == 42 && body.byte_at(i + 1) == 47) {
+        i += 1;
+      }
+      i += 2;
+    } else if c == 47 && body.byte_at(i + 1) == 47 {
+      while i < n && body.byte_at(i) != 10 {
+        i += 1;
+      }
+    } else if alpha(c) || c == 95 {
+      s = i;
+      while i < n && word(body.byte_at(i)) {
+        i += 1;
+      }
+      bump(counts, body[s..i]);
+    } else if digit(c) {
+      // A number, its suffix and exponent included, is no identifier.
+      while i < n && (word(body.byte_at(i)) || body.byte_at(i) == 46) {
+        i += 1;
+      }
+    } else {
+      i += 1;
+    }
+  }
+  counts
+}
+
+fn is_ident(s: text) -> boolean {
+  n = s.size();
+  if n == 0 || !(alpha(s.byte_at(0)) || s.byte_at(0) == 95) {
+    return false;
+  }
+  for i in 1..n {
+    if !word(s.byte_at(i)) {
+      return false;
+    }
+  }
+  true
+}
+
+// The lines of `t` as a split on every newline gives them: one more than its newlines, so the
+// empty text is one empty line.
+fn lines_of(t: text) -> vector<text> {
+  if t == "" {
+    return [""];
+  }
+  t.split('\n')
+}
+
+// `s` without `suffix` at its end, or null where it does not end in it.
+fn strip_suffix(s: text, suffix: text) -> text? {
+  if !s.ends_with(suffix) {
+    return null;
+  }
+  s[0..s.size() - suffix.size()]
+}
+
+// `s` without `prefix` at its start, or null where it does not start with it.
+fn strip_prefix(s: text, prefix: text) -> text? {
+  if !s.starts_with(prefix) {
+    return null;
+  }
+  s[prefix.size()..s.size()]
+}
+
+// `s` without the bytes `b` it starts with.
+fn trim_start_byte(s: text, b: integer) -> text {
+  i = 0;
+  while i < s.size() && s.byte_at(i) == b {
+    i += 1;
+  }
+  s[i..s.size()]
+}
+
+// What follows the last space or `*` of `s`: the name a declarator ends in.
+fn last_name(s: text) -> text {
+  i = s.size();
+  while i > 0 && s.byte_at(i - 1) != 32 && s.byte_at(i - 1) != 42 {
+    i -= 1;
+  }
+  s[i..s.size()]
+}
+
+// The name a parameter `"T name"` declares, or null for one without a space.
+fn param_name(p: text) -> text? {
+  at = p.rfind(" ") ?? return null;
+  trim_start_byte(p[at + 1..p.size()], 42)
+}
+
+// A label alone on its line (`cont_3:;`, or `loft_gen_end:` before its statement): its name.
+fn label_of(line: text) -> text? {
+  t = line.trim();
+  name = strip_suffix(t, ":;") ?? strip_suffix(t, ":") ?? return null;
+  if is_ident(name) && name != "default" {
+    return name;
+  }
+  null
+}
+
+// Is `t` a C type the writer declares a local as?
+fn local_type(t: text) -> boolean {
+  t == "int64_t" || t == "int32_t" || t == "int16_t" || t == "int8_t" || t == "uint64_t"
+    || t == "uint32_t" || t == "uint16_t" || t == "uint8_t" || t == "double" || t == "float"
+    || t == "int" || t == "size_t" || t.starts_with("loft_") || t.starts_with("lt_")
+}
+
+// A declaration alone on its line: the name, the initializer, and whether it is at the
+// function's top level (four spaces).
+struct Declaration {
+  name: text,
+  init: text?,
+  top: boolean,
+}
+
+// A declaration alone on its line (`T name = init;` or `T name;`, at any indent).
+fn declaration_at(line: text) -> Declaration? {
+  rest = trim_start_byte(line, 32);
+  top = line.size() - rest.size() == 4;
+  if rest == "" || !rest.ends_with(";") || line.size() == rest.size() {
+    return null;
+  }
+  rest = rest[0..rest.size() - 1];
+  // One declaration per line: `int64_t m = LOFT_NULL; int m_set = 0;` is two, and is left
+  // alone (dropping it for the first would lose the second).
+  if rest.contains(";") {
+    return null;
+  }
+  head = rest;
+  init: text? = null;
+  eq = rest.find(" = ");
+  if eq != null {
+    head = rest[0..eq];
+    init = rest[eq + 3..rest.size()];
+  }
+  // `T name`, `T *name` or `T * name`: the pointer belongs to the declarator.
+  sp = head.rfind(" ") ?? return null;
+  name = trim_start_byte(head[sp + 1..head.size()], 42);
+  e = sp;
+  while e > 0 && (head.byte_at(e - 1) == 42 || head.byte_at(e - 1) == 32) {
+    e -= 1;
+  }
+  if local_type(head[0..e]) && is_ident(name) {
+    return Declaration { name: name, init: init, top: top };
+  }
+  null
+}
+
+// A top-level declaration: `declaration_at` at four spaces.
+fn declaration(line: text) -> Declaration? {
+  d = declaration_at(line) ?? return null;
+  if d.top {
+    return d;
+  }
+  null
+}
+
+// Does evaluating `init` do nothing but produce a value?  Literals, names, braces, and the
+// writer's constant spellings; any other call may have an effect.
+fn pure(init: text) -> boolean {
+  s = init;
+  for keep in ["loft_ref_null()", "(double) NAN", "(float) NAN", "INT64_C(", "UINT64_C(", "INT32_C("] {
+    s = s.replace(keep, " ");
+  }
+  !s.contains("(") && !s.contains("\"") && !s.contains("'")
+}
+
+// An absent initializer has no effect either.
+fn pure_or_none(init: text?) -> boolean {
+  init == null || pure(init)
+}
+
+// Is `rhs` a constant — no name a program declares (they are lower case: locals, functions),
+// only literals and the writer's constants (`LOFT_NULL`, `INT64_C(3)`)?  Dropping a constant
+// right-hand side leaves nothing unread behind; one that reads a local keeps the read.
+fn constant(rhs: text) -> boolean {
+  if !pure(rhs) {
+    return false;
+  }
+  for c in identifier_counts(rhs) {
+    first = c.name.byte_at(0);
+    if !(first >= 65 && first <= 90) && c.name != "loft_ref_null" {
+      return false;
+    }
+  }
+  true
+}
+
+// One assignment statement of a line: the bytes `from..to` of the whole statement, the name
+// assigned and the right-hand side.
+struct Assignment {
+  from: integer,
+  to: integer,
+  name: text,
+  rhs: text,
+}
+
+// The byte after the literal that opens at `at` with quote `line.byte_at(at)`, as the statement
+// scan passes it: the closing quote itself where there is one.
+fn literal_end(line: text, at: integer) -> integer {
+  quote = line.byte_at(at);
+  pos = at + 1;
+  while pos < line.size() && line.byte_at(pos) != quote {
+    if line.byte_at(pos) == 92 {
+      pos += 1;
+    }
+    pos += 1;
+  }
+  pos
+}
+
+// Every assignment statement on `line` — at its start, or after a `{` or `;`.  The statement
+// ends at the first `;` outside brackets and literals.
+fn assignment_spans(line: text) -> vector<Assignment> {
+  n = line.size();
+  out: vector<Assignment> = [];
+  at = 0;
+  depth = 0;
+  stmt_start = true;
+  while at < n {
+    ch = line.byte_at(at);
+    if ch == 34 || ch == 39 {
+      at = literal_end(line, at) + 1;
+      stmt_start = false;
+      continue;
+    }
+    if ch == 32 {
+      at += 1;
+      continue;
+    }
+    if stmt_start && depth == 0 && (alpha(ch) || ch == 95) {
+      s0 = at;
+      end = at;
+      while end < n && (word(line.byte_at(end)) || line.byte_at(end) == 46) {
+        end += 1;
+      }
+      target = line[s0..end];
+      if line[end..n].starts_with(" = ") {
+        r0 = end + 3;
+        pos = r0;
+        nest = 0;
+        while pos < n {
+          b = line.byte_at(pos);
+          if b == 40 || b == 91 || b == 123 {
+            nest += 1;
+          } else if b == 41 || b == 93 || b == 125 {
+            nest -= 1;
+          } else if b == 34 || b == 39 {
+            pos = literal_end(line, pos);
+          } else if b == 59 && nest == 0 {
+            break;
+          }
+          pos += 1;
+        }
+        parts = target.split('.');
+        name = parts[0];
+        fields = true;
+        for p in parts {
+          if p#index > 0 && !is_ident(p) {
+            fields = false;
+          }
+        }
+        if pos < n && is_ident(name) && fields && !line[r0..pos].contains(" = ") {
+          out += [Assignment { from: s0, to: pos + 1, name: name, rhs: line[r0..pos] }];
+          at = pos + 1;
+          stmt_start = true;
+          continue;
+        }
+      }
+      at = end;
+      stmt_start = false;
+      continue;
+    }
+    if ch == 123 || ch == 59 {
+      stmt_start = true;
+      if ch == 123 {
+        depth = 0;
+      }
+    } else if ch == 40 || ch == 91 {
+      depth += 1;
+      stmt_start = false;
+    } else if ch == 41 || ch == 93 {
+      depth -= 1;
+      stmt_start = false;
+    } else if ch == 125 {
+      stmt_start = true;
+    } else {
+      stmt_start = false;
+    }
+    at += 1;
+  }
+  out
+}
+
+// `body` (the lines between the function's braces) without the labels, locals and assignments
+// nothing reads, and with every parameter of `params` (`"T name"` each) the body never names
+// marked `(void)`.  Repeated until nothing changes: a local dropped may have been the last
+// reader of another.
+pub fn tidy(params: vector<text>, body: text) -> text {
+  now = body;
+  for _ in 0..8 {
+    next = tidy_once(params, now);
+    if next == now {
+      break;
+    }
+    now = next;
+  }
+  now
+}
+
+fn tidy_once(params: vector<text>, body: text) -> text {
+  counts = identifier_counts(body);
+  lines = lines_of(body);
+  // The locals written but never read: every occurrence beyond the declaration is the target
+  // of a whole-line assignment whose right-hand side does not name it.
+  assigned: hash<Count[name]> = [];
+  for l in lines {
+    for a in assignment_spans(l) {
+      if count_of(identifier_counts(a.rhs), a.name) == 0 {
+        bump(assigned, a.name);
+      }
+    }
+  }
+  set_only: vector<text> = [];
+  // A parameter the body only ever assigns: its value is never read.
+  for p in params {
+    name = param_name(p) ?? continue;
+    if is_ident(name) && count_of(counts, name) > 0 && count_of(assigned, name) == count_of(counts, name) {
+      set_only += [name];
+    }
+  }
+  for l in lines {
+    d = declaration(l) ?? continue;
+    if pure_or_none(d.init) && !l.contains("volatile") && count_of(counts, d.name) > 1
+      && count_of(assigned, d.name) + 1 == count_of(counts, d.name) {
+      set_only += [d.name];
+    }
+  }
+  out = "";
+  for p in params {
+    name = param_name(p) ?? continue;
+    if is_ident(name) && count_of(counts, name) == 0 && !body.contains("(void) {name};") {
+      out += "    (void) {name};\n";
+    }
+  }
+  for l in lines {
+    last = l#index + 1 == len(lines);
+    // A local the whole body names once is unused wherever it is declared; one only ever
+    // assigned is dropped at the top level alone, where its name is the function's.
+    keep = true;
+    label = label_of(l);
+    if label != null {
+      keep = count_of(counts, label) > 1;
+    } else {
+      d = declaration_at(l);
+      if d != null {
+        keep = !(pure_or_none(d.init) && !l.contains("volatile")
+          && (count_of(counts, d.name) == 1 || (d.top && set_only.contains(d.name))));
+      }
+    }
+    if !keep {
+      continue;
+    }
+    spans = [for a in assignment_spans(l) if set_only.contains(a.name) { a }];
+    if len(spans) > 0 {
+      // Nothing reads the local: the value is not kept, its computation still runs.
+      line = "";
+      at = 0;
+      for a in spans {
+        line += l[at..a.from];
+        if !constant(a.rhs) {
+          line += "(void) ({a.rhs});";
+        }
+        at = a.to;
+      }
+      line += l[at..l.size()];
+      if line.trim() != "" {
+        out += line.trim_end();
+        if !last {
+          out += "\n";
+        }
+      }
+      continue;
+    }
+    out += l;
+    if !last {
+      out += "\n";
+    }
+  }
+  out
+}
+
+// The parameters of the signature `l` between its parentheses at `open` and `close`, as
+// `"T name"` each; `void` and a function pointer are none.
+fn params_of(l: text, open: integer, close: integer) -> vector<text> {
+  [for p in l[open + 1..close].split_text(", ") if p != "void" && p != "" && !p.contains("(") { p }]
+}
+
+// The line after `from` that is `}` alone, or null.
+fn closing(lines: vector<text>, from: integer) -> integer? {
+  for k in from..len(lines) {
+    if lines[k] == "}}" {
+      return k;
+    }
+  }
+  null
+}
+
+// The written part of a unit (everything after the runtime) with every function body tidied
+// (`tidy`) — the program's functions, their twins and dispatchers, generator resumes and the
+// render functions alike.  A function is a line at column 0 that ends in `) {` and the next
+// line that is `}` alone; anything else (a table, a type) is passed over as it is.
+pub fn tidy_unit(written: text) -> text {
+  lines = lines_of(written);
+  out = "";
+  i = 0;
+  while i < len(lines) {
+    l = lines[i]!;
+    first = l.byte_at(0);
+    signature = !(first == 32 || first == 9) && l.ends_with(") {{") && l.contains("(") && first != 35;
+    end = if signature { closing(lines, i + 1) } else { null };
+    if end != null {
+      open = l.find("(") ?? 0;
+      close = l.rfind(")") ?? l.size();
+      params = params_of(l, open, close);
+      body = lines[i + 1..end].join("\n");
+      tidied = tidy(params, "{body}\n");
+      out += ref_params_copied(l, open, close, params, tidied);
+      out += "}}";
+      if end + 1 < len(lines) {
+        out += "\n";
+      }
+      i = end + 1;
+      continue;
+    }
+    out += l;
+    if i + 1 < len(lines) {
+      out += "\n";
+    }
+    i += 1;
+  }
+  out
+}
+
+// `@FR-R-RefParam`: every `loft_ref` parameter the body names taken as `<name>__in` and copied
+// into the local `<name>` by `LOFT_REF_IN` as the body's first statement — field by field under
+// gcc, which then keeps `rec` and `pos` apart instead of reloading them with one load across
+// the two spilled halves of the argument (loft_rt.h, at `LOFT_REF_IN`).  The body is unchanged.
+// Switch `LOFT_NO_REF_PARAM_COPY`.  Answers the signature line and the body after it.
+fn ref_params_copied(sig: text, open: integer, close: integer, params: vector<text>, body: text) -> text {
+  off = env_variable("LOFT_NO_REF_PARAM_COPY") ?? "0";
+  if off != "0" {
+    return "{sig}\n{body}";
+  }
+  counts = identifier_counts(body);
+  copied: vector<text> = [];
+  for p in params {
+    n = strip_prefix(p, "loft_ref ") ?? continue;
+    if is_ident(n) && count_of(counts, n) > 0 {
+      copied += [n];
+    }
+  }
+  if len(copied) == 0 {
+    return "{sig}\n{body}";
+  }
+  list: vector<text> = [];
+  for p in sig[open + 1..close].split_text(", ") {
+    n = strip_prefix(p, "loft_ref ");
+    if n != null && copied.contains(n) {
+      list += ["loft_ref {n}__in"];
+    } else {
+      list += [p];
+    }
+  }
+  head = "";
+  for n in copied {
+    head += "    LOFT_REF_IN({n});\n";
+  }
+  "{sig[0..open + 1]}{list.join(", ")}{sig[close..sig.size()]}\n{head}{body}"
+}
+
+// What a column-0 line defines or declares, and whether it opens a function's body.
+struct Defined {
+  name: text,
+  opens: boolean,
+}
+
+// The name a column-0 line defines or declares: a function (`static T name(…) {` or its
+// prototype `…);`, a body always inlined into its wrapper spelled `LOFT_HOT_INLINE T name(…)`),
+// or a one-line table (`static const T name[…] = …;`).
+fn defined_name(l: text) -> Defined? {
+  if !l.starts_with("static ") && !l.starts_with("LOFT_HOT_INLINE ") {
+    return null;
+  }
+  open = l.find("(");
+  if open != null && (l.ends_with(") {{") || l.ends_with(");")) {
+    name = last_name(l[0..open]);
+    if is_ident(name) {
+      return Defined { name: name, opens: l.ends_with(") {{") };
+    }
+    return null;
+  }
+  if l.starts_with("static const ") && l.ends_with(";") {
+    // `static const T name[…] = …;` or `static const T name = …;`
+    eq = l.find(" = ") ?? return null;
+    head = l[0..eq];
+    bracket = head.find("[");
+    if bracket != null {
+      head = head[0..bracket];
+    }
+    name = last_name(head);
+    if is_ident(name) {
+      return Defined { name: name, opens: false };
+    }
+  }
+  null
+}
+
+// The finished program (`main` included) without the written functions and one-line tables
+// nothing names: a twin the writer declined, a default function no constructor calls, a
+// default image or key table no code reads.  Only the part after `runtime_end` is touched; the
+// whole text is what names them.  Repeated until nothing changes, since a function dropped may
+// have been its callee's last caller.
+pub fn drop_unnamed(program: text, runtime_end: text) -> text {
+  found = program.find(runtime_end) ?? return program;
+  at = found + runtime_end.size();
+  runtime = program[0..at];
+  written = program[at..program.size()];
+  for _ in 0..8 {
+    all = "{runtime}{written}";
+    counts = identifier_counts(all);
+    lines = lines_of(written);
+    // How many lines of the program define or declare each name: those are no use of it.
+    decls: hash<Count[name]> = [];
+    for l in lines_of(all) {
+      d = defined_name(l) ?? continue;
+      bump(decls, d.name);
+    }
+    // A function's mentions inside its own body (it calls itself) are no use of it either.
+    own: hash<Count[name]> = [];
+    k = 0;
+    while k < len(lines) {
+      d = defined_name(lines[k]!);
+      end = if d != null && d.opens { closing(lines, k + 1) } else { null };
+      if d != null && end != null {
+        inside = count_of(identifier_counts(lines[k + 1..end].join("\n")), d.name);
+        for _ in 0..inside {
+          bump(own, d.name);
+        }
+        k = end + 1;
+        continue;
+      }
+      k += 1;
+    }
+    out = "";
+    changed = false;
+    i = 0;
+    while i < len(lines) {
+      l = lines[i]!;
+      d = defined_name(l);
+      unused = d != null && d.name != "main"
+        && count_of(counts, d.name) <= count_of(decls, d.name) + count_of(own, d.name);
+      if d != null && unused && d.opens {
+        changed = true;
+        i = (closing(lines, i + 1) ?? i) + 1;
+        // The blank line the function was written after goes with it.
+        if out.ends_with("\n\n") {
+          out = out[0..out.size() - 1];
+        }
+      } else if unused {
+        changed = true;
+        i += 1;
+      } else {
+        out += l;
+        if i + 1 < len(lines) {
+          out += "\n";
+        }
+        i += 1;
+      }
+    }
+    written = out;
+    if !changed {
+      break;
+    }
+  }
+  "{runtime}{written}"
+}

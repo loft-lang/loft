@@ -13,7 +13,7 @@
 //!    buffer a one-`Set` literal's value is built from (the hoist reads their plain
 //!    declarations as invariant).
 //! 3. `@FR-R-ElemFirst` — a temp built inside its appended element (the pairs the writers
-//!    still apply; the IR's own pairs no longer show a buffer).
+//!    still apply; the IR's own pairs show no buffer).
 //! 4. `@FR-R-MoveAppend` — a move host.
 //! 5. `@FR-R-RetAdopt` — the adopted result's witness.
 //!

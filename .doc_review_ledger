@@ -4,105 +4,106 @@ Makefile#If you are working on loft itself	73519f10023eb2b24124ffc70f299ac910ff9
 Makefile#If you just want to try things	e49371c37328d134164aa52e7f03e73cd1e28e584d71b5c542b240ea80ddcaaf	2026.10.0
 Makefile#More specialised	69a18e7c2f3cc10755fec9a8124a07c2c5a7aa28a4df6f4c3ac27f7a6873bb32	2026.10.0
 Makefile#What can this Makefile do for you?	1733a30e4e2e90a7251ea8311dca7b3cfaae5227718dd7654b7f5dcd4a108c84	2026.10.0
-README.md#(intro)	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	2026.10.0
-README.md#Contributing	72ef0d99fe0c37d875d0b5319760b9d0d4009cf39123047a9850b2551252f33e	2026.10.0
-README.md#Documentation	3b896c604f3b6a9feb821510f50173a7fde6a6b900f6a1ee6da80a74351469a4	2026.10.0
-README.md#Download a binary — no toolchain, no compiler	9b7da8015b63f5fe9eff156fcc27886162d2309ba883cde956c764079897c19e	2026.10.0
-README.md#Getting started	40869f9da5eaeb130460f2d8648cb8b50747df046d09d7ff74a5861b38065743	2026.10.0
-README.md#How loft is built — and why it cannot be orphaned	8557ea7d3a00a9ec20e8bc5727fff24865cd65ce2321ce093a19cd4dbc9342bf	2026.10.0
-README.md#License	94bc1e091213d83510bae9d9b6f79df6ca203e3fd32d732531d930078449945c	2026.10.0
-README.md#Maturity	d4b6c4ebd49d1643e4b38ffa41911dffdd0cd6641bd7a95c51cd4263909feea9	2026.10.0
-README.md#Or build it yourself	703c547d25d47c0c5b147f22a22ad31079d75097adf8700bef1215517b8fbbb4	2026.10.0
-README.md#The distribution	882370f67ce97245a46f0cdc5f220020aea87ca97108bc9e32609647e96ce520	2026.10.0
-README.md#What it looks like when it runs	2678afe8643e169033929faada81f2365799cfe0c1bfd0ff080864d6b2df0f3d	2026.10.0
-README.md#loft — a language that reads like Python, ships like a distribution	780b331e593bc98c21733b6170ae56cbeb052b20950b9a93f3ac344840b2bb9c	2026.10.0
-README.md#or pin it to main, ignoring pull requests	32e51bab9311282e92c9f5fbbf2e4b1ec3237df61dfe360aeab4e15f7a8d491a	2026.10.0
-README.md#requires a Rust toolchain (1.96 or later)	c337f5bb49a4d546547aa68759f014140428774ddc7bbe1b52d875fdbce1bcf7	2026.10.0
-README.md#the newest daily build of your platform, from any branch or PR	135a8896cf77ef7fd27fbd3c1b85ff3cec74ec7be4b8d021713fdd49956d3097	2026.10.0
-default/01_code.loft#(intro)	736f8d149d0557bc3d37c448b501e1b935a1a693e825baa5ce0ca6de45c1728c	2026.10.0
-default/01_code.loft#Assertions that report both sides	c93651e020b6f821018e8bf276f856dd301f338f967e17759074368233759b2f	2026.10.0
-default/01_code.loft#Collections	bfd2f18292c641d76961179e896264220678973c97c1047fd287557fef8111f8	2026.10.0
-default/01_code.loft#Field iteration support types	85ec9b4ef432b47178046986c920fbc383fac954e2cad276e6826a371de657d9	2026.10.0
-default/01_code.loft#Interfaces	9ae3fdbc4c508d377b676db82da4c25c3a7a1c50cf6f03e0bf86d78a84de2e0f	2026.10.0
-default/01_code.loft#Math	94c82c377ea6fc6d3dab578a68db22fc38ea7cbe5d23db288be62bc40e5b22eb	2026.10.0
-default/01_code.loft#Output and Diagnostics	0bc797b05d721812314f20fd97fd399df2c1d9562a95904a949df6d26498a3b4	2026.10.0
-default/01_code.loft#Parallel	5a53362a1a7f82a65bb6b8a5728c72a0a8e95a789dc9267432649f3c55fb472d	2026.10.0
-default/01_code.loft#Text	d2bd261ddf3d077c94d93db01ca2389b5ef1a4e8f2b1a50c3b8d114fe9a8b92b	2026.10.0
-default/01_code.loft#Types	71495276d35b091742c4ee9e13a249ee7e43b75a9c62aa119378eba7a1f6ab75	2026.10.0
-default/01_code.loft#Vector aggregates	3df8582fc80713318c39115feb498a78279b6be72ad04b35d3e6e5526a1b0f0b	2026.10.0
-default/01_code.loft#exp / ln / log2 / log10	e0f66d86d133ed8e562b440bb6e889ccbe21949e2a2c3f6c90315bc82f139b48	2026.10.0
-default/01_code.loft#min / max / clamp	b90c7904dbba895520b64baa48f39183bbafb5c8af36423a85be2ceda887523e	2026.10.0
-default/02_files.loft#(intro)	2c8fd463978bb1d4ea062143c617fc36bbf4de73d5ebc4640fb9e59e762b73ff	2026.10.0
-default/02_files.loft#Binary file I/O	66f2f4ebd7c20ab39fa68b8789289d2850e695e92d19d753b8736c7dbf44355d	2026.10.0
-default/02_files.loft#Environment	3a662a2a10b4a42cbb6d10a2f7f04ffec1818526f1084d94e171d135b2f0bc4f	2026.10.0
-default/02_files.loft#File System	3035b6671b78fd2ab27d7d787fd334a924f569ba2e678a8583df279fb4a40f31	2026.10.0
-default/02_files.loft#Files and directories	9d924a43dc382dbf9513fc6c8326c5d3231bd5ec908a3bba9e2aeb3f15564dca	2026.10.0
-default/02_files.loft#Lazy stores	765852449e276db0400b34aa38a953296946056ce96bd0f9483f02b6ecc88d8a	2026.10.0
-default/02_files.loft#Memory diagnostics	775c785857e1ceffa46a2b3af2f7bec8fbc0abc42ee392f619f3443abd43aab6	2026.10.0
-default/02_files.loft#Optional C libraries	075196a42baa32ef51ea4cb9fd9422bda410c0f6b9bf3e81f66e57337be16087	2026.10.0
-default/02_files.loft#Paged store loading	c9219fa25b41c745764b35a6a2cd4ebfc1d85a6cf2062c23f3fbe43ec5abc706	2026.10.0
-default/02_files.loft#Path helpers	eb318689e5bf8ddddd5df7c5bf67a16317575d56e265477d63ebf9b4d8016b83	2026.10.0
-default/02_files.loft#Persistent stores	fe6e1ed4fc1abddf3de8b18031f21d04d33cac3199cb7675be919d05a074af9f	2026.10.0
-default/02_files.loft#System directories	608bafe15e9463971156edd8222249f1885f72ca6c2708c51c206036b30c13d3	2026.10.0
-default/02_files.loft#Text	0bba5158ae39d275caae807563f973696e605fa6701f62c1de9b1ad01957d0fa	2026.10.0
-default/02_files.loft#Time	d63f496a9163ccff765ca214d9f2e62b79c31a91db16fd24ac012dfd54e4ecd8	2026.10.0
-default/02_files.loft#Vector operations	8c047398256e9f81704f0649dd7bf1ff51965c5b5bb6953581b3a96aa34320f5	2026.10.0
+README.md#(intro)	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	2026.11.0
+README.md#Contributing	d026ec5a19e86e2281c740b02234b86791d673a8ec048dbe42b87e9914bb8f00	2026.11.0
+README.md#Documentation	375d01e61db0fa6ef9631ea9f7892b67a776c63572d0fcd31895e9bae5ed4506	2026.11.0
+README.md#Download a binary — no toolchain, no compiler	b69d566b87cec175552997116c734af9b712f9e6bd606d39e8e5eeebf7f5c239	2026.11.0
+README.md#Getting started	40869f9da5eaeb130460f2d8648cb8b50747df046d09d7ff74a5861b38065743	2026.11.0
+README.md#How loft is built — and why it cannot be orphaned	3fcb3be8663e801858dda72483640d9d4fa15d13333e6f585a5a8bcbf6d91eca	2026.11.0
+README.md#License	94bc1e091213d83510bae9d9b6f79df6ca203e3fd32d732531d930078449945c	2026.11.0
+README.md#Maturity	f2fb5ba061d04c008beea18a74ec209f3b3aa82086b819dbde05e42552412486	2026.11.0
+README.md#Or build it yourself	703c547d25d47c0c5b147f22a22ad31079d75097adf8700bef1215517b8fbbb4	2026.11.0
+README.md#The distribution	882370f67ce97245a46f0cdc5f220020aea87ca97108bc9e32609647e96ce520	2026.11.0
+README.md#What it looks like when it runs	2678afe8643e169033929faada81f2365799cfe0c1bfd0ff080864d6b2df0f3d	2026.11.0
+README.md#loft — a language that reads like Python, ships like a distribution	e594bfa2aed64c9df2631c1477b20bc3f5085cf636d9e0075a5dc49e48c1757f	2026.11.0
+README.md#or pin it to main, ignoring pull requests	32e51bab9311282e92c9f5fbbf2e4b1ec3237df61dfe360aeab4e15f7a8d491a	2026.11.0
+README.md#requires a Rust toolchain (1.96 or later)	15c805b8096874e4d313b9bd841e3505fa7547e97e16105cf38a0cb56b54270e	2026.11.0
+README.md#the newest daily build of your platform, from any branch or PR	135a8896cf77ef7fd27fbd3c1b85ff3cec74ec7be4b8d021713fdd49956d3097	2026.11.0
+default/01_code.loft#(intro)	736f8d149d0557bc3d37c448b501e1b935a1a693e825baa5ce0ca6de45c1728c	2026.11.0
+default/01_code.loft#Assertions that report both sides	c93651e020b6f821018e8bf276f856dd301f338f967e17759074368233759b2f	2026.11.0
+default/01_code.loft#Collections	0ec940ed376d0c1f6e7bf4ffb0ce29529ab7838d6ae511724c6dfcca80de8aa8	2026.11.0
+default/01_code.loft#Field iteration support types	5a9a9b3fb22e5eb3b99c954a1b55378233a4ae504cbb2ec1c7a11f5cc8e8e315	2026.11.0
+default/01_code.loft#Interfaces	c9f15e98e57a187be26131d64ee93c3af6ee5fb8ab38b4329c91b4be758981e3	2026.11.0
+default/01_code.loft#Math	9285a32cd9dc19714a0dd59b2c12b728231a6c2117230619c0c5e1e2bcc848ce	2026.11.0
+default/01_code.loft#Output and Diagnostics	102673942faa1284a0e71340434236db831daea6c1f3c7de3556e1fc4ebb6a8c	2026.11.0
+default/01_code.loft#Parallel	58280fb55347ecb543be89cf1f314161e6c8939976ce3d9ba6f3e159725648e5	2026.11.0
+default/01_code.loft#Text	257ca83ff083ea449933e10e39781db994fd3d3b128854628bdea3cac739eeb1	2026.11.0
+default/01_code.loft#Types	ea156e4664b077603f8c45807b4bbc5dddc662b134c2069def148832babb0608	2026.11.0
+default/01_code.loft#Vector aggregates	7e8bfdea5581e3c51cd159370cd4b55281cbe84e2d999897990a92654e4ba9de	2026.11.0
+default/01_code.loft#exp / ln / log2 / log10	fd9e57cd93f84c1a4f37a588537f34b582e1a8fd9cf9263e08e460e161083452	2026.11.0
+default/01_code.loft#min / max / clamp	4adf201104891bf9abb5d05363353b76a8cc3c55302eacfc6d5b30665004eeb6	2026.11.0
+default/02_files.loft#(intro)	2c8fd463978bb1d4ea062143c617fc36bbf4de73d5ebc4640fb9e59e762b73ff	2026.11.0
+default/02_files.loft#Binary file I/O	66f2f4ebd7c20ab39fa68b8789289d2850e695e92d19d753b8736c7dbf44355d	2026.11.0
+default/02_files.loft#Environment	3a662a2a10b4a42cbb6d10a2f7f04ffec1818526f1084d94e171d135b2f0bc4f	2026.11.0
+default/02_files.loft#File System	705720f7466a9060a3b2fff11c7c215c84ca6f6ff18b64a4442fba86c3df7878	2026.11.0
+default/02_files.loft#Files and directories	9d924a43dc382dbf9513fc6c8326c5d3231bd5ec908a3bba9e2aeb3f15564dca	2026.11.0
+default/02_files.loft#Lazy stores	765852449e276db0400b34aa38a953296946056ce96bd0f9483f02b6ecc88d8a	2026.11.0
+default/02_files.loft#Memory diagnostics	775c785857e1ceffa46a2b3af2f7bec8fbc0abc42ee392f619f3443abd43aab6	2026.11.0
+default/02_files.loft#Optional C libraries	075196a42baa32ef51ea4cb9fd9422bda410c0f6b9bf3e81f66e57337be16087	2026.11.0
+default/02_files.loft#Paged store loading	c9219fa25b41c745764b35a6a2cd4ebfc1d85a6cf2062c23f3fbe43ec5abc706	2026.11.0
+default/02_files.loft#Path helpers	eb318689e5bf8ddddd5df7c5bf67a16317575d56e265477d63ebf9b4d8016b83	2026.11.0
+default/02_files.loft#Persistent stores	fe6e1ed4fc1abddf3de8b18031f21d04d33cac3199cb7675be919d05a074af9f	2026.11.0
+default/02_files.loft#System directories	608bafe15e9463971156edd8222249f1885f72ca6c2708c51c206036b30c13d3	2026.11.0
+default/02_files.loft#Text	0bba5158ae39d275caae807563f973696e605fa6701f62c1de9b1ad01957d0fa	2026.11.0
+default/02_files.loft#Time	d63f496a9163ccff765ca214d9f2e62b79c31a91db16fd24ac012dfd54e4ecd8	2026.11.0
+default/02_files.loft#Vector operations	e609160ff29f5faa2e181dcc030488a7b96980548542417bc01f95c7df83cf14	2026.11.0
 default/03_text.loft#(intro)	9d972980e94d121313c0a0949b00b2e88c876441503240a5a1c0cf692ea3f12b	2026.10.0
 default/03_text.loft#Environment	8dfb90ee280cbc5c9fa8a7f74199d65d3a573aae0a8408d18f1ac2fb79a7532c	2026.10.0
 default/03_text.loft#Text	50744c89b0fd8b033280c975484cab85ec3ec062dca3d819bddf0a9a87522109	2026.10.0
 default/03_text.loft#Text: bytes and code points	b05f76fbbc30ddd0dfeea1edfa80862bd4038d1829a1e885f7b71581aed79132	2026.10.0
 default/03_text.loft#Text: case and classification	66926f141dffcde55666bafc05c04a6a05a1ec02a62296930a72524919e55c50	2026.10.0
-default/04_stacktrace.loft#(intro)	24d6186128bd3ee0d6f01d34f21a986de06591ef0afa1a91fcd85ee840986f4a	2026.10.0
-default/04_stacktrace.loft#Stack traces	e20f6d77b8ebcde9a64565ed9227561a09f73f28e8d246e63ee1e124897ce46e	2026.10.0
+default/04_stacktrace.loft#(intro)	24d6186128bd3ee0d6f01d34f21a986de06591ef0afa1a91fcd85ee840986f4a	2026.11.0
+default/04_stacktrace.loft#Stack traces	f30dd57c2cd06df145f92014ed5ee57296c3b55d28a6662835f76d562e9539dc	2026.11.0
 default/05_coroutine.loft#(intro)	aa71092242d6ac9742caafd40edba9d0b53b540b55502a2d6096507df2d477d2	2026.10.0
 default/05_coroutine.loft#Coroutines	d9f6209c377fd454b3cd27824d6a108ae0ec815fdee739e66459c112a0755a87	2026.10.0
-default/06_json.loft#(intro)	d9e8c5805432da04984d40cfa30d0eb8c9dcc70bf0567143517d375f0fb75641	2026.10.0
-default/06_json.loft#JSON	9d9dac5293fced14a55af395da6de8d2204ac2ae2de5426889291f9b3dddecf4	2026.10.0
-default/06_json.loft#JSON: building values	b561b61b1bd13552c2160f13cd396421f3b4b3c65384d3567b88e787d36e8d0e	2026.10.0
-default/06_json.loft#JSON: reading values	f798176e921d808656d066c8113d20b5b08dbc6f5625df987ce56a2f1280d3ca	2026.10.0
-default/06_json.loft#JSON: the struct bridge	bd6505f87e01db5ac1e06d00d507d3b5a236a13ccb4c435ebac8003d2f53cbc1	2026.10.0
+default/06_json.loft#(intro)	d9e8c5805432da04984d40cfa30d0eb8c9dcc70bf0567143517d375f0fb75641	2026.11.0
+default/06_json.loft#JSON	129c13792583bf5a941d7dc0e85047ed5efb5b0a52e3a012f2e1e5c12ecd4126	2026.11.0
+default/06_json.loft#JSON: building values	b561b61b1bd13552c2160f13cd396421f3b4b3c65384d3567b88e787d36e8d0e	2026.11.0
+default/06_json.loft#JSON: reading values	f798176e921d808656d066c8113d20b5b08dbc6f5625df987ce56a2f1280d3ca	2026.11.0
+default/06_json.loft#JSON: the struct bridge	bd6505f87e01db5ac1e06d00d507d3b5a236a13ccb4c435ebac8003d2f53cbc1	2026.11.0
 default/07_reflect.loft#(intro)	bc5c7ee838743f7dde1e7b09e7d70f3c106616ba4dac2b50fa7f7e02f89f2c63	2026.10.0
 default/07_reflect.loft#Type reflection	a7dfa5be5e463b757585f2532387a517f6f1f5b61b18d4e7e566091cab11c3b0	2026.10.0
-doc/00-performance.html#(intro)	1d6b176e628f7a77b25d21504d0e029e217dbabc4d0abf5d21e5ef3562695173	2026.10.0
+doc/00-performance.html#(intro)	1d6b176e628f7a77b25d21504d0e029e217dbabc4d0abf5d21e5ef3562695173	2026.11.0
 doc/00-performance.html#Bottlenecks	04605e01c631748c2171ab2b1e2b1176dde70ff6ada1c40f925bb159b9b8ebac	2026.10.0
-doc/00-performance.html#Key takeaways	69741c0d8aed880bd3f007b27be01b1394538b9143baf86473efefd651887bd9	2026.10.0
+doc/00-performance.html#Key takeaways	69741c0d8aed880bd3f007b27be01b1394538b9143baf86473efefd651887bd9	2026.11.0
 doc/00-performance.html#Open performance work	d5a8a778f7721775be9dcb6ce36f5da75d2e00dc21792cc8fc0571e63f94b136	2026.10.0
 doc/00-performance.html#Performance	f1e82b6b0e611e3d57661e7b4bb6a9790de473f47221638b7ec4e63901ead125	2026.10.0
 doc/00-performance.html#loft interpreter vs Python	06945d54628327cf67986361d561a18a5ff060f9a608c6d79de61738e6d09b38	2026.10.0
 doc/00-performance.html#loft native vs Rust	abf75eac0c56aa23eb3b1ab1f19156cacd25aff9bd269d17dcad560b83a59277	2026.10.0
 doc/00-performance.html#loft wasm vs loft native	73a7165e6d4c5641069541dc5d2d80faab6d2810469b0bc4a10dc05d6f985eb4	2026.10.0
-doc/00-vs-python.html#(intro)	26526da25a675d221122a25bba3e8e17105824d676649f0e02e2d7e1a75001fb	2026.10.0
-doc/00-vs-python.html#1. Variables — static types inferred at first assignment	e113c2b55f3af242da5923d3df5653792ab6a09c51051cb60eb9782d3f62d3bd	2026.10.0
-doc/00-vs-python.html#10. Built-in parallel for-loops — par(...)	3db47b5281d5558e0d716e3674e84a65318ec94389a55dbed10000d464b82741	2026.10.0
-doc/00-vs-python.html#11. Generic functions — interface bounds, no duck typing	6e1313382a8df8cd1daa5095a1913132052226751a5b62ba2b2fd5cce32b283a	2026.10.0
-doc/00-vs-python.html#12. Function signatures — defaults and named args, but no *args	0b234279343d589108cf42253ad8614c97910ddf7a52b89d70ccaabf61c60d10	2026.10.0
-doc/00-vs-python.html#13. Ecosystem — minimal standard library	2a0af657737622c5b55b16a279924f34e615d667255584a2ea2e6cbd27ca77ce	2026.10.0
-doc/00-vs-python.html#14. Exponentiation with ** or pow(); ^ is XOR	668bb048ca455dcd312f19322e2325853a7065133cd145aeb52a9dd6440eb6cd	2026.10.0
-doc/00-vs-python.html#2. Null — structured absence, not a universal wildcard	e5a395d9c526d453e4de5a6f47aa2beb18513df025ef2fde2e016a41df34ebdd	2026.10.0
-doc/00-vs-python.html#3. Structs vs classes and dicts	d7c93533249b9689f101eb6c586d3a59865186458468efa24d82f5d1aa9e3a04	2026.10.0
-doc/00-vs-python.html#4. while loop — yes, and while true; no while ... else	60f6ca30aa365080116fe79c29978475de66becffe954cd3d73d5060614ee6b0	2026.10.0
-doc/00-vs-python.html#5. Polymorphic enum dispatch vs isinstance	a6a3274915af52aa7c41e645596be8b2c704d01b7aed54c03cd11e5298089fc0	2026.10.0
-doc/00-vs-python.html#6. String formatting — embedded expressions	baeb564425dec8652c0b2dddf4b55b9d0310b908a4575500e29fd182d92c1aea	2026.10.0
-doc/00-vs-python.html#7. Collections — typed and built-in	a6e56ed6aeb4a69c39b262e30c4cc0111df5f5c922e56c6f9775f5935e5165d4	2026.10.0
-doc/00-vs-python.html#8. Closures — same-scope capture works	cfe020a43c0cf6b87c18187f5dd830cbae658188fb060991b1d52a8ba26ca5d9	2026.10.0
-doc/00-vs-python.html#9. No exception handling — file errors use FileResult	3af15a3d79727d76f4f3e1c1950f6be8a09d85d9d6361cab08d5a1c6ebe9fd3d	2026.10.0
-doc/00-vs-python.html#vs Python	e61f327b85c33bc315556834ce0180f7c2456c1441b26ddccfdb955908ad6ab3	2026.10.0
-doc/00-vs-rust.html#(intro)	7fc1cb928fc662981aaa470a63ae41d524912a2856b3250a2e382eba4f72f456	2026.10.0
-doc/00-vs-rust.html#1. Variables — no let or mut	dc8328da9d945b39cee25bb24612ad96e211778c9b95b05fbb48aa53478d81ab	2026.10.0
-doc/00-vs-rust.html#10. Polymorphic enum dispatch	61f1bc3837ca30170421bb1e22d3f76d4c6dbcb76bc40bcf9c66f21d70e4ff24	2026.10.0
-doc/00-vs-rust.html#11. Closures — same-scope capture works	07c6768b6d14637fa08f0b6aaa05fb273a788beddcbe931fbae0efb2ecc3634d	2026.10.0
-doc/00-vs-rust.html#12. Generic functions — inferred, with structural interface bounds	1fbc0661f7afd7390d1e017b17903b2c47749606bb4946bff5f07d5c2af85f73	2026.10.0
-doc/00-vs-rust.html#13. String formatting — embedded expressions	9c6eda7abc20f4434c477d3d8a57e8c068ea028cd49312a34d6b5b40bc40404a	2026.10.0
-doc/00-vs-rust.html#14. Built-in parallel for-loops — par(...)	de7464f0ad6f1b543649a7bee72680807566652d554852c7c0c9164df39531d5	2026.10.0
-doc/00-vs-rust.html#2. Null instead of Option&lt;T&gt;	4b1692e2c1e374660c8805db37debe6db7b8c1d45fec2b5a3e92de7498dfc649	2026.10.0
-doc/00-vs-rust.html#3. Parameter mutability — const and &amp; instead of ownership	245c11333267f3b049e7f8ce761f96f4d51fb2d57c53d8c3c0739a77304eb46f	2026.10.0
-doc/00-vs-rust.html#4. ^ is XOR; ** or pow() for exponentiation	eae36178a650e926c5d8d3e740b6790faa1512948ede5463f4604df0882ae0f7	2026.10.0
-doc/00-vs-rust.html#5. No loop keyword — an infinite loop is while true	a2281ee6bf162f0add595d00b7373d37adb69c0362a3bf0305410fe082df4851	2026.10.0
-doc/00-vs-rust.html#6. Filtered loops — for ... if ...	251be89c6264449f0aec184943c339c64507000739c93594c556e8f83a1f11b2	2026.10.0
-doc/00-vs-rust.html#7. Loop attributes: #first, #count, #index	73026f60690ebe40a326d7c052b60dde26cc495e6492b35bceddc72c2d0c9be6	2026.10.0
-doc/00-vs-rust.html#8. Named loop break — x#break	d93234748e9f500fda4c9bd6a4f58bf7471e338d2314e647ee07661569885e23	2026.10.0
-doc/00-vs-rust.html#9. Methods by self name, not impl blocks	4d66cb0b08d6425bdc7a48129b5cf0663942ed67fb0c5caedf86b8e4341e52c6	2026.10.0
-doc/00-vs-rust.html#vs Rust	aec54a00307cb864b6a75a7e3889c1368e3ae1e25898b1dd5a4641c902de7824	2026.10.0
+doc/00-vs-python.html#(intro)	26526da25a675d221122a25bba3e8e17105824d676649f0e02e2d7e1a75001fb	2026.11.0
+doc/00-vs-python.html#1. Variables — static types inferred at first assignment	e113c2b55f3af242da5923d3df5653792ab6a09c51051cb60eb9782d3f62d3bd	2026.11.0
+doc/00-vs-python.html#10. Built-in parallel for-loops — par(...)	3db47b5281d5558e0d716e3674e84a65318ec94389a55dbed10000d464b82741	2026.11.0
+doc/00-vs-python.html#11. Generic functions — interface bounds, no duck typing	6e1313382a8df8cd1daa5095a1913132052226751a5b62ba2b2fd5cce32b283a	2026.11.0
+doc/00-vs-python.html#12. Function signatures — defaults and named args, but no *args	0b234279343d589108cf42253ad8614c97910ddf7a52b89d70ccaabf61c60d10	2026.11.0
+doc/00-vs-python.html#13. Ecosystem — minimal standard library	2a0af657737622c5b55b16a279924f34e615d667255584a2ea2e6cbd27ca77ce	2026.11.0
+doc/00-vs-python.html#14. Exponentiation with ** or pow(); ^ is XOR	76649957f5018e4d7aa62f789c88304cf0c12eae373906a64a1dec5ba39b50bf	2026.11.0
+doc/00-vs-python.html#2. Null — structured absence, not a universal wildcard	e5a395d9c526d453e4de5a6f47aa2beb18513df025ef2fde2e016a41df34ebdd	2026.11.0
+doc/00-vs-python.html#3. Structs vs classes and dicts	a71ef37143540b78c134ae7f9ae2bcc382bd75cabbda01c13bd4f2d905571c80	2026.11.0
+doc/00-vs-python.html#4. while loop — yes, and while true; no while ... else	60f6ca30aa365080116fe79c29978475de66becffe954cd3d73d5060614ee6b0	2026.11.0
+doc/00-vs-python.html#5. Polymorphic enum dispatch vs isinstance	a6a3274915af52aa7c41e645596be8b2c704d01b7aed54c03cd11e5298089fc0	2026.11.0
+doc/00-vs-python.html#6. String formatting — embedded expressions	baeb564425dec8652c0b2dddf4b55b9d0310b908a4575500e29fd182d92c1aea	2026.11.0
+doc/00-vs-python.html#7. Collections — typed and built-in	a6e56ed6aeb4a69c39b262e30c4cc0111df5f5c922e56c6f9775f5935e5165d4	2026.11.0
+doc/00-vs-python.html#8. Closures — same-scope capture works	cfe020a43c0cf6b87c18187f5dd830cbae658188fb060991b1d52a8ba26ca5d9	2026.11.0
+doc/00-vs-python.html#9. No exception handling — file errors use FileResult	ddbc603b8e3c6f3f230ccb724d46c98cf7487b6fc258ef179fdd889b3b2605fa	2026.11.0
+doc/00-vs-python.html#vs Python	e61f327b85c33bc315556834ce0180f7c2456c1441b26ddccfdb955908ad6ab3	2026.11.0
+doc/00-vs-rust.html#(intro)	7fc1cb928fc662981aaa470a63ae41d524912a2856b3250a2e382eba4f72f456	2026.11.0
+doc/00-vs-rust.html#1. Variables — no let or mut	dc8328da9d945b39cee25bb24612ad96e211778c9b95b05fbb48aa53478d81ab	2026.11.0
+doc/00-vs-rust.html#10. Polymorphic enum dispatch	61f1bc3837ca30170421bb1e22d3f76d4c6dbcb76bc40bcf9c66f21d70e4ff24	2026.11.0
+doc/00-vs-rust.html#11. Closures — same-scope capture works	07c6768b6d14637fa08f0b6aaa05fb273a788beddcbe931fbae0efb2ecc3634d	2026.11.0
+doc/00-vs-rust.html#12. Generic functions — inferred, with structural interface bounds	1fbc0661f7afd7390d1e017b17903b2c47749606bb4946bff5f07d5c2af85f73	2026.11.0
+doc/00-vs-rust.html#13. String formatting — embedded expressions	9c6eda7abc20f4434c477d3d8a57e8c068ea028cd49312a34d6b5b40bc40404a	2026.11.0
+doc/00-vs-rust.html#14. Built-in parallel for-loops — par(...)	62464044a9aa0a283d4d387dcc4cc54f1fc45e7aa6cfded2423d59e97f623389	2026.11.0
+doc/00-vs-rust.html#15. Tree slots — &amp;Tree? instead of &amp;mut Option&lt;Box&lt;Tree&gt;&gt;	ca593d360b32c57e18a0817caf26a8cfcc779e87a4ed42ffc73f30cc6c1bb551	2026.11.0
+doc/00-vs-rust.html#2. Null instead of Option&lt;T&gt;	4b1692e2c1e374660c8805db37debe6db7b8c1d45fec2b5a3e92de7498dfc649	2026.11.0
+doc/00-vs-rust.html#3. Parameter mutability — const and &amp; instead of ownership	245c11333267f3b049e7f8ce761f96f4d51fb2d57c53d8c3c0739a77304eb46f	2026.11.0
+doc/00-vs-rust.html#4. ^ is XOR; ** or pow() for exponentiation	eae36178a650e926c5d8d3e740b6790faa1512948ede5463f4604df0882ae0f7	2026.11.0
+doc/00-vs-rust.html#5. No loop keyword — an infinite loop is while true	a2281ee6bf162f0add595d00b7373d37adb69c0362a3bf0305410fe082df4851	2026.11.0
+doc/00-vs-rust.html#6. Filtered loops — for ... if ...	251be89c6264449f0aec184943c339c64507000739c93594c556e8f83a1f11b2	2026.11.0
+doc/00-vs-rust.html#7. Loop attributes: #first, #count, #index	73026f60690ebe40a326d7c052b60dde26cc495e6492b35bceddc72c2d0c9be6	2026.11.0
+doc/00-vs-rust.html#8. Named loop break — x#break	d93234748e9f500fda4c9bd6a4f58bf7471e338d2314e647ee07661569885e23	2026.11.0
+doc/00-vs-rust.html#9. Methods by self name, not impl blocks	4d66cb0b08d6425bdc7a48129b5cf0663942ed67fb0c5caedf86b8e4341e52c6	2026.11.0
+doc/00-vs-rust.html#vs Rust	aec54a00307cb864b6a75a7e3889c1368e3ae1e25898b1dd5a4641c902de7824	2026.11.0
 doc/DEVELOPERS.md#(intro)	8a36d044f76004b7395acac8bb7180db9985c7c5091cad9582d436f63e5466f0	2026.10.0
 doc/DEVELOPERS.md#1. Lexer (`src/lexer.rs`)	5014a1487fbc70cf9c5acbd5382df5c316f8fdd5408cbfefe3478657cc978ade	2026.10.0
 doc/DEVELOPERS.md#10. Standard Library (`src/native.rs` + `default/*.loft`)	76ad243ee4247d875c13a8f5710303dba55fd837150983234135ed30801b2158	2026.10.0
@@ -137,52 +138,52 @@ doc/DEVELOPERS.md#Scope Gate — What Belongs in Loft	1716e54afbf0bac1106b39dfee
 doc/DEVELOPERS.md#Scope creep red flags	fdead08c451838413a718c288ee940b2104af14af612dafbcf707287b39713fc	2026.10.0
 doc/DEVELOPERS.md#See also	53080960953f1008563b20f326570d4e125f80738b39e1a1e4de08d9c45dd00f	2026.10.0
 doc/DEVELOPERS.md#Tests first	750e793be598a2a5eb889bed9ccf1899848b0f8f960f52c0162e834177be5c31	2026.10.0
-doc/claude/LOFT.md#(intro)	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	2026.10.0
+doc/claude/LOFT.md#(intro)	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	2026.11.0
 doc/claude/LOFT.md#A store that did not take	facd00771cf16b11daf432c05067053ae5b9eefbbeb7f68efebaf74a25dabd5c	2026.10.0
-doc/claude/LOFT.md#Collections, structs and calls	a4be2fe06ff56281c2ae9b2cba63c6cfc397778cf9a79e92f53647ed453a4ea3	2026.10.0
-doc/claude/LOFT.md#Composite types	469d8915b27f1368f9522c3658702d49086949c85e9940788dfd4e7bc2e674b7	2026.10.0
-doc/claude/LOFT.md#Contents	32188a57bc6a84580e41173684967bf6159992cdcd875e578a87ec7488a77121	2026.10.0
-doc/claude/LOFT.md#Control flow and variables	f0bc8a091e3e5902735af55af1408e5fedfd0a1f05d505f747c3c46c80dc486c	2026.10.0
-doc/claude/LOFT.md#Declarations, files and grammar	b373e82fe30858fbf3c345d6f23a85df55992370be7ce205ec4da0bd6e88f9df	2026.10.0
-doc/claude/LOFT.md#Enum types	57bd67eac42dec5477b5dc3551591434afb07edac92c4f33cdb8173d1c67749e	2026.10.0
-doc/claude/LOFT.md#Generics, interfaces, best practices and design decisions	69d74de0bc1ebb7117a7bf339e2b56d0128b6c5c48abe563961366d796a0b95f	2026.10.0
-doc/claude/LOFT.md#Limits	2a76c217aab7511dcaaf79d1f1821edc680490b0fe4856080b987790f3a66d82	2026.10.0
-doc/claude/LOFT.md#Literals, closures, strings and formatting	83019462dfab3fc37907e041f347fa8b08669203d61a812ba090173cdbb45af1	2026.10.0
-doc/claude/LOFT.md#Loft Language Reference	36b8a0d887aaf3bdf4b4d53c898a307edc50fa9e3d8c5bafa98b3e74e90bb20f	2026.10.0
-doc/claude/LOFT.md#Naming Conventions (enforced by the parser)	2f2f30b4a55ba176a741d1751b492f8f5095ce99233a03faaa4ef24d469c7bd0	2026.10.0
-doc/claude/LOFT.md#Null representation	b43b7f9bc14c2f0b798e8fe65cd8d093f763b8f49130fa8ccfdee08fa08441f9	2026.10.0
-doc/claude/LOFT.md#Operators	7016e715f133183de666cc919f0bb4a5e9db8f31e3899972e3d0adeb05024a56	2026.10.0
+doc/claude/LOFT.md#Collections, structs and calls	a4be2fe06ff56281c2ae9b2cba63c6cfc397778cf9a79e92f53647ed453a4ea3	2026.11.0
+doc/claude/LOFT.md#Composite types	469d8915b27f1368f9522c3658702d49086949c85e9940788dfd4e7bc2e674b7	2026.11.0
+doc/claude/LOFT.md#Contents	32188a57bc6a84580e41173684967bf6159992cdcd875e578a87ec7488a77121	2026.11.0
+doc/claude/LOFT.md#Control flow and variables	f0bc8a091e3e5902735af55af1408e5fedfd0a1f05d505f747c3c46c80dc486c	2026.11.0
+doc/claude/LOFT.md#Declarations, files and grammar	b373e82fe30858fbf3c345d6f23a85df55992370be7ce205ec4da0bd6e88f9df	2026.11.0
+doc/claude/LOFT.md#Enum types	57bd67eac42dec5477b5dc3551591434afb07edac92c4f33cdb8173d1c67749e	2026.11.0
+doc/claude/LOFT.md#Generics, interfaces, best practices and design decisions	69d74de0bc1ebb7117a7bf339e2b56d0128b6c5c48abe563961366d796a0b95f	2026.11.0
+doc/claude/LOFT.md#Limits	2a76c217aab7511dcaaf79d1f1821edc680490b0fe4856080b987790f3a66d82	2026.11.0
+doc/claude/LOFT.md#Literals, closures, strings and formatting	83019462dfab3fc37907e041f347fa8b08669203d61a812ba090173cdbb45af1	2026.11.0
+doc/claude/LOFT.md#Loft Language Reference	36b8a0d887aaf3bdf4b4d53c898a307edc50fa9e3d8c5bafa98b3e74e90bb20f	2026.11.0
+doc/claude/LOFT.md#Naming Conventions (enforced by the parser)	751b1c76c191ad319861f7ef7d52985eaf83de0844b17f6f7274ca3dbd6e3885	2026.11.0
+doc/claude/LOFT.md#Null representation	a4a642df91a9279b3e70fafa3ca6a74f69138dded9ada3ce2cb594e748504113	2026.11.0
+doc/claude/LOFT.md#Operators	7016e715f133183de666cc919f0bb4a5e9db8f31e3899972e3d0adeb05024a56	2026.11.0
 doc/claude/LOFT.md#Operators on your own type — `operator compare`, `plus`, `minus`, `times`, …	26689395f8132b33c75efa7c34138bd97c8f9a88245be2bd977d0a41baaf03f7	2026.10.0
 doc/claude/LOFT.md#Parsing (JSON → JsonValue tree → struct)	49f8166950ec16dfb9bf23648752cdc7e52921a935cdf0f3e918d2307f45a47f	2026.10.0
-doc/claude/LOFT.md#Primitive types	5f3beb605ea7fed7693b4ec5bda9b7077eac51923e7dd4907edce00a626c8a16	2026.10.0
-doc/claude/LOFT.md#Recursive types — a child or a link	03e47f4a4b42f12facc74e9c00f58ba6245c9deaa5faa7f3e18e9e62e20b475b	2026.10.0
-doc/claude/LOFT.md#Scripts (a file with no `fn main`)	4b3b3451a8d231238ebcab46b389f4337cd8c1ebeb14c5df0ca8908650487ce4	2026.10.0
-doc/claude/LOFT.md#See also	d60abbd92ac41580b2b6fd353cf426fa07cbb4f5559d94ba355780a0e11a7827	2026.10.0
-doc/claude/LOFT.md#Struct types	a46e8e663f563c5330f3078d63bcda1c9c3893551b2eaf258ed33b7247179d08	2026.10.0
+doc/claude/LOFT.md#Primitive types	d5e953f0c8432acb9263acdf3e6362a4dda15c8f7a8ffb8fc40a27d4efb07f7b	2026.11.0
+doc/claude/LOFT.md#Recursive types — a child or a link	03e47f4a4b42f12facc74e9c00f58ba6245c9deaa5faa7f3e18e9e62e20b475b	2026.11.0
+doc/claude/LOFT.md#Scripts (a file with no `fn main`)	dcca639d426de29b253b96631b8df4628047ad6846f480f1cf358417f5b57a65	2026.11.0
+doc/claude/LOFT.md#See also	d60abbd92ac41580b2b6fd353cf426fa07cbb4f5559d94ba355780a0e11a7827	2026.11.0
+doc/claude/LOFT.md#Struct types	a46e8e663f563c5330f3078d63bcda1c9c3893551b2eaf258ed33b7247179d08	2026.11.0
 doc/claude/LOFT.md#The `??` operator (null-coalescing)	405ceefb731d86f06f19e1e56f8b135c6d2ecac19614df7a5275eaf5fc40cbe6	2026.10.0
 doc/claude/LOFT.md#The `as` operator	cee844868ccbe495ada28cdb575e505c78167cff01380b375bebf033cb7b1299	2026.10.0
 doc/claude/LOFT.md#The `x?` operator (default-fallback) — @PLN116	39f2c906d76686d2399073819f3b33cccc6ab7f8b3ceb782dbd7726f016794e8	2026.10.0
 doc/claude/LOFT.md#Type-conversion rules — when does loft convert automatically?	6b5f3d981312d30ecb2b8ff17956df421d05cdf1532f41d5fdc2433f0bb2693a	2026.10.0
-doc/claude/LOFT.md#Types	b5d946c3574dd17e1e896e475a418639412db48bb8eef3222b8dd888f23bf4ec	2026.10.0
-doc/docs.html#(intro)	19c1e29aa7329a2d33355ec3773ec7b84bab52ce527ae93704d6c108c3bd4402	2026.10.0
-doc/docs.html#Loft	0cbcbf78e4c20d8f48d0d465c2891cf7297f2bcfb87a09ec874a69efd6eff0b7	2026.10.0
-doc/examples.html#(intro)	417802bfe26e4b4d70033b1dfb62b4dfa42663f57e4f6155cc9d46ee66e3ad4b	2026.10.0
-doc/examples.html#Loft	8d1ce39fb2fcdbef9372cbf46da64c387aa4d165626d9ba5059fee9223243b21	2026.10.0
-doc/install.html#(intro)	ecee0fc4c2adb72bae023d9fb31ff4e61f943813bb0530bf1fdd3e967120bcda	2026.10.0
-doc/install.html#A slightly bigger program	e4aeeaef72adbdccef7522edb7d11f3d01e00b5ddd8891a672f8ddb0ab1e7e49	2026.10.0
-doc/install.html#Build locally	8a4c82a1d478b91923ac51e12fcd90c77984e4c944b1c6a1b4b98578534b4117	2026.10.0
-doc/install.html#Command-line flags	5e160a16c7820aebe0485bf684295e2d497f688f320f832dd1ade8f5877a4054	2026.10.0
-doc/install.html#Compiling through C	2add6d52d19e4156544db62d46355301fe354e95fa212d3adc6d4d7985e664f7	2026.10.0
-doc/install.html#Editor setup	8987c38588060bad67f90725f5877bd811adba314410c0bbe0ee34735c9457bc	2026.10.0
-doc/install.html#Hello, World	df4c42290408e432c3d3cd6fc3f5ab51947062d60d8925fb346c59731bb208b2	2026.10.0
-doc/install.html#Install	327a7ec1966604effcd9da81ca7202475f39a0d7fa9020a5d4b236741ac84032	2026.10.0
-doc/install.html#Install from source	59b71f2c74dee78253f533c3b4399a7dbd129910aa2fb9ffad8191587ecf07ac	2026.10.0
-doc/install.html#Next steps	3381f33fefad745bbecd4bb7fe089d1c2dcc28116a08cbd89711a8611017d716	2026.10.0
-doc/install.html#Prerequisites	1c2dcbba3021165b5d32bfc395d17e6309d07b638a53f935ebde16e34c8aef99	2026.10.0
-doc/install.html#Running your program as a native binary	d762ff9ba092e91476b6bd758c2bd97e98f1ada3a5c8979d01e4561f2fbf913e	2026.10.0
-doc/install.html#Standard library	7b83756135f54bf3c76a66387c61dc49457c71a5b0a2a4d19f41eab4cb3d3290	2026.10.0
-doc/install.html#Using libraries	6534ee20b0b52aede272947f2b6d9bfb0f1bb4079c9c4dd532668c72e4e14498	2026.10.0
-doc/install.html#Verify the installation	4dd214e720ccc8098b82feecc340ea18540247e404c76fbb232dcbab7b313e03	2026.10.0
+doc/claude/LOFT.md#Types	b5d946c3574dd17e1e896e475a418639412db48bb8eef3222b8dd888f23bf4ec	2026.11.0
+doc/docs.html#(intro)	19c1e29aa7329a2d33355ec3773ec7b84bab52ce527ae93704d6c108c3bd4402	2026.11.0
+doc/docs.html#Loft	0cbcbf78e4c20d8f48d0d465c2891cf7297f2bcfb87a09ec874a69efd6eff0b7	2026.11.0
+doc/examples.html#(intro)	417802bfe26e4b4d70033b1dfb62b4dfa42663f57e4f6155cc9d46ee66e3ad4b	2026.11.0
+doc/examples.html#Loft	8d1ce39fb2fcdbef9372cbf46da64c387aa4d165626d9ba5059fee9223243b21	2026.11.0
+doc/install.html#(intro)	ecee0fc4c2adb72bae023d9fb31ff4e61f943813bb0530bf1fdd3e967120bcda	2026.11.0
+doc/install.html#A slightly bigger program	e4aeeaef72adbdccef7522edb7d11f3d01e00b5ddd8891a672f8ddb0ab1e7e49	2026.11.0
+doc/install.html#Build locally	8a4c82a1d478b91923ac51e12fcd90c77984e4c944b1c6a1b4b98578534b4117	2026.11.0
+doc/install.html#Command-line flags	5e160a16c7820aebe0485bf684295e2d497f688f320f832dd1ade8f5877a4054	2026.11.0
+doc/install.html#Compiling through C	2add6d52d19e4156544db62d46355301fe354e95fa212d3adc6d4d7985e664f7	2026.11.0
+doc/install.html#Editor setup	8987c38588060bad67f90725f5877bd811adba314410c0bbe0ee34735c9457bc	2026.11.0
+doc/install.html#Hello, World	df4c42290408e432c3d3cd6fc3f5ab51947062d60d8925fb346c59731bb208b2	2026.11.0
+doc/install.html#Install	327a7ec1966604effcd9da81ca7202475f39a0d7fa9020a5d4b236741ac84032	2026.11.0
+doc/install.html#Install from source	59b71f2c74dee78253f533c3b4399a7dbd129910aa2fb9ffad8191587ecf07ac	2026.11.0
+doc/install.html#Next steps	3381f33fefad745bbecd4bb7fe089d1c2dcc28116a08cbd89711a8611017d716	2026.11.0
+doc/install.html#Prerequisites	1c2dcbba3021165b5d32bfc395d17e6309d07b638a53f935ebde16e34c8aef99	2026.11.0
+doc/install.html#Running your program as a native binary	d762ff9ba092e91476b6bd758c2bd97e98f1ada3a5c8979d01e4561f2fbf913e	2026.11.0
+doc/install.html#Standard library	7b83756135f54bf3c76a66387c61dc49457c71a5b0a2a4d19f41eab4cb3d3290	2026.11.0
+doc/install.html#Using libraries	6534ee20b0b52aede272947f2b6d9bfb0f1bb4079c9c4dd532668c72e4e14498	2026.11.0
+doc/install.html#Verify the installation	4dd214e720ccc8098b82feecc340ea18540247e404c76fbb232dcbab7b313e03	2026.11.0
 doc/learn-loft.md#(intro)	116fa1b011f3e9908ad417c6e7e936244c97e5106aa6e869aa87c0e756371431	2026.10.0
 doc/learn-loft.md#1. Hello, loft (3 min)	104ed995d7cded5d10fb88b8c89f30673c3f0884c9bc8d1a371e33012418af17	2026.10.0
 doc/learn-loft.md#10. Where next (2 min)	c8341b116b2821beccc4b7633163595236402bfddfbea94844a68c3538b3c33f	2026.10.0
@@ -195,42 +196,42 @@ doc/learn-loft.md#7. Structs (3 min)	4e73ba6864504423748c489c3638b2262b7d15655db
 doc/learn-loft.md#8. Enums (3 min)	aa6994cbe07b386354d02057e73bbe251ad2fc06f88ab6ab117cdb74cccfb120	2026.10.0
 doc/learn-loft.md#9. Files and JSON (3 min)	00911b4a925a7ff563c6ea811cfe3c72a3599628972fbf8010dd7f6e0c4e5e68	2026.10.0
 doc/learn-loft.md#Learn loft in 30 minutes	40b64763737509705db373c6b288035660c0b4c209f195727dfe66243fbaaf5b	2026.10.0
-doc/report.html#(intro)	f8f50320f550b65c371a43e103d40d60619b591d406da1911da36eb9a4582bf7	2026.10.0
-doc/report.html#1. Loft version and platform	86c90254693c598c02859cc8f0eab105190cc34469d4cc897b95148c40806a07	2026.10.0
-doc/report.html#2. A minimal reproducer	c21c2482c3b1dbb9ab47a0c56561cc95a498b67a70f7887507425a4c13273ddc	2026.10.0
-doc/report.html#3. What actually happens	b7b544234e025f370e1e7fedb8a22063099c90907fef7d0622b4b7a72d5365ba	2026.10.0
-doc/report.html#4. What you expected instead	f21eeb25a6ab87132eb3a78b1668d318af25169f991a0012d9f224b8a094ba09	2026.10.0
-doc/report.html#Before reporting	189bfa9f482be75cf3af811d4938dec0cb757c4032c7ffb94ebd950187aa170e	2026.10.0
-doc/report.html#Crash or panic	2e218464ddd5b0dfc01a2105646e63bb88df424242888e9cde0a2d96a77d19a8	2026.10.0
-doc/report.html#Feature requests and design questions	7764161a368a27c01a432e761b2964d581172ca696a3faa685c52b6f67b6cdc5	2026.10.0
-doc/report.html#Missing compiler error	a2d115e6407ea13116d3dd0ebc85f663ed596927ea3b5bef48ceab94c0916423	2026.10.0
-doc/report.html#Reducing to a minimal example	6b7a7fec682cf81692603d12ddc59038d205cfccf8aeb62d04d0dea97ed3657d	2026.10.0
-doc/report.html#Report a problem	ed2eae535c9efbe133b022ef7d2c13f904ce8d126051e963c64eef39dbfd4d17	2026.10.0
-doc/report.html#Types of problems	166c0dbf276c50f61d64af9f70715fe8630a32abfcb16c1c85c9d1ca5283e462	2026.10.0
-doc/report.html#Unexpected compiler error	c8f8dc3532895b6c3bbf4ac37a30d3e6fd960d28b4c45753d7e970c258673ee3	2026.10.0
-doc/report.html#Unexpected warning	95e6e1c9df3ca6c12939b2d8185e0961f34bf647da8b9b4b46b41f3857aba0e2	2026.10.0
-doc/report.html#What to include	1005c0c2662da993d528640098006b23087c33762efa07a32c75d138e86a0aaf	2026.10.0
-doc/report.html#Wrong result	68bf8b6e08b6711a9de75b03fd8c61ac4fff3722c7f525576ee35d8dc421e67d	2026.10.0
-doc/roadmap.html#(intro)	90ce01efc5fead1db8ff34aa8e6550af6656e28bbac10353cf2fc5d69886231b	2026.10.0
-doc/roadmap.html#0.8.4 (shipped 2026-04-24): Awesome Brick Buster	0a97b9d3d9bee48cc7777114aca7fc5b14471f81edec9b8319b5f2179782326c	2026.10.0
-doc/roadmap.html#0.8.5 (shipped 2026-06-07): Language maturity	ca07d4c59dbbb9ace587029bb59536ac96a3c8f8e5f69eccfb6d599277d60037	2026.10.0
-doc/roadmap.html#0.9.0 — Fully working loft language	78665d36c49c1765f4869902444ca7c52306dbd887f24dbb4ef217644d9c2c7c	2026.10.0
-doc/roadmap.html#1.0.0 — Totally sure everything works	717cac6120793e1931e02906d4a1f054ea2aa951f00785a562d1710a76555fdd	2026.10.0
-doc/roadmap.html#1.1 and beyond	66bee65b020d282bb9999fdd1eb4b68bdc93aa25e659f19f61ba0d51739323b6	2026.10.0
-doc/roadmap.html#Compilation cache	4b072917d1e0c9ed3f8253e9c9a81c50c447dc754876eaa7ed696e873b31a441	2026.10.0
-doc/roadmap.html#Developer experience	c3259b99096870427d19a54ec5dd156d640b548828f644411c221ac397fb5d37	2026.10.0
-doc/roadmap.html#Following progress	25136e9a209e205fff436edb6b6fbac9b47b190a4adcb1f1a134db87b36867e6	2026.10.0
-doc/roadmap.html#Game polish	1b2a833436f7734724af7330ece416d9789187babcefa64d529e0926f2ac6cfa	2026.10.0
-doc/roadmap.html#Infrastructure	92dacdb2a35a0a8402be35102ae4b41a4a37e80e07019b8a395d5870c71ddfc5	2026.10.0
+doc/report.html#(intro)	f8f50320f550b65c371a43e103d40d60619b591d406da1911da36eb9a4582bf7	2026.11.0
+doc/report.html#1. Loft version and platform	f1b2f7a442d44b541c41bb84ad9ab83a00e8f05b326d64d5915e4cde94855b1a	2026.11.0
+doc/report.html#2. A minimal reproducer	c21c2482c3b1dbb9ab47a0c56561cc95a498b67a70f7887507425a4c13273ddc	2026.11.0
+doc/report.html#3. What actually happens	b7b544234e025f370e1e7fedb8a22063099c90907fef7d0622b4b7a72d5365ba	2026.11.0
+doc/report.html#4. What you expected instead	f21eeb25a6ab87132eb3a78b1668d318af25169f991a0012d9f224b8a094ba09	2026.11.0
+doc/report.html#Before reporting	189bfa9f482be75cf3af811d4938dec0cb757c4032c7ffb94ebd950187aa170e	2026.11.0
+doc/report.html#Crash or panic	2e218464ddd5b0dfc01a2105646e63bb88df424242888e9cde0a2d96a77d19a8	2026.11.0
+doc/report.html#Feature requests and design questions	7764161a368a27c01a432e761b2964d581172ca696a3faa685c52b6f67b6cdc5	2026.11.0
+doc/report.html#Missing compiler error	a2d115e6407ea13116d3dd0ebc85f663ed596927ea3b5bef48ceab94c0916423	2026.11.0
+doc/report.html#Reducing to a minimal example	6b7a7fec682cf81692603d12ddc59038d205cfccf8aeb62d04d0dea97ed3657d	2026.11.0
+doc/report.html#Report a problem	ed2eae535c9efbe133b022ef7d2c13f904ce8d126051e963c64eef39dbfd4d17	2026.11.0
+doc/report.html#Types of problems	166c0dbf276c50f61d64af9f70715fe8630a32abfcb16c1c85c9d1ca5283e462	2026.11.0
+doc/report.html#Unexpected compiler error	c8f8dc3532895b6c3bbf4ac37a30d3e6fd960d28b4c45753d7e970c258673ee3	2026.11.0
+doc/report.html#Unexpected warning	95e6e1c9df3ca6c12939b2d8185e0961f34bf647da8b9b4b46b41f3857aba0e2	2026.11.0
+doc/report.html#What to include	1005c0c2662da993d528640098006b23087c33762efa07a32c75d138e86a0aaf	2026.11.0
+doc/report.html#Wrong result	68bf8b6e08b6711a9de75b03fd8c61ac4fff3722c7f525576ee35d8dc421e67d	2026.11.0
+doc/roadmap.html#(intro)	90ce01efc5fead1db8ff34aa8e6550af6656e28bbac10353cf2fc5d69886231b	2026.11.0
+doc/roadmap.html#0.8.4 (shipped 2026-04-24): Awesome Brick Buster	0a97b9d3d9bee48cc7777114aca7fc5b14471f81edec9b8319b5f2179782326c	2026.11.0
+doc/roadmap.html#0.8.5 (shipped 2026-06-07): Language maturity	ca07d4c59dbbb9ace587029bb59536ac96a3c8f8e5f69eccfb6d599277d60037	2026.11.0
+doc/roadmap.html#0.9.0 — Fully working loft language	78665d36c49c1765f4869902444ca7c52306dbd887f24dbb4ef217644d9c2c7c	2026.11.0
+doc/roadmap.html#1.0.0 — Totally sure everything works	717cac6120793e1931e02906d4a1f054ea2aa951f00785a562d1710a76555fdd	2026.11.0
+doc/roadmap.html#1.1 and beyond	66bee65b020d282bb9999fdd1eb4b68bdc93aa25e659f19f61ba0d51739323b6	2026.11.0
+doc/roadmap.html#Compilation cache	4b072917d1e0c9ed3f8253e9c9a81c50c447dc754876eaa7ed696e873b31a441	2026.11.0
+doc/roadmap.html#Developer experience	c3259b99096870427d19a54ec5dd156d640b548828f644411c221ac397fb5d37	2026.11.0
+doc/roadmap.html#Following progress	25136e9a209e205fff436edb6b6fbac9b47b190a4adcb1f1a134db87b36867e6	2026.11.0
+doc/roadmap.html#Game polish	1b2a833436f7734724af7330ece416d9789187babcefa64d529e0926f2ac6cfa	2026.11.0
+doc/roadmap.html#Infrastructure	92dacdb2a35a0a8402be35102ae4b41a4a37e80e07019b8a395d5870c71ddfc5	2026.11.0
 doc/roadmap.html#Language polish	216fcc3d5302188ea0b8df980af8c7509f1ef958d8b5af9380339aa0a9a00c95	2026.10.0
-doc/roadmap.html#Multiplayer	c0000f2b256246e1bfe1f434af545f79ba591450507d065d0f3fc487b732f779	2026.10.0
-doc/roadmap.html#Packaging and FFI	77ecb61c0eeea7f969ba2a4b77fcd88cdcce9acdcbc47d64217f588703eec950	2026.10.0
-doc/roadmap.html#Roadmap	59d7ff2a9c33f48cab3d895199cd0ee8198dbb729c671141bc7f52901cdefb0c	2026.10.0
-doc/roadmap.html#Scene scripting	426787d4382a2b62a8d94ecfa91d9facf1e688119dd6ba2fc4f73930136ca030	2026.10.0
-doc/roadmap.html#Single-file HTML export	26d9f716065df85c8ffca190d3341c8116ba3b2e0614e73f2840af3f903639d7	2026.10.0
-doc/roadmap.html#Stability contract	1656cd08d60b34b6e8417b1b20cec8e3ef71599a45b75c370cf1d225fb8adcdb	2026.10.0
-doc/roadmap.html#Web IDE	6305844b887555f9cfa8860233c4d81284aa90078a9f52d22edba5a503baab6b	2026.10.0
-doc/roadmap.html#Working Moros editor	ce0875b862d0696e0bccd5253f4b7a2d6805533649ba327c1937e5572b76fe62	2026.10.0
+doc/roadmap.html#Multiplayer	c0000f2b256246e1bfe1f434af545f79ba591450507d065d0f3fc487b732f779	2026.11.0
+doc/roadmap.html#Packaging and FFI	77ecb61c0eeea7f969ba2a4b77fcd88cdcce9acdcbc47d64217f588703eec950	2026.11.0
+doc/roadmap.html#Roadmap	2f1369fa65d6b1595db01f4fb16980bbdeb2dd2a7b414386ca142ded2ff2927e	2026.11.0
+doc/roadmap.html#Scene scripting	426787d4382a2b62a8d94ecfa91d9facf1e688119dd6ba2fc4f73930136ca030	2026.11.0
+doc/roadmap.html#Single-file HTML export	26d9f716065df85c8ffca190d3341c8116ba3b2e0614e73f2840af3f903639d7	2026.11.0
+doc/roadmap.html#Stability contract	c192f03ab256031564aaf03197eaa1d0a0384568da0a9461ec88d40570383182	2026.11.0
+doc/roadmap.html#Web IDE	6305844b887555f9cfa8860233c4d81284aa90078a9f52d22edba5a503baab6b	2026.11.0
+doc/roadmap.html#Working Moros editor	ce0875b862d0696e0bccd5253f4b7a2d6805533649ba327c1937e5572b76fe62	2026.11.0
 tests/docs/00-general.loft#(intro)	7dc32660542d347dd0d110bcb7d2ecfdf95371a23c52f27ab771091b0046a525	2026.10.0
 tests/docs/01-keywords.loft#(intro)	28c1580146f9139e19cc795087f770361ffff07256432e72506a4cceae46cce0	2026.10.0
 tests/docs/02-text.loft#(intro)	11b2a2aea59ec6fb46db477ba9a60cb5c7ea9e24a8716dd92ea7ea35b57df187	2026.10.0

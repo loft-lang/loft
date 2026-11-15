@@ -157,7 +157,10 @@ carried one more fact?* Yes → the fact belongs in the type.
 Interp (`src/state/codegen.rs` → bytecode), native (`src/generation/` → Rust) and the C
 backend (`src/c/`, `--native-c` → C99) are **separate generators reading the same IR**.  A
 new operator lands in all three: its `#rust` template in `default/*.loft` gives the
-interpreter (`make fill` regenerates `src/fill.rs`) and native, while the C backend
+interpreter (`make fill` regenerates `src/fill.rs`) and native, its `#loft` template beside
+it gives the loft runner (regenerate `selfhost/src/fill.loft`,
+`doc/claude/plans/91-self-host/1b-fill-port.md`), and `make surface-gen` re-derives
+`index/target_surface.json`, while the C backend
 implements it by hand (`src/c/body.rs` or a file under `src/c/body/`, plus its runtime
 header) and lists it in the
 operator shape table that matches its result (`OP_INT`, `OP_REF`, … in `src/c/body.rs`).

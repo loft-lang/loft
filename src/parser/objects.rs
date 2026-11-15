@@ -4422,14 +4422,14 @@ impl Parser {
             self.lexer.token("in");
             let loop_nr = self.vars.start_loop();
             let mut expr = Value::Null;
-            let in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+            let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
             // A keyed source is walked through its snapshot here as in a `for` statement and a
             // comprehension (`keyed_snapshot`, the one home).  Without it `"{for e in h {…}}"`
             // walked the HASH as if it were a snapshot and read a record number out of its
             // table header: a store panic on both backends.  The scope-exit release frees the
             // scratch, as it does for a comprehension's.
             let snapshot = self
-                .keyed_snapshot(&mut expr, &in_type, false)
+                .keyed_snapshot(&mut expr, &mut in_type, false)
                 .map(|(_, fill)| fill);
             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {

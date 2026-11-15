@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2494 — a tuple literal whose text member is read off another tuple (`nb.2`), passed
+// straight to a call, did not build natively: the member is a block (the scope pass binds the
+// read to a work text first) and its tail was CLONED, as a tuple slot that owns its text needs,
+// while the slot here borrows (`&str`) — so the borrow outlived the clone (rustc E0716).  The
+// interpreter and the C backend answered right; this file is the native corpus's reach.
+//
+// CHANNEL: the VALUES (hand-computed); the native build refusing is the failure.
+// Axes this file MOVES:  where the text member comes from (a tuple field, an outer local, a
+//                        call); what takes the tuple (a method, a user fn, `==`, a bind into an
+//                        owning slot).
+// Axes it HOLDS FIXED:   the tuple is built inside a `for` over a vector of tuples.
+//
+// @falsified-at: 5330b3690 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)  [FALSIFY_NATIVE=rust]
+
+fn has(v: vector<(integer, integer, text)>, t: (integer, integer, text)) -> boolean {
+  v.contains(t)
+}
+fn side(k: integer) -> text { if k > 0 { "N" } else { "W" } }
+
+fn test_a_field_member_into_a_borrowing_call() {
+  doors: vector<(integer, integer, text)> = [(1, 2, "N")];
+  nbs = [(0, -1, "N"), (-1, 0, "W"), (5, 5, "N")];
+  a = 0;
+  for nb in nbs { if doors.contains((1, 2, nb.2)) { a += 1; } }
+  b = 0;
+  for nb in nbs { if has(doors, (1, 2, nb.2)) { b += 10; } }
+  assert("{a} {b} {len(doors)} {doors[0].2}" == "2 20 1 N", "{a} {b}");
+}
+
+fn test_other_member_sources_and_consumers() {
+  doors: vector<(integer, integer, text)> = [(1, 2, "N")];
+  nbs = [(0, -1, "N"), (-1, 0, "W"), (5, 5, "N")];
+  s = "N";
+  c = 0;
+  for nb in nbs { if doors.contains((1, 2, s)) { c += nb.0 + 2; } }
+  d = "";
+  for nb in nbs {
+    t = (nb.0, nb.1, nb.2);
+    d += "{t.2}{t.0}";
+  }
+  e = 0;
+  for nb in nbs { if doors.contains((1, 2, side(nb.0 + 1))) { e += 100; } }
+  f = 0;
+  for nb in nbs { if (1, nb.2) == (1, "N") { f += 1000; } }
+  assert("{c} {d} {e} {f} {s}" == "10 N0W-1N5 200 2000 N", "{c} {d} {e} {f}");
+}

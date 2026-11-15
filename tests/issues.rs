@@ -3885,7 +3885,7 @@ fn test() {
 #[test]
 #[cfg_attr(
     debug_assertions,
-    ignore = "P122 stress test — ~10min in debug mode; runs in release automatically (passes in ~0.05s)."
+    ignore = "P122 stress, 10 min in debug: --release, or --ignored"
 )]
 fn p122_long_running_struct_loop() {
     code!(

@@ -117,7 +117,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">divided_by</span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>, other: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span>?</code></pre>
-<p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>, null on a zero divisor.</p>
+<p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>: infinite on a zero divisor, null for <code>0.0 / 0.0</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">remainder</span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>, other: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span>?</code></pre>
@@ -141,7 +141,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">divided_by</span>(self: f64, other: f64) -&gt; f64?</code></pre>
-<p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>, null on a zero divisor.</p>
+<p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>: infinite on a zero divisor, null for <code>0.0 / 0.0</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">remainder</span>(self: f64, other: f64) -&gt; f64?</code></pre>

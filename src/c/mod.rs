@@ -197,7 +197,7 @@ pub(crate) fn passed(c: CType) -> String {
 /// structs the unit's functions name.
 pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
-    /// The `#c_twin`s, whose bodies `data` no longer holds (`Data::with_c_twins_bound`).
+    /// The `#c_twin`s, whose bodies `data` does not hold (`Data::with_c_twins_bound`).
     pub(crate) c_twins: Vec<u32>,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
@@ -2023,6 +2023,7 @@ pub fn emit_unit_for(
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
+    trace_reach(data, roots, &all, &fns);
     let mut cx = Cx::new(data, stores, browser);
     cx.c_twins = twins;
     cx.frames
@@ -2955,6 +2956,112 @@ pub(crate) fn variable_shapes(
     Ok(shapes)
 }
 
+/// `LOFT_TRACE_REACH=1` — what a unit reaches and what it writes, two lines on standard error:
+/// `[reach]<TAB>root<TAB>names…`, every definition `opt::names::reachable_functions` finds from
+/// the unit's roots, sorted by name; and `[functions]<TAB>root<TAB>names…`, the functions the
+/// unit writes, in the order it writes them.  Layers of the loft-written generator's
+/// comparison (12-c-generator.md § The layers beside the unit).
+fn trace_reach(data: &Data, roots: &[u32], all: &[u32], fns: &[u32]) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_REACH").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let root = roots.first().map_or("", |d| data.def(*d).name());
+    let mut reach: Vec<&str> = crate::opt::names::reachable_functions(data, all)
+        .into_iter()
+        .map(|d| data.def(d).name())
+        .collect();
+    reach.sort_unstable();
+    eprintln!("[reach]\t{root}\t{}", reach.join(" "));
+    let written: Vec<&str> = fns.iter().map(|d| data.def(*d).name()).collect();
+    eprintln!("[functions]\t{root}\t{}", written.join(" "));
+}
+
+/// `LOFT_TRACE_COUNTERS=1` — every counted loop of function `d` as `loop_shape::range_counters`
+/// reads it, in the order a walk of the body meets them: one line on standard error,
+/// `[counters]<TAB>function<TAB>loop_var,index,next,inclusive …` (`next` is `-` in the
+/// single-counter form, `inclusive` 0 or 1).  A function without one prints an empty row.  A
+/// layer of the loft-written generator's comparison (12-c-generator.md § The layers beside the
+/// unit).
+fn trace_counters(cx: &Cx, d: u32) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_COUNTERS").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let def = cx.data.def(d);
+    let mut row: Vec<String> = Vec::new();
+    def.code().walk(&mut |v| {
+        if let Value::Loop(lp) = v
+            && let Ok(rc) = crate::loop_shape::range_counters(lp, cx.data)
+        {
+            row.push(format!(
+                "{},{},{},{}",
+                rc.loop_var,
+                rc.index,
+                rc.next.map_or("-".to_string(), |n| n.to_string()),
+                u8::from(rc.inclusive)
+            ));
+        }
+    });
+    eprintln!("[counters]\t{}\t{}", def.name(), row.join(" "));
+    // The `#index` of every `for e in v` loop its own bound keeps from overflowing
+    // (`opt::iteration::bounded_iteration_index`), in the same order: `[iterations]`.
+    let mut row: Vec<String> = Vec::new();
+    def.code().walk(&mut |v| {
+        if let Value::Loop(lp) = v
+            && let Some(ix) = crate::opt::iteration::bounded_iteration_index(lp, cx.data)
+        {
+            row.push(ix.to_string());
+        }
+    });
+    eprintln!("[iterations]\t{}\t{}", def.name(), row.join(" "));
+}
+
+/// `c` in a word, for a trace: a tuple by its members, since its number is the order tuples
+/// were first met in.
+fn shape_word(cx: &Cx, c: CType) -> String {
+    match c {
+        CType::Int => "int".into(),
+        CType::Int32 => "int32".into(),
+        CType::Bool => "bool".into(),
+        CType::Text => "text".into(),
+        CType::Ref => "ref".into(),
+        CType::Enum => "enum".into(),
+        CType::Float => "float".into(),
+        CType::Single => "single".into(),
+        CType::Char => "char".into(),
+        CType::Fn => "fn".into(),
+        CType::Tuple(id) => format!(
+            "tuple({})",
+            cx.tuple_shapes(id)
+                .into_iter()
+                .map(|m| shape_word(cx, m))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        CType::Tr(g) => format!("tr{g}"),
+        CType::TrVec => "trvec".into(),
+        CType::Void => "void".into(),
+    }
+}
+
+/// `LOFT_TRACE_SHAPES=1` — the C shape of every variable of function `d` as
+/// [`variable_shapes`] derived it, before a rewrite reshapes any: one line per function on
+/// standard error, `[shapes]<TAB>function<TAB>number:name=shape …`.  The layer the loft-written
+/// generator's own derivation is compared with (`selfhost/bench/cgen_survey.py --layer shapes`,
+/// 12-c-generator.md § The layers beside the unit); its format is that comparison's contract.
+fn trace_shapes(cx: &Cx, d: u32, shapes: &[CType]) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_SHAPES").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let def = cx.data.def(d);
+    let vars = def.variables();
+    let row: Vec<String> = shapes
+        .iter()
+        .enumerate()
+        .map(|(v, c)| format!("{v}:{}={}", vars.name(v as u16), shape_word(cx, *c)))
+        .collect();
+    eprintln!("[shapes]\t{}\t{}", def.name(), row.join(" "));
+}
+
 /// `@FR-R-Inline`: a function of at most twelve statements is declared `inline`.  The hint
 /// raises the compiler's inlining budget for it, so a small helper called from a hot loop —
 /// a push through `put`, an accessor — is taken into its caller, and the caller's locals stay
@@ -3145,6 +3252,10 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         return Err("parameters that do not match their arguments".into());
     }
     let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
+    if mask == 0 {
+        trace_shapes(cx, d, &shapes);
+        trace_counters(cx, d);
+    }
     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
     // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
     let apr_at = if mask & APR_BIT == 0 {
@@ -4429,6 +4540,26 @@ fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String 
     )
 }
 
+/// `LOFT_TRACE_BODIES=1` — every function body this unit writes, as written (before the unit
+/// is tidied and its hot helpers are decided): one line on standard error,
+/// `[bodies]<TAB>name<TAB>text`, the text with each backslash doubled and each newline as
+/// `\n`; a body `(R-CSplit)` wrote in parts prints `(split)`.  A layer of the loft-written
+/// generator's comparison (12-c-generator.md § The layers beside the unit): its function
+/// writer prints the same line for each function it carries.
+fn trace_body(name: &str, split: bool, whole: &str) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_BODIES").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    if split {
+        eprintln!("[bodies]\t{name}\t(split)");
+    } else {
+        eprintln!(
+            "[bodies]\t{name}\t{}",
+            whole.replace('\\', "\\\\").replace('\n', "\\n")
+        );
+    }
+}
+
 /// The storage of a frame wrapper's body: `LOFT_HOT_INLINE` where the function is hinted
 /// `inline`, the hot-helper marker's body form where that is still undecided
 /// (`resolve_hot_helpers`), the function's own storage otherwise.
@@ -4475,6 +4606,7 @@ fn framed(
         held(ret)
     );
     let whole = format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
+    trace_body(name, parts.is_some(), &whole);
     let text = match parts {
         Some(parts) if split::everywhere() => parts,
         Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),

@@ -1,5 +1,5 @@
 # path	rule	count — pinned by `make docs-lint-baseline`; read by `make docs-lint`
-CLAUDE.md	timeline	15
+CLAUDE.md	timeline	1
 default/01_code.loft	narration	2
 default/01_code.loft	stamp	16
 default/02_files.loft	stamp	3
@@ -8,7 +8,7 @@ default/07_reflect.loft	stamp	1
 doc/PROMPTS.md	hedge	3
 doc/PROMPTS.md	history	1
 doc/claude/API_SURFACE.md	timeline	2
-doc/claude/BOTH_BACKEND_SWITCHES.md	timeline	12
+doc/claude/BOTH_BACKEND_SWITCHES.md	timeline	7
 doc/claude/BRITTLE.md	timeline	10
 doc/claude/BROADENING.md	timeline	5
 doc/claude/BROWSER_INTEROP.md	timeline	3
@@ -16,7 +16,7 @@ doc/claude/BUG_REVIEW.md	timeline	4
 doc/claude/BUS_FACTOR.md	history	2
 doc/claude/BUS_FACTOR.md	timeline	1
 doc/claude/CAVEATS.md	history	1
-doc/claude/CAVEATS.md	timeline	40
+doc/claude/CAVEATS.md	timeline	38
 doc/claude/CI_BUDGET.md	history	3
 doc/claude/CI_BUDGET.md	timeline	27
 doc/claude/CODE.md	timeline	12
@@ -40,7 +40,7 @@ doc/claude/DEBUG.md	timeline	45
 doc/claude/DEBUG_INTROSPECT.md	timeline	3
 doc/claude/DEBUG_PROBES.md	timeline	7
 doc/claude/DEBUG_STORES.md	history	1
-doc/claude/DEBUG_STORES.md	timeline	13
+doc/claude/DEBUG_STORES.md	timeline	12
 doc/claude/DEBUG_TRACE.md	timeline	5
 doc/claude/DEBUG_VIEW.md	timeline	2
 doc/claude/DEPS_INVENTORY.md	history	2
@@ -49,7 +49,7 @@ doc/claude/DESIGN.md	timeline	8
 doc/claude/DESIGN_VERIFICATION.md	timeline	2
 doc/claude/DEVELOPMENT.md	timeline	1
 doc/claude/DIAGNOSTICS.md	history	1
-doc/claude/DIAGNOSTICS.md	timeline	27
+doc/claude/DIAGNOSTICS.md	timeline	24
 doc/claude/DOC_QUALITY.md	history	2
 doc/claude/DOC_QUALITY.md	timeline	12
 doc/claude/DRAWING.md	timeline	1
@@ -57,7 +57,7 @@ doc/claude/FIRST_CONTACT.md	timeline	29
 doc/claude/FORMALIZATION.md	history	2
 doc/claude/FORMALIZATION.md	timeline	4
 doc/claude/GALLERY_CI.md	timeline	6
-doc/claude/GOALS.md	timeline	7
+doc/claude/GOALS.md	timeline	6
 doc/claude/GOALS_USEFUL_NOT_STABLE.md	timeline	2
 doc/claude/GUARDS.md	timeline	49
 doc/claude/HTML_EXPORT.md	timeline	13
@@ -187,7 +187,7 @@ doc/claude/formal/performance.md	timeline	4
 doc/claude/formal/rewrites.md	timeline	10
 doc/claude/formal/tuples.md	history	1
 doc/claude/formal/tuples.md	timeline	23
-doc/claude/formal/types.md	timeline	27
+doc/claude/formal/types.md	timeline	25
 doc/claude/presentations/audience-generative-art/README.md	timeline	5
 doc/claude/presentations/par/PAR_PRESENTATION.md	timeline	26
 doc/claude/presentations/par/PAR_PRESENTATION_SLIDES.md	timeline	1
@@ -338,7 +338,7 @@ src/native_gate.rs	stamp	2
 src/native_lib.rs	narration	3
 src/native_lib.rs	stamp	6
 src/native_utils.rs	narration	3
-src/native_utils.rs	stamp	17
+src/native_utils.rs	stamp	16
 src/net.rs	narration	1
 src/net_profile.rs	narration	1
 src/null_census.rs	stamp	1
@@ -357,7 +357,7 @@ src/opt/value_records/mod.rs	stamp	1
 src/opt/value_records/sites.rs	stamp	2
 src/opt/writes.rs	stamp	1
 src/ownership_cfg.rs	narration	2
-src/ownership_cfg.rs	stamp	11
+src/ownership_cfg.rs	stamp	10
 src/package.rs	narration	2
 src/paged_reader.rs	narration	5
 src/paged_reader.rs	stamp	1
@@ -446,7 +446,7 @@ src/scopes.rs	stamp	6
 src/scopes/args.rs	narration	3
 src/scopes/args.rs	stamp	5
 src/scopes/arm_lift.rs	narration	2
-src/scopes/arm_lift.rs	stamp	4
+src/scopes/arm_lift.rs	stamp	3
 src/scopes/buffers.rs	stamp	1
 src/scopes/capture_adoption.rs	narration	1
 src/scopes/capture_adoption.rs	stamp	3
@@ -489,13 +489,13 @@ src/stack_verify.rs	stamp	4
 src/startup_cache.rs	narration	3
 src/startup_cache.rs	stamp	3
 src/state/codegen.rs	narration	9
-src/state/codegen.rs	stamp	55
+src/state/codegen.rs	stamp	51
 src/state/debug.rs	narration	1
 src/state/debug.rs	stamp	3
 src/state/io.rs	narration	3
 src/state/io.rs	stamp	18
 src/state/mod.rs	narration	13
-src/state/mod.rs	stamp	75
+src/state/mod.rs	stamp	74
 src/state/text.rs	narration	1
 src/state/text.rs	stamp	6
 src/store.rs	narration	9

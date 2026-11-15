@@ -1176,7 +1176,7 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
 /// in milliseconds; compiling a program 300 levels deep costs time that grows with the square
 /// of the depth.  Nightly, beside `wrap::limits_at_full_size`.
 #[test]
-#[ignore = "the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored"]
+#[ignore = "the limit guards at the real 300 / 64 KiB — miri.yml's nightly `release-gate-sweeps` job; run with --ignored"]
 fn native_limits_at_full_size() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
@@ -5987,7 +5987,7 @@ fn a_generation_run_does_not_read_the_previous_programs_facts() {
 /// a vector of records as bytes — answer under `wasmtime` what the interpreter answers.
 /// Skips without `clang`, the `wasm32-wasip2` target or `wasmtime`.
 #[test]
-#[ignore = "a wasm32 build of a whole program, 128 s in the serial native group — runs nightly in miri.yml's release-gate job"]
+#[ignore = "a wasm32 build of a whole program, 128 s in the serial native group — runs nightly in miri.yml's `release-gate-sweeps` job"]
 fn a_c_shim_links_into_the_wasm_target() -> std::io::Result<()> {
     let have = |tool: &str| {
         loft::platform::process::harness_command(tool)
@@ -6074,7 +6074,7 @@ fn main() {\n\
 /// loft_w_strlen`.  `lcshim2` needs `strlen` from that library, `lcshim` brings its own copy.
 /// Skips without `clang`, the `wasm32-wasip2` target or `wasmtime`.
 #[test]
-#[ignore = "a wasm32 build of a whole program, the per-commit suite's only wasip2 rlib user — runs nightly in miri.yml's release-gate job"]
+#[ignore = "a wasm32 build of a whole program, the per-commit suite's only wasip2 rlib user — runs nightly in miri.yml's `release-gate-sweeps` job"]
 fn two_c_shims_link_into_the_wasm_target() -> std::io::Result<()> {
     let have = |tool: &str| {
         loft::platform::process::harness_command(tool)

@@ -150,6 +150,13 @@ a new one; a write inside a branch joins the written and the kept state
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
 read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
+A first bind that joins at run time copies what lies in its witness's store and adopts the
+rest, so a store the value names while another variable holds it (a branch arm's call that
+answered into the frame's buffer) has both as holders, and a free through each is a second
+free (`LOFT_RECORDS_NO_JOIN_ADOPT_HELD=1` reads every join as a copy).
+A native is read by its declaration: `-> T[p]` answers a view of parameter `p`, and a public
+native none of whose parameters holds a store answers a store of its own; any other native's
+answer is not followed (`LOFT_RECORDS_NO_NATIVE_ANSWERS=1` follows none).
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through
