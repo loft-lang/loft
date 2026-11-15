@@ -115,9 +115,12 @@ pub struct State {
   // plus 2 (1 for none), 0 for not yet derived.  The Rust interpreter derives them once
   // (`Stores::derive_facts`); an operator reads them, never the type tree.
   pub tfacts: vector<integer>,
-  // Each record target an `OpNewRecord` / `OpFinishRecord` names (`target_of`), by
-  // `parent type * 65536 + field`.
-  pub targets: hash<Target[key]>,
+  // Each record target an `OpNewRecord` / `OpFinishRecord` names (`target_of`), in the order
+  // first met; where each key (`parent type * 65536 + field`) is in that list; and a direct-
+  // mapped cache of `TCACHE` (key, index) pairs in front of the hash.
+  pub targets: vector<Target>,
+  pub tkeys: hash<TKey[key]>,
+  pub tcache: vector<integer>,
   // Per native: its handler where `natives::light` carries it — the dispatch loop calls it from
   // `OpStaticCall`'s arm (`State::light_call`) — else -1; and the scratch vector it passes.
   pub lights: vector<integer>,
@@ -133,6 +136,13 @@ pub struct State {
 // (`T_*`; a linked group files by its own collection's kind when made, through its members
 // when finished), the element type, its size and the facts the filing routines take; a
 // linked group's members (`types::group_members`) and whether they hold or may be null.
+pub struct TKey {
+  pub key: integer,
+  pub idx: integer,
+}
+
+pub TCACHE = 1024;
+
 pub struct Target {
   pub key: integer,
   pub ok: boolean,
@@ -286,7 +296,7 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code) };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], tkeys: [], tcache: [for _ in 0..2 * TCACHE { -1 }], lights: [], lio: [0, 0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code) };
   ptab = natives::par_natives(img);
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
@@ -1219,9 +1229,19 @@ pub fn has(self: State, k: integer, tp: integer) -> boolean {
 // The record target `(ptp, fld)` names (`Target`), derived on its first use.
 pub fn target_of(self: State, ptp: integer, fld: integer) -> integer {
   key = ptp * 65536 + fld;
-  if self.targets[key] != null {
-    return key;
+  h = 2 * ((key ^ (key >> 10)) & (TCACHE - 1));
+  if (self.tcache[h] ?? -1) == key {
+    return self.tcache[h + 1] ?? 0;
   }
+  known = self.tkeys[key];
+  idx = if known != null { known!.idx } else { self.derive_target(ptp, fld, key) };
+  self.tcache[h] = key;
+  self.tcache[h + 1] = idx;
+  idx
+}
+
+// `target_of`'s miss: the target derived and listed; answers its index.
+fn derive_target(self: State, ptp: integer, fld: integer, key: integer) -> integer {
   gm: vector<integer> = [];
   rc = types::record_collection(self.types, ptp, fld);
   at = rc.at;
@@ -1253,7 +1273,9 @@ pub fn target_of(self: State, ptp: integer, fld: integer) -> integer {
     gk += 3;
   }
   self.targets += [Target { key: key, ok: ok, tp: ctp, at: at ?? 0, how: how, group: len(gm) >= 6, elem: elem, size: self.types[elem]?.size ?? 0, kkind: self.fact(F_KEYED_KIND, ctp) ?? 0, linked: self.types[elem]?.linked ?? false, content: self.fact(F_CONTENT, ctp) ?? 0, gm: gm, gheld: gheld, gnull: gnull, direct: direct, nkeys: if self.types[ctp] == null { 0 } else { len(self.types[ctp]!.keys) } }];
-  key
+  idx = len(self.targets) - 1;
+  self.tkeys += [TKey { key: key, idx: idx }];
+  idx
 }
 
 // Type `tp`'s keyed facts (`State.kfacts`), derived on its first use: answers where they start.
