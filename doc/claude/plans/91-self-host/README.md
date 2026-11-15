@@ -17,9 +17,13 @@ The path, in order, with the gate each stage passes before the next starts, is
 [§ The path](#the-path--stages-and-gates).  **Where it stands:** 1a's lexer and parser pass
 gates T and S on nearly every file, and its elaborator is gate E's work: the gate table, by
 program and by formal rule, is [1a-parser.md § Where it stands](1a-parser.md#where-it-stands).
-1b's interpreter runs programs from the RUST front end's image (766 of the 1,078 corpus
-programs at its last census, in an earlier `handoff-*.md`; not re-measured since); the IR
-passes and the bytecode writer are not ported yet.  The bytecode runner built as a port of
+1b's bytecode runner runs the RUST front end's run image and agrees with `loft --interpret` on
+nearly the whole corpus, and the bytecode writer in loft writes all but two of the corpus's
+functions byte for byte; both positions are committed baselines checked by
+`selfhost/bench/run_image_survey.py --check` and `bgen_survey.py --check`, and the latest
+numbers and the next step (the front end) are in
+[handoff-2026-11-15-front-end-start.md](handoff-2026-11-15-front-end-start.md).  The IR passes
+are not ported yet.  The bytecode runner built as a port of
 the Rust interpreter — its generated operator table, what is still to build and where it
 differs from Rust — is [1b-fill-port.md](1b-fill-port.md).  What it still takes from Rust, and
 the order that ends in, is [rust-dependencies.md](rust-dependencies.md); the design of a build

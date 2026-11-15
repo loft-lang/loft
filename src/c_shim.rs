@@ -238,6 +238,11 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     for p in &paths {
         cmd.push_arg(p);
     }
+    // After the sources, where a gcc link resolves them: the system libraries a shim that opens
+    // a socket or reads the certificate store needs on Windows (Winsock and the rest,
+    // `platform::c_system_link_libs`), as a C backend program's own link names them.  None
+    // elsewhere.
+    cmd.push_args(crate::platform::c_system_link_libs());
     let out = cmd.run(b"").map_err(|e| {
         format!(
             "`[c] shim` needs a C compiler and `{}` could not be run ({e}). Install one \

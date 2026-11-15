@@ -1,0 +1,101 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `data::NarrowSlot` (@PLN91): the field encoding a narrow integer takes — its width, the
+// kind that width, its nullability and its range pick (`NarrowIntKind::of`), and the `min` a
+// byte or short kind encodes against.  One home for the front end's field reads and writes
+// (`el_ex_base::int_slot`) and the bytecode writer's linked narrow locals (`local_slot`);
+// it names no elaborator state, so the runner's writer can use it.
+use ir;
+
+// `IntegerSpec::byte_width`: the alias's `size(n)`, else the bytes the range needs.
+pub fn byte_width(spec: ir::IntegerSpec, nullable: boolean) -> integer {
+  if spec.forced_size > 0 {
+    return spec.forced_size;
+  }
+  codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+  if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 }
+}
+
+// `NarrowSlot::of_slot`: the kind of a slot `width` bytes wide (an op's suffix: "Byte",
+// "ShortRaw", "Int4", "Int", …) and its `min`; `narrow_vec` for a narrow-vector element.
+pub fn slot_of(spec: ir::IntegerSpec, nullable: boolean, width: integer, narrow_vec: boolean) -> Slot {
+  unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
+  kind = if width == 1 {
+    if nullable { "ByteNullable" } else { "Byte" }
+  } else if width == 2 {
+    if nullable { "Short" } else if narrow_vec { "ShortRaw" } else { "ShortFull" }
+  } else if width == 4 {
+    if unsigned_wide && (nullable || narrow_vec) { "Int4Raw" } else if unsigned_wide { "Int4Full" } else { "Int4" }
+  } else {
+    "Int"
+  };
+  m = 0;
+  if takes_min(kind) {
+    m = spec.min;
+    // `usable_min`: a sentinel-reserving kind whose range fills its width drops its bottom code.
+    reserves = kind == "ByteNullable" || kind == "Short";
+    sentinel = reserves && ((spec.forced_size == 1 && spec.max - spec.min + 1 == 256) || (spec.forced_size == 2 && spec.max - spec.min + 1 == 65536));
+    if sentinel && spec.min < 0 {
+      m = spec.min + 1;
+    }
+  }
+  Slot { kind: kind, min: m }
+}
+
+pub struct Slot {
+  pub kind: text,
+  pub min: integer
+}
+
+pub fn takes_min(k: text) -> boolean {
+  k == "Byte" || k == "ByteNullable" || k == "ShortRaw" || k == "Short" || k == "ShortFull"
+}
+
+// `NarrowSlot::of_type`: the slot a narrow integer LOCAL of type `t` takes — a slot like a
+// field, never a narrow-vector element; null for the wide `integer`, which keeps its 8 bytes.
+pub fn local_slot(t: ir::TypeT) -> Slot? {
+  nullable = match t {
+    TyOptional { inner: _ } => true,
+    _ => false,
+  };
+  spec = match base(t) {
+    TyInteger { spec: s } => s,
+    _ => {
+      return null;
+    }
+  };
+  width = byte_width(spec, nullable);
+  if width >= 8 {
+    return null;
+  }
+  slot_of(spec, nullable, width, false)
+}
+
+// `NarrowIntKind::code`: the kind as the narrow operators' last operand spells it.
+pub fn kind_code(k: text) -> integer {
+  if k == "Byte" { 0 } else if k == "ByteNullable" { 1 } else if k == "ShortRaw" { 2 }
+  else if k == "Short" { 3 } else if k == "ShortFull" { 4 } else if k == "Int4" { 5 }
+  else if k == "Int4Raw" { 6 } else if k == "Int4Full" { 7 } else { 255 }
+}
+
+// `NarrowIntKind::get_op`: the operator a LINK to a place of this kind reads through.
+pub fn get_op(k: text) -> text {
+  if k == "Int" { "OpGetInt" } else { "OpGet{k}" }
+}
+
+// `NarrowIntKind::set_op`: the write twin; a not-null short or 4-byte place reuses the raw
+// store (only its READ differs).
+pub fn set_op(k: text) -> text {
+  if k == "ShortFull" { "OpSetShortRaw" } else if k == "Int4Full" { "OpSetInt4Raw" }
+  else if k == "Int" { "OpSetInt" } else { "OpSet{k}" }
+}
+
+// `Type::base`: the type under any `?`.
+fn base(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => base(inner),
+    _ => t,
+  }
+}

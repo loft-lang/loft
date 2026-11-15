@@ -1188,8 +1188,12 @@ pub fn local_tag(self: State, of: integer, a: integer) -> integer? {
   if r.rec == 0 { 0 } else { crt::get_w(crt::W_ENUM, r.store_nr, r.rec, r.pos, 0, 0) }
 }
 
-// Type `tp`'s default image, derived on its first use.
+// Type `tp`'s default image, derived on its first use.  A type with no row — `u16::MAX`, the
+// type a no-prefill insert carries — has none: `Stores::set_default_value` returns for it.
 pub fn default_of(self: State, tp: integer) -> vector<u8> {
+  if tp < 0 || tp >= len(self.types) || self.types[tp] == null {
+    return [];
+  }
   self.image_ready(tp);
   self.images[tp] ?? []
 }
@@ -2131,10 +2135,12 @@ pub fn fn_call_ref(self: State, fn_var: integer, arg_size: integer) {
   depth = self.depth + 1;
   top = self.stack_pos;
   i = self.fnref_of[d] ?? -1;
+  kind = 0;
   if i >= 0 {
     f = self.fnrefs[i]!;
-    if f.kind != 0 {
-      self.stop("not carried: a call through a reference to a {if f.kind == 1 { "native" } else { "generator" }}");
+    kind = f.kind;
+    if f.kind == 1 {
+      self.stop("not carried: a call through a reference to a native");
       return;
     }
     if f.drop > 0 && asz >= f.drop {
@@ -2148,6 +2154,13 @@ pub fn fn_call_ref(self: State, fn_var: integer, arg_size: integer) {
   closure = self.slot_dbref(top - (fv - 8));
   if closure.rec != 0 {
     self.put_stack_dbref(closure);
+  }
+  // `@FR-G-Call` (loft#2059): a reference to a GENERATOR starts one, as `OpCoroutineCreate`
+  // does for a named call — the arguments, the hidden buffers and the closure become the paused
+  // frame, and the handle is the call's value.
+  if kind == 2 {
+    self.coroutine_create(d, asz + self.stack_pos - top, self.starts[d] ?? 0);
+    return;
   }
   // loft#1185: the allocation count before the callee runs (`release_fnref_bufs` compares).
   self.fn_calls += [depth, crt::serial_now()];

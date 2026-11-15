@@ -19,6 +19,8 @@ use ret_adopt;
 use bgen_set;
 use bgen_loop;
 use bgen_tuple;
+use bgen_yield;
+use narrow;
 use bgen_text;
 
 // The bytes of one function while they are written.
@@ -117,6 +119,9 @@ pub struct Gen {
   walks_known: boolean,
   // `@FR-R-RetAdopt`: the local that is built in the caller's buffer (`v` -1: none).
   adopt: ret_adopt::RetAdopt,
+  // `@FR-T-Record`: the narrow tuple members a `&` names, as `var * 64 + member`
+  // (`tuple_links::linked_narrow_members`); each holds its field encoding.
+  linked: vector<integer>,
   why: text,
 }
 
@@ -319,6 +324,11 @@ fn put_fused(g: Gen, f: Fused, jump: boolean) {
 }
 
 // `State::code_put`: a jump's 4-byte step written where its place was kept.
+fn patch_u16(o: Out, at: integer, v: integer) {
+  o.code[at] = (v & 255) as u8;
+  o.code[at + 1] = ((v >> 8) & 255) as u8;
+}
+
 fn patch_i32(o: Out, at: integer, v: integer) {
   w = v & 4294967295;
   o.code[at] = (w & 255) as u8;
@@ -658,8 +668,37 @@ fn branch(g: Gen, test: ir::Node, t_val: ir::Node, f_val: ir::Node) -> ir::TypeT
     false_stack = true_stack;
   }
   if !divergent(t_val) && !divergent(f_val) && true_stack != false_stack {
-    stop(g, "not written yet: an if whose arms leave different heights");
-    return tp;
+    // `gen_if`'s B5 join: both arms leave a value at different heights.  Join at the shorter
+    // arm's height; the taller arm frees its excess and keeps the value on top.  The value's
+    // width is the FUNCTION's return width, as the Rust writer reads it.
+    target = if true_stack < false_stack { true_stack } else { false_stack };
+    ret_size = frame::width(def_of(g, g.d).returned[0] ?? ir::TyVoid, true);
+    keep = frame::stepped(ret_size);
+    if false_stack > target {
+      // The false arm is taller and its end is here: shrink it in place, then the join.
+      add_op(g, "OpFreeStack");
+      put_u16(g.o, ret_size);
+      put_u16(g.o, (false_stack - target) + keep);
+      g.position = target;
+      patch_i32(g.o, end_at, len(g.o.code) - false_pos);
+    } else {
+      // The true arm is taller but already written: its jump lands in a trampoline after the
+      // false arm, which frees its excess; the false arm jumps over it to the join.
+      add_op(g, "OpGotoWord");
+      skip = len(g.o.code);
+      put_i32(g.o, 0);
+      skip_base = len(g.o.code);
+      patch_i32(g.o, end_at, skip_base - false_pos);
+      add_op(g, "OpFreeStack");
+      put_u16(g.o, ret_size);
+      put_u16(g.o, (true_stack - target) + keep);
+      patch_i32(g.o, skip, len(g.o.code) - skip_base);
+    }
+    g.position = target;
+    return match tp {
+      TyNever => fp,
+      _ => tp,
+    };
   }
   patch_i32(g.o, end_at, len(g.o.code) - false_pos);
   if divergent(t_val) {
@@ -760,7 +799,15 @@ fn add_const(g: Gen, tp: ir::TypeT, p: ir::Node, before: integer) {
 }
 
 // `State::code_add_str`: a text's byte count and its bytes.
+// A text's bytes, length first, as the Rust writer puts them.  The text null IS a text of one
+// NUL byte (`STRING_NULL`, src/store.rs: nullity is read from the content), so a constant
+// `"\0"` reaches here as the null text, whose `size()` is 0: its bytes are that one NUL.
 fn put_str(o: Out, s: text) {
+  if s == null {
+    put_u8(o, 1);
+    o.code += [0 as u8];
+    return;
+  }
   put_u8(o, s.size());
   for i in 0..s.size() {
     o.code += [(s.byte_at(i) & 255) as u8];
@@ -1041,6 +1088,9 @@ fn own_way(g: Gen, op: integer, args: vector<ir::Node>) -> boolean {
   }
   if name == "OpCreateStack" && first >= 0 {
     push_create_stack(g, var_pos(g, first));
+    return true;
+  }
+  if name == "OpCreateStack" && len(args) > 0 && bgen_tuple::create_stack(g, args[0]!) {
     return true;
   }
   if name == "OpFreeText" && len(args) == 1 {
@@ -1885,8 +1935,21 @@ fn assign(g: Gen, v: integer, value: ir::Node) {
     NdBlock { block: _ } => true,
     _ => false,
   };
-  if put == "" || var.linked_narrow || (g.slots[v] ?? 65535) == 65535 {
-    stop(g, "not written yet: an assignment of a value that is no scalar");
+  // A linked narrow local is written in its field encoding (`OpPutNarrow`, then `min` and
+  // the kind), on its first assignment and every later one.
+  narrow_sl = if var.linked_narrow { narrow::local_slot(tp) } else { null };
+  if narrow_sl != null {
+    put = "OpPutNarrow";
+  }
+  if put == "" || (var.linked_narrow && narrow_sl == null) || (g.slots[v] ?? 65535) == 65535 {
+    // Named apart, so the survey ranks them: what the port lacks differs per cause.
+    stop(g, if (g.slots[v] ?? 65535) == 65535 {
+      "not written yet: an assignment to a variable without a slot"
+    } else if var.linked_narrow {
+      "not written yet: an assignment to a narrow local a link names"
+    } else {
+      "not written yet: an assignment of a value that is no scalar"
+    });
     return;
   }
   if !(g.allocated[v] ?? false) {
@@ -1899,6 +1962,7 @@ fn assign(g: Gen, v: integer, value: ir::Node) {
     at = var_pos(g, v);
     add_op(g, put);
     put_u16(g.o, at);
+    narrow_operands(g, narrow_sl);
     return;
   }
   before = g.position;
@@ -1937,14 +2001,165 @@ fn assign(g: Gen, v: integer, value: ir::Node) {
   at = var_pos(g, v);
   add_op(g, put);
   put_u16(g.o, at);
+  narrow_operands(g, narrow_sl);
+}
+
+// `Data::has_default`: does a value of `t` take a default when nothing chooses one (`@FR-D-*`)?
+// A record does when every field supplies one (`(D-Rec)`): an explicit default, a constant, a
+// hidden or a computed field, a nullable one; a bare enum field needs an explicit choice, and a
+// `reference<T>` pointer has none.
+fn has_default(g: Gen, t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyBoolean => true,
+    TyCharacter => true,
+    TyText { dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    TyOptional { inner: _ } => true,
+    TyNull => true,
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    TyEnum { n: _, is_ref: _, dep: _ } => true,
+    TyTuple { elems } => {
+      for e in elems {
+        if !has_default(g, e) {
+          return false;
+        }
+      }
+      true
+    }
+    TyReference { n: d, dep } => {
+      if pointer_marker(dep) {
+        return false;
+      }
+      rec = def_of(g, d);
+      if rec.def_type != 5 && rec.def_type != 4 {
+        return true;
+      }
+      for at in rec.attributes {
+        ftp = at.typedef[0] ?? ir::TyVoid;
+        supplied = match at.value[0] ?? ir::NdNull {
+          NdNull => false,
+          _ => true,
+        };
+        routine = match ftp {
+          TyRoutine { n: _ } => true,
+          _ => false,
+        };
+        if supplied || at.constant || at.hidden || routine {
+          continue;
+        }
+        match ftp {
+          TyEnum { n: e, is_ref: _, dep: _ } => {
+            nm = def_of(g, e).name;
+            if !nm.starts_with("__") && nm != "JsonValue" {
+              return false;
+            }
+          }
+          _ => {}
+        }
+        pointer = match base(ftp) {
+          TyReference { n: _, dep: fd } => pointer_marker(fd),
+          _ => false,
+        };
+        optional = match ftp {
+          TyOptional { inner: _ } => true,
+          _ => false,
+        };
+        if (at.nullable && !pointer) || optional {
+          continue;
+        }
+        if pointer || !has_default(g, ftp) {
+          return false;
+        }
+      }
+      true
+    }
+    _ => false,
+  }
+}
+
+// `Deps::is_pointer_marker`: a shared pointer's dep list holds the `u16::MAX` marker.
+fn pointer_marker(dep: vector<integer>) -> boolean {
+  for x in dep {
+    if x == 65535 {
+      return true;
+    }
+  }
+  false
+}
+
+// `gen_drop`: a value written, then its bytes taken off the stack.
+fn drop_value(g: Gen, n: ir::Node) {
+  generate(g, n, false);
+  size = frame::stepped(size_code(g, n));
+  if size > 0 {
+    add_op(g, "OpFreeStack");
+    put_u16(g.o, 0);
+    put_u16(g.o, size);
+  }
+  g.position -= size;
+}
+
+// `gen_parallel`: `parallel { arm; … }` — `OpParallelBegin` with the arm count, an
+// `OpParallelArm` per arm (its offset from the join, patched), `OpParallelJoin`, a jump over the
+// arms for the thread that waits, then each arm as a void function of its own: the arm's value
+// dropped and a return that discards the enclosing frame as the function's own does.
+fn parallel_block(g: Gen, arms: vector<ir::Node>) {
+  add_op(g, "OpParallelBegin");
+  put_u8(g.o, len(arms));
+  at: vector<integer> = [];
+  for _ in arms {
+    add_op(g, "OpParallelArm");
+    at += [len(g.o.code)];
+    put_u16(g.o, 0);
+  }
+  add_op(g, "OpParallelJoin");
+  join = len(g.o.code);
+  add_op(g, "OpGotoWord");
+  skip = len(g.o.code);
+  put_i32(g.o, 0);
+  skip_base = len(g.o.code);
+  for a in arms {
+    patch_u16(g.o, at[a#index] ?? 0, len(g.o.code) - join);
+    drop_value(g, a);
+    add_op(g, "OpReturn");
+    put_u16(g.o, g.arguments);
+    put_u16(g.o, 0);
+    put_u16(g.o, g.position);
+  }
+  patch_i32(g.o, skip, len(g.o.code) - skip_base);
+}
+
+// The operands a narrow operator carries after the position: the slot's `min`, its kind.
+fn narrow_operands(g: Gen, sl: narrow::Slot?) {
+  if sl != null {
+    put_i32(g.o, sl!.min);
+    put_u8(g.o, narrow::kind_code(sl!.kind));
+  }
 }
 
 // `State::generate_var`: a variable's value pushed, by its type.
 fn variable(g: Gen, v: integer) -> ir::TypeT {
   var = var_of(g, v);
   tp = var.type_def[0] ?? ir::TyVoid;
+  // `@PLN167` decision 1: a LINKED narrow local holds its field encoding; the read takes the
+  // slot's `min` and kind after the position (`generate_var`).
   if var.linked_narrow {
-    stop(g, "a linked narrow local");
+    sl = narrow::local_slot(tp);
+    if sl == null {
+      stop(g, "a linked narrow local");
+      return tp;
+    }
+    init_slot(g, v, "OpVarNarrow");
+    put_i32(g.o, sl!.min);
+    put_u8(g.o, narrow::kind_code(sl!.kind));
     return tp;
   }
   match base(tp) {
@@ -1985,15 +2200,14 @@ fn variable(g: Gen, v: integer) -> ir::TypeT {
   // A link is read through: the reference its slot holds, then the value it names.
   through = "";
   operand = true;
+  link_sl: narrow::Slot? = null;
   match tp {
     TyRefVar { inner } => {
-      nullable = optional_shape(inner);
+      // `@PLN167`: a link to a NARROW integer place reads its field encoding through the
+      // kind's own operator, which takes the `min` after the field offset.
+      link_sl = narrow::local_slot(inner);
       through = match base(inner) {
-        TyInteger { spec } => {
-          codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
-          width = if spec.forced_size > 0 { spec.forced_size } else if codes <= 65536 { 2 } else { 8 };
-          if width < 8 { "narrow" } else { "OpGetInt" }
-        }
+        TyInteger { spec: _ } => if link_sl != null { narrow::get_op(link_sl!.kind) } else { "OpGetInt" },
         TyCharacter => "OpGetCharacter",
         TySingle => "OpGetSingle",
         TyFloat => "OpGetFloat",
@@ -2038,6 +2252,9 @@ fn variable(g: Gen, v: integer) -> ir::TypeT {
     if operand {
       put_u16(g.o, 0);
     }
+    if link_sl != null && narrow::takes_min(link_sl!.kind) {
+      put_i32(g.o, link_sl!.min);
+    }
   }
   tp
 }
@@ -2056,22 +2273,64 @@ fn returned_value(g: Gen, inner: ir::Node) {
   }
 }
 
-// The packed size a generator's next and return carry for an element; -1 for one the port
-// of `next_operands` does not carry.
+// The packed size a generator's next and return carry for an element (`next_operands`'
+// `value_size`: the channel in the high byte, the element's argument width in the low).
 fn yield_size(step: ir::TypeT) -> integer {
-  // `channel_tag`, of the type as it stands; a tuple's member kinds are not ported.
-  tag = match step {
-    TyTuple { elems: _ } => -1,
+  channel_tag(step) * 256 + frame::width(step, true)
+}
+
+// `coroutine_layout::channel_tag`: the native transport channel a yield of `tp` travels, packed
+// into the operand's high byte (the interpreter masks it off; the bytes must still agree).
+fn channel_tag(tp: ir::TypeT) -> integer {
+  match tp {
+    TyTuple { elems } => {
+      if len(elems) == 0 {
+        return 6;
+      }
+      for e in elems {
+        if !slot_kind(e) {
+          return 6;
+        }
+      }
+      1
+    }
     TyFunction { args: _, result: _, dep: _, consts: _ } => 2,
     TyFloat => 3,
     TySingle => 4,
     TyEnum { n: _, is_ref, dep: _ } => if is_ref { 0 } else { 5 },
-    _ => 0,
-  };
-  if tag < 0 {
-    return -1;
+    _ => {
+      // `channel_0_carries`: a text, a store handle or a scalar, each asked of the base.
+      bs = base(tp);
+      carried = match bs {
+        TyText { dep: _ } => true,
+        TyInteger { spec: _ } => true,
+        TyFloat => true,
+        TySingle => true,
+        TyCharacter => true,
+        TyBoolean => true,
+        TyEnum { n: _, is_ref, dep: _ } => true,
+        _ => own::is_dbref(bs),
+      };
+      if carried { 0 } else { 6 }
+    }
   }
-  tag * 256 + frame::width(step, true)
+}
+
+// `YieldSlot::classify(..).is_some()`: a tuple member a transport slot carries, asked of the
+// member as it stands.
+fn slot_kind(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec: _ } => true,
+    TyCharacter => true,
+    TyNull => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyRoutine { n: _ } => true,
+    TyText { dep: _ } => true,
+    TyIterator { step: _, inner: _ } => true,
+    _ => own::is_dbref(t),
+  }
 }
 
 // `State::add_return`: the return, with the arguments' bytes, the answer's and the evaluation
@@ -2082,10 +2341,6 @@ fn add_return(g: Gen) {
     TyIterator { step, inner: _ } => {
       // A generator ends: `coroutine_layout::next_operands`' packed size of what it yields.
       size = yield_size(step);
-      if size < 0 {
-        stop(g, "not written yet: a generator of an element the port does not carry");
-        return;
-      }
       add_op(g, "OpCoroutineReturn");
       put_u16(g.o, size);
       return;
@@ -2235,15 +2490,11 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
     NdBreak { n } => leave(g, n, true),
     NdContinue { n } => leave(g, n, false),
     NdDrop { inner } => {
-      // `gen_drop`: the value, then its bytes taken off the stack.
-      generate(g, inner, false);
-      size = frame::stepped(size_code(g, inner));
-      if size > 0 {
-        add_op(g, "OpFreeStack");
-        put_u16(g.o, 0);
-        put_u16(g.o, size);
-      }
-      g.position -= size;
+      drop_value(g, inner);
+      ir::TyVoid
+    }
+    NdParallel { arms } => {
+      parallel_block(g, arms);
       ir::TyVoid
     }
     NdEnum { ord, tp: _ } => {
@@ -2277,7 +2528,7 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
     }
     NdYield { inner } => {
       // A scalar or text handed out; a record's or function's temporaries are handed over
-      // with it (`yield_handed_temps`), which is not written yet.
+      // with it (`yield_handed_temps`).
       step = match def_of(g, g.d).returned[0] ?? ir::TyVoid {
         TyIterator { step: st, inner: _ } => st,
         _ => ir::TyVoid,
@@ -2292,12 +2543,16 @@ fn generate(g: Gen, node: ir::Node, top: boolean) -> ir::TypeT {
         TyEnum { n: _, is_ref, dep: _ } => !is_ref,
         _ => false,
       };
-      if !plain {
-        return unwritten(g, "a yield that hands a record or a function value over");
-      }
       t = generate(g, inner, false);
+      if !plain {
+        // The temps holding what the consumer is handed are forgotten (`yield_handed_temps`).
+        bgen_yield::forget(g, inner);
+      }
       value_tp = match base(t) {
         TyRefVar { inner: under } => under,
+        // A function value's node answers no type of its own (`NdFnRef` below): the yielded
+        // value is the generator's element.
+        TyVoid => step,
         _ => t,
       };
       size = frame::width(value_tp, true);
@@ -2375,17 +2630,6 @@ fn call_ref(g: Gen, v: integer, args: vector<ir::Node>) -> ir::TypeT {
   declared = 0;
   for p in params {
     declared += pushed(p);
-    text_link = match base(p) {
-      TyRefVar { inner } => match base(inner) {
-        TyText { dep: _ } => true,
-        _ => false,
-      },
-      _ => false,
-    };
-    if text_link {
-      stop(g, "not written yet: a call through a function value with a text link parameter");
-      return ret;
-    }
   }
   for a in args {
     p = params[a#index];
@@ -2554,9 +2798,12 @@ fn adopted_bind(g: Gen, v: integer, value: ir::Node) -> boolean {
 pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, natives: vector<text>, why: vector<text>) -> vector<u8>? {
   def = b.data.definitions[d]!;
   ret = def.returned[0] ?? ir::TyVoid;
-  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), owned_reassigned: [], walks: [], walks_known: false, adopt: ret_adopt::RetAdopt {}, why: "" };
+  g = Gen { b: b, starts: starts, natives: natives, d: d, o: Out { code: [] }, position: 0, arguments: 0, slots: [], allocated: [], loop_start: [], loop_stack: [], loop_rotated: [], breaks: [], continues: [], ops: ops, defs: own::new_defs(), owned_reassigned: [], walks: [], walks_known: false, adopt: ret_adopt::RetAdopt {}, linked: [], why: "" };
   if !body_null(def) {
     g.defs = own::function_defs(b, d, ops);
+    if def.code[0] != null {
+      bgen_tuple::linked_members(g, def.code[0]!, g.linked);
+    }
     a = ret_adopt::ret_adopt(b, d);
     if a.v >= 0 && def.code[0] != null && adopt_bound(g, def.code[0]!, a) {
       g.adopt = a;
@@ -2584,9 +2831,6 @@ pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, n
           hwm = end;
         }
       }
-      if v.argument && v.linked_narrow {
-        stop(g, "not written yet: a linked narrow argument");
-      }
     }
     g.arguments = g.position;
     g.position += 8;
@@ -2595,7 +2839,57 @@ pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, n
       _ => false,
     };
     if empty {
-      stop(g, "an empty body");
+      // `def_code`'s empty stub (loft#1254): no frame is reserved; a body answering a value
+      // pushes its type's default first — `to_default`, or the null sentinel for a heap
+      // return.  The port carries the scalars, the text, a plain enum and the collections;
+      // a reference, an optional, a tuple or a function value keeps a refusal.
+      ret_t = def.returned[0] ?? ir::TyVoid;
+      // 0: nothing to push, 1: `dflt`, 2: the null sentinel, -1: not carried.
+      kind = -1;
+      dflt = ir::NdNull;
+      // A type with no default (`Data::has_default`) pushes nothing: the stub returns as it is.
+      if !has_default(g, ret_t) {
+        kind = 0;
+      }
+      matched = if kind == 0 { ir::TyVoid } else { ret_t };
+      match matched {
+        TyVoid => { kind = 0; }
+        TyReference { n: _, dep: _ } => { kind = 2; }
+        TyBoolean => { kind = 1; dflt = ir::NdBoolean { b: false }; }
+        TyInteger { spec } => {
+          // `IntegerSpec::default_value`: zero, or the range's end nearest to it.
+          kind = 1;
+          dflt = ir::NdInt { n: if spec.min <= 0 && 0 <= spec.max { 0 } else if spec.min > 0 { spec.min } else { spec.max } };
+        }
+        TyFloat => { kind = 1; dflt = ir::NdFloat { f: 0.0 }; }
+        TySingle => { kind = 1; dflt = ir::NdSingle { f: 0.0 as single }; }
+        TyCharacter => { kind = 1; dflt = ir::NdInt { n: 0 }; }
+        TyText { dep: _ } => { kind = 1; dflt = ir::NdText { s: "" }; }
+        TyEnum { n: _, is_ref, dep: _ } => {
+          if is_ref { kind = 2; } else { kind = 1; dflt = ir::NdEnum { ord: 0, tp: 0 }; }
+        }
+        TyVector { inner: _, dep: _ } => { kind = 2; }
+        TySorted { n: _, keys: _, dep: _ } => { kind = 2; }
+        TyIndex { n: _, keys: _, dep: _ } => { kind = 2; }
+        TyHash { n: _, names: _, dep: _ } => { kind = 2; }
+        TyRadix { n: _, names: _, dep: _ } => { kind = 2; }
+        TyTrie { n: _, key: _, dep: _ } => { kind = 2; }
+        _ => {}
+      }
+      if kind >= 0 {
+        if kind == 1 {
+          generate(g, dflt, false);
+        } else if kind == 2 {
+          push_sentinel(g);
+        }
+        add_return(g);
+        why[0] = g.why;
+        if g.why != "" {
+          return null;
+        }
+        return g.o.code;
+      }
+      stop(g, "not written yet: an empty body answering a value");
     }
     hwm = frame::stepped(hwm);
     if hwm > g.position {
@@ -2603,12 +2897,27 @@ pub fn function(b: ir::Bundle, ops: own::Ops, d: integer, starts: vector<u32>, n
       put_u16(g.o, hwm - g.position);
       g.position = hwm;
     }
-    // A record a literal is built in (`__vdb…`) starts as the sentinel null.
+    // In variable order, as `def_code`'s entry loop: a record a literal is built in (`__vdb…`)
+    // starts as the sentinel null; a narrow by-value argument a link names arrives as the
+    // caller's 8-byte value and is re-encoded in place once (`@PLN167` decision 1).
     for v in def.variables.variables {
       if !v.argument && v.name.starts_with("__vdb") && v.stack_pos != 65535 {
         at = var_pos(g, v#index);
         add_op(g, "OpInitRefSentinel");
         put_u16(g.o, at);
+      } else if v.argument && len(g.linked) > 0 && len(bgen_tuple::elems_of(v.type_def[0] ?? ir::TyVoid)) > 0 {
+        bgen_tuple::reencode_argument(g, v#index);
+      } else if v.argument && v.linked_narrow {
+        sl = narrow::local_slot(v.type_def[0] ?? ir::TyVoid);
+        if sl == null {
+          stop(g, "not written yet: a linked narrow argument");
+        } else {
+          init_slot(g, v#index, "OpVarInt");
+          at = var_pos(g, v#index);
+          add_op(g, "OpPutNarrow");
+          put_u16(g.o, at);
+          narrow_operands(g, sl);
+        }
       }
     }
     generate(g, def.code[0]!, true);

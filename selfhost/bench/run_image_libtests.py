@@ -96,7 +96,7 @@ def one(item, loft, runner, tmp, env, timeout, libargs, mirrors):
     rc, want, err = proc([loft, *libargs, "--interpret", prog], env, timeout, cwd=cwd)
     rc2, got, err2 = proc([runner, img], {**env, "LOFT_NATIVE_LEAK_CHECK": "1"}, timeout, cwd=cwd)
     passed = rc == 0
-    m = re.search(r"stopped: not carried: (\S+)", err2)
+    m = re.search(r"stopped: not carried: ([^\n]+)", err2)
     if m:
         return item, "stopped", m.group(1), passed
     if rc2 == -9:

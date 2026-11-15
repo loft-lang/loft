@@ -119,11 +119,20 @@ sh target/seed/build.sh       # what a user runs: CC, CFLAGS, LTO and OUT may be
    release gate then runs `make seed-check SEED=<the published seed>`.
 2. **A stable image format.**  At L1 the runner still runs images the Rust front end writes
    (`loft --emit-run-image`): a seed-built runner and a newer `loft` must agree on the format.
-   The image carries a schema (`selfhost/src/ir.loft` `RunImage`, `make ir-schema-regen`); it
-   needs a version word the runner checks, refusing an image of another version by name rather
-   than misreading it.
-3. **Windows.**  `build.sh` is POSIX; the MSVC build (`cl`, the Windows CRT, `LoadLibrary`) is
-   the C driver's `msvc_args` form and has no seed script yet.
+   Built: `RunImage.format` (offset 0) holds `RUN_IMAGE_FORMAT`, written by `src/ir_store.rs`
+   and checked first by `load::load_run`, which refuses another format by name; the two
+   constants are held equal by `ir_store`'s `the_run_image_format_is_the_loft_schemas`.  A layout
+   change is the store load's conversion (the `.dschema`); the number is raised when what the
+   bytes MEAN changes under an unchanged layout.  Owed: whether to freeze the format for the
+   switch window (the owner's call).
+3. **Windows.**  Built: `build.cmd` (MSVC: `cl /std:c11 /O2 /GL`, the unit and the shim
+   together, `/LTCG`, Winsock, crypt32, advapi32, an 8 MiB stack; `cl` from PATH or vswhere)
+   and `build.sh` under MinGW (MSYS2 gcc 16); both runners agree with `loft --interpret` on the
+   smoke programs on windows-latest (checked with `windows-probe.yml`'s `run=`).  It took a
+   portable `#c` lookup in the shim (`loft_dl_self_sym`), Winsock on a shim's link
+   (`c_shim.rs`), a long integer `match` written as one `switch` (`cl` nests at most 128
+   blocks) and the program's start-up left out of a shim unit (`LOFT_SHIM_UNIT`).  Owed: a
+   Windows leg that runs it, not only a probe.
 
 ### What L1 gives
 
@@ -267,9 +276,9 @@ L3: src/opt/ ─► C writer ─► bodies ─► driver ─► bootstrap fixpoi
 
 1. **Where the seed lives** — committed C (simple, heavy history), a release artifact
    (recommended: the history stays small, the release gate checks it), or a separate repository.
-2. **The image format's versioning at L1** — a version word and a refusal, or the runner and
-   `loft` released only together.  Recommended: the version word; it is one field and it makes
-   the L1 player independent of the compiler's release.
+2. **The image format's versioning at L1** — taken as recommended: the version word (built,
+   [What L1 still owes](#what-l1-still-owes) 2).  Open: freezing the format for the switch
+   window.
 3. **The moving target** — while the front end is being ported, every Rust compiler change is
    owed twice.  Options: freeze the Rust front end's semantics for the port's duration (only
    fixes, each mirrored), or let it move and count the debt per change.  Recommended: a change

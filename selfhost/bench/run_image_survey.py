@@ -18,11 +18,28 @@ directory and run from the file's own directory, `tests/lib` on `--lib` — so a
 starts at `main`, covers what `loft --tests` runs.
 
     python3 selfhost/bench/run_image_survey.py [--scripts-only] [--functions] [--jobs N] [--top 30]
+    python3 selfhost/bench/run_image_survey.py [--written] [--functions] --check BASELINE
+    python3 selfhost/bench/run_image_survey.py [--written] [--functions] --write-baseline BASELINE
+
+The position is gated by a committed baseline (`run_image_survey.baseline.tsv` beside this file,
+in `baseline.py`'s format):
+per LAYER — `image` (the run image's own code), `written` (the code the loft writer writes),
+each with `-functions` when the test functions run too — the agree count and every program
+that does not agree yet, with its verdict.  `--write-baseline` replaces its own layer's block
+and keeps the others; `--check` exits 1 on a DROP (a program the block does not list stops
+agreeing, a program new to the corpus does not agree, or the agree count falls) and on any
+`differ`, which is a wrong answer whether or not it is listed.  A listed program that agrees now
+is printed as a re-pin and does not fail: the baseline moves only in the commit whose change
+moves it, with the reason in the message.  Both need the whole corpus (no `--chapter`,
+`--scripts-only`) and the language suite at the commit `tests/loft-suite.pin` names, which the
+baseline records: a suite checkout at another commit is another corpus, and is refused by name.
 """
 import argparse, collections, concurrent.futures as cf, hashlib, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import baseline  # noqa: E402  one baseline format for every survey
 
 
 def proc(cmd, env, timeout, cwd=None):
@@ -49,6 +66,11 @@ def test_functions(files):
 
 def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()):
     src_dir = os.path.dirname(f)
+    # A temporary directory of its own: the test functions of one file run at once here, where
+    # `loft test` runs them one after another, and a test that keeps a fixed file under
+    # `temp_dir()` (a trace, a scratch store) would read another test's.
+    job_tmp = tempfile.mkdtemp(prefix="job-", dir=tmp)
+    env = {**env, "TMPDIR": job_tmp}
     if test:
         # The test file with a `main` that calls the one test, beside the other programs; it runs
         # from the test file's own directory, where its relative paths resolve.
@@ -60,7 +82,12 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
         with open(prog, "w", encoding="utf-8") as fh:
             fh.write(open(f, encoding="utf-8", errors="replace").read() + f"\n\nfn main() {{\n  {test}();\n}}\n")
         f = prog
-    img = f[:-5] + ".run" if test else os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f) + ".run")
+    # A file name past the file system's 255 bytes is no file (a long suite cell under a deep
+    # checkout): a long stem keeps its end and a hash, as a test function's program does.
+    stem = re.sub(r"[^A-Za-z0-9]", "_", f)
+    if len(stem) > 150:
+        stem = stem[-120:] + "_" + hashlib.sha1(stem.encode()).hexdigest()[:12]
+    img = f[:-5] + ".run" if test else os.path.join(tmp, stem + ".run")
     rc, _, err = proc([loft, *libargs, "--emit-run-image", img, f], env, timeout, cwd=src_dir)
     if rc != 0:
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
@@ -79,9 +106,9 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     rc2, got, err2 = proc([runner, img], run_env, timeout, cwd=src_dir)
     if "stopped: not carried by the bytecode writer in loft" in err2:
         return f, "unwritten", [""]
-    m = re.search(r"stopped: not carried: (\S+)", err2)
+    m = re.search(r"stopped: not carried: ([^\n]+)", err2)
     if m:
-        return f, "stopped", [m.group(1)]
+        return f, "stopped", [m.group(1).strip()[:100]]
     if rc2 == -9:
         return f, "fault", ["timeout"]
     if rc2 not in (0, rc):
@@ -115,10 +142,17 @@ def main():
                     help="run the code the bytecode writer in loft writes (bgen_image.loft), not the image's")
     ap.add_argument("--show", action="append", default=[],
                     help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage; repeatable)")
+    ap.add_argument("--check", metavar="BASELINE", help="exit 1 on a drop against BASELINE or any differ")
+    ap.add_argument("--write-baseline", metavar="BASELINE", help="write this layer's block of BASELINE")
     o = ap.parse_args()
+    if (o.check or o.write_baseline) and (o.chapter or o.scripts_only):
+        sys.exit("--check and --write-baseline read the whole corpus: drop --chapter and --scripts-only")
+    layer = ("written" if o.written else "image") + ("-functions" if o.functions else "")
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = o.loft or os.path.join(root, "target", "release", "loft")
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
+    if o.check or o.write_baseline:
+        pin = baseline.require_pin(root, suite, o.check)
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
     if o.written:
         # The loft writer holds every text local as its own text; the image's tables are
@@ -155,12 +189,14 @@ def main():
         counts = collections.Counter()
         ops = collections.Counter()
         shown = []
+        results = {}
         with cf.ThreadPoolExecutor(o.jobs) as ex:
             for (src, test), (f, verdict, what) in zip(jobs, ex.map(
                     lambda j: one(j[0], loft, runner, tmp, env, o.timeout, o.written, j[1], libargs), jobs)):
                 counts[verdict] += 1
+                name = baseline.name_of(src, root, suite) + (f"::{test}" if test else "")
+                results[name] = verdict
                 if verdict in o.show:
-                    name = os.path.relpath(src, root) + (f"::{test}" if test else "")
                     shown.append(f"{verdict}\t{name}\t{what[0]}")
                 if verdict == "stopped":
                     ops[what[0]] += 1
@@ -174,7 +210,12 @@ def main():
                 print(f"  {n:5d}  {name}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
+    if o.write_baseline:
+        baseline.write(o.write_baseline, pin, layer, counts["agree"], len(jobs),
+                       {p: v for p, v in results.items() if v != "agree"})
+    if o.check:
+        fails, repins = baseline.check(layer, baseline.read(o.check), counts["agree"], len(jobs), results)
+        baseline.report(layer, o.check, fails, repins)
 
 if __name__ == "__main__":
     main()

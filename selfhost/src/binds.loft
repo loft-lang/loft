@@ -339,6 +339,38 @@ fn link_target_owns(f: ir::Function, v: integer) -> boolean {
   }
 }
 
+// src/data.rs fn slot_self_step (@PLN219) — the field a whole write through slot parameter `v`
+// MOVES from: `X` for the value `OpRefFromChildRec(X)` with `X = OpGetField(v, pos, kt)`, a
+// child of the node the parameter names (`slot = slot.right`); null for any other value.
+fn slot_self_step(b: ir::Bundle, value: ir::Node, v: integer) -> ir::Node? {
+  match unspan_node(value) {
+    NdCall { def_nr: rf, args: a } => {
+      if def(b, rf).name != "OpRefFromChildRec" || len(a) == 0 {
+        return null;
+      }
+      x = a[0]!;
+      match unspan_node(x) {
+        NdCall { def_nr: gf, args: ga } => {
+          if def(b, gf).name != "OpGetField" || len(ga) != 3 {
+            return null;
+          }
+          on_v = match unspan_node(ga[0]!) {
+            NdVar { n } => n == v,
+            _ => false,
+          };
+          at_int = match unspan_node(ga[1]!) {
+            NdInt { n: _ } => true,
+            _ => false,
+          };
+          if on_v && at_int { x } else { null }
+        }
+        _ => null,
+      }
+    }
+    _ => null,
+  }
+}
+
 // src/variables/mod.rs fn link_write_releases — does a write through link `v` release what it
 // displaces?  Not where the link reaches a plain parameter, which borrows
 // (`@FR-F-ParamRebind`; `LOFT_LINK_PARAM_RELEASES` unset).
@@ -709,16 +741,19 @@ fn any_reads_var(ns: vector<ir::Node>, v: integer) -> boolean {
   false
 }
 
-// src/data.rs:3903 fn is_null_sentinel_detach — the null-sentinel DETACH `Scopes::convert`
+// src/data.rs fn is_null_sentinel_detach — the null-sentinel DETACH `Scopes::convert`
 // emits: a literal-backing accumulator, a work-ref, a `??` temp or a closure record assigned
-// the bare `OpNullRefSentinel()`.
+// the bare `OpNullRefSentinel()`; and a local whose one bind adopts its callee's record
+// (`deferred_first_bind`), which `@FR-R-HostStore`'s result clause lets go once a field adopted
+// that record — the store lives on for the answer.
 fn is_null_sentinel_detach(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   nm = own::var_name(f, v);
   (owns_literal_backing_store(nm)
     || nm.starts_with("__ref_")
     || nm.starts_with("__rref_")
     || nm.starts_with("__ncc_")
-    || nm.starts_with("___clos_"))
+    || nm.starts_with("___clos_")
+    || (f.variables[v]?.deferred_first_bind ?? false))
     && own::is_null_sentinel(b, value)
 }
 

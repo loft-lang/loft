@@ -61,7 +61,8 @@ def write_seed(out, loft):
     shutil.copy(os.path.join(ROOT, "src", "c", "loft_width.h"), os.path.join(out, "gen", "loft_width.h"))
     shutil.copy(os.path.join(ROOT, "selfhost", "crt", "shim", "crt.c"),
                 os.path.join(out, "selfhost", "crt", "shim", "crt.c"))
-    shutil.copy(os.path.join(ROOT, "selfhost", "seed", "build.sh"), os.path.join(out, "build.sh"))
+    for script in ("build.sh", "build.cmd"):
+        shutil.copy(os.path.join(ROOT, "selfhost", "seed", script), os.path.join(out, script))
     os.chmod(os.path.join(out, "build.sh"), 0o755)
     with open(os.path.join(out, "MANIFEST.sha256"), "w", encoding="utf-8") as fh:
         for rel, digest in manifest(out):
@@ -148,7 +149,12 @@ def main():
     ap.add_argument("--build", action="store_true", help="build --out with a C compiler alone")
     ap.add_argument("--smoke", type=int, default=40, help="corpus programs --build compares (0: none)")
     o = ap.parse_args()
+    # The seed's paths are used from other directories (the unit is written from selfhost/), so
+    # a relative one is resolved here, against the directory it was given in.
+    o.out = os.path.abspath(o.out)
+    o.loft = os.path.abspath(o.loft)
     if o.check:
+        o.check = os.path.abspath(o.check)
         diff = check(o.check, o.loft)
         if diff:
             print(f"the seed {o.check} is not the one these sources give; differing:")

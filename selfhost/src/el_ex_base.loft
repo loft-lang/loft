@@ -12,6 +12,7 @@ use fold;
 use el_vars;
 use el_types;
 use el_schema;
+use narrow;
 use el_convert;
 use el_definitions;
 
@@ -1013,11 +1014,7 @@ pub struct IntSlot {
 }
 
 pub fn byte_width(spec: ir::IntegerSpec, nullable: boolean) -> integer {
-  if spec.forced_size > 0 {
-    return spec.forced_size;
-  }
-  codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
-  if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 }
+  narrow::byte_width(spec, nullable)
 }
 
 pub fn int_slot(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean) -> IntSlot {
@@ -1027,31 +1024,12 @@ pub fn int_slot(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: bool
   if alias != el::NONE && el::def(e, alias).forced_size > 0 {
     s = el::def(e, alias).forced_size;
   }
-  unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
-  kind = if s == 1 {
-    if nullable { "ByteNullable" } else { "Byte" }
-  } else if s == 2 {
-    if nullable { "Short" } else if narrow_vec { "ShortRaw" } else { "ShortFull" }
-  } else if s == 4 {
-    if unsigned_wide && (nullable || narrow_vec) { "Int4Raw" } else if unsigned_wide { "Int4Full" } else { "Int4" }
-  } else {
-    "Int"
-  };
-  takes_min = kind == "Byte" || kind == "ByteNullable" || kind == "ShortRaw" || kind == "Short" || kind == "ShortFull";
-  m = 0;
-  if takes_min {
-    m = spec.min;
-    reserves = kind == "ByteNullable" || kind == "Short";
-    sentinel = reserves && ((spec.forced_size == 1 && spec.max - spec.min + 1 == 256) || (spec.forced_size == 2 && spec.max - spec.min + 1 == 65536));
-    if sentinel && spec.min < 0 {
-      m = spec.min + 1;
-    }
-  }
-  IntSlot { kind: kind, min: m }
+  sl = narrow::slot_of(spec, nullable, s, narrow_vec);
+  IntSlot { kind: sl.kind, min: sl.min }
 }
 
 pub fn slot_takes_min(k: text) -> boolean {
-  k == "Byte" || k == "ByteNullable" || k == "ShortRaw" || k == "Short" || k == "ShortFull"
+  narrow::takes_min(k)
 }
 
 // `Parser::get_val` of field `a` of record `d` at `r`: a collection or record field is the place

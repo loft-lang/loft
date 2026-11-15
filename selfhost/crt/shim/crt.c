@@ -22,6 +22,14 @@
 /* The engine-host kernel (`lib/engine_host`): the runtime's own (`loft_engine.h`), its sockets
  * and its HTTPS client, as a C program that reaches a kernel native is built. */
 #define LOFT_ENGINE 1
+/* `@FR-Path-Case`: a name is compared with its directory's entries through the full lowercase
+ * mapping (`É.txt` beside `é.txt` is a case clash), as a C program that reaches the file library
+ * is built.  `loft_text_lower` and its table come with the compiled bodies (`loft_bodies.c`,
+ * included below), which always carry the text predicates' case tables; a shim built without
+ * them (`-DLOFT_CRT_NO_BODIES`) compares names by ASCII case alone. */
+#ifndef LOFT_CRT_NO_BODIES
+#define LOFT_PATH_FOLD 1
+#endif
 #include "../../../src/c/loft_crt.h"
 /* The file routines (@PLN91 S6's files): a File record of the interpreted program is read and
  * written by the runtime's own `loft_get_file`, `loft_write_file`, `loft_read_file`, …, and a
@@ -646,9 +654,10 @@ int64_t loft_crt_view_char(int64_t store, int64_t at, int64_t idx) {
  * `rfind` (1) of the view at `val` in the one at `self`, whether that one starts (2) or ends
  * (3) with it; the null text reads as the empty one, as the natives' loft ports read it. */
 int64_t loft_crt_view_search(int64_t which, int64_t store, int64_t self, int64_t val) {
+    /* A null text is searched as its own bytes, the one NUL (`STRING_NULL`), as the Rust natives
+     * search `Str::str()`: `t.contains("\0")` asks for a NUL byte, and is not the empty needle
+     * every text holds. */
     loft_str s = *(loft_str *) loft_crt_slot_at(store, self), v = *(loft_str *) loft_crt_slot_at(store, val);
-    if (loft_str_is_null(s)) s = loft_lit("", 0);
-    if (loft_str_is_null(v)) v = loft_lit("", 0);
     return which == 0 ? loft_find(s, v) : which == 1 ? loft_rfind(s, v)
          : which == 2 ? (int64_t) loft_starts_with(s, v) : (int64_t) loft_ends_with(s, v);
 }
@@ -678,7 +687,6 @@ void loft_crt_ref_text_append_view(int64_t s, int64_t r, int64_t p, int64_t stk,
  * and handed over as a 64-bit integer, the answer narrowed to the C return's width and sign
  * (`ret_bits` 0 for none).  -1 in `*ok` where the symbol is not found or the arity is past the
  * ladder; the caller stops the run then. */
-#include <dlfcn.h>
 #define LOFT_CRT_CCALLS 4096
 static void *loft_crt_cfn[LOFT_CRT_CCALLS];
 int64_t loft_crt_c_call(int64_t stk, int64_t top, const char *sym, int64_t symlen, const char *args,
@@ -689,7 +697,11 @@ int64_t loft_crt_c_call(int64_t stk, int64_t top, const char *sym, int64_t symle
     if (nargs < 0 || nargs > 8 || idx < 0 || idx >= LOFT_CRT_CCALLS || symlen <= 0) return 0;
     void *f = loft_crt_cfn[idx];
     if (!f) {
-        f = dlsym(RTLD_DEFAULT, sym);
+        /* What the process has loaded, by the runtime's own lookup (`dlsym` on POSIX, every
+         * module's `GetProcAddress` on Windows); a host with no loader finds nothing. */
+#if defined(LOFT_DL)
+        f = loft_dl_self_sym(sym);
+#endif
         if (!f) return 0;
         loft_crt_cfn[idx] = f;
     }

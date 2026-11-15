@@ -13,6 +13,10 @@
  * dropping of the unused ones leaves no undefined symbol behind. */
 #ifndef LOFT_CRT_H
 #define LOFT_CRT_H
+/* A shim is no program: it has no `main`, so the runtime leaves out the program's start-up
+ * (`loft_start`, which calls the `loft_init` only a program's unit defines).  MSVC's `cl` refuses
+ * a static function called and never defined even where nothing calls the caller (C2129). */
+#define LOFT_SHIM_UNIT 1
 #include "loft_cc.h"
 #include "loft_text.h"
 #include "loft_store.h"

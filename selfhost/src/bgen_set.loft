@@ -15,6 +15,7 @@ use ir;
 use own;
 use binds;
 use bgen;
+use narrow;
 use bgen_tuple;
 use bgen_text;
 
@@ -395,13 +396,11 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
     g.position -= 8;
     return;
   }
-  nullable = bgen::optional_shape(inner);
+  link_sl = narrow::local_slot(inner);
   op = match tp {
-    TyInteger { spec } => {
-      codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
-      width = if spec.forced_size > 0 { spec.forced_size } else if codes <= 65536 { 2 } else { 8 };
-      if width < 8 { "" } else { "OpSetInt" }
-    }
+    // `@PLN167`: a link to a NARROW integer place writes its field encoding through the kind's
+    // own operator (its `min` follows the field offset).
+    TyInteger { spec: _ } => if link_sl != null { narrow::set_op(link_sl!.kind) } else { "OpSetInt" },
     TyCharacter => "OpSetCharacter",
     TySingle => "OpSetSingle",
     TyFloat => "OpSetFloat",
@@ -431,13 +430,16 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
   // A link to a record held out of line writes its slot cell (`OpSetSlotRef`); a child
   // record moved within its own slot is a path of its own (`slot_self_step`).
   slot_def = binds::slot_link_def(g.b, var.type_def[0] ?? ir::TyVoid);
-  if slot_def != null {
-    moved = match bgen::unspan(value) {
-      NdCall { def_nr, args: _ } => g.b.data.definitions[def_nr]!.name == "OpRefFromChildRec",
-      _ => false,
-    };
-    if moved {
-      bgen::stop(g, "not written yet: a child record moved within its slot");
+  // `@PLN219`: `slot = slot.f` through a slot cell MOVES the child (`OpMoveSlotRef`), whose
+  // write-back releases the displaced store — not through a link to a plain parameter
+  // (`link_write_releases`), which takes the plain write below.
+  if slot_def != null && binds::link_write_releases(f, v) {
+    src = binds::slot_self_step(g.b, value, v);
+    if src != null {
+      bgen::init_slot(g, v, "OpVarRef");
+      bgen::generate(g, src!, false);
+      bgen::add_op(g, "OpMoveSlotRef");
+      bgen::put_u16(g.o, g.b.data.definitions[slot_def!]!.known_type);
       return;
     }
   }
@@ -450,6 +452,9 @@ fn set_link(g: bgen::Gen, v: integer, inner: ir::TypeT, value: ir::Node) {
     bgen::add_op(g, op);
     if !collection {
       bgen::put_u16(g.o, 0);
+    }
+    if link_sl != null && narrow::takes_min(link_sl!.kind) {
+      bgen::put_i32(g.o, link_sl!.min);
     }
   }
   if displaces {

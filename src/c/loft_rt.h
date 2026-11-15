@@ -6625,8 +6625,11 @@ static loft_text loft_text_case(loft_str s, const loft_umap *m, size_t n, int lo
     return out;
 }
 
-/* Called first by `main`: the arguments, the clock's start, the constants. */
+/* Called first by `main`: the arguments, the clock's start, the constants.  A shim has no
+ * `main` (`LOFT_SHIM_UNIT`, loft_crt.h). */
+#if !defined(LOFT_SHIM_UNIT)
 static void loft_init(void);
+#endif
 #if defined(_WIN32)
 #include <io.h>
 #include <fcntl.h>
@@ -6899,6 +6902,7 @@ static void loft_seed_keys(void) {
     loft_seed_k0 = k[0] | 1;
 }
 
+#if !defined(LOFT_SHIM_UNIT)
 static void loft_start(int argc, char **argv) {
 #if defined(_WIN32)
     /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
@@ -6920,6 +6924,7 @@ static void loft_start(int argc, char **argv) {
     LOFT_TRACE("M\n");
     loft_init();
 }
+#endif
 
 /* ── Content equality (Stores::eq_content, @FR-E-Eq) ──────────────────────────────────── */
 

@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `narrow.loft`, the field encoding of a narrow integer (`data::NarrowSlot`): the kind and the
+// `min` a slot takes, the kind's operand code and its link operators — each expected value read
+// off the Rust rules by hand (`NarrowIntKind::of`, `IntegerSpec::usable_min`, `code`, `get_op`,
+// `set_op`).  The front end's field reads and the bytecode writer's linked narrow locals both
+// read these, so a wrong answer here is wrong bytes in both.
+use ir;
+use narrow;
+
+fn spec(lo: integer, hi: integer, size: integer) -> ir::IntegerSpec {
+  ir::IntegerSpec { min: lo, max: hi, not_null: false, forced_size: size }
+}
+
+fn slot(lo: integer, hi: integer, size: integer, nullable: boolean, width: integer, vec: boolean) -> text {
+  s = narrow::slot_of(spec(lo, hi, size), nullable, width, vec);
+  "{s.kind} {s.min}"
+}
+
+fn test_a_narrow_slot_takes_the_kind_and_min_of_its_width_and_range() {
+  assert(slot(0, 255, 1, false, 1, false) == "Byte 0", "u8");
+  assert(slot(-128, 127, 1, false, 1, false) == "Byte -128", "i8");
+  // a nullable kind whose range fills its width drops the bottom code of a signed range
+  assert(slot(0, 255, 1, true, 1, false) == "ByteNullable 0", "u8?");
+  assert(slot(-128, 127, 1, true, 1, false) == "ByteNullable -127", "i8?");
+  assert(slot(10, 20, 0, true, 1, false) == "ByteNullable 10", "limit(10, 20)?: no sentinel without size(1)");
+  assert(slot(-32768, 32767, 2, false, 2, false) == "ShortFull -32768", "i16");
+  assert(slot(-32768, 32767, 2, true, 2, false) == "Short -32767", "i16?");
+  assert(slot(0, 65535, 2, false, 2, true) == "ShortRaw 0", "a u16 vector element");
+  assert(slot(-2147483648, 2147483647, 4, false, 4, false) == "Int4 0", "i32: no min");
+  assert(slot(0, 4294967295, 4, false, 4, false) == "Int4Full 0", "u32");
+  assert(slot(0, 4294967295, 4, true, 4, false) == "Int4Raw 0", "u32?");
+  assert(slot(0, 255, 1, false, 8, false) == "Int 0", "a wide slot");
+}
+
+fn test_a_local_takes_a_narrow_slot_only_below_eight_bytes() {
+  assert(narrow::byte_width(spec(10, 20, 0), false) == 1, "11 codes fit a byte");
+  assert(narrow::byte_width(spec(0, 255, 0), true) == 2, "257 codes need two");
+  assert(narrow::byte_width(spec(0, 255, 4), false) == 4, "size(4) is the width");
+  l = narrow::local_slot(ir::TyInteger { spec: spec(10, 20, 0) });
+  assert(l != null && l!.kind == "Byte" && l!.min == 10, "limit(10, 20)");
+  n = narrow::local_slot(ir::TyOptional { inner: ir::TyInteger { spec: spec(-128, 127, 1) } });
+  assert(n != null && n!.kind == "ByteNullable" && n!.min == -127, "i8?");
+  assert(narrow::local_slot(ir::TyInteger { spec: spec(-2147483647, 2147483647, 0) }) == null, "the wide integer");
+  assert(narrow::local_slot(ir::TyBoolean) == null, "not an integer");
+}
+
+fn test_a_kind_spells_its_code_and_its_link_operators() {
+  codes = "";
+  for k in ["Byte", "ByteNullable", "ShortRaw", "Short", "ShortFull", "Int4", "Int4Raw", "Int4Full", "Int"] {
+    codes += "{narrow::kind_code(k)} ";
+  }
+  assert(codes == "0 1 2 3 4 5 6 7 255 ", "codes: {codes}");
+  assert(narrow::get_op("ShortFull") == "OpGetShortFull" && narrow::get_op("Int") == "OpGetInt", "get");
+  assert(narrow::set_op("ShortFull") == "OpSetShortRaw" && narrow::set_op("Int4Full") == "OpSetInt4Raw", "a not-null wide store reuses the raw one");
+  assert(narrow::set_op("Byte") == "OpSetByte" && narrow::set_op("Int") == "OpSetInt", "set");
+  assert(narrow::takes_min("ShortRaw") && !narrow::takes_min("Int4"), "min");
+}

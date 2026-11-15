@@ -36,7 +36,7 @@ fn main() {
       exit(2);
     }
     // The natives by number are loft's own table, which the runner then dispatches on.
-    img!.natives = native_table::names();
+    img!.natives = native_table::of(b!);
     st = bgen_image::stream(b!, img!.natives);
     if st.why != "" {
       eprintln("stopped: not carried by the bytecode writer in loft: {st.why}");

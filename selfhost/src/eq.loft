@@ -112,6 +112,93 @@ fn followed(at: crt::Pos) -> crt::Pos {
   crt::place_pos(at.s, at.r, at.p)
 }
 
+// Two keyed collections walked in step (`crt::keyed_iterate` / `keyed_step`, the walk `OpIterate`
+// takes: `on` 1 an index of type `arg`, 2 a sorted of elements `arg` bytes wide, 3 an ordered):
+// equal when every pair of elements is and both end together.  An absent one equals only an
+// absent one.
+fn keyed(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, on: integer, arg: integer, content: integer, st: EqState) -> boolean {
+  na = crt::vec_absent(x.s, x.r, x.p);
+  nb = crt::vec_absent(y.s, y.r, y.p);
+  if na || nb {
+    return na && nb;
+  }
+  sa = crt::keyed_iterate(x.s, x.r, x.p, on, arg, 0, 0);
+  sb = crt::keyed_iterate(y.s, y.r, y.p, on, arg, 0, 0);
+  oa: vector<integer> = [0, 0, 0, 0];
+  ob: vector<integer> = [0, 0, 0, 0];
+  while true {
+    crt::keyed_step(oa, sa, x.s, x.r, x.p, on, arg);
+    crt::keyed_step(ob, sb, y.s, y.r, y.p, on, arg);
+    sa = oa[3] ?? 0;
+    sb = ob[3] ?? 0;
+    ea = crt::Pos { s: oa[0] ?? 65535, r: oa[1] ?? 0, p: oa[2] ?? 0 };
+    eb = crt::Pos { s: ob[0] ?? 65535, r: ob[1] ?? 0, p: ob[2] ?? 0 };
+    if ea.r == 0 || eb.r == 0 {
+      return ea.r == 0 && eb.r == 0;
+    }
+    if !walk(ts, ea, eb, content, st) {
+      return false;
+    }
+  }
+  true
+}
+
+// Two spatial or trie collections, each snapshot in key order (`crt::radix_snap`, which 0) and the
+// snapshots walked in step; both snapshots go back to their stores whatever the answer.  Rust
+// walks the owned children (`for_each_owned_child`); equal contents give equal sequences in
+// either order, which is canonical for the keys.
+fn radix(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, content: integer, st: EqState) -> boolean {
+  na = crt::vec_absent(x.s, x.r, x.p);
+  nb = crt::vec_absent(y.s, y.r, y.p);
+  if na || nb {
+    return na && nb;
+  }
+  oa: vector<integer> = [0, 0, 0, 0];
+  ob: vector<integer> = [0, 0, 0, 0];
+  none: vector<integer> = [];
+  crt::radix_snap(oa, x.s, x.r, x.p, 0, 0, none, null);
+  crt::radix_snap(ob, y.s, y.r, y.p, 0, 0, none, null);
+  sx = crt::Pos { s: oa[0] ?? 65535, r: oa[1] ?? 0, p: oa[2] ?? 0 };
+  sy = crt::Pos { s: ob[0] ?? 65535, r: ob[1] ?? 0, p: ob[2] ?? 0 };
+  equal = true;
+  ia = crt::scratch_iterate(sx.s, sx.r, sx.p);
+  ib = crt::scratch_iterate(sy.s, sy.r, sy.p);
+  going = true;
+  while going {
+    crt::scratch_step(oa, ia, sx.s, sx.r, sx.p, false);
+    crt::scratch_step(ob, ib, sy.s, sy.r, sy.p, false);
+    ia = oa[3] ?? 0;
+    ib = ob[3] ?? 0;
+    ea = crt::Pos { s: oa[0] ?? 65535, r: oa[1] ?? 0, p: oa[2] ?? 0 };
+    eb = crt::Pos { s: ob[0] ?? 65535, r: ob[1] ?? 0, p: ob[2] ?? 0 };
+    if ea.r == 0 || eb.r == 0 {
+      equal = ea.r == 0 && eb.r == 0;
+      going = false;
+    } else if !walk(ts, ea, eb, content, st) {
+      equal = false;
+      going = false;
+    }
+  }
+  if sx.r != 0 {
+    crt::free_scratch(sx.s, sx.r, sx.p);
+  }
+  if sy.r != 0 {
+    crt::free_scratch(sy.s, sy.r, sy.p);
+  }
+  equal
+}
+
+// The stored reference at `at`, as `Stores::get_db_ref` reads it: one naming a record that was
+// removed reads null (`@FR-H-Removed`), so it equals a null reference and any other reference to
+// a removed record.
+fn read_ref(at: crt::Pos) -> crt::Pos {
+  p = followed(at);
+  if p.r != 0 && crt::ref_removed(p.s, p.r) {
+    return crt::Pos { s: 65535, r: 0, p: 0 };
+  }
+  p
+}
+
 // The `i`-th place of a flat `[s, r, p, s, r, p, …]` list (`crt::hash_refs`).
 fn listed(refs: vector<integer>, i: integer) -> crt::Pos {
   crt::Pos { s: refs[3 * i] ?? 65535, r: refs[3 * i + 1] ?? 0, p: refs[3 * i + 2] ?? 0 }
@@ -182,6 +269,14 @@ fn walk(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, tp: integer, st: EqSta
       }
       true
     }
+    // `eq_collection`'s ordered walk (`Stores::next`): an index, a sorted and an ordered
+    // collection compared element by element in their own order.
+    PtIndex { content, keys: _ } => keyed(ts, x, y, 1, tp, content, st),
+    PtSorted { content, keys: _ } => keyed(ts, x, y, 2, ts[content]!.size, content, st),
+    PtOrdered { content, keys: _ } => keyed(ts, x, y, 3, 0, content, st),
+    // A spatial and a trie: their elements compared pairwise, in key order on both sides.
+    PtRadix { content, fields: _ } => radix(ts, x, y, content, st),
+    PtTrie { content, key: _ } => radix(ts, x, y, content, st),
     PtHash { content, fields: _ } => {
       na = crt::vec_absent(x.s, x.r, x.p);
       nb = crt::vec_absent(y.s, y.r, y.p);
@@ -252,8 +347,8 @@ fn fields_eq(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, fields: vector<ir
 
 // `eq_reference`: the records two stored references name, compared once per pair.
 fn reference(ts: vector<ir::DbType>, x: crt::Pos, y: crt::Pos, target: integer, st: EqState) -> boolean {
-  a = followed(x);
-  c = followed(y);
+  a = read_ref(x);
+  c = read_ref(y);
   if a.r == 0 || c.r == 0 {
     return a.r == 0 && c.r == 0;
   }

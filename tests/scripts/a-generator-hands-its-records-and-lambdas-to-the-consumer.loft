@@ -1,0 +1,53 @@
+// A generator yielding a value the consumer takes over (`formal/coroutines.md` (G-Own)): a
+// record literal, a call's record, a vector, a tuple holding a record, a lambda with a capture;
+// and one abandoned after its first value.  Each expected value is computed by hand.  The
+// surveys of the loft bytecode writer and runner read it too: there the generator must forget
+// the temps holding what it hands over, or the consumer's release frees a store twice.
+struct P { x: integer, name: text }
+
+fn mk(i: integer) -> P { P { x: i * 10, name: "m{i}" } }
+
+fn lits(n: integer) -> iterator<P> {
+  for i in 0..n { yield P { x: i, name: "p{i}" }; }
+}
+
+fn calls(n: integer) -> iterator<P> {
+  for i in 0..n { yield mk(i); }
+}
+
+fn vecs(n: integer) -> iterator<vector<integer>> {
+  for i in 0..n { yield [i, i + 1, i * i]; }
+}
+
+fn pairs(n: integer) -> iterator<(integer, P)> {
+  for i in 0..n { yield (i + 100, mk(i)); }
+}
+
+fn adders(n: integer) -> iterator<fn(integer) -> integer> {
+  for i in 0..n {
+    k = i * 7;
+    yield fn(x: integer) -> integer { x + k };
+  }
+}
+
+fn main() {
+  s = "";
+  for p in lits(3) { s += "{p.x}:{p.name} "; }
+  assert(s == "0:p0 1:p1 2:p2 ", "literals: {s}");
+  s = "";
+  for p in calls(3) { s += "{p.x}:{p.name} "; }
+  assert(s == "0:m0 10:m1 20:m2 ", "calls: {s}");
+  s = "";
+  for v in vecs(3) { s += "{v} "; }
+  assert(s == "[0,1,0] [1,2,1] [2,3,4] ", "vectors: {s}");
+  s = "";
+  for t in pairs(2) { s += "{t.0}/{t.1.name} "; }
+  assert(s == "100/m0 101/m1 ", "tuples: {s}");
+  s = "";
+  for f in adders(3) { s += "{f(1)} "; }
+  assert(s == "1 8 15 ", "lambdas: {s}");
+  s = "";
+  for p in calls(5) { s += "first {p.name} "; break; }
+  assert(s == "first m0 ", "abandoned: {s}");
+  println("ok");
+}

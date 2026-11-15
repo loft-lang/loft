@@ -295,8 +295,16 @@ fn gen_shape(b: ir::Bundle, d: integer) -> ir::RunGen {
     }
   }
   top = local_start;
+  // An argument's slot is the code writer's (`def_code` lays the arguments out from 0, each
+  // at its stepped width), not the program image's: the image is written before it.
+  arg_pos = 0;
   for v in f.variables {
     t = v.type_def[0] ?? ir::TyVoid;
+    slot = v.stack_pos;
+    if v.argument {
+      slot = arg_pos;
+      arg_pos += frame::stepped(frame::width(t, true));
+    }
     if !v.argument && v.stack_pos != 65535 {
       end = v.stack_pos + frame::width(t, false);
       if end > top {
@@ -324,8 +332,8 @@ fn gen_shape(b: ir::Bundle, d: integer) -> ir::RunGen {
     };
     independent = len(deps) == 0 || (len(deps) == 1 && deps[0] == v#index && !record);
     owns = !binds::is_inline_ref(f, v#index) && !v.skip_free && independent;
-    if owns && !v.captured && v.stack_pos != 65535 {
-      g.owned_locals += [v.stack_pos];
+    if owns && !v.captured && slot != 65535 {
+      g.owned_locals += [slot];
     }
   }
   g.zone2 = top - local_start;
