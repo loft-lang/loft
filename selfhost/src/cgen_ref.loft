@@ -1104,6 +1104,17 @@ fn ref_ops_5(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     b = cgen_fn::arg(x, w, args, 1, ind);
     return E { code: "loft_get_dir({as_view(w, a)}, {as_ref(w, b)}, {size})", kind: K_BOOL };
   }
+  // `deliver(tag, value)` (`Stores::deliver_loopback`): the value's bytes through its layout,
+  // by the walker the unit writes for its type (`deliver.rs`).
+  if name == "OpDeliver" && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    tname = if tp >= 0 && tp < len(x.b.types) { x.b.types[tp]!.name } else { "#{tp}" };
+    f = cgen_tables::deliver_type(x, tp);
+    pair = [args[0], args[1]];
+    a = cgen_fn::arg(x, w, pair, 0, ind);
+    b = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "loft_deliver({as_int(w, a)}, {c_string(tname)}, {f}, {as_ref(w, b)})", kind: K_VOID };
+  }
   if (name == "OpExpose" || name == "OpRelease") && count == 3 {
     pair = [args[0], args[1]];
     a = cgen_fn::arg(x, w, pair, 0, ind);
@@ -1217,6 +1228,31 @@ fn ref_ops_6(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
   if name == "OpStoreBuf" && count == 1 {
     r = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_store_buf({as_ref(w, r)})", kind: K_REF };
+  }
+  // `OpCopyClosure(src, tp)`: a fn-ref's closure copied out of a field — its owned capture
+  // slots (`Stores::owned_capture_slots`, the fields of the owned-reference shape) shared with
+  // the copy (`loft_copy_closure`).
+  if name == "OpCopyClosure" && count == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "a type out of range");
+      return none();
+    }
+    cgen_tables::name_types(x);
+    cgen_tables::describe_type(x, tp);
+    owned_shape = types::named(x.b.types, "dbref") ?? -1;
+    owned: vector<text> = [];
+    if owned_shape >= 0 {
+      match x.b.types[tp]!.parts[0] {
+        PtStruct { fields } => for f in fields { if f.content == owned_shape { owned += ["{f.position}"]; } },
+        _ => {},
+      }
+    }
+    list = if len(owned) == 0 { "0" } else { "(const uint16_t[]){{ {owned.join(", ")} }}" };
+    src = cgen_fn::expr(x, w, args[0], ind);
+    t = temp(w, "ref");
+    line(w, ind, "{t} = loft_copy_closure(loft_types, {tp}, {as_ref(w, src)}, {list}, {len(owned)});");
+    return E { code: t, kind: K_REF };
   }
   if name == "OpChildRec" && count == 2 {
     tp = cgen_fn::literal(w, args[1], "type") ?? return none();

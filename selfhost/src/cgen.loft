@@ -163,6 +163,8 @@ pub struct Cx {
   // collection types whose SQL plan the unit declares (`Cx::sql_plans`).
   pub lazy_fetchers: integer,
   pub sql_plans: vector<boolean>,
+  // The types a `deliver` walks (`Cx::deliver_types`), per type number: one `loft_dlv{tp}`.
+  pub delivers: vector<boolean>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -196,6 +198,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     upgrades: [for _ in 0..len(b.types) { false }],
     lazy_fetchers: 0,
     sql_plans: [for _ in 0..len(b.types) { false }],
+    delivers: [for _ in 0..len(b.types) { false }],
   }
 }
 

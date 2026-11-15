@@ -1699,7 +1699,9 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     NdEnum { ord, tp: _ } => E { code: "(uint8_t) {ord}", kind: K_ENUM },
     NdFloat { f } => E { code: "loft_f64(UINT64_C(0x{float_bits(f)}))", kind: K_FLOAT },
     NdSingle { f } => E { code: "loft_f32(UINT32_C({if f == null { "0x7fc00000" } else { "{f.bits():#x}" }}))", kind: K_SINGLE },
-    NdText { s: literal } => E { code: "loft_lit({c_string(literal)}, {literal.size()})", kind: K_VIEW },
+    // The text `"\0"` is the null text's sentinel: the image reads it back as null, and the
+    // unit spells it as the Rust writer does, one NUL byte.
+    NdText { s: literal } => if literal == null { E { code: "loft_lit(\"\\000\", 1)", kind: K_VIEW } } else { E { code: "loft_lit({c_string(literal)}, {literal.size()})", kind: K_VIEW } },
     // The definition number a function value names, as an integer.
     NdFnRefDnr { n } => E { code: "{w.names[n]!}.d", kind: K_INT },
     NdFnRef { def_nr, var, t: _ } => {
