@@ -26,6 +26,7 @@ use cgen_text;
 use cgen_ref;
 use cgen_hoist;
 use cgen_win;
+use cgen_file;
 use opt_hoist;
 use cgen_w::*;
 
@@ -1628,6 +1629,7 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
       pushed = true;
     }
   }
+  held_file = plain_rules() && cgen_file::open_hold(x, w, lp, ind);
   hold_invariants(x, w, lp, ind);
   held_headers = len(w.headers);
   held_pushes = len(w.push_heads);
@@ -1664,6 +1666,10 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   w.grid_facts = w.grid_facts[0..grid_known];
   if window {
     cgen_win::close_window(x, w, ind);
+  }
+  if held_file {
+    // The loop's own end; its other exits gave the cursor back where they leave.
+    cgen_file::close_hold(w, ind);
   }
   w.memos = w.memos[0..len(w.memos) - 1];
   if pushed {

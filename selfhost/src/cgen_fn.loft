@@ -32,6 +32,7 @@ use opt_adopt;
 use opt_hoist;
 use cgen_win;
 use cgen_table;
+use cgen_file;
 use cgen_texts;
 use cgen_natives;
 use opt_names;
@@ -2353,11 +2354,15 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdBreak { n } => {
       l = label(w, n);
       flush(w, ind);
+      // The holds of the loops it leaves; the target's own goes back after its end.
+      cgen_file::release_holds(w, len(w.loops) - n, ind);
       line(w, ind, "goto brk_{l};");
     },
     NdContinue { n } => {
       l = label(w, n);
       flush(w, ind);
+      // The holds of the loops it leaves; the target's own stays held.
+      cgen_file::release_holds(w, len(w.loops) - n, ind);
       line(w, ind, "goto cont_{l};");
     },
     NdInsert { items } => {
@@ -2694,6 +2699,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     headers: [],
     push_heads: [],
     windows: [],
+    file_holds: [],
     length_locals: [],
     length_asked: false,
     grid_facts: [],

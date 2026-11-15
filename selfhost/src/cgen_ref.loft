@@ -15,6 +15,7 @@ use cgen_fn;
 use cgen_bind;
 use cgen_hoist;
 use cgen_table;
+use cgen_file;
 use ptypes;
 use opt_push;
 use binds;
@@ -1383,6 +1384,10 @@ fn read_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
     return none();
   }
   tp = cgen_fn::literal(w, args[3], "type") ?? return none();
+  // `@FR-R-TypedRead`: a typed read of a file the loop holds goes through its cursor.
+  if cgen_file::held_read(x, w, args, ind) {
+    return E { code: "(void) 0", kind: K_VOID };
+  }
   pair = [args[0], args[2]];
   file = cgen_fn::arg(x, w, pair, 0, ind);
   amount = cgen_fn::arg(x, w, pair, 1, ind);
