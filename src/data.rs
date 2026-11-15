@@ -10767,9 +10767,16 @@ impl Data {
                 // was refused and `v = chains(k);` broke the statement after it (loft#2497).
                 if self.definitions[d_nr].def_type == DefType::Function {
                     let ret = &self.definitions[d_nr].returned;
-                    let nested = !matches!(ret.base(), Type::Unknown(_))
-                        && !ret.any_node(&mut |t| matches!(t.base(), Type::Tuple(_)));
-                    if nested && let Some(new_ty) = Self::rewrite_type_opt(ret, stub_nr, &target) {
+                    // Rewrite only a return that names this stub: `rewrite_type_opt` builds a
+                    // fresh argument list for a function type even when nothing in it
+                    // changes, which cost the cold stdlib parse an allocation.
+                    if !matches!(ret.base(), Type::Unknown(_))
+                        && ret.any_node(
+                            &mut |t| matches!(t.base(), Type::Unknown(n) if *n == stub_nr),
+                        )
+                        && !ret.any_node(&mut |t| matches!(t.base(), Type::Tuple(_)))
+                        && let Some(new_ty) = Self::rewrite_type_opt(ret, stub_nr, &target)
+                    {
                         self.definitions[d_nr].returned = new_ty;
                     }
                 }
