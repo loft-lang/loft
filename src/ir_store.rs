@@ -884,6 +884,33 @@ pub fn materialize_bundle(
     rec.set_field_str(stores, ds::BUNDLE_OLDEST, &facts.oldest);
     rec.set_field_str(stores, ds::BUNDLE_BRIDGE, &facts.bridge);
     rec.set_field_str(stores, ds::BUNDLE_VERSION, &facts.version);
+    let host = &facts.host;
+    rec.set_field_str(stores, ds::BUNDLE_REFLECT, &host.reflect);
+    rec.set_field_str(stores, ds::BUNDLE_TLS_LINES, &host.tls_lines);
+    rec.set_field_str(stores, ds::BUNDLE_LAZY_REFUSAL, &host.lazy_refusal);
+    let plans = rec.field_recvec(ds::BUNDLE_SQL_PLANS, ds::IMAGESQLPLAN_STRIDE);
+    for p in &host.sql_plans {
+        let r = plans.push(stores);
+        r.set_field_int(stores, ds::IMAGESQLPLAN_TP, i64::from(p.tp));
+        r.set_field_str(stores, ds::IMAGESQLPLAN_TEXT, &p.text);
+        r.set_field_int(stores, ds::IMAGESQLPLAN_PARAMS, p.params as i64);
+        r.set_field_str(stores, ds::IMAGESQLPLAN_FILTER, p.filter.as_deref().unwrap_or(""));
+        let (range, range_params) = p.range.as_ref().map_or(("", 0), |(t, n)| (t.as_str(), *n));
+        r.set_field_str(stores, ds::IMAGESQLPLAN_RANGE, range);
+        r.set_field_int(stores, ds::IMAGESQLPLAN_RANGE_PARAMS, range_params as i64);
+        let cols = r.field_recvec(ds::IMAGESQLPLAN_COLUMNS, ds::IMAGESQLCOL_STRIDE);
+        for (column, field) in &p.columns {
+            let c = cols.push(stores);
+            c.set_field_str(stores, ds::IMAGESQLCOL_COLUMN, column);
+            c.set_field_int(stores, ds::IMAGESQLCOL_FIELD, *field as i64);
+        }
+    }
+    let drivers = rec.field_recvec(ds::BUNDLE_LAZY_DRIVERS, ds::IMAGELAZYDRIVER_STRIDE);
+    for (element, d) in &host.lazy_drivers {
+        let r = drivers.push(stores);
+        r.set_field_str(stores, ds::IMAGELAZYDRIVER_ELEMENT, element);
+        r.set_field_int(stores, ds::IMAGELAZYDRIVER_D, i64::from(*d));
+    }
 }
 
 /// What the host resolved for the loft-written C writer beside the IR (@PLN91 strand 12): the
@@ -902,6 +929,33 @@ pub struct BundleFacts {
     pub oldest: String,
     pub bridge: String,
     pub version: String,
+    /// What the host answers by running the interpreter or the toolchain (`c::host_facts`).
+    pub host: HostFacts,
+}
+
+/// The answers [`BundleFacts::host`] carries: the reflection table, the TLS lines, the lazy
+/// collections' SQL plans and the lazy drivers (each element's name and definition), or why
+/// the drivers were refused.  Empty where the program does not reach what asks for it.
+#[derive(Clone, Debug, Default)]
+pub struct HostFacts {
+    pub reflect: String,
+    pub tls_lines: String,
+    pub sql_plans: Vec<SqlPlanShape>,
+    pub lazy_drivers: Vec<(String, u32)>,
+    pub lazy_refusal: String,
+}
+
+/// One keyed collection's SQL plan (`ImageSqlPlan`): the equality select, its parameter count
+/// and columns (name, element field), the filter form, and the range form with its parameter
+/// count.
+#[derive(Clone, Debug, Default)]
+pub struct SqlPlanShape {
+    pub tp: u16,
+    pub text: String,
+    pub params: usize,
+    pub columns: Vec<(String, usize)>,
+    pub filter: Option<String>,
+    pub range: Option<(String, usize)>,
 }
 
 /// A converting load's description of root `tp`: the layout of the root and every `upgrade`
@@ -946,6 +1000,7 @@ pub fn bundle_facts(data: &Data, program: &Stores, clibs: Vec<CLibFacts>) -> Bun
         oldest: release.oldest.clone(),
         bridge: release.bridge.clone(),
         version: release.version.clone(),
+        host: crate::c::host_facts(data, program),
     }
 }
 
@@ -1800,6 +1855,8 @@ pub fn run_image_sidecars(data: &Data, program: &Stores) -> Vec<RunSidecarShape>
                     | "n_store_load_prefix"
                     | "n_store_load_box"
                     | "n_store_load_range"
+                    // A lazy binding fetches through the paged loader of its collection.
+                    | "n_store_bind_lazy"
             ) {
                 return;
             }

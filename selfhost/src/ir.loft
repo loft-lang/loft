@@ -438,6 +438,17 @@ struct Bundle {
   oldest: text,
   bridge: text,
   version: text,
+  // @PLN91 strand 12: what the host answers by running the interpreter or the toolchain, for a
+  // program that reaches it (`ir_store::bundle_facts`): the reflection table
+  // (`c::reflect::table_of`, every type's `reflect_type` answer read back), the TLS lines a
+  // unit that fetches over a URL carries (`tls::unit_lines`), each keyed collection's SQL plan
+  // for a lazy `sqlite:` source (`sql_query::derive_select`), and the lazy drivers by the
+  // element they serve (`Data::lazy_fetch_drivers`), or why they were refused.
+  reflect: text,
+  tls_lines: text,
+  sql_plans: vector<ImageSqlPlan>,
+  lazy_drivers: vector<ImageLazyDriver>,
+  lazy_refusal: text,
 }
 
 // @FTR-078 — the compiler's whole IR vocabulary written as loft types: 24 `Type` variants,
@@ -445,7 +456,7 @@ struct Bundle {
 // schema for the same graph falls out of it
 // The empty bundle a program image is read into (`load.loft`).
 fn empty_bundle() -> Bundle {
-  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [], sidecars: [], upgrades: [], upgrade_types: [], oldest: "", bridge: "", version: "" }
+  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [], sidecars: [], upgrades: [], upgrade_types: [], oldest: "", bridge: "", version: "", reflect: "", tls_lines: "", sql_plans: [], lazy_drivers: [], lazy_refusal: "" }
 }
 
 // @PLN91 the RUN image (`loft --emit-run-image`): the bytecode the Rust writer produced
@@ -635,4 +646,30 @@ struct ImageUpgrade {
   desc: text,
   names: vector<text>,
   ids: vector<integer>,
+}
+
+// One keyed collection type's SQL plan (`Cx::sql_plan`): the equality select `derive_select`
+// derives from the layout, its parameter count and the columns it names (each a field number of
+// the element), the filter form's text ("" for none) and the range form's text and parameter
+// count ("" for none: an unordered collection).
+struct ImageSqlPlan {
+  tp: integer,
+  text: text,
+  params: integer,
+  columns: vector<ImageSqlCol>,
+  filter: text,
+  range: text,
+  range_params: integer,
+}
+
+struct ImageSqlCol {
+  column: text,
+  field: integer,
+}
+
+// A lazy driver (`Data::lazy_fetch_drivers`): the element type's name it serves and its
+// definition.
+struct ImageLazyDriver {
+  element: text,
+  d: integer,
 }

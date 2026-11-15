@@ -159,6 +159,10 @@ pub struct Cx {
   // converts from another layout (`Cx::upgrades`), per type number.
   pub sidecars: vector<boolean>,
   pub upgrades: vector<boolean>,
+  // `@PLN129`'s lazy bindings: the fetch adapters written so far (`Cx::lazy_fetchers`) and the
+  // collection types whose SQL plan the unit declares (`Cx::sql_plans`).
+  pub lazy_fetchers: integer,
+  pub sql_plans: vector<boolean>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -190,6 +194,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     sers: [for _ in 0..len(b.types) { false }],
     sidecars: [for _ in 0..len(b.types) { false }],
     upgrades: [for _ in 0..len(b.types) { false }],
+    lazy_fetchers: 0,
+    sql_plans: [for _ in 0..len(b.types) { false }],
   }
 }
 
@@ -289,6 +295,10 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
     bind = bind_tables();
     if a.written.find("static const uint32_t loft_ntypes =") != null {
       bind = bind.replace("    loft_warn_logger = loft_log_warn;\n", "    loft_warn_logger = loft_log_warn;\n    loft_T = loft_types;\n    loft_T_n = loft_ntypes;\n");
+    }
+    // A unit that binds a lazy store hands the runtime its drivers.
+    if a.written.find("static const loft_lazy_driver loft_lazy_driver_table[]") != null {
+      bind = bind.replace("}}\n", "    loft_lazy_drivers = loft_lazy_driver_table;\n    loft_nlazy_drivers = loft_nlazy_driver_table;\n    loft_lazy_driver_refusal = loft_lazy_driver_refusal_text;\n}}\n");
     }
     unit = "{a.defines}{RUNTIME_START}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit("{a.written}{bind}")}";
     anchor = if load::program_relative(b) { 1 } else { 0 };

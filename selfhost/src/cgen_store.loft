@@ -18,6 +18,7 @@ use cgen_ref;
 use cgen_tables;
 use cgen_parse;
 use loop_shape;
+use types;
 
 // `placement::KEY_ORDER`: a layout dump that holds it has a collection whose key order moved.
 KEY_ORDER = ",order=1";
@@ -149,6 +150,27 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
     return E { code: "(uint8_t) loft_image_load({r}, {path}, {sc}, {if route == "n_store_load_untrusted" { 1 } else { 0 }})", kind: K_BOOL };
   }
+  // `load_url`: a whole image over `http(s)://` — the gate as `store_load`'s, and the
+  // expected digest of a load that checks one before the sidecar.
+  if (route == "n_store_load_url" && len(args) == 3) || (route == "n_store_load_url_trusted" && len(args) == 2) {
+    tp = root_of(x, w, args[0]!, "a loaded value whose store type is not known here");
+    if tp < 0 {
+      return none();
+    }
+    if row_of(x, tp)?.walks ?? false {
+      cgen_tables::copy_type(x, tp);
+      cgen_tables::name_types(x);
+    }
+    upgrade_of(x, w, tp);
+    sc = sidecar_of(x, w, tp);
+    if w.why != "" {
+      return none();
+    }
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    url = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    sha = if len(args) == 3 { "{as_view(w, cgen_fn::arg(x, w, args, 2, ind))}, " } else { "" };
+    return E { code: "{if route == "n_store_load_url" { "loft_store_load_url" } else { "loft_store_load_url_trusted" }}({r}, {url}, {sha}{sc})", kind: K_BOOL };
+  }
   if route == "n_store_verify" && len(args) == 1 {
     // The walk reads the store's own type: every type the value reaches is described.
     tp = root_of(x, w, args[0]!, "a verified value whose store type is not known here");
@@ -186,6 +208,11 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     limit = as_int(w, cgen_fn::arg(x, w, three, 2, ind));
     return E { code: "loft_trie_prefix({r}, {keys}, {pre}, {limit})", kind: K_REF };
   }
+  lazy = lazy_native(x, w, route, args, ind, done);
+  if done {
+    return lazy;
+  }
+  done = true;
   if route == "n_store_load_key" || route == "n_store_load_key_text" || route == "n_store_load_keys" || route == "n_store_load_keys_text" || route == "n_store_load_prefix" || route == "n_store_load_box" || route == "n_store_load_range" {
     return paged_load(x, w, route, args, ind);
   }
@@ -365,3 +392,211 @@ pub fn upgrades(x: Cx) -> boolean {
   }
   false
 }
+
+// ── @PLN129 lazily bound collections (`loft_lazy.h`, keyed.rs `lazy_native`) ──
+
+// The natives of a lazily bound collection, with `done` set; `done` false for any other.
+fn lazy_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  if route == "n_store_bind_lazy" && len(args) == 2 {
+    return bind_lazy(x, w, args, ind);
+  }
+  if route == "n_store_lazy_error" && len(args) == 1 {
+    return E { code: "loft_lazy_error({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_VIEW };
+  }
+  if route == "n_store_lazy_faults" && len(args) == 1 {
+    return E { code: "loft_lazy_faults({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_INT };
+  }
+  if route == "n_store_lazy_clear" && len(args) == 1 {
+    return E { code: "loft_lazy_clear({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_BOOL };
+  }
+  if route == "n_store_lazy_fail" && len(args) == 2 {
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    why = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    return E { code: "loft_lazy_fail({r}, {why})", kind: K_VOID };
+  }
+  // A database's explicit fetches (`lazy_query`, `lazy_range`), run by the runtime's sqlite
+  // source.
+  if route == "n_store_lazy_query" && len(args) == 2 {
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    c = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    return E { code: "loft_lazy_query({r}, {c})", kind: K_INT };
+  }
+  if route == "n_store_lazy_range" && len(args) == 3 {
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    lo = as_int(w, cgen_fn::arg(x, w, args, 1, ind));
+    hi = as_int(w, cgen_fn::arg(x, w, args, 2, ind));
+    return E { code: "loft_lazy_range({r}, {lo}, {hi})", kind: K_INT };
+  }
+  done = false;
+  none()
+}
+
+// `Stores::collection_type_of_store`: the keyed collection a store minted as `tp` roots — the
+// type itself, or a wrapper struct's one keyed-collection field — or -1.
+fn collection_type_of_store(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return -1;
+  }
+  if is_keyed_type(b, tp) {
+    return tp;
+  }
+  fields = match b.types[tp].parts[0] {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => return -1,
+  };
+  found = -1;
+  count = 0;
+  for f in fields {
+    if is_keyed_type(b, f.content) {
+      found = f.content;
+      count += 1;
+    }
+  }
+  if count == 1 { found } else { -1 }
+}
+
+fn is_keyed_type(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  match b.types[tp].parts[0] {
+    PtHash { content: _, fields: _ } => true,
+    PtSorted { content: _, keys: _ } => true,
+    PtOrdered { content: _, keys: _ } => true,
+    PtIndex { content: _, keys: _ } => true,
+    PtTrie { content: _, key: _ } => true,
+    PtRadix { content: _, fields: _ } => true,
+    _ => false,
+  }
+}
+
+// `Stores::element_type_name`: the name of collection `tp`'s element type, "" for none.
+fn element_type_name(b: ir::Bundle, tp: integer) -> text {
+  if tp < 0 || tp >= len(b.types) {
+    return "";
+  }
+  c = types::content_of(b.types, tp) ?? -1;
+  if c < 0 || c >= len(b.types) { "" } else { b.types[c]!.name }
+}
+
+// `store_bind_lazy(local, source)` (`Stores::bind_lazy`): a kind an image cannot page — any
+// but a hash, a trie or a spatial — is refused at the bind; else the binding carries a fetch
+// for one key written from the collection's paged plan (`loft_lazy_fetch{k}`).
+fn bind_lazy(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  local = args[0]!;
+  root = root_of(x, w, local, "a lazily bound value whose store type is not known here");
+  if root < 0 {
+    return none();
+  }
+  coll = collection_type_of_store(x.b, root);
+  // The element a miss is fetched for is the BOUND collection's own: a field read names the
+  // field's type as its third operand.
+  field_type = -1;
+  match loop_shape::unspan(local) {
+    NdCall { def_nr, args: fa } => {
+      if x.b.data.definitions[def_nr]!.name == "OpGetField" && len(fa) == 3 {
+        field_type = match loop_shape::unspan(fa[2]!) { NdInt { n } => n, _ => -1 };
+      }
+    },
+    _ => {},
+  }
+  own = coll;
+  if field_type >= 0 && field_type < len(x.b.types) {
+    fc = collection_type_of_store(x.b, field_type);
+    if fc >= 0 {
+      own = fc;
+    }
+  }
+  element = c_string(if own < 0 { "" } else { element_type_name(x.b, own) });
+  kind = if coll >= 0 { cgen_ref::keyed_kind(x.b, coll) } else { "" };
+  unservable = "0";
+  fetch = "0";
+  if kind == "hash" || kind == "trie" || kind == "spatial" {
+    radix = kind == "spatial";
+    name = if radix { "n_store_load_box" } else if kind == "trie" { "n_store_load_key_text" } else { "n_store_load_key" };
+    plan = paged_plan(x, w, name, local) ?? return none();
+    k = x.lazy_fetchers;
+    x.lazy_fetchers = k + 1;
+    head = "loft_types, coll, path, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {plan.nk}";
+    load = if radix {
+      "n > 0 ? loft_pg_load_box_kv({head}, key, n, key, n, -1, {plan.coll_name}) : 0"
+    } else {
+      "n == 1 ? loft_pg_load_keys({head}, {plan.kind}, key, 1) : 0"
+    };
+    f = "loft_lazy_fetch{k}";
+    sig = "static int64_t {f}(loft_ref coll, loft_str path, const loft_kv *key, int n)";
+    x.gen_decls += "{sig};\n";
+    x.gen_bodies += "\n{sig} {{\n    return {load};\n}}\n";
+    fetch = f;
+  } else {
+    unservable = c_string("a lazily-bound `.store` image is read a page at a time, which only a `hash`, a `trie` or a `spatial` supports, and `{x.b.types[root]!.name}` is none of them — read it whole with `store_load` (or `store_load_url_trusted` for a URL), which carries every kind");
+  }
+  plan_ref = sql_plan(x, w, own);
+  if w.why != "" {
+    return none();
+  }
+  r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+  source = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+  E { code: "loft_lazy_bind_coll({r}, {source}, {fetch}, {element}, {unservable}, {plan_ref})", kind: K_BOOL }
+}
+
+// `sql_plan`: a `sqlite:` source's plan for keyed collection type `tp` (`loft_sql_plan`) — the
+// equality query the host derived from the layout (`Bundle.sql_plans`), its table, each
+// column's field, and the collection's own insert; "0" where no query was derived.
+fn sql_plan(x: Cx, w: W, tp: integer) -> text {
+  if tp < 0 || tp >= len(x.b.types) {
+    return "0";
+  }
+  at = -1;
+  for p in x.b.sql_plans {
+    if p.tp == tp {
+      at = p#index;
+    }
+  }
+  if at < 0 {
+    return "0";
+  }
+  plan = x.b.sql_plans[at]!;
+  kk = cgen_ref::keyed_kind(x.b, tp);
+  kind = if kk == "hash" || kk == "sorted" || kk == "index" || kk == "ordered" || kk == "spatial" || kk == "trie" { "LOFT_KEYED_{kk.to_uppercase()}" } else { "" };
+  if kind == "" {
+    return "0";
+  }
+  elem = types::content_of(x.b.types, tp) ?? -1;
+  if elem < 0 || elem >= len(x.b.types) {
+    return "0";
+  }
+  fields = match x.b.types[elem]!.parts[0] {
+    PtStruct { fields } => fields,
+    _ => return "0",
+  };
+  size = x.b.types[elem]!.size;
+  cgen_tables::copy_type(x, elem);
+  keys = cgen_tables::keys_of(x, tp);
+  after = plan.text.find(" FROM ");
+  table = "";
+  if after != null {
+    rest = plan.text[after! + 6..plan.text.size()];
+    space = rest.find(" ");
+    table = if space == null { rest } else { rest[0..space!] };
+  }
+  cols: vector<text> = [];
+  for c in plan.columns {
+    if c.field >= 0 && c.field < len(fields) {
+      f = fields[c.field]!;
+      cols += ["{{ {c_string(c.column)}, {f.position}, {f.content}, {c_string(x.b.types[f.content]!.name)} }}"];
+    }
+  }
+  name = "loft_sqlplan{tp}";
+  if !x.sql_plans[tp]! {
+    x.sql_plans[tp] = true;
+    col_list = if len(cols) == 0 { "{{ 0, 0, 0, 0 }}" } else { cols.join(", ") };
+    filter = if plan.filter == "" { "0" } else { c_string(plan.filter) };
+    range = if plan.range == "" { "0" } else { c_string(plan.range) };
+    x.gen_decls += "static const loft_sql_col loft_sqlcols{tp}[] = {{ {col_list} }};\nstatic const loft_sql_plan {name} = {{ {c_string(plan.text)}, {c_string(table)}, {c_string(element_type_name(x.b, tp))}, loft_types, loft_sqlcols{tp}, {len(cols)}, {plan.params}, {elem}, {size}, {kind}, {keys}, {filter}, {range}, {plan.range_params} }};\n";
+  }
+  "&{name}"
+}
+

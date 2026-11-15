@@ -915,6 +915,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     line(w, ind, "{shown};");
     return held_value(w, json, "text");
   }
+  // `T.parse(JsonValue)`: the struct walk over the tree (`loft_parse.h`), over the parse
+  // table's rows for the type.
+  if route == "n_struct_from_jsonvalue" && len(args) == 2 {
+    tp = literal(w, args[1], "type") ?? return none();
+    cgen_parse::parse_type(x, w, tp);
+    val = expr(x, w, args[0], ind);
+    return E { code: "loft_struct_from_jsonvalue(loft_ptypes, {as_ref(w, val)}, {tp})", kind: K_REF };
+  }
   if route.starts_with("n_parallel_") {
     pe = cgen_par::par_native(x, w, route, args, ind);
     if pe != null {

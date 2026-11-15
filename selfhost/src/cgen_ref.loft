@@ -2131,17 +2131,13 @@ fn iterate(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   none()
 }
 
-// `get_record`: the record a keyed collection holds under the given key values.  Under the
-// plain rules: no table handle; a unit that binds a lazy store is refused by name.
+// `get_record`: the record a keyed collection holds under the given key values.  In a unit
+// that binds a lazy store a miss fetches the key and looks again (`@PLN129`).
 fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   tp = cgen_fn::literal(w, args[1], "type") ?? return none();
   kind = keyed_kind(x.b, tp);
   if kind == "" {
     refuse(w, "a keyed operation on another kind of type");
-    return none();
-  }
-  if lazy_unit(x) {
-    refuse(w, "a lookup in a unit that binds a lazy store");
     return none();
   }
   keys = x.b.types[tp].keys;
@@ -2205,6 +2201,14 @@ fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   } else {
     "loft_rx_find({data}, {key_table}, {nk}, {if kind == "trie" { 1 } else { 0 }}, {kv}, {given})"
   };
+  // `@PLN129` — a miss on a collection bound to a source fetches the key and looks again
+  // (`State::get_record`); only a unit that binds one asks.
+  if lazy_unit(x) && w.why == "" {
+    missed = temp(w, "ref");
+    line(w, ind, "{missed} = {find};");
+    line(w, ind, "if ({missed}.rec == 0 && loft_lazy_bound({data}) && loft_lazy_miss({data}, {kv}, {given})) {missed} = {find};");
+    return E { code: missed, kind: K_REF };
+  }
   E { code: find, kind: K_REF }
 }
 
