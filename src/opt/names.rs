@@ -461,7 +461,16 @@ pub fn library_bridge_ident(data: &Data, exports: &HashSet<u32>, d_nr: u32) -> S
     } else {
         HashSet::new()
     };
-    disambiguated_fn_ident(&dups, data.def(d_nr))
+    // The library's own name leads (@C97: a library's public symbols live under its module):
+    // the host looks a bridge up by name across every library it loaded, so two libraries that
+    // each export `open` must not answer to one symbol (loft#2507).  `source_label` is the
+    // program-independent half of `lib_ids::fn_key`, so the artifact and every program that
+    // adopts it spell the same name.
+    format!(
+        "{}__{}",
+        rust_fn_ident(&data.source_label(data.def(d_nr).source)),
+        disambiguated_fn_ident(&dups, data.def(d_nr))
+    )
 }
 
 /// Flatten a loft def name into a valid Rust identifier.  Most names already are

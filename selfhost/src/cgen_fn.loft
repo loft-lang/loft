@@ -14,6 +14,7 @@
 // call of a function and every other shape are refused by name.
 
 use ir;
+use cgen::(Cx, request_twin);
 use binds;
 use cgen_names;
 use cgen_types;
@@ -32,9 +33,13 @@ use opt_adopt;
 use opt_hoist;
 use cgen_win;
 use cgen_table;
+use cgen_clibs;
+use cgen_par;
+use lower;
 use cgen_file;
 use cgen_texts;
 use cgen_natives;
+use cgen_unicode;
 use opt_names;
 use opt_writes;
 use char_walk;
@@ -291,6 +296,47 @@ fn literal32(v: ir::Node, e: E) -> E {
     NdInt { n } => if n != -2147483648 { E { code: "INT32_C({n})", kind: K_INT32 } } else { e },
     _ => e,
   }
+}
+
+// `call_operator`: a bare `null` argument is the null of the operand's declared type, as the
+// bytecode pushes it (`OpSetDbRef(g, 0, null)`, `OpPushInt(v, null)`) — `typed_null`.
+fn typed_nulls(b: ir::Bundle, d: integer, args: vector<ir::Node>) -> vector<ir::Node> {
+  any = false;
+  for a in args {
+    if loop_shape::unspan(a) == NdNull {
+      any = true;
+    }
+  }
+  if !any {
+    return args;
+  }
+  attrs = b.data.definitions[d]!.attributes;
+  out: vector<ir::Node> = [];
+  for a in args {
+    i = a#index;
+    op = "";
+    if loop_shape::unspan(a) == NdNull && i < len(attrs) {
+      op = match binds::base(attrs[i]!.typedef[0] ?? ir::TyVoid) {
+        TyInteger { spec: _ } => "OpConvIntFromNull",
+        TyFloat => "OpConvFloatFromNull",
+        TySingle => "OpConvSingleFromNull",
+        TyText { dep: _ } => "OpConvTextFromNull",
+        TyBoolean => "OpConvBoolFromNull",
+        TyCharacter => "OpConvCharacterFromNull",
+        TyReference { n: _, dep: _ } => "OpNullRefSentinel",
+        TyVector { inner: _, dep: _ } => "OpNullRefSentinel",
+        TySorted { n: _, keys: _, dep: _ } => "OpNullRefSentinel",
+        TyHash { n: _, names: _, dep: _ } => "OpNullRefSentinel",
+        TyIndex { n: _, keys: _, dep: _ } => "OpNullRefSentinel",
+        TyRadix { n: _, names: _, dep: _ } => "OpNullRefSentinel",
+        TyTrie { n: _, key: _, dep: _ } => "OpNullRefSentinel",
+        _ => "",
+      };
+    }
+    nr = if op == "" { -1 } else { lower::find(b, op) ?? -1 };
+    out += [if nr >= 0 { ir::NdCall { def_nr: nr, args: [] } } else { a }];
+  }
+  out
 }
 
 // An operator call (`operator`): the plain form where the range proof holds, else the checked
@@ -831,6 +877,15 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       return answered;
     }
   }
+  // `unicode_native`: a text's case mapping, through the unit's case table.
+  if (route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase") && len(args) == 1 {
+    f = cgen_unicode::unicode_case(x, route == "t_4text_to_uppercase");
+    cased = expr(x, w, args[0], ind);
+    r = temp(w, "text");
+    line(w, ind, "loft_text_free(&{r});");
+    line(w, ind, "{r} = {f}({as_view(w, cased)});");
+    return held_value(w, r, "text");
+  }
   // A record as JSON text (`struct_json_native`).
   if (route == "n_struct_to_json" || route == "n_struct_to_json_pretty") && len(args) == 2 {
     tp = literal(w, args[1], "type") ?? return none();
@@ -844,12 +899,24 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     line(w, ind, "{shown};");
     return held_value(w, json, "text");
   }
-  if (route.starts_with("n_store_") && route != "n_store_upgrade_owed_next") || route == "n_spatial_range" || route == "n_trie_prefix" || route == "t_4hash_len" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
+  if route.starts_with("n_parallel_") {
+    pe = cgen_par::par_native(x, w, route, args, ind);
+    if pe != null {
+      return pe!;
+    }
+  }
+  // `h.len()` on a hash (`keyed.rs`): through the table's handle where the body holds one.
+  if route == "t_4hash_len" && len(args) == 1 {
+    hh = cgen_table::handle(x, w, args[0]);
+    h = as_ref(w, expr(x, w, args[0], ind));
+    return E { code: if hh != "" { "loft_hh_len(&{hh}, {h})" } else { "loft_hash_len({h})" }, kind: K_INT };
+  }
+  if (route.starts_with("n_store_") && route != "n_store_upgrade_owed_next") || route == "n_spatial_range" || route == "n_trie_prefix" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
     refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
     return none();
   }
   native = if route == "" { "" } else { cgen_natives::native_c(route) ?? "" };
-  if native == "" && (!binds::is_loft_defined(def) || def.c_symbol != "") {
+  if native == "" && def.c_sig == "" && !binds::is_loft_defined(def) && !cgen_clibs::is_forwarded(x.b, d) {
     refuse(w, "a call of a function without a loft body");
     return none();
   }
@@ -899,7 +966,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     }
     named = function_literal(x.b, a);
     if shapes[i]! == "fn" && named >= 0 {
-      xs[i] = fn_value(named);
+      xs[i] = fn_value(x, named);
       continue;
     }
     later_writes = false;
@@ -954,7 +1021,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     line(w, ind, "{held} = {code};");
     return held_value(w, held, "text");
   }
-  E { code: code, kind: kind_of(ret) }
+  E { code: code, kind: kind_of(ret), tup: if is_tuple(ret) { ret } else { "" } }
 }
 
 // The variable a link argument names (`link_arg`), as its address.  `first`: the outermost
@@ -1182,12 +1249,24 @@ fn work_twin(x: Cx, d: integer) -> text {
     x.why_work = written.refused;
     return "";
   }
+  // `write_work_twin`: declared and defined with the unit's bodies, as the twin's own
+  // `static inline void <name>(<params>)` around the body the writer wrote.
+  sig = "static inline void {name}({written.list})";
+  open = written.text.find(" {{\n") ?? 0;
+  x.gen_decls += "{sig};\n";
+  x.gen_bodies += "\n{sig}{written.text[open..written.text.size()]}";
   name
 }
 
 // `Cx::fn_value`: definition `d` used as a value.
-fn fn_value(d: integer) -> text {
-  "loft_fn_of(INT64_C({if d < 0 { -d } else { d }}))"
+// `Cx::fn_value`: `d` used as a value — an arm of its signature's dispatcher — and the C
+// value that names it.
+fn fn_value(x: Cx, d: integer) -> text {
+  n = if d < 0 { -d } else { d };
+  if n < len(x.fn_values) {
+    x.fn_values[n] = true;
+  }
+  "loft_fn_of(INT64_C({n}))"
 }
 
 // The function an integer literal names where a function value is expected (`is_function`),
@@ -1308,7 +1387,7 @@ fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E 
     }
     named = function_literal(x.b, a);
     if s == "fn" && named >= 0 {
-      xs[i] = fn_value(named);
+      xs[i] = fn_value(x, named);
       continue;
     }
     later_writes = false;
@@ -1333,7 +1412,7 @@ fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E 
     line(w, ind, "{held_t} = {code};");
     return held_value(w, held_t, "text");
   }
-  E { code: code, kind: kind_of(ret) }
+  E { code: code, kind: kind_of(ret), tup: if is_tuple(ret) { ret } else { "" } }
 }
 
 // One member, or a whole tuple, copied from `from` to `to` (`copy_member`): a text into the
@@ -1503,8 +1582,9 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     // The definition number a function value names, as an integer.
     NdFnRefDnr { n } => E { code: "{w.names[n]!}.d", kind: K_INT },
     NdFnRef { def_nr, var, t: _ } => {
+      named = fn_value(x, def_nr);
       if var == 65535 {
-        return E { code: fn_value(def_nr), kind: K_FN };
+        return E { code: named, kind: K_FN };
       }
       E { code: "loft_fn_make(INT64_C({def_nr}), {w.names[var]!})", kind: K_FN }
     },
@@ -1538,7 +1618,7 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       if !name.starts_with("Op") {
         return call(x, w, def_nr, args, ind);
       }
-      op_call(x, w, name, args, ind)
+      op_call(x, w, name, typed_nulls(x.b, def_nr, args), ind)
     },
     NdBlock { block: _ } => compound(x, w, node, ind),
     NdInsert { items: _ } => compound(x, w, node, ind),
@@ -1756,7 +1836,7 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
   node = loop_shape::unspan(v);
   // A function named where a function value is expected.
   if shape == "fn" && function_literal(x.b, node) >= 0 {
-    line(w, ind, "{target} = {fn_value(function_literal(x.b, node))};");
+    line(w, ind, "{target} = {fn_value(x, function_literal(x.b, node))};");
     return;
   }
   if is_tuple(shape) && tuple_has_text(shape) {
@@ -2186,8 +2266,12 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   };
   if !is_line {
     filed = w.filed;
+    filed_path = w.filed_path;
     w.filed = -1;
-    w.filed_next = if cgen_ref::binds_lookup(x.b, v) { filed } else { -1 };
+    w.filed_path = "";
+    lookup = cgen_ref::binds_lookup(x.b, v);
+    w.filed_next = if lookup { filed } else { -1 };
+    w.filed_next_path = if lookup { filed_path } else { "" };
   }
   // An assignment or a `return` of a located value reports a fault in it at that line.
   at = match loop_shape::unspan(v) {
@@ -2214,7 +2298,9 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   }
   if !is_line {
     w.filed_next = -1;
+    w.filed_next_path = "";
     w.filed = cgen_ref::filed_record(x.b, v);
+    w.filed_path = if w.filed >= 0 { cgen_ref::filed_place(x.b, v) } else { "" };
   }
 }
 
@@ -2674,7 +2760,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     over: [],
     in_range_copy: false,
     peel_seeds: [],
-    walk_scopes: [for cw in char_walk::walks(x.b, index) { cw.scope }],
+    walk_scopes: if (env_variable("LOFT_NO_CHAR_WALK") ?? "0") != "0" { [] } else { [for cw in char_walk::walks(x.b, index) { cw.scope }] },
     borrowed: texts.borrowed,
     literal_views: cgen_texts::literal_views(x.b, index, texts.borrowed),
     pending: [],
@@ -2692,6 +2778,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     keyed: -1,
     filed: -1,
     filed_next: -1,
+    filed_path: "",
+    filed_next_path: "",
     cold: [],
     undeclared: [for _ in 0..len(d.variables.variables) { false }],
     frees_old_tuple: false,
@@ -2836,9 +2924,14 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   };
   list = if len(params) == 0 { "void" } else { params.join(", ") };
   // `(R-CSplit)` writes a body over its budget of call sites in parts: not carried.
-  if cgen_split::over_budget(storage, list, out) {
-    return Written { text: "", refused: "a body the writer splits" };
-  }
+  // `(R-CSplit)`: a body over its budget of call sites goes out as a chain of parts for MSVC
+  // and whole for every other compiler.  The parts are not carried: the unit writes the whole
+  // body, which gcc and clang compile from the Rust unit too (`split`), and the bodies layer
+  // still counts it as one this writer does not write.
+  split = cgen_split::over_budget(storage, list, out);
   name = cgen_names::twin_name(x.b, x.dups, twin);
-  Written { text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "" }
+  // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
+  // marker resolved once the twins are written, or out of line.
+  outer = if statements <= 12 { "static inline" } else if statements <= 80 && twin.nn == 0 { "static /*loft_hot:{index}*/" } else { "static" };
+  Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer }
 }

@@ -435,11 +435,10 @@ pub fn hash_fill_loop(b: ir::Bundle, lp: ir::Block) -> HashFill? {
     _ => return null,
   };
   rc = loop_shape::range_counters(lp, b.data.definitions) ?? return null;
-  // The body block walked whole: a lambda in a loop that captures a vector is loft#2487.
+  // Per statement of the body, as `hoist.rs` asks `any_node` of each.
   state = [-1, 0, 0, 0, 0];
-  whole = lp.operators[1];
-  {
-    opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+  for st in body {
+    opt_non_sentinel::walk(st, fn(n: ir::Node) {
       match n {
         NdBreak { n: _ } => { state[2] = 1; },
         NdReturn { inner: _ } => { state[2] = 1; },
@@ -465,8 +464,8 @@ pub fn hash_fill_loop(b: ir::Bundle, lp: ir::Block) -> HashFill? {
   if state[2]! == 1 || hash < 0 || state[3]! == 1 {
     return null;
   }
-  {
-    opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+  for st in body {
+    opt_non_sentinel::walk(st, fn(n: ir::Node) {
       match n {
         NdSet { var, inner: _ } => { if var == hash { state[4] = 1; } },
         _ => {},

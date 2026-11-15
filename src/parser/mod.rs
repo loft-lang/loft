@@ -577,6 +577,9 @@ pub struct Parser {
     /// parsed, to be judged once every body is final (`check_match_guards`).
     pub(crate) match_subject_root: u16,
     pub(crate) guard_checks: Vec<control::GuardCheck>,
+    /// loft#2492 — every call argument pass 2 parsed that may carry a closure record, to be
+    /// judged once every body is final (`check_closure_keeps`).
+    pub(crate) closure_arguments: Vec<closure_flow::ClosureArgument>,
     /// @PLN187 — the receiver fact of the method step being parsed (`parse_part` sets it).
     pub(crate) method_receiver: crate::data::AliasFact,
     /// @PLN187 — the positional and named argument facts of the method call being parsed.
@@ -1986,6 +1989,7 @@ mod advice;
 mod bounds;
 mod call_args;
 mod calls;
+mod closure_flow;
 mod closures;
 mod compare;
 mod convert;
@@ -2144,6 +2148,7 @@ impl Parser {
             match_arm_facts: Vec::new(),
             match_subject_root: u16::MAX,
             guard_checks: Vec::new(),
+            closure_arguments: Vec::new(),
             pending_key_facts: Vec::new(),
             comprehension_fact: None,
             method_receiver: crate::data::AliasFact::Plain,

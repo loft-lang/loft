@@ -5,10 +5,11 @@
 // The natives of a plain program by the number `OpStaticCall` carries (@PLN91,
 // doc/claude/plans/91-self-host/rust-dependencies.md step 2): the run image's `natives` table
 // kept in loft, so the bytecode writer needs none from an image.  The order is the number: a
-// new native is added at the end.  A program that loads a library with natives of its own has
-// those after these, which this table does not hold yet.
+// new native is added at the end.  A program's own `#c` declarations follow these, in
+// definition order (`of`); a library loaded with natives of its own is not held yet.
 //
 // `selfhost/bench/bgen_check.loft --stream` compares it with the image's table.
+use ir;
 
 pub fn names() -> vector<text> {
   [
@@ -245,4 +246,22 @@ pub fn names() -> vector<text> {
     "loft_shared_t_6vector_join",
     "loft_shared_t_6vector_join#dest"
   ]
+}
+
+// The natives of program `b`: the standard ones, then each definition with a declared C
+// signature and no body, in definition order — the order `c_call::register` adds them to the
+// interpreter's static-call table (a declaration whose signature does not fit is an error at
+// its declaration, so a program that compiles has none).
+pub fn of(b: ir::Bundle) -> vector<text> {
+  out = names();
+  for d in b.data.definitions {
+    bodyless = match d.code[0] ?? ir::NdNull {
+      NdNull => true,
+      _ => false,
+    };
+    if d.c_sig != "" && bodyless {
+      out += [d.name];
+    }
+  }
+  out
 }

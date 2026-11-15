@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Android guard (scripts/android_guards.py): the program opens a font and an image by the
+// relative paths it uses on the PC, and draws both.  It lists no files: the app carries the
+// ones the program names (@C164), as the ESP app and the page do.
+//
+// The image is `images/rgb3x3.png` stretched over 93 x 93 pixels, each texel 31 pixels square,
+// so a texel's centre is a pixel's centre and reads its colour as the file holds it, whatever
+// the filtering.  Decoded by hand, row by row from the top: red, green, blue; yellow, cyan,
+// magenta; (10, 20, 30), (40, 50, 60), (70, 80, 90).  The font's measure is the desktop's (the
+// rasterising is loft, not the GPU), and the text it draws lights more than a hundred pixels.
+use graphics::*;
+
+fn main() {
+  f = load_font("fonts/LiberationSansNarrow-Bold.ttf") ?? return assert(false, "no font");
+  w = open_window(320, 480, "b3_text") ?? return assert(false, "no window");
+  p = w.painter() ?? return assert(false, "no painter");
+  img = w.load_texture("images/rgb3x3.png") ?? return assert(false, "no image");
+  t = w.text_texture(f, "AV", 48.0, rgb(255, 255, 255));
+  tw = f.measure("AV", 48.0) as integer + 5;
+  th = f.line_height(48.0) + 4;
+  println("font {tw} x {th}");
+  for frame in 0..3 {
+    w.poll();
+    w.clear(rgb(0, 0, 0));
+    p.image(img, 0.0, 0.0, 93.0, 93.0);
+    p.image(t, 120.0, 0.0, tw as float, th as float);
+    if frame == 2 {
+      c = w.capture();
+      for row in 0..3 {
+        y = 15 + 31 * row;
+        println("row {row}: {c.get_pixel(15, y):x} {c.get_pixel(46, y):x} {c.get_pixel(77, y):x}");
+      }
+      lit = 0;
+      for y in 0..th {
+        for x in 120..120 + tw {
+          if (c.get_pixel(x, y) & 0xFFFFFF) != 0 { lit += 1; }
+        }
+      }
+      println("text lit {lit > 100}");
+    }
+    w.swap();
+  }
+}

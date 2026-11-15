@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#2501's walks: each compares a node reached through the context record against a bare
+// variant.  The record is declared in `bvc2501_ctx`, which uses this module back.
+#package
+use bvc2501_shapes;
+use bvc2501_ctx::*;
+
+// A local read through the record, compared with `==`.
+pub fn bvc_nil_first(x: BvcCx) -> integer {
+  n = 0;
+  for i in 0..len(x.b.defs) {
+    d = x.b.defs[i]!;
+    if len(d.code) > 0 && d.code[0] == BvcNil {
+      n += 1;
+    }
+  }
+  n
+}
+
+// No local: the whole chain is the operand.
+pub fn bvc_nil_first_inline(x: BvcCx) -> integer {
+  n = 0;
+  for i in 0..len(x.b.defs) {
+    if x.b.defs[i]!.code[0] == BvcNil {
+      n += 1;
+    }
+  }
+  n
+}
+
+// `!=`.
+pub fn bvc_not_nil_first(x: BvcCx) -> integer {
+  n = 0;
+  for d in x.b.defs {
+    if d.code[0] != BvcNil {
+      n += 1;
+    }
+  }
+  n
+}
+
+// A `match` on the same chain, its arms bare.
+pub fn bvc_sum_first(x: BvcCx) -> integer {
+  s = 0;
+  for d in x.b.defs {
+    match d.code[0] {
+      BvcNum { n } => { s += n; },
+      BvcNil => {},
+    }
+  }
+  s
+}

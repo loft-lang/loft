@@ -171,6 +171,9 @@ fn harness_of(dir: &std::path::Path, defines: &[&str], harness: &str) -> std::pa
         .arg("-o")
         .arg(&exe)
         .args(["-lm", "-lpthread"])
+        // The shim opens sockets (the engine-host kernel): Winsock and the rest on Windows,
+        // after the objects, as a C backend program's link names them.  None elsewhere.
+        .args(loft::platform::c_system_link_libs())
         .output()
         .expect("link the harness");
     assert!(

@@ -12,6 +12,7 @@
 // split or a split table, a text push window, a cold exit.
 
 use ir;
+use cgen::(Cx);
 use loop_shape;
 use opt_non_sentinel;
 use cgen_fn;
@@ -704,6 +705,10 @@ fn builds_text(d: ir::Definition, arm: ir::Node) -> boolean {
 // Does a statement of `ops`, at any depth outside a nested loop's own count, push a character
 // into a text — what a loop's text push window is opened for?
 pub fn pushes_text(x: Cx, ops: vector<ir::Node>) -> boolean {
+  // `LOFT_NO_TEXT_WINDOW=1`: the Rust writer opens no window, and pushes as written.
+  if (env_variable("LOFT_NO_TEXT_WINDOW") ?? "0") != "0" {
+    return false;
+  }
   hit = [false];
   for op in ops {
     if hit[0]! {

@@ -330,8 +330,8 @@ static void loft_format_long(loft_text *s, int64_t val, uint8_t radix, int64_t w
  * printed, not when a block fills or the program ends. */
 static void loft_print(loft_str s) {
 #if defined(EPIPE)
-    if (fwrite(s.p, 1, s.len, stdout) < s.len && errno == EPIPE) exit(0);
-    if (memchr(s.p, '\n', s.len) && fflush(stdout) != 0 && errno == EPIPE) exit(0);
+    if (fwrite(s.p, 1, s.len, stdout) < s.len && errno == EPIPE) LOFT_EXIT(0);
+    if (memchr(s.p, '\n', s.len) && fflush(stdout) != 0 && errno == EPIPE) LOFT_EXIT(0);
 #else
     fwrite(s.p, 1, s.len, stdout);
     if (memchr(s.p, '\n', s.len)) fflush(stdout);
@@ -744,7 +744,7 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
     loft_push(&loft_fail_msg, message.p, message.len);
     if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
-    exit(1);
+    LOFT_EXIT(1);
 }
 
 /* A production run's discard of a locked write (`loft_log_locked_write`), bound by a unit's
@@ -771,7 +771,7 @@ static int loft_locked_write(void) {
     loft_push(&loft_fail_msg, msg, sizeof msg - 1);
     if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
-    exit(1);
+    LOFT_EXIT(1);
 }
 
 /* The call stack ran past `LOFT_MAX_CALL_DEPTH` (`RuntimeError::stack_overflow`): the program
@@ -790,7 +790,7 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
     loft_push(&loft_fail_msg, msg, (size_t) n);
     if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
-    exit(1);
+    LOFT_EXIT(1);
 }
 #endif
 
@@ -916,7 +916,7 @@ static void loft_panic(loft_str message, loft_str file, int64_t line) {
     loft_push(&loft_fail_msg, message.p, message.len);
     if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
-    exit(1);
+    LOFT_EXIT(1);
 }
 
 /* exit(code) (runtime_error::exit_program): the program ends in silence with the code's low
@@ -932,7 +932,7 @@ static void loft_exit(int64_t code) {
     }
     fflush(stdout);
     fflush(stderr);
-    exit((int) ((uint64_t) code & 0xFF));
+    LOFT_EXIT((int) ((uint64_t) code & 0xFF));
 }
 
 /* True when the last failure's message holds one of `want`. */
@@ -1981,7 +1981,7 @@ static void loft_refree_fail(uint32_t nr) {
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, m, strlen(m));
     if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
-    exit(1);
+    LOFT_EXIT(1);
 }
 
 static void loft_free_ref(loft_ref r) {
@@ -6625,8 +6625,11 @@ static loft_text loft_text_case(loft_str s, const loft_umap *m, size_t n, int lo
     return out;
 }
 
-/* Called first by `main`: the arguments, the clock's start, the constants. */
+/* Called first by `main`: the arguments, the clock's start, the constants.  A shim has no
+ * `main` (`LOFT_SHIM_UNIT`, loft_crt.h). */
+#if !defined(LOFT_SHIM_UNIT)
 static void loft_init(void);
+#endif
 #if defined(_WIN32)
 #include <io.h>
 #include <fcntl.h>
@@ -6844,7 +6847,7 @@ static void loft_c_missing_library(const loft_c_boundlib *l, const loft_c_libdir
             "\n  fix: put `%s` beside the program, in `%s-%s/` under one of these directories, or name its "
             "directory with LOFT_LIB_PATH\n",
             l->file, l->pkg, l->version);
-    exit(1);
+    LOFT_EXIT(1);
 }
 
 /* `native_bind::bind`: open every library the program was shipped with, first found in search
@@ -6899,6 +6902,7 @@ static void loft_seed_keys(void) {
     loft_seed_k0 = k[0] | 1;
 }
 
+#if !defined(LOFT_SHIM_UNIT)
 static void loft_start(int argc, char **argv) {
 #if defined(_WIN32)
     /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
@@ -6920,6 +6924,7 @@ static void loft_start(int argc, char **argv) {
     LOFT_TRACE("M\n");
     loft_init();
 }
+#endif
 
 /* ── Content equality (Stores::eq_content, @FR-E-Eq) ──────────────────────────────────── */
 

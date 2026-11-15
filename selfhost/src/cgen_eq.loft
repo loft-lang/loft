@@ -1,0 +1,165 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — `src/c/eq.rs`: `==` on two records by content (`@FR-E-Eq`).  The unit
+// writes one `loft_eq{tp}` per type a body compares, each field by its own comparison; the
+// runtime's `loft_eq_*` helpers are the parts every type shares.
+
+use ir;
+use cgen::(Cx);
+use cgen_tables;
+
+// `eq_type`: type `tp` and every type its comparison reaches, registered — or why not.
+pub fn eq_type(x: Cx, tp: integer) -> text {
+  if tp <= 6 || tp >= len(x.b.types) || x.eqs[tp]! {
+    return "";
+  }
+  x.eqs[tp] = true;
+  why = match x.b.types[tp]!.parts[0]! {
+    PtStruct { fields } => eq_fields_reach(x, fields),
+    PtEnumValue { value: _, fields } => eq_fields_reach(x, fields),
+    PtEnum { values } => {
+      w = "";
+      for v in values {
+        if v.nr != 65535 && w == "" {
+          w = eq_type(x, v.nr);
+        }
+      }
+      w
+    },
+    PtVector { content } => eq_type(x, content),
+    PtChildRec { content } => eq_type(x, content),
+    PtSorted { content, keys: _ } => { cgen_tables::keys_name(x, tp); eq_type(x, content) },
+    PtHash { content, fields: _ } => { cgen_tables::keys_name(x, tp); eq_type(x, content) },
+    PtIndex { content, keys: _ } => { cgen_tables::keys_name(x, tp); eq_type(x, content) },
+    PtOrdered { content, keys: _ } => { cgen_tables::keys_name(x, tp); eq_type(x, content) },
+    PtArray { content } => { cgen_tables::keys_name(x, tp); eq_type(x, content) },
+    PtRadix { content, fields: _ } => { cgen_tables::keys_name(x, tp); eq_type(x, content) },
+    PtTrie { content, key: _ } => { cgen_tables::keys_name(x, tp); eq_type(x, content) },
+    PtBase => "a comparison of a base",
+    _ => "",
+  };
+  if why != "" {
+    x.eqs[tp] = false;
+  }
+  why
+}
+
+fn compared(f: ir::DbField) -> boolean {
+  !f.name.starts_with("#") && (f.other_indexes[0] ?? 0) != 65535
+}
+
+fn eq_fields_reach(x: Cx, fields: vector<ir::DbField>) -> text {
+  for f in fields {
+    if !compared(f) {
+      continue;
+    }
+    w = if f.target == 65535 { eq_type(x, f.content) } else { eq_type(x, f.target) };
+    if w != "" {
+      return w;
+    }
+  }
+  ""
+}
+
+// `eq_fn`: the C function that compares two values of type `tp`.
+pub fn eq_fn(tp: integer) -> text {
+  if tp == 0 || tp == 1 {
+    "loft_eq_long"
+  } else if tp == 2 {
+    "loft_eq_single"
+  } else if tp == 3 {
+    "loft_eq_float"
+  } else if tp == 4 {
+    "loft_eq_byte"
+  } else if tp == 5 {
+    "loft_eq_text"
+  } else if tp == 6 {
+    "loft_eq_u32"
+  } else {
+    "loft_eq{tp}"
+  }
+}
+
+fn eq_fields(fields: vector<ir::DbField>, ind: text) -> text {
+  out = "";
+  for f in fields {
+    if !compared(f) {
+      continue;
+    }
+    pa = "loft_field(a, {f.position})";
+    pb = "loft_field(b, {f.position})";
+    test = if f.name == "enum" {
+      "loft_eq_byte({pa}, {pb})"
+    } else if f.target != 65535 {
+      "loft_eq_reference({pa}, {pb}, {f.target}, {eq_fn(f.target)})"
+    } else {
+      "{eq_fn(f.content)}({pa}, {pb})"
+    };
+    out += "{ind}if (!{test}) return 0;\n";
+  }
+  out
+}
+
+// `eq_code`: every registered type's comparison.
+pub fn eq_code(x: Cx) -> text {
+  out = "";
+  for on in x.eqs {
+    if on {
+      out += "static int loft_eq{on#index}(loft_ref a, loft_ref b);\n";
+    }
+  }
+  for on in x.eqs {
+    if !on {
+      continue;
+    }
+    tp = on#index;
+    t = x.b.types[tp]!;
+    out += "static int loft_eq{tp}(loft_ref a, loft_ref b) {{\n";
+    out += "    if (loft_same_place(a, b)) return 1;\n";
+    out += "    if (a.rec == 0 || b.rec == 0) return a.rec == 0 && b.rec == 0;\n";
+    out += match t.parts[0]! {
+      PtStruct { fields } => eq_fields(fields, "    ") + "    return 1;\n",
+      PtEnumValue { value: _, fields } => eq_fields(fields, "    ") + "    return 1;\n",
+      PtEnum { values } => enum_eq(x, values),
+      PtHash { content, fields: _ } => keyed_eq(x, tp, content, 1),
+      PtIndex { content, keys: _ } => keyed_eq(x, tp, content, 2),
+      PtOrdered { content, keys: _ } => keyed_eq(x, tp, content, 0),
+      PtArray { content } => keyed_eq(x, tp, content, 0),
+      PtRadix { content, fields: _ } => keyed_eq(x, tp, content, 3),
+      PtTrie { content, key: _ } => keyed_eq(x, tp, content, 3),
+      PtVector { content } => "    return loft_eq_vector(a, b, {x.b.types[content]!.size}, {eq_fn(content)});\n",
+      PtSorted { content, keys: _ } => "    return loft_eq_vector(a, b, {x.b.types[content]!.size}, {eq_fn(content)});\n",
+      PtChildRec { content } => "    return loft_eq_child(a, b, {eq_fn(content)});\n",
+      PtByte { start, nullable: _ } => "    (void) {start};\n    return loft_eq_byte(a, b);\n",
+      PtShort { start: _, nullable: _ } => "    return loft_eq_u16(a, b);\n",
+      PtShortRaw { start: _, nullable: _ } => "    return loft_eq_u16(a, b);\n",
+      PtInt { start: _, nullable: _ } => "    return loft_eq_u32(a, b);\n",
+      PtIntRaw { start: _, nullable: _ } => "    return loft_eq_u32(a, b);\n",
+      _ => "    return loft_eq_dbref(a, b);\n",
+    };
+    out += "}}\n";
+  }
+  out
+}
+
+fn enum_eq(x: Cx, values: vector<ir::EnumPair>) -> text {
+  out = "    uint8_t v = *loft_at(loft_store_of(a), a.rec, a.pos);\n    if (v != *loft_at(loft_store_of(b), b.rec, b.pos)) return 0;\n    switch (v) {{\n";
+  for v in values {
+    if v.nr >= 0 && v.nr < len(x.b.types) {
+      match x.b.types[v.nr]!.parts[0]! {
+        PtEnumValue { value: _, fields } => {
+          out += "    case {v#index + 1}:\n" + eq_fields(fields, "        ") + "        return 1;\n";
+        },
+        _ => {},
+      }
+    }
+  }
+  out + "    default:\n        return 1;\n    }}\n"
+}
+
+fn keyed_eq(x: Cx, tp: integer, elem: integer, kind: integer) -> text {
+  keys = cgen_tables::keys_name(x, tp);
+  "    return loft_eq_keyed(a, b, {kind}, {keys}, {len(x.b.types[tp]!.keys)}, {eq_fn(elem)});\n"
+}

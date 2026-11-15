@@ -196,7 +196,7 @@ fn build_scalar_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(
 }
 
 /// Build a cdylib from `lib_src` (a pure library — no `main`) exporting the
-/// **shared-store-dispatchable** function `fn_name` as `loft_shared_n_<fn_name>`
+/// **shared-store-dispatchable** function `fn_name` as `loft_shared_std__n_<fn_name>`
 /// (the `*mut Stores` bridge, for a non-scalar value crossing the boundary).
 /// Returns (so_path, tmp_dir), or None when the toolchain isn't available.
 fn build_shared_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(PathBuf, PathBuf)> {
@@ -239,10 +239,13 @@ fn build_shared_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(
 
     let src = loft::native_lib::generate_shared_cdylib_lib_rs(&p.data, &state.database, &export);
     for name in fn_name.split(',') {
-        let want = format!("pub extern \"C\" fn loft_shared_n_{name}");
+        let want = format!("pub extern \"C\" fn loft_shared_std__n_{name}");
         assert!(
             src.contains(&want),
-            "the shared bridge for {name} must be present"
+            "the shared bridge for {name} must be present; the artifact exports {:?}",
+            src.lines()
+                .filter(|l| l.contains("fn loft_shared_"))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -495,7 +498,7 @@ fn dispatches_vector_arg_into_shared_cdylib() {
         return;
     };
 
-    let native_decl = "pub fn vec_sum(data: vector<integer>) -> integer not null;\n#native \"loft_shared_n_vec_sum\"\n";
+    let native_decl = "pub fn vec_sum(data: vector<integer>) -> integer not null;\n#native \"loft_shared_std__n_vec_sum\"\n";
     let source = r#"
 fn main() {
     d = [10, 20, 30];
@@ -535,7 +538,7 @@ fn dispatches_vector_return_from_shared_cdylib() {
         return;
     };
 
-    let native_decl = "pub fn range_vec(n: integer) -> vector<integer> not null;\n#native \"loft_shared_n_range_vec\"\n";
+    let native_decl = "pub fn range_vec(n: integer) -> vector<integer> not null;\n#native \"loft_shared_std__n_range_vec\"\n";
     let source = r#"
 fn main() {
     v = range_vec(4);
@@ -567,7 +570,7 @@ fn dispatches_struct_arg_into_shared_cdylib() {
         return;
     };
 
-    let native_decl = "struct Point { x: integer, y: integer }\npub fn point_sum(p: Point) -> integer not null;\n#native \"loft_shared_n_point_sum\"\n";
+    let native_decl = "struct Point { x: integer, y: integer }\npub fn point_sum(p: Point) -> integer not null;\n#native \"loft_shared_std__n_point_sum\"\n";
     let source = r#"
 fn main() {
     p = Point { x: 3, y: 4 };
@@ -601,7 +604,7 @@ fn dispatches_struct_return_from_shared_cdylib() {
         return;
     };
 
-    let native_decl = "struct Point { x: integer, y: integer }\npub fn make_point(a: integer, b: integer) -> Point not null;\n#native \"loft_shared_n_make_point\"\n";
+    let native_decl = "struct Point { x: integer, y: integer }\npub fn make_point(a: integer, b: integer) -> Point not null;\n#native \"loft_shared_std__n_make_point\"\n";
     let source = r#"
 fn main() {
     p = make_point(3, 4);
@@ -635,7 +638,7 @@ fn dispatches_text_arg_into_shared_cdylib() {
     };
 
     let native_decl =
-        "pub fn str_len(s: text) -> integer not null;\n#native \"loft_shared_n_str_len\"\n";
+        "pub fn str_len(s: text) -> integer not null;\n#native \"loft_shared_std__n_str_len\"\n";
     let source = r#"
 fn main() {
     n = str_len("hello");
@@ -665,7 +668,8 @@ fn dispatches_text_return_from_shared_cdylib() {
         return;
     };
 
-    let native_decl = "pub fn shout(s: text) -> text not null;\n#native \"loft_shared_n_shout\"\n";
+    let native_decl =
+        "pub fn shout(s: text) -> text not null;\n#native \"loft_shared_std__n_shout\"\n";
     let source = r#"
 fn main() {
     r = shout("hi");
@@ -698,7 +702,7 @@ fn dispatches_plain_enum_into_shared_cdylib() {
     let Some((so_c, tmp_c)) = build_shared_lib_cdylib("loft_n2_enum_c", DIR_LIB, "dir_code") else {
         return;
     };
-    let decl_c = "enum Direction { North, East, South, West }\npub fn dir_code(d: Direction) -> integer not null;\n#native \"loft_shared_n_dir_code\"\n";
+    let decl_c = "enum Direction { North, East, South, West }\npub fn dir_code(d: Direction) -> integer not null;\n#native \"loft_shared_std__n_dir_code\"\n";
     run_shared_dispatch(
         &so_c,
         decl_c,
@@ -710,7 +714,7 @@ fn dispatches_plain_enum_into_shared_cdylib() {
     let Some((so_f, tmp_f)) = build_shared_lib_cdylib("loft_n2_enum_f", DIR_LIB, "dir_from") else {
         return;
     };
-    let decl_f = "enum Direction { North, East, South, West }\npub fn dir_from(n: integer) -> Direction not null;\n#native \"loft_shared_n_dir_from\"\n";
+    let decl_f = "enum Direction { North, East, South, West }\npub fn dir_from(n: integer) -> Direction not null;\n#native \"loft_shared_std__n_dir_from\"\n";
     run_shared_dispatch(
         &so_f,
         decl_f,
@@ -741,7 +745,7 @@ fn dispatches_data_enum_into_shared_cdylib() {
     let Some((so_a, tmp_a)) = build_shared_lib_cdylib("loft_n2_denum_a", SHAPE_LIB, "area") else {
         return;
     };
-    let decl_a = "enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }\npub fn area(s: Shape) -> integer not null;\n#native \"loft_shared_n_area\"\n";
+    let decl_a = "enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }\npub fn area(s: Shape) -> integer not null;\n#native \"loft_shared_std__n_area\"\n";
     run_shared_dispatch(
         &so_a,
         decl_a,
@@ -754,7 +758,7 @@ fn dispatches_data_enum_into_shared_cdylib() {
     else {
         return;
     };
-    let decl_m = "enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }\npub fn make_rect(w: integer, h: integer) -> Shape not null;\n#native \"loft_shared_n_make_rect\"\n";
+    let decl_m = "enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }\npub fn make_rect(w: integer, h: integer) -> Shape not null;\n#native \"loft_shared_std__n_make_rect\"\n";
     run_shared_dispatch(
         &so_m,
         decl_m,
@@ -787,7 +791,7 @@ fn dispatches_sorted_arg_into_shared_cdylib() {
         return;
     };
 
-    let native_decl = "struct Item { k: integer not null, v: integer not null }\npub fn sum_values(items: sorted<Item[k]>) -> integer not null;\n#native \"loft_shared_n_sum_values\"\n";
+    let native_decl = "struct Item { k: integer not null, v: integer not null }\npub fn sum_values(items: sorted<Item[k]>) -> integer not null;\n#native \"loft_shared_std__n_sum_values\"\n";
     let source = r#"
 fn main() {
     s: sorted<Item[k]> = [];
@@ -925,7 +929,7 @@ fn auto_native_marks_and_dispatches_normal_library_fn() {
     );
     assert_eq!(
         p.data.def(double_nr).native(),
-        "loft_shared_n_double",
+        "loft_shared_std__n_double",
         "the bridge symbol must be set"
     );
 
@@ -1067,7 +1071,7 @@ fn f3_body_bearing_marked_fn_dispatch_vs_interpret() {
         return; // rustc unavailable
     };
     let native_decl = "pub fn vec_sum(data: vector<integer>) -> integer not null;\n\
-                       #native \"loft_shared_n_vec_sum\"\n";
+                       #native \"loft_shared_std__n_vec_sum\"\n";
     let pc_src = "fn main() { d = [10, 20, 30]; assert(vec_sum(d) == 60, \"pc\") }";
     SHARED_DISPATCH_HITS.store(0, Ordering::Relaxed);
     run_shared_dispatch(&so_pc, native_decl, pc_src);
@@ -1284,7 +1288,7 @@ fn p303_text_return_marked_fn_expression_and_dest_context() {
 /// #305 — two modules may export the SAME `pub fn` name (`Data` scopes defs by
 /// source; the interpreter resolves module-qualified calls fine), but emitted
 /// Rust is one flat namespace: the generated cdylib defined `n_dup_name` and
-/// its `loft_shared_n_dup_name` wrapper TWICE -> rustc E0428 -> the library
+/// its `loft_shared_std__n_dup_name` wrapper TWICE -> rustc E0428 -> the library
 /// silently fell back to interpreting (and a whole-program `--native` compile
 /// failed outright).  Collision members now get a file-hash-disambiguated
 /// identifier.  End-to-end over a real on-disk package (module scoping comes
@@ -1465,9 +1469,9 @@ fn a_library_artifact_runs_in_a_program_that_numbers_it_differently() {
          fn before2(a: integer) -> integer {{ a - 2 }}\n\
          {DECLS}\
          pub fn mix(n: integer) -> vector<Pt>;\n\
-         #native \"loft_shared_n_mix\"\n\
+         #native \"loft_shared_std__n_mix\"\n\
          pub fn pick(i: integer) -> fn(integer) -> integer;\n\
-         #native \"loft_shared_n_pick\"\n\
+         #native \"loft_shared_std__n_pick\"\n\
          fn main() {{\n\
          \x20   assert(before1(3) + before2(3) == 3, \"the shifting functions run\");\n\
          \x20   v = mix(4);\n\

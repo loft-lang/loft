@@ -123,6 +123,82 @@ fn main() {
     }
 }
 
+/// The same program through the C backend (`--native-c --native-android`,
+/// doc/claude/plans/106-android-build-target/c-backend.md A0): the C unit, the Android entry and
+/// the NDK's app glue, built by the NDK's clang with no rustc and no cargo.  An AArch64 ELF that
+/// exports the activity entry, the glue's `android_main` caller and the renamed program `main`,
+/// and that names no C++ runtime (nothing C++ is linked, so the APK carries no
+/// `libc++_shared.so`).  The same opt-in leg as the rustc path's test.
+#[test]
+fn android_c_backend_so_is_aarch64_elf() {
+    if std::env::var_os("LOFT_ANDROID_BUILD_TEST").is_none() {
+        eprintln!(
+            "skipping android build leg: set LOFT_ANDROID_BUILD_TEST=1 (needs an NDK + cross toolchain)"
+        );
+        return;
+    }
+    if std::env::var_os("ANDROID_NDK_HOME").is_none()
+        && std::env::var_os("ANDROID_NDK_ROOT").is_none()
+    {
+        eprintln!("skipping: LOFT_ANDROID_BUILD_TEST set but no ANDROID_NDK_HOME/ANDROID_NDK_ROOT");
+        return;
+    }
+    let src = r#"
+struct Point { x: integer, y: integer }
+fn dist2(p: Point) -> integer { p.x * p.x + p.y * p.y }
+fn main() {
+  total = 0;
+  for i in 0..5 {
+    p = Point { x: i, y: i + 1 };
+    total = total + dist2(p);
+  }
+  print("total={total}\n");
+}
+"#;
+    let probe = write_probe("prog_c.loft", src);
+    let out_so = std::env::temp_dir()
+        .join("loft_android_target")
+        .join("prog_c.so");
+    let _ = fa::remove_file(&out_so);
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--native-c")
+        .arg("--native-android")
+        .arg(&out_so)
+        .arg(&probe)
+        .env("LOFT_TIMEOUT", "300")
+        .env_remove("LOFT_ANDROID_TARGET")
+        .output()
+        .expect("spawn loft");
+    assert!(
+        out.status.success(),
+        "--native-c --native-android failed:\nstdout:{}\nstderr:{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        is_aarch64_elf(&out_so),
+        "output {} is not an AArch64 ELF shared object\nstderr:{}",
+        out_so.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for sym in [
+        "android_main",
+        "ANativeActivity_onCreate",
+        "loft_program_main",
+    ] {
+        assert!(
+            so_names_symbol(&out_so, sym),
+            "output {} does not export `{sym}`",
+            out_so.display()
+        );
+    }
+    assert!(
+        !so_names_symbol(&out_so, "libc++_shared.so"),
+        "output {} names the C++ runtime, which the C path links nothing of",
+        out_so.display()
+    );
+}
+
 /// Without an NDK, `--native-android` fails fast with a message that names the env
 /// var to set — not an opaque `rustc`/`cc` error deep in the build.
 #[test]

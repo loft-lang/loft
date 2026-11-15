@@ -316,12 +316,15 @@ fn print_help() {
     println!("                                rustc whatever LOFT_NATIVE_BACKEND says; with");
     println!("                                --native-emit it writes the Rust");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
-    println!(
-        "  --native-android [out.apk]    cross-compile to a signed Android APK (needs \
-         ANDROID_NDK_HOME + ANDROID_HOME); a *.so output builds just the library"
-    );
     println!("                                (default: .loft/<script>.wasm beside the script)");
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
+    println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
+    println!("                                ANDROID_NDK_HOME + ANDROID_HOME); a *.so output");
+    println!("                                builds just the library");
+    println!("  --assets a,b                  the files an app carries (--native-esp, --html,");
+    println!("                                --native-android), beside the program: files,");
+    println!("                                directories, `*` in a name, `!` to drop a match;");
+    println!("                                without it, the files the program names");
     println!(
         "  --html [out.html]             compile to a self-contained browser page (the browser"
     );
@@ -9819,7 +9822,10 @@ fn main() {
     // run never looked up, and cold-parsed forever.  The directories the parse adds are
     // derived from the sources, which the manifest pins by hash.
     let cache_key_dirs: Vec<String> = p.lib_dirs.clone();
+    // A `LOFT_CGEN` run builds the loft-written generator's unit: a binary the source key
+    // names was built from the Rust one, so it is not served (@PLN91 strand 12 U-0).
     let native_fast_path_wanted = native_mode
+        && std::env::var_os("LOFT_CGEN").is_none()
         && native_emit.is_none()
         && html_out.is_none()
         && native_wasm.is_none()
@@ -10759,6 +10765,60 @@ fn main() {
             );
             std::process::exit(1);
         }
+        // Through the C and the NDK's clang when the C backend drives native builds
+        // (doc/claude/plans/106-android-build-target/c-backend.md): the unit the host build
+        // compiles, linked with the Android entry and the NDK's app glue, then packaged as the
+        // rustc path packages its library.  `.loft/android/` beside the program keeps the
+        // debug keystore, so every later build of the app signs with the same key.
+        if native_c {
+            let ann =
+                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
+            let expected = |name: &str| ann.expected_failure(name);
+            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+                Ok(c) => c,
+                Err(r) => {
+                    eprintln!("loft: {}", r.message());
+                    std::process::exit(2);
+                }
+            };
+            let work = std::path::Path::new(&abs_file)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(".loft")
+                .join("android");
+            if let Err(e) = fa::create_dir_all(&work) {
+                eprintln!("loft: cannot create {}: {e}", work.display());
+                std::process::exit(1);
+            }
+            // The library and the APK's staging are this build's alone (two programs beside
+            // each other build at once); only the keystore is shared, in `.loft/android/`.
+            let staging = platform::build_scratch_dir("android");
+            let built = staging.join("libloft_android_app.so");
+            let assets = android::app_assets(&abs_file, &c, &esp_assets, &work, &android_out)
+                .unwrap_or_else(|e| {
+                    eprintln!("loft: {e}");
+                    std::process::exit(1);
+                });
+            let package = android::Package {
+                staging: &staging,
+                keystore_dir: &work,
+                debuggable: !ship_build,
+                assets: &assets,
+            };
+            let result = c_driver::build_android(
+                &c,
+                &built,
+                &target.c_compiler(),
+                &target.glue_dir(),
+                ship_build,
+            )
+            .and_then(|()| target.finish(&built, &package, std::path::Path::new(&android_out)));
+            if let Err(e) = result {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
         // Per-process scratch so parallel --native-android runs never share the
         // generated source (one rustc reading another's program).
         let build_dir = platform::build_scratch_dir("android");
@@ -11175,28 +11235,21 @@ fn main() {
                     std::process::exit(2);
                 }
             };
-            // A page that declares no `[[embed]]` carries the files its program names, found
-            // as `--native-esp` finds an app's (app_files.rs), or the ones `--assets` names: the
-            // page and the device then carry the same files.
+            // A page that declares no `[[embed]]` carries the files an app carries (@C164,
+            // `app_files::carried_files`): the device, the page and the phone then hold the same.
             if !embeds_declared {
                 let program_dir = std::path::Path::new(&abs_file).parent().map_or_else(
                     || std::path::PathBuf::from("."),
                     std::path::Path::to_path_buf,
                 );
-                let named: Vec<(String, std::path::PathBuf)> = if esp_assets.is_empty() {
-                    app_files::named_assets(&program_dir, &c)
-                        .into_iter()
-                        .map(|(r, p, _)| (r, p))
-                        .collect()
-                } else {
-                    app_files::asset_files(&program_dir, &esp_assets).unwrap_or_else(|e| {
+                let named =
+                    app_files::carried_files(&program_dir, &c, &esp_assets).unwrap_or_else(|e| {
                         eprintln!("loft: {e}");
                         std::process::exit(1);
-                    })
-                };
+                    });
                 let files: Vec<loft::html_embed::PageFile> = named
                     .into_iter()
-                    .map(|(rel, source)| loft::html_embed::PageFile {
+                    .map(|(rel, source, _)| loft::html_embed::PageFile {
                         page_path: format!("/{rel}"),
                         source,
                     })
@@ -12307,7 +12360,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             let expected = |name: &str| ann.expected_failure(name);
             // The debug tier marks every statement with its loft line, so the binary's debug
             // information names the loft source (`#line`).
-            let emitted = if tier == c_driver::Tier::Debug {
+            let emitted = if let Some(unit) = c_driver::loft_written_unit(&p.data, &state.database)
+            {
+                // @PLN91 strand 12 U-0: the loft-written generator's unit, refused by name.
+                unit.map_err(|why| loft::c::Refusal {
+                    function: "main".to_string(),
+                    why,
+                })
+            } else if tier == c_driver::Tier::Debug {
                 loft::c::emit_program_with_source_lines(&p.data, &state.database, &expected)
             } else {
                 loft::c::emit_program(&p.data, &state.database, &expected)
@@ -12387,7 +12447,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 .is_some_and(|d| d == cache_dir.as_path());
             // The next run of this program under the same inputs execs the binary without
             // parsing, as a rustc build's does (@PLN166 B3).
-            if durable && program_cache_on && !has_auto_native && !any_dev_interpret {
+            if durable
+                && program_cache_on
+                && !has_auto_native
+                && !any_dev_interpret
+                && std::env::var_os("LOFT_CGEN").is_none()
+            {
                 loft::startup_cache::save_native_sidecar(
                     &abs_file,
                     &cache_key_dirs,

@@ -56,7 +56,9 @@ reachable as `--native-rust`, for one purpose: it is the reference the self-host
 compared with byte for byte ([@PLN91 § The port method](plans/91-self-host/README.md#the-port-method--the-diff-is-the-work-the-reference-is-the-truth)),
 so a defect it shares with the language is still fixed in it under that method.  `--native` flips to
 the C backend at [@PLN203](https://github.com/loft-lang/plans/issues/203)'s last phase, and the
-writer leaves the tree at @PLN91's stage 6, with Cargo.  The reasons are measured in
+writer leaves the tree at @PLN91's stage 6, with Cargo — a stage its
+[double-implementation ledger](plans/91-self-host/README.md#the-double-implementation--why-the-rust-side-stays-live)
+decides, not a date.  The reasons are measured in
 [plans/203-c99-default-backend.md](plans/203-c99-default-backend.md) § The position and
 [ROADMAP-history.md § The rustc backend](ROADMAP-history.md#the-rustc-backend--the-order-as-it-read-until-2026-11-12).
 
@@ -135,7 +137,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN76](https://github.com/loft-lang/plans/issues/76) | future | Particle system |
 | [@PLN56](https://github.com/loft-lang/plans/issues/56) | future | Rigged characters |
 | [@PLN49](https://github.com/loft-lang/plans/issues/49) | future | dryopea — sci-fi free-build / tower-defence game |
-| [@PLN209](https://github.com/loft-lang/plans/issues/209) | next | Platform-agnostic game libraries — one game source on the Tanmatsu, the web and the desktop; every game with a small-format version ([plan](plans/209-platform-agnostic-games/README.md)) |
+| [@PLN209](https://github.com/loft-lang/plans/issues/209) | next | Platform-agnostic game libraries — one game source on the Tanmatsu, the web and the desktop; every game with a small-format version; a GPU layer that names no stack, with GL, Metal, Vulkan and console backends beneath it ([plan](plans/209-platform-agnostic-games/README.md), [GPU steps](plans/209-platform-agnostic-games/GPU_LAYER.md)) |
 | [@PLN218](https://github.com/loft-lang/plans/issues/218) | next | A Tanmatsu engine for `stage` — the landscape drawn when it changes, the actors every frame, one scene model for 2D and 3D; the engine in C, the game in loft; 60 fps |
 | [@PLN213](https://github.com/loft-lang/plans/issues/213) | future | The whole Tanmatsu from loft — the board, the radios, add-ons, and multiplayer games over Wi-Fi through an outside server |
 | [@PLN214](https://github.com/loft-lang/plans/issues/214) | future | A 2.5D arcade dogfighter with PvP over the network — Tanmatsu, desktop and browser; @PLN213's practice game, cheap fixed drawing so it measures the network and the game |

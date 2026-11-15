@@ -157,6 +157,103 @@ Each step ends with a number: how many programs of the corpus agree in the form 
 
 The order inside G-2 follows the survey's ranking, not this list, once the ranking exists.
 
+### Running units first, then the rules (owner, 2026-11-15)
+
+The order from here: small programs RUN through the loft generator's C with correct results,
+under the plain switches (the rules not carried yet, off on both sides — a correct program,
+with fewer optimisations); then the same programs take the rules back one by one until their
+units are the Rust generator's byte for byte under the default switches.  A body that equals
+the Rust one proves nothing about a unit that is never compiled: assembly, the tables and the
+names numbered by first use are only checked by building and running the program.
+
+- **U-0 — the harness.**  `LOFT_CGEN=<generator>` makes `loft --native-c p.loft` compile the
+  unit the loft generator writes from the program's image (`<generator> <image> <out.c>
+  <src/c>`) instead of the Rust generator's — the same driver, flags, link and run.  A
+  generator that refuses the program is a refusal there, never a fallback to the Rust unit.
+  `cgen_survey.py --run` counts per program: `pass` (the program's own asserts pass and its
+  output and exit are the interpreter's), `fail` (the first differing line), `refused`,
+  `nobuild` (the C compiler's first error); beside it, whether the unit equals the Rust plain
+  unit.  The target set is the programs with a `main` whose every body the writer already
+  writes equal under the plain switches (517 of 1 077 on 2026-11-15), smallest first.
+- **U-1 — the unit's assembly** (`emit_unit_for`) for the target set: the defines
+  (`unit_defines`), the type tables, the typedefs, the prototypes and bodies in the Rust order,
+  the framed wrappers, the names a unit numbers by first use (`loft_call<n>`, `loft_tup<n>`),
+  the twins, the tables' binding and `main`; each piece ported as the next program needs it.
+  Done when every program of the target set passes.
+  Measured (2026-11-15, the skeleton — wrappers, prototypes in the Rust order, the
+  hot-helper markers resolved, the common defines, the `__wr` twins; every table refused by
+  name): **39 of the 517 programs pass, all 39 units byte-identical to the Rust ones**, 0 fail,
+  0 do not build.  What the rest refuse, by programs: the copy table and the defaults
+  (`loft_types` 148, `loft_dflt` 120, a record's copy table 52 — the 60 `copy_type` /
+  `describe_type` registrations), the function values' dispatchers (59), the file library's
+  define with its case table (48), the show code (25), the tuple structs (13).  `--run`
+  compares a unit with the Rust one from the same site (`--native-c`), which can differ from
+  `--emit-c`'s.
+  With the type tables (`cgen_tables.loft`: the copy table, the key tables, the enum names, the
+  default images, each registered where the Rust writer registers it, and compared as the
+  `tables` layer, `LOFT_TRACE_TABLES`): **347 of the 517 pass, all 347 byte-identical**; the
+  `tables` layer agrees on 346 of the 347 units written (the one left registers a value
+  record's copy types, a rule under the plain switches).  Next, by programs: the function
+  values' dispatchers (59), the file library's define and case table (48), the show code
+  (41), the tuple structs (13).
+  With the function values (`cgen_fnval.loft`: `dispatch_code`, `dispatch_arm`, `drop_code`;
+  `Cx::fn_values` registered where the Rust writer's `fn_value` is): **395 of the 517 pass, all
+  byte-identical**.  Next: the show code (50), the file library's define (48), the tuple
+  structs (15).
+  With the show code (`cgen_show.loft`: `show_type`, `show_code`, `fields_fn`, `show_body`,
+  `enum_body`; the rendered types join the `tables` layer as `shows=`): **445 of the 517
+  pass, all byte-identical**; the `tables` layer agrees on all 445.  Next: the file library's
+  define and its case table (48), the tuple structs (15).
+  With the Unicode case tables (`cgen_unicode.loft`: `unicode_case`, `case_code`; the file
+  library's `LOFT_PATH_FOLD` and the `to_lowercase` / `to_uppercase` calls register them; the
+  tables layer gains `unicode=`): **475 of the 517 pass, all byte-identical**; the `tables`
+  layer agrees on all 476 units written.  Next: the constants (`loft_const`, 16), the tuple
+  structs (15), the frames' define (4).
+  With the constants (`const_code`: each constant's store built as the runner builds it,
+  `consts::build_store`, read back through `crt::store_bytes`; the unit's defines decided after
+  the bodies, a constant ruling out `LOFT_NO_LOCKS`): **491 of the 517 pass**, 475 of them
+  byte-identical.  The 16 others differ in the constant's words alone: the C runtime's
+  allocator lays the same store out otherwise than Rust's (`Stores::database`), so the words
+  hold the same values at other places.  Open for phase O, a choice: the image carries each
+  constant's store words, or the generator builds them with a port of the Rust allocator.
+  With the tuple structs (`typedef struct { … } loft_tup<n>`, numbered by first use, a tuple's
+  members before it as `tuple_id` numbers them): **506 of the 517 pass**, 490 byte-identical
+  (the 16 constants' words aside).  Left: the frames' define (4), "a tuple expected, a Void
+  found" (4), a locked store (2), reflection (1).
+  With a call's tuple result carrying its shape (`E.tup`, met where the `--native-c` site keeps
+  a call the `--emit-c` site inlined), the frames' define (`LOFT_FRAMES`, the `StackFrame`
+  offsets) and the locked stores' (`LOFT_FOREIGN`; no `LOFT_NO_LOCKS` for `#lock` or a mapped
+  file): **516 of the 517 pass**, 500 byte-identical.  Left: reflection (1, `reflect.rs`).
+  `LOFT_CGEN_IMAGE=<path>` keeps the image the `--native-c` site hands the generator.
+  Over the whole corpus: an over-budget body (`(R-CSplit)`) is written whole — what gcc and
+  clang compile from the Rust unit too — its MSVC parts not carried, and the bodies layer still
+  counts it refused; five more rules the writer does not carry join the plain switches
+  (`LOFT_NO_CHAR_WALK`, `LOFT_NO_LAZY_SPLIT`, `LOFT_NO_SPLIT_TABLE`, `LOFT_NO_TESTED_BORROW`,
+  `LOFT_NO_TEXT_WINDOW`), honoured on the loft side where the Rust writer reads them (the
+  range analysis takes no walk under `LOFT_NO_CHAR_WALK`, as `FnWriter::char_walks` is empty
+  there).  **800 of the 1 078 corpus programs pass, 613 byte-identical**; the plain bodies
+  layer 12 381 equal, 0 different.  The one `fail` is the harness's: `19-files.loft` reads
+  paths from the repository root, and the run starts it in its own directory.
+  With `OpPlaceRecord` (`@FR-H-RootExtent`'s foreign flag from the host's root type) and
+  `LOFT_NO_DESTINATION` among the plain switches (`@FR-R-Destination`'s `__d` twins are not
+  carried; the bodies it shaped were hidden behind `OpPlaceRecord` until now): **835 of the
+  1 078 corpus programs pass**, 636 byte-identical; plain bodies 12 465 equal, 0 different.
+  The benches (`bench/*/bench.loft` and the portal libraries' `bench/bench.loft`, compared by
+  each routine row's hash, `cgen_survey.py --run --bench`): **45 of 61 pass**.
+  With `OpAbsInt` / `OpPowInt`, the out-of-line child records (`OpChildRecInPlace`,
+  `OpMoveChildRec`, `OpDemoteRec`, `OpReleaseRecIfDistinct`, `OpStoreBufOnly`), the typed hash
+  removal (`@FR-R-TypedKeyed`'s removal clause, `loft_hash_remove_i64`), a `main` that takes
+  the program's arguments, and the null-sentinel detach of a deferred first bind (binds.loft,
+  shared with the bytecode writer: `22_expr` freed a store twice without it): **846 of the
+  1 078 corpus programs pass** (644 byte-identical), **47 of the 61 benches**.  A
+  `tests/scripts` program now runs from the repository root, as the suite runs it.
+- **U-2 — the tests' unit** (`emit_tests_of`), so the language suite's cells (`test_*`
+  functions, no `main`) run through it too.
+- **O — the rules back.**  Over the programs that pass, one `PLAIN_SWITCHES` entry at a time:
+  its port, then the count of units equal to the Rust ones with that switch on, until the list
+  is empty and the units are equal under the default switches.  A rule's port never lowers the
+  `pass` count.
+
 ### The order of the next ports
 
 Each is a layer first (rule 6), then text.  What `opt/range.rs` asks of its port, read off the
@@ -195,11 +292,12 @@ character walk (95), `OpPlaceRecord` (86), a lazy split or a split table (65).  
 assembly (the first-use numbering of `loft_call<n>` and `loft_tup<n>`, the framed wrapper,
 the twins) follows the bodies.
 
-The helpers of a port, in the session's scratch directory and rebuilt from this description
-when it is gone: `cycle.sh` builds the generator with `--ship` and runs the plain and the
-default `bodies` layer (it prints `N of 1076 units agree`, so a generator that dies on some
-units cannot pass as "0 different"); `one.sh FILE FUNCTION` prints the unified diff of one
-body, the Rust writer's against the loft writer's, under the plain switches.
+The helpers of a port, beside the survey: `selfhost/bench/cgen_cycle.sh` compile-checks the
+generator, builds it with `--ship` and runs the plain and the default `bodies` layer (it prints
+`N of 1077 units agree`, so a generator that dies on some units cannot pass as "0 different");
+`selfhost/bench/cgen_one.sh FILE FUNCTION` prints the unified diff of one body, the Rust
+writer's against the loft writer's, under the plain switches.  Both keep their output in
+`$LOFT_CGEN_OUT` (default `$TMPDIR/loft-cgen`).
 
 ### An open design question: a rule keyed on node identity
 

@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-// @PLN91 strand 12 — what the function writer's files share: the unit's context (`Cx`), one
-// function's writer (`FnWriter`, here `W`) with the records its rules keep, a C expression and
-// its kind (`E`, `K`), and the leaf routines over them — a shape's C type and null, a line, a
-// temporary, the conversions (`as_int` …), the range proof's questions.  Declared apart from
-// the walk (`cgen_fn.loft`) and the loops (`cgen_loop.loft`), which use each other: a record
-// both name is declared before either is read.
+// @PLN91 strand 12 — `src/c/body.rs`'s writer state: one function's writer (`FnWriter`, here
+// `W`) with the records its rules keep, a C expression and its kind (`E`, `K`), and the leaf
+// routines over them — a shape's C type and null, a line, a temporary, the conversions
+// (`as_int` …), the range proof's questions.  The unit's context (`Cx`) is `src/c/mod.rs`'s,
+// in `cgen.loft`.
 
 use ir;
+use cgen::(Cx);
 use cgen_names;
 use loop_shape;
 use opt_frame_calls;
@@ -178,65 +178,6 @@ struct Seed {
   value: integer,
 }
 
-// What every function of a unit is written under (`Cx`): the program, the program-wide
-// parameter proof and the call memo of the range analysis.
-pub struct Cx {
-  pub b: ir::Bundle,
-  pub p: opt_non_sentinel::Proof,
-  pub c: opt_range::Calls,
-  // Per definition: is its name one two functions share (`duplicate_fn_names`)?
-  pub dups: vector<boolean>,
-  // `@FR-R-RangedCall`'s gain verdicts and `@FR-R-GuardFree`'s.
-  pub gains: opt_ranged_call::Gains,
-  pub guard: opt_frame_calls::GuardFree,
-  // The twins a call site asked for, in the order they were first asked (`Cx::twins`).
-  pub twins: vector<cgen_names::Twin>,
-  // `@FR-R-BufferReturn`'s `__wr` twins per definition: 0 not asked, 1 declined, 2 written, 3
-  // not carried by this writer (`why_work` says why).
-  pub work_twins: vector<integer>,
-  pub why_work: text,
-  // The memo of the store-write question (`Cx::hoist_memo.stores_written`).
-  pub writes: opt_writes::Writes,
-  // The operators the ownership oracle reads by number (`own::Ops`).
-  pub ops: own::Ops,
-  // The signatures the unit calls function values through, in the order they were first
-  // used (`Cx::fn_sigs`): `loft_call{n}`.
-  pub sigs: vector<text>,
-  // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
-  pub tuples: vector<text>,
-  // Does the unit bind a lazy store (`Cx::lazy`)?  -1 not asked yet, else 0 or 1.
-  pub lazy: integer,
-}
-
-pub fn new_cx(b: ir::Bundle) -> Cx {
-  Cx {
-    b: b,
-    p: opt_non_sentinel::new_proof(b),
-    c: opt_range::new_calls(),
-    dups: cgen_names::duplicate_fn_names(b),
-    gains: opt_ranged_call::new_gains(b),
-    guard: opt_frame_calls::new_guard_free(b),
-    twins: [],
-    work_twins: [for _ in 0..len(b.data.definitions) { 0 }],
-    why_work: "",
-    writes: opt_writes::new_writes(b),
-    ops: own::ops_of(b),
-    sigs: [],
-    tuples: [],
-    lazy: -1,
-  }
-}
-
-// The place twin `t` is called: it is written with the unit (`request_twin`).
-fn request_twin(x: Cx, t: cgen_names::Twin) {
-  for known in x.twins {
-    if cgen_names::same_twin(known, t) {
-      return;
-    }
-  }
-  x.twins += [t];
-}
-
 // One function's writer (`FnWriter`): what it has written and where a fault reports.
 struct W {
   // The function's definition number and name.
@@ -319,6 +260,10 @@ struct W {
   // into (-1 for none), and the one a lookup's binding may read it from.
   filed: integer,
   filed_next: integer,
+  // The place (`opt_push::vector_path`'s key) the previous statement filed into, and the one
+  // this statement may read (`filed_next`'s path).
+  filed_path: text,
+  filed_next_path: text,
   // `@FR-R-Cold`: the outlined arms, and per variable whether the body leaves it to one of
   // them (or, in a helper, to the function) — it is then neither declared nor bound here.
   cold: vector<ColdArm>,
@@ -460,6 +405,15 @@ fn text_dest(w: W, v: ir::Node) -> text {
 pub struct Written {
   pub text: text,
   pub refused: text,
+  // What the unit's assembly writes around a written body (`function`): the C name, the
+  // C result type, the parameter list and the storage of the frame wrapper (`static`,
+  // `static inline`, or the hot-helper marker `static /*loft_hot:<d>*/`).
+  pub name: text,
+  pub ret: text,
+  pub list: text,
+  pub storage: text,
+  // `(R-CSplit)`: the body is over its budget — written whole, its MSVC parts not carried.
+  pub split: boolean,
 }
 
 fn refuse(w: W, why: text) {
@@ -566,6 +520,23 @@ fn tuple_placeholder(shape: text) -> text {
 }
 
 // Every tuple placeholder of `code` as its numbered name (`Cx::tuple_id`).
+// `Cx::tuple_id`: the number of tuple struct `shape`, made on first use — after the tuples it
+// holds, so each struct's typedef follows the ones it names.
+fn tuple_id(x: Cx, shape: text) -> integer {
+  for t in x.tuples {
+    if t == shape {
+      return t#index;
+    }
+  }
+  for m in tuple_members(shape) {
+    if is_tuple(m) {
+      tuple_id(x, m);
+    }
+  }
+  x.tuples += [shape];
+  len(x.tuples) - 1
+}
+
 pub fn resolve_tuples(x: Cx, code: text) -> text {
   out = "";
   rest = code;
@@ -573,16 +544,7 @@ pub fn resolve_tuples(x: Cx, code: text) -> text {
     at = rest.find("loft_tup@") ?? break;
     close = rest[at + 9..rest.size()].find("@") ?? break;
     shape = rest[at + 9..at + 9 + close];
-    id = -1;
-    for t in x.tuples {
-      if t == shape {
-        id = t#index;
-      }
-    }
-    if id < 0 {
-      x.tuples += [shape];
-      id = len(x.tuples) - 1;
-    }
+    id = tuple_id(x, shape);
     out += "{rest[0..at]}loft_tup{id}";
     rest = rest[at + 10 + close..rest.size()];
   }
@@ -628,7 +590,7 @@ fn held(shape: text) -> text {
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
 // what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_DISTINCT_VERSION", "LOFT_NO_REBOUND_MOVER", "LOFT_NO_APART_MINT", "LOFT_NO_CALLEE_INPUTS", "LOFT_NO_GROWN_HEADER", "LOFT_NO_GUARD_BOUND", "LOFT_NO_VERSION", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_APPEND_TWIN", "LOFT_NO_HAND_OVER", "LOFT_NO_VR_PTR", "LOFT_NO_FNREF_PARK", "LOFT_NO_FNREF_BUFFER"];
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_DISTINCT_VERSION", "LOFT_NO_REBOUND_MOVER", "LOFT_NO_APART_MINT", "LOFT_NO_CALLEE_INPUTS", "LOFT_NO_GROWN_HEADER", "LOFT_NO_GUARD_BOUND", "LOFT_NO_VERSION", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_APPEND_TWIN", "LOFT_NO_HAND_OVER", "LOFT_NO_VR_PTR", "LOFT_NO_FNREF_PARK", "LOFT_NO_FNREF_BUFFER", "LOFT_NO_CHAR_WALK", "LOFT_NO_LAZY_SPLIT", "LOFT_NO_SPLIT_TABLE", "LOFT_NO_TESTED_BORROW", "LOFT_NO_TEXT_WINDOW", "LOFT_NO_DESTINATION", "LOFT_NO_KEYED_IN_PLACE"];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {

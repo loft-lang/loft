@@ -11,6 +11,7 @@
 // remainder that grows a store proved apart (`LOFT_NO_DISTINCT_GROWTH`).
 
 use ir;
+use cgen::(Cx);
 use loop_shape;
 use opt_view;
 use cgen_fn;

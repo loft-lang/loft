@@ -330,7 +330,7 @@ fn named(b: ir::Bundle, source: integer, key: text) -> integer {
 
 // `Data::drop_cascade_nr`: the cascade that releases what a record of type `type_def` owns
 // (`t_<LEN><Type>_OpDropAll`), else the type's own drop hook (`…_OpDrop`); `NONE` for none.
-fn drop_cascade_nr(b: ir::Bundle, type_def: integer) -> integer {
+pub fn drop_cascade_nr(b: ir::Bundle, type_def: integer) -> integer {
   if type_def == NONE || type_def < 0 || type_def >= len(b.data.definitions) {
     return NONE;
   }

@@ -610,33 +610,36 @@ fn apart_hoist(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd
 }
 
 // Is every rebind of `v` in the body a navigation — a field or an element of something?
-// Two flat walks: a lambda nested in one that captures a vector is loft#2487.
+// Two flat walks, not a walk nested in the first one's lambda: a lambda that writes a
+// captured vector and builds an inner lambda over it frees the vector (loft#2504).
 fn navigates(b: ir::Bundle, lp: ir::Block, v: integer) -> boolean {
   ok = [true];
   values: vector<ir::Node> = [];
-  whole = ir::NdInsert { items: lp.operators };
-  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
-    match n {
-      NdSet { var, inner } => { if var == v { values += [inner]; } },
-      NdTuplePut { var, idx: _, inner: _ } => { if var == v { ok[0] = false; } },
-      _ => {},
-    }
-  });
-  bound = ir::NdInsert { items: values };
-  opt_non_sentinel::walk(bound, fn(m: ir::Node) {
-    match m {
-      NdCall { def_nr, args: _ } => {
-        name = def_name(b, def_nr);
-        if !(name == "OpGetField" || name == "OpGetVector" || name == "OpGetVectorNullable") {
-          ok[0] = false;
-        }
-      },
-      NdBlock { block: _ } => { ok[0] = false; },
-      NdIf { cond: _, t: _, f: _ } => { ok[0] = false; },
-      NdLoop { block: _ } => { ok[0] = false; },
-      _ => {},
-    }
-  });
+  for st in lp.operators {
+    opt_non_sentinel::walk(st, fn(n: ir::Node) {
+      match n {
+        NdSet { var, inner } => { if var == v { values += [inner]; } },
+        NdTuplePut { var, idx: _, inner: _ } => { if var == v { ok[0] = false; } },
+        _ => {},
+      }
+    });
+  }
+  for value in values {
+    opt_non_sentinel::walk(value, fn(m: ir::Node) {
+      match m {
+        NdCall { def_nr, args: _ } => {
+          name = def_name(b, def_nr);
+          if !(name == "OpGetField" || name == "OpGetVector" || name == "OpGetVectorNullable") {
+            ok[0] = false;
+          }
+        },
+        NdBlock { block: _ } => { ok[0] = false; },
+        NdIf { cond: _, t: _, f: _ } => { ok[0] = false; },
+        NdLoop { block: _ } => { ok[0] = false; },
+        _ => {},
+      }
+    });
+  }
   ok[0]!
 }
 

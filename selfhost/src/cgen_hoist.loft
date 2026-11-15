@@ -8,6 +8,8 @@
 // element reads, the length and the scalar element writes go through it.
 
 use ir;
+use cgen_tables;
+use cgen::(Cx);
 use loop_shape;
 use opt_hoist;
 use opt_length;
@@ -360,7 +362,7 @@ pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
     made = temp(w, "ref");
     line(w, ind, "{made} = (LOFT_PROVED(loft_ph_same({mh}, {w.push_heads[minting].size}), {c_string(msite)}), loft_ph_new(&{mh}, {w.push_heads[minting].size}));");
     if !(name == "OpNewRecordNP" || cgen_ref::mint_complete(x.b, w, ptp)) && elem >= 0 {
-      line(w, ind, "loft_fill({made}, loft_dflt{elem}, {x.b.types[elem].size});");
+      line(w, ind, "loft_fill({made}, {cgen_tables::default_name(x, elem)}, {x.b.types[elem].size});");
     }
     return E { code: made, kind: K_REF };
   }

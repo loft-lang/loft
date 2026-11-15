@@ -1,0 +1,239 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — `src/c/fnval.rs`: function values in C.  A call through a value goes
+// to the dispatcher of its signature, `loft_call{n}`, which switches on the definition number;
+// its arms are every function the unit uses as a value whose visible parameters and result have
+// the signature's shapes.  `loft_drop_closure` releases a value's closure record through its
+// drop cascade.
+
+use ir;
+use binds;
+use lower;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_names;
+use cgen_types;
+use opt_names;
+
+// What the dispatchers wrote, or why not.
+pub struct Dispatch {
+  pub code: text,
+  pub refused: text,
+}
+
+// One parameter of a signature key (`fn_sig`'s `shape:mode`).
+struct SigParam {
+  shape: text,
+  mode: integer,
+}
+
+// A signature key `s:m,s:m->ret` taken apart.
+fn sig_params(key: text) -> vector<SigParam> {
+  out: vector<SigParam> = [];
+  arrow = key.find("->") ?? key.size();
+  head = key[0..arrow];
+  if head == "" {
+    return out;
+  }
+  for p in head.split(',') {
+    colon = p.find(":") ?? p.size();
+    out += [SigParam { shape: p[0..colon], mode: if p[colon + 1..p.size()] == "1" { 1 } else if p[colon + 1..p.size()] == "2" { 2 } else { 0 } }];
+  }
+  out
+}
+
+fn sig_ret(key: text) -> text {
+  arrow = key.find("->") ?? return "void";
+  key[arrow + 2..key.size()]
+}
+
+// `value_signature`: `d`'s visible parameters as `shape:link` and its result, as a key the
+// dispatcher's signature is compared with ("" where a parameter or the result has no shape).
+fn value_signature(b: ir::Bundle, d: integer) -> text {
+  def = b.data.definitions[d]!;
+  parts: vector<text> = [];
+  for a in def.attributes {
+    if a.hidden || a.name == "__closure" {
+      continue;
+    }
+    t = binds::base(a.typedef[0] ?? ir::TyVoid);
+    link = 0;
+    inner = t;
+    match t {
+      TyRefVar { inner: i } => {
+        link = 1;
+        inner = binds::base(i);
+      },
+      _ => {},
+    }
+    shape = cgen_types::ctype(inner) ?? return "";
+    if shape == "void" {
+      return "";
+    }
+    parts += ["{shape}:{link}"];
+  }
+  ret = if len(def.returned) == 0 { "void" } else { cgen_types::ctype(def.returned[0]!) ?? return "" };
+  "{parts.join(",")}->{ret}"
+}
+
+// A signature key with every place mode (2) read as a link (1): what `value_signature` answers.
+fn linked_key(key: text) -> text {
+  ps = sig_params(key);
+  "{[for p in ps { "{p.shape}:{if p.mode > 0 { 1 } else { 0 }}" }].join(",")}->{sig_ret(key)}"
+}
+
+fn writes(fns: vector<integer>, d: integer) -> boolean {
+  for f in fns {
+    if f == d {
+      return true;
+    }
+  }
+  false
+}
+
+// Is `t` a heap answer (`Reference`, `Vector`, a struct enum)?
+fn heap_type(t: ir::TypeT) -> boolean {
+  match binds::base(t) {
+    TyReference { n: _, dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+// `ret_promo_base`: a `τ?` return that takes the buffer looks through its `?`.
+fn promo_base(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => if binds::ret_promo_peels(t) { inner } else { t },
+    _ => t,
+  }
+}
+
+// `dispatch_arm`: the arm calling `d`, or why not.
+fn dispatch_arm(x: Cx, d: integer, ret: text, out: &text) -> text {
+  def = x.b.data.definitions[d]!;
+  args: vector<text> = [];
+  buffers: vector<text> = [];
+  visible = 0;
+  promo = if len(def.returned) == 0 { ir::TyVoid } else { promo_base(def.returned[0]!) };
+  vec_buf = match promo {
+    TyVector { inner: _, dep: _ } => lower::main_vector_of(x.b, [promo]) ?? -1,
+    _ => -1,
+  };
+  uses_vec_buf = false;
+  for a in def.attributes {
+    t = a.typedef[0] ?? ir::TyVoid;
+    if a.name == "__closure" {
+      args += ["f.clos"];
+    } else if !a.hidden {
+      args += ["a{visible}"];
+      visible += 1;
+    } else if (match binds::base(t) { TyRefVar { inner } => binds::base(inner) is TyText, _ => false }) {
+      w = "w{len(buffers)}";
+      args += ["&{w}"];
+      buffers += [w];
+    } else if a.work_buffer {
+      args += ["loft_ref_null()"];
+    } else if !(t is TyOptional) && heap_type(t) {
+      if vec_buf >= 0 && ret == "ref" {
+        uses_vec_buf = true;
+        args += ["hb"];
+      } else {
+        args += ["loft_ref_null()"];
+      }
+    } else {
+      return "a function value {def.name} with a hidden {a.name} buffer";
+    }
+  }
+  call = "{cgen_names::c_name(x.b, x.dups, d)}({args.join(", ")})";
+  out += "    case INT64_C({d}): {{";
+  for w in buffers {
+    out += " loft_text {w} = {{ 0, 0, 0 }};";
+  }
+  hold = ret == "ref" && len(def.returned) > 0 && heap_type(def.returned[0]!);
+  if hold {
+    out += " uint64_t sn = loft_stores_allocated;";
+  }
+  vec_tp = if uses_vec_buf && ret == "ref" { vec_buf } else { -1 };
+  if vec_tp >= 0 {
+    out += " loft_ref hb = loft_ref_null(); loft_database_wrapper(loft_types, &hb, {x.b.types[vec_tp]!.size}, {vec_tp});";
+  }
+  if ret == "void" {
+    out += " {call};";
+  } else {
+    out += " {held(ret)} r = {call};";
+  }
+  if vec_tp >= 0 {
+    out += " loft_fnref_buf(r, hb);";
+  }
+  if hold {
+    out += " loft_fnref_mint(r, sn, f.clos);";
+  }
+  for w in buffers {
+    out += " loft_text_free(&{w});";
+  }
+  out += if ret == "void" { " return; }}\n" } else { " return r; }}\n" };
+  ""
+}
+
+// `dispatch_code`: every dispatcher, after the prototypes of `fns`, the functions the unit
+// writes.  The `@FR-R-FnRefBuffer` variants (`loft_call{n}b`) are not carried: that rule is
+// among the plain switches.
+pub fn dispatch_code(x: Cx, fns: vector<integer>) -> Dispatch {
+  out = "";
+  for key in x.sigs {
+    id = key#index;
+    ps = sig_params(key);
+    ret = sig_ret(key);
+    list: vector<text> = ["loft_fn f"];
+    for p in ps {
+      i = p#index;
+      list += [if p.mode == 2 { "loft_ref a{i}" } else if p.mode == 1 { "{held(p.shape)} *a{i}" } else { "{passed(p.shape)} a{i}" }];
+    }
+    out += "\nstatic {held(ret)} loft_call{id}({list.join(", ")}) {{\n    switch (f.d) {{\n";
+    want = linked_key(key);
+    for v in x.fn_values {
+      if !v {
+        continue;
+      }
+      d = v#index;
+      if value_signature(x.b, d) != want {
+        continue;
+      }
+      if !writes(fns, d) {
+        return Dispatch { code: "", refused: "a function value {x.b.data.definitions[d]!.name} the unit does not write (a native as a value)" };
+      }
+      why = dispatch_arm(x, d, ret, out);
+      if why != "" {
+        return Dispatch { code: "", refused: why };
+      }
+    }
+    out += "    default:\n        break;\n    }}\n";
+    if ret == "void" {
+      out += "}}\n";
+    } else if ret == "text" {
+      out += "    return loft_text_own(loft_null_text());\n}}\n";
+    } else {
+      out += "    {{ {held(ret)} r = {initial(ret)}; return r; }}\n}}\n";
+    }
+  }
+  Dispatch { code: out, refused: "" }
+}
+
+// `drop_code`: `loft_drop_closure`, a value's closure record released through its cascade.
+pub fn drop_code(x: Cx, fns: vector<integer>) -> text {
+  out = "\nstatic void loft_drop_closure(loft_fn f) {{\n    if (!loft_store_live(f.clos)) return;\n    switch (f.d) {{\n";
+  for v in x.fn_values {
+    if !v {
+      continue;
+    }
+    d = v#index;
+    cascade = opt_names::drop_cascade_nr(x.b, x.b.data.definitions[d]!.closure_record);
+    if cascade >= 0 && cascade < len(x.b.data.definitions) && writes(fns, cascade) {
+      out += "    case INT64_C({d}): {cgen_names::c_name(x.b, x.dups, cascade)}(f.clos); return;\n";
+    }
+  }
+  out + "    default:\n        return;\n    }}\n}}\n"
+}

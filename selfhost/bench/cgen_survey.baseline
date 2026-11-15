@@ -1,0 +1,164 @@
+{
+ "bodies|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "equal": 2633,
+  "functions": 13560,
+  "refused": 0,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "bodies|plain|program|corpus": {
+  "agree": 1076,
+  "differ": 3,
+  "equal": 12615,
+  "functions": 13359,
+  "refused": 0,
+  "switches": [
+   "LOFT_NO_APART",
+   "LOFT_NO_APART_MINT",
+   "LOFT_NO_APPEND_LOOP_WINDOW",
+   "LOFT_NO_APPEND_TWIN",
+   "LOFT_NO_CALLEE_INPUTS",
+   "LOFT_NO_CHAR_WALK",
+   "LOFT_NO_DEFERRED_COPY",
+   "LOFT_NO_DESTINATION",
+   "LOFT_NO_DISTINCT_VERSION",
+   "LOFT_NO_FNREF_BUFFER",
+   "LOFT_NO_FNREF_PARK",
+   "LOFT_NO_GROWN_HEADER",
+   "LOFT_NO_GUARD_BOUND",
+   "LOFT_NO_HAND_OVER",
+   "LOFT_NO_KEYED_IN_PLACE",
+   "LOFT_NO_LAZY_SPLIT",
+   "LOFT_NO_LOOP_RECORD",
+   "LOFT_NO_REBOUND_MOVER",
+   "LOFT_NO_SPLIT_TABLE",
+   "LOFT_NO_TESTED_BORROW",
+   "LOFT_NO_TEXT_WINDOW",
+   "LOFT_NO_TRANSIENT",
+   "LOFT_NO_VALUE_RECORD",
+   "LOFT_NO_VERSION",
+   "LOFT_NO_VR_PTR",
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "counters|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "refused": 0,
+  "rows": 13312,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "functions|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "refused": 0,
+  "rows": 1077,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "iterations|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "refused": 0,
+  "rows": 13312,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "nn|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "refused": 0,
+  "rows": 6071,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "reach|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "refused": 0,
+  "rows": 1077,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "shapes|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "refused": 0,
+  "rows": 13312,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "tables|plain|program|corpus": {
+  "agree": 901,
+  "differ": 0,
+  "refused": 176,
+  "rows": 901,
+  "switches": [
+   "LOFT_NO_APART",
+   "LOFT_NO_APART_MINT",
+   "LOFT_NO_APPEND_LOOP_WINDOW",
+   "LOFT_NO_APPEND_TWIN",
+   "LOFT_NO_CALLEE_INPUTS",
+   "LOFT_NO_CHAR_WALK",
+   "LOFT_NO_DEFERRED_COPY",
+   "LOFT_NO_DESTINATION",
+   "LOFT_NO_DISTINCT_VERSION",
+   "LOFT_NO_FNREF_BUFFER",
+   "LOFT_NO_FNREF_PARK",
+   "LOFT_NO_GROWN_HEADER",
+   "LOFT_NO_GUARD_BOUND",
+   "LOFT_NO_HAND_OVER",
+   "LOFT_NO_KEYED_IN_PLACE",
+   "LOFT_NO_LAZY_SPLIT",
+   "LOFT_NO_LOOP_RECORD",
+   "LOFT_NO_REBOUND_MOVER",
+   "LOFT_NO_SPLIT_TABLE",
+   "LOFT_NO_TESTED_BORROW",
+   "LOFT_NO_TEXT_WINDOW",
+   "LOFT_NO_TRANSIENT",
+   "LOFT_NO_VALUE_RECORD",
+   "LOFT_NO_VERSION",
+   "LOFT_NO_VR_PTR",
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "texts|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "refused": 0,
+  "rows": 13312,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ },
+ "writes|default|program|corpus": {
+  "agree": 1077,
+  "differ": 0,
+  "refused": 0,
+  "rows": 13312,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1077
+ }
+}

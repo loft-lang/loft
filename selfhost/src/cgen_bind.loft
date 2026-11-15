@@ -9,6 +9,7 @@
 // An arm not written yet refuses the function under its name.
 
 use ir;
+use cgen::(Cx);
 use own;
 use binds;
 use bgen_set;
@@ -157,6 +158,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       if keyed == null {
         line(w, ind, "loft_database(&{name}, 8);");
       } else {
+        cgen_tables::describe_type(x, keyed!);
         line(w, ind, "loft_database_typed(&{name}, {cgen_ref::enum_parent_size(b, keyed!)}, {keyed!});");
       }
     }
@@ -182,6 +184,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       known = lower::main_vector_of(b, [base]) ?? 65535;
       size = cgen_ref::enum_parent_size(b, known);
       line(w, ind, "{name} = loft_ref_null();");
+      cgen_tables::describe_type(x, known);
       line(w, ind, "loft_database_typed(&{name}, {size}, {known});");
       return;
     }
@@ -228,6 +231,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     line(w, ind, "{r} = {as_ref(w, e)};");
     line(w, ind, "if ({r}.store_nr != 0xFFFF && ({r}.store_nr == {witness}.store_nr)) {{");
     line(w, ind + 1, "{name} = loft_ref_null();");
+    cgen_tables::copy_type(x, bytes);
     line(w, ind + 1, "loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
     line(w, ind, "}} else {{ {name} = {r}; }}");
     if rebind_owned {
@@ -272,7 +276,9 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     if witnessed && !first {
       line(w, ind + 1, "{name} = loft_ref_null();");
     }
+    cgen_tables::describe_type(x, known);
     line(w, ind + 1, "loft_database_typed(&{name}, {size}, {known});");
+    cgen_tables::copy_type(x, known);
     line(w, ind + 1, "loft_copy_record(loft_types, {known}, {src_held}, {name}, 4);");
     line(w, ind, "}}");
     flush(w, ind);
@@ -294,6 +300,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     entry = binds::entry_witness(f, var);
     null_keeps_entry = if entry == null { "" } else { "if ({r}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {w.names[entry!]!}.store_nr) {name} = loft_ref_null(); else " };
     if !frees {
+      cgen_tables::copy_type(x, bytes);
       line(w, ind, "{null_keeps_entry}loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
       flush(w, ind);
       return;
@@ -315,8 +322,10 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       _ => false,
     };
     if is_call && swap_safe(b, bytes, []) {
+      cgen_tables::copy_type(x, bytes);
       line(w, ind, "{null_keeps_entry}if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ loft_bind_copy(loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref({r}); }}");
     } else {
+      cgen_tables::copy_type(x, bytes);
       line(w, ind, "{null_keeps_entry}{{ loft_bind_copy(loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref({r}); }}");
     }
     flush(w, ind);
@@ -330,6 +339,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     r = temp(w, "ref");
     line(w, ind, "{r} = {as_ref(w, e)};");
     fresh_unless_owned(x, w, f, var, value, first, name, ind);
+    cgen_tables::copy_type(x, bytes);
     line(w, ind, "loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
     flush(w, ind);
     return;
@@ -343,6 +353,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     line(w, ind, "{r} = {as_ref(w, e)};");
     line(w, ind, "{old} = {name};");
     line(w, ind, "{name} = loft_ref_null();");
+    cgen_tables::copy_type(x, bytes);
     line(w, ind, "loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
     line(w, ind, "if ({old}.store_nr != 0xFFFF) loft_free_ref({old});");
     flush(w, ind);
@@ -355,6 +366,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     if sd != null && own::copies_as(b, hd!, sd!) {
       bytes = b.data.definitions[hd!]!.known_type;
       fresh_unless_owned(x, w, f, var, value, first, name, ind);
+      cgen_tables::copy_type(x, bytes);
       line(w, ind, "loft_bind_copy(loft_types, {bytes}, &{name}, {w.names[src]!});");
       return;
     }

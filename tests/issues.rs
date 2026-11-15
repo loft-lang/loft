@@ -19376,3 +19376,63 @@ fn run() -> integer { v = mk(); w = v; w[0] = 9; w += [5]; v[0] * 1000 + w[0] * 
     .expr("run()")
     .result(Value::Long(1932));
 }
+
+/// A body local two loops bind at types that differ only in absence is two bindings
+/// (`@FR-B-Scope`, `@FR-N-Join`), and the second is defined where it is bound.  Pass 1 cannot
+/// see the difference — a field's value is `float?` only once the struct is laid out — so the
+/// split is first met on pass 2, and the `=` there defined the ENDED binding: every read of
+/// the new one was "Unknown variable 'l#b1'".  By hand: the first loop adds 1 and 3; the
+/// second, the root of (2 - 0)², a hundredfold: 4 + 200.
+///
+/// @falsified-at ef39df483 + this change: without the `defined` at the split, the test's
+/// program does not compile.
+#[test]
+fn a_loop_local_split_on_absence_alone_is_defined_where_it_is_bound() {
+    code!(
+        "struct SlW { p: float, q: float }
+fn sl_faces(xs: const vector<float>, inner: const vector<SlW>) -> float {
+    t = 0.0;
+    for i in 0..len(xs) {
+        bx = xs[i] ?? 0.0;
+        l = sqrt(bx * bx);
+        t += l;
+    }
+    for iw in inner {
+        l = sqrt((iw.q - iw.p) * (iw.q - iw.p));
+        t += (l ?? 0.0) * 100.0;
+    }
+    t
+}
+fn test() {
+    assert(sl_faces([1.0, 3.0], [SlW { p: 0.0, q: 2.0 }]) == 204.0, \"4 + 200\");
+}"
+    )
+    .result(Value::Null);
+}
+
+/// loft#2509 — the same split from the other side: a local bound in an inner loop, and bound
+/// again after it from a value pass 1 types differently (`sqrt` of a local the inner loop
+/// fed).  The bind after the inner block is a binding of its own (`@FR-B-Scope`), first split
+/// on pass 2, and it is defined there.  By hand: `near` is 1.0 after the inner loop, twice.
+///
+/// @falsified-at 6ae07aa59: without the `defined` at the split the program is refused with
+/// "Unknown variable 'd#b0'" (measured on main @ 39701d652).
+#[test]
+fn a_local_rebound_after_its_inner_loop_is_defined_where_it_is_bound() {
+    code!(
+        "fn rb_sum() -> float {
+    t = 0.0;
+    for r in 0..2 {
+        near = 9.0;
+        for f in [1.0] { d = f; near = d; }
+        d = sqrt(near);
+        t += (d ?? 0.0) + (r as float) * 10.0;
+    }
+    t
+}
+fn test() {
+    assert(rb_sum() == 12.0, \"1 + 0, then 1 + 10\");
+}"
+    )
+    .result(Value::Null);
+}

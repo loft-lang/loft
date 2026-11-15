@@ -34,6 +34,13 @@
                                         # `[copy_check]` warning on one side alone differs
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
+    scripts/c_sweep.py --android        # each program built as an Android app through the C
+                                        # (`loft --native-c --native-android`) and run on the
+                                        # device `adb` reaches — an emulator — one at a time;
+                                        # `--baseline FILE` fails on any change from the listed
+                                        # programs that do not match yet, `--write-baseline FILE`
+                                        # writes that list (doc/claude/plans/106-android-build-
+                                        # target/c-backend.md, A1)
     scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
     scripts/c_sweep.py --riscv32        # the C built for 32-bit RISC-V Linux by zig cc and run
                                         # under qemu-riscv32 (LOFT_RISCV32_CC names another cc)
@@ -70,6 +77,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import shutil
 import zlib
@@ -444,6 +452,108 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False,
     return path, "match", "", None, times
 
 
+# `--android`: the device is one, so its sessions take turns; the builds beside them do not.
+ANDROID_LOCK = threading.Lock()
+ANDROID_PKG = "loftsweep"
+ANDROID_RUN_LIMIT = 120
+
+
+def adb() -> str:
+    home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or ""
+    local = Path(home) / "platform-tools" / "adb"
+    return str(local) if home and local.exists() else "adb"
+
+
+def android_session(apk: str, limit_s: float):
+    """Install `apk`, start its activity and wait for its exit code; (exit, stdout).  The exit
+    is the code the entry wrote (`loft-exit.txt`) when the program returned or stopped the run
+    (`exit`, a failed assertion: `LOFT_EXIT`), "died" when the process ended without one (a
+    crash, a signal), or "timeout"."""
+    pkg = f"com.loft.{ANDROID_PKG}"
+    a = adb()
+    run([a, "uninstall", pkg], 60)
+    code, _, err = run([a, "install", apk], 120)
+    if code != 0:
+        return "install", err
+    run([a, "shell", "am", "start", "-W", "-n", f"{pkg}/android.app.NativeActivity"], 60)
+    t0 = time.monotonic()
+    exit_text = b""
+    # Died means the process was SEEN and is gone: under load an app can take seconds to
+    # appear, and reading its absence before then as a death called 148 clean runs "died".
+    seen = False
+    while time.monotonic() - t0 < limit_s:
+        # `run-as … cat` of a file that is not there yet answers `cat: …` on the same stream.
+        _, said, _ = run([a, "exec-out", "run-as", pkg, "cat", "files/loft-exit.txt"], 30)
+        exit_text = said.strip() if re.fullmatch(rb"-?\d+", said.strip()) else b""
+        if exit_text:
+            break
+        _, pid, _ = run([a, "shell", "pidof", pkg], 30)
+        if pid.strip():
+            seen = True
+        elif seen:
+            # One more read: the exit code may have landed between the two looks.
+            _, said, _ = run([a, "exec-out", "run-as", pkg, "cat", "files/loft-exit.txt"], 30)
+            exit_text = said.strip() if re.fullmatch(rb"-?\d+", said.strip()) else b""
+            break
+        time.sleep(0.3)
+    _, out, _ = run([a, "exec-out", "run-as", pkg, "cat", "files/loft-stdout.txt"], 60)
+    if out.startswith(b"cat: files/loft-stdout.txt"):
+        out = b""
+    run([a, "shell", "am", "force-stop", pkg], 30)
+    if exit_text:
+        return int(exit_text), out
+    return ("timeout" if time.monotonic() - t0 >= limit_s else "died"), out
+
+
+def one_android(path: str):
+    """`path` built as an Android app and run on the device, against `loft --interpret`."""
+    src = ROOT / path
+    text = src.read_text(encoding="utf-8", errors="replace")
+    if not HAS_MAIN.search(text):
+        return path, "refused", "no `fn main`: an Android app runs a program, not its tests", None, {}
+    tmp = os.path.join(SCRATCH or tempfile.gettempdir(),
+                       f"{Path(path).stem[:60]}-{zlib.crc32(path.encode()):08x}")
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    # The C first, as the host modes write it: a refusal and a program loft does not compile
+    # are sorted before the Android build, which then fails only for a reason of its own.
+    code, _, err = run([LOFT, "--emit-c", os.path.join(tmp, "p.c"), str(src)], 60, cwd=src.parent)
+    if code == 2:
+        return path, "refused", reason(err), None, {}
+    if code != 0:
+        return path, "refused", "the program does not compile in loft", None, {}
+    apk = os.path.join(tmp, f"{ANDROID_PKG}.apk")
+    env = {"LOFT_ANDROID_TARGET": os.environ.get("LOFT_ANDROID_TARGET", "x86_64-linux-android")}
+    code, _, err = run([LOFT, "--native-c", "--native-android", apk, str(src)], 300,
+                       cwd=src.parent, env=env)
+    if code != 0:
+        line = err.decode(errors="replace").strip().split("\n")[-1][:200]
+        # A host archive the device cannot link (A0 compiles only a shim's sources) is not
+        # carried yet; anything else is a defect of the Android build.
+        bucket = "refused" if "a library built for this machine" in line else "cc-error"
+        return path, bucket, line, None, {}
+    rundir = ROOT if CWD_DIRECTIVE.search(text) else src.parent
+    times = {}
+    i_out, times["interp"] = timed([LOFT, "--interpret", str(src)], limit(path, "interp"),
+                                   cwd=rundir)
+    why = killed(path, "interp", i_out)
+    if why:
+        return path, "slow", why, None, times
+    t0 = time.monotonic()
+    with ANDROID_LOCK:
+        a_code, a_out = android_session(apk, ANDROID_RUN_LIMIT)
+    times["android"] = time.monotonic() - t0
+    if a_code == "install":
+        return path, "cc-error", f"[android] install: {a_out.decode(errors='replace').strip()[:150]}", None, times
+    if a_code == "timeout":
+        return path, "slow", "[android] no exit code within the time limit", None, times
+    same = (i_out[0] == 0) == (a_code == 0) and unreported(i_out[1]) == unreported(a_out)
+    if not same:
+        return path, "differ", f"[android] exit {i_out[0]} vs {a_code}", \
+            (i_out, (a_code, a_out, b"")), times
+    return path, "match", "", None, times
+
+
 TIMES = ROOT / "bench" / "portal" / "local" / "c_sweep"
 
 
@@ -515,6 +625,18 @@ def main(argv: list[str]) -> int:
         modes = ("m32",)
     if "--riscv32" in argv:
         modes = ("riscv32",)
+    android = "--android" in argv
+    if android:
+        modes = ("android",)
+    baseline_file = write_baseline = None
+    for flag in ("--baseline", "--write-baseline"):
+        if flag in argv:
+            i = argv.index(flag)
+            if flag == "--baseline":
+                baseline_file = argv[i + 1]
+            else:
+                write_baseline = argv[i + 1]
+            del argv[i:i + 2]
     if "--mode" in argv:
         i = argv.index("--mode")
         modes = (argv[i + 1],)
@@ -542,12 +664,15 @@ def main(argv: list[str]) -> int:
     reasons: dict = {}
     bad = []
     timings = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
+    # The emulator needs the cores too: beside it, a few builds keep its one queue fed.
+    workers = min(4, os.cpu_count() or 4) if android else (os.cpu_count() or 4)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         asan = "--asan" in argv
         stderr = "--stderr" in argv
         log = "--log" in argv
-        for path, bucket, why, outs, times in ex.map(lambda f: one(f, asan, modes, stderr, log),
-                                                     files):
+        work = (lambda f: one_android(f)) if android else \
+            (lambda f: one(f, asan, modes, stderr, log))
+        for path, bucket, why, outs, times in ex.map(work, files):
             timings[path] = times
             buckets[bucket] += 1
             if bucket in ("match", "refused"):
@@ -590,7 +715,45 @@ def main(argv: list[str]) -> int:
                 print(f"           {path}")
             if len(paths) > len(shown):
                 print(f"           … and {len(paths) - len(shown)} more")
+    if write_baseline or baseline_file:
+        return baselined(bad, files, write_baseline, baseline_file)
     return 1 if bad else 0
+
+
+def baseline_key(path: str) -> str:
+    """A program's name in a baseline: its path from the root, a suite cell's as
+    `loft-suite/<its path in the suite>`, so a list written beside one suite checkout reads the
+    same beside another (`LOFT_SUITE_DIR`, or CI's)."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from corpus import suite_dir
+    full = Path(path) if os.path.isabs(path) else ROOT / path
+    try:
+        return "loft-suite/" + full.resolve().relative_to(Path(suite_dir()).resolve()).as_posix()
+    except ValueError:
+        return path.replace(os.sep, "/")
+
+
+def baselined(bad, files, write_to, check_against) -> int:
+    """The programs that do not match yet, as a committed list that only shrinks: written by
+    `--write-baseline`, and `--baseline` fails both on a program that newly does not match and
+    on a listed one that matches now (the list is then re-written, as a ratchet re-pins).
+    Programs are named by `baseline_key`."""
+    now = sorted({baseline_key(path) for path, _, _, _ in bad})
+    if write_to:
+        Path(write_to).write_text("".join(f"{p}\n" for p in now), encoding="utf-8")
+        print(f"baseline: {len(now)} program(s) written to {write_to}")
+        return 0
+    listed = {l.strip() for l in Path(check_against).read_text(encoding="utf-8").splitlines()
+              if l.strip() and not l.startswith("#")}
+    swept = {baseline_key(f) for f in files}
+    new = [p for p in now if p not in listed]
+    fixed = sorted(p for p in listed if p in swept and p not in now)
+    for p in new:
+        print(f"  NEW      {p}")
+    for p in fixed:
+        print(f"  FIXED    {p} — drop it from {check_against} (--write-baseline)")
+    print(f"baseline {check_against}: {len(new)} new, {len(fixed)} fixed, {len(listed)} listed")
+    return 1 if new or fixed else 0
 
 
 if __name__ == "__main__":

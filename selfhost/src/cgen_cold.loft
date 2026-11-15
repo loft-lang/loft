@@ -11,6 +11,7 @@
 // when it equals it, and a function holding a second arm equal to an admitted one is refused.
 
 use ir;
+use cgen::(Cx);
 use binds;
 use loop_shape;
 use opt_non_sentinel;

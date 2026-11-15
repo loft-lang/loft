@@ -591,6 +591,206 @@ pub(crate) fn build_wasm(
     ))
 }
 
+/// The Android entry the unit is linked with (`android_main`, stdout into logcat, the glue's
+/// app thread at the desktop's 8 MiB stack): `src/c/android/loft_android_main.c`.
+const ANDROID_MAIN_C: &str = include_str!("c/android/loft_android_main.c");
+
+/// `--native-android` through the C (doc/claude/plans/106-android-build-target/c-backend.md,
+/// A0): the unit built by the NDK's clang into the activity library `out`.  Four objects, one
+/// link:
+/// - the unit, its `main` renamed `loft_program_main`, at the host build's own flags for the
+///   tier, plus `-fPIC -DLOFT_ANDROID`;
+/// - [`ANDROID_MAIN_C`], the entry that calls it;
+/// - the NDK's `android_native_app_glue.c` from `glue_dir`, whose `pthread_create` is the
+///   entry's `loft_android_glue_thread` (`-D`, that one object only), which gives its app
+///   thread the desktop's 8 MiB stack;
+/// - each `[c] shim` the unit links, compiled from its sources for the target, as the wasm
+///   build compiles them.
+///
+/// Linked `-shared` against the platform's `android`, `log`, `m` and `dl`, with
+/// `ANativeActivity_onCreate` (the glue's) kept as the library's entry.
+///
+/// # Errors
+/// A link input that is a host archive and not a shim's sources (A0 builds none for Android),
+/// or a compile or link that fails, with the compiler's output.
+pub(crate) fn build_android(
+    c: &str,
+    out: &std::path::Path,
+    cc: &std::path::Path,
+    glue_dir: &std::path::Path,
+    ship: bool,
+) -> Result<(), String> {
+    let links = link_inputs(c);
+    let (links, sources) = shims_as_sources(c, &links, &marked(c, "shim-archive"));
+    if let Some(host) = links.iter().find(|l| !is_c_source(l)) {
+        return Err(format!(
+            "--native-android: this program links `{host}`, a library built for this machine; \
+             the Android build compiles only a `[c] shim`'s sources for the device so far"
+        ));
+    }
+    let dir = loft::platform::scratch_dir().join(format!("loft_android_c_{}", std::process::id()));
+    fa::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let unit = dir.join("unit.c");
+    let entry = dir.join("loft_android_main.c");
+    fa::write(&unit, c).map_err(|e| format!("cannot write {}: {e}", unit.display()))?;
+    fa::write(&entry, ANDROID_MAIN_C)
+        .map_err(|e| format!("cannot write {}: {e}", entry.display()))?;
+    let glue = glue_dir.join("android_native_app_glue.c");
+    if !fa::exists(&glue) {
+        return Err(format!(
+            "--native-android: the NDK has no `{}`; an NDK {} or later carries it",
+            glue.display(),
+            crate::android::NDK_MIN
+        ));
+    }
+    let tier = if ship { Tier::Release } else { Tier::Check };
+    let mut flags = cc_flags(tier);
+    flags.extend(["-fPIC".to_string(), "-DLOFT_ANDROID".to_string()]);
+    // A shim's sources include the build's width header and the compiled-bodies fragment, as
+    // the host's link-time build of them does (`release_shim_lto`).
+    if !sources.is_empty() {
+        let inc = dir.join("inc");
+        let paths: Vec<std::path::PathBuf> = links.iter().map(std::path::PathBuf::from).collect();
+        fa::create_dir_all(&inc).map_err(|e| format!("cannot create {}: {e}", inc.display()))?;
+        loft::c_shim::put_width_header(&inc)?;
+        loft::c_shim::put_bodies(&inc, &paths)?;
+        flags.push("-I".to_string());
+        flags.push(inc.to_string_lossy().into_owned());
+    }
+    let run = |args: Vec<String>, what: &str| android_cc(cc, &dir, &args, what);
+    let obj = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    android_fixed_objects(
+        &run,
+        &glue,
+        glue_dir,
+        &entry,
+        (&obj("glue.o"), &obj("entry.o")),
+        !ship,
+    )?;
+    let mut unit_args = flags.clone();
+    unit_args.extend([
+        "-Dmain=loft_program_main".to_string(),
+        "-c".to_string(),
+        unit.to_string_lossy().into_owned(),
+        "-o".to_string(),
+        obj("unit.o"),
+    ]);
+    run(unit_args, "compiling the program's C")?;
+    let mut objects = vec![obj("unit.o"), obj("entry.o"), obj("glue.o")];
+    for (k, src) in links.iter().enumerate() {
+        // A shim that draws reaches the activity through the glue's `struct android_app`.
+        let mut args = flags.clone();
+        args.extend(["-I".to_string(), glue_dir.to_string_lossy().into_owned()]);
+        let o = obj(&format!("shim_{k}.o"));
+        args.extend(["-c".to_string(), src.clone(), "-o".to_string(), o.clone()]);
+        run(args, &format!("compiling the shim `{src}`"))?;
+        objects.push(o);
+    }
+    let mut link = vec![
+        "-shared".to_string(),
+        "-o".to_string(),
+        out.to_string_lossy().into_owned(),
+    ];
+    link.extend(objects);
+    link.extend(
+        [
+            "-u",
+            "ANativeActivity_onCreate",
+            "-landroid",
+            "-llog",
+            "-lm",
+            "-ldl",
+        ]
+        .iter()
+        .map(|s| (*s).to_string()),
+    );
+    link.extend(
+        loft::platform::c_thread_link_args()
+            .iter()
+            .map(|a| (*a).to_string()),
+    );
+    run(link, "linking the activity library")?;
+    if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
+        let _ = fa::remove_dir_all(&dir);
+    }
+    Ok(())
+}
+
+/// Run the NDK clang `cc` with `args`; a failure names `what` and keeps nothing hidden: the
+/// compiler's output, and `LOFT_KEEP_NATIVE_C=1` to keep the build directory `dir`.
+fn android_cc(
+    cc: &std::path::Path,
+    dir: &std::path::Path,
+    args: &[String],
+    what: &str,
+) -> Result<(), String> {
+    let mut cmd = Spawn::new(Program::os(cc));
+    cmd.push_args(args.iter().map(String::as_str));
+    let ran = cmd
+        .run(b"")
+        .map_err(|e| format!("--native-android: cannot run `{}`: {e}", cc.display()))?;
+    if ran.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "--native-android: {what} failed (LOFT_KEEP_NATIVE_C=1 keeps {}).\n{}",
+        dir.display(),
+        String::from_utf8_lossy(&ran.stderr).trim_end()
+    ))
+}
+
+/// The two objects every Android build links whatever the program: the NDK's app glue, whose
+/// `pthread_create` is the entry's `loft_android_glue_thread`, and the entry itself.  They are
+/// the NDK's and ours, not the program's, so they take a fixed optimisation with warnings off,
+/// outside the tier's flags.  `copy_stdout` (a build that is not `--ship`) has the entry keep
+/// a copy of the program's stdout and its exit code in the app's files directory, which
+/// `scripts/c_sweep.py --android` reads: logcat drops lines of a fast writer.
+fn android_fixed_objects(
+    run: &dyn Fn(Vec<String>, &str) -> Result<(), String>,
+    glue: &std::path::Path,
+    glue_dir: &std::path::Path,
+    entry: &std::path::Path,
+    (glue_o, entry_o): (&str, &str),
+    copy_stdout: bool,
+) -> Result<(), String> {
+    let glue_inc = glue_dir.to_string_lossy().into_owned();
+    run(
+        vec![
+            "-c".into(),
+            glue.to_string_lossy().into_owned(),
+            "-I".into(),
+            glue_inc.clone(),
+            "-fPIC".into(),
+            "-O2".into(),
+            "-w".into(),
+            "-Dpthread_create=loft_android_glue_thread".into(),
+            "-o".into(),
+            glue_o.into(),
+        ],
+        "compiling the NDK's app glue",
+    )?;
+    run(
+        vec![
+            "-c".into(),
+            entry.to_string_lossy().into_owned(),
+            "-I".into(),
+            glue_inc,
+            "-std=c99".into(),
+            "-fPIC".into(),
+            "-O2".into(),
+            "-w".into(),
+            if copy_stdout {
+                "-DLOFT_ANDROID_STDOUT_COPY".into()
+            } else {
+                "-DLOFT_ANDROID_NO_STDOUT_COPY".into()
+            },
+            "-o".into(),
+            entry_o.into(),
+        ],
+        "compiling the Android entry",
+    )
+}
+
 /// Why [`build`] made no binary: no C compiler to run at all — which a run that did not ask for
 /// native answers by interpreting, as the rustc path does without rustc — or a compiler that
 /// rejected the unit, a defect of the backend.
@@ -835,6 +1035,83 @@ pub(crate) fn build(
             cached: false,
         })
     }
+}
+
+/// @PLN91 strand 12 U-0 — `LOFT_CGEN=<generator>`: the unit the LOFT-written C generator
+/// (`selfhost/front/cgen.loft`, built) writes from this program's image, in place of the Rust
+/// generator's.  `None` when the variable is not set.  A generator that refuses the program,
+/// fails or writes nothing is an `Err` naming why — never a fallback to the Rust unit, which
+/// would let a refusal pass as a run.  The generator reads the runtime headers from
+/// `LOFT_CGEN_RUNTIME`, else the `src/c` of the tree the generator lies in, found from its path
+/// at run time: the binary names no directory of the machine that built it, so a build from a
+/// checkout and one from an export are the same bytes.  `LOFT_CGEN_IMAGE=<path>` keeps the image.
+#[cfg(feature = "mmap")]
+pub(crate) fn loft_written_unit(
+    data: &loft::data::Data,
+    stores: &loft::database::Stores,
+) -> Option<Result<String, String>> {
+    let generator = std::env::var("LOFT_CGEN").ok().filter(|g| !g.is_empty())?;
+    let runtime = match std::env::var("LOFT_CGEN_RUNTIME")
+        .ok()
+        .filter(|r| !r.is_empty())
+        .or_else(|| {
+            std::path::Path::new(&generator)
+                .ancestors()
+                .map(|a| a.join("src").join("c"))
+                .find(|c| fa::exists(c.join("loft_rt.h")))
+                .map(|c| c.to_string_lossy().into_owned())
+        }) {
+        Some(r) => r,
+        None => {
+            return Some(Err(format!(
+                "LOFT_CGEN: no `src/c` above `{generator}`; set LOFT_CGEN_RUNTIME to the runtime headers"
+            )));
+        }
+    };
+    let stem = std::env::temp_dir().join(format!("loft_cgen_{}", std::process::id()));
+    let image = format!("{}.store", stem.display());
+    let unit = format!("{}.c", stem.display());
+    let written = (|| {
+        loft::ir_store::save_bundle_with(data, stores, &image, &loft::c::c_library_facts(data))
+            .map_err(|e| format!("the program image could not be written: {e}"))?;
+        let out = Spawn::new(Program::os(&generator))
+            .args([&image, &unit, &runtime])
+            .run(&[])
+            .map_err(|e| format!("the C generator {generator} did not start: {e}"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let last = err
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("no message");
+            return Err(format!("the loft C generator wrote no unit: {last}"));
+        }
+        fa::read_to_string(&unit).map_err(|e| format!("the loft C generator's unit: {e}"))
+    })();
+    // `LOFT_CGEN_IMAGE=<path>`: keep the image the generator read, to run it again by hand
+    // (`<generator> <path> <out> --layer bodies`).
+    if let Some(keep) = std::env::var_os("LOFT_CGEN_IMAGE") {
+        let keep = keep.to_string_lossy().to_string();
+        let _ = fa::copy(&image, &keep);
+        let _ = fa::copy(format!("{image}.dschema"), format!("{keep}.dschema"));
+    }
+    for p in [&image, &format!("{image}.dschema"), &unit] {
+        let _ = fa::remove_file(p);
+    }
+    Some(written)
+}
+
+/// A build without file-backed stores writes no image, so it has no loft generator to run.
+#[cfg(not(feature = "mmap"))]
+pub(crate) fn loft_written_unit(
+    _data: &loft::data::Data,
+    _stores: &loft::database::Stores,
+) -> Option<Result<String, String>> {
+    std::env::var("LOFT_CGEN")
+        .ok()
+        .filter(|g| !g.is_empty())
+        .map(|_| Err("LOFT_CGEN needs file-backed stores, which this build leaves out".to_string()))
 }
 
 #[cfg(test)]

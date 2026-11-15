@@ -62,6 +62,20 @@ kind     = "system"
 names    = ["Security", "ServiceManagement", "CoreFoundation", "bsm", "iconv"]
 provider = "macOS: the keychain trust store (rustls-native-certs), CoreFoundation, the audit library (nix through zip), libiconv (the libc crate links it on Apple targets)"
 
+[thirdparty.android-ndk]
+kind       = "sdk"
+source     = "https://developer.android.com/ndk"
+version    = "r26"
+pinned     = "src/android.rs:NDK_MIN"
+# `--native-c --native-android` compiles the NDK's own sources/android/native_app_glue into the
+# activity library (doc/claude/plans/106-android-build-target/c-backend.md), unchanged.
+advisories = []
+
+[thirdparty.android]
+kind     = "system"
+names    = ["android", "log"]
+provider = "the Android platform: libandroid (the activity, the looper, the window) and liblog (logcat), which an app links and the device ships"
+
 [thirdparty.wasi-libc]
 kind     = "system"
 names    = ["setjmp", "wasi-emulated-signal", "wasi-emulated-process-clocks"]

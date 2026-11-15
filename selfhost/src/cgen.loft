@@ -8,6 +8,10 @@
 // construct this generator does not carry yet, never another unit.
 
 use ir;
+use binds;
+use own;
+use opt_ranged_call;
+use opt_frame_calls;
 use load;
 use cgen_tidy;
 use cgen_types;
@@ -23,6 +27,9 @@ use opt_writes;
 use opt_split_table;
 use cgen_w;
 use cgen_names;
+use cgen_unit;
+use cgen_clibs;
+use cgen_tables;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -97,6 +104,96 @@ fn original_name(d: ir::Definition) -> text {
 }
 
 // Is `code` (a definition's body, a box of one) a block with no statement?
+// What every function of a unit is written under (`Cx`): the program, the program-wide
+// parameter proof and the call memo of the range analysis.
+pub struct Cx {
+  pub b: ir::Bundle,
+  pub p: opt_non_sentinel::Proof,
+  pub c: opt_range::Calls,
+  // Per definition: is its name one two functions share (`duplicate_fn_names`)?
+  pub dups: vector<boolean>,
+  // `@FR-R-RangedCall`'s gain verdicts and `@FR-R-GuardFree`'s.
+  pub gains: opt_ranged_call::Gains,
+  pub guard: opt_frame_calls::GuardFree,
+  // The twins a call site asked for, in the order they were first asked (`Cx::twins`).
+  pub twins: vector<cgen_names::Twin>,
+  // `@FR-R-BufferReturn`'s `__wr` twins per definition: 0 not asked, 1 declined, 2 written, 3
+  // not carried by this writer (`why_work` says why).
+  pub work_twins: vector<integer>,
+  pub why_work: text,
+  // The memo of the store-write question (`Cx::hoist_memo.stores_written`).
+  pub writes: opt_writes::Writes,
+  // The operators the ownership oracle reads by number (`own::Ops`).
+  pub ops: own::Ops,
+  // The signatures the unit calls function values through, in the order they were first
+  // used (`Cx::fn_sigs`): `loft_call{n}`.
+  pub sigs: vector<text>,
+  // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
+  pub tuples: vector<text>,
+  // Does the unit bind a lazy store (`Cx::lazy`)?  -1 not asked yet, else 0 or 1.
+  pub lazy: integer,
+  // The bodies' declarations and the bodies (`Cx::gen_decls`, `Cx::gen_bodies`), in the order
+  // they were written: a `__wr` twin lands in them while its caller is being written.
+  pub gen_decls: text,
+  pub gen_bodies: text,
+  // The unit's type tables, as the bodies registered them (`Cx::copy_types` …).
+  pub tables: cgen_tables::Tables,
+  // The functions the unit uses as values (`Cx::fn_values`): each an arm of its signature's
+  // dispatcher, per definition number.
+  pub fn_values: vector<boolean>,
+  // The types the unit renders (`Cx::show_types`), per type number: one `loft_show{tp}` each.
+  pub shows: vector<boolean>,
+  // The Unicode tables the unit carries (`Cx::unicode`), in name order: `lower`, `upper`.
+  pub unicode: vector<text>,
+  // The constants the unit's bodies read (`Cx::consts`), per definition number.
+  pub consts: vector<boolean>,
+  // The types the unit compares by content (`Cx::eq_types`), per type number.
+  pub eqs: vector<boolean>,
+  // Does a `par` site run on threads (`Cx::threads`), and how many sites were written
+  // (`Cx::par_sites`, each its context and body)?
+  pub threads: boolean,
+  pub par_sites: integer,
+}
+
+pub fn new_cx(b: ir::Bundle) -> Cx {
+  Cx {
+    b: b,
+    p: opt_non_sentinel::new_proof(b),
+    c: opt_range::new_calls(),
+    dups: cgen_names::duplicate_fn_names(b),
+    gains: opt_ranged_call::new_gains(b),
+    guard: opt_frame_calls::new_guard_free(b),
+    twins: [],
+    work_twins: [for _ in 0..len(b.data.definitions) { 0 }],
+    why_work: "",
+    writes: opt_writes::new_writes(b),
+    ops: own::ops_of(b),
+    sigs: [],
+    tuples: [],
+    lazy: -1,
+    gen_decls: "",
+    gen_bodies: "",
+    tables: cgen_tables::new_tables(b),
+    fn_values: [for _ in 0..len(b.data.definitions) { false }],
+    shows: [for _ in 0..len(b.types) { false }],
+    unicode: [],
+    consts: [for _ in 0..len(b.data.definitions) { false }],
+    eqs: [for _ in 0..len(b.types) { false }],
+    threads: false,
+    par_sites: 0,
+  }
+}
+
+// The place twin `t` is called: it is written with the unit (`request_twin`).
+fn request_twin(x: Cx, t: cgen_names::Twin) {
+  for known in x.twins {
+    if cgen_names::same_twin(known, t) {
+      return;
+    }
+  }
+  x.twins += [t];
+}
+
 fn empty_body(code: vector<ir::Node>) -> boolean {
   if len(code) != 1 {
     return false;
@@ -111,11 +208,6 @@ fn empty_body(code: vector<ir::Node>) -> boolean {
 // locked store, no thread, none of the optional runtimes.
 fn unit_defines() -> text {
   "#define LOFT_NO_LOCKS 1\n#define LOFT_NO_THREADS 1\n#define LOFT_MAX_CALL_DEPTH {MAX_CALL_DEPTH}\n"
-}
-
-// The C libraries' tables (`c_libraries`) of a unit that binds none.
-fn c_libraries() -> text {
-  "static const loft_c_optlib loft_coptlibs[] = {{ {{ 0, 0, 0, 0 }} }};\nstatic const uint32_t loft_ncoptlibs = 0;\nstatic const loft_c_boundlib loft_cboundlibs[] = {{ {{ 0, 0, 0, 0 }} }};\nstatic const uint32_t loft_ncboundlibs = 0;\nstatic const char *const *const loft_clibsyms[] = {{ 0 }};\nstatic const char *const loft_clibs[] = {{ 0 }};\nstatic const uint32_t loft_nclibs = 0;\n"
 }
 
 // Always written (`Cx::type_name_table`): the heap ceiling's report names a type by it too.
@@ -145,6 +237,16 @@ fn empty_function(d: ir::Definition, decls: &text, bodies: &text) {
   bodies += "\nstatic inline void {name}(void) {{\n    loft_frame_push({c_string(original_name(d))}, {c_string(d.position.file)}, {d.position.line});\n    LOFT_HOLD_MARK(hm);\n    {name}__fr();\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n}}\n";
 }
 
+// The number of the definition named `name`, -1 for none.
+fn def_index(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
 // The unit of the program in `b` (`emit_program`): the runtime, the program's functions and a
 // `main` that calls the program's.  `runtime_text` is `runtime`'s answer.  The debug unit
 // (`emit_program_with_source_lines`) marks each statement with a `#line`: a function without a
@@ -155,16 +257,39 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
   if main == null {
     return refuse("no main: the tests' unit");
   }
+  // `program_main`: a `main` that takes nothing, or the program's arguments as a
+  // `vector<text>` (`loft_arguments`, the ones after its name), freed when `main` returns.
+  call = "{main.name}();";
   if len(main.attributes) > 0 {
-    return refuse("main: a main that takes arguments");
+    a = main.attributes[0]!;
+    takes_texts = match binds::base(a.typedef[0] ?? ir::TyVoid) {
+      TyVector { inner, dep: _ } => binds::base(inner) is TyText,
+      _ => false,
+    };
+    if len(main.attributes) != 1 || a.hidden || !takes_texts {
+      return refuse("main: a main that takes arguments other than `vector<text>`");
+    }
+    call = "{{ loft_ref loft_main_args = loft_arguments(); {main.name}(loft_main_args); loft_free_ref(loft_main_args); }}";
   }
   if !empty_body(main.code) {
-    return refuse("main: a function body");
+    // U-1: the unit of every function `main` reaches (`emit_unit_for`).
+    a = cgen_unit::assemble(b, def_index(b, "n_main"), cgen_clibs::tables(b), type_name_table(b.types), MAX_CALL_DEPTH);
+    if a.refused != "" {
+      return refuse(a.refused);
+    }
+    bind = bind_tables();
+    if a.written.find("static const uint32_t loft_ntypes =") != null {
+      bind = bind.replace("    loft_warn_logger = loft_log_warn;\n", "    loft_warn_logger = loft_log_warn;\n    loft_T = loft_types;\n    loft_T_n = loft_ntypes;\n");
+    }
+    unit = "{a.defines}{RUNTIME_START}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit("{a.written}{bind}")}";
+    anchor = if load::program_relative(b) { 1 } else { 0 };
+    unit += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {call}\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
+    return Unit { code: cgen_tidy::drop_unnamed(unit, RUNTIME_END), refused: "" };
   }
   decls = "";
   bodies = "";
   empty_function(main, decls, bodies);
-  written = "{c_libraries()}{type_name_table(b.types)}static void loft_init(void) {{\n}}\n{decls}{bodies}{bind_tables()}";
+  written = "{cgen_clibs::tables(b)}{type_name_table(b.types)}static void loft_init(void) {{\n}}\n{decls}{bodies}{bind_tables()}";
   out = "{unit_defines()}{RUNTIME_START}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit(written)}";
   anchor = if load::program_relative(b) { 1 } else { 0 };
   out += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {main.name}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
@@ -173,11 +298,14 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
 }
 
 // One function body's line of the `bodies` layer.
-fn body_line(cx: cgen_w::Cx, t: cgen_names::Twin) -> text {
+fn body_line(cx: Cx, t: cgen_names::Twin) -> text {
   name = cgen_names::twin_name(cx.b, cx.dups, t);
   wr = cgen_fn::write_function(cx, t);
   if wr.refused != "" {
     return "[refused]\t{name}\t{wr.refused}\n";
+  }
+  if wr.split {
+    return "[refused]\t{name}\ta body the writer splits\n";
   }
   "[bodies]\t{name}\t{wr.text.replace("\\", "\\\\").replace("\n", "\\n")}\n"
 }
@@ -209,7 +337,7 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
     out = "";
     for d in b.data.definitions {
       if d.name == "n_main" {
-        cx = cgen_w::new_cx(b);
+        cx = new_cx(b);
         for f in opt_names::written_functions(b, d#index) {
           out += body_line(cx, cgen_names::plain(f));
         }
@@ -223,6 +351,16 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
       }
     }
     return out;
+  }
+  if name == "tables" {
+    // `LOFT_TRACE_TABLES`: the unit's type tables as its bodies registered them — for a unit
+    // this generator writes whole.
+    root = def_index(b, "n_main");
+    if root < 0 {
+      return "";
+    }
+    a = cgen_unit::assemble(b, root, cgen_clibs::tables(b), type_name_table(b.types), MAX_CALL_DEPTH);
+    return if a.refused == "" { "{a.tables}\n" } else { "[refused]\tunit\t{a.refused}\n" };
   }
   if name == "writes" {
     // `LOFT_TRACE_WRITES`: per function with a body, whether a call of it may write a store

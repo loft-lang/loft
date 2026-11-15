@@ -390,3 +390,27 @@ appended to the final link on lines of their own (not `/* link: */`, whose input
 and `[c.<os>]` sections adding to the base.  Decided 2026-10-29.
 **Holds at:** `@C158` — `src/manifest.rs` (the `[c]` keys), `src/c_shim.rs` (the fixed flags).
 
+
+## C164 — An app carries the files its program names, by one rule on every target
+
+**Decision.** A build that packs a program's files with it — the ESP app (`--native-esp`), the
+C page (`--native-c --html` with no `[[embed]]`) and the Android app (`--native-c
+--native-android`) — packs the ones the program names, or the ones `--assets a,b` lists
+instead.  "Named" is `app_files::named_assets`: a path the program writes as a constant, a path
+written in a file already packed, or a directory and an extension the program writes as
+constants of their own (`"{dir}/levels/{name}.json"`).  Each file keeps its path relative to the
+program, so a relative path finds on the device what it found on the PC.  A path that would
+leave the program's directory is refused.  `app_files::carried_files` is the rule's one home;
+each target only stores what it returns, and writes a report of what went in and why.
+**Why.** A program written once should find the same files on every target it is built for:
+three rules would make a file present on the page and missing on the phone.  A list in
+`loft.toml` was weighed for Android and set aside, because the device and the page already
+needed none, and the report answers what a list would have made explicit.
+**Revisit when.** A program needs a file it names nowhere (a path read from user input, a file
+chosen by a library at run time): `--assets` serves it today, and a shared manifest key for all
+three targets would be the next step, never one per target.  A `#cwd` program resolves its paths
+against the working directory, which an app does not have; its files are not packed.  Decided
+2026-11-15.
+**Holds at:** `@C164` — `src/app_files.rs` (`carried_files`), `src/esp_app.rs`,
+`src/main.rs` (the page), `src/android.rs` (`app_assets`, and its test);
+`tests/android/b3_text/` (an app that lists nothing and opens its font and image).

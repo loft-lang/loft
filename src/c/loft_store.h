@@ -91,9 +91,13 @@
  * clear keeps it, so a store cleared and refilled in a loop allocates nothing. */
 typedef struct { uint64_t *bits; uint32_t nwords; uint32_t live; uint32_t cap; } loft_bits;
 
-/* A replay built from this header alone (tests/c_emit.rs) has no `loft_cc.h`. */
+/* A replay built from this header alone (tests/c_emit.rs) has no `loft_cc.h`: inlining is a
+ * plain `static inline`, and the run ends with `exit` itself. */
 #ifndef LOFT_HOT_INLINE
 #define LOFT_HOT_INLINE static inline
+#endif
+#ifndef LOFT_EXIT
+#define LOFT_EXIT(code) exit(code)
 #endif
 
 LOFT_HOT_INLINE int loft_bits_contains(const loft_bits *b, uint32_t pos) {
@@ -362,7 +366,7 @@ static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t 
         else
             fprintf(stderr, "    a store growing %s → %s\n", from, to);
         fputs("\n  Raise or remove the limit with LOFT_MEMORY_LIMIT=<size|0>, e.g. 8G.\n", stderr);
-        exit(101);
+        LOFT_EXIT(101);
     }
     loft_heap_total += new_b - old_b;
 }

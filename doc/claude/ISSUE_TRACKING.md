@@ -671,7 +671,8 @@ scripts/claim.py check N           # who holds it
   it cannot `release` it; once the agent has finished, that session takes it over
   (`take N --take-over`) and then fixes, watches or releases it as its own.
 - **One stream keeps the list near green.**  Outside the PR gatherings, the stream the owner
-  names for it sweeps the open issues about every two hours: each one without a live claim is
+  names for it sweeps the open issues about every two hours, reading the whole list `make work`
+  prints, never only what was filed since the last sweep: each one without a live claim is
   taken and fixed, or handed to the agent whose branch or area it is, which is better: that
   agent makes a thorough fix on its own branch.  A red on an open PR is different: it is handed
   over only when that agent can cut a clean fix, one commit that applies alone without its
@@ -688,7 +689,11 @@ scripts/claim.py check N           # who holds it
   `Flaky test (passed only on retry)` annotations, on that run and on main's push runs: a pass
   on retry is a finding, and the race is deleted as [GUARDS.md](GUARDS.md) § A fixed delay is
   not synchronisation describes (sequence the steps, never widen the margin), so a green run
-  stays evidence.
+  stays evidence.  And it checks the weekly stability series: when the last row of
+  `index/stability_weekly.tsv` is more than seven days old, it records one
+  (`make stability-read ARGS="--record"`, [STABILITY_METHOD.md](STABILITY_METHOD.md)
+  § The weekly read), and when the read shows the performance portal's row older than a week,
+  it asks the performance stream for `make perf-check ARGS="--record"`.
 
 A claim written in prose ("claimed by the … stream") is invisible to the script, the work queue
 and the hook.  Write it with the script.

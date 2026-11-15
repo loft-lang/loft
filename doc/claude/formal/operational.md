@@ -94,6 +94,16 @@ they reduce the left operand, and evaluate the right operand *only* when the lef
 already decided the result — verified on both backends. Every other binary op (arithmetic,
 comparison, `??`) evaluates both operands under E-Left.
 
+An operand's value is its CONTENTS.  A text or vector variable that a later operand can write
+is taken into a temp of its own first (`scopes::args::copy_written_text_operands`,
+`copy_written_vector_operands`; a vector's temp is a store minted and freed for it), so
+`v[set(v)]` indexes the vector as it was before `set` replaced it or wrote an element.  An
+operand nothing later can write is read in place: `v[len(v) - 1]` copies nothing
+(`scopes::args::writes_vector` reads a callee's body to tell).
+`LOFT_NO_COPY_WRITTEN_TEXT=1` / `LOFT_NO_COPY_WRITTEN_VECTOR=1` leave the operand in place: the
+first bisect step for a wrong answer where one expression both reads and writes a text or a
+vector.  Guards: `loft-suite/rules/operational/E-Left/`.
+
 ### Arithmetic — uncomputable yields null (the spreadsheet model)
 
 ```
@@ -503,19 +513,13 @@ drift apart; verified both backends —
 
 ## Deviations
 
-**OPEN: 3.**
+**OPEN: 2.**
 - **D-op-1** — there is no shared operational semantics — the interpreter is the spec.  Not
   resolvable in a release: two implementations, and nothing links them into one executable
   semantics outside the tests that run both; @PLN89's differential oracle narrows it, and each
   divergence it catches is filed on its own.
 - **D-op-2** — interpreter/native divergences are test-caught, not definition-caught.  Not
   resolvable in a release, for D-op-1's reason.
-- **D-op-3** — `(E-Left)` for a VECTOR operand: `v[set(v)]`, with `set(w: &vector<integer>)`
-  replacing the vector, reads the NEW vector on all three backends (7 for `[1, 2, 3]` replaced
-  by `[7, 8, 9]`) where the rule reads the old one (1).  A text operand takes its value into a
-  temp first (`scopes::args::copy_written_text_operands`); a vector's temp needs a store minted
-  and freed for it, and a vector parameter that is not `const` is written by more calls than a
-  `&` text is, so the write test is wider.  The design is open.
 
 The full register — these entries in full, plus every closed one with its dates and
 issue numbers — is the companion [operational-history.md](operational-history.md).

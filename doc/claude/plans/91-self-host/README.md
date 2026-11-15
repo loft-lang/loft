@@ -14,12 +14,17 @@ runtime is the one part that is not loft.  **Self-hosting is the first objective
 goes first again:** the lexer and the parser in loft, now; 1b's open items wait behind them.
 
 The path, in order, with the gate each stage passes before the next starts, is
-[§ The path](#the-path--stages-and-gates).  **Where it stands:** 1a's lexer and parser pass
+[§ The path](#the-path--stages-and-gates); the plan that takes it to a `loft` built with no
+Rust in its path, phase by phase from where each part stands, is [main-switch.md](main-switch.md).  **Where it stands:** 1a's lexer and parser pass
 gates T and S on nearly every file, and its elaborator is gate E's work: the gate table, by
 program and by formal rule, is [1a-parser.md § Where it stands](1a-parser.md#where-it-stands).
-1b's interpreter runs programs from the RUST front end's image (766 of the 1,078 corpus
-programs at its last census, in an earlier `handoff-*.md`; not re-measured since); the IR
-passes and the bytecode writer are not ported yet.  The bytecode runner built as a port of
+1b's bytecode runner runs the RUST front end's run image and agrees with `loft --interpret` on
+nearly the whole corpus, and the bytecode writer in loft writes all but two of the corpus's
+functions byte for byte; both positions are committed baselines checked by
+`selfhost/bench/run_image_survey.py --check` and `bgen_survey.py --check`, and the latest
+numbers and the next step (the front end) are in
+[handoff-2026-11-15-front-end-start.md](handoff-2026-11-15-front-end-start.md).  The IR passes
+are not ported yet.  The bytecode runner built as a port of
 the Rust interpreter — its generated operator table, what is still to build and where it
 differs from Rust — is [1b-fill-port.md](1b-fill-port.md).  What it still takes from Rust, and
 the order that ends in, is [rust-dependencies.md](rust-dependencies.md); the design of a build
@@ -213,7 +218,8 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
    manager, the debugger, the REPL, the language server, `gendoc` and the exports, then the
    selfhost harness and the comparison as loft programs; each part diffed against the Rust
    tool's output on the same input before the Rust part is removed.
-6. **Rust out of the project.**  The library leftovers (strand 10: `plugin_runtime`'s crates,
+6. **Rust out of the project — when [§ The double implementation](#the-double-implementation--why-the-rust-side-stays-live)
+   says so, not at a date.**  The library leftovers (strand 10: `plugin_runtime`'s crates,
    the library CI's cargo build and rustc leg, the `bench.rs` twins) removed; the Rust
    implementation — every `src/*.rs`, the rustc backend (`src/generation/`), Cargo — moved to
    a repository of its own, kept as the REFERENCE implementation the answers are compared
@@ -279,6 +285,55 @@ What the method leaves behind is a language whose remaining defects are shallow 
 exact sense: each is a disagreement between two independent implementations of a written
 rule, caught by a byte diff, with a cell that pins it — never a decision buried in a writer
 nobody can rebuild.
+
+### The double implementation — why the Rust side stays live
+
+The Rust implementation is not frozen at the flip and not retired at a date (owner,
+2026-11-15): it is kept live, every language change landing on both sides, for as long as the
+ledger below says it earns its keep.  Stage 6 is taken when the ledger says so, never before.
+
+**What two live implementations buy.**  Every change is proved twice: the hand-computed cell
+says what is right, and the byte-equal comparison says both implementations agree with it.  A
+live reference answers a new program as well as an old one, so no golden corpus is needed
+while it lives.  And the second implementation is a reading of loft itself: a change whose
+natural design differs between the loft side and the Rust side is a FINDING — a construct loft
+lacks, a decision to cost, or a place where loft is the better language — and goes on the
+friction register ([1b-interpreter.md § The dogfood rule](1b-interpreter.md#the-dogfood-rule-governs-every-step),
+the design → code notes).  Such a call is not the burden of the mirror; it is its yield.
+
+**Why the mirror is cheap.**  In a stable project the time spent deciding what to change
+outweighs the change by far: a fix here is a median of 10 to 24 hours from filing to close, of
+which the edit is minutes, and the port put 25,000 lines into the tree in two days because
+every decision in them had been taken once already.  Two implementations cost the cheap half
+twice and the expensive half never, as long as they share one decision: one formal rule, one
+cell, one IR.
+
+**The rules of a change while both sides live.**
+
+- **The cell first**, hand-computed against the formal rule; then whichever side is cheaper to
+  change; then the other to match under the byte-equal gate.
+- **A change is done when the survey reads equal again**, not when its own tests pass.  A
+  join that lands with a non-zero differ count is the mirror lagging, and nothing else
+  reports it.
+- **A change to the IR lands on both sides in one commit**, with `ir.loft` and the round-trip
+  test: a half-changed IR breaks the comparison for every program at once.
+- **The last Rust-built release binary is kept at each release** (the reproducible build), so
+  the day the Rust side stops, the last answer it gave to any program is still in hand.
+- **The loft side may be made clean at any time** under the refactor gate: a module redesigned
+  is admitted when its outputs stay byte-identical over the corpus before and after.
+
+**The ledger, read with the weekly series.**  Two columns, both from what the tree already
+records:
+
+| column | what it counts | reads as |
+|---|---|---|
+| yield | friction-register rows and design → code notes the mirror produced that week | the second implementation reading the language |
+| burden | the lag from a change landing on one side to the survey reading equal again, and the commits that only carry the other side with no register row | transcription that taught nothing |
+
+The day to reconsider the Rust side is when the yield column stops growing while the burden
+column still does: the mirror then only repeats what the language already knows.  Until then a
+week with many design calls is the double implementation earning its keep, not a reason to
+stop.
 
 ## Honest floors + costs (do not design these away)
 

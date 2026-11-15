@@ -136,7 +136,11 @@ neither the destination nor a bracket's protected argument names it: a call that
 argument on some path hands the caller's store to that free (`LOFT_RECORDS_NO_PARAM_SOURCE_FREE=1`
 leaves it unreported).  A plain free of a variable that may name the caller's store beside
 stores of the frame's own is one too: nothing at run time tells the paths apart
-(`LOFT_RECORDS_NO_MAYBE_PARAM_END=1`).
+(`LOFT_RECORDS_NO_MAYBE_PARAM_END=1`).  A capture a lambda reads out of its own closure record
+(`OpGetDbRef(__closure, off)`) is the caller's store, and a closure record this frame builds
+that holds one in a slot its cascade frees releases the caller's store: a wrong end, the
+record having adopted a capture it only relays (`@FR-L-CapOwn`;
+`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).
 A finding names the source line it was first seen at, and a re-free or a use after the end names
 the free that ended the store (`(ended at line L by OpFreeRefIfDistinct(x))`).  Which statement
 of a block is its value is one reading shared with the C and rustc writers

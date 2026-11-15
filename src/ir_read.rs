@@ -591,9 +591,31 @@ pub fn open_bundle(path: &str) -> std::io::Result<(Data, Vec<SchemaType>)> {
         pos: root.pos + ds::BUNDLE_DATA,
         ..root
     };
-    let data = read_data(&stores, data_root);
+    let mut data = read_data(&stores, data_root);
+    data.c_libraries = read_c_libraries(&stores, Record::new(root));
     let schema = read_schema(&stores, Record::new(root), ds::BUNDLE_TYPES);
     Ok((data, schema))
+}
+
+/// The program's C libraries a bundle carries (`ImageCLib`, `materialize_bundle`).
+fn read_c_libraries(stores: &Stores, root: Record) -> Vec<crate::c_libs::CLibrary> {
+    let v = root.field_recvec(ds::BUNDLE_C_LIBRARIES, ds::IMAGECLIB_STRIDE);
+    (0..v.len(stores))
+        .map(|i| {
+            let r = v.get(i, stores);
+            let shim = r.field_str(stores, ds::IMAGECLIB_SHIM);
+            crate::c_libs::CLibrary {
+                name: r.field_str(stores, ds::IMAGECLIB_NAME).to_string(),
+                pkg_dir: r.field_str(stores, ds::IMAGECLIB_PKG_DIR).to_string(),
+                optional: r.field_bool(stores, ds::IMAGECLIB_OPTIONAL),
+                shim: if shim.is_empty() {
+                    Vec::new()
+                } else {
+                    shim.split('\n').map(str::to_string).collect()
+                },
+            }
+        })
+        .collect()
 }
 
 /// @PLN11 G2/M6 — warm-cache store-backed load.  Mmap the bundle into a

@@ -939,6 +939,65 @@ jobs:
           set LOFT_CC=cl
           python scripts\c_sweep.py --verbose --mode default --shard ${{ matrix.shard }}/6
 
+  c-sweep-android:
+    # @windows-exempt: an Android emulator run — the device is Linux whatever the host, and the Android build itself is the host-independent C driver the windows-latest CI legs build
+    # @nightly-class: report — the C backend's Android build answering other than the interpreter (a new target, raised to unsound at its flip)
+    # doc/claude/plans/106-android-build-target/c-backend.md A1 — every corpus program built as
+    # an Android app through the C (`loft --native-c --native-android`) and run on an x86_64
+    # emulator, its whole stdout and exit status against `loft --interpret`'s.  Gated by
+    # `scripts/c_sweep_android.baseline`, the programs that do not match yet: a new one, or a
+    # listed one that matches now, fails the shard.  Shard 0 also runs the C path's build test.
+    # Eight shards: an app's install, run and read take a few seconds on a local KVM emulator,
+    # so a shard of ~275 apps keeps inside its hour on a runner two or three times slower.
+    name: C backend sweep, Android (${{ matrix.shard }}/8)
+    if: github.event_name != 'pull_request'
+    needs: pr-ci-started
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build the release loft binary
+        run: cargo build --release --bin loft
+      # The emulator runs on KVM, which a hosted runner has but does not open to the user.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: The C path's Android build test
+        if: matrix.shard == 0
+        env:
+          LOFT_ANDROID_BUILD_TEST: "1"
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          cargo test --release --test android_target
+      - name: Sweep this shard on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          # Shard 0 first runs the guards that draw, take a tap and play sound
+          # (scripts/android_guards.py, tests/android/), against the published libraries.
+          script: >-
+            export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+            LOFT_ANDROID_TARGET=x86_64-linux-android;
+            guards=0;
+            if [ "${{ matrix.shard }}" = 0 ]; then
+            { target/release/loft install graphics && target/release/loft install audio
+            && python3 scripts/android_guards.py; } || guards=1; fi;
+            python3 scripts/c_sweep.py --android --verbose --shard ${{ matrix.shard }}/8
+            --baseline scripts/c_sweep_android.baseline && exit $guards
+
   poison-claim:
     # A pull_request run has this job; a PR-head dispatch leaves it to that run.
     if: ${{ !inputs.pr_head }}
@@ -2027,7 +2086,7 @@ jobs:
     # @windows-exempt: platform-free — writes an issue
     name: → tracked issue (red-steps digest)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, release-gate-sweeps, debug-asserts, audit,
+            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
@@ -2044,7 +2103,7 @@ jobs:
     # @windows-exempt: platform-free — writes the daily status
     name: Daily status (the one place to look)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, release-gate-sweeps, debug-asserts, audit,
+            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.

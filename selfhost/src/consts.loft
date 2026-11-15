@@ -43,7 +43,7 @@ struct Literal {
   elements: vector<Element>,
 }
 
-NULL_STORE = 65535;
+pub NULL_STORE = 65535;
 
 // `fold_text_block`: an all-literal text expression's string — `"x" + "y"` builds its value in
 // a work buffer (`OpClearText(w); OpAppendText(w, "x"); …; w`) — or null.
@@ -295,6 +295,16 @@ fn build_one(b: ir::Bundle, lit: Literal) -> integer {
   }
   crt::lock_constant(store);
   store
+}
+
+// Definition `d`'s constant store built, NULL_STORE where it is no constant or its body is no
+// literal this builder reads — for the C generator's `const_code`, which writes its words.
+pub fn build_store(b: ir::Bundle, d: integer) -> integer {
+  if d < 0 || d >= len(b.data.definitions) || b.data.definitions[d]!.def_type != 8 {
+    return NULL_STORE;
+  }
+  lit = literal(b, d) ?? return NULL_STORE;
+  build_one(b, lit)
 }
 
 // Every vector constant of the image built: the store of each definition, NULL_STORE where

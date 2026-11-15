@@ -16,6 +16,8 @@ use ir;
 use frame;
 use binds;
 use bgen;
+use el_ir;
+use narrow;
 
 // The members of a tuple type; none for any other type.
 fn elems_of(t: ir::TypeT) -> vector<ir::TypeT> {
@@ -51,6 +53,50 @@ fn offset(elems: vector<ir::TypeT>, idx: integer, own: boolean) -> integer {
 }
 
 // `NarrowSlot::of_type`: could this member be held in fewer than eight bytes?
+// `tuple_links::linked_narrow_members`: each top-level narrow member of a tuple local that a
+// `&` names — the body holds `OpCreateStack(TupleGet(t, i))`, the one lowering the `&` bind and
+// the `&` argument share — as `t * 64 + i`.  Such a member holds its field encoding; every
+// other member keeps its 8-byte slot.
+pub fn linked_members(g: bgen::Gen, n: ir::Node, out: vector<integer>) {
+  match bgen::unspan(n) {
+    NdCall { def_nr, args } => {
+      if bgen::def_of(g, def_nr).name == "OpCreateStack" && len(args) > 0 {
+        match bgen::unspan(args[0]!) {
+          NdTupleGet { var, idx } => {
+            elems = elems_of(bgen::var_of(g, var).type_def[0] ?? ir::TyVoid);
+            if idx < 64 && idx < len(elems) && narrow::local_slot(elems[idx]!) != null && !holds(out, var * 64 + idx) {
+              out += [var * 64 + idx];
+            }
+          }
+          _ => {}
+        }
+      }
+    }
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    linked_members(g, c, out);
+  }
+}
+
+fn holds(out: vector<integer>, k: integer) -> boolean {
+  for o in out {
+    if o == k {
+      return true;
+    }
+  }
+  false
+}
+
+// `tuple_links::member_slot`: the field encoding member `idx` of tuple local `var` holds; null
+// for a member kept in its slot (and for `var` -1, a nested tuple's member).
+pub fn member_slot(g: bgen::Gen, var: integer, elems: vector<ir::TypeT>, idx: integer) -> narrow::Slot? {
+  if var < 0 || idx >= 64 || !holds(g.linked, var * 64 + idx) {
+    return null;
+  }
+  narrow::local_slot(elems[idx] ?? ir::TyVoid)
+}
+
 fn narrow(t: ir::TypeT) -> boolean {
   nullable = bgen::optional_shape(t);
   match bgen::base(t) {
@@ -87,9 +133,14 @@ fn is_function(t: ir::TypeT) -> boolean {
 }
 
 // One member read from its frame position `abs`.
-fn push_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean) {
-  if narrow(e) {
-    bgen::stop(g, "not written yet: a tuple with a narrow integer member");
+fn push_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean, sl: narrow::Slot?) {
+  // `@FR-T-Record`: a narrow member a `&` names is read in its field encoding.
+  if sl != null {
+    pos = g.position - abs;
+    bgen::add_op(g, "OpVarNarrow");
+    bgen::put_u16(g.o, pos);
+    bgen::put_i32(g.o, sl!.min);
+    bgen::put_u8(g.o, narrow::kind_code(sl!.kind));
     return;
   }
   op = match bgen::base(e) {
@@ -124,20 +175,25 @@ fn push_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean) {
 }
 
 // `emit_tuple_var_push_recursive`: every member of a tuple at frame position `base` pushed.
-fn push_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean) {
+fn push_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean, var: integer) {
   for e in elems {
     abs = base + offset(elems, e#index, own);
     match e {
-      TyTuple { elems: inner } => push_all(g, inner, abs, own),
-      _ => push_member(g, e, abs, own),
+      TyTuple { elems: inner } => push_all(g, inner, abs, own, -1),
+      _ => push_member(g, e, abs, own, member_slot(g, var, elems, e#index)),
     }
   }
 }
 
 // One member popped into its frame position `abs`; `first` for a slot that holds no text yet.
-fn put_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean, first: boolean) {
-  if narrow(e) {
-    bgen::stop(g, "not written yet: a tuple with a narrow integer member");
+fn put_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean, first: boolean, sl: narrow::Slot?) {
+  // `@FR-T-Record`: a narrow member a `&` names is written in its field encoding.
+  if sl != null {
+    pos = g.position - abs;
+    bgen::add_op(g, "OpPutNarrow");
+    bgen::put_u16(g.o, pos);
+    bgen::put_i32(g.o, sl!.min);
+    bgen::put_u8(g.o, narrow::kind_code(sl!.kind));
     return;
   }
   op = match bgen::base(e) {
@@ -151,7 +207,9 @@ fn put_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean, first: boo
     TyText { dep: _ } => if own { "OpAppendText" } else { "OpPutText" },
     _ => "",
   };
-  if op == "" && dbref_slot(e) {
+  // Asked of the base, as the Rust writer's `match elems[i].base()` asks `is_dbref_slot`: a
+  // `ref(S)?` member is one handle too (`@FR-N-Shape`).
+  if op == "" && dbref_slot(bgen::base(e)) {
     op = "OpPutRef";
   }
   if op == "" || abs > g.position {
@@ -172,14 +230,14 @@ fn put_member(g: bgen::Gen, e: ir::TypeT, abs: integer, own: boolean, first: boo
 
 // `emit_tuple_var_pop_put` and `emit_tuple_put_ops`: the members on the stack stored into
 // the tuple at `base`, last first.
-fn put_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean, first: boolean) {
+fn put_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean, first: boolean, var: integer) {
   i = len(elems) - 1;
   while i >= 0 {
     e = elems[i]!;
     abs = base + offset(elems, i, own);
     match e {
-      TyTuple { elems: inner } => put_all(g, inner, abs, own, first),
-      _ => put_member(g, e, abs, own, first),
+      TyTuple { elems: inner } => put_all(g, inner, abs, own, first, -1),
+      _ => put_member(g, e, abs, own, first, member_slot(g, var, elems, i)),
     }
     i -= 1;
   }
@@ -188,7 +246,7 @@ fn put_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean, 
 // A tuple local read whole (`generate_var`'s tuple arm).
 pub fn read(g: bgen::Gen, v: integer) -> ir::TypeT {
   tp = bgen::var_of(g, v).type_def[0] ?? ir::TyVoid;
-  push_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v));
+  push_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v), v);
   tp
 }
 
@@ -256,8 +314,8 @@ pub fn get(g: bgen::Gen, v: integer, idx: integer) -> ir::TypeT {
   own = owned(g, v);
   abs = (g.slots[v] ?? 0) + offset(elems, idx, own);
   match e {
-    TyTuple { elems: inner } => push_all(g, inner, abs, own),
-    _ => push_member(g, e, abs, own),
+    TyTuple { elems: inner } => push_all(g, inner, abs, own, -1),
+    _ => push_member(g, e, abs, own, member_slot(g, v, elems, idx)),
   }
   e
 }
@@ -288,7 +346,7 @@ pub fn put(g: bgen::Gen, v: integer, idx: integer, value: ir::Node) -> ir::TypeT
   }
   abs = (g.slots[v] ?? 0) + offset(elems, idx, own);
   match e {
-    TyTuple { elems: inner } => put_all(g, inner, abs, own, false),
+    TyTuple { elems: inner } => put_all(g, inner, abs, own, false, -1),
     _ => {
       // A single member's reference kinds are named, not derived (`TuplePut`'s own list).
       store = match bgen::base(e) {
@@ -306,7 +364,7 @@ pub fn put(g: bgen::Gen, v: integer, idx: integer, value: ir::Node) -> ir::TypeT
         bgen::add_op(g, "OpPutRef");
         bgen::put_u16(g.o, pos);
       } else {
-        put_member(g, e, abs, own, false);
+        put_member(g, e, abs, own, false, member_slot(g, v, elems, idx));
       }
     }
   }
@@ -384,7 +442,7 @@ pub fn first_bind(g: bgen::Gen, v: integer, value: ir::Node) {
   if g.position == before {
     return;
   }
-  put_all(g, elems, g.slots[v] ?? 0, owned(g, v), true);
+  put_all(g, elems, g.slots[v] ?? 0, owned(g, v), true, v);
 }
 
 // A tuple local's later value (`set_var`'s tuple arm).
@@ -396,17 +454,17 @@ pub fn set(g: bgen::Gen, v: integer, value: ir::Node) {
     bgen::stop(g, "not written yet: a tuple set to a value that pushes nothing");
     return;
   }
-  put_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v), false);
+  put_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v), false, v);
 }
 
 // `emit_tuple_null_init`: each member's zero stored, a text member's slot made a text.
-fn null_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean) {
+fn null_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean, var: integer) {
   for e in elems {
     abs = base + offset(elems, e#index, own);
     nested = false;
     match e {
       TyTuple { elems: inner } => {
-        null_all(g, inner, abs, own);
+        null_all(g, inner, abs, own, -1);
         nested = true;
       }
       _ => {}
@@ -414,16 +472,14 @@ fn null_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean)
     if nested {
       continue;
     }
-    if narrow(e) {
-      bgen::stop(g, "not written yet: a tuple with a narrow integer member");
-      return;
-    }
+    // `@FR-T-Record`: a narrow member a `&` names is written in its field encoding.
+    sl = member_slot(g, var, elems, e#index);
     put = "";
     match bgen::base(e) {
       TyInteger { spec: _ } => {
         bgen::add_op(g, "OpConstInt");
         bgen::put_i64(g.o, 0);
-        put = "OpPutInt";
+        put = if sl != null { "OpPutNarrow" } else { "OpPutInt" };
       }
       TyFunction { args: _, result: _, dep: _, consts: _ } => {
         bgen::add_op(g, "OpConstInt");
@@ -460,7 +516,7 @@ fn null_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean)
       }
       _ => {}
     }
-    if put == "" && dbref_slot(e) {
+    if put == "" && dbref_slot(bgen::base(e)) {
       bgen::push_sentinel(g);
       put = "OpPutRef";
     }
@@ -475,13 +531,17 @@ fn null_all(g: bgen::Gen, elems: vector<ir::TypeT>, base: integer, own: boolean)
     }
     bgen::add_op(g, put);
     bgen::put_u16(g.o, pos);
+    if sl != null {
+      bgen::put_i32(g.o, sl!.min);
+      bgen::put_u8(g.o, narrow::kind_code(sl!.kind));
+    }
   }
 }
 
 // `gen_set_first_tuple_null`.
 pub fn first_null(g: bgen::Gen, v: integer) {
   tp = bgen::var_of(g, v).type_def[0] ?? ir::TyVoid;
-  null_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v));
+  null_all(g, elems_of(tp), g.slots[v] ?? 0, owned(g, v), v);
 }
 
 // `emit_tuple_text_free`: every text an owned tuple member holds released.
@@ -516,4 +576,53 @@ pub fn free_member(g: bgen::Gen, v: integer, idx: integer) -> boolean {
   own = owned(g, v);
   free_texts(g, elems[idx]!, (g.slots[v] ?? 0) + offset(elems, idx, own), own);
   true
+}
+
+// `OpCreateStack` of a tuple member (`@FR-B-Ref-Lvalue`): a link to a tuple local's member is
+// the tuple's slot at the member's offset; to a member of a tuple reached through a `&(…)` link,
+// the link's reference at the member's field offset — each the address its own read uses.
+// False where `arg` is no member of either.
+pub fn create_stack(g: bgen::Gen, arg: ir::Node) -> boolean {
+  match bgen::unspan(arg) {
+    NdTupleGet { var, idx } => {
+      tp = bgen::var_of(g, var).type_def[0] ?? ir::TyVoid;
+      linked = link_elems(tp);
+      if len(linked) > 0 {
+        bgen::init_slot(g, var, "OpVarRef");
+        bgen::add_op(g, "OpGetField");
+        bgen::put_u16(g.o, offset(linked, idx, false));
+        return true;
+      }
+      elems = elems_of(tp);
+      if idx >= len(elems) {
+        return false;
+      }
+      dep = g.position - ((g.slots[var] ?? 0) + offset(elems, idx, owned(g, var)));
+      bgen::push_create_stack(g, dep);
+      true
+    }
+    _ => false,
+  }
+}
+
+// `def_code`'s entry loop for a by-value tuple argument: each narrow member a `&` names
+// arrives as the caller's 8-byte value and is re-encoded in place, member by member.
+pub fn reencode_argument(g: bgen::Gen, v: integer) {
+  elems = elems_of(bgen::var_of(g, v).type_def[0] ?? ir::TyVoid);
+  for e in elems {
+    sl = member_slot(g, v, elems, e#index);
+    if sl == null {
+      continue;
+    }
+    at = (g.slots[v] ?? 0) + offset(elems, e#index, false);
+    // Each distance taken before its operator moves the position, as `def_code` takes them.
+    read_pos = g.position - at;
+    bgen::add_op(g, "OpVarInt");
+    bgen::put_u16(g.o, read_pos);
+    put_pos = g.position - at;
+    bgen::add_op(g, "OpPutNarrow");
+    bgen::put_u16(g.o, put_pos);
+    bgen::put_i32(g.o, sl!.min);
+    bgen::put_u8(g.o, narrow::kind_code(sl!.kind));
+  }
 }

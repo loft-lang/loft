@@ -362,6 +362,10 @@ pub(crate) fn capture_build_backings(
         HashMap::default()
     };
     let mut out = CaptureBuilds::default();
+    // Only a body that builds a closure record asks which locals it assigns
+    // (`record_adopts_capture`), so only such a body collects them: the set costs every other
+    // function nothing (the front end's allocation pins).
+    let builds_records = (0..function.next_var()).any(|w| is_record_local(function, w));
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
     captures_rebound_in_a_loop(code, set_dbref, &mut out.rebound_in_loop);
     out.pass_confined = pass_confined_records(data, function, code);
@@ -439,6 +443,9 @@ pub(crate) fn capture_build_backings(
             // something the builds before it never held.
             let slot_step = crate::keys::null_slot_generation()
                 && null_slot_sets.contains(&std::ptr::from_ref(node));
+            if builds_records {
+                out.assigned.insert(*v);
+            }
             if !slot_step {
                 *generation.entry(*v).or_default() += 1;
             }

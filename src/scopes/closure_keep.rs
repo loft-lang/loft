@@ -1073,22 +1073,15 @@ impl ConfinementWalk {
     /// it nowhere and hand it to nobody?  A call through it is `CallRef`, which names the
     /// parameter by number; any `Var` of it outside a release is a value read.
     fn only_called(&self, data: &Data, callee: u32, arg: usize) -> bool {
-        let Ok(p) = u16::try_from(arg) else {
-            return false;
-        };
-        fn reads(node: &Value, p: u16, release: &HashSet<u32>) -> bool {
-            match node.unspan() {
-                Value::Var(v) if *v == p => return true,
-                Value::Call(d, _) if release.contains(d) => return false,
-                _ => {}
-            }
-            let mut any = false;
-            node.unspan()
-                .for_each_child(&mut |c| any = any || reads(c, p, release));
-            any
-        }
-        let def = data.def(callee);
-        def.variables.is_argument(p) && !reads(&def.code, p, &self.release_ops)
+        let mut asked = HashSet::default();
+        only_called_in(
+            data,
+            callee,
+            arg,
+            &self.release_ops,
+            &self.loft_fns,
+            &mut asked,
+        )
     }
 
     /// The record types every build of which is confined, given what is read as a value.
@@ -1131,4 +1124,57 @@ impl ConfinementWalk {
         }
         out
     }
+}
+
+/// [`ConfinementWalk::only_called`]: does `callee` only CALL its parameter `arg`?  A call
+/// through it is `CallRef`, which names the parameter by number; any `Var` of it outside a
+/// release is a value read — except as an argument handed on to a loft function that, in turn,
+/// only calls ITS parameter (`walk(n, f)` recursing as `walk(a, f)`, loft#2487's callee one
+/// step further): nothing on that chain can store it either.  A pair already being asked is
+/// answered yes — a cycle that stores the value nowhere stores it nowhere — and every pair the
+/// chain reaches must hold for the outermost one to (`@FR-L-CapOwn`).
+fn only_called_in(
+    data: &Data,
+    callee: u32,
+    arg: usize,
+    release: &HashSet<u32>,
+    loft_fns: &HashSet<u32>,
+    asked: &mut HashSet<(u32, usize)>,
+) -> bool {
+    if !asked.insert((callee, arg)) {
+        return true;
+    }
+    let Ok(p) = u16::try_from(arg) else {
+        return false;
+    };
+    fn escapes(
+        node: &Value,
+        p: u16,
+        data: &Data,
+        release: &HashSet<u32>,
+        loft_fns: &HashSet<u32>,
+        asked: &mut HashSet<(u32, usize)>,
+    ) -> bool {
+        match node.unspan() {
+            Value::Var(v) if *v == p => return true,
+            Value::Call(d, _) if release.contains(d) => return false,
+            Value::Call(d, args) if loft_fns.contains(d) => {
+                return args.iter().enumerate().any(|(j, a)| {
+                    if matches!(a.unspan(), Value::Var(v) if *v == p) {
+                        !only_called_in(data, *d, j, release, loft_fns, asked)
+                    } else {
+                        escapes(a, p, data, release, loft_fns, asked)
+                    }
+                });
+            }
+            _ => {}
+        }
+        let mut any = false;
+        node.unspan().for_each_child(&mut |c| {
+            any = any || escapes(c, p, data, release, loft_fns, asked);
+        });
+        any
+    }
+    let def = data.def(callee);
+    def.variables.is_argument(p) && !escapes(&def.code, p, data, release, loft_fns, asked)
 }

@@ -28,18 +28,29 @@ if [ -z "${LTO+set}" ]; then
   if "$CC" -v 2>&1 | grep -q "gcc version"; then LTO=-flto=auto; else LTO=-flto; fi
 fi
 OUT=${OUT:-run_image_run}
-# The shim's functions are linked in and found by name at start (`LOFT_BIND_LIBS`), so the
-# program exports its symbols; `dlopen` is in libdl on Linux and in libc elsewhere.
+# The program exports its symbols, so a program's own `#c` function is found by name in it;
+# `dlopen` is in libdl on Linux and in libc elsewhere.  On Windows (MinGW gcc under MSYS2 or Git
+# Bash) the threads are the CRT's, sockets Winsock's, and the main thread gets a Linux one's 8 MiB
+# stack, as `loft --native-c` links (`platform::c_system_link_libs`, `c_main_stack_args`); MSVC's
+# `cl` is build.cmd's.
+THREADS=-pthread
+EXPORT=-rdynamic
 case "$(uname -s 2>/dev/null || echo unknown)" in
   Linux*) LIBS="-ldl -lm" ;;
   Darwin* | FreeBSD* | NetBSD* | OpenBSD* | DragonFly*) LIBS="-lm" ;;
+  MINGW* | MSYS* | CYGWIN*)
+    THREADS=
+    EXPORT=-Wl,--export-all-symbols
+    LIBS="-lm -lws2_32 -lcrypt32 -ladvapi32 -Wl,--stack,8388608"
+    case "$OUT" in *.exe) ;; *) OUT="$OUT.exe" ;; esac
+    ;;
   *)
     echo "build.sh: no link flags known for $(uname -s 2>/dev/null || echo this host);" \
-         "set them by hand: \$CC \$CFLAGS \$LTO gen/run_image_run.c and crt.c together, -DLOFT_BIND_LIBS," \
+         "set them by hand (MSVC: build.cmd): \$CC \$CFLAGS \$LTO gen/run_image_run.c and crt.c together, -DLOFT_BIND_LIBS," \
          "symbols exported, the dynamic loader and libm linked" >&2
     exit 2
     ;;
 esac
 # shellcheck disable=SC2086  # the flag variables are word lists
-$CC -std=c99 -w -pthread $CFLAGS $LTO -I gen -DLOFT_BIND_LIBS gen/run_image_run.c selfhost/crt/shim/crt.c \
-  -o "$OUT" -rdynamic $LIBS
+$CC -std=c99 -w $THREADS $CFLAGS $LTO -I gen -DLOFT_BIND_LIBS gen/run_image_run.c selfhost/crt/shim/crt.c \
+  -o "$OUT" $EXPORT $LIBS

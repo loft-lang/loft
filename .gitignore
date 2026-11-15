@@ -102,6 +102,9 @@ dist/
 # the weekly stability read's series (scripts/stability_read.py --record): the committed trend
 # the December read opens — STABILITY_METHOD.md § The weekly read
 !/index/stability_weekly.tsv
+# The hand-kept notes beside it: a change of instrument on its week (STABILITY_METHOD.md
+# § The weekly read), read into the series' `note` column.
+!/index/stability_notes.tsv
 
 # Python __pycache__ from tools/indexer/migrate.py.
 __pycache__/

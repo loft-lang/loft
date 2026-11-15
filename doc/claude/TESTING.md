@@ -653,6 +653,12 @@ per-file rows, `leak.rs`'s parses, a `workspace_root().join("tests/scripts/…")
 a Makefile target, a workflow, a `@ARGS --lib`/`--project` line that needs this tree, or the
 documentation's worked-example registry (`examples-index.tsv`: the `@AAA-###` tags the
 stdlib's `// Example:` lines and the feature catalogue resolve).  Everything else is a cell.
+**The gate:** `scripts/scripts_named.py check`, run by `tests/doc_hygiene.rs`, fails a
+`tests/scripts/` file nothing names unless `tests/scripts_unpinned.baseline` lists it — the
+backlog to move into the suite, a ratchet that only shrinks (`make scripts-named` lists,
+`make scripts-named-bless` re-records after a move).  A receipt, a dump or a plan page does not
+name a script: they are written from it.  The weekly read carries the count beside the suite's
+cells added ([STABILITY_METHOD.md § The weekly read](STABILITY_METHOD.md#the-weekly-read--make-stability-read)).
 It still runs through `tests/wrap.rs` (the `loft_suite_*` chunks) and `tests/native.rs`.
 
 ### Design intent and growth policy
@@ -677,12 +683,11 @@ above pins here, and never add a Rust `.rs` test for what a loft program can exp
 - The test exercises compiler internals that only surface via the Rust test framework
   (`.slots()` layouts, `.sizes`).
 
-**Prefer `tests/scripts/` over `code!()` in `.rs` files.**  If a test can be written as
-plain loft code with `assert()`, put it in the appropriate script file — do not wrap it in
-`code!(r#"..."#)` inside a `.rs` file.  The `code!()` macro exists for cases that need Rust
-assertions on compiler output, not as a convenience wrapper for loft code.  Script tests are
-also validated by the native test runner (`cargo test --test native`), giving automatic
-dual-mode coverage.
+**Prefer a suite cell over `code!()` in `.rs` files.**  If a test can be written as plain
+loft code with `assert()`, it is a cell under its rule in the language suite — never wrapped in
+`code!(r#"..."#)` inside a `.rs` file, and in `tests/scripts/` only when this repository names
+it (above).  The `code!()` macro exists for cases that need Rust assertions on compiler output,
+not as a convenience wrapper for loft code.  A cell runs on both backends by construction.
 
 **When a `.rs` test and a script test cover the same behaviour**, the `.rs` test should be removed
 — the script is the authoritative version.

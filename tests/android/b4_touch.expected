@@ -1,0 +1,6 @@
+ready
+touch begin 0 100 200
+mouse down 1 100 200
+touch end 0 100 200
+mouse up 1 100 200
+seen 4

@@ -1,0 +1,441 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — `src/c/body/par.rs`: `par` as C.  A `for x in v par(r = f(x), n)`
+// loop's queue call runs the worker over the rows into the buffer stack of `loft_keyed.h`,
+// which the loop reads by row and pops — on threads (`loft_par_run`) when the worker's result
+// is a scalar, a text, a record or nothing and its extras are scalars, else one row after
+// another.  A row of tuples is not carried yet.
+
+use ir;
+use binds;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_types;
+use cgen_names;
+use cgen_tables;
+use cgen_ref;
+use cgen_fn;
+use loop_shape;
+
+// The dense row type and its push of a scalar result (`dense_rows`), "" for another shape.
+fn dense_row(shape: text) -> text {
+  if shape == "int" || shape == "bool" || shape == "enum" || shape == "char" {
+    "int64_t"
+  } else if shape == "float" {
+    "double"
+  } else if shape == "single" {
+    "float"
+  } else {
+    ""
+  }
+}
+
+fn dense_push(shape: text) -> text {
+  if shape == "float" {
+    "loft_par_push_f64"
+  } else if shape == "single" {
+    "loft_par_push_f32"
+  } else {
+    "loft_par_push_i64"
+  }
+}
+
+fn is_scalar(shape: text) -> boolean {
+  shape == "int" || shape == "bool" || shape == "enum" || shape == "char" || shape == "float" || shape == "single"
+}
+
+// A worker call's operands, and the buffers made for it per row (`WorkerCall`).
+struct WorkerCall {
+  args: vector<text>,
+  texts: vector<text>,
+  vectors: vector<text>,
+  why: text,
+}
+
+// `worker_call`: the row first, then the extras for the worker's next visible parameters, a
+// work buffer for each hidden text, a buffer for a hidden heap result.
+fn worker_call(x: Cx, d: integer, esz: integer, extra: vector<text>) -> WorkerCall {
+  def = x.b.data.definitions[d]!;
+  out = WorkerCall { args: [], texts: [], vectors: [], why: "" };
+  visible = 0;
+  for a in def.attributes {
+    t = a.typedef[0] ?? ir::TyVoid;
+    if a.hidden {
+      match binds::base(t) {
+        TyRefVar { inner } => {
+          if binds::base(inner) is TyText {
+            w = "loft_w{len(out.texts)}";
+            out.args += ["&{w}"];
+            out.texts += [w];
+          } else {
+            out.why = "a par worker with a hidden parameter of another kind";
+            return out;
+          }
+        },
+        TyVector { inner: _, dep: _ } => {
+          v = "loft_rb{len(out.vectors)}";
+          out.args += [v];
+          out.vectors += [v];
+        },
+        TyReference { n: _, dep: _ } => {
+          out.args += ["loft_ref_null()"];
+        },
+        TyEnum { n: _, is_ref, dep: _ } => {
+          if is_ref {
+            out.args += ["loft_ref_null()"];
+          } else {
+            out.why = "a par worker with a hidden parameter of another kind";
+            return out;
+          }
+        },
+        _ => {
+          out.why = "a par worker with a hidden parameter of another kind";
+          return out;
+        },
+      }
+      continue;
+    }
+    if visible == 0 {
+      c = cgen_types::ctype(t) ?? "";
+      bits = "loft_par_arg(loft_e, {esz})";
+      row = if c == "ref" {
+        "loft_e"
+      } else if c == "text" {
+        "loft_get_text(loft_e, 0)"
+      } else if c == "int" {
+        "loft_i64_bits({bits})"
+      } else if c == "float" {
+        "loft_f64({bits})"
+      } else if c == "single" {
+        "loft_f32((uint32_t) {bits})"
+      } else if c == "char" {
+        "(uint32_t) {bits}"
+      } else if c == "bool" || c == "enum" {
+        "(uint8_t) {bits}"
+      } else if c == "fn" {
+        "loft_fn_of((int64_t) (uint32_t) {bits})"
+      } else {
+        ""
+      };
+      if row == "" {
+        out.why = "a par worker over rows of shape {c}";
+        return out;
+      }
+      out.args += [row];
+    } else {
+      if visible - 1 >= len(extra) {
+        out.why = "a par worker with more parameters than extras";
+        return out;
+      }
+      out.args += [extra[visible - 1]!];
+    }
+    visible += 1;
+  }
+  out
+}
+
+// `par_discard`'s row: the worker's result dropped with what it owns.
+fn discard(call: text, shape: text) -> text {
+  if shape == "text" {
+    "{{ loft_text loft_t = {call}; loft_text_free(&loft_t); }}"
+  } else if shape == "ref" {
+    "{{ uint64_t loft_s = loft_stores_allocated; loft_ref loft_r = {call}; if (loft_fnref_minted(loft_r, loft_s, loft_ref_null())) loft_free_ref(loft_r); }}"
+  } else {
+    "(void) {call};"
+  }
+}
+
+// The statement that files a row's result (`store`), "" with `why` set where it has none.
+fn row_store(name: text, call: text, shape: text, threaded: boolean, why: &text) -> text {
+  if name == "n_parallel_discard" {
+    return discard(call, shape);
+  }
+  dense = dense_row(shape);
+  if dense != "" {
+    return "loft_b[loft_i] = ({dense}) {call};";
+  }
+  if shape == "text" {
+    return "loft_b[loft_i].t = {call};";
+  }
+  if shape == "ref" {
+    return "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(loft_b[loft_i].r, loft_s, loft_ref_null()); }}";
+  }
+  if shape == "fn" && !threaded {
+    return "loft_b[loft_i].fn = {call};";
+  }
+  if shape == "void" || threaded {
+    return "{call};";
+  }
+  why = "a par worker returning {shape}";
+  ""
+}
+
+// `par_native`: a call of one of the `par` natives, or null for another.
+pub fn par_native(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E? {
+  if (name == "n_parallel_queue" || name == "n_parallel_queue_text" || name == "n_parallel_queue_ref" || name == "n_parallel_queue_narrow" || name == "n_parallel_queue_fn" || name == "n_parallel_discard") && len(args) >= 5 {
+    return queue(x, w, name, args, ind);
+  }
+  if name == "n_parallel_fold" && len(args) >= 4 {
+    return fold(x, w, args, ind);
+  }
+  get = if name == "n_parallel_buf_get" { "loft_par_get" } else if name == "n_parallel_buf_get_float" { "loft_par_get_float" } else if name == "n_parallel_buf_get_single" { "loft_par_get_single" } else if name == "n_parallel_buf_get_ref" { "loft_par_get_ref" } else if name == "n_parallel_buf_get_fn" { "loft_par_get_fn" } else { "" };
+  if get != "" && len(args) == 1 {
+    kind = if name == "n_parallel_buf_get_float" { K_FLOAT } else if name == "n_parallel_buf_get_single" { K_SINGLE } else if name == "n_parallel_buf_get_ref" { K_REF } else if name == "n_parallel_buf_get_fn" { K_FN } else { K_INT };
+    i = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "{get}({as_int(w, i)})", kind: kind };
+  }
+  if name == "n_parallel_buf_get_text" && len(args) == 1 {
+    i = cgen_fn::expr(x, w, args[0], ind);
+    t = temp(w, "text");
+    line(w, ind, "loft_text_free(&{t});");
+    line(w, ind, "{t} = loft_par_get_text({as_int(w, i)});");
+    return held_value(w, t, "text");
+  }
+  if name == "n_parallel_buf_get_narrow" && len(args) == 3 {
+    i = cgen_fn::arg(x, w, args, 0, ind);
+    n = cgen_fn::arg(x, w, args, 1, ind);
+    s = cgen_fn::arg(x, w, args, 2, ind);
+    return E { code: "loft_par_get_narrow({as_int(w, i)}, {as_int(w, n)}, {as_int(w, s)})", kind: K_INT };
+  }
+  if (name == "n_parallel_buf_drop" || name == "n_parallel_buf_drop_text" || name == "n_parallel_buf_drop_narrow" || name == "n_parallel_buf_drop_fn") && len(args) == 0 {
+    return E { code: "loft_par_drop(0)", kind: K_VOID };
+  }
+  if name == "n_parallel_buf_drop_ref" && len(args) == 0 {
+    return E { code: "loft_par_drop(1)", kind: K_VOID };
+  }
+  null
+}
+
+// `par_queue(input, esz, _, threads, func, extras…, count)`.
+fn queue(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  esz = cgen_fn::literal(w, args[1], "element size") ?? return none();
+  d = cgen_fn::literal(w, args[4], "worker") ?? return none();
+  if d < 0 || d >= len(x.b.data.definitions) {
+    refuse(w, "a worker out of range");
+    return none();
+  }
+  def = x.b.data.definitions[d]!;
+  input = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+  shapes: vector<text> = [];
+  first = true;
+  for a in def.attributes {
+    if a.hidden {
+      continue;
+    }
+    if first {
+      first = false;
+      continue;
+    }
+    shapes += [cgen_types::ctype(a.typedef[0] ?? ir::TyVoid) ?? "int"];
+  }
+  // The extras come before their count, the last operand.
+  extra: vector<text> = [];
+  for k in 5..len(args) - 1 {
+    i = k - 5;
+    e = cgen_fn::expr(x, w, args[k]!, ind);
+    extra += [as_shape(w, e, if i < len(shapes) { shapes[i]! } else { "int" })];
+  }
+  if w.why != "" {
+    return none();
+  }
+  wc = worker_call(x, d, esz, extra);
+  if wc.why != "" {
+    refuse(w, wc.why);
+    return none();
+  }
+  shape = if len(def.returned) == 0 { "void" } else { cgen_types::ctype(def.returned[0]!) ?? "" };
+  if shape == "" || is_tuple(shape) {
+    refuse(w, "a par worker whose result has no C shape");
+    return none();
+  }
+  call = "{cgen_names::c_name(x.b, x.dups, d)}({wc.args.join(", ")})";
+  why = "";
+  store = row_store(name, call, shape, false, why);
+  if why != "" {
+    refuse(w, why);
+    return none();
+  }
+  // A struct or struct-enum record result: its type and size, for the result store's rows.
+  kt = -1;
+  size = 0;
+  if shape == "ref" && name != "n_parallel_discard" && len(def.returned) > 0 {
+    r = match binds::base(def.returned[0]!) {
+      TyReference { n, dep: _ } => n,
+      TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+      _ => -1,
+    };
+    if r >= 0 {
+      k = x.b.data.definitions[r]!.known_type;
+      if k != 65535 {
+        s = cgen_ref::enum_parent_size(x.b, k);
+        if s > 0 {
+          kt = k;
+          size = s;
+        }
+      }
+    }
+  }
+  extras_scalar = true;
+  for i in 0..len(extra) {
+    c = if i < len(shapes) { shapes[i]! } else { "int" };
+    if !is_scalar(c) && c != "ref" {
+      extras_scalar = false;
+    }
+  }
+  threaded = len(wc.vectors) == 0 && (name == "n_parallel_discard" || kt >= 0 || is_scalar(shape) || shape == "text" || shape == "void") && extras_scalar;
+  if threaded {
+    return threaded_site(x, w, name, input, esz, args[3], d, shapes, extra, wc.texts, shape, kt, size, ind);
+  }
+  n = temp(w, "int");
+  line(w, ind, "{n} = loft_vec_len({input});");
+  line(w, ind, "{{");
+  dense = if name == "n_parallel_discard" { "" } else { dense_row(shape) };
+  row_c = if dense == "" { "loft_par_slot" } else { dense };
+  push = if dense == "" { "loft_par_push" } else { dense_push(shape) };
+  line(w, ind + 1, "{row_c} *loft_b = {if name == "n_parallel_discard" { "0" } else { "{push}({n})" }};");
+  line(w, ind + 1, "(void) loft_b;");
+  line(w, ind + 1, "for (int64_t loft_i = 0; loft_i < {n}; loft_i++) {{");
+  line(w, ind + 2, "loft_ref loft_e = loft_vec_get({input}, {esz}, loft_i);");
+  line(w, ind + 2, "(void) loft_e;");
+  for t in wc.texts {
+    line(w, ind + 2, "loft_text {t} = {{ 0, 0, 0 }};");
+  }
+  for v in wc.vectors {
+    line(w, ind + 2, "loft_ref {v} = loft_ref_null();");
+    line(w, ind + 2, "loft_database(&{v}, 8);");
+  }
+  line(w, ind + 2, store);
+  for t in wc.texts {
+    line(w, ind + 2, "loft_text_free(&{t});");
+  }
+  for v in wc.vectors {
+    if name == "n_parallel_discard" {
+      line(w, ind + 2, "loft_free_ref({v});");
+    } else {
+      line(w, ind + 2, "if (loft_b[loft_i].r.store_nr == {v}.store_nr) loft_b[loft_i].adopted = 1; else loft_free_ref({v});");
+    }
+  }
+  line(w, ind + 1, "}}");
+  line(w, ind, "}}");
+  if name == "n_parallel_discard" {
+    return E { code: "(void) 0", kind: K_VOID };
+  }
+  E { code: n, kind: K_INT }
+}
+
+// `par_threaded`: the site's operands in a context struct, its loop over a row range in a
+// body function (both written before the unit's functions), and the site a `loft_par_run`.
+fn threaded_site(x: Cx, w: W, name: text, input: text, esz: integer, threads: ir::Node, d: integer, shapes: vector<text>, extra: vector<text>, texts: vector<text>, shape: text, kt: integer, size: integer, ind: integer) -> E {
+  x.threads = true;
+  id = x.par_sites;
+  x.par_sites += 1;
+  fields: vector<text> = [for i in 0..len(extra) { "loft_c->x{i}" }];
+  wc = worker_call(x, d, esz, fields);
+  call = "{cgen_names::c_name(x.b, x.dups, d)}({wc.args.join(", ")})";
+  why = "";
+  store = row_store(name, call, shape, true, why);
+  dense = if name == "n_parallel_discard" { "" } else { dense_row(shape) };
+  row_c = if dense == "" { "loft_par_slot" } else { dense };
+  push = if dense == "" { "loft_par_push" } else { dense_push(shape) };
+  decl = "typedef struct {{\n    loft_ref in;\n    {row_c} *b;\n    loft_ref res;\n";
+  for i in 0..len(extra) {
+    decl += "    {held(if i < len(shapes) { shapes[i]! } else { "int" })} x{i};\n";
+  }
+  decl += "}} loft_parctx{id};\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi);\n";
+  if kt >= 0 {
+    decl += "static void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn);\n";
+  }
+  x.gen_decls += decl;
+  body = "\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi) {{\n    loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    {row_c} *loft_b = loft_c->b;\n    (void) loft_b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        loft_ref loft_e = loft_vec_get(loft_c->in, {esz}, loft_i);\n        (void) loft_e;\n";
+  for t in texts {
+    body += "        loft_text {t} = {{ 0, 0, 0 }};\n";
+  }
+  body += "        {store}\n";
+  for t in texts {
+    body += "        loft_text_free(&{t});\n";
+  }
+  body += "    }}\n}}\n";
+  if kt >= 0 {
+    cgen_tables::describe_type(x, kt);
+    body += "\nstatic void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    loft_par_slot *loft_b = loft_c->b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        loft_ref loft_r = loft_b[loft_i].r;\n        if (loft_r.store_nr == 0xFFFF || loft_r.rec == 0 || loft_r.store_nr < loft_pn) {{ loft_b[loft_i].adopted = 0; continue; }}\n        loft_ref loft_d = {{ loft_c->res.store_nr, loft_c->res.rec, loft_c->res.pos + (uint32_t) loft_i * {size}u, 0 }};\n        loft_copy_bytes(loft_d, 0, loft_r, 0, {size});\n        loft_copy_claims(loft_types, {kt}, loft_r, loft_d);\n        loft_b[loft_i].r = loft_d;\n        loft_b[loft_i].adopted = 0;\n    }}\n}}\n";
+  }
+  x.gen_bodies += body;
+  t = as_int(w, cgen_fn::expr(x, w, threads, ind));
+  n = temp(w, "int");
+  line(w, ind, "{n} = loft_vec_len({input});");
+  line(w, ind, "{{");
+  slots = if name == "n_parallel_discard" { "0" } else { "{push}({n})" };
+  res = "{{ 0xFFFF, 0, 0, 0 }}";
+  if kt >= 0 {
+    line(w, ind + 1, "loft_ref loft_res = loft_ref_null();");
+    line(w, ind + 1, "loft_database(&loft_res, (uint32_t) ({n} * {size}));");
+    res = "loft_res";
+  }
+  init = "loft_parctx{id} loft_c = {{ {input}, {slots}, {res}";
+  for e in extra {
+    init += ", {e}";
+  }
+  line(w, ind + 1, init + " }};");
+  if kt >= 0 {
+    line(w, ind + 1, "loft_par_hold(loft_res);");
+    line(w, ind + 1, "loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id}, loft_res.store_nr);");
+  } else {
+    line(w, ind + 1, "loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, 0, 0);");
+  }
+  line(w, ind, "}}");
+  if name == "n_parallel_discard" {
+    return E { code: "(void) 0", kind: K_VOID };
+  }
+  E { code: n, kind: K_INT }
+}
+
+// `par_fold(input, init, fold, threads)`: the rows split into `min(threads, rows)` slices,
+// each folded from `init`, then the partials folded from `init` in slice order.
+fn fold(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  for k in 4..len(args) {
+    match loop_shape::unspan(args[k]!) {
+      NdInt { n } => if n != 0 {
+        refuse(w, "a par fold with extra arguments");
+        return none();
+      },
+      _ => {
+        refuse(w, "a par fold with extra arguments");
+        return none();
+      },
+    }
+  }
+  d = cgen_fn::literal(w, args[2], "fold") ?? return none();
+  def = x.b.data.definitions[d]!;
+  ret = if len(def.returned) == 0 { "" } else { cgen_types::ctype(def.returned[0]!) ?? "" };
+  if len(def.attributes) != 2 || ret != "int" {
+    refuse(w, "a par fold whose function is not fold(integer, integer)");
+    return none();
+  }
+  f = cgen_names::c_name(x.b, x.dups, d);
+  ops = [args[0], args[1], args[3]];
+  input = as_ref(w, cgen_fn::arg(x, w, ops, 0, ind));
+  init = as_int(w, cgen_fn::arg(x, w, ops, 1, ind));
+  threads = as_int(w, cgen_fn::arg(x, w, ops, 2, ind));
+  if w.why != "" {
+    return none();
+  }
+  r = temp(w, "int");
+  line(w, ind, "{{");
+  line(w, ind + 1, "uint64_t loft_n = (uint64_t) loft_vec_len({input});");
+  line(w, ind + 1, "uint64_t loft_t = (uint64_t) (int64_t) (int32_t) {threads};");
+  line(w, ind + 1, "if (loft_t < 1) loft_t = 1;");
+  line(w, ind + 1, "if (loft_t > (loft_n > 1 ? loft_n : 1)) loft_t = loft_n > 1 ? loft_n : 1;");
+  line(w, ind + 1, "{r} = {init};");
+  line(w, ind + 1, "if (loft_n > 0) {{");
+  line(w, ind + 2, "for (uint64_t loft_k = 0; loft_k < loft_t; loft_k++) {{");
+  line(w, ind + 3, "int64_t loft_p = {init};");
+  line(w, ind + 3, "for (uint64_t loft_i = loft_k * loft_n / loft_t; loft_i < (loft_k + 1) * loft_n / loft_t; loft_i++)");
+  line(w, ind + 4, "loft_p = {f}(loft_p, loft_i64_bits(loft_par_arg(loft_vec_get({input}, 8, (int64_t) loft_i), 8)));");
+  line(w, ind + 3, "{r} = {f}({r}, loft_p);");
+  line(w, ind + 2, "}}");
+  line(w, ind + 1, "}}");
+  line(w, ind, "}}");
+  E { code: r, kind: K_INT }
+}

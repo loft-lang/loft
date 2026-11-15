@@ -1,0 +1,302 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — `src/c/mod.rs`'s unit assembly (`emit_unit_for`, `function`'s frame
+// wrapper `framed`, `resolve_hot_helpers`, `unit_defines`): the functions a program's `main`
+// reaches, each as its body (`__fr`) and its frame wrapper, in the Rust order — the bodies'
+// declarations, the wrappers' declarations, the bodies, the wrappers, the tables' binding.
+// What a unit needs that this file does not carry yet is refused by name, so the survey ranks
+// it: a table the bodies name (the copy table, the defaults, the keys …), a define a reached
+// library needs.
+
+use ir;
+use cgen::(Cx, new_cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_clibs;
+use cgen_names;
+use opt_names;
+use opt_frame_calls;
+use opt_non_sentinel;
+use binds;
+use types;
+use cgen_tables;
+use cgen_fnval;
+use cgen_unicode;
+
+// What the assembly wrote, or why it was not.
+pub struct Assembled {
+  pub defines: text,
+  pub written: text,
+  pub refused: text,
+  // The `tables` layer's line (`LOFT_TRACE_TABLES`) of a written unit.
+  pub tables: text,
+}
+
+fn not_carried(why: text) -> Assembled {
+  Assembled { defines: "", written: "", refused: why }
+}
+
+// `always_inline_body`: the storage of a frame wrapper's body.
+fn body_storage(storage: text) -> text {
+  if storage == "static inline" {
+    return "LOFT_HOT_INLINE";
+  }
+  if storage.starts_with("static /*loft_hot:") && storage.ends_with("*/") {
+    d = storage["static /*loft_hot:".size()..storage.size() - 2];
+    return "static /*loft_hot_body:{d}*/";
+  }
+  storage
+}
+
+// A parameter list's names, in order (`framed`'s `args`).
+fn arg_names(list: text) -> vector<text> {
+  out: vector<text> = [];
+  if list == "void" {
+    return out;
+  }
+  for raw in list.split(',') {
+    p = raw.trim();
+    at = 0;
+    for c in p {
+      if c == ' ' || c == '*' {
+        at = c#index + 1;
+      }
+    }
+    out += [p[at..p.size()]];
+  }
+  out
+}
+
+// Does a function returning `t` hand a heap value up (`FnRefBufGuard`'s `hands_up`)?
+fn hands_up(t: ir::TypeT) -> boolean {
+  match binds::base(t) {
+    TyReference { n: _, dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+// `framed`'s wrapper body: the frame pushed, the texts' hold mark, the call of the body, the
+// function values' guard unless nothing that registers one is reachable (`@FR-R-GuardFree`).
+fn wrapper(x: Cx, d: integer, wr: Written) -> text {
+  def = x.b.data.definitions[d]!;
+  frame_name = if def.name.starts_with("n_") { def.name[2..def.name.size()] } else { def.name };
+  push = "    loft_frame_push({c_string(frame_name)}, {c_string(def.position.file)}, {def.position.line});\n    LOFT_HOLD_MARK(hm);\n";
+  ret_up = len(def.returned) > 0 && hands_up(def.returned[0]!);
+  guard_free = !ret_up && (env_variable("LOFT_NO_GUARD_FREE") ?? "0") == "0" && opt_frame_calls::is_guard_free(x.b, x.guard, d);
+  release = "";
+  if !ret_up && !guard_free {
+    push += "    size_t fm = loft_nfnrefs;\n";
+    release = "    if (loft_nfnrefs != fm) loft_fnref_release(fm);\n";
+  }
+  call = "{wr.name}__fr({arg_names(wr.list).join(", ")})";
+  if wr.ret == "void" {
+    return "{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n";
+  }
+  "{push}    {wr.ret} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n"
+}
+
+// `resolve_hot_helpers`: the helper markers resolved — `static inline` / `LOFT_HOT_INLINE` for a
+// candidate a hinted twin reaches, `static` for every other.  An `__inv` twin is what makes a
+// helper hot (`hot_helpers`), and the writer refuses those, so every marker resolves to
+// `static` here; a unit that asks for one is refused before it reaches this.
+fn resolve_hot(code: text, candidates: vector<integer>) -> text {
+  out = code;
+  for d in candidates {
+    out = out.replace("static /*loft_hot:{d}*/", "static").replace("static /*loft_hot_body:{d}*/", "static");
+  }
+  out
+}
+
+// The tables a written body names that this file does not write yet, by their C prefix.
+UNIT_TABLES = ["loft_sc_", "loft_ptypes", "loft_uc_"];
+
+// `Stores::position`: the byte offset of field `name` of record type `tp`.
+fn field_at(b: ir::Bundle, tp: integer, name: text) -> integer {
+  for f in types::record_fields(b.types, tp) {
+    if f.name == name {
+      return f.position;
+    }
+  }
+  0
+}
+
+// Does this body run a `par` loop (`Cx::threads`)?
+fn runs_parallel(code: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    if n is NdParallel {
+      hit[0] = true;
+    }
+  });
+  hit[0]!
+}
+
+// `unit_defines` for a unit that reaches no library needing a define of its own: no locked
+// store, one thread, the call-depth cap.  A reached function that would add a define refuses
+// the unit, naming it.
+fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, refused: &text) -> text {
+  fold = false;
+  frames = false;
+  foreign = false;
+  locked = false;
+  for d in b.data.definitions {
+    if !(reached[d#index] ?? false) {
+      continue;
+    }
+    n = d.name;
+    if n == "n_file_map" {
+      // `file_map` is the one producer of a foreign store, and a mapped file is read-only.
+      foreign = true;
+      locked = true;
+    } else if n == "n_set_store_lock" {
+      // `@FR-R-NoLocks`: a store is read-only only through `#lock = …`, a mapped file or a
+      // constant store.
+      locked = true;
+    } else if d.position.file.ends_with("02_files.loft") {
+      // `@FR-Path-Case`: a name is compared with its directory's entries through the full
+      // lowercase mapping, the table `to_lowercase` registers.
+      fold = true;
+    } else if n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue" || n == "n_parse_errors_of" {
+      refused = "the unit's define for JSON ({n})";
+    } else if n == "n_reflect_type" || n == "n_type_named" || n == "n_reflect_field" || n == "n_reflect_field_path" {
+      refused = "the unit's define for reflection ({n})";
+    } else if n == "n_store_bind_lazy" {
+      refused = "the unit's define for a lazy store";
+    } else if n == "n_stack_trace" {
+      frames = true;
+    } else if n == "n_store_load_url" || n == "n_store_load_url_trusted" || d.native.starts_with("loft_kernel_") || d.native.starts_with("loft_swap_") || d.native.starts_with("loft_rebuild_") || d.native == "loft_live_flip" || d.native == "loft_process_run" || d.native == "loft_git_query" {
+      refused = "the unit's define for a runtime ({n})";
+    } else if d.width32 {
+      refused = "a function under the 32-bit regime ({n})";
+    } else if len(d.code) > 0 && runs_parallel(d.code[0]!) {
+      refused = "the unit's define for threads (par)";
+    }
+    if refused != "" {
+      return "";
+    }
+  }
+  head = if foreign { "#define LOFT_FOREIGN 1\n" } else { "" };
+  locks = locked;
+  for c in x.consts {
+    if c {
+      locks = true;
+    }
+  }
+  if fold {
+    cgen_unicode::unicode_case(x, false);
+    head += "#define LOFT_PATH_FOLD 1\n";
+  }
+  no_locks = if locks { "" } else { "#define LOFT_NO_LOCKS 1\n" };
+  // `cx.frames`: a unit that reads its own stack trace keeps the frames, laid out as the
+  // standard library's `StackFrame` record is.
+  frame_defs = "";
+  if frames {
+    sf = types::named(b.types, "StackFrame") ?? -1;
+    if sf < 0 {
+      refused = "the unit's define for frames: no StackFrame type";
+      return "";
+    }
+    frame_defs = "#define LOFT_FRAMES 1\n#define LOFT_SF_SIZE {b.types[sf]!.size}\n#define LOFT_SF_FUNCTION {field_at(b, sf, "function")}\n#define LOFT_SF_FILE {field_at(b, sf, "file")}\n#define LOFT_SF_LINE {field_at(b, sf, "line")}\n#define LOFT_SF_ARGS {field_at(b, sf, "arguments")}\n#define LOFT_SF_VARS {field_at(b, sf, "variables")}\n";
+  }
+  // `@FR-R-NoThreads`: a unit whose `par` sites all run in order keeps its tables plain.
+  no_threads = if x.threads { "" } else { "#define LOFT_NO_THREADS 1\n" };
+  "{head}{no_locks}{no_threads}{frame_defs}#define LOFT_MAX_CALL_DEPTH {max_depth}\n"
+}
+
+// What `emit_unit_for` gathers: the bodies' declarations (`gen_decls`), the wrappers'
+// (`protos`), the bodies (`gen_bodies`) and the wrappers (`bodies`), in writing order.
+struct Pieces {
+  decls: text,
+  protos: text,
+  fr_bodies: text,
+  bodies: text,
+}
+
+// One function or twin written into `p`, or why not.
+fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>) -> text {
+  if t.inv {
+    return "a hot helper an __inv twin reaches";
+  }
+  // A `#c` binding (@PLN24): the C function itself, called through its declared signature —
+  // no frame of its own, so no `__fr` wrapper.
+  forward = cgen_clibs::is_forwarded(x.b, t.d);
+  if (x.b.data.definitions[t.d]!.c_sig != "" || forward) && cgen_names::is_plain(t) {
+    cb = if forward { cgen_clibs::forwarded(x, t.d) } else { cgen_clibs::binding(x, t.d) };
+    if cb.refused != "" {
+      return "{x.b.data.definitions[t.d]!.name}: {cb.refused}";
+    }
+    p.protos += "{cb.storage} {cb.ret} {cb.name}({cb.list});\n";
+    p.bodies += "\n{cb.storage} {cb.ret} {cb.name}({cb.list}) {{\n{cb.text}}}\n";
+    return "";
+  }
+  wr = cgen_fn::write_function(x, t);
+  if wr.refused != "" {
+    return "{x.b.data.definitions[t.d]!.name}: {wr.refused}";
+  }
+  if wr.storage.starts_with("static /*loft_hot:") {
+    candidates += [t.d];
+  }
+  x.gen_decls += "{body_storage(wr.storage)} {wr.ret} {wr.name}__fr({wr.list});\n";
+  p.protos += "{wr.storage} {wr.ret} {wr.name}({wr.list});\n";
+  x.gen_bodies += "\n{wr.text}";
+  p.bodies += "\n{wr.storage} {wr.ret} {wr.name}({wr.list}) {{\n{wrapper(x, t.d, wr)}}}\n";
+  ""
+}
+
+// `emit_unit_for` for the program's `main` (`root`): the unit after the runtime text, without
+// the C libraries' and the type names' tables (the caller writes those) — or why not.
+pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth: integer) -> Assembled {
+  x = new_cx(b);
+  why = "";
+  reached = opt_names::reachable_functions(b, [root]);
+  candidates: vector<integer> = [];
+  pieces = Pieces { decls: "", protos: "", fr_bodies: "", bodies: "" };
+  for f in opt_names::written_functions(b, root) {
+    why = write_one(x, cgen_names::plain(f), pieces, candidates);
+    if why != "" {
+      return not_carried(why);
+    }
+  }
+  // The twins the bodies asked for, and the ones those ask for in turn (`write_twins`).
+  done = 0;
+  while done < len(x.twins) {
+    why = write_one(x, cgen_names::copy_twin(x.twins[done]!), pieces, candidates);
+    if why != "" {
+      return not_carried(why);
+    }
+    done += 1;
+  }
+  decls = x.gen_decls;
+  protos = pieces.protos;
+  fr_bodies = x.gen_bodies;
+  bodies = pieces.bodies;
+  // `unit_defines`, after the bodies: a constant they read makes a locked store possible.
+  defs = defines(x, b, reached, max_depth, why);
+  if why != "" {
+    return not_carried(why);
+  }
+  // The dispatchers of the function values, after the prototypes (`dispatch_code`).
+  dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions(b, root));
+  if dispatch.refused != "" {
+    return not_carried(dispatch.refused);
+  }
+  // The closure release only where something calls it.
+  drops = "";
+  if fr_bodies.find("loft_drop_closure(") != null || bodies.find("loft_drop_closure(") != null || dispatch.code.find("loft_drop_closure(") != null {
+    drops = cgen_fnval::drop_code(x, opt_names::written_functions(b, root));
+  }
+  // The dispatchers name their signatures' shapes: a tuple among them is numbered there.
+  dispatch.code = resolve_tuples(x, dispatch.code);
+  for t in UNIT_TABLES {
+    if fr_bodies.find(t) != null || bodies.find(t) != null {
+      return not_carried("the unit's table {t}");
+    }
+  }
+  typedefs = cgen_tables::typedefs(x, names);
+  written = "{head}{typedefs}{resolve_hot(decls, candidates)}{resolve_hot(protos, candidates)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates)}{resolve_hot(bodies, candidates)}";
+  Assembled { defines: defs, written: written, refused: "", tables: cgen_tables::tables_line(x) }
+}

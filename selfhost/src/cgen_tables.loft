@@ -1,0 +1,325 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — the unit's type tables (`src/c/mod.rs`: `copy_type`, `describe_type`,
+// `name_types`, `default_image`, `enum_names`, `keys_of`, and the writers `copy_table`,
+// `field_rows`, the key, enum-name and default tables of `typedefs`).  A body registers what it
+// names while it is written; the unit writes the tables after the last body.  The rows come
+// from `types::row`, the runner's port of the same table.
+
+use ir;
+use types;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_show;
+use cgen_eq;
+use cgen_unicode;
+use consts;
+use crt;
+
+// What the bodies registered (`Cx::copy_types`, `described`, `names_types`, `defaults`,
+// `enum_names`, `key_types`): per type number whether it is in the set.
+pub struct Tables {
+  pub copy: vector<boolean>,
+  pub described: vector<boolean>,
+  pub names: boolean,
+  pub defaults: vector<boolean>,
+  pub enums: vector<boolean>,
+  pub keys: vector<boolean>,
+}
+
+pub fn new_tables(b: ir::Bundle) -> Tables {
+  n = len(b.types);
+  Tables { copy: [for _ in 0..n { false }], described: [for _ in 0..n { false }], names: false, defaults: [for _ in 0..n { false }], enums: [for _ in 0..n { false }], keys: [for _ in 0..n { false }] }
+}
+
+// `copy_type`: type `tp` and every type it reaches, in the copy table.
+pub fn copy_type(x: Cx, tp: integer) {
+  if tp < 0 || tp >= len(x.b.types) || x.tables.copy[tp]! {
+    return;
+  }
+  x.tables.copy[tp] = true;
+  match x.b.types[tp]!.parts[0]! {
+    PtStruct { fields } => { for f in fields { copy_type(x, f.content); } },
+    PtEnumValue { value: _, fields } => { for f in fields { copy_type(x, f.content); } },
+    PtVector { content } => copy_type(x, content),
+    PtArray { content } => copy_type(x, content),
+    PtChildRec { content } => copy_type(x, content),
+    PtSorted { content, keys: _ } => copy_type(x, content),
+    PtOrdered { content, keys: _ } => copy_type(x, content),
+    PtHash { content, fields: _ } => copy_type(x, content),
+    PtIndex { content, keys: _ } => copy_type(x, content),
+    PtRadix { content, fields: _ } => copy_type(x, content),
+    PtTrie { content, key: _ } => copy_type(x, content),
+    PtEnum { values } => { for v in values { if v.nr != 65535 { copy_type(x, v.nr); } } },
+    _ => {},
+  }
+}
+
+// `describe_type`: type `tp` and every type it reaches, in the type table as a description.
+// A radix's and a trie's content is not walked here, as `describe_type` walks it not.
+pub fn describe_type(x: Cx, tp: integer) {
+  if tp < 0 || tp >= len(x.b.types) || x.tables.described[tp]! {
+    return;
+  }
+  x.tables.described[tp] = true;
+  match x.b.types[tp]!.parts[0]! {
+    PtStruct { fields } => { for f in fields { describe_type(x, f.content); } },
+    PtEnumValue { value: _, fields } => { for f in fields { describe_type(x, f.content); } },
+    PtVector { content } => describe_type(x, content),
+    PtArray { content } => describe_type(x, content),
+    PtChildRec { content } => describe_type(x, content),
+    PtSorted { content, keys: _ } => describe_type(x, content),
+    PtOrdered { content, keys: _ } => describe_type(x, content),
+    PtHash { content, fields: _ } => describe_type(x, content),
+    PtIndex { content, keys: _ } => describe_type(x, content),
+    PtEnum { values } => { for v in values { if v.nr != 65535 { describe_type(x, v.nr); } } },
+    _ => {},
+  }
+}
+
+// `name_types`: the code names the type table whether or not a type is registered.
+pub fn name_types(x: Cx) {
+  x.tables.names = true;
+}
+
+// `default_image`: the C name of record type `tp`'s default bytes, registered for the unit.
+pub fn default_name(x: Cx, tp: integer) -> text {
+  if tp >= 0 && tp < len(x.b.types) {
+    x.tables.defaults[tp] = true;
+  }
+  "loft_dflt{tp}"
+}
+
+// `enum_names`: the C name of plain enum `tp`'s value names, registered for the unit.
+pub fn enum_name(x: Cx, tp: integer) -> text {
+  if tp >= 0 && tp < len(x.b.types) {
+    x.tables.enums[tp] = true;
+  }
+  "loft_enum{tp}"
+}
+
+// `keys_of`'s name half: the C name of keyed type `tp`'s key parts, registered for the unit.
+pub fn keys_name(x: Cx, tp: integer) -> text {
+  if tp >= 0 && tp < len(x.b.types) {
+    x.tables.keys[tp] = true;
+  }
+  "loft_keys{tp}"
+}
+
+// `keys_of`: the C name of keyed type `tp`'s key parts and their count, registered.
+fn keys_of(x: Cx, tp: integer) -> text {
+  x.tables.keys[tp] = true;
+  "loft_keys{tp}, {len(x.b.types[tp]!.keys)}"
+}
+
+// `type_holds_file`: can a value of `tp` hold or reach a `File` record?
+fn holds_file(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
+  if tp < 0 || tp >= len(ts) {
+    return false;
+  }
+  for s in seen {
+    if s == tp {
+      return false;
+    }
+  }
+  seen += [tp];
+  t = ts[tp]!;
+  holds = match t.parts[0]! {
+    PtStruct { fields } => t.name == "File" || fields_hold(ts, fields, seen),
+    PtEnumValue { value: _, fields } => t.name == "File" || fields_hold(ts, fields, seen),
+    PtEnum { values } => {
+      any = false;
+      for v in values {
+        if v.nr != 65535 && holds_file(ts, v.nr, seen) {
+          any = true;
+        }
+      }
+      any
+    },
+    PtVector { content } => holds_file(ts, content, seen),
+    PtArray { content } => holds_file(ts, content, seen),
+    PtSorted { content, keys: _ } => holds_file(ts, content, seen),
+    PtOrdered { content, keys: _ } => holds_file(ts, content, seen),
+    PtHash { content, fields: _ } => holds_file(ts, content, seen),
+    PtIndex { content, keys: _ } => holds_file(ts, content, seen),
+    PtRadix { content, fields: _ } => holds_file(ts, content, seen),
+    PtTrie { content, key: _ } => holds_file(ts, content, seen),
+    PtChildRec { content } => holds_file(ts, content, seen),
+    _ => false,
+  };
+  seen.remove(len(seen) - 1);
+  holds
+}
+
+fn fields_hold(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  for f in fields {
+    if holds_file(ts, f.content, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+fn tdesc_kind(k: integer) -> text {
+  ["LOFT_T_SCALAR", "LOFT_T_TEXT", "LOFT_T_STRUCT", "LOFT_T_VECTOR", "LOFT_T_ENUM", "LOFT_T_CHILD", "LOFT_T_HASH", "LOFT_T_INDEX", "LOFT_T_ORDERED", "LOFT_T_RADIX", "LOFT_T_TRIE", "LOFT_T_DBREF"][k] ?? "LOFT_T_SCALAR"
+}
+
+// Does a row of this kind carry its key parts (`copy_table`'s `keys`)?
+fn keyed_row(p: ir::DbParts) -> boolean {
+  match p {
+    PtHash { content: _, fields: _ } => true,
+    PtSorted { content: _, keys: _ } => true,
+    PtIndex { content: _, keys: _ } => true,
+    PtRadix { content: _, fields: _ } => true,
+    PtTrie { content: _, key: _ } => true,
+    PtOrdered { content: _, keys: _ } => true,
+    _ => false,
+  }
+}
+
+// `copy_table`: one `loft_tdesc` per registered type, at its type number.
+fn copy_table(x: Cx) -> text {
+  any = false;
+  max = 0;
+  for c in x.tables.copy {
+    if c || x.tables.described[c#index]! {
+      any = true;
+      max = c#index;
+    }
+  }
+  if !any {
+    if x.tables.names {
+      return "static const loft_tdesc *const loft_types = 0;\nstatic const uint32_t loft_ntypes = 0;\n";
+    }
+    return "";
+  }
+  out = "";
+  rows: vector<text> = [];
+  for c in x.tables.copy {
+    tp = c#index;
+    if !(c || x.tables.described[tp]!) {
+      continue;
+    }
+    r = types::row(x.b.types, tp);
+    head = if r.kind == types::T_STRUCT {
+      list: vector<text> = [for f in r.fields { "{{ {f.pos}, {f.tp}, {f.view}, {f.hidden}, {f.group} }}" }];
+      body = if len(list) == 0 { "{{ 0, 0, 0, 0, 0 }}" } else { list.join(", ") };
+      out += "static const loft_fld loft_fields{tp}[] = {{ {body} }};\n";
+      "{tdesc_kind(r.kind)}, {r.size}, 0, {r.n}, loft_fields{tp}, 0"
+    } else if r.kind == types::T_ENUM {
+      variants = [for v in r.variants { "{v}" }].join(", ");
+      out += "static const uint16_t loft_variants{tp}[] = {{ {variants} }};\n";
+      "{tdesc_kind(r.kind)}, {r.size}, 0, {r.n}, 0, loft_variants{tp}"
+    } else {
+      "{tdesc_kind(r.kind)}, {r.size}, {r.elem}, 0, 0, 0"
+    };
+    keys = if keyed_row(x.b.types[tp]!.parts[0]!) { keys_of(x, tp) } else { "0, 0" };
+    file = if x.b.types[tp]!.name == "File" { 2 } else if holds_file(x.b.types, tp, []) { 1 } else { 0 };
+    owns = if r.owns_heap { 1 } else { 0 };
+    linked = if r.linked { 1 } else { 0 };
+    rows += ["    [{tp}] = {{ {head}, {owns}, {keys}, {linked}, {file} }},"];
+  }
+  out += "static const loft_tdesc loft_types[{max + 1}] = {{\n{rows.join("\n")}\n}};\n";
+  out += "static const uint32_t loft_ntypes = {max + 1};\n";
+  out
+}
+
+// `typedefs`' tables, in its order: the key parts (named while the copy table is written), the
+// copy table, the type names, the enum names, the default images.  `names` is the type-name
+// table (`type_name_table`), written by the caller.
+pub fn typedefs(x: Cx, names: text) -> text {
+  table = copy_table(x);
+  out = "";
+  for k in x.tables.keys {
+    if !k {
+      continue;
+    }
+    tp = k#index;
+    parts: vector<text> = [for p in x.b.types[tp]!.keys { "{{ {p.type_nr}, {p.position}, {p.start} }}" }];
+    body = if len(parts) == 0 { "{{ 0, 0, 0 }}" } else { parts.join(", ") };
+    out += "static const loft_key loft_keys{tp}[] = {{ {body} }};\n";
+  }
+  out += table;
+  out += names;
+  for e in x.tables.enums {
+    if !e {
+      continue;
+    }
+    vals = types::enum_names(x.b.types, e#index) ?? [];
+    quoted = [for v in vals { c_string(v) }].join(", ");
+    out += "static const char *const loft_enum{e#index}[] = {{ \"\", {quoted} }};\n";
+  }
+  for d in x.tables.defaults {
+    if !d {
+      continue;
+    }
+    bytes = types::default_image(x.b.types, d#index);
+    count = if len(bytes) > 0 { len(bytes) } else { 1 };
+    list = if len(bytes) == 0 { "0" } else { [for v in bytes { "{v as integer}" }].join(", ") };
+    out += "static const uint8_t loft_dflt{d#index}[{count}] = {{ {list} }};\n";
+  }
+  // The render functions (`show_code`), after the tuple structs `typedefs` writes between.
+  // The tuple structs, in the order the unit first named them; a member that is a tuple is
+  // numbered by its holder's typedef if nothing named it before.
+  done = 0;
+  while done < len(x.tuples) {
+    shape = x.tuples[done]!;
+    fields: vector<text> = [];
+    for m in tuple_members(shape) {
+      fields += ["{resolve_tuples(x, held(m))} f{m#index};"];
+    }
+    out += "typedef struct {{ {fields.join(" ")} }} loft_tup{done};\n";
+    done += 1;
+  }
+  // …the render functions (`show_code`), then the Unicode tables (`unicode_code`).
+  out + cgen_show::show_code(x) + cgen_eq::eq_code(x) + cgen_unicode::unicode_code(x) + const_code(x)
+}
+
+// `const_code`: each constant's store as words, and `loft_init`, which loads them before `main`
+// runs.  The store is built as the runner builds it (`consts::build_store`) and read back
+// through the C runtime; trailing zero words are left off.
+fn const_code(x: Cx) -> text {
+  out = "";
+  init = "static void loft_init(void) {{\n";
+  for on in x.consts {
+    if !on {
+      continue;
+    }
+    d = on#index;
+    store = consts::build_store(x.b, d);
+    if store == consts::NULL_STORE {
+      continue;
+    }
+    bytes = crt::store_bytes(store);
+    crt::free_constant(store);
+    n = len(bytes) / 8;
+    while n > 1 && word(bytes, n - 1, 0) == 0 && word(bytes, n - 1, 4) == 0 {
+      n -= 1;
+    }
+    words: vector<text> = [];
+    for i in 0..n {
+      words += ["{word(bytes, i, 0)}u", "{word(bytes, i, 4)}u"];
+    }
+    out += "static const uint32_t loft_cwords{d}[] = {{ {words.join(", ")} }};\nstatic loft_ref loft_const{d};\n";
+    init += "    loft_const{d} = loft_const_store(loft_cwords{d}, {n});\n";
+  }
+  out + init + "}}\n"
+}
+
+// The little-endian u32 at byte `at` of word `w`.
+fn word(bytes: vector<u8>, w: integer, at: integer) -> integer {
+  base = w * 8 + at;
+  (bytes[base]! as integer) + (bytes[base + 1]! as integer) * 256 + (bytes[base + 2]! as integer) * 65536 + (bytes[base + 3]! as integer) * 16777216
+}
+
+fn set_line(v: vector<boolean>) -> text {
+  [for s in v if s { "{s#index}" }].join(",")
+}
+
+// The `tables` layer's line (`LOFT_TRACE_TABLES`).
+pub fn tables_line(x: Cx) -> text {
+  t = x.tables;
+  "[tables]\tunit\tcopy={set_line(t.copy)}\tdescribed={set_line(t.described)}\tnames={if t.names { 1 } else { 0 }}\tdefaults={set_line(t.defaults)}\tenums={set_line(t.enums)}\tkeys={set_line(t.keys)}\tshows={set_line(x.shows)}\tunicode={x.unicode.join(",")}\tconsts={set_line(x.consts)}"
+}

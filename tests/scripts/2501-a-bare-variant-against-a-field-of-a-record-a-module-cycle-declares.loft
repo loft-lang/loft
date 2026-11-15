@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2501 — a bare variant compared against an expression whose type runs through a record
+// declared in a module that `use`s this one back (`bvc2501_ctx` declares `BvcCx` and uses
+// `bvc2501_walker`, which walks it).  In the first pass the record is still its forward stub,
+// so the operand's type is unknown, and the bare-variant branch reported in that pass an error
+// the second pass — which types the operand — never reaches: the program did not compile.
+//
+// The sample has five definitions; three start with `BvcNil`, two with a number (3 and 9), so
+// the four walks answer 3 (a local), 3 (the chain inline), 2 (`!=`) and 12 (a `match`).
+//
+// @ARGS: --lib tests/lib
+// @falsified-at: 0b1c81580 — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the compile — main (with loft#2497's fix) refuses `x.b.defs[i]!.code[0] == BvcNil`
+//   as "bare variant 'BvcNil' has no type here", so the program does not run there.
+//   HOLDS: leak, panic and refusals are clean here on both backends.
+//   Score it again with `make falsify GUARD=<this file> REF=0b1c81580`.
+
+use bvc2501_ctx::*;
+
+fn main() {
+  got = bvc_counts();
+  assert_eq(got, "3 3 2 12", "the four walks over the cycle's record");
+  println("loft#2501: {got}");
+}

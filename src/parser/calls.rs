@@ -1389,6 +1389,7 @@ impl Parser {
             self.copy_store_text_args(d_nr, &mut actual);
         }
         let tp = self.call_dependencies(d_nr, &all_types);
+        self.record_closure_arguments(d_nr, &actual, arg_pos);
         *code = Value::Call(d_nr, actual);
         // loft#2146 — an argument linked through a temp is stored back once the call returns.
         if !posts.is_empty() {

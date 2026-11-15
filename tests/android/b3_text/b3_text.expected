@@ -1,0 +1,5 @@
+font 56 x 56
+row 0: ffff0000 ff00ff00 ff0000ff
+row 1: ffffff00 ff00ffff ffff00ff
+row 2: ff0a141e ff28323c ff46505a
+text lit true

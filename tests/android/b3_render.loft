@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Android guard (scripts/android_guards.py): the program's own shaders, written for desktop
+// GL (`#version 330 core`), compile on OpenGL ES 3 through the library's rewrite and draw.  Two
+// triangles cover the left half of the screen in normalised coordinates, so a pixel at a
+// quarter of the width (well inside, away from every edge) is the shader's colour
+// (51, 102, 153) and one at three quarters is the clear colour (0, 0, 0).
+use graphics::*;
+
+fn main() {
+  w = open_window(320, 480, "b3_render") ?? return assert(false, "no window");
+  vs = "#version 330 core\nlayout(location = 0) in vec3 aPos;\nvoid main() {{ gl_Position = vec4(aPos, 1.0); }}\n";
+  fs = "#version 330 core\nuniform vec3 uColor;\nout vec4 FragColor;\nvoid main() {{ FragColor = vec4(uColor, 1.0); }}\n";
+  sh = w.shader(vs, fs) ?? return assert(false, "the shaders did not compile");
+  tri: vector<single> = [];
+  for v in [-1.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, -1.0, -1.0, 0.0, 0.0, 1.0, 0.0, -1.0, 1.0, 0.0] {
+    tri += [v as single];
+  }
+  m = w.upload(tri, 3);
+  for frame in 0..3 {
+    w.poll();
+    w.clear(rgb(0, 0, 0));
+    sh.set_vec3("uColor", 0.2, 0.4, 0.6);
+    m.draw(sh);
+    if frame == 2 {
+      c = w.capture();
+      y = c.height / 2;
+      println("left {c.get_pixel(c.width / 4, y):x} right {c.get_pixel(c.width * 3 / 4, y):x}");
+    }
+    w.swap();
+  }
+}

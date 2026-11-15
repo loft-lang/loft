@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Android guard (scripts/android_guards.py): a painter's rectangles on the activity's window,
+// read back through `capture()`.  Every channel asked is a whole number of 255ths, so the GPU's
+// rounding cannot move it: the expected pixels are (20, 24, 48), (255, 102, 0) and
+// (51, 204, 153), each opaque, packed as `rgba` packs them.
+use graphics::*;
+
+fn main() {
+  w = open_window(320, 480, "b3_rects") ?? return assert(false, "no window");
+  p = w.painter() ?? return assert(false, "no painter");
+  println("size {w.width() > 0} {w.height() > 0}");
+  for frame in 0..3 {
+    w.poll();
+    w.clear(rgb(20, 24, 48));
+    p.rect(30.0, 60.0, 120.0, 90.0, 1.0, 0.4, 0.0, 1.0);
+    p.rect(170.0, 60.0, 120.0, 90.0, 0.2, 0.8, 0.6, 1.0);
+    if frame == 2 {
+      c = w.capture();
+      println("bg {c.get_pixel(5, 5):x} a {c.get_pixel(90, 105):x} b {c.get_pixel(230, 105):x}");
+    }
+    w.swap();
+  }
+}

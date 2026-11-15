@@ -22,6 +22,7 @@ mod par;
 mod peel;
 mod spec_chain;
 mod sticky;
+mod switch;
 mod table_handle;
 pub(super) mod transient;
 mod value;
@@ -7147,6 +7148,9 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         let delivery = self.delivery_block(b);
+        if b.name == "scalar_match" && !delivery && self.switch_match(b, ind)? {
+            return Ok(());
+        }
         self.in_delivery += u32::from(delivery);
         let r = self.ops_stmt(&b.operators, ind);
         self.in_delivery -= u32::from(delivery);

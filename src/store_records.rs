@@ -1604,11 +1604,16 @@ impl Run<'_> {
         uncover_all(st, &value.pts);
         let recs = Self::stores_of(&Self::pts(st, w));
         let strong = recs.len() == 1 && off.is_some();
+        // A closure slot keeps the caller's store (`Pt::Param`) beside this frame's own, so the
+        // record's cascade can be asked whether it ends one (loft#2504).
         let pts: Pts = value
             .pts
             .iter()
             .copied()
-            .filter(|p| matches!(p, Pt::Store(_)))
+            .filter(|p| {
+                matches!(p, Pt::Store(_))
+                    || (matches!(p, Pt::Param(_)) && self.is_closure_record(w))
+            })
             .collect();
         let held = Val {
             corr: value
@@ -1775,6 +1780,34 @@ impl Run<'_> {
         }
     }
 
+    /// loft#2504, `@FR-L-CapOwn` — a closure record's cascade that frees a slot holding the
+    /// CALLER's store (`Pt::Param`, a capture relayed out of this lambda's own `__closure`):
+    /// the record adopted a store that belongs further out, and its release frees it under
+    /// the record that owns it.
+    fn report_cascade_param_ends(&mut self, st: &State, w: u16) {
+        for r in Self::stores_of(&Self::pts(st, w)) {
+            let Some(m) = st.slots.get(&r) else {
+                continue;
+            };
+            let offs = self.cascade_frees(r);
+            let relayed = m.iter().any(|(o, v)| {
+                offs.as_ref().is_none_or(|f| f.contains(o))
+                    && v.pts.iter().any(|p| matches!(p, Pt::Param(_)))
+            });
+            if relayed {
+                let name = self.var_name(w);
+                self.find(
+                    "wrong-end",
+                    r.site,
+                    format!(
+                        "the record `{name}` releases by its cascade a capture its frame relayed \
+                         from its own closure: that store is the caller's"
+                    ),
+                );
+            }
+        }
+    }
+
     /// Release the stores closure record `w`'s capture slots hold — its cascade
     /// (`<record>_OpDropAll(w)`), or a free of a slot read (`OpFreeRef(OpGetDbRef(w, off))`,
     /// `scopes::rebound_captures`).  A slot store already ended on every path is ended twice.
@@ -1816,6 +1849,9 @@ impl Run<'_> {
             Self::stores_of(&Self::held_by_record(st, w, None))
         };
         held.dedup();
+        if how == "its cascade" {
+            self.report_cascade_param_ends(st, w);
+        }
         let label = format!("{how}({})", self.var_name(w));
         for k in held {
             self.sites[k.site as usize].ends.insert(label.clone());
@@ -5432,7 +5468,27 @@ impl Run<'_> {
                     }
                     None => Pts::new(),
                 };
-                if held.is_empty() {
+                // loft#2504 — a slot of the lambda's own closure record (its hidden
+                // `__closure` parameter) holds a store its caller's record owns: a capture
+                // read out of it, and relayed into a record this frame builds, is the
+                // caller's store, never this function's to end.  Asked of `__closure` alone:
+                // a drop cascade's `self` is a parameter too, and ending what it holds is its
+                // job.  `LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` leaves the read unknown.
+                let relayed = Self::first_var(args, 0).filter(|&w| {
+                    let frame = &self.data.def(self.d_nr).variables;
+                    frame.is_argument(w) && frame.name(w) == "__closure"
+                });
+                if held.is_empty()
+                    && let Some(w) = relayed
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM").is_some()
+                    )
+                {
+                    Val {
+                        pts: [Pt::Param(w)].into(),
+                        corr: BTreeSet::new(),
+                    }
+                } else if held.is_empty() {
                     Val::unknown()
                 } else {
                     Val {

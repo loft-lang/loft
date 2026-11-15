@@ -334,4 +334,9 @@ Closures are a full first-class contract: construction, every container measured
 re-assignment into a place that already holds one. What a closure may not do is bounded by
 two decisions rather than by gaps — one capture shape per fn-ref attribute, and no capturing
 closure inside a collection (DESIGN_DECISIONS.md @C116, loft#247) or inside a struct that a
-collection holds (#318).
+collection holds (#318).  Both bounds hold through a call: a capturing closure passed to a
+parameter its callee KEEPS — writes into a collection or a fn field, itself, through a local or
+by handing it to a callee that keeps it — is refused at the argument, because the
+callee's parameter type says nothing about what the caller passes and only the caller sees the
+closure (`src/parser/closure_flow.rs`).  A callee that only calls its parameter, or hands it to
+one that only calls, takes any closure.

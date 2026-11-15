@@ -21,6 +21,20 @@ exception to contagion and never mentioned truthiness, so a `&&` that answered `
 like the rule being OBEYED rather than a shipped decision (@C73) being broken. An `OPEN: n` is
 only as strong as the rules above it, not only as strong as its oracle.
 
+### D-op-3 — CLOSED (2026-11-15, loft#2503): (E-Left) for a VECTOR operand read the written vector
+- Was: `v[set(v)]`, with `set(w: &vector<integer>)` replacing the vector, read the NEW vector on
+  all three backends (7 for `[1, 2, 3]` replaced by `[7, 8, 9]`) where the rule reads the old one
+  (1); an element written through `&`, or through a plain vector parameter (the caller's store),
+  showed the same way.  Silent: `LOFT_POISON` and `LOFT_STRICT_STORES` saw no store misuse, only
+  the evaluation order.  A text operand already took its value into a temp first
+  (`copy_written_text_operands`); a vector's temp needed a store minted and freed for it, and a
+  write test that could tell a reading callee (`len`) from a writing one.
+- Closed by: `scopes::args::copy_written_vector_operands` — the indexed vector is copied into a
+  store minted for it (`OpDatabase` of `main_vector<T>`, `OpAppendVector`, freed at scope exit)
+  when `writes_vector` says the index can write it; `writes_vector` reads a callee's own body for
+  a write to the parameter it is handed, so `v[len(v) - 1]` and a reading function copy nothing.
+  Guard: `loft-suite/rules/operational/E-Left/2503-a-vector-is-read-before-an-index-that-writes-it.loft`.
+
 ### D-op-7 — CLOSED (2026-08-31, loft#1246): (E-Uncomp-NN)'s default was the range's FLOOR
 - Was: `OpRangeDefault(value, lo, hi, dflt)` is emitted for every declared range, and TWO
   functions filled `dflt` with `lo` — `declared_range` for the `limit(…)` spelling and

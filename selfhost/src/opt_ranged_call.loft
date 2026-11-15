@@ -8,6 +8,7 @@
 // (`guard_plan`) is carried for its variable clause; a hoisted record field is not a leaf yet.
 
 use ir;
+use cgen::(Cx);
 use binds;
 use loop_shape;
 use opt_non_sentinel;

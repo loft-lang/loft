@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Android guard (scripts/android_guards.py): a tap at (100, 200), which the runner sends
+// (`b4_touch.input`) once the program prints `ready`, arrives as a touch of pointer 0 and as
+// mouse button 1 at that point, each pressed and released.
+use graphics::*;
+
+fn main() {
+  w = open_window(320, 480, "b4_touch") ?? return assert(false, "no window");
+  w.clear(rgb(0, 0, 0));
+  w.swap();
+  println("ready");
+  seen = 0;
+  frames = 0;
+  while w.poll() && seen < 4 && frames < 3000 {
+    for e in w.events() {
+      match e {
+        TouchBegin { id, x, y } => { println("touch begin {id} {x as integer} {y as integer}"); seen += 1; }
+        MouseDown { button, x, y } => { println("mouse down {button} {x as integer} {y as integer}"); seen += 1; }
+        TouchEnd { id, x, y } => { println("touch end {id} {x as integer} {y as integer}"); seen += 1; }
+        MouseUp { button, x, y } => { println("mouse up {button} {x as integer} {y as integer}"); seen += 1; }
+        _ => {}
+      }
+    }
+    w.clear(rgb(0, 0, 0));
+    w.swap();
+    frames += 1;
+  }
+  println("seen {seen}");
+}

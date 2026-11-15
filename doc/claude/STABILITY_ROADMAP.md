@@ -68,7 +68,9 @@ No figure is written here: each is a query, and a figure in prose is stale the d
 `index/stability_weekly.tsv` ([STABILITY_METHOD.md § The weekly read](STABILITY_METHOD.md)).
 **The tracker meters read the outflow of defects and not the inflow of code** (owner,
 2026-11-12): the code that destabilises loft and the code that stabilises it again arrive in
-the same weeks, so the read carries both halves, the last two rows below.
+the same weeks, so the read carries both halves, the last two rows below.  The read is run by
+the gathering stream with each join and READ by the owner's passes
+([STABILITY_METHOD.md § The weekly read](STABILITY_METHOD.md#the-weekly-read--make-stability-read)).
 
 | meter | stable when | read it with |
 |---|---|---|
@@ -76,6 +78,8 @@ the same weeks, so the read carries both halves, the last two rows below.
 | owner rulings asked for | **0** — a ruling the rules already gave is a process defect | the week's `Contract: strained — letter applied` trailers, read in one sitting |
 | the consumer gate | **green with no cure needed, two weeks running** | the `consumer-main-health` nightly |
 | `silent-wrong` open **on main** | **0** — `fixed-pending-merge` does not count; the freeze binds what main ships | `gh issue list -R loft-lang/loft --state open --label silent-wrong` minus `fixed-pending-merge` |
+| open deviations with a dead or missing tracking reference | **0** — an entry nobody can find from the tracker is deferred work nobody was told about | `make stability-read` (`deviations_stale`, named in the summary line); `scripts/rule_tags.py registers --issues` by hand |
+| script tests nothing in the repository names, and script tests added beside suite cells added | **0**, and the first far below the second — the suite is the main container of loft's tests | `make stability-read` (`scripts_unpinned`, `scripts_added`, `cells_added`); `scripts/scripts_named.py check` is the PR gate |
 | the C ship lane against the Rust twins | **no routine over 3×**; one over it is a bug issue | `python3 bench/stats.py --lanes rust,c,cship`, the committed row in `bench/portal/results/` |
 | lines into the core per week (`src/` outside `src/c/`, `src/generation/`, `src/opt/`, `src/lower/`), beside the lines into tests | **falling, with the test lines not falling faster** — the inflow the other meters cannot see | `git log --numstat` over the week's commits on every branch; a `make stability-read` column still to add |
 | share of the week's fixes that land with a guard (a suite cell, a `tests/` change or a suite pin) | **not falling while the core inflow holds** | the `Fixes #N` commits of the week against the paths they touch; a `make stability-read` column still to add |

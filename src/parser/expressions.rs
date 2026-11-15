@@ -7250,6 +7250,14 @@ use a separate collection or add after the loop"
             // binding never ended, and a later loop could not take the spelling for its
             // variable ("shadows a local still in scope").
             self.record_binding(var_nr);
+            // The store's target from here on, so it is the one this `=` defines.  The write
+            // below marks the name's FIRST resolution, which is the ended binding: a split
+            // first met on pass 2 — two loops whose values differ only in absence, which pass
+            // 1 cannot see yet — left the new binding undefined, and every read of it was
+            // "Unknown variable 'l#b1'".
+            if !self.first_pass {
+                self.vars.defined(var_nr);
+            }
             rebound_to = Value::Var(var_nr);
             &rebound_to
         } else {

@@ -83,7 +83,7 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
     want, got, img = stem + ".want.c", stem + ".layer", stem + ".store"
     switch = {"shapes": "LOFT_TRACE_SHAPES", "reach": "LOFT_TRACE_REACH", "functions": "LOFT_TRACE_REACH",
-              "counters": "LOFT_TRACE_COUNTERS", "iterations": "LOFT_TRACE_COUNTERS", "nn": "LOFT_TRACE_FACTS", "ranges": "LOFT_TRACE_FACTS", "bodies": "LOFT_TRACE_BODIES", "texts": "LOFT_TRACE_TEXTS", "writes": "LOFT_TRACE_WRITES"}[layer]
+              "counters": "LOFT_TRACE_COUNTERS", "iterations": "LOFT_TRACE_COUNTERS", "nn": "LOFT_TRACE_FACTS", "ranges": "LOFT_TRACE_FACTS", "bodies": "LOFT_TRACE_BODIES", "tables": "LOFT_TRACE_TABLES", "texts": "LOFT_TRACE_TEXTS", "writes": "LOFT_TRACE_WRITES"}[layer]
     try:
         rc, err = proc([loft, "--emit-c", want, f], {**env, switch: "1"}, timeout, cwd=os.path.dirname(f))
         if rc != 0:
@@ -121,6 +121,16 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
                 detail = (f"{n} line {k}\n    oracle: {(a[k] if k < len(a) else '(end)')[:170]}"
                           f"\n    other:  {(b[k] if k < len(b) else '(end)')[:170]}")
             return f, "differ" if wrong else "agree", (len(rust), len(equal), len(wrong), refused, detail)
+        if layer == "tables":
+            # A unit-level layer the generator prints only for a unit it writes whole: a unit
+            # it refuses is counted refused, never different.
+            if "unit" not in mine:
+                with open(got, encoding="utf-8", errors="replace") as fh:
+                    why = next((l.split("\t", 2)[-1] for l in fh.read().splitlines() if l.startswith("[refused]\t")), "no line")
+                return f, "refused", why[:110]
+            if rust.get("unit") != mine["unit"]:
+                return f, "differ", f"unit\n    oracle: {rust.get('unit') or '(no line)'}\n    other:  {mine['unit']}"
+            return f, "agree", "1"
         if layer == "texts":
             # A FIELD comparison: the generator prints the `key=value` fields it derives so
             # far, and each must be the oracle's; a field it does not print is not compared.
@@ -173,6 +183,124 @@ def one(f, loft, generator, tmp, env, timeout, debug=False):
                 os.unlink(p)
 
 
+def bench_rows(out):
+    """A bench program's verdict lines: each routine row's name and hash (its first and last
+    columns), the timings left out — what `bench/stats.py` holds every lane to."""
+    rows = []
+    for line in out.splitlines():
+        cells = line.split("\t")
+        if len(cells) >= 3 and cells[0] != "routine":
+            rows.append(f"{cells[0]}\t{cells[-1]}")
+    return "\n".join(rows)
+
+
+def run_one(f, loft, generator, tmp, env, timeout, bench=False):
+    """U-0: build and RUN `f` through the generator's unit (`LOFT_CGEN`), against the interpreter.
+
+    `pass` — the native run's output and exit are the interpreter's, and the interpreter's run
+    passed (exit 0); `fail` — they differ, or both fail; `refused` — the generator wrote no unit;
+    `nobuild` — the C compiler refused the unit.  The second field says whether the unit equals
+    the Rust generator's under the same switches (`=`) or not (`~`)."""
+    stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
+    want, got = stem + ".want.c", stem + ".got.c"
+    # A `tests/scripts` program runs from the repository root, as the test suite runs it
+    # (`19-files.loft` reads `tests/example`); every other one from its own directory.
+    marker = os.sep + os.path.join("tests", "scripts") + os.sep
+    cwd = f.split(marker)[0] if marker in f else os.path.dirname(f)
+
+    def run(cmd, e):
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, env=e, timeout=timeout, cwd=cwd)
+            return p.returncode, p.stdout, p.stderr
+        except subprocess.TimeoutExpired:
+            return -9, "", "timeout"
+    try:
+        gen_env = {**env, "LOFT_CGEN": generator, "LOFT_CGEN_RUNTIME": RUNTIME_DIR}
+        rc, _, err = run([loft, "--native-c", "--native-emit", got, f], gen_env)
+        if rc != 0 or not os.path.exists(got):
+            lines = [l for l in err.splitlines() if l.strip()] or ["no message"]
+            return f, "refused", re.sub(r"^.*cgen: not carried: (\w+: )?", "", lines[-1])[:110]
+        # The Rust unit from the same site the run compiles from (`--native-c`), which can
+        # differ from `--emit-c`'s: the run is compared with what the Rust writer would build.
+        run([loft, "--native-c", "--native-emit", want, f], env)
+        same = "=" if os.path.exists(want) and open(want, "rb").read() == open(got, "rb").read() else "~"
+        tail = ["--n", "2"] if bench else []
+        irc, iout, ierr = run([loft, "--interpret", f] + tail, env)
+        nrc, nout, nerr = run([loft, "--native-c", f] + tail, gen_env)
+        if bench:
+            iout, nout = bench_rows(iout), bench_rows(nout)
+        if nrc != 0 and ("error:" in nerr and ".c:" in nerr):
+            return f, "nobuild", same + " " + next((l for l in nerr.splitlines() if "error:" in l), "")[:150]
+        if irc == 0 and nrc == 0 and iout == nout:
+            return f, "pass", same
+        a, b = iout.splitlines(), nout.splitlines()
+        k = next((i for i in range(min(len(a), len(b))) if a[i] != b[i]), min(len(a), len(b)))
+        return f, "fail", (f"{same} exit {irc}/{nrc} line {k}\n    interpreter: {(a[k] if k < len(a) else '(end)')[:150]}"
+                           f"\n    loft unit:   {(b[k] if k < len(b) else '(end)')[:150]}"
+                           + (f"\n    stderr: {last(nerr)}" if nrc != 0 else ""))
+    finally:
+        for p in (want, got):
+            if os.path.exists(p):
+                os.unlink(p)
+
+
+BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cgen_survey.baseline")
+
+
+def gate(o, key, switches, numbers):
+    """`--write-baseline` / `--check`: the committed position of one configuration.
+
+    The baseline holds, per configuration `key` (layer, switches, form, scope), the counts it
+    was taken at and the switch list it was taken under.  `--check` fails (exit 1) on any count
+    below its baseline, on any `differ`, and on a switch list that is not the baseline's — a
+    position is only compared with one taken the same way.  Re-pin (`--write-baseline`) in the
+    commit of the change that moves it, saying why."""
+    import json
+    base = {}
+    if os.path.exists(BASELINE):
+        with open(BASELINE, encoding="utf-8") as fh:
+            base = json.load(fh)
+    if o.write_baseline:
+        base[key] = {"switches": switches, **numbers}
+        with open(BASELINE, "w", encoding="utf-8") as fh:
+            json.dump(base, fh, indent=1, sort_keys=True)
+            fh.write("\n")
+        print(f"baseline {key}: written")
+        return 0
+    if not o.check:
+        return None
+    want = base.get(key)
+    if want is None:
+        print(f"baseline {key}: none committed — take one with --write-baseline")
+        return 1
+    fails = []
+    if want.get("switches") != switches:
+        fails.append(f"taken under {want.get('switches')}, run under {switches}")
+    for k, v in numbers.items():
+        if k in ("differ", "fail", "nobuild"):
+            if v > 0:
+                fails.append(f"{k} {v}")
+        elif k in want and isinstance(v, int) and k in GATED and v < want[k]:
+            fails.append(f"{k} {v} < {want[k]}")
+    if fails:
+        print(f"baseline {key}: DROPPED — " + "; ".join(fails))
+        return 1
+    print(f"baseline {key}: held")
+    return 0
+
+
+# The counts a drop of which fails `--check` (the ones that only grow as the port does).
+GATED = ("agree", "equal", "pass", "rows", "same")
+
+
+def config_key(o):
+    scope = ("files:" + os.path.basename(o.files)) if o.files else ("scripts" if o.scripts_only else "corpus")
+    if o.chapter:
+        scope += ":" + ",".join(sorted(o.chapter))
+    what = "run" if o.run else (o.layer or "unit")
+    return f"{what}|{'plain' if o.plain else 'default'}|{o.form}|{scope}"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--loft", default=None, help="the loft binary (default: target/release/loft)")
@@ -180,7 +308,7 @@ def main():
     ap.add_argument("--cgen", action="store_true", help="build selfhost/front/cgen.loft and use it")
     ap.add_argument("--form", choices=["program", "debug"], default="program",
                     help="which unit: the program's, or the debug tier's with its #line marks")
-    ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges", "bodies", "texts", "writes"], default=None,
+    ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges", "bodies", "tables", "texts", "writes"], default=None,
                     help="compare what an analysis derived instead of the unit")
     ap.add_argument("--plain", action="store_true",
                     help="both sides under the switches of cgen_w.loft's PLAIN_SWITCHES: the rules "
@@ -189,6 +317,21 @@ def main():
                     help="with --plain: leave SWITCH out, so the oracle runs that rule, and tell the "
                          "generator to write as if it carried it (LOFT_CGEN_ASSUME): the bodies that "
                          "differ are the ones the rule changes")
+    ap.add_argument("--run", action="store_true",
+                    help="U-0: build and run each program through the generator's unit (LOFT_CGEN) "
+                         "and compare its output and exit with the interpreter's")
+    ap.add_argument("--bench", action="store_true",
+                    help="with --run: the programs are benches (bench/*/bench.loft, a library's "
+                         "bench/bench.loft) — run with --n 2, and compare each routine row's "
+                         "hash, not the timings")
+    ap.add_argument("--files", default=None, metavar="LIST",
+                    help="the programs to survey: a file of paths, one per line (the last tab "
+                         "field of a line), instead of the census's corpus")
+    ap.add_argument("--write-baseline", action="store_true",
+                    help="record this configuration's counts and switch list in cgen_survey.baseline")
+    ap.add_argument("--check", action="store_true",
+                    help="exit 1 when a count is below this configuration's baseline, on any "
+                         "differ, or when the switches are not the baseline's")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
@@ -209,6 +352,7 @@ def main():
                 env[name] = "1"
         if o.assume:
             env["LOFT_CGEN_ASSUME"] = o.assume
+    switches = sorted(k for k, v in env.items() if k.startswith("LOFT_NO_") and v == "1")
     tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
     if (o.form == "debug" or o.layer) and not (o.cgen or o.generator):
         sys.exit("--form debug and --layer compare a generator's output: give --cgen or --generator")
@@ -226,6 +370,40 @@ def main():
                 sys.exit(f"the generator did not build:\n{p.stderr[-2000:]}")
         files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
                                                            o.chapter, o.scripts_only) if census.plain(f)]
+        if o.files:
+            with open(o.files, encoding="utf-8") as fh:
+                files = [os.path.abspath(l.rstrip("\n").split("\t")[-1]) for l in fh if l.strip()]
+        if o.run:
+            if not o.generator:
+                sys.exit("--run builds the generator's units: give --cgen or --generator")
+            counts = collections.Counter()
+            why = collections.Counter()
+            same = 0
+            shown = []
+            with cf.ThreadPoolExecutor(o.jobs) as ex:
+                for f, verdict, what in ex.map(lambda f: run_one(f, loft, o.generator, tmp, env, o.timeout, o.bench), files):
+                    counts[verdict] += 1
+                    if verdict in ("pass", "fail", "nobuild") and what.startswith("="):
+                        same += 1
+                    if verdict in o.show:
+                        shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what}")
+                    if verdict in ("refused", "nobuild"):
+                        why[what.lstrip("=~ ")] += 1
+            print(f"{counts['pass']} of {len(files)} programs pass through the loft unit; " +
+                  ", ".join(f"{counts[k]} {k}" for k in ("fail", "nobuild", "refused") if counts[k]) +
+                  f"; {same} units equal the Rust one")
+            for line in sorted(shown):
+                print(line)
+            if why:
+                print("why a program did not build or was not written, by programs:")
+                for name, n in why.most_common(o.top):
+                    print(f"  {n:5d}  {name}")
+            gated = gate(o, config_key(o), switches,
+                         {"pass": counts["pass"], "fail": counts["fail"], "nobuild": counts["nobuild"],
+                          "refused": counts["refused"], "same": same, "programs": len(files)})
+            if gated is not None:
+                return gated
+            return 0 if counts["pass"] == len(files) else 1
         counts = collections.Counter()
         why = collections.Counter()
         shown = []
@@ -267,6 +445,16 @@ def main():
             print("why the second unit was not written, by programs:")
             for name, n in why.most_common(o.top):
                 print(f"  {n:5d}  {name}")
+        numbers = {"agree": counts["agree"], "differ": counts["differ"], "refused": counts["refused"],
+                   "units": units}
+        if o.layer == "bodies":
+            numbers.update({"equal": bodies["equal"], "differ": bodies["differ"] + counts["differ"],
+                            "functions": bodies["functions"]})
+        elif o.layer:
+            numbers["rows"] = rows
+        gated = gate(o, config_key(o), switches, numbers)
+        if gated is not None:
+            return gated
         return 0 if counts["agree"] == units else 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
