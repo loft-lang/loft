@@ -2164,6 +2164,12 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
     w.span_file = saved_file;
     w.span_line = saved_line;
   }
+  if w.why == "" && len(w.headers) > 0 {
+    match loop_shape::unspan(v) {
+      NdSet { var: set_var, inner: _ } => cgen_hoist::refresh_rebound(w, set_var, ind),
+      _ => {},
+    }
+  }
   if !is_line {
     w.filed_next = -1;
     w.filed = cgen_ref::filed_record(x.b, v);

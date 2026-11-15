@@ -75,6 +75,7 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
     return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [] };
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
+  opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
   // A loop that grows a store holds its headers without their base (`kept_bases` without the
   // store facts).
   for v in verdict.vectors {
@@ -815,4 +816,14 @@ pub fn windowed_path(w: W, path: text) -> boolean {
     }
   }
   false
+}
+
+// `refresh_rebound_header`: a rebind of `var` derives again every header held for the bare
+// vector it names.
+pub fn refresh_rebound(w: W, var: integer, ind: integer) {
+  for h in w.headers {
+    if h.path == "{var}:" {
+      line(w, ind, "{h.name} = loft_vh_of({w.names[var]!});");
+    }
+  }
 }

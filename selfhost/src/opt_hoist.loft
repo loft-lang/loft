@@ -77,6 +77,19 @@ fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boole
 // by a pure path, in first-appearance order, but for those rooted at a variable the body
 // rebinds.
 fn vector_candidates(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<Held> {
+  found = indexed_vectors(b, d, lp);
+  rebound = rebound_vars(b, d, lp);
+  out: vector<Held> = [];
+  for f in found {
+    if !rebound[f.root]! {
+      out += [f];
+    }
+  }
+  out
+}
+
+// `indexed_vectors`: the vectors the body indexes by a pure path, rebound or not.
+fn indexed_vectors(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<Held> {
   found: vector<Held> = [];
   whole = ir::NdInsert { items: lp.operators };
   opt_non_sentinel::walk(whole, fn(n: ir::Node) {
@@ -104,14 +117,7 @@ fn vector_candidates(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<
       _ => {},
     }
   });
-  rebound = rebound_vars(b, d, lp);
-  out: vector<Held> = [];
-  for f in found {
-    if !rebound[f.root]! {
-      out += [f];
-    }
-  }
-  out
+  found
 }
 
 // `LoopHoist`: what a loop may hold for its run — the headers of the vectors it reads, the
@@ -560,4 +566,81 @@ fn apart_hoist(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd
   // The loop grows no store these headers live in, so each carries its base.
   out.growth_free = len(out.vectors) > 0;
   out
+}
+
+// Is every rebind of `v` in the body a navigation — a field or an element of something?
+// Two flat walks: a lambda nested in one that captures a vector is loft#2487.
+fn navigates(b: ir::Bundle, lp: ir::Block, v: integer) -> boolean {
+  ok = [true];
+  values: vector<ir::Node> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => { if var == v { values += [inner]; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if var == v { ok[0] = false; } },
+      _ => {},
+    }
+  });
+  bound = ir::NdInsert { items: values };
+  opt_non_sentinel::walk(bound, fn(m: ir::Node) {
+    match m {
+      NdCall { def_nr, args: _ } => {
+        name = def_name(b, def_nr);
+        if !(name == "OpGetField" || name == "OpGetVector" || name == "OpGetVectorNullable") {
+          ok[0] = false;
+        }
+      },
+      NdBlock { block: _ } => { ok[0] = false; },
+      NdIf { cond: _, t: _, f: _ } => { ok[0] = false; },
+      NdLoop { block: _ } => { ok[0] = false; },
+      _ => {},
+    }
+  });
+  ok[0]!
+}
+
+// `rebound_apart_headers` (`@FR-R-Header`'s rebind clause) joined to a verdict: a bare
+// vector the loop rebinds by navigating is held apart and derived again after each rebind.
+pub fn with_rebound(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block, v: LoopHoist) {
+  if !opt_facts::enabled() || (env_variable("LOFT_NO_APART_HEADERS") ?? "0") != "0" || (env_variable("LOFT_NO_REBOUND_HEADER") ?? "0") != "0" {
+    return;
+  }
+  d = b.data.definitions[vd]!;
+  rebound = rebound_vars(b, d, lp);
+  candidates: vector<Held> = [];
+  for c in indexed_vectors(b, d, lp) {
+    if c.path.ends_with(":") && rebound[c.root]! && navigates(b, lp, c.root) {
+      candidates += [c];
+    }
+  }
+  if len(candidates) == 0 {
+    return;
+  }
+  paths: vector<text> = [];
+  roots: vector<integer> = [];
+  for c in candidates {
+    paths += [c.path];
+    roots += [c.root];
+  }
+  lent: vector<boolean> = [for x in d.variables.variables { work_buffer_arg(d, x#index) }];
+  keep = opt_apart::apart_headers(b, w, facts, vd, lp, paths, roots, lent);
+  // Held alone, the stores they live in grow nowhere in the loop: each carries its base.
+  alone = len(v.vectors) == 0 && len(v.pushes) == 0 && len(v.mint_pushes) == 0;
+  for c in candidates {
+    if !keep[c#index]! {
+      continue;
+    }
+    held = false;
+    for q in v.vectors {
+      if q.path == c.path {
+        held = true;
+      }
+    }
+    if !held {
+      v.vectors += [c];
+    }
+  }
+  if alone && len(v.vectors) > 0 {
+    v.growth_free = true;
+  }
 }
