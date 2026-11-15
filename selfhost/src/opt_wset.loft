@@ -1,0 +1,433 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/body_writes.rs`: the write set of a loop body — which record
+// types it may write, at which offsets — that `@FR-R-Scalar` evicts its held scalars by.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_names;
+use opt_hoist;
+use opt_non_sentinel;
+use opt_push;
+use opt_writes;
+use types;
+
+// A write set: (type, offset) pairs written in place, the types written whole, the types of
+// return buffers a callee fills, and the types of records the body owns and re-mints.
+pub struct WSet {
+  pub off_tp: vector<integer>,
+  pub off_at: vector<integer>,
+  pub whole: vector<integer>,
+  pub retbufs: vector<integer>,
+  pub own: vector<integer>,
+}
+
+pub fn empty() -> WSet {
+  WSet { off_tp: [], off_at: [], whole: [], retbufs: [], own: [] }
+}
+
+fn has(list: vector<integer>, x: integer) -> boolean {
+  for l in list {
+    if l == x {
+      return true;
+    }
+  }
+  false
+}
+
+// `WriteSet::evicts`: does the set write field `fld` of record type `tp`?
+pub fn evicts(s: WSet, tp: integer, fld: integer) -> boolean {
+  if has(s.whole, tp) || has(s.retbufs, tp) || has(s.own, tp) {
+    return true;
+  }
+  for t in s.off_tp {
+    if t == tp && s.off_at[t#index]! == fld {
+      return true;
+    }
+  }
+  false
+}
+
+fn extend(s: WSet, o: WSet) {
+  for t in o.off_tp {
+    s.off_tp += [t];
+    s.off_at += [o.off_at[t#index]!];
+  }
+  for t in o.whole {
+    s.whole += [t];
+  }
+  for t in o.retbufs {
+    s.retbufs += [t];
+  }
+  for t in o.own {
+    s.own += [t];
+  }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d >= 0 && d < len(b.data.definitions) { b.data.definitions[d]!.name } else { "" }
+}
+
+// `plain_record_type`: the schema type of a plain record type, -1 for any other.
+pub fn plain_tp(b: ir::Bundle, t: ir::TypeT) -> integer {
+  if !opt_writes::is_plain_record(b, t) {
+    return -1;
+  }
+  match opt_names::peel_link(t) {
+    TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
+    _ => -1,
+  }
+}
+
+fn var_tp(d: ir::Definition, v: integer) -> ir::TypeT {
+  if v >= 0 && v < len(d.variables.variables) { d.variables.variables[v]!.type_def[0] ?? ir::TyVoid } else { ir::TyVoid }
+}
+
+fn is_struct(b: ir::Bundle, tp: integer) -> boolean {
+  tp >= 0 && tp < len(b.types) && (match b.types[tp].parts[0] { PtStruct { fields: _ } => true, _ => false })
+}
+
+// `inline_parents`: every record type that holds `tp` inline, at any depth, as (type, offset)
+// pairs appended to `chain`.
+fn inline_parents(b: ir::Bundle, tp: integer, chain: vector<integer>) {
+  out: vector<integer> = [];
+  todo: vector<integer> = [tp, 0];
+  for _ in 0..len(b.types) * len(b.types) + 2 {
+    if len(todo) == 0 {
+      break;
+    }
+    cur = todo[len(todo) - 2];
+    base = todo[len(todo) - 1];
+    todo = todo[0..len(todo) - 2];
+    for t in b.types {
+      fields = match t.parts[0] {
+        PtStruct { fields: fs } => fs,
+        PtEnumValue { value: _, fields: fs } => fs,
+        _ => continue,
+      };
+      for f in fields {
+        if f.content != cur {
+          continue;
+        }
+        at = base + f.position;
+        known = false;
+        for o in out {
+          if o#index % 2 == 0 && o == t#index && out[o#index + 1]! == at {
+            known = true;
+          }
+        }
+        if !known {
+          out += [t#index, at];
+          todo += [t#index, at];
+        }
+      }
+    }
+  }
+  for o in out {
+    chain += [o];
+  }
+}
+
+// The kinds `setter_target` answers: an unknown place, a place that is no record, a record
+// (its (type, base) chain in `chain`).
+UNKNOWN = 0;
+NO_RECORD = 1;
+RECORD = 2;
+
+fn element_target(b: ir::Bundle, d: ir::Definition, vector: ir::Node, chain: vector<integer>) -> integer {
+  match loop_shape::unspan(vector) {
+    NdVar { n: v } => {
+      match opt_names::peel_link(var_tp(d, v)) {
+        TyVector { inner, dep: _ } => {
+          if opt_writes::is_scalar(inner) {
+            return NO_RECORD;
+          }
+          tp = plain_tp(b, inner);
+          if tp < 0 {
+            return UNKNOWN;
+          }
+          chain += [tp, 0];
+          RECORD
+        },
+        _ => UNKNOWN,
+      }
+    },
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) != "OpGetField" || len(args) != 3 {
+        return UNKNOWN;
+      }
+      vec_tp = match loop_shape::unspan(args[2]) { NdInt { n } => n, _ => -1 };
+      if vec_tp < 0 || vec_tp >= len(b.types) {
+        return UNKNOWN;
+      }
+      elem = match b.types[vec_tp].parts[0] {
+        PtVector { content } => content,
+        _ => -1,
+      };
+      if elem < 0 || elem >= len(b.types) {
+        return UNKNOWN;
+      }
+      if is_struct(b, elem) {
+        chain += [elem, 0];
+        return RECORD;
+      }
+      narrow = (env_variable("LOFT_NO_NARROW_ELEMENT_WRITE") ?? "0") == "0";
+      match b.types[elem].parts[0] {
+        PtBase => NO_RECORD,
+        PtEnum { values: _ } => NO_RECORD,
+        PtByte { start: _, nullable: _ } => if narrow { NO_RECORD } else { UNKNOWN },
+        PtShort { start: _, nullable: _ } => if narrow { NO_RECORD } else { UNKNOWN },
+        PtInt { start: _, nullable: _ } => if narrow { NO_RECORD } else { UNKNOWN },
+        PtShortRaw { start: _ } => if narrow { NO_RECORD } else { UNKNOWN },
+        PtIntRaw { start: _ } => if narrow { NO_RECORD } else { UNKNOWN },
+        _ => UNKNOWN,
+      }
+    },
+    _ => UNKNOWN,
+  }
+}
+
+fn setter_target(b: ir::Bundle, d: ir::Definition, target: ir::Node, chain: vector<integer>) -> integer {
+  match loop_shape::unspan(target) {
+    NdVar { n: u } => {
+      tp = plain_tp(b, var_tp(d, u));
+      if tp < 0 {
+        return UNKNOWN;
+      }
+      chain += [tp, 0];
+      if !opt_hoist::owned_local(d, u) {
+        inline_parents(b, tp, chain);
+      }
+      RECORD
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if name == "OpGetField" && len(args) == 3 {
+        content = match loop_shape::unspan(args[2]) { NdInt { n } => n, _ => -1 };
+        off = match loop_shape::unspan(args[1]) { NdInt { n } => n, _ => return UNKNOWN };
+        if content < 0 || !is_struct(b, content) {
+          return UNKNOWN;
+        }
+        chain += [content, 0];
+        parents: vector<integer> = [];
+        if setter_target(b, d, args[0], parents) == RECORD {
+          for p in parents {
+            chain += [if p#index % 2 == 0 { p } else { p + off }];
+          }
+        } else {
+          inline_parents(b, content, chain);
+        }
+        return RECORD;
+      }
+      if (name == "OpGetVector" || name == "OpGetVectorNullable") && len(args) == 3 {
+        return element_target(b, d, args[0], chain);
+      }
+      UNKNOWN
+    },
+    _ => UNKNOWN,
+  }
+}
+
+// `fresh_rooted`: a place rooted at a freshly minted element.
+fn fresh_rooted(b: ir::Bundle, place: ir::Node, fresh: vector<boolean>) -> boolean {
+  match loop_shape::unspan(place) {
+    NdVar { n: v } => v >= 0 && v < len(fresh) && fresh[v]!,
+    NdCall { def_nr, args } => def_name(b, def_nr) == "OpGetField" && len(args) > 0 && fresh_rooted(b, args[0], fresh),
+    _ => false,
+  }
+}
+
+fn is_mint(b: ir::Bundle, d: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
+  path = "";
+  root = -1;
+  vtp = 0;
+  opt_push::mint_target(b, d, name, args, path, root, vtp);
+  path != ""
+}
+
+// One call of the walk; false where the write cannot be typed.
+fn call_writes(b: ir::Bundle, w: opt_writes::Writes, vd: integer, def_nr: integer, args: vector<ir::Node>, fresh: vector<boolean>, set: WSet) -> boolean {
+  if def_nr < 0 || def_nr >= len(b.data.definitions) {
+    return false;
+  }
+  d = b.data.definitions[vd]!;
+  def = b.data.definitions[def_nr]!;
+  name = def.name;
+  first = opt_writes::first_var(args);
+  if opt_writes::is_in_place_set(name) {
+    fld = if len(args) > 1 { match loop_shape::unspan(args[1]) { NdInt { n } => n, _ => return false } } else { return false };
+    if fresh_rooted(b, args[0], fresh) {
+      return true;
+    }
+    chain: vector<integer> = [];
+    kind = setter_target(b, d, args[0], chain);
+    if kind == UNKNOWN {
+      return false;
+    }
+    for c in chain {
+      if c#index % 2 == 0 {
+        set.off_tp += [c];
+        set.off_at += [chain[c#index + 1]! + fld];
+      }
+    }
+    return true;
+  }
+  if opt_push::is_fusable(name) || name == "OpPreAllocVector" {
+    return true;
+  }
+  if is_mint(b, d, name, args) {
+    if name == "OpFinishRecord" && len(args) > 1 {
+      e = loop_shape::var_of(loop_shape::unspan(args[1]));
+      if e >= 0 && e < len(fresh) {
+        fresh[e] = false;
+      }
+    }
+    return true;
+  }
+  if name == "OpCopyRecord" && len(args) == 3 && fresh_rooted(b, args[1], fresh) {
+    return true;
+  }
+  // `in_place_copy`: a flag-free copy of a flat record writes its type whole.
+  if name == "OpCopyRecord" && len(args) == 3 && (env_variable("LOFT_NO_COPY_IN_PLACE") ?? "0") == "0" {
+    match loop_shape::unspan(args[2]) {
+      NdInt { n: raw } => {
+        if raw >= 0 && raw <= 65535 && raw & 32768 == 0 && is_struct(b, raw & 16383) && !types::owns_heap(b.types, raw & 16383) {
+          set.whole += [raw & 16383];
+          return true;
+        }
+      },
+      _ => {},
+    }
+  }
+  mint = name == "OpDatabase" || name == "OpDatabaseNP";
+  in_frame = first >= 0 && first < len(d.variables.variables);
+  // `null_buffer_alloc` / `discharge_buffer_set`: the discharge buffer is the body's own.
+  if (mint || name.starts_with("OpSet")) && (env_variable("LOFT_NO_NULL_BUFFER_HOIST") ?? "0") == "0" && in_frame && d.variables.variables[first]!.name.starts_with("__ref_p2_") {
+    tp = plain_tp(b, var_tp(d, first));
+    if tp >= 0 {
+      set.own += [tp];
+      return true;
+    }
+  }
+  if mint && in_frame && fresh[first]! {
+    return true;
+  }
+  // `lazy_buffer_mint`
+  if mint && in_frame && d.variables.variables[first]!.lazy_buffer {
+    tp = plain_tp(b, var_tp(d, first));
+    if tp < 0 {
+      return false;
+    }
+    set.own += [tp];
+    return true;
+  }
+  if opt_writes::scalar_stack_ref(d, name, args) {
+    return true;
+  }
+  // `scalar_file_read`: the read moves the file record's own cursor fields.
+  if name == "OpReadFile" && len(args) > 1 && in_frame {
+    scalar = match loop_shape::unspan(args[1]) {
+      NdCall { def_nr: c, args: inner } => c >= 0 && c < len(b.data.definitions) && opt_writes::scalar_stack_ref(d, b.data.definitions[c]!.name, inner),
+      _ => false,
+    };
+    tp = plain_tp(b, var_tp(d, first));
+    if scalar && tp >= 0 {
+      set.whole += [tp];
+      return true;
+    }
+  }
+  if name == "OpFreeRef" || name == "OpFreeRefIfDistinct" {
+    tp = if in_frame { plain_tp(b, var_tp(d, first)) } else { -1 };
+    if tp < 0 {
+      return false;
+    }
+    set.own += [tp];
+    return true;
+  }
+  if !binds::has_code(def) {
+    return opt_writes::native_op_is_store_free(def);
+  }
+  if opt_writes::call_writes_store(b, w, def_nr) {
+    inner = callee_writes(b, w, def_nr) ?? return false;
+    extend(set, inner);
+  }
+  true
+}
+
+// `body_writes`: adds what `node` may write to `set`; false where a statement cannot be
+// typed.  `fresh` — the elements minted so far — is shared by a body's statements.
+pub fn body_writes(b: ir::Bundle, w: opt_writes::Writes, vd: integer, node: ir::Node, fresh: vector<boolean>, set: WSet) -> boolean {
+  d = b.data.definitions[vd]!;
+  ok = [true];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        own_mint = false;
+        minted = false;
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr, args } => {
+            name = def_name(b, def_nr);
+            own_mint = (name == "OpDatabase" || name == "OpDatabaseNP") && opt_writes::first_var(args) == var;
+            minted = name == "OpNewRecord" && is_mint(b, d, name, args);
+          },
+          _ => {},
+        }
+        if var < len(fresh) && !(fresh[var]! && own_mint) {
+          fresh[var] = minted;
+        }
+      },
+      NdCall { def_nr, args } => {
+        if ok[0]! && !call_writes(b, w, vd, def_nr, args, fresh, set) {
+          ok[0] = false;
+        }
+      },
+      NdCallRef { var: _, args: _ } => { ok[0] = false; },
+      NdParallel { arms: _ } => { ok[0] = false; },
+      NdYield { inner: _ } => { ok[0] = false; },
+      _ => {},
+    }
+  });
+  ok[0]!
+}
+
+// `callee_writes`: the write set of a call of function `d`, memoised; null where it cannot
+// be typed (a recursion cycle too).
+fn callee_writes(b: ir::Bundle, w: opt_writes::Writes, d: integer) -> WSet? {
+  if len(w.wstate) == 0 {
+    w.wstate = [for _ in 0..len(b.data.definitions) { 0 }];
+    w.wsets = [for _ in 0..len(b.data.definitions) { empty() }];
+  }
+  state = w.wstate[d]!;
+  if state == 1 || state == 2 {
+    return null;
+  }
+  if state == 3 {
+    return w.wsets[d]!;
+  }
+  w.wstate[d] = 1;
+  def = b.data.definitions[d]!;
+  out = empty();
+  ok = false;
+  if opt_writes::in_place_only_writer(b, w, d) {
+    ok = body_writes(b, w, d, def.code[0]!, [for _ in 0..len(def.variables.variables) { false }], out);
+  } else if opt_writes::retbuf_only_writer(b, w, d) {
+    attr = binds::hidden_return_buffer_attr(def);
+    if attr != null {
+      tp = plain_tp(b, def.attributes[attr]!.typedef[0] ?? ir::TyVoid);
+      if tp >= 0 {
+        out.retbufs += [tp];
+        ok = true;
+      }
+    }
+  }
+  if !ok {
+    w.wstate[d] = 2;
+    return null;
+  }
+  w.wsets[d] = out;
+  w.wstate[d] = 3;
+  out
+}

@@ -8,6 +8,7 @@
 use state;
 use crt;
 use types;
+use natives;
 
 // A reference out of the three integers a `crt` routine answers.
 fn out_ref(io: vector<integer>) -> state::DbRef {
@@ -44,7 +45,7 @@ pub fn evacuate(self: state::State, holder: state::DbRef, fld: integer, home: st
   self.load_table();
   live = holder.store_nr != state::NULL_STORE && crt::store_live(holder.store_nr);
   elem = if live { types::root_vector_element(self.types, crt::store_known(holder.store_nr)) } else { null };
-  crt::evacuate(tp, holder.store_nr, holder.rec, holder.pos, fld, home.store_nr, home.rec, home.pos, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+  crt::evacuate(tp, holder.store_nr, holder.rec, holder.pos, fld, home.store_nr, home.rec, home.pos, (self.fact(state::F_PARENT_SIZE, tp) ?? 0), self.default_of(tp), elem != null && elem != tp);
 }
 
 // `Stores::get_dir`: the directory's entries appended to `result`, a vector of `File` records;
@@ -96,6 +97,529 @@ pub fn copy_closure(self: state::State, src: state::DbRef, tp: integer) -> state
   out_ref(io)
 }
 
+// A native `natives::light` carries, called by `OpStaticCall`'s arm on the stack as it stands.
+pub fn light_call(self: state::State, h: integer, idx: integer) {
+  if h == natives::N_STACK_TRACE {
+    self.stack_trace();
+    return;
+  }
+  if h == natives::N_C_CALL {
+    self.c_call_native(idx);
+    return;
+  }
+  if h == natives::N_REFLECT_TYPE {
+    self.reflect_type_native();
+    return;
+  }
+  if h == natives::N_TYPE_NAMED {
+    self.type_named_native();
+    return;
+  }
+  if h == natives::N_ENV_VARIABLES {
+    // `EnvVariable` records sized from the program's schema, built by the C runtime.
+    et = self.type_nr("EnvVariable");
+    crt::env_variables_into(self.lio, if et < 0 { 0 } else { self.types[et]?.size ?? 0 });
+    self.ensure_stack(16);
+    crt::set_slot_ref(self.stk, self.stack_pos, self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+    self.stack_pos += 16;
+    return;
+  }
+  if h == natives::N_REFLECT_FIELD {
+    self.reflect_field_native();
+    return;
+  }
+  if h == natives::N_REFLECT_FIELD_PATH {
+    self.reflect_field_path_native();
+    return;
+  }
+  if natives::is_state_native(h) {
+    self.keyed_entry(h == natives::N_KEYED_ENTRY_TEXT);
+    return;
+  }
+  sp = natives::light(h, self.stk, self.stack_pos, self.lio, self.tbuf);
+  if sp < 0 {
+    self.stop("not carried: native handler {h}");
+  } else {
+    self.stack_pos = sp;
+  }
+}
+
+// The number of the type the schema calls `name`, -1 for none.
+pub fn type_nr(self: state::State, name: text) -> integer {
+  for i in 0..len(self.types) {
+    if (self.types[i]?.name ?? "") == name {
+      return i;
+    }
+  }
+  -1
+}
+
+// `State::call_line`: the line of the call made at `call_pos` — the last line-table entry
+// STRICTLY before it (an entry at it belongs to the next statement), 0 for none.
+pub fn call_line(self: state::State, call_pos: integer) -> integer {
+  lo = 0;
+  hi = len(self.lines) / 2;
+  // The first pair at or past `call_pos`; the one before it is the line.
+  while lo < hi {
+    mid = (lo + hi) / 2;
+    if (self.lines[2 * mid] ?? 0) < call_pos {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if lo == 0 { 0 } else { self.lines[2 * lo - 1] ?? 0 }
+}
+
+// The byte position of field `name` in the record type `tp`, -1 for none; and whether that
+// field is an 8-byte integer (else a 4-byte one, the `LOFT_STD_INT4` regime).
+fn field_at(self: state::State, tp: integer, name: text) -> integer {
+  for f in types::record_fields(self.types, tp) {
+    if f.name == name {
+      return f.position;
+    }
+  }
+  -1
+}
+
+fn field_wide(self: state::State, tp: integer, name: text) -> boolean {
+  for f in types::record_fields(self.types, tp) {
+    if f.name == name {
+      return (self.types[f.content]?.size ?? 8) == 8;
+    }
+  }
+  true
+}
+
+// An integer written at its field's width.
+fn put_int_at(s: integer, r: integer, p: integer, fld: integer, wide: boolean, v: integer) {
+  if wide {
+    crt::set_int(s, r, p, fld, v);
+  } else {
+    crt::set_w(crt::W_INT4, s, r, p, fld, 0, v);
+  }
+}
+
+// `reflect_type(kt)` / `type_named(name)` (native.rs `reflect_type_into`): a `TypeInfo` record
+// for type `kt` in a store of its own — its name, kind, size, collection and element, then the
+// field, variant and key vectors — its reference pushed.  The record positions are the
+// program schema's `TypeInfo`, `FieldInfo`, `VariantInfo`, `KeyInfo`.
+pub fn reflect_push(self: state::State, kt: integer) {
+  self.load_table();
+  ti = self.type_nr("TypeInfo");
+  fi = self.type_nr("FieldInfo");
+  vi = self.type_nr("VariantInfo");
+  ki = self.type_nr("KeyInfo");
+  if ti < 0 || fi < 0 || vi < 0 || ki < 0 {
+    self.stop("not carried: reflection without the TypeInfo types");
+    return;
+  }
+  // `database` remakes a store its argument already names.
+  self.lio[0] = state::NULL_STORE;
+  self.lio[1] = 0;
+  self.lio[2] = 0;
+  crt::database(self.lio, self.types[ti]?.size ?? 0, ti);
+  s = self.lio[0] ?? state::NULL_STORE;
+  r = self.lio[1] ?? 0;
+  p = self.lio[2] ?? 0;
+  known = kt >= 0 && kt < len(self.types);
+  crt::set_text(s, r, p, self.field_at(ti, "name"), if known { self.types[kt]?.name ?? "" } else { "#{kt}" });
+  crt::set_w(crt::W_BYTE, s, r, p, self.field_at(ti, "kind"), 0, types::reflect_kind(self.types, kt));
+  put_int_at(s, r, p, self.field_at(ti, "size"), self.field_wide(ti, "size"), if known { self.types[kt]?.size ?? 0 } else { 0 });
+  crt::set_w(crt::W_BYTE, s, r, p, self.field_at(ti, "collection"), 0, if known { types::reflect_collection(self.types, kt) } else { 1 });
+  elem = if known { types::reflect_element(self.types, kt) } else { null };
+  crt::set_text(s, r, p, self.field_at(ti, "element"), if elem == null { "" } else { self.types[elem!]?.name ?? "#{elem!}" });
+  if known {
+    fields = types::record_fields(self.types, kt);
+    if (types::reflect_kind(self.types, kt) == 8 || types::reflect_kind(self.types, kt) == 10) {
+      fsize = self.types[fi]?.size ?? 0;
+      fpos = p + self.field_at(ti, "fields");
+      for f in fields {
+        crt::vec_append(self.lio, s, r, fpos, fsize);
+        es = self.lio[0] ?? state::NULL_STORE;
+        er = self.lio[1] ?? 0;
+        ep = self.lio[2] ?? 0;
+        crt::set_text(es, er, ep, self.field_at(fi, "name"), f.name);
+        crt::set_text(es, er, ep, self.field_at(fi, "type_name"), self.types[f.content]?.name ?? "#{f.content}");
+        put_int_at(es, er, ep, self.field_at(fi, "position"), self.field_wide(fi, "position"), f.position);
+        crt::set_w(crt::W_BYTE, es, er, ep, self.field_at(fi, "kind"), 0, types::reflect_kind(self.types, f.content));
+        crt::set_w(crt::W_BYTE, es, er, ep, self.field_at(fi, "nullable"), 0, if f.nullable { 1 } else { 0 });
+        crt::vec_finish(s, r, fpos);
+      }
+    }
+    match self.types[kt]?.parts[0] {
+      PtEnum { values } => {
+        vsize = self.types[vi]?.size ?? 0;
+        vpos = p + self.field_at(ti, "variants");
+        for v in values {
+          crt::vec_append(self.lio, s, r, vpos, vsize);
+          es = self.lio[0] ?? state::NULL_STORE;
+          er = self.lio[1] ?? 0;
+          ep = self.lio[2] ?? 0;
+          crt::set_text(es, er, ep, self.field_at(vi, "name"), v.name);
+          // 1-indexed: the store spells "absent" as 0.
+          put_int_at(es, er, ep, self.field_at(vi, "tag"), self.field_wide(vi, "tag"), v#index + 1);
+          crt::vec_finish(s, r, vpos);
+        }
+      }
+      _ => {}
+    }
+    keys = types::reflect_keys(self.types, kt);
+    if len(keys) > 0 && elem != null {
+      efields = types::record_fields(self.types, elem!);
+      // Whole or nothing: a key the element's fields do not hold drops the list.
+      whole = true;
+      k = 0;
+      while k + 1 < len(keys) {
+        if efields[keys[k] ?? -1] == null {
+          whole = false;
+        }
+        k += 2;
+      }
+      if whole {
+        ksize = self.types[ki]?.size ?? 0;
+        kpos = p + self.field_at(ti, "keys");
+        k = 0;
+        while k + 1 < len(keys) {
+          ef = efields[keys[k] ?? 0]!;
+          crt::vec_append(self.lio, s, r, kpos, ksize);
+          es = self.lio[0] ?? state::NULL_STORE;
+          er = self.lio[1] ?? 0;
+          ep = self.lio[2] ?? 0;
+          crt::set_text(es, er, ep, self.field_at(ki, "name"), ef.name);
+          put_int_at(es, er, ep, self.field_at(ki, "position"), self.field_wide(ki, "position"), ef.position);
+          crt::set_w(crt::W_BYTE, es, er, ep, self.field_at(ki, "ascending"), 0, keys[k + 1] ?? 1);
+          crt::vec_finish(s, r, kpos);
+          k += 2;
+        }
+      }
+    }
+  }
+  self.ensure_stack(16);
+  crt::set_slot_ref(self.stk, self.stack_pos, s, r, p);
+  self.stack_pos += 16;
+}
+
+// The data field of record type `kt` that BEGINS at byte `position` (`LayoutField::is_data`:
+// not the enum tag, not a `#` field), -1 for none: its index in the type's fields.
+fn data_field(self: state::State, kt: integer, position: integer) -> integer {
+  k = types::reflect_kind(self.types, kt);
+  if k != 8 && k != 10 {
+    return -1;
+  }
+  for f in types::record_fields(self.types, kt) {
+    if f.name != "enum" && !f.name.starts_with("#") && f.position == position {
+      return f#index;
+    }
+  }
+  -1
+}
+
+// `field_value(x, position)` / `field_value(x, path)` (native.rs `reflect_field_at`): the value
+// at a reflected position of the record `(vs, vr, vp)` of type `kt` — each step of a path an
+// inline record field — as a `ValueInfo` in a store of its own, its reference pushed.  A
+// position no data field begins at, or a null record, answers `OtherKind` with nothing read;
+// a scalar's null is its own kind's sentinel.
+fn field_value_push(self: state::State, vs: integer, vr: integer, vp: integer, kt0: integer, path: vector<integer>) {
+  self.load_table();
+  fv = self.type_nr("ValueInfo");
+  if fv < 0 {
+    self.stop("not carried: field_value without the ValueInfo type");
+    return;
+  }
+  kt = kt0;
+  at = vp;
+  fidx = -1;
+  content = -1;
+  ok = len(path) > 0;
+  for step in path {
+    if !ok {
+      break;
+    }
+    fidx = self.data_field(kt, step);
+    if fidx < 0 {
+      ok = false;
+    } else {
+      f = types::record_fields(self.types, kt)[fidx]!;
+      content = f.content;
+      if step#index + 1 < len(path) {
+        // Every step but the last lands on an inline record.
+        ck = types::reflect_kind(self.types, content);
+        if ck != 8 && ck != 10 {
+          ok = false;
+        }
+        at += f.position;
+        kt = content;
+      } else {
+        at += f.position;
+      }
+    }
+  }
+  kind = if ok && vr != 0 { types::reflect_kind(self.types, content) } else { 14 };
+  self.lio[0] = state::NULL_STORE;
+  self.lio[1] = 0;
+  self.lio[2] = 0;
+  crt::database(self.lio, self.types[fv]?.size ?? 0, fv);
+  s = self.lio[0] ?? state::NULL_STORE;
+  r = self.lio[1] ?? 0;
+  p = self.lio[2] ?? 0;
+  iw = self.field_wide(fv, "i");
+  crt::set_w(crt::W_BYTE, s, r, p, self.field_at(fv, "kind"), 0, kind);
+  put_int_at(s, r, p, self.field_at(fv, "i"), iw, 0);
+  crt::set_float(s, r, p, self.field_at(fv, "f"), 0.0, (self.types[types::record_fields(self.types, fv)[self.field_index(fv, "f")]?.content ?? 3]?.size ?? 8) == 4);
+  is_null = false;
+  if kind != 14 {
+    iv: integer? = 0;
+    flv: float? = 0.0;
+    tv: text? = null;
+    istext = false;
+    isfloat = false;
+    match self.types[content]?.parts[0] {
+      PtBase => {
+        if content == 0 || content == 1 {
+          iv = crt::get_int(vs, vr, at, 0);
+          is_null = iv == null;
+        } else if content == 2 || content == 3 {
+          flv = crt::get_float(vs, vr, at, 0, content == 2);
+          is_null = flv == null;
+          isfloat = true;
+        } else if content == 4 {
+          b = crt::get_w(crt::W_BYTE, vs, vr, at, 0, 0);
+          is_null = b == null || b == 255;
+          iv = (b ?? 0) & 1;
+        } else if content == 6 {
+          c = crt::get_w(crt::W_CHARACTER, vs, vr, at, 0, 0) ?? 0;
+          is_null = c == 0;
+          iv = c;
+        } else if content == 5 {
+          tv = crt::get_text(vs, vr, at, 0);
+          is_null = tv == null;
+          istext = true;
+        }
+      }
+      PtByte { start, nullable } => {
+        raw = crt::get_w(crt::W_BYTE, vs, vr, at, 0, 0);
+        is_null = raw == null || (nullable && raw == 255);
+        iv = if is_null { null } else { raw! + start };
+      }
+      PtShort { start, nullable: _ } => {
+        iv = crt::get_w(crt::W_SHORT, vs, vr, at, 0, start);
+        is_null = iv == null;
+      }
+      PtShortRaw { start, nullable: _ } => {
+        iv = crt::get_w(crt::W_SHORT_RAW, vs, vr, at, 0, start);
+        is_null = iv == null;
+      }
+      PtInt { start: _, nullable: _ } => {
+        iv = crt::get_w(crt::W_INT4, vs, vr, at, 0, 0);
+        is_null = iv == null;
+      }
+      _ => {}
+    }
+    if !is_null {
+      put_int_at(s, r, p, self.field_at(fv, "i"), iw, if isfloat || istext { 0 } else { iv ?? 0 });
+      if isfloat {
+        crt::set_float(s, r, p, self.field_at(fv, "f"), flv, (self.types[types::record_fields(self.types, fv)[self.field_index(fv, "f")]?.content ?? 3]?.size ?? 8) == 4);
+      }
+      if istext {
+        crt::set_text(s, r, p, self.field_at(fv, "t"), tv);
+      }
+    }
+  }
+  crt::set_w(crt::W_BYTE, s, r, p, self.field_at(fv, "is_null"), 0, if is_null { 1 } else { 0 });
+  self.ensure_stack(16);
+  crt::set_slot_ref(self.stk, self.stack_pos, s, r, p);
+  self.stack_pos += 16;
+}
+
+fn field_index(self: state::State, tp: integer, name: text) -> integer {
+  for f in types::record_fields(self.types, tp) {
+    if f.name == name {
+      return f#index;
+    }
+  }
+  0
+}
+
+// `field_value(x, position)`: the type number, the position and the record popped.
+pub fn reflect_field_native(self: state::State) {
+  kt = self.get_stack_i64() ?? -1;
+  position = self.get_stack_i64() ?? -1;
+  if !self.can_pop(16) {
+    return;
+  }
+  self.stack_pos -= 16;
+  crt::slot_ref(self.lio, self.stk, self.stack_pos);
+  self.field_value_push(self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, kt, [position]);
+}
+
+// `field_value(x, path)`: the type number, the path (a `vector<integer>`) and the record popped.
+pub fn reflect_field_path_native(self: state::State) {
+  kt = self.get_stack_i64() ?? -1;
+  if !self.can_pop(32) {
+    return;
+  }
+  self.stack_pos -= 32;
+  crt::slot_ref(self.lio, self.stk, self.stack_pos + 16);
+  ps = self.lio[0] ?? state::NULL_STORE;
+  pr = self.lio[1] ?? 0;
+  pp = self.lio[2] ?? 0;
+  path: vector<integer> = [];
+  n = crt::vec_len(ps, pr, pp);
+  for i in 0..n {
+    crt::vec_get(self.lio, ps, pr, pp, 8, i);
+    path += [crt::get_int(self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, 0) ?? -1];
+  }
+  crt::slot_ref(self.lio, self.stk, self.stack_pos);
+  self.field_value_push(self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, kt, path);
+}
+
+pub fn reflect_type_native(self: state::State) {
+  kt = self.get_stack_i64() ?? -1;
+  self.reflect_push(kt);
+}
+
+pub fn type_named_native(self: state::State) {
+  name = self.get_stack_str() ?? "";
+  kt = self.type_nr(name);
+  // `Stores::name` also answers the DECLARED spelling of a type `finish_type` renamed — a
+  // `vector<T>` held as `array<T>`, a `sorted<T[k]>` as `ordered<T[k]>`; the image keeps
+  // only the new name.
+  if kt < 0 && name.starts_with("vector<") {
+    kt = self.type_nr("array<{name[7..name.size()]}");
+  } else if kt < 0 && name.starts_with("sorted<") {
+    kt = self.type_nr("ordered<{name[7..name.size()]}");
+  }
+  if kt < 0 {
+    self.ensure_stack(16);
+    crt::set_slot_ref(self.stk, self.stack_pos, state::NULL_STORE, 0, 0);
+    self.stack_pos += 16;
+    return;
+  }
+  self.reflect_push(kt);
+}
+
+// `stack_trace()` (`n_stack_trace`): the frames outermost first, each its function, file and
+// the line of the call that entered it (0 for the entry frame) — a `vector<StackFrame>` in a
+// store of its own, the field positions read from the program's schema.  A frame's arguments
+// and variables are not carried (STACKTRACE.md ST-6: empty, as a native frame's are).
+pub fn stack_trace(self: state::State) {
+  self.load_table();
+  sf = self.type_nr("StackFrame");
+  if sf < 0 {
+    self.stop("not carried: stack_trace without a StackFrame type");
+    return;
+  }
+  size = self.types[sf]?.size ?? 0;
+  fpos = -1;
+  filepos = -1;
+  lpos = -1;
+  lwide = true;
+  for f in types::record_fields(self.types, sf) {
+    if f.name == "function" {
+      fpos = f.position;
+    } else if f.name == "file" {
+      filepos = f.position;
+    } else if f.name == "line" {
+      lpos = f.position;
+      lwide = (self.types[f.content]?.size ?? 8) == 8;
+    }
+  }
+  vt = self.type_nr("vector<StackFrame>");
+  // `database` remakes a store its argument already names: the scratch vector is cleared to the
+  // null reference first, or the last operator's store would be the one remade.
+  self.lio[0] = state::NULL_STORE;
+  self.lio[1] = 0;
+  self.lio[2] = 0;
+  crt::database(self.lio, 8, if vt < 0 { sf } else { vt });
+  vs = self.lio[0] ?? state::NULL_STORE;
+  vr = self.lio[1] ?? 0;
+  vp = self.lio[2] ?? 0;
+  self.image_ready(sf);
+  for k in 0..self.depth {
+    fr = self.frame_at(k);
+    d = fr.d_nr;
+    crt::vec_append(self.lio, vs, vr, vp, size);
+    es = self.lio[0] ?? state::NULL_STORE;
+    er = self.lio[1] ?? 0;
+    ep = self.lio[2] ?? 0;
+    crt::fill(es, er, ep, self.images[sf]!);
+    crt::set_text(es, er, ep, fpos, self.names[d] ?? "<worker>");
+    crt::set_text(es, er, ep, filepos, self.files[self.def_files[d] ?? 0] ?? "");
+    line = if k == 0 { 0 } else { self.call_line(fr.call_pos) };
+    if lwide {
+      crt::set_int(es, er, ep, lpos, line);
+    } else {
+      crt::set_w(crt::W_INT4, es, er, ep, lpos, 0, line);
+    }
+    crt::vec_finish(vs, vr, vp);
+  }
+  self.ensure_stack(16);
+  crt::set_slot_ref(self.stk, self.stack_pos, vs, vr, vp);
+  self.stack_pos += 16;
+}
+
+// A program's own `#c` binding (`RunImage.cnatives`): its arguments popped at their slot
+// widths, the C function called through `crt::c_call`, the answer pushed at its slot's width.
+pub fn c_call_native(self: state::State, idx: integer) {
+  desc = self.cnatives[idx] ?? "";
+  parts = desc.split(';');
+  sym = parts[0] ?? "";
+  args = parts[1] ?? "";
+  ret = parts[2] ?? "v";
+  answer = parts[3] ?? "v";
+  n = args.size();
+  if !self.can_pop(8 * n) {
+    return;
+  }
+  bits = if ret == "v" { 0 } else { ret[1..ret.size()] as integer ?? 64 };
+  self.lio[0] = 0;
+  v = crt::c_call(self.stk, self.stack_pos, sym, args, bits, ret.starts_with("s"), idx, self.lio);
+  if (self.lio[0] ?? -1) < 0 {
+    self.stop("not carried: the C function {sym} (not found in the process)");
+    return;
+  }
+  self.stack_pos -= 8 * n;
+  if answer == "i" {
+    self.put_stack_i64(v);
+  } else if answer == "b" {
+    self.put_stack_u8(v);
+  } else if answer == "c" {
+    self.put_stack_u32(v);
+  }
+}
+
+// `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` and
+// `keyed_entry_text(data, parent_tp, fld, key)` — the entry under the key in the hash the
+// record target names (`State::target_of`, derived once), found or filed with its key written.
+pub fn keyed_entry(self: state::State, text_key: boolean) {
+  self.load_table();
+  sp = self.stack_pos;
+  ptp = natives::get(self.stk, sp - (if text_key { 32 } else { 48 })) ?? 0;
+  fld = natives::get(self.stk, sp - (if text_key { 24 } else { 40 })) ?? 0;
+  t = self.targets[self.target_of(ptp, fld)]!;
+  if !t.direct || t.how != state::T_HASH {
+    self.stop("not carried: a keyed entry in a collection that is not a hash");
+    return;
+  }
+  n = 1;
+  if text_key {
+    crt::key_view(self.stk, sp - 16);
+  } else {
+    n = if t.nkeys < 1 { 1 } else if t.nkeys > 4 { 4 } else { t.nkeys };
+    for ki in 0..n {
+      crt::key_int(natives::get(self.stk, sp - 32 + ki * 8));
+    }
+  }
+  at = sp - (if text_key { 48 } else { 64 });
+  vs = crt::stack_get(4, self.stk, at) & 65535;
+  vr = crt::stack_get(4, self.stk, at + 4);
+  vp = crt::stack_get(4, self.stk, at + 8);
+  crt::keyed_entry(self.lio, vs, vr, vp + t.at, t.content, t.tp, n);
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+  self.stack_pos = at + 16;
+}
+
 // `State::hash_add`: the record and then the hash popped; the record filed in the hash of
 // type `tp`.
 pub fn hash_add(self: state::State) {
@@ -103,7 +627,7 @@ pub fn hash_add(self: state::State) {
   rec = self.get_stack_dbref();
   data = self.get_stack_dbref();
   self.load_table();
-  crt::hash_insert(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp);
+  crt::hash_insert(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(state::F_CONTENT, tp) ?? 0, tp);
 }
 
 // `State::create_stack`: a reference to the frame slot `pos` under the top pushed — the null
@@ -191,7 +715,7 @@ pub fn parallel_join(self: state::State) {
 pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, raw: integer, parent_tp: integer, field: integer) {
   tp = raw & 32767;
   self.load_table();
-  elem = types::content_of(self.types, tp);
+  elem = self.fact(state::F_CONTENT, tp);
   if elem == null {
     self.stop("not carried: a fill of {self.types[tp]?.name ?? "a collection"}");
     return;
@@ -213,12 +737,12 @@ pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, r
       k = 0;
       while k + 2 < len(members) {
         held = held || (members[k + 1] ?? -1) == 0;
-        nullable = nullable || types::nullable_element(self.types, members[k + 2] ?? 0);
+        nullable = nullable || self.has(state::F_NULLABLE_ELEMENT, members[k + 2] ?? 0);
         k += 3;
       }
     }
   }
-  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, types::keyed_kind(self.types, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
+  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, self.fact(state::F_KEYED_KIND, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
 }
 
 // `State::string_from_const_store`: a view of the long text the constant store holds in record

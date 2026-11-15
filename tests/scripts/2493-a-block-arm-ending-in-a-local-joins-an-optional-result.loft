@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2493 — an optional `match` result meets a present arm of its base, whatever spells the
+// arm: a call, a literal, or a block whose value is a local (`@FR-N-Join`).  The block arm was
+// refused (`cannot unify: Out? and Out`), for a record, an integer, a text and a vector alike.
+// Each cell is hand-computed; the `B` arm answers null through its call.
+//
+// @falsified-at: 0de1794d4 — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: leak, panic and refusals are clean on both trees (`falsify` requires HERE clean);
+//   the exit is the whole measurement.
+// CHANNEL: the asserts; before the fix the file does not parse.
+struct Out { kind: integer, value: integer }
+struct Other { kind: integer }
+enum Nd { A, B { n: integer }, C { n: integer } }
+fn mk(n: integer) -> Out? { if n < 0 { return null; } Out { kind: 1, value: n } }
+fn num(n: integer) -> integer? { if n < 0 { null } else { n * 2 } }
+fn word(n: integer) -> text? { if n < 0 { null } else { "w{n}" } }
+fn list(n: integer) -> vector<integer>? { if n < 0 { null } else { [n, n] } }
+
+fn rec(v: Nd) -> Out? {
+  match v {
+    A => mk(3),
+    B { n } => mk(0 - n),
+    C { n } => { x = Out { kind: 3, value: n }; x.value += 1; x },
+  }
+}
+fn int(v: Nd) -> integer? {
+  match v {
+    A => num(3),
+    B { n } => num(0 - n),
+    C { n } => { x = n + 10; x },
+  }
+}
+fn txt(v: Nd) -> text? {
+  match v {
+    A => word(3),
+    B { n } => word(0 - n),
+    C { n } => { x = "c{n}"; x },
+  }
+}
+fn vec(v: Nd) -> vector<integer>? {
+  match v {
+    A => list(3),
+    B { n } => list(0 - n),
+    C { n } => { x = [n]; x += [n + 1]; x },
+  }
+}
+
+fn test_a_block_arm_ending_in_a_local_joins_an_optional_result() {
+  assert((rec(A).value ?? -1) == 3 && rec(B { n: 5 }) == null && (rec(C { n: 4 }).value ?? -1) == 5, "record");
+  assert((int(A) ?? -1) == 6 && int(B { n: 5 }) == null && (int(C { n: 4 }) ?? -1) == 14, "integer");
+  assert((txt(A) ?? "-") == "w3" && txt(B { n: 5 }) == null && (txt(C { n: 4 }) ?? "-") == "c4", "text");
+  a = vec(A) ?? [];
+  c = vec(C { n: 4 }) ?? [];
+  assert(len(a) == 2 && a[1] == 3 && vec(B { n: 5 }) == null && len(c) == 2 && c[1] == 5, "vector");
+}

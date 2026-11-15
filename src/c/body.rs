@@ -617,6 +617,77 @@ fn borrowed_texts(
     }
 }
 
+/// `LOFT_TRACE_TEXTS=1` — what the text analyses a body is set up with decided for function
+/// `d` (`FnWriter::new`): one line on standard error, `[texts]<TAB>function<TAB>` then
+/// `borrowed=`, `literal=`, `tested=` (each `v:root+root`), `slices=`, `lazy=` (each
+/// `v:separator's code point:dead buffer or -`), `tabs=` (each
+/// `v:code point:dead buffer or -:alias+alias`), every list sorted by variable number and
+/// comma separated.  A layer of the loft-written generator's comparison (12-c-generator.md
+/// § The layers beside the unit).
+pub(crate) fn trace_texts(cx: &Cx, d: u32) {
+    if !crate::env_once!(std::env::var("LOFT_TRACE_TEXTS").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let def = cx.data.def(d);
+    let (borrowed, tested, slices) = borrowed_texts(cx, d);
+    let literal = literal_views(def.code(), &borrowed);
+    let list = |it: Vec<u16>| {
+        let mut it = it;
+        it.sort_unstable();
+        it.iter().map(u16::to_string).collect::<Vec<_>>().join(",")
+    };
+    let b: Vec<u16> = (0..borrowed.len())
+        .filter(|v| borrowed[*v])
+        .map(|v| v as u16)
+        .collect();
+    let mut t: Vec<(u16, Vec<u16>)> = tested.into_iter().collect();
+    t.sort();
+    let t: Vec<String> = t
+        .iter()
+        .map(|(v, r)| {
+            let roots: Vec<String> = r.iter().map(u16::to_string).collect();
+            format!("{v}:{}", roots.join("+"))
+        })
+        .collect();
+    let dead = |b: Option<u16>| b.map_or("-".to_string(), |b| b.to_string());
+    let lazy = if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
+        std::collections::BTreeMap::new()
+    } else {
+        crate::opt::lazy_split::lazy_splits(cx.data, d)
+    };
+    let lazy: Vec<String> = lazy
+        .iter()
+        .map(|(v, l)| format!("{v}:{}:{}", l.separator as u32, dead(l.dead_buf)))
+        .collect();
+    let tabs = if cx.switches.split_table_disabled {
+        std::collections::BTreeMap::new()
+    } else {
+        crate::opt::hoist::split_tables(cx.data, d)
+    };
+    let tabs: Vec<String> = tabs
+        .iter()
+        .map(|(v, t)| {
+            let aliases: Vec<String> = t.aliases.iter().map(u16::to_string).collect();
+            format!(
+                "{v}:{}:{}:{}",
+                t.separator as u32,
+                dead(t.dead_buf),
+                aliases.join("+")
+            )
+        })
+        .collect();
+    eprintln!(
+        "[texts]\t{}\tborrowed={}\tliteral={}\ttested={}\tslices={}\tlazy={}\ttabs={}",
+        def.name(),
+        list(b),
+        list(literal.into_iter().collect()),
+        t.join(","),
+        list(slices.into_iter().collect()),
+        lazy.join(","),
+        tabs.join(",")
+    );
+}
+
 /// `@FR-R-TextBorrow`'s format clause (C): a bind of a work-text borrower that is a format
 /// block ending in its work text, a frame-local text the view reads in place.
 fn work_view_bind(vars: &Function, borrowed: &[bool], x: &Value) -> bool {

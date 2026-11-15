@@ -324,7 +324,7 @@ not a check, so the expensive option costs a flag to ask for rather than a flag 
 | | |
 |---|---|
 | `find_problems.sh` | curated — ~70s |
-| `find_problems.sh --full` | every test — ~370s |
+| `find_problems.sh --full` | every test of THIS repository — ~370s; not the language suite (`make suite`, TESTING.md), which an IR or rewrite change also needs |
 | `find_problems.sh --subject <name>` | one area — seconds |
 | `find_problems.sh --changed [ref]` | the subjects the DIFF touches (uncommitted edits, or against `ref`) — seconds; falls back to curated, saying why, when the diff touches something every binary depends on |
 | `find_problems.sh --list-subjects` | the subjects, and what the default excludes |

@@ -1,0 +1,964 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — what the function writer's files share: the unit's context (`Cx`), one
+// function's writer (`FnWriter`, here `W`) with the records its rules keep, a C expression and
+// its kind (`E`, `K`), and the leaf routines over them — a shape's C type and null, a line, a
+// temporary, the conversions (`as_int` …), the range proof's questions.  Declared apart from
+// the walk (`cgen_fn.loft`) and the loops (`cgen_loop.loft`), which use each other: a record
+// both name is declared before either is read.
+
+use ir;
+use cgen_names;
+use loop_shape;
+use opt_frame_calls;
+use opt_non_sentinel;
+use opt_range;
+use opt_writes;
+use own;
+use opt_facts;
+use opt_adopt;
+use opt_ranged_call;
+
+// The shape of a C expression's value (`K`).
+K_INT = 0;
+K_INT32 = 1;
+K_COND = 2;
+K_BOOL = 3;
+K_VOID = 4;
+K_ENUM = 5;
+K_FLOAT = 6;
+K_SINGLE = 7;
+K_CHAR = 8;
+K_VIEW = 9;
+K_REF = 10;
+K_FN = 11;
+K_TUP = 12;
+
+// A C expression and the shape of its value (`E`).
+struct E {
+  code: text,
+  kind: integer,
+  // A tuple value's shape (`K::Tup`'s struct), "" for any other kind.
+  tup: text = "",
+}
+
+// A temporary and its shape; `verify`: only a `LOFT_VERIFY` proof reads it.
+struct Temp {
+  name: text,
+  shape: text,
+  verify: boolean,
+}
+
+// `@FR-R-StickySum`: a sum an enclosing loop took, with its loop's flag; and a temp a sum is
+// staged through (`t = acc ± e; …; acc = t`).
+struct Sum {
+  var: integer,
+  flag: text,
+}
+
+struct Staged {
+  temp: integer,
+  sum: integer,
+}
+
+// `@FR-R-Invariant`: a chain a loop memoises — the memo's local, the chain its first use
+// evaluates and whether the loop's prelude evaluated it — and one loop's memos.
+struct Memo {
+  name: text,
+  chain: ir::Node,
+  hoisted: boolean,
+}
+
+struct MemoFrame {
+  memos: vector<Memo>,
+}
+
+// `@FR-R-GuardedChain`: a guarded loop's admission, asked of each operator its body writes —
+// the loop's depth, its guard ("" in the plain copy, where every admitted operator is plain)
+// and the leaves a chain may be built from, per variable of function `d`.
+struct ChainFrame {
+  d: integer,
+  depth: integer,
+  guard: text,
+  own: vector<boolean>,
+  nested: vector<integer>,
+  written: vector<boolean>,
+  escaped: vector<boolean>,
+}
+
+// `@FR-R-Cold`'s loft clause: an early exit written as a helper — its arm, the literal it
+// answers, the helper's name, whether the body wrote its call, the variables it owns.
+struct ColdArm {
+  arm: ir::Node,
+  answer: ir::Node,
+  name: text,
+  called: boolean,
+  own: vector<integer>,
+}
+
+// `@FR-R-Header`: a vector header a loop holds — the vector's path, the header's local, and
+// whether it carries the record's base (`frame` 1) or must derive it at each use (0).
+struct Header {
+  path: text,
+  name: text,
+  frame: integer,
+}
+
+// `@FR-R-Push`: a push header a loop holds — the path, the header's local, the element size
+// and whether it writes through the record address it holds.
+// A push window open for a path: its name, the vector's held reference and the element size.
+struct Window {
+  path: text,
+  name: text,
+  pv: text,
+  size: integer,
+}
+
+// A record scalar a loop holds in a local: the record variable, the field, the local, its
+// shape.
+struct HeldScalar {
+  root: integer,
+  fld: integer,
+  name: text,
+  shape: text,
+}
+
+// `@FR-R-Base`'s grid clause: a variable and what it is known to be below (a fact), or the
+// expression it was bound to (a bind, a range end).
+struct GridFact {
+  var: integer,
+  node: ir::Node,
+}
+
+// `@FR-R-FileHold`: a file a loop reads through a held cursor — the file variable, the
+// cursor's name, and how many loops enclosed the one that holds it.
+struct FileHold {
+  file: integer,
+  name: text,
+  depth: integer,
+}
+
+struct PushHead {
+  path: text,
+  name: text,
+  size: integer,
+  based: boolean,
+}
+
+// `@FR-R-Base`'s counter clause: a range end known to be the length of a vector — the end
+// variable, the vector, and the local the end was copied from (-1 for none).
+struct RangeLen {
+  end: integer,
+  vec: ir::Node,
+  via: integer,
+}
+
+// A variable known to stay inside (a counter) or to be the length of (a length) the vector a
+// header describes, for the loop being written.
+struct InRange {
+  var: integer,
+  header: text,
+}
+
+// `@FR-R-RecPtr`: a record view whose address is held — the variable, the address local and
+// the lock-flag local.
+struct RecPtr {
+  var: integer,
+  pa: text,
+  pl: text,
+  // The text clause: the address also serves the view's text field reads.
+  texts: boolean,
+}
+
+// `@FR-R-Peel`: a constant the statements just before a loop gave one of its counters.
+struct Seed {
+  var: integer,
+  value: integer,
+}
+
+// What every function of a unit is written under (`Cx`): the program, the program-wide
+// parameter proof and the call memo of the range analysis.
+pub struct Cx {
+  pub b: ir::Bundle,
+  pub p: opt_non_sentinel::Proof,
+  pub c: opt_range::Calls,
+  // Per definition: is its name one two functions share (`duplicate_fn_names`)?
+  pub dups: vector<boolean>,
+  // `@FR-R-RangedCall`'s gain verdicts and `@FR-R-GuardFree`'s.
+  pub gains: opt_ranged_call::Gains,
+  pub guard: opt_frame_calls::GuardFree,
+  // The twins a call site asked for, in the order they were first asked (`Cx::twins`).
+  pub twins: vector<cgen_names::Twin>,
+  // `@FR-R-BufferReturn`'s `__wr` twins per definition: 0 not asked, 1 declined, 2 written, 3
+  // not carried by this writer (`why_work` says why).
+  pub work_twins: vector<integer>,
+  pub why_work: text,
+  // The memo of the store-write question (`Cx::hoist_memo.stores_written`).
+  pub writes: opt_writes::Writes,
+  // The operators the ownership oracle reads by number (`own::Ops`).
+  pub ops: own::Ops,
+  // The signatures the unit calls function values through, in the order they were first
+  // used (`Cx::fn_sigs`): `loft_call{n}`.
+  pub sigs: vector<text>,
+  // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
+  pub tuples: vector<text>,
+  // Does the unit bind a lazy store (`Cx::lazy`)?  -1 not asked yet, else 0 or 1.
+  pub lazy: integer,
+}
+
+pub fn new_cx(b: ir::Bundle) -> Cx {
+  Cx {
+    b: b,
+    p: opt_non_sentinel::new_proof(b),
+    c: opt_range::new_calls(),
+    dups: cgen_names::duplicate_fn_names(b),
+    gains: opt_ranged_call::new_gains(b),
+    guard: opt_frame_calls::new_guard_free(b),
+    twins: [],
+    work_twins: [for _ in 0..len(b.data.definitions) { 0 }],
+    why_work: "",
+    writes: opt_writes::new_writes(b),
+    ops: own::ops_of(b),
+    sigs: [],
+    tuples: [],
+    lazy: -1,
+  }
+}
+
+// The place twin `t` is called: it is written with the unit (`request_twin`).
+fn request_twin(x: Cx, t: cgen_names::Twin) {
+  for known in x.twins {
+    if cgen_names::same_twin(known, t) {
+      return;
+    }
+  }
+  x.twins += [t];
+}
+
+// One function's writer (`FnWriter`): what it has written and where a fault reports.
+struct W {
+  // The function's definition number and name.
+  index: integer,
+  name: text,
+  // Per variable: its C name, and whether it is a parameter.
+  names: vector<text>,
+  params: vector<boolean>,
+  // The function's facts as `opt_range` reads them.
+  nn: vector<boolean>,
+  rv: opt_range::Ranges,
+  file: text,
+  line: integer,
+  shapes: vector<text>,
+  ret: text,
+  body: text,
+  temps: vector<Temp>,
+  // The first construct this writer does not carry; "" while everything was.
+  why: text,
+  cur_line: integer,
+  // The site a located value reports at (`span_site`): its file as a C string, "" for none.
+  span_file: text,
+  span_line: integer,
+  // The label number of each enclosing loop, innermost last, and the labels handed out.
+  loops: vector<integer>,
+  labels: integer,
+  // Declarations beside the temporaries.
+  decls: vector<text>,
+  sticky: vector<Sum>,
+  sticky_temps: vector<Staged>,
+  // One frame per loop being written, innermost last; a chain evaluated for its memo reads
+  // none (`no_memo`).
+  memos: vector<MemoFrame>,
+  no_memo: integer,
+  chains: vector<ChainFrame>,
+  chain_guards: integer,
+  // The loop about to be written has its iterator next (`iter_pending`); the statement being
+  // written is a loop's iterator (`in_iter`).
+  iter_pending: boolean,
+  in_iter: integer,
+  // `@FR-R-RangedCall`'s guarded copy and a loop body's narrowed facts: the facts the code
+  // being written runs under, innermost last, read before the function's own.
+  over: vector<opt_range::Ranges>,
+  in_range_copy: boolean,
+  peel_seeds: vector<Seed>,
+  // The scopes of this function's character walks.
+  walk_scopes: vector<integer>,
+  // `@FR-R-TextBorrow`: the text locals held as a `loft_str` view, and the ones every bind of
+  // which is a literal.
+  borrowed: vector<boolean>,
+  literal_views: vector<boolean>,
+  // The owned text temporaries the current statement made, freed at its end (`flush`).
+  pending: vector<text>,
+  // A formatted value's work text written straight into the text it is appended to
+  // (`format_into_dest`): the work variable (-1: none) and the destination's C name.
+  work_alias: integer,
+  work_dest: text,
+  // Per variable: its own C name (`names` spells a link as what it points at, `(*name)`),
+  // whether it is a `&` link, and whether a statement written so far has bound it.
+  raw: vector<text>,
+  links: vector<boolean>,
+  bound: vector<boolean>,
+  // `@FR-R-BufferReturn`'s bind clause: the work buffers a `__wr` call of the current
+  // statement filled that were made for that call alone.
+  pending_work: vector<text>,
+  // A `__wr` twin: the `&text` parameter it answers, -1 for any other body.
+  work_ret: integer,
+  // The next text field read is a view of the field in place (`field_view`).
+  field_view: boolean,
+  // The function's definitions, as the ownership oracle reads them (`use_analysis::Defs`).
+  defs: own::Defs,
+  // Per variable: the wrapper type its vector's room was minted with (`room_minted`), -1
+  // for none — the write of the vector's empty handle that follows is then nothing.
+  room_minted: vector<integer>,
+  // The element type the last `vector_place` found, and the keyed collection's type where
+  // the place is one (-1 for a plain vector).
+  elem: integer,
+  keyed: integer,
+  // `@FR-R-SameRead`'s filed clause: the hash type the previous statement filed a record
+  // into (-1 for none), and the one a lookup's binding may read it from.
+  filed: integer,
+  filed_next: integer,
+  // `@FR-R-Cold`: the outlined arms, and per variable whether the body leaves it to one of
+  // them (or, in a helper, to the function) — it is then neither declared nor bound here.
+  cold: vector<ColdArm>,
+  undeclared: vector<boolean>,
+  // The bind being written is of a local that owns its tuple's texts (`frees_old_tuple`).
+  frees_old_tuple: boolean,
+  // `@FR-R-RecPtr`: the record views whose address is held, innermost last.
+  rec_ptrs: vector<RecPtr>,
+  // `@FR-R-Header`: the headers the enclosing loops hold, innermost last.
+  headers: vector<Header>,
+  // `@FR-R-Push`: the push headers the enclosing loops hold, innermost last.
+  push_heads: vector<PushHead>,
+  windows: vector<Window>,
+  file_holds: vector<FileHold>,
+  // The function's length locals, `[n0, v0, …]`, and whether they were asked yet.
+  length_locals: vector<integer>,
+  length_asked: boolean,
+  grid_facts: vector<GridFact>,
+  grid_binds: vector<GridFact>,
+  range_ends: vector<GridFact>,
+  // The variables the function sets in more than one place; empty until first asked.
+  set_many: vector<boolean>,
+  // `@FR-R-TableHandle`: the places that take a handle, and the handles declared so far.
+  table_places: vector<text>,
+  table_paths: vector<text>,
+  table_names: vector<text>,
+  // `@FR-R-RetAdopt`: the adopted result local (`adopt_v` -1 for none) and how deep the
+  // writer is in its exit delivery.
+  adopt_v: integer,
+  adopt_vdb: integer,
+  adopt_buf: integer,
+  adopt_tp: integer,
+  in_delivery: integer,
+  scalars: vector<HeldScalar>,
+  // The function's store-apartness facts (`StoreFacts`).
+  facts: opt_facts::Facts,
+  // `@FR-R-Base`'s counter clause: what the statements before the loop being written say of
+  // its range end, the `n = len(v)` bind before the enclosing `for` block (`alias_var` -1 for
+  // none), and the counters and lengths the enclosing loops proved in range.
+  range_lens: vector<RangeLen>,
+  alias_var: integer,
+  alias_vec: ir::Node,
+  in_range: vector<InRange>,
+  in_range_lens: vector<InRange>,
+}
+
+// A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
+// no C statement can be, replaced by the frees when the function is assembled.
+EPILOGUE_MARK = "@@loft-epilogue@@";
+
+// A text variable this function holds as a `loft_text` (`text_held`): a local that is no view.
+fn text_held(w: W, v: integer) -> boolean {
+  (w.shapes[v] ?? "") == "text" && (!(w.params[v] ?? true) || (w.links[v] ?? false)) && !(w.borrowed[v] ?? false)
+}
+
+// `v`'s address (`var_addr`): the variable's own, or the one a link holds.
+fn var_addr(w: W, v: integer) -> text {
+  if w.links[v] ?? false { w.raw[v]! } else { "&{w.names[v]!}" }
+}
+
+// A value held in temporary `t` (`held`): a text as a view of it, freed at the statement's end.
+fn held_value(w: W, t: text, shape: text) -> E {
+  if shape == "text" {
+    w.pending += [t];
+    return E { code: "loft_view(&{t})", kind: K_VIEW };
+  }
+  if shape == "void" {
+    return E { code: "(void) 0", kind: K_VOID };
+  }
+  E { code: t, kind: kind_of(shape), tup: if is_tuple(shape) { shape } else { "" } }
+}
+
+// Free the owned text temporaries the statement just finished made (`flush`).
+fn flush(w: W, ind: integer) {
+  w.pending_work = [];
+  for t in w.pending {
+    line(w, ind, "loft_text_free(&{t});");
+  }
+  w.pending = [];
+}
+
+// Free every text the function holds (`epilogue`): written as a marker, expanded with the
+// function's full list when it is assembled.
+fn epilogue(w: W, ind: integer) {
+  // A `return` from inside a held loop: the cursors go back before the frame does.
+  for i in rev(0..len(w.file_holds)) {
+    line(w, ind, "loft_fcur_release(&{w.file_holds[i]!.name}, {w.file_holds[i]!.name}p);");
+  }
+  line(w, ind, EPILOGUE_MARK);
+}
+
+// The text temporary a view `loft_view(&t)` reads, when the current statement made it and may
+// hand its buffer on (`pending_text_temp`); "" for any other code.
+fn pending_text_temp(w: W, code: text) -> text {
+  if !code.starts_with("loft_view(&") || !code.ends_with(")") || (env_variable("LOFT_NO_C_TEXT_MOVE") ?? "0") != "0" {
+    return "";
+  }
+  t = code[11..code.size() - 1];
+  made = false;
+  for p in w.pending {
+    if p == t {
+      made = true;
+    }
+  }
+  if !made {
+    return "";
+  }
+  for k in w.temps {
+    if k.name == t && k.shape == "text" {
+      return t;
+    }
+  }
+  ""
+}
+
+// The C place a text operator writes into (`text_dest`), "" with a refusal for any other.
+fn text_dest(w: W, v: ir::Node) -> text {
+  n = loop_shape::var_of(loop_shape::unspan(v));
+  if n >= 0 && n == w.work_alias {
+    return w.work_dest;
+  }
+  if n >= 0 && text_held(w, n) {
+    return w.names[n]!;
+  }
+  match loop_shape::unspan(v) {
+    NdTupleGet { var, idx } => {
+      members = tuple_members(w.shapes[var] ?? "");
+      if idx < len(members) && members[idx]! == "text" {
+        return "{w.names[var]!}.f{idx}";
+      }
+    },
+    _ => {},
+  }
+  refuse(w, "a text operator writing into what is no text local");
+  ""
+}
+
+// A function's body as C, or why it was not written (`refused` is "" for a written one).
+pub struct Written {
+  pub text: text,
+  pub refused: text,
+}
+
+fn refuse(w: W, why: text) {
+  if w.why == "" {
+    w.why = why;
+  }
+}
+
+fn none() -> E {
+  E { code: "", kind: K_VOID }
+}
+
+// `s` as a C string literal (`body::c_string`): a quote, a backslash and a question mark
+// escaped (no trigraph), every byte outside printable ASCII in octal.
+pub fn c_string(s: text) -> text {
+  out = "\"";
+  for i in 0..s.size() {
+    b = s.byte_at(i);
+    if b == 34 {
+      out += "\\\"";
+    } else if b == 92 {
+      out += "\\\\";
+    } else if b == 63 {
+      out += "\\?";
+    } else if b >= 32 && b <= 126 {
+      out += s[i..i + 1];
+    } else {
+      out += "\\{b / 64}{b / 8 % 8}{b % 8}";
+    }
+  }
+  out + "\""
+}
+
+// A C-safe name for variable `v` (`var_name`): its number first, so two loft names that
+// sanitise alike stay apart; every character that is no ASCII letter or digit an underscore.
+fn var_name(name: text, v: integer) -> text {
+  clean = "";
+  for ch in name {
+    code = ch as integer;
+    letter = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    if letter {
+      clean += "{ch}";
+    } else {
+      clean += "_";
+    }
+  }
+  "v{v}_{clean}"
+}
+
+// Is `shape` a tuple's — `tuple(member,…)`, as `cgen_types::ctype` spells it?
+fn is_tuple(shape: text) -> boolean {
+  shape.starts_with("tuple(")
+}
+
+// A tuple shape's members, in order (`Cx::tuple_shapes`).
+fn tuple_members(shape: text) -> vector<text> {
+  out: vector<text> = [];
+  if !is_tuple(shape) {
+    return out;
+  }
+  depth = 0;
+  start = 6;
+  end = shape.size() - 1;
+  for i in 6..end {
+    c = shape.byte_at(i);
+    if c == 40 {
+      depth += 1;
+    } else if c == 41 {
+      depth -= 1;
+    } else if c == 44 && depth == 0 {
+      out += [shape[start..i]];
+      start = i + 1;
+    }
+  }
+  out += [shape[start..end]];
+  out
+}
+
+// Does a tuple of `shape` hold a text at any depth (`Cx::tuple_has_text`)?
+fn tuple_has_text(shape: text) -> boolean {
+  for m in tuple_members(shape) {
+    if m == "text" || (is_tuple(m) && tuple_has_text(m)) {
+      return true;
+    }
+  }
+  false
+}
+
+// The texts a tuple at `at` holds, at any depth (`tuple_text_leaves`).
+fn tuple_text_leaves(at: text, shape: text, out: vector<text>) {
+  for m in tuple_members(shape) {
+    if m == "text" {
+      out += ["{at}.f{m#index}"];
+    } else if is_tuple(m) {
+      tuple_text_leaves("{at}.f{m#index}", m, out);
+    }
+  }
+}
+
+// A tuple struct's name before the unit numbers it: `resolve_tuples` replaces each by
+// `loft_tup<n>`, `n` the unit's first-use number of the shape.
+fn tuple_placeholder(shape: text) -> text {
+  "loft_tup@{shape}@"
+}
+
+// Every tuple placeholder of `code` as its numbered name (`Cx::tuple_id`).
+pub fn resolve_tuples(x: Cx, code: text) -> text {
+  out = "";
+  rest = code;
+  for _ in 0..code.size() {
+    at = rest.find("loft_tup@") ?? break;
+    close = rest[at + 9..rest.size()].find("@") ?? break;
+    shape = rest[at + 9..at + 9 + close];
+    id = -1;
+    for t in x.tuples {
+      if t == shape {
+        id = t#index;
+      }
+    }
+    if id < 0 {
+      x.tuples += [shape];
+      id = len(x.tuples) - 1;
+    }
+    out += "{rest[0..at]}loft_tup{id}";
+    rest = rest[at + 10 + close..rest.size()];
+  }
+  out + rest
+}
+
+// The C type a value of `shape` is held in (`held`); "" for a shape this writer does not carry.
+fn held(shape: text) -> text {
+  if is_tuple(shape) {
+    for m in tuple_members(shape) {
+      if held(m) == "" || m == "void" {
+        return "";
+      }
+    }
+    return tuple_placeholder(shape);
+  }
+  if shape == "int" {
+    "int64_t"
+  } else if shape == "bool" {
+    "uint8_t"
+  } else if shape == "enum" {
+    "uint8_t"
+  } else if shape == "float" {
+    "double"
+  } else if shape == "single" {
+    "float"
+  } else if shape == "char" {
+    "uint32_t"
+  } else if shape == "text" {
+    "loft_text"
+  } else if shape == "ref" {
+    "loft_ref"
+  } else if shape == "fn" {
+    "loft_fn"
+  } else if shape == "void" {
+    "void"
+  } else {
+    ""
+  }
+}
+
+// The rules of the Rust writer this one does not carry yet, each by the switch that turns it
+// off.  A function that holds a record or a vector is written only with every one of them
+// set — the same switches the oracle is then run under — and refused by name otherwise, so
+// what is written is the Rust writer's under the same switches.
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_DISTINCT_VERSION", "LOFT_NO_REBOUND_MOVER", "LOFT_NO_APART_MINT", "LOFT_NO_CALLEE_INPUTS", "LOFT_NO_GROWN_HEADER", "LOFT_NO_GUARD_BOUND", "LOFT_NO_VERSION", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_APPEND_TWIN", "LOFT_NO_HAND_OVER", "LOFT_NO_VR_PTR", "LOFT_NO_FNREF_PARK", "LOFT_NO_FNREF_BUFFER"];
+
+// Is every rule of `PLAIN_SWITCHES` switched off?
+pub fn plain_rules() -> boolean {
+  // `LOFT_CGEN_ASSUME=<switch>`: a measurement — write as if that rule were off although the
+  // oracle runs with it on, so the survey counts the bodies the rule changes.
+  assumed = env_variable("LOFT_CGEN_ASSUME") ?? "";
+  for s in PLAIN_SWITCHES {
+    if (env_variable(s) ?? "0") == "0" && s != assumed {
+      return false;
+    }
+  }
+  true
+}
+
+// The C type a parameter of `shape` is passed as (`passed`): a text as a borrowed view.
+fn passed(shape: text) -> text {
+  if shape == "text" { "loft_str" } else { held(shape) }
+}
+
+// The initial value of a local of `shape`: its null (`Cx::initial`).
+fn initial(shape: text) -> text {
+  if is_tuple(shape) {
+    parts: vector<text> = [];
+    for m in tuple_members(shape) {
+      parts += [initial(m)];
+    }
+    return "{{ {parts.join(", ")} }}";
+  }
+  if shape == "int" {
+    "LOFT_NULL"
+  } else if shape == "bool" {
+    "LOFT_BOOL_NULL"
+  } else if shape == "enum" {
+    "255"
+  } else if shape == "float" {
+    "(double) NAN"
+  } else if shape == "single" {
+    "(float) NAN"
+  } else if shape == "text" {
+    "{{ 0, 0, 0 }}"
+  } else if shape == "ref" {
+    "{{ 0xFFFF, 0, 0, 0 }}"
+  } else if shape == "fn" {
+    "{{ LOFT_NULL, {{ 0xFFFF, 0, 0, 0 }} }}"
+  } else {
+    "0"
+  }
+}
+
+fn kind_of(shape: text) -> integer {
+  if is_tuple(shape) {
+    return K_TUP;
+  }
+  if shape == "int" {
+    K_INT
+  } else if shape == "bool" {
+    K_BOOL
+  } else if shape == "enum" {
+    K_ENUM
+  } else if shape == "float" {
+    K_FLOAT
+  } else if shape == "single" {
+    K_SINGLE
+  } else if shape == "char" {
+    K_CHAR
+  } else if shape == "text" {
+    K_VIEW
+  } else if shape == "ref" {
+    K_REF
+  } else if shape == "fn" {
+    K_FN
+  } else {
+    K_VOID
+  }
+}
+
+// The shape a value of kind `k` is held in (`arg_with`'s temporaries): a condition as a
+// boolean.
+fn shape_of_kind(k: integer) -> text {
+  if k == K_INT {
+    "int"
+  } else if k == K_ENUM {
+    "enum"
+  } else if k == K_FLOAT {
+    "float"
+  } else if k == K_SINGLE {
+    "single"
+  } else if k == K_CHAR {
+    "char"
+  } else if k == K_VIEW {
+    "text"
+  } else if k == K_REF {
+    "ref"
+  } else if k == K_FN {
+    "fn"
+  } else {
+    "bool"
+  }
+}
+
+// The name of kind `k` as the Rust writer's refusals spell it.
+fn kind_name(k: integer) -> text {
+  if k == K_INT {
+    "Int"
+  } else if k == K_INT32 {
+    "Int32"
+  } else if k == K_COND {
+    "Cond"
+  } else if k == K_BOOL {
+    "Bool"
+  } else if k == K_ENUM {
+    "Enum"
+  } else if k == K_FLOAT {
+    "Float"
+  } else if k == K_SINGLE {
+    "Single"
+  } else if k == K_CHAR {
+    "Char"
+  } else if k == K_VIEW {
+    "View"
+  } else if k == K_REF {
+    "Ref"
+  } else if k == K_FN {
+    "Fn"
+  } else {
+    "Void"
+  }
+}
+
+// `n` as a C `int64_t` constant (`c_long`): the null as `LOFT_NULL`.
+fn c_long(n: integer?) -> text {
+  if n == null { "LOFT_NULL" } else { "INT64_C({n})" }
+}
+
+fn line(w: W, ind: integer, s: text) {
+  for _ in 0..ind {
+    w.body += "    ";
+  }
+  w.body += "{s}\n";
+}
+
+fn temp(w: W, shape: text) -> text {
+  t = "t{len(w.temps) + 1}";
+  w.temps += [Temp { name: t, shape: shape, verify: false }];
+  t
+}
+
+// The flag of the sum an enclosing loop took for variable `v`, "" for none.
+fn sticky_flag(w: W, v: integer) -> text {
+  for s in w.sticky {
+    if s.var == v {
+      return s.flag;
+    }
+  }
+  ""
+}
+
+// `range_proves`: does `(R-Range)` prove the integer operator `name` over `args` cannot fault,
+// under the facts the code being written runs under?
+fn range_proves(x: Cx, w: W, name: text, args: vector<ir::Node>) -> boolean {
+  if opt_range::plain_form(name, len(args)) == "" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+    return false;
+  }
+  if len(w.over) > 0 {
+    return opt_range::op_range_at_site(x.b, x.p, x.c, w.nn, w.over[len(w.over) - 1]!, name, args) != null;
+  }
+  opt_range::op_range_at_site(x.b, x.p, x.c, w.nn, w.rv, name, args) != null
+}
+
+// Does the range proof bound `v` under those facts?
+fn ranged(x: Cx, w: W, v: ir::Node) -> boolean {
+  if len(w.over) > 0 {
+    return opt_range::range(x.b, x.p, x.c, w.nn, w.over[len(w.over) - 1]!, v, 0) != null;
+  }
+  opt_range::range(x.b, x.p, x.c, w.nn, w.rv, v, 0) != null
+}
+
+fn is_temp(w: W, code: text) -> boolean {
+  for t in w.temps {
+    if t.name == code {
+      return true;
+    }
+  }
+  false
+}
+
+// `c` without one pair of outer parentheses that enclose all of it (`bare`).
+fn bare(c: text) -> text {
+  n = c.size();
+  if n < 2 || c[0..1] != "(" || c[n - 1..n] != ")" {
+    return c;
+  }
+  depth = 0;
+  for i in 1..n - 1 {
+    b = c.byte_at(i);
+    if b == 40 {
+      depth += 1;
+    } else if b == 41 {
+      depth -= 1;
+    }
+    if depth < 0 {
+      return c;
+    }
+  }
+  if depth == 0 { c[1..n - 1] } else { c }
+}
+
+fn as_int(w: W, e: E) -> text {
+  if e.kind == K_INT {
+    e.code
+  } else if e.kind == K_INT32 {
+    "loft_w64({e.code})"
+  } else if e.kind == K_BOOL || e.kind == K_CHAR {
+    "((int64_t) ({e.code}))"
+  } else {
+    refuse(w, "an integer expected, a {kind_name(e.kind)} found");
+    ""
+  }
+}
+
+fn as_enum(w: W, e: E) -> text {
+  if e.kind == K_ENUM {
+    return e.code;
+  }
+  refuse(w, "an enum value expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_float(w: W, e: E) -> text {
+  if e.kind == K_FLOAT {
+    return e.code;
+  }
+  refuse(w, "a float expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_single(w: W, e: E) -> text {
+  if e.kind == K_SINGLE {
+    return e.code;
+  }
+  refuse(w, "a single expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_char(w: W, e: E) -> text {
+  if e.kind == K_CHAR {
+    e.code
+  } else if e.kind == K_INT {
+    "((uint32_t) ({e.code}))"
+  } else if e.kind == K_INT32 {
+    "((uint32_t) loft_w64({e.code}))"
+  } else {
+    refuse(w, "a character expected, a {kind_name(e.kind)} found");
+    ""
+  }
+}
+
+fn as_cond(w: W, e: E) -> text {
+  if e.kind == K_COND {
+    e.code
+  } else if e.kind == K_BOOL {
+    "({e.code} == 1)"
+  } else {
+    refuse(w, "a condition expected");
+    ""
+  }
+}
+
+fn as_bool(w: W, e: E) -> text {
+  if e.kind == K_BOOL {
+    e.code
+  } else if e.kind == K_COND {
+    "(uint8_t) ({bare(e.code)})"
+  } else {
+    refuse(w, "a boolean expected");
+    ""
+  }
+}
+
+fn as_view(w: W, e: E) -> text {
+  if e.kind == K_VIEW {
+    return e.code;
+  }
+  refuse(w, "a text expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_ref(w: W, e: E) -> text {
+  if e.kind == K_REF {
+    return e.code;
+  }
+  refuse(w, "a reference expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_fn(w: W, e: E) -> text {
+  if e.kind == K_FN {
+    return e.code;
+  }
+  refuse(w, "a function value expected, a {kind_name(e.kind)} found");
+  ""
+}
+
+fn as_shape(w: W, e: E, shape: text) -> text {
+  if shape == "int" {
+    as_int(w, e)
+  } else if shape == "bool" {
+    as_bool(w, e)
+  } else if shape == "enum" {
+    as_enum(w, e)
+  } else if shape == "float" {
+    as_float(w, e)
+  } else if shape == "single" {
+    as_single(w, e)
+  } else if shape == "char" {
+    as_char(w, e)
+  } else if shape == "text" {
+    as_view(w, e)
+  } else if shape == "ref" {
+    as_ref(w, e)
+  } else if shape == "fn" {
+    as_fn(w, e)
+  } else if is_tuple(shape) {
+    if e.kind != K_TUP || e.tup != shape {
+      refuse(w, "a tuple expected, a {kind_name(e.kind)} found");
+      return "";
+    }
+    e.code
+  } else {
+    refuse(w, "a value of shape {shape}");
+    ""
+  }
+}

@@ -53,17 +53,20 @@ fn is_call(n: ir::Node, through_value: boolean) -> boolean {
 
 // `bind_lowering::re_bind`, every switch at its default.
 fn re_bind(g: bgen::Gen, v: integer, value: ir::Node) -> ReBind {
-  b = g.b;
-  d = g.d;
+  re_bind_of(g.b, g.ops, g.defs, g.d, v, value)
+}
+
+// The decision itself, on the facts alone: the C writer (`cgen_bind.loft`) asks it too.
+fn re_bind_of(b: ir::Bundle, own_ops: own::Ops, defs: own::Defs, d: integer, v: integer, value: ir::Node) -> ReBind {
   f = b.data.definitions[d]!.variables;
   var = f.variables[v]!;
   tp = var.type_def[0] ?? ir::TyVoid;
   s1 = binds::s1_substituted(b, v, value);
   reads_v = binds::reads_var(value, v);
-  rhs_base = own::base_of(own::ownership_of(b, g.ops, d, value));
-  alias_v = binds::rhs_may_alias_v(b, g.ops, d, f, v, value);
+  rhs_base = own::base_of(own::ownership_of(b, own_ops, d, value));
+  alias_v = binds::rhs_may_alias_v(b, own_ops, d, f, v, value);
   entry_w = binds::entry_witness(f, v);
-  owned_ref = binds::owned_ref(b, g.ops, d, f, v, value);
+  owned_ref = binds::owned_ref(b, own_ops, d, f, v, value);
   frees_displaced = owned_ref && (!var.argument || entry_w != null);
   new_record = binds::rhs_is_new_record(b, value);
   nullable_local = binds::nullable_local(f, v);
@@ -94,7 +97,7 @@ fn re_bind(g: bgen::Gen, v: integer, value: ir::Node) -> ReBind {
   }
   stashed = free == "stash";
   shape = binds::first_bind_shape(tp);
-  callee = binds::callee_of(b, g.defs, value);
+  callee = binds::callee_of(b, defs, value);
   s1_join = s1 && stashed && is_call(value, false) && callee != null;
   plain_source = match bgen::unspan(value) {
     NdVar { n: _ } => true,
@@ -103,7 +106,7 @@ fn re_bind(g: bgen::Gen, v: integer, value: ir::Node) -> ReBind {
   if (owned_ref || buffer_kept) && (!s1 || s1_join)
       && (!stashed || s1_join || (!reads_v && is_call(value, true) && callee != null))
       && !plain_source && !var.view_elided {
-    jb = binds::join_base(b, g.ops, d, f, value, v);
+    jb = binds::join_base(b, own_ops, d, f, value, v);
     rec = binds::join_record(shape);
     if jb != null && jb! != own::MAX && jb! != v && rec != null {
       rb.arm = "R1";
@@ -117,7 +120,7 @@ fn re_bind(g: bgen::Gen, v: integer, value: ir::Node) -> ReBind {
   }
   promoted = binds::is_promoted_return_buffer(b, d, f, v);
   if owned_ref && !witnessed && (!var.argument || (promoted && entry_w != null)) && !var.view_elided {
-    opaque = binds::opaque_callref_bind(b, g.defs, tp, value);
+    opaque = binds::opaque_callref_bind(b, defs, tp, value);
     if opaque != null {
       rb.arm = "R2a";
       rb.rec = opaque!;
@@ -137,7 +140,7 @@ fn re_bind(g: bgen::Gen, v: integer, value: ir::Node) -> ReBind {
         && !(reads_v && !witnessed && own::returns_borrowed_view(cd)
              && !(rhs_base == own::MAX && stashed) && alias_v)
         && !var.view_elided
-        && !binds::adopts_minted_at_bind(b, g.ops, f, v, value) {
+        && !binds::adopts_minted_at_bind(b, own_ops, f, v, value) {
       rb.arm = "R2b";
       rb.rec = record;
       return rb;
@@ -166,7 +169,7 @@ fn re_bind(g: bgen::Gen, v: integer, value: ir::Node) -> ReBind {
     return rb;
   }
   if owned_ref && stashed && reads_v && !new_record && hd != null
-      && binds::answers_a_view_to_copy(b, g.ops, d, value) {
+      && binds::answers_a_view_to_copy(b, own_ops, d, value) {
     rb.arm = "R2d";
     rb.rec = hd!;
   }

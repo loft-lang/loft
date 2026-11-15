@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2498 — the C backend's transient form of a record (`src/c/body/transient.rs`) holds no
+// record of its own group by value: the place a comprehension's record literal is built in
+// reads as `OpGetField(element, 0, Held)`, which is the element itself.  Read as a member, the
+// group's struct held itself and `cc` rejected the unit as soon as any other transient twin
+// was written (`not_yet`'s here).
+// Each cell is hand-computed: three ranges and the 5 written into the second make 8; `join`
+// keeps `Unknown`, which is not `not_yet()`, so the match answers its fallback 6.
+//
+// @falsified-at: 0de1794d4 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   HOLDS: leak, panic and refusals are clean on both trees (`falsify` requires HERE clean);
+//   the exit is the whole measurement.
+// CHANNEL: the asserts; before the fix the C backend's unit does not compile.
+struct Held { has: boolean, lo: integer, hi: integer }
+struct Ranges { vars: vector<Held>, steps: vector<boolean> }
+enum Own { Unknown, Borrowed { base: integer } }
+fn not_yet() -> Own {
+  Borrowed { base: 3 }
+}
+fn join(a: Own, c: Own) -> Own {
+  if a == not_yet() {
+    return c;
+  }
+  a
+}
+fn mark_n(a: integer) -> integer {
+  o = join(Unknown, Borrowed { base: a });
+  match o {
+    Borrowed { base } => base + 1,
+    _ => a,
+  }
+}
+fn empty_ranges(count: integer) -> Ranges {
+  Ranges { vars: [for _ in 0..count { Held { has: false, lo: 0, hi: 0 } }], steps: [for _ in 0..count { false }] }
+}
+fn range_vars(count: integer) -> Ranges {
+  r = empty_ranges(count);
+  if count > 1 {
+    r.vars[1].lo = 5;
+  }
+  r
+}
+fn total(count: integer) -> integer {
+  r = range_vars(count);
+  len(r.vars) + r.vars[1].lo
+}
+fn test_a_transient_record_is_no_member_of_itself() {
+  assert(total(3) == 8, "the ranges, built and read: {total(3)}");
+  assert(mark_n(6) == 6, "the joined variant: {mark_n(6)}");
+}

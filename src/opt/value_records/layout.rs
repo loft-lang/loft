@@ -6,7 +6,7 @@
 //! and the layouts: which record types a tuple can carry, field by field, and with which
 //! presence word when the record is nullable.
 
-use crate::data::{Data, Type, Value};
+use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
 use crate::opt::body_writes::{
     Target, WriteSet, body_writes, fresh_rooted, rebound_vars, setter_target,
@@ -428,8 +428,8 @@ pub(crate) fn layout_into(
 /// write a record of type `tp` that EXISTS before the call?  Growth writes fresh slots only
 /// (a mint, a push, an append, a reservation); a scalar set and a whole copy are asked
 /// their target's type, a fresh mint variable's target answering no; a free, a store test
-/// and a read write nothing; a native this walk does not know, a fn-ref, a `par` and a
-/// recursion answer yes.  `fresh` carries the mint variables across the statements of one
+/// and a read write nothing; a native this walk does not know, a fn-ref and a `par` answer
+/// yes, and a recursion adds nothing beyond what the recursive function's own walk finds.  `fresh` carries the mint variables across the statements of one
 /// list, as [`body_writes`] keeps them.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn may_write_existing(
@@ -442,6 +442,7 @@ pub(crate) fn may_write_existing(
     buffer: Option<u16>,
     memo: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
+    assumed: &mut HashSet<u32>,
 ) -> bool {
     let mut hit = false;
     node.any_node(&mut |n| match n {
@@ -467,32 +468,7 @@ pub(crate) fn may_write_existing(
             let def = data.def(*d);
             let name = def.name();
             if !matches!(def.code(), Value::Null) {
-                let callee = if let Some(&k) = memo.get(d) {
-                    k
-                } else if !active.insert(*d) {
-                    true
-                } else {
-                    // The callee's own hidden return buffer is a record that does not
-                    // exist before the call — minted from its sentinel, or the CALLER's
-                    // owned local under `(R-Rebind)`, never a parameter's record — so its
-                    // mint and every write into it are writes of a FRESH record.
-                    let own = own_return_buffer(def);
-                    let mut inner_fresh: HashSet<u16> = own.into_iter().collect();
-                    let k = may_write_existing(
-                        def.code(),
-                        tp,
-                        data,
-                        stores,
-                        def.variables(),
-                        &mut inner_fresh,
-                        own,
-                        memo,
-                        active,
-                    );
-                    active.remove(d);
-                    memo.insert(*d, k);
-                    k
-                };
+                let callee = callee_writes_existing(*d, tp, data, stores, memo, active, assumed);
                 if callee {
                     crate::rewrite_census::declined(
                         "R-ValueRecord",
@@ -550,6 +526,56 @@ pub(crate) fn may_write_existing(
     hit
 }
 
+/// [`may_write_existing`] for a call to the loft function `d`: its memoised answer, or its body
+/// walked.  A call back into a function still being walked is the least fixpoint: that
+/// function's writes are what its own walk finds, so this call adds none, and the answer is
+/// provisional until that walk ends (`assumed`) — nothing computed under it is memoised.
+#[allow(clippy::too_many_arguments)]
+fn callee_writes_existing(
+    d: u32,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+    memo: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+    assumed: &mut HashSet<u32>,
+) -> bool {
+    if let Some(&k) = memo.get(&d) {
+        return k;
+    }
+    if !active.insert(d) {
+        assumed.insert(d);
+        return false;
+    }
+    let def = data.def(d);
+    // The callee's own hidden return buffer is a record that does not exist before the call —
+    // minted from its sentinel, or the CALLER's owned local under `(R-Rebind)`, never a
+    // parameter's record — so its mint and every write into it are writes of a FRESH record.
+    let own = own_return_buffer(def);
+    let mut inner_fresh: HashSet<u16> = own.into_iter().collect();
+    let k = may_write_existing(
+        def.code(),
+        tp,
+        data,
+        stores,
+        def.variables(),
+        &mut inner_fresh,
+        own,
+        memo,
+        active,
+        assumed,
+    );
+    active.remove(&d);
+    // Its own assumption is discharged by its walk: a `false` is the fixpoint, and a `true`
+    // makes every caller's answer `true` regardless.  A result that still leans on an
+    // enclosing walk's assumption is not kept.
+    assumed.remove(&d);
+    if assumed.is_empty() {
+        memo.insert(d, k);
+    }
+    k
+}
+
 /// Does `v` own the store it names — a user or compiler local that is no parameter, no
 /// link, no capture, no inline element, and borrows from nothing but its own `__vdb_N`
 /// witness?  A record minted into such a local lives in a store no parameter of the frame
@@ -602,6 +628,17 @@ pub(crate) fn native_writes_existing(
                 Target::Unknown => true,
             };
     }
+    // `@FR-R-ValueRecord`'s parameter clause keys the write set by RECORD TYPE.  A text setter
+    // stores a text slot, and a candidate is a no-heap record — it has no text slot, so no
+    // text write touches its bytes, whatever the target.
+    if TEXT_SET_OPS.contains(&name) && !stores.owns_heap(tp) {
+        return false;
+    }
+    // `OpPutRef` writes the variable's frame slot (`put_var`), never a record; a parameter
+    // the body rebinds is declined on its own (`rebound_vars`).
+    if name == "OpPutRef" {
+        return false;
+    }
     if name == "OpCopyRecord" {
         return args.len() != 3
             || (!fresh_rooted(&args[1], data, fresh)
@@ -634,9 +671,102 @@ pub(crate) fn native_writes_existing(
         return false;
     }
     let value = |t: &Type| is_scalar(t) || matches!(t.base(), Type::Text(_));
+    // A non-`const` operand is a route to a record of type `tp` only when what it names can
+    // hold one, asked of the ARGUMENT's type — a variable's, or the schema type a field
+    // projection carries: a native's own parameter is often the generic `vector` /
+    // `reference`, so an operand of any other shape stays a route.
+    let typed_apart = |arg: &Value| match arg.unspan() {
+        Value::Var(v) => {
+            (*v as usize) < vars.var_count() && !holds_schema_type(data, stores, vars.tp(*v), tp)
+        }
+        Value::Call(d, fa)
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpGetField"
+                && fa.len() == 3 =>
+        {
+            matches!(fa[2].unspan(), Value::Int(c)
+                if u16::try_from(*c).is_ok_and(|c| !schema_reaches(stores, c, tp)))
+        }
+        _ => false,
+    };
     !def.attributes()
         .iter()
-        .all(|a| a.value_const || value(&a.typedef))
+        .enumerate()
+        .all(|(i, a)| a.value_const || value(&a.typedef) || args.get(i).is_some_and(typed_apart))
+}
+
+/// The setters that store a TEXT slot: a write that can reach no byte of a no-heap record.
+const TEXT_SET_OPS: [&str; 2] = ["OpSetText", "OpSetTextReplace"];
+
+/// Can a value of type `t` hold — as itself, a field, an inline sub-record or a collection's
+/// element, transitively — a record of SCHEMA type `tp`?  The write walk is keyed by schema
+/// number; `hoist::type_reaches` asks the same of a DEFINITION, for the loop hoist, and the
+/// two answer alike where both can be asked.  A scalar or a text holds none, and a
+/// vector or keyed collection holds what its element holds.  Every shape not named here (a
+/// generic `reference` or `vector`, a tuple, a function, a type with no schema number) answers
+/// YES: the caller treats yes as "may write", so the fallback can only decline more.
+pub(crate) fn holds_schema_type(data: &Data, stores: &Stores, t: &Type, tp: u16) -> bool {
+    // Only a struct (or a struct enum's) definition names a layout; a reference typed by any
+    // other definition — the generic `reference`, a vector element's slot — stays a route.
+    let schema = |d: u32| -> Option<u16> {
+        ((d as usize) < data.definitions.len()
+            && matches!(data.def_type(d), DefType::Struct | DefType::Enum))
+        .then(|| data.def(d).known_type())
+        .filter(|k| *k != u16::MAX)
+    };
+    match t.peel_link() {
+        Type::RefVar(inner) | Type::Optional(inner) => holds_schema_type(data, stores, inner, tp),
+        x if is_scalar(x) || matches!(x, Type::Text(_) | Type::Boolean) => false,
+        Type::Vector(elem, _) => holds_schema_type(data, stores, elem, tp),
+        Type::Reference(d, _)
+        | Type::Enum(d, true, _)
+        | Type::Sorted(d, _, _)
+        | Type::Index(d, _, _)
+        | Type::Radix(d, _, _)
+        | Type::Trie(d, _, _)
+        | Type::Hash(d, _, _) => schema(*d).is_none_or(|k| schema_reaches(stores, k, tp)),
+        _ => true,
+    }
+}
+
+/// [`holds_schema_type`] over the schema: does type `k`'s layout hold a record of type `tp`?  A
+/// type number outside the schema answers yes, for the reason `holds_schema_type`'s fallback does.
+fn schema_reaches(stores: &Stores, k: u16, tp: u16) -> bool {
+    use crate::database::Parts;
+    let mut seen: HashSet<u16> = HashSet::new();
+    let mut todo = vec![k];
+    while let Some(cur) = todo.pop() {
+        if cur == tp {
+            return true;
+        }
+        if !seen.insert(cur) {
+            continue;
+        }
+        let Some(t) = stores.types.get(cur as usize) else {
+            return true;
+        };
+        match &t.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                todo.extend(fields.iter().map(|f| f.content));
+            }
+            Parts::Enum(values) => todo.extend(values.iter().map(|(v, _)| *v)),
+            Parts::Vector(c)
+            | Parts::Array(c)
+            | Parts::Sorted(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Radix(c, _) => todo.push(*c),
+            Parts::Base
+            | Parts::Byte(..)
+            | Parts::Short(..)
+            | Parts::Int(..)
+            | Parts::ShortRaw(..)
+            | Parts::IntRaw(..) => {}
+            _ => return true,
+        }
+    }
+    false
 }
 
 /// `ops` with every TERMINAL whole-record copy — an `OpCopyRecord` statement whose next
@@ -737,6 +867,13 @@ pub(crate) fn tuple_param_candidates(
         if def.code().any_node(&mut |n| matches!(n, Value::Yield(_))) {
             continue;
         }
+        // A function the release machinery calls — a type's `OpDrop` hook or cascade — is
+        // handed the record being released, by no call site this pass rewrites: its
+        // parameters stay records.  (The `OpCopy` hook, which the copy machinery calls the
+        // same way, is declined per parameter below.)
+        if data.is_drop_function(d_nr) {
+            continue;
+        }
         let vars = def.variables();
         let mut rebound: Option<HashSet<u16>> = None;
         let mut written: Option<Option<WriteSet>> = None;
@@ -756,7 +893,7 @@ pub(crate) fn tuple_param_candidates(
             let Some(tp) = plain_record_type(data, inner) else {
                 continue;
             };
-            if stores.owns_heap(tp) {
+            if stores.owns_heap(tp) || crate::lease::copy_hook_nr(data, *rd) == d_nr {
                 continue;
             }
             let layout = match types.get(&tp) {
@@ -836,6 +973,7 @@ pub(crate) fn tuple_param_candidates(
                         &mut fresh,
                         own,
                         &mut existing_memo,
+                        &mut HashSet::new(),
                         &mut HashSet::new(),
                     )
                 })

@@ -1,0 +1,256 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the text facts a function's writer is set up with (`FnWriter::new` in
+// `src/c/body.rs`): `borrowed_texts`, `literal_views`, `view_bind` and `work_view_bind`, over
+// the analyses `opt_lazy_split`, `opt_split_table`, `opt_text_borrow` and
+// `opt_store_text_borrow`.
+
+use ir;
+use loop_shape;
+use opt_lazy_split;
+use opt_non_sentinel;
+use opt_split_table;
+use opt_store_text_borrow;
+use opt_text_borrow;
+use cgen_types;
+
+// What `borrowed_texts` answers, with the splits it read: per variable whether the C holds it
+// as a `loft_str` view, the tested borrows, the `@FR-R-SliceBorrow` candidates, and the
+// function's lazy splits and split tables.
+pub struct Texts {
+  pub borrowed: vector<boolean>,
+  pub tested: vector<opt_store_text_borrow::Tested>,
+  pub slices: vector<boolean>,
+  pub lazy: vector<opt_lazy_split::LazySplit>,
+  pub tables: vector<opt_split_table::SplitTable>,
+}
+
+fn env_on(name: text) -> boolean {
+  (env_variable(name) ?? "0") != "0"
+}
+
+// A text that is no `&` link.
+fn plain_text(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyText { dep: _ } => true,
+    _ => false,
+  }
+}
+
+// The last statement of a block that is no line marker, or null.
+fn last_statement(bl: ir::Block) -> ir::Node? {
+  at = -1;
+  for o in bl.operators {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => at = o#index,
+    }
+  }
+  if at < 0 {
+    return null;
+  }
+  bl.operators[at]
+}
+
+// `view_bind`: is `v` a text the view form of a borrowed bind writes with no temporary —
+// another borrowed local or a text parameter, a literal, a text field read, a block ending in
+// one?
+fn view_bind(b: ir::Bundle, def: ir::Definition, borrowed: vector<boolean>, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdBlock { block } => {
+      last = last_statement(block[0]) ?? return false;
+      view_bind(b, def, borrowed, last)
+    },
+    NdVar { n } => {
+      var = def.variables.variables[n]!;
+      (borrowed[n] ?? false) || (var.argument && plain_text(var.type_def[0]!))
+    },
+    NdText { s: _ } => true,
+    // A substring is left out: the C may copy its source into a statement temporary first.
+    NdCall { def_nr, args: _ } => b.data.definitions[def_nr]!.name == "OpGetText",
+    _ => false,
+  }
+}
+
+// `work_view_bind`: a bind of a work-text borrower that is a format block ending in its work
+// text, a frame-local text the view reads in place.
+fn work_view_bind(def: ir::Definition, borrowed: vector<boolean>, v: ir::Node) -> boolean {
+  bl = match loop_shape::unspan(v) {
+    NdBlock { block } => block[0],
+    _ => return false,
+  };
+  last = last_statement(bl) ?? return false;
+  w = loop_shape::var_of(loop_shape::unspan(last));
+  if w < 0 || w >= len(borrowed) || borrowed[w]! {
+    return false;
+  }
+  var = def.variables.variables[w]!;
+  !var.argument && plain_text(var.type_def[0]!)
+}
+
+// `borrowed_texts`: the text locals of function `d` the C holds as a `loft_str` view rather
+// than an owned copy.  A local is kept only when EVERY bind of it is a shape the view form
+// writes without a temporary.
+pub fn borrowed_texts(b: ir::Bundle, d: integer) -> Texts {
+  def = b.data.definitions[d]!;
+  vars = def.variables.variables;
+  count = len(vars);
+  out = Texts { borrowed: [for _ in 0..count { false }], tested: [], slices: [for _ in 0..count { false }], lazy: [], tables: [] };
+  if !env_on("LOFT_NO_LAZY_SPLIT") {
+    out.lazy = opt_lazy_split::lazy_splits(b, d);
+  }
+  if !env_on("LOFT_NO_SPLIT_TABLE") {
+    out.tables = opt_split_table::split_tables(b, d);
+  }
+  if env_on("LOFT_NO_TEXT_BORROW") || len(def.code) == 0 {
+    return out;
+  }
+  // The lazy splits' and the split tables' walks need no store condition: their pieces are
+  // slices of a text.
+  sliced: vector<boolean> = [for _ in 0..count { false }];
+  for ls in out.lazy {
+    sliced[ls.vec] = true;
+  }
+  for t in out.tables {
+    for a in t.aliases {
+      sliced[a] = true;
+    }
+  }
+  walks = opt_text_borrow::borrowed_text_walks(b, d, sliced, out.tables);
+  for t in opt_text_borrow::borrowed_discharge_temps(b, d, out.tables) {
+    if t {
+      walks[t#index] = true;
+    }
+  }
+  store = opt_store_text_borrow::borrowed_store_texts(b, d, walks, true);
+  out.slices = store.slices;
+  no_work = env_on("LOFT_NO_C_WORK_BORROW");
+  work: vector<boolean> = [for v in 0..count { !no_work && store.work[v]! }];
+  tested: vector<opt_store_text_borrow::Tested> = [];
+  is_tested: vector<boolean> = [for _ in 0..count { false }];
+  for t in store.tested {
+    is_tested[t.var] = true;
+  }
+  if !env_on("LOFT_NO_C_TESTED_BORROW") && opt_store_text_borrow::retbuf_var(b, d) >= 0 {
+    for t in store.tested {
+      if !store.work[t.var]! {
+        tested += [opt_store_text_borrow::Tested { var: t.var, roots: t.roots }];
+      }
+    }
+  }
+  for v in 0..count {
+    plain = store.borrows[v]! && !is_tested[v]! && !store.work[v]!;
+    kept_tested = false;
+    for t in tested {
+      if t.var == v {
+        kept_tested = true;
+      }
+    }
+    if (walks[v]! || plain || work[v]! || kept_tested) && !vars[v]!.argument && plain_text(vars[v]!.type_def[0]!) {
+      out.borrowed[v] = true;
+    }
+  }
+  // Every bind of a candidate, gathered once.
+  binds: vector<ir::Node> = [];
+  opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if out.borrowed[var] ?? false { binds += [n]; } },
+      _ => {},
+    }
+  });
+  for _ in 0..count + 1 {
+    dropped = false;
+    for s in binds {
+      match s {
+        NdSet { var, inner } => {
+          if out.borrowed[var]! && !view_bind(b, def, out.borrowed, inner) && !(work[var]! && work_view_bind(def, out.borrowed, inner)) {
+            out.borrowed[var] = false;
+            dropped = true;
+          }
+        },
+        _ => {},
+      }
+    }
+    if !dropped {
+      break;
+    }
+  }
+  for t in tested {
+    if out.borrowed[t.var]! {
+      out.tested += [opt_store_text_borrow::Tested { var: t.var, roots: t.roots }];
+    }
+  }
+  out
+}
+
+// `literal_views`: the borrowed text locals every bind of which is a literal.
+pub fn literal_views(b: ir::Bundle, d: integer, borrowed: vector<boolean>) -> vector<boolean> {
+  def = b.data.definitions[d]!;
+  count = len(def.variables.variables);
+  lit: vector<boolean> = [for _ in 0..count { false }];
+  other: vector<boolean> = [for _ in 0..count { false }];
+  if len(def.code) > 0 {
+    opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+      match n {
+        NdSet { var, inner } => {
+          if borrowed[var] ?? false {
+            match loop_shape::unspan(inner) {
+              NdText { s: _ } => lit[var] = true,
+              _ => other[var] = true,
+            }
+          }
+        },
+        _ => {},
+      }
+    });
+  }
+  [for v in 0..count { lit[v]! && !other[v]! }]
+}
+
+// The `[texts]` line of function `d` (`LOFT_TRACE_TEXTS`).
+pub fn texts_line(b: ir::Bundle, d: integer) -> text {
+  def = b.data.definitions[d]!;
+  t = borrowed_texts(b, d);
+  literal = literal_views(b, d, t.borrowed);
+  borrowed: vector<text> = [];
+  literals: vector<text> = [];
+  slices: vector<text> = [];
+  for v in t.borrowed {
+    if v {
+      borrowed += ["{v#index}"];
+    }
+    if literal[v#index]! {
+      literals += ["{v#index}"];
+    }
+    if t.slices[v#index]! {
+      slices += ["{v#index}"];
+    }
+  }
+  tested: vector<text> = [];
+  for v in 0..len(t.borrowed) {
+    for k in t.tested {
+      if k.var == v {
+        roots: vector<text> = [];
+        for r in k.roots {
+          roots += ["{r}"];
+        }
+        tested += ["{v}:{roots.join("+")}"];
+      }
+    }
+  }
+  lazy: vector<text> = [];
+  for ls in t.lazy {
+    lazy += ["{ls.vec}:{ls.separator}:{if ls.dead { "{ls.buf}" } else { "-" }}"];
+  }
+  tabs: vector<text> = [];
+  for st in t.tables {
+    aliases: vector<text> = [];
+    for a in st.aliases {
+      aliases += ["{a}"];
+    }
+    tabs += ["{st.var}:{st.separator}:{if st.dead { "{st.buf}" } else { "-" }}:{aliases.join("+")}"];
+  }
+  "[texts]\t{def.name}\tborrowed={borrowed.join(",")}\tliteral={literals.join(",")}\ttested={tested.join(",")}\tslices={slices.join(",")}\tlazy={lazy.join(",")}\ttabs={tabs.join(",")}"
+}

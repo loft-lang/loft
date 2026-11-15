@@ -1,0 +1,268 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/lazy_split.rs` with the shape tests of `src/ir_shape.rs` it
+// reads (`call_named`, `as_var`, `split_call`): `@FR-R-LazySplit`, the `for piece in
+// text.split(c)` loops whose vector is never built.  Every gate is an under-approximation: a
+// declined loop keeps the vector.
+
+use ir;
+use loop_shape;
+use opt_names;
+use opt_non_sentinel;
+
+// One lazy split loop: the hidden `_vector_N` the `For` block binds the call's result to, the
+// hidden buffer the call would have filled, the separator's code point, and whether the buffer
+// serves this call alone (it is then never minted).
+pub struct LazySplit {
+  pub vec: integer,
+  pub buf: integer,
+  pub separator: integer,
+  pub dead: boolean,
+}
+
+// `call_named`: the arguments of `v` when it is a call of the definition named `name`; `hit`
+// says whether it is one.
+pub fn call_named(b: ir::Bundle, v: ir::Node, name: text, hit: &boolean) -> vector<ir::Node> {
+  hit = false;
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == name {
+        hit = true;
+        return args;
+      }
+      []
+    },
+    _ => [],
+  }
+}
+
+// Is `v` a call of the definition named `name`?
+pub fn is_call(b: ir::Bundle, v: ir::Node, name: text) -> boolean {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args: _ } => def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == name,
+    _ => false,
+  }
+}
+
+// `split_call`: the buffer and the separator of a call that is the standard library's `split`
+// with a constant, non-null separator and a hidden return buffer; the buffer, -1 for any other
+// call, with the separator's code point in `separator`.
+pub fn split_call(b: ir::Bundle, d: ir::Definition, call: ir::Node, separator: &integer) -> integer {
+  separator = 0;
+  hit = false;
+  args = call_named(b, call, "t_4text_split", hit);
+  if !hit || len(args) != 3 {
+    return -1;
+  }
+  callee = match loop_shape::unspan(call) {
+    NdCall { def_nr, args: _ } => def_nr,
+    _ => -1,
+  };
+  if callee < 0 || !opt_names::is_stdlib(b.data.definitions[callee]!) {
+    return -1;
+  }
+  conv = call_named(b, args[1], "OpConvCharacterFromInt", hit);
+  if !hit || len(conv) == 0 {
+    return -1;
+  }
+  code = match loop_shape::unspan(conv[0]) {
+    NdInt { n } => n,
+    _ => -1,
+  };
+  // A character constant that is a Unicode scalar value and not the null character.
+  if code <= 0 || code > 1114111 || (code >= 55296 && code <= 57343) {
+    return -1;
+  }
+  buf = loop_shape::var_of(loop_shape::unspan(args[2]));
+  if buf < 0 || buf >= len(d.variables.variables) || !d.variables.variables[buf]!.name.starts_with("__ref") {
+    return -1;
+  }
+  separator = code;
+  buf
+}
+
+// `lazy_split_block`: the vector, the buffer and the separator of ONE `For` block that walks
+// a `split`; null for any other block.
+fn lazy_split_block(b: ir::Bundle, d: ir::Definition, bl: ir::Block) -> LazySplit? {
+  // ops = [.., Set(_vector, t_4text_split(src, sep, buf)), Set(idx, -1), Loop(..)]: the
+  // bind, the index seed and the loop are consecutive and close the block.
+  at = -1;
+  for op in bl.operators {
+    if at < 0 {
+      match loop_shape::unspan(op) {
+        NdSet { var: _, inner } => { if is_call(b, inner, "t_4text_split") { at = op#index; } },
+        _ => {},
+      }
+    }
+  }
+  if at < 0 || len(bl.operators) - at != 3 {
+    return null;
+  }
+  vec = -1;
+  buf = -1;
+  separator = 0;
+  match loop_shape::unspan(bl.operators[at]!) {
+    NdSet { var, inner } => {
+      vec = var;
+      buf = split_call(b, d, inner, separator);
+    },
+    _ => {},
+  }
+  if buf < 0 {
+    return null;
+  }
+  idx = -1;
+  match loop_shape::unspan(bl.operators[at + 1]!) {
+    NdSet { var, inner } => {
+      if loop_shape::unspan(inner) == NdInt { n: -1 } {
+        idx = var;
+      }
+    },
+    _ => {},
+  }
+  if idx < 0 {
+    return null;
+  }
+  lp = match loop_shape::unspan(bl.operators[at + 2]!) {
+    NdLoop { block } => block[0],
+    _ => return null,
+  };
+  // loop[0] = Set(piece, iter next { idx += 1; OpGetText(OpGetVectorNullable(vec, 4, idx), 0) })
+  if len(lp.operators) < 2 {
+    return null;
+  }
+  next = match loop_shape::unspan(lp.operators[0]) {
+    NdSet { var: _, inner } => {
+      match loop_shape::unspan(inner) {
+        NdBlock { block } => block[0],
+        _ => return null,
+      }
+    },
+    _ => return null,
+  };
+  if !next.name.contains("iter next") || len(next.operators) != 2 {
+    return null;
+  }
+  hit = false;
+  read = call_named(b, next.operators[1], "OpGetText", hit);
+  if !hit || len(read) == 0 {
+    return null;
+  }
+  elem = call_named(b, read[0], "OpGetVectorNullable", hit);
+  if !hit || len(elem) < 3 || loop_shape::var_of(loop_shape::unspan(elem[0])) != vec || loop_shape::var_of(loop_shape::unspan(elem[2])) != idx {
+    return null;
+  }
+  // loop[1] = If(OpLeInt(OpLengthVector(vec), idx), break, _)
+  test = match loop_shape::unspan(lp.operators[1]) {
+    NdIf { cond, t: _, f: _ } => cond,
+    _ => return null,
+  };
+  le = call_named(b, test, "OpLeInt", hit);
+  if !hit || len(le) < 2 || loop_shape::var_of(loop_shape::unspan(le[1])) != idx {
+    return null;
+  }
+  length = call_named(b, le[0], "OpLengthVector", hit);
+  if !hit || len(length) == 0 || loop_shape::var_of(loop_shape::unspan(length[0])) != vec {
+    return null;
+  }
+  LazySplit { vec: vec, buf: buf, separator: separator, dead: false }
+}
+
+// `buffer_serves_one_call`: does the hidden buffer `buf` serve ONE call and nothing else, so
+// that a rewrite which drops that call may leave the buffer unminted?  Its every mention must
+// be accounted for: the one call argument, its frees, its null declaration, and the null test
+// that guards a mint at first use.
+pub fn buffer_serves_one_call(b: ir::Bundle, body: ir::Node, buf: integer) -> boolean {
+  total = [0];
+  call_args = [0];
+  benign = [0];
+  rebound = [false];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdVar { n: v } => { if v == buf { total[0] = total[0]! + 1; } },
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) {
+          hits = 0;
+          for a in args {
+            if loop_shape::var_of(loop_shape::unspan(a)) == buf {
+              hits += 1;
+            }
+          }
+          name = b.data.definitions[def_nr]!.name;
+          if name == "OpFreeRef" || name == "OpFreeRefTag" || name == "OpRefIsNull" {
+            benign[0] = benign[0]! + hits;
+          } else {
+            call_args[0] = call_args[0]! + hits;
+          }
+        }
+      },
+      NdSet { var, inner } => {
+        if var == buf && loop_shape::unspan(inner) != NdNull {
+          rebound[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  call_args[0]! == 1 && total[0]! == call_args[0]! + benign[0]! && !rebound[0]!
+}
+
+// `lazy_splits`: the lazy split loops of function `d`'s body, by the hidden vector's number.
+pub fn lazy_splits(b: ir::Bundle, d: integer) -> vector<LazySplit> {
+  out: vector<LazySplit> = [];
+  def = b.data.definitions[d]!;
+  if len(def.code) == 0 {
+    return out;
+  }
+  body = def.code[0]!;
+  yields = [false];
+  blocks: vector<ir::Block> = [];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { yields[0] = true; },
+      NdBlock { block } => { if block[0].name == "For block" { blocks += [block[0]]; } },
+      _ => {},
+    }
+  });
+  if yields[0]! {
+    return out;
+  }
+  count = len(def.variables.variables);
+  found: vector<LazySplit> = [];
+  for bl in blocks {
+    ls = lazy_split_block(b, def, bl) ?? continue;
+    found += [ls];
+  }
+  // The vector is the writer's to replace only when its two readers are its ONLY mentions
+  // and the call its only value.
+  mentions: vector<integer> = [for _ in 0..count { 0 }];
+  binds: vector<integer> = [for _ in 0..count { 0 }];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdVar { n: v } => { if v < count { mentions[v] = mentions[v]! + 1; } },
+      NdSet { var, inner } => {
+        if var < count && loop_shape::unspan(inner) != NdNull {
+          binds[var] = binds[var]! + 1;
+        }
+      },
+      _ => {},
+    }
+  });
+  // By the vector's number, a later block's entry replacing an earlier one's.
+  for v in 0..count {
+    at = -1;
+    for f in found {
+      if f.vec == v {
+        at = f#index;
+      }
+    }
+    if at < 0 || mentions[v]! != 2 || binds[v]! != 1 {
+      continue;
+    }
+    ls = found[at]!;
+    out += [LazySplit { vec: ls.vec, buf: ls.buf, separator: ls.separator, dead: buffer_serves_one_call(b, body, ls.buf) }];
+  }
+  out
+}

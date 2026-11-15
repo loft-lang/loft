@@ -1,0 +1,1084 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/store_text_borrow.rs`: `@FR-R-TextBorrow`'s store clause.  A
+// text local bound only from texts that outlive it — a parameter's field, another borrowed
+// local, a literal, a format's own work text, a slice of a parameter — is a view, not a copy,
+// where nothing in its scope writes a store the frame did not mint.  With `foreign_store_writer`,
+// `frame_minted_locals` and the tested clause's roots.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_lazy_split;
+use opt_non_sentinel;
+use opt_text_borrow;
+use opt_writes;
+use cgen_types;
+
+// A tested borrow (`StoreTextBorrows::tested`): the local and the parameters whose stores its
+// bind tests against the return buffer's.
+pub struct Tested {
+  pub var: integer,
+  pub roots: vector<integer>,
+}
+
+// `borrowed_store_texts`' answer, per variable of the function.
+pub struct Borrows {
+  pub borrows: vector<boolean>,
+  pub tested: vector<Tested>,
+  pub work: vector<boolean>,
+  pub slices: vector<boolean>,
+}
+
+// What the bind tests read: the function, its body, the variables any statement assigns, and
+// the sets the fixpoints move.
+struct St {
+  d: integer,
+  rebound: vector<boolean>,
+  already: vector<boolean>,
+  temps: vector<boolean>,
+  locals: vector<boolean>,
+  // The temps bound to a LOCAL's text, each with that local; -1 for none.
+  local_temp: vector<integer>,
+  // `temps ∪ locals` of the round being judged (without the tested ones in the last pass).
+  admitted: vector<boolean>,
+  local_roots: boolean,
+  no_slice: boolean,
+  no_local: boolean,
+}
+
+fn env_on(name: text) -> boolean {
+  (env_variable(name) ?? "0") != "0"
+}
+
+fn is_text(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyText { dep: _ } => true,
+    _ => false,
+  }
+}
+
+fn is_link(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  }
+}
+
+// The definition a call names and its arguments, where `v` is a call of a known definition.
+fn call_def(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args: _ } => if def_nr >= 0 && def_nr < len(b.data.definitions) { def_nr } else { -1 },
+    _ => -1,
+  }
+}
+
+fn call_args(v: ir::Node) -> vector<ir::Node> {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr: _, args } => args,
+    _ => [],
+  }
+}
+
+fn place_op(name: text) -> boolean {
+  name == "OpGetField" || name == "OpGetVector" || name == "OpGetVectorNullable"
+}
+
+// `param_rooted`: a place rooted at a value parameter the body never rebinds.
+fn param_rooted(b: ir::Bundle, def: ir::Definition, r: ir::Node, rebound: vector<boolean>) -> boolean {
+  a = loop_shape::var_of(loop_shape::unspan(r));
+  if a >= 0 {
+    var = def.variables.variables[a]!;
+    return var.argument && !is_link(var.type_def[0]!) && !(rebound[a] ?? true);
+  }
+  d = call_def(b, r);
+  if d < 0 || !place_op(b.data.definitions[d]!.name) {
+    return false;
+  }
+  args = call_args(r);
+  len(args) > 0 && param_rooted(b, def, args[0], rebound)
+}
+
+// `local_root`: the frame local a place is rooted at, -1 for none.
+fn local_root(b: ir::Bundle, def: ir::Definition, r: ir::Node) -> integer {
+  a = loop_shape::var_of(loop_shape::unspan(r));
+  if a >= 0 {
+    return if def.variables.variables[a]!.argument { -1 } else { a };
+  }
+  d = call_def(b, r);
+  if d < 0 || !place_op(b.data.definitions[d]!.name) {
+    return -1;
+  }
+  args = call_args(r);
+  if len(args) == 0 { -1 } else { local_root(b, def, args[0]) }
+}
+
+// The record a text field read `OpGetText(r, _)` reads; `hit` says whether `to` is one.
+fn text_read_of(b: ir::Bundle, to: ir::Node, hit: &boolean) -> ir::Node {
+  args = opt_lazy_split::call_named(b, to, "OpGetText", hit);
+  if !hit || len(args) == 0 {
+    hit = false;
+    return NdNull;
+  }
+  args[0]
+}
+
+fn param_read(b: ir::Bundle, st: St, to: ir::Node) -> boolean {
+  hit = false;
+  r = text_read_of(b, to, hit);
+  hit && param_rooted(b, b.data.definitions[st.d]!, r, st.rebound)
+}
+
+// The local a discharge temp's text read is rooted at (the C writer's local-root clause).
+fn local_read(b: ir::Bundle, st: St, to: ir::Node) -> integer {
+  if !st.local_roots || st.no_local {
+    return -1;
+  }
+  hit = false;
+  r = text_read_of(b, to, hit);
+  if hit { local_root(b, b.data.definitions[st.d]!, r) } else { -1 }
+}
+
+fn text_local(b: ir::Bundle, st: St, v: integer) -> boolean {
+  var = b.data.definitions[st.d]!.variables.variables[v]!;
+  !var.argument && !(st.already[v] ?? false) && is_text(var.type_def[0]!)
+}
+
+// A plain text PARAMETER the body never rebinds.
+fn plain_text_arg(b: ir::Bundle, st: St, s: integer) -> boolean {
+  if s < 0 {
+    return false;
+  }
+  var = b.data.definitions[st.d]!.variables.variables[s]!;
+  var.argument && is_text(var.type_def[0]!) && !(st.rebound[s] ?? true)
+}
+
+// The text a value slice `OpGetTextSub(s, …)` cuts, -1 for any other value.
+fn slice_of(b: ir::Bundle, to: ir::Node) -> integer {
+  hit = false;
+  args = opt_lazy_split::call_named(b, to, "OpGetTextSub", hit);
+  if !hit || len(args) == 0 { -1 } else { loop_shape::var_of(loop_shape::unspan(args[0])) }
+}
+
+// How often `node` names variable `work` — a read or an assignment.
+fn mentions(node: ir::Node, work: integer) -> integer {
+  c = [0];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == work { c[0] = c[0]! + 1; } },
+      NdSet { var, inner: _ } => { if var == work { c[0] = c[0]! + 1; } },
+      _ => {},
+    }
+  });
+  c[0]!
+}
+
+// Is `st` a release `OpFreeText(work)`?
+fn frees_text(b: ir::Bundle, st: ir::Node, work: integer) -> boolean {
+  hit = false;
+  args = opt_lazy_split::call_named(b, st, "OpFreeText", hit);
+  hit && len(args) == 1 && loop_shape::var_of(loop_shape::unspan(args[0])) == work
+}
+
+// The statements of the body's own block that declare `work` with a literal; with `frees`,
+// its releases there too.
+fn top_bookkeeping(b: ir::Bundle, body: ir::Node, work: integer, frees: boolean) -> integer {
+  count = 0;
+  match loop_shape::unspan(body) {
+    NdBlock { block } => {
+      for op in block[0].operators {
+        match loop_shape::unspan(op) {
+          NdSet { var, inner } => {
+            literal = match loop_shape::unspan(inner) {
+              NdText { s: _ } => true,
+              _ => false,
+            };
+            if var == work && literal {
+              count += 1;
+            }
+          },
+          _ => {
+            if frees && frees_text(b, op, work) {
+              count += 1;
+            }
+          },
+        }
+      }
+    },
+    _ => {},
+  }
+  count
+}
+
+// `own_format_work`: the work text of a format string that is the format's own — named
+// nowhere else in the body but by its declaration and release; -1 for any other value.
+fn own_format_work(b: ir::Bundle, body: ir::Node, to: ir::Node) -> integer {
+  bl = match loop_shape::unspan(to) {
+    NdBlock { block } => block[0],
+    _ => return -1,
+  };
+  if bl.name != "Formatted string" || len(bl.operators) == 0 {
+    return -1;
+  }
+  work = match loop_shape::unspan(bl.operators[0]) {
+    NdSet { var, inner: _ } => var,
+    _ => return -1,
+  };
+  if loop_shape::var_of(loop_shape::unspan(bl.operators[len(bl.operators) - 1])) != work {
+    return -1;
+  }
+  if mentions(body, work) == mentions(to, work) + top_bookkeeping(b, body, work, true) { work } else { -1 }
+}
+
+// Does every `return` of `code` answer variable `out`?
+fn only_returns(code: ir::Node, out: integer) -> boolean {
+  bad = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner } => { if loop_shape::var_of(loop_shape::unspan(inner)) != out { bad[0] = true; } },
+      _ => {},
+    }
+  });
+  !bad[0]!
+}
+
+// `own_call_work`: the caller's work local a call fills — a callee answering its one text
+// work buffer on every exit, handed a `default ref` block's local that the body names nowhere
+// else; -1 for any other value.
+fn own_call_work(b: ir::Bundle, body: ir::Node, to: ir::Node) -> integer {
+  if env_on("LOFT_NO_CALL_TEXT_BORROW") {
+    return -1;
+  }
+  d = call_def(b, to);
+  if d < 0 {
+    return -1;
+  }
+  callee = b.data.definitions[d]!;
+  if !binds::has_code(callee) || len(callee.returned) == 0 || !is_text(callee.returned[0]!) {
+    return -1;
+  }
+  // The callee's hidden `&text` parameters: its work buffers.
+  wi = -1;
+  buffers = 0;
+  for a in callee.attributes {
+    work_buffer = match a.typedef[0]! {
+      TyRefVar { inner } => match inner { TyText { dep: _ } => true, _ => false },
+      _ => false,
+    };
+    if a.hidden && work_buffer {
+      buffers += 1;
+    }
+    hidden_text = match cgen_types::base(a.typedef[0]!) {
+      TyRefVar { inner } => is_text(inner),
+      _ => false,
+    };
+    if wi < 0 && a.hidden && hidden_text {
+      wi = a#index;
+    }
+  }
+  if buffers != 1 || wi < 0 {
+    return -1;
+  }
+  out = binds::var_named(callee.variables, callee.attributes[wi]!.name);
+  if out < 0 || out >= len(callee.variables.variables) {
+    return -1;
+  }
+  // Every return of the callee answers its work buffer.
+  code = callee.code[0]!;
+  if !only_returns(code, out) {
+    return -1;
+  }
+  match loop_shape::unspan(code) {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) > 0 {
+        tail = loop_shape::unspan(ops[len(ops) - 1]);
+        returns = match tail {
+          NdReturn { inner: _ } => true,
+          _ => false,
+        };
+        if !returns && loop_shape::var_of(tail) != out {
+          return -1;
+        }
+      }
+    },
+    _ => {},
+  }
+  // The caller's work local, handed through a `default ref` block.
+  args = call_args(to);
+  if wi >= len(args) {
+    return -1;
+  }
+  bl = match loop_shape::unspan(args[wi]!) {
+    NdBlock { block } => block[0],
+    _ => return -1,
+  };
+  if bl.name != "default ref" || len(bl.operators) == 0 {
+    return -1;
+  }
+  work = -1;
+  match loop_shape::unspan(bl.operators[0]) {
+    NdSet { var, inner } => {
+      match loop_shape::unspan(inner) {
+        NdText { s: _ } => work = var,
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  if work < 0 {
+    return -1;
+  }
+  // The declaration among the outermost statements, and EVERY release of the work local.
+  released = [0];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    if frees_text(b, n, work) {
+      released[0] = released[0]! + 1;
+    }
+  });
+  if mentions(body, work) == mentions(to, work) + top_bookkeeping(b, body, work, false) + released[0]! { work } else { -1 }
+}
+
+fn fmt_own(b: ir::Bundle, body: ir::Node, to: ir::Node) -> boolean {
+  own_format_work(b, body, to) >= 0 || own_call_work(b, body, to) >= 0
+}
+
+// `source_ok`: a value a borrowing local may be bound from.
+fn source_ok(b: ir::Bundle, st: St, body: ir::Node, to: ir::Node) -> boolean {
+  match loop_shape::unspan(to) {
+    NdText { s: _ } => true,
+    NdBlock { block: _ } => fmt_own(b, body, to),
+    NdVar { n: s } => {
+      var = b.data.definitions[st.d]!.variables.variables[s]!;
+      ((st.admitted[s] ?? false) && st.local_temp[s]! < 0) || (var.argument && is_text(var.type_def[0]!))
+    },
+    _ => {
+      if call_def(b, to) >= 0 && fmt_own(b, body, to) {
+        return true;
+      }
+      if param_read(b, st, to) {
+        return true;
+      }
+      s = slice_of(b, to);
+      !st.no_slice && s >= 0 && (plain_text_arg(b, st, s) || (st.admitted[s] ?? false))
+    },
+  }
+}
+
+// Is every bind of `v` a literal, or (`fmt`) a format's own work text, or (`!fmt`) a slice of a
+// plain parameter (`text_bound_only_by`)?
+fn bound_only_by(b: ir::Bundle, st: St, body: ir::Node, v: integer, fmt: boolean) -> boolean {
+  bad = [false];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == v && loop_shape::unspan(inner) != NdNull {
+          literal = match loop_shape::unspan(inner) {
+            NdText { s: _ } => true,
+            _ => false,
+          };
+          ok = literal || (if fmt { fmt_own(b, body, inner) } else { plain_text_arg(b, st, slice_of(b, inner)) });
+          if !ok {
+            bad[0] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  !bad[0]!
+}
+
+fn names_a_store(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TyVector { inner: _, dep: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    _ => false,
+  }
+}
+
+// `Definition::hidden_return_buffer_attr`: the place of the hidden return buffer among the
+// parameters, -1 for none.
+fn return_buffer_attr(def: ir::Definition) -> integer {
+  for a in def.attributes {
+    heap = match a.typedef[0]! {
+      TyReference { n: _, dep: _ } => true,
+      TyVector { inner: _, dep: _ } => true,
+      TyEnum { n: _, is_ref, dep: _ } => is_ref,
+      _ => false,
+    };
+    if a.hidden && !a.work_buffer && heap {
+      return a#index;
+    }
+  }
+  -1
+}
+
+// `retbuf_var`: the variable that is function `d`'s hidden return buffer, -1 for none.
+pub fn retbuf_var(b: ir::Bundle, d: integer) -> integer {
+  def = b.data.definitions[d]!;
+  at = return_buffer_attr(def);
+  if at < 0 {
+    return -1;
+  }
+  v = binds::var_named(def.variables, def.attributes[at]!.name);
+  if v < 0 || v >= len(def.variables.variables) { -1 } else { v }
+}
+
+// `minted_expr`: a value in a store the frame minted.
+fn minted_expr(b: ir::Bundle, e: ir::Node, minted: vector<boolean>) -> boolean {
+  v = loop_shape::var_of(loop_shape::unspan(e));
+  if v >= 0 {
+    return minted[v] ?? false;
+  }
+  d = call_def(b, e);
+  if d < 0 {
+    return false;
+  }
+  args = call_args(e);
+  callee = b.data.definitions[d]!;
+  name = callee.name;
+  if place_op(name) || name == "OpGetRecord" || name == "OpNewRecord" {
+    return len(args) > 0 && minted_expr(b, args[0], minted);
+  }
+  // A user call that builds into its hidden return buffer answers that buffer.
+  if binds::has_code(callee) {
+    at = return_buffer_attr(callee);
+    return at >= 0 && at < len(args) && minted_expr(b, args[at]!, minted);
+  }
+  false
+}
+
+// `frame_minted_locals`: the store-naming locals (and the `seeds`) of function `d` whose store
+// this frame minted — never handed out by slot, never bound from a value that is not minted.
+fn frame_minted_locals(b: ir::Bundle, d: integer, body: ir::Node, seed: integer) -> vector<boolean> {
+  vars = b.data.definitions[d]!.variables.variables;
+  count = len(vars);
+  minted: vector<boolean> = [for v in 0..count { (!vars[v]!.argument || v == seed) && names_a_store(vars[v]!.type_def[0]!) }];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) {
+          def = b.data.definitions[def_nr]!;
+          slot_write = def.name == "OpDatabase" || def.name == "OpDatabaseNP";
+          buffer_at = if binds::has_code(def) { return_buffer_attr(def) } else { -1 };
+          for a in args {
+            i = a#index;
+            x = loop_shape::var_of(loop_shape::unspan(a));
+            if x >= 0 && x < count && i != buffer_at && i < len(def.attributes) {
+              at = def.attributes[i]!;
+              if (at.constant && !(slot_write && i == 0)) || is_link(at.typedef[0]!) {
+                minted[x] = false;
+              }
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  for _ in 0..count + 1 {
+    dropped: vector<integer> = [];
+    opt_non_sentinel::walk(body, fn(n: ir::Node) {
+      match n {
+        NdSet { var, inner } => {
+          if var < count && minted[var]! && loop_shape::unspan(inner) != NdNull && !minted_expr(b, inner, minted) {
+            dropped += [var];
+          }
+        },
+        _ => {},
+      }
+    });
+    if len(dropped) == 0 {
+      break;
+    }
+    for v in dropped {
+      minted[v] = false;
+    }
+  }
+  minted
+}
+
+// `callee_writes_only_its_buffer`: a callee handed a minted local as its return buffer, whose
+// own body writes no store but the ones it mints and that buffer.  A recursion cycle answers
+// yes; nothing is kept.
+fn callee_writes_only_its_buffer(b: ir::Bundle, w: opt_writes::Writes, d: integer, args: vector<ir::Node>, minted: vector<boolean>) -> boolean {
+  def = b.data.definitions[d]!;
+  at = return_buffer_attr(def);
+  if at < 0 || at >= len(args) {
+    return false;
+  }
+  handed = loop_shape::var_of(loop_shape::unspan(args[at]!));
+  if handed < 0 || !(minted[handed] ?? false) {
+    return false;
+  }
+  rb = retbuf_var(b, d);
+  if rb < 0 {
+    return false;
+  }
+  if w.buffer_guard[d]! {
+    return true;
+  }
+  w.buffer_guard[d] = true;
+  inner = frame_minted_locals(b, d, def.code[0]!, rb);
+  clean = !foreign_store_writer(b, w, def.code[0]!, inner, d);
+  w.buffer_guard[d] = false;
+  clean
+}
+
+// One call of `foreign_store_writer`'s walk: does it write a store the frame did not mint?
+// `vd` is the function whose variable table is known, -1 for none.
+fn foreign_call(b: ir::Bundle, w: opt_writes::Writes, callee: integer, args: vector<ir::Node>, minted: vector<boolean>, vd: integer) -> boolean {
+  if callee < 0 || callee >= len(b.data.definitions) {
+    return true;
+  }
+  def = b.data.definitions[callee]!;
+  name = def.name;
+  if binds::has_code(def) {
+    return opt_writes::call_writes_store(b, w, callee) && !opt_writes::in_place_only_writer(b, w, callee) && !(vd >= 0 && callee_writes_only_its_buffer(b, w, callee, args, minted));
+  }
+  // `OpCreateStack` of a text of the known frame, and `OpPutRef` there, write no store.
+  text_ref = false;
+  if vd >= 0 && name == "OpCreateStack" {
+    t = opt_writes::first_var(args);
+    text_ref = t >= 0 && (match opt_names_peel(b.data.definitions[vd]!.variables.variables[t]!.type_def[0]!) { TyText { dep: _ } => true, _ => false });
+  }
+  if opt_writes::native_op_is_store_free(def) || opt_writes::in_place_set(name) || text_ref || (vd >= 0 && name == "OpPutRef") {
+    return false;
+  }
+  named = false;
+  for a in args {
+    i = a#index;
+    if i >= len(def.attributes) {
+      if name == "OpGetRecord" || name == "OpSetKeyed" {
+        continue;
+      }
+      return true;
+    }
+    at = def.attributes[i]!;
+    if at.constant {
+      x = loop_shape::var_of(loop_shape::unspan(a));
+      if x >= 0 {
+        if !(minted[x] ?? false) {
+          return true;
+        }
+        named = true;
+      }
+    } else if names_a_store(at.typedef[0]!) {
+      // `OpAppendVector`'s source is READ, never written.
+      if name == "OpAppendVector" && i == 1 {
+        continue;
+      }
+      if !minted_expr(b, a, minted) {
+        return true;
+      }
+      named = true;
+    } else if !(opt_writes::is_scalar(at.typedef[0]!) || is_text(at.typedef[0]!)) {
+      return true;
+    }
+  }
+  !named
+}
+
+// `Type::peel_link`.
+fn opt_names_peel(t: ir::TypeT) -> ir::TypeT {
+  match cgen_types::base(t) {
+    TyRefVar { inner } => opt_names_peel(inner),
+    TyRewritten { inner } => opt_names_peel(inner),
+    _ => cgen_types::base(t),
+  }
+}
+
+fn any_foreign(b: ir::Bundle, w: opt_writes::Writes, nodes: vector<ir::Node>, minted: vector<boolean>, vd: integer) -> boolean {
+  for n in nodes {
+    if foreign_store_writer(b, w, n, minted, vd) {
+      return true;
+    }
+  }
+  false
+}
+
+// `foreign_store_writer`: does anything under `node` write a store the frame did not mint — a
+// call through a function value, parallel arms, a yield, a callee that writes one, or a native
+// writer of a slot or a store outside `minted`?
+fn foreign_store_writer(b: ir::Bundle, w: opt_writes::Writes, node: ir::Node, minted: vector<boolean>, vd: integer) -> boolean {
+  n = loop_shape::unspan(node);
+  match n {
+    NdCallRef { var: _, args: _ } => true,
+    NdParallel { arms: _ } => true,
+    NdYield { inner: _ } => true,
+    NdCall { def_nr, args } => foreign_call(b, w, def_nr, args, minted, vd) || any_foreign(b, w, args, minted, vd),
+    NdBlock { block } => any_foreign(b, w, block[0].operators, minted, vd),
+    NdLoop { block } => any_foreign(b, w, block[0].operators, minted, vd),
+    NdInsert { items } => any_foreign(b, w, items, minted, vd),
+    NdTuple { items } => any_foreign(b, w, items, minted, vd),
+    NdSet { var: _, inner } => foreign_store_writer(b, w, inner, minted, vd),
+    NdReturn { inner } => foreign_store_writer(b, w, inner, minted, vd),
+    NdDrop { inner } => foreign_store_writer(b, w, inner, minted, vd),
+    NdTuplePut { var: _, idx: _, inner } => foreign_store_writer(b, w, inner, minted, vd),
+    NdIf { cond, t, f } => any_foreign(b, w, [cond, t, f], minted, vd),
+    NdIter { var: _, create, next, init } => any_foreign(b, w, [create, next, init], minted, vd),
+    _ => false,
+  }
+}
+
+// How many nodes `node` holds.
+fn size(node: ir::Node) -> integer {
+  s = [0];
+  opt_non_sentinel::walk(node, fn(_n: ir::Node) {
+    s[0] = s[0]! + 1;
+  });
+  s[0]!
+}
+
+// `collect_void_blocks`: the blocks that answer nothing, reached through the statement shapes
+// a scope can stand in.
+fn collect_void_blocks(node: ir::Node, out: vector<ir::Node>) {
+  match node {
+    NdBlock { block } => {
+      void = len(block[0].result) == 0 || cgen_types::base(block[0].result[0]!) == ir::TypeT.TyVoid;
+      if void {
+        out += [node];
+      }
+      for o in block[0].operators {
+        collect_void_blocks(o, out);
+      }
+    },
+    NdLoop { block } => { for o in block[0].operators { collect_void_blocks(o, out); } },
+    NdSpan { pos: _, inner } => collect_void_blocks(inner, out),
+    NdSet { var: _, inner } => collect_void_blocks(inner, out),
+    NdCall { def_nr: _, args } => { for a in args { collect_void_blocks(a, out); } },
+    NdIf { cond, t, f } => {
+      collect_void_blocks(cond, out);
+      collect_void_blocks(t, out);
+      collect_void_blocks(f, out);
+    },
+    NdInsert { items } => { for o in items { collect_void_blocks(o, out); } },
+    NdDrop { inner } => collect_void_blocks(inner, out),
+    NdReturn { inner } => collect_void_blocks(inner, out),
+    _ => {},
+  }
+}
+
+// `tested_scope`'s count: the mentions of `v` the borrow lives across — not a literal bind,
+// the null text's bind or the text's release.
+fn live_mentions(b: ir::Bundle, node: ir::Node, v: integer) -> integer {
+  c = [0];
+  skip = [0];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == v {
+          literal = match loop_shape::unspan(inner) {
+            NdText { s: _ } => true,
+            NdNull => true,
+            _ => opt_lazy_split::is_call(b, inner, "OpConvTextFromNull"),
+          };
+          if literal {
+            skip[0] = skip[0]! + 1;
+          } else {
+            c[0] = c[0]! + 1;
+          }
+        }
+      },
+      NdVar { n: x } => { if x == v { c[0] = c[0]! + 1; } },
+      _ => {
+        if frees_text(b, n, v) {
+          skip[0] = skip[0]! + 1;
+        }
+      },
+    }
+  });
+  // A skipped release's operand is a variable read the walk counted on its own.
+  if c[0]! > skip[0]! { c[0]! - skip[0]! } else { 0 }
+}
+
+// Every block under `node` that answers no text, in walk order (`tested_scope`'s candidates).
+fn collect_plain_blocks(node: ir::Node, out: vector<ir::Node>) {
+  match node {
+    NdBlock { block } => {
+      text = len(block[0].result) > 0 && is_text(block[0].result[0]!);
+      if !text {
+        out += [node];
+      }
+      for o in block[0].operators {
+        collect_plain_blocks(o, out);
+      }
+    },
+    NdSpan { pos: _, inner } => collect_plain_blocks(inner, out),
+    NdCall { def_nr: _, args } => { for a in args { collect_plain_blocks(a, out); } },
+    NdCallRef { var: _, args } => { for a in args { collect_plain_blocks(a, out); } },
+    NdInsert { items } => { for a in items { collect_plain_blocks(a, out); } },
+    NdTuple { items } => { for a in items { collect_plain_blocks(a, out); } },
+    NdParallel { arms } => { for a in arms { collect_plain_blocks(a, out); } },
+    NdLoop { block } => { for a in block[0].operators { collect_plain_blocks(a, out); } },
+    NdSet { var: _, inner } => collect_plain_blocks(inner, out),
+    NdReturn { inner } => collect_plain_blocks(inner, out),
+    NdDrop { inner } => collect_plain_blocks(inner, out),
+    NdYield { inner } => collect_plain_blocks(inner, out),
+    NdTuplePut { var: _, idx: _, inner } => collect_plain_blocks(inner, out),
+    NdIf { cond, t, f } => {
+      collect_plain_blocks(cond, out);
+      collect_plain_blocks(t, out);
+      collect_plain_blocks(f, out);
+    },
+    NdIter { var: _, create, next, init } => {
+      collect_plain_blocks(create, out);
+      collect_plain_blocks(next, out);
+      collect_plain_blocks(init, out);
+    },
+    _ => {},
+  }
+}
+
+// The roots of the tested clause (`param_roots_of`): the parameters every non-literal bind of
+// `v` reads a text field of; empty where a bind is rooted in none.
+fn param_roots_of(b: ir::Bundle, def: ir::Definition, body: ir::Node, v: integer) -> vector<integer> {
+  roots: vector<integer> = [];
+  ok = [true];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == v {
+          to = loop_shape::unspan(inner);
+          plain = match to {
+            NdText { s: _ } => true,
+            NdNull => true,
+            NdVar { n: s } => def.variables.variables[s]!.argument,
+            _ => false,
+          };
+          if !plain {
+            hit = false;
+            r = text_read_of(b, inner, hit);
+            p = if hit { root_param(b, def, r) } else { -1 };
+            if p < 0 {
+              ok[0] = false;
+            } else {
+              known = false;
+              for k in roots {
+                if k == p {
+                  known = true;
+                }
+              }
+              if !known {
+                roots += [p];
+              }
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if ok[0]! { roots } else { [] }
+}
+
+// The parameter a chain of calls' first operands is rooted at, -1 for none.
+fn root_param(b: ir::Bundle, def: ir::Definition, r: ir::Node) -> integer {
+  p = loop_shape::var_of(loop_shape::unspan(r));
+  if p >= 0 {
+    return if def.variables.variables[p]!.argument { p } else { -1 };
+  }
+  if call_def(b, r) < 0 {
+    return -1;
+  }
+  args = call_args(r);
+  if len(args) == 0 { -1 } else { root_param(b, def, args[0]) }
+}
+
+// The round's admitted set: `temps ∪ locals`, without the tested locals when `tested` names any.
+fn admit(st: St, tested: vector<Tested>) {
+  for v in 0..len(st.admitted) {
+    st.admitted[v] = st.temps[v]! || st.locals[v]!;
+  }
+  for t in tested {
+    st.admitted[t.var] = false;
+  }
+}
+
+// `borrowed_store_texts`: the text locals of function `d` that borrow, beyond the ones
+// `already` admitted.  `local_roots` is the C writer's local-root clause.
+pub fn borrowed_store_texts(b: ir::Bundle, d: integer, already: vector<boolean>, local_roots: boolean) -> Borrows {
+  def = b.data.definitions[d]!;
+  vars = def.variables.variables;
+  count = len(vars);
+  out = Borrows { borrows: [for _ in 0..count { false }], tested: [], work: [for _ in 0..count { false }], slices: [for _ in 0..count { false }] };
+  if len(def.code) == 0 {
+    return out;
+  }
+  body = def.code[0]!;
+  st = St {
+    d: d,
+    rebound: [for _ in 0..count { false }],
+    already: already,
+    temps: [for _ in 0..count { false }],
+    locals: [for _ in 0..count { false }],
+    local_temp: [for _ in 0..count { -1 }],
+    admitted: [for _ in 0..count { false }],
+    local_roots: local_roots,
+    no_slice: env_on("LOFT_NO_SLICE_BORROW"),
+    no_local: env_on("LOFT_NO_LOCAL_TEXT_BORROW"),
+  };
+  yields = [false];
+  binds_of: vector<integer> = [for _ in 0..count { 0 }];
+  sets: vector<ir::Node> = [];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { yields[0] = true; },
+      NdSet { var, inner } => {
+        if var < count {
+          st.rebound[var] = true;
+          if loop_shape::unspan(inner) != NdNull {
+            binds_of[var] = binds_of[var]! + 1;
+          }
+          sets += [n];
+        }
+      },
+      _ => {},
+    }
+  });
+  if yields[0]! {
+    return out;
+  }
+  // The discharge temps: one bind, to a parameter's text or to a local's.
+  fmt_bound: vector<boolean> = [for _ in 0..count { false }];
+  for s in sets {
+    match s {
+      NdSet { var, inner } => {
+        if vars[var]!.name.starts_with("__ncc_") && text_local(b, st, var) {
+          if param_read(b, st, inner) {
+            st.temps[var] = true;
+          } else {
+            root = local_read(b, st, inner);
+            if root >= 0 {
+              st.temps[var] = true;
+              st.local_temp[var] = root;
+            }
+          }
+        }
+        // The locals: the greatest set whose every binding is a borrowable source.
+        if !vars[var]!.name.starts_with("__") && text_local(b, st, var) {
+          st.locals[var] = true;
+        }
+      },
+      _ => {},
+    }
+  }
+  for v in 0..count {
+    if st.temps[v]! && binds_of[v]! != 1 {
+      st.temps[v] = false;
+    }
+  }
+  // The format clause: a local bound to a format string borrows the format's own work text.
+  for s in sets {
+    match s {
+      NdSet { var, inner } => {
+        if st.locals[var]! && fmt_own(b, body, inner) {
+          fmt_bound[var] = true;
+        }
+      },
+      _ => {},
+    }
+  }
+  for v in 0..count {
+    if !fmt_bound[v]! {
+      continue;
+    }
+    refused = false;
+    for s in sets {
+      match s {
+        NdSet { var, inner } => {
+          // A format binding it reads itself, or the local copied into another variable.
+          if var == v && fmt_own(b, body, inner) && mentions_var(inner, v) {
+            refused = true;
+          }
+          if var != v && loop_shape::var_of(loop_shape::unspan(inner)) == v {
+            refused = true;
+          }
+        },
+        _ => {},
+      }
+    }
+    if refused {
+      fmt_bound[v] = false;
+      st.locals[v] = false;
+    }
+  }
+  source = fn(to: ir::Node) -> boolean { source_ok(b, st, body, to) };
+  temp = fn(to: ir::Node) -> boolean { param_read(b, st, to) || local_read(b, st, to) >= 0 };
+  for _ in 0..count + 1 {
+    admit(st, []);
+    dropped: vector<integer> = [];
+    for v in 0..count {
+      if !st.admitted[v]! {
+        continue;
+      }
+      escapes = if st.temps[v]! { opt_text_borrow::text_escapes_with(b, body, v, temp) } else { opt_text_borrow::text_escapes_with(b, body, v, source) };
+      if escapes {
+        dropped += [v];
+      }
+    }
+    if len(dropped) == 0 {
+      break;
+    }
+    for v in dropped {
+      st.temps[v] = false;
+      st.locals[v] = false;
+    }
+  }
+  // The store condition, over each borrow's scope.
+  minted = frame_minted_locals(b, d, body, -1);
+  rb = if env_on("LOFT_NO_TESTED_BORROW") { -1 } else { retbuf_var(b, d) };
+  minted_rb: vector<boolean> = [];
+  if rb >= 0 {
+    minted_rb = frame_minted_locals(b, d, body, rb);
+  }
+  w = opt_writes::new_writes(b);
+  none: vector<boolean> = [for _ in 0..count { false }];
+  voids: vector<ir::Node> = [];
+  collect_void_blocks(body, voids);
+  plains: vector<ir::Node> = [];
+  if rb >= 0 {
+    collect_plain_blocks(body, plains);
+  }
+  for v in 0..count {
+    if !st.temps[v]! && !st.locals[v]! {
+      continue;
+    }
+    // A borrow of the frame's own work text names no store.
+    if fmt_bound[v]! && bound_only_by(b, st, body, v, true) {
+      out.work[v] = true;
+      continue;
+    }
+    // A slice of a plain parameter names no store either.
+    if !st.no_slice && bound_only_by(b, st, body, v, false) {
+      continue;
+    }
+    // `mention_scope`: the smallest block answering nothing that holds every mention.
+    total = mentions(body, v);
+    best = -1;
+    best_size = 0;
+    for bl in voids {
+      if mentions(bl, v) == total {
+        s = size(bl);
+        if best < 0 || s < best_size {
+          best = bl#index;
+          best_size = s;
+        }
+      }
+    }
+    // The local-root clause: no store writer of any kind may run in the scope, nor may the
+    // local be rebound there.
+    root = st.local_temp[v]!;
+    if root >= 0 {
+      bad = if best >= 0 { sets_var(voids[best]!, root) || foreign_store_writer(b, w, voids[best]!, none, -1) } else { sets_var(body, root) || foreign_store_writer(b, w, body, none, -1) };
+      if bad {
+        st.temps[v] = false;
+      }
+      continue;
+    }
+    foreign = if best >= 0 { foreign_store_writer(b, w, voids[best]!, minted, -1) } else { foreign_store_writer(b, w, body, minted, -1) };
+    if !foreign {
+      continue;
+    }
+    // The tested clause: a local whose only other writers name the return buffer borrows
+    // while its parameters' stores are not the buffer's.
+    if rb >= 0 && st.locals[v]! {
+      live = live_mentions(b, body, v);
+      narrow = -1;
+      narrow_size = 0;
+      for bl in plains {
+        if live_mentions(b, bl, v) == live {
+          s = size(bl);
+          if narrow < 0 || s < narrow_size {
+            narrow = bl#index;
+            narrow_size = s;
+          }
+        }
+      }
+      clean = if narrow >= 0 { !foreign_store_writer(b, w, plains[narrow]!, minted_rb, d) } else { !foreign_store_writer(b, w, body, minted_rb, d) };
+      if clean {
+        roots = param_roots_of(b, def, body, v);
+        if len(roots) > 0 {
+          out.tested += [Tested { var: v, roots: roots }];
+          continue;
+        }
+      }
+    }
+    st.temps[v] = false;
+    st.locals[v] = false;
+  }
+  // A local whose source was just refused has lost its borrow's source.  A TESTED local is no
+  // source.
+  for _ in 0..count + 1 {
+    admit(st, out.tested);
+    lost: vector<integer> = [];
+    for v in 0..count {
+      if st.locals[v]! && opt_text_borrow::text_escapes_with(b, body, v, source) {
+        lost += [v];
+      }
+    }
+    if len(lost) == 0 {
+      break;
+    }
+    for v in lost {
+      st.locals[v] = false;
+    }
+  }
+  kept: vector<Tested> = [];
+  for t in out.tested {
+    if st.locals[t.var]! {
+      kept += [Tested { var: t.var, roots: t.roots }];
+    }
+  }
+  out.tested = kept;
+  for v in 0..count {
+    if out.work[v]! && !st.locals[v]! && !st.temps[v]! {
+      out.work[v] = false;
+    }
+    out.borrows[v] = st.temps[v]! || st.locals[v]!;
+  }
+  for s in sets {
+    match s {
+      NdSet { var, inner } => {
+        if st.locals[var]! && slice_of(b, inner) >= 0 {
+          out.slices[var] = true;
+        }
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+// Does `node` read variable `v` as a `Var`?
+fn mentions_var(node: ir::Node, v: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == v { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// Does `node` assign variable `v`?
+fn sets_var(node: ir::Node, v: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var == v { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}

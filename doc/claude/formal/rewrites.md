@@ -5377,9 +5377,18 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  returns `(a, b, …)` in fill order, the local is a tuple read by
                  `TupleGet`, and the buffer's null init, mint guard and frees leave the
                  IR, so the interpreter claims no store for the call.  Its candidates
-                 are this rule's admissions, and native finds only what the IR
-                 declined.  Switch `LOFT_NO_IR_VALUE_RECORD=1`; guard
-                 `a-small-record-returned-to-a-reader-is-a-tuple.loft`.
+                 are this rule's admissions with one gate left out: a site that
+                 consumes the record as an OPERAND (an argument a record parameter
+                 takes, a field value) declines nothing there, because the IR keeps
+                 that site on the record form and serves the carriers with a TWIN
+                 (`value_records_twinned`) — no site runs other code than before.  A
+                 return buffer followed only by hidden WORK buffers (a callee's own
+                 vector the caller hoists) is dropped at its index, the work buffers
+                 kept.  Native finds only what the IR declined.  Switches
+                 `LOFT_NO_IR_VALUE_RECORD=1`, `LOFT_NO_VR_TWIN_SITES=1` (the operand
+                 decline again); guards `a-small-record-returned-to-a-reader-is-a-tuple.loft`,
+                 `a-small-record-handed-on-as-a-record-keeps-its-tuple-elsewhere.loft`,
+                 and `make rewrite-census` for the admissions.
                  NULLABLE CLAUSE (`--native`, `(N-Road)`, C144): a `-> S?` of a record
                  this rule admits returns the tuple of `S`'s fields followed by a
                  PRESENCE word, `(f₁, …, fₙ, bool)`.  An ABSENT tuple holds every
@@ -6584,6 +6593,15 @@ to bisect to.
   `resolve_move(from: Vec3, …)`, whose body only builds `Vec3`s through `vec3`, carries its
   parameters, and `vec3` stops being consumed as a record at those sites (the moros/dryopea
   lane: `vec3` and `hex_to_world` tuples, four mints and frees fewer per `resolve_move`).
+  The walk keys a native's write by RECORD TYPE as the write set does: a text setter writes
+  no byte of a no-heap record, `OpPutRef` writes a frame slot, and a non-`const` operand is
+  a route only when its type — a variable's, or the schema type a field projection carries
+  — can hold the parameter's type (`holds_schema_type`).  A call back into a function still
+  being walked contributes nothing beyond that function's own walk (the least fixpoint; a
+  result that leans on an open walk is not memoised), so a write-free recursion such as the
+  runner's `show::write` chain carries its parameters.  A drop function and a type's
+  `OpCopy` hook keep record parameters: the release and copy machinery hand them the
+  record, through no call site this rule rewrites.
   Cells `loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft` (c4b and c5b are
   the aliasing negatives: a parameter that names the record written reads the write back,
   which a tuple copy could not).  Declines:

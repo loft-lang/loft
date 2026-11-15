@@ -1,0 +1,115 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the size test of `(R-CSplit)` (`src/c/split.rs`): `strip`, `idents`,
+// `call_sites` and the reading of a body's lines that `statements` refuses.  The split
+// itself — the frame struct and the part functions — is not carried: a body over the budget
+// is refused by name.
+
+// A body over this many runtime-call sites is written in parts (`DEFAULT_BUDGET`).
+BUDGET = 300;
+
+fn ident_char(c: integer) -> boolean {
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+// The runtime-call sites of one line of C (`call_sites` over `strip`): the identifiers that
+// start `loft_` and are followed by `(`, outside string and character literals and comments.
+// -1 for a line the splitter cannot read: a block comment that does not close on it.
+fn line_sites(l: text) -> integer {
+  n = l.size();
+  count = 0;
+  i = 0;
+  for _ in 0..n + 1 {
+    if i >= n {
+      break;
+    }
+    c = l.byte_at(i);
+    if c == 34 || c == 39 {
+      // A literal: skipped to its closing quote, an escape taking two bytes.
+      i += 1;
+      for _ in 0..n {
+        if i >= n || l.byte_at(i) == c {
+          break;
+        }
+        i += if l.byte_at(i) == 92 && i + 1 < n { 2 } else { 1 };
+      }
+      i += 1;
+    } else if c == 47 && i + 1 < n && l.byte_at(i + 1) == 47 {
+      break;
+    } else if c == 47 && i + 1 < n && l.byte_at(i + 1) == 42 {
+      end = l[i + 2..n].find("*/") ?? return -1;
+      i = end + i + 4;
+    } else if c >= 48 && c <= 57 {
+      // A number, with any suffix and exponent, is no identifier.
+      for _ in 0..n {
+        if i >= n || !(ident_char(l.byte_at(i)) || l.byte_at(i) == 46) {
+          break;
+        }
+        i += 1;
+      }
+    } else if ident_char(c) {
+      start = i;
+      for _ in 0..n {
+        if i >= n || !ident_char(l.byte_at(i)) {
+          break;
+        }
+        i += 1;
+      }
+      if l[start..i].starts_with("loft_") {
+        j = i;
+        for _ in 0..n {
+          if j >= n || !(l.byte_at(j) == 32 || l.byte_at(j) == 9) {
+            break;
+          }
+          j += 1;
+        }
+        if j < n && l.byte_at(j) == 40 {
+          count += 1;
+        }
+      }
+    } else {
+      i += 1;
+    }
+  }
+  count
+}
+
+// Does `(R-CSplit)` write `body` — a function's lines, of storage `storage` — in parts?  An
+// under-approximation of "kept whole": a body over the budget that the splitter would still
+// keep whole for a reason found later in its reading is answered as split.
+pub fn over_budget(storage: text, params: text, body: text) -> boolean {
+  if (env_variable("LOFT_NO_C_SPLIT") ?? "0") != "0" {
+    return false;
+  }
+  // `LOFT_C_SPLIT`: 1 (or unreadable) the default budget, 0 off, any other number the budget.
+  budget = (env_variable("LOFT_C_SPLIT") ?? "1").trim() as integer ?? 1;
+  if budget == 0 {
+    return false;
+  }
+  if budget == 1 {
+    budget = BUDGET;
+  }
+  total = 0;
+  for l in body.split('\n') {
+    t = l.trim();
+    // A preprocessor line other than `#line` leaves the body whole.
+    if t.starts_with("#") && !t.starts_with("#line") {
+      return false;
+    }
+    sites = line_sites(l);
+    if sites < 0 {
+      return false;
+    }
+    total += sites;
+  }
+  if total <= budget {
+    return false;
+  }
+  // An inline function, and a function-pointer or variadic parameter, stay whole.
+  if storage != "static" && !storage.starts_with("static /*loft_hot") {
+    return false;
+  }
+  !(params.contains("(") || params.contains("..."))
+}

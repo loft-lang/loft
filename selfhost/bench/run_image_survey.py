@@ -12,9 +12,14 @@ table is the C runtime's); `leak` (the same output, another count of stores left
 the interpreter reports); `differ`; `stopped` (an operator or native not carried, named in the
 ranking); `fault` (the run stopped for another reason, or crashed); `noimage`.
 
-    python3 selfhost/bench/run_image_survey.py [--scripts-only] [--jobs N] [--top 30]
+`--functions` runs the corpus's test files too (`fn test_*()` and no `main`): each test function
+as a program of its own — the file with a `main` calling that one test, written to a scratch
+directory and run from the file's own directory, `tests/lib` on `--lib` — so a run image, which
+starts at `main`, covers what `loft --tests` runs.
+
+    python3 selfhost/bench/run_image_survey.py [--scripts-only] [--functions] [--jobs N] [--top 30]
 """
-import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, hashlib, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
@@ -28,24 +33,50 @@ def proc(cmd, env, timeout, cwd=None):
         return -9, "", "timeout"
 
 
-def one(f, loft, runner, tmp, env, timeout, written=False):
-    img = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f) + ".run")
-    rc, _, err = proc([loft, "--emit-run-image", img, f], env, timeout)
+TEST_FN = re.compile(r"^fn (test\w*)\s*\(\s*\)", re.M)
+
+
+def test_functions(files):
+    """(file, test) for every test function of the files that have no `main`."""
+    out = []
+    for f in files:
+        src = open(f, encoding="utf-8", errors="replace").read()
+        if census.SKIP.search(src) or re.search(r"^\s*fn main\s*\(", src, re.M):
+            continue
+        out += [(f, t) for t in TEST_FN.findall(src)]
+    return out
+
+
+def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()):
+    src_dir = os.path.dirname(f)
+    if test:
+        # The test file with a `main` that calls the one test, beside the other programs; it runs
+        # from the test file's own directory, where its relative paths resolve.
+        # A file name past the file system's 255 bytes is no file: a long one keeps its end and a hash.
+        stem = re.sub(r"[^A-Za-z0-9]", "_", f"{f}::{test}")
+        if len(stem) > 150:
+            stem = stem[-120:] + "_" + hashlib.sha1(stem.encode()).hexdigest()[:12]
+        prog = os.path.join(tmp, stem + ".loft")
+        with open(prog, "w", encoding="utf-8") as fh:
+            fh.write(open(f, encoding="utf-8", errors="replace").read() + f"\n\nfn main() {{\n  {test}();\n}}\n")
+        f = prog
+    img = f[:-5] + ".run" if test else os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f) + ".run")
+    rc, _, err = proc([loft, *libargs, "--emit-run-image", img, f], env, timeout, cwd=src_dir)
     if rc != 0:
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
     run_env = {**env, "LOFT_NATIVE_LEAK_CHECK": "1"}
     if written:
         # The code is the bytecode writer in loft's, from the program's stored IR.
         store = img[:-4] + ".store"
-        rc, _, err = proc([loft, "--emit-image", store, f], env, timeout)
+        rc, _, err = proc([loft, *libargs, "--emit-image", store, f], env, timeout, cwd=src_dir)
         if rc != 0:
             return f, "noimage", err.strip().splitlines()[-1:] or [""]
         run_env["LOFT_RUN_PROGRAM"] = store
-    rc, want, err = proc([loft, "--interpret", f], env, timeout, cwd=os.path.dirname(f))
+    rc, want, err = proc([loft, *libargs, "--interpret", f], env, timeout, cwd=src_dir)
     # The runner shares one C runtime with the program it runs, so its exit leak check
     # (`LOFT_NATIVE_LEAK_CHECK`) counts the program's stores left at exit, as the interpreter's
     # own report does: the two counts are compared too.
-    rc2, got, err2 = proc([runner, img], run_env, timeout, cwd=os.path.dirname(f))
+    rc2, got, err2 = proc([runner, img], run_env, timeout, cwd=src_dir)
     if "stopped: not carried by the bytecode writer in loft" in err2:
         return f, "unwritten", [""]
     m = re.search(r"stopped: not carried: (\S+)", err2)
@@ -75,6 +106,8 @@ def main():
     ap.add_argument("--loft", default=None, help="the loft binary (default: target/release/loft)")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
+    ap.add_argument("--functions", action="store_true",
+                    help="also every test function of the test files, each as a program of its own")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--timeout", type=int, default=60)
@@ -105,8 +138,13 @@ def main():
             sys.exit(f"the runner did not build:\n{p.stderr[-2000:]}")
         # Absolute: each program runs from its own directory, where a path relative to the
         # working directory (a relative LOFT_SUITE_DIR) does not resolve.
-        files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
-                                                           o.chapter, o.scripts_only) if census.plain(f)]
+        corpus = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
+                                                            o.chapter, o.scripts_only) if os.path.isfile(f)]
+        files = [f for f in corpus if census.plain(f)]
+        jobs = [(f, None) for f in files]
+        if o.functions:
+            jobs += test_functions([f for f in corpus if not census.plain(f)])
+        libargs = ("--lib", os.path.join(root, "tests", "lib"))
         # The compiler keeps a warm cache that does not know `LOFT_NO_TEXT_BORROW`: the first
         # emission after the switch changed reads what the other setting left.  One emission
         # of each kind first, so every program's two images come from one setting.
@@ -118,13 +156,15 @@ def main():
         ops = collections.Counter()
         shown = []
         with cf.ThreadPoolExecutor(o.jobs) as ex:
-            for f, verdict, what in ex.map(lambda f: one(f, loft, runner, tmp, env, o.timeout, o.written), files):
+            for (src, test), (f, verdict, what) in zip(jobs, ex.map(
+                    lambda j: one(j[0], loft, runner, tmp, env, o.timeout, o.written, j[1], libargs), jobs)):
                 counts[verdict] += 1
                 if verdict in o.show:
-                    shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what[0]}")
+                    name = os.path.relpath(src, root) + (f"::{test}" if test else "")
+                    shown.append(f"{verdict}\t{name}\t{what[0]}")
                 if verdict == "stopped":
                     ops[what[0]] += 1
-        print(f"{counts['agree']} of {len(files)} programs agree; " +
+        print(f"{counts['agree']} of {len(jobs)} programs agree; " +
               ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "unwritten", "differ", "fault", "noimage") if counts[k]))
         for line in sorted(shown):
             print(line)

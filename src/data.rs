@@ -8096,6 +8096,28 @@ impl Data {
         }
     }
 
+    /// The type a READ of a stored `reference<E>` field answers: for a struct-enum `E`, a
+    /// value of `E` itself, `Enum(E, true)`, which is how every other `E` record is typed.
+    /// The field keeps its `Reference` former (the pointer layout and its `OpGetDbRef` /
+    /// `OpSetDbRef` arms key on it); only what the read hands on changes, so `==`, `&a == &b`
+    /// (`@FR-E-Eq`) and a parameter of `E` see one type.  A struct's record is already typed
+    /// `Reference(S)`, so nothing changes for it.  The deps, the pointer marker included,
+    /// carry over unchanged.
+    #[must_use]
+    pub fn stored_ref_read(&self, t: Type) -> Type {
+        match t {
+            Type::Reference(e, deps)
+                if deps.is_pointer_marker()
+                    && (e as usize) < self.definitions.len()
+                    && matches!(self.def(e).returned.base(), Type::Enum(_, true, _)) =>
+            {
+                Type::Enum(e, true, deps)
+            }
+            Type::Optional(inner) => Type::Optional(Box::new(self.stored_ref_read(*inner))),
+            other => other,
+        }
+    }
+
     /// Is this definition one the AUTHOR wrote, rather than one loft generated for them?
     ///
     /// The generated ones carry a leading `__` — `__tuple<integer,Node>`, `__nullable<S>`,

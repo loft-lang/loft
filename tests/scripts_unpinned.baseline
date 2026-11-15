@@ -41,8 +41,12 @@ tests/scripts/2484-a-walk-over-a-fresh-keyed-collection-views-its-records.loft
 tests/scripts/2485-a-write-from-a-nested-block-keeps-its-loop-binding.loft
 tests/scripts/2486-an-early-return-of-a-match-bound-vector-is-copied-out.loft
 tests/scripts/2490-an-early-return-of-a-small-record-literal-is-its-tuple.loft
+tests/scripts/2493-a-block-arm-ending-in-a-local-joins-an-optional-result.loft
 tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft
+tests/scripts/2496-a-forward-typed-capture-beside-a-boolean-vector-has-its-storage.loft
 tests/scripts/2497-a-return-naming-a-record-declared-below-is-that-record.loft
+tests/scripts/2498-a-transient-record-is-no-member-of-itself.loft
+tests/scripts/2499-a-match-with-a-leaving-arm-last-in-an-if-branch-runs.loft
 tests/scripts/39-diagnostics-passing.loft
 tests/scripts/a-byte-classifier-reads-its-table.loft
 tests/scripts/a-call-proving-its-26th-parameter-is-not-a-destination-twin.loft
@@ -114,6 +118,7 @@ tests/scripts/a-text-operand-is-read-before-a-later-operand-writes-it.loft
 tests/scripts/a-text-walks-loop-variable-returned-is-copied-out-and-borrowed.loft
 tests/scripts/a-transient-sites-text-local-keeps-a-write-after-its-bind.loft
 tests/scripts/a-transient-twin-writes-only-what-it-built.loft
+tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-can-be-written.loft
 tests/scripts/a-twin-record-address-is-its-arguments-own.loft
 tests/scripts/a-vector-of-raw-scalars-is-written-as-one-block.loft
 tests/scripts/a-vector-of-scalars-clears-without-a-release-walk.loft

@@ -1892,6 +1892,8 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
             own[res] = loft_stores[res];
             loft_stores = own;
             loft_nstores = own_n;
+            /* The result store's entry came from the worker's table: no hint holds for it. */
+            loft_hint_table = 0;
             /* The result store's entry is the caller's again: not freed with the worker's. */
             loft_par_free_table(j->kept, j->parent_n, j->kept_n);
             j->kept = 0;

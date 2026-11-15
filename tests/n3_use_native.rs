@@ -67,7 +67,12 @@ fn copy_pkg(from: &std::path::Path, to: &std::path::Path) {
 /// indices. The test therefore matches the prefix + extension rather than a
 /// fixed name; the fingerprint is not knowable from here.
 fn cdylib_present(dir: &std::path::Path) -> bool {
-    let named = loft::native_lib::platform_cdylib_name("loft_auto_mathnative");
+    cdylib_present_for(dir, "mathnative")
+}
+
+/// [`cdylib_present`] for the package named `pkg`.
+fn cdylib_present_for(dir: &std::path::Path, pkg: &str) -> bool {
+    let named = loft::native_lib::platform_cdylib_name(&format!("loft_auto_{pkg}"));
     let (prefix, ext) = named
         .rsplit_once('.')
         .expect("a cdylib name has an extension");
@@ -150,6 +155,72 @@ fn use_compile_native_library_dispatches_on_real_binary() {
 
     let _ = fa::remove_dir_all(&tmp);
     let _ = fa::remove_dir_all(native_auto);
+}
+
+/// A compiled library's `-> text?` answer reaches the interpreted caller: a text element of a
+/// vector field, a text field, the parameter, a null, the empty text and an absent element
+/// each read as the library's own body answers them.  `is_cdylib_text_call` routed only a
+/// plain `-> text` through the destination; a `text?` was called with none and every answer
+/// read as the empty text — `arguments::get` answered "" for a value it had parsed, and a
+/// missing option read as present.
+#[test]
+fn a_compiled_librarys_nullable_text_answer_reaches_the_script() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir().join(format!("loft_n3_textopt_{pid}"));
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
+    let prog = tmp.join("main.loft");
+    fa::write(
+        &prog,
+        "use textopt;\n\
+         fn main() {\n\
+         \x20 o = textopt::Opts { keys: [\"a\", \"output\"], vals: [\"x1\", \"app.bin\"] };\n\
+         \x20 n = textopt::Named { label: \"lbl\", n: 3 };\n\
+         \x20 miss = textopt::lookup(o, \"nothere\");\n\
+         \x20 none = textopt::none_unless_big(n);\n\
+         \x20 empty = textopt::empty_when_positive(n);\n\
+         \x20 absent = textopt::element(o, 5);\n\
+         \x20 println(\"[{textopt::lookup(o, \"output\")}] [{textopt::element(o, 0)}] [{textopt::label_of(n)}] [{textopt::same(\"tp\")}]\");\n\
+         \x20 println(\"{miss == null} {none == null} {empty == null} {len(empty ?? \"xx\")} {absent == null}\");\n\
+         }\n",
+    )
+    .unwrap();
+    let lib = private_lib(&tmp, &["textopt"]);
+    // `--interpret`: the script interprets and calls into the compiled library.
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--lib")
+        .arg(&lib)
+        .arg("--interpret")
+        .arg(&prog)
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("run the loft binary");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "loft exited non-zero.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    // The values each body answers: the element "app.bin", the element "x1", the field "lbl",
+    // the parameter "tp"; then a missing key, a null exit and an absent element are null, and
+    // the empty text is present with length 0.
+    assert_eq!(
+        stdout, "[app.bin] [x1] [lbl] [tp]\ntrue true false 0 true\n",
+        "a compiled library's text? answer did not reach the script"
+    );
+    assert!(
+        cdylib_present_for(&lib.join("textopt/native-auto"), "textopt"),
+        "the library was not compiled, so the test exercised nothing"
+    );
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// @PLN11 Arc N / N3 (B3) — silent per-function fallback: a library where two

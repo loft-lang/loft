@@ -119,12 +119,34 @@ struct Ops {
     get_vector: u32,
     not: u32,
     put_ref: u32,
+    /// Per definition, the argument its return buffer is passed at, where hidden work
+    /// buffers follow it (`work_buffer` attributes, hoisted to the caller); `None` where the
+    /// buffer is the last argument or there is none, which [`Ops::buf_at`] reads as the last.
+    ret_arg: Vec<Option<usize>>,
     /// The default walk's records (`Stores::set_default_value`) on a scratch copy of the
     /// stores, one per record type: what a copy from a null source leaves in a fresh record.
     defaults: std::cell::RefCell<(Stores, HashMap<u16, crate::keys::DbRef>)>,
 }
 
 impl Ops {
+    /// The index of the return buffer among a call's `n` arguments to `d`: before the
+    /// callee's hidden work buffers where it has them, else the last.
+    fn buf_at(&self, d: u32, n: usize) -> usize {
+        match self.ret_arg.get(d as usize).copied().flatten() {
+            Some(i) if i < n => i,
+            _ => n.saturating_sub(1),
+        }
+    }
+
+    /// The arguments of a call to `d` other than its return buffer.
+    fn non_buf<'a>(&self, d: u32, args: &'a [Value]) -> impl Iterator<Item = &'a Value> {
+        let at = self.buf_at(d, args.len());
+        args.iter()
+            .enumerate()
+            .filter(move |(i, _)| *i != at)
+            .map(|(_, a)| a)
+    }
+
     fn new(data: &Data, stores: &Stores) -> Ops {
         let k = [Kind::Int, Kind::Float, Kind::Single, Kind::Bool];
         let names = ["Int", "Float", "Single", "Boolean"];
@@ -149,6 +171,15 @@ impl Ops {
             get_vector: data.def_nr("OpGetVector"),
             not: data.def_nr("OpNot"),
             put_ref: data.def_nr("OpPutRef"),
+            ret_arg: (0..data.definitions())
+                .map(|d| {
+                    let def = data.def(d);
+                    let idx = def.hidden_return_buffer_attr()?;
+                    let rest = &def.attributes[idx + 1..];
+                    (!rest.is_empty() && rest.iter().all(|a| a.hidden && a.work_buffer))
+                        .then_some(idx)
+                })
+                .collect(),
             defaults: std::cell::RefCell::new({
                 let mut scratch = stores.clone();
                 scratch.max = 0;
@@ -335,12 +366,28 @@ struct World {
 /// by value (`c::Cx::vr_ptr_params`, `@FR-R-ValueRecord`).  Here, below both readers: the
 /// C passes such a parameter by pointer and [`World::lendable`] lends a carrier to it.
 pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
+    param_read_only(data, body, a, None)
+}
+
+/// [`vr_param_read_only`] for a RECORD parameter, which shares its caller's store
+/// (`@FR-F-ParamHeap`): a user function handed it — whole, or inside an argument expression
+/// (`f(x ?? a.inner)`) — at a parameter that takes a record writes the caller's record unless
+/// that parameter is read-only too, so with `lent` (the parameters already known read-only)
+/// such a hand-off reads only where `lent` holds the callee's parameter; a call through a
+/// function reference, whose callee is not known, does not.
+fn param_read_only(
+    data: &crate::data::Data,
+    body: &Value,
+    a: u16,
+    lent: Option<&HashSet<(u32, usize)>>,
+) -> bool {
     let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
     let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
     let mut ok = true;
     body.any_node(&mut |n| {
         match n {
             Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == a => ok = false,
+            Value::CallRef(_, args) if lent.is_some() && args.iter().any(&mentions) => ok = false,
             Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
                 let def = data.def(*op);
                 let name = def.name();
@@ -349,6 +396,16 @@ pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16)
                         (name.starts_with("OpSet") && i == 0) || (name == "OpCopyRecord" && i == 1);
                     if writes_into && mentions(x) {
                         ok = false;
+                    } else if let Some(ro) = lent
+                        && !name.starts_with("Op")
+                        && mentions(x)
+                    {
+                        let shares = def.attributes().get(i).is_none_or(|p| {
+                            matches!(p.typedef.base(), Type::Reference(..) | Type::RefVar(_))
+                        });
+                        if shares && !ro.contains(&(*op, i)) {
+                            ok = false;
+                        }
                     } else if is_a(x) {
                         let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
                             || matches!(
@@ -397,13 +454,23 @@ fn lendable_params(data: &Data) -> HashMap<(u32, usize), u32> {
                 continue;
             }
             let p = def.variables.var(&a.name);
-            if !a.hidden
-                && p != u16::MAX
-                && !def.returned().depend().contains(&p)
-                && vr_param_read_only(data, def.code(), p)
-            {
+            if !a.hidden && p != u16::MAX && !def.returned().depend().contains(&p) {
                 out.insert((d, i), *rec);
             }
+        }
+    }
+    // Read-only is TRANSITIVE: a parameter handed on to another function's record parameter
+    // is written where that one is.  Optimistic, then pruned until nothing changes.
+    loop {
+        let ro: HashSet<(u32, usize)> = out.keys().copied().collect();
+        let before = out.len();
+        out.retain(|&(d, i), _| {
+            let def = data.def(d);
+            let p = def.variables.var(&def.attributes[i].name);
+            param_read_only(data, def.code(), p, Some(&ro))
+        });
+        if out.len() == before {
+            break;
         }
     }
     out
@@ -442,9 +509,9 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         return 0;
     }
     let mut laps = crate::opt::laps::PassLaps::new(std::env::var_os("LOFT_TIMING").is_some());
-    let mut vr = crate::opt::value_records::value_records(data, stores, false);
+    let mut vr = crate::opt::value_records::value_records_twinned(data, stores);
     if split_public(data, &vr) {
-        vr = crate::opt::value_records::value_records(data, stores, false);
+        vr = crate::opt::value_records::value_records_twinned(data, stores);
     }
     laps.lap("vr_analysis");
     if vr.fns.is_empty() && vr.params.is_empty() {
@@ -767,10 +834,16 @@ fn callee_shape(
     if !def.native.is_empty() {
         return Err("a native function");
     }
-    // The return buffer is the LAST attribute, so dropping it moves no other parameter.
+    // The return buffer is the LAST attribute or followed only by hidden work buffers (`Ops::ret_arg`).
     let idx = def.hidden_return_buffer_attr().ok_or("no return buffer")?;
     let buf = def.variables.var(&def.attributes[idx].name);
-    if idx + 1 != def.attributes.len() || buf == u16::MAX || !def.variables.is_argument(buf) {
+    // Only hidden work buffers may follow it (`Ops::ret_arg`): every site drops the argument
+    // at the buffer's index, and no parameter after it is one a site reads by number.
+    if (idx + 1 != def.attributes.len()
+        && ops.ret_arg.get(d as usize).copied().flatten() != Some(idx))
+        || buf == u16::MAX
+        || !def.variables.is_argument(buf)
+    {
         return Err("the return buffer is not the last parameter");
     }
     let Type::Reference(record, _) = def.returned().peel_link().base() else {
@@ -1143,12 +1216,13 @@ fn exit_value(n: &Value, buf: u16, layout: &Layout, ops: &Ops, sh: &mut BodyShap
                 && exit_value(last, buf, layout, ops, sh)
         }
         Value::Call(d, args)
-            if matches!(args.last().map(Value::unspan), Some(Value::Var(_)))
-                && args[..args.len() - 1].iter().all(|a| !mentions(a, buf)) =>
+            if matches!(
+                args.get(ops.buf_at(*d, args.len())).map(Value::unspan),
+                Some(Value::Var(_))
+            ) && ops.non_buf(*d, args).all(|a| !mentions(a, buf)) =>
         {
             sh.tail_calls.push(*d);
-            args[..args.len() - 1]
-                .iter()
+            ops.non_buf(*d, args)
                 .all(|a| body_shape(a, buf, layout, ops, false, sh))
         }
         _ => false,
@@ -1293,15 +1367,14 @@ fn body_shape(
         }
         _ if tail => exit_value(n, buf, layout, ops, sh),
         Value::Set(l, inner)
-            if let Value::Call(_, args) = inner.unspan()
-                && (matches!(args.last().map(Value::unspan), Some(Value::Var(b)) if *b == buf)
+            if let Value::Call(g, args) = inner.unspan()
+                && (matches!(args.get(ops.buf_at(*g, args.len())).map(Value::unspan), Some(Value::Var(b)) if *b == buf)
                     // A PROMOTED local: the buffer rebound from a call built in a local buffer.
                     || (*l == buf
-                        && matches!(args.last().map(Value::unspan), Some(Value::Var(_))))) =>
+                        && matches!(args.get(ops.buf_at(*g, args.len())).map(Value::unspan), Some(Value::Var(_))))) =>
         {
             sh.bound.insert(*l);
-            args[..args.len() - 1]
-                .iter()
+            ops.non_buf(*g, args)
                 .all(|a| !mentions(a, buf) && body_shape(a, buf, layout, ops, false, sh))
         }
         Value::Set(_, inner)
@@ -2115,14 +2188,20 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
             if let Value::Call(d, args) = inner.unspan()
                 && w.cands.contains_key(d)
             {
-                let r = match args.last().map(Value::unspan) {
+                let at = w.ops.buf_at(*d, args.len());
+                let r = match args.get(at).map(Value::unspan) {
                     Some(Value::Var(r)) => Some(*r),
                     _ => None,
                 };
                 s.binds.push((*v, *d, r));
                 *s.cand_calls.entry(*d).or_default() += 1;
                 s.called.insert(*d);
-                scan_args(*d, &args[..args.len().saturating_sub(1)], w, s);
+                // The parameters before the buffer keep their numbers; the work buffers after
+                // it are hidden, no parameter a tuple or a lend is asked of.
+                scan_args(*d, &args[..at.min(args.len())], w, s);
+                for a in args.iter().skip(at + 1) {
+                    scan(a, false, w, s);
+                }
                 return;
             }
             if stmt && matches!(inner.unspan(), Value::Null) {
@@ -2377,7 +2456,10 @@ impl Rewrite<'_> {
                     return;
                 }
                 if let Value::Call(d, args) = inner.unspan_mut() {
-                    args.pop();
+                    let at = ops.buf_at(*d, args.len());
+                    if at < args.len() {
+                        args.remove(at);
+                    }
                     if let Some(t) = self.twins.get(d) {
                         *d = *t;
                     }
@@ -2748,7 +2830,12 @@ fn rewrite_callee(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, d: u32,
             .insert(0, Value::Set(c.buf, Box::new(null_tuple(layout, &w.ops))));
     }
     def.returned = tuple;
-    def.attributes.pop();
+    let at = def
+        .attributes
+        .iter()
+        .position(|a| def.variables.var(&a.name) == c.buf)
+        .unwrap_or(def.attributes.len() - 1);
+    def.attributes.remove(at);
     def.variables.drop_argument(c.buf);
 }
 
@@ -2909,9 +2996,13 @@ impl Exits<'_> {
                 self.stmts(&mut b.operators, vars, true);
             }
             Value::Call(d, args)
-                if matches!(args.last().map(Value::unspan), Some(Value::Var(_))) =>
+                if matches!(
+                    args.get(self.w.ops.buf_at(*d, args.len()))
+                        .map(Value::unspan),
+                    Some(Value::Var(_))
+                ) =>
             {
-                args.pop();
+                args.remove(self.w.ops.buf_at(*d, args.len()));
                 let callee = self.w.cands.get(d).map(|k| k.record);
                 if let Some(t) = self.twins.get(d) {
                     *d = *t;

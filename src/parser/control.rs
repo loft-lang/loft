@@ -6291,6 +6291,9 @@ impl Parser {
             if matches!(true_type.base(), Type::Void) && ends_in_halt(&self.data, &true_code) {
                 true_type = Type::Never;
             }
+            // A then arm that never finishes by a construct of its own — a `match` whose every
+            // arm leaves — keeps that construct: it is the arm's code, not a `null` to retype.
+            let then_never = matches!(true_type.base(), Type::Never);
             if matches!(true_type, Type::Null | Type::Never)
                 || then_tuple_nulls.is_some()
                 || true_is_empty_literal
@@ -6483,10 +6486,11 @@ impl Parser {
                     let p = bl.operators.len() - 1;
                     // A then arm of no type yet is a `null`, or on pass 1 an expression pass 1
                     // cannot type (`first_pass_null_arm`): only the null takes the sibling's null.
-                    if bl
-                        .operators
-                        .last()
-                        .is_some_and(|o| ends_in_halt(&self.data, o))
+                    if then_never
+                        || bl
+                            .operators
+                            .last()
+                            .is_some_and(|o| ends_in_halt(&self.data, o))
                     {
                         // `@FR-C-Never` — the halt stays, the sibling's null goes behind it.
                         bl.operators.push(self.null_value(&false_type));
@@ -6719,7 +6723,19 @@ impl Parser {
         let outer_subject = std::mem::take(&mut self.match_subject);
         let outer_arm_facts = std::mem::take(&mut self.match_arm_facts);
         let outer_root = std::mem::replace(&mut self.match_subject_root, u16::MAX);
-        let r = self.parse_match_inner(code);
+        let mut r = self.parse_match_inner(code);
+        // `@FR-C-Never` — a match never finishes only when EVERY arm does not: beside an arm
+        // that finishes without a value it is a statement that finishes (loft#2499).  Typed
+        // `never`, an enclosing `if` read it as its arm's diverging tail and put the sibling's
+        // null in its place, so the arm that matched did not run.
+        if matches!(r.base(), Type::Never) && self.match_void_arm {
+            r = Type::Void;
+            if let Value::Block(bl) = code
+                && matches!(bl.result.base(), Type::Never)
+            {
+                bl.result = Type::Void;
+            }
+        }
         let arm_facts = std::mem::replace(&mut self.match_arm_facts, outer_arm_facts);
         self.match_subject = outer_subject;
         self.match_subject_root = outer_root;
@@ -8531,6 +8547,7 @@ impl Parser {
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         self.forget_facts(facts);
         let block = v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match");
+        self.match_void_arm |= matches!(arm_type.base(), Type::Void);
         if Self::arm_settles_match(result_type, &arm_type) {
             *result_type = arm_type.clone();
         }
@@ -18054,6 +18071,11 @@ impl Parser {
     /// (loft#2315).
     fn match_arms_unify(&self, result: &Type, arm: &Type) -> bool {
         match_arm_types_unify(result, arm)
+            // `@FR-N-Join`: an optional result meets a present arm of its base — a block arm
+            // whose value is a local, which no expected type converted (loft#2493).
+            || (matches!(result, Type::Optional(_))
+                && !matches!(arm, Type::Optional(_))
+                && match_arm_types_unify(result.base(), arm))
             || matches!(
                 (self.variant_parent_enum(arm), result.base()),
                 (Some(Type::Enum(a, _, _)), Type::Enum(b, _, _)) if a == *b
