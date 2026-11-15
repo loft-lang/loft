@@ -3750,14 +3750,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.data.set_attr_type(closure_rec, a_nr, attr_tp);
             self.note_shared_vector(closure_rec, &name, &ctype);
         }
-        if self.data.def(closure_rec).known_type() == u16::MAX
-            && !(0..self.data.attributes(closure_rec))
-                .any(|a| self.data.attr_type(closure_rec, a).is_unknown())
-        {
-            crate::typedef::fill_database(&mut self.data, &mut self.database, closure_rec);
-            self.database
-                .lay_out_record(self.data.def(closure_rec).known_type());
-        }
+        // Laid out as soon as nothing BLOCKS it, in the layout's own reading of that
+        // (`typedef::lay_out_late`).  `Type::is_unknown` is not that reading: it takes a
+        // `Reference` to definition 0 for an unresolved one, and a shared `vector<boolean>`
+        // capture is stored as exactly that (`boolean` is definition 0), so a record holding
+        // one beside a repaired capture was never laid out and the body's first read of the
+        // repaired capture found no storage (loft#2496).
+        crate::typedef::lay_out_late(&mut self.data, &mut self.database, closure_rec);
     }
 
     /// Record that the closure record `rec`'s attribute `name` shares the captured vector of

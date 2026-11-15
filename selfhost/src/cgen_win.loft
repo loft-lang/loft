@@ -1,0 +1,285 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the push window of `src/c/body.rs` (`open_window`, `windowed`): a
+// counted push loop reserves its trips once and writes its pushes through a window.
+
+use ir;
+use cgen_w::*;
+use cgen_fn;
+use cgen_names;
+use cgen_hoist;
+use cgen_ref;
+use opt_push;
+use opt_non_sentinel;
+use opt_window;
+use opt_fill;
+
+// The window held for the vector at `path`, -1 for none.
+pub fn window_at(w: W, path: text) -> integer {
+  for win in w.windows {
+    if win.path == path {
+      return win#index;
+    }
+  }
+  -1
+}
+
+// `window_loop`: the loop as one a window serves — a counted scalar push loop, else a loop
+// that appends records to one plain vector.
+fn window_loop(x: Cx, w: W, lp: ir::Block) -> opt_window::PushLoop? {
+  scalar = opt_window::push_loop(x.b, lp);
+  if scalar != null {
+    if scalar.fill || window_at(w, scalar.path) >= 0 || !opt_window::push_window_ok(x.b, x.writes, w.index, lp, scalar) {
+      return null;
+    }
+    return scalar;
+  }
+  if (env_variable("LOFT_NO_RECORD_PUSH") ?? "0") != "0" {
+    return null;
+  }
+  m = opt_window::mint_loop(x.b, w.index, lp, (env_variable("LOFT_NO_HEAP_RECORD_PUSH") ?? "0") == "0") ?? return null;
+  if window_at(w, m.path) >= 0 || !opt_window::mint_window_ok(x.b, x.writes, w.index, lp, m) {
+    return null;
+  }
+  m
+}
+
+// `open_window`: opens the window of push loop `lp`; answers whether it did.
+pub fn open_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
+  if (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_PUSH_WINDOW") ?? "0") != "0" {
+    return false;
+  }
+  p = window_loop(x, w, lp) ?? return deep_window(x, w, lp, ind);
+  n = len(w.decls) + 1;
+  win = "pw{n}";
+  pv = "pv{n}";
+  w.decls += ["loft_win {win} = {{ 0, 0, 0, 0, 0xFFFF }};"];
+  w.decls += ["loft_ref {pv} = {{ 0xFFFF, 0, 0, 0 }};"];
+  vector = as_ref(w, cgen_fn::expr(x, w, p.vector, ind));
+  line(w, ind, "{pv} = {vector};");
+  // The trip count: the range's end less its start, plus one for an inclusive range.
+  hi = as_int(w, cgen_fn::expr(x, w, p.hi, ind));
+  lo = if p.next_var >= 0 { w.names[p.next_var]! } else { "loft_add({w.names[p.index_var]!}, INT64_C(1))" };
+  flush(w, ind);
+  line(w, ind, "loft_vec_reserve_more({pv}, loft_mul(loft_add(loft_sub({hi}, {lo}), INT64_C({if p.inclusive { 1 } else { 0 }})), INT64_C({p.pushes})), {p.size});");
+  line(w, ind, "{win} = loft_win_of({pv}, {p.size});");
+  w.windows += [Window { path: p.path, name: win, pv: pv, size: p.size }];
+  true
+}
+
+// `deep_window`: one window for the pushes onto the single path a loop pushes to at any
+// depth — no reservation, the pushes grow the record through the window.
+fn deep_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
+  if (env_variable("LOFT_NO_DEEP_WINDOW") ?? "0") != "0" {
+    return false;
+  }
+  paths: vector<text> = [];
+  roots: vector<integer> = [];
+  sizes: vector<integer> = [];
+  vectors: vector<ir::Node> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(x.b.data.definitions) {
+          path = "";
+          root = -1;
+          size = opt_push::fused(x.b, x.b.data.definitions[def_nr]!.name, args, path, root);
+          if size > 0 {
+            seen = false;
+            for p in paths {
+              if p == path {
+                seen = true;
+              }
+            }
+            if !seen {
+              paths += [path];
+              roots += [root];
+              sizes += [size];
+              vectors += [args[0]];
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if len(paths) != 1 || window_at(w, paths[0]) >= 0 {
+    return false;
+  }
+  if !opt_window::deep_window_ok(x.b, x.writes, w.facts, w.index, lp, paths[0], roots[0]) {
+    return false;
+  }
+  n = len(w.decls) + 1;
+  win = "pw{n}";
+  pv = "pv{n}";
+  w.decls += ["loft_win {win} = {{ 0, 0, 0, 0, 0xFFFF }};"];
+  w.decls += ["loft_ref {pv} = {{ 0xFFFF, 0, 0, 0 }};"];
+  vector = as_ref(w, cgen_fn::expr(x, w, vectors[0], ind));
+  line(w, ind, "{pv} = {vector};");
+  flush(w, ind);
+  line(w, ind, "{win} = loft_win_of({pv}, {sizes[0]});");
+  w.windows += [Window { path: paths[0], name: win, pv: pv, size: sizes[0] }];
+  true
+}
+
+// `close_window`: the loop's one exit gives the length back; an enclosing loop's push header
+// on the same path is derived again.
+pub fn close_window(x: Cx, w: W, ind: integer) {
+  last = w.windows[len(w.windows) - 1]!;
+  w.windows = w.windows[0..len(w.windows) - 1];
+  line(w, ind, "loft_win_sync({last.name});");
+  for h in w.push_heads {
+    if h.path == last.path {
+      line(w, ind, "{h.name} = loft_ph_of({h.name}.v, {h.size});");
+      break;
+    }
+  }
+}
+
+// `windowed`: a reservation on, or a scalar push onto, a path a window is open for.
+pub fn windowed(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if name == "OpPreAllocVector" {
+    r = -1;
+    at = if len(args) > 0 { window_at(w, opt_push::vector_path(x.b, args[0], r)) } else { -1 };
+    if at < 0 {
+      return none();
+    }
+    done = true;
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  path = "";
+  root = -1;
+  if name == "OpNewRecord" || name == "OpNewRecordNP" || name == "OpFinishRecord" {
+    vtp = 0;
+    opt_push::mint_target(x.b, x.b.data.definitions[w.index]!, name, args, path, root, vtp);
+    minting = if path == "" { -1 } else { window_at(w, path) };
+    if minting < 0 {
+      return none();
+    }
+    done = true;
+    mw = w.windows[minting].name;
+    mv = w.windows[minting].pv;
+    msize = w.windows[minting].size;
+    if name == "OpFinishRecord" {
+      return E { code: "loft_win_finish(&{mw}, {mv}, {msize})", kind: K_VOID };
+    }
+    elem = match x.b.types[vtp].parts[0] {
+      PtVector { content } => content,
+      _ => -1,
+    };
+    ptp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    msite = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{mw}";
+    made = temp(w, "ref");
+    line(w, ind, "{made} = (LOFT_PROVED(loft_win_same({mw}, {mv}, {msize}), {c_string(msite)}), loft_win_slot(&{mw}, {mv}, {msize}));");
+    if !(name == "OpNewRecordNP" || cgen_ref::mint_complete(x.b, w, ptp)) && elem >= 0 {
+      line(w, ind, "loft_fill({made}, loft_dflt{elem}, {x.b.types[elem].size});");
+    }
+    return E { code: made, kind: K_REF };
+  }
+  size = opt_push::fused(x.b, name, args, path, root);
+  if size == 0 {
+    return none();
+  }
+  held = window_at(w, path);
+  if held < 0 {
+    return none();
+  }
+  done = true;
+  win = w.windows[held].name;
+  pv = w.windows[held].pv;
+  val = cgen_fn::expr(x, w, args[len(args) - 1], ind);
+  put = "loft_win_put1";
+  bits = "";
+  if name == "OpPushInt" {
+    put = "loft_win_put8";
+    bits = "(uint64_t) {as_int(w, val)}";
+  } else if name == "OpPushFloat" {
+    put = "loft_win_put8";
+    bits = "loft_f64_bits({as_float(w, val)})";
+  } else if name == "OpPushSingle" {
+    put = "loft_win_put4";
+    bits = "loft_f32_bits({as_single(w, val)})";
+  } else if name == "OpPushInt4" {
+    put = "loft_win_put4";
+    bits = "loft_i4_bits({as_int(w, val)})";
+  } else if name == "OpPushCharacter" {
+    put = "loft_win_put4";
+    bits = as_char(w, val);
+  } else if name == "OpPushBoolean" {
+    bits = as_bool(w, val);
+  } else if name == "OpPushEnum" {
+    bits = as_enum(w, val);
+  } else {
+    min = cgen_fn::literal(w, args[1], "byte minimum") ?? return none();
+    bits = "loft_byte_raw({min}, {as_int(w, val)})";
+  }
+  site = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{win}";
+  E { code: "(LOFT_PROVED(loft_win_same({win}, {pv}, {size}), {c_string(site)}), {put}(&{win}, {pv}, {bits}))", kind: K_VOID }
+}
+
+// `counter_step`: `v + 1`, as the loop's own step spells it.
+fn counter_step(x: Cx, v: integer) -> ir::Node {
+  add = -1;
+  for d in x.b.data.definitions {
+    if add < 0 && d.name == "OpAddInt" {
+      add = d#index;
+    }
+  }
+  ir::NdCall { def_nr: add, args: [ir::NdVar { n: v }, ir::NdInt { n: 1 }] }
+}
+
+// `fill_head` (`@FR-R-Fill`): the fill of loop `lp` through the header held for its vector;
+// answers the flag that says the fill ran ("" where the loop is no fill).
+pub fn fill_head(x: Cx, w: W, lp: ir::Block, ind: integer) -> text {
+  if (env_variable("LOFT_NO_FILL_HOIST") ?? "0") != "0" {
+    return "";
+  }
+  f = opt_fill::fill_loop(x.b, lp) ?? return "";
+  if f.has_bound && (env_variable("LOFT_NO_GUARDED_FILL") ?? "0") != "0" {
+    return "";
+  }
+  hdr = cgen_hoist::held_path(w, f.path);
+  if hdr == "" {
+    return "";
+  }
+  lo = if f.next_var >= 0 { w.names[f.next_var]! } else { as_int(w, cgen_fn::expr(x, w, counter_step(x, f.index_var), ind)) };
+  base = if f.has_base { as_int(w, cgen_fn::expr(x, w, f.nodes[3]!, ind)) } else { "(int64_t) 0" };
+  hi = as_int(w, cgen_fn::expr(x, w, f.nodes[1]!, ind));
+  value = cgen_fn::expr(x, w, f.nodes[2]!, ind);
+  func = "loft_vh_fill_{f.kind}";
+  val = if f.kind == "f64" { as_float(w, value) } else if f.kind == "f32" { as_single(w, value) } else { as_int(w, value) };
+  bound = if f.has_bound { as_int(w, cgen_fn::expr(x, w, f.nodes[len(f.nodes) - 1]!, ind)) } else { "" };
+  if w.why != "" {
+    return "";
+  }
+  flush(w, ind);
+  s = lp.scope;
+  incl = if f.inclusive { 1 } else { 0 };
+  if f.has_bound {
+    line(w, ind, "int64_t flhi_{s} = loft_fill_guard_end({hi}, {incl}, {bound}, {base}); int64_t fllo_{s} = {lo};");
+    line(w, ind, "int fill_{s} = loft_fill_span(flhi_{s}, fllo_{s}) >= 8 && {func}({hdr}, {base}, fllo_{s}, flhi_{s}, 0, {val}); /* @FR-R-Fill guarded */");
+  } else {
+    line(w, ind, "int fill_{s} = {func}({hdr}, {base}, {lo}, {hi}, {incl}, {val}); /* @FR-R-Fill */");
+  }
+  "fill_{s}"
+}
+
+// `fill_tail`: where the fill ran, the counters take the values the loop would have left.
+pub fn fill_tail(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  f = opt_fill::fill_loop(x.b, lp) ?? return;
+  hi = as_int(w, cgen_fn::expr(x, w, f.nodes[1]!, ind + 1));
+  last = if f.inclusive { "({hi})" } else { "(({hi}) - 1)" };
+  line(w, ind, "}} else {{");
+  flush(w, ind + 1);
+  idx = w.names[f.index_var]!;
+  line(w, ind + 1, "{idx} = {last};");
+  past = as_int(w, cgen_fn::expr(x, w, counter_step(x, f.index_var), ind + 1));
+  flush(w, ind + 1);
+  stepped = if f.next_var >= 0 { w.names[f.next_var]! } else { idx };
+  line(w, ind + 1, "{stepped} = {past};");
+  line(w, ind, "}}");
+}

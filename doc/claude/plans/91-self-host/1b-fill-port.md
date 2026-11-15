@@ -67,6 +67,19 @@ fn OpAddInt(v1: __word, v2: __word) -> __word;
   text value is not a view into a store or the code.  The generated function is named
   `op_<operator>`, so none takes a standard-library name.
 - The answer local is typed and nullable, so a template may answer `null`.
+- **A second form behind ` #arm `** is the operator's arm of the dispatch loop, where the first
+  form cannot be one (it names a whole reference or text, or it is a `State` method):
+  `#loft"s.put_var_dbref(pos, value); #arm slots: crt::copy_ref(value_at, base + sp + 16 - pos);"`.
+  An operator with no `#rust` template carries only the arm form (`#loft" #arm …"`).  In an arm
+  a reference argument is read in its slot — `r.store_nr`, `r.rec`, `r.pos` are scalar locals,
+  `r_at` the slot's address, `r_pos` its position — and a text argument is its view's slot
+  (`v1_at`, `v1_pos`), read in place by `crt::view_*`; `out_at` is the address a reference
+  answer is written at; `base`, `stk`, `sp` (the top after the pops), `ip` (past the
+  operands) and `tmp0`… are the loop's.  Before the form: `slots:` (every `u16` operand is a
+  frame slot the guard tests), `slots(a, b):` (those alone), `guard(<test>):`, then `answer:` — a
+  call on the `State` that leaves the operator's answer on the stack itself, as a text answer is
+  pushed by its template (`OpNewRecord` calls `State::new_record_at` with the slot it reads).
+  The whole contract is `create.loft`'s `inline_arm`.
 
 Two language features exist for the port:
 
@@ -142,15 +155,41 @@ The dispatch loop is generated (`fill.loft`'s `run`) by the Rust interpreter's e
 | `(R-FrameHeadroom)` | `OpCall` and a plain `OpReturn` are arms (`create.loft`'s `call_arm`, `return_arm`): the frame list is held memory (`State.fbase`, four words a frame) written at the local depth; a call tests the depth and the default headroom under the capacity, and only one that fails runs `fn_call`, which grows the stack |
 
 Every check the accessors make is a compare at the loop's head or in the arm's guard; a step
-whose test fails is left to the operator's function, which reports it.  An operator with a text
-or reference argument runs through `execute`.  A return that is not plain — a buffer of a call
-through a reference to release, a destination-form call, a `par` worker or arm — runs
-`fn_return` (`State::plain_return`, asked once after each operator that ran on the `State`).
+whose test fails is left to the operator's function, which reports it.  A reference or text
+operator is an arm where its template reads the reference's fields or gives an ` #arm ` form
+(What a template is); every other one runs through `execute`.  An operator in a slot past 254
+— two bytes in the code — is an arm of a second `match` under slot 255.  A return that is not
+plain — a buffer of a call through a reference to release, a destination-form call, a `par`
+worker or arm — runs `fn_return` (`State::plain_return`, asked once after each operator that
+ran on the `State`).  A function binds at most 300 variables, so an arm's locals come from a
+pool by type (`ri0`…, `rf0`…, `rb0`…).
+
+What an operator outside the arms costs, and the cures that hold everywhere in the runner:
+
+- A `state::DbRef` value is a record in a store of its own.  The IR's `(R-ValueRecord)` carries
+  the `State`'s reference getters as tuples (their record-owing sites keep the record form,
+  `value_records_twinned`); a method that takes or answers a reference reads and writes it in
+  its slot (`get_record`, `new_record_at`, `step`), the answer through the scratch vector
+  `State.lio`.
+- A fact about a type is derived once per type, never per execution: `State::fact` (scalar
+  facts), `keyed_facts` (key plans), `target_of` (record targets, behind a direct-mapped cache).
+  A `types::` walk per operator copies the type table's vectors out by value.
+- A text argument is read as its view in place (`crt::view_*`, `*_view`); where a copy is
+  owed it goes through `State.tbuf` (`crt::stack_str_in`), never a vector minted per call.  A
+  formatted value is rendered into its destination (`crt::append_int` / `append_float` /
+  `append_text`).
+- A native that needs only the stack is `natives::light`, called from `OpStaticCall`'s arm;
+  each native is a function of its own, so a call initialises only its own locals.
 
 Measure with `selfhost/bench/fill_speed.sh` (the generated runner against `loft --interpret`
 on the integer kernels) and `selfhost/bench/bench_speed.py` (every routine of the benchmark
 suite, `bench/NN_*`, each timed by the program itself).  Compare builds by user-mode
 instruction counts (`perf stat -e instructions:u`, a large run less a tiny one): on a busy
 machine the times and the cycle counts move by a factor of two, the instruction counts not at
-all.  The gate is the generated runner at the Rust interpreter's time; on the integer kernels
-it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles).
+all.  The gate is the generated runner at the Rust interpreter's time.  On the integer kernels
+it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles); over the
+benchmark suite's 94 routines the geometric mean is 0.92 of the Rust interpreter's time on this
+machine, 1.10 on a second (before the last arms), the worst 2.3 (`map_json`, rendering records
+through `show`'s text buffers) — the routines over 1.3 are the worklist, by what their
+operators and natives are (`LOFT_FILL_TRACE=1` prints each operator and each native the run
+reaches).

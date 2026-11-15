@@ -1,0 +1,167 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/c/body/table_handle.rs` (`@FR-R-TableHandle`): a hash of linked
+// records under one integer key that a function reaches twice, or in a loop, is reached
+// through a handle that remembers its table.
+
+use ir;
+use cgen_w::*;
+use el_ir;
+use loop_shape;
+use opt_push;
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d >= 0 && d < len(b.data.definitions) { b.data.definitions[d]!.name } else { "" }
+}
+
+// A hash of linked records under one integer key.
+fn int_hash(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  elem = match b.types[tp].parts[0] {
+    PtHash { content, fields: _ } => content,
+    _ => -1,
+  };
+  if elem < 0 || elem >= len(b.types) || !b.types[elem].linked || len(b.types[tp].keys) != 1 {
+    return false;
+  }
+  k = b.types[tp].keys[0].type_nr;
+  k == 1 || k == 2
+}
+
+fn literal(v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n,
+    NdLong { n } => n ?? -1,
+    _ => -1,
+  }
+}
+
+fn path_of(b: ir::Bundle, coll: ir::Node) -> text {
+  root = -1;
+  opt_push::vector_path(b, coll, root)
+}
+
+// `finish_place`: the place `OpFinishRecord(owner, _, ptp, fld)` files into, "" for none.
+pub fn finish_place(b: ir::Bundle, owner: ir::Node, ptp: integer, fld: integer) -> text {
+  if ptp < 0 || ptp >= len(b.types) || fld < 0 {
+    return "";
+  }
+  if fld == 65535 {
+    return if int_hash(b, ptp) { path_of(b, owner) } else { "" };
+  }
+  fields = match b.types[ptp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    PtEnumValue { value: _, fields: fs } => fs,
+    _ => return "",
+  };
+  if fld >= len(fields) || !int_hash(b, fields[fld]!.content) {
+    return "";
+  }
+  base = path_of(b, owner);
+  if base == "" { "" } else { "{base}{fields[fld]!.position}," }
+}
+
+// `keyed_place`: the place a keyed operator reaches, "" for any other call.
+fn keyed_place(b: ir::Bundle, name: text, args: vector<ir::Node>) -> text {
+  if name == "OpGetRecord" && len(args) >= 2 {
+    return if int_hash(b, literal(args[1])) { path_of(b, args[0]) } else { "" };
+  }
+  if (name == "OpLengthHash" || name == "t_4hash_len") && len(args) == 1 {
+    return path_of(b, args[0]);
+  }
+  if name == "OpHashRemove" && len(args) == 3 {
+    raw = literal(args[2]);
+    return if raw >= 0 && int_hash(b, raw & 32767) { path_of(b, args[0]) } else { "" };
+  }
+  if name == "OpFinishRecord" && len(args) == 4 {
+    return finish_place(b, args[0], literal(args[2]), literal(args[3]));
+  }
+  ""
+}
+
+fn count(b: ir::Bundle, v: ir::Node, in_loop: boolean, paths: vector<text>, times: vector<integer>, looped: vector<boolean>) {
+  node = loop_shape::unspan(v);
+  inside = in_loop || (node is NdLoop);
+  match node {
+    NdCall { def_nr, args } => {
+      path = if def_nr >= 0 && def_nr < len(b.data.definitions) { keyed_place(b, def_name(b, def_nr), args) } else { "" };
+      if path != "" {
+        at = -1;
+        for p in paths {
+          if p == path {
+            at = p#index;
+          }
+        }
+        if at < 0 {
+          paths += [path];
+          times += [1];
+          looped += [inside];
+        } else {
+          times[at] = times[at]! + 1;
+          if inside {
+            looped[at] = true;
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  for child in el_ir::children(node) {
+    count(b, child, inside, paths, times, looped);
+  }
+}
+
+// `places`: the places function `d` reaches twice or in a loop.
+pub fn places(b: ir::Bundle, d: integer) -> vector<text> {
+  def = b.data.definitions[d]!;
+  out: vector<text> = [];
+  if len(def.code) == 0 {
+    return out;
+  }
+  paths: vector<text> = [];
+  times: vector<integer> = [];
+  looped: vector<boolean> = [];
+  count(b, def.code[0]!, false, paths, times, looped);
+  for p in paths {
+    if times[p#index]! >= 2 || looped[p#index]! {
+      out += [p];
+    }
+  }
+  out
+}
+
+// `table_handle_at`: the handle of the place at `path`, declared at its first use; "" where
+// the place takes none.
+pub fn handle_at(w: W, path: text) -> text {
+  if path == "" || (env_variable("LOFT_NO_TABLE_HANDLE") ?? "0") != "0" {
+    return "";
+  }
+  held = false;
+  for p in w.table_places {
+    if p == path {
+      held = true;
+    }
+  }
+  if !held {
+    return "";
+  }
+  for p in w.table_paths {
+    if p == path {
+      return w.table_names[p#index]!;
+    }
+  }
+  h = "hh{len(w.decls) + 1}";
+  w.decls += ["loft_hh {h} = LOFT_HH_NONE;"];
+  w.table_paths += [path];
+  w.table_names += [h];
+  h
+}
+
+// `table_handle`: the handle of the collection `coll` names.
+pub fn handle(x: Cx, w: W, coll: ir::Node) -> text {
+  handle_at(w, path_of(x.b, coll))
+}

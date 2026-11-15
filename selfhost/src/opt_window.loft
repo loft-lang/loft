@@ -1,0 +1,756 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/push_window.rs`: `@FR-R-PushFill`'s window, the counted loop
+// whose scalar pushes onto one path write through a window on that vector — one reservation
+// for its trips, the length written back at the loop's one exit.
+
+use ir;
+use binds;
+use cgen_types;
+use el_ir;
+use loop_shape;
+use opt_hoist;
+use opt_facts;
+use opt_names;
+use opt_non_sentinel;
+use opt_push;
+use opt_writes;
+use types;
+
+// One counted push loop: the pushed path and its root, the vector's expression, the element
+// size, the range's end and counters, the pushes per pass, and whether the loop is one fill.
+pub struct PushLoop {
+  pub path: text,
+  pub root: integer,
+  pub vector: ir::Node,
+  pub size: integer,
+  pub hi: ir::Node,
+  pub inclusive: boolean,
+  pub index_var: integer,
+  pub next_var: integer,
+  pub pushes: integer,
+  pub fill: boolean,
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d >= 0 && d < len(b.data.definitions) { b.data.definitions[d]!.name } else { "" }
+}
+
+fn push_width(name: text) -> integer {
+  if name == "OpPushByte" || name == "OpPushBoolean" || name == "OpPushEnum" {
+    1
+  } else if name == "OpPushInt4" || name == "OpPushCharacter" || name == "OpPushSingle" {
+    4
+  } else if name == "OpPushInt" || name == "OpPushFloat" {
+    8
+  } else {
+    0
+  }
+}
+
+// `push_loop_body`: the statements of a plain `for` loop's body, or of a comprehension's.
+pub fn push_loop_body(lp: ir::Block) -> vector<ir::Node> {
+  if lp.name == "For loop" && len(lp.operators) == 2 {
+    return match loop_shape::unspan(lp.operators[1]) {
+      NdBlock { block } => block[0].operators,
+      _ => [],
+    };
+  }
+  if lp.name == "For comprehension" {
+    return lp.operators[1..len(lp.operators)];
+  }
+  []
+}
+
+// The path of the first operand of call `n` when it is a vector's, "" otherwise.
+fn first_path(b: ir::Bundle, args: vector<ir::Node>) -> text {
+  if len(args) == 0 {
+    return "";
+  }
+  root = -1;
+  opt_push::vector_path(b, args[0], root)
+}
+
+// `push_loop`: the counted loop `lp` as a push loop, null where it is none.
+pub fn push_loop(b: ir::Bundle, lp: ir::Block) -> PushLoop? {
+  body = push_loop_body(lp);
+  if len(body) == 0 {
+    return null;
+  }
+  rc = loop_shape::range_counters(lp, b.data.definitions) ?? return null;
+  stmts: vector<ir::Node> = [];
+  for s in body {
+    if !(loop_shape::unspan(s) is NdLine) {
+      stmts += [s];
+    }
+  }
+  // The pushes at the top level of the body.
+  path = "";
+  root = -1;
+  // Held in a slot: a bind of a match's operand is a view the next statement rebinds.
+  pushed: vector<ir::Node> = [ir::NdNull];
+  size = 0;
+  vals: vector<ir::Node> = [];
+  biased = false;
+  for s in stmts {
+    match loop_shape::unspan(s) {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        at = "";
+        r = -1;
+        width = opt_push::fused(b, name, args, at, r);
+        if width > 0 {
+          if name == "OpPushByte" {
+            biased = true;
+          }
+          if path != "" && path != at {
+            return null;
+          }
+          if path == "" {
+            path = at;
+            root = r;
+            pushed[0] = args[0];
+            size = width;
+          }
+          vals += [args[len(args) - 1]];
+        }
+      },
+      _ => {},
+    }
+  }
+  if path == "" {
+    return null;
+  }
+  // The statements that are neither a counted push nor the path's own reservation.
+  plain = 0;
+  for s in stmts {
+    own = false;
+    match loop_shape::unspan(s) {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        own = (push_width(name) > 0 || name == "OpPreAllocVector") && first_path(b, args) == path;
+      },
+      _ => {},
+    }
+    if !own {
+      plain += 1;
+    }
+  }
+  // early leave, the pushes of the whole body, another write of the path
+  state = [0, 0, 0];
+  whole = ir::NdInsert { items: body };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdBreak { n: _ } => { state[0] = 1; },
+      NdReturn { inner: _ } => { state[0] = 1; },
+      NdContinue { n: _ } => { state[0] = 1; },
+      NdLoop { block: _ } => { state[0] = 1; },
+      NdYield { inner: _ } => { state[0] = 1; },
+      NdParallel { arms: _ } => { state[0] = 1; },
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && first_path(b, args) == path {
+          name = def_name(b, def_nr);
+          if push_width(name) > 0 {
+            state[1] = state[1]! + 1;
+          } else if !(name == "OpPreAllocVector" || name.starts_with("OpGet") || name.starts_with("OpLength")) {
+            state[2] = 1;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if state[0]! == 1 || state[2]! == 1 || state[1]! != len(vals) {
+    return null;
+  }
+  banned = [rc.loop_var, rc.index, root];
+  if rc.next >= 0 {
+    banned += [rc.next];
+  }
+  if !opt_push::simple_invariant(b, rc.hi, banned) {
+    return null;
+  }
+  fill = !biased && len(vals) == 1 && plain == 0 && opt_push::simple_invariant(b, vals[0], banned);
+  PushLoop { path: path, root: root, vector: pushed[0]!, size: size, hi: rc.hi, inclusive: rc.inclusive, index_var: rc.index, next_var: rc.next, pushes: len(vals), fill: fill }
+}
+
+// `field_of_owned`: the owned local whose field `root` was set from, once; -1 for none.
+fn field_of_owned(b: ir::Bundle, d: ir::Definition, root: integer) -> integer {
+  if len(d.code) == 0 {
+    return -1;
+  }
+  state = [-1, 0];
+  opt_non_sentinel::walk(d.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == root && loop_shape::unspan(inner) != NdNull {
+          state[1] = state[1]! + 1;
+          state[0] = -1;
+          match loop_shape::unspan(inner) {
+            NdCall { def_nr, args } => {
+              if def_name(b, def_nr) == "OpGetField" && len(args) > 0 {
+                state[0] = loop_shape::var_of(loop_shape::unspan(args[0]));
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  h = state[0]!;
+  if h >= 0 && state[1]! == 1 && h < len(d.variables.variables) && opt_hoist::owned_local(d, h) && !d.variables.variables[root]!.captured { h } else { -1 }
+}
+
+// `IntegerSpec::part_min` and `byte_width`, for `same_element_storage`.
+fn int_width(spec: ir::IntegerSpec, nullable: boolean) -> integer {
+  if spec.forced_size > 0 {
+    return spec.forced_size;
+  }
+  codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+  if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 }
+}
+
+fn int_min(spec: ir::IntegerSpec, width: integer, nullable: boolean) -> integer {
+  range = spec.max - spec.min + 1;
+  reserves = nullable && (width == 1 || width == 2) && ((spec.forced_size == 1 && range == 256) || (spec.forced_size == 2 && range == 65536));
+  if reserves && spec.min < 0 { spec.min + 1 } else { spec.min }
+}
+
+// `Type::same_element_storage` over two scalar element types.
+fn same_storage(a: ir::TypeT, c: ir::TypeT) -> boolean {
+  a_null = a is TyOptional;
+  c_null = c is TyOptional;
+  match cgen_types::base(a) {
+    TyInteger { spec: sa } => {
+      match cgen_types::base(c) {
+        TyInteger { spec: sc } => {
+          wa = int_width(sa, a_null);
+          wc = int_width(sc, c_null);
+          a_null == c_null && wa == wc && (wa >= 8 || int_min(sa, wa, a_null) == int_min(sc, wc, c_null))
+        },
+        _ => true,
+      }
+    },
+    _ => true,
+  }
+}
+
+fn vector_elem(t: ir::TypeT, hit: &boolean) -> ir::TypeT {
+  hit = false;
+  match opt_names::peel_link(t) {
+    TyVector { inner, dep: _ } => {
+      hit = true;
+      inner
+    },
+    _ => ir::TyVoid,
+  }
+}
+
+// `scalar_vector`: a vector of plain scalars.
+fn scalar_vector(t: ir::TypeT) -> boolean {
+  hit = false;
+  e = vector_elem(t, hit);
+  hit && opt_writes::is_scalar(e)
+}
+
+// `scalar_vector_apart`: two vectors of scalars whose elements are stored differently.
+fn scalar_vector_apart(a: ir::TypeT, c: ir::TypeT) -> boolean {
+  ha = false;
+  ea = vector_elem(a, ha);
+  hc = false;
+  ec = vector_elem(c, hc);
+  ha && hc && opt_writes::is_scalar(ea) && opt_writes::is_scalar(ec) && !same_storage(ea, ec)
+}
+
+// `names_beside_file_reads`: does `n` name `x` anywhere but as the file of a scalar read?
+fn names_beside_file_reads(b: ir::Bundle, d: ir::Definition, n: ir::Node, x: integer) -> boolean {
+  node = loop_shape::unspan(n);
+  match node {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == "OpReadFile" && len(args) > 1 && loop_shape::var_of(loop_shape::unspan(args[0])) == x {
+        scalar = false;
+        match loop_shape::unspan(args[1]) {
+          NdCall { def_nr: c, args: inner } => {
+            if def_name(b, c) == "OpCreateStack" && len(inner) > 0 {
+              t = loop_shape::var_of(loop_shape::unspan(inner[0]));
+              scalar = t >= 0 && t < len(d.variables.variables) && opt_writes::is_scalar(d.variables.variables[t]!.type_def[0] ?? ir::TyVoid);
+            }
+          },
+          _ => {},
+        }
+        if scalar {
+          for a in args {
+            if a#index > 0 && names_beside_file_reads(b, d, a, x) {
+              return true;
+            }
+          }
+          return false;
+        }
+      }
+    },
+    _ => {},
+  }
+  if named_here(node) == x {
+    return true;
+  }
+  for child in el_ir::children(node) {
+    if names_beside_file_reads(b, d, child, x) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Value::var_named_here`: the variable this node itself names, -1 for none.
+fn named_here(n: ir::Node) -> integer {
+  match n {
+    NdVar { n: v } => v,
+    NdSet { var, inner: _ } => var,
+    NdTupleGet { var, idx: _ } => var,
+    NdTuplePut { var, idx: _, inner: _ } => var,
+    NdFnRefDnr { n: v } => v,
+    NdCallRef { var, args: _ } => var,
+    NdIter { var, create: _, next: _, init: _ } => var,
+    NdFnRef { def_nr: _, var, t: _ } => var,
+    _ => -1,
+  }
+}
+
+// `push_window_ok`: may loop `lp`, the push loop `p`, write its pushes through a window?
+pub fn push_window_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Block, p: PushLoop) -> boolean {
+  if p.fill {
+    return false;
+  }
+  d = b.data.definitions[vd]!;
+  root = p.root;
+  if root < 0 || root >= len(d.variables.variables) {
+    return false;
+  }
+  root_is_retbuf = opt_hoist::retbuf_var(d) == root;
+  // The field clause: a root set once as a field of an owned local is that local's alone
+  // while the loop names neither.
+  holder = field_of_owned(b, d, root);
+  if !(opt_hoist::owned_local(d, root) || root_is_retbuf || opt_hoist::work_buffer_arg(d, root) || holder >= 0) {
+    return false;
+  }
+  body = push_loop_body(lp);
+  if len(body) == 0 {
+    return false;
+  }
+  parts: vector<ir::Node> = [];
+  for s in body {
+    if holder >= 0 && el_ir::reads_var(s, holder) {
+      return false;
+    }
+    // A counted push gives its value operand alone, the path's reservation its count.
+    own = false;
+    match loop_shape::unspan(s) {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if (push_width(name) > 0 || name == "OpPreAllocVector") && first_path(b, args) == p.path {
+          own = true;
+          for a in args {
+            if a#index > 0 {
+              parts += [a];
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+    if !own {
+      parts += [s];
+    }
+  }
+  window_parts_ok(b, w, vd, parts, root, root_is_retbuf, null)
+}
+
+// `window_parts_ok` for one root: no part names the root or a variable that could view its
+// store, and none writes a store beside the pushes.
+fn window_parts_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, parts: vector<ir::Node>, root: integer, root_is_retbuf: boolean, facts: opt_facts::Facts?) -> boolean {
+  d = b.data.definitions[vd]!;
+  root_tp = d.variables.variables[root]!.type_def[0] ?? ir::TyVoid;
+  may_view: vector<integer> = [];
+  for v in d.variables.variables {
+    x = v#index;
+    tp = v.type_def[0] ?? ir::TyVoid;
+    // `(R-Alias)`: a variable the store facts prove apart from the root cannot view it.
+    if facts != null && opt_facts::enabled() && x != root && opt_facts::distinct(b, facts, x, root) {
+      continue;
+    }
+    if x == root || opt_writes::is_scalar(tp) || (cgen_types::base(tp) is TyText) || opt_hoist::owned_local(d, x) || (v.argument && !root_is_retbuf) {
+      continue;
+    }
+    // A view of a plain no-heap record reads fields, never a length.
+    if opt_writes::is_plain_record(b, tp) {
+      known = match opt_names::peel_link(tp) {
+        TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
+        _ => -1,
+      };
+      if known >= 0 && !types::owns_heap(b.types, known) {
+        continue;
+      }
+    }
+    if scalar_vector_apart(tp, root_tp) {
+      continue;
+    }
+    // A file the body only reads a scalar from, beside a root of scalars.
+    if scalar_vector(root_tp) {
+      named = false;
+      for part in parts {
+        if names_beside_file_reads(b, d, part, x) {
+          named = true;
+        }
+      }
+      if !named {
+        continue;
+      }
+    }
+    may_view += [x];
+  }
+  for part in parts {
+    if el_ir::reads_var(part, root) {
+      return false;
+    }
+    for x in may_view {
+      if el_ir::reads_var(part, x) {
+        return false;
+      }
+    }
+    if opt_writes::blocks_under(b, w, vd, part, 1, []) {
+      return false;
+    }
+  }
+  true
+}
+
+// The most mint groups on `path` one pass of `n` runs: the arms of a choice take the larger.
+fn most_mints(b: ir::Bundle, d: ir::Definition, n: ir::Node, path: text) -> integer {
+  match loop_shape::unspan(n) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == "OpNewRecord" {
+        at = "";
+        root = -1;
+        vtp = 0;
+        opt_push::mint_target(b, d, "OpNewRecord", args, at, root, vtp);
+        if at == path {
+          return 1;
+        }
+      }
+    },
+    NdIf { cond, t, f } => {
+      a = most_mints(b, d, t, path);
+      c = most_mints(b, d, f, path);
+      return most_mints(b, d, cond, path) + (if a > c { a } else { c });
+    },
+    _ => {},
+  }
+  total = 0;
+  for child in el_ir::children(loop_shape::unspan(n)) {
+    total += most_mints(b, d, child, path);
+  }
+  total
+}
+
+// `mint_loop`: the plain counted loop `lp` as a loop that appends records to one plain vector
+// (`@FR-R-PushRec`), null where it is none.  `pushes` is its mint groups per pass.
+pub fn mint_loop(b: ir::Bundle, vd: integer, lp: ir::Block, heap_push: boolean) -> PushLoop? {
+  if lp.name != "For loop" || len(lp.operators) != 2 {
+    return null;
+  }
+  body = match loop_shape::unspan(lp.operators[1]) {
+    NdBlock { block } => block[0].operators,
+    _ => return null,
+  };
+  d = b.data.definitions[vd]!;
+  rc = loop_shape::range_counters(lp, b.data.definitions) ?? return null;
+  // early leave, a mint that does not qualify or reaches a second path, the mints
+  state = [0, 0, 0, -1, 0];
+  found: vector<text> = [""];
+  target: vector<ir::Node> = [ir::NdNull];
+  whole = ir::NdInsert { items: body };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdBreak { n: _ } => { state[0] = 1; },
+      NdReturn { inner: _ } => { state[0] = 1; },
+      NdContinue { n: _ } => { state[0] = 1; },
+      NdLoop { block: _ } => { state[0] = 1; },
+      NdYield { inner: _ } => { state[0] = 1; },
+      NdParallel { arms: _ } => { state[0] = 1; },
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr) == "OpNewRecord" {
+          at = "";
+          root = -1;
+          vtp = 0;
+          vector = opt_push::mint_target(b, d, "OpNewRecord", args, at, root, vtp);
+          if at == "" || !opt_push::mint_push_qualifies(b, vtp, heap_push) || (found[0]! != "" && found[0]! != at) {
+            state[1] = 1;
+          } else {
+            if found[0]! == "" {
+              found[0] = at;
+              target[0] = vector;
+              state[3] = root;
+              state[4] = vtp;
+            }
+            state[2] = state[2]! + 1;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  path = found[0]!;
+  if state[0]! == 1 || state[1]! == 1 || path == "" || state[2]! == 0 {
+    return null;
+  }
+  // Every operator naming the path is a mint group's own.
+  other = [false];
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && first_path(b, args) == path {
+          name = def_name(b, def_nr);
+          if !(name == "OpPreAllocVector" || name == "OpNewRecord" || name == "OpFinishRecord") {
+            other[0] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if other[0]! {
+    return null;
+  }
+  root_var = state[3]!;
+  banned = [rc.loop_var, rc.index, root_var];
+  if rc.next >= 0 {
+    banned += [rc.next];
+  }
+  if !opt_push::simple_invariant(b, rc.hi, banned) {
+    return null;
+  }
+  per_pass = 0;
+  for s in body {
+    per_pass += most_mints(b, d, s, path);
+  }
+  if per_pass < 1 {
+    per_pass = 1;
+  }
+  size = 0;
+  match b.types[state[4]!].parts[0] {
+    PtVector { content } => { if content >= 0 && content < len(b.types) { size = b.types[content].size; } },
+    _ => {},
+  }
+  PushLoop { path: path, root: root_var, vector: target[0]!, size: size, hi: rc.hi, inclusive: rc.inclusive, index_var: rc.index, next_var: rc.next, pushes: per_pass, fill: false }
+}
+
+// The parts of a mint loop's statement the window must judge: a mint group's own writes of
+// its fresh element give their values alone.
+fn collect(b: ir::Bundle, n: ir::Node, path: text, fresh: vector<boolean>, parts: vector<ir::Node>) {
+  match loop_shape::unspan(n) {
+    NdIf { cond, t, f } => {
+      parts += [cond];
+      collect(b, t, path, fresh, parts);
+      collect(b, f, path, fresh, parts);
+    },
+    NdBlock { block } => {
+      for op in block[0].operators {
+        collect(b, op, path, fresh, parts);
+      }
+    },
+    NdInsert { items } => {
+      for op in items {
+        collect(b, op, path, fresh, parts);
+      }
+    },
+    NdLine { n: _ } => {},
+    NdSet { var, inner } => {
+      if var < len(fresh) && fresh[var]! {
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr: _, args } => {
+            for a in args {
+              if a#index > 0 {
+                parts += [a];
+              }
+            }
+          },
+          _ => {},
+        }
+      } else {
+        parts += [n];
+      }
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && first_path(b, args) == path && (name == "OpPreAllocVector" || name == "OpFinishRecord") {
+        skip = if name == "OpFinishRecord" { 2 } else { 1 };
+        for a in args {
+          if a#index >= skip {
+            parts += [a];
+          }
+        }
+        return;
+      }
+      root = -1;
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && len(args) > 0 && opt_writes::is_in_place_set(name) && opt_push::vector_path(b, args[0], root) != "" && root >= 0 && root < len(fresh) && fresh[root]! {
+        for a in args {
+          if a#index > 0 {
+            parts += [a];
+          }
+        }
+        return;
+      }
+      if name == "OpCopyRecord" && len(args) == 3 {
+        into = loop_shape::var_of(loop_shape::unspan(args[1]));
+        if into >= 0 && into < len(fresh) && fresh[into]! {
+          parts += [args[0]];
+          return;
+        }
+      }
+      parts += [n];
+    },
+    _ => { parts += [n]; },
+  }
+}
+
+// `mint_window_ok`: may the mint loop `m` write its elements through a window?
+pub fn mint_window_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Block, m: PushLoop) -> boolean {
+  d = b.data.definitions[vd]!;
+  root = m.root;
+  if root < 0 || root >= len(d.variables.variables) {
+    return false;
+  }
+  root_is_retbuf = opt_hoist::retbuf_var(d) == root;
+  if !(opt_hoist::owned_local(d, root) || root_is_retbuf || opt_hoist::work_buffer_arg(d, root)) {
+    return false;
+  }
+  body = match loop_shape::unspan(lp.operators[1]) {
+    NdBlock { block } => block[0].operators,
+    _ => return false,
+  };
+  // The elements the groups mint.
+  fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+  whole = ir::NdInsert { items: body };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr, args } => {
+            if def_name(b, def_nr) == "OpNewRecord" && first_path(b, args) == m.path && var < len(fresh) {
+              fresh[var] = true;
+            }
+          },
+          _ => {},
+        }
+      },
+      _ => {},
+    }
+  });
+  // `copies_heap_into_fresh`: a whole-record copy into the element that owns heap fields.
+  heap = [false];
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr) == "OpCopyRecord" && len(args) == 3 {
+          into = loop_shape::var_of(loop_shape::unspan(args[1]));
+          if into >= 0 && into < len(fresh) && fresh[into]! {
+            match loop_shape::unspan(args[2]) {
+              NdInt { n: raw } => { if types::owns_heap(b.types, raw & 16383) { heap[0] = true; } },
+              _ => { heap[0] = true; },
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if heap[0]! {
+    return false;
+  }
+  parts: vector<ir::Node> = [];
+  for s in body {
+    collect(b, s, m.path, fresh, parts);
+  }
+  window_parts_ok(b, w, vd, parts, root, root_is_retbuf, null)
+}
+
+// The parts of a loop body a deep window must judge, at any depth; false where the body can
+// return or a jump leaves a loop that encloses the window.
+fn deep_collect(b: ir::Bundle, n: ir::Node, path: text, depth: integer, parts: vector<ir::Node>) -> boolean {
+  match loop_shape::unspan(n) {
+    NdReturn { inner: _ } => false,
+    NdYield { inner: _ } => false,
+    NdBreak { n: k } => k <= depth,
+    NdContinue { n: k } => k <= depth,
+    NdLine { n: _ } => true,
+    NdIf { cond, t, f } => {
+      parts += [cond];
+      deep_collect(b, t, path, depth, parts) && deep_collect(b, f, path, depth, parts)
+    },
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if !deep_collect(b, o, path, depth, parts) {
+          return false;
+        }
+      }
+      true
+    },
+    NdLoop { block } => {
+      for o in block[0].operators {
+        if !deep_collect(b, o, path, depth + 1, parts) {
+          return false;
+        }
+      }
+      true
+    },
+    NdInsert { items } => {
+      for o in items {
+        if !deep_collect(b, o, path, depth, parts) {
+          return false;
+        }
+      }
+      true
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && first_path(b, args) == path && (push_width(name) > 0 || name == "OpPreAllocVector") {
+        for a in args {
+          if a#index > 0 {
+            parts += [a];
+          }
+        }
+      } else {
+        parts += [n];
+      }
+      true
+    },
+    _ => {
+      parts += [n];
+      true
+    },
+  }
+}
+
+// `deep_window_ok`: may the pushes onto `path` anywhere under loop `lp` — in loops inside
+// it too — write through one window opened before it?
+pub fn deep_window_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block, path: text, root: integer) -> boolean {
+  d = b.data.definitions[vd]!;
+  if root < 0 || root >= len(d.variables.variables) {
+    return false;
+  }
+  root_is_retbuf = opt_hoist::retbuf_var(d) == root;
+  if !(opt_hoist::owned_local(d, root) || root_is_retbuf || opt_hoist::work_buffer_arg(d, root)) {
+    return false;
+  }
+  parts: vector<ir::Node> = [];
+  for o in lp.operators {
+    if !deep_collect(b, o, path, 0, parts) {
+      return false;
+    }
+  }
+  window_parts_ok(b, w, vd, parts, root, root_is_retbuf, facts)
+}

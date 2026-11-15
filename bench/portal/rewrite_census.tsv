@@ -44,7 +44,7 @@
 01_fibonacci	-	rust	R-GuardFree	9
 01_fibonacci	-	rust	R-Header	1
 01_fibonacci	-	rust	R-InlineLeaf	8
-01_fibonacci	-	rust	R-Leaf	111
+01_fibonacci	-	rust	R-Leaf	115
 01_fibonacci	-	rust	R-LeafChain	28
 01_fibonacci	-	rust	R-LitDiv	1
 01_fibonacci	-	rust	R-LoopSlot	1
@@ -104,7 +104,7 @@
 02_sum_loop	-	rust	R-GuardFree	8
 02_sum_loop	-	rust	R-Header	1
 02_sum_loop	-	rust	R-InlineLeaf	8
-02_sum_loop	-	rust	R-Leaf	112
+02_sum_loop	-	rust	R-Leaf	116
 02_sum_loop	-	rust	R-LeafChain	28
 02_sum_loop	-	rust	R-LitDiv	1
 02_sum_loop	-	rust	R-LoopSlot	2
@@ -166,7 +166,7 @@
 03_sieve	-	rust	R-GuardFree	8
 03_sieve	-	rust	R-Header	1
 03_sieve	-	rust	R-InlineLeaf	8
-03_sieve	-	rust	R-Leaf	113
+03_sieve	-	rust	R-Leaf	117
 03_sieve	-	rust	R-LeafChain	30
 03_sieve	-	rust	R-LitDiv	2
 03_sieve	-	rust	R-LoopSlot	3
@@ -231,7 +231,7 @@
 04_collatz	-	rust	R-GuardFree	8
 04_collatz	-	rust	R-Header	1
 04_collatz	-	rust	R-InlineLeaf	8
-04_collatz	-	rust	R-Leaf	112
+04_collatz	-	rust	R-Leaf	116
 04_collatz	-	rust	R-LeafChain	30
 04_collatz	-	rust	R-LitDiv	3
 04_collatz	-	rust	R-LoopSlot	3
@@ -293,7 +293,7 @@
 05_mandelbrot	-	rust	R-GuardFree	8
 05_mandelbrot	-	rust	R-Header	1
 05_mandelbrot	-	rust	R-InlineLeaf	8
-05_mandelbrot	-	rust	R-Leaf	112
+05_mandelbrot	-	rust	R-Leaf	116
 05_mandelbrot	-	rust	R-LeafChain	29
 05_mandelbrot	-	rust	R-LitDiv	1
 05_mandelbrot	-	rust	R-LoopSlot	4
@@ -359,7 +359,7 @@
 06_newton_sqrt	-	rust	R-GuardedChain/operators	4
 06_newton_sqrt	-	rust	R-Header	1
 06_newton_sqrt	-	rust	R-InlineLeaf	8
-06_newton_sqrt	-	rust	R-Leaf	112
+06_newton_sqrt	-	rust	R-Leaf	116
 06_newton_sqrt	-	rust	R-LeafChain	30
 06_newton_sqrt	-	rust	R-LitDiv	1
 06_newton_sqrt	-	rust	R-LoopSlot	3
@@ -419,7 +419,7 @@
 07_string_build	-	rust	R-GuardFree	8
 07_string_build	-	rust	R-Header	1
 07_string_build	-	rust	R-InlineLeaf	8
-07_string_build	-	rust	R-Leaf	111
+07_string_build	-	rust	R-Leaf	115
 07_string_build	-	rust	R-LeafChain	29
 07_string_build	-	rust	R-LitDiv	1
 07_string_build	-	rust	R-LoopSlot	2
@@ -489,7 +489,7 @@
 08_word_count	-	rust	R-Header/apart-param	4
 08_word_count	-	rust	R-InlineLeaf	8
 08_word_count	-	rust	R-KeyedEntry	1
-08_word_count	-	rust	R-Leaf	113
+08_word_count	-	rust	R-Leaf	117
 08_word_count	-	rust	R-LeafChain	28
 08_word_count	-	rust	R-LitDiv	2
 08_word_count	-	rust	R-LoopSlot	2
@@ -556,7 +556,7 @@
 09_matrix_mul	-	rust	R-Header	7
 09_matrix_mul	-	rust	R-InlineLeaf	8
 09_matrix_mul	-	rust	R-Inputs	1
-09_matrix_mul	-	rust	R-Leaf	113
+09_matrix_mul	-	rust	R-Leaf	117
 09_matrix_mul	-	rust	R-LeafChain	28
 09_matrix_mul	-	rust	R-LitDiv	1
 09_matrix_mul	-	rust	R-LoopSlot	4
@@ -630,7 +630,7 @@
 10_sort	-	rust	R-Header	5
 10_sort	-	rust	R-Header/function	1
 10_sort	-	rust	R-InlineLeaf	8
-10_sort	-	rust	R-Leaf	113
+10_sort	-	rust	R-Leaf	117
 10_sort	-	rust	R-LeafChain	30
 10_sort	-	rust	R-LitDiv	4
 10_sort	-	rust	R-LoopSlot	5
@@ -696,7 +696,7 @@
 11_par	-	rust	R-GuardFree	9
 11_par	-	rust	R-Header	2
 11_par	-	rust	R-InlineLeaf	8
-11_par	-	rust	R-Leaf	112
+11_par	-	rust	R-Leaf	116
 11_par	-	rust	R-LeafChain	29
 11_par	-	rust	R-LitDiv	1
 11_par	-	rust	R-LoopSlot	3
@@ -802,7 +802,7 @@
 12_drawing	-	rust	R-InlineLeaf	72
 12_drawing	-	rust	R-Inputs	5
 12_drawing	-	rust	R-Invariant	40
-12_drawing	-	rust	R-Leaf	133
+12_drawing	-	rust	R-Leaf	137
 12_drawing	-	rust	R-LeafChain	35
 12_drawing	-	rust	R-LitDiv	1
 12_drawing	-	rust	R-LoopSlot	20
@@ -889,7 +889,7 @@
 13_stdlib_text	-	rust	R-Header	1
 13_stdlib_text	-	rust	R-InlineLeaf	9
 13_stdlib_text	-	rust	R-LazySplit	4
-13_stdlib_text	-	rust	R-Leaf	118
+13_stdlib_text	-	rust	R-Leaf	122
 13_stdlib_text	-	rust	R-LeafChain	37
 13_stdlib_text	-	rust	R-LitDiv	6
 13_stdlib_text	-	rust	R-LoopSlot	16
@@ -978,7 +978,7 @@
 14_stdlib_vector	-	rust	R-InRange	1
 14_stdlib_vector	-	rust	R-InlineLeaf	10
 14_stdlib_vector	-	rust	R-Inputs	10
-14_stdlib_vector	-	rust	R-Leaf	137
+14_stdlib_vector	-	rust	R-Leaf	141
 14_stdlib_vector	-	rust	R-LeafChain	30
 14_stdlib_vector	-	rust	R-LitDiv	5
 14_stdlib_vector	-	rust	R-LoopSlot	28
@@ -1071,7 +1071,7 @@
 15_stdlib_keyed	-	rust	R-InlineLeaf	23
 15_stdlib_keyed	-	rust	R-Invariant	2
 15_stdlib_keyed	-	rust	R-KeyedEntry	2
-15_stdlib_keyed	-	rust	R-Leaf	126
+15_stdlib_keyed	-	rust	R-Leaf	130
 15_stdlib_keyed	-	rust	R-LeafChain	32
 15_stdlib_keyed	-	rust	R-LitDiv	28
 15_stdlib_keyed	-	rust	R-LoopSlot	22
@@ -1187,7 +1187,7 @@
 16_consumer_shapes	-	rust	R-Inputs	12
 16_consumer_shapes	-	rust	R-Invariant	120
 16_consumer_shapes	-	rust	R-KeyedEntry	1
-16_consumer_shapes	-	rust	R-Leaf	137
+16_consumer_shapes	-	rust	R-Leaf	141
 16_consumer_shapes	-	rust	R-LeafChain	36
 16_consumer_shapes	-	rust	R-LitDiv	50
 16_consumer_shapes	-	rust	R-LoopSlot	47
@@ -1226,6 +1226,8 @@
 17_consumer_moros_dryopea	-	c	R-Base/counter	25
 17_consumer_moros_dryopea	-	c	R-Base/guard	1
 17_consumer_moros_dryopea	-	c	R-BoundedNest/kernel	1
+17_consumer_moros_dryopea	-	c	R-BufferReturn	2
+17_consumer_moros_dryopea	-	c	R-BufferReturn/bind	1
 17_consumer_moros_dryopea	-	c	R-Compact	2
 17_consumer_moros_dryopea	-	c	R-CompleteWrite	49
 17_consumer_moros_dryopea	-	c	R-Counter	342
@@ -1272,7 +1274,7 @@
 17_consumer_moros_dryopea	-	c	R-RecPtr/held	24
 17_consumer_moros_dryopea	-	c	R-RecPtr/param	2
 17_consumer_moros_dryopea	-	c	R-RecPtr/text	7
-17_consumer_moros_dryopea	-	c	R-RefParam	152
+17_consumer_moros_dryopea	-	c	R-RefParam	153
 17_consumer_moros_dryopea	-	c	R-RetAdopt	5
 17_consumer_moros_dryopea	-	c	R-Reuse	11
 17_consumer_moros_dryopea	-	c	R-Rotate	62
@@ -1284,7 +1286,7 @@
 17_consumer_moros_dryopea	-	c	R-TextBorrow	14
 17_consumer_moros_dryopea	-	c	R-TypedKeyed/compound	5
 17_consumer_moros_dryopea	-	c	R-ValueLocal	9
-17_consumer_moros_dryopea	-	c	R-ValueRecord	15
+17_consumer_moros_dryopea	-	c	R-ValueRecord	18
 17_consumer_moros_dryopea	-	c	R-ValueRecord/view	2
 17_consumer_moros_dryopea	-	c	R-View	15
 17_consumer_moros_dryopea	-	c	R-WorkPark	24
@@ -1325,7 +1327,7 @@
 17_consumer_moros_dryopea	-	rust	R-InlineLeaf	35
 17_consumer_moros_dryopea	-	rust	R-Invariant	34
 17_consumer_moros_dryopea	-	rust	R-KeyedEntry/subscript	3
-17_consumer_moros_dryopea	-	rust	R-Leaf	163
+17_consumer_moros_dryopea	-	rust	R-Leaf	170
 17_consumer_moros_dryopea	-	rust	R-LeafChain	80
 17_consumer_moros_dryopea	-	rust	R-LitDiv	91
 17_consumer_moros_dryopea	-	rust	R-LiteralAppend	1
@@ -1349,22 +1351,24 @@
 17_consumer_moros_dryopea	-	rust	R-TextClear	36
 17_consumer_moros_dryopea	-	rust	R-TypedKeyed/compound	5
 17_consumer_moros_dryopea	-	rust	R-ValueLocal	15
-17_consumer_moros_dryopea	-	rust	R-ValueRecord	15
+17_consumer_moros_dryopea	-	rust	R-ValueRecord	18
 17_consumer_moros_dryopea	-	rust	R-ValueRecord/view	2
 17_consumer_moros_dryopea	-	rust	R-View	34
 17_consumer_moros_dryopea	-	rust	R-Wrapper	34
 17_consumer_moros_dryopea	-	rust	R-ZeroCount	8
 18_consumer_crawler	-	c	H-ClearRelease/plain	18
 18_consumer_crawler	-	c	R-Alias/versioned	5
-18_consumer_crawler	-	c	R-Base	41
-18_consumer_crawler	-	c	R-Base/counter	10
+18_consumer_crawler	-	c	R-Base	42
+18_consumer_crawler	-	c	R-Base/counter	11
 18_consumer_crawler	-	c	R-Base/grid	15
 18_consumer_crawler	-	c	R-Base/guard	3
 18_consumer_crawler	-	c	R-BoundedNest/kernel	1
+18_consumer_crawler	-	c	R-BufferReturn	2
+18_consumer_crawler	-	c	R-BufferReturn/bind	2
 18_consumer_crawler	-	c	R-Callee	2
 18_consumer_crawler	-	c	R-CharWalk	3
 18_consumer_crawler	-	c	R-CompleteWrite	21
-18_consumer_crawler	-	c	R-Counter	390
+18_consumer_crawler	-	c	R-Counter	391
 18_consumer_crawler	-	c	R-DischargeInto	7
 18_consumer_crawler	-	c	R-ExitVector	1
 18_consumer_crawler	-	c	R-ExpPow	2
@@ -1372,7 +1376,7 @@
 18_consumer_crawler	-	c	R-FieldAppend/bare	31
 18_consumer_crawler	-	c	R-FileHold	1
 18_consumer_crawler	-	c	R-FormatAppend	1
-18_consumer_crawler	-	c	R-FormatAppend/c	3
+18_consumer_crawler	-	c	R-FormatAppend/c	4
 18_consumer_crawler	-	c	R-ForwardWalk	8
 18_consumer_crawler	-	c	R-Fuse	213
 18_consumer_crawler	-	c	R-Fuse/field	26
@@ -1382,7 +1386,7 @@
 18_consumer_crawler	-	c	R-GuardedChain	12
 18_consumer_crawler	-	c	R-GuardedChain/operators	55
 18_consumer_crawler	-	c	R-GuardedChain/versions	2
-18_consumer_crawler	-	c	R-Header	41
+18_consumer_crawler	-	c	R-Header	42
 18_consumer_crawler	-	c	R-Header/grown	22
 18_consumer_crawler	-	c	R-Header/narrow	8
 18_consumer_crawler	-	c	R-Inline	10
@@ -1402,13 +1406,13 @@
 18_consumer_crawler	-	c	R-Push/sole	2
 18_consumer_crawler	-	c	R-PushFill	10
 18_consumer_crawler	-	c	R-PushFill/fill	1
-18_consumer_crawler	-	c	R-Range	290
+18_consumer_crawler	-	c	R-Range	291
 18_consumer_crawler	-	c	R-Range/index	17
 18_consumer_crawler	-	c	R-RangedCall	11
 18_consumer_crawler	-	c	R-RecPtr	7
 18_consumer_crawler	-	c	R-RecPtr/held	2
 18_consumer_crawler	-	c	R-RecPtr/param	5
-18_consumer_crawler	-	c	R-RefParam	142
+18_consumer_crawler	-	c	R-RefParam	143
 18_consumer_crawler	-	c	R-RetAdopt	5
 18_consumer_crawler	-	c	R-Rotate	70
 18_consumer_crawler	-	c	R-Scalar	8
@@ -1425,7 +1429,7 @@
 18_consumer_crawler	-	c	R-WorkBuffer	1
 18_consumer_crawler	-	c	R-WorkBuffer/onward	2
 18_consumer_crawler	-	c	R-WorkBuffer/result	5
-18_consumer_crawler	-	c	R-WorkPark	20
+18_consumer_crawler	-	c	R-WorkPark	21
 18_consumer_crawler	-	c	R-Wrapper	28
 18_consumer_crawler	-	c	R-ZeroCount	8
 18_consumer_crawler	-	rust	R-Alias/versioned	5
@@ -1458,7 +1462,7 @@
 18_consumer_crawler	-	rust	R-Inputs	50
 18_consumer_crawler	-	rust	R-Invariant	70
 18_consumer_crawler	-	rust	R-KeyedEntry	1
-18_consumer_crawler	-	rust	R-Leaf	149
+18_consumer_crawler	-	rust	R-Leaf	153
 18_consumer_crawler	-	rust	R-LeafChain	64
 18_consumer_crawler	-	rust	R-LitDiv	7
 18_consumer_crawler	-	rust	R-LoopSlot	57
@@ -1550,7 +1554,7 @@
 19_stdlib_par	-	rust	R-GuardedChain/operators	6
 19_stdlib_par	-	rust	R-Header	8
 19_stdlib_par	-	rust	R-InlineLeaf	9
-19_stdlib_par	-	rust	R-Leaf	114
+19_stdlib_par	-	rust	R-Leaf	118
 19_stdlib_par	-	rust	R-LeafChain	31
 19_stdlib_par	-	rust	R-LoopSlot	16
 19_stdlib_par	-	rust	R-Mint	10
@@ -1643,7 +1647,7 @@
 20_interpreter	-	rust	R-Header/apart-param	3
 20_interpreter	-	rust	R-Header/function	1
 20_interpreter	-	rust	R-InlineLeaf	8
-20_interpreter	-	rust	R-Leaf	113
+20_interpreter	-	rust	R-Leaf	117
 20_interpreter	-	rust	R-LeafChain	29
 20_interpreter	-	rust	R-LoopSlot	6
 20_interpreter	-	rust	R-Mint	7
@@ -1729,7 +1733,7 @@
 21_tree	-	rust	R-InPlaceLiteral/child	1
 21_tree	-	rust	R-InlineLeaf	16
 21_tree	-	rust	R-Invariant	28
-21_tree	-	rust	R-Leaf	119
+21_tree	-	rust	R-Leaf	123
 21_tree	-	rust	R-LeafChain	30
 21_tree	-	rust	R-LitDiv	47
 21_tree	-	rust	R-LoopSlot	15
@@ -1752,6 +1756,8 @@
 22_expr	-	c	R-Base	1
 22_expr	-	c	R-Base/guard	1
 22_expr	-	c	R-BoundedNest/kernel	1
+22_expr	-	c	R-BufferReturn	9
+22_expr	-	c	R-BufferReturn/bind	1
 22_expr	-	c	R-CharWalk	1
 22_expr	-	c	R-CompleteWrite	5
 22_expr	-	c	R-Counter	12
@@ -1774,14 +1780,14 @@
 22_expr	-	c	R-NonSentinelParam/twin	4
 22_expr	-	c	R-Range	26
 22_expr	-	c	R-RangedCall	5
-22_expr	-	c	R-RefParam	24
+22_expr	-	c	R-RefParam	25
 22_expr	-	c	R-RetAdopt	3
 22_expr	-	c	R-Rotate	11
 22_expr	-	c	R-SingleUse	2
 22_expr	-	c	R-SpecChain	1
 22_expr	-	c	R-StickySum	5
 22_expr	-	c	R-TextBorrow	14
-22_expr	-	c	R-WorkPark	11
+22_expr	-	c	R-WorkPark	18
 22_expr	-	c	R-Wrapper	9
 22_expr	-	c	R-ZeroCount	8
 22_expr	-	rust	R-Base	2
@@ -1801,7 +1807,7 @@
 22_expr	-	rust	R-Header	1
 22_expr	-	rust	R-HostStore	5
 22_expr	-	rust	R-InlineLeaf	9
-22_expr	-	rust	R-Leaf	113
+22_expr	-	rust	R-Leaf	117
 22_expr	-	rust	R-LeafChain	28
 22_expr	-	rust	R-LitDiv	11
 22_expr	-	rust	R-LoopSlot	4
@@ -1874,7 +1880,7 @@
 23_lru	-	rust	R-Header	1
 23_lru	-	rust	R-InlineLeaf	9
 23_lru	-	rust	R-Invariant	4
-23_lru	-	rust	R-Leaf	114
+23_lru	-	rust	R-Leaf	118
 23_lru	-	rust	R-LeafChain	32
 23_lru	-	rust	R-LitDiv	17
 23_lru	-	rust	R-LoopSlot	2

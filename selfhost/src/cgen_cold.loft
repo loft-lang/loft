@@ -1,0 +1,361 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/c/body/cold.rs`: `@FR-R-Cold`'s loft clause.  An early exit that
+// builds a text — `if bad { fault = "…{pos}…"; return false }` — is written as a
+// `LOFT_NOINLINE LOFT_COLD` helper taking the function's own parameters, and the function
+// keeps a call of it.
+//
+// The Rust writer keys an admitted arm by its node's address; here an arm is the admitted one
+// when it equals it, and a function holding a second arm equal to an admitted one is refused.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_non_sentinel;
+use cgen_fn;
+use cgen_names;
+use cgen_w::*;
+
+// What `cold_finish` answers when the body named a variable the plan gave to an arm: the
+// function is then written again with the clause off.
+COLD_ESCAPED = "a cold exit's variable named outside its arm";
+
+// How often each variable is named in `v` (`mentions`): a read, an assignment, a call through
+// it, a loop's iterator, a tuple member read or write.
+fn mentions(v: ir::Node, count: integer) -> vector<integer> {
+  out: vector<integer> = [for _ in 0..count { 0 }];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    x = match n {
+      NdVar { n: y } => y,
+      NdSet { var, inner: _ } => var,
+      NdCallRef { var, args: _ } => var,
+      NdIter { var, create: _, next: _, init: _ } => var,
+      NdTupleGet { var, idx: _ } => var,
+      NdTuplePut { var, idx: _, inner: _ } => var,
+      _ => -1,
+    };
+    if x >= 0 && x < count {
+      out[x] = out[x]! + 1;
+    }
+  });
+  out
+}
+
+// The variable `n` releases with `OpFreeText`, -1 for any other node (`text_free`).
+pub fn text_free(b: ir::Bundle, n: ir::Node) -> integer {
+  match loop_shape::unspan(n) {
+    NdCall { def_nr, args } => {
+      if cgen_fn::def_name(b, def_nr) == "OpFreeText" && len(args) == 1 {
+        return loop_shape::var_of(loop_shape::unspan(args[0]));
+      }
+      -1
+    },
+    _ => -1,
+  }
+}
+
+// How often each variable is released with `OpFreeText` in `v` (`text_frees`).
+fn text_frees(b: ir::Bundle, v: ir::Node, count: integer) -> vector<integer> {
+  out: vector<integer> = [for _ in 0..count { 0 }];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    w = text_free(b, n);
+    if w >= 0 && w < count {
+      out[w] = out[w]! + 1;
+    }
+  });
+  out
+}
+
+fn literal(v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdNull => true,
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdEnum { ord: _, tp: _ } => true,
+    _ => false,
+  }
+}
+
+// Does `arm` hold exactly one `return`, no other way out, and a text built in a work text?
+fn arm_shape_ok(d: ir::Definition, arm: ir::Node) -> boolean {
+  returns = [0];
+  other_exit = [false];
+  builds = [false];
+  opt_non_sentinel::walk(arm, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner: _ } => { returns[0] = returns[0]! + 1; },
+      NdLoop { block: _ } => { other_exit[0] = true; },
+      NdBreak { n: _ } => { other_exit[0] = true; },
+      NdContinue { n: _ } => { other_exit[0] = true; },
+      NdYield { inner: _ } => { other_exit[0] = true; },
+      NdFnRef { def_nr: _, var: _, t: _ } => { other_exit[0] = true; },
+      NdFnRefDnr { n: _ } => { other_exit[0] = true; },
+      NdParallel { arms: _ } => { other_exit[0] = true; },
+      NdSet { var, inner: _ } => {
+        if d.variables.variables[var]!.name.starts_with("__work") {
+          builds[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  returns[0]! == 1 && !other_exit[0]! && builds[0]!
+}
+
+// `cold_arm`: the literal `arm` answers when it is an early exit the clause outlines — a
+// block ending in the one `return` of a literal (or of a local set once to a literal), that
+// builds a text and leaves no other way; null for any other arm.
+fn cold_arm(d: ir::Definition, arm: ir::Node) -> ir::Node? {
+  ops = match loop_shape::unspan(arm) {
+    NdBlock { block } => block[0].operators,
+    _ => return null,
+  };
+  if len(ops) == 0 {
+    return null;
+  }
+  ret = match loop_shape::unspan(ops[len(ops) - 1]) {
+    NdReturn { inner } => loop_shape::unspan(inner),
+    _ => return null,
+  };
+  answer = ret;
+  if !literal(ret) {
+    x = loop_shape::var_of(ret);
+    if x < 0 {
+      return null;
+    }
+    named = [0];
+    sets: vector<ir::Node> = [];
+    opt_non_sentinel::walk(arm, fn(n: ir::Node) {
+      match n {
+        NdSet { var, inner } => {
+          if var == x {
+            named[0] = named[0]! + 1;
+            sets += [loop_shape::unspan(inner)];
+          }
+        },
+        NdVar { n: y } => { if y == x { named[0] = named[0]! + 1; } },
+        NdCallRef { var, args: _ } => { if var == x { named[0] = named[0]! + 1; } },
+        NdIter { var, create: _, next: _, init: _ } => { if var == x { named[0] = named[0]! + 1; } },
+        NdTupleGet { var, idx: _ } => { if var == x { named[0] = named[0]! + 1; } },
+        NdTuplePut { var, idx: _, inner: _ } => { if var == x { named[0] = named[0]! + 1; } },
+        _ => {},
+      }
+    });
+    if len(sets) == 0 || named[0]! != 2 || !literal(sets[len(sets) - 1]) {
+      return null;
+    }
+    answer = sets[len(sets) - 1];
+  }
+  if !arm_shape_ok(d, arm) {
+    return null;
+  }
+  answer
+}
+
+// The then-arms of every `if` standing as a statement of a block, in walk order; `unnamed`
+// says whether the body holds a function reference, a `par` arm or a `yield`.
+fn statement_arms(code: ir::Node, unnamed: &boolean) -> vector<ir::Node> {
+  arms: vector<ir::Node> = [];
+  flag = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdFnRef { def_nr: _, var: _, t: _ } => { flag[0] = true; },
+      NdFnRefDnr { n: _ } => { flag[0] = true; },
+      NdParallel { arms: _ } => { flag[0] = true; },
+      NdYield { inner: _ } => { flag[0] = true; },
+      NdBlock { block } => {
+        for op in block[0].operators {
+          match loop_shape::unspan(op) {
+            NdIf { cond: _, t, f: _ } => { arms += [t]; },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  unnamed = flag[0]!;
+  arms
+}
+
+// `cold_plan`: the arms the clause outlines, each with the variables it owns; those are not
+// declared in the body.  "" or the reason the function is refused.
+pub fn cold_plan(x: Cx, w: W) -> text {
+  if (env_variable("LOFT_NO_COLD_EXIT") ?? "0") != "0" {
+    return "";
+  }
+  d = x.b.data.definitions[w.index]!;
+  code = d.code[0]!;
+  count = len(d.variables.variables);
+  unnamed = false;
+  arms = statement_arms(code, unnamed);
+  if unnamed || len(arms) == 0 {
+    return "";
+  }
+  whole = mentions(code, count);
+  frees = text_frees(x.b, code, count);
+  inits: vector<integer> = [for _ in 0..count { 0 }];
+  match loop_shape::unspan(code) {
+    NdBlock { block } => {
+      for op in block[0].operators {
+        match loop_shape::unspan(op) {
+          NdSet { var, inner } => {
+            if loop_shape::unspan(inner) == NdText { s: "" } || loop_shape::unspan(inner) == NdNull {
+              inits[var] = inits[var]! + 1;
+            }
+          },
+          _ => {},
+        }
+      }
+    },
+    _ => {},
+  }
+  admitted: vector<ColdArm> = [];
+  for arm in arms {
+    answer = cold_arm(d, arm) ?? continue;
+    inside = mentions(arm, count);
+    freed_inside = text_frees(x.b, arm, count);
+    own: vector<integer> = [];
+    ok = true;
+    for n in inside {
+      v = n#index;
+      if n == 0 || w.params[v]! {
+        continue;
+      }
+      // Outside the arm only its empty initialisations and its frees may name it.
+      if whole[v]! - n != inits[v]! + frees[v]! - freed_inside[v]! {
+        ok = false;
+      }
+      own += [v];
+    }
+    if !ok {
+      continue;
+    }
+    // Two arms sharing a variable: the first takes it, the second stays in place.
+    disjoint = true;
+    for a in admitted {
+      for o in a.own {
+        for v in own {
+          if o == v {
+            disjoint = false;
+          }
+        }
+      }
+    }
+    if disjoint {
+      admitted += [ColdArm { arm: arm, answer: answer, name: "", called: false, own: own }];
+    }
+  }
+  if len(admitted) == 0 {
+    return "";
+  }
+  // `plain_params`: a signature a helper does not take.
+  args = 0;
+  for v in d.variables.variables {
+    if v.argument {
+      args += 1;
+    }
+  }
+  if args != len(d.attributes) || binds::hidden_return_buffer_attr(d) != null {
+    return "";
+  }
+  // An arm equal to an admitted one that is not it would be read as it.
+  for arm in arms {
+    same = 0;
+    for a in admitted {
+      if a.arm == arm {
+        same += 1;
+      }
+    }
+    twins = 0;
+    for other in arms {
+      if other == arm {
+        twins += 1;
+      }
+    }
+    if same > 0 && twins > 1 {
+      return "two equal cold exits";
+    }
+  }
+  base = cgen_names::c_name(x.b, x.dups, w.index);
+  for a in admitted {
+    a.name = "{base}__cold{a#index}";
+    for v in a.own {
+      w.undeclared[v] = true;
+    }
+    w.cold += [a];
+  }
+  ""
+}
+
+// The admitted arm `then_arm` is, -1 for any other.
+pub fn cold_index(w: W, then_arm: ir::Node) -> integer {
+  for a in w.cold {
+    if a.arm == then_arm {
+      return a#index;
+    }
+  }
+  -1
+}
+
+// `cold_if`: the statement `if` whose then-arm is helper `k` — the call, then the answer.
+pub fn cold_if(x: Cx, w: W, k: integer, cond: ir::Node, other: ir::Node, ind: integer) {
+  w.cold[k].called = true;
+  args: vector<text> = [];
+  for p in w.params {
+    if p {
+      args += [w.raw[p#index]!];
+    }
+  }
+  test = as_cond(w, cgen_fn::expr(x, w, cond, ind));
+  line(w, ind, "if (LOFT_UNLIKELY({bare(test)})) {{");
+  line(w, ind + 1, "{w.cold[k].name}({args.join(", ")});");
+  cgen_fn::stmt(x, w, ir::NdReturn { inner: w.cold[k].answer }, ind + 1);
+  if loop_shape::unspan(other) != NdNull {
+    line(w, ind, "}} else {{");
+    cgen_fn::stmt(x, w, other, ind + 1);
+  }
+  line(w, ind, "}}");
+  flush(w, ind);
+}
+
+// Does `out` name `name` as a whole identifier?
+fn names_whole(out: text, name: text) -> boolean {
+  rest = out;
+  for _ in 0..out.size() {
+    at = rest.find(name) ?? return false;
+    next = at + name.size();
+    after = if next < rest.size() { rest.byte_at(next) } else { 32 };
+    before = if at > 0 { rest.byte_at(at - 1) } else { 32 };
+    if !ident_byte(after) && !ident_byte(before) {
+      return true;
+    }
+    rest = rest[at + 1..rest.size()];
+  }
+  false
+}
+
+fn ident_byte(b: integer) -> boolean {
+  (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+}
+
+// `cold_finish`: did the body keep to the plan — every helper called, no variable of an arm
+// named outside it?
+pub fn cold_escaped(w: W, out: text) -> boolean {
+  for u in w.undeclared {
+    if u && names_whole(out, w.raw[u#index]!) {
+      return true;
+    }
+  }
+  for a in w.cold {
+    if !a.called {
+      return true;
+    }
+  }
+  false
+}

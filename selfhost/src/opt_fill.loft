@@ -1,0 +1,184 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `opt::hoist::fill_loop` (`@FR-R-Fill`): a counted loop whose body is one
+// scalar store of an invariant value at `v[i]` or `v[base + i]` — optionally under the guard
+// `t = index; if t < N { … }` — is one fill, the loop its fallback.
+
+use ir;
+use loop_shape;
+use opt_push;
+
+// One fill loop.  `nodes` holds, in order: the vector, the range's end, the value, then the
+// base (when `has_base`) and the guard's bound (when `has_bound`).
+pub struct FillLoop {
+  pub path: text,
+  pub kind: text,
+  pub inclusive: boolean,
+  pub index_var: integer,
+  pub next_var: integer,
+  pub has_base: boolean,
+  pub has_bound: boolean,
+  pub nodes: vector<ir::Node>,
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d >= 0 && d < len(b.data.definitions) { b.data.definitions[d]!.name } else { "" }
+}
+
+fn statements(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    if !(loop_shape::unspan(o) is NdLine) {
+      out += [o];
+    }
+  }
+  out
+}
+
+pub fn fill_loop(b: ir::Bundle, lp: ir::Block) -> FillLoop? {
+  if lp.name != "For loop" || len(lp.operators) != 2 {
+    return null;
+  }
+  rc = loop_shape::range_counters(lp, b.data.definitions) ?? return null;
+  stmts = match loop_shape::unspan(lp.operators[1]) {
+    NdBlock { block } => statements(block[0].operators),
+    _ => return null,
+  };
+  // The guarded clause: `t = <index>; if t < N { <the setter at v[t]> }`.
+  guard_var = -1;
+  held: vector<ir::Node> = [];
+  if len(stmts) != 1 && len(stmts) != 2 {
+    return null;
+  }
+  if len(stmts) == 1 {
+    held += [stmts[0]];
+  }
+  if len(stmts) == 2 {
+    guard_var = guarded_parts(b, stmts[0], stmts[1], held);
+    if guard_var < 0 {
+      return null;
+    }
+  }
+  // `held`: [setter], or [bound index, bound, setter].
+  setter = held[len(held) - 1];
+  parts: vector<ir::Node> = [];
+  kind = "";
+  match loop_shape::unspan(setter) {
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      kind = if name == "OpSetInt" { "i64" } else if name == "OpSetSingle" { "f32" } else if name == "OpSetFloat" { "f64" } else if name == "OpSetInt4Raw" { "u32" } else { "" };
+      if kind == "" || len(args) != 3 || loop_shape::unspan(args[1]) != NdInt { n: 0 } {
+        return null;
+      }
+      match loop_shape::unspan(args[0]) {
+        NdCall { def_nr: addr, args: aargs } => {
+          an = def_name(b, addr);
+          if !(an == "OpGetVector" || an == "OpGetVectorNullable") || len(aargs) != 3 {
+            return null;
+          }
+          width = if kind == "i64" || kind == "f64" { 8 } else { 4 };
+          if loop_shape::unspan(aargs[1]) != NdInt { n: width } {
+            return null;
+          }
+          // parts: vector, index, value
+          parts += [aargs[0]];
+          parts += [aargs[2]];
+        },
+        _ => return null,
+      }
+      parts += [args[2]];
+    },
+    _ => return null,
+  }
+  root = -1;
+  path = opt_push::vector_path(b, parts[0], root);
+  if path == "" {
+    return null;
+  }
+  banned = [rc.loop_var, rc.index];
+  if rc.next >= 0 {
+    banned += [rc.next];
+  }
+  banned += [root];
+  index = parts[1];
+  if guard_var >= 0 {
+    if loop_shape::var_of(loop_shape::unspan(index)) != guard_var {
+      return null;
+    }
+    banned += [guard_var];
+    index = held[0];
+  }
+  // The index: the loop variable, or `invariant + variable` either way round.
+  base: vector<ir::Node> = [];
+  match loop_shape::unspan(index) {
+    NdVar { n } => { if n != rc.loop_var { return null; } },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if !(name == "OpAddInt" || name == "OpAddIntNullable") || len(args) != 2 {
+        return null;
+      }
+      if loop_shape::var_of(loop_shape::unspan(args[0])) == rc.loop_var && opt_push::simple_invariant(b, args[1], banned) {
+        base += [args[1]];
+      } else if loop_shape::var_of(loop_shape::unspan(args[1])) == rc.loop_var && opt_push::simple_invariant(b, args[0], banned) {
+        base += [args[0]];
+      } else {
+        return null;
+      }
+    },
+    _ => return null,
+  }
+  if !opt_push::simple_invariant(b, parts[2], banned) || !opt_push::simple_invariant(b, rc.hi, banned) {
+    return null;
+  }
+  if guard_var >= 0 && !opt_push::simple_invariant(b, held[1], banned) {
+    return null;
+  }
+  nodes: vector<ir::Node> = [parts[0], rc.hi, parts[2]];
+  for n in base {
+    nodes += [n];
+  }
+  if guard_var >= 0 {
+    nodes += [held[1]];
+  }
+  FillLoop { path: path, kind: kind, inclusive: rc.inclusive, index_var: rc.index, next_var: rc.next, has_base: len(base) > 0, has_bound: guard_var >= 0, nodes: nodes }
+}
+
+// The guarded clause's parts appended to `held` — the index the local is bound to, the
+// guard's bound, the one guarded statement — and the local; -1 where `bind; test` is not
+// `t = index; if t < N { one statement }`.
+fn guarded_parts(b: ir::Bundle, bind: ir::Node, test: ir::Node, held: vector<ir::Node>) -> integer {
+  local = -1;
+  match loop_shape::unspan(bind) {
+    NdSet { var, inner: bound_index } => {
+      local = var;
+      held += [bound_index];
+    },
+    _ => {},
+  }
+  if local < 0 {
+    return -1;
+  }
+  ok = false;
+  match loop_shape::unspan(test) {
+    NdIf { cond, t, f } => {
+      arm: vector<ir::Node> = match loop_shape::unspan(t) {
+        NdBlock { block } => statements(block[0].operators),
+        _ => [t],
+      };
+      match loop_shape::unspan(cond) {
+        NdCall { def_nr, args } => {
+          if loop_shape::unspan(f) == NdNull && len(arm) == 1 && def_name(b, def_nr) == "OpLtInt" && len(args) == 2 && loop_shape::var_of(loop_shape::unspan(args[0])) == local {
+            held += [args[1]];
+            held += [arm[0]];
+            ok = true;
+          }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  if ok { local } else { -1 }
+}

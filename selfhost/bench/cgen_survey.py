@@ -67,12 +67,23 @@ def first_difference(a, b):
                 return n, "", ""
 
 
+def numbered(line):
+    """A body with the names the UNIT numbers by first use — a function-value dispatcher
+    `loft_call<n>`, a tuple struct `loft_tup<n>` — renumbered by first appearance in the body:
+    a function writer that does not carry every function yet cannot know the unit's numbers,
+    and the unit comparison is what checks them."""
+    for stem in ("loft_call", "loft_tup"):
+        seen = {}
+        line = re.sub(stem + r"(\d+)", lambda m: stem + "#" + str(seen.setdefault(m.group(1), len(seen))), line)
+    return line
+
+
 def layer_one(f, loft, generator, tmp, env, timeout, layer):
     """One program's `layer`: each line the Rust generator traced against the generator's."""
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
     want, got, img = stem + ".want.c", stem + ".layer", stem + ".store"
     switch = {"shapes": "LOFT_TRACE_SHAPES", "reach": "LOFT_TRACE_REACH", "functions": "LOFT_TRACE_REACH",
-              "counters": "LOFT_TRACE_COUNTERS", "iterations": "LOFT_TRACE_COUNTERS", "nn": "LOFT_TRACE_FACTS", "ranges": "LOFT_TRACE_FACTS", "bodies": "LOFT_TRACE_BODIES"}[layer]
+              "counters": "LOFT_TRACE_COUNTERS", "iterations": "LOFT_TRACE_COUNTERS", "nn": "LOFT_TRACE_FACTS", "ranges": "LOFT_TRACE_FACTS", "bodies": "LOFT_TRACE_BODIES", "texts": "LOFT_TRACE_TEXTS", "writes": "LOFT_TRACE_WRITES"}[layer]
     try:
         rc, err = proc([loft, "--emit-c", want, f], {**env, switch: "1"}, timeout, cwd=os.path.dirname(f))
         if rc != 0:
@@ -80,7 +91,7 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
         rust = {}
         for line in err.splitlines():
             if line.startswith(f"[{layer}]\t"):
-                rust[line.split("\t")[1]] = line
+                rust[line.split("\t")[1]] = numbered(line) if layer == "bodies" else line
         rc, err = proc([loft, "--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
         if rc == 0:
             rc, err = proc([generator, img, got, "--layer", layer], env, timeout, cwd=os.path.dirname(f))
@@ -90,7 +101,7 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
         with open(got, encoding="utf-8", errors="replace") as fh:
             for line in fh.read().splitlines():
                 if line.startswith(f"[{layer}]\t"):
-                    mine[line.split("\t")[1]] = line
+                    mine[line.split("\t")[1]] = numbered(line) if layer == "bodies" else line
         if layer == "bodies":
             # A SUBSET comparison: the function writer carries some functions and refuses the
             # rest by name; each body it writes must be the oracle's.
@@ -110,6 +121,18 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
                 detail = (f"{n} line {k}\n    oracle: {(a[k] if k < len(a) else '(end)')[:170]}"
                           f"\n    other:  {(b[k] if k < len(b) else '(end)')[:170]}")
             return f, "differ" if wrong else "agree", (len(rust), len(equal), len(wrong), refused, detail)
+        if layer == "texts":
+            # A FIELD comparison: the generator prints the `key=value` fields it derives so
+            # far, and each must be the oracle's; a field it does not print is not compared.
+            for name, line in sorted(rust.items()):
+                fields = dict(c.split("=", 1) for c in line.split("\t")[2:])
+                held = dict(c.split("=", 1) for c in (mine.get(name) or "").split("\t")[2:] if "=" in c)
+                if name not in mine:
+                    return f, "differ", f"{name}\n    oracle: {line[:160]}\n    other:  (no line)"
+                for k, v in held.items():
+                    if fields.get(k) != v:
+                        return f, "differ", f"{name} field {k}\n    oracle: {fields.get(k)}\n    other:  {v}"
+            return f, "agree", str(len(rust))
         for name, line in sorted(rust.items()):
             if mine.get(name) != line:
                 return f, "differ", f"{name}\n    oracle: {line[:160]}\n    other:  {(mine.get(name) or '(no line)')[:160]}"
@@ -157,8 +180,15 @@ def main():
     ap.add_argument("--cgen", action="store_true", help="build selfhost/front/cgen.loft and use it")
     ap.add_argument("--form", choices=["program", "debug"], default="program",
                     help="which unit: the program's, or the debug tier's with its #line marks")
-    ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges", "bodies"], default=None,
+    ap.add_argument("--layer", choices=["shapes", "reach", "functions", "counters", "iterations", "nn", "ranges", "bodies", "texts", "writes"], default=None,
                     help="compare what an analysis derived instead of the unit")
+    ap.add_argument("--plain", action="store_true",
+                    help="both sides under the switches of cgen_w.loft's PLAIN_SWITCHES: the rules "
+                         "the loft writer does not carry yet, off")
+    ap.add_argument("--assume", default=None, metavar="SWITCH",
+                    help="with --plain: leave SWITCH out, so the oracle runs that rule, and tell the "
+                         "generator to write as if it carried it (LOFT_CGEN_ASSUME): the bodies that "
+                         "differ are the ones the rule changes")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
@@ -171,6 +201,14 @@ def main():
     loft = o.loft or os.path.join(root, "target", "release", "loft")
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
+    if o.plain:
+        with open(os.path.join(root, "selfhost", "src", "cgen_w.loft"), encoding="utf-8") as fh:
+            row = re.search(r"^PLAIN_SWITCHES = \[(.*)\];$", fh.read(), re.M)
+        for name in re.findall(r'"(LOFT_NO_[A-Z0-9_]+)"', row.group(1)):
+            if name != o.assume:
+                env[name] = "1"
+        if o.assume:
+            env["LOFT_CGEN_ASSUME"] = o.assume
     tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
     if (o.form == "debug" or o.layer) and not (o.cgen or o.generator):
         sys.exit("--form debug and --layer compare a generator's output: give --cgen or --generator")

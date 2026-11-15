@@ -1,0 +1,384 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `opt::hoist::split_tables` (`@FR-R-SplitTable`) with `one_op_wrapper` of
+// `src/ir_shape.rs`: a local `vector<text>` bound once from the standard library's `split`
+// with a constant separator, every other mention of which is a read the table answers — its
+// length, an element read, or the alias a `for p in V` walk binds.  A declined bind keeps the
+// vector.
+
+use ir;
+use loop_shape;
+use opt_names;
+use opt_non_sentinel;
+use opt_lazy_split;
+use cgen_types;
+
+// One split table: the local, the hidden buffer the call would have filled and whether it
+// serves this call alone, the separator's code point, and the walks' hidden vectors.
+pub struct SplitTable {
+  pub var: integer,
+  pub buf: integer,
+  pub dead: boolean,
+  pub separator: integer,
+  pub aliases: vector<integer>,
+}
+
+// What `table_mentions` counted for one local; `why` is "" while every mention is one the
+// table answers.
+struct Mentions {
+  binds: integer,
+  reads: integer,
+  aliases: vector<integer>,
+  why: text,
+}
+
+// `Definition::hidden_return_buffer_attr`: does the function take a hidden return buffer?
+fn hidden_return_buffer(d: ir::Definition) -> boolean {
+  for a in d.attributes {
+    if a.hidden && !a.work_buffer {
+      heap = match a.typedef[0]! {
+        TyReference { n: _, dep: _ } => true,
+        TyVector { inner: _, dep: _ } => true,
+        TyEnum { n: _, is_ref, dep: _ } => is_ref,
+        _ => false,
+      };
+      if heap {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+fn is_text(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyText { dep: _ } => true,
+    _ => false,
+  }
+}
+
+// `one_op_wrapper_call`: the one native operator a standard-library wrapper's whole body is,
+// over its own parameters — its definition number, with its argument nodes in `operands`; -1
+// for any other function.
+pub fn one_op_wrapper(b: ir::Bundle, d: integer, operands: vector<ir::Node>) -> integer {
+  if d < 0 || d >= len(b.data.definitions) {
+    return -1;
+  }
+  def = b.data.definitions[d]!;
+  if def.rust != "" || len(def.code) == 0 || def.code[0] == ir::Node.NdNull || hidden_return_buffer(def) {
+    return -1;
+  }
+  if def.source != 0 || !opt_names::is_stdlib(def) {
+    return -1;
+  }
+  for a in def.attributes {
+    if is_text(a.typedef[0]!) {
+      return -1;
+    }
+  }
+  if len(def.returned) > 0 && is_text(def.returned[0]!) {
+    return -1;
+  }
+  params = len(def.attributes);
+  // The body: a block of exactly one statement (line markers aside), possibly a `return`.
+  stmt: ir::Node = NdNull;
+  found = 0;
+  match loop_shape::unspan(def.code[0]!) {
+    NdBlock { block } => {
+      for op in block[0].operators {
+        match loop_shape::unspan(op) {
+          NdLine { n: _ } => {},
+          _ => {
+            found += 1;
+            stmt = loop_shape::unspan(op);
+          },
+        }
+      }
+    },
+    _ => {
+      found = 1;
+      stmt = loop_shape::unspan(def.code[0]!);
+    },
+  }
+  if found != 1 {
+    return -1;
+  }
+  match stmt {
+    NdReturn { inner } => stmt = loop_shape::unspan(inner),
+    _ => {},
+  }
+  match stmt {
+    NdCall { def_nr, args } => {
+      callee = b.data.definitions[def_nr]!;
+      if (len(callee.code) > 0 && callee.code[0] != ir::Node.NdNull) || callee.rust == "" {
+        return -1;
+      }
+      for a in args {
+        fits = match loop_shape::unspan(a) {
+          NdVar { n } => n < params,
+          NdInt { n: _ } => true,
+          _ => false,
+        };
+        if !fits {
+          return -1;
+        }
+        operands += [a];
+      }
+      def_nr
+    },
+    _ => -1,
+  }
+}
+
+// Is `x` the variable `v`?
+fn is_v(x: ir::Node, v: integer) -> boolean {
+  loop_shape::var_of(loop_shape::unspan(x)) == v
+}
+
+// `table_mentions`: every mention of `v` under `node` classified as one the split table
+// answers; `m.why` names the first that is not.  Walked by hand because the question is about
+// a mention's PARENT.
+fn table_mentions(b: ir::Bundle, d: ir::Definition, node: ir::Node, v: integer, m: Mentions) {
+  if m.why != "" {
+    return;
+  }
+  vars = d.variables.variables;
+  n = loop_shape::unspan(node);
+  match n {
+    NdVar { n: u } => {
+      if u == v {
+        m.why = "read outside a table position";
+      }
+    },
+    NdSet { var, inner } => {
+      if var == v {
+        to = loop_shape::unspan(inner);
+        separator = 0;
+        if to == ir::Node.NdNull {
+          return;
+        }
+        if opt_lazy_split::split_call(b, d, inner, separator) >= 0 {
+          m.binds += 1;
+          table_mentions(b, d, inner, v, m);
+          return;
+        }
+        // An alias's one bind is `Set(alias, Var(table))`.
+        if loop_shape::var_of(to) >= 0 && vars[v]!.name.starts_with("_vector_") {
+          m.binds += 1;
+          return;
+        }
+        m.why = "rebound";
+        return;
+      }
+      if is_v(inner, v) {
+        if vars[var]!.name.starts_with("_vector_") {
+          m.aliases += [var];
+          return;
+        }
+        m.why = "copied";
+        return;
+      }
+      table_mentions(b, d, inner, v, m);
+    },
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        for a in args {
+          table_mentions(b, d, a, v, m);
+        }
+        return;
+      }
+      name = b.data.definitions[def_nr]!.name;
+      length_read = name == "OpLengthVector" && len(args) == 1;
+      if !length_read {
+        operands: vector<ir::Node> = [];
+        op = one_op_wrapper(b, def_nr, operands);
+        length_read = op >= 0 && b.data.definitions[op]!.name == "OpLengthVector" && len(operands) == 1 && loop_shape::var_of(loop_shape::unspan(operands[0])) == 0;
+      }
+      if length_read && len(args) > 0 && is_v(args[0], v) {
+        m.reads += 1;
+        return;
+      }
+      if name == "OpGetText" && len(args) > 0 {
+        hit = false;
+        inner = opt_lazy_split::call_named(b, args[0], "OpGetVectorNullable", hit);
+        if !hit {
+          inner = opt_lazy_split::call_named(b, args[0], "OpGetVector", hit);
+        }
+        if hit && len(inner) > 0 && is_v(inner[0], v) {
+          m.reads += 1;
+          // The index may hold anything but the table itself.
+          for a in inner {
+            if a#index > 0 {
+              table_mentions(b, d, a, v, m);
+            }
+          }
+          for a in args {
+            if a#index > 0 {
+              table_mentions(b, d, a, v, m);
+            }
+          }
+          return;
+        }
+      }
+      for a in args {
+        if is_v(a, v) {
+          m.why = "handed to a call";
+          return;
+        }
+      }
+      for a in args {
+        table_mentions(b, d, a, v, m);
+      }
+    },
+    NdCallRef { var: _, args } => { for a in args { table_mentions(b, d, a, v, m); } },
+    NdInsert { items } => { for a in items { table_mentions(b, d, a, v, m); } },
+    NdTuple { items } => { for a in items { table_mentions(b, d, a, v, m); } },
+    NdParallel { arms } => { for a in arms { table_mentions(b, d, a, v, m); } },
+    NdBlock { block } => { for a in block[0].operators { table_mentions(b, d, a, v, m); } },
+    NdLoop { block } => { for a in block[0].operators { table_mentions(b, d, a, v, m); } },
+    NdReturn { inner } => table_mentions(b, d, inner, v, m),
+    NdDrop { inner } => table_mentions(b, d, inner, v, m),
+    NdYield { inner } => table_mentions(b, d, inner, v, m),
+    NdTuplePut { var: _, idx: _, inner } => table_mentions(b, d, inner, v, m),
+    NdIf { cond, t, f } => {
+      table_mentions(b, d, cond, v, m);
+      table_mentions(b, d, t, v, m);
+      table_mentions(b, d, f, v, m);
+    },
+    NdIter { var: _, create, next, init } => {
+      table_mentions(b, d, create, v, m);
+      table_mentions(b, d, next, v, m);
+      table_mentions(b, d, init, v, m);
+    },
+    _ => {},
+  }
+}
+
+// How often `node` reads variable `v` as a `Var`.
+fn count_var(node: ir::Node, v: integer) -> integer {
+  c = [0];
+  opt_non_sentinel::walk(node, fn(x: ir::Node) {
+    match x {
+      NdVar { n } => { if n == v { c[0] = c[0]! + 1; } },
+      _ => {},
+    }
+  });
+  c[0]!
+}
+
+// `bind_block_holds_every_mention`: does the block that binds `v` from its split hold every
+// other mention of `v`, after the bind?  The first block or loop in walk order that holds the
+// bind as one of its statements decides.
+fn bind_block_holds_every_mention(body: ir::Node, v: integer) -> boolean {
+  total = count_var(body, v);
+  lists: vector<ir::Block> = [];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdBlock { block } => { lists += [block[0]]; },
+      NdLoop { block } => { lists += [block[0]]; },
+      _ => {},
+    }
+  });
+  for bl in lists {
+    at = -1;
+    for op in bl.operators {
+      if at < 0 {
+        match loop_shape::unspan(op) {
+          NdSet { var, inner } => {
+            if var == v && loop_shape::unspan(inner) != ir::Node.NdNull {
+              at = op#index;
+            }
+          },
+          _ => {},
+        }
+      }
+    }
+    if at < 0 {
+      continue;
+    }
+    after = 0;
+    for op in bl.operators {
+      if op#index > at {
+        after += count_var(op, v);
+      }
+    }
+    return after == total;
+  }
+  false
+}
+
+// A bind of a plain local from a constant split.
+struct Bind {
+  var: integer,
+  buf: integer,
+  separator: integer,
+}
+
+// `split_tables`: the split tables of function `d`, by the local's number.
+pub fn split_tables(b: ir::Bundle, d: integer) -> vector<SplitTable> {
+  out: vector<SplitTable> = [];
+  def = b.data.definitions[d]!;
+  if len(def.code) == 0 || (env_variable("LOFT_NO_WRAPPER_INLINE") ?? "0") != "0" {
+    return out;
+  }
+  body = def.code[0]!;
+  vars = def.variables.variables;
+  yields = [false];
+  binds: vector<Bind> = [];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { yields[0] = true; },
+      NdSet { var, inner } => {
+        separator = 0;
+        buf = opt_lazy_split::split_call(b, def, inner, separator);
+        if buf >= 0 && var < len(vars) && !vars[var]!.argument && !vars[var]!.name.starts_with("_vector_") {
+          text_vector = match vars[var]!.type_def[0]! {
+            TyVector { inner: el, dep: _ } => is_text(el),
+            _ => false,
+          };
+          if text_vector {
+            binds += [Bind { var: var, buf: buf, separator: separator }];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if yields[0]! {
+    return out;
+  }
+  // By the local's number, a later bind's entry replacing an earlier one's.
+  for v in 0..len(vars) {
+    at = -1;
+    for bd in binds {
+      if bd.var == v {
+        at = bd#index;
+      }
+    }
+    if at < 0 {
+      continue;
+    }
+    m = Mentions { binds: 0, reads: 0, aliases: [], why: "" };
+    table_mentions(b, def, body, v, m);
+    if m.why != "" || m.binds != 1 {
+      continue;
+    }
+    // Every alias reads the table the way the walk does, and nothing else.
+    plain = true;
+    for a in m.aliases {
+      am = Mentions { binds: 0, reads: 0, aliases: [], why: "" };
+      table_mentions(b, def, body, a, am);
+      if am.why != "" || am.binds != 1 || len(am.aliases) > 0 {
+        plain = false;
+      }
+    }
+    if !plain || !bind_block_holds_every_mention(body, v) {
+      continue;
+    }
+    bd = binds[at]!;
+    out += [SplitTable { var: v, buf: bd.buf, dead: opt_lazy_split::buffer_serves_one_call(b, body, bd.buf), separator: bd.separator, aliases: m.aliases }];
+  }
+  out
+}

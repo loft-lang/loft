@@ -1312,6 +1312,12 @@ impl FnWriter<'_> {
                     }
                     Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_) => {
                         let r = self.cx.tr_group(tp);
+                        // A record holds no record of its own group by value: a projection
+                        // at offset 0 that names the group again is the record itself (the
+                        // place a literal is built in), not a member of it.
+                        if r == g && off == 0 {
+                            return Ok(Place::Rec(lv, g));
+                        }
                         self.cx.tr_member(g, off, Member::Record(r));
                         Ok(Place::Rec(
                             format!("{lv}.{}", Member::Record(r).name(off)),

@@ -8,6 +8,7 @@
 use state;
 use crt;
 use types;
+use natives;
 
 // A reference out of the three integers a `crt` routine answers.
 fn out_ref(io: vector<integer>) -> state::DbRef {
@@ -44,7 +45,7 @@ pub fn evacuate(self: state::State, holder: state::DbRef, fld: integer, home: st
   self.load_table();
   live = holder.store_nr != state::NULL_STORE && crt::store_live(holder.store_nr);
   elem = if live { types::root_vector_element(self.types, crt::store_known(holder.store_nr)) } else { null };
-  crt::evacuate(tp, holder.store_nr, holder.rec, holder.pos, fld, home.store_nr, home.rec, home.pos, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+  crt::evacuate(tp, holder.store_nr, holder.rec, holder.pos, fld, home.store_nr, home.rec, home.pos, (self.fact(state::F_PARENT_SIZE, tp) ?? 0), self.default_of(tp), elem != null && elem != tp);
 }
 
 // `Stores::get_dir`: the directory's entries appended to `result`, a vector of `File` records;
@@ -96,6 +97,51 @@ pub fn copy_closure(self: state::State, src: state::DbRef, tp: integer) -> state
   out_ref(io)
 }
 
+// A native `natives::light` carries, called by `OpStaticCall`'s arm on the stack as it stands.
+pub fn light_call(self: state::State, h: integer) {
+  if natives::is_state_native(h) {
+    self.keyed_entry(h == natives::N_KEYED_ENTRY_TEXT);
+    return;
+  }
+  sp = natives::light(h, self.stk, self.stack_pos, self.lio, self.tbuf);
+  if sp < 0 {
+    self.stop("not carried: native handler {h}");
+  } else {
+    self.stack_pos = sp;
+  }
+}
+
+// `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` and
+// `keyed_entry_text(data, parent_tp, fld, key)` — the entry under the key in the hash the
+// record target names (`State::target_of`, derived once), found or filed with its key written.
+pub fn keyed_entry(self: state::State, text_key: boolean) {
+  self.load_table();
+  sp = self.stack_pos;
+  ptp = natives::get(self.stk, sp - (if text_key { 32 } else { 48 })) ?? 0;
+  fld = natives::get(self.stk, sp - (if text_key { 24 } else { 40 })) ?? 0;
+  t = self.targets[self.target_of(ptp, fld)]!;
+  if !t.direct || t.how != state::T_HASH {
+    self.stop("not carried: a keyed entry in a collection that is not a hash");
+    return;
+  }
+  n = 1;
+  if text_key {
+    crt::key_view(self.stk, sp - 16);
+  } else {
+    n = if t.nkeys < 1 { 1 } else if t.nkeys > 4 { 4 } else { t.nkeys };
+    for ki in 0..n {
+      crt::key_int(natives::get(self.stk, sp - 32 + ki * 8));
+    }
+  }
+  at = sp - (if text_key { 48 } else { 64 });
+  vs = crt::stack_get(4, self.stk, at) & 65535;
+  vr = crt::stack_get(4, self.stk, at + 4);
+  vp = crt::stack_get(4, self.stk, at + 8);
+  crt::keyed_entry(self.lio, vs, vr, vp + t.at, t.content, t.tp, n);
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+  self.stack_pos = at + 16;
+}
+
 // `State::hash_add`: the record and then the hash popped; the record filed in the hash of
 // type `tp`.
 pub fn hash_add(self: state::State) {
@@ -103,7 +149,7 @@ pub fn hash_add(self: state::State) {
   rec = self.get_stack_dbref();
   data = self.get_stack_dbref();
   self.load_table();
-  crt::hash_insert(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp);
+  crt::hash_insert(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(state::F_CONTENT, tp) ?? 0, tp);
 }
 
 // `State::create_stack`: a reference to the frame slot `pos` under the top pushed — the null
@@ -191,7 +237,7 @@ pub fn parallel_join(self: state::State) {
 pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, raw: integer, parent_tp: integer, field: integer) {
   tp = raw & 32767;
   self.load_table();
-  elem = types::content_of(self.types, tp);
+  elem = self.fact(state::F_CONTENT, tp);
   if elem == null {
     self.stop("not carried: a fill of {self.types[tp]?.name ?? "a collection"}");
     return;
@@ -213,12 +259,12 @@ pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, r
       k = 0;
       while k + 2 < len(members) {
         held = held || (members[k + 1] ?? -1) == 0;
-        nullable = nullable || types::nullable_element(self.types, members[k + 2] ?? 0);
+        nullable = nullable || self.has(state::F_NULLABLE_ELEMENT, members[k + 2] ?? 0);
         k += 3;
       }
     }
   }
-  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, types::keyed_kind(self.types, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
+  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, self.fact(state::F_KEYED_KIND, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
 }
 
 // `State::string_from_const_store`: a view of the long text the constant store holds in record

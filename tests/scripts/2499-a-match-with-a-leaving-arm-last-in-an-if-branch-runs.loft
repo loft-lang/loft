@@ -1,0 +1,157 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2499, `@FR-C-Never` — a `match` (or an `if` whose both arms leave) that is the LAST
+// statement of an `if` branch with an `else` RUNS when one of its arms leaves by `return` or
+// `break`.  It was typed `never` as soon as one arm was, the enclosing `if` read its branch as
+// a tail that never finishes, and wrote the sibling's null over that tail — the match itself —
+// so the arm that matched did not run and nothing said so.
+//
+// A match never finishes only when EVERY arm does not, and a branch that never finishes by a
+// construct of its own keeps that construct.
+//
+// Every value is hand-computed, each function's cells in the comment above it.
+//
+// @falsified-at: 0de1794d4 — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: leak, panic and refusals are clean on this tree, both backends; the exit is the
+//   whole measurement.
+// CHANNEL: the asserts — before the fix `mixed` answers 0 where 1 is right.
+
+enum N { B { c: integer }, C }
+
+// One arm finishes, the other returns.  B{7} in the then branch files one element -> 1;
+// C returns -1; n = 1 takes the else -> 3.
+fn mixed(second: N, n: integer) -> integer {
+  held: vector<integer> = [];
+  if n == 2 {
+    match second {
+      B { c } => { held += [c]; },
+      _ => return -1,
+    }
+  } else {
+    held += [9, 9, 9];
+  }
+  len(held)
+}
+
+// Every arm leaves, each after a write the caller sees: B{7} files 1 and answers 1; C files 2
+// and answers 2; n = 1 files 3 and answers 3 — 6 elements after the three calls.
+fn all_leave(second: N, n: integer, held: &vector<integer>) -> integer {
+  if n == 2 {
+    match second {
+      B { c } => { held += [c]; return 1; },
+      _ => { held += [0, 0]; return 2; },
+    }
+  } else {
+    held += [9, 9, 9];
+  }
+  3
+}
+
+// The match in the ELSE branch.  From an empty vector: B{7} files two -> 2; C returns -1;
+// n = 1 files one more -> 3.
+fn in_else(second: N, n: integer, held: &vector<integer>) -> integer {
+  if n == 1 {
+    held += [9];
+  } else {
+    match second {
+      B { c } => { held += [c, c]; },
+      _ => return -1,
+    }
+  }
+  len(held)
+}
+
+// An `else if` chain after the branch: as `mixed`, with n = 1 filing one -> 1 and n = 0
+// answering -2.
+fn chained(second: N, n: integer) -> integer {
+  held: vector<integer> = [];
+  if n == 2 {
+    match second {
+      B { c } => { held += [c, c, c]; },
+      _ => return -1,
+    }
+  } else if n == 1 {
+    held += [1];
+  } else {
+    return -2;
+  }
+  len(held)
+}
+
+// Value position: the then branch leaves on every arm, the else gives the value.  B{7}
+// answers 10, C answers 20, n = 1 answers 5 + 100.
+fn value_position(second: N, n: integer, held: &vector<integer>) -> integer {
+  x = if n == 2 {
+    match second {
+      B { c } => { held += [c]; return 10; },
+      _ => { held += [0]; return 20; },
+    }
+  } else {
+    5
+  };
+  x + 100
+}
+
+// A nested `if` whose both arms leave, in place of the match: k = 4 files 1 and answers 1,
+// k = 0 files 2 and answers 2, n = 1 files 3 and answers 3 — 6 elements.
+fn nested_if(k: integer, n: integer, held: &vector<integer>) -> integer {
+  if n == 2 {
+    if k > 0 { held += [k]; return 1; } else { held += [0, 0]; return 2; }
+  } else {
+    held += [9, 9, 9];
+  }
+  3
+}
+
+// A `break` arm inside a loop: passes 0 and 1 add c, pass 2 adds 100 -> 114 for B{7}; C
+// breaks on the first pass -> 0.
+fn in_loop(second: N) -> integer {
+  total = 0;
+  for i in 0..3 {
+    if i < 2 {
+      match second {
+        B { c } => { total += c; },
+        _ => break,
+      }
+    } else {
+      total += 100;
+    }
+  }
+  total
+}
+
+fn main() {
+  assert(mixed(B { c: 7 }, 2) == 1, "mixed, the finishing arm: {mixed(B { c: 7 }, 2)}");
+  assert(mixed(C, 2) == -1 && mixed(C, 1) == 3, "mixed, the leaving arm and the else");
+
+  a: vector<integer> = [];
+  r1 = all_leave(B { c: 7 }, 2, a);
+  r2 = all_leave(C, 2, a);
+  r3 = all_leave(C, 1, a);
+  assert(r1 == 1 && r2 == 2 && r3 == 3 && len(a) == 6, "all_leave {r1} {r2} {r3} {len(a)}");
+
+  e: vector<integer> = [];
+  e1 = in_else(B { c: 7 }, 2, e);
+  e2 = in_else(C, 2, e);
+  e3 = in_else(C, 1, e);
+  assert(e1 == 2 && e2 == -1 && e3 == 3, "in_else {e1} {e2} {e3}");
+
+  assert(chained(B { c: 7 }, 2) == 3 && chained(C, 2) == -1, "chained, the match");
+  assert(chained(C, 1) == 1 && chained(C, 0) == -2, "chained, the rest of the chain");
+
+  v: vector<integer> = [];
+  v1 = value_position(B { c: 7 }, 2, v);
+  v2 = value_position(C, 2, v);
+  v3 = value_position(C, 1, v);
+  assert(v1 == 10 && v2 == 20 && v3 == 105 && len(v) == 2, "value_position {v1} {v2} {v3} {len(v)}");
+
+  n: vector<integer> = [];
+  n1 = nested_if(4, 2, n);
+  n2 = nested_if(0, 2, n);
+  n3 = nested_if(0, 1, n);
+  assert(n1 == 1 && n2 == 2 && n3 == 3 && len(n) == 6, "nested_if {n1} {n2} {n3} {len(n)}");
+
+  assert(in_loop(B { c: 7 }) == 114 && in_loop(C) == 0, "in_loop {in_loop(B { c: 7 })} {in_loop(C)}");
+  println("2499 ok");
+}

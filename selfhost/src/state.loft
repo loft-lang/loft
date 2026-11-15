@@ -79,6 +79,8 @@ pub struct State {
   // Per native: the definition whose loft body stands for it — a standard-library function
   // the Rust build compiled (`loft_shared_<def>`) — or -1; the same for its destination form
   // (`…#dest`); and the destinations such calls in flight append their answer to.
+  // Per native: its handler in the natives' table (`natives::native_handler`), -1 for none.
+  pub handlers: vector<integer>,
   pub shared: vector<integer>,
   pub shared_dest: vector<integer>,
   pub dest_calls: vector<FnBuf>,
@@ -102,7 +104,83 @@ pub struct State {
   // and for a destination form (`…#dest`) the body of its plain twin.
   pub bodies: vector<integer>,
   pub bodies_dest: vector<integer>,
+  // Each keyed collection type's facts, derived on its first lookup (`keyed_facts`): four
+  // integers per type — derived (1) or not (0), the kind (0 a hash, `types::keyed_kind`
+  // otherwise, -1 not a keyed collection), where its key plan starts in `key_parts` (-1 none),
+  // its element type.  A plan is its part count, then how each part lies in its slot
+  // (`natives::KP_*`).
+  pub kfacts: vector<integer>,
+  pub key_parts: vector<integer>,
+  // Each type's scalar facts (`fact`), `F_COUNT` per type, derived on first use: the value
+  // plus 2 (1 for none), 0 for not yet derived.  The Rust interpreter derives them once
+  // (`Stores::derive_facts`); an operator reads them, never the type tree.
+  pub tfacts: vector<integer>,
+  // Each record target an `OpNewRecord` / `OpFinishRecord` names (`target_of`), in the order
+  // first met; where each key (`parent type * 65536 + field`) is in that list; and a direct-
+  // mapped cache of `TCACHE` (key, index) pairs in front of the hash.
+  pub targets: vector<Target>,
+  pub tkeys: hash<TKey[key]>,
+  pub tcache: vector<integer>,
+  // Per native: its handler where `natives::light` carries it — the dispatch loop calls it from
+  // `OpStaticCall`'s arm (`State::light_call`) — else -1; and the scratch vector it passes.
+  pub lights: vector<integer>,
+  pub lio: vector<integer>,
+  // The bytes a popped text is copied through (`get_stack_str`), kept between operators.
+  pub tbuf: vector<u8>,
+  // The code's length, for the operand readers' one test (the code never changes once loaded).
+  pub code_len: integer,
 }
+
+// What `OpNewRecord` / `OpFinishRecord` file a record into, derived once per parent type and
+// field (`State::target_of`): the collection type and its offset in the parent, how it files
+// (`T_*`; a linked group files by its own collection's kind when made, through its members
+// when finished), the element type, its size and the facts the filing routines take; a
+// linked group's members (`types::group_members`) and whether they hold or may be null.
+pub struct TKey {
+  pub key: integer,
+  pub idx: integer,
+}
+
+pub TCACHE = 1024;
+
+pub struct Target {
+  pub key: integer,
+  pub ok: boolean,
+  pub tp: integer,
+  pub at: integer,
+  pub how: integer,
+  pub group: boolean,
+  pub elem: integer,
+  pub size: integer,
+  pub kkind: integer,
+  pub linked: boolean,
+  pub content: integer,
+  pub gm: vector<integer>,
+  pub gheld: boolean,
+  pub gnull: boolean,
+  // Whether `types::record_collection` named the collection itself (no linked group's rule),
+  // and how many key parts the collection type has.
+  pub direct: boolean,
+  pub nkeys: integer,
+}
+
+pub T_VECTOR = 0;
+pub T_ARRAY = 1;
+pub T_KEYED = 2;
+pub T_HASH = 3;
+
+// The facts `State::fact` keeps per type.
+pub F_CONTENT = 0;
+pub F_HASH_ELEMENT = 1;
+pub F_KEYED_KIND = 2;
+pub F_ARRAY_ELEMENT = 3;
+pub F_KEYED_ELEMENT = 4;
+pub F_VECTOR_ELEMENT = 5;
+pub F_PARENT_SIZE = 6;
+pub F_OWNS_HEAP = 7;
+pub F_NO_STORED_REFS = 8;
+pub F_NULLABLE_ELEMENT = 9;
+pub F_COUNT = 10;
 
 // `State.native` when a `par` worker returned, when a `par` block's arms are to run, and when
 // one of them returned.
@@ -218,11 +296,15 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], tkeys: [], tcache: [for _ in 0..2 * TCACHE { -1 }], lights: [], lio: [0, 0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code) };
+  ptab = natives::par_natives(img);
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
-    carried = natives::native_handler(name) >= 0;
+    handler = natives::native_handler(name);
+    s.handlers += [handler];
+    s.lights += [if (natives::is_light(handler) || natives::is_state_native(handler)) && (ptab[i] ?? 0) == 0 { handler } else { -1 }];
+    carried = handler >= 0;
     s.shared += [if carried { -1 } else { img.shared[i] ?? -1 }];
     dest_form = name.ends_with("#dest");
     s.bodies += [if carried || dest_form { -1 } else { crt::body_find(name) }];
@@ -271,7 +353,7 @@ fn ensure_stack(self: State, step: integer) {
 
 // Are `n` more bytes of code there?  Past the end the run stops (`code_out_of_range`).
 fn code_has(self: State, n: integer) -> boolean {
-  if self.code_pos < 0 || self.code_pos + n > len(self.code) {
+  if self.code_pos < 0 || self.code_pos + n > self.code_len {
     if self.fault == "" {
       self.stop("the code position {self.code_pos} is outside the bytecode ({len(self.code)} bytes)");
     }
@@ -308,7 +390,7 @@ pub fn code_u8(self: State) -> integer {
   if !self.code_has(1) {
     return 0;
   }
-  v = crt::get_u8(self.code, self.code_pos);
+  v = crt::peek_u8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v
 }
@@ -317,7 +399,7 @@ pub fn code_i8(self: State) -> integer {
   if !self.code_has(1) {
     return 0;
   }
-  v = crt::get_i8(self.code, self.code_pos);
+  v = crt::peek_i8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v
 }
@@ -326,7 +408,7 @@ pub fn code_u16(self: State) -> integer {
   if !self.code_has(2) {
     return 0;
   }
-  v = crt::get_u16(self.code, self.code_pos);
+  v = crt::peek_u16(self.code_held, self.code_pos);
   self.code_pos += 2;
   v
 }
@@ -335,7 +417,7 @@ pub fn code_i16(self: State) -> integer {
   if !self.code_has(2) {
     return 0;
   }
-  v = crt::get_i16(self.code, self.code_pos);
+  v = crt::peek_i16(self.code_held, self.code_pos);
   self.code_pos += 2;
   v
 }
@@ -344,7 +426,7 @@ pub fn code_u32(self: State) -> integer {
   if !self.code_has(4) {
     return 0;
   }
-  v = crt::get_u32(self.code, self.code_pos);
+  v = crt::peek_u32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -353,7 +435,7 @@ pub fn code_i32(self: State) -> integer {
   if !self.code_has(4) {
     return 0;
   }
-  v = crt::get_i32(self.code, self.code_pos);
+  v = crt::peek_i32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -362,7 +444,7 @@ pub fn code_i64(self: State) -> integer {
   if !self.code_has(8) {
     return 0;
   }
-  v = crt::get_i64(self.code, self.code_pos);
+  v = crt::peek_i64(self.code_held, self.code_pos);
   self.code_pos += 8;
   v
 }
@@ -371,7 +453,7 @@ pub fn code_f32(self: State) -> single {
   if !self.code_has(4) {
     return 0.0f;
   }
-  v = crt::get_f32(self.code, self.code_pos);
+  v = crt::peek_f32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -380,7 +462,7 @@ pub fn code_f64(self: State) -> float {
   if !self.code_has(8) {
     return 0.0;
   }
-  v = crt::get_f64(self.code, self.code_pos);
+  v = crt::peek_f64(self.code_held, self.code_pos);
   self.code_pos += 8;
   v
 }
@@ -390,7 +472,7 @@ pub fn code_bool(self: State) -> boolean {
   if !self.code_has(1) {
     return false;
   }
-  v = crt::get_u8(self.code, self.code_pos);
+  v = crt::peek_u8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v == 1
 }
@@ -784,7 +866,7 @@ pub fn get_stack_str(self: State) -> text? {
     return null;
   }
   self.stack_pos -= 16;
-  crt::stack_str(self.stk, self.stack_pos)
+  crt::stack_str_in(self.tbuf, self.stk, self.stack_pos)
 }
 
 // ── Characters: a code point in a 4-byte slot, 0 for null. ────────────────────────────────
@@ -842,9 +924,8 @@ pub fn raise_recoverable(self: State, what: text) {
 
 // The reference in the frame slot at byte `at`.
 fn ref_at(self: State, at: integer) -> DbRef {
-  io: vector<integer> = [NULL_STORE, 0, 0];
-  crt::slot_ref(io, self.stk, at);
-  DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
+  // Three raw words of the slot, the store number its low 16 bits (`crt::place_ref`).
+  DbRef { store_nr: crt::stack_get(4, self.stk, at) & 65535, rec: crt::stack_get(4, self.stk, at + 4), pos: crt::stack_get(4, self.stk, at + 8) }
 }
 
 // `get_stack::<DbRef>`: a reference popped (a 16-byte step).
@@ -905,7 +986,7 @@ fn make_store(self: State, at: integer, tp: integer) {
   }
   io: vector<integer> = [NULL_STORE, 0, 0];
   crt::slot_ref(io, self.stk, at);
-  bytes = types::enum_parent_size(self.types, tp);
+  bytes = (self.fact(F_PARENT_SIZE, tp) ?? 0);
   if types::is_vector_wrapper(self.types, tp) {
     self.load_table();
     crt::database_wrapper(io, bytes, tp);
@@ -1005,7 +1086,7 @@ pub fn text_null_jump(self: State) {
   src = self.code_u16();
   arg = self.code_u8() == 1;
   step = self.code_i32();
-  if crt::slot_text(self.stk, self.stack_pos - src, arg) != null {
+  if !crt::local_text_null(self.stk, self.stack_pos - src, if arg { 1 } else { 0 }) {
     self.code_pos += step;
   }
 }
@@ -1029,20 +1110,33 @@ pub fn vec_get(r: DbRef, size: integer, index: integer?) -> DbRef {
   DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 }
 }
 
+// Is `index` an element of the vector — or null, which reads as null without a report?  A
+// negative one counts from the end.
+pub fn vec_has(store: integer, rec: integer, pos: integer, index: integer?) -> boolean {
+  if index == null {
+    return true;
+  }
+  n = crt::vec_len(store, rec, pos) ?? 0;
+  at = if index! < 0 { index! + n } else { index! };
+  at >= 0 && at < n
+}
+
+// The report of an index `vec_has` refused.
+pub fn raise_vec_index(self: State, store: integer, rec: integer, pos: integer, index: integer?) {
+  n = crt::vec_len(store, rec, pos) ?? 0;
+  if (index ?? 0) + n < 0 {
+    self.raise_recoverable("a negative index {index ?? 0}");
+  } else {
+    self.raise_recoverable("index {index ?? 0} outside a vector of {n}");
+  }
+}
+
 // `State::vec_get_or_raise`: the same element, an index outside the vector reported (a negative
 // one counts from the end).
 pub fn vec_get_or_raise(self: State, r: DbRef, size: integer, index: integer?) -> DbRef {
-  if index != null {
-    n = crt::vec_len(r.store_nr, r.rec, r.pos) ?? 0;
-    at = if index! < 0 { index! + n } else { index! };
-    if at < 0 {
-      self.raise_recoverable("a negative index {index!}");
-      return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
-    }
-    if at >= n {
-      self.raise_recoverable("index {index!} outside a vector of {n}");
-      return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
-    }
+  if !vec_has(r.store_nr, r.rec, r.pos, index) {
+    self.raise_vec_index(r.store_nr, r.rec, r.pos, index);
+    return DbRef { store_nr: NULL_STORE, rec: 0, pos: 0 };
   }
   vec_get(r, size, index)
 }
@@ -1068,6 +1162,12 @@ pub fn local_tag(self: State, of: integer, a: integer) -> integer? {
 
 // Type `tp`'s default image, derived on its first use.
 pub fn default_of(self: State, tp: integer) -> vector<u8> {
+  self.image_ready(tp);
+  self.images[tp] ?? []
+}
+
+// Type `tp`'s default image derived (`images`), for a caller that reads it in place.
+pub fn image_ready(self: State, tp: integer) {
   while len(self.imaged) <= tp {
     self.images += [[]];
     self.imaged += [false];
@@ -1076,29 +1176,132 @@ pub fn default_of(self: State, tp: integer) -> vector<u8> {
     self.images[tp] = types::default_image(self.types, tp);
     self.imaged[tp] = true;
   }
-  self.images[tp] ?? []
 }
 
-// The collection a record is added to (`OpNewRecord`, `OpFinishRecord`): the parent `ptp`
-// itself or its field `fld`, a linked group's member resolved to the field's own collection.
-// Null where the runner does not add to it, with the reason in `fault`.
-fn record_target(self: State, ptp: integer, fld: integer, gm: vector<integer>) -> types::RecordColl? {
+// Fact `k` (`F_*`) of type `tp`, derived by its `types::` function on the first ask; null
+// where that function answers none.  A boolean fact is 1 or 0.
+pub fn fact(self: State, k: integer, tp: integer) -> integer? {
+  at = tp * F_COUNT + k;
+  v = self.tfacts[at] ?? 0;
+  if v == 0 {
+    while len(self.tfacts) < (tp + 1) * F_COUNT {
+      self.tfacts += [0];
+    }
+    d = self.derive_fact(k, tp);
+    v = if d == null { 1 } else { d! + 2 };
+    self.tfacts[at] = v;
+  }
+  if v == 1 { null } else { v - 2 }
+}
+
+fn derive_fact(self: State, k: integer, tp: integer) -> integer? {
+  ts = self.types;
+  if k == F_CONTENT {
+    types::content_of(ts, tp)
+  } else if k == F_HASH_ELEMENT {
+    types::hash_element(ts, tp)
+  } else if k == F_KEYED_KIND {
+    types::keyed_kind(ts, tp)
+  } else if k == F_ARRAY_ELEMENT {
+    types::array_element(ts, tp)
+  } else if k == F_KEYED_ELEMENT {
+    types::keyed_element(ts, tp)
+  } else if k == F_VECTOR_ELEMENT {
+    types::vector_element(ts, tp)
+  } else if k == F_PARENT_SIZE {
+    types::enum_parent_size(ts, tp)
+  } else if k == F_OWNS_HEAP {
+    if types::owns_heap(ts, tp) { 1 } else { 0 }
+  } else if k == F_NO_STORED_REFS {
+    if types::holds_no_stored_refs(ts, tp) { 1 } else { 0 }
+  } else if k == F_NULLABLE_ELEMENT {
+    if types::nullable_element(ts, tp) { 1 } else { 0 }
+  } else {
+    null
+  }
+}
+
+// Whether fact `k` of `tp` holds (a boolean fact).
+pub fn has(self: State, k: integer, tp: integer) -> boolean {
+  (self.fact(k, tp) ?? 0) == 1
+}
+
+// The record target `(ptp, fld)` names (`Target`), derived on its first use.
+pub fn target_of(self: State, ptp: integer, fld: integer) -> integer {
+  key = ptp * 65536 + fld;
+  h = 2 * ((key ^ (key >> 10)) & (TCACHE - 1));
+  if (self.tcache[h] ?? -1) == key {
+    return self.tcache[h + 1] ?? 0;
+  }
+  known = self.tkeys[key];
+  idx = if known != null { known!.idx } else { self.derive_target(ptp, fld, key) };
+  self.tcache[h] = key;
+  self.tcache[h + 1] = idx;
+  idx
+}
+
+// `target_of`'s miss: the target derived and listed; answers its index.
+fn derive_target(self: State, ptp: integer, fld: integer, key: integer) -> integer {
+  gm: vector<integer> = [];
   rc = types::record_collection(self.types, ptp, fld);
-  if rc.fld != 65535 && rc.at == null {
+  at = rc.at;
+  ctp = rc.tp;
+  direct = !(rc.fld != 65535 && rc.at == null);
+  if rc.fld != 65535 && at == null {
     g = types::group_members(self.types, ptp, fld);
     if g != null && len(g!) >= 6 {
       for x in g! {
         gm += [x];
       }
-      rc = types::RecordColl { tp: g![2] ?? 0, fld: fld, at: g![0] ?? 0 };
+      ctp = g![2] ?? 0;
+      at = g![0] ?? 0;
     }
   }
-  plain = types::vector_element(self.types, rc.tp) != null || types::array_element(self.types, rc.tp) != null || types::keyed_element(self.types, rc.tp) != null || types::hash_element(self.types, rc.tp) != null;
-  if (rc.fld != 65535 && rc.at == null) || !plain {
-    self.stop("not carried: a record added to {self.types[rc.tp]?.name ?? "a collection"}");
-    return null;
+  aelem = self.fact(F_ARRAY_ELEMENT, ctp);
+  kelem = self.fact(F_KEYED_ELEMENT, ctp);
+  helem = self.fact(F_HASH_ELEMENT, ctp);
+  velem = self.fact(F_VECTOR_ELEMENT, ctp);
+  ok = !(rc.fld != 65535 && at == null) && (velem != null || aelem != null || kelem != null || helem != null);
+  elem = aelem ?? kelem ?? helem ?? velem ?? 0;
+  how = if aelem != null { T_ARRAY } else if kelem != null { T_KEYED } else if helem != null { T_HASH } else { T_VECTOR };
+  gheld = false;
+  gnull = false;
+  gk = 0;
+  while gk + 2 < len(gm) {
+    gheld = gheld || (gm[gk + 1] ?? -1) == 0;
+    gnull = gnull || self.has(F_NULLABLE_ELEMENT, gm[gk + 2] ?? 0);
+    gk += 3;
   }
-  rc
+  self.targets += [Target { key: key, ok: ok, tp: ctp, at: at ?? 0, how: how, group: len(gm) >= 6, elem: elem, size: self.types[elem]?.size ?? 0, kkind: self.fact(F_KEYED_KIND, ctp) ?? 0, linked: self.types[elem]?.linked ?? false, content: self.fact(F_CONTENT, ctp) ?? 0, gm: gm, gheld: gheld, gnull: gnull, direct: direct, nkeys: if self.types[ctp] == null { 0 } else { len(self.types[ctp]!.keys) } }];
+  idx = len(self.targets) - 1;
+  self.tkeys += [TKey { key: key, idx: idx }];
+  idx
+}
+
+// Type `tp`'s keyed facts (`State.kfacts`), derived on its first use: answers where they start.
+pub fn keyed_facts(self: State, tp: integer) -> integer {
+  at = tp * 4;
+  if (self.kfacts[at] ?? 0) == 1 {
+    return at;
+  }
+  while len(self.kfacts) < at + 4 {
+    self.kfacts += [0];
+  }
+  kind = self.fact(F_KEYED_KIND, tp) ?? (if self.fact(F_HASH_ELEMENT, tp) == null { -1 } else { 0 });
+  plan = -1;
+  kc = types::key_contents(self.types, tp);
+  if kc != null && kind >= 0 {
+    plan = len(self.key_parts);
+    self.key_parts += [len(kc)];
+    for c in kc {
+      self.key_parts += [natives::key_part(self.types, c)];
+    }
+  }
+  self.kfacts[at + 1] = kind;
+  self.kfacts[at + 2] = plan;
+  self.kfacts[at + 3] = self.fact(F_CONTENT, tp) ?? 0;
+  self.kfacts[at] = 1;
+  at
 }
 
 // `State::new_record`: a record made in the collection the reference on top holds — a plain
@@ -1107,34 +1310,43 @@ fn record_target(self: State, ptp: integer, fld: integer, gm: vector<integer>) -
 fn new_record_of(self: State, defaults: boolean) {
   ptp = self.code_u16();
   fld = self.code_u16();
-  gm: vector<integer> = [];
-  rc = self.record_target(ptp, fld, gm);
-  if rc == null {
+  if !self.can_pop(16) {
+    return;
+  }
+  self.new_record_at(ptp, fld, defaults, self.stack_pos - 16);
+}
+
+// `new_record_of` on its operands, the collection's reference in the frame slot at `at` (the
+// top less 16): the new record's reference written over it, the top just above
+// (`OpNewRecord`'s arm calls this).
+pub fn new_record_at(self: State, ptp: integer, fld: integer, defaults: boolean, at: integer) {
+  t = self.targets[self.target_of(ptp, fld)]!;
+  if !t.ok {
+    self.stop("not carried: a record added to {self.types[t.tp]?.name ?? "a collection"}");
     return;
   }
   // A keyed collection's routines read its key parts from the loaded table.
   self.load_table();
-  v = self.get_stack_dbref();
-  vp = v.pos + (rc!.at ?? 0);
-  aelem = types::array_element(self.types, rc!.tp);
-  kelem = types::keyed_element(self.types, rc!.tp);
-  helem = types::hash_element(self.types, rc!.tp);
-  rtp = aelem ?? kelem ?? helem ?? types::vector_element(self.types, rc!.tp) ?? 0;
-  size = self.types[rtp]?.size ?? 0;
-  io: vector<integer> = [NULL_STORE, 0, 0];
-  if aelem != null {
-    crt::entry_new(io, v.store_nr, v.rec, vp, size);
-  } else if kelem != null {
-    crt::keyed_new(io, v.store_nr, v.rec, vp, types::keyed_kind(self.types, rc!.tp) ?? 0, size);
-  } else if helem != null {
-    crt::hash_entry(io, v.store_nr, v.rec, vp, size, self.types[rtp]?.linked ?? false);
+  // The collection's reference read in its slot, the new record's written over it.
+  vs = crt::stack_get(4, self.stk, at) & 65535;
+  vr = crt::stack_get(4, self.stk, at + 4);
+  vp = crt::stack_get(4, self.stk, at + 8) + t.at;
+  if t.how == T_ARRAY {
+    crt::entry_new(self.lio, vs, vr, vp, t.size);
+  } else if t.how == T_KEYED {
+    crt::keyed_new(self.lio, vs, vr, vp, t.kkind, t.size);
+  } else if t.how == T_HASH {
+    crt::hash_entry(self.lio, vs, vr, vp, t.size, t.linked);
   } else {
-    crt::vec_append(io, v.store_nr, v.rec, vp, size);
+    crt::vec_append(self.lio, vs, vr, vp, t.size);
   }
   if defaults {
-    crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, self.default_of(rtp));
+    // The image read where it is kept: `default_of` would answer a copy.
+    self.image_ready(t.elem);
+    crt::fill(self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, self.images[t.elem]!);
   }
-  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+  self.stack_pos = at + 16;
 }
 
 pub fn new_record(self: State) {
@@ -1150,37 +1362,40 @@ pub fn new_record_n_p(self: State) {
 pub fn finish_record(self: State) {
   ptp = self.code_u16();
   fld = self.code_u16();
-  gm: vector<integer> = [];
-  rc = self.record_target(ptp, fld, gm);
-  if rc == null {
+  if !self.can_pop(32) {
+    return;
+  }
+  self.stack_pos -= 32;
+  self.finish_record_at(ptp, fld, self.stack_pos);
+}
+
+// `finish_record` on its operands, the two references popped already: the collection's in the
+// frame slot at `at`, the record's above it (`OpFinishRecord`'s arm calls this).
+pub fn finish_record_at(self: State, ptp: integer, fld: integer, at: integer) {
+  t = self.targets[self.target_of(ptp, fld)]!;
+  if !t.ok {
+    self.stop("not carried: a record added to {self.types[t.tp]?.name ?? "a collection"}");
     return;
   }
   self.load_table();
-  r = self.get_stack_dbref();
-  v = self.get_stack_dbref();
-  vp = v.pos + (rc!.at ?? 0);
-  aelem = types::array_element(self.types, rc!.tp);
-  kelem = types::keyed_element(self.types, rc!.tp);
-  helem = types::hash_element(self.types, rc!.tp);
-  if len(gm) >= 6 {
-    self.load_table();
-    gheld = false;
-    gnull = false;
-    gk = 0;
-    while gk + 2 < len(gm) {
-      gheld = gheld || (gm[gk + 1] ?? -1) == 0;
-      gnull = gnull || types::nullable_element(self.types, gm[gk + 2] ?? 0);
-      gk += 3;
-    }
-    crt::group_finish(types::content_of(self.types, rc!.tp) ?? 0, gheld, gnull, v.store_nr, v.rec, v.pos, r.store_nr, r.rec, r.pos, gm);
-  } else if aelem != null {
-    crt::array_append(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos);
-  } else if kelem != null {
-    crt::keyed_finish(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, types::keyed_kind(self.types, rc!.tp) ?? 0, kelem!, rc!.tp);
-  } else if helem != null {
-    crt::hash_insert(v.store_nr, v.rec, vp, r.store_nr, r.rec, r.pos, helem!, rc!.tp);
+  // The record on top and the collection's reference under it, read in their slots.
+  vs = crt::stack_get(4, self.stk, at) & 65535;
+  vr = crt::stack_get(4, self.stk, at + 4);
+  vpos = crt::stack_get(4, self.stk, at + 8);
+  rs = crt::stack_get(4, self.stk, at + 16) & 65535;
+  rr = crt::stack_get(4, self.stk, at + 20);
+  rp = crt::stack_get(4, self.stk, at + 24);
+  vp = vpos + t.at;
+  if t.group {
+    crt::group_finish(t.content, t.gheld, t.gnull, vs, vr, vpos, rs, rr, rp, t.gm);
+  } else if t.how == T_ARRAY {
+    crt::array_append(vs, vr, vp, rs, rr, rp);
+  } else if t.how == T_KEYED {
+    crt::keyed_finish(vs, vr, vp, rs, rr, rp, t.kkind, t.elem, t.tp);
+  } else if t.how == T_HASH {
+    crt::hash_insert(vs, vr, vp, rs, rr, rp, t.elem, t.tp);
   } else {
-    crt::vec_finish(v.store_nr, v.rec, vp);
+    crt::vec_finish(vs, vr, vp);
   }
 }
 
@@ -1195,7 +1410,7 @@ pub fn format_int(self: State) {
   dir = self.code_i8();
   width = self.get_stack_i64();
   val = self.get_stack_i64();
-  crt::slot_text_append(self.stk, self.stack_pos - (pos - 16), crt::format_int(val, radix, width, token, plus, note, dir));
+  crt::append_int(self.stk, -1, self.stack_pos - (pos - 16), val, radix, width, token, plus, note, dir);
 }
 
 // `State::format_text`: the width and then the view popped, the text formatted and appended to
@@ -1206,16 +1421,20 @@ pub fn format_text(self: State) {
   token = self.code_u8();
   width = self.get_stack_i64();
   val = self.get_stack_str();
-  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_text(val, width, dir, token));
+  crt::append_text(self.stk, -1, self.stack_pos - (pos - 24), val, width, dir, token);
 }
 
 // `State::append_stack_text`: the view popped, appended to the text the reference in the frame
 // slot at `pos` names.
 pub fn append_stack_text(self: State) {
   pos = self.code_u16();
-  val = self.get_stack_str();
+  if !self.can_pop(16) {
+    return;
+  }
+  // The view appended where it lies: no text copied out of it.
+  self.stack_pos -= 16;
   r = self.get_var_dbref(pos - 16);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, val);
+  crt::ref_text_append_view(r.store_nr, r.rec, r.pos, self.stk, self.stack_pos);
 }
 
 // `State::get_stack_ref`: the reference on top replaced by the one stored at its field `fld`.
@@ -1257,7 +1476,7 @@ pub fn append_copy(self: State) {
   tp = self.code_u16();
   count = self.get_stack_i64();
   r = self.get_stack_dbref();
-  etp = types::content_of(self.types, tp);
+  etp = self.fact(F_CONTENT, tp);
   if etp == null || (self.types[etp!]?.linked ?? false) {
     self.stop("not carried: a repeat of a linked element");
     return;
@@ -1330,7 +1549,7 @@ pub fn format_stack_int(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_i64();
   r = self.get_var_dbref(pos - 16);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_int(val, radix, width, token, plus, note, dir));
+  crt::append_int(r.store_nr, r.rec, r.pos, val, radix, width, token, plus, note, dir);
 }
 
 // `State::format_stack_text`: as `format_text`, into the text the slot's reference names.
@@ -1341,7 +1560,7 @@ pub fn format_stack_text(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_str();
   r = self.get_var_dbref(pos - 24);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_text(val, width, dir, token));
+  crt::append_text(r.store_nr, r.rec, r.pos, val, width, dir, token);
 }
 
 // `State::format_float`: the precision, the width and then the value popped, the value
@@ -1354,13 +1573,13 @@ pub fn format_float(self: State) {
   precision = self.get_stack_i64();
   width = self.get_stack_i64();
   val = self.get_stack_f64();
-  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val, width, precision, token, plus, dir, false));
+  crt::append_float(self.stk, -1, self.stack_pos - (pos - 24), val, width, precision, token, plus, dir, false);
 }
 
 // A copy's type operand as flags: the source freed (0x8000), the type holding no stored
 // references, the destination fresh (0x4000).
 fn copy_flags(self: State, raw: integer) -> integer {
-  (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(self.types, raw & 16383) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
+  (if raw & 32768 != 0 { 1 } else { 0 }) + (if self.has(F_NO_STORED_REFS, raw & 16383) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
 }
 
 // `State::const_ref_at`: constant `d`'s root, in the store adopted for it.
@@ -1376,7 +1595,7 @@ pub fn clear(self: State, data: DbRef, raw: integer) {
   self.load_table();
   reset = false;
   if raw & 32768 != 0 {
-    reset = crt::reset_pool_root(data.store_nr, data.rec, data.pos, tp, types::enum_parent_size(self.types, tp), self.default_of(tp));
+    reset = crt::reset_pool_root(data.store_nr, data.rec, data.pos, tp, (self.fact(F_PARENT_SIZE, tp) ?? 0), self.default_of(tp));
   }
   if !reset {
     crt::clear(data.store_nr, data.rec, data.pos, tp);
@@ -1425,7 +1644,7 @@ pub fn place_record(self: State, host: DbRef, tp: integer) -> DbRef {
   fresh = host.store_nr == NULL_STORE || host.rec == 0 || !crt::store_live(host.store_nr);
   elem = if fresh { null } else { types::root_vector_element(self.types, crt::store_known(host.store_nr)) };
   io: vector<integer> = [host.store_nr, host.rec, host.pos];
-  crt::place_record(io, host.store_nr, host.rec, host.pos, tp, types::enum_parent_size(self.types, tp), self.default_of(tp), elem != null && elem != tp);
+  crt::place_record(io, host.store_nr, host.rec, host.pos, tp, (self.fact(F_PARENT_SIZE, tp) ?? 0), self.default_of(tp), elem != null && elem != tp);
   if fresh {
     crt::set_store_known(io[0] ?? NULL_STORE, tp);
   }
@@ -1438,26 +1657,32 @@ pub fn get_record(self: State) {
   db_tp = self.code_u16();
   no_keys = self.code_u8();
   self.load_table();
-  kind = types::keyed_kind(self.types, db_tp) ?? 0;
-  if types::hash_element(self.types, db_tp) == null && kind == 0 {
+  f = self.keyed_facts(db_tp);
+  kind = self.kfacts[f + 1] ?? -1;
+  if kind < 0 {
     self.stop("not carried: a lookup in {self.types[db_tp]?.name ?? "a collection"}");
     return;
   }
   // The key parts read off the stack as the old runner reads them (`stack_keys`).
-  bytes = natives::push_keys(self.types, self.stk, db_tp, no_keys, self.stack_pos);
+  bytes = natives::push_keys(self.key_parts, self.kfacts[f + 2] ?? -1, self.stk, no_keys, self.stack_pos);
   if bytes < 0 || !self.can_pop(bytes + 16) {
     self.stop("not carried: a lookup whose key does not resolve");
     return;
   }
-  self.stack_pos -= bytes;
-  r = self.get_stack_dbref();
-  io: vector<integer> = [NULL_STORE, 0, 0];
+  // The collection's reference read in its slot and the answer written over it: no
+  // reference value between them.
+  self.stack_pos -= bytes + 16;
+  at = self.stack_pos;
+  rs = crt::stack_get(4, self.stk, at) & 65535;
+  rr = crt::stack_get(4, self.stk, at + 4);
+  rp = crt::stack_get(4, self.stk, at + 8);
   if kind != 0 {
-    crt::keyed_find(io, r.store_nr, r.rec, r.pos, kind, db_tp, no_keys);
+    crt::keyed_find(self.lio, rs, rr, rp, kind, db_tp, no_keys);
   } else {
-    crt::hash_find(io, r.store_nr, r.rec, r.pos, db_tp, no_keys);
+    crt::hash_find(self.lio, rs, rr, rp, db_tp, no_keys);
   }
-  self.put_stack_dbref(DbRef { store_nr: io[0] ?? NULL_STORE, rec: io[1] ?? 0, pos: io[2] ?? 0 });
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+  self.stack_pos += 16;
 }
 
 // `State::get_text_sub`: the bounds popped, the view below them replaced by its slice.
@@ -1479,16 +1704,21 @@ pub fn format_stack_float(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_f64();
   r = self.get_var_dbref(pos - 24);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_float(val, width, precision, token, plus, dir, false));
+  crt::append_float(r.store_nr, r.rec, r.pos, val, width, precision, token, plus, dir, false);
 }
 
 // `Stores::remove_vector_at`: element `index` removed, by its type's mode — linked, owning
 // heap, or plain; whether one was removed.
 pub fn vec_remove(self: State, r: DbRef, tp: integer, index: integer?) -> boolean {
-  et = self.types[tp]!;
+  self.vec_remove_at(r.store_nr, r.rec, r.pos, tp, index)
+}
+
+// `vec_remove` on the reference's parts (`OpRemoveVector`'s arm): the element type's size and
+// mode read where the table keeps them, no type record bound.
+pub fn vec_remove_at(self: State, rs: integer, rr: integer, rp: integer, tp: integer, index: integer?) -> boolean {
   self.load_table();
-  mode = if et.linked { 2 } else if types::owns_heap(self.types, tp) { 1 } else { 0 };
-  crt::vec_remove(r.store_nr, r.rec, r.pos, tp, et.size, mode, index)
+  mode = if self.types[tp]?.linked ?? false { 2 } else if self.has(F_OWNS_HEAP, tp) { 1 } else { 0 };
+  crt::vec_remove(rs, rr, rp, tp, self.types[tp]?.size ?? 0, mode, index)
 }
 
 // `Stores::keep_vector_range`: the vector cut to its elements `lo..hi`.
@@ -1511,6 +1741,47 @@ pub fn vec_slice(self: State, r: DbRef, src: DbRef, lo: integer?, hi: integer?, 
 pub fn rget_bool(base: integer, sp: integer, pos: integer) -> boolean? {
   b = crt::peek_u8(base, sp - pos);
   if b == 255 { null } else { b == 1 }
+}
+
+// A reference in the frame slot `pos` under the top `sp`, read by an arm through the stack's
+// base: its store, its record and its position.
+pub fn rref_s(base: integer, sp: integer, pos: integer) -> integer {
+  crt::peek_u32(base, sp - pos)
+}
+
+pub fn rref_r(base: integer, sp: integer, pos: integer) -> integer {
+  crt::peek_u32(base, sp - pos + 4)
+}
+
+pub fn rref_p(base: integer, sp: integer, pos: integer) -> integer {
+  crt::peek_u32(base, sp - pos + 8)
+}
+
+// `State::local_vec_len`, `vec_get_int` and `vec_set_int` on those locals: the length of the
+// vector local `vec`, whether its local index `idx` names an element (`vec_has`), and the
+// integer field `fld` of that element read and written.
+pub fn rvec_len(base: integer, sp: integer, vec: integer) -> integer {
+  crt::vec_len(rref_s(base, sp, vec), rref_r(base, sp, vec), rref_p(base, sp, vec))
+}
+
+pub fn rvec_has(base: integer, sp: integer, vec: integer, idx: integer) -> boolean {
+  vec_has(rref_s(base, sp, vec), rref_r(base, sp, vec), rref_p(base, sp, vec), crt::peek_i64(base, sp - idx))
+}
+
+pub fn rvec_int(base: integer, sp: integer, vec: integer, size: integer, idx: integer, fld: integer) -> integer? {
+  crt::vec_elem_int(rref_s(base, sp, vec), rref_r(base, sp, vec), rref_p(base, sp, vec), size, crt::peek_i64(base, sp - idx), fld)
+}
+
+pub fn rvec_set_int(base: integer, sp: integer, vec: integer, size: integer, idx: integer, fld: integer, val: integer?) {
+  crt::vec_elem_set_int(rref_s(base, sp, vec), rref_r(base, sp, vec), rref_p(base, sp, vec), size, crt::peek_i64(base, sp - idx), fld, val);
+}
+
+// `State::local_tag` on the loop's locals.
+pub fn rtag(stk: integer, base: integer, sp: integer, of: integer, a: integer) -> integer? {
+  if of == 0 {
+    return crt::get_w(crt::W_ENUM, stk, 1, 8 + sp - a, 0, 0);
+  }
+  if rref_r(base, sp, a) == 0 { 0 } else { crt::get_w(crt::W_ENUM, rref_s(base, sp, a), rref_r(base, sp, a), rref_p(base, sp, a), 0, 0) }
 }
 
 // A boolean answer as its stack byte: 1, 0, or 255 for null.
@@ -1624,13 +1895,13 @@ pub fn hash_remove(self: State) {
   self.load_table();
   tp = raw & 32767;
   view = raw & 32768 != 0;
-  kelem = types::keyed_element(self.types, tp);
+  kelem = self.fact(F_KEYED_ELEMENT, tp);
   if kelem != null {
-    crt::keyed_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::keyed_kind(self.types, tp) ?? 0, kelem!, tp, view);
-  } else if types::array_element(self.types, tp) != null {
-    crt::array_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::array_element(self.types, tp) ?? 0, view);
-  } else if types::hash_element(self.types, tp) != null {
-    crt::hash_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, types::content_of(self.types, tp) ?? 0, tp, view);
+    crt::keyed_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(F_KEYED_KIND, tp) ?? 0, kelem!, tp, view);
+  } else if self.fact(F_ARRAY_ELEMENT, tp) != null {
+    crt::array_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(F_ARRAY_ELEMENT, tp) ?? 0, view);
+  } else if self.fact(F_HASH_ELEMENT, tp) != null {
+    crt::hash_remove(data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, self.fact(F_CONTENT, tp) ?? 0, tp, view);
   } else {
     self.stop("not carried: a removal from {self.types[tp]?.name ?? "a collection"}");
   }
@@ -1689,7 +1960,7 @@ pub fn format_single(self: State) {
   precision = self.get_stack_i64();
   width = self.get_stack_i64();
   val = self.get_stack_f32();
-  crt::slot_text_append(self.stk, self.stack_pos - (pos - 24), crt::format_float(val as float?, width, precision, token, plus, dir, true));
+  crt::append_float(self.stk, -1, self.stack_pos - (pos - 24), val as float?, width, precision, token, plus, dir, true);
 }
 
 pub fn format_stack_single(self: State) {
@@ -1701,7 +1972,7 @@ pub fn format_stack_single(self: State) {
   width = self.get_stack_i64();
   val = self.get_stack_f32();
   r = self.get_var_dbref(pos - 24);
-  crt::ref_text_append(r.store_nr, r.rec, r.pos, crt::format_float(val as float?, width, precision, token, plus, dir, true));
+  crt::append_float(r.store_nr, r.rec, r.pos, val as float?, width, precision, token, plus, dir, true);
 }
 
 // `State::append_character`: a character popped and appended to the text local `pos` back
@@ -2036,20 +2307,28 @@ pub fn step(self: State) {
   on = self.code_u8();
   arg = self.code_u16();
   cursor = self.get_var_i64(state_var) ?? 0;
-  data = self.slot_dbref(self.stack_pos - 16);
-  out: vector<integer> = [NULL_STORE, 0, 0, 0];
+  // The collection's reference read in its slot, the step's answer written over it; the step
+  // answers through the scratch vector (its fourth part the walk's next state).
+  at = self.stack_pos - 16;
+  if !self.slot_ok(at) {
+    return;
+  }
+  crt::slot_ref(self.lio, self.stk, at);
+  ds = self.lio[0] ?? NULL_STORE;
+  dr = self.lio[1] ?? 0;
+  dp = self.lio[2] ?? 0;
   kind = on & 63;
   if kind == 4 {
-    crt::scratch_step(out, cursor, data.store_nr, data.rec, data.pos, on & 64 != 0);
+    crt::scratch_step(self.lio, cursor, ds, dr, dp, on & 64 != 0);
   } else if kind >= 1 && kind <= 3 {
     self.load_table();
-    crt::keyed_step(out, cursor, data.store_nr, data.rec, data.pos, on, arg);
+    crt::keyed_step(self.lio, cursor, ds, dr, dp, on, arg);
   } else {
     self.stop("not carried: a walk of kind {kind}");
     return;
   }
-  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, out[3]);
-  crt::set_slot_ref(self.stk, self.stack_pos - 16, out[0] ?? NULL_STORE, out[1] ?? 0, out[2] ?? 0);
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, self.lio[3]);
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
 }
 
 // `State::remove`: the walk's current record removed — the state in the slot `state_var`
@@ -2076,12 +2355,13 @@ pub fn set_keyed(self: State) {
   no_keys = self.code_u8();
   tp = raw & 32767;
   self.load_table();
-  kind = types::keyed_kind(self.types, tp) ?? 0;
-  if types::hash_element(self.types, tp) == null && kind == 0 {
+  f = self.keyed_facts(tp);
+  kind = self.kfacts[f + 1] ?? -1;
+  if kind < 0 {
     self.stop("not carried: a keyed write into {self.types[tp]?.name ?? "a collection"}");
     return;
   }
-  bytes = natives::push_keys(self.types, self.stk, tp, no_keys, self.stack_pos);
+  bytes = natives::push_keys(self.key_parts, self.kfacts[f + 2] ?? -1, self.stk, no_keys, self.stack_pos);
   if bytes < 0 || !self.can_pop(bytes + 32) {
     self.stop("not carried: a keyed write whose key does not resolve");
     return;
@@ -2089,7 +2369,7 @@ pub fn set_keyed(self: State) {
   self.stack_pos -= bytes;
   value = self.get_stack_dbref();
   coll = self.get_stack_dbref();
-  crt::set_keyed(coll.store_nr, coll.rec, coll.pos, value.store_nr, value.rec, value.pos, types::content_of(self.types, tp) ?? 0, tp, no_keys, raw >= 32768, kind);
+  crt::set_keyed(coll.store_nr, coll.rec, coll.pos, value.store_nr, value.rec, value.pos, self.kfacts[f + 3] ?? 0, tp, no_keys, raw >= 32768, kind);
 }
 
 // `State::replace_keyed`: a keyed local rebound from a call (`h = f()`) — `dest`, popped
@@ -2556,7 +2836,7 @@ pub fn index_group(self: State, primary: DbRef, tp: integer, parent_tp: integer,
     mpos = gm![k] ?? 0;
     mkind = gm![k + 1] ?? 0;
     mtp = gm![k + 2] ?? 0;
-    nullable = nullable || types::nullable_element(self.types, mtp);
+    nullable = nullable || self.has(F_NULLABLE_ELEMENT, mtp);
     if k > 0 {
       if mtp == tp && vpos < 0 {
         vpos = mpos;
@@ -2597,10 +2877,10 @@ pub fn link_record(self: State, data: DbRef, rec: DbRef, parent_tp: integer, fld
   k = 0;
   while k + 2 < len(gm!) {
     held = held || (gm![k + 1] ?? -1) == 0;
-    nullable = nullable || types::nullable_element(self.types, gm![k + 2] ?? 0);
+    nullable = nullable || self.has(F_NULLABLE_ELEMENT, gm![k + 2] ?? 0);
     k += 3;
   }
-  crt::group_finish(types::content_of(self.types, gm![2] ?? 0) ?? 0, held, nullable, data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, siblings);
+  crt::group_finish(self.fact(F_CONTENT, gm![2] ?? 0) ?? 0, held, nullable, data.store_nr, data.rec, data.pos, rec.store_nr, rec.rec, rec.pos, siblings);
 }
 
 // `Stores::deliver_reconstruct` (`deliver(tag, value)`): the value's bytes printed by the

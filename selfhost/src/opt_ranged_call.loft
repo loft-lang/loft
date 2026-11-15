@@ -1,0 +1,448 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/ranged_call.rs`: `@FR-R-RangedCall`'s facts.  Whether a call of a
+// function repays a ranged variant (the gain test), whether a call's integer arguments are
+// proven within `[-L, L]`, and the facts a ranged variant's body runs under.  The guarded copy
+// (`guard_plan`) is carried for its variable clause; a hoisted record field is not a leaf yet.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_non_sentinel;
+use opt_range;
+
+// The bound a ranged variant's integer parameters are assumed within.
+pub const L = 1073741824;
+// The checked operators a callee must run for its ranged variant to be worth writing.
+const MIN_CHECKED_OPS = 3;
+
+// The gain verdict per definition (`Cx::rg_gains`): 0 not asked, 1 no, 2 yes.
+pub struct Gains {
+  memo: vector<integer>,
+}
+
+pub fn new_gains(b: ir::Bundle) -> Gains {
+  Gains { memo: [for _ in 0..len(b.data.definitions) { 0 }] }
+}
+
+fn is_integer(t: ir::TypeT) -> boolean {
+  match opt_non_sentinel::cgen_base(t) {
+    TyInteger { spec: _ } => true,
+    _ => false,
+  }
+}
+
+fn generator(d: ir::Definition) -> boolean {
+  if len(d.returned) == 0 {
+    return false;
+  }
+  match opt_non_sentinel::cgen_base(d.returned[0]!) {
+    TyIterator { step: _, inner: _ } => true,
+    _ => false,
+  }
+}
+
+// `checked_ops`: the checked integer operators a call of `d` runs — its own and its callees',
+// three deep — which a ranged variant may turn plain.
+fn checked_ops(b: ir::Bundle, d: integer, depth: integer) -> integer {
+  if depth > 3 || d < 0 || d >= len(b.data.definitions) {
+    return 0;
+  }
+  def = b.data.definitions[d]!;
+  if !binds::is_loft_defined(def) || generator(def) {
+    return 0;
+  }
+  own = [0];
+  callees: vector<integer> = [];
+  opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) {
+          cd = b.data.definitions[def_nr]!;
+          name = cd.name;
+          if name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt" || name == "OpMinSingleInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable" || name == "OpMulIntNullable" {
+            own[0] = own[0]! + 1;
+          } else if binds::is_loft_defined(cd) && def_nr != d {
+            callees += [def_nr];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  count = own[0]!;
+  for c in callees {
+    count += checked_ops(b, c, depth + 1);
+  }
+  count
+}
+
+// `benefits`: does a call of `d` repay a ranged variant?
+pub fn benefits(b: ir::Bundle, d: integer) -> boolean {
+  checked_ops(b, d, 0) >= MIN_CHECKED_OPS
+}
+
+// `args_ranged`: are `d`'s integer arguments `args` all proven within `[-L, L]` under `rv` —
+// at least one of them?
+pub fn args_ranged(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, d: integer, args: vector<ir::Node>) -> boolean {
+  attrs = b.data.definitions[d]!.attributes;
+  if len(attrs) < len(args) {
+    return false;
+  }
+  any = false;
+  for arg in args {
+    if !is_integer(attrs[arg#index]!.typedef[0]!) {
+      continue;
+    }
+    r = opt_range::range(b, p, c, nn, rv, arg, 0) ?? return false;
+    if r.lo < -L || r.hi > L {
+      return false;
+    }
+    any = true;
+  }
+  any
+}
+
+// `param_seeds`: the seeds of `d`'s ranged variant — each visible integer parameter within
+// `[-L, L]`.
+pub fn param_seeds(b: ir::Bundle, d: integer) -> opt_range::Ranges {
+  def = b.data.definitions[d]!;
+  seeds = opt_range::empty_ranges(len(def.variables.variables));
+  for at in def.attributes {
+    if at.hidden {
+      continue;
+    }
+    v = binds::var_named(def.variables, at.name);
+    if v >= 0 && v < len(def.variables.variables) && is_integer(def.variables.variables[v]!.type_def[0]!) {
+      opt_range::set_var(seeds, v, opt_range::Range { lo: -L, hi: L });
+    }
+  }
+  seeds
+}
+
+// `ranges_under`: the facts `d`'s body runs under from `seeds`.
+pub fn ranges_under(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, d: integer, seeds: opt_range::Ranges) -> opt_range::Ranges {
+  nn = opt_non_sentinel::non_sentinel_vars(b, p, d);
+  opt_range::range_vars_seeded(b, p, c, d, nn, [], seeds)
+}
+
+// `variant_gains`: does `d`'s ranged variant turn at least `MIN_CHECKED_OPS` operators plain
+// that its plain body keeps checked?
+pub fn variant_gains(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, g: Gains, d: integer, depth: integer) -> boolean {
+  known = g.memo[d] ?? 0;
+  if known != 0 {
+    return known == 2;
+  }
+  memo: vector<integer> = [for _ in 0..len(b.data.definitions) { -1 }];
+  gain = gained_ops(b, p, c, d, depth, memo) >= MIN_CHECKED_OPS;
+  g.memo[d] = if gain { 2 } else { 1 };
+  gain
+}
+
+// `gained_ops`: the operators `d`'s ranged variant turns plain that its plain body keeps
+// checked — its own, under its parameters seeded, and for each call it newly ranges, that
+// callee's variant's in turn (three deep).  A recursive function meets itself as no gain.
+fn gained_ops(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, d: integer, depth: integer, memo: vector<integer>) -> integer {
+  if depth > 3 || !benefits(b, d) {
+    return 0;
+  }
+  known = memo[d] ?? -1;
+  if known >= 0 {
+    return known;
+  }
+  memo[d] = 0;
+  def = b.data.definitions[d]!;
+  code = def.code[0]!;
+  seeded = ranges_under(b, p, c, d, param_seeds(b, d));
+  nn = opt_non_sentinel::non_sentinel_vars(b, p, d);
+  plain = opt_range::range_vars_seeded(b, p, c, d, nn, [], opt_range::empty_ranges(len(def.variables.variables)));
+  gained = [0];
+  calls: vector<integer> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) {
+          cd = b.data.definitions[def_nr]!;
+          if opt_range::plain_form(cd.name, len(args)) != "" {
+            if opt_range::op_range(b, p, c, nn, seeded, cd.name, args, 0) != null && opt_range::op_range(b, p, c, nn, plain, cd.name, args, 0) == null {
+              gained[0] = gained[0]! + 1;
+            }
+          } else if def_nr != d && binds::is_loft_defined(cd) && args_ranged(b, p, c, nn, seeded, def_nr, args) && !args_ranged(b, p, c, nn, plain, def_nr, args) {
+            calls += [def_nr];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  total = gained[0]!;
+  for callee in calls {
+    total += gained_ops(b, p, c, callee, depth + 1, memo);
+  }
+  memo[d] = total;
+  total
+}
+
+// `f` on every node of every one of `nodes`.
+fn walk_each(nodes: vector<ir::Node>, f: fn(ir::Node)) {
+  for n in nodes {
+    opt_non_sentinel::walk(n, f);
+  }
+}
+
+// The bound a guarded copy tests each leaf against (`G`).
+pub const G = 1048576;
+
+// What `guard_plan` decides for a counted `For` block: the variables its guard tests
+// (`|x| <= G` each) and the facts its guarded copy runs under.
+pub struct GuardPlan {
+  pub leaves: vector<integer>,
+  pub facts: opt_range::Ranges,
+  pub fields: vector<GuardField>,
+}
+
+// A hoisted integer field the guard bounds: the record variable, the offset, the read.
+pub struct GuardField {
+  pub root: integer,
+  pub off: integer,
+  pub call: ir::Node,
+}
+
+// The record variable of `OpGetInt(Var(v), off)`, the offset in `off`; -1 for another node.
+fn int_read(b: ir::Bundle, n: ir::Node, off: &integer) -> integer {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) || b.data.definitions[def_nr]!.name != "OpGetInt" || len(args) < 2 {
+        return -1;
+      }
+      at = opt_non_sentinel::int_of(args[1]) ?? return -1;
+      off = at;
+      loop_shape::var_of(args[0])
+    },
+    _ => -1,
+  }
+}
+
+// `prelude_fields`: the integer fields the block's prelude reads and its loop does not join
+// the guard's fields, unless the prelude calls a function.
+fn prelude_fields(b: ir::Bundle, block: ir::Node, fields: vector<GuardField>) {
+  ops = match loop_shape::unspan(block) {
+    NdBlock { block: bl } => bl[0].operators,
+    _ => return,
+  };
+  at_loop = -1;
+  for op in ops {
+    if at_loop < 0 && (loop_shape::unspan(op) is NdLoop) {
+      at_loop = op#index;
+    }
+  }
+  if at_loop < 0 {
+    return;
+  }
+  prelude = ir::NdInsert { items: ops[0..at_loop] };
+  calls_user = [false];
+  extra: vector<GuardField> = [];
+  opt_non_sentinel::walk(prelude, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && opt_range::is_loft_defined(b.data.definitions[def_nr]!) {
+          calls_user[0] = true;
+        }
+        off = 0;
+        v = int_read(b, n, off);
+        if v >= 0 {
+          known = false;
+          for f in fields {
+            if f.root == v && f.off == off {
+              known = true;
+            }
+          }
+          for f in extra {
+            if f.root == v && f.off == off {
+              known = true;
+            }
+          }
+          if !known {
+            extra += [GuardField { root: v, off: off, call: n }];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if calls_user[0]! {
+    return;
+  }
+  in_loop: vector<integer> = [];
+  opt_non_sentinel::walk(ops[at_loop]!, fn(n: ir::Node) {
+    off = 0;
+    v = int_read(b, n, off);
+    if v >= 0 {
+      in_loop += [v, off];
+    }
+  });
+  for f in extra {
+    read = false;
+    for r in in_loop {
+      if r#index % 2 == 0 && r == f.root && in_loop[r#index + 1]! == f.off {
+        read = true;
+      }
+    }
+    if !read {
+      fields += [f];
+    }
+  }
+}
+
+// `variable_leaves`: the integer variables `block` reads in a counted range's start or end but
+// never assigns, that the function never hands out by reference, and that `known` does not
+// already bound within `G`.
+fn variable_leaves(b: ir::Bundle, f: integer, known: opt_range::Ranges, block: ir::Node) -> vector<integer> {
+  if (env_variable("LOFT_NO_RANGED_CALL_VARS") ?? "0") != "0" {
+    return [];
+  }
+  def = b.data.definitions[f]!;
+  vars = def.variables.variables;
+  count = len(vars);
+  written: vector<boolean> = [for _ in 0..count { false }];
+  bounds: vector<ir::Node> = [];
+  opt_non_sentinel::walk(block, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var < count {
+          written[var] = true;
+          if vars[var]!.name.starts_with("_range_start") || vars[var]!.name.starts_with("_range_end") {
+            bounds += [inner];
+          }
+        }
+      },
+      NdTuplePut { var, idx: _, inner: _ } => { if var < count { written[var] = true; } },
+      _ => {},
+    }
+  });
+  escaped: vector<boolean> = [for _ in 0..count { false }];
+  opt_non_sentinel::collect_escapes(b, def.code[0]!, escaped);
+  leaves: vector<integer> = [];
+  walk_each(bounds, fn(n: ir::Node) {
+    match n {
+      NdVar { n: v } => {
+        if v < count && is_integer(vars[v]!.type_def[0]!) && !written[v]! && !escaped[v]! {
+          r = opt_range::var_range(known, v);
+          bounded = r != null && r.lo >= -G && r.hi <= G;
+          seen = false;
+          for l in leaves {
+            if l == v {
+              seen = true;
+            }
+          }
+          if !bounded && !seen {
+            leaves += [v];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  leaves
+}
+
+// How often `code` assigns each variable (a `Set` or a tuple write).
+fn set_counts(code: ir::Node, count: integer) -> vector<integer> {
+  sets: vector<integer> = [for _ in 0..count { 0 }];
+  count_sets(code, sets);
+  sets
+}
+
+// `sets_outside` walks every child, a span's included.
+fn count_sets(code: ir::Node, sets: vector<integer>) {
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < len(sets) { sets[var] = sets[var]! + 1; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if var < len(sets) { sets[var] = sets[var]! + 1; } },
+      _ => {},
+    }
+  });
+}
+
+// `copy_gains`: does the guarded copy gain — some call in `block` takes a ranged variant under
+// the copy's facts and would not under `known`, and no call doing checked integer work is left
+// checked in the copy?
+fn copy_gains(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, g: Gains, nn: vector<boolean>, known: opt_range::Ranges, block: ir::Node, copy: opt_range::Ranges) -> boolean {
+  candidates: vector<integer> = [];
+  left_checked = [false];
+  opt_non_sentinel::walk(block, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if benefits(b, def_nr) {
+          if !args_ranged(b, p, c, nn, copy, def_nr, args) {
+            left_checked[0] = true;
+          } else if !args_ranged(b, p, c, nn, known, def_nr, args) {
+            candidates += [def_nr];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if left_checked[0]! {
+    return false;
+  }
+  for d in candidates {
+    if variant_gains(b, p, c, g, d, 0) {
+      return true;
+    }
+  }
+  false
+}
+
+// `guard_plan`, its variable clause: for the counted `For` block `block` of function `f`, the
+// leaves its guard tests and the facts its guarded copy runs under — or null when the copy
+// would make no call newly ranged, or would leave a call doing checked work checked.
+pub fn guard_plan(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, g: Gains, f: integer, nn: vector<boolean>, known: opt_range::Ranges, walks: vector<opt_range::Walk>, block: ir::Node, fields: vector<GuardField>) -> GuardPlan? {
+  prelude_fields(b, block, fields);
+  all_leaves = variable_leaves(b, f, known, block);
+  if len(all_leaves) == 0 && len(fields) == 0 {
+    return null;
+  }
+  unranged: vector<integer> = [];
+  for v in all_leaves {
+    if opt_range::var_range(known, v) == null {
+      unranged += [v];
+    }
+  }
+  def = b.data.definitions[f]!;
+  count = len(def.variables.variables);
+  // What the copy alone assigns and nothing hands out by reference keeps the copy's facts.
+  total = set_counts(def.code[0]!, count);
+  inside = set_counts(block, count);
+  escaped: vector<boolean> = [for _ in 0..count { false }];
+  opt_non_sentinel::collect_escapes(b, def.code[0]!, escaped);
+  keep: vector<boolean> = [for v in 0..count { total[v]! <= inside[v]! && !escaped[v]! }];
+  // The fewest leaves that make a call newly ranged: the variables with no range first, and
+  // only then the ones a wider fact bounds.
+  // Fields alone first.
+  tried = 0;
+  none: vector<integer> = [];
+  for tier in 0..3 {
+    leaves = if tier == 0 { none } else if tier == 1 { unranged } else { all_leaves };
+    if (tier == 0 && len(fields) == 0) || (tier > 0 && len(leaves) == tried) {
+      continue;
+    }
+    tried = len(leaves);
+    seeds = opt_range::empty_ranges(count);
+    for fl in fields {
+      seeds.fields += [opt_range::FieldRange { root: fl.root, off: fl.off, lo: -G, hi: G }];
+    }
+    for v in leaves {
+      opt_range::set_var(seeds, v, opt_range::Range { lo: -G, hi: G });
+    }
+    copy = opt_range::range_vars_code(b, p, c, f, block, nn, walks, seeds);
+    merged = opt_range::merge_guarded(known, copy, keep, leaves, G, seeds);
+    if copy_gains(b, p, c, g, nn, known, block, merged) {
+      return GuardPlan { leaves: leaves, facts: merged, fields: fields };
+    }
+  }
+  null
+}

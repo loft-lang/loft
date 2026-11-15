@@ -1,0 +1,1154 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Header` in the function writer: `hold_vectors`, `held_access`,
+// `held_proof`, `place_of`, `held_len` and `index_arg` of `src/c/body.rs`, for the base
+// clause — a loop that writes no store holds the header of each vector it indexes, and the
+// element reads, the length and the scalar element writes go through it.
+
+use ir;
+use loop_shape;
+use opt_hoist;
+use opt_length;
+use opt_facts;
+use opt_push;
+use opt_range;
+use opt_non_sentinel;
+use cgen_fn;
+use cgen_ref;
+use cgen_names;
+use cgen_w::*;
+
+fn enabled() -> boolean {
+  (env_variable("LOFT_NO_VECTOR_HOIST") ?? "0") == "0"
+}
+
+// The header an enclosing loop holds for `path`, "" for none.
+fn held_path(w: W, path: text) -> text {
+  for i in rev(0..len(w.headers)) {
+    if w.headers[i]!.path == path {
+      // A header held without its base derives it at each use.
+      return if w.headers[i]!.frame == 1 { w.headers[i]!.name } else { "loft_vh_fresh({w.headers[i]!.name})" };
+    }
+  }
+  ""
+}
+
+// The push header held for the vector `v` names: its position in `w.push_heads`, -1 for none.
+pub fn push_head(x: Cx, w: W, v: ir::Node) -> integer {
+  root = -1;
+  path = opt_push::vector_path(x.b, v, root);
+  if path == "" {
+    return -1;
+  }
+  for i in rev(0..len(w.push_heads)) {
+    if w.push_heads[i]!.path == path {
+      return i;
+    }
+  }
+  -1
+}
+
+// `read_header`: the header an element READ of `v` goes through — the held header, or the
+// push header's view of its vector.
+fn read_header(x: Cx, w: W, v: ir::Node) -> text {
+  h = held_vector(x, w, v);
+  if h != "" || (env_variable("LOFT_NO_PUSH_HEADER_READ") ?? "0") != "0" {
+    return h;
+  }
+  at = push_head(x, w, v);
+  if at < 0 { "" } else { "loft_ph_vh(&{w.push_heads[at].name})" }
+}
+
+// `held_vector`: the header held for the vector `v` names, "" for none.
+pub fn held_vector(x: Cx, w: W, v: ir::Node) -> text {
+  root = -1;
+  path = opt_push::vector_path(x.b, v, root);
+  if path == "" { "" } else { held_path(w, path) }
+}
+
+// `hold_vectors` and `hold_pushes`: open loop `lp`'s frames — the headers of the vectors it
+// reads, then the push headers of the paths it pushes to.  The loop's caller closes them
+// with `release`, by the two lengths it saved.
+pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::LoopHoist {
+  if !enabled() {
+    return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true };
+  }
+  verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
+  opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
+  // `@FR-R-Scalar`: each record scalar the verdict admits is read once, into a local.
+  for sc in verdict.scalars {
+    known = false;
+    for hs in w.scalars {
+      if hs.root == sc.root && hs.fld == sc.fld {
+        known = true;
+      }
+    }
+    if known {
+      continue;
+    }
+    c = cgen_fn::shape_of(x.b, w, sc.call);
+    if !(c == "int" || c == "float" || c == "single" || c == "bool" || c == "enum" || c == "char") {
+      continue;
+    }
+    kept = w.pending;
+    w.pending = [];
+    read = cgen_fn::expr(x, w, sc.call, ind);
+    nested = w.pending;
+    w.pending = kept;
+    for t in nested {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return verdict;
+    }
+    local = "s{len(w.decls) + 1}";
+    w.decls += ["{held(c)} {local} = {initial(c)};"];
+    line(w, ind, "{local} = {as_shape(w, read, c)};");
+    w.scalars += [HeldScalar { root: sc.root, fld: sc.fld, name: local, shape: c }];
+  }
+  // A loop that grows a store holds its headers without their base (`kept_bases` without the
+  // store facts).
+  for v in verdict.vectors {
+    // `kept_bases`: a loop that grows no store keeps every base; beside a growth, the base
+    // of a vector the store facts prove apart from every mover.
+    base = if verdict.growth_free { 1 } else { 0 };
+    if base == 0 && len(verdict.movers) > 0 && opt_facts::enabled() {
+      base = 1;
+      for m in verdict.movers {
+        if !opt_facts::distinct(x.b, w.facts, v.root, m) {
+          base = 0;
+        }
+      }
+    }
+    // A path an enclosing loop holds keeps that header, unless this one carries a base the
+    // outer one lacks.
+    outer = -1;
+    for i in rev(0..len(w.headers)) {
+      if w.headers[i]!.path == v.path {
+        outer = w.headers[i]!.frame;
+        break;
+      }
+    }
+    if outer == 1 || (outer == 0 && base == 0) {
+      continue;
+    }
+    saved = w.pending;
+    w.pending = [];
+    e = cgen_fn::expr(x, w, v.vector, ind);
+    inner = w.pending;
+    w.pending = saved;
+    for t in inner {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return verdict;
+    }
+    h = "h{len(w.decls) + 1}";
+    w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
+    line(w, ind, "{h} = loft_vh_of({as_ref(w, e)});");
+    w.headers += [Header { path: v.path, name: h, frame: base }];
+  }
+  verdict
+}
+
+// `hold_pushes`: a scalar pushed path the verdict admits keeps a push header the push itself
+// keeps current.
+pub fn hold_pushes(x: Cx, w: W, lp: ir::Block, verdict: opt_hoist::LoopHoist, ind: integer) {
+  // The sole-growth clause: the loop's one growth is this path's pushes, so its header
+  // writes through the record address it holds.
+  based = verdict.sole_push && len(verdict.pushes) == 1 && (env_variable("LOFT_NO_PUSH_BASE") ?? "0") == "0";
+  for p in verdict.pushes {
+    if push_head(x, w, p.vector) >= 0 || windowed_path(w, p.path) {
+      continue;
+    }
+    size = opt_hoist::push_size(x.b, lp, p.path);
+    if size == 0 {
+      continue;
+    }
+    saved = w.pending;
+    w.pending = [];
+    e = cgen_fn::expr(x, w, p.vector, ind);
+    inner = w.pending;
+    w.pending = saved;
+    for t in inner {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return;
+    }
+    h = "ph{len(w.decls) + 1}";
+    w.decls += ["loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"];
+    line(w, ind, "{h} = loft_ph_of({as_ref(w, e)}, {size});");
+    w.push_heads += [PushHead { path: p.path, name: h, size: size, based: based }];
+  }
+  // `@FR-R-PushRec`: a minted path keeps a push header too, never a based one.
+  for p in verdict.mint_pushes {
+    if push_head(x, w, p.vector) >= 0 || windowed_path(w, p.path) {
+      continue;
+    }
+    size = opt_hoist::mint_size(x.b, w.index, lp, p.path);
+    if size == 0 {
+      continue;
+    }
+    saved = w.pending;
+    w.pending = [];
+    e = cgen_fn::expr(x, w, p.vector, ind);
+    inner = w.pending;
+    w.pending = saved;
+    for t in inner {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return;
+    }
+    h = "ph{len(w.decls) + 1}";
+    w.decls += ["loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"];
+    line(w, ind, "{h} = loft_ph_of({as_ref(w, e)}, {size});");
+    w.push_heads += [PushHead { path: p.path, name: h, size: size, based: false }];
+  }
+}
+
+// `push_bits`: the value a scalar push writes, as the bits its header routine takes; the
+// routine in `put`.
+fn push_bits(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, put: &text) -> text {
+  val = cgen_fn::expr(x, w, args[len(args) - 1], ind);
+  if name == "OpPushInt" {
+    put = "loft_ph_put8";
+    return "(uint64_t) {as_int(w, val)}";
+  }
+  if name == "OpPushFloat" {
+    put = "loft_ph_put8";
+    return "loft_f64_bits({as_float(w, val)})";
+  }
+  if name == "OpPushSingle" {
+    put = "loft_ph_put4";
+    return "loft_f32_bits({as_single(w, val)})";
+  }
+  if name == "OpPushInt4" {
+    put = "loft_ph_put4";
+    return "loft_i4_bits({as_int(w, val)})";
+  }
+  if name == "OpPushCharacter" {
+    put = "loft_ph_put4";
+    return "(uint32_t) {as_char(w, val)}";
+  }
+  if name == "OpPushBoolean" {
+    put = "loft_ph_put1";
+    return "(uint8_t) {as_bool(w, val)}";
+  }
+  if name == "OpPushEnum" {
+    put = "loft_ph_put1";
+    return "(uint8_t) {as_enum(w, val)}";
+  }
+  min = cgen_fn::literal(w, args[1], "byte minimum") ?? return "";
+  put = "loft_ph_put1";
+  "loft_byte_raw({min}, {as_int(w, val)})"
+}
+
+// `held_push_run` (`@FR-R-PushFill`'s held-run clause): a run of two or more plain scalar
+// pushes onto a path a push header is held for is one call — one room test for the run.
+// Answers the statement after the run, -1 where statement `at` starts none.
+pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer) -> integer {
+  if (env_variable("LOFT_NO_HELD_PUSH_RUN") ?? "0") != "0" {
+    return -1;
+  }
+  shown: vector<ir::Node> = ops[0..end];
+  first = opt_push::push_at(x.b, shown, at);
+  if first.size == 0 {
+    return -1;
+  }
+  head = push_head(x, w, first.vector);
+  if head < 0 || w.push_heads[head].size != first.size || windowed_path(w, first.path) {
+    return -1;
+  }
+  run: vector<opt_push::Push> = [first];
+  stop = first.next;
+  for _ in 0..end {
+    p = opt_push::push_at(x.b, shown, stop);
+    if p.size == 0 || p.path != first.path || p.size != first.size || loop_shape::unspan(p.vector) != loop_shape::unspan(first.vector) {
+      break;
+    }
+    run += [p];
+    stop = p.next;
+  }
+  if len(run) < 2 {
+    return -1;
+  }
+  def = x.b.data.definitions[w.index]!;
+  for p in run {
+    if !opt_push::run_value_plain(x.b, def, p.root, p.val) {
+      return -1;
+    }
+  }
+  // The values are computed into temporaries first, in the run's order.
+  temps: vector<text> = [];
+  put = "";
+  for p in run {
+    bits = push_bits(x, w, p.op, p.args, ind, put);
+    if w.why != "" {
+      return -1;
+    }
+    t = "pb{len(w.decls) + 1}";
+    w.decls += ["{bits_type(put)} {t} = 0;"];
+    line(w, ind, "{t} = {bits};");
+    temps += [t];
+  }
+  h = w.push_heads[head].name;
+  site = "{cgen_names::original_name(def)}:{h}";
+  based = w.push_heads[head].based;
+  line(w, ind, "LOFT_PROVED({if based { "loft_phb_same" } else { "loft_ph_same" }}({h}, {first.size}), {c_string(site)});");
+  line(w, ind, "{if based { put.replace("loft_ph_put", "loft_ph_putb") } else { put }}_run(&{h}, {len(temps)}, (const {bits_type(put)}[]) {{ {temps.join(", ")} }});");
+  stop
+}
+
+fn bits_type(put: text) -> text {
+  if put == "loft_ph_put8" { "uint64_t" } else if put == "loft_ph_put4" { "uint32_t" } else { "uint8_t" }
+}
+
+// `pushed_mint`: the length of, the reservation on and a scalar push onto a path a push
+// header is held for go through the header.  `done` says whether `name` over `args` is one.
+pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if (name == "OpLengthVector" || name == "OpPreAllocVector") && len(args) > 0 {
+    at = push_head(x, w, args[0]);
+    if at < 0 {
+      return none();
+    }
+    done = true;
+    if name == "OpLengthVector" {
+      return E { code: "((int64_t) {w.push_heads[at].name}.len)", kind: K_INT };
+    }
+    // The reservation is capacity, observably nothing; the header's push grows the record.
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  path = "";
+  root = -1;
+  size = opt_push::fused(x.b, name, args, path, root);
+  if size == 0 {
+    // A record mint, or its finish, on a path a push header is held for.
+    if !(name == "OpNewRecord" || name == "OpNewRecordNP" || name == "OpFinishRecord") {
+      return none();
+    }
+    vtp = 0;
+    opt_push::mint_target(x.b, x.b.data.definitions[w.index]!, name, args, path, root, vtp);
+    if path == "" {
+      return none();
+    }
+    minting = -1;
+    for i in rev(0..len(w.push_heads)) {
+      if w.push_heads[i]!.path == path {
+        minting = i;
+        break;
+      }
+    }
+    if minting < 0 {
+      return none();
+    }
+    done = true;
+    mh = w.push_heads[minting].name;
+    if name == "OpFinishRecord" {
+      return E { code: "loft_ph_finish(&{mh})", kind: K_VOID };
+    }
+    elem = match x.b.types[vtp].parts[0] {
+      PtVector { content } => content,
+      _ => -1,
+    };
+    ptp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    msite = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{mh}";
+    made = temp(w, "ref");
+    line(w, ind, "{made} = (LOFT_PROVED(loft_ph_same({mh}, {w.push_heads[minting].size}), {c_string(msite)}), loft_ph_new(&{mh}, {w.push_heads[minting].size}));");
+    if !(name == "OpNewRecordNP" || cgen_ref::mint_complete(x.b, w, ptp)) && elem >= 0 {
+      line(w, ind, "loft_fill({made}, loft_dflt{elem}, {x.b.types[elem].size});");
+    }
+    return E { code: made, kind: K_REF };
+  }
+  at = push_head(x, w, args[0]);
+  if at < 0 || w.push_heads[at].size != size {
+    return none();
+  }
+  done = true;
+  h = w.push_heads[at].name;
+  put = "";
+  bits = push_bits(x, w, name, args, ind, put);
+  if w.why != "" {
+    return none();
+  }
+  site = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{h}";
+  if w.push_heads[at].based {
+    return E { code: "(LOFT_PROVED(loft_phb_same({h}, {size}), {c_string(site)}), {put.replace("loft_ph_put", "loft_ph_putb")}(&{h}, {bits}))", kind: K_VOID };
+  }
+  E { code: "(LOFT_PROVED(loft_ph_same({h}, {size}), {c_string(site)}), {put}(&{h}, {bits}))", kind: K_VOID }
+}
+
+// `bind_view_header` (`@FR-R-View`): after statement `at` binds a vector view the rest of
+// the block indexes and never rebinds, hold its header — a copy of the header its source is
+// held under, or one taken from the view itself.  The frame closes with the block.
+pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer) {
+  if !enabled() || (env_variable("LOFT_NO_VIEW_HOIST") ?? "0") != "0" {
+    return;
+  }
+  d = opt_hoist::view_def_header(x.b, x.writes, w.index, ops, at, (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0");
+  if d < 0 || held_path(w, "{d}:") != "" {
+    return;
+  }
+  // The header the view's source is held under, with whether that one carries its base.
+  source = "";
+  base = 1;
+  match loop_shape::unspan(ops[at]!) {
+    NdSet { var: _, inner } => {
+      root = -1;
+      path = opt_push::vector_path(x.b, inner, root);
+      if path != "" {
+        for i in rev(0..len(w.headers)) {
+          if w.headers[i]!.path == path {
+            source = w.headers[i]!.name;
+            base = w.headers[i]!.frame;
+            break;
+          }
+        }
+      }
+    },
+    _ => return,
+  }
+  h = "h{len(w.decls) + 1}";
+  w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
+  if source != "" {
+    line(w, ind, "{h} = {source};");
+  } else {
+    line(w, ind, "{h} = loft_vh_of({w.names[d]!});");
+  }
+  w.headers += [Header { path: "{d}:", name: h, frame: base }];
+}
+
+// Close a loop's frames: back to the headers and push headers held before it.
+pub fn release(w: W, headers: integer, pushes: integer) {
+  if len(w.headers) > headers {
+    w.headers = w.headers[0..headers];
+  }
+  if len(w.push_heads) > pushes {
+    w.push_heads = w.push_heads[0..pushes];
+  }
+}
+
+// `len_bind`: `n = len(v)` — the variable in `var`, the vector as the answer; `var` -1 for
+// any other statement.
+fn len_bind(x: Cx, op: ir::Node, var: &integer) -> ir::Node {
+  var = -1;
+  match loop_shape::unspan(op) {
+    NdSet { var: v, inner } => {
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args } => {
+          name = cgen_fn::def_name(x.b, def_nr);
+          if len(args) == 1 && (name == "t_6vector_len" || name == "OpLengthVector") {
+            var = v;
+            return args[0];
+          }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  ir::NdNull
+}
+
+// What statement `i` of `ops` is written under (`peel::range_lens`, and the `len_alias` a
+// `for` block takes from the statement before it): for a loop, the range ends the two
+// statements before it bind to a vector's length.
+pub fn range_facts(x: Cx, w: W, ops: vector<ir::Node>, i: integer) {
+  w.range_lens = [];
+  match loop_shape::unspan(ops[i]!) {
+    NdLoop { block: _ } => {
+      first = if i >= 2 { i - 2 } else { 0 };
+      for k in rev(first..i) {
+        op = ops[k]!;
+        end = -1;
+        vec = len_bind(x, op, end);
+        if end >= 0 {
+          w.range_lens += [RangeLen { end: end, vec: vec, via: -1 }];
+          continue;
+        }
+        match loop_shape::unspan(op) {
+          NdSet { var, inner } => {
+            // `end = n` where the statement before the `for` block was `n = len(v)`.
+            n = loop_shape::var_of(loop_shape::unspan(inner));
+            if n >= 0 && n == w.alias_var {
+              w.range_lens += [RangeLen { end: var, vec: w.alias_vec, via: n }];
+            }
+            // `end = n` where `n` holds `len(v)` for the rest of the function
+            // (`length_locals`): one entry for each vector it is the length of.
+            if n >= 0 {
+              if !w.length_asked {
+                w.length_asked = true;
+                w.length_locals = opt_length::own_length_locals(x.b, w.index);
+              }
+              for m in w.length_locals {
+                if m#index % 2 == 0 && m == n {
+                  of = ir::NdVar { n: w.length_locals[m#index + 1]! };
+                  known = false;
+                  for r in w.range_lens {
+                    if r.end == var && loop_shape::unspan(r.vec) == of {
+                      known = true;
+                    }
+                  }
+                  if !known {
+                    w.range_lens += [RangeLen { end: var, vec: of, via: n }];
+                  }
+                }
+              }
+            }
+          },
+          _ => {},
+        }
+      }
+    },
+    NdBlock { block } => {
+      // `n = len(v)` right before a `for` block: the block's range end `n` is `len(v)`.
+      if block[0].name == "For block" {
+        w.alias_var = -1;
+        for k in rev(0..i) {
+          if !(loop_shape::unspan(ops[k]!) is NdLine) {
+            bound = -1;
+            vec = len_bind(x, ops[k]!, bound);
+            if bound >= 0 {
+              w.alias_var = bound;
+              w.alias_vec = vec;
+            }
+            break;
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+}
+
+// `counters_in_range`: in `for i in 0..len(v)` with `v` held for the loop, the counters are
+// inside `v` when the body assigns none of them.
+pub fn counters_in_range(x: Cx, w: W, lp: ir::Block) {
+  if (env_variable("LOFT_NO_COUNTER_IN_RANGE") ?? "0") != "0" {
+    return;
+  }
+  rc = loop_shape::range_counters(lp, x.b.data.definitions) ?? return;
+  if rc.inclusive {
+    return;
+  }
+  end = loop_shape::var_of(loop_shape::unspan(rc.hi));
+  if end < 0 {
+    return;
+  }
+  counter = if rc.next >= 0 { rc.next } else { rc.index };
+  start = if rc.next >= 0 { 0 } else { -1 };
+  seeded = false;
+  for s in w.peel_seeds {
+    if s.var == counter && s.value == start {
+      seeded = true;
+    }
+  }
+  if !seeded {
+    return;
+  }
+  // The body may move none of the counters, nor the local a range end was copied from.
+  count = len(w.shapes);
+  assigned: vector<boolean> = [for _ in 0..count { false }];
+  body = ir::NdInsert { items: lp.operators[1..len(lp.operators)] };
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < count { assigned[var] = true; } },
+      _ => {},
+    }
+  });
+  if assigned[rc.index]! || assigned[rc.loop_var]! || (rc.next >= 0 && assigned[rc.next]!) {
+    return;
+  }
+  for r in w.range_lens {
+    if r.end != end {
+      continue;
+    }
+    h = held_vector(x, w, r.vec);
+    if h == "" || (r.via >= 0 && assigned[r.via]!) {
+      continue;
+    }
+    w.in_range_lens += [InRange { var: end, header: h }];
+    if r.via >= 0 {
+      w.in_range_lens += [InRange { var: r.via, header: h }];
+    }
+    w.in_range += [InRange { var: rc.index, header: h }];
+    w.in_range += [InRange { var: rc.loop_var, header: h }];
+  }
+}
+
+fn in_list(list: vector<InRange>, var: integer, held: text) -> boolean {
+  for r in list {
+    if r.var == var && r.header == held {
+      return true;
+    }
+  }
+  false
+}
+
+// `counter_index`: the index `idx` as a counter proved inside the vector `held` describes —
+// the counter itself, or `(counter + step) % len` — else "".
+pub fn counter_index(x: Cx, w: W, idx: ir::Node, held: text) -> text {
+  ctr = loop_shape::var_of(loop_shape::unspan(idx));
+  if ctr >= 0 {
+    return if in_list(w.in_range, ctr, held) { w.names[ctr]! } else { "" };
+  }
+  // `wrapped_counter`: `counter % len` or `(counter + step) % len`.
+  match loop_shape::unspan(idx) {
+    NdCall { def_nr, args } => {
+      name = cgen_fn::def_name(x.b, def_nr);
+      if len(args) != 2 || !(name == "OpRemInt" || name == "OpRemIntNullable") {
+        return "";
+      }
+      n = loop_shape::var_of(loop_shape::unspan(args[1]));
+      step = 0;
+      c = loop_shape::var_of(loop_shape::unspan(args[0]));
+      if c < 0 {
+        match loop_shape::unspan(args[0]) {
+          NdCall { def_nr: add, args: sum } => {
+            if len(sum) != 2 || cgen_fn::def_name(x.b, add) != "OpAddInt" {
+              return "";
+            }
+            c = match sum[0] { NdVar { n: v } => v, _ => -1 };
+            step = match sum[1] { NdInt { n: k } => k, _ => -1 };
+            if c < 0 || step < 0 || step > 65536 {
+              return "";
+            }
+          },
+          _ => return "",
+        }
+      }
+      if n < 0 || !in_list(w.in_range, c, held) || !in_list(w.in_range_lens, n, held) {
+        return "";
+      }
+      i = w.names[c]!;
+      len_name = w.names[n]!;
+      if step == 0 {
+        return i;
+      }
+      if step == 1 && (env_variable("LOFT_NO_WRAP_SELECT") ?? "0") == "0" {
+        return "({i} == {len_name} - INT64_C(1) ? INT64_C(0) : {i} + INT64_C(1))";
+      }
+      "(({i} + INT64_C({step})) % {len_name})"
+    },
+    _ => "",
+  }
+}
+
+// `place_of`: the C place the vector `v` names, "" where it names none the writer can spell.
+fn place_of(x: Cx, w: W, v: ir::Node) -> text {
+  match loop_shape::unspan(v) {
+    NdVar { n } => if (w.shapes[n] ?? "") == "ref" { w.names[n]! } else { "" },
+    NdCall { def_nr, args } => {
+      if len(args) != 3 || cgen_fn::def_name(x.b, def_nr) != "OpGetField" {
+        return "";
+      }
+      fld = match loop_shape::unspan(args[1]) {
+        NdInt { n } => n,
+        _ => return "",
+      };
+      base = place_of(x, w, args[0]);
+      if base == "" { "" } else { "loft_field({base}, {fld})" }
+    },
+    _ => "",
+  }
+}
+
+// `held_proof`: the proof that header `held` still describes the vector `v` names.
+fn held_proof(x: Cx, w: W, v: ir::Node, held: text) -> text {
+  place = place_of(x, w, v);
+  if place == "" {
+    return "((void) 0)";
+  }
+  site = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{held}";
+  "LOFT_PROVED(loft_vh_same({held}, {place}), {c_string(site)})"
+}
+
+// `index_arg`: an index the range facts prove non-negative is passed as such; the second
+// answer, in `nn`, is the suffix of the routine that takes it.
+fn index_arg(x: Cx, w: W, idx: ir::Node, code: text, nn: &text) -> text {
+  nn = "";
+  if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+    return code;
+  }
+  facts = if len(w.over) > 0 { w.over[len(w.over) - 1]! } else { w.rv };
+  r = opt_range::range(x.b, x.p, x.c, w.nn, facts, idx, 0) ?? return code;
+  if r.lo < 0 {
+    return code;
+  }
+  nn = "_nn";
+  "loft_nonneg({code}, \"R-Range:{w.name}\")"
+}
+
+// The parts of an element read `OpGetVector(vec, size, idx)` or its nullable twin; `count`
+// 0 for any other node.
+struct Elem {
+  vec: ir::Node,
+  size: ir::Node,
+  idx: ir::Node,
+  report: boolean,
+  found: boolean,
+}
+
+fn elem_of(x: Cx, v: ir::Node) -> Elem {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      name = cgen_fn::def_name(x.b, def_nr);
+      if len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable") {
+        return Elem { vec: args[0], size: args[1], idx: args[2], report: name == "OpGetVector", found: true };
+      }
+    },
+    _ => {},
+  }
+  Elem { vec: ir::NdNull, size: ir::NdNull, idx: ir::NdNull, report: false, found: false }
+}
+
+// The routine that reads a narrow field through an element's address (`pa_reader`), with its
+// kind in `kind`; "" for a getter that has none.
+fn pa_reader(name: text, kind: &integer) -> text {
+  kind = K_INT;
+  if name == "OpGetSingle" {
+    kind = K_SINGLE;
+    "loft_pa_f32"
+  } else if name == "OpGetEnum" {
+    kind = K_ENUM;
+    "loft_pa_enum"
+  } else if name == "OpGetInt4" {
+    "loft_pa_int4"
+  } else if name == "OpGetInt4Raw" {
+    "loft_pa_int4_raw"
+  } else if name == "OpGetInt4Full" {
+    "loft_pa_int4_full"
+  } else if name == "OpGetByte" {
+    "loft_pa_byte"
+  } else if name == "OpGetByteNullable" {
+    "loft_pa_byte_nullable"
+  } else if name == "OpGetShort" {
+    "loft_pa_short"
+  } else if name == "OpGetShortRaw" || name == "OpGetShortFull" {
+    "loft_pa_short_raw"
+  } else if name == "OpGetBoolean" {
+    kind = K_BOOL;
+    "loft_pa_bool"
+  } else {
+    ""
+  }
+}
+
+// `held_access`: an access of a vector whose header a loop holds goes through the header.
+// `done` says whether `name` over `args` is one.
+pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  count = len(args);
+  if (name == "OpGetVector" || name == "OpGetVectorNullable") && count == 3 {
+    h = read_header(x, w, args[0]);
+    if h == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, args[1], "element size") ?? return none();
+    counted = counter_index(x, w, args[2], h);
+    if counted != "" {
+      return E { code: "({held_proof(x, w, args[0], h)}, loft_vh_at_ref({h}, {size}, {counted}))", kind: K_REF };
+    }
+    i = as_int(w, cgen_fn::expr(x, w, args[2], ind));
+    nn = "";
+    index = index_arg(x, w, args[2], i, nn);
+    proof = held_proof(x, w, args[0], h);
+    if name == "OpGetVector" {
+      return E { code: "({proof}, loft_vh_get_at{nn}({h}, {size}, {index}, {cgen_fn::site(w)}))", kind: K_REF };
+    }
+    return E { code: "({proof}, loft_vh_get{nn}({h}, {size}, {index}))", kind: K_REF };
+  }
+  if name == "OpLengthVector" && count == 1 {
+    h = held_vector(x, w, args[0]);
+    if h == "" {
+      return none();
+    }
+    done = true;
+    return E { code: "{h}.len", kind: K_INT };
+  }
+  if (name == "OpGetInt" || name == "OpGetFloat") && count == 2 {
+    el = elem_of(x, args[0]);
+    if !el.found {
+      return none();
+    }
+    held = read_header(x, w, el.vec);
+    if held == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, el.size, "element size") ?? return none();
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    k = if name == "OpGetInt" { K_INT } else { K_FLOAT };
+    counted = counter_index(x, w, el.idx, held);
+    if counted != "" {
+      return E { code: "({held_proof(x, w, el.vec, held)}, {if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" }}({held}, {size}, {counted}, {fld}))", kind: k };
+    }
+    i = as_int(w, cgen_fn::expr(x, w, el.idx, ind));
+    fits = grid_index(x, w, el.idx, held);
+    if fits != "" {
+      raw = if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" };
+      checked = if name == "OpGetInt" { "loft_vh_get_int" } else { "loft_vh_get_float" };
+      return E { code: "({held_proof(x, w, el.vec, held)}, {fits} ? {raw}({held}, {size}, {i}, {fld}) : {checked}{if el.report { "_at" } else { "" }}({held}, {size}, {i}, {fld}{if el.report { ", {cgen_fn::site(w)}" } else { "" }}))", kind: k };
+    }
+    nn = "";
+    index = index_arg(x, w, el.idx, i, nn);
+    proof = held_proof(x, w, el.vec, held);
+    f = if name == "OpGetInt" { "loft_vh_get_int" } else { "loft_vh_get_float" };
+    // An unreported read with no proof on its index goes through the push header itself.
+    if !el.report && nn == "" && held.starts_with("loft_ph_vh(&") && held.ends_with(")") {
+      return E { code: "({proof}, {f.replace("loft_vh_", "loft_ph_")}(&{held[12..held.size() - 1]}, {size}, {index}, {fld}))", kind: k };
+    }
+    if el.report {
+      return E { code: "({proof}, {f}_at{nn}({held}, {size}, {index}, {fld}, {cgen_fn::site(w)}))", kind: k };
+    }
+    return E { code: "({proof}, {f}{nn}({held}, {size}, {index}, {fld}))", kind: k };
+  }
+  narrow = ((name == "OpGetSingle" || name == "OpGetEnum" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetBoolean") && count == 2) || ((name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull") && count == 3);
+  if narrow {
+    el = elem_of(x, args[0]);
+    if !el.found {
+      return none();
+    }
+    held = read_header(x, w, el.vec);
+    if held == "" {
+      return none();
+    }
+    kind = K_INT;
+    reader = pa_reader(name, kind);
+    if reader == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, el.size, "element size") ?? return none();
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    proof = held_proof(x, w, el.vec, held);
+    counted = counter_index(x, w, el.idx, held);
+    i = if counted != "" { "" } else { as_int(w, cgen_fn::expr(x, w, el.idx, ind)) };
+    nn = "";
+    index = if counted != "" { "" } else { index_arg(x, w, el.idx, i, nn) };
+    addr = if counted != "" {
+      "loft_vh_at_addr({held}, {size}, {counted})"
+    } else if el.report { "loft_vh_addr_at{nn}({held}, {size}, {index}, {cgen_fn::site(w)})" } else { "loft_vh_addr{nn}({held}, {size}, {index})" };
+    if count == 3 {
+      min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
+      return E { code: "({proof}, {reader}({addr}, {fld}, {c_long(min)}))", kind: kind };
+    }
+    return E { code: "({proof}, {reader}({addr}, {fld}))", kind: kind };
+  }
+  if (name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetInt4Raw") && count == 3 {
+    el = elem_of(x, args[0]);
+    if !el.found {
+      return none();
+    }
+    held = held_vector(x, w, el.vec);
+    if held == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, el.size, "element size") ?? return none();
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [el.idx, args[2]];
+    i = as_int(w, cgen_fn::arg(x, w, pair, 0, ind));
+    value = cgen_fn::arg(x, w, pair, 1, ind);
+    f = if name == "OpSetInt" { "loft_vh_set_int" } else if name == "OpSetInt4Raw" { "loft_vh_set_u32" } else { "loft_vh_set_float" };
+    code = if name == "OpSetFloat" { as_float(w, value) } else { as_int(w, value) };
+    proof = held_proof(x, w, el.vec, held);
+    nn = "";
+    index = index_arg(x, w, el.idx, i, nn);
+    if el.report {
+      return E { code: "({proof}, {f}_at{nn}({held}, {size}, {index}, {fld}, {code}, {cgen_fn::site(w)}))", kind: K_VOID };
+    }
+    return E { code: "({proof}, {f}{nn}({held}, {size}, {index}, {fld}, {code}))", kind: K_VOID };
+  }
+  none()
+}
+
+// Is a push window open for `path`?
+pub fn windowed_path(w: W, path: text) -> boolean {
+  for win in w.windows {
+    if win.path == path {
+      return true;
+    }
+  }
+  false
+}
+
+// `refresh_rebound_header`: a rebind of `var` derives again every header held for the bare
+// vector it names.
+pub fn refresh_rebound(w: W, var: integer, ind: integer) {
+  for h in w.headers {
+    if h.path == "{var}:" {
+      line(w, ind, "{h.name} = loft_vh_of({w.names[var]!});");
+    }
+  }
+}
+
+// Are the vector hoists on (`verdict`'s own switch)?
+pub fn hoists() -> boolean {
+  enabled()
+}
+
+// The variable a bound names, -1 for a literal.
+fn bound_var(n: ir::Node) -> integer {
+  loop_shape::var_of(loop_shape::unspan(n))
+}
+
+// Does `body` assign any of `vars`?
+fn assigns_any(body: ir::Node, vars: vector<integer>) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => {
+        for v in vars {
+          if v == var {
+            hit[0] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `grid_bind`: an integer local set in one place from variables each set in one place is its
+// expression wherever the block that binds it encloses the read.
+pub fn grid_bind(x: Cx, w: W, var: integer, value: ir::Node) {
+  if len(w.set_many) == 0 {
+    def = x.b.data.definitions[w.index]!;
+    counts: vector<integer> = [for _ in 0..len(def.variables.variables) + 1 { 0 }];
+    if len(def.code) > 0 {
+      opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+        match n {
+          NdSet { var: v, inner: _ } => { if v < len(counts) { counts[v] = counts[v]! + 1; } },
+          _ => {},
+        }
+      });
+    }
+    w.set_many = [for c in counts { c > 1 }];
+  }
+  if var < len(w.set_many) && w.set_many[var]! {
+    return;
+  }
+  once = [true];
+  opt_non_sentinel::walk(value, fn(n: ir::Node) {
+    match n {
+      NdVar { n: v } => { if v < len(w.set_many) && w.set_many[v]! { once[0] = false; } },
+      _ => {},
+    }
+  });
+  if once[0]! {
+    w.grid_binds += [GridFact { var: var, node: value }];
+  }
+}
+
+// `peel::range_ends`: the binds of the two statements before a loop.
+pub fn range_ends(w: W, ops: vector<ir::Node>, i: integer) {
+  w.range_ends = [];
+  if !(loop_shape::unspan(ops[i]!) is NdLoop) {
+    return;
+  }
+  for k in (if i >= 2 { i - 2 } else { 0 })..i {
+    match loop_shape::unspan(ops[k]!) {
+      NdSet { var, inner } => { w.range_ends += [GridFact { var: var, node: inner }]; },
+      _ => {},
+    }
+  }
+}
+
+// `grid_counter_facts`: in `for i in 0..n` — counter seeded at 0, `n` a variable or a literal
+// the body assigns no more than the counters — `0 <= i < n` and `0 <= i#index < n`.
+pub fn grid_counter_facts(x: Cx, w: W, lp: ir::Block) {
+  rc = loop_shape::range_counters(lp, x.b.data.definitions) ?? return;
+  if rc.inclusive {
+    return;
+  }
+  counter = if rc.next >= 0 { rc.next } else { rc.index };
+  start = if rc.next >= 0 { 0 } else { -1 };
+  seeded = false;
+  for s in w.peel_seeds {
+    if s.var == counter && s.value == start {
+      seeded = true;
+    }
+  }
+  end = bound_var(rc.hi);
+  if !seeded || end < 0 {
+    return;
+  }
+  bounds: vector<ir::Node> = [ir::NdVar { n: end }];
+  for r in w.range_ends {
+    if r.var == end && len(bounds) == 1 {
+      src = loop_shape::unspan(r.node);
+      if (src is NdVar) || (src is NdInt) {
+        bounds += [src];
+      }
+      break;
+    }
+  }
+  watched: vector<integer> = [rc.index, rc.loop_var];
+  if rc.next >= 0 {
+    watched += [rc.next];
+  }
+  for bnd in bounds {
+    if bound_var(bnd) >= 0 {
+      watched += [bound_var(bnd)];
+    }
+  }
+  for op in lp.operators {
+    if op#index > 0 && assigns_any(op, watched) {
+      return;
+    }
+  }
+  for bnd in bounds {
+    w.grid_facts += [GridFact { var: rc.loop_var, node: bnd }];
+    w.grid_facts += [GridFact { var: rc.index, node: bnd }];
+  }
+}
+
+// `grid_test_facts`: under `0 <= x && x < w` the then arm knows `0 <= x < w`, while it
+// assigns neither.
+pub fn grid_test_facts(x: Cx, w: W, cond: ir::Node, then: ir::Node) {
+  conjuncts: vector<ir::Node> = [];
+  stack: vector<ir::Node> = [cond];
+  for _ in 0..4096 {
+    if len(stack) == 0 {
+      break;
+    }
+    c = loop_shape::unspan(stack[len(stack) - 1]);
+    stack = stack[0..len(stack) - 1];
+    split = false;
+    match c {
+      NdIf { cond: a, t, f } => {
+        if loop_shape::unspan(f) == NdBoolean { b: false } {
+          stack += [a];
+          stack += [t];
+          split = true;
+        }
+      },
+      _ => {},
+    }
+    if !split {
+      conjuncts += [c];
+    }
+  }
+  lower: vector<integer> = [];
+  upper: vector<GridFact> = [];
+  for c in conjuncts {
+    match c {
+      NdCall { def_nr, args } => {
+        if len(args) == 2 && def_nr >= 0 && def_nr < len(x.b.data.definitions) {
+          name = x.b.data.definitions[def_nr]!.name;
+          a0 = loop_shape::unspan(args[0]);
+          a1 = loop_shape::unspan(args[1]);
+          if name == "OpLeInt" && a0 == NdInt { n: 0 } && (a1 is NdVar) {
+            lower += [bound_var(a1)];
+          } else if name == "OpGeInt" && (a0 is NdVar) && a1 == NdInt { n: 0 } {
+            lower += [bound_var(a0)];
+          } else if name == "OpLtInt" && (a0 is NdVar) && ((a1 is NdVar) || (a1 is NdInt)) {
+            upper += [GridFact { var: bound_var(a0), node: a1 }];
+          } else if name == "OpGtInt" && (a1 is NdVar) && ((a0 is NdVar) || (a0 is NdInt)) {
+            upper += [GridFact { var: bound_var(a1), node: a0 }];
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  for u in upper {
+    watched: vector<integer> = [u.var];
+    if bound_var(u.node) >= 0 {
+      watched += [bound_var(u.node)];
+    }
+    known = false;
+    for l in lower {
+      if l == u.var {
+        known = true;
+      }
+    }
+    if known && !assigns_any(then, watched) {
+      w.grid_facts += [GridFact { var: u.var, node: u.node }];
+    }
+  }
+}
+
+fn grid_c(w: W, n: ir::Node) -> text {
+  match loop_shape::unspan(n) {
+    NdVar { n: v } => w.names[v]!,
+    NdInt { n: k } => "INT64_C({k})",
+    _ => "",
+  }
+}
+
+// `grid_index`: the test that proves `row * width + column` inside the vector `held`
+// describes, "" where the index is no such sum of facts.
+fn grid_index(x: Cx, w: W, idx: ir::Node, held: text) -> text {
+  if (env_variable("LOFT_NO_GRID_INDEX") ?? "0") != "0" || len(w.grid_facts) == 0 {
+    return "";
+  }
+  e = loop_shape::unspan(idx);
+  bound_to = bound_var(e);
+  if bound_to >= 0 {
+    for i in rev(0..len(w.grid_binds)) {
+      if w.grid_binds[i]!.var == bound_to {
+        e = loop_shape::unspan(w.grid_binds[i]!.node);
+        break;
+      }
+    }
+  }
+  terms: vector<ir::Node> = match e {
+    NdCall { def_nr, args } => {
+      name = cgen_fn::def_name(x.b, def_nr);
+      if (name == "OpAddInt" || name == "OpAddIntNullable") && len(args) == 2 { args } else { [] }
+    },
+    _ => [],
+  };
+  if len(terms) != 2 {
+    return "";
+  }
+  for side in 0..2 {
+    prod = terms[side]!;
+    other = terms[1 - side]!;
+    factors: vector<ir::Node> = match loop_shape::unspan(prod) {
+      NdCall { def_nr, args } => {
+        name = cgen_fn::def_name(x.b, def_nr);
+        if (name == "OpMulInt" || name == "OpMulIntNullable") && len(args) == 2 { args } else { [] }
+      },
+      _ => [],
+    };
+    if len(factors) != 2 {
+      continue;
+    }
+    for pick in 0..2 {
+      a = bound_var(factors[pick]!);
+      width = loop_shape::unspan(factors[1 - pick]!);
+      col = bound_var(other);
+      if a < 0 || col < 0 {
+        continue;
+      }
+      height = -1;
+      for i in rev(0..len(w.grid_facts)) {
+        if w.grid_facts[i]!.var == a {
+          height = i;
+          break;
+        }
+      }
+      below = false;
+      for f in w.grid_facts {
+        if f.var == col && loop_shape::unspan(f.node) == width {
+          below = true;
+        }
+      }
+      if height >= 0 && below {
+        h = grid_c(w, w.grid_facts[height]!.node);
+        wd = grid_c(w, width);
+        return if h == "" || wd == "" { "" } else { "loft_grid_fits({held}, {h}, {wd})" };
+      }
+    }
+  }
+  ""
+}

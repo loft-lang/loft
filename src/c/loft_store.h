@@ -268,6 +268,16 @@ typedef struct {
 static LOFT_TLS loft_store_t *loft_stores = 0;
 static LOFT_TLS uint32_t loft_nstores = 0;
 static LOFT_TLS uint64_t loft_stores_allocated = 0;
+/* `loft_store_make`'s hint: every slot of `loft_hint_table` under `loft_hint` is live, so the
+ * search for the lowest free slot starts there — the same slot the search from 0 finds, without
+ * walking the live ones each time.  A slot freed lowers it (`loft_store_freed`); a table other
+ * than the one it was taken on (a `par` worker's, a reallocation) reads it as 0. */
+static LOFT_TLS const loft_store_t *loft_hint_table = 0;
+static LOFT_TLS uint32_t loft_hint = 0;
+
+static inline void loft_store_freed(uint32_t nr) {
+    if (loft_hint_table == loft_stores && nr < loft_hint) loft_hint = nr;
+}
 
 /* `@FR-R-TableHandle`: store `s` takes a table generation no store has had.  Every path that
  * changes a table's claim, size, slot width, entry kind, seed or entry directory calls it, and so
