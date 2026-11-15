@@ -952,7 +952,7 @@ fn magnitude(n: integer) -> integer {
 // summing and `*` multiplying — or "" where a leaf is none of these.  `counters` is false
 // while bounding a nested loop's own seed and end.  A record scalar an enclosing frame holds
 // is no leaf yet: no body that reads one is carried.
-fn chain_bound(x: Cx, f: ChainFrame, v: ir::Node, counters: boolean, inv: vector<integer>) -> text {
+fn chain_bound(x: Cx, w: W, f: ChainFrame, v: ir::Node, counters: boolean, inv: vector<integer>) -> text {
   match loop_shape::unspan(v) {
     NdInt { n } => "INT64_C({magnitude(n)})",
     NdLong { n } => if n == null { "" } else { "INT64_C({magnitude(n)})" },
@@ -971,30 +971,62 @@ fn chain_bound(x: Cx, f: ChainFrame, v: ir::Node, counters: boolean, inv: vector
       if (f.written[n] ?? true) || (f.escaped[n] ?? true) || !integer_var {
         return "";
       }
+      // `inv` holds the invariants (a variable's number) and the held record scalars
+      // (-(its place in `w.scalars`) - 1), each numbered among its own kind.
+      at = 0;
       for k in inv {
         if k == n {
-          return "loft_gc_v{k#index}";
+          return "loft_gc_v{at}";
+        }
+        if k >= 0 {
+          at += 1;
         }
       }
       inv += [n];
-      "loft_gc_v{len(inv) - 1}"
+      "loft_gc_v{at}"
     },
     NdCall { def_nr, args } => {
       name = x.b.data.definitions[def_nr]!.name;
       count = len(args);
       if count == 2 && (name == "OpAddInt" || name == "OpMinInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable" || name == "OpMulInt" || name == "OpMulIntNullable") {
-        lhs = chain_bound(x, f, args[0], counters, inv);
+        lhs = chain_bound(x, w, f, args[0], counters, inv);
         if lhs == "" {
           return "";
         }
-        rhs = chain_bound(x, f, args[1], counters, inv);
+        rhs = chain_bound(x, w, f, args[1], counters, inv);
         if rhs == "" {
           return "";
         }
         return if name.starts_with("OpMul") { "loft_gc_mul({lhs}, {rhs}, &loft_gc_ok)" } else { "loft_gc_add({lhs}, {rhs}, &loft_gc_ok)" };
       }
       if count == 1 && name == "OpMinSingleInt" {
-        return chain_bound(x, f, args[0], counters, inv);
+        return chain_bound(x, w, f, args[0], counters, inv);
+      }
+      // A record scalar an enclosing loop holds (`loft_gc_s<k>`).
+      if name == "OpGetInt" {
+        fld = 0;
+        rec = opt_hoist::scalar_read(name, args, fld);
+        held = -1;
+        for i in rev(0..len(w.scalars)) {
+          if w.scalars[i]!.root == rec && w.scalars[i]!.fld == fld {
+            held = i;
+            break;
+          }
+        }
+        if rec < 0 || held < 0 {
+          return "";
+        }
+        nth = 0;
+        for k in inv {
+          if k == -held - 1 {
+            return "loft_gc_s{nth}";
+          }
+          if k < 0 {
+            nth += 1;
+          }
+        }
+        inv += [-held - 1];
+        return "loft_gc_s{nth}";
       }
       ""
     },
@@ -1066,7 +1098,7 @@ fn gather(x: Cx, w: W, f: ChainFrame, v: ir::Node, offset: boolean, inv: vector<
       if chain_op(name, len(args)) {
         // A chain that does not bound leaves the invariants as they were.
         trial = inv;
-        bound = chain_bound(x, f, node, true, trial);
+        bound = chain_bound(x, w, f, node, true, trial);
         if bound != "" {
           for k in trial {
             if k#index >= len(inv) {
@@ -1237,11 +1269,11 @@ fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
   seeds: vector<text> = [];
   ends: vector<text> = [];
   for n in nested {
-    s = chain_bound(x, frame, n.seed, false, inv);
+    s = chain_bound(x, w, frame, n.seed, false, inv);
     if s == "" {
       return null;
     }
-    h = chain_bound(x, frame, n.hi, false, inv);
+    h = chain_bound(x, w, frame, n.hi, false, inv);
     if h == "" {
       return null;
     }
@@ -1259,8 +1291,19 @@ fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
   line(w, ind + 1, "int64_t loft_gc_lo = {lo}, loft_gc_hi = {hi};");
   line(w, ind + 1, "if (loft_gc_lo == LOFT_NULL || loft_gc_hi == LOFT_NULL) loft_gc_ok = 0;");
   line(w, ind + 1, "int64_t loft_gc_cb = loft_gc_add(loft_gc_max(loft_gc_abs(loft_gc_lo, &loft_gc_ok), loft_gc_abs(loft_gc_hi, &loft_gc_ok)), INT64_C(1), &loft_gc_ok);");
+  vars_at = 0;
   for v in inv {
-    line(w, ind + 1, "int64_t loft_gc_v{v#index} = loft_gc_abs({w.names[v]!}, &loft_gc_ok);");
+    if v >= 0 {
+      line(w, ind + 1, "int64_t loft_gc_v{vars_at} = loft_gc_abs({w.names[v]!}, &loft_gc_ok);");
+      vars_at += 1;
+    }
+  }
+  held_at = 0;
+  for v in inv {
+    if v < 0 {
+      line(w, ind + 1, "int64_t loft_gc_s{held_at} = loft_gc_abs({w.scalars[-v - 1]!.name}, &loft_gc_ok);");
+      held_at += 1;
+    }
   }
   for s in seeds {
     line(w, ind + 1, "int64_t loft_gc_nc{s#index} = loft_gc_add(loft_gc_max({s}, {ends[s#index]!}), INT64_C(1), &loft_gc_ok);");
@@ -1269,8 +1312,11 @@ fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
     line(w, ind + 1, "(void) {c};");
   }
   line(w, ind + 1, "(void) loft_gc_cb;");
-  for v in inv {
-    line(w, ind + 1, "(void) loft_gc_v{v#index};");
+  for k in 0..vars_at {
+    line(w, ind + 1, "(void) loft_gc_v{k};");
+  }
+  for k in 0..held_at {
+    line(w, ind + 1, "(void) loft_gc_s{k};");
   }
   for s in seeds {
     line(w, ind + 1, "(void) loft_gc_nc{s#index};");
@@ -1317,7 +1363,7 @@ fn admitted_at(x: Cx, w: W, name: text, args: vector<ir::Node>) -> integer {
     }
     scratch: vector<integer> = [];
     for a in args {
-      if chain_bound(x, f, a, true, scratch) == "" {
+      if chain_bound(x, w, f, a, true, scratch) == "" {
         return -1;
       }
     }
@@ -1585,7 +1631,8 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   hold_invariants(x, w, lp, ind);
   held_headers = len(w.headers);
   held_pushes = len(w.push_heads);
-  verdict = if plain_rules() { cgen_hoist::hold_vectors(x, w, lp, ind) } else { opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [] } };
+  held_scalars = len(w.scalars);
+  verdict = if plain_rules() { cgen_hoist::hold_vectors(x, w, lp, ind) } else { opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true } };
   ranged_counters = len(w.in_range);
   ranged_lens = len(w.in_range_lens);
   if plain_rules() {
@@ -1602,6 +1649,7 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   w.in_range = w.in_range[0..ranged_counters];
   w.in_range_lens = w.in_range_lens[0..ranged_lens];
   cgen_hoist::release(w, held_headers, held_pushes);
+  w.scalars = w.scalars[0..held_scalars];
   if window {
     cgen_win::close_window(x, w, ind);
   }
@@ -1619,12 +1667,23 @@ pub fn range_guard(x: Cx, w: W, node: ir::Node, ops: vector<ir::Node>, facts: ve
     return "";
   }
   has_loop = false;
+  // The loop's hoisted integer fields join the guard (`verdict`'s scalars).
+  fields: vector<opt_ranged_call::GuardField> = [];
   for op in ops {
     if holds_opaque(op, true) {
       return "";
     }
     match loop_shape::unspan(op) {
-      NdLoop { block: _ } => has_loop = true,
+      NdLoop { block } => {
+        if !has_loop && plain_rules() && cgen_hoist::hoists() {
+          for sc in opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, block[0]).scalars {
+            if loop_shape::call_name(x.b.data.definitions, loop_shape::unspan(sc.call)) == "OpGetInt" {
+              fields += [opt_ranged_call::GuardField { root: sc.root, off: sc.fld, call: sc.call }];
+            }
+          }
+        }
+        has_loop = true;
+      },
       _ => {},
     }
   }
@@ -1633,14 +1692,25 @@ pub fn range_guard(x: Cx, w: W, node: ir::Node, ops: vector<ir::Node>, facts: ve
   }
   walks = opt_range::walks_of(x.b, w.index);
   plan = if len(w.over) > 0 {
-    opt_ranged_call::guard_plan(x.b, x.p, x.c, x.gains, w.index, w.nn, w.over[len(w.over) - 1]!, walks, node)
+    opt_ranged_call::guard_plan(x.b, x.p, x.c, x.gains, w.index, w.nn, w.over[len(w.over) - 1]!, walks, node, fields)
   } else {
-    opt_ranged_call::guard_plan(x.b, x.p, x.c, x.gains, w.index, w.nn, w.rv, walks, node)
+    opt_ranged_call::guard_plan(x.b, x.p, x.c, x.gains, w.index, w.nn, w.rv, walks, node, fields)
   };
   if plan == null {
     return "";
   }
   test: vector<text> = [];
+  for fl in plan.fields {
+    kept = w.pending;
+    w.pending = [];
+    read = as_int(w, cgen_fn::expr(x, w, fl.call, 1));
+    nested = w.pending;
+    w.pending = kept;
+    for t in nested {
+      w.pending += [t];
+    }
+    test += ["((uint64_t) ({read}) + UINT64_C({opt_ranged_call::G}) <= UINT64_C({2 * opt_ranged_call::G}))"];
+  }
   for v in plan.leaves {
     test += ["((uint64_t) ({w.names[v]!}) + UINT64_C({opt_ranged_call::G}) <= UINT64_C({2 * opt_ranged_call::G}))"];
   }

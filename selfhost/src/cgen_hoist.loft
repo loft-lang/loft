@@ -72,10 +72,41 @@ pub fn held_vector(x: Cx, w: W, v: ir::Node) -> text {
 // with `release`, by the two lengths it saved.
 pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::LoopHoist {
   if !enabled() {
-    return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [] };
+    return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true };
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
   opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
+  // `@FR-R-Scalar`: each record scalar the verdict admits is read once, into a local.
+  for sc in verdict.scalars {
+    known = false;
+    for hs in w.scalars {
+      if hs.root == sc.root && hs.fld == sc.fld {
+        known = true;
+      }
+    }
+    if known {
+      continue;
+    }
+    c = cgen_fn::shape_of(x.b, w, sc.call);
+    if !(c == "int" || c == "float" || c == "single" || c == "bool" || c == "enum" || c == "char") {
+      continue;
+    }
+    kept = w.pending;
+    w.pending = [];
+    read = cgen_fn::expr(x, w, sc.call, ind);
+    nested = w.pending;
+    w.pending = kept;
+    for t in nested {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return verdict;
+    }
+    local = "s{len(w.decls) + 1}";
+    w.decls += ["{held(c)} {local} = {initial(c)};"];
+    line(w, ind, "{local} = {as_shape(w, read, c)};");
+    w.scalars += [HeldScalar { root: sc.root, fld: sc.fld, name: local, shape: c }];
+  }
   // A loop that grows a store holds its headers without their base (`kept_bases` without the
   // store facts).
   for v in verdict.vectors {
@@ -826,4 +857,9 @@ pub fn refresh_rebound(w: W, var: integer, ind: integer) {
       line(w, ind, "{h.name} = loft_vh_of({w.names[var]!});");
     }
   }
+}
+
+// Are the vector hoists on (`verdict`'s own switch)?
+pub fn hoists() -> boolean {
+  enabled()
 }

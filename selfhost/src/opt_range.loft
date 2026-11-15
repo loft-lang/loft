@@ -45,8 +45,18 @@ struct BodyRange {
 }
 
 // The facts one function's ranges are read under.
+// The range a run-time guard proved of an integer field of a record variable.
+pub struct FieldRange {
+  pub root: integer,
+  pub off: integer,
+  pub lo: integer,
+  pub hi: integer,
+}
+
 pub struct Ranges {
   vars: vector<Held>,
+  // `@FR-R-RangedCall`'s guarded fields.
+  fields: vector<FieldRange>,
   elems: vector<ElemRange>,
   bodies: vector<BodyRange>,
   // The stepped counters of exclusive counted loops whose `counter + 1` cannot overflow.
@@ -96,7 +106,7 @@ U32_MAX = 4294967295;
 I64_MAX = 9223372036854775807;
 
 pub fn empty_ranges(count: integer) -> Ranges {
-  Ranges { vars: [for _ in 0..count { Held { has: false, lo: 0, hi: 0 } }], elems: [], bodies: [], steps: [for _ in 0..count { false }] }
+  Ranges { vars: [for _ in 0..count { Held { has: false, lo: 0, hi: 0 } }], fields: [], elems: [], bodies: [], steps: [for _ in 0..count { false }] }
 }
 
 pub fn var_range(rv: Ranges, v: integer) -> Range? {
@@ -217,8 +227,16 @@ fn ranged(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolea
         return null;
       }
       name = defs[def_nr]!.name;
-      // A guarded field read is ranged by a twin's seeds alone; a plain function has none.
+      // A guarded field read: the run-time test in front of the code proved the field in
+      // range, and nothing in it writes the field.
       if name == "OpGetInt" && len(args) >= 2 && loop_shape::var_of(args[0]) >= 0 && opt_non_sentinel::int_of(args[1]) != null {
+        of = loop_shape::var_of(args[0]);
+        at = opt_non_sentinel::int_of(args[1]) ?? 0;
+        for i in rev(0..len(rv.fields)) {
+          if rv.fields[i]!.root == of && rv.fields[i]!.off == at {
+            return Range { lo: rv.fields[i]!.lo, hi: rv.fields[i]!.hi };
+          }
+        }
         return null;
       }
       op = op_range(b, p, c, nn, rv, name, args, depth);
@@ -432,7 +450,7 @@ fn named_var(d: ir::Definition, name: text) -> integer {
 }
 
 // `Definition::is_loft_defined`: a function with a body the program or a library wrote.
-fn is_loft_defined(d: ir::Definition) -> boolean {
+pub fn is_loft_defined(d: ir::Definition) -> boolean {
   (d.name.starts_with("n_") || d.name.starts_with("t_") || d.instance_of >= 0) && opt_non_sentinel::has_body(d)
 }
 
@@ -1393,6 +1411,9 @@ pub fn range_vars_code(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: i
   vars = def.variables.variables;
   count = len(vars);
   rv = empty_ranges(count);
+  for f in seeds.fields {
+    rv.fields += [f];
+  }
   escaped: vector<boolean> = [for _ in 0..count { false }];
   opt_non_sentinel::collect_escapes(b, code, escaped);
   // A seeded variable holds its seed only while nothing in the code can change it.
@@ -1462,7 +1483,7 @@ pub fn body_facts(rv: Ranges, scope: integer) -> Ranges? {
   if !any {
     return null;
   }
-  over = Ranges { vars: rv.vars, elems: rv.elems, bodies: rv.bodies, steps: rv.steps };
+  over = Ranges { vars: rv.vars, fields: rv.fields, elems: rv.elems, bodies: rv.bodies, steps: rv.steps };
   for br in rv.bodies {
     if br.scope == scope {
       set_var(over, br.var, Range { lo: br.lo, hi: br.hi });
@@ -1473,8 +1494,8 @@ pub fn body_facts(rv: Ranges, scope: integer) -> Ranges? {
 
 // `guarded_facts`' merge: `known` with the copy's facts for the variables `keep` admits — a
 // variable both range keeps their intersection — and each leaf within `[-g, g]`.
-pub fn merge_guarded(known: Ranges, copy: Ranges, keep: vector<boolean>, leaves: vector<integer>, g: integer) -> Ranges {
-  merged = Ranges { vars: known.vars, elems: known.elems, bodies: known.bodies, steps: known.steps };
+pub fn merge_guarded(known: Ranges, copy: Ranges, keep: vector<boolean>, leaves: vector<integer>, g: integer, seeds: Ranges) -> Ranges {
+  merged = Ranges { vars: known.vars, fields: known.fields, elems: known.elems, bodies: known.bodies, steps: known.steps };
   for h in copy.vars {
     v = h#index;
     if !h.has || !(keep[v] ?? false) {
@@ -1507,6 +1528,9 @@ pub fn merge_guarded(known: Ranges, copy: Ranges, keep: vector<boolean>, leaves:
     if !found {
       merged.elems += [ElemRange { tuple: e.tuple, at: e.at, lo: e.lo, hi: e.hi }];
     }
+  }
+  for f in seeds.fields {
+    merged.fields += [f];
   }
   for v in leaves {
     set_var(merged, v, Range { lo: -g, hi: g });

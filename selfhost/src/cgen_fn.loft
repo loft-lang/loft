@@ -28,6 +28,7 @@ use cgen_recptr;
 use cgen_hoist;
 use own;
 use opt_facts;
+use opt_hoist;
 use cgen_win;
 use cgen_texts;
 use cgen_natives;
@@ -318,6 +319,17 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     pushed = cgen_hoist::pushed_op(x, w, name, args, ind, through_push);
     if through_push {
       return pushed;
+    }
+  }
+  if len(w.scalars) > 0 {
+    read_fld = 0;
+    read_of = opt_hoist::scalar_read(name, args, read_fld);
+    if read_of >= 0 {
+      for i in rev(0..len(w.scalars)) {
+        if w.scalars[i]!.root == read_of && w.scalars[i]!.fld == read_fld {
+          return E { code: w.scalars[i]!.name, kind: kind_of(w.scalars[i]!.shape) };
+        }
+      }
     }
   }
   if len(w.rec_ptrs) > 0 {
@@ -1381,7 +1393,7 @@ fn assign_tuple(x: Cx, w: W, vals: vector<ir::Node>, target: text, shape: text, 
 }
 
 // The C shape a compound evaluates to (`shape_of`), for the compounds carried; "" refuses.
-fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
+pub fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
   match loop_shape::unspan(v) {
     NdBlock { block } => {
       if len(block[0].result) == 0 {
@@ -2643,6 +2655,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     headers: [],
     push_heads: [],
     windows: [],
+    scalars: [],
     facts: opt_facts::facts_of(x.b, index),
     range_lens: [],
     alias_var: -1,

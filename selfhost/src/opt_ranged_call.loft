@@ -200,6 +200,100 @@ pub const G = 1048576;
 pub struct GuardPlan {
   pub leaves: vector<integer>,
   pub facts: opt_range::Ranges,
+  pub fields: vector<GuardField>,
+}
+
+// A hoisted integer field the guard bounds: the record variable, the offset, the read.
+pub struct GuardField {
+  pub root: integer,
+  pub off: integer,
+  pub call: ir::Node,
+}
+
+// The record variable of `OpGetInt(Var(v), off)`, the offset in `off`; -1 for another node.
+fn int_read(b: ir::Bundle, n: ir::Node, off: &integer) -> integer {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) || b.data.definitions[def_nr]!.name != "OpGetInt" || len(args) < 2 {
+        return -1;
+      }
+      at = opt_non_sentinel::int_of(args[1]) ?? return -1;
+      off = at;
+      loop_shape::var_of(args[0])
+    },
+    _ => -1,
+  }
+}
+
+// `prelude_fields`: the integer fields the block's prelude reads and its loop does not join
+// the guard's fields, unless the prelude calls a function.
+fn prelude_fields(b: ir::Bundle, block: ir::Node, fields: vector<GuardField>) {
+  ops = match loop_shape::unspan(block) {
+    NdBlock { block: bl } => bl[0].operators,
+    _ => return,
+  };
+  at_loop = -1;
+  for op in ops {
+    if at_loop < 0 && (loop_shape::unspan(op) is NdLoop) {
+      at_loop = op#index;
+    }
+  }
+  if at_loop < 0 {
+    return;
+  }
+  prelude = ir::NdInsert { items: ops[0..at_loop] };
+  calls_user = [false];
+  extra: vector<GuardField> = [];
+  opt_non_sentinel::walk(prelude, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && opt_range::is_loft_defined(b.data.definitions[def_nr]!) {
+          calls_user[0] = true;
+        }
+        off = 0;
+        v = int_read(b, n, off);
+        if v >= 0 {
+          known = false;
+          for f in fields {
+            if f.root == v && f.off == off {
+              known = true;
+            }
+          }
+          for f in extra {
+            if f.root == v && f.off == off {
+              known = true;
+            }
+          }
+          if !known {
+            extra += [GuardField { root: v, off: off, call: n }];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if calls_user[0]! {
+    return;
+  }
+  in_loop: vector<integer> = [];
+  opt_non_sentinel::walk(ops[at_loop]!, fn(n: ir::Node) {
+    off = 0;
+    v = int_read(b, n, off);
+    if v >= 0 {
+      in_loop += [v, off];
+    }
+  });
+  for f in extra {
+    read = false;
+    for r in in_loop {
+      if r#index % 2 == 0 && r == f.root && in_loop[r#index + 1]! == f.off {
+        read = true;
+      }
+    }
+    if !read {
+      fields += [f];
+    }
+  }
 }
 
 // `variable_leaves`: the integer variables `block` reads in a counted range's start or end but
@@ -306,9 +400,10 @@ fn copy_gains(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, g:
 // `guard_plan`, its variable clause: for the counted `For` block `block` of function `f`, the
 // leaves its guard tests and the facts its guarded copy runs under — or null when the copy
 // would make no call newly ranged, or would leave a call doing checked work checked.
-pub fn guard_plan(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, g: Gains, f: integer, nn: vector<boolean>, known: opt_range::Ranges, walks: vector<opt_range::Walk>, block: ir::Node) -> GuardPlan? {
+pub fn guard_plan(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, g: Gains, f: integer, nn: vector<boolean>, known: opt_range::Ranges, walks: vector<opt_range::Walk>, block: ir::Node, fields: vector<GuardField>) -> GuardPlan? {
+  prelude_fields(b, block, fields);
   all_leaves = variable_leaves(b, f, known, block);
-  if len(all_leaves) == 0 {
+  if len(all_leaves) == 0 && len(fields) == 0 {
     return null;
   }
   unranged: vector<integer> = [];
@@ -327,21 +422,26 @@ pub fn guard_plan(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls
   keep: vector<boolean> = [for v in 0..count { total[v]! <= inside[v]! && !escaped[v]! }];
   // The fewest leaves that make a call newly ranged: the variables with no range first, and
   // only then the ones a wider fact bounds.
+  // Fields alone first.
   tried = 0;
-  for tier in 0..2 {
-    leaves = if tier == 0 { unranged } else { all_leaves };
-    if len(leaves) == tried {
+  none: vector<integer> = [];
+  for tier in 0..3 {
+    leaves = if tier == 0 { none } else if tier == 1 { unranged } else { all_leaves };
+    if (tier == 0 && len(fields) == 0) || (tier > 0 && len(leaves) == tried) {
       continue;
     }
     tried = len(leaves);
     seeds = opt_range::empty_ranges(count);
+    for fl in fields {
+      seeds.fields += [opt_range::FieldRange { root: fl.root, off: fl.off, lo: -G, hi: G }];
+    }
     for v in leaves {
       opt_range::set_var(seeds, v, opt_range::Range { lo: -G, hi: G });
     }
     copy = opt_range::range_vars_code(b, p, c, f, block, nn, walks, seeds);
-    merged = opt_range::merge_guarded(known, copy, keep, leaves, G);
+    merged = opt_range::merge_guarded(known, copy, keep, leaves, G, seeds);
     if copy_gains(b, p, c, g, nn, known, block, merged) {
-      return GuardPlan { leaves: leaves, facts: merged };
+      return GuardPlan { leaves: leaves, facts: merged, fields: fields };
     }
   }
   null

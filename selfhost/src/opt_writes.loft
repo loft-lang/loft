@@ -15,6 +15,7 @@ use loop_shape;
 use types;
 use opt_names;
 use opt_push;
+use opt_wset;
 use cgen_types;
 
 const STRUCT = 5;
@@ -33,11 +34,14 @@ pub struct Writes {
   in_place: vector<boolean>,
   // The definitions `callee_writes_only_its_buffer` is answering (`Facts::buffer_guard`).
   buffer_guard: vector<boolean>,
+  // `callee_writes`' memo: per definition 0 unasked, 1 being answered, 2 untyped, 3 its set.
+  wstate: vector<integer>,
+  wsets: vector<opt_wset::WSet>,
 }
 
 pub fn new_writes(b: ir::Bundle) -> Writes {
   count = len(b.data.definitions);
-  Writes { free: [for _ in 0..count { false }], active: [for _ in 0..count { false }], skip_sets: [], skip_bufs: [], in_place: [for _ in 0..count { false }], buffer_guard: [for _ in 0..count { false }] }
+  Writes { free: [for _ in 0..count { false }], active: [for _ in 0..count { false }], skip_sets: [], skip_bufs: [], in_place: [for _ in 0..count { false }], buffer_guard: [for _ in 0..count { false }], wstate: [], wsets: [] }
 }
 
 fn env_on(name: text) -> boolean {

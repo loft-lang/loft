@@ -654,3 +654,8 @@ pub fn mint_push_qualifies(b: ir::Bundle, vector_tp: integer, heap: boolean) -> 
   };
   record && (heap || !types::owns_heap(b.types, elem))
 }
+
+// Is `name` a fusable scalar push (`FUSABLE_PUSHES`)?
+pub fn is_fusable(name: text) -> boolean {
+  push_size(name) > 0
+}

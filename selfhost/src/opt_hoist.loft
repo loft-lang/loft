@@ -19,6 +19,7 @@ use opt_push;
 use opt_writes;
 use opt_facts;
 use opt_apart;
+use opt_wset;
 
 // One vector a loop may hold: its path, the path's root variable, the expression naming it.
 pub struct Held {
@@ -132,10 +133,23 @@ pub struct LoopHoist {
   pub sole_push: boolean,
   // The roots of what the loop grows: its pushed and minted paths and its reservations.
   pub movers: vector<integer>,
+  // The record scalars the loop reads once before it (`@FR-R-Scalar`).
+  pub scalars: vector<Scalar>,
+  // The gate declined the loop: what it holds is the apart clause's.
+  pub declined: boolean,
+}
+
+// A record scalar a loop may hold: the record variable, the field's offset, the record's
+// schema type and the read itself.
+pub struct Scalar {
+  pub root: integer,
+  pub fld: integer,
+  pub tp: integer,
+  pub call: ir::Node,
 }
 
 fn nothing() -> LoopHoist {
-  LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [] }
+  LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true }
 }
 
 // `owned_local`: a local that owns its store — no parameter, no link, not captured, and
@@ -244,7 +258,7 @@ fn reserved_roots(b: ir::Bundle, lp: ir::Block) -> vector<integer> {
 // store otherwise, where it rebinds a path it pushes to, or where a push could alias another
 // held vector.  The mint tier, the held scalars, the callee inputs and every apart clause are
 // not carried.
-pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
+fn hoist_paths(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
   tier = (if (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0" { 1 } else { 0 }) + (if (env_variable("LOFT_NO_PUSH_HOIST") ?? "0") == "0" { 4 } else { 0 }) + (if (env_variable("LOFT_NO_MINT_HOIST") ?? "0") == "0" { 8 } else { 0 });
   d = b.data.definitions[vd]!;
   fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
@@ -253,7 +267,7 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
       return apart_hoist(b, w, facts, vd, lp);
     }
   }
-  out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false, movers: [] };
+  out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false, movers: [], scalars: [], declined: false };
   pushes: vector<Held> = if tier & 4 != 0 { pushed_paths(b, lp) } else { [] };
   // The paths the body mints a record element into, each with whether every mint group on
   // it qualifies for the record push.
@@ -625,7 +639,7 @@ pub fn with_rebound(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Fact
   lent: vector<boolean> = [for x in d.variables.variables { work_buffer_arg(d, x#index) }];
   keep = opt_apart::apart_headers(b, w, facts, vd, lp, paths, roots, lent);
   // Held alone, the stores they live in grow nowhere in the loop: each carries its base.
-  alone = len(v.vectors) == 0 && len(v.pushes) == 0 && len(v.mint_pushes) == 0;
+  alone = len(v.vectors) == 0 && len(v.pushes) == 0 && len(v.mint_pushes) == 0 && len(v.scalars) == 0;
   for c in candidates {
     if !keep[c#index]! {
       continue;
@@ -643,4 +657,72 @@ pub fn with_rebound(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Fact
   if alone && len(v.vectors) > 0 {
     v.growth_free = true;
   }
+}
+
+fn scalar_getter(name: text) -> boolean {
+  name == "OpGetInt" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetSingle" || name == "OpGetFloat" || name == "OpGetBoolean" || name == "OpGetCharacter" || name == "OpGetEnum"
+}
+
+// `scalar_read`: the record variable of a scalar field read `getter(Var(v), fld)`, with the
+// offset in `fld`; -1 for any other call.
+pub fn scalar_read(name: text, args: vector<ir::Node>, fld: &integer) -> integer {
+  if !scalar_getter(name) || len(args) < 2 {
+    return -1;
+  }
+  v = loop_shape::var_of(loop_shape::unspan(args[0]));
+  match loop_shape::unspan(args[1]) {
+    NdInt { n } => { fld = n; },
+    _ => return -1,
+  }
+  v
+}
+
+// `hoistable`: the vector headers and the record scalars loop `lp` may derive once up front.
+pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
+  out = hoist_paths(b, w, facts, vd, lp);
+  if out.declined || (env_variable("LOFT_NO_SCALAR_HOIST") ?? "0") != "0" {
+    return out;
+  }
+  d = b.data.definitions[vd]!;
+  rebound = rebound_vars(b, d, lp);
+  found: vector<Scalar> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        fld = 0;
+        v = scalar_read(def_name(b, def_nr), args, fld);
+        if v >= 0 && v < len(rebound) && !rebound[v]! {
+          tp = opt_wset::plain_tp(b, d.variables.variables[v]!.type_def[0] ?? ir::TyVoid);
+          known = false;
+          for f in found {
+            if f.root == v && f.fld == fld {
+              known = true;
+            }
+          }
+          if tp >= 0 && !known {
+            found += [Scalar { root: v, fld: fld, tp: tp, call: n }];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if len(found) == 0 {
+    return out;
+  }
+  written = opt_wset::empty();
+  fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+  for op in lp.operators {
+    if !opt_wset::body_writes(b, w, vd, op, fresh, written) {
+      // A statement the write-set walk cannot type: no scalar hoists in this loop.
+      return out;
+    }
+  }
+  for f in found {
+    if !opt_wset::evicts(written, f.tp, f.fld) {
+      out.scalars += [f];
+    }
+  }
+  out
 }
