@@ -55,6 +55,11 @@ One row per ISO week (Monday).  The columns, by source:
                        `make rule-coverage` with the suite beside the tree reads higher)
     census_only        guarded by the census alone
     deviations_open    the formal chapters' stated OPEN counts, summed
+    deviations_stale   open deviation entries whose tracking reference is DEAD at the
+                       week's end: none named (and not ruled `not resolvable in a
+                       release`), or every issue or plan it names already closed — the
+                       `rule_tags.py registers --issues` check, read weekly instead of by
+                       hand; the summary line names them
     decisions          `@C` entries in the design-decision registers
   the nightlies (workflow runs, public):
     consumer_green     scheduled consumer-main-health runs green that week / run
@@ -75,7 +80,11 @@ import re
 import statistics
 import subprocess
 import sys
+import tempfile
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rule_tags as rt  # noqa: E402 — the register's one home (`open_register`), read at a commit
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERIES = os.path.join(ROOT, "index", "stability_weekly.tsv")
@@ -86,7 +95,7 @@ CITE = re.compile(r"@FR-([A-Z][A-Za-z0-9-]{1,40})(?![-A-Za-z0-9])")
 COLUMNS = ["week_of", "partial", "filed", "silent_wrong", "sev_high", "consumer_hit", "regression",
            "ci_shaped", "closed", "strained", "settled", "strained_pct", "zero_streak",
            "close_h_median", "open_sw_main", "consumer_commits", "rules", "rules_R", "rules_R_new",
-           "annotated", "guarded", "census_only", "deviations_open", "decisions",
+           "annotated", "guarded", "census_only", "deviations_open", "deviations_stale", "decisions",
            "consumer_green", "release_gate_age", "portal"]
 
 
@@ -249,7 +258,7 @@ def repo_row(sha):
     portal = []
     for f in files:
         if f.startswith("bench/portal/results/") and f.endswith(".tsv") and not f.endswith("-builds.tsv"):
-            meta, ratios = {}, []
+            meta, ratios, col = {}, [], None
             for line in show(sha, f).split("\n"):
                 if line.startswith("#"):
                     if "=" in line:
@@ -257,9 +266,16 @@ def repo_row(sha):
                         meta[k.strip()] = v.strip()
                     continue
                 parts = line.split("\t")
-                if len(parts) > 11:
+                if col is None:
+                    # The header names the lanes.  The judged lane is the C ship lane where
+                    # the file has one (`cship_ratio`, PERFORMANCE.md § What is judged); a
+                    # file from before the C lanes carries the rustc-native `ratio`.  Read
+                    # by name: by position, the C-lane layout read `cship_n` as a ratio.
+                    col = next((parts.index(c) for c in ("cship_ratio", "ratio") if c in parts), -1)
+                    continue
+                if 0 <= col < len(parts):
                     try:
-                        ratios.append(float(parts[11]))
+                        ratios.append(float(parts[col]))
                     except ValueError:
                         pass
             if ratios:
@@ -269,6 +285,57 @@ def repo_row(sha):
                 annotated=len(cited["src"] & rules), guarded=len(named | census),
                 census_only=len(census - named), deviations_open=deviations, decisions=len(decisions),
                 portal=" ".join(portal) or "-")
+
+
+def open_deviations_at(sha):
+    """`rule_tags.open_register()` read at one commit: every OPEN entry as
+    `(chapter, tag, [refs], unresolvable)`, with the same multi-entry and companion
+    resolution the `registers` report uses, so the two cannot disagree."""
+    with tempfile.TemporaryDirectory() as d:
+        subprocess.run(f"git archive {sha} doc/claude/formal | tar -x -C {d}", shell=True,
+                       check=True, cwd=ROOT)
+        keep, rt.FORMAL = rt.FORMAL, os.path.join(d, "doc/claude/formal")
+        try:
+            live, _drift, _regs = rt.open_register()
+        finally:
+            rt.FORMAL = keep
+    return live
+
+
+def closed_on(ref, memo, signed=None):
+    """The day a tracking reference closed: `None` while open, `"?"` when the tracker could
+    not be asked (named, never counted as fine).  A ref is an issue number (loft-lang/loft)
+    or `PLNn` (loft-lang/plans)."""
+    if ref in memo:
+        return memo[ref]
+    repo, n = ("loft-lang/plans", ref[3:]) if ref.startswith("PLN") else (REPO, ref)
+    try:
+        d = api(f"repos/{repo}/issues/{n}", signed_in=signed)
+        memo[ref] = parse_day(d["closed_at"]) if d.get("closed_at") else None
+    except Exception:  # noqa: BLE001 — an unreachable tracker is reported, not guessed
+        memo[ref] = "?"
+    return memo[ref]
+
+
+def stale_deviations(sha, end, memo, signed=None):
+    """The open entries at `sha` whose tracking reference is dead at `end`: no reference and
+    not ruled `not resolvable in a release`, or every reference it names closed on or before
+    `end` (a ruled entry included — its ruling carries it, but a closed issue in its head is a
+    pointer nobody checks).  Each is `tag:untracked` or `tag:<refs>`; an entry with an
+    unreachable reference is `tag:?`."""
+    out = []
+    for _chapter, tag, refs, unresolvable in open_deviations_at(sha):
+        if not refs:
+            # A ruled-unresolvable entry needs no tracker; any other open entry owes one.
+            if not unresolvable:
+                out.append(f"{tag}:untracked")
+            continue
+        days = [closed_on(r, memo, signed) for r in refs]
+        if any(d == "?" for d in days):
+            out.append(f"{tag}:?")
+        elif all(d is not None and d <= end for d in days):
+            out.append(f"{tag}:{','.join(refs)}")
+    return out
 
 
 # ── the rows ──────────────────────────────────────────────────────────────────────────────
@@ -299,7 +366,7 @@ def rows(since, until, cache=None):
     consumer_runs = workflow_runs("consumer-main-health.yml")
     gate_runs = workflow_runs("release-gate.yml", pages=1)
     ref = main_ref()
-    out, streak, prev_r = [], 0, None
+    out, streak, prev_r, memo, signed = [], 0, None, {}, gh_signed_in()
     for w in weeks:
         end = w + dt.timedelta(days=6)
         filed = [i for i in issues if w <= parse_day(i["created_at"]) <= end]
@@ -316,6 +383,7 @@ def rows(since, until, cache=None):
                       and (not i["closed_at"] or parse_day(i["closed_at"]) > end))
         sha = tree_at(ref, end)
         r = repo_row(sha) if sha else {}
+        stale = stale_deviations(sha, end, memo, signed) if sha else []
         sched = [c for d, ev, c in consumer_runs if ev == "schedule" and w <= parse_day(d) <= end]
         gate = [(d, c) for d, ev, c in gate_runs if parse_day(d) <= end]
         gate_age = f"{(end - parse_day(gate[0][0])).days}d:{gate[0][1]}" if gate else "never"
@@ -337,6 +405,7 @@ def rows(since, until, cache=None):
             rules_R_new=(r["rules_R"] - prev_r) if prev_r is not None and r else "-",
             annotated=r.get("annotated", "-"), guarded=r.get("guarded", "-"),
             census_only=r.get("census_only", "-"), deviations_open=r.get("deviations_open", "-"),
+            deviations_stale=len(stale) if sha else "-", _stale=stale,
             decisions=r.get("decisions", "-"),
             consumer_green=f"{sum(c == 'success' for c in sched)}/{len(sched)}",
             release_gate_age=gate_age, portal=r.get("portal", "-")))
@@ -351,7 +420,9 @@ def read_series():
     for line in open(SERIES, encoding="utf-8"):
         if line.startswith("#") or not line.strip():
             continue
-        out.append(dict(zip(COLUMNS, line.rstrip("\n").split("\t"))))
+        row = dict.fromkeys(COLUMNS, "-")
+        row.update(zip(COLUMNS, line.rstrip("\n").split("\t")))
+        out.append(row)
     return out
 
 
@@ -363,7 +434,7 @@ def write_series(table):
     with open(SERIES, "w", encoding="utf-8") as f:
         f.write(head)
         for r in sorted(table.values(), key=lambda r: r["week_of"]):
-            f.write("\t".join(str(r[c]) for c in COLUMNS) + "\n")
+            f.write("\t".join(str(r.get(c, "-")) for c in COLUMNS) + "\n")
 
 
 def main():
@@ -379,14 +450,16 @@ def main():
     table = rows(since, until, a.cache)
     print("\t".join(COLUMNS))
     for r in table:
-        print("\t".join(str(r[c]) for c in COLUMNS))
+        print("\t".join(str(r.get(c, "-")) for c in COLUMNS))
     last = [r for r in table if r["partial"] == "no"]
     if last:
         r = last[-1]
         print(f"\nweek of {r['week_of']}: strained {r['strained']} of {r['strained'] + r['settled']} judged "
               f"({r['strained_pct']} %), zero streak {r['zero_streak']} week(s) — stable reads at 2; "
               f"silent-wrong open on main {r['open_sw_main']}; consumer gate green {r['consumer_green']}; "
-              f"release gate {r['release_gate_age']}; rewrite rules +{r['rules_R_new']}")
+              f"release gate {r['release_gate_age']}; rewrite rules +{r['rules_R_new']}; "
+              f"deviations with a dead reference {r['deviations_stale']}"
+              + (f" ({', '.join(r['_stale'])})" if r.get("_stale") else ""))
     if a.record:
         kept = {r["week_of"]: r for r in read_series()}
         for r in table:
