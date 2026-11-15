@@ -15,10 +15,10 @@ getting faster where the runner exposed a mechanism.  How the loop and an arm wo
 
 | Measure | 2026-11-14 night | Now |
 |---|---|---|
-| `bench_speed.py` geometric mean (94 routines), this machine | 2.03, worst 12.8 | 0.88, worst 1.80 (08688f618); 68 of 94 at or under 1.0 |
+| `bench_speed.py` geometric mean (94 routines), this machine | 2.03, worst 12.8 | 0.87, worst 1.68 (`sum`, a 0.4 ms row), c94efcd89; `map_json` 1.84 -> ~1.27 after 115206415 |
 | the same, the laptop (quiet) | 2.20 | 0.99, worst 2.27 (62012dfbf, before the last three commits) |
 | arms of `run` | 222 | 267 |
-| `run_image_survey.py` | 1186 of 1194 | the same, the same 8 |
+| `run_image_survey.py` | 1186 of 1194 | 1193 of 1194 — the one left differs only in its `store_memory()` report (1b-fill-port.md difference 3) |
 
 ## What changed in the language, not only the runner
 
@@ -29,6 +29,14 @@ getting faster where the runner exposed a mechanism.  How the loop and an arm wo
   (silent-wrong, `F-ParamHeap/2137`, fixed in 603a2a2a0 before any merge).  Measured -11 % C,
   -14 % interpreter on a small-record cell.  Census blessed; its channel is `make rewrite-census`.
 - The C runtime finds a free store slot from a lower-bound hint (`loft_hint`), same numbers.
+- `(R-ValueLocal)`'s tuple-parameter gate keys a native's write by record type and takes a
+  recursion's least fixpoint (c94efcd89): the runner's tuple parameters 17 -> 273, geometric
+  mean 0.92 -> 0.87, and every program with small-record helpers gets the same admissions.
+  Guard: `tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-can-be-written.loft`.
+- The C writer hands a lent tuple carrier to a tuple parameter as it is (115206415,
+  `LOFT_NO_LEND_HANDOFF`).
+- The runner now carries reflection (`type_of`, `type_named`, `field_value`) and the process
+  and environment natives (`eprint`, `exit`, `panic`, `env_variables`, the directory queries).
 
 ## Open, by size of what it would buy
 
@@ -42,18 +50,24 @@ getting faster where the runner exposed a mechanism.  How the loop and an arm wo
 2. **A C routine cannot return a text but through a byte vector** (`room()`, a store per call):
    `crt::show_leaf` (`map_json` 2.25), `stack_str`, `get_text`.  A `#c_twin` signature returning
    the runtime's `loft_text` would remove the buffer; it touches `c_signature.rs`'s consumers.
-3. The rows over 1.3 here: `map_json` 1.80, `sum` 1.68 (a 0.4 ms routine), `par_text` 1.51,
-   `replace` 1.36, `record_append` 1.31, `par_map_float` 1.30 — read each one's histogram first
+3. The rows over 1.25 here: `sum` 1.68 (both sides run the same vectorised block sum; `-O3` on
+   the shim and a four-chain unroll both measured no gain or worse), `par_text` 1.55,
+   `map_json` ~1.27, `replace` 1.37, `par_map_float` 1.32, `record_append` 1.29 — read each one's histogram first
    (`LOFT_FILL_TRACE=1`, the one-routine images: keep `main`'s setup, drop the other timing
    blocks).
-4. Not done on this tip: `make ci`, `make wasm` + `make surface-gen` (default/01_code.loft's
+4. An empty vector local makes its store at the declaration, on both backends — the runner's
+   `show::write` paid one per formatted value until it stopped declaring one it rarely fills
+   (6c065851c).  A store made at the first append would remove the class.
+5. Not done on this tip: `make ci`, `make wasm` + `make surface-gen` (default/01_code.loft's
    `#loft` lines moved the wasm stamp), the language suite cell
    `a-small-record-handed-on-as-a-record-keeps-its-tuple-elsewhere.loft` (written, passes both
    backends and both switch positions; not in loft-suite yet — switching that checkout's
    branch was refused, it needs the owner's go).
-5. Branch-carried reds from the merged compiled-bodies work, not this arc: the feature
-   catalogue (four uncatalogued files), the `@FR-N-Shape` ratchet (1180 -> 1183), the layer and
-   test-subject ratchets, `main`'s nightly rustc-native suite reds (two `B-Copy`, one `H-Free`).
+6. Branch-carried reds from the merged compiled-bodies work, not this arc: the feature
+   catalogue (four uncatalogued files), the `@FR-N-Shape` ratchet (1180 -> 1183), the layer
+   ratchet, decision C162 without a guard under `tests/` (its cells are in loft-suite), three
+   loft-suite cells red on `--native` only (two `B-Copy`, one `H-Free`; red on the committed
+   tip before c94efcd89, green on installed main), `main`'s nightly rustc-native suite reds (two `B-Copy`, one `H-Free`).
 
 ## How to measure
 
