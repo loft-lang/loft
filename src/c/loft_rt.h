@@ -1027,9 +1027,48 @@ static uint8_t loft_ends_with(loft_str s, loft_str v) {
     return (uint8_t) (v.len <= s.len && loft_mem_at(s, s.len - v.len, v));
 }
 
+/* How common byte `c` is in text, highest first: the order `memchr`'s searchers rank a needle's
+ * bytes by, so a search stops on the needle's RAREST byte and not on its first — the first of
+ * "alpha" is the commonest letter there is.  Bytes not listed rank rare. */
+static int loft_byte_commonness(unsigned char c) {
+    static const char order[] = " etaoinsrhldcumfpgwybvkxjqzETAOINSRHLDCUMFPGWYBVKXJQZ,.\n0123456789";
+    const char *at = memchr(order, c, sizeof order - 1);
+    return at ? (int) (sizeof order - 1 - (size_t) (at - order)) : 0;
+}
+
+/* The offset of needle `v`'s rarest byte (`loft_byte_commonness`): the byte a search scans
+ * for.  Asked once per search, not once per match. */
+static size_t loft_rare_index(loft_str v) {
+    size_t k = 0;
+    int best = v.len ? loft_byte_commonness((unsigned char) v.p[0]) : 0;
+    for (size_t i = 1; i < v.len; i++) {
+        int c = loft_byte_commonness((unsigned char) v.p[i]);
+        if (c < best) best = c, k = i;
+    }
+    return k;
+}
+
+/* The first byte offset at or after `from` where `v` occurs in `s`, or -1: `memchr` for the
+ * needle's byte at `k` (`loft_rare_index`), then the whole needle compared around each hit
+ * (`str::find`'s answer; an empty needle is found at `from`). */
+static int64_t loft_mem_find_at(loft_str s, size_t from, loft_str v, size_t k) {
+    if (v.len == 0) return from <= s.len ? (int64_t) from : -1;
+    if (v.len > s.len || from > s.len - v.len) return -1;
+    const char *end = s.p + (s.len - v.len) + k + 1;
+    const char *at = s.p + from + k;
+    while (at < end) {
+        const char *hit = (const char *) memchr(at, (unsigned char) v.p[k], (size_t) (end - at));
+        if (!hit) return -1;
+        const char *start = hit - k;
+        if (memcmp(start, v.p, v.len) == 0) return (int64_t) (start - s.p);
+        at = hit + 1;
+    }
+    return -1;
+}
+
 static int64_t loft_find(loft_str s, loft_str v) {
-    for (size_t at = 0; at + v.len <= s.len; at++) if (loft_mem_at(s, at, v)) return (int64_t) at;
-    return LOFT_NULL;
+    int64_t at = loft_mem_find_at(s, 0, v, loft_rare_index(v));
+    return at < 0 ? LOFT_NULL : at;
 }
 
 static int64_t loft_rfind(loft_str s, loft_str v) {
@@ -1098,16 +1137,13 @@ static loft_text loft_replace(loft_str s, loft_str v, loft_str w) {
         loft_push(&out, w.p, w.len);
         return out;
     }
-    /* As str::replace: find the next match by its first byte, push the run before it whole. */
+    /* As str::replace: find the next match (`loft_mem_find_at`), push the run before it whole. */
+    size_t k = loft_rare_index(v);
     while (at < s.len) {
-        const char *hit = (const char *) memchr(s.p + at, (unsigned char) v.p[0], s.len - at);
-        while (hit && ((size_t) (hit - s.p) + v.len > s.len || memcmp(hit, v.p, v.len) != 0)) {
-            size_t next = (size_t) (hit - s.p) + 1;
-            hit = next < s.len ? (const char *) memchr(s.p + next, (unsigned char) v.p[0], s.len - next) : 0;
-        }
-        size_t to = hit ? (size_t) (hit - s.p) : s.len;
+        int64_t hit = loft_mem_find_at(s, at, v, k);
+        size_t to = hit < 0 ? s.len : (size_t) hit;
         loft_push(&out, s.p + at, to - at);
-        if (!hit) break;
+        if (hit < 0) break;
         loft_push(&out, w.p, w.len);
         at = to + v.len;
     }
