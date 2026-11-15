@@ -21526,15 +21526,30 @@ impl Parser {
         // `In` buffer and the displaced free released the caller's store — the interpreter then
         // read a corrupt reference.  It stays an inner work-ref; the element is copied out.
         // `LOFT_NO_RET_TYPE_MATCH=1` lets any record type be promoted.
-        // Asked of a compiler WORK-REF holding a struct only: a parameter of another type is the
-        // attribute rung's (its dep still merges), and a variant is its enum's record.
-        if let (Type::Reference(vd, _), Type::Reference(rd, _)) =
-            (self.vars.tp(v).base(), ctx.ret.base())
-            && vd != rd
+        // Asked of a compiler WORK-REF holding a record only: a parameter of another type is the
+        // attribute rung's (its dep still merges), and a variant is its enum's record.  A record
+        // ENUM result is the same heap record as a struct one (`heap_def_nr`): spelled for
+        // `Reference` alone, `-> T { def(e, 0).ts[0]! }` over a record enum `T` bound the
+        // call's `D` container as the buffer and freed the caller's store twice (loft#2515).
+        let record_of = |d: u32| {
+            if self.data.def_type(d) == DefType::EnumValue {
+                self.data.def(d).parent()
+            } else {
+                d
+            }
+        };
+        let is_record = |d: u32| {
+            matches!(
+                self.data.def_type(d),
+                DefType::Struct | DefType::Enum | DefType::EnumValue
+            )
+        };
+        if let (Some(vd), Some(rd)) = (self.vars.tp(v).heap_def_nr(), ctx.ret.heap_def_nr())
+            && is_record(vd)
+            && is_record(rd)
+            && record_of(vd) != record_of(rd)
             && self.vars.name(v).starts_with("__ref_")
             && !self.vars.is_argument(v)
-            && self.data.def_type(*vd) == DefType::Struct
-            && self.data.def_type(*rd) == DefType::Struct
             && !crate::env_once!(std::env::var_os("LOFT_NO_RET_TYPE_MATCH").is_some())
         {
             return RetPromotion::SkipInnerRef;
