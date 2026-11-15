@@ -409,3 +409,58 @@ exactly: smooth light differs from a shade a cell by design.
 
 **A question back:** does the atlas suit `scene3d`, or would you rather keep the reaches another
 way?  The contract (rules 1 to 5) is what the game needs; how the GPU draws it is yours.
+
+## This stream's answer: torches are built in `scene3d` (2026-11-16)
+
+**The atlas suits `scene3d`, and it is built that way**, on branch `scene3d-torches` of
+loft-libs-graphics (`scene3d` 0.3.0, stacked on #92).  It was written from this file's
+proposal before SCENE_CONTRACT.md § Torches reached the game's `main`, so **the two arrays'
+layouts below are this stream's reading and are fitted to the contract when it lands**; the
+PR is opened after that.
+
+| Call | `d` as built |
+|---|---|
+| `scene.offers_torches()` | true |
+| `scene.set_torch_reach(d) -> boolean` | id, layer, x0, y0, w, h, then w x h reaches row by row; false when the box is over 15 x 15 or 64 torches are held |
+| `scene.set_torches(d)` | nine a torch: id, x, y, layer, start, glow, red, green, blue |
+| `scene.drop_torch(id)` | — |
+
+**How it is drawn**, and where it leaves the proposal:
+
+- **The reaches:** one 16 x 16 square a torch in a 128 x 128 atlas (64 torches), sampled
+  between texels.  The reach fills at most 15 x 15 of it; the last row and column stay dark and
+  the sample point is kept inside the square, so one torch's reach never bleeds into the next.
+- **The two strongest a cell:** two bytes a cell in a map laid out as the light's, worked out
+  when a reach is given, moved or dropped, for the cells of its old and its new box.  They are
+  ranked by the reach alone, not by reach times glow: a glow changes every frame and a
+  ranking that followed it would be a texture write a flicker.
+- **The shader:** the vertex stage reads the face's light cell's two torches; the fragment
+  stage reads each one's reach at the point and takes the brightest of those and the cell's
+  light, a channel at a time.  A cell lists a torch only where that torch's reach is above 0,
+  so "not past a wall" needs no mask of its own.
+- **A flicker** is the block's numbers: no texture is written (checked from the recording
+  backend).
+- **A card** takes the torches of the cell its foot stands on, and its own light where that is
+  brighter.  The proposal did not say; without it the hero holding a torch stands dark in its
+  light, since the cells' light now comes without the torches.
+- **`start`** is taken and not used: the reach given already starts there.  Say if the
+  contract means it for something.
+
+**Measured on a Mac** (`scene3d/tests/torches.loft`, the light at a pixel against the reach
+weighed by hand between its four cells, within 3 of 255):
+
+| Where | By hand | Drawn |
+|---|---|---|
+| By the torch, reach 1 with 0.5 round it | 0.9886: 252 | 252 |
+| At its cell's east edge, and one pixel past it | 0.7520: 192, 0.7417: 189 | 192, 189: no step |
+| A cell the reach does not name | 0 | 0 |
+| A red torch over a cell half lit | (252, 128, 128) | the same |
+| Three torches at a cell: 1 red, 0.8 blue, 0.3 green | (249, 0, 199) | the same; the third not drawn |
+
+The 16 tests pass on the interpreter, both compiled backends and a shipped program, and the
+torch tests in both writers' pages (WebGL2).  Six planted breaks each turn one red.  With no
+torch given the picture against `raster3d` is as before, 23 of 384,000 pixels.
+
+**Not built:** more than two torches a cell, a reach wider than 15 cells, and the night
+comparison against `raster3d` by a margin — that is `tools/fixedshot.loft`'s, once the game
+sends its torches.
