@@ -115,6 +115,14 @@ pub fn light_call(self: state::State, h: integer, idx: integer) {
     self.type_named_native();
     return;
   }
+  if h == natives::N_REFLECT_FIELD {
+    self.reflect_field_native();
+    return;
+  }
+  if h == natives::N_REFLECT_FIELD_PATH {
+    self.reflect_field_path_native();
+    return;
+  }
   if natives::is_state_native(h) {
     self.keyed_entry(h == natives::N_KEYED_ENTRY_TEXT);
     return;
@@ -281,6 +289,180 @@ pub fn reflect_push(self: state::State, kt: integer) {
   self.ensure_stack(16);
   crt::set_slot_ref(self.stk, self.stack_pos, s, r, p);
   self.stack_pos += 16;
+}
+
+// The data field of record type `kt` that BEGINS at byte `position` (`LayoutField::is_data`:
+// not the enum tag, not a `#` field), -1 for none: its index in the type's fields.
+fn data_field(self: state::State, kt: integer, position: integer) -> integer {
+  k = types::reflect_kind(self.types, kt);
+  if k != 8 && k != 10 {
+    return -1;
+  }
+  for f in types::record_fields(self.types, kt) {
+    if f.name != "enum" && !f.name.starts_with("#") && f.position == position {
+      return f#index;
+    }
+  }
+  -1
+}
+
+// `field_value(x, position)` / `field_value(x, path)` (native.rs `reflect_field_at`): the value
+// at a reflected position of the record `(vs, vr, vp)` of type `kt` — each step of a path an
+// inline record field — as a `ValueInfo` in a store of its own, its reference pushed.  A
+// position no data field begins at, or a null record, answers `OtherKind` with nothing read;
+// a scalar's null is its own kind's sentinel.
+fn field_value_push(self: state::State, vs: integer, vr: integer, vp: integer, kt0: integer, path: vector<integer>) {
+  self.load_table();
+  fv = self.type_nr("ValueInfo");
+  if fv < 0 {
+    self.stop("not carried: field_value without the ValueInfo type");
+    return;
+  }
+  kt = kt0;
+  at = vp;
+  fidx = -1;
+  content = -1;
+  ok = len(path) > 0;
+  for step in path {
+    if !ok {
+      break;
+    }
+    fidx = self.data_field(kt, step);
+    if fidx < 0 {
+      ok = false;
+    } else {
+      f = types::record_fields(self.types, kt)[fidx]!;
+      content = f.content;
+      if step#index + 1 < len(path) {
+        // Every step but the last lands on an inline record.
+        ck = types::reflect_kind(self.types, content);
+        if ck != 8 && ck != 10 {
+          ok = false;
+        }
+        at += f.position;
+        kt = content;
+      } else {
+        at += f.position;
+      }
+    }
+  }
+  kind = if ok && vr != 0 { types::reflect_kind(self.types, content) } else { 14 };
+  self.lio[0] = state::NULL_STORE;
+  self.lio[1] = 0;
+  self.lio[2] = 0;
+  crt::database(self.lio, self.types[fv]?.size ?? 0, fv);
+  s = self.lio[0] ?? state::NULL_STORE;
+  r = self.lio[1] ?? 0;
+  p = self.lio[2] ?? 0;
+  iw = self.field_wide(fv, "i");
+  crt::set_w(crt::W_BYTE, s, r, p, self.field_at(fv, "kind"), 0, kind);
+  put_int_at(s, r, p, self.field_at(fv, "i"), iw, 0);
+  crt::set_float(s, r, p, self.field_at(fv, "f"), 0.0, (self.types[types::record_fields(self.types, fv)[self.field_index(fv, "f")]?.content ?? 3]?.size ?? 8) == 4);
+  is_null = false;
+  if kind != 14 {
+    iv: integer? = 0;
+    flv: float? = 0.0;
+    tv: text? = null;
+    istext = false;
+    isfloat = false;
+    match self.types[content]?.parts[0] {
+      PtBase => {
+        if content == 0 || content == 1 {
+          iv = crt::get_int(vs, vr, at, 0);
+          is_null = iv == null;
+        } else if content == 2 || content == 3 {
+          flv = crt::get_float(vs, vr, at, 0, content == 2);
+          is_null = flv == null;
+          isfloat = true;
+        } else if content == 4 {
+          b = crt::get_w(crt::W_BYTE, vs, vr, at, 0, 0);
+          is_null = b == null || b == 255;
+          iv = (b ?? 0) & 1;
+        } else if content == 6 {
+          c = crt::get_w(crt::W_CHARACTER, vs, vr, at, 0, 0) ?? 0;
+          is_null = c == 0;
+          iv = c;
+        } else if content == 5 {
+          tv = crt::get_text(vs, vr, at, 0);
+          is_null = tv == null;
+          istext = true;
+        }
+      }
+      PtByte { start, nullable } => {
+        raw = crt::get_w(crt::W_BYTE, vs, vr, at, 0, 0);
+        is_null = raw == null || (nullable && raw == 255);
+        iv = if is_null { null } else { raw! + start };
+      }
+      PtShort { start, nullable: _ } => {
+        iv = crt::get_w(crt::W_SHORT, vs, vr, at, 0, start);
+        is_null = iv == null;
+      }
+      PtShortRaw { start, nullable: _ } => {
+        iv = crt::get_w(crt::W_SHORT_RAW, vs, vr, at, 0, start);
+        is_null = iv == null;
+      }
+      PtInt { start: _, nullable: _ } => {
+        iv = crt::get_w(crt::W_INT4, vs, vr, at, 0, 0);
+        is_null = iv == null;
+      }
+      _ => {}
+    }
+    if !is_null {
+      put_int_at(s, r, p, self.field_at(fv, "i"), iw, if isfloat || istext { 0 } else { iv ?? 0 });
+      if isfloat {
+        crt::set_float(s, r, p, self.field_at(fv, "f"), flv, (self.types[types::record_fields(self.types, fv)[self.field_index(fv, "f")]?.content ?? 3]?.size ?? 8) == 4);
+      }
+      if istext {
+        crt::set_text(s, r, p, self.field_at(fv, "t"), tv);
+      }
+    }
+  }
+  crt::set_w(crt::W_BYTE, s, r, p, self.field_at(fv, "is_null"), 0, if is_null { 1 } else { 0 });
+  self.ensure_stack(16);
+  crt::set_slot_ref(self.stk, self.stack_pos, s, r, p);
+  self.stack_pos += 16;
+}
+
+fn field_index(self: state::State, tp: integer, name: text) -> integer {
+  for f in types::record_fields(self.types, tp) {
+    if f.name == name {
+      return f#index;
+    }
+  }
+  0
+}
+
+// `field_value(x, position)`: the type number, the position and the record popped.
+pub fn reflect_field_native(self: state::State) {
+  kt = self.get_stack_i64() ?? -1;
+  position = self.get_stack_i64() ?? -1;
+  if !self.can_pop(16) {
+    return;
+  }
+  self.stack_pos -= 16;
+  crt::slot_ref(self.lio, self.stk, self.stack_pos);
+  self.field_value_push(self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, kt, [position]);
+}
+
+// `field_value(x, path)`: the type number, the path (a `vector<integer>`) and the record popped.
+pub fn reflect_field_path_native(self: state::State) {
+  kt = self.get_stack_i64() ?? -1;
+  if !self.can_pop(32) {
+    return;
+  }
+  self.stack_pos -= 32;
+  crt::slot_ref(self.lio, self.stk, self.stack_pos + 16);
+  ps = self.lio[0] ?? state::NULL_STORE;
+  pr = self.lio[1] ?? 0;
+  pp = self.lio[2] ?? 0;
+  path: vector<integer> = [];
+  n = crt::vec_len(ps, pr, pp);
+  for i in 0..n {
+    crt::vec_get(self.lio, ps, pr, pp, 8, i);
+    path += [crt::get_int(self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, 0) ?? -1];
+  }
+  crt::slot_ref(self.lio, self.stk, self.stack_pos);
+  self.field_value_push(self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, kt, path);
 }
 
 pub fn reflect_type_native(self: state::State) {

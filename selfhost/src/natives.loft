@@ -75,6 +75,8 @@ pub N_STACK_TRACE = 200;
 pub N_C_CALL = 201;
 pub N_REFLECT_TYPE = 202;
 pub N_TYPE_NAMED = 203;
+pub N_REFLECT_FIELD = 204;
+pub N_REFLECT_FIELD_PATH = 205;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -89,6 +91,8 @@ pub fn native_handler(name: text) -> integer {
     "n_stack_trace" => N_STACK_TRACE,
     "n_reflect_type" => N_REFLECT_TYPE,
     "n_type_named" => N_TYPE_NAMED,
+    "n_reflect_field" => N_REFLECT_FIELD,
+    "n_reflect_field_path" => N_REFLECT_FIELD_PATH,
     "n_env_variable_dest" => N_ENV_VARIABLE_DEST,
     "n_now" => N_NOW,
     "n_ticks" => N_TICKS,
@@ -417,7 +421,7 @@ pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: v
 // keyed entries, which read the record target's facts it derives once; `stack_trace`, which
 // reads the frame list; a program's own `#c` binding, which the image describes.
 pub fn is_state_native(nh: integer) -> boolean {
-  nh == N_KEYED_ENTRY_INTS || nh == N_KEYED_ENTRY_TEXT || nh == N_STACK_TRACE || nh == N_C_CALL || nh == N_REFLECT_TYPE || nh == N_TYPE_NAMED
+  nh == N_KEYED_ENTRY_INTS || nh == N_KEYED_ENTRY_TEXT || nh == N_STACK_TRACE || nh == N_C_CALL || nh == N_REFLECT_TYPE || nh == N_TYPE_NAMED || nh == N_REFLECT_FIELD || nh == N_REFLECT_FIELD_PATH
 }
 
 // Whether `light` carries native handler `nh`.
