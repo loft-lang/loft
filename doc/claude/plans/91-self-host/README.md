@@ -211,7 +211,8 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
    manager, the debugger, the REPL, the language server, `gendoc` and the exports, then the
    selfhost harness and the comparison as loft programs; each part diffed against the Rust
    tool's output on the same input before the Rust part is removed.
-6. **Rust retired.**  The library leftovers (strand 10: `plugin_runtime`'s crates, the
+6. **Rust retired — when [§ The double implementation](#the-double-implementation--why-the-rust-side-stays-live)
+   says so, not at a date.**  The library leftovers (strand 10: `plugin_runtime`'s crates, the
    library CI's cargo build and rustc leg, the `bench.rs` twins), the rustc backend
    (`src/generation/`) and every `src/*.rs` file removed; no Cargo in the build.  Gate: loft
    built from C alone, its full suite green on the interpreter and the C backend.
@@ -274,6 +275,55 @@ What the method leaves behind is a language whose remaining defects are shallow 
 exact sense: each is a disagreement between two independent implementations of a written
 rule, caught by a byte diff, with a cell that pins it — never a decision buried in a writer
 nobody can rebuild.
+
+### The double implementation — why the Rust side stays live
+
+The Rust implementation is not frozen at the flip and not retired at a date (owner,
+2026-11-15): it is kept live, every language change landing on both sides, for as long as the
+ledger below says it earns its keep.  Stage 6 is taken when the ledger says so, never before.
+
+**What two live implementations buy.**  Every change is proved twice: the hand-computed cell
+says what is right, and the byte-equal comparison says both implementations agree with it.  A
+live reference answers a new program as well as an old one, so no golden corpus is needed
+while it lives.  And the second implementation is a reading of loft itself: a change whose
+natural design differs between the loft side and the Rust side is a FINDING — a construct loft
+lacks, a decision to cost, or a place where loft is the better language — and goes on the
+friction register ([1b-interpreter.md § The dogfood rule](1b-interpreter.md#the-dogfood-rule-governs-every-step),
+the design → code notes).  Such a call is not the burden of the mirror; it is its yield.
+
+**Why the mirror is cheap.**  In a stable project the time spent deciding what to change
+outweighs the change by far: a fix here is a median of 10 to 24 hours from filing to close, of
+which the edit is minutes, and the port put 25,000 lines into the tree in two days because
+every decision in them had been taken once already.  Two implementations cost the cheap half
+twice and the expensive half never, as long as they share one decision: one formal rule, one
+cell, one IR.
+
+**The rules of a change while both sides live.**
+
+- **The cell first**, hand-computed against the formal rule; then whichever side is cheaper to
+  change; then the other to match under the byte-equal gate.
+- **A change is done when the survey reads equal again**, not when its own tests pass.  A
+  join that lands with a non-zero differ count is the mirror lagging, and nothing else
+  reports it.
+- **A change to the IR lands on both sides in one commit**, with `ir.loft` and the round-trip
+  test: a half-changed IR breaks the comparison for every program at once.
+- **The last Rust-built release binary is kept at each release** (the reproducible build), so
+  the day the Rust side stops, the last answer it gave to any program is still in hand.
+- **The loft side may be made clean at any time** under the refactor gate: a module redesigned
+  is admitted when its outputs stay byte-identical over the corpus before and after.
+
+**The ledger, read with the weekly series.**  Two columns, both from what the tree already
+records:
+
+| column | what it counts | reads as |
+|---|---|---|
+| yield | friction-register rows and design → code notes the mirror produced that week | the second implementation reading the language |
+| burden | the lag from a change landing on one side to the survey reading equal again, and the commits that only carry the other side with no register row | transcription that taught nothing |
+
+The day to reconsider the Rust side is when the yield column stops growing while the burden
+column still does: the mirror then only repeats what the language already knows.  Until then a
+week with many design calls is the double implementation earning its keep, not a reason to
+stop.
 
 ## Honest floors + costs (do not design these away)
 
