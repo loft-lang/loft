@@ -1,0 +1,181 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `StoreFacts` (`src/opt/push_window.rs`): which two variables of a
+// function can be proved to name records in DIFFERENT stores (`@FR-R-Alias`), read off the
+// dependency lists of their types.  Without the adopted return buffer (`ret_adopt`), the
+// buffers an emitter owns and the pairs a run-time test proved apart.
+
+use ir;
+use binds;
+use loop_shape;
+use own;
+use opt_non_sentinel;
+
+// The facts of one function: its variables, the locals whose buffer was placed in another
+// record's store, and the locals that host one.
+pub struct Facts {
+  pub d: integer,
+  pub placed: vector<boolean>,
+  pub hosts: vector<boolean>,
+}
+
+// `placed_locals` and `placed_hosts` of function `d`.
+pub fn facts_of(b: ir::Bundle, d: integer) -> Facts {
+  def = b.data.definitions[d]!;
+  count = len(def.variables.variables);
+  placed: vector<boolean> = [for _ in 0..count { false }];
+  hosts: vector<boolean> = [for _ in 0..count { false }];
+  if len(def.code) > 0 {
+    opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+      match n {
+        NdSet { var, inner } => {
+          match loop_shape::unspan(inner) {
+            NdCall { def_nr, args: _ } => {
+              if def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == "OpPlaceRecord" && var < count {
+                placed[var] = true;
+              }
+            },
+            _ => {},
+          }
+        },
+        NdCall { def_nr, args } => {
+          if def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == "OpPlaceRecord" && len(args) > 0 {
+            host = loop_shape::var_of(loop_shape::unspan(args[0]));
+            if host >= 0 && host < count {
+              hosts[host] = true;
+            }
+          }
+        },
+        _ => {},
+      }
+    });
+  }
+  Facts { d: d, placed: placed, hosts: hosts }
+}
+
+// The variables `cur`'s type depends on, but for itself.
+fn deps_of(f: ir::Function, cur: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for dep in own::tp_depend(f, cur) {
+    if dep != cur {
+      out += [dep];
+    }
+  }
+  out
+}
+
+// `terminal`: the variable at the end of `x`'s dependency chain — the one whose store `x`'s
+// record lives in — or -1 where the chain forks to different ends or loops.
+fn terminal_from(f: ir::Function, x: integer, seen: vector<boolean>) -> integer {
+  cur = x;
+  for _ in 0..len(f.variables) + 1 {
+    if cur < 0 || cur >= len(f.variables) || seen[cur]! {
+      return -1;
+    }
+    seen[cur] = true;
+    deps = deps_of(f, cur);
+    if len(deps) == 0 {
+      return cur;
+    }
+    if len(deps) == 1 {
+      cur = deps[0];
+      continue;
+    }
+    end = -1;
+    for dep in deps {
+      branch: vector<boolean> = [for s in seen { s }];
+      t = terminal_from(f, dep, branch);
+      if t < 0 || (end >= 0 && end != t) {
+        return -1;
+      }
+      end = t;
+    }
+    return end;
+  }
+  -1
+}
+
+pub fn terminal(b: ir::Bundle, facts: Facts, x: integer) -> integer {
+  f = b.data.definitions[facts.d]!.variables;
+  terminal_from(f, x, [for _ in 0..len(f.variables) { false }])
+}
+
+// `fresh`: a chain end that owns its store alone — a hidden store witness, or a plain local
+// record the frame made.
+fn fresh(b: ir::Bundle, facts: Facts, t: integer) -> boolean {
+  f = b.data.definitions[facts.d]!.variables;
+  if facts.placed[t]! || facts.hosts[t]! {
+    return false;
+  }
+  v = f.variables[t]!;
+  if v.name.starts_with("__vdb") {
+    return true;
+  }
+  tp = binds::base(v.type_def[0] ?? ir::TyVoid);
+  !v.argument && !v.captured && !binds::is_inline_ref(f, t) && !own::is_skip_free(f, t) && !binds::is_compiler_generated(f, t) && !(tp is TyRefVar) && own::is_dbref(tp)
+}
+
+// `fork`: the dependencies where `x`'s chain first forks; empty where it never does.
+fn fork(f: ir::Function, x: integer) -> vector<integer> {
+  cur = x;
+  seen: vector<boolean> = [for _ in 0..len(f.variables) { false }];
+  for _ in 0..len(f.variables) + 1 {
+    if cur < 0 || cur >= len(f.variables) || seen[cur]! {
+      return [];
+    }
+    seen[cur] = true;
+    deps = deps_of(f, cur);
+    if len(deps) == 0 {
+      return [];
+    }
+    if len(deps) == 1 {
+      cur = deps[0];
+      continue;
+    }
+    return deps;
+  }
+  []
+}
+
+fn distinct_at(b: ir::Bundle, facts: Facts, a: integer, c: integer, depth: integer) -> boolean {
+  f = b.data.definitions[facts.d]!.variables;
+  // A forked chain is apart from the other variable when every branch is.
+  if depth < 4 {
+    branches = fork(f, a);
+    if len(branches) > 0 {
+      for dep in branches {
+        if !distinct_at(b, facts, dep, c, depth + 1) {
+          return false;
+        }
+      }
+      return true;
+    }
+    others = fork(f, c);
+    if len(others) > 0 {
+      for dep in others {
+        if !distinct_at(b, facts, a, dep, depth + 1) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  ta = terminal(b, facts, a);
+  tc = terminal(b, facts, c);
+  if ta < 0 || tc < 0 {
+    return false;
+  }
+  ta != tc && (fresh(b, facts, ta) || fresh(b, facts, tc))
+}
+
+// `distinct`: are the records `a` and `c` name proved to live in different stores?
+pub fn distinct(b: ir::Bundle, facts: Facts, a: integer, c: integer) -> boolean {
+  distinct_at(b, facts, a, c, 0)
+}
+
+// Are the store facts asked at all (`LOFT_NO_DISTINCT_GROWTH` turns them off)?
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_DISTINCT_GROWTH") ?? "0") == "0"
+}

@@ -17,6 +17,7 @@ use opt_names;
 use opt_non_sentinel;
 use opt_push;
 use opt_writes;
+use opt_facts;
 
 // One vector a loop may hold: its path, the path's root variable, the expression naming it.
 pub struct Held {
@@ -122,10 +123,12 @@ pub struct LoopHoist {
   pub mint_pushes: vector<Held>,
   pub growth_free: boolean,
   pub sole_push: boolean,
+  // The roots of what the loop grows: its pushed and minted paths and its reservations.
+  pub movers: vector<integer>,
 }
 
 fn nothing() -> LoopHoist {
-  LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false }
+  LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [] }
 }
 
 // `owned_local`: a local that owns its store — no parameter, no link, not captured, and
@@ -234,7 +237,7 @@ fn reserved_roots(b: ir::Bundle, lp: ir::Block) -> vector<integer> {
 // store otherwise, where it rebinds a path it pushes to, or where a push could alias another
 // held vector.  The mint tier, the held scalars, the callee inputs and every apart clause are
 // not carried.
-pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Block) -> LoopHoist {
+pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
   tier = (if (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0" { 1 } else { 0 }) + (if (env_variable("LOFT_NO_PUSH_HOIST") ?? "0") == "0" { 4 } else { 0 }) + (if (env_variable("LOFT_NO_MINT_HOIST") ?? "0") == "0" { 8 } else { 0 });
   d = b.data.definitions[vd]!;
   fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
@@ -243,7 +246,7 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Bloc
       return nothing();
     }
   }
-  out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false };
+  out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false, movers: [] };
   pushes: vector<Held> = if tier & 4 != 0 { pushed_paths(b, lp) } else { [] };
   // The paths the body mints a record element into, each with whether every mint group on
   // it qualifies for the record push.
@@ -316,6 +319,7 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Bloc
       movers += [r];
     }
   }
+  out.movers = movers;
   if len(pushes) == 0 && len(mints) == 0 {
     return out;
   }
@@ -367,7 +371,21 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Bloc
       }
     }
     for q in out.vectors {
-      if owned_local(d, q.root) || (d.variables.variables[q.root]!.argument && !any_retbuf) {
+      // …or a vector the store facts prove apart from every mover.
+      apart = opt_facts::enabled();
+      for m in movers {
+        if apart && !opt_facts::distinct(b, facts, q.root, m) {
+          apart = false;
+        }
+      }
+      // A mover itself stays for now: it leaves the read list below.
+      is_mover = false;
+      for p in moved {
+        if p.path == q.path {
+          is_mover = true;
+        }
+      }
+      if is_mover || owned_local(d, q.root) || (d.variables.variables[q.root]!.argument && !any_retbuf) || apart {
         kept += [q];
       }
     }

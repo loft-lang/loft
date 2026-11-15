@@ -10,6 +10,7 @@
 use ir;
 use loop_shape;
 use opt_hoist;
+use opt_facts;
 use opt_push;
 use opt_range;
 use opt_non_sentinel;
@@ -71,13 +72,23 @@ pub fn held_vector(x: Cx, w: W, v: ir::Node) -> text {
 // with `release`, by the two lengths it saved.
 pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::LoopHoist {
   if !enabled() {
-    return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false };
+    return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [] };
   }
-  verdict = opt_hoist::hoistable(x.b, x.writes, w.index, lp);
+  verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
   // A loop that grows a store holds its headers without their base (`kept_bases` without the
   // store facts).
-  base = if verdict.growth_free { 1 } else { 0 };
   for v in verdict.vectors {
+    // `kept_bases`: a loop that grows no store keeps every base; beside a growth, the base
+    // of a vector the store facts prove apart from every mover.
+    base = if verdict.growth_free { 1 } else { 0 };
+    if base == 0 && len(verdict.movers) > 0 && opt_facts::enabled() {
+      base = 1;
+      for m in verdict.movers {
+        if !opt_facts::distinct(x.b, w.facts, v.root, m) {
+          base = 0;
+        }
+      }
+    }
     // A path an enclosing loop holds keeps that header, unless this one carries a base the
     // outer one lacks.
     outer = -1;

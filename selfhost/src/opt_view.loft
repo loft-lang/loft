@@ -17,6 +17,7 @@ use opt_names;
 use opt_non_sentinel;
 use opt_push;
 use opt_writes;
+use opt_facts;
 use types;
 
 fn def_name(b: ir::Bundle, d: integer) -> text {
@@ -277,7 +278,7 @@ fn free_before_use(b: ir::Bundle, d: ir::Definition, stmts: vector<ir::Node>, fr
 // `view_extent_verdict`: may the address of view `r` serve the statements `stmts[from..]` of
 // function `vd`?  They read or write a scalar field of it, none of them may move a store or
 // rebind the view, and no record is released before a use of it.
-pub fn view_extent_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, from: integer, r: integer, extra_use: boolean) -> boolean {
+pub fn view_extent_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, stmts: vector<ir::Node>, from: integer, r: integer, extra_use: boolean) -> boolean {
   d = b.data.definitions[vd]!;
   targets = binds::link_targets(d.variables, r);
   state = [false, false];
@@ -334,8 +335,24 @@ pub fn view_extent_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: 
   if !state[1]! && !extra_use {
     return false;
   }
+  // The remainder clause: a push or mint into a store proved apart from the view's cannot
+  // move it, so the push and mint tiers open when every mover's root is apart from `r`.
+  tier = 1;
+  if opt_facts::enabled() {
+    roots = mover_roots(b, d, stmts, from);
+    apart = len(roots) > 0;
+    for m in roots {
+      if !opt_facts::distinct(b, facts, r, m) {
+        apart = false;
+      }
+    }
+    if apart {
+      tier = 13;
+    }
+  }
+  fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
   for op in stmts {
-    if op#index >= from && opt_writes::blocks_in_place(b, w, vd, op) {
+    if op#index >= from && opt_writes::blocks_under(b, w, vd, op, tier, fresh) {
       return false;
     }
   }
@@ -368,17 +385,17 @@ fn flat_copy(b: ir::Bundle, args: vector<ir::Node>) -> boolean {
 }
 
 // `param_view_ptr`: may parameter `p`'s address be taken at entry for the whole body?
-pub fn param_view_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, p: integer) -> boolean {
+pub fn param_view_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, stmts: vector<ir::Node>, p: integer) -> boolean {
   tp = b.data.definitions[vd]!.variables.variables[p]!.type_def[0]!;
   if (tp is TyOptional) || !opt_writes::is_plain_record(b, tp) {
     return false;
   }
-  view_extent_ok(b, w, vd, stmts, 0, p, false)
+  view_extent_ok(b, w, facts, vd, stmts, 0, p, false)
 }
 
 // `record_view_ptr`: may the address of the view statement `at` binds be taken there, for the
 // statements `stmts[at + 1..]`?
-pub fn record_view_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, at: integer, extra_use: boolean) -> boolean {
+pub fn record_view_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, stmts: vector<ir::Node>, at: integer, extra_use: boolean) -> boolean {
   r = -1;
   bound_null = false;
   match loop_shape::unspan(stmts[at]!) {
@@ -399,7 +416,7 @@ pub fn record_view_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: 
   if bound_null {
     return false;
   }
-  view_extent_ok(b, w, vd, stmts, at + 1, r, extra_use)
+  view_extent_ok(b, w, facts, vd, stmts, at + 1, r, extra_use)
 }
 
 // `reads_text_field`: do the statements `stmts[from..]` read a text field of view `r`?
@@ -417,4 +434,44 @@ pub fn reads_text_field(b: ir::Bundle, stmts: vector<ir::Node>, from: integer, r
     }
   });
   hit[0]!
+}
+
+// `mover_roots`: the roots of what `stmts[from..]` grows — a fusable push, a reservation, a
+// record mint — each once, in first-appearance order.
+fn mover_roots(b: ir::Bundle, d: ir::Definition, stmts: vector<ir::Node>, from: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  rest = ir::NdInsert { items: stmts[from..len(stmts)] };
+  opt_non_sentinel::walk(rest, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        path = "";
+        root = -1;
+        if opt_push::fused(b, name, args, path, root) == 0 {
+          root = -1;
+          if !(name == "OpPreAllocVector" && len(args) == 3 && opt_push::vector_path(b, args[0], root) != "") {
+            root = -1;
+            vtp = 0;
+            opt_push::mint_target(b, d, name, args, path, root, vtp);
+            if path == "" {
+              root = -1;
+            }
+          }
+        }
+        if root >= 0 {
+          seen = false;
+          for o in out {
+            if o == root {
+              seen = true;
+            }
+          }
+          if !seen {
+            out += [root];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  out
 }

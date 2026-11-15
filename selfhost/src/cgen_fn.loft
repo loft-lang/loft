@@ -27,6 +27,7 @@ use cgen_split;
 use cgen_recptr;
 use cgen_hoist;
 use own;
+use opt_facts;
 use cgen_texts;
 use cgen_natives;
 use opt_names;
@@ -2627,6 +2628,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     rec_ptrs: [],
     headers: [],
     push_heads: [],
+    facts: opt_facts::facts_of(x.b, index),
     range_lens: [],
     alias_var: -1,
     alias_vec: ir::NdNull,

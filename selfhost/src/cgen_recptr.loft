@@ -204,7 +204,7 @@ pub fn bind_param_ptrs(x: Cx, w: W, code: ir::Node) {
     if !p || (w.shapes[v] ?? "") != "ref" || w.links[v]! || opt_view::scalar_field_uses(x.b, stmts, 0, v) < 2 {
       continue;
     }
-    if !opt_view::param_view_ok(x.b, x.writes, w.index, stmts, v) {
+    if !opt_view::param_view_ok(x.b, x.writes, w.facts, w.index, stmts, v) {
       continue;
     }
     bind(x, w, v, stmts, 0, 1, false);
@@ -245,7 +245,7 @@ pub fn bind_record_ptr(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: int
   // The text clause: an element of a held vector serves its text field reads through the
   // address — a record element's texts are records of its vector's store.
   texts = (env_variable("LOFT_NO_TEXT_FIELD") ?? "0") == "0" && held_element_bind(x, w, ops[at]!).header != "" && opt_view::reads_text_field(x.b, remainder, at + 1, r);
-  if !opt_view::record_view_ok(x.b, x.writes, w.index, remainder, at, texts) {
+  if !opt_view::record_view_ok(x.b, x.writes, w.facts, w.index, remainder, at, texts) {
     return;
   }
   bind(x, w, r, ops, at + 1, ind, texts);
