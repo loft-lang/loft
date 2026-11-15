@@ -45,8 +45,16 @@ getting faster where the runner exposed a mechanism.  How the loop and an arm wo
    (1.27 G vs 20 M instructions) and 6x on the interpreter, every loft program with accessor
    helpers.  `(F-Ret)` makes the result fresh; a call site that only reads the result while
    nothing writes the source cannot tell a view from the copy (the condition `(R-CopyView)`
-   uses for locals).  A rewrite: such a callee returns the place as a view to such sites.
-   Not started; needs the design pass (`design-protocol`) and a formal rule.
+   uses for locals).  The rule already exists: `(R-ViewReturn)` (rewrites.md,
+   `src/lower/view_return.rs`) — a twin answering (address, owned) — but it is applied by the
+   rustc writer only, and it declines every natural accessor spelling.  Measured on the probe
+   (`fn parts_of(ts: const vector<T>, tp) -> Parts?` against the inline `ts[tp]?.parts[0]`):
+   6.5x on `--native`, 30x on `--native-c`, 7x on the interpreter; `LOFT_TRACE_VIEW_RETURN`
+   declines `t = ts[tp]; …; t.parts[0]`, the same with `return`, and a `for` finder ("the
+   callee writes or returns otherwise"), and `return ts[tp]?.parts[0]` is no candidate at
+   all.  The work is widening its callee grammar to those shapes (an enum or `?` result, a
+   local bound from the element, a tail expression), then carrying it to the C writer and the
+   IR, each step with its own matrix.
 2. **A C routine cannot return a text but through a byte vector** (`room()`, a store per call):
    `crt::show_leaf` (`map_json` 2.25), `stack_str`, `get_text`.  A `#c_twin` signature returning
    the runtime's `loft_text` would remove the buffer; it touches `c_signature.rs`'s consumers.
