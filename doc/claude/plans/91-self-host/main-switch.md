@@ -65,6 +65,17 @@ So the hard part was always the front end.  The C backend only looked hard while
 written in Rust against rustc; once it existed as a writer over decided data it became the
 easiest part to write again.
 
+**What the interpreter stream builds beside the long pole: the spine.**  The C generator is a
+leaf — it reads an image and writes text.  The interpreter stream builds the spine the leaves
+hang on: lexer, parser, elaborator, scope pass, bytecode writer, runner, each a loft program
+with a gate of its own, and `selfhost/front/loft.loft` is where they are joined into one path
+from source to answer.  Once that path runs the corpus, the whole is visible in a way the Rust
+tree never made it: one ranked list of what still refuses, by family, across every stage at
+once (`elab_gate.py --plan` is its first form), instead of a count per part.  It is also what
+lets the C generator drop in at the end as one more consumer of the same image, so the spine
+is what both ports eventually stand on.  That is why phase 1's gate is the whole path running
+the corpus, never a part reaching a count.
+
 ## The phases
 
 Phases 1 and 2 run in parallel, as the two streams run now, with phase 0 ahead of both.
