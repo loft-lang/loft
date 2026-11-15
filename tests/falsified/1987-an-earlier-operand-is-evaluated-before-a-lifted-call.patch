@@ -1,8 +1,8 @@
 diff --git a/src/scopes/args.rs b/src/scopes/args.rs
-index eada78143..37d57e7ae 100644
+index 77997522b..26e041589 100644
 --- a/src/scopes/args.rs
 +++ b/src/scopes/args.rs
-@@ -311,16 +311,8 @@ impl Scopes<'_> {
+@@ -388,16 +388,8 @@ impl Scopes<'_> {
                  if *d == create_stack_nr
                      && matches!(cargs.first().map(Value::unspan), Some(Value::Var(_))))
          });
@@ -19,7 +19,7 @@ index eada78143..37d57e7ae 100644
              // loft#1320 — a branch VALUE consumed by this call (`total(if c { g(a) } else { g(n) })`)
              // never reaches `scan_set`, so its arms get their owners here, homed in this statement's
              // scope: the call reads the temp and the scope's exit frees it by identity.
-@@ -691,11 +683,6 @@ impl Scopes<'_> {
+@@ -768,11 +760,6 @@ impl Scopes<'_> {
                  ls.push(scanned);
              }
          }
@@ -30,8 +30,8 @@ index eada78143..37d57e7ae 100644
 -        }
          if outer_call != u32::MAX && ls.len() == args.len() {
              self.copy_written_text_operands(outer_call, &mut preamble, &mut ls, function, data);
-         }
-@@ -830,61 +817,6 @@ impl Scopes<'_> {
+             self.copy_written_vector_operands(outer_call, &mut preamble, &mut ls, function, data);
+@@ -908,61 +895,6 @@ impl Scopes<'_> {
          }
      }
  
@@ -93,8 +93,8 @@ index eada78143..37d57e7ae 100644
      /// `@FR-E-Left` for a text operand: a text variable passed by VALUE (its parameter a
      /// `text`) is read by reference by the interpreter and the Rust backend, so a LATER operand
      /// that writes the variable — assigns it, or hands it to a parameter that is not a `text`
-@@ -928,88 +860,6 @@ impl Scopes<'_> {
-         }
+@@ -1073,88 +1005,6 @@ impl Scopes<'_> {
+         ls[0] = field;
      }
  
 -    /// Does `operand` answer the same whenever it is evaluated relative to `hoisted`: a

@@ -75,6 +75,83 @@ pub(crate) fn writes_var(v: &Value, x: u16, data: &Data) -> bool {
     })
 }
 
+/// Can evaluating `v` change the CONTENTS of vector variable `x` (`@FR-E-Left`, loft#2503)?
+/// A rebind of `x`; a closure call (it may hold `x`); an operator that mutates the vector in
+/// its first argument, or a field / element write (`OpSet*`) whose target is reached from `x`;
+/// and a call of a function handed `x` (or its `&`, `OpCreateStack(x)`) at a parameter that
+/// is not `const` and that the function may write — a `&` parameter always, a native (no loft
+/// body to read) always, and a loft body when IT writes that parameter by this same test
+/// (`len(self: vector)` reads, so `v[len(v) - 1]` is no write; a plain vector parameter is the
+/// caller's store, so a body that pushes onto one is).  An operator outside the list only
+/// READS its vector (`OpLengthVector`, `OpGetVector`, the comparisons): that is the claim the
+/// fallback makes.  A call chain deeper than [`WRITES_DEPTH`] answers yes: a copy is never
+/// wrong, only slower.
+pub(crate) fn writes_vector(v: &Value, x: u16, data: &Data) -> bool {
+    writes_vector_at(v, x, data, 0)
+}
+
+const WRITES_DEPTH: u8 = 6;
+
+fn writes_vector_at(v: &Value, x: u16, data: &Data, depth: u8) -> bool {
+    // A write TARGET reached from `x`: `x` itself or a projection chain rooted in it.
+    fn names(a: &Value, x: u16) -> bool {
+        a.any_node(&mut |n| matches!(n, Value::Var(y) if *y == x))
+    }
+    // The vector itself handed to a call: `x`, or its `&` (`OpCreateStack(x)`).  An element
+    // value (`f(v[0])`) is not the vector.
+    fn hands(a: &Value, x: u16, data: &Data) -> bool {
+        match a.unspan() {
+            Value::Var(y) => *y == x,
+            Value::Call(d, inner) => {
+                data.def(*d).name() == "OpCreateStack"
+                    && matches!(inner.first().map(Value::unspan), Some(Value::Var(y)) if *y == x)
+            }
+            _ => false,
+        }
+    }
+    const MUTATORS: &[&str] = &[
+        "OpClearVector",
+        "OpRemoveVector",
+        "OpKeepVectorRange",
+        "OpPrependVector",
+        "OpInsertVector",
+        "OpAppendVector",
+        "OpSliceVector",
+        "OpAdoptVector",
+        "OpReplaceVector",
+        "OpMoveVector",
+        "OpPreAllocVector",
+        "OpReserveVector",
+    ];
+    v.any_node(&mut |n| match n {
+        Value::Set(y, _) => *y == x,
+        Value::CallRef(..) => true,
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let def = data.def(*d);
+            let name = def.name();
+            if name.starts_with("Op") {
+                (MUTATORS.contains(&name) || name.starts_with("OpSet"))
+                    && args.first().is_some_and(|a| names(a, x))
+                    || (name == "OpMoveVector" && args.get(1).is_some_and(|a| names(a, x)))
+            } else {
+                args.iter().enumerate().any(|(k, a)| {
+                    hands(a, x, data)
+                        && def.attributes.get(k).is_none_or(|p| {
+                            !p.constant
+                                && (matches!(p.typedef.base(), Type::RefVar(_))
+                                    || matches!(def.code(), Value::Null)
+                                    || depth >= WRITES_DEPTH
+                                    || u16::try_from(k).map_or(true, |kv| {
+                                        writes_vector_at(def.code(), kv, data, depth + 1)
+                                    }))
+                        })
+                })
+            }
+        }
+        _ => false,
+    })
+}
+
 /// The argument whose store `outer_call` frees for itself (`OpSets::freed_source_arg`): a
 /// source that is an inline call the scope pass lifts into a `__lift_N` is a store that temp
 /// also owns, and its scope-exit `OpFreeRef` would be a second release — silent while the
@@ -698,6 +775,7 @@ impl Scopes<'_> {
         }
         if outer_call != u32::MAX && ls.len() == args.len() {
             self.copy_written_text_operands(outer_call, &mut preamble, &mut ls, function, data);
+            self.copy_written_vector_operands(outer_call, &mut preamble, &mut ls, function, data);
         }
         if outer_call != u32::MAX && ls.len() == args.len() {
             self.keep_viewed_displaced(
@@ -926,6 +1004,73 @@ impl Scopes<'_> {
             preamble.push(v_set(tmp, Value::Var(x)));
             ls[j] = Value::Var(tmp);
         }
+    }
+
+    /// `@FR-E-Left` for a VECTOR operand (loft#2503, the old D-op-3): the vector an element
+    /// read indexes is a reference to its store, so an index that writes the vector —
+    /// replaces it through a `&` parameter, writes an element, pushes through a plain
+    /// parameter — changed what the read saw: `v[set(v)]` read the NEW vector.  The operand
+    /// takes its value first: a store minted for it (`OpDatabase` of the element type's
+    /// `main_vector<T>` record, freed at scope exit as every lift is), the vector copied in
+    /// (`OpAppendVector`, as `u = v` copies), and the read indexes the copy.  Only an index
+    /// that WRITES it (`writes_vector`) pays the copy: `v[len(v) - 1]` reads in place.  An
+    /// element type with no `main_vector<T>` in the program (no vector of it was ever minted)
+    /// keeps the read in place.  `LOFT_NO_COPY_WRITTEN_VECTOR=1` leaves every one.
+    fn copy_written_vector_operands(
+        &mut self,
+        callee: u32,
+        preamble: &mut Vec<Value>,
+        ls: &mut [Value],
+        function: &mut Function,
+        data: &Data,
+    ) {
+        if ls.len() < 3
+            || (callee as usize) >= data.definitions.len()
+            || !matches!(
+                data.def(callee).name(),
+                "OpGetVector" | "OpGetVectorNullable" | "OpVectorRef" | "OpVectorRefNullable"
+            )
+            || std::env::var("LOFT_NO_COPY_WRITTEN_VECTOR").is_ok_and(|v| v != "0")
+        {
+            return;
+        }
+        let Value::Var(x) = ls[0].unspan() else {
+            return;
+        };
+        let x = *x;
+        // A `&vector` parameter reads through its link to the caller's vector.
+        let Type::Vector(elem, _) = function.tp(x).peel_link() else {
+            return;
+        };
+        let elem = elem.as_ref().clone();
+        if !ls[1..].iter().any(|later| writes_vector(later, x, data)) {
+            return;
+        }
+        let wrapper = data.def_nr(&format!("main_vector<{}>", elem.name(data)));
+        let vec_def = data.def_nr(&Type::Vector(Box::new(elem.clone()), Deps::none()).name(data));
+        let elem_def = data.type_def_nr(&elem);
+        if [wrapper, vec_def, elem_def].contains(&u32::MAX) {
+            return;
+        }
+        let known = |d: u32| Value::Int(i32::from(data.def(d).known_type()));
+        let tmp = self.new_lift_var(function, &Type::Reference(wrapper, Deps::none()));
+        let field = Value::Call(
+            data.def_nr("OpGetField"),
+            vec![Value::Var(tmp), Value::Int(0), known(vec_def)],
+        );
+        preamble.push(Value::Call(
+            data.def_nr("OpDatabase"),
+            vec![Value::Var(tmp), known(wrapper)],
+        ));
+        preamble.push(Value::Call(
+            data.def_nr("OpSetInt4"),
+            vec![Value::Var(tmp), Value::Int(0), Value::Int(0)],
+        ));
+        preamble.push(Value::Call(
+            data.def_nr("OpAppendVector"),
+            vec![field.clone(), Value::Var(x), known(elem_def)],
+        ));
+        ls[0] = field;
     }
 
     /// Does `operand` answer the same whenever it is evaluated relative to `hoisted`: a
