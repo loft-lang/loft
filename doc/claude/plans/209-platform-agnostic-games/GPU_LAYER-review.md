@@ -70,6 +70,38 @@ game runs unchanged on every machine loft reaches.
    a tolerance written without them is re-measured at every surprise.  M1 is the place to list
    them.
 
+## The frame tier off the device — one guard makes it tested, not testable
+
+The owner's premise holds and the tree was built on it: the Tanmatsu's frame tier is a
+software rasteriser into a byte array, so the board adds nothing to the picture that a PC
+cannot compute.  What the tree checks off the device today ([TANMATSU.md § Verified, and
+how](../../TANMATSU.md#verified-and-how)):
+
+- **the language**: a program under `#width 32` answers the same on every backend and every
+  processor, so the interpreter on a PC is the oracle for the board's arithmetic;
+- **the C on a 32-bit RISC-V core**: `scripts/c_sweep.py --riscv32` (`zig cc` for riscv32,
+  run under `qemu-riscv32`) and `--m32`, every library the device needs green on both — not a
+  CI job yet;
+- **the rasteriser itself**: `tiles` has no platform section; its RGB565 surfaces and `present`
+  with scale and rotation are the same code on the board, on a desktop and in tests.  Only
+  `screen`'s display section (the frame to the panel, row by row), `input`'s key polling and
+  `audio`'s FreeRTOS task are the board's, type-checked against the real BSP headers with
+  stand-ins; their run-time behaviour needs the board or `virtual-tanmatsu-graceloader`.
+
+**The guard that is missing — a golden frame, byte for byte, three ways.**  The game's
+scripted run (`TW_MOVES`) rendered to its RGB565 surface on the interpreter, on `--native-c`
+and under the riscv32 QEMU leg, each compared with committed golden frames.  The rasteriser is
+deterministic integer code, so there is no tolerance to measure: the three runs must agree
+exactly, and a difference is a width-32 or codegen defect by construction.  The same frames
+are the oracle step P4 needs (a frame drawn through a GPU surface equal to the bitmap, byte
+for byte), and the riscv32 leg becomes a nightly with it.  It belongs in arc F beside F1's
+view, as the frame tier's own gate, and it is what keeps the frame tier the floor every game
+is held to without a board in the loop.
+
+What stays a board measurement, recorded in TANMATSU.md: the present time (11 ms for a frame
+through the row-at-a-time path), memory under the board's PSRAM and flash budget, and the
+panel's pixel order.
+
 Against the table above, the plan covers the layer, the platform split, the single shader
 source, the tiers, the software oracle and the no-user-shaders start.  What it lacks is a first
 measurement, and M0 and L0 are both an afternoon.
