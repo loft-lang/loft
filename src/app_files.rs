@@ -159,6 +159,28 @@ pub(crate) fn c_literals(c: &str) -> Vec<String> {
 /// Why a file goes into the app: what named it.
 pub(crate) type Reason = String;
 
+/// The files an app built from the program in `program_dir` carries, each by its path relative
+/// to the program, the file on this machine, and why it is in (@C164): the ones `listed` names
+/// (`--assets`), or without a list the ones the program names ([`named_assets`]).  One rule for
+/// every target that packs a program's files — the ESP app, the C page and the Android app — so
+/// a program finds the same files on each.
+///
+/// # Errors
+/// A listed entry that names nothing beside the program.
+pub(crate) fn carried_files(
+    program_dir: &Path,
+    c: &str,
+    listed: &[String],
+) -> Result<Vec<(String, PathBuf, Reason)>, String> {
+    if listed.is_empty() {
+        return Ok(named_assets(program_dir, c));
+    }
+    Ok(asset_files(program_dir, listed)?
+        .into_iter()
+        .map(|(r, p)| (r, p, "named by --assets".to_string()))
+        .collect())
+}
+
 /// The files beside the program that the program can open, found from what names them, never
 /// from a list:
 ///

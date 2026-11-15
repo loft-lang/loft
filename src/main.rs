@@ -316,12 +316,15 @@ fn print_help() {
     println!("                                rustc whatever LOFT_NATIVE_BACKEND says; with");
     println!("                                --native-emit it writes the Rust");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
-    println!(
-        "  --native-android [out.apk]    cross-compile to a signed Android APK (needs \
-         ANDROID_NDK_HOME + ANDROID_HOME); a *.so output builds just the library"
-    );
     println!("                                (default: .loft/<script>.wasm beside the script)");
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
+    println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
+    println!("                                ANDROID_NDK_HOME + ANDROID_HOME); a *.so output");
+    println!("                                builds just the library");
+    println!("  --assets a,b                  the files an app carries (--native-esp, --html,");
+    println!("                                --native-android), beside the program: files,");
+    println!("                                directories, `*` in a name, `!` to drop a match;");
+    println!("                                without it, the files the program names");
     println!(
         "  --html [out.html]             compile to a self-contained browser page (the browser"
     );
@@ -10788,10 +10791,16 @@ fn main() {
             // each other build at once); only the keystore is shared, in `.loft/android/`.
             let staging = platform::build_scratch_dir("android");
             let built = staging.join("libloft_android_app.so");
+            let assets = android::app_assets(&abs_file, &c, &esp_assets, &work, &android_out)
+                .unwrap_or_else(|e| {
+                    eprintln!("loft: {e}");
+                    std::process::exit(1);
+                });
             let package = android::Package {
                 staging: &staging,
                 keystore_dir: &work,
                 debuggable: !ship_build,
+                assets: &assets,
             };
             let result = c_driver::build_android(
                 &c,
@@ -11223,28 +11232,21 @@ fn main() {
                     std::process::exit(2);
                 }
             };
-            // A page that declares no `[[embed]]` carries the files its program names, found
-            // as `--native-esp` finds an app's (app_files.rs), or the ones `--assets` names: the
-            // page and the device then carry the same files.
+            // A page that declares no `[[embed]]` carries the files an app carries (@C164,
+            // `app_files::carried_files`): the device, the page and the phone then hold the same.
             if !embeds_declared {
                 let program_dir = std::path::Path::new(&abs_file).parent().map_or_else(
                     || std::path::PathBuf::from("."),
                     std::path::Path::to_path_buf,
                 );
-                let named: Vec<(String, std::path::PathBuf)> = if esp_assets.is_empty() {
-                    app_files::named_assets(&program_dir, &c)
-                        .into_iter()
-                        .map(|(r, p, _)| (r, p))
-                        .collect()
-                } else {
-                    app_files::asset_files(&program_dir, &esp_assets).unwrap_or_else(|e| {
+                let named =
+                    app_files::carried_files(&program_dir, &c, &esp_assets).unwrap_or_else(|e| {
                         eprintln!("loft: {e}");
                         std::process::exit(1);
-                    })
-                };
+                    });
                 let files: Vec<loft::html_embed::PageFile> = named
                     .into_iter()
-                    .map(|(rel, source)| loft::html_embed::PageFile {
+                    .map(|(rel, source, _)| loft::html_embed::PageFile {
                         page_path: format!("/{rel}"),
                         source,
                     })

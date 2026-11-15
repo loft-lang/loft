@@ -36,12 +36,96 @@ use std::path::{Path, PathBuf};
 pub(crate) const NDK_MIN: &str = "r26";
 
 /// How an activity library is packaged: where the APK is staged, where the debug keystore
-/// lives (it stays, so every later build of the app signs with the same key), and whether the
-/// app is debuggable (a build that is not `--ship`).
+/// lives (it stays, so every later build of the app signs with the same key), whether the
+/// app is debuggable (a build that is not `--ship`), and the program's files it carries
+/// ([`app_assets`]: each path relative to the program, and the file on this machine).
 pub(crate) struct Package<'a> {
     pub(crate) staging: &'a Path,
     pub(crate) keystore_dir: &'a Path,
     pub(crate) debuggable: bool,
+    pub(crate) assets: &'a [(String, std::path::PathBuf)],
+}
+
+/// The list the entry extracts the packed files by (`src/c/android/loft_android_main.c`): it
+/// cannot list the APK's `assets/` tree itself (`AAssetDir` names the files of one directory).
+const ASSET_LIST: &str = "loft-assets.txt";
+
+/// The files an app built from `program` (its C in `c`) carries, by their path relative to the
+/// program's directory: the files an app carries on every target (@C164,
+/// `app_files::carried_files`: the ones `listed` names, else the ones the program names).  On
+/// the device they are extracted into the app's files directory, which is the program's
+/// directory there, so a relative path finds what it found on the PC.  What went in and why is
+/// written to `<report_dir>/<app>-report.txt`, as the ESP build writes its report.
+///
+/// # Errors
+/// A listed entry that names nothing, or a path that would leave the files directory (`..`, an
+/// absolute path) or that the list cannot hold (a line break in its name).
+pub(crate) fn app_assets(
+    program: &str,
+    c: &str,
+    listed: &[String],
+    report_dir: &Path,
+    out: &str,
+) -> Result<Vec<(String, std::path::PathBuf)>, String> {
+    use std::fmt::Write as _;
+    let dir = Path::new(program)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let carried = crate::app_files::carried_files(dir, c, listed)?;
+    let mut report =
+        String::from("# The files `loft --native-android` packed into this app, and why.\n\n");
+    for (rel, path, why) in &carried {
+        let size = crate::file_access::metadata(path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let _ = writeln!(report, "{size:9} {rel}  ({why})");
+    }
+    let name = crate::file_access::file_stem(Path::new(out)).unwrap_or_else(|| "app".into());
+    let _ = crate::file_access::write(report_dir.join(format!("{name}-report.txt")), report);
+    let files: Vec<(String, std::path::PathBuf)> =
+        carried.into_iter().map(|(r, p, _)| (r, p)).collect();
+    for (rel, _) in &files {
+        if rel == ASSET_LIST {
+            return Err(format!(
+                "--assets: `{rel}` is the name the app's own file list takes"
+            ));
+        }
+        let leaves = rel.starts_with('/') || rel.split('/').any(|c| c == "..");
+        if leaves || rel.contains('\n') {
+            return Err(format!(
+                "--assets: `{rel}` cannot be packed: an app's file keeps its path below the program"
+            ));
+        }
+    }
+    Ok(files)
+}
+
+/// Stage `assets` under `staging/assets/`, beside the list the entry reads: a stamp first,
+/// which changes when any file's path or content does (the entry extracts again then), and
+/// one path a line.
+fn stage_assets(staging: &Path, assets: &[(String, std::path::PathBuf)]) -> Result<(), String> {
+    use std::hash::{Hash, Hasher};
+    let root = staging.join("assets");
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut list = String::new();
+    for (rel, source) in assets {
+        let bytes = crate::file_access::read(source)
+            .map_err(|e| format!("loft: read asset {}: {e}", source.display()))?;
+        rel.hash(&mut hasher);
+        bytes.hash(&mut hasher);
+        let to = root.join(rel);
+        if let Some(parent) = to.parent() {
+            crate::file_access::create_dir_all(parent)
+                .map_err(|e| format!("loft: create {}: {e}", parent.display()))?;
+        }
+        crate::file_access::write(&to, &bytes)
+            .map_err(|e| format!("loft: stage asset {rel}: {e}"))?;
+        list.push_str(rel);
+        list.push('\n');
+    }
+    let stamp = format!("{:016x}\n", hasher.finish());
+    crate::file_access::write(root.join(ASSET_LIST), stamp + &list)
+        .map_err(|e| format!("loft: write {ASSET_LIST}: {e}"))
 }
 
 /// A resolved Android cross-compile descriptor: the NDK, the API level, and the
@@ -268,6 +352,7 @@ impl AndroidTarget {
             staging: &crate_dir,
             keystore_dir: &crate_dir,
             debuggable: false,
+            assets: &[],
         };
         self.finish(&built, &package, out_path)
     }
@@ -367,19 +452,22 @@ impl AndroidTarget {
             "aapt2 link",
         )?;
 
-        // Add the whole `lib/<abi>/` tree (the app .so + libc++_shared.so) to the APK
-        // zip via the JDK `jar` (no separate `zip` dependency; `-M` keeps jar from
-        // injecting a MANIFEST.MF that would collide with apksigner's signing block).
-        run_tool(
-            Spawn::new(Program::os(sdk.jar()))
-                .cwd(&PathText::from_os(&work.join("staging")))
-                .arg("--update")
-                .arg("--no-manifest")
-                .arg("--file")
-                .arg(&base)
-                .arg("lib"),
-            "jar (add native libs)",
-        )?;
+        // Add the whole `lib/<abi>/` tree (the app .so + libc++_shared.so) and the program's
+        // files under `assets/` to the APK zip via the JDK `jar` (no separate `zip`
+        // dependency; `-M` keeps jar from injecting a MANIFEST.MF that would collide with
+        // apksigner's signing block).
+        let mut add = Spawn::new(Program::os(sdk.jar()))
+            .cwd(&PathText::from_os(&work.join("staging")))
+            .arg("--update")
+            .arg("--no-manifest")
+            .arg("--file")
+            .arg(&base)
+            .arg("lib");
+        if !package.assets.is_empty() {
+            stage_assets(&work.join("staging"), package.assets)?;
+            add = add.arg("assets");
+        }
+        run_tool(add, "jar (add native libs and assets)")?;
 
         let aligned = work.join("aligned.apk");
         run_tool(
@@ -853,4 +941,51 @@ fn cargo_linker_var(triple: &str) -> String {
 /// 32-bit build), so every supported host maps to its `*-x86_64` tag.
 fn host_tag() -> &'static str {
     crate::platform::ndk_host_tag()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::app_assets;
+
+    /// The files an app carries keep their paths below the program (@C164): with no list, the
+    /// ones the program names; with `--assets`, the ones listed.  A path that would leave the
+    /// files directory, or that takes the name of the app's own file list, is refused at the
+    /// build, and the report says what went in and why.
+    #[test]
+    fn an_app_carries_its_files_below_the_program() {
+        let dir = std::env::temp_dir().join(format!("loft_android_assets_{}", std::process::id()));
+        let _ = crate::file_access::remove_dir_all(&dir);
+        let app = dir.join("app");
+        let program = app.join("prog.loft");
+        crate::file_access::create_dir_all(app.join("data")).expect("mkdir");
+        crate::file_access::write(&program, "fn main() {}").expect("write");
+        crate::file_access::write(app.join("data").join("a.txt"), "a").expect("write");
+        crate::file_access::write(app.join("data").join("b.txt"), "b").expect("write");
+        crate::file_access::write(dir.join("outside.txt"), "o").expect("write");
+        crate::file_access::write(app.join("loft-assets.txt"), "x").expect("write");
+        let program = program.to_string_lossy().into_owned();
+        let names = |c: &str, listed: &[&str]| {
+            let listed: Vec<String> = listed.iter().map(|s| (*s).to_string()).collect();
+            app_assets(&program, c, &listed, &dir, "game.apk")
+                .map(|f| f.into_iter().map(|(r, _)| r).collect::<Vec<_>>())
+        };
+        // No list: what the program's C names, and nothing else.
+        assert_eq!(names("", &[]), Ok(vec![]));
+        assert_eq!(
+            names("loft_lit(\"data/b.txt\", 10)", &[]),
+            Ok(vec!["data/b.txt".to_string()])
+        );
+        let report =
+            crate::file_access::read_to_string(dir.join("game-report.txt")).expect("report");
+        assert!(report.contains("data/b.txt"), "{report}");
+        // A list: what it names.
+        assert_eq!(
+            names("", &["data"]),
+            Ok(vec!["data/a.txt".to_string(), "data/b.txt".to_string()])
+        );
+        assert!(names("", &["../outside.txt"]).is_err_and(|e| e.contains("cannot be packed")));
+        assert!(names("", &["loft-assets.txt"]).is_err_and(|e| e.contains("file list")));
+        assert!(names("", &["missing"]).is_err());
+        let _ = crate::file_access::remove_dir_all(&dir);
+    }
 }

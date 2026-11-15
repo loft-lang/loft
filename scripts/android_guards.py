@@ -9,7 +9,9 @@ exit status compared with `<name>.expected` (status 0).
 
 They are what the corpus sweep (`c_sweep.py --android`) cannot be: programs that draw, take
 input and play sound, each printing what it read back (a captured pixel, an event, the frames
-the audio device took), so the comparison is exact and hand-computed.  A `<name>.input` holds
+the audio device took), so the comparison is exact and hand-computed.  A guard is a file in
+`tests/android/` or one directory below it (a program with files of its own beside it); a
+`<name>.assets` holds the `--assets` list of the files the app carries.  A `<name>.input` holds
 `adb shell input` lines (`tap 100 200`), sent once the program prints `ready`; the device's
 animations are switched off first.  `--lib` points
 at a library checkout (`loft --lib`); without it the installed `graphics` and `audio` are used.
@@ -45,6 +47,9 @@ def one(src: Path, libs: list) -> tuple:
     with tempfile.TemporaryDirectory(prefix="loft-android-guard-") as tmp:
         apk = os.path.join(tmp, f"{stem}.apk")
         cmd = [LOFT] + [x for d in libs for x in ("--lib", d)]
+        listed = src.with_suffix(".assets")
+        if listed.exists():
+            cmd += ["--assets", listed.read_text(encoding="utf-8").strip()]
         code, _, err = run(cmd + ["--native-c", "--native-android", apk, str(src)], 600,
                            env={"LOFT_ANDROID_TARGET": os.environ.get("LOFT_ANDROID_TARGET",
                                                                        "x86_64-linux-android")})
@@ -92,7 +97,7 @@ def main(argv) -> int:
     for scale in ("window_animation_scale", "transition_animation_scale",
                   "animator_duration_scale"):
         run([a, "shell", "settings", "put", "global", scale, "0"], 30)
-    guards = sorted(g for g in GUARDS.glob("*.loft") if g.is_file())
+    guards = sorted(g for g in [*GUARDS.glob("*.loft"), *GUARDS.glob("*/*.loft")] if g.is_file())
     if names:
         guards = [g for g in guards if g.stem in names]
     failed = 0

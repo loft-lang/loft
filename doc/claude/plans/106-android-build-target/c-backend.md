@@ -116,34 +116,15 @@ entry makes that work unchanged:
 
 - `chdir(app->activity->internalDataPath)` before `loft_program_main`, so a relative path lands
   in the app's own writable directory.
-- The program's data files are packaged under the APK's `assets/` and extracted into that
-  directory on the first launch after an install or an update.  A stamp file holds the APK's
-  version code, so a later launch extracts nothing.  The reads go through `AAssetManager`
-  (`app->activity->assetManager`), the only reader of a compressed APK entry.
-- Which files are packaged is the one rule that needs the owner's decision (below).
-
-### 4. The library shims — one `__ANDROID__` section each
-
-- **graphics** (`graphics_gl.c`), a new `GG_ANDROID` back end beside `GG_X11`, `GG_COCOA` and
-  `GG_BROWSER`, ported from the fixture's 427-line `android_gl.rs`:
-  - EGL on `loft_android_app()->window`: an ES 3 context, `EGL_OPENGL_ES2_BIT` configs, a
-    window surface.  GLES 3.0 is WebGL2, so the browser back end's shader rules apply as they
-    are.
-  - The surface follows the lifecycle: `APP_CMD_TERM_WINDOW` destroys it and
-    `APP_CMD_INIT_WINDOW` makes it again, with the same context.  A frame with no window
-    draws nothing.
-  - Input from `app->onInputEvent`: a `MotionEvent` feeds `gl_mouse_*`, a `KeyEvent` feeds
-    `gl_key_pressed`; `gl_show_keyboard()` is `ANativeActivity_showSoftInput`.
-  - The platform switch gains `&& !defined(__ANDROID__)` on the X11 line.  Without it, Android
-    compiles the X11 back end and fails at its first `dlopen("libX11.so.6")`.
-- **audio** (`audio_out.c`): the desktop section is miniaudio, which supports Android itself
-  (AAudio loaded at run time, OpenSL ES as the fallback).  Expected work: the build compiles it,
-  and the `b4_audio` golden decides.
-- **imaging, tiles** and every other pure-C shim compile unchanged; the driver's existing
-  "a shim that does not compile for this target" message names any exception.
-- **TLS**: `src/c/tls.rs` builds BearSSL for the triple, as it builds it for the host.  The
-  trust store on Android is `/system/etc/security/cacerts/` (one PEM per file); the loader
-  reads that directory under `__ANDROID__`.
+- The program's files are the ones every app target carries (@C164,
+  `app_files::carried_files`): those the program names, or the ones `--assets a,b` lists.  They
+  are packed under the APK's `assets/` beside a list, `loft-assets.txt` (a stamp, then one path
+  a line; `AAssetDir` lists one directory only), and copied into the files directory before
+  the program starts, under their own paths.  The stamp changes with any file's path or
+  content, so a launch after an install of other files copies again and any other launch
+  copies nothing.  `.loft/android/<app>-report.txt` beside the program says what went in and
+  why.  A `#cwd` program resolves against the working directory, which an app does not have:
+  its files are not packed.
 
 ## Selecting the path, and retiring the old one
 
@@ -177,9 +158,9 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
    `scripts/android_guards.py` on the nightly's first emulator shard): `b3_rects` (a painter),
    `b3_render` (the program's own `#version 330 core` shaders), `b4_touch` (a tap the runner
    sends), `b4_audio` (the frames the audio device took) and `b4_stack` (a recursion that needs
-   more than 2 MiB).  Each prints what it read back, so the comparison with its hand-computed
-   `.expected` is exact: no screenshot and no pixel tolerance.  `b3_text` needs a font packaged
-   with the app (A3); `b4_ime` waits for a soft-keyboard call, which the published `graphics`
+   more than 2 MiB), `b3_text` (a font and an image the app carries).  Each prints what it read
+   back, so the comparison with its hand-computed `.expected` is exact: no screenshot and no
+   pixel tolerance.  `b4_ime` waits for a soft-keyboard call, which the published `graphics`
    does not have.
 
 ## The phases, each with a gate
@@ -189,7 +170,7 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
 | **A0** | `build_android` in the driver; `src/c/android/loft_android_main.c` with the entry, logcat and the renamed `main`; the NDK's glue with the 8 MiB app thread | a headless program's APK prints, in logcat, exactly what `loft --interpret` prints; a recursion that needs more than the default 1 MiB stack passes, and fails without the change |
 | **A1** | the build test (verification 1) and the emulator differential (verification 2) over the headless corpus | every headless corpus program agrees, 0 differ; the differ list is a committed baseline that only shrinks (main-switch.md phase 0's rule) |
 | **A2** | `GG_ANDROID` in `graphics_gl.c`; the `__ANDROID__` guard on X11; audio through miniaudio | the guards `b3_rects`, `b3_render`, `b4_touch`, `b4_audio`, `b4_stack` pass on the PUBLISHED `graphics` and `audio`; each library republished through its own CI (the `loft-library` skill) |
-| **A3** | files: `internalDataPath`, assets packaged and extracted, the program directory | a program that loads a font and an image from its package draws `b3_text` with no path changed |
+| **A3** | files: `internalDataPath`, the program's files packed and extracted (@C164), the program directory | `b3_text` (a font and an image the program names, opened by its PC paths) passes; the corpus programs left in the baseline read repo-root paths under `#cwd` |
 | **A4** | TLS for the triple and the Android trust store | an `https://` fetch answers the same in the emulator as on the desktop |
 | **A5** | the flip: `--native-android` on the C path by default; the rustc Android path deleted with the rustc writer | one release cycle in which the Android build test and the nightly emulator run used only the C path |
 
@@ -198,10 +179,10 @@ piece (the graphics back end), and the only one that changes a published library
 
 ## Decisions (owner: the recommendations, taken)
 
-1. **Which files go into the APK.**  Decided: a package's `[android] assets = [...]`
-   list in `loft.toml` (directories or globs relative to the package), defaulting to the
-   package's `assets/` directory when it has one, with each `use`d library's own declared
-   assets added.  Nothing is guessed from string literals in the program.
+1. **Which files go into the APK.**  Decided: the rule the ESP app and the C page already use
+   (@C164): the files the program names, or the ones `--assets` lists, the same on every
+   target.  A `[android] assets` list in `loft.toml` was weighed and set aside, since the device
+   and the page already needed none.
 2. **Whether armv7 (32-bit) ships.**  It compiles (measured), and loft's store is 32-bit
    already.  Decided: build it on request (`LOFT_ANDROID_TARGET`) but test only
    `aarch64` and the `x86_64` emulator twin; arm64 is every Android device sold since 2019.

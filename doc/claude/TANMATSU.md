@@ -175,7 +175,8 @@ the port while the board starts still gets them.
 - **No Rust.**  The project holds the C file the C backend writes (the program and the runtime)
   and the `[c]` parts of the libraries the program uses.  A C build loads no library's Rust part
   ([HARDWARE_BACKENDS.md § The processor](HARDWARE_BACKENDS.md#the-processor)).
-- **Files, found from what names them.**  Without `--assets`, the app packs each file beside
+- **Files, found from what names them** (@C164: the C page and the Android app carry theirs by
+  the same rule, `app_files::carried_files`).  Without `--assets`, the app packs each file beside
   the program that something names: a text constant of the program (`"kinds.json"`, or the
   `/theme.json` a path built at run time leaves), a path written in a file already packed
   (`theme.json` naming its sheets), or a directory and an extension the program writes as

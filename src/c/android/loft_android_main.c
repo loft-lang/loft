@@ -24,11 +24,16 @@
  * - The working directory and the program's directory (`LOFT_SOURCE_DIR`, which a relative path
  *   resolves against) are the app's own files directory, so a relative path lands somewhere the
  *   app may write; TMPDIR is a `tmp` directory beside it.
+ * - The program's files the build packed under the APK's `assets/` (src/android.rs
+ *   `app_assets`) are copied into that directory under their own paths before the program
+ *   starts, so it opens them by the names it used on the PC.  The copy is made again only when
+ *   the build's stamp changes (an install of other files), not on every launch.
  * - After the program returns, the activity lives on until the OS destroys it, so the process
  *   is not ended under it.  A program that stops the run (`exit(n)`, a failed assertion, the
  *   store limit) does the same: the runtime's `LOFT_EXIT` reaches `loft_android_exit`, which
  *   returns the run to `android_main` with that status.  Ending the process instead reads to
  *   the OS as a crash, and it answers one by starting the app again. */
+#include <android/asset_manager.h>
 #include <android/log.h>
 #include <android_native_app_glue.h>
 #include <errno.h>
@@ -199,6 +204,114 @@ __attribute__((noreturn)) void loft_android_exit(int code) {
     _exit(code);
 }
 
+/* Make every directory above `path` (a file's path), as `mkdir -p` would. */
+static void loft_android_parents(char *path) {
+    for (char *slash = strchr(path + 1, '/'); slash != NULL; slash = strchr(slash + 1, '/')) {
+        *slash = 0;
+        mkdir(path, 0700);
+        *slash = '/';
+    }
+}
+
+/* Copy asset `name` to `to`, through `to`.part, so a launch stopped half-way leaves no
+ * truncated file under the program's name.  0 when it is in place. */
+static int loft_android_copy_asset(AAssetManager *am, const char *name, const char *to) {
+    char part[4096];
+    char buf[65536];
+    int fd, n, ok = 1;
+    AAsset *in = AAssetManager_open(am, name, AASSET_MODE_STREAMING);
+    if (in == NULL) {
+        return -1;
+    }
+    snprintf(part, sizeof part, "%s.part", to);
+    fd = open(part, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        AAsset_close(in);
+        return -1;
+    }
+    while ((n = AAsset_read(in, buf, sizeof buf)) > 0) {
+        if (write(fd, buf, (size_t) n) != n) {
+            ok = 0;
+            break;
+        }
+    }
+    ok = ok && n == 0;
+    AAsset_close(in);
+    if (close(fd) != 0 || !ok || rename(part, to) != 0) {
+        unlink(part);
+        return -1;
+    }
+    return 0;
+}
+
+/* Copy the packed files into `files` when the build that packed them is not the one copied
+ * last: `loft-assets.txt` is a stamp line, then one path a line; `.loft-assets` keeps the
+ * stamp of the last complete copy.  A copy that fails leaves the old stamp, so the next launch
+ * tries again, and the program finds the file missing as it would on the PC. */
+static void loft_android_extract(AAssetManager *am, const char *files) {
+    AAsset *list = am != NULL ? AAssetManager_open(am, "loft-assets.txt", AASSET_MODE_BUFFER) : NULL;
+    char stamp_path[4096], to[4096], old[64];
+    char *text, *line, *next;
+    size_t len;
+    int failed = 0, fd;
+    ssize_t got;
+    if (list == NULL) {
+        return;
+    }
+    len = (size_t) AAsset_getLength(list);
+    text = (char *) malloc(len + 1);
+    if (text == NULL) {
+        AAsset_close(list);
+        return;
+    }
+    memcpy(text, AAsset_getBuffer(list), len);
+    text[len] = 0;
+    AAsset_close(list);
+    next = strchr(text, '\n');
+    if (next == NULL) {
+        free(text);
+        return;
+    }
+    *next++ = 0;
+    snprintf(stamp_path, sizeof stamp_path, "%s/.loft-assets", files);
+    fd = open(stamp_path, O_RDONLY);
+    got = fd >= 0 ? read(fd, old, sizeof old - 1) : -1;
+    if (fd >= 0) {
+        close(fd);
+    }
+    old[got > 0 ? got : 0] = 0;
+    if (strcmp(old, text) == 0) {
+        free(text);
+        return;
+    }
+    for (line = next; *line != 0; line = next) {
+        next = strchr(line, '\n');
+        if (next != NULL) {
+            *next++ = 0;
+        } else {
+            next = line + strlen(line);
+        }
+        if (*line == 0) {
+            continue;
+        }
+        snprintf(to, sizeof to, "%s/%s", files, line);
+        loft_android_parents(to);
+        if (loft_android_copy_asset(am, line, to) != 0) {
+            __android_log_print(ANDROID_LOG_WARN, "loft", "cannot copy the packed file %s", line);
+            failed = 1;
+        }
+    }
+    if (!failed) {
+        fd = open(stamp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd >= 0) {
+            ssize_t w = write(fd, text, strlen(text));
+            (void) w;
+            close(fd);
+        }
+    }
+    free(text);
+}
+
 void android_main(struct android_app *app) {
     static char name[] = "loft";
     char *argv[] = {name, NULL};
@@ -217,6 +330,7 @@ void android_main(struct android_app *app) {
          * here that is the VM launcher in a read-only system directory.  The app's own files
          * directory is the program's, and a `tmp` beside it its TMPDIR (there is no /tmp). */
         setenv("LOFT_SOURCE_DIR", files, 1);
+        loft_android_extract(app->activity->assetManager, files);
         {
             char tmp[4096];
             snprintf(tmp, sizeof tmp, "%s/tmp", files);

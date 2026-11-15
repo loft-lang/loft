@@ -10,7 +10,7 @@
 //! launcher installs into `appfs` (badgelink).  No Rust part of any library is built or
 //! linked: the C backend loads none.
 
-use crate::app_files::{Reason, asset_files, named_assets};
+use crate::app_files::{Reason, carried_files};
 use loft::file_access as fa;
 use loft::platform::process::{Program, Spawn};
 use std::fmt::Write as _;
@@ -244,10 +244,6 @@ fn cmake_path(p: &Path) -> String {
 ///
 /// # Errors
 /// A file that cannot be read or written.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one ESP-IDF project written top to bottom; each block is one of its files"
-)]
 pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, String> {
     let main = out.join("main");
     fa::create_dir_all(&main).map_err(|e| format!("cannot create {}: {e}", main.display()))?;
@@ -284,14 +280,7 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
     }
     unit.push_str(app.c);
     put(main.join("loft_app.c"), &unit)?;
-    let named: Vec<(String, PathBuf, Reason)> = if app.assets.is_empty() {
-        named_assets(app.program_dir, app.c)
-    } else {
-        asset_files(app.program_dir, app.assets)?
-            .into_iter()
-            .map(|(r, p)| (r, p, "named by --assets".to_string()))
-            .collect()
-    };
+    let named: Vec<(String, PathBuf, Reason)> = carried_files(app.program_dir, app.c, app.assets)?;
     let files: Vec<(String, PathBuf)> = named
         .iter()
         .map(|(r, p, _)| (r.clone(), p.clone()))
