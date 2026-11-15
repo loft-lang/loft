@@ -862,20 +862,7 @@ fn callee_shape(
     // A returned local that no call handed `buf` binds: a delivery local when every set of it
     // is an exit value, else a VIEW of a record, read field-wise where it is returned.
     let mut delivered: HashSet<u16> = HashSet::default();
-    // A local a literal fills IN PLACE (`OpDatabase(l, tp); OpSetX(l, …)`, the record built
-    // into a work local, then `return l`) owns a record its sets do not show: its one set is
-    // the `l = null` the scope pass declares it with.  It is a VIEW, read field-wise and freed
-    // where it is returned, never a delivery local retyped as the tuple.
-    let mut minted: HashSet<u16> = HashSet::default();
-    def.code().any_node(&mut |c| {
-        if let Value::Call(op, a) = c
-            && *op == ops.database
-            && let Some(Value::Var(v)) = a.first().map(Value::unspan)
-        {
-            minted.insert(*v);
-        }
-        false
-    });
+    let minted = minted_locals(def.code(), ops);
     let mut tail_calls = sh.tail_calls.clone();
     let mut returned = sh.returned.clone();
     let mut todo: Vec<u16> = returned.difference(&sh.bound).copied().collect();
@@ -947,6 +934,24 @@ fn callee_shape(
         delivered,
         tail_calls,
     })
+}
+
+/// The locals a literal fills IN PLACE (`OpDatabase(l, tp); OpSetX(l, …)`, the record built
+/// into a work local, then `return l`).  Such a local owns a record its sets do not show: its
+/// one set is the `l = null` the scope pass declares it with.  It is a VIEW, read field-wise
+/// and freed where it is returned, never a delivery local retyped as the tuple.
+fn minted_locals(code: &Value, ops: &Ops) -> HashSet<u16> {
+    let mut minted: HashSet<u16> = HashSet::default();
+    code.any_node(&mut |c| {
+        if let Value::Call(op, a) = c
+            && *op == ops.database
+            && let Some(Value::Var(v)) = a.first().map(Value::unspan)
+        {
+            minted.insert(*v);
+        }
+        false
+    });
+    minted
 }
 
 /// Each literal's view values, in the order [`literals_to_tuples`] meets the literals: the

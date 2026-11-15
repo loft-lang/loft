@@ -3,6 +3,11 @@
 // and one abandoned after its first value.  Each expected value is computed by hand.  The
 // surveys of the loft bytecode writer and runner read it too: there the generator must forget
 // the temps holding what it hands over, or the consumer's release frees a store twice.
+//
+// @falsified-at: hand-measured (2026-11-15, f1feb2e4b) — on the loft writer's code
+// (`run_image_survey.py --written` reads this file) with `bgen_yield.loft`'s forgetting of the
+// handed temps removed, the runner stopped "a store was freed twice"; the Rust build answers
+// the same before and after that change, so `falsify.sh` against a Rust ref has no channel here.
 struct P { x: integer, name: text }
 
 fn mk(i: integer) -> P { P { x: i * 10, name: "m{i}" } }

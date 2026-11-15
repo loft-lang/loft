@@ -4,6 +4,12 @@
 // `if`); a guarded arm and plain arms after it (the `default`); a repeated literal (never
 // reached); negative and 64-bit literals; a null subject; a `match` in value position; arms that
 // `continue`, `break` and `return` inside a loop; a subject evaluated once.
+//
+// @falsified-at: hand-measured (2026-11-15, on 83aad7478) — with `src/c/body/switch.rs` writing
+// each case's end as `}` instead of `} break;` (a case falling into the next), `--native-c`
+// failed cell 1 ("c1/10: 139909 139906 …" for "13 20 62 …"); `--interpret`, which has no switch,
+// passed, as did the unmutated build.  The `if` chain the switch replaced answers the same, so a
+// control ref before 4a523ed62 would pass too: the channel is a wrong switch, not the old code.
 fn c1(x: integer?, t: integer) -> integer {
   match x {
     0 => { t += 3; },
