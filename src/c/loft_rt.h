@@ -7082,8 +7082,26 @@ static int64_t loft_vector_sum_int(loft_ref v, int64_t acc) {
         int64_t stop = at + LOFT_SUM_BLOCK < n ? at + LOFT_SUM_BLOCK : n;
         uint64_t room = acc == LOFT_NULL ? 0 : (acc < 0 ? (uint64_t) 0 - (uint64_t) acc : (uint64_t) acc);
         if (acc == LOFT_NULL || room >= (uint64_t) INT64_MAX - (uint64_t) LOFT_SUM_BLOCK * (uint64_t) LOFT_SUM_BOUND) break;
+        /* Eight lane accumulators, so the vectorised body runs four independent add chains as
+         * LLVM's unrolled `sum_blocks_i64` does — one accumulator is one chain, which waits on
+         * itself every element pair.  Sums are modulo 2^64 and the bound test an OR: the lanes
+         * fold to the same answer. */
+        uint64_t hs[8] = { 0 }, ss[8] = { 0 };
+        int64_t i = at;
+        for (; i + 8 <= stop; i += 8) {
+            for (int j = 0; j < 8; j++) {
+                int64_t x;
+                memcpy(&x, base + (size_t) (i + j) * 8, 8);
+                hs[j] |= ((uint64_t) x + (uint64_t) LOFT_SUM_BOUND) >> 41;
+                ss[j] += (uint64_t) x;
+            }
+        }
         uint64_t high = 0, sum = 0;
-        for (int64_t i = at; i < stop; i++) {
+        for (int j = 0; j < 8; j++) {
+            high |= hs[j];
+            sum += ss[j];
+        }
+        for (; i < stop; i++) {
             int64_t x;
             memcpy(&x, base + (size_t) i * 8, 8);
             high |= ((uint64_t) x + (uint64_t) LOFT_SUM_BOUND) >> 41;
