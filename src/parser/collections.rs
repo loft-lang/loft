@@ -741,7 +741,7 @@ impl Parser {
                     let elem_ref_like = matches!(&**vtp, Type::Reference(_, _))
                         || matches!(&**vtp, Type::Enum(d, true, _)
                             if self.data.def(*d).name.starts_with("__nullable<"))
-                        || (matches!(&**vtp, Type::Enum(_, true, _))
+                        || (matches!(vtp.base(), Type::Enum(_, true, _))
                             && self.database.is_linked(db_tp));
                     if elem_ref_like {
                         if self.database.is_linked(db_tp) {

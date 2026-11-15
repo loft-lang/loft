@@ -8109,7 +8109,7 @@ impl Data {
             Type::Reference(e, deps)
                 if deps.is_pointer_marker()
                     && (e as usize) < self.definitions.len()
-                    && matches!(self.def(e).returned, Type::Enum(_, true, _)) =>
+                    && matches!(self.def(e).returned.base(), Type::Enum(_, true, _)) =>
             {
                 Type::Enum(e, true, deps)
             }
