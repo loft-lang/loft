@@ -523,3 +523,39 @@ pub fn fused(b: ir::Bundle, name: text, args: vector<ir::Node>, path: &text, roo
   path = vector_path(b, args[0], root);
   if path == "" { 0 } else { size }
 }
+
+// `run_value_plain`: a pushed value a held header's single expression can carry — scalar
+// variables other than the vector's root and operators, no call of a function, no statement.
+pub fn run_value_plain(b: ir::Bundle, d: ir::Definition, root: integer, val: ir::Node) -> boolean {
+  ok = [true];
+  opt_non_sentinel::walk(val, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => {
+        if x == root || !scalar_type(binds::base(d.variables.variables[x]!.type_def[0] ?? ir::TyVoid)) {
+          ok[0] = false;
+        }
+      },
+      NdCall { def_nr, args: _ } => { if !def_name(b, def_nr).starts_with("Op") { ok[0] = false; } },
+      NdCallRef { var: _, args: _ } => { ok[0] = false; },
+      NdBlock { block: _ } => { ok[0] = false; },
+      NdLoop { block: _ } => { ok[0] = false; },
+      NdInsert { items: _ } => { ok[0] = false; },
+      NdSet { var: _, inner: _ } => { ok[0] = false; },
+      NdIf { cond: _, t: _, f: _ } => { ok[0] = false; },
+      _ => {},
+    }
+  });
+  ok[0]!
+}
+
+fn scalar_type(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  }
+}

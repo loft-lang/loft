@@ -1806,7 +1806,8 @@ pub fn clear_before_mint(b: ir::Bundle, ops: vector<ir::Node>, i: integer, end: 
 // one vector known to be empty reserves the run's room once.  Answers the statement after the
 // run, -1 where statement `at` starts none.  The run's header (its pushes written through one
 // held header) is the vector hoist's, which is not carried.
-pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer) -> integer {
+pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer, head: &boolean) -> integer {
+  head = false;
   if (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
     return -1;
   }
@@ -1818,6 +1819,7 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
   count = 1;
   next = first.next;
   run_end = next;
+  vals: vector<ir::Node> = [first.val];
   for _ in 0..end {
     for _ in 0..end {
       if next >= end || !(loop_shape::unspan(shown[next]!) is NdLine) {
@@ -1830,6 +1832,7 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
       break;
     }
     count += 1;
+    vals += [p.val];
     next = p.next;
     run_end = next;
   }
@@ -1837,7 +1840,27 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
     return -1;
   }
   v = as_ref(w, cgen_fn::expr(x, w, first.vector, ind));
-  line(w, ind, "loft_vec_reserve_run({v}, INT64_C({count}), {first.size});");
+  // The header clause: values computed from scalars and operators cannot move the store, and
+  // the run's one growth is the reservation — so its pushes write through one header and its
+  // held record address.
+  header = (env_variable("LOFT_NO_PUSH_RUN_HEADER") ?? "0") == "0" && (env_variable("LOFT_NO_VECTOR_HOIST") ?? "0") == "0";
+  def = x.b.data.definitions[w.index]!;
+  for val in vals {
+    if header && !opt_push::run_value_plain(x.b, def, first.root, val) {
+      header = false;
+    }
+  }
+  if !header {
+    line(w, ind, "loft_vec_reserve_run({v}, INT64_C({count}), {first.size});");
+    return run_end;
+  }
+  // The header first: a vector that already has room for the run takes no reservation call.
+  h = "ph{len(w.decls) + 1}";
+  w.decls += ["loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"];
+  line(w, ind, "{h} = loft_ph_of({v}, {first.size});");
+  line(w, ind, "if (LOFT_UNLIKELY({h}.cap < {count} || {h}.len > {h}.cap - {count})) {h} = loft_ph_reserved({h}, INT64_C({count}), {first.size});");
+  w.push_heads += [PushHead { path: first.path, name: h, size: first.size, based: true }];
+  head = true;
   run_end
 }
 

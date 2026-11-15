@@ -1995,16 +1995,24 @@ fn stmts(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
 // `ops[..end]`, the statements of a list whose remainder the caller writes (`stmts_upto`).
 // The statements just before a loop seed its counters (`@FR-R-Peel`).
 fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
-  // The end of the push run a reservation was made for.
+  // The end of the push run a reservation was made for, and whether a push header is open
+  // for it.
   run_end = 0;
+  run_head = false;
   for o in ops {
     if o#index >= end || w.why != "" {
       break;
     }
+    if run_head && o#index >= run_end {
+      w.push_heads = w.push_heads[0..len(w.push_heads) - 1];
+      run_head = false;
+    }
     if o#index >= run_end && plain_rules() {
-      reserved = cgen_ref::reserve_push_run(x, w, ops, o#index, end, ind);
+      opened = false;
+      reserved = cgen_ref::reserve_push_run(x, w, ops, o#index, end, ind, opened);
       if reserved >= 0 {
         run_end = reserved;
+        run_head = opened;
       }
     }
     // A clear of a vector the next statement mints anew releases nothing that is kept.
@@ -2028,6 +2036,9 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
       cgen_recptr::bind_record_ptr(x, w, ops, o#index, ind);
       cgen_hoist::bind_view_header(x, w, ops, o#index, ind);
     }
+  }
+  if run_head {
+    w.push_heads = w.push_heads[0..len(w.push_heads) - 1];
   }
 }
 
