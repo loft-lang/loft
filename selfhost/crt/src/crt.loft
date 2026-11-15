@@ -1066,6 +1066,15 @@ pub fn store_buf(out: vector<integer>, store: integer, rec: integer, pos: intege
   c_store_buf(out, store, rec, pos, if only { 1 } else { 0 });
 }
 
+// `store_buf`'s answer written at the address `to` (`OpStoreBuf`'s arm).  The routine mints a
+// store, so the body calls it once and reads the answer from a vector of three.
+pub fn store_buf_to(to: integer, store: integer, rec: integer, pos: integer, only: boolean) {
+  out: vector<integer> = [65535, 0, 0];
+  c_store_buf(out, store, rec, pos, if only { 1 } else { 0 });
+  poke_ref(to, out[0] ?? 65535, out[1] ?? 0, out[2] ?? 0);
+}
+#c_twin "loft_twin_store_buf_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 // `OpAdoptChildRec`: the field's child record adopted from the value.
 pub fn adopt_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer) {
   c_adopt_child_rec(tp, fs, fr, fp, vs, vr, vp);

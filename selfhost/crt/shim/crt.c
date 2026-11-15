@@ -1468,6 +1468,14 @@ int64_t loft_crt_store_buf(int64_t *out, int64_t no, int64_t store, int64_t rec,
     return 0;
 }
 
+/* `store_buf`'s answer written at the address `to` (`OpStoreBuf`'s arm). */
+extern void loft_twin_store_buf_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t only);
+LOFT_STEP_FN void loft_twin_store_buf_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t only) {
+    loft_ref h = loft_crt_ref(store, rec, pos);
+    loft_ref b = only ? loft_store_buf_only(h) : loft_store_buf(h);
+    loft_twin_poke_ref(to, b.store_nr, b.rec, b.pos);
+}
+
 /* OpAdoptChildRec (`Stores::adopt_child_rec`): the field's child record adopted from the value. */
 void loft_crt_adopt_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int64_t vs, int64_t vr, int64_t vp) {
     if (!LOFT_CRT_TP_OK(tp)) return;
