@@ -923,7 +923,7 @@ impl Parser {
             }
         } else {
             let dep = Self::receiver_frame_deps(&t);
-            t = self.data.attr_type(dnr, fnr);
+            t = self.data.stored_ref_read(self.data.attr_type(dnr, fnr));
             for on in dep {
                 t = t.depending(on);
             }
