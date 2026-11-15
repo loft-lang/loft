@@ -302,6 +302,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     t = result;
   }
   discharged = false;
+  converted = false;
   // A function body's tail is a store into its result (`convert_store`): converted to it, and
   // the body typed as the result even where the two are equal (a `u8` tail of `-> integer`).
   if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(el_types::base(result)) && el_convert::plain_scalar(el_types::base(t)) {
@@ -323,11 +324,15 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
       } else {
         l = l[..-1] + [tc!];
         t = result;
+        // A narrowing conversion guarded the value inside its cast (`convert` runs
+        // `guard_declared_range` before the `dn4cast` it wraps the value in): a second guard
+        // would wrap the finished cast.  A widening one returned the value unguarded.
+        converted = match el_ir::unspan(tc!) { NdBlock { block } => block[0] != null && block[0]!.name == "dn4cast", _ => false };
       }
     }
   }
-  // …and takes the declared result's range (`guard_declared_range`), the types equal or not.
-  if !e.first_pass && !discharged && context == "return from block" && len(l) > 0 && el_types::base(result) is TyInteger && !el_convert::null_source(e, l[-1]) {
+  // …and takes the declared result's range (`guard_declared_range`) where no conversion ran.
+  if !e.first_pass && !discharged && !converted && context == "return from block" && len(l) > 0 && el_types::base(result) is TyInteger && !el_convert::null_source(e, l[-1]) {
     l = l[..-1] + [el_convert::guard_range(e, l[-1], result, t, result is TyOptional)];
   }
   // loft#1368 (`tail_is_borrowing_branch`, `@FR-F-Ret`): a record function whose tail is an

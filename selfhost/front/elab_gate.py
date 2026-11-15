@@ -12,8 +12,17 @@ nothing.  Both runners are built through the C backend once per run.  The refusa
 by reason: the constructs the port carries next.
 
   selfhost/front/elab_gate.py [--part NAME]… [--jobs N] [--show N] [FILE…]
+  selfhost/front/elab_gate.py --check BASELINE | --write-baseline BASELINE
+
+The position is gated by a committed baseline (`elab_gate.baseline.tsv` beside this file, in
+`selfhost/bench/baseline.py`'s format), layer `elab`: the agree count and every program that
+does not agree yet, with its verdict.  `--check` fails on a drop and on any `differ` (an image
+that is not Rust's), listed or not; both need the whole corpus and the suite at the pin.
 """
 import argparse, collections, concurrent.futures as cf, glob, os, shutil, subprocess, sys, tempfile
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bench"))
+import baseline  # noqa: E402  one baseline format for every survey
 
 PARTS = ["scripts", "docs", "suite", "lib"]
 
@@ -114,18 +123,26 @@ def main():
                     help="rank refusal families by the programs clearing them in turn would admit")
     ap.add_argument("--which", help="list the programs a refusal starting with this text blocks alone")
     ap.add_argument("--details", type=int, default=3, help="details listed per refusal family")
+    ap.add_argument("--check", metavar="BASELINE", help="exit 1 on a drop against BASELINE or any differ")
+    ap.add_argument("--write-baseline", metavar="BASELINE", help="write the `elab` block of BASELINE")
     o = ap.parse_args()
+    if (o.check or o.write_baseline) and (o.files or o.part):
+        sys.exit("--check and --write-baseline read the whole corpus: drop the files and --part")
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = o.loft if os.path.isabs(o.loft) else os.path.join(root, o.loft)
-    suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite-91"))
+    suite = os.path.realpath(os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite-91")))
+    pin = baseline.require_pin(root, suite, o.check) if (o.check or o.write_baseline) else None
     env = dict(os.environ, LOFT_NO_CACHE="1", LOFT_TIMEOUT="300")
     if o.files:
-        todo = [("args", os.path.abspath(f)) for f in o.files]
+        # Canonical: the Rust front end names a program by its canonical path (an `assert`'s
+        # file literal is it), so both sides are handed that one — following a symbolic link
+        # is the driver's, not the elaboration's.
+        todo = [("args", os.path.realpath(f)) for f in o.files]
         parts = ["args"]
     else:
         parts = o.part or PARTS
         files = corpus(root, suite)
-        todo = [(part, os.path.abspath(f)) for part in parts for f in files[part]]
+        todo = [(part, os.path.realpath(f)) for part in parts for f in files[part]]
     tmp = tempfile.mkdtemp(prefix="loft-elab-", dir=os.environ.get("TMPDIR"))
     sh = os.path.join(root, "selfhost")
     # The standard library's store types: what an empty program's image holds.
@@ -150,6 +167,7 @@ def main():
     # `LOFT_ELAB_VERDICTS=<file>`: each program's verdict, one per line — what two runs diff —
     # a refused one followed by its refusals, so a grep names the programs a family blocks.
     verdicts = []
+    results = {}          # machine-free program name -> verdict, the Rust-refused left out
     with cf.ThreadPoolExecutor(o.jobs) as ex:
         futs = {ex.submit(one, loft, defs, elab, std, f, tmp, env, i): (part, f)
                 for i, (part, f) in enumerate(todo)}
@@ -157,6 +175,8 @@ def main():
             part, f = futs[fut]
             verdict, detail = fut.result()
             per[part][verdict] += 1
+            if verdict != "noimage":
+                results[baseline.name_of(f, root, suite)] = verdict
             rel = os.path.relpath(f, os.path.dirname(root))
             refusals = " | ".join(sorted(set(detail))) if verdict == "refused" else ""
             verdicts.append(f"{verdict}\t{rel}" + (f"\t{refusals}" if refusals else ""))
@@ -177,7 +197,7 @@ def main():
     tot = collections.Counter()
     for c in per.values():
         tot.update(c)
-    n = sum(tot.values()) - tot["noimage"]
+    n = total = sum(tot.values()) - tot["noimage"]
     print(f"{tot['agree']} of {n} programs agree; {tot['refused']} refused, {tot['differ']} differ"
           + (f"; {tot['noimage']} the Rust front end refuses" if tot["noimage"] else ""))
     for part in parts:
@@ -220,7 +240,16 @@ def main():
     # `LOFT_ELAB_KEEP=1` keeps the built elaborator and the standard image for single runs.
     if not os.environ.get("LOFT_ELAB_KEEP"):
         shutil.rmtree(tmp, ignore_errors=True)
-    sys.exit(0 if tot["agree"] == n else 1)
+    if o.write_baseline:
+        baseline.write(o.write_baseline, pin, "elab", tot["agree"], total,
+                       {k: v for k, v in results.items() if v != "agree"})
+    if o.check:
+        fails, repins = baseline.check("elab", baseline.read(o.check), tot["agree"], total, results)
+        baseline.report("elab", o.check, fails, repins)
+        sys.exit(0)
+    if o.write_baseline:
+        sys.exit(0)
+    sys.exit(0 if tot["agree"] == total else 1)
 
 
 if __name__ == "__main__":

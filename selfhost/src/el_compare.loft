@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — comparison and equality over compound values (`@FR-E-Eq`), the port of
+// `src/parser/compare.rs`: what `call_op_as` asks before its builtin candidates.  Tuples compare
+// element by element.  A construct not carried yet is refused by name (`el::refuse`).
+
+use ir;
+use el;
+use el_ir;
+use el_vars;
+use el_types;
+use el_ex_null;
+use el_ex_base::*;
+
+// `Parser::tuple_compare` — two tuples compared element by element (`==`, `!=`, `<`, `<=`, `>`,
+// `>=`): equality is every element equal, ordering is lexicographic, each element by its own
+// type's operator.  Null when this is not a tuple comparison, leaving `call_op` to resolve it.
+pub fn tuple_compare(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
+  if !(op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") || len(types) != 2 {
+    return null;
+  }
+  // A stored `__tuple<…>` operand reads its members through an unbox (`unbox_tuple_from_dbref`),
+  // not carried yet.
+  if (stored_tuple(e, types[0]!) && (stored_tuple(e, types[1]!) || el_types::base(types[1]!) is TyTuple))
+      || (stored_tuple(e, types[1]!) && el_types::base(types[0]!) is TyTuple) {
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyBoolean);
+    }
+    el::refuse(e, "a comparison of a stored tuple");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  le = tuple_elements(types[0]!);
+  re = tuple_elements(types[1]!);
+  if le == null || re == null {
+    return null;
+  }
+  // Different arities are not a tuple comparison: the refusal names both types.
+  if len(le!) != len(re!) || len(le!) == 0 {
+    return null;
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyBoolean);
+  }
+  // `@FR-T-Absent` — an operand that may be absent (the in-flight `(τ…)?` of an out-of-range
+  // read, declared on its local) is guarded per side (`coalesce_not_null`), not carried yet.
+  if (op == "==" || op == "!=") && (operand_absent(e, vars, list[0]!, types[0]!) || operand_absent(e, vars, list[1]!, types[1]!)) {
+    el::refuse(e, "a comparison of a tuple that may be absent");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // Each element read names its side again, so a side that does work is bound to a local
+  // first; a side that is already a tuple local is used as it stands.
+  prelude: vector<ir::Node> = [];
+  left = bind_tuple_operand(e, vars, list[0]!, le!, "__cmp_l", prelude);
+  right = bind_tuple_operand(e, vars, list[1]!, re!, "__cmp_r", prelude);
+  cmp = lex_compare(e, vars, op, 0, left, right, le!, re!);
+  if len(prelude) == 0 {
+    return ex(cmp, ir::TyBoolean);
+  }
+  prelude += [cmp];
+  ex(el_ir::v_block(prelude, ir::TyBoolean, "tuple_compare"), ir::TyBoolean)
+}
+
+// `Parser::tuple_elements` for a stack tuple: its elements; null for anything else (the stored
+// `__tuple<…>` form is met before this, in `tuple_compare`).
+fn tuple_elements(t: ir::TypeT) -> vector<ir::TypeT>? {
+  match el_types::base(t) {
+    TyTuple { elems } => elems,
+    _ => null
+  }
+}
+
+// A stored tuple, `reference<__tuple<…>>`: the boxed form a heap-carrying tuple travels as.
+fn stored_tuple(e: el::El, t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyReference { n, dep: _ } => n >= 0 && el::def(e, n).name.starts_with("__tuple<"),
+    _ => false
+  }
+}
+
+// The operand's OWN type says whether it may be absent: `types` arrives peeled, so a local's
+// declared type is where the `?` survives (`Parser::is_absent_tuple` on it).
+fn operand_absent(e: el::El, vars: el_vars::Vars, v: ir::Node, t: ir::TypeT) -> boolean {
+  tp = match el_ir::unspan(v) {
+    NdVar { n } => el_vars::tp(vars, n),
+    _ => t
+  };
+  match tp {
+    TyOptional { inner } => tuple_elements(inner) != null || stored_tuple(e, inner),
+    _ => false
+  }
+}
+
+// `Parser::bind_tuple_operand` — a name the operand's elements can be read from repeatedly;
+// the binding statement is appended to `prelude`.
+fn bind_tuple_operand(e: el::El, vars: el_vars::Vars, value: ir::Node, elems: vector<ir::TypeT>, name: text, prelude: vector<ir::Node>) -> integer {
+  match el_ir::unspan(value) {
+    NdVar { n } => {
+      if el_vars::tp(vars, n) is TyTuple {
+        return n;
+      }
+    },
+    _ => {}
+  }
+  tuple_tp = ir::TyTuple { elems: elems };
+  tmp = el_vars::create_unique(vars, name, tuple_tp);
+  el_vars::set_defined(vars, tmp);
+  el_vars::change_var_type(e, vars, tmp, tuple_tp);
+  prelude += [el_ir::v_set(tmp, value)];
+  tmp
+}
+
+// `Parser::lex_compare` — the lexicographic chain from element `i` on.  The LAST element
+// carries the operator as written; each earlier one asks "strictly before?", then "equal, so
+// keep looking?".  `==` / `!=` ask every element alike, folded with `&&` / `||`.
+fn lex_compare(e: el::El, vars: el_vars::Vars, op: text, i: integer, left: integer, right: integer, le: vector<ir::TypeT>, re: vector<ir::TypeT>) -> ir::Node {
+  last = len(le) - 1;
+  if op == "==" || op == "!=" {
+    acc = elem(e, vars, op, last, left, right, le, re);
+    k = last - 1;
+    while k >= 0 {
+      head = elem(e, vars, op, k, left, right, le, re);
+      acc = if op == "==" {
+        el_ir::v_if(head, acc, ir::NdBoolean { b: false })
+      } else {
+        el_ir::v_if(head, ir::NdBoolean { b: true }, acc)
+      };
+      k -= 1;
+    }
+    return acc;
+  }
+  if i == last {
+    return elem(e, vars, op, i, left, right, le, re);
+  }
+  strict = if op.starts_with("<") { "<" } else { ">" };
+  before = elem(e, vars, strict, i, left, right, le, re);
+  same = elem(e, vars, "==", i, left, right, le, re);
+  rest = lex_compare(e, vars, op, i + 1, left, right, le, re);
+  el_ir::v_if(before, ir::NdBoolean { b: true }, el_ir::v_if(same, rest, ir::NdBoolean { b: false }))
+}
+
+// Element `i` of both sides compared by its own type's operator — the whole two-operand
+// resolution (`builtin_op`: an element's own `operator`, content equality, then `call_op`), as
+// Rust's `call_op` resolves it.
+fn elem(e: el::El, vars: el_vars::Vars, op: text, i: integer, left: integer, right: integer, le: vector<ir::TypeT>, re: vector<ir::TypeT>) -> ir::Node {
+  el_ex_null::builtin_op(e, vars, op, ex(ir::NdTupleGet { var: left, idx: i }, le[i]!), ex(ir::NdTupleGet { var: right, idx: i }, re[i]!)).code
+}

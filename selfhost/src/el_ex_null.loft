@@ -28,6 +28,7 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_pattern;
 use el_ex_vector;
+use el_compare;
 
 pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
@@ -913,7 +914,23 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
   // A float compared with `null` is its null test (`null_test`): its truth, `!` of it for `==`.
   if (op == "==" || op == "!=") && (a.tp is TyNull || b.tp is TyNull) {
     v = if a.tp is TyNull { b } else { a };
+    // @FR-B-Ref-Uniform — a `&τ?` asks the null question its `τ?` asks (`null_test` peels the
+    // link): the link is the route, never the shape.
+    while v.tp is TyRefVar {
+      v = ex(v.code, match v.tp { TyRefVar { inner } => inner, _ => v.tp });
+    }
     vb = el_types::base(v.tp);
+    // `@FR-T-Absent` — a tuple a program writes down EXISTS, whatever its members hold: its
+    // null test is constantly false.  Only an out-of-range read's `(τ…)?` can be absent, which
+    // `coalesce_not_null` answers — not carried yet.
+    if tuple_shape(e, v.tp) {
+      if v.tp is TyOptional {
+        el::refuse(e, "a null test of a tuple that may be absent");
+        return ex(ir::NdNull, ir::TyBoolean);
+      }
+      f = ir::NdBoolean { b: false };
+      return ex(if op == "==" { f } else { el_ir::cl(e, "OpNot", [f]) }, ir::TyBoolean);
+    }
     if vb is TyFloat || vb is TySingle {
       t = el_convert::convert_admitting(e, vars, v.code, v.tp, ir::TyBoolean);
       if t != null {
@@ -946,6 +963,12 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     // negation.
     sd = struct_ref(e, vb);
     if v.tp is TyOptional && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") {
+      is_null = el_ir::cl(e, "OpRefIsNull", [v.code]);
+      return ex(if op == "==" { is_null } else { el_ir::cl(e, "OpNot", [is_null]) }, ir::TyBoolean);
+    }
+    // `null_test`'s last arm: any other `τ?` over a reference (a struct-enum variant's record,
+    // a stored tuple) holds the store sentinel too.
+    if v.tp is TyOptional && vb is TyReference {
       is_null = el_ir::cl(e, "OpRefIsNull", [v.code]);
       return ex(if op == "==" { is_null } else { el_ir::cl(e, "OpNot", [is_null]) }, ir::TyBoolean);
     }
@@ -1021,12 +1044,34 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     }
   }
   if op == ">" {
-    return call_op(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
+    return compare_or_call(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
   }
   if op == ">=" {
-    return call_op(e, vars, "<=", [b.code, a.code], [b.tp, a.tp]);
+    return compare_or_call(e, vars, "<=", [b.code, a.code], [b.tp, a.tp]);
   }
-  call_op(e, vars, op, [a.code, b.code], [a.tp, b.tp])
+  compare_or_call(e, vars, op, [a.code, b.code], [a.tp, b.tp])
+}
+
+// `call_op_as`'s first question: two tuples compare element by element (`tuple_compare`),
+// BEFORE the candidates — which would match `OpEqRef` for two stored tuples and answer whether
+// they are one record.  Then the builtin candidates (`call_op`).
+fn compare_or_call(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  for t in types {
+    if el_types::is_unknown(t) {
+      return call_op(e, vars, op, list, types);
+    }
+  }
+  tc = el_compare::tuple_compare(e, vars, op, list, types);
+  tc ?? call_op(e, vars, op, list, types)
+}
+
+// `Parser::is_tuple_shape`: a stack tuple, or a stored `__tuple<…>` record.
+fn tuple_shape(e: el::El, t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyTuple { elems: _ } => true,
+    TyReference { n, dep: _ } => n >= 0 && starts_with(el::def(e, n).name, "__tuple<"),
+    _ => false
+  }
 }
 
 // `Parser::order_through_compare`: an order form through `operator compare` — the call, its
