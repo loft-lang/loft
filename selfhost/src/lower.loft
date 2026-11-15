@@ -2277,6 +2277,10 @@ pub fn type_key(b: ir::Bundle, t: ir::TypeT) -> text? {
     TySingle => "single",
     TyCharacter => "character",
     TyKeys => "keys",
+    TyIterator { step, inner: _ } => {
+      k = type_key(b, step);
+      if k == null { null } else { "iterator<{k}>" }
+    }
     TyTuple { elems } => {
       r = "";
       for e in elems {
