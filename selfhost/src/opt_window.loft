@@ -12,6 +12,7 @@ use cgen_types;
 use el_ir;
 use loop_shape;
 use opt_hoist;
+use opt_facts;
 use opt_names;
 use opt_non_sentinel;
 use opt_push;
@@ -365,18 +366,22 @@ pub fn push_window_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir:
       parts += [s];
     }
   }
-  window_parts_ok(b, w, vd, parts, root, root_is_retbuf)
+  window_parts_ok(b, w, vd, parts, root, root_is_retbuf, null)
 }
 
 // `window_parts_ok` for one root: no part names the root or a variable that could view its
 // store, and none writes a store beside the pushes.
-fn window_parts_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, parts: vector<ir::Node>, root: integer, root_is_retbuf: boolean) -> boolean {
+fn window_parts_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, parts: vector<ir::Node>, root: integer, root_is_retbuf: boolean, facts: opt_facts::Facts?) -> boolean {
   d = b.data.definitions[vd]!;
   root_tp = d.variables.variables[root]!.type_def[0] ?? ir::TyVoid;
   may_view: vector<integer> = [];
   for v in d.variables.variables {
     x = v#index;
     tp = v.type_def[0] ?? ir::TyVoid;
+    // `(R-Alias)`: a variable the store facts prove apart from the root cannot view it.
+    if facts != null && opt_facts::enabled() && x != root && opt_facts::distinct(b, facts, x, root) {
+      continue;
+    }
     if x == root || opt_writes::is_scalar(tp) || (cgen_types::base(tp) is TyText) || opt_hoist::owned_local(d, x) || (v.argument && !root_is_retbuf) {
       continue;
     }
@@ -670,5 +675,82 @@ pub fn mint_window_ok(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir:
   for s in body {
     collect(b, s, m.path, fresh, parts);
   }
-  window_parts_ok(b, w, vd, parts, root, root_is_retbuf)
+  window_parts_ok(b, w, vd, parts, root, root_is_retbuf, null)
+}
+
+// The parts of a loop body a deep window must judge, at any depth; false where the body can
+// return or a jump leaves a loop that encloses the window.
+fn deep_collect(b: ir::Bundle, n: ir::Node, path: text, depth: integer, parts: vector<ir::Node>) -> boolean {
+  match loop_shape::unspan(n) {
+    NdReturn { inner: _ } => false,
+    NdYield { inner: _ } => false,
+    NdBreak { n: k } => k <= depth,
+    NdContinue { n: k } => k <= depth,
+    NdLine { n: _ } => true,
+    NdIf { cond, t, f } => {
+      parts += [cond];
+      deep_collect(b, t, path, depth, parts) && deep_collect(b, f, path, depth, parts)
+    },
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if !deep_collect(b, o, path, depth, parts) {
+          return false;
+        }
+      }
+      true
+    },
+    NdLoop { block } => {
+      for o in block[0].operators {
+        if !deep_collect(b, o, path, depth + 1, parts) {
+          return false;
+        }
+      }
+      true
+    },
+    NdInsert { items } => {
+      for o in items {
+        if !deep_collect(b, o, path, depth, parts) {
+          return false;
+        }
+      }
+      true
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && first_path(b, args) == path && (push_width(name) > 0 || name == "OpPreAllocVector") {
+        for a in args {
+          if a#index > 0 {
+            parts += [a];
+          }
+        }
+      } else {
+        parts += [n];
+      }
+      true
+    },
+    _ => {
+      parts += [n];
+      true
+    },
+  }
+}
+
+// `deep_window_ok`: may the pushes onto `path` anywhere under loop `lp` — in loops inside
+// it too — write through one window opened before it?
+pub fn deep_window_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block, path: text, root: integer) -> boolean {
+  d = b.data.definitions[vd]!;
+  if root < 0 || root >= len(d.variables.variables) {
+    return false;
+  }
+  root_is_retbuf = opt_hoist::retbuf_var(d) == root;
+  if !(opt_hoist::owned_local(d, root) || root_is_retbuf || opt_hoist::work_buffer_arg(d, root)) {
+    return false;
+  }
+  parts: vector<ir::Node> = [];
+  for o in lp.operators {
+    if !deep_collect(b, o, path, 0, parts) {
+      return false;
+    }
+  }
+  window_parts_ok(b, w, vd, parts, root, root_is_retbuf, facts)
 }

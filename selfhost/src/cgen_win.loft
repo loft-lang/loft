@@ -12,6 +12,7 @@ use cgen_names;
 use cgen_hoist;
 use cgen_ref;
 use opt_push;
+use opt_non_sentinel;
 use opt_window;
 
 // The window held for the vector at `path`, -1 for none.
@@ -49,7 +50,7 @@ pub fn open_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
   if (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_PUSH_WINDOW") ?? "0") != "0" {
     return false;
   }
-  p = window_loop(x, w, lp) ?? return false;
+  p = window_loop(x, w, lp) ?? return deep_window(x, w, lp, ind);
   n = len(w.decls) + 1;
   win = "pw{n}";
   pv = "pv{n}";
@@ -64,6 +65,62 @@ pub fn open_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
   line(w, ind, "loft_vec_reserve_more({pv}, loft_mul(loft_add(loft_sub({hi}, {lo}), INT64_C({if p.inclusive { 1 } else { 0 }})), INT64_C({p.pushes})), {p.size});");
   line(w, ind, "{win} = loft_win_of({pv}, {p.size});");
   w.windows += [Window { path: p.path, name: win, pv: pv, size: p.size }];
+  true
+}
+
+// `deep_window`: one window for the pushes onto the single path a loop pushes to at any
+// depth — no reservation, the pushes grow the record through the window.
+fn deep_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
+  if (env_variable("LOFT_NO_DEEP_WINDOW") ?? "0") != "0" {
+    return false;
+  }
+  paths: vector<text> = [];
+  roots: vector<integer> = [];
+  sizes: vector<integer> = [];
+  vectors: vector<ir::Node> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(x.b.data.definitions) {
+          path = "";
+          root = -1;
+          size = opt_push::fused(x.b, x.b.data.definitions[def_nr]!.name, args, path, root);
+          if size > 0 {
+            seen = false;
+            for p in paths {
+              if p == path {
+                seen = true;
+              }
+            }
+            if !seen {
+              paths += [path];
+              roots += [root];
+              sizes += [size];
+              vectors += [args[0]];
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if len(paths) != 1 || window_at(w, paths[0]) >= 0 {
+    return false;
+  }
+  if !opt_window::deep_window_ok(x.b, x.writes, w.facts, w.index, lp, paths[0], roots[0]) {
+    return false;
+  }
+  n = len(w.decls) + 1;
+  win = "pw{n}";
+  pv = "pv{n}";
+  w.decls += ["loft_win {win} = {{ 0, 0, 0, 0, 0xFFFF }};"];
+  w.decls += ["loft_ref {pv} = {{ 0xFFFF, 0, 0, 0 }};"];
+  vector = as_ref(w, cgen_fn::expr(x, w, vectors[0], ind));
+  line(w, ind, "{pv} = {vector};");
+  flush(w, ind);
+  line(w, ind, "{win} = loft_win_of({pv}, {sizes[0]});");
+  w.windows += [Window { path: paths[0], name: win, pv: pv, size: sizes[0] }];
   true
 }
 
