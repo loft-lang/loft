@@ -1,0 +1,405 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/parser/length_locals.rs` over the IR: the locals of a function that
+// hold the length of a vector of its own from their one assignment on (`n = len(v)`, `n`
+// assigned once, nothing that can run after it writing `v`).  Read by `@FR-R-Base`'s counter
+// clause for a range end copied from such a local.  The lockstep twins are not carried.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_non_sentinel;
+use own;
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d >= 0 && d < len(b.data.definitions) { b.data.definitions[d]!.name } else { "" }
+}
+
+// `is_len_call`
+fn is_len(name: text) -> boolean {
+  name == "n_len" || name == "OpLengthVector" || (name.starts_with("t_") && name.ends_with("_len"))
+}
+
+// `vec_key`: the base variable of a vector named by a variable or a field of one, with
+// whether it is the bare variable in `bare`; -1 for any other expression.
+fn vec_base(b: ir::Bundle, v: ir::Node, bare: &boolean) -> integer {
+  bare = false;
+  match loop_shape::unspan(v) {
+    NdVar { n } => {
+      bare = true;
+      n
+    },
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) != "OpGetField" || len(args) != 3 {
+        return -1;
+      }
+      if !(loop_shape::unspan(args[1]) is NdInt) || !(loop_shape::unspan(args[2]) is NdInt) {
+        return -1;
+      }
+      loop_shape::var_of(loop_shape::unspan(args[0]))
+    },
+    _ => -1,
+  }
+}
+
+// `parser::op_writes_first_arg`
+fn writes_first(name: text) -> boolean {
+  name.starts_with("OpSet") || name.starts_with("OpPush") || name.starts_with("OpAppendStack") || name.starts_with("OpClearStack") || name.starts_with("OpFormat") || name == "OpNewRecord" || name == "OpAppendCopy" || name == "OpAppendVector" || name == "OpSliceVector" || name == "OpAppendTextBytes" || name == "OpKeepRange" || name == "OpAppendText" || name == "OpAppendCharacter" || name == "OpClearVector" || name == "OpClearText" || name == "OpClearKeyed" || name == "OpHashRemove" || name == "OpInsertVector" || name == "OpRemoveVector" || name == "OpReverseVector" || name == "OpSortVector" || name == "OpReplaceVector" || name == "OpFinishRecord"
+}
+
+// `closures::collect_vars_in`: the variables `v` names as values, into `out`.
+fn collect_vars(v: ir::Node, out: vector<boolean>) {
+  match v {
+    NdVar { n } => { if n >= 0 && n < len(out) { out[n] = true; } },
+    NdTupleGet { var, idx: _ } => { if var >= 0 && var < len(out) { out[var] = true; } },
+    NdSet { var: _, inner } => collect_vars(inner, out),
+    NdCall { def_nr: _, args } => { for a in args { collect_vars(a, out); } },
+    NdBlock { block } => { for o in block[0].operators { collect_vars(o, out); } },
+    NdLoop { block } => { for o in block[0].operators { collect_vars(o, out); } },
+    NdInsert { items } => { for o in items { collect_vars(o, out); } },
+    NdIf { cond, t, f } => {
+      collect_vars(cond, out);
+      collect_vars(t, out);
+      collect_vars(f, out);
+    },
+    NdReturn { inner } => collect_vars(inner, out),
+    NdDrop { inner } => collect_vars(inner, out),
+    NdIter { var: _, create, next, init } => {
+      collect_vars(create, out);
+      collect_vars(next, out);
+      collect_vars(init, out);
+    },
+    NdSpan { pos: _, inner } => collect_vars(inner, out),
+    _ => {},
+  }
+}
+
+fn is_ref_var(t: ir::TypeT) -> boolean {
+  t is TyRefVar
+}
+
+// The memo of `callee_param_writes`: per definition whether it was asked, and its answer.
+struct Cache {
+  asked: vector<boolean>,
+  rows: vector<vector<boolean>>,
+}
+
+fn new_cache(b: ir::Bundle) -> Cache {
+  Cache { asked: [for _ in 0..len(b.data.definitions) { false }], rows: [for _ in 0..len(b.data.definitions) { [] }] }
+}
+
+// `closures::callee_param_writes`: per parameter of function `d`, whether its body writes it.
+fn param_writes(b: ir::Bundle, d: integer, c: Cache) -> vector<boolean> {
+  if c.asked[d]! {
+    return c.rows[d]!;
+  }
+  def = b.data.definitions[d]!;
+  n = len(def.attributes);
+  // Break recursion: a placeholder before walking the body.
+  c.asked[d] = true;
+  c.rows[d] = [for _ in 0..n { false }];
+  if !binds::has_code(def) || n == 0 {
+    return c.rows[d]!;
+  }
+  written: vector<boolean> = [for _ in 0..len(def.variables.variables) + n { false }];
+  written_vars(b, def, def.code[0]!, written, c);
+  merged: vector<boolean> = [for i in 0..n { (c.rows[d]![i] ?? false) || written[i]! }];
+  c.rows[d] = merged;
+  merged
+}
+
+// `parser::find_written_vars`
+fn written_vars(b: ir::Bundle, d: ir::Definition, code: ir::Node, written: vector<boolean>, c: Cache) {
+  match code {
+    NdSet { var, inner } => {
+      if var >= 0 && var < len(written) {
+        written[var] = true;
+      }
+      written_vars(b, d, inner, written, c);
+    },
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return;
+      }
+      callee = b.data.definitions[def_nr]!;
+      first_write = writes_first(callee.name);
+      second_write = callee.name == "OpCopyRecord" || callee.name == "OpRemove";
+      for a in args {
+        i = a#index;
+        if i < len(callee.attributes) && is_ref_var(callee.attributes[i]!.typedef[0] ?? ir::TyVoid) {
+          match a {
+            NdVar { n } => { if n >= 0 && n < len(written) { written[n] = true; } },
+            _ => {},
+          }
+        }
+        if (i == 0 && first_write) || (i == 1 && second_write) {
+          collect_vars(a, written);
+        }
+        written_vars(b, d, a, written, c);
+      }
+      if binds::has_code(callee) {
+        rows = param_writes(b, def_nr, c);
+        for a in args {
+          if a#index < len(rows) && rows[a#index]! {
+            collect_vars(a, written);
+          }
+        }
+      }
+    },
+    NdCallRef { var, args } => {
+      params: vector<ir::TypeT> = [];
+      if var >= 0 && var < len(d.variables.variables) {
+        match binds::base(d.variables.variables[var]!.type_def[0] ?? ir::TyVoid) {
+          TyFunction { args: ps, result: _, dep: _, consts: _ } => { params = ps; },
+          _ => {},
+        }
+      }
+      for a in args {
+        if a#index < len(params) && is_ref_var(binds::base(params[a#index]!)) {
+          collect_vars(a, written);
+        }
+        written_vars(b, d, a, written, c);
+      }
+    },
+    NdBlock { block } => { for o in block[0].operators { written_vars(b, d, o, written, c); } },
+    NdLoop { block } => { for o in block[0].operators { written_vars(b, d, o, written, c); } },
+    NdInsert { items } => { for o in items { written_vars(b, d, o, written, c); } },
+    NdIf { cond, t, f } => {
+      written_vars(b, d, cond, written, c);
+      written_vars(b, d, t, written, c);
+      written_vars(b, d, f, written, c);
+    },
+    NdReturn { inner } => written_vars(b, d, inner, written, c),
+    NdDrop { inner } => written_vars(b, d, inner, written, c),
+    NdTuplePut { var, idx: _, inner } => {
+      if var >= 0 && var < len(written) {
+        written[var] = true;
+      }
+      written_vars(b, d, inner, written, c);
+    },
+    NdIter { var: _, create, next, init } => {
+      written_vars(b, d, create, written, c);
+      written_vars(b, d, next, written, c);
+      written_vars(b, d, init, written, c);
+    },
+    NdSpan { pos: _, inner } => written_vars(b, d, inner, written, c),
+    _ => {},
+  }
+}
+
+// Can variable `w` reach `base`'s store, or `base` its?
+fn reach(d: ir::Definition, w: integer, base: integer) -> boolean {
+  if w == base {
+    return true;
+  }
+  for dep in own::tp_depend(d.variables, w) {
+    if dep == base {
+      return true;
+    }
+  }
+  for dep in own::tp_depend(d.variables, base) {
+    if dep == w {
+      return true;
+    }
+  }
+  false
+}
+
+// `writes_node`: may this one node write `base`'s vector?
+fn writes_node(b: ir::Bundle, d: ir::Definition, n: ir::Node, base: integer, c: Cache) -> boolean {
+  match loop_shape::unspan(n) {
+    NdSet { var, inner: _ } => var == base,
+    NdTuplePut { var, idx: _, inner: _ } => reach(d, var, base),
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      callee = b.data.definitions[def_nr]!;
+      rows: vector<boolean> = if binds::has_code(callee) { param_writes(b, def_nr, c) } else { [] };
+      for a in args {
+        i = a#index;
+        writes = (i == 0 && writes_first(callee.name)) || (i == 1 && callee.name == "OpCopyRecord") || (i < len(callee.attributes) && is_ref_var(binds::base(callee.attributes[i]!.typedef[0] ?? ir::TyVoid))) || (i < len(rows) && rows[i]!);
+        if writes {
+          named: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+          collect_vars(a, named);
+          for v in named {
+            if v && reach(d, v#index, base) {
+              return true;
+            }
+          }
+        }
+      }
+      false
+    },
+    NdCallRef { var: _, args: _ } => true,
+    _ => false,
+  }
+}
+
+// `statements_after`: the statements that can run after the assignment of `n`, into `after`;
+// false where `n` is not assigned by a statement.
+fn statements_after(node: ir::Node, n: integer, after: vector<ir::Node>) -> boolean {
+  match loop_shape::unspan(node) {
+    NdSet { var, inner: _ } => var == n,
+    NdBlock { block } => after_in(block[0].operators, n, after),
+    NdLoop { block } => {
+      found = after_in(block[0].operators, n, after);
+      if found {
+        for o in block[0].operators {
+          after += [o];
+        }
+      }
+      found
+    },
+    NdInsert { items } => after_in(items, n, after),
+    NdIf { cond: _, t, f } => statements_after(t, n, after) || statements_after(f, n, after),
+    _ => false,
+  }
+}
+
+fn after_in(ops: vector<ir::Node>, n: integer, after: vector<ir::Node>) -> boolean {
+  for op in ops {
+    if statements_after(op, n, after) {
+      for o in ops {
+        if o#index > op#index {
+          after += [o];
+        }
+      }
+      return true;
+    }
+  }
+  false
+}
+
+fn stable_after(b: ir::Bundle, d: ir::Definition, code: ir::Node, n: integer, base: integer) -> boolean {
+  if base < 0 || base >= len(d.variables.variables) || d.variables.variables[base]!.captured {
+    return false;
+  }
+  after: vector<ir::Node> = [];
+  if !statements_after(code, n, after) {
+    return false;
+  }
+  c = new_cache(b);
+  hit = [false];
+  rest = ir::NdInsert { items: after };
+  opt_non_sentinel::walk(rest, fn(node: ir::Node) {
+    if !hit[0]! && writes_node(b, d, node, base, c) {
+      hit[0] = true;
+    }
+  });
+  !hit[0]!
+}
+
+// `own_vector`: a vector no user parameter can name.
+fn own_vector(d: ir::Definition, v: integer) -> boolean {
+  f = d.variables;
+  seen: vector<integer> = [v];
+  for i in 0..len(f.variables) + 1 {
+    if i >= len(seen) {
+      break;
+    }
+    x = seen[i]!;
+    if x < 0 || x >= len(f.variables) {
+      continue;
+    }
+    if f.variables[x]!.argument {
+      pos = 0;
+      work = false;
+      for a in f.variables {
+        if a.argument {
+          if a#index == x {
+            work = pos < len(d.attributes) && d.attributes[pos]!.work_buffer;
+          }
+          pos += 1;
+        }
+      }
+      if !work {
+        return false;
+      }
+    }
+    for dep in own::tp_depend(f, x) {
+      known = false;
+      for s in seen {
+        if s == dep {
+          known = true;
+        }
+      }
+      if !known {
+        seen += [dep];
+      }
+    }
+  }
+  true
+}
+
+// `own_length_locals`: (length local, vector) pairs flat — `[n0, v0, n1, v1, …]`.
+pub fn own_length_locals(b: ir::Bundle, vd: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if (env_variable("LOFT_NO_LENGTH_LOCAL") ?? "0") != "0" {
+    return out;
+  }
+  d = b.data.definitions[vd]!;
+  if len(d.code) == 0 {
+    return out;
+  }
+  code = d.code[0]!;
+  count = len(d.variables.variables);
+  // every `n = len(<vector>)`: n, the vector's base, whether it is the bare variable
+  sets: vector<integer> = [];
+  assigned: vector<integer> = [for _ in 0..count { 0 }];
+  by_ref: vector<boolean> = [for _ in 0..count { false }];
+  opt_non_sentinel::walk(code, fn(node: ir::Node) {
+    match node {
+      NdSet { var, inner } => {
+        if var < count {
+          assigned[var] = assigned[var]! + 1;
+        }
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr, args } => {
+            if len(args) == 1 && def_nr >= 0 && def_nr < len(b.data.definitions) && is_len(def_name(b, def_nr)) {
+              bare = false;
+              base = vec_base(b, args[0], bare);
+              if base >= 0 {
+                sets += [var, base, if bare { 1 } else { 0 }];
+              }
+            }
+          },
+          _ => {},
+        }
+      },
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) {
+          attrs = b.data.definitions[def_nr]!.attributes;
+          for a in args {
+            v = loop_shape::var_of(loop_shape::unspan(a));
+            if v >= 0 && v < count && a#index < len(attrs) && is_ref_var(binds::base(attrs[a#index]!.typedef[0] ?? ir::TyVoid)) {
+              by_ref[v] = true;
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  for s in sets {
+    if s#index % 3 != 0 {
+      continue;
+    }
+    n = s;
+    base = sets[s#index + 1]!;
+    bare = sets[s#index + 2]! == 1;
+    if n < 0 || n >= count || assigned[n]! != 1 || d.variables.variables[n]!.argument || d.variables.variables[n]!.captured || by_ref[n]! {
+      continue;
+    }
+    // `holds_var_length`: the length of the bare variable itself, a vector of the frame's own.
+    if !bare || !own_vector(d, base) {
+      continue;
+    }
+    if stable_after(b, d, code, n, base) {
+      out += [n, base];
+    }
+  }
+  out
+}

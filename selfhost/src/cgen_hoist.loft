@@ -10,6 +10,7 @@
 use ir;
 use loop_shape;
 use opt_hoist;
+use opt_length;
 use opt_facts;
 use opt_push;
 use opt_range;
@@ -475,6 +476,28 @@ pub fn range_facts(x: Cx, w: W, ops: vector<ir::Node>, i: integer) {
             n = loop_shape::var_of(loop_shape::unspan(inner));
             if n >= 0 && n == w.alias_var {
               w.range_lens += [RangeLen { end: var, vec: w.alias_vec, via: n }];
+            }
+            // `end = n` where `n` holds `len(v)` for the rest of the function
+            // (`length_locals`): one entry for each vector it is the length of.
+            if n >= 0 {
+              if !w.length_asked {
+                w.length_asked = true;
+                w.length_locals = opt_length::own_length_locals(x.b, w.index);
+              }
+              for m in w.length_locals {
+                if m#index % 2 == 0 && m == n {
+                  of = ir::NdVar { n: w.length_locals[m#index + 1]! };
+                  known = false;
+                  for r in w.range_lens {
+                    if r.end == var && loop_shape::unspan(r.vec) == of {
+                      known = true;
+                    }
+                  }
+                  if !known {
+                    w.range_lens += [RangeLen { end: var, vec: of, via: n }];
+                  }
+                }
+              }
             }
           },
           _ => {},

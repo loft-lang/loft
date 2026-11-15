@@ -2694,6 +2694,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     headers: [],
     push_heads: [],
     windows: [],
+    length_locals: [],
+    length_asked: false,
     grid_facts: [],
     grid_binds: [],
     range_ends: [],
