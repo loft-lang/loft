@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	38d4877cb4a76aae39bb2c82206558ba5327ca35
 
-layer	elab	agree	725	of	2096
+layer	elab	agree	727	of	2096
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -955,7 +955,6 @@ elab	refused	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-infe
 elab	refused	loft-suite/rules/types/N-Join/153-n-join-an-inferred-local-widens-to-nullable.loft
 elab	refused	loft-suite/rules/types/N-Join/2305-a-text-match-arm-calling-a-function-declared-below-builds-natively.loft
 elab	refused	loft-suite/rules/types/N-Join/2339-a-binding-arm-answering-a-null-block-takes-the-joins-null.loft
-elab	differ	loft-suite/rules/types/N-Join/2478-an-inferred-local-bound-from-a-function-declared-below-joins-its-null.loft
 elab	refused	loft-suite/rules/types/N-Match/1417-a-null-arm-matches-a-heap-subject.loft
 elab	refused	loft-suite/rules/types/N-Match/2230-a-null-arm-matches-a-plain-enum-subject.loft
 elab	refused	loft-suite/rules/types/N-Match/2427-a-nullable-collection-is-matched-like-any-nullable.loft
@@ -1318,7 +1317,6 @@ elab	refused	tests/scripts/a-run-of-pushes-through-a-loops-header-tests-its-room
 elab	refused	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft
 elab	refused	tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-slice.loft
 elab	refused	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
-elab	differ	tests/scripts/a-small-record-built-into-a-work-local-and-returned-is-read-as-its-fields.loft
 elab	refused	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft
 elab	refused	tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft
 elab	refused	tests/scripts/a-text-call-result-is-read-from-its-work-buffer.loft

@@ -32,6 +32,12 @@ use el_compare;
 
 pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
+    // `build_null_coalesce_default` holds a subject that is no local in a `__ncc_N` whatever
+    // its type, so a call to a function declared below mints it on the first pass too: it
+    // numbers before the second pass's buffers, as the Rust's does.
+    if e.first_pass && !(x.code is NdVar) && !(x.tp is TyNull) {
+      el_vars::create_unique(vars, "_ncc", el_types::base(x.tp));
+    }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   lhs = el_types::base(x.tp);
@@ -1949,12 +1955,10 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
   }
-  if !e.first_pass && unrenamed {
-    // Staged after the tail's delivery (`stage_exits`), as Rust redirects a mid-body exit.
-    built = el_expressions::object_into_buffer(e, vars, x, rb, result, stage: false);
-    if built != null {
-      return ex(ir::NdReturn { inner: built! }, ir::TyNever);
-    }
+  // A fresh literal keeps its own work ref here: whether the exits build into the buffer is
+  // decided once the tail's delivery is, over EVERY exit (`literal_exits_into_buffer`).
+  if !e.first_pass && unrenamed && el_expressions::fresh_literal_ref(x) >= 0 {
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
   // A buffer a chain renamed onto its work ref (`chain_return_buffer_var`) is still the
   // caller's: a literal is built into it as into `__retbuf`.

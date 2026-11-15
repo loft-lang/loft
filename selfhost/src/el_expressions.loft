@@ -317,6 +317,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // A tail already refused is no second refusal.
       if built != null {
         code = built!;
+        code = literal_exits_into_buffer(e, vars, code, rb, result);
         if el_types::base(result) is TyReference {
           code = stage_exits(e, vars, code, rb);
         }
@@ -2224,6 +2225,151 @@ pub fn literal_arms_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb:
     },
     _ => null
   }
+}
+
+// The work ref of a FRESH record literal — an `Object` (or a unit variant's `EnumUnitLit`) block
+// that opens by nulling its own buffer and answers it — or -1 (`tail_fresh_object_workref`).
+pub fn fresh_literal_ref(x: ir::Node) -> integer {
+  match el_ir::unspan(x) {
+    NdReturn { inner } => fresh_literal_ref(inner),
+    NdBlock { block } => {
+      b = block[0];
+      if !(b.name == "Object" || b.name == "EnumUnitLit") || len(b.operators) == 0 {
+        return -1;
+      }
+      opens = match el_ir::unspan(b.operators[0]!) { NdSet { var, inner } => if inner is NdNull { var } else { -1 }, _ => -1 };
+      answers = match el_ir::unspan(b.operators[-1]!) { NdVar { n } => n, _ => -1 };
+      if opens >= 0 && opens == answers { opens } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// `exit_literal_workrefs`: the work refs of an exit whose value is a fresh literal, or a branch
+// every arm of which ends in one; false when some arm ends in anything else.
+fn exit_literal_refs(x: ir::Node, out: vector<integer>) -> boolean {
+  w = fresh_literal_ref(x);
+  if w >= 0 {
+    out += [w];
+    return true;
+  }
+  match el_ir::unspan(x) {
+    NdIf { cond: _, t, f } => exit_literal_refs(t, out) && exit_literal_refs(f, out),
+    NdBlock { block } => len(block[0].operators) > 0 && exit_literal_refs(block[0].operators[-1]!, out),
+    _ => false
+  }
+}
+
+// `returns_through_chain`: a chain exit answers what its callee wrote into the buffer `v`.
+fn returns_through_chain(x: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(x) {
+    NdBlock { block } => block[0].name == "one_buffer_chain" && len(block[0].operators) > 0 && match el_ir::unspan(block[0].operators[-1]!) { NdVar { n } => n == v, _ => false },
+    NdInsert { items } => len(items) > 0 && returns_through_chain(items[-1]!, v),
+    _ => false
+  }
+}
+
+// Every `return` value of `n`, in source order.
+fn returns_of(n: ir::Node, out: vector<ir::Node>) {
+  match n {
+    NdReturn { inner } => { out += [inner]; },
+    NdSpan { pos: _, inner } => returns_of(inner, out),
+    NdIf { cond, t, f } => { returns_of(cond, out); returns_of(t, out); returns_of(f, out); },
+    NdBlock { block } => { for o in block[0].operators { returns_of(o, out); } },
+    NdLoop { block } => { for o in block[0].operators { returns_of(o, out); } },
+    NdInsert { items } => { for o in items { returns_of(o, out); } },
+    NdSet { var: _, inner } => returns_of(inner, out),
+    NdCall { def_nr: _, args } => { for o in args { returns_of(o, out); } },
+    _ => {}
+  }
+}
+
+// Each fresh-literal `return` of `n` rebuilt into the return buffer `rb` (`build_exit_arms`).
+fn build_literal_exits(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+  match n {
+    NdReturn { inner } => {
+      if fresh_literal_ref(inner) >= 0 {
+        built = object_into_buffer(e, vars, inner, rb, result, stage: false);
+        if built != null {
+          return ir::NdReturn { inner: built! };
+        }
+      } else if exit_literal_refs(inner, []) {
+        el::refuse(e, "a mid-body `return` of a branch of literals built into the return buffer");
+      }
+      n
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: build_literal_exits(e, vars, inner, rb, result) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: build_literal_exits(e, vars, t, rb, result), f: build_literal_exits(e, vars, f, rb, result) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { build_literal_exits(e, vars, x, rb, result) }] },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { build_literal_exits(e, vars, x, rb, result) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { build_literal_exits(e, vars, x, rb, result) }];
+      ir::NdLoop { block: [b] }
+    },
+    _ => n
+  }
+}
+
+// `Parser::literal_exits_into_buffer` (@PLN164 B2, `@FR-R-Place`) for the unpromoted `__retbuf`:
+// when EVERY mid-body exit is a fresh literal of the buffer's type, a chain over the buffer or a
+// by-value parameter of its type (`@FR-R-Rebind`), each `return S { … }` builds into the buffer,
+// so the callee answers one store whichever exit it takes; any other exit keeps every per-exit
+// store.  (The chain-renamed buffer's half, `chain_return_buffer_var`, is not carried here.)
+pub fn literal_exits_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+  if e.first_pass || attr_nr(el::def(e, e.context), "__retbuf") < 0 || el::def(e, e.context).name.contains("__lambda") {
+    return code;
+  }
+  td = heap_def(el_vars::tp(vars, rb));
+  if td < 0 || td != heap_def(el::def(e, e.context).returned[0] ?? ir::TyVoid) || !el_ex_match::fully_written_by_literal(e, td) {
+    return code;
+  }
+  params: vector<integer> = [];
+  for a in el::def(e, e.context).attributes {
+    if !a.hidden && heap_def(a.typedef[0] ?? ir::TyVoid) == td {
+      pv = el_vars::var(vars, a.name);
+      if pv >= 0 && vars.vars[pv].argument {
+        params += [pv];
+      }
+    }
+  }
+  exits: vector<ir::Node> = [];
+  returns_of(code, exits);
+  refs: vector<integer> = [];
+  for x in exits {
+    arms: vector<integer> = [];
+    if exit_literal_refs(x, arms) {
+      for w in arms {
+        if w == rb {
+          continue;
+        }
+        if el_vars::is_compiler_generated(vars, w) && heap_def(el_vars::tp(vars, w)) == td {
+          if !refs.contains(w) {
+            refs += [w];
+          }
+        } else {
+          return code;
+        }
+      }
+      continue;
+    }
+    if returns_through_chain(x, rb) {
+      continue;
+    }
+    pv = match el_ir::unspan(x) { NdVar { n } => n, _ => -1 };
+    if pv >= 0 && params.contains(pv) {
+      continue;
+    }
+    return code;
+  }
+  if len(refs) == 0 {
+    return code;
+  }
+  build_literal_exits(e, vars, code, rb, result)
 }
 
 // A record literal built in its own `__ref_p2_N` (an `Object` block opening with that buffer's
