@@ -184,7 +184,7 @@ draws it with.
 
 | Caller | Vertex / instance | Block | Tex | Pipelines | What changes for it |
 |---|---|---|---|---|---|
-| graphics `Painter` flat | `F3` | `MAT4`, `F4` colour with alpha | 0 | 2: blend off, blend on; depth off | The colour and the alpha become one `F4`.  It blends today "where the window has `GL_BLEND` on": the window's switch becomes which of its two pipelines the painter uses (§ graphics 0.12 on top) |
+| graphics `Painter` flat | `F3` | `MAT4`, `F4` colour with alpha | 0 | 2: blend off, blend on; depth off | The colour and the alpha become one `F4`.  It blends today "where the window has `GL_BLEND` on": that becomes the painter's own setting, which picks one of its two pipelines |
 | graphics `Painter` textured | `F3` | `MAT4` | 1 | 2, as flat | The discard under 0.01 stays in its source |
 | graphics `Sprites` | `F3` | `MAT4`, `F4` (the cell's corners) | 1 | 3: the painter's two, and depth test for `Sprites.draw` | Four floats become one `F4` |
 | stage sprites | `F3` / `F4`, `F2`, `F4`, `F4`, `F2` | `F2` screen, `F2` camera, `F1` time | 1 | 1: blend (one, one minus source alpha), depth off | `instance_attrib` per run becomes `instances(buffer, first_float)`: the layout is the pipeline's, the offset the draw's.  Scissor per run stays a call in the pass |
@@ -200,15 +200,20 @@ No row needed a stack named.  Three rows changed the API while it was written: t
 ambient blend (below), the light arrays (`f4_at`, and no `vec3` in a block) and stage's
 per-run instance offset (`instances(buffer, first_float)`).
 
-## graphics 0.12 on top, while both exist (L3, L4)
+## graphics 0.12 beside it, while both exist (L3–L6)
 
-graphics keeps its 0.12 calls until L7, with `gpu` beneath them from L4 on.  What makes that
-possible is one small table inside graphics: its `Window` remembers the switches a caller
-set (`enable`, `blend`, `cull`, `depth_write`), and a `Shader` builds a pipeline for each
-combination it is first drawn with.  So `w.enabled(cap)` still answers, a painter still
-blends where the caller turned blending on, and the same picture comes out.
+graphics keeps its 0.12 calls on its own GL code until L7; what it draws itself is built
+again on `gpu` as a library beside it and compared with its pixels (GPU_LAYER.md L4).
 
-This table is the only place the old model survives, and it goes with L7.
+A first form of this section had graphics' 0.12 calls run on top of `gpu`, its `Window`
+remembering the state switches and a `Shader` building a pipeline for each combination.  It
+does not hold: a 0.12 `Shader` is any GLSL with uniforms set by name, and a painter there
+draws into whatever target and viewport the window was last given.  Neither can be said in a
+pass that names everything it depends on, which is the rule this boundary rests on.
+
+In a page the two do share one thing, the page's GL context: a program that mixes them sets
+the state its graphics drawing relies on (measured at L3 and L4: a depth write left off by a
+pipeline changed what graphics drew next).
 
 ## What no other stack has
 

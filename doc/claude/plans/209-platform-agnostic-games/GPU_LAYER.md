@@ -12,14 +12,16 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 
 P1, P2, P3, L0, L1, L2, L2b and M0 are done (2026-11-15).  L2b amended § The shape's reach:
 a backend names the layer's header by the layer's name (@C164).
-Next: L4 (graphics' own drawing onto `gpu`), and L3's X11 run on the Linux machine.
+Next: M1 (the first Metal triangle, on this Mac), and L3's and L4's X11 runs on the Linux
+machine.  L5 (stage) changes a published library that would then depend on `gpu`, so it waits
+for `gpu` to be published.
 Publishing waits for the name (open question 2) and for @C164 in a released loft.  V0
 waits for a Linux machine.
 
 | Track | Steps | State |
 |---|---|---|
 | P — the game on a Mac, on the GL that is there | P1–P5 | P1–P3 done; P4 stood in for until L3; P5 measured standing still |
-| L — the neutral layer | L0–L8 | L0–L2b done; L3 in review, X11 not run; L4–L8 open |
+| L — the neutral layer | L0–L8 | L0–L3 done on a Mac and in a page (X11 not run); L4's painter and sprites in review; L5–L8 open |
 | M — the Metal backend | M0–M4 | M0 done; M1–M4 open |
 | V — the Vulkan backend | V0–V4 | Open |
 | H — one shader source | H1–H4 | Open |
@@ -281,6 +283,23 @@ Nothing here waits for the neutral layer or for Metal.
 - **L4 — graphics' own drawing moves, one part a step (S each).**  `Painter`, `Sprites`,
   `GroupMeshes`, text textures, `quad`: each onto `gpu`, each compared with its 0.12 pixels.
   Goes red when: that part's tests draw another byte.
+  **How it is done (2026-11-15): the new one beside the old, as rule 2 says.**  graphics'
+  `Painter` draws at once into whatever its window was last told (`render_to`, `viewport`)
+  and blends where the window had blending on.  On `gpu` nothing is left set from an earlier
+  call, so a painter there cannot mean the same thing; and a 0.12 `Shader` is any GLSL with
+  uniforms set by name, which no pipeline can stand in for.  So each part is built as a
+  library on `gpu`, compared with graphics' pixels, and graphics keeps its own until L7.
+  **Painter and Sprites: built, in review as loft-libs-graphics#85** (`gpu_paint` 0.1.0):
+  `painter(dev, into)` with `rect`, `image`, `sprite`, `resize`, and `sprites(…)` with `draw`
+  for a sprite in a scene with depth; graphics' three programs with their uniforms as one
+  block each.  Five tests compare it byte for byte with graphics 0.12 on a Mac (interpreter,
+  `--native-c`, `--native`, a shipped program) and in both writers' pages; two read what it
+  asks of a backend from `gpu_record`, with no display; seven planted breaks each turn a
+  comparison red.  X11 not run.
+  **Left of L4, each taken up with its first caller:** `quad` (a full-target quad of two
+  pairs: stage's light pass, L5), text textures (they need graphics' `Font`: L7, when
+  graphics itself builds on `gpu`), `GroupMeshes` (buffers by group with bounds: the games'
+  views, L8).
 - **L5 — `stage` moves (M).**  Its four programs and its batching onto `gpu`.
   Goes red when: stage's suite draws other pixels than before the step.
 - **L6 — `gpu_host`, and the gate (S).**  The host package of § The shape; F8's lint gains a
