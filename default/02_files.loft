@@ -1261,6 +1261,7 @@ fn OpDatabaseNP(pos: const u16, db_tp: const u16);
 // `@FR-R-CompleteWrite` — `OpNewRecord` without the default prefill: the same claimed slot,
 // invisible until its `OpFinishRecord`, and no `set_default_value`; the same condition.
 fn OpNewRecordNP(data: reference, parent_tp: const u16, fld: const u16) -> reference[data];
+#loft" #arm answer: s.new_record_at(parent_tp, fld, false, data_pos);"
 #impure(parent_write)
 
 // --- Path helpers ---

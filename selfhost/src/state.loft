@@ -1288,6 +1288,16 @@ pub fn keyed_facts(self: State, tp: integer) -> integer {
 fn new_record_of(self: State, defaults: boolean) {
   ptp = self.code_u16();
   fld = self.code_u16();
+  if !self.can_pop(16) {
+    return;
+  }
+  self.new_record_at(ptp, fld, defaults, self.stack_pos - 16);
+}
+
+// `new_record_of` on its operands, the collection's reference in the frame slot at `at` (the
+// top less 16): the new record's reference written over it, the top just above
+// (`OpNewRecord`'s arm calls this).
+pub fn new_record_at(self: State, ptp: integer, fld: integer, defaults: boolean, at: integer) {
   t = self.targets[self.target_of(ptp, fld)]!;
   if !t.ok {
     self.stop("not carried: a record added to {self.types[t.tp]?.name ?? "a collection"}");
@@ -1295,11 +1305,7 @@ fn new_record_of(self: State, defaults: boolean) {
   }
   // A keyed collection's routines read its key parts from the loaded table.
   self.load_table();
-  if !self.can_pop(16) {
-    return;
-  }
   // The collection's reference read in its slot, the new record's written over it.
-  at = self.stack_pos - 16;
   vs = crt::stack_get(4, self.stk, at) & 65535;
   vr = crt::stack_get(4, self.stk, at + 4);
   vp = crt::stack_get(4, self.stk, at + 8) + t.at;
@@ -1318,6 +1324,7 @@ fn new_record_of(self: State, defaults: boolean) {
     crt::fill(self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, self.images[t.elem]!);
   }
   crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+  self.stack_pos = at + 16;
 }
 
 pub fn new_record(self: State) {
@@ -1333,18 +1340,23 @@ pub fn new_record_n_p(self: State) {
 pub fn finish_record(self: State) {
   ptp = self.code_u16();
   fld = self.code_u16();
+  if !self.can_pop(32) {
+    return;
+  }
+  self.stack_pos -= 32;
+  self.finish_record_at(ptp, fld, self.stack_pos);
+}
+
+// `finish_record` on its operands, the two references popped already: the collection's in the
+// frame slot at `at`, the record's above it (`OpFinishRecord`'s arm calls this).
+pub fn finish_record_at(self: State, ptp: integer, fld: integer, at: integer) {
   t = self.targets[self.target_of(ptp, fld)]!;
   if !t.ok {
     self.stop("not carried: a record added to {self.types[t.tp]?.name ?? "a collection"}");
     return;
   }
   self.load_table();
-  if !self.can_pop(32) {
-    return;
-  }
   // The record on top and the collection's reference under it, read in their slots.
-  self.stack_pos -= 32;
-  at = self.stack_pos;
   vs = crt::stack_get(4, self.stk, at) & 65535;
   vr = crt::stack_get(4, self.stk, at + 4);
   vpos = crt::stack_get(4, self.stk, at + 8);

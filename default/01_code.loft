@@ -1744,9 +1744,11 @@ fn OpInsertVector(r: vector, size: const u16, index: __word, db_tp: const u16) -
 #impure(parent_write)
 // Claim space for a new record for the given structure
 fn OpNewRecord(data: reference, parent_tp: const u16, fld: const u16) -> reference[data];
+#loft" #arm answer: s.new_record_at(parent_tp, fld, true, data_pos);"
 #impure(parent_write)
 // Write the new record into the given structure (when not already done)
 fn OpFinishRecord(data: reference, rec: reference, parent_tp: const u16, fld: const u16);
+#loft" #arm s.finish_record_at(parent_tp, fld, data_pos);"
 #impure(parent_write)
 // Add all elements of another vector with the same type
 fn OpAppendVector(r: vector, other: vector, tp: const u16);

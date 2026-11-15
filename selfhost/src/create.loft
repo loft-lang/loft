@@ -476,7 +476,7 @@ fn pool(names: vector<text>, locals: vector<text>, name: text, kind: text) -> te
 // `<name>_pos`, `out_at` (the address it writes a reference answer at) and integers of its own
 // (`tmp0`…).  Before it: `slots:` (every `u16` operand is a frame slot the guard tests),
 // `slots(a, b):` (those alone), `guard(<test>):` (a test of its own).  A text answer the form
-// pushes itself.
+// pushes itself, and so does a `State` method behind `answer:`.
 fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
   // A slot past 254 is two bytes in the code — 255, then the slot less 255: its arm is one of
   // the second byte's (`run_fn`), its operands a byte further.
@@ -509,6 +509,13 @@ fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
       own_guard = template[6..till!];
       template = template[till! + 3..len(template)].trim();
     }
+  }
+  // `answer:` — the body is a call on the `State` that leaves the operator's answer on the stack
+  // itself, as a text answer is pushed by its template (the method sets the top).
+  own_answer = false;
+  if template.starts_with("answer:") {
+    own_answer = true;
+    template = template[7..len(template)].trim();
   }
   if !explicit {
     template = fn_part(whole);
@@ -618,7 +625,7 @@ fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
   };
   rw = if void { "" } else { answer_width(ret) };
   // A text answer is a view its template pushes itself.
-  if !void && rw != "str" && slot_width(rw) == "" && !(rw == "dbref" && writes_ref) {
+  if !void && rw != "str" && slot_width(rw) == "" && !(rw == "dbref" && writes_ref) && !own_answer {
     return "";
   }
   body = rename(template, names, locals);
@@ -634,6 +641,9 @@ fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
   // A template that needs more of the `State` runs on it: the positions written first and
   // read back after, as the register table's `regs_out` / `regs_in` bracket such an operator.
   through = names_state(body.replace("s.raise_", "raise_"));
+  if own_answer && !through {
+    return "";
+  }
   if through {
     body = rename(template, names, locals);
     if writes_ref {
@@ -669,7 +679,7 @@ fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
   }
   if through {
     out += "        s.code_pos = ip;\n        s.stack_pos = sp;\n        s.depth = fd;\n";
-    if void || rw == "str" {
+    if void || rw == "str" || own_answer {
       out += "        {body}\n";
     } else {
       out += "        nv{sfx}: {answer_type(rw)} = {body};\n        s.put_stack_{rw}(nv{sfx});\n";

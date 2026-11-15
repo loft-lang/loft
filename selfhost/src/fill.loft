@@ -4769,6 +4769,54 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    192 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      ri1 = crt::peek_u16(cbase, ip + 3);
+      if sp >= 16 {
+        ri2 = sp - 16;
+        sp -= 16;
+        ip += 5;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        s.new_record_at(ri0, ri1, true, ri2);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
+        continue;
+      }
+    }
+    193 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      ri1 = crt::peek_u16(cbase, ip + 3);
+      if sp >= 32 {
+        ri2 = sp - 32;
+        sp -= 32;
+        ip += 5;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        s.finish_record_at(ri0, ri1, ri2);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
+        continue;
+      }
+    }
     194 => {
       ri0 = crt::peek_u16(cbase, ip + 1);
       if sp >= 32 {
@@ -5427,6 +5475,30 @@ pub fn run(s: state::State, end: integer) {
       if ri1 >= 8 && ri1 <= sp {
         ip += 17;
         if state::rtag(stk, base, sp, ri0, ri1) != ri2 { ip += ri3; }
+        continue;
+      }
+    }
+    13 => {
+      ri0 = crt::peek_u16(cbase, ip + 2);
+      ri1 = crt::peek_u16(cbase, ip + 4);
+      if sp >= 16 {
+        ri2 = sp - 16;
+        sp -= 16;
+        ip += 6;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        s.new_record_at(ri0, ri1, false, ri2);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }

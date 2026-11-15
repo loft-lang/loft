@@ -76,8 +76,10 @@ fn OpAddInt(v1: __word, v2: __word) -> __word;
   (`v1_at`, `v1_pos`), read in place by `crt::view_*`; `out_at` is the address a reference
   answer is written at; `base`, `stk`, `sp` (the top after the pops), `ip` (past the
   operands) and `tmp0`… are the loop's.  Before the form: `slots:` (every `u16` operand is a
-  frame slot the guard tests), `slots(a, b):` (those alone), `guard(<test>):`.  The whole
-  contract is `create.loft`'s `inline_arm`.
+  frame slot the guard tests), `slots(a, b):` (those alone), `guard(<test>):`, then `answer:` — a
+  call on the `State` that leaves the operator's answer on the stack itself, as a text answer is
+  pushed by its template (`OpNewRecord` calls `State::new_record_at` with the slot it reads).
+  The whole contract is `create.loft`'s `inline_arm`.
 
 Two language features exist for the port:
 
