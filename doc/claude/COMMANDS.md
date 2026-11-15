@@ -70,7 +70,9 @@ make after-join / make after-fix         # WHAT A CHANGE NEEDS, AND NOTHING MORE
                                          #   step stays inside twenty minutes; a release build
                                          #   here is never part of it.  `--pr` (before a PR
                                          #   push, via `scripts/pr_push.py`) adds the PR-only
-                                         #   checks — JOINING.md § The script
+                                         #   checks.  A rerun skips a cargo/lint step whose
+                                         #   inputs did not change and runs the last reds
+                                         #   first; `--fresh` runs all — JOINING.md § The script
 cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole stdlib + every
                                          #   tests/scripts file + every program of the language
                                          #   suite beside the tree (../loft-suite, LOFT_SUITE_DIR);
