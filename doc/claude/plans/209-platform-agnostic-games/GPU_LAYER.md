@@ -32,8 +32,10 @@ waits for a Linux machine.
 1. The latest tile-world-game plays on a Mac as a native, fully optimised (`--ship`) program,
    in its 3D presentation.
 2. A game, and `stage`, build against one GPU library that names no graphics stack and depends
-   on none.  Each stack — OpenGL and WebGL2, Metal, a CPU renderer for a machine with no GPU
-   (the Tanmatsu), Vulkan, later a Nintendo and a Sony backend — is a library of its own beneath it.
+   on none.  Each stack — OpenGL and WebGL2, Metal, Vulkan, later a Nintendo and a Sony
+   backend — is a library of its own beneath it.
+3. A game that runs on `gpu` and on a machine with no GPU (the Tanmatsu) is as simple to write
+   as it can be made: one view, written once, drawn by either (open question 1).
 
 ## The owner's rulings (2026-11-15)
 
@@ -68,7 +70,7 @@ waits for a Linux machine.
 ```
 game, stage ──► gpu (neutral: the loft API, the backend table's C header, no stack named)
                  ▲            ▲             ▲              ▲
-          gpu_gl   gpu_metal   gpu_vulkan   gpu_frame   a console's (private repo)
+          gpu_gl   gpu_metal   gpu_vulkan   a console's (private repo)
 ```
 
 - **`gpu`** holds the whole loft API: pipelines (shader, vertex layout, blend, depth, cull
@@ -394,7 +396,7 @@ H4 is kept either way: it is what gives a shader a pixel test on a machine with 
   Goes red when: a program differs from its GLSL build beyond the tolerance; the blob fails the
   driver's own validation layer.
 - **H4 — the C emitter (M).**  A program run on the CPU: pixel tests for shaders with no GPU,
-  and what `gpu_frame` draws with.
+  on a machine with no GPU.
   Goes red when: the CPU picture differs from the GPU's beyond the tolerance.
 
 ## Track C — what a console backend needs kept free
@@ -422,13 +424,12 @@ header.  Two things are kept true in public so that it can be:
 
 ## Open questions
 
-1. **`gpu_frame`** — whether the Tanmatsu's renderer sits under `gpu` (through H4), or stays
-   the frame tier's own (`tiles`, [@PLN218](https://github.com/loft-lang/plans/issues/218)).
-   Recommended: the second.  Pipelines and passes cost a small machine with no GPU, and the
-   frame tier is already the floor every game is held to; H4 then earns its place as the
-   shader test path.  The owner's "like the Tanmatsu" may mean the first: the owner's call.
-   tile-world-game's two views are evidence for the second (§ The CPU tier and `gpu` side by
-   side).
+1. **`gpu_frame`** — settled (owner, 2026-11-15): the Tanmatsu's renderer does not run under
+   `gpu`.  What is asked instead: **writing a game that runs on `gpu` and on the Tanmatsu is
+   as simple as it can be made.**  A game writes its view once, against a scene (§ The CPU
+   tier and `gpu` side by side); a CPU implementation and a `gpu` one draw it; the host picks,
+   and shows the frame and hands over the input either way, so the game's loop has no branch
+   for the machine.  H4 (the C emitter) stays as the shader test path.
 2. **The name** — settled (owner, 2026-11-15): the layer is `gpu`, a backend `gpu_<stack>`.
    `gpu` 0.1.0 is ready to publish from the libraries' `main` (`scripts/registry_maintain.sh
    --only gpu`; its dry run lists that one version and nothing else) and is not published yet.
