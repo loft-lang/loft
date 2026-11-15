@@ -5,9 +5,11 @@
 
 @PLN91, doc/claude/plans/91-self-host/1b-fill-port.md.  A run image starts at `main`, so each
 test function is run as a program of its own: the test file with a `main` that calls that one
-`fn test_*()`, written to a scratch directory and run from there with every library repository
-on `--lib` (from the test's own directory a `use` of the package would find the test file of
-that name first); a test file with a `main` of its own is run as the program it is.  The
+`fn test_*()`.  It is written INTO its package — a test may read the package's private fields,
+which only a file of the package may — but into a mirror of the package in a scratch directory:
+its `loft.toml`, a link to each other entry (`src`, `native`, data), a `tests/` of links beside
+the written programs; it runs from the package's root, as `loft test` does, with every mirrored
+repository on `--lib`.  A test file with a `main` of its own is run as the program it is.  The
 verdicts are the survey's (`run_image_survey.py`): `agree`, `stores`, `leak`, `differ`,
 `stopped` (the first operator or native not carried, ranked), `fault`, `noimage`.  `agree`
 counts a test that fails the same way on both; how many of the agreeing tests pass on the
@@ -51,15 +53,39 @@ def tests_of(libs, repos, here=None):
     return out
 
 
-def one(item, loft, runner, tmp, env, timeout, libargs):
+def mirror(src_root, dst_root):
+    """A mirror of every package under `src_root` in `dst_root`, and the package directories."""
+    for pkg in sorted(os.listdir(src_root)):
+        sp = os.path.join(src_root, pkg)
+        if not os.path.isfile(os.path.join(sp, "loft.toml")):
+            continue
+        dp = os.path.join(dst_root, pkg)
+        os.makedirs(dp, exist_ok=True)
+        for e in os.listdir(sp):
+            if e in ("native-auto", "target", ".loft", "tests"):
+                continue
+            if e == "loft.toml":
+                shutil.copy(os.path.join(sp, e), os.path.join(dp, e))
+            else:
+                os.symlink(os.path.join(sp, e), os.path.join(dp, e))
+        st = os.path.join(sp, "tests")
+        if os.path.isdir(st):
+            os.makedirs(os.path.join(dp, "tests"), exist_ok=True)
+            for e in os.listdir(st):
+                if e != ".loft":
+                    os.symlink(os.path.join(st, e), os.path.join(dp, "tests", e))
+
+
+def one(item, loft, runner, tmp, env, timeout, libargs, mirrors):
     repo, pkg, f, t = item
     src = open(f, encoding="utf-8", errors="replace").read()
-    stem = re.sub(r"[^A-Za-z0-9]", "_", f"{repo}_{pkg}_{os.path.basename(f)}_{t}")
-    prog = os.path.join(tmp, stem + ".loft")
+    stem = re.sub(r"[^A-Za-z0-9]", "_", f"runimg_{os.path.basename(f)}_{t}")[:150]
+    pkg_root = os.path.join(mirrors[repo], pkg)
+    prog = os.path.join(pkg_root, "tests", stem + ".loft")
     with open(prog, "w", encoding="utf-8") as fh:
         fh.write(src if t == "main" else src + f"\n\nfn main() {{\n  {t}();\n}}\n")
-    img = os.path.join(tmp, stem + ".run")
-    cwd = tmp
+    img = os.path.join(tmp, f"{repo}_{pkg}_{stem}.run")
+    cwd = pkg_root
     # The runner carries no compiled library code (1b-fill-port.md difference 9): its image keeps
     # every library function as bytecode.  The interpreter it is compared with runs as a user's
     # does, its `use`d libraries compiled.
@@ -105,13 +131,21 @@ def main():
     o = ap.parse_args()
     repos = [] if o.in_tree_only else (o.repo or REPOS)
     here = os.path.join(root, "lib") if (o.in_tree or o.in_tree_only) else None
-    libargs = ["--lib", os.path.join(root, "lib")]
-    for r in REPOS:
-        if os.path.isdir(os.path.join(o.libs, r)):
-            libargs += ["--lib", os.path.join(o.libs, r)]
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
     tmp = tempfile.mkdtemp(prefix="loft-libtests-", dir=os.environ.get("TMPDIR"))
     try:
+        # Every repository mirrored, so each test is written into its package without writing
+        # into the repository; the in-tree lib/ too.
+        mirrors = {}
+        for r in REPOS + ["lib"]:
+            src_root = os.path.join(root, "lib") if r == "lib" else os.path.join(o.libs, r)
+            if os.path.isdir(src_root):
+                mirrors[r] = os.path.join(tmp, "mirror", r)
+                os.makedirs(mirrors[r], exist_ok=True)
+                mirror(src_root, mirrors[r])
+        libargs = []
+        for r in mirrors.values():
+            libargs += ["--lib", r]
         runner = os.path.join(o.runner, "run_image_run") if o.runner else None
         if not runner:
             out = os.path.join(tmp, "runner")
@@ -132,7 +166,7 @@ def main():
         shown = []
         with cf.ThreadPoolExecutor(o.jobs) as ex:
             for item, verdict, what, ok in ex.map(
-                    lambda i: one(i, o.loft, runner, tmp, env, o.timeout, libargs), items):
+                    lambda i: one(i, o.loft, runner, tmp, env, o.timeout, libargs, mirrors), items):
                 counts[verdict] += 1
                 per_repo[item[0]][verdict] += 1
                 if verdict == "agree" and ok:
