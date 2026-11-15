@@ -68,7 +68,9 @@ make after-join / make after-fix         # WHAT A CHANGE NEEDS, AND NOTHING MORE
                                          #   REPORTED as the dispatch it needs (`--dispatch`
                                          #   sends them).  `--dry-run` is the plan.  Every
                                          #   step stays inside twenty minutes; a release build
-                                         #   here is never part of it — JOINING.md § The script
+                                         #   here is never part of it.  `--pr` (before a PR
+                                         #   push, via `scripts/pr_push.py`) adds the PR-only
+                                         #   checks — JOINING.md § The script
 cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole stdlib + every
                                          #   tests/scripts file + every program of the language
                                          #   suite beside the tree (../loft-suite, LOFT_SUITE_DIR);
@@ -216,6 +218,11 @@ scripts/derive-ci.sh                     # the PURE derived artefacts (compiled 
                                          #   browser bundle, doc pages, …) regenerated ON A
                                          #   RUNNER and committed back; ratchets stay local —
                                          #   JOINING.md § Derived artefacts on a runner
+scripts/pr_push.py <PR>                  # the ONE way to push the next branch to an open PR:
+                                         #   refuses while its run is in flight or without a
+                                         #   fast-forward; runs `after.py fix --pr` (the PR-only
+                                         #   checks) first; `--dry-run` · `--watch` —
+                                         #   DEVELOPMENT.md § The PR cycle
 scripts/pr_watch.py <PR>                 # a PR run's reds AS THEY END: run it in the background;
                                          #   it exits on each new red job (log saved under
                                          #   .git/loft-pr-watch/), at the run's end and its

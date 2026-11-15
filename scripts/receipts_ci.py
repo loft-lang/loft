@@ -23,6 +23,8 @@ is reported, not failed: the channel is the reader's to re-record.
 
     python3 scripts/receipts_ci.py                   # refresh + score every stale receipt
     python3 scripts/receipts_ci.py --list            # only say what is in reach
+    python3 scripts/receipts_ci.py --check --base X  # before a PR push: would a stale receipt
+                                                     #   fail the PR's run?  (seconds; no scoring)
     python3 scripts/receipts_ci.py --changed --base origin/main   # also what changed since BASE
     python3 scripts/receipts_ci.py --only "a.patch b.patch"      # exactly these (a hand re-derivation)
 """
@@ -105,8 +107,9 @@ def armed(guard, name):
     return env
 
 
-def refresh(patch):
-    """Rewrite a stale patch from a clean three-way merge onto HEAD; False when it conflicts."""
+def refresh(patch, write=True):
+    """Rewrite a stale patch from a clean three-way merge onto HEAD; False when it conflicts.
+    With `write=False` only the merge is tried: the patch file is left as it is."""
     with tempfile.TemporaryDirectory(prefix="loft-receipt-") as td:
         wt = pathlib.Path(td) / "wt"
         git("worktree", "add", "--detach", str(wt), "HEAD")
@@ -125,6 +128,8 @@ def refresh(patch):
             diff = git("diff", "HEAD", "--", "src/", "default/", cwd=wt).stdout
             if not diff.strip():
                 return False
+            if not write:
+                return True
             # The rewritten patch has no hunk of the generated file; keep the fact that the
             # control must regenerate it.
             names = GENERATED in patch.read_text(encoding="utf-8", errors="replace")
@@ -138,6 +143,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--check", action="store_true",
+                    help="try each stale receipt's refresh without writing it or scoring it: "
+                         "exit 1 when one would be a wild swing on the PR's run")
     ap.add_argument("--changed", action="store_true",
                     help="also score receipts whose patch or guard changed since --base")
     ap.add_argument("--only", default="",
@@ -179,6 +187,20 @@ def main():
             print(f"{p.relative_to(ROOT)}  {'STALE' if p in stale else 'changed'}  "
                   f"{', '.join(cites[p.name])}")
         return 0
+
+    if args.check:
+        # The PR's receipts job fails on a stale patch it cannot refresh before it scores
+        # anything; that half costs seconds here, where a miss costs a whole PR run.  The
+        # score itself (a control build per receipt) stays the runner's.
+        bad = [p for p in stale if p in reach and not refresh(p, write=False)]
+        for p in bad:
+            print(f"{p.relative_to(ROOT)}: no longer applies and a three-way merge conflicts — "
+                  f"re-derive it by hand (GUARDS.md § The patch receipt); guard "
+                  f"{', '.join(cites[p.name])}")
+        ok = len([p for p in stale if p in reach]) - len(bad)
+        if ok:
+            print(f"{ok} stale receipt(s) refresh cleanly; the PR's run re-scores them")
+        return 1 if bad else 0
 
     lines, swings, drift, refreshed = [], [], [], []
     for patch in reach:
