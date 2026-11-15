@@ -64,11 +64,21 @@ each [c] shim, compiled from source ┘   -llog -landroid -lEGL -lGLESv3 -lm -ld
 A C file of its own, compiled beside the unit (the driver writes it out of the binary).  It
 owns the OS entry, the way `android-activity` owns it for the rustc path:
 
-- `void android_main(struct android_app *app)`: keep `app` in a runtime global; redirect
-  stdout and stderr into logcat (a pipe, a reader thread, `__android_log_write` per line, tag
-  `loft-stdout`: the Rust tail's `__loft_android_redirect_stdio_to_logcat`, in C); prepare the
+- `void android_main(struct android_app *app)`: keep `app` in a runtime global; move stdout
+  and stderr onto two pipes whose readers write each line to logcat (tags `loft-stdout`,
+  `loft-stderr`: the Rust tail's `__loft_android_redirect_stdio_to_logcat`, in C); prepare the
   files (§ 3); call `loft_program_main(1, argv)`; then drain lifecycle events until
-  `APP_CMD_DESTROY`, so the process does not exit under the activity.
+  `APP_CMD_DESTROY`, so the process does not exit under the activity.  A program that stops
+  the run (`exit`, a failed assertion) does the same: the runtime's `LOFT_EXIT` reaches the
+  entry's `loft_android_exit`, which records the status and returns to `android_main`.  Ending
+  the process instead reads to the OS as a crash, and it starts the app again.
+- **logcat is not the output of record.**  A 5,000-line burst kept 3,603 lines under the
+  default ring buffer and 4,646 under a 32 MiB one: the device's log socket drops writes under
+  a burst.  So a build that is not `--ship` (`LOFT_ANDROID_STDOUT_COPY`) also keeps the whole
+  stdout in `loft-stdout.txt` and the exit code in `loft-exit.txt`, in the app's files
+  directory, and is debuggable, so `adb exec-out run-as <package> cat files/…` reads them: the
+  same burst then reads byte for byte as the interpreter's.  A `--ship` build writes neither
+  and is not debuggable.
 - `struct android_app *loft_android_app(void)`: how a library shim reaches the window, the
   input queue and the activity.  This is the C form of the Rust `loft_gl_android_set_app`
   seam, turned around: the shim ASKS the runtime, so no library names the runtime's internals.
@@ -150,15 +160,17 @@ entry makes that work unchanged:
 
 The two oracles the project already trusts: the interpreter's answer, and @PLN106's goldens.
 
-1. **A build test, every PR that touches the driver or the runtime**: `tests/android_target.rs`
+1. **A build test, on the nightly** (the first shard of the emulator job): `tests/android_target.rs`
    gains the C path.  Emit, NDK-compile for `aarch64` and `x86_64`, check the ELF header, check
    that `ANativeActivity_onCreate` and `android_main` are exported, and check the `NEEDED` list
    holds only system libraries.  GitHub's ubuntu image ships an NDK; the test stays opt-in
    (`LOFT_ANDROID_BUILD_TEST=1`) as it is now, and the job sets it.
 2. **A differential run in the emulator, on the nightly (advisory)**: a `--android` mode of
    `scripts/c_sweep.py`.  It builds each headless corpus program as an APK, starts it on an
-   x86_64 emulator (`adb install`, `am start`), collects the `loft-stdout` logcat lines and
-   compares them with `loft --interpret`'s output.  On GitHub: the ubuntu runner with KVM and
+   x86_64 emulator (`adb install`, `am start`), reads the `loft-stdout.txt` and
+   `loft-exit.txt` the entry kept (logcat drops lines) and compares them with
+   `loft --interpret`'s output and status.  The programs that do not match yet are
+   `scripts/c_sweep_android.baseline`, a list that only shrinks.  On GitHub: the ubuntu runner with KVM and
    the community emulator action; locally, this box.  Its wall time is measured before the job
    is wired, and a long run is sharded, never given a larger limit.
 3. **The goldens, rebased onto the published libraries**: `b3_rects`, `b3_text`, `b3_render`

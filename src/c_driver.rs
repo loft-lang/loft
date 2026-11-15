@@ -664,8 +664,8 @@ pub(crate) fn build_android(
         &glue,
         glue_dir,
         &entry,
-        &obj("glue.o"),
-        &obj("entry.o"),
+        (&obj("glue.o"), &obj("entry.o")),
+        !ship,
     )?;
     let mut unit_args = flags.clone();
     unit_args.extend([
@@ -678,7 +678,9 @@ pub(crate) fn build_android(
     run(unit_args, "compiling the program's C")?;
     let mut objects = vec![obj("unit.o"), obj("entry.o"), obj("glue.o")];
     for (k, src) in links.iter().enumerate() {
+        // A shim that draws reaches the activity through the glue's `struct android_app`.
         let mut args = flags.clone();
+        args.extend(["-I".to_string(), glue_dir.to_string_lossy().into_owned()]);
         let o = obj(&format!("shim_{k}.o"));
         args.extend(["-c".to_string(), src.clone(), "-o".to_string(), o.clone()]);
         run(args, &format!("compiling the shim `{src}`"))?;
@@ -740,14 +742,16 @@ fn android_cc(
 /// The two objects every Android build links whatever the program: the NDK's app glue, whose
 /// `pthread_create` is the entry's `loft_android_glue_thread`, and the entry itself.  They are
 /// the NDK's and ours, not the program's, so they take a fixed optimisation with warnings off,
-/// outside the tier's flags.
+/// outside the tier's flags.  `copy_stdout` (a build that is not `--ship`) has the entry keep
+/// a copy of the program's stdout and its exit code in the app's files directory, which
+/// `scripts/c_sweep.py --android` reads: logcat drops lines of a fast writer.
 fn android_fixed_objects(
     run: &dyn Fn(Vec<String>, &str) -> Result<(), String>,
     glue: &std::path::Path,
     glue_dir: &std::path::Path,
     entry: &std::path::Path,
-    glue_o: &str,
-    entry_o: &str,
+    (glue_o, entry_o): (&str, &str),
+    copy_stdout: bool,
 ) -> Result<(), String> {
     let glue_inc = glue_dir.to_string_lossy().into_owned();
     run(
@@ -775,6 +779,11 @@ fn android_fixed_objects(
             "-fPIC".into(),
             "-O2".into(),
             "-w".into(),
+            if copy_stdout {
+                "-DLOFT_ANDROID_STDOUT_COPY".into()
+            } else {
+                "-DLOFT_ANDROID_NO_STDOUT_COPY".into()
+            },
             "-o".into(),
             entry_o.into(),
         ],

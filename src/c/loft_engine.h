@@ -779,7 +779,7 @@ static void loft_ehk_debug(size_t cid, const char *cmd, size_t n) {
     free(r.p);
     if (loft_eh_quit) {
         fflush(0);
-        exit(0);
+        LOFT_EXIT(0);
     }
 }
 
@@ -1187,7 +1187,7 @@ static void loft_ehc_pump_ctl(void) {
                 free(r.p);
                 if (loft_eh_quit) {
                     fflush(0);
-                    exit(0);
+                    LOFT_EXIT(0);
                 }
             }
             free(msg.p);
@@ -1660,7 +1660,7 @@ static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_sho
         fputs("loft-swap: this build cannot take over the running world (the reason is above); the running build "
               "keeps serving\n",
               stderr);
-        exit(1);
+        LOFT_EXIT(1);
     }
     size_t n = 0;
     char *json = loft_sw_read(snap, &n);

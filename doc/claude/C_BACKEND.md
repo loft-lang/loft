@@ -61,6 +61,10 @@ python3 scripts/image_probe.py                 # every corpus program: the C wri
                                                #   constructs, and a new holder or twin moves
                                                #   a count while every output still matches
 python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
+python3 scripts/c_sweep.py --android \
+  --baseline scripts/c_sweep_android.baseline  # each program as an Android app on the emulator adb
+                                               #   reaches; the baseline lists what does not match
+                                               #   yet (plans/106-android-build-target/c-backend.md)
 python3 scripts/c_sweep.py --no-limit          # no kill at three times the last sweep's time
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
 python3 bench/stats.py --lanes rust,c,cship    # every bench program as C, against its Rust twin

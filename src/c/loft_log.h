@@ -665,7 +665,7 @@ static void loft_leak_report(void) {
     if (loft_strict_violations) {
         fflush(stdout);
         fprintf(stderr, "[strict-store] FAILED: %llu store-lifetime violation(s)\n", (unsigned long long) loft_strict_violations);
-        exit(1);
+        LOFT_EXIT(1);
     }
 #endif
 }

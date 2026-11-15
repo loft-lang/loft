@@ -54,6 +54,30 @@
 /* `bool`, which a `#c` binding's signature may name (C99 spells it in this header). */
 #include <stdbool.h>
 
+/* A function that never returns (`exit`'s kind): C11's `_Noreturn` as gcc / clang / MSVC spell
+ * it, nothing under C99. */
+#if defined(LOFT_STRICT)
+#define LOFT_NORETURN
+#elif defined(__GNUC__) || defined(__clang__)
+#define LOFT_NORETURN __attribute__((noreturn))
+#elif defined(_MSC_VER)
+#define LOFT_NORETURN __declspec(noreturn)
+#else
+#define LOFT_NORETURN
+#endif
+
+/* How the runtime ends the program with a status: every site that stops the run calls this,
+ * never `exit` itself.  On Android the process belongs to the activity, and ending it under the
+ * activity reads to the OS as a crash it answers by starting the app again: there the entry's
+ * `loft_android_exit` records the status and returns the run to `android_main`
+ * (src/c/android/loft_android_main.c). */
+#if defined(LOFT_ANDROID)
+LOFT_NORETURN void loft_android_exit(int code);
+#define LOFT_EXIT(code) loft_android_exit(code)
+#else
+#define LOFT_EXIT(code) exit(code)
+#endif
+
 /* `par` on threads (@PLN203 C4): POSIX threads on a POSIX host, the CRT's on Windows, none under
  * `-DLOFT_STRICT` (ISO C99 has no thread-local storage), `-DLOFT_NO_POSIX` or WASI, where a
  * `par` loop runs its rows in order — the same answer (@FR-C-Det).  `LOFT_TLS` marks the

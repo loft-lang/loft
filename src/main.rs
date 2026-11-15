@@ -10784,7 +10784,15 @@ fn main() {
                 eprintln!("loft: cannot create {}: {e}", work.display());
                 std::process::exit(1);
             }
-            let built = work.join("libloft_android_app.so");
+            // The library and the APK's staging are this build's alone (two programs beside
+            // each other build at once); only the keystore is shared, in `.loft/android/`.
+            let staging = platform::build_scratch_dir("android");
+            let built = staging.join("libloft_android_app.so");
+            let package = android::Package {
+                staging: &staging,
+                keystore_dir: &work,
+                debuggable: !ship_build,
+            };
             let result = c_driver::build_android(
                 &c,
                 &built,
@@ -10792,7 +10800,7 @@ fn main() {
                 &target.glue_dir(),
                 ship_build,
             )
-            .and_then(|()| target.finish(&built, &work, std::path::Path::new(&android_out)));
+            .and_then(|()| target.finish(&built, &package, std::path::Path::new(&android_out)));
             if let Err(e) = result {
                 eprintln!("loft: {e}");
                 std::process::exit(1);

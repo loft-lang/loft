@@ -35,6 +35,15 @@ use std::path::{Path, PathBuf};
 /// its `native_app_glue` (thirdparty.toml `android-ndk` pins this).
 pub(crate) const NDK_MIN: &str = "r26";
 
+/// How an activity library is packaged: where the APK is staged, where the debug keystore
+/// lives (it stays, so every later build of the app signs with the same key), and whether the
+/// app is debuggable (a build that is not `--ship`).
+pub(crate) struct Package<'a> {
+    pub(crate) staging: &'a Path,
+    pub(crate) keystore_dir: &'a Path,
+    pub(crate) debuggable: bool,
+}
+
 /// A resolved Android cross-compile descriptor: the NDK, the API level, and the
 /// Rust/NDK target triple. Build one with [`AndroidTarget::detect`]; the linker,
 /// the generated crate, and the `.so` all derive from these three.
@@ -255,18 +264,26 @@ impl AndroidTarget {
             .join(&self.triple)
             .join("release")
             .join("libloft_android_app.so");
-        self.finish(&built, &crate_dir, out_path)
+        let package = Package {
+            staging: &crate_dir,
+            keystore_dir: &crate_dir,
+            debuggable: false,
+        };
+        self.finish(&built, &package, out_path)
     }
 
     /// The activity library `built` delivered as `out_path`: packaged into a signed APK when
-    /// the output names one, else copied as the bare `.so`.  `work` holds the APK's staging
-    /// and the debug keystore, which stays there so every later build signs with the same key.
-    /// Shared by the rustc path and the C path: neither the manifest nor the signing knows
-    /// which compiler wrote the library.
-    pub(crate) fn finish(&self, built: &Path, work: &Path, out_path: &Path) -> Result<(), String> {
+    /// the output names one, else copied as the bare `.so`.  Shared by the rustc path and the
+    /// C path: neither the manifest nor the signing knows which compiler wrote the library.
+    pub(crate) fn finish(
+        &self,
+        built: &Path,
+        package: &Package,
+        out_path: &Path,
+    ) -> Result<(), String> {
         if crate::file_access::extension(out_path).is_some_and(|e| e.eq_ignore_ascii_case("apk")) {
             let sdk = AndroidSdk::detect()?;
-            self.package_apk(&sdk, built, work, out_path)
+            self.package_apk(&sdk, built, package, out_path)
         } else {
             crate::file_access::copy(built, out_path)
                 .map(|_| ())
@@ -300,12 +317,12 @@ impl AndroidTarget {
         &self,
         sdk: &AndroidSdk,
         so_path: &Path,
-        crate_dir: &Path,
+        package: &Package,
         out_apk: &Path,
     ) -> Result<(), String> {
         const LIB_NAME: &str = "loft_android_app";
         let app = app_ident(out_apk);
-        let work = crate_dir.join("apk-build");
+        let work = package.staging.join("apk-build");
         let lib_dir = work.join("staging").join("lib").join(self.abi());
         let _ = crate::file_access::remove_dir_all(&work);
         crate::file_access::create_dir_all(&lib_dir).map_err(|e| format!("loft: create {e}"))?;
@@ -323,8 +340,11 @@ impl AndroidTarget {
                 .map_err(|e| format!("loft: stage libc++_shared.so: {e}"))?;
         }
         let manifest = work.join("AndroidManifest.xml");
-        crate::file_access::write(&manifest, android_manifest(&app, LIB_NAME))
-            .map_err(|e| format!("loft: write manifest {e}"))?;
+        crate::file_access::write(
+            &manifest,
+            android_manifest(&app, LIB_NAME, package.debuggable),
+        )
+        .map_err(|e| format!("loft: write manifest {e}"))?;
 
         let base = work.join("base.apk");
         run_tool(
@@ -372,7 +392,7 @@ impl AndroidTarget {
             "zipalign",
         )?;
 
-        let keystore = ensure_debug_keystore(sdk, crate_dir)?;
+        let keystore = ensure_debug_keystore(sdk, package.keystore_dir)?;
         run_tool(
             Spawn::new(Program::os(sdk.apksigner()))
                 .arg("sign")
@@ -394,16 +414,21 @@ impl AndroidTarget {
 
 /// A reusable debug keystore under the generated crate dir, created once with the
 /// JDK `keytool` (password `android`, the Android debug-key convention).
-fn ensure_debug_keystore(sdk: &AndroidSdk, crate_dir: &Path) -> Result<PathBuf, String> {
-    let keystore = crate_dir.join("loft-debug.keystore");
+fn ensure_debug_keystore(sdk: &AndroidSdk, dir: &Path) -> Result<PathBuf, String> {
+    let keystore = dir.join("loft-debug.keystore");
     if crate::file_access::exists(&keystore) {
         return Ok(keystore);
     }
+    // Made under a name of this process's own and linked into place, which fails where another
+    // build got there first: two builds beside one program that both find no keystore then sign
+    // with the same key, as an update of an installed app requires.
+    let fresh = dir.join(format!("loft-debug.keystore.{}", std::process::id()));
+    let _ = crate::file_access::remove_file(&fresh);
     run_tool(
         Spawn::new(Program::os(sdk.keytool()))
             .arg("-genkeypair")
             .arg("-keystore")
-            .arg(&keystore)
+            .arg(&fresh)
             .arg("-alias")
             .arg("androiddebugkey")
             .arg("-storepass")
@@ -420,6 +445,8 @@ fn ensure_debug_keystore(sdk: &AndroidSdk, crate_dir: &Path) -> Result<PathBuf, 
             .arg("CN=Loft Debug,O=Loft,C=US"),
         "keytool (debug keystore)",
     )?;
+    let _ = crate::file_access::hard_link(&fresh, &keystore);
+    let _ = crate::file_access::remove_file(&fresh);
     Ok(keystore)
 }
 
@@ -537,11 +564,18 @@ fn app_ident(out_apk: &Path) -> String {
 /// The generated `AndroidManifest.xml` for a code-less `NativeActivity` APK
 /// (`hasCode="false"`, no dex). `min`/`target` sdk come from `aapt2` flags, so no
 /// `<uses-sdk>` here (aapt2 rejects the duplicate).
-fn android_manifest(app: &str, lib_name: &str) -> String {
+fn android_manifest(app: &str, lib_name: &str, debuggable: bool) -> String {
+    // A debuggable app lets `adb shell run-as` read its private files: a build that is not
+    // `--ship` keeps a copy of its stdout there (c-backend.md, A1).
+    let debuggable = if debuggable {
+        r#" android:debuggable="true""#
+    } else {
+        ""
+    };
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.loft.{app}">
-    <application android:label="{app}" android:hasCode="false" android:extractNativeLibs="true">
+    <application android:label="{app}" android:hasCode="false" android:extractNativeLibs="true"{debuggable}>
         <activity android:name="android.app.NativeActivity" android:exported="true" android:label="{app}">
             <meta-data android:name="android.app.lib_name" android:value="{lib_name}"/>
             <intent-filter>

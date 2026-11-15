@@ -1,0 +1,7 @@
+loft-suite/rules/calls/F-Ret/a-function-returning-a-stored-reference-hands-back-a-copy.loft
+tests/docs/13-file.loft
+tests/scripts/19-files.loft
+tests/scripts/191-source-dir.loft
+tests/scripts/2237-a-key-order-image-converts-on-every-backend.loft
+tests/scripts/37-stress.loft
+tests/scripts/golden-images-whole.loft
