@@ -121,6 +121,40 @@ reproducible reference artefact; the library CI and the consumer gate run on the
 a new job builds the Rust side and runs the surveys as the comparison.  Gate: one full release
 cycle in which every check ran on the loft-built binary and the Rust side only compared.
 
+## The rustc writer is not kept — the Rust implementation is
+
+The Rust implementation stays live under the double-implementation ledger; the rustc writer
+(`src/generation/`, the backend that emits Rust) does not, and is retired ahead of the switch
+rather than carried through it.
+
+**Why the ledger reads differently for the two.**  The interpreter, the front end and the Rust
+C writer are a second implementation of loft's DECISIONS, gated byte for byte against the loft
+ones, so each disagreement is a reading of the language.  The rustc writer is a third writer
+over the same decisions: it shares the front end and `src/opt/` with the C writer, so it
+differentiates only the text-writing step, which the C sweep already checks differentially
+against the interpreter.  Its yield column is near zero.  Its burden column is not: the
+interpreter stream's handoffs carry main's nightly rustc-native suite reds (two `B-Copy`, one
+`H-Free`) that nobody fixes; the rewrite census on every PR still builds and emits both
+writers, so each IR change must keep the rustc writer compiling for the gate to run; and the
+rules it alone enforces are still only there (`@FR-B-Ref-Read` has no C site and no exercised
+cell).
+
+**What still depends on it:** `--native-android` cross-compiles through rustc.  The browser
+page and the wasm target already come from the C writer through clang; an Android build from
+the C unit through the NDK's clang is the same shape as the wasm build, and is the one piece
+of @PLN203 C6 still owed.
+
+**The order.**
+1. **Stop gating on it.**  The rewrite census and the nightly suite run on the C writer only;
+   a rustc-native run stays as a report until Android moves, never a gate.
+2. **Freeze it.**  A red in it is fixed only if Android needs it.
+3. **Harvest before deleting.**  Each rewrite only it holds gets a decision — ported to the C
+   writer or recorded as declined (the handoff names one: the accessor view that declines
+   every natural spelling); each rule only it enforces gets a C site or a suite cell.  Days of
+   reading, and the part a deletion would otherwise lose.
+4. **Delete at the Android flip**, by tag, the last release binary kept as the reference
+   artefact.
+
 ## Decisions the plan needs before phase 1 gets far
 
 1. **Freeze the image format for the switch window.**  The seed design lists a stable image
