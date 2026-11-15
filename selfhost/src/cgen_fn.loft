@@ -1950,6 +1950,10 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
     if o#index >= end || w.why != "" {
       break;
     }
+    // A clear of a vector the next statement mints anew releases nothing that is kept.
+    if cgen_ref::clear_before_mint(x.b, ops, o#index, end) {
+      continue;
+    }
     w.peel_seeds = cgen_loop::peel_seeds(ops, o#index);
     // A loop's first statement is its iterator: no guard of that loop admits its operators.
     if o#index == 0 && w.iter_pending {

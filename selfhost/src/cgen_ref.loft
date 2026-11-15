@@ -14,6 +14,7 @@ use loop_shape;
 use cgen_fn;
 use cgen_bind;
 use ptypes;
+use binds;
 use opt_non_sentinel;
 use types;
 use cgen_w::*;
@@ -452,7 +453,11 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     return E { code: "loft_vec_finish({place})", kind: K_VOID };
   }
   if name == "OpClearVector" && count == 1 {
+    plain = clear_releases_nothing(x.b, w, args[0]);
     v = cgen_fn::expr(x, w, args[0], ind);
+    if plain {
+      return E { code: "loft_vec_clear({as_ref(w, v)})", kind: K_VOID };
+    }
     return E { code: "loft_vec_clear_release(loft_types, loft_ntypes, {as_ref(w, v)})", kind: K_VOID };
   }
   if name == "OpCopyRecord" && count == 3 {
@@ -465,6 +470,9 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     fresh = raw & 16384 != 0;
     struct_type = tp < len(x.b.types) && (match x.b.types[tp].parts[0] { PtStruct { fields: _ } => true, _ => false });
     free = (if raw & 32768 != 0 { 1 } else { 0 }) + (if cgen_bind::swap_safe(x.b, tp, []) { 2 } else { 0 }) + (if fresh { 4 } else { 0 });
+    // `flat_copy` (`@FR-R-FlatCopy`): a record that owns no heap, read from a variable and
+    // not released by the copy, is copied as its bytes.
+    flat = (env_variable("LOFT_NO_FLAT_COPY") ?? "0") == "0" && raw & 32768 == 0 && loop_shape::var_of(loop_shape::unspan(args[0])) >= 0 && tp < len(x.b.types) && (match x.b.types[tp].parts[0] { PtStruct { fields: _ } => true, PtEnumValue { value: _, fields: _ } => true, _ => false }) && !types::owns_heap(x.b.types, tp);
     pair = [args[0], args[1]];
     src = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
     dst = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
@@ -475,8 +483,12 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
       d_held = temp(w, "ref");
       line(w, ind, "{s_held} = {src};");
       line(w, ind, "{d_held} = {dst};");
-      line(w, ind, "if ({s_held}.store_nr == 0xFFFF) {{ loft_fill({d_held}, loft_dflt{tp}, {x.b.types[tp].size}); }} else {{ loft_copy_record(loft_types, {tp}, {s_held}, {d_held}, {free}); }}");
+      copy = if flat { "loft_copy_flat(loft_types, {tp}, {s_held}, {d_held}, {free}, {x.b.types[tp].size}, {cgen_fn::site(w)})" } else { "loft_copy_record(loft_types, {tp}, {s_held}, {d_held}, {free})" };
+      line(w, ind, "if ({s_held}.store_nr == 0xFFFF) {{ loft_fill({d_held}, loft_dflt{tp}, {x.b.types[tp].size}); }} else {{ {copy}; }}");
       return E { code: "((void) 0)", kind: K_VOID };
+    }
+    if flat {
+      return E { code: "loft_copy_flat(loft_types, {tp}, {src}, {dst}, {free}, {x.b.types[tp].size}, {cgen_fn::site(w)})", kind: K_VOID };
     }
     return E { code: "loft_copy_record_at(loft_types, {tp}, {src}, {dst}, {free}, {cgen_fn::site(w)})", kind: K_VOID };
   }
@@ -1698,6 +1710,79 @@ fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
     "loft_rx_find({data}, {key_table}, {nk}, {if kind == "trie" { 1 } else { 0 }}, {kv}, {given})"
   };
   E { code: find, kind: K_REF }
+}
+
+// `clear_releases_nothing`: a clear of a vector whose elements own nothing — a local vector
+// of scalars, or a plain vector field of elements that own no heap and are not linked.
+fn clear_releases_nothing(b: ir::Bundle, w: W, v: ir::Node) -> boolean {
+  if (env_variable("LOFT_NO_PLAIN_CLEAR") ?? "0") != "0" {
+    return false;
+  }
+  match loop_shape::unspan(v) {
+    NdVar { n } => {
+      match binds::base(b.data.definitions[w.index]!.variables.variables[n]!.type_def[0] ?? ir::TyVoid) {
+        TyVector { inner, dep: _ } => {
+          match binds::base(inner) {
+            TyInteger { spec: _ } => true,
+            TyFloat => true,
+            TySingle => true,
+            TyCharacter => true,
+            TyBoolean => true,
+            TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+            _ => false,
+          }
+        },
+        _ => false,
+      }
+    },
+    NdCall { def_nr, args } => {
+      if cgen_fn::def_name(b, def_nr) != "OpGetField" || len(args) < 3 {
+        return false;
+      }
+      tp = match loop_shape::unspan(args[2]) { NdInt { n } => n, _ => -1 };
+      if tp < 0 || tp >= len(b.types) {
+        return false;
+      }
+      match b.types[tp].parts[0] {
+        PtVector { content } => content != 65535 && content < len(b.types) && !types::owns_heap(b.types, content) && !b.types[content].linked,
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+// `clear_before_mint`: statement `i` of `ops[..end]` clears a vector local the next statement
+// mints a new room for.
+pub fn clear_before_mint(b: ir::Bundle, ops: vector<ir::Node>, i: integer, end: integer) -> boolean {
+  if (env_variable("LOFT_NO_PROLOGUE_CLEAR_DROP") ?? "0") != "0" {
+    return false;
+  }
+  cleared = match loop_shape::unspan(ops[i]!) {
+    NdCall { def_nr, args } => if cgen_fn::def_name(b, def_nr) == "OpClearVector" && len(args) > 0 { loop_shape::var_of(loop_shape::unspan(args[0])) } else { -1 },
+    _ => -1,
+  };
+  if cleared < 0 {
+    return false;
+  }
+  for o in ops {
+    if o#index <= i || o#index >= end {
+      continue;
+    }
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      NdCall { def_nr, args } => {
+        if cgen_fn::def_name(b, def_nr) != "OpDatabase" || len(args) < 2 {
+          return false;
+        }
+        minted = loop_shape::var_of(loop_shape::unspan(args[0]));
+        tp = match loop_shape::unspan(args[1]) { NdInt { n } => n, _ => -1 };
+        return minted == cleared && is_vector_wrapper(b, tp);
+      },
+      _ => return false,
+    }
+  }
+  false
 }
 
 // `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write
