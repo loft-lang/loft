@@ -502,31 +502,33 @@ pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 /// consts: vector<RunConst>, fnrefs: vector<RunFnRef>, types: vector<DbType>,
 /// gens: vector<RunGen>, shared: vector<integer>, workers: vector<RunWorker>,
 /// sidecars: vector<RunSidecar>, oldest, bridge, source: text, main: integer, cwd: boolean }` — the run
-/// image's store root (@PLN91).
-pub(crate) const RUNIMG_MAIN: u32 = 0;
-pub(crate) const RUNIMG_CODE: u32 = 8;
-pub(crate) const RUNIMG_STARTS: u32 = 12;
-pub(crate) const RUNIMG_OPS: u32 = 16;
-pub(crate) const RUNIMG_LAYOUTS: u32 = 20;
-pub(crate) const RUNIMG_NATIVES: u32 = 24;
-pub(crate) const RUNIMG_CONSTS: u32 = 28;
-pub(crate) const RUNIMG_FNREFS: u32 = 32;
-pub(crate) const RUNIMG_TYPES: u32 = 36;
-pub(crate) const RUNIMG_GENS: u32 = 40;
-pub(crate) const RUNIMG_SHARED: u32 = 44;
-pub(crate) const RUNIMG_WORKERS: u32 = 48;
-pub(crate) const RUNIMG_SIDECARS: u32 = 52;
-pub(crate) const RUNIMG_OLDEST: u32 = 56;
-pub(crate) const RUNIMG_BRIDGE: u32 = 60;
-pub(crate) const RUNIMG_SOURCE: u32 = 64;
-pub(crate) const RUNIMG_STORE_INSTS: u32 = 68;
-pub(crate) const RUNIMG_NAMES: u32 = 72;
-pub(crate) const RUNIMG_DEF_FILES: u32 = 76;
-pub(crate) const RUNIMG_FILES: u32 = 80;
-pub(crate) const RUNIMG_LINES: u32 = 84;
-pub(crate) const RUNIMG_CNATIVES: u32 = 88;
-pub(crate) const RUNIMG_CWD: u32 = 92;
-pub(crate) const RUNIMG_STRIDE: u32 = 96;
+/// image's store root (@PLN91).  `format` comes first, at offset 0 in every format: it is what a
+/// runner reads before it trusts the rest (`RUN_IMAGE_FORMAT`).
+pub(crate) const RUNIMG_FORMAT: u32 = 0;
+pub(crate) const RUNIMG_MAIN: u32 = 8;
+pub(crate) const RUNIMG_CODE: u32 = 16;
+pub(crate) const RUNIMG_STARTS: u32 = 20;
+pub(crate) const RUNIMG_OPS: u32 = 24;
+pub(crate) const RUNIMG_LAYOUTS: u32 = 28;
+pub(crate) const RUNIMG_NATIVES: u32 = 32;
+pub(crate) const RUNIMG_CONSTS: u32 = 36;
+pub(crate) const RUNIMG_FNREFS: u32 = 40;
+pub(crate) const RUNIMG_TYPES: u32 = 44;
+pub(crate) const RUNIMG_GENS: u32 = 48;
+pub(crate) const RUNIMG_SHARED: u32 = 52;
+pub(crate) const RUNIMG_WORKERS: u32 = 56;
+pub(crate) const RUNIMG_SIDECARS: u32 = 60;
+pub(crate) const RUNIMG_OLDEST: u32 = 64;
+pub(crate) const RUNIMG_BRIDGE: u32 = 68;
+pub(crate) const RUNIMG_SOURCE: u32 = 72;
+pub(crate) const RUNIMG_STORE_INSTS: u32 = 76;
+pub(crate) const RUNIMG_NAMES: u32 = 80;
+pub(crate) const RUNIMG_DEF_FILES: u32 = 84;
+pub(crate) const RUNIMG_FILES: u32 = 88;
+pub(crate) const RUNIMG_LINES: u32 = 92;
+pub(crate) const RUNIMG_CNATIVES: u32 = 96;
+pub(crate) const RUNIMG_CWD: u32 = 100;
+pub(crate) const RUNIMG_STRIDE: u32 = 104;
 /// `RunFnRef { def, drop, kind, cascade: integer, hidden: vector<integer> }` — a call through a function
 /// reference's shape.
 pub(crate) const RUNFNREF_DEF: u32 = 0;
@@ -1840,6 +1842,7 @@ mod tests {
 
         // The run image (@PLN91, the stored bytecode the loft runner executes).
         assert_eq!(u32::from(stores.size(ids.run_image)), RUNIMG_STRIDE);
+        assert_eq!(pos(ids.run_image, "format"), RUNIMG_FORMAT);
         assert_eq!(pos(ids.run_image, "main"), RUNIMG_MAIN);
         assert_eq!(pos(ids.run_image, "code"), RUNIMG_CODE);
         assert_eq!(pos(ids.run_image, "starts"), RUNIMG_STARTS);

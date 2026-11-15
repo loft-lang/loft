@@ -22,6 +22,11 @@ pub fn load_run(path: text) -> ir::RunImage? {
   if !store_load(r, path) {
     return null;
   }
+  // An image in another format is refused before anything in it is read as this format.
+  if r.format != ir::RUN_IMAGE_FORMAT {
+    eprintln("{path}: a run image in format {r.format}; this runner reads format {ir::RUN_IMAGE_FORMAT} — write it again with the loft of this runner's release (`loft --emit-run-image`)");
+    return null;
+  }
   r
 }
 

@@ -963,6 +963,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t117, "before", t5);
     db.field(t117, "after", t5);
     db.field(t117, "dump", t5);
+    db.field(t118, "format", 0);
     let vec_code = db.vector(t119);
     db.field(t118, "code", vec_code);
     let t141 = db.int_raw(0, false);
