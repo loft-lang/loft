@@ -15,9 +15,9 @@ getting faster where the runner exposed a mechanism.  How the loop and an arm wo
 
 | Measure | 2026-11-14 night | Now |
 |---|---|---|
-| `bench_speed.py` geometric mean (94 routines), this machine | 2.03, worst 12.8 | 0.92, worst 2.25 |
-| the same, the laptop (quiet), on 3998d0169 | 2.20 | 1.10, worst 2.89 (before the last eight commits) |
-| arms of `run` | 222 | 265 |
+| `bench_speed.py` geometric mean (94 routines), this machine | 2.03, worst 12.8 | 0.88, worst 1.80 (08688f618); 68 of 94 at or under 1.0 |
+| the same, the laptop (quiet) | 2.20 | 0.99, worst 2.27 (62012dfbf, before the last three commits) |
+| arms of `run` | 222 | 267 |
 | `run_image_survey.py` | 1186 of 1194 | the same, the same 8 |
 
 ## What changed in the language, not only the runner
@@ -42,8 +42,8 @@ getting faster where the runner exposed a mechanism.  How the loop and an arm wo
 2. **A C routine cannot return a text but through a byte vector** (`room()`, a store per call):
    `crt::show_leaf` (`map_json` 2.25), `stack_str`, `get_text`.  A `#c_twin` signature returning
    the runtime's `loft_text` would remove the buffer; it touches `c_signature.rs`'s consumers.
-3. The rows over 1.3 here: `map_json`, `sum` (a 0.4 ms routine), `build_rec`, `record_append`,
-   `par_text`, `expr_simplify`, `replace` — read each one's histogram first
+3. The rows over 1.3 here: `map_json` 1.80, `sum` 1.68 (a 0.4 ms routine), `par_text` 1.51,
+   `replace` 1.36, `record_append` 1.31, `par_map_float` 1.30 — read each one's histogram first
    (`LOFT_FILL_TRACE=1`, the one-routine images: keep `main`'s setup, drop the other timing
    blocks).
 4. Not done on this tip: `make ci`, `make wasm` + `make surface-gen` (default/01_code.loft's

@@ -188,8 +188,8 @@ instruction counts (`perf stat -e instructions:u`, a large run less a tiny one):
 machine the times and the cycle counts move by a factor of two, the instruction counts not at
 all.  The gate is the generated runner at the Rust interpreter's time.  On the integer kernels
 it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles); over the
-benchmark suite's 94 routines the geometric mean is 0.92 of the Rust interpreter's time on this
-machine, 1.10 on a second (before the last arms), the worst 2.3 (`map_json`, rendering records
-through `show`'s text buffers) — the routines over 1.3 are the worklist, by what their
+benchmark suite's 94 routines the geometric mean is 0.88 of the Rust interpreter's time (0.99
+on a second machine, a few commits earlier), the worst 1.8 (`map_json`, rendering records
+through `show`), 68 of 94 at or under it — the routines over 1.3 are the worklist, by what their
 operators and natives are (`LOFT_FILL_TRACE=1` prints each operator and each native the run
 reaches).
