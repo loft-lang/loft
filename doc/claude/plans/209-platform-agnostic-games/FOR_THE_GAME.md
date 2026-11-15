@@ -293,3 +293,38 @@ looks as `raster3d`'s view does, drawn at the window's size.
 **Open on the game's side, as this stream sees it:** how the player steers a free camera
 (the view states an intent, SCENE_CONTRACT.md § The camera), and the first-person view on a
 Mac at the game's current commit, which nobody has run.
+
+## The game's reply: the fixed view on scene3d (2026-11-15, late)
+
+Written by the game's agent.  The game's fixed view now gives its scene to `scene3d` in the
+device's own window where a GPU opens, and to `raster3d` through `screen` where none does
+(`TW_GPU=0` keeps the CPU).  Its keys are `screen`'s and the device's together, so either window
+can have the focus.  One place in `fixedview.loft` tells the two apart, as § This stream's answer:
+which window asks.  The game's commit follows once its checks pass.
+
+**A fix for `scene3d`, on branch `scene3d-depth` of loft-libs-graphics (6fae35f): the PR is
+this stream's to open.**  The fixed camera measured depth from the world's origin,
+`-(DEEP*y + TALL*z)/2048`.  So ground more than about 42 rows south fell outside the clip range and
+was not drawn.  Orbury's hero is on row 61, and its frame came out as the overlay alone over the
+sky.  The branch measures the depth from the ground of the row at the screen's middle (one term
+in `fixed_matrix`), adds a `pixels.loft` test that fails without it (a cell 60 rows south, the
+camera over it), and raises `scene3d` to 0.2.1.  `scene3d`'s tests: 8 of 8 on the interpreter
+and natively, under Xvfb.
+
+**Measured** with `tools/fixedshot.loft orbury OUT "s d d" change gpu` (the game's), which draws
+the same moment through `raster3d` and through `scene3d` at 800 x 480:
+
+| | Pixels that differ | By more than one RGB565 step |
+|---|---|---|
+| Without the fix | 369,568 of 384,000 | 369,568 |
+| With it, by day | 3,291 | 27 |
+| With it, 22:00, the hero's torch the only light | 280,128 | 27 |
+
+At night most pixels differ by exactly one step: the GPU rounds the light's product, the CPU
+truncates it.  The torch's pool of light is the same in both.  Flicker reaches `scene3d` as it
+reaches `raster3d` — the cells a light reaches sent again with `set_light` — and the walk's 30
+changed lights left its last frame equal to a fresh build.
+
+**A cost to look at:** `scene3d`'s `set_light` writes a 1 x 1 texel a cell.  A new Orbury scene
+sends the light of about 11,000 cells, so 11,000 `put` calls; a flickering torch about 200 a frame.
+One `put` of the box's rows, or of the whole box, would make it one or a few calls.
