@@ -115,6 +115,15 @@ pub fn light_call(self: state::State, h: integer, idx: integer) {
     self.type_named_native();
     return;
   }
+  if h == natives::N_ENV_VARIABLES {
+    // `EnvVariable` records sized from the program's schema, built by the C runtime.
+    et = self.type_nr("EnvVariable");
+    crt::env_variables_into(self.lio, if et < 0 { 0 } else { self.types[et]?.size ?? 0 });
+    self.ensure_stack(16);
+    crt::set_slot_ref(self.stk, self.stack_pos, self.lio[0] ?? state::NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+    self.stack_pos += 16;
+    return;
+  }
   if h == natives::N_REFLECT_FIELD {
     self.reflect_field_native();
     return;

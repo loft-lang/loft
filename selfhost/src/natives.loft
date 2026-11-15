@@ -77,6 +77,18 @@ pub N_REFLECT_TYPE = 202;
 pub N_TYPE_NAMED = 203;
 pub N_REFLECT_FIELD = 204;
 pub N_REFLECT_FIELD_PATH = 205;
+N_EPRINT = 206;
+pub N_ENV_VARIABLES = 207;
+N_PATH_SEP = 208;
+N_MTIME = 209;
+N_IS_SYMLINK = 210;
+N_DIRECTORY_DEST = 211;
+N_USER_DIRECTORY_DEST = 212;
+N_PROGRAM_DIRECTORY_DEST = 213;
+N_OS_CACHE_DIR_DEST = 214;
+N_YMD_DAYS_AGO_DEST = 215;
+N_EXIT = 216;
+N_PANIC = 217;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -89,6 +101,18 @@ pub fn native_handler(name: text) -> integer {
   match name {
     "n_assert" => N_ASSERT,
     "n_stack_trace" => N_STACK_TRACE,
+    "n_eprint" => N_EPRINT,
+    "n_env_variables" => N_ENV_VARIABLES,
+    "n_path_sep" => N_PATH_SEP,
+    "n_mtime" => N_MTIME,
+    "n_is_symlink" => N_IS_SYMLINK,
+    "n_directory_dest" => N_DIRECTORY_DEST,
+    "n_user_directory_dest" => N_USER_DIRECTORY_DEST,
+    "n_program_directory_dest" => N_PROGRAM_DIRECTORY_DEST,
+    "n_os_cache_dir_dest" => N_OS_CACHE_DIR_DEST,
+    "n_ymd_days_ago_dest" => N_YMD_DAYS_AGO_DEST,
+    "n_exit" => N_EXIT,
+    "n_panic" => N_PANIC,
     "n_reflect_type" => N_REFLECT_TYPE,
     "n_type_named" => N_TYPE_NAMED,
     "n_reflect_field" => N_REFLECT_FIELD,
@@ -411,6 +435,28 @@ pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: v
     return native_text_from_byte_range_dest(nh, stk, sp, io, tb);
   } else if nh == N_JSON_ERRORS_DEST {
     return native_json_errors_dest(nh, stk, sp, io, tb);
+  } else if nh == N_EPRINT {
+    return native_eprint(nh, stk, sp, io, tb);
+  } else if nh == N_PATH_SEP {
+    return native_path_sep(nh, stk, sp, io, tb);
+  } else if nh == N_MTIME {
+    return native_mtime(nh, stk, sp, io, tb);
+  } else if nh == N_IS_SYMLINK {
+    return native_is_symlink(nh, stk, sp, io, tb);
+  } else if nh == N_DIRECTORY_DEST {
+    return native_directory_dest(nh, stk, sp, io, tb);
+  } else if nh == N_USER_DIRECTORY_DEST {
+    return native_user_directory_dest(nh, stk, sp, io, tb);
+  } else if nh == N_PROGRAM_DIRECTORY_DEST {
+    return native_program_directory_dest(nh, stk, sp, io, tb);
+  } else if nh == N_OS_CACHE_DIR_DEST {
+    return native_os_cache_dir_dest(nh, stk, sp, io, tb);
+  } else if nh == N_YMD_DAYS_AGO_DEST {
+    return native_ymd_days_ago_dest(nh, stk, sp, io, tb);
+  } else if nh == N_EXIT {
+    return native_exit(nh, stk, sp, io, tb);
+  } else if nh == N_PANIC {
+    return native_panic(nh, stk, sp, io, tb);
   } else {
     return -1;
   }
@@ -421,12 +467,12 @@ pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: v
 // keyed entries, which read the record target's facts it derives once; `stack_trace`, which
 // reads the frame list; a program's own `#c` binding, which the image describes.
 pub fn is_state_native(nh: integer) -> boolean {
-  nh == N_KEYED_ENTRY_INTS || nh == N_KEYED_ENTRY_TEXT || nh == N_STACK_TRACE || nh == N_C_CALL || nh == N_REFLECT_TYPE || nh == N_TYPE_NAMED || nh == N_REFLECT_FIELD || nh == N_REFLECT_FIELD_PATH
+  nh == N_KEYED_ENTRY_INTS || nh == N_KEYED_ENTRY_TEXT || nh == N_STACK_TRACE || nh == N_C_CALL || nh == N_REFLECT_TYPE || nh == N_TYPE_NAMED || nh == N_REFLECT_FIELD || nh == N_REFLECT_FIELD_PATH || nh == N_ENV_VARIABLES
 }
 
 // Whether `light` carries native handler `nh`.
 pub fn is_light(nh: integer) -> boolean {
-  nh == N_ASSERT || nh == N_ENV_VARIABLE_DEST || nh == N_NOW || nh == N_TICKS || nh == N_PROTECT || nh == N_UNPROTECT || nh == N_IS_DIR || nh == N_IS_FILE || nh == N_FILE_MAP || nh == N_GET_STORE_LOCK || nh == N_SET_STORE_LOCK || nh == N_LIST_DIR || nh == N_UPGRADE_OWED_NEXT || nh == N_UPGRADE_OWED_FINISH || nh == N_UPGRADE_OWED_REF || nh == N_UPGRADE_ROUTINE || nh == N_YIELD_FRAME || nh == N_TEXT_RFIND || nh == N_TEXT_FIND || nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END || nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST || nh == N_WRITE_TEXT_RAW || nh == N_TEXT_BYTE_AT || nh == N_TEXT_REPLACE_DEST || nh == N_STARTS_WITH || nh == N_ENDS_WITH || nh == N_WRITE_BYTES || nh == N_VECTOR_SUM_INT || nh == N_OS_TEMP_DIR_DEST || nh == N_READ_BYTES || nh == N_ARGUMENTS || nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST || nh == N_JSON_ERRORS_DEST
+  nh == N_ASSERT || nh == N_ENV_VARIABLE_DEST || nh == N_NOW || nh == N_TICKS || nh == N_PROTECT || nh == N_UNPROTECT || nh == N_IS_DIR || nh == N_IS_FILE || nh == N_FILE_MAP || nh == N_GET_STORE_LOCK || nh == N_SET_STORE_LOCK || nh == N_LIST_DIR || nh == N_UPGRADE_OWED_NEXT || nh == N_UPGRADE_OWED_FINISH || nh == N_UPGRADE_OWED_REF || nh == N_UPGRADE_ROUTINE || nh == N_YIELD_FRAME || nh == N_TEXT_RFIND || nh == N_TEXT_FIND || nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END || nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST || nh == N_WRITE_TEXT_RAW || nh == N_TEXT_BYTE_AT || nh == N_TEXT_REPLACE_DEST || nh == N_STARTS_WITH || nh == N_ENDS_WITH || nh == N_WRITE_BYTES || nh == N_VECTOR_SUM_INT || nh == N_OS_TEMP_DIR_DEST || nh == N_READ_BYTES || nh == N_ARGUMENTS || nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST || nh == N_JSON_ERRORS_DEST || nh == N_EPRINT || nh == N_PATH_SEP || nh == N_MTIME || nh == N_IS_SYMLINK || nh == N_DIRECTORY_DEST || nh == N_USER_DIRECTORY_DEST || nh == N_PROGRAM_DIRECTORY_DEST || nh == N_OS_CACHE_DIR_DEST || nh == N_YMD_DAYS_AGO_DEST || nh == N_EXIT || nh == N_PANIC
 }
 
 pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
@@ -1660,4 +1706,73 @@ fn native_hash_sorted(nh: integer, _idx: integer, img: ir::RunImage, stk: intege
   crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
   sp += 16;
   sp
+}
+
+// The natives a program calls on its process and its environment, each the runner's own
+// standard-library function on the same process (`light`).
+fn native_eprint(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  eprint(crt::stack_str_in(tb, stk, sp0 - 16) ?? "");
+  sp0 - 16
+}
+
+fn native_path_sep(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  crt::stack_put(crt::SW_U32, stk, sp0, path_sep() as integer);
+  sp0 + 8
+}
+
+fn native_mtime(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  t = mtime(crt::stack_str_in(tb, stk, sp0 - 16) ?? "");
+  set(stk, sp0 - 16, t);
+  sp0 - 8
+}
+
+fn native_is_symlink(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  b = is_symlink(crt::stack_str_in(tb, stk, sp0 - 16) ?? "");
+  set_bool(stk, sp0 - 16, b);
+  sp0 - 8
+}
+
+// A directory query: the destination popped, then the path suffix; the answer appended.
+fn native_directory_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  crt::slot_ref(io, stk, sp0 - 16);
+  v = crt::stack_str_in(tb, stk, sp0 - 32) ?? "";
+  d = if nh == N_USER_DIRECTORY_DEST { user_directory(v) } else if nh == N_PROGRAM_DIRECTORY_DEST { program_directory(v) } else { directory(v) };
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, d);
+  sp0 - 32
+}
+
+fn native_user_directory_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  native_directory_dest(nh, stk, sp0, io, tb)
+}
+
+fn native_program_directory_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  native_directory_dest(nh, stk, sp0, io, tb)
+}
+
+fn native_os_cache_dir_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  crt::slot_ref(io, stk, sp0 - 16);
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_cache_dir());
+  sp0 - 16
+}
+
+fn native_ymd_days_ago_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  crt::slot_ref(io, stk, sp0 - 16);
+  days = get(stk, sp0 - 24) ?? 0;
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ymd_days_ago(days));
+  sp0 - 24
+}
+
+fn native_exit(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  exit(get(stk, sp0 - 8) ?? 0);
+  sp0 - 8
+}
+
+// `panic(message, file, line)`: the line, the file and the message popped, the runner's own
+// `panic` given the program's place.
+fn native_panic(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  line = get(stk, sp0 - 8) ?? 0;
+  file = crt::stack_str_in(tb, stk, sp0 - 24) ?? "";
+  message = crt::stack_str_in(tb, stk, sp0 - 40) ?? "";
+  crt::panic_at(message, file, line);
+  sp0 - 40
 }

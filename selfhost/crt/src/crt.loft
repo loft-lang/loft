@@ -2406,6 +2406,22 @@ pub fn arguments_into(out: vector<integer>) {
   c_arguments(out);
 }
 
+fn c_panic(msg: text, mlen: integer, file: text, flen: integer, line: integer);
+#c "loft_crt_panic" "void(const char*, int64_t, const char*, int64_t, int64_t)"
+
+// `panic` reported at the place given — the interpreted program's, not this caller's.
+pub fn panic_at(message: text, file: text, line: integer) {
+  c_panic(message, message.size(), file, file.size(), line);
+}
+
+fn c_env_variables(out: vector<integer>, size: integer) -> integer;
+#c "loft_crt_env_variables" "int64_t(int64_t*, int64_t, int64_t)"
+
+// `env_variables()` in the program's stores: `EnvVariable` records of `size` bytes, into `out`.
+pub fn env_variables_into(out: vector<integer>, size: integer) {
+  c_env_variables(out, size);
+}
+
 fn c_add_type_name(v: text, bytes: integer);
 #c "loft_crt_add_type_name" "void(const char*, int64_t)"
 

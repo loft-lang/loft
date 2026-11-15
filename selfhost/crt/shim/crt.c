@@ -2701,6 +2701,19 @@ void loft_crt_add_arg(const char *v, int64_t bytes) {
 }
 
 /* `arguments()`: the program's arguments in a store of their own, into `out`. */
+/* `panic(message, file, line)` reported at the PROGRAM's place: the runtime's own `loft_panic`
+ * (a loft call to `panic` gets the caller's place injected by the compiler). */
+void loft_crt_panic(const char *msg, int64_t mlen, const char *file, int64_t flen, int64_t line) {
+    loft_panic(loft_crt_str(msg, mlen), loft_crt_str(file, flen), line);
+}
+
+/* `env_variables()`: the environment as `EnvVariable` records of `size` bytes, the C runtime's
+ * own (`loft_env_variables`), into `out`. */
+int64_t loft_crt_env_variables(int64_t *out, int64_t no, int64_t size) {
+    loft_crt_put_ref(out, no, loft_env_variables((uint32_t) size));
+    return 0;
+}
+
 int64_t loft_crt_arguments(int64_t *out, int64_t no) {
     loft_crt_put_ref(out, no, loft_arguments());
     return 0;
