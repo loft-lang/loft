@@ -438,5 +438,7 @@ pre-built: which copy of the dependency a program loads is that program's resolu
 header must reach a dependant of a dependant.  Decided 2026-11-15.
 **Holds at:** `@C165` — `src/c_shim.rs` (`declare_dep_headers`, `put_dep_headers`, the cache
 key), `src/parser/packages.rs` (which dependencies a shim waits for), `src/startup_cache.rs`
-(the `chdr` lines), `src/esp_app.rs`; guard `a_backend_finds_the_layers_header_wherever_the_two_are_installed`
+(the `chdr` lines), `src/esp_app.rs`, `scripts/thirdparty.py` (the publish gate builds a shim
+with its dependencies' headers staged the same way, and names the cure for a path out of the
+package); guard `a_backend_finds_the_layers_header_wherever_the_two_are_installed`
 (`tests/c_emit.rs`).
