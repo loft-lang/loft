@@ -12,6 +12,7 @@
 use ir;
 use binds;
 use loop_shape;
+use types;
 use opt_names;
 use cgen_types;
 
@@ -554,4 +555,140 @@ pub fn in_place_only_writer(b: ir::Bundle, w: Writes, d: integer) -> boolean {
     w.in_place[d] = true;
   }
   only
+}
+
+// A plain struct record type that owns no heap (`Stores::is_struct` and not `owns_heap`).
+fn flat_struct(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  match b.types[tp].parts[0] {
+    PtStruct { fields: _ } => !types::owns_heap(b.types, tp),
+    _ => false,
+  }
+}
+
+// The allowances `blocks_header_hoist` gives a native call under its in-place tier, beside
+// `allowed`: an in-place setter, a scalar read from a file, a reference to a scalar, text or
+// flat-record local, the mint of the frame's own return buffer, a flag-free copy of a flat
+// record.
+fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
+  if in_place_set(name) || scalar_stack_ref(def, name, args) {
+    return true;
+  }
+  if name == "OpReadFile" && len(args) > 1 {
+    match loop_shape::unspan(args[1]) {
+      NdCall { def_nr: c, args: inner } => {
+        if c >= 0 && c < len(b.data.definitions) && scalar_stack_ref(def, b.data.definitions[c]!.name, inner) {
+          return true;
+        }
+      },
+      _ => {},
+    }
+  }
+  v = first_var(args);
+  in_frame = v >= 0 && v < len(def.variables.variables);
+  if name == "OpCreateStack" && in_frame {
+    tp = def.variables.variables[v]!.type_def[0]!;
+    is_text_local = match opt_names::peel_link(tp) {
+      TyText { dep: _ } => true,
+      _ => false,
+    };
+    if is_text_local && !env_on("LOFT_NO_FRESH_TEXT_SET") {
+      return true;
+    }
+    if plain_record(b, tp) {
+      known = match opt_names::peel_link(tp) {
+        TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
+        _ => -1,
+      };
+      if flat_struct(b, known) {
+        return true;
+      }
+    }
+  }
+  if (name == "OpDatabase" || name == "OpDatabaseNP") && in_frame {
+    var = def.variables.variables[v]!;
+    if var.argument && (var.name == "__retbuf" || var.name.starts_with("__ref_")) {
+      return true;
+    }
+  }
+  if name == "OpCopyRecord" && len(args) == 3 && !env_on("LOFT_NO_COPY_IN_PLACE") {
+    match loop_shape::unspan(args[2]) {
+      NdInt { n: raw } => {
+        if raw >= 0 && raw <= 65535 && raw & 32768 == 0 && flat_struct(b, raw & 16383) {
+          return true;
+        }
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
+fn any_blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>) -> boolean {
+  for n in nodes {
+    if blocks_in_place(b, w, vd, n) {
+      return true;
+    }
+  }
+  false
+}
+
+// `blocks_header_hoist` under the in-place tier alone (no push, no mint, nothing the emitter
+// owns): may running `node` of function `vd` MOVE or grow a store — anything but a write in
+// place, a release, or the allocation of a buffer no header describes?
+pub fn blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
+  n = loop_shape::unspan(node);
+  match n {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      frees = exit_tail_frees(b, b.data.definitions[vd]!, ops);
+      for op in ops {
+        released = false;
+        for f in frees {
+          if f == op#index {
+            released = true;
+          }
+        }
+        if !released && blocks_in_place(b, w, vd, op) {
+          return true;
+        }
+      }
+      false
+    },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        def = b.data.definitions[vd]!;
+        name = b.data.definitions[def_nr]!.name;
+        if !(in_place_native(b, def, name, args) || allowed(b, def, name, args)) && call_writes_store(b, w, def_nr) && !(!env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
+          return true;
+        }
+      }
+      any_blocks_in_place(b, w, vd, args)
+    },
+    NdCallRef { var: _, args: _ } => true,
+    NdParallel { arms: _ } => true,
+    NdYield { inner: _ } => true,
+    NdInsert { items } => any_blocks_in_place(b, w, vd, items),
+    NdTuple { items } => any_blocks_in_place(b, w, vd, items),
+    NdLoop { block } => any_blocks_in_place(b, w, vd, block[0].operators),
+    NdSet { var: _, inner } => blocks_in_place(b, w, vd, inner),
+    NdReturn { inner } => blocks_in_place(b, w, vd, inner),
+    NdDrop { inner } => blocks_in_place(b, w, vd, inner),
+    NdTuplePut { var: _, idx: _, inner } => blocks_in_place(b, w, vd, inner),
+    NdIf { cond, t, f } => blocks_in_place(b, w, vd, cond) || blocks_in_place(b, w, vd, t) || blocks_in_place(b, w, vd, f),
+    NdIter { var: _, create, next, init } => blocks_in_place(b, w, vd, create) || blocks_in_place(b, w, vd, next) || blocks_in_place(b, w, vd, init),
+    _ => false,
+  }
+}
+
+// `frees_a_record`, for the walks of other modules.
+pub fn releases_record(d: ir::Definition, name: text, args: vector<ir::Node>) -> boolean {
+  frees_a_record(d, name, args)
+}
+
+// `plain_record_type`, for the walks of other modules.
+pub fn is_plain_record(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  plain_record(b, t)
 }

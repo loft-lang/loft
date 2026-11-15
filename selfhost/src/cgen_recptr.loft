@@ -1,0 +1,157 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-RecPtr` in the function writer: `bind_param_ptrs`,
+// `bind_record_ptr`, `record_ptr_line` and `rec_ptr_access` of `src/c/body.rs`.  A plain
+// record view whose remainder only writes in place takes its record's address once; its
+// scalar field reads and in-place writes then go through that address.
+//
+// Not carried: the held-element address and the text clause (both the vector hoist's), and a
+// remainder that grows a store proved apart (`LOFT_NO_DISTINCT_GROWTH`).
+
+use ir;
+use loop_shape;
+use opt_view;
+use cgen_fn;
+use cgen_w::*;
+
+fn enabled() -> boolean {
+  (env_variable("LOFT_NO_RECORD_PTR") ?? "0") == "0"
+}
+
+fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: integer) {
+  slot = len(w.decls);
+  pa = "loft_pa{r}_{slot}";
+  pl = "loft_pl{r}_{slot}";
+  w.decls += ["uint8_t *{pa} = 0;"];
+  w.decls += ["int {pl} = 0;"];
+  rec = w.names[r]!;
+  line(w, ind, "{pa} = loft_rec_ptr({rec});");
+  writes = false;
+  for op in ops {
+    if op#index >= from && !writes {
+      writes = opt_view::writes_view(x.b, op, r);
+    }
+  }
+  // The lock flag only matters to a write through the address.
+  if writes {
+    line(w, ind, "{pl} = loft_rec_locked({rec});");
+  }
+  w.rec_ptrs += [RecPtr { var: r, pa: pa, pl: pl }];
+}
+
+// `bind_param_ptrs`: a plain-record parameter read or written at least twice takes its
+// address at entry.
+pub fn bind_param_ptrs(x: Cx, w: W, code: ir::Node) {
+  if !enabled() {
+    return;
+  }
+  stmts = match loop_shape::unspan(code) {
+    NdBlock { block } => block[0].operators,
+    _ => return,
+  };
+  for p in w.params {
+    v = p#index;
+    if !p || (w.shapes[v] ?? "") != "ref" || w.links[v]! || opt_view::scalar_field_uses(x.b, stmts, 0, v) < 2 {
+      continue;
+    }
+    if !opt_view::param_view_ok(x.b, x.writes, w.index, stmts, v) {
+      continue;
+    }
+    bind(x, w, v, stmts, 0, 1);
+  }
+}
+
+// `bind_record_ptr`: after statement `at` of `ops` binds a plain record view, take its
+// address where the statements up to its last field use allow it.
+pub fn bind_record_ptr(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer) {
+  if !enabled() {
+    return;
+  }
+  r = match loop_shape::unspan(ops[at]!) {
+    NdSet { var, inner: _ } => var,
+    _ => return,
+  };
+  if (w.shapes[r] ?? "") != "ref" {
+    return;
+  }
+  for p in w.rec_ptrs {
+    if p.var == r {
+      return;
+    }
+  }
+  // The address serves the view's field reads and writes alone, so only the statements up to
+  // the last of them are judged.
+  last = -1;
+  for i in rev(at + 1..len(ops)) {
+    if opt_view::field_use(x.b, ops[i]!, r) {
+      last = i;
+      break;
+    }
+  }
+  if last < 0 {
+    return;
+  }
+  remainder: vector<ir::Node> = ops[0..last + 1];
+  if !opt_view::record_view_ok(x.b, x.writes, w.index, remainder, at) {
+    return;
+  }
+  bind(x, w, r, ops, at + 1, ind);
+}
+
+// `rec_ptr_access`: a scalar field read or in-place write of a view whose address is held
+// goes through the address.  `done` says whether `name` over `args` is one.
+pub fn rec_ptr_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  count = len(args);
+  getter = ((name == "OpGetInt" || name == "OpGetFloat" || name == "OpGetSingle" || name == "OpGetEnum" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full") && count == 2) || ((name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull") && count == 3);
+  setter = (name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetSingle" || name == "OpSetEnum") && count == 3;
+  if !getter && !setter {
+    return none();
+  }
+  off = 0;
+  root = opt_view::view_field(x.b, args[0], args[1], off);
+  if root < 0 || off < 0 {
+    return none();
+  }
+  at = -1;
+  for p in w.rec_ptrs {
+    if p.var == root {
+      at = p#index;
+    }
+  }
+  if at < 0 {
+    return none();
+  }
+  pa = w.rec_ptrs[at].pa;
+  done = true;
+  if getter {
+    if name == "OpGetInt" {
+      return E { code: "loft_pa_i64({pa}, {off})", kind: K_INT };
+    }
+    if name == "OpGetFloat" {
+      return E { code: "loft_pa_f64({pa}, {off})", kind: K_FLOAT };
+    }
+    if name == "OpGetSingle" {
+      return E { code: "loft_pa_f32({pa}, {off})", kind: K_SINGLE };
+    }
+    if name == "OpGetEnum" {
+      return E { code: "loft_pa_enum({pa}, {off})", kind: K_ENUM };
+    }
+    if count == 2 {
+      f = if name == "OpGetInt4" { "loft_pa_int4" } else if name == "OpGetInt4Raw" { "loft_pa_int4_raw" } else { "loft_pa_int4_full" };
+      return E { code: "{f}({pa}, {off})", kind: K_INT };
+    }
+    min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
+    g = if name == "OpGetByte" { "loft_pa_byte" } else if name == "OpGetByteNullable" { "loft_pa_byte_nullable" } else if name == "OpGetShort" { "loft_pa_short" } else { "loft_pa_short_raw" };
+    return E { code: "{g}({pa}, {off}, {c_long(min)})", kind: K_INT };
+  }
+  val = cgen_fn::expr(x, w, args[2], ind);
+  shape = if name == "OpSetInt" { "int" } else if name == "OpSetFloat" { "float" } else if name == "OpSetSingle" { "single" } else { "enum" };
+  ty = held(shape);
+  code = if name == "OpSetInt" { as_int(w, val) } else if name == "OpSetFloat" { as_float(w, val) } else if name == "OpSetSingle" { as_single(w, val) } else { as_enum(w, val) };
+  t = temp(w, shape);
+  line(w, ind, "{t} = ({ty}) ({code});");
+  E { code: "loft_pa_set_at({pa}, {w.rec_ptrs[at].pl}, {off}, &{t}, sizeof({ty}), {w.names[root]!}, {cgen_fn::site(w)})", kind: K_VOID }
+}

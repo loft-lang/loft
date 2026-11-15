@@ -24,6 +24,7 @@ use cgen_ref;
 use cgen_bind;
 use cgen_cold;
 use cgen_split;
+use cgen_recptr;
 use own;
 use cgen_texts;
 use cgen_natives;
@@ -295,6 +296,13 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     }
   }
   count = len(args);
+  if len(w.rec_ptrs) > 0 {
+    through = false;
+    held_access = cgen_recptr::rec_ptr_access(x, w, name, args, ind, through);
+    if through {
+      return held_access;
+    }
+  }
   if len(w.chains) > 0 {
     done = false;
     guarded = cgen_loop::chain_operator(x, w, name, args, ind, done);
@@ -1831,6 +1839,9 @@ fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind
     refuse(w, "a value block with no value");
     return;
   }
+  // What the statements before the value bind — a record pointer — serves the value as well,
+  // so it closes after the value, with the block.
+  held = len(w.rec_ptrs);
   stmts_upto(x, w, ops, at, ind);
   assign(x, w, ops[at]!, target, shape, ind);
   flush(w, ind);
@@ -1839,6 +1850,7 @@ fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind
       stmt(x, w, o, ind);
     }
   }
+  w.rec_ptrs = w.rec_ptrs[0..held];
 }
 
 // The last statement of `ops` before `end` that is no line marker (and, with `value`, no
@@ -1940,7 +1952,10 @@ fn ret_held(w: W, r: text, ind: integer) {
 
 // A block's statements in order (`stmts`, `stmts_in`).
 fn stmts(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
+  // The record pointers this block bound close with it.
+  held = len(w.rec_ptrs);
   stmts_upto(x, w, ops, len(ops), ind);
+  w.rec_ptrs = w.rec_ptrs[0..held];
 }
 
 // `ops[..end]`, the statements of a list whose remainder the caller writes (`stmts_upto`).
@@ -1971,6 +1986,9 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
       w.in_iter -= 1;
     } else {
       stmt(x, w, o, ind);
+    }
+    if plain_rules() && w.why == "" {
+      cgen_recptr::bind_record_ptr(x, w, ops, o#index, ind);
     }
   }
 }
@@ -2545,6 +2563,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     cold: [],
     undeclared: [for _ in 0..len(d.variables.variables) { false }],
     frees_old_tuple: false,
+    rec_ptrs: [],
   };
   code = d.code[0]!;
   if len(helper) > 0 {
@@ -2565,6 +2584,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     if planned != "" {
       return Written { text: "", refused: planned };
     }
+  }
+  if plain_rules() {
+    cgen_recptr::bind_param_ptrs(x, w, code);
   }
   if ret == "void" {
     stmt(x, w, code, 1);
