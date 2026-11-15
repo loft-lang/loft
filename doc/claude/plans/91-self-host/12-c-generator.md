@@ -182,6 +182,25 @@ The range facts need `opt/char_walk.rs` and `opt/range.rs`
 operation answers).  With both layers equal, the writer's core walk (`body.rs` `write`:
 declarations, temporaries, statements, calls, `if`) starts producing text.
 
+### The rules still switched off in plain mode
+
+`cgen_w::PLAIN_SWITCHES` names them (29): `VALUE_RECORD`, `APART_CALL`, `DISTINCT_VERSION`, `REBOUND_MOVER`, `APART_MINT`, `CALLEE_INPUTS`, `GROWN_HEADER`, `LENGTH_LOCAL`, `LOCKSTEP`, `GRID_INDEX`, `FIELD_HEADER`, `FN_HEADER`, `RANGE_END_HEADER`, `GUARD_BOUND`, `VERSION`, `TRANSIENT`, `DEFERRED_COPY`, `LOOP_RECORD`, `APART`, `RETBUF_ADOPT`, `APPEND_LOOP_WINDOW`, `MINT_WINDOW`, `TABLE_HANDLE`, `APPEND_TWIN`, `HAND_OVER`, `VR_PTR`, `FNREF_PARK`, `FNREF_BUFFER`, `FILE_HOLD`.
+A rule leaves the list when both sides agree on the whole corpus with it on.  Where a coarse
+switch covers several clauses, its finer switches take its place first and each clause is
+ported on its own.
+
+What the loft writer still refuses beside the rules, by bodies of the corpus: a body the
+writer splits (272), `OpCoroutineNext` (115) and `yield` (107) — the generators — a
+character walk (95), `OpPlaceRecord` (86), a lazy split or a split table (65).  Whole-unit
+assembly (the first-use numbering of `loft_call<n>` and `loft_tup<n>`, the framed wrapper,
+the twins) follows the bodies.
+
+The helpers of a port, in the session's scratch directory and rebuilt from this description
+when it is gone: `cycle.sh` builds the generator with `--ship` and runs the plain and the
+default `bodies` layer (it prints `N of 1076 units agree`, so a generator that dies on some
+units cannot pass as "0 different"); `one.sh FILE FUNCTION` prints the unified diff of one
+body, the Rust writer's against the loft writer's, under the plain switches.
+
 ## What decides a step is done
 
 - The survey's count for the step's form did not drop and rose by what the step named.
@@ -208,8 +227,8 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 | layer `counters` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer counters` |
 | layer `iterations` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer iterations` |
 | layer `nn` | 6 044 function rows (the functions that ask a fact), all equal | `cgen_survey.py --cgen --layer nn` |
-| layer `bodies` | the whole corpus, default rules: of 13 511 function bodies the Rust writer wrote, the loft writer wrote 2 522 equal and none different (a function that holds a record or a vector is refused there) | `cgen_survey.py --generator <built cgen> --layer bodies` |
-| layer `bodies`, plain | the whole corpus with both sides under `cgen_w::PLAIN_SWITCHES` (the rules not carried yet, off): of 13 333 bodies, 12 136 equal and none different (the names a unit numbers by first use — `loft_call<n>`, `loft_tup<n>` — compared renumbered per body, the unit comparison checks the numbers); refused by count: a body the writer splits 261, generators (`OpCoroutineNext` 115, `NdYield` 107), a character walk 95, `OpPlaceRecord` 86, a lazy split or split table 65, `OpSetKeyed` 51 | `cgen_survey.py --plain --generator <built cgen> --layer bodies` |
+| layer `bodies` | the whole corpus (1076 units), default rules: of 13 537 function bodies the Rust writer wrote, the loft writer wrote 2 633 equal and none different (a function that holds a record or a vector is refused there) | `cgen_survey.py --generator <built cgen> --layer bodies` |
+| layer `bodies`, plain | the whole corpus with both sides under `cgen_w::PLAIN_SWITCHES` (the rules not carried yet, off): of 13 346 bodies, 12 138 equal and none different, 1 325 refused (the names a unit numbers by first use — `loft_call<n>`, `loft_tup<n>` — renumbered per body) | `cgen_survey.py --plain --generator <built cgen> --layer bodies` |
 | layer `writes` | 13 263 function rows over 1075 units, all equal | `cgen_survey.py --generator <built cgen> --layer writes` |
 | layer `texts` | 13 263 function rows over 1075 units, all six fields equal | `cgen_survey.py --generator <built cgen> --layer texts` |
 | layer `ranges` | tests/scripts: 444 of 444 programs equal (2 939 rows), the character walks read from `char_walk::walks` | `cgen_survey.py --generator <interpreted cgen, LOFT_NO_IR_VALUE_RECORD=1> --layer ranges --scripts-only` |
@@ -272,6 +291,8 @@ Each was fixed where it was met, with its guard (rule 2 and 3 of the port).
 | loft#2493 | a `match` whose result an earlier arm made optional refused a later arm that is a block ending in a local of the base type | `tests/scripts/2493-…loft` |
 | loft#2496 | a lambda capturing a local whose type pass 1 cannot know beside a `vector<boolean>` had no storage for the capture | `tests/scripts/2496-…loft` |
 | loft#2497 | a walk `for x in f()` over a call's vector of a record declared later is refused, or — the record in a module that uses this one back — leaks the vector — **open**: filed with both repros; the writer's shared records are declared in `cgen_w.loft`, before the files that walk them | none yet |
+| loft#2499 | a `match` with a leaving arm, last in an `if` branch that has an `else`, was dropped: the arm that matched did not run (silent) | `tests/scripts/2499-…loft` |
+| loft#2498 | the C backend's transient form of a record registered itself as its own member | `tests/scripts/2498-…loft` |
 | loft#2485 | a bind after its block ended moved the ended binding's type (a false gating warning), and a per-loop binding never ended | `tests/callarg_nstore.rs` |
 
 Not fixed, noted: a `hash<T[k]>` local cannot be formatted (`"{h}"`: "Cannot format type"),
