@@ -1173,8 +1173,9 @@ pub fn log(sev: integer, m: text, f: text, line: integer) {
 }
 
 // `store_load_key(r, path, key)`: one record under an integer or a text key read from the image.
-pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text, is_text: boolean) -> boolean {
-  c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey, tkey.size(), if is_text { 1 } else { 0 }) != 0
+pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text?, is_text: boolean) -> boolean {
+  // A null key crosses as the null text (-1), the key the Rust native files under `STRING_NULL`.
+  c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey ?? "", bytes_of(tkey), if is_text { 1 } else { 0 }) != 0
 }
 
 // `store_load_keys(r, path, keys)`: every key of the vector read; how many records were.
