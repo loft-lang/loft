@@ -636,9 +636,9 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
   false
 }
 
-fn any_blocks(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>, in_place: integer) -> boolean {
+fn any_blocks(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>, in_place: integer, fresh: vector<boolean>) -> boolean {
   for n in nodes {
-    if blocks_tier(b, w, vd, n, in_place) {
+    if blocks_tier(b, w, vd, n, in_place, fresh) {
       return true;
     }
   }
@@ -647,33 +647,42 @@ fn any_blocks(b: ir::Bundle, w: Writes, vd: integer, nodes: vector<ir::Node>, in
 
 // `blocks_header_hoist` under the in-place tier alone.
 pub fn blocks_in_place(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
-  blocks_tier(b, w, vd, node, 1)
+  blocks_tier(b, w, vd, node, 1, [])
 }
 
 // `blocks_header_hoist` under the in-place tier, asked WITHOUT the type schema (as
 // `view_def_header` asks it): no record is known to be flat, so a record copy and a reference
 // to a record local are not in place.
 pub fn blocks_in_place_untyped(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
-  blocks_tier(b, w, vd, node, 2)
+  blocks_tier(b, w, vd, node, 2, [])
 }
 
 // `blocks_header_hoist` under the tiers `tier` names: 1 the in-place tier, 2 the in-place
 // tier asked without the schema, +4 the push tier (a fusable push, a reservation, a kept
 // range).
-pub fn blocks_under(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, tier: integer) -> boolean {
-  blocks_tier(b, w, vd, node, tier)
+// +8 the mint tier: a record mint into a plain vector, the delivery into the element it
+// minted, a text set of one.  `fresh` is the walk's own state — per variable, whether it holds
+// an element the statements so far minted — and is shared by the statements of one body.
+pub fn blocks_under(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, tier: integer, fresh: vector<boolean>) -> boolean {
+  blocks_tier(b, w, vd, node, tier, fresh)
+}
+
+// Is `v` a variable `fresh` marks?
+fn is_fresh(fresh: vector<boolean>, v: ir::Node) -> boolean {
+  n = loop_shape::var_of(loop_shape::unspan(v));
+  n >= 0 && n < len(fresh) && fresh[n]!
 }
 
 // `blocks_header_hoist` under no tier at all: may running `node` write a store, but for a
 // release and the allocation of a buffer no header describes?
 pub fn blocks_plain(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node) -> boolean {
-  blocks_tier(b, w, vd, node, 0)
+  blocks_tier(b, w, vd, node, 0, [])
 }
 
 // `blocks_header_hoist` under the in-place tier alone (no push, no mint, nothing the emitter
 // owns): may running `node` of function `vd` MOVE or grow a store — anything but a write in
 // place, a release, or the allocation of a buffer no header describes?
-fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: integer) -> boolean {
+fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: integer, fresh: vector<boolean>) -> boolean {
   n = loop_shape::unspan(node);
   match n {
     NdBlock { block } => {
@@ -686,7 +695,7 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
             released = true;
           }
         }
-        if !released && blocks_tier(b, w, vd, op, in_place) {
+        if !released && blocks_tier(b, w, vd, op, in_place, fresh) {
           return true;
         }
       }
@@ -696,24 +705,67 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
       if def_nr >= 0 && def_nr < len(b.data.definitions) {
         def = b.data.definitions[vd]!;
         name = b.data.definitions[def_nr]!.name;
-        if !(in_place_native(b, def, name, args, in_place) || allowed(b, def, name, args) || (in_place & 4 != 0 && opt_push::mover(b, name, args))) && call_writes_store(b, w, def_nr) && !(in_place & 3 != 0 && !env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
+        admitted = false;
+        if in_place & 8 != 0 {
+          mpath = "";
+          mroot = -1;
+          mtp = 0;
+          opt_push::mint_target(b, def, name, args, mpath, mroot, mtp);
+          // A record mint; its finish closes the element's fresh window.
+          if mpath != "" {
+            admitted = true;
+            if name == "OpFinishRecord" {
+              done = loop_shape::var_of(loop_shape::unspan(args[1]));
+              if done >= 0 && done < len(fresh) {
+                fresh[done] = false;
+              }
+            }
+          }
+          // The delivery into a fresh element, and a text set of one.
+          if name == "OpCopyRecord" && len(args) == 3 && is_fresh(fresh, args[1]) {
+            admitted = true;
+          }
+          if name == "OpSetText" && len(args) == 3 && !env_on("LOFT_NO_FRESH_TEXT_SET") && is_fresh(fresh, args[0]) {
+            admitted = true;
+          }
+        }
+        if !(admitted || in_place_native(b, def, name, args, in_place) || allowed(b, def, name, args) || (in_place & 4 != 0 && opt_push::mover(b, name, args))) && call_writes_store(b, w, def_nr) && !(in_place & 3 != 0 && !env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
           return true;
         }
       }
-      any_blocks(b, w, vd, args, in_place)
+      any_blocks(b, w, vd, args, in_place, fresh)
     },
     NdCallRef { var: _, args: _ } => true,
     NdParallel { arms: _ } => true,
     NdYield { inner: _ } => true,
-    NdInsert { items } => any_blocks(b, w, vd, items, in_place),
-    NdTuple { items } => any_blocks(b, w, vd, items, in_place),
-    NdLoop { block } => any_blocks(b, w, vd, block[0].operators, in_place),
-    NdSet { var: _, inner } => blocks_tier(b, w, vd, inner, in_place),
-    NdReturn { inner } => blocks_tier(b, w, vd, inner, in_place),
-    NdDrop { inner } => blocks_tier(b, w, vd, inner, in_place),
-    NdTuplePut { var: _, idx: _, inner } => blocks_tier(b, w, vd, inner, in_place),
-    NdIf { cond, t, f } => blocks_tier(b, w, vd, cond, in_place) || blocks_tier(b, w, vd, t, in_place) || blocks_tier(b, w, vd, f, in_place),
-    NdIter { var: _, create, next, init } => blocks_tier(b, w, vd, create, in_place) || blocks_tier(b, w, vd, next, in_place) || blocks_tier(b, w, vd, init, in_place),
+    NdInsert { items } => any_blocks(b, w, vd, items, in_place, fresh),
+    NdTuple { items } => any_blocks(b, w, vd, items, in_place, fresh),
+    NdLoop { block } => any_blocks(b, w, vd, block[0].operators, in_place, fresh),
+    NdSet { var, inner } => {
+      // The element variables the body has minted so far, in the walk's order.
+      if in_place & 8 != 0 && var < len(fresh) {
+        minted = false;
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr: m, args: margs } => {
+            if m >= 0 && m < len(b.data.definitions) && b.data.definitions[m]!.name == "OpNewRecord" {
+              mpath = "";
+              mroot = -1;
+              mtp = 0;
+              opt_push::mint_target(b, b.data.definitions[vd]!, "OpNewRecord", margs, mpath, mroot, mtp);
+              minted = mpath != "";
+            }
+          },
+          _ => {},
+        }
+        fresh[var] = minted;
+      }
+      blocks_tier(b, w, vd, inner, in_place, fresh)
+    },
+    NdReturn { inner } => blocks_tier(b, w, vd, inner, in_place, fresh),
+    NdDrop { inner } => blocks_tier(b, w, vd, inner, in_place, fresh),
+    NdTuplePut { var: _, idx: _, inner } => blocks_tier(b, w, vd, inner, in_place, fresh),
+    NdIf { cond, t, f } => blocks_tier(b, w, vd, cond, in_place, fresh) || blocks_tier(b, w, vd, t, in_place, fresh) || blocks_tier(b, w, vd, f, in_place, fresh),
+    NdIter { var: _, create, next, init } => blocks_tier(b, w, vd, create, in_place, fresh) || blocks_tier(b, w, vd, next, in_place, fresh) || blocks_tier(b, w, vd, init, in_place, fresh),
     _ => false,
   }
 }

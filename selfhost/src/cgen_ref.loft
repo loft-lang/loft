@@ -1880,7 +1880,7 @@ pub fn hash_reserve(x: Cx, w: W, lp: ir::Block, ind: integer) {
 
 // `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write
 // every field, so the minted element needs no default image first?
-fn mint_complete(b: ir::Bundle, w: W, tp: integer) -> boolean {
+pub fn mint_complete(b: ir::Bundle, w: W, tp: integer) -> boolean {
   fact = b.data.definitions[w.index]!.no_prefill;
   for part in fact.split(';') {
     if part.starts_with("m") {

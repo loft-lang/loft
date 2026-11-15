@@ -10,6 +10,9 @@ use ir;
 use loop_shape;
 use opt_non_sentinel;
 use binds;
+use opt_names;
+use opt_writes;
+use types;
 
 // One scalar push as a rule reads it: the vector's path, the vector and value nodes, the
 // element's size.  `size` 0: no fusable push.
@@ -561,4 +564,93 @@ fn scalar_type(t: ir::TypeT) -> boolean {
     TyEnum { n: _, is_ref, dep: _ } => !is_ref,
     _ => false,
   }
+}
+
+// `mint_target`: the plain vector a record mint (`OpNewRecord`, its `NP` twin) or its finish
+// appends to — a vector local, or a plain vector field of a plain record local — as its
+// path (in `path`, root in `root`), its schema type (in `vector_tp`) and the expression that
+// names it; `path` "" for any other call.
+pub fn mint_target(b: ir::Bundle, d: ir::Definition, name: text, args: vector<ir::Node>, path: &text, root: &integer, vector_tp: &integer) -> ir::Node {
+  path = "";
+  arity = if name == "OpNewRecord" || name == "OpNewRecordNP" { 3 } else if name == "OpFinishRecord" { 4 } else { 0 };
+  if arity == 0 || len(args) != arity {
+    return ir::NdNull;
+  }
+  tp = match loop_shape::unspan(args[arity - 2]!) { NdInt { n } => n, _ => -1 };
+  fld = match loop_shape::unspan(args[arity - 1]!) { NdInt { n } => n, _ => -1 };
+  if tp < 0 || fld < 0 || tp > 65535 {
+    return ir::NdNull;
+  }
+  r = -1;
+  base = vector_path(b, args[0], r);
+  if base == "" || r < 0 || r >= len(d.variables.variables) {
+    return ir::NdNull;
+  }
+  var_tp = d.variables.variables[r]!.type_def[0] ?? ir::TyVoid;
+  bare_vector = match opt_names::peel_link(var_tp) {
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  };
+  if base.ends_with(":") && bare_vector {
+    path = base;
+    root = r;
+    vector_tp = tp;
+    return args[0];
+  }
+  if fld == 65535 || (env_variable("LOFT_NO_FIELD_MINT") ?? "0") != "0" || !opt_writes::is_plain_record(b, var_tp) || tp >= len(b.types) {
+    return ir::NdNull;
+  }
+  // `plain_vector_field`: a plain vector field that belongs to no linked group.
+  fields = match b.types[tp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    _ => return ir::NdNull,
+  };
+  if fld >= len(fields) || len(fields[fld]!.other_indexes) != 0 {
+    return ir::NdNull;
+  }
+  content = fields[fld]!.content;
+  plain = content >= 0 && content < len(b.types) && (match b.types[content].parts[0] { PtVector { content: _ } => true, _ => false });
+  get_field = -1;
+  for def in b.data.definitions {
+    if def.name == "OpGetField" && get_field < 0 {
+      get_field = def#index;
+    }
+  }
+  if !plain || get_field < 0 {
+    return ir::NdNull;
+  }
+  pos = fields[fld]!.position;
+  path = "{base}{pos},";
+  root = r;
+  vector_tp = content;
+  ir::NdCall { def_nr: get_field, args: [args[0], ir::NdInt { n: pos }, ir::NdInt { n: content }] }
+}
+
+// `mint_push_qualifies`: a mint into a plain vector of records — a struct, or a user struct
+// enum — takes a push header; a heap-owning element only with `heap`.
+pub fn mint_push_qualifies(b: ir::Bundle, vector_tp: integer, heap: boolean) -> boolean {
+  if vector_tp < 0 || vector_tp >= len(b.types) {
+    return false;
+  }
+  elem = match b.types[vector_tp].parts[0] {
+    PtVector { content } => content,
+    _ => return false,
+  };
+  if elem < 0 || elem >= len(b.types) {
+    return false;
+  }
+  record = match b.types[elem].parts[0] {
+    PtStruct { fields: _ } => true,
+    PtEnum { values } => {
+      held = false;
+      for v in values {
+        if v.nr != 65535 {
+          held = true;
+        }
+      }
+      held && (env_variable("LOFT_NO_ENUM_RECORD") ?? "0") == "0" && !b.types[elem].name.starts_with("__nullable<")
+    },
+    _ => false,
+  };
+  record && (heap || !types::owns_heap(b.types, elem))
 }

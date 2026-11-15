@@ -118,12 +118,14 @@ fn vector_candidates(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<
 pub struct LoopHoist {
   pub vectors: vector<Held>,
   pub pushes: vector<Held>,
+  // The paths the loop mints records into that take a push header (`@FR-R-PushRec`).
+  pub mint_pushes: vector<Held>,
   pub growth_free: boolean,
   pub sole_push: boolean,
 }
 
 fn nothing() -> LoopHoist {
-  LoopHoist { vectors: [], pushes: [], growth_free: false, sole_push: false }
+  LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false }
 }
 
 // `owned_local`: a local that owns its store — no parameter, no link, not captured, and
@@ -233,20 +235,66 @@ fn reserved_roots(b: ir::Bundle, lp: ir::Block) -> vector<integer> {
 // held vector.  The mint tier, the held scalars, the callee inputs and every apart clause are
 // not carried.
 pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Block) -> LoopHoist {
-  tier = (if (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0" { 1 } else { 0 }) + (if (env_variable("LOFT_NO_PUSH_HOIST") ?? "0") == "0" { 4 } else { 0 });
+  tier = (if (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0" { 1 } else { 0 }) + (if (env_variable("LOFT_NO_PUSH_HOIST") ?? "0") == "0" { 4 } else { 0 }) + (if (env_variable("LOFT_NO_MINT_HOIST") ?? "0") == "0" { 8 } else { 0 });
+  d = b.data.definitions[vd]!;
+  fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
   for op in lp.operators {
-    if opt_writes::blocks_under(b, w, vd, op, tier) {
+    if opt_writes::blocks_under(b, w, vd, op, tier, fresh) {
       return nothing();
     }
   }
-  d = b.data.definitions[vd]!;
-  out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], growth_free: true, sole_push: false };
-  if tier & 4 == 0 {
-    return out;
+  out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false };
+  pushes: vector<Held> = if tier & 4 != 0 { pushed_paths(b, lp) } else { [] };
+  // The paths the body mints a record element into, each with whether every mint group on
+  // it qualifies for the record push.
+  mints: vector<Held> = [];
+  qualifies: vector<boolean> = [];
+  if tier & 8 != 0 {
+    record_push = (env_variable("LOFT_NO_RECORD_PUSH") ?? "0") == "0";
+    heap_push = (env_variable("LOFT_NO_HEAP_RECORD_PUSH") ?? "0") == "0";
+    whole = ir::NdInsert { items: lp.operators };
+    opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+      match n {
+        NdCall { def_nr, args } => {
+          if def_name(b, def_nr) == "OpNewRecord" {
+            path = "";
+            root = -1;
+            vtp = 0;
+            vector = opt_push::mint_target(b, d, "OpNewRecord", args, path, root, vtp);
+            if path != "" {
+              q = record_push && opt_push::mint_push_qualifies(b, vtp, heap_push);
+              at = -1;
+              for m in mints {
+                if m.path == path {
+                  at = m#index;
+                }
+              }
+              if at >= 0 {
+                qualifies[at] = qualifies[at]! && q;
+              } else {
+                mints += [Held { path: path, root: root, vector: vector }];
+                qualifies += [q];
+              }
+            }
+          }
+        },
+        _ => {},
+      }
+    });
   }
-  pushes = pushed_paths(b, lp);
   movers: vector<integer> = [];
   for p in pushes {
+    seen = false;
+    for m in movers {
+      if m == p.root {
+        seen = true;
+      }
+    }
+    if !seen {
+      movers += [p.root];
+    }
+  }
+  for p in mints {
     seen = false;
     for m in movers {
       if m == p.root {
@@ -268,7 +316,7 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Bloc
       movers += [r];
     }
   }
-  if len(pushes) == 0 {
+  if len(pushes) == 0 && len(mints) == 0 {
     return out;
   }
   // A pushed path the body rebinds declines the loop (the rebound-mover clause is not
@@ -279,10 +327,23 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Bloc
       return nothing();
     }
   }
+  for p in mints {
+    if rebound[p.root]! {
+      return nothing();
+    }
+  }
+  // The movers: every pushed and every minted path.
+  moved: vector<Held> = [];
+  for p in pushes {
+    moved += [p];
+  }
+  for p in mints {
+    moved += [p];
+  }
   others = false;
   for q in out.vectors {
     pushed = false;
-    for p in pushes {
+    for p in moved {
       if p.path == q.path {
         pushed = true;
       }
@@ -293,11 +354,11 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Bloc
   }
   retbuf = retbuf_var(d);
   kept: vector<Held> = [];
-  if len(pushes) > 1 || others {
+  if len(moved) > 1 || others {
     // Every push root must be exclusive: a local that owns its store, the function's own
     // return buffer, a work buffer.
     any_retbuf = false;
-    for p in pushes {
+    for p in moved {
       if !(owned_local(d, p.root) || p.root == retbuf || work_buffer_arg(d, p.root)) {
         return nothing();
       }
@@ -317,7 +378,7 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Bloc
   out.vectors = [];
   for q in kept {
     pushed = false;
-    for p in pushes {
+    for p in moved {
       if p.path == q.path {
         pushed = true;
       }
@@ -327,8 +388,13 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, vd: integer, lp: ir::Bloc
     }
   }
   out.pushes = pushes;
+  for m in mints {
+    if qualifies[m#index]! {
+      out.mint_pushes += [m];
+    }
+  }
   out.growth_free = false;
-  out.sole_push = len(pushes) == 1 && len(movers) == 1 && movers[0] == pushes[0].root;
+  out.sole_push = len(pushes) == 1 && len(mints) == 0 && len(movers) == 1 && movers[0] == pushes[0].root;
   out
 }
 
@@ -421,4 +487,31 @@ pub fn view_def_header(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts:
     }
   });
   if state[1]! && !state[0]! { d } else { -1 }
+}
+
+// The element size of the records the loop mints into `path` (`mint_size`), 0 for none.
+pub fn mint_size(b: ir::Bundle, vd: integer, lp: ir::Block, path: text) -> integer {
+  d = b.data.definitions[vd]!;
+  size = [0];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if size[0]! == 0 && def_name(b, def_nr) == "OpNewRecord" {
+          at = "";
+          root = -1;
+          vtp = 0;
+          opt_push::mint_target(b, d, "OpNewRecord", args, at, root, vtp);
+          if at == path && vtp >= 0 && vtp < len(b.types) {
+            match b.types[vtp].parts[0] {
+              PtVector { content } => { if content >= 0 && content < len(b.types) { size[0] = b.types[content].size; } },
+              _ => {},
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  size[0]!
 }

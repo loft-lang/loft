@@ -14,6 +14,7 @@ use opt_push;
 use opt_range;
 use opt_non_sentinel;
 use cgen_fn;
+use cgen_ref;
 use cgen_names;
 use cgen_w::*;
 
@@ -70,7 +71,7 @@ pub fn held_vector(x: Cx, w: W, v: ir::Node) -> text {
 // with `release`, by the two lengths it saved.
 pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::LoopHoist {
   if !enabled() {
-    return opt_hoist::LoopHoist { vectors: [], pushes: [], growth_free: false, sole_push: false };
+    return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false };
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.index, lp);
   // A loop that grows a store holds its headers without their base (`kept_bases` without the
@@ -137,6 +138,31 @@ pub fn hold_pushes(x: Cx, w: W, lp: ir::Block, verdict: opt_hoist::LoopHoist, in
     w.decls += ["loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"];
     line(w, ind, "{h} = loft_ph_of({as_ref(w, e)}, {size});");
     w.push_heads += [PushHead { path: p.path, name: h, size: size, based: based }];
+  }
+  // `@FR-R-PushRec`: a minted path keeps a push header too, never a based one.
+  for p in verdict.mint_pushes {
+    if push_head(x, w, p.vector) >= 0 {
+      continue;
+    }
+    size = opt_hoist::mint_size(x.b, w.index, lp, p.path);
+    if size == 0 {
+      continue;
+    }
+    saved = w.pending;
+    w.pending = [];
+    e = cgen_fn::expr(x, w, p.vector, ind);
+    inner = w.pending;
+    w.pending = saved;
+    for t in inner {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return;
+    }
+    h = "ph{len(w.decls) + 1}";
+    w.decls += ["loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"];
+    line(w, ind, "{h} = loft_ph_of({as_ref(w, e)}, {size});");
+    w.push_heads += [PushHead { path: p.path, name: h, size: size, based: false }];
   }
 }
 
@@ -257,7 +283,42 @@ pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
   root = -1;
   size = opt_push::fused(x.b, name, args, path, root);
   if size == 0 {
-    return none();
+    // A record mint, or its finish, on a path a push header is held for.
+    if !(name == "OpNewRecord" || name == "OpNewRecordNP" || name == "OpFinishRecord") {
+      return none();
+    }
+    vtp = 0;
+    opt_push::mint_target(x.b, x.b.data.definitions[w.index]!, name, args, path, root, vtp);
+    if path == "" {
+      return none();
+    }
+    minting = -1;
+    for i in rev(0..len(w.push_heads)) {
+      if w.push_heads[i]!.path == path {
+        minting = i;
+        break;
+      }
+    }
+    if minting < 0 {
+      return none();
+    }
+    done = true;
+    mh = w.push_heads[minting].name;
+    if name == "OpFinishRecord" {
+      return E { code: "loft_ph_finish(&{mh})", kind: K_VOID };
+    }
+    elem = match x.b.types[vtp].parts[0] {
+      PtVector { content } => content,
+      _ => -1,
+    };
+    ptp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    msite = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{mh}";
+    made = temp(w, "ref");
+    line(w, ind, "{made} = (LOFT_PROVED(loft_ph_same({mh}, {w.push_heads[minting].size}), {c_string(msite)}), loft_ph_new(&{mh}, {w.push_heads[minting].size}));");
+    if !(name == "OpNewRecordNP" || cgen_ref::mint_complete(x.b, w, ptp)) && elem >= 0 {
+      line(w, ind, "loft_fill({made}, loft_dflt{elem}, {x.b.types[elem].size});");
+    }
+    return E { code: made, kind: K_REF };
   }
   at = push_head(x, w, args[0]);
   if at < 0 || w.push_heads[at].size != size {
