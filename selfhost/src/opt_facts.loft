@@ -19,6 +19,10 @@ pub struct Facts {
   pub d: integer,
   pub placed: vector<boolean>,
   pub hosts: vector<boolean>,
+  // `@FR-R-RetAdopt`'s adopted local and its witness (-1 for none): neither owns its store
+  // alone — it is the caller's buffer.
+  pub adopted_v: integer,
+  pub adopted_vdb: integer,
 }
 
 // `placed_locals` and `placed_hosts` of function `d`.
@@ -52,7 +56,7 @@ pub fn facts_of(b: ir::Bundle, d: integer) -> Facts {
       }
     });
   }
-  Facts { d: d, placed: placed, hosts: hosts }
+  Facts { d: d, placed: placed, hosts: hosts, adopted_v: -1, adopted_vdb: -1 }
 }
 
 // The variables `cur`'s type depends on, but for itself.
@@ -106,7 +110,7 @@ pub fn terminal(b: ir::Bundle, facts: Facts, x: integer) -> integer {
 // record the frame made.
 pub fn fresh(b: ir::Bundle, facts: Facts, t: integer) -> boolean {
   f = b.data.definitions[facts.d]!.variables;
-  if facts.placed[t]! || facts.hosts[t]! {
+  if facts.placed[t]! || facts.hosts[t]! || t == facts.adopted_v || t == facts.adopted_vdb {
     return false;
   }
   v = f.variables[t]!;

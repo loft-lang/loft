@@ -28,6 +28,7 @@ use cgen_recptr;
 use cgen_hoist;
 use own;
 use opt_facts;
+use opt_adopt;
 use opt_hoist;
 use cgen_win;
 use cgen_texts;
@@ -1780,7 +1781,14 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
         fn_ref_field_read(x, w, block[0].operators, target, ind);
         return;
       }
+      delivery = w.adopt_v >= 0 && block[0].name == "one_buffer_vec_copy";
+      if delivery {
+        w.in_delivery += 1;
+      }
       assign_seq(x, w, block[0].operators, target, shape, ind);
+      if delivery {
+        w.in_delivery -= 1;
+      }
     },
     NdInsert { items } => assign_seq(x, w, items, target, shape, ind),
     NdIf { cond, t, f } => {
@@ -2096,7 +2104,16 @@ fn block_stmt(x: Cx, w: W, node: ir::Node, name: text, ops: vector<ir::Node>, in
       return;
     }
   }
+  // `@FR-R-RetAdopt` — inside the exit delivery of an adopted result local the buffer's
+  // clear and its append emit nothing.
+  delivery = w.adopt_v >= 0 && name == "one_buffer_vec_copy";
+  if delivery {
+    w.in_delivery += 1;
+  }
   ops_stmt(x, w, ops, ind);
+  if delivery {
+    w.in_delivery -= 1;
+  }
 }
 
 // The label of the loop `depth` loops out (`label`), -1 past the outermost.
@@ -2382,6 +2399,11 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
           cgen_bind::link_rebind(x, w, var, inner, ind);
           return;
         }
+        // `@FR-R-RetAdopt` — the adopted local's bind: it IS the return buffer.
+        if var == w.adopt_v && def_name(x.b, match loop_shape::unspan(inner) { NdCall { def_nr, args: _ } => def_nr, _ => -1 }) == "OpGetField" {
+          cgen_ref::adopted_init(x, w, ind);
+          return;
+        }
         cgen_bind::ref_set(x, w, var, inner, first, ind);
         return;
       }
@@ -2655,6 +2677,11 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     headers: [],
     push_heads: [],
     windows: [],
+    adopt_v: -1,
+    adopt_vdb: -1,
+    adopt_buf: -1,
+    adopt_tp: -1,
+    in_delivery: 0,
     scalars: [],
     facts: opt_facts::facts_of(x.b, index),
     range_lens: [],
@@ -2663,6 +2690,18 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     in_range: [],
     in_range_lens: [],
   };
+  // `@FR-R-RetAdopt`: the result local that is built in the return buffer.
+  if plain_rules() && (env_variable("LOFT_NO_RETBUF_ADOPT") ?? "0") == "0" {
+    adopted = opt_adopt::ret_adopt(x.b, index);
+    if adopted != null {
+      w.adopt_v = adopted.v;
+      w.adopt_vdb = adopted.vdb;
+      w.adopt_buf = adopted.buf;
+      w.adopt_tp = adopted.db_tp;
+      w.facts.adopted_v = adopted.v;
+      w.facts.adopted_vdb = adopted.vdb;
+    }
+  }
   code = d.code[0]!;
   if len(helper) > 0 {
     // A helper declares only what its arm names besides the parameters.

@@ -67,6 +67,16 @@ fn wrapper_field_pos(b: ir::Bundle, tp: integer) -> integer {
 
 // The operators over a record or a vector; `done` says whether `name` is one of them.
 pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  if w.adopt_v >= 0 && len(args) > 0 {
+    operand = loop_shape::var_of(args[0]);
+    // The adopted local's witness is never minted, so neither is its store nor the zero
+    // its vector field would have been given; in the delivery the buffer is neither
+    // cleared nor appended to itself.
+    if ((name == "OpDatabase" || name == "OpSetInt4") && operand == w.adopt_vdb) || (w.in_delivery > 0 && (name == "OpClearVector" || name == "OpAppendVector") && loop_shape::var_of(loop_shape::unspan(args[0])) == w.adopt_buf) {
+      done = true;
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+  }
   answer0 = ref_ops_0(x, w, name, args, ind, done);
   if done {
     return answer0;
@@ -1975,4 +1985,18 @@ fn keyed_kind(b: ir::Bundle, tp: integer) -> text {
     PtTrie { content: _, key: _ } => "trie",
     _ => "",
   }
+}
+
+// `adopted_init` (`@FR-R-RetAdopt`): a caller that offered no buffer gets one minted exactly
+// as the witness would have been; an offered one is emptied, as the delivery's clear did.
+pub fn adopted_init(x: Cx, w: W, ind: integer) {
+  done = false;
+  mint = ref_operator(x, w, "OpDatabase", [ir::NdVar { n: w.adopt_buf }, ir::NdInt { n: w.adopt_tp }], ind, done);
+  if w.why != "" {
+    return;
+  }
+  buf = w.names[w.adopt_buf]!;
+  clear = if clear_releases_nothing(x.b, w, ir::NdVar { n: w.adopt_buf }) { "loft_vec_clear({buf})" } else { "loft_vec_clear_release(loft_types, loft_ntypes, {buf})" };
+  line(w, ind, "if ({buf}.store_nr == 0xFFFF || {buf}.rec == 0) {{ {mint.code}; }} else {{ {clear}; }}");
+  line(w, ind, "{w.names[w.adopt_v]!} = {buf};");
 }
