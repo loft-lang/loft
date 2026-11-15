@@ -666,6 +666,33 @@ void loft_crt_ref_text_append_view(int64_t s, int64_t r, int64_t p, int64_t stk,
     if (t) loft_text_concat(t, v);
 }
 
+/* `OpCastFloatFromText` / `OpCastSingleFromText` on the view in its frame slot: the runtime's
+ * own parse (`loft_float_of_text`, as the C backend casts), NaN — null — where it is not a
+ * number, the null text included. */
+double loft_crt_view_float(int64_t stk, int64_t at) {
+    return loft_float_of_text(*(loft_str *) loft_crt_slot_at(stk, at));
+}
+double loft_crt_view_single(int64_t stk, int64_t at) {
+    return (double) loft_single_of_text(*(loft_str *) loft_crt_slot_at(stk, at));
+}
+
+/* `self.replace(value, with)` over the three views in their frame slots, the answer appended
+ * to the text `(s, r, p)` names — the runtime's own `loft_replace`, no text copied out first.  A
+ * null view reads as the empty text, as the native's `?? ""` does. */
+static loft_str loft_crt_view_or_empty(int64_t stk, int64_t at) {
+    loft_str v = *(loft_str *) loft_crt_slot_at(stk, at);
+    return loft_str_is_null(v) ? loft_lit("", 0) : v;
+}
+void loft_crt_ref_text_replace_view(int64_t s, int64_t r, int64_t p, int64_t stk, int64_t self_at,
+                                    int64_t val_at, int64_t with_at) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
+    loft_text out = loft_replace(loft_crt_view_or_empty(stk, self_at),
+                                 loft_crt_view_or_empty(stk, val_at),
+                                 loft_crt_view_or_empty(stk, with_at));
+    if (t) loft_text_concat(t, loft_view(&out));
+    loft_text_free(&out);
+}
+
 /* `text.trim()` / `trim_start()` / `trim_end()` (`which` 0, 1, 2) on the view at `at`: the
  * view narrowed in place, as Rust's `str::trim*` answers a sub-slice of the same text. */
 void loft_crt_stack_text_trim(int64_t store, int64_t at, int64_t which) {
@@ -2775,6 +2802,21 @@ static void loft_crt_cell_set(loft_ref at, loft_ref x) {
 int64_t loft_crt_slot_get(int64_t *out, int64_t no, int64_t s, int64_t r, int64_t p, int64_t fld) {
     loft_crt_put_ref(out, no, loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld)));
     return 0;
+}
+
+/* `place_ref`'s answer — the reference stored at `(store, rec, pos)` — a part at a time, and
+ * written at the address `to` (`OpGetStackRef`'s arm). */
+int64_t loft_crt_place_ref_part(int64_t store, int64_t rec, int64_t pos, int64_t part) {
+    loft_store_t *s = &loft_stores[store];
+    uint32_t v = loft_u32(s, (uint32_t) rec, (uint32_t) (pos + part * 4));
+    return part == 0 ? (int64_t) (uint16_t) v : (int64_t) v;
+}
+extern void loft_twin_place_ref_to(int64_t to, int64_t store, int64_t rec, int64_t pos);
+LOFT_STEP_FN void loft_twin_place_ref_to(int64_t to, int64_t store, int64_t rec, int64_t pos) {
+    loft_store_t *s = &loft_stores[store];
+    loft_twin_poke_ref(to, (uint16_t) loft_u32(s, (uint32_t) rec, (uint32_t) pos),
+                       loft_u32(s, (uint32_t) rec, (uint32_t) pos + 4),
+                       loft_u32(s, (uint32_t) rec, (uint32_t) pos + 8));
 }
 
 /* `slot_get`'s answer a part at a time (0 store, 1 record, 2 position), and written at the

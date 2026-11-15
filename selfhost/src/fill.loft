@@ -3429,6 +3429,22 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    69 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      ri1 = crt::peek_u8(cbase, ip + 3);
+      ri2 = crt::peek_u8(cbase, ip + 4);
+      rb0 = crt::peek_u8(cbase, ip + 5) == 1;
+      rb1 = crt::peek_u8(cbase, ip + 6) == 1;
+      ri3 = crt::peek_i8(cbase, ip + 7);
+      if sp >= 16 && ri0 >= 32 && ri0 <= sp {
+        ri4 = crt::peek_i64(base, sp - 8);
+        ri5 = crt::peek_i64(base, sp - 16);
+        sp -= 16;
+        ip += 8;
+        ri7 = sp - (ri0 - 16); crt::append_int(crt::peek_u32(base, ri7) & 65535, crt::peek_u32(base, ri7 + 4), crt::peek_u32(base, ri7 + 8), ri5, ri1, ri4, ri2, rb0, rb1, ri3);
+        continue;
+      }
+    }
     70 => {
       rs0 = crt::peek_f32(cbase, ip + 1);
       if true {
@@ -4025,6 +4041,17 @@ pub fn run(s: state::State, end: integer) {
       if ri0 >= 8 && ri0 <= sp {
         ip += 3;
         crt::poke_ref(base + sp - ri0, 65535, 0, 0);
+        continue;
+      }
+    }
+    134 => {
+      if sp >= 16 && s.table_loaded && crt::peek_u32(base, sp - 16) != 65535 {
+        ri0 = crt::peek_u32(base, sp - 16);
+        ri1 = crt::peek_u32(base, sp - 12);
+        ri2 = crt::peek_u32(base, sp - 8);
+        sp -= 16;
+        ip += 1;
+        crt::free_ref(ri0, ri1, ri2);
         continue;
       }
     }
@@ -4742,6 +4769,54 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    192 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      ri1 = crt::peek_u16(cbase, ip + 3);
+      if sp >= 16 {
+        ri2 = sp - 16;
+        sp -= 16;
+        ip += 5;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        s.new_record_at(ri0, ri1, true, ri2);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
+        continue;
+      }
+    }
+    193 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      ri1 = crt::peek_u16(cbase, ip + 3);
+      if sp >= 32 {
+        ri2 = sp - 32;
+        sp -= 32;
+        ip += 5;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        s.finish_record_at(ri0, ri1, ri2);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
+        continue;
+      }
+    }
     194 => {
       ri0 = crt::peek_u16(cbase, ip + 1);
       if sp >= 32 {
@@ -5073,6 +5148,29 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    236 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      ri1 = crt::peek_u16(cbase, ip + 3);
+      if ri0 >= 8 && ri0 <= sp && ri1 <= sp {
+        ip += 5;
+        crt::poke_ref(base + sp - ri0, stk, 1, 8 + sp - ri1);
+        continue;
+      }
+    }
+    238 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 16 {
+        ri1 = crt::peek_u32(base, sp - 16);
+        ri2 = crt::peek_u32(base, sp - 12);
+        ri3 = crt::peek_u32(base, sp - 8);
+        sp -= 16;
+        ip += 3;
+        ri4 = base + sp;
+        crt::place_ref_to(ri4, ri1, ri2, ri3 + ri0);
+        sp += 16;
+        continue;
+      }
+    }
     240 => {
       ri0 = crt::peek_u16(cbase, ip + 1);
       if sp >= 16 {
@@ -5114,6 +5212,24 @@ pub fn run(s: state::State, end: integer) {
         sp -= 32;
         ip += 3;
         crt::slot_set(ri0, ri4, ri5, ri6, ri1, ri2, ri3);
+        continue;
+      }
+    }
+    247 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if sp >= 16 && ri0 >= 32 && ri0 <= sp {
+        ri1 = sp - 16;
+        sp -= 16;
+        ip += 3;
+        ri3 = sp - (ri0 - 16); crt::ref_text_append_view(crt::peek_u32(base, ri3) & 65535, crt::peek_u32(base, ri3 + 4), crt::peek_u32(base, ri3 + 8), stk, ri1);
+        continue;
+      }
+    }
+    249 => {
+      ri0 = crt::peek_u16(cbase, ip + 1);
+      if ri0 >= 16 && ri0 <= sp {
+        ip += 3;
+        crt::ref_text_clear(crt::peek_u32(base, sp - ri0) & 65535, crt::peek_u32(base, sp - ri0 + 4), crt::peek_u32(base, sp - ri0 + 8));
         continue;
       }
     }
@@ -5362,6 +5478,30 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    13 => {
+      ri0 = crt::peek_u16(cbase, ip + 2);
+      ri1 = crt::peek_u16(cbase, ip + 4);
+      if sp >= 16 {
+        ri2 = sp - 16;
+        sp -= 16;
+        ip += 6;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        s.new_record_at(ri0, ri1, false, ri2);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
+        continue;
+      }
+    }
     14 => {
       if sp >= 8 {
         ri0 = crt::peek_u8(base, sp - 8);
@@ -5435,6 +5575,28 @@ pub fn run(s: state::State, end: integer) {
         base = crt::stack_base(stk);
         fd = s.depth;
         rp = -1;
+        continue;
+      }
+    }
+    20 => {
+      if sp >= 16 {
+        ri0 = sp - 16;
+        sp -= 16;
+        ip += 2;
+        nvs: single? = crt::view_single(stk, ri0);
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    21 => {
+      if sp >= 16 {
+        ri0 = sp - 16;
+        sp -= 16;
+        ip += 2;
+        nvf: float? = crt::view_float(stk, ri0);
+        crt::poke_f64(base, sp, nvf);
+        sp += 8;
         continue;
       }
     }
@@ -5706,6 +5868,33 @@ pub fn run(s: state::State, end: integer) {
         nvi: integer? = crt::vec_len(ri0, ri1, ri2);
         crt::poke_i64(base, sp, nvi);
         sp += 8;
+        continue;
+      }
+    }
+    57 => {
+      ri0 = crt::peek_u16(cbase, ip + 2);
+      if sp >= 24 {
+        ri1 = crt::peek_i64(base, sp - 8);
+        ri2 = crt::peek_u32(base, sp - 24);
+        ri3 = crt::peek_u32(base, sp - 20);
+        ri4 = crt::peek_u32(base, sp - 16);
+        sp -= 24;
+        ip += 4;
+        s.code_pos = ip;
+        s.stack_pos = sp;
+        s.depth = fd;
+        nv_312: boolean? = s.vec_remove_at(ri2, ri3, ri4, ri0, ri1);
+        s.put_stack_bool(nv_312);
+        if s.stopped || s.native >= 0 {
+          return;
+        }
+        ip = s.code_pos;
+        sp = s.stack_pos;
+        cap = s.stack_cap;
+        top = cap - 8;
+        base = crt::stack_base(stk);
+        fd = s.depth;
+        rp = -1;
         continue;
       }
     }

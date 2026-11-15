@@ -115,15 +115,20 @@ pub struct State {
   // plus 2 (1 for none), 0 for not yet derived.  The Rust interpreter derives them once
   // (`Stores::derive_facts`); an operator reads them, never the type tree.
   pub tfacts: vector<integer>,
-  // Each record target an `OpNewRecord` / `OpFinishRecord` names (`target_of`), by
-  // `parent type * 65536 + field`.
-  pub targets: hash<Target[key]>,
+  // Each record target an `OpNewRecord` / `OpFinishRecord` names (`target_of`), in the order
+  // first met; where each key (`parent type * 65536 + field`) is in that list; and a direct-
+  // mapped cache of `TCACHE` (key, index) pairs in front of the hash.
+  pub targets: vector<Target>,
+  pub tkeys: hash<TKey[key]>,
+  pub tcache: vector<integer>,
   // Per native: its handler where `natives::light` carries it — the dispatch loop calls it from
   // `OpStaticCall`'s arm (`State::light_call`) — else -1; and the scratch vector it passes.
   pub lights: vector<integer>,
   pub lio: vector<integer>,
   // The bytes a popped text is copied through (`get_stack_str`), kept between operators.
   pub tbuf: vector<u8>,
+  // The code's length, for the operand readers' one test (the code never changes once loaded).
+  pub code_len: integer,
 }
 
 // What `OpNewRecord` / `OpFinishRecord` file a record into, derived once per parent type and
@@ -131,6 +136,13 @@ pub struct State {
 // (`T_*`; a linked group files by its own collection's kind when made, through its members
 // when finished), the element type, its size and the facts the filing routines take; a
 // linked group's members (`types::group_members`) and whether they hold or may be null.
+pub struct TKey {
+  pub key: integer,
+  pub idx: integer,
+}
+
+pub TCACHE = 1024;
+
 pub struct Target {
   pub key: integer,
   pub ok: boolean,
@@ -284,7 +296,7 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], tkeys: [], tcache: [for _ in 0..2 * TCACHE { -1 }], lights: [], lio: [0, 0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code) };
   ptab = natives::par_natives(img);
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
@@ -341,7 +353,7 @@ fn ensure_stack(self: State, step: integer) {
 
 // Are `n` more bytes of code there?  Past the end the run stops (`code_out_of_range`).
 fn code_has(self: State, n: integer) -> boolean {
-  if self.code_pos < 0 || self.code_pos + n > len(self.code) {
+  if self.code_pos < 0 || self.code_pos + n > self.code_len {
     if self.fault == "" {
       self.stop("the code position {self.code_pos} is outside the bytecode ({len(self.code)} bytes)");
     }
@@ -378,7 +390,7 @@ pub fn code_u8(self: State) -> integer {
   if !self.code_has(1) {
     return 0;
   }
-  v = crt::get_u8(self.code, self.code_pos);
+  v = crt::peek_u8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v
 }
@@ -387,7 +399,7 @@ pub fn code_i8(self: State) -> integer {
   if !self.code_has(1) {
     return 0;
   }
-  v = crt::get_i8(self.code, self.code_pos);
+  v = crt::peek_i8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v
 }
@@ -396,7 +408,7 @@ pub fn code_u16(self: State) -> integer {
   if !self.code_has(2) {
     return 0;
   }
-  v = crt::get_u16(self.code, self.code_pos);
+  v = crt::peek_u16(self.code_held, self.code_pos);
   self.code_pos += 2;
   v
 }
@@ -405,7 +417,7 @@ pub fn code_i16(self: State) -> integer {
   if !self.code_has(2) {
     return 0;
   }
-  v = crt::get_i16(self.code, self.code_pos);
+  v = crt::peek_i16(self.code_held, self.code_pos);
   self.code_pos += 2;
   v
 }
@@ -414,7 +426,7 @@ pub fn code_u32(self: State) -> integer {
   if !self.code_has(4) {
     return 0;
   }
-  v = crt::get_u32(self.code, self.code_pos);
+  v = crt::peek_u32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -423,7 +435,7 @@ pub fn code_i32(self: State) -> integer {
   if !self.code_has(4) {
     return 0;
   }
-  v = crt::get_i32(self.code, self.code_pos);
+  v = crt::peek_i32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -432,7 +444,7 @@ pub fn code_i64(self: State) -> integer {
   if !self.code_has(8) {
     return 0;
   }
-  v = crt::get_i64(self.code, self.code_pos);
+  v = crt::peek_i64(self.code_held, self.code_pos);
   self.code_pos += 8;
   v
 }
@@ -441,7 +453,7 @@ pub fn code_f32(self: State) -> single {
   if !self.code_has(4) {
     return 0.0f;
   }
-  v = crt::get_f32(self.code, self.code_pos);
+  v = crt::peek_f32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -450,7 +462,7 @@ pub fn code_f64(self: State) -> float {
   if !self.code_has(8) {
     return 0.0;
   }
-  v = crt::get_f64(self.code, self.code_pos);
+  v = crt::peek_f64(self.code_held, self.code_pos);
   self.code_pos += 8;
   v
 }
@@ -460,7 +472,7 @@ pub fn code_bool(self: State) -> boolean {
   if !self.code_has(1) {
     return false;
   }
-  v = crt::get_u8(self.code, self.code_pos);
+  v = crt::peek_u8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v == 1
 }
@@ -1150,6 +1162,12 @@ pub fn local_tag(self: State, of: integer, a: integer) -> integer? {
 
 // Type `tp`'s default image, derived on its first use.
 pub fn default_of(self: State, tp: integer) -> vector<u8> {
+  self.image_ready(tp);
+  self.images[tp] ?? []
+}
+
+// Type `tp`'s default image derived (`images`), for a caller that reads it in place.
+pub fn image_ready(self: State, tp: integer) {
   while len(self.imaged) <= tp {
     self.images += [[]];
     self.imaged += [false];
@@ -1158,7 +1176,6 @@ pub fn default_of(self: State, tp: integer) -> vector<u8> {
     self.images[tp] = types::default_image(self.types, tp);
     self.imaged[tp] = true;
   }
-  self.images[tp] ?? []
 }
 
 // Fact `k` (`F_*`) of type `tp`, derived by its `types::` function on the first ask; null
@@ -1212,9 +1229,19 @@ pub fn has(self: State, k: integer, tp: integer) -> boolean {
 // The record target `(ptp, fld)` names (`Target`), derived on its first use.
 pub fn target_of(self: State, ptp: integer, fld: integer) -> integer {
   key = ptp * 65536 + fld;
-  if self.targets[key] != null {
-    return key;
+  h = 2 * ((key ^ (key >> 10)) & (TCACHE - 1));
+  if (self.tcache[h] ?? -1) == key {
+    return self.tcache[h + 1] ?? 0;
   }
+  known = self.tkeys[key];
+  idx = if known != null { known!.idx } else { self.derive_target(ptp, fld, key) };
+  self.tcache[h] = key;
+  self.tcache[h + 1] = idx;
+  idx
+}
+
+// `target_of`'s miss: the target derived and listed; answers its index.
+fn derive_target(self: State, ptp: integer, fld: integer, key: integer) -> integer {
   gm: vector<integer> = [];
   rc = types::record_collection(self.types, ptp, fld);
   at = rc.at;
@@ -1246,7 +1273,9 @@ pub fn target_of(self: State, ptp: integer, fld: integer) -> integer {
     gk += 3;
   }
   self.targets += [Target { key: key, ok: ok, tp: ctp, at: at ?? 0, how: how, group: len(gm) >= 6, elem: elem, size: self.types[elem]?.size ?? 0, kkind: self.fact(F_KEYED_KIND, ctp) ?? 0, linked: self.types[elem]?.linked ?? false, content: self.fact(F_CONTENT, ctp) ?? 0, gm: gm, gheld: gheld, gnull: gnull, direct: direct, nkeys: if self.types[ctp] == null { 0 } else { len(self.types[ctp]!.keys) } }];
-  key
+  idx = len(self.targets) - 1;
+  self.tkeys += [TKey { key: key, idx: idx }];
+  idx
 }
 
 // Type `tp`'s keyed facts (`State.kfacts`), derived on its first use: answers where they start.
@@ -1281,6 +1310,16 @@ pub fn keyed_facts(self: State, tp: integer) -> integer {
 fn new_record_of(self: State, defaults: boolean) {
   ptp = self.code_u16();
   fld = self.code_u16();
+  if !self.can_pop(16) {
+    return;
+  }
+  self.new_record_at(ptp, fld, defaults, self.stack_pos - 16);
+}
+
+// `new_record_of` on its operands, the collection's reference in the frame slot at `at` (the
+// top less 16): the new record's reference written over it, the top just above
+// (`OpNewRecord`'s arm calls this).
+pub fn new_record_at(self: State, ptp: integer, fld: integer, defaults: boolean, at: integer) {
   t = self.targets[self.target_of(ptp, fld)]!;
   if !t.ok {
     self.stop("not carried: a record added to {self.types[t.tp]?.name ?? "a collection"}");
@@ -1288,11 +1327,7 @@ fn new_record_of(self: State, defaults: boolean) {
   }
   // A keyed collection's routines read its key parts from the loaded table.
   self.load_table();
-  if !self.can_pop(16) {
-    return;
-  }
   // The collection's reference read in its slot, the new record's written over it.
-  at = self.stack_pos - 16;
   vs = crt::stack_get(4, self.stk, at) & 65535;
   vr = crt::stack_get(4, self.stk, at + 4);
   vp = crt::stack_get(4, self.stk, at + 8) + t.at;
@@ -1306,9 +1341,12 @@ fn new_record_of(self: State, defaults: boolean) {
     crt::vec_append(self.lio, vs, vr, vp, t.size);
   }
   if defaults {
-    crt::fill(self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, self.default_of(t.elem));
+    // The image read where it is kept: `default_of` would answer a copy.
+    self.image_ready(t.elem);
+    crt::fill(self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, self.images[t.elem]!);
   }
   crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
+  self.stack_pos = at + 16;
 }
 
 pub fn new_record(self: State) {
@@ -1324,18 +1362,23 @@ pub fn new_record_n_p(self: State) {
 pub fn finish_record(self: State) {
   ptp = self.code_u16();
   fld = self.code_u16();
+  if !self.can_pop(32) {
+    return;
+  }
+  self.stack_pos -= 32;
+  self.finish_record_at(ptp, fld, self.stack_pos);
+}
+
+// `finish_record` on its operands, the two references popped already: the collection's in the
+// frame slot at `at`, the record's above it (`OpFinishRecord`'s arm calls this).
+pub fn finish_record_at(self: State, ptp: integer, fld: integer, at: integer) {
   t = self.targets[self.target_of(ptp, fld)]!;
   if !t.ok {
     self.stop("not carried: a record added to {self.types[t.tp]?.name ?? "a collection"}");
     return;
   }
   self.load_table();
-  if !self.can_pop(32) {
-    return;
-  }
   // The record on top and the collection's reference under it, read in their slots.
-  self.stack_pos -= 32;
-  at = self.stack_pos;
   vs = crt::stack_get(4, self.stk, at) & 65535;
   vr = crt::stack_get(4, self.stk, at + 4);
   vpos = crt::stack_get(4, self.stk, at + 8);
@@ -1667,10 +1710,15 @@ pub fn format_stack_float(self: State) {
 // `Stores::remove_vector_at`: element `index` removed, by its type's mode — linked, owning
 // heap, or plain; whether one was removed.
 pub fn vec_remove(self: State, r: DbRef, tp: integer, index: integer?) -> boolean {
-  et = self.types[tp]!;
+  self.vec_remove_at(r.store_nr, r.rec, r.pos, tp, index)
+}
+
+// `vec_remove` on the reference's parts (`OpRemoveVector`'s arm): the element type's size and
+// mode read where the table keeps them, no type record bound.
+pub fn vec_remove_at(self: State, rs: integer, rr: integer, rp: integer, tp: integer, index: integer?) -> boolean {
   self.load_table();
-  mode = if et.linked { 2 } else if self.has(F_OWNS_HEAP, tp) { 1 } else { 0 };
-  crt::vec_remove(r.store_nr, r.rec, r.pos, tp, et.size, mode, index)
+  mode = if self.types[tp]?.linked ?? false { 2 } else if self.has(F_OWNS_HEAP, tp) { 1 } else { 0 };
+  crt::vec_remove(rs, rr, rp, tp, self.types[tp]?.size ?? 0, mode, index)
 }
 
 // `Stores::keep_vector_range`: the vector cut to its elements `lo..hi`.
@@ -2259,20 +2307,28 @@ pub fn step(self: State) {
   on = self.code_u8();
   arg = self.code_u16();
   cursor = self.get_var_i64(state_var) ?? 0;
-  data = self.slot_dbref(self.stack_pos - 16);
-  out: vector<integer> = [NULL_STORE, 0, 0, 0];
+  // The collection's reference read in its slot, the step's answer written over it; the step
+  // answers through the scratch vector (its fourth part the walk's next state).
+  at = self.stack_pos - 16;
+  if !self.slot_ok(at) {
+    return;
+  }
+  crt::slot_ref(self.lio, self.stk, at);
+  ds = self.lio[0] ?? NULL_STORE;
+  dr = self.lio[1] ?? 0;
+  dp = self.lio[2] ?? 0;
   kind = on & 63;
   if kind == 4 {
-    crt::scratch_step(out, cursor, data.store_nr, data.rec, data.pos, on & 64 != 0);
+    crt::scratch_step(self.lio, cursor, ds, dr, dp, on & 64 != 0);
   } else if kind >= 1 && kind <= 3 {
     self.load_table();
-    crt::keyed_step(out, cursor, data.store_nr, data.rec, data.pos, on, arg);
+    crt::keyed_step(self.lio, cursor, ds, dr, dp, on, arg);
   } else {
     self.stop("not carried: a walk of kind {kind}");
     return;
   }
-  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, out[3]);
-  crt::set_slot_ref(self.stk, self.stack_pos - 16, out[0] ?? NULL_STORE, out[1] ?? 0, out[2] ?? 0);
+  crt::stack_put(crt::SW_I64, self.stk, self.stack_pos - state_var, self.lio[3]);
+  crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
 }
 
 // `State::remove`: the walk's current record removed — the state in the slot `state_var`

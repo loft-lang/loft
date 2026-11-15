@@ -732,6 +732,16 @@ pub fn get_dbref_to(to: integer, store: integer, rec: integer, pos: integer, fld
 }
 #c_twin "loft_twin_get_dbref_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_place_ref_part(store: integer, rec: integer, pos: integer, part: integer) -> integer;
+#c "loft_crt_place_ref_part" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+// `OpGetStackRef`'s answer (`place_ref`: the reference stored at `(store, rec, pos)`) written
+// at the address `to`.
+pub fn place_ref_to(to: integer, store: integer, rec: integer, pos: integer) {
+  poke_ref(to, c_place_ref_part(store, rec, pos, 0), c_place_ref_part(store, rec, pos, 1), c_place_ref_part(store, rec, pos, 2));
+}
+#c_twin "loft_twin_place_ref_to" "void(int64_t, int64_t, int64_t, int64_t)"
+
 fn c_slot_get_part(part: integer, s: integer, r: integer, p: integer, fld: integer) -> integer;
 #c "loft_crt_slot_get_part" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -863,6 +873,30 @@ pub fn set_text_view(store: integer, rec: integer, pos: integer, fld: integer, s
 
 pub fn ref_text_append_view(s: integer, r: integer, p: integer, stk: integer, at: integer) {
   c_ref_text_append_view(s, r, p, stk, at);
+}
+
+fn c_view_float(stk: integer, at: integer) -> float;
+#c "loft_crt_view_float" "double(int64_t, int64_t)"
+fn c_view_single(stk: integer, at: integer) -> float;
+#c "loft_crt_view_single" "double(int64_t, int64_t)"
+
+// The view in its frame slot read as a float or a single, as `text as float` reads it: null
+// where it is not a number.
+pub fn view_float(stk: integer, at: integer) -> float {
+  c_view_float(stk, at)
+}
+
+pub fn view_single(stk: integer, at: integer) -> single {
+  c_view_single(stk, at) as single
+}
+
+fn c_ref_text_replace_view(s: integer, r: integer, p: integer, stk: integer, self_at: integer, val_at: integer, with_at: integer);
+#c "loft_crt_ref_text_replace_view" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `self.replace(value, with)` over the three views in their slots, appended to the text the
+// reference names; a null view is the empty text.
+pub fn ref_text_replace_view(s: integer, r: integer, p: integer, stk: integer, self_at: integer, val_at: integer, with_at: integer) {
+  c_ref_text_replace_view(s, r, p, stk, self_at, val_at, with_at);
 }
 
 // `OpClearStackText`: the text the reference `(s, r, p)` names emptied.
