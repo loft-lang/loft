@@ -1,0 +1,2017 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the records and vectors of the function writer: `store_operator`,
+// `free_operator`, `database_operator`, `ref_operator`, `field_operator`, `narrow_operator`
+// and the plain arms of `vector_operator` of `src/c/body.rs`.
+//
+// Written with the rules of `cgen_w::PLAIN_SWITCHES` off: what a rule would write in their
+// place is not carried.
+
+use ir;
+use loop_shape;
+use cgen_fn;
+use cgen_bind;
+use cgen_hoist;
+use cgen_table;
+use cgen_file;
+use ptypes;
+use opt_push;
+use binds;
+use opt_non_sentinel;
+use types;
+use cgen_w::*;
+
+// A program write as its `_at` setter (`set_at`): `f(args…, file, line)`.
+fn set_at(w: W, f: text, args: vector<text>) -> E {
+  E { code: "{f}({args.join(", ")}, {cgen_fn::site(w)})", kind: K_VOID }
+}
+
+// The size a record of type `tp` is allotted with (`Stores::enum_parent_size`): a variant's
+// is its enum's.
+pub fn enum_parent_size(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return 0;
+  }
+  own = b.types[tp].size;
+  for t in b.types {
+    match t.parts[0] {
+      PtEnum { values } => {
+        for v in values {
+          if v.nr == tp && t.size > own {
+            return t.size;
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  own
+}
+
+// `Stores::is_vector_wrapper`: the record a vector local's store is rooted in.
+pub fn is_vector_wrapper(b: ir::Bundle, tp: integer) -> boolean {
+  tp >= 0 && tp < len(b.types) && b.types[tp].name.starts_with("main_vector<")
+}
+
+// `Stores::wrapper_field_pos`: the offset of a vector wrapper's one field, -1 for any other
+// type.
+fn wrapper_field_pos(b: ir::Bundle, tp: integer) -> integer {
+  if !is_vector_wrapper(b, tp) {
+    return -1;
+  }
+  match b.types[tp].parts[0] {
+    PtStruct { fields } => if len(fields) == 1 { fields[0].position } else { -1 },
+    _ => -1,
+  }
+}
+
+// The operators over a record or a vector; `done` says whether `name` is one of them.
+pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  if w.adopt_v >= 0 && len(args) > 0 {
+    operand = loop_shape::var_of(args[0]);
+    // The adopted local's witness is never minted, so neither is its store nor the zero
+    // its vector field would have been given; in the delivery the buffer is neither
+    // cleared nor appended to itself.
+    if ((name == "OpDatabase" || name == "OpSetInt4") && operand == w.adopt_vdb) || (w.in_delivery > 0 && (name == "OpClearVector" || name == "OpAppendVector") && loop_shape::var_of(loop_shape::unspan(args[0])) == w.adopt_buf) {
+      done = true;
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+  }
+  answer0 = ref_ops_0(x, w, name, args, ind, done);
+  if done {
+    return answer0;
+  }
+  answer1 = ref_ops_1(x, w, name, args, ind, done);
+  if done {
+    return answer1;
+  }
+  answer2 = ref_ops_2(x, w, name, args, ind, done);
+  if done {
+    return answer2;
+  }
+  answer3 = ref_ops_3(x, w, name, args, ind, done);
+  if done {
+    return answer3;
+  }
+  answer4 = ref_ops_4(x, w, name, args, ind, done);
+  if done {
+    return answer4;
+  }
+  answer5 = ref_ops_5(x, w, name, args, ind, done);
+  if done {
+    return answer5;
+  }
+  answer6 = ref_ops_6(x, w, name, args, ind, done);
+  if done {
+    return answer6;
+  }
+  answer7 = ref_ops_7(x, w, name, args, ind, done);
+  if done {
+    return answer7;
+  }
+  answer8 = ref_ops_8(x, w, name, args, ind, done);
+  if done {
+    return answer8;
+  }
+  answer9 = ref_ops_9(x, w, name, args, ind, done);
+  if done {
+    return answer9;
+  }
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_0(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpFreeRef" && count == 1 {
+    slot = loop_shape::var_of(loop_shape::unspan(args[0]));
+    if slot >= 0 && (w.shapes[slot] ?? "") == "ref" {
+      return E { code: "loft_free_var(&{w.names[slot]!})", kind: K_VOID };
+    }
+    if slot >= 0 && (w.shapes[slot] ?? "") == "fn" {
+      return E { code: "loft_free_var(&{w.names[slot]!}.clos)", kind: K_VOID };
+    }
+    if slot >= 0 {
+      refuse(w, "a release of a variable of shape {w.shapes[slot] ?? ""}");
+      return none();
+    }
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_free_ref({as_ref(w, r)})", kind: K_VOID };
+  }
+  if name == "OpFreeRefIfDistinct" && count == 2 {
+    slot = loop_shape::var_of(loop_shape::unspan(args[0]));
+    if slot >= 0 && (w.shapes[slot] ?? "") == "ref" {
+      other = cgen_fn::expr(x, w, args[1], ind);
+      return E { code: "loft_free_var_distinct(&{w.names[slot]!}, {as_ref(w, other)})", kind: K_VOID };
+    }
+  }
+  if (name == "OpFreeRefIfDistinct" || name == "OpFreeRefOrHandUp") && count == 2 {
+    p = cgen_fn::arg(x, w, args, 0, ind);
+    other = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "loft_free_displaced({as_ref(w, p)}, {as_ref(w, other)})", kind: K_VOID };
+  }
+  if (name == "OpDatabase" || name == "OpDatabaseNP") && count == 2 {
+    slot = loop_shape::var_of(args[0]);
+    if slot < 0 {
+      refuse(w, "{name} of no variable");
+      return none();
+    }
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    if tp < 0 || tp > 65535 {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    size = enum_parent_size(x.b, tp);
+    if is_vector_wrapper(x.b, tp) {
+      w.room_minted[slot] = tp;
+      return E { code: "loft_database_room(loft_types, loft_ntypes, &{w.names[slot]!}, {size}, {tp})", kind: K_VOID };
+    }
+    return E { code: "loft_database_typed(&{w.names[slot]!}, {size}, {tp})", kind: K_VOID };
+  }
+  if name == "OpRefIsNull" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "({as_ref(w, r)}.store_nr == 0xFFFF)", kind: K_COND };
+  }
+  if name == "OpNullRefSentinel" && count == 0 {
+    return E { code: "loft_ref_null()", kind: K_REF };
+  }
+  if name == "OpConvBoolFromRef" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "({as_ref(w, r)}.rec != 0)", kind: K_COND };
+  }
+  if name == "OpRefAlias" && count == 1 {
+    return cgen_fn::expr(x, w, args[0], ind);
+  }
+  if name == "OpGetInt" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_int({as_ref(w, r)}, {fld})", kind: K_INT };
+  }
+  // `keep_room_operator`: the empty handle written into a room that was just minted.
+  if name == "OpSetInt4" && count == 3 {
+    slot = match args[0] { NdVar { n } => n, _ => -1 };
+    off = match args[1] { NdInt { n } => n, _ => -1 };
+    zero = match args[2] { NdInt { n } => n == 0, _ => false };
+    if slot >= 0 && zero && w.room_minted[slot]! >= 0 && wrapper_field_pos(x.b, w.room_minted[slot]!) == off {
+      w.room_minted[slot] = -1;
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_1(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if (name == "OpSetInt" || name == "OpSetInt4" || name == "OpSetInt4Raw") && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    f = if name == "OpSetInt" { "loft_set_int_at" } else if name == "OpSetInt4" { "loft_set_int4_at" } else { "loft_set_int4_raw_at" };
+    return set_at(w, f, [as_ref(w, r), "{fld}", as_int(w, val)]);
+  }
+  if (name == "OpGetField" && (count == 2 || count == 3)) {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_field({as_ref(w, r)}, {fld})", kind: K_REF };
+  }
+  if name == "OpGetDbRef" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_dbref({as_ref(w, r)}, {fld})", kind: K_REF };
+  }
+  if name == "OpSetDbRef" && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, "loft_set_dbref_at", [as_ref(w, r), "{fld}", as_ref(w, val)]);
+  }
+  if name == "OpPutRef" && count == 2 {
+    slot = loop_shape::var_of(args[0]);
+    if slot >= 0 {
+      val = cgen_fn::expr(x, w, args[1], ind);
+      return E { code: "{w.names[slot]!} = {as_ref(w, val)}", kind: K_VOID };
+    }
+  }
+  if (name == "OpDropFnRef" || name == "OpFnRefClosure") && count == 1 {
+    f = loop_shape::var_of(args[0]);
+    if f >= 0 && (w.shapes[f] ?? "") == "fn" {
+      if name == "OpDropFnRef" {
+        return E { code: "loft_drop_closure({w.names[f]!})", kind: K_VOID };
+      }
+      return E { code: "{w.names[f]!}.clos", kind: K_REF };
+    }
+  }
+  if name == "OpStoreLive" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_store_live({as_ref(w, r)})", kind: K_COND };
+  }
+  if name == "OpDistinctStore" && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "({as_ref(w, a)}.store_nr != {as_ref(w, b)}.store_nr)", kind: K_COND };
+  }
+  if name == "OpGetEnum" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_enum({as_ref(w, r)}, {fld})", kind: K_ENUM };
+  }
+  if name == "OpSetEnum" && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, "loft_set_byte_at", [as_ref(w, r), "{fld}", as_enum(w, val)]);
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_2(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpGetText" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    view = w.field_view;
+    w.field_view = false;
+    r = cgen_fn::expr(x, w, args[0], ind);
+    code = as_ref(w, r);
+    if view {
+      at = code;
+      if !cgen_fn::identifier(code) {
+        at = temp(w, "ref");
+        line(w, ind, "{at} = {code};");
+      }
+      return E { code: "loft_get_text({at}, {fld})", kind: K_VIEW };
+    }
+    t = temp(w, "text");
+    line(w, ind, "loft_text_free(&{t});");
+    line(w, ind, "{t} = loft_text_own(loft_get_text({code}, {fld}));");
+    return held_value(w, t, "text");
+  }
+  if (name == "OpSetText" || name == "OpSetTextReplace") && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    f = if name == "OpSetText" { "loft_set_text_at" } else { "loft_refill_text_at" };
+    return set_at(w, f, [as_ref(w, r), "{fld}", as_view(w, val)]);
+  }
+  if (name == "OpGetFloat" || name == "OpGetSingle") && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    if name == "OpGetFloat" {
+      return E { code: "loft_get_float({as_ref(w, r)}, {fld})", kind: K_FLOAT };
+    }
+    return E { code: "loft_get_single({as_ref(w, r)}, {fld})", kind: K_SINGLE };
+  }
+  if (name == "OpSetFloat" || name == "OpSetSingle") && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    if name == "OpSetFloat" {
+      return set_at(w, "loft_set_float_at", [as_ref(w, r), "{fld}", as_float(w, val)]);
+    }
+    return set_at(w, "loft_set_single_at", [as_ref(w, r), "{fld}", as_single(w, val)]);
+  }
+  if (name == "OpPushBoolean" || name == "OpPushFloat" || name == "OpPushSingle" || name == "OpPushInt4" || name == "OpPushEnum" || name == "OpPushInt") && count == 2 {
+    v = cgen_fn::arg(x, w, args, 0, ind);
+    val = cgen_fn::arg(x, w, args, 1, ind);
+    if name == "OpPushBoolean" {
+      return E { code: "loft_vec_push_byte({as_ref(w, v)}, {as_bool(w, val)})", kind: K_VOID };
+    }
+    if name == "OpPushEnum" {
+      return E { code: "loft_vec_push_byte({as_ref(w, v)}, {as_enum(w, val)})", kind: K_VOID };
+    }
+    if name == "OpPushFloat" {
+      return E { code: "loft_vec_push_float({as_ref(w, v)}, {as_float(w, val)})", kind: K_VOID };
+    }
+    if name == "OpPushSingle" {
+      return E { code: "loft_vec_push_single({as_ref(w, v)}, {as_single(w, val)})", kind: K_VOID };
+    }
+    f = if name == "OpPushInt4" { "loft_vec_push_int4" } else { "loft_vec_push_int" };
+    return E { code: "{f}({as_ref(w, v)}, {as_int(w, val)})", kind: K_VOID };
+  }
+  if (name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull") && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
+    f = if name == "OpGetByte" { "loft_get_byte" } else if name == "OpGetByteNullable" { "loft_get_byte_nullable" } else if name == "OpGetShort" { "loft_get_short" } else { "loft_get_short_raw" };
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "{f}({as_ref(w, r)}, {fld}, {c_long(min)})", kind: K_INT };
+  }
+  if (name == "OpSetByte" || name == "OpSetByteNullable" || name == "OpSetShort" || name == "OpSetShortRaw") && count == 4 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
+    f = if name == "OpSetByte" { "loft_set_byte_v_at" } else if name == "OpSetByteNullable" { "loft_set_byte_nullable_at" } else if name == "OpSetShort" { "loft_set_short_at" } else { "loft_set_short_raw_at" };
+    pair = [args[0], args[3]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, f, [as_ref(w, r), "{fld}", c_long(min), as_int(w, val)]);
+  }
+  if (name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full") && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    f = if name == "OpGetInt4" { "loft_get_int4" } else if name == "OpGetInt4Raw" { "loft_get_int4_raw" } else { "loft_get_int4_full" };
+    return E { code: "{f}({as_ref(w, r)}, {fld})", kind: K_INT };
+  }
+  if name == "OpSizeVector" && count == 2 {
+    stride = cgen_fn::literal(w, args[1], "stride") ?? return none();
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "(loft_vec_len({as_ref(w, v)}) * {stride})", kind: K_INT };
+  }
+  if name == "OpInitRefSentinel" && count == 1 {
+    slot = loop_shape::var_of(args[0]);
+    if slot >= 0 && (w.shapes[slot] ?? "") == "ref" {
+      return E { code: "{w.names[slot]!} = loft_ref_null()", kind: K_VOID };
+    }
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpLengthVector" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_len({as_ref(w, v)})", kind: K_INT };
+  }
+  if name == "OpPreAllocVector" && count == 3 {
+    n = cgen_fn::literal(w, args[1], "count") ?? return none();
+    size = cgen_fn::literal(w, args[2], "element size") ?? return none();
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_prealloc({as_ref(w, v)}, {n}, {size})", kind: K_VOID };
+  }
+  if (name == "OpGetVector" || name == "OpGetVectorNullable") && count == 3 {
+    size = cgen_fn::literal(w, args[1], "element size") ?? return none();
+    pair = [args[0], args[2]];
+    v = cgen_fn::arg(x, w, pair, 0, ind);
+    idx = cgen_fn::arg(x, w, pair, 1, ind);
+    if name == "OpGetVector" {
+      return E { code: "loft_vec_get_at({as_ref(w, v)}, {size}, {as_int(w, idx)}, {cgen_fn::site(w)})", kind: K_REF };
+    }
+    return E { code: "loft_vec_get({as_ref(w, v)}, {size}, {as_int(w, idx)})", kind: K_REF };
+  }
+  if (name == "OpNewRecord" || name == "OpNewRecordNP") && count == 3 {
+    place = vector_place(x, w, args[0], args[1], args[2], ind);
+    if w.why != "" {
+      return none();
+    }
+    ptp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    elem = w.elem;
+    if elem < 0 || elem >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    size = x.b.types[elem].size;
+    t = temp(w, "ref");
+    if w.keyed >= 0 {
+      // `keyed_new`: the record a keyed collection takes, from its default image.
+      kind = keyed_kind(x.b, w.keyed);
+      if kind == "sorted" {
+        line(w, ind, "{t} = loft_sorted_new({place}, {size});");
+      } else if kind == "hash" {
+        line(w, ind, "{t} = loft_hash_entry({place}, {size}, {if x.b.types[elem].linked { 1 } else { 0 }});");
+      } else {
+        line(w, ind, "{t} = loft_entry_new({place}, {size});");
+      }
+      line(w, ind, "loft_fill({t}, loft_dflt{elem}, {size});");
+      return E { code: t, kind: K_REF };
+    }
+    line(w, ind, "{t} = loft_vec_append({place}, {size});");
+    if !(name == "OpNewRecordNP" || mint_complete(x.b, w, ptp)) {
+      line(w, ind, "loft_fill({t}, loft_dflt{elem}, {size});");
+    }
+    return E { code: t, kind: K_REF };
+  }
+  if name == "OpFinishRecord" && count == 4 {
+    place = vector_place(x, w, args[0], args[2], args[3], ind);
+    if w.why != "" {
+      return none();
+    }
+    if w.keyed >= 0 {
+      // `keyed_finish`: the filled record entered by its keys.
+      tp = w.keyed;
+      elem = w.elem;
+      kind = keyed_kind(x.b, tp);
+      rec = as_ref(w, cgen_fn::expr(x, w, args[1], ind));
+      keys = "loft_keys{tp}, {len(x.b.types[tp].keys)}";
+      if kind == "sorted" {
+        return E { code: "loft_sorted_finish({place}, {x.b.types[elem].size}, {keys})", kind: K_VOID };
+      }
+      if kind == "hash" {
+        ptp_at = match loop_shape::unspan(args[2]) { NdInt { n } => n, _ => -1 };
+        fld_at = match loop_shape::unspan(args[3]) { NdInt { n } => n, _ => -1 };
+        filed_in = cgen_table::handle_at(w, cgen_table::finish_place(x.b, args[0], ptp_at, fld_at));
+        if filed_in != "" {
+          return E { code: "(void) loft_hh_insert(&{filed_in}, loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
+        }
+        return E { code: "(void) loft_hash_insert(loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
+      }
+      if kind == "index" || kind == "ordered" {
+        return E { code: "(void) {if kind == "index" { "loft_ix_insert" } else { "loft_ordered_insert" }}(loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
+      }
+      if kind == "array" {
+        return E { code: "loft_array_append({place}, {rec})", kind: K_VOID };
+      }
+      return E { code: "(void) loft_rx_insert_record(loft_types, {elem}, {place}, {rec}, {keys}, {if kind == "trie" { 1 } else { 0 }}, 0)", kind: K_VOID };
+    }
+    return E { code: "loft_vec_finish({place})", kind: K_VOID };
+  }
+  if name == "OpClearVector" && count == 1 {
+    plain = clear_releases_nothing(x.b, w, args[0]);
+    v = cgen_fn::expr(x, w, args[0], ind);
+    if plain {
+      return E { code: "loft_vec_clear({as_ref(w, v)})", kind: K_VOID };
+    }
+    return E { code: "loft_vec_clear_release(loft_types, loft_ntypes, {as_ref(w, v)})", kind: K_VOID };
+  }
+  if name == "OpCopyRecord" && count == 3 {
+    raw = cgen_fn::literal(w, args[2], "type") ?? return none();
+    if raw < 0 || raw > 65535 {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    tp = raw & 16383;
+    fresh = raw & 16384 != 0;
+    struct_type = tp < len(x.b.types) && (match x.b.types[tp].parts[0] { PtStruct { fields: _ } => true, _ => false });
+    free = (if raw & 32768 != 0 { 1 } else { 0 }) + (if cgen_bind::swap_safe(x.b, tp, []) { 2 } else { 0 }) + (if fresh { 4 } else { 0 });
+    // `flat_copy` (`@FR-R-FlatCopy`): a record that owns no heap, read from a variable and
+    // not released by the copy, is copied as its bytes.
+    flat = (env_variable("LOFT_NO_FLAT_COPY") ?? "0") == "0" && raw & 32768 == 0 && loop_shape::var_of(loop_shape::unspan(args[0])) >= 0 && tp < len(x.b.types) && (match x.b.types[tp].parts[0] { PtStruct { fields: _ } => true, PtEnumValue { value: _, fields: _ } => true, _ => false }) && !types::owns_heap(x.b.types, tp);
+    pair = [args[0], args[1]];
+    src = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    dst = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    // `fresh_default_tp`: a fresh destination whose source is absent takes the type's
+    // default image — unless that image is all zero, which the minted record already is.
+    if fresh && struct_type && !default_is_zero(x.b, tp) {
+      s_held = temp(w, "ref");
+      d_held = temp(w, "ref");
+      line(w, ind, "{s_held} = {src};");
+      line(w, ind, "{d_held} = {dst};");
+      copy = if flat { "loft_copy_flat(loft_types, {tp}, {s_held}, {d_held}, {free}, {x.b.types[tp].size}, {cgen_fn::site(w)})" } else { "loft_copy_record(loft_types, {tp}, {s_held}, {d_held}, {free})" };
+      line(w, ind, "if ({s_held}.store_nr == 0xFFFF) {{ loft_fill({d_held}, loft_dflt{tp}, {x.b.types[tp].size}); }} else {{ {copy}; }}");
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+    if flat {
+      return E { code: "loft_copy_flat(loft_types, {tp}, {src}, {dst}, {free}, {x.b.types[tp].size}, {cgen_fn::site(w)})", kind: K_VOID };
+    }
+    return E { code: "loft_copy_record_at(loft_types, {tp}, {src}, {dst}, {free}, {cgen_fn::site(w)})", kind: K_VOID };
+  }
+  if (name == "OpMoveRecord" || name == "OpMoveField") && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    pair = [args[0], args[1]];
+    src = cgen_fn::arg(x, w, pair, 0, ind);
+    dst = cgen_fn::arg(x, w, pair, 1, ind);
+    f = if name == "OpMoveRecord" { "loft_move_record_out" } else { "loft_move_field" };
+    return E { code: "{f}(loft_types, {tp}, {as_ref(w, src)}, {as_ref(w, dst)})", kind: K_VOID };
+  }
+  if (name == "OpPrependVector" || name == "OpAppendVector") && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    linked = x.b.types[tp].linked;
+    pair = [args[0], args[1]];
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    from = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    if name == "OpPrependVector" {
+      return E { code: "loft_vec_prepend(loft_types, {tp}, {into}, {from}, {if linked { 1 } else { 0 }})", kind: K_BOOL };
+    }
+    if linked {
+      return E { code: "loft_vec_add_array(loft_types, {tp}, {into}, {from})", kind: K_VOID };
+    }
+    return E { code: "loft_vec_add(loft_types, {tp}, {into}, {from})", kind: K_VOID };
+  }
+  if name == "OpFormatDatabase" {
+    if count != 4 {
+      refuse(w, "OpFormatDatabase with an unexpected operand list");
+      return none();
+    }
+    dest = text_dest(w, args[0]);
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    fmt = cgen_fn::literal(w, args[3], "format") ?? return none();
+    if show_refusal(x.b, tp, []) != "" {
+      refuse(w, show_refusal(x.b, tp, []));
+      return none();
+    }
+    val = cgen_fn::expr(x, w, args[1], ind);
+    return E { code: show_top_call(x, w, tp, "&{dest}", as_ref(w, val), "{fmt}"), kind: K_VOID };
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpReplaceVector" && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    from = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    if x.b.types[tp].linked {
+      return E { code: "loft_vec_replace_array(loft_types, {tp}, {into}, {from})", kind: K_VOID };
+    }
+    return E { code: "loft_vec_replace(loft_types, loft_ntypes, {tp}, {into}, {from})", kind: K_VOID };
+  }
+  if (name == "OpAdoptVector" || name == "OpMoveVector") && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    linked = x.b.types[tp].linked;
+    if name == "OpAdoptVector" && linked {
+      refuse(w, "an adopted vector of linked records");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    from = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    f = if name == "OpAdoptVector" { "loft_vec_adopt" } else if linked { "loft_move_vector_array" } else { "loft_move_vector" };
+    return E { code: "{f}(loft_types, {tp}, {into}, {from})", kind: K_VOID };
+  }
+  if (name == "OpSliceVector" || name == "OpSliceView") && count == 5 {
+    tp = cgen_fn::literal(w, args[4], "element type") ?? return none();
+    scalar = (tp <= 6 && tp != 5) || (tp >= 0 && tp < len(x.b.types) && (match x.b.types[tp].parts[0] {
+      PtByte { start: _, nullable: _ } => true,
+      PtShort { start: _, nullable: _ } => true,
+      PtShortRaw { start: _, nullable: _ } => true,
+      PtInt { start: _, nullable: _ } => true,
+      PtIntRaw { start: _, nullable: _ } => true,
+      _ => false,
+    }));
+    if !scalar || tp < 0 {
+      refuse(w, "a slice of elements that are not scalars");
+      return none();
+    }
+    four = [args[0], args[1], args[2], args[3]];
+    into = as_ref(w, cgen_fn::arg(x, w, four, 0, ind));
+    from = as_ref(w, cgen_fn::arg(x, w, four, 1, ind));
+    lo = as_int(w, cgen_fn::arg(x, w, four, 2, ind));
+    hi = as_int(w, cgen_fn::arg(x, w, four, 3, ind));
+    f = if name == "OpSliceVector" { "loft_vec_slice" } else { "loft_vec_slice_view" };
+    return E { code: "{f}({into}, {from}, {lo}, {hi}, {x.b.types[tp].size})", kind: K_VOID };
+  }
+  if name == "OpAppendCopy" && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "vector type") ?? return none();
+    ctp = if tp >= 0 && tp < len(x.b.types) { content_of(x.b, tp) } else { 65535 };
+    if ctp >= len(x.b.types) {
+      refuse(w, "a vector type out of range");
+      return none();
+    }
+    if x.b.types[ctp].linked {
+      refuse(w, "a repeat of a linked element type");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    times = as_int(w, cgen_fn::arg(x, w, pair, 1, ind));
+    return E { code: "loft_vec_append_copy(loft_types, {ctp}, {into}, {times})", kind: K_VOID };
+  }
+  if name == "OpKeepVectorRange" && count == 4 {
+    tp = cgen_fn::literal(w, args[1], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    size = if x.b.types[tp].linked { 0 } else { x.b.types[tp].size };
+    three = [args[0], args[2], args[3]];
+    vec_c = as_ref(w, cgen_fn::arg(x, w, three, 0, ind));
+    lo = as_int(w, cgen_fn::arg(x, w, three, 1, ind));
+    hi = as_int(w, cgen_fn::arg(x, w, three, 2, ind));
+    keep = "loft_keep_vector_range(loft_types, {tp}, {vec_c}, {size}, {lo}, {hi})";
+    // A push header on the path takes the clamped length at the op's own site.
+    pushing = cgen_hoist::push_head(x, w, args[0]);
+    if pushing >= 0 {
+      ph = w.push_heads[pushing].name;
+      return E { code: "((void) ({keep}, {ph} = loft_ph_of({ph}.v, {w.push_heads[pushing].size})))", kind: K_VOID };
+    }
+    return E { code: keep, kind: K_VOID };
+  }
+  if name == "OpRemoveVector" && count == 3 {
+    tp = cgen_fn::literal(w, args[1], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    pair = [args[0], args[2]];
+    vec_c = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    at_c = as_int(w, cgen_fn::arg(x, w, pair, 1, ind));
+    if x.b.types[tp].linked {
+      return E { code: "loft_vec_remove_linked(loft_types, {tp}, {vec_c}, {at_c})", kind: K_COND };
+    }
+    if types::owns_heap(x.b.types, tp) {
+      return E { code: "loft_vec_remove_at(loft_types, {tp}, {vec_c}, {at_c})", kind: K_COND };
+    }
+    return E { code: "loft_vec_remove({vec_c}, {x.b.types[tp].size}, {at_c})", kind: K_COND };
+  }
+  if name == "OpFreeRecordIn" && count == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_free_record_in(loft_types, {tp}, {as_ref(w, r)})", kind: K_VOID };
+  }
+  if name == "OpConstRef" && count == 1 {
+    d = cgen_fn::literal(w, args[0], "constant") ?? return none();
+    if d < 0 || d >= len(x.b.data.definitions) {
+      refuse(w, "a constant out of range");
+      return none();
+    }
+    return E { code: "loft_const{d}", kind: K_REF };
+  }
+  // The file operators (`file_operator`), but for the reads and writes of a value.
+  if (name == "OpGetFile" || name == "OpSizeFile" || name == "OpSyncFile") && count == 1 {
+    file = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    if name == "OpGetFile" {
+      return E { code: "loft_get_file({file})", kind: K_BOOL };
+    }
+    if name == "OpSizeFile" {
+      return E { code: "loft_size_file({file})", kind: K_INT };
+    }
+    return E { code: "loft_sync_file({file})", kind: K_BOOL };
+  }
+  if (name == "OpDelete" || name == "OpRmdir" || name == "OpMkdir" || name == "OpMkdirAll") && count == 1 {
+    path = as_view(w, cgen_fn::expr(x, w, args[0], ind));
+    if name == "OpDelete" {
+      return E { code: "loft_fs_delete({path})", kind: K_INT };
+    }
+    if name == "OpRmdir" {
+      return E { code: "loft_fs_rmdir({path})", kind: K_INT };
+    }
+    return E { code: "loft_fs_mkdir({path}, {if name == "OpMkdir" { 0 } else { 1 }})", kind: K_INT };
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_5(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpMoveFile" && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "loft_fs_move({as_view(w, a)}, {as_view(w, b)})", kind: K_INT };
+  }
+  if (name == "OpSeekFile" || name == "OpTruncateFile") && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    if name == "OpSeekFile" {
+      return E { code: "loft_seek_file({as_ref(w, a)}, {as_int(w, b)})", kind: K_VOID };
+    }
+    return E { code: "loft_truncate_file({as_ref(w, a)}, {as_int(w, b)})", kind: K_BOOL };
+  }
+  if name == "OpGetFileText" && count == 2 {
+    // The text the file's contents go into: a local, by its own name or through its place.
+    target = match loop_shape::unspan(args[1]) {
+      NdCall { def_nr, args: inner } => if cgen_fn::def_name(x.b, def_nr) == "OpCreateStack" && len(inner) == 1 { inner[0] } else { args[1] },
+      _ => args[1],
+    };
+    dest = text_dest(w, target);
+    file = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    return E { code: "loft_get_file_text({file}, &{dest})", kind: K_VOID };
+  }
+  if name == "OpGetDir" && count == 2 {
+    size = -1;
+    for t in x.b.types {
+      if t.name == "File" && size < 0 {
+        size = t.size;
+      }
+    }
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "loft_get_dir({as_view(w, a)}, {as_ref(w, b)}, {size})", kind: K_BOOL };
+  }
+  if (name == "OpExpose" || name == "OpRelease") && count == 3 {
+    pair = [args[0], args[1]];
+    a = cgen_fn::arg(x, w, pair, 0, ind);
+    b = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "((void) ({as_int(w, a)}), loft_set_store_lock({as_ref(w, b)}, {if name == "OpExpose" { 1 } else { 0 }}))", kind: K_VOID };
+  }
+  if name == "OpReverseVector" && count == 2 {
+    size = cgen_fn::literal(w, args[1], "element size") ?? return none();
+    vec_c = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    return E { code: "loft_vec_reverse({vec_c}, {size})", kind: K_VOID };
+  }
+  if name == "OpSortVector" && count == 2 {
+    tp = cgen_fn::literal(w, args[1], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    unsigned = match x.b.types[tp].parts[0] { PtIntRaw { start: _, nullable: _ } => 1, _ => 0 };
+    vec_c = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    return E { code: "loft_vec_sort({vec_c}, {x.b.types[tp].size}, {if tp == 2 || tp == 3 { 1 } else { 0 }}, {if tp == 5 { 1 } else { 0 }}, {unsigned})", kind: K_VOID };
+  }
+  if name == "OpAppendTextBytes" && count == 4 {
+    vec_c = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    bytes_c = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    lo_c = as_int(w, cgen_fn::arg(x, w, args, 2, ind));
+    hi_c = as_int(w, cgen_fn::arg(x, w, args, 3, ind));
+    return E { code: "loft_append_text_bytes({vec_c}, {bytes_c}, {lo_c}, {hi_c})", kind: K_VOID };
+  }
+  if name == "OpConvRefFromNull" && count == 0 {
+    return E { code: "loft_ref_null()", kind: K_REF };
+  }
+  if name == "OpNullReported" && count == 0 {
+    return E { code: "loft_ref_null_reported()", kind: K_REF };
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_6(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpSizeStruct" && count == 2 {
+    sz = cgen_fn::literal(w, args[1], "size") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "((void) {as_ref(w, r)}, INT64_C({sz}))", kind: K_INT };
+  }
+  if name == "OpSizeHash" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_hash_table_bytes({as_ref(w, r)})", kind: K_INT };
+  }
+  if name == "OpReserveVector" && count == 3 {
+    size = cgen_fn::literal(w, args[2], "element size") ?? return none();
+    pair = [args[0], args[1]];
+    vec_c = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    count_c = as_int(w, cgen_fn::arg(x, w, pair, 1, ind));
+    return E { code: "loft_vec_reserve({vec_c}, {count_c}, {size})", kind: K_VOID };
+  }
+  if name == "OpInsertVector" && count == 4 {
+    size = cgen_fn::literal(w, args[1], "element size") ?? return none();
+    tp = cgen_fn::literal(w, args[3], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    pair = [args[0], args[2]];
+    vec_c = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    at_c = as_int(w, cgen_fn::arg(x, w, pair, 1, ind));
+    t = temp(w, "ref");
+    if x.b.types[tp].linked {
+      line(w, ind, "{t} = loft_vec_insert_linked({vec_c}, {x.b.types[tp].size}, {at_c});");
+    } else {
+      line(w, ind, "{t} = loft_vec_insert({vec_c}, {size}, {at_c});");
+    }
+    line(w, ind, "loft_fill({t}, loft_dflt{tp}, {x.b.types[tp].size});");
+    return E { code: t, kind: K_REF };
+  }
+  if name == "OpKeepRange" && count == 4 {
+    tp = cgen_fn::literal(w, args[3], "element type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    if x.b.types[tp].linked || types::owns_heap(x.b.types, tp) {
+      refuse(w, "a kept range of elements that own records");
+      return none();
+    }
+    three = [args[0], args[1], args[2]];
+    vec_c = as_ref(w, cgen_fn::arg(x, w, three, 0, ind));
+    lo_c = as_int(w, cgen_fn::arg(x, w, three, 1, ind));
+    hi_c = as_int(w, cgen_fn::arg(x, w, three, 2, ind));
+    pushing = cgen_hoist::push_head(x, w, args[0]);
+    if pushing >= 0 {
+      ph = w.push_heads[pushing].name;
+      if (env_variable("LOFT_NO_PUSH_HEADER_KEEP") ?? "0") == "0" {
+        return E { code: "loft_ph_keep(&{ph}, {lo_c}, {hi_c}, {w.push_heads[pushing].size})", kind: K_VOID };
+      }
+      return E { code: "((void) (loft_vec_keep_range({vec_c}, {lo_c}, {hi_c}, {x.b.types[tp].size}), {ph} = loft_ph_of({ph}.v, {w.push_heads[pushing].size})))", kind: K_VOID };
+    }
+    return E { code: "loft_vec_keep_range({vec_c}, {lo_c}, {hi_c}, {x.b.types[tp].size})", kind: K_VOID };
+  }
+  if name == "OpRefFromChildRec" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_ref_from_child_rec({as_ref(w, r)})", kind: K_REF };
+  }
+  if name == "OpStoreBuf" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_store_buf({as_ref(w, r)})", kind: K_REF };
+  }
+  if name == "OpChildRec" && count == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "a type out of range");
+      return none();
+    }
+    r = cgen_fn::expr(x, w, args[0], ind);
+    t = temp(w, "ref");
+    line(w, ind, "{t} = loft_new_child_rec(loft_types, {tp}, {as_ref(w, r)}, loft_dflt{tp}, {x.b.types[tp].size});");
+    return E { code: t, kind: K_REF };
+  }
+  if name == "OpSetChildRec" && count == 3 {
+    raw = cgen_fn::literal(w, args[2], "type") ?? return none();
+    pair = [args[0], args[1]];
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    from = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    return E { code: "loft_set_child_rec(loft_types, {raw & 16383}, {into}, {from}, {if raw & 32768 != 0 { 1 } else { 0 }})", kind: K_VOID };
+  }
+  if name == "OpAdoptChildRec" && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    pair = [args[0], args[1]];
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    from = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    return E { code: "loft_adopt_child_rec(loft_types, {tp}, {into}, {from})", kind: K_VOID };
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_7(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpWriteFile" && count == 3 {
+    return write_file(x, w, args, ind);
+  }
+  if name == "OpReadFile" && count == 4 {
+    return read_file(x, w, args, ind);
+  }
+  if name == "OpClearKeyed" && count == 2 {
+    raw = cgen_fn::literal(w, args[1], "type") ?? return none();
+    dest_c = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    if raw & 32768 != 0 {
+      // A view member releases its own storage; the member that holds the records frees them.
+      tp = raw & 32767;
+      if keyed_kind(x.b, tp) == "" {
+        refuse(w, "a keyed operation on another kind of type");
+        return none();
+      }
+      return E { code: "loft_remove_claims_mode(loft_types, {tp}, {dest_c}, 1)", kind: K_VOID };
+    }
+    return E { code: "loft_remove_claims(loft_types, {raw}, {dest_c})", kind: K_VOID };
+  }
+  if (name == "OpLengthSpatial" || name == "OpLengthTrie" || name == "OpLengthHash" || name == "OpSizeSpatial" || name == "OpSizeTrie" || name == "OpSizeIndex" || name == "OpLengthIndex") && count == 1 {
+    counted = if name == "OpLengthHash" { cgen_table::handle(x, w, args[0]) } else { "" };
+    coll_c = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    if name == "OpLengthHash" {
+      return E { code: if counted != "" { "loft_hh_len(&{counted}, {coll_c})" } else { "loft_hash_len({coll_c})" }, kind: K_INT };
+    }
+    if name == "OpLengthIndex" {
+      return E { code: "(int64_t) loft_bt_len({coll_c})", kind: K_INT };
+    }
+    if name == "OpSizeIndex" {
+      return E { code: "loft_bt_table_bytes({coll_c})", kind: K_INT };
+    }
+    if name == "OpLengthSpatial" || name == "OpLengthTrie" {
+      return E { code: "loft_rx_count({coll_c})", kind: K_INT };
+    }
+    return E { code: "loft_rx_table_bytes({coll_c})", kind: K_INT };
+  }
+  // The displaced function value keeps no closure it shares a store with the new one.
+  if name == "OpFnRefDetachShared" && count == 2 {
+    old_f = loop_shape::var_of(args[0]);
+    new_f = loop_shape::var_of(args[1]);
+    if old_f >= 0 && new_f >= 0 && (w.shapes[old_f] ?? "") == "fn" && (w.shapes[new_f] ?? "") == "fn" {
+      o = w.names[old_f]!;
+      return E { code: "{{ if ({o}.clos.rec == 0 || {o}.clos.store_nr == {w.names[new_f]!}.clos.store_nr) {o}.clos = loft_ref_null(); }}", kind: K_VOID };
+    }
+  }
+  if (name == "OpVectorRef" || name == "OpVectorRefNullable") && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    if name == "OpVectorRef" {
+      return E { code: "loft_array_get_at({as_ref(w, a)}, {as_int(w, b)}, {cgen_fn::site(w)})", kind: K_REF };
+    }
+    return E { code: "loft_array_get({as_ref(w, a)}, {as_int(w, b)})", kind: K_REF };
+  }
+  if name == "OpIterate" && count >= 4 {
+    return iterate(x, w, args, ind);
+  }
+  if name == "OpStep" && count == 4 {
+    state = loop_shape::var_of(args[0]);
+    if state >= 0 {
+      on = cgen_fn::literal(w, args[2], "walk kind") ?? return none();
+      walk_arg = cgen_fn::literal(w, args[3], "walk argument") ?? return none();
+      coll_c = as_ref(w, cgen_fn::expr(x, w, args[1], ind));
+      reverse = if on & 64 != 0 { 1 } else { 0 };
+      kind = on & 63;
+      st = w.names[state]!;
+      if kind == 1 {
+        // `arg` is the index type: a step finds its record again by key.
+        if walk_arg < 0 || walk_arg >= len(x.b.types) {
+          refuse(w, "a type number out of range");
+          return none();
+        }
+        return E { code: "loft_ix_step(&{st}, {coll_c}, loft_keys{walk_arg}, {len(x.b.types[walk_arg].keys)}, {reverse})", kind: K_REF };
+      }
+      if kind == 3 {
+        return E { code: "loft_seq_step(&{st}, {coll_c}, 0, {reverse})", kind: K_REF };
+      }
+      if kind == 2 {
+        return E { code: "loft_seq_step(&{st}, {coll_c}, {walk_arg}, {reverse})", kind: K_REF };
+      }
+      if kind == 4 {
+        return E { code: "loft_scratch_step(&{st}, {coll_c}, {reverse})", kind: K_REF };
+      }
+      refuse(w, "a walk of kind {kind}");
+      return none();
+    }
+  }
+  if name == "OpFreeScratch" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_free_scratch({as_ref(w, r)})", kind: K_VOID };
+  }
+  if name == "OpReplaceKeyed" && count == 3 {
+    raw = cgen_fn::literal(w, args[2], "type") ?? return none();
+    tp = raw & 32767;
+    if keyed_kind(x.b, tp) == "" {
+      refuse(w, "a keyed operation on another kind of type");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    from = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    into = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    // Bit 1: the element tree may move whole.
+    mode = (if raw & 32768 != 0 { 1 } else { 0 }) + (if cgen_bind::swap_safe(x.b, tp, []) { 2 } else { 0 });
+    return E { code: "loft_replace_keyed(loft_types, {tp}, {from}, {into}, {mode})", kind: K_VOID };
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_8(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpReserveHash" && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    if keyed_kind(x.b, tp) == "" {
+      refuse(w, "a keyed operation on another kind of type");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    coll_c = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    count_c = as_int(w, cgen_fn::arg(x, w, pair, 1, ind));
+    return E { code: "loft_hash_reserve(loft_types, {tp}, {coll_c}, {count_c})", kind: K_VOID };
+  }
+  if name == "OpHashRemove" && count == 3 {
+    raw = cgen_fn::literal(w, args[2], "type") ?? return none();
+    view = if raw & 32768 != 0 { 1 } else { 0 };
+    tp = raw & 32767;
+    kind = keyed_kind(x.b, tp);
+    if kind == "" {
+      refuse(w, "a keyed operation on another kind of type");
+      return none();
+    }
+    elem = content_of(x.b, tp);
+    nk = len(x.b.types[tp].keys);
+    // The typed removal of a hash entry its own lookup found starts at that lookup's walk: it
+    // asks that both name one path, which is not read here.
+    looked_up = match loop_shape::unspan(args[1]) {
+      NdCall { def_nr, args: inner } => cgen_fn::def_name(x.b, def_nr) == "OpGetRecord" && len(inner) == 4,
+      _ => false,
+    };
+    if kind == "hash" && nk == 1 && looked_up && (x.b.types[tp].keys[0].type_nr == 1 || x.b.types[tp].keys[0].type_nr == 2) {
+      refuse(w, "a removal of the entry a lookup found");
+      return none();
+    }
+    pair = [args[0], args[1]];
+    coll_c = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    rec_c = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    keys_c = "loft_keys{tp}, {nk}";
+    if kind == "hash" {
+      return E { code: "loft_hash_remove(loft_types, {elem}, {coll_c}, {rec_c}, {keys_c}, {view})", kind: K_VOID };
+    }
+    if kind == "sorted" {
+      return E { code: "loft_sorted_remove_owned(loft_types, {elem}, {coll_c}, {rec_c}, {x.b.types[elem].size})", kind: K_VOID };
+    }
+    if kind == "index" {
+      return E { code: "loft_ix_remove(loft_types, {elem}, {coll_c}, {rec_c}, {keys_c}, {view})", kind: K_VOID };
+    }
+    if kind == "ordered" || kind == "array" {
+      return E { code: "loft_ordered_remove(loft_types, {elem}, {coll_c}, {rec_c}, {if kind == "array" { 1 } else { 0 }}, {view})", kind: K_VOID };
+    }
+    return E { code: "loft_rx_remove_owned(loft_types, {elem}, {coll_c}, {rec_c}, {keys_c}, {if kind == "trie" { 1 } else { 0 }}, {view})", kind: K_VOID };
+  }
+  if name == "OpGetRecord" && count >= 3 {
+    return get_record(x, w, args, ind);
+  }
+  if name == "OpGetBoolean" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_bool({as_ref(w, r)}, {fld})", kind: K_BOOL };
+  }
+  if name == "OpSetBoolean" && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, "loft_set_byte_at", [as_ref(w, r), "{fld}", as_bool(w, val)]);
+  }
+  if name == "OpPushByte" && count == 3 {
+    min = cgen_fn::literal(w, args[1], "byte minimum") ?? return none();
+    pair = [args[0], args[2]];
+    v = cgen_fn::arg(x, w, pair, 0, ind);
+    val = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "loft_vec_push_byte({as_ref(w, v)}, loft_byte_raw({min}, {as_int(w, val)}))", kind: K_VOID };
+  }
+  if name == "OpVectorIsNull" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_absent({as_ref(w, v)})", kind: K_COND };
+  }
+  if name == "OpLengthSorted" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_vec_len({as_ref(w, v)})", kind: K_INT };
+  }
+  if (name == "OpEqRef" || name == "OpNeRef") && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "{if name == "OpNeRef" { "!" } else { "" }}loft_ref_eq({as_ref(w, a)}, {as_ref(w, b)})", kind: K_COND };
+  }
+  if name == "OpClear" && count == 2 {
+    raw = cgen_fn::literal(w, args[1], "type") ?? return none();
+    tp = raw & 32767;
+    root = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    walk = "loft_remove_claims(loft_types, {tp}, {root})";
+    if raw & 32768 == 0 {
+      return E { code: walk, kind: K_VOID };
+    }
+    if tp >= len(x.b.types) {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    return E { code: "if (!loft_reset_pool_root({root}, {tp}, {enum_parent_size(x.b, tp)}, loft_dflt{tp}, {x.b.types[tp].size})) {walk}", kind: K_VOID };
+  }
+  done = false;
+  none()
+}
+
+// A group of `ref_operator`'s arms: one function of them all is more than a C compiler
+// optimises in reasonable time.
+fn ref_ops_9(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  count = len(args);
+  if name == "OpGetCharacter" && count == 2 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_get_char({as_ref(w, r)}, {fld})", kind: K_CHAR };
+  }
+  if name == "OpSetCharacter" && count == 3 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [args[0], args[2]];
+    r = cgen_fn::arg(x, w, pair, 0, ind);
+    c = cgen_fn::arg(x, w, pair, 1, ind);
+    return set_at(w, "loft_set_char_at", [as_ref(w, r), "{fld}", as_char(w, c)]);
+  }
+  if name == "OpPushCharacter" && count == 2 {
+    v = cgen_fn::arg(x, w, args, 0, ind);
+    c = cgen_fn::arg(x, w, args, 1, ind);
+    return E { code: "loft_vec_push_char({as_ref(w, v)}, {as_char(w, c)})", kind: K_VOID };
+  }
+  done = false;
+  none()
+}
+
+// `Cx::show_type`: can a value of type `tp` be rendered — "" when it can, else the refusal.
+fn show_refusal(b: ir::Bundle, tp: integer, seen: vector<integer>) -> text {
+  if tp <= 6 {
+    return "";
+  }
+  for s in seen {
+    if s == tp {
+      return "";
+    }
+  }
+  if tp >= len(b.types) {
+    return "a format of an unknown type";
+  }
+  seen += [tp];
+  t = b.types[tp];
+  match t.parts[0] {
+    PtEnum { values } => {
+      if t.name == "JsonValue" {
+        return "a format of a JsonValue";
+      }
+      for v in values {
+        if v.nr != 65535 {
+          why = show_refusal(b, v.nr, seen);
+          if why != "" {
+            return why;
+          }
+        }
+      }
+      ""
+    },
+    PtStruct { fields } => show_fields_refusal(b, fields, seen),
+    PtEnumValue { value: _, fields } => show_fields_refusal(b, fields, seen),
+    PtVector { content } => show_refusal(b, content, seen),
+    PtChildRec { content } => if ptypes::child_rec_is_value(b.types, content) { show_refusal(b, content, seen) } else { "" },
+    PtSorted { content, keys: _ } => show_refusal(b, content, seen),
+    PtHash { content, fields: _ } => show_refusal(b, content, seen),
+    PtIndex { content, keys: _ } => show_refusal(b, content, seen),
+    PtOrdered { content, keys: _ } => show_refusal(b, content, seen),
+    PtArray { content } => show_refusal(b, content, seen),
+    PtRadix { content, fields: _ } => show_refusal(b, content, seen),
+    PtTrie { content, key: _ } => show_refusal(b, content, seen),
+    PtBase => "a format of a base",
+    _ => "",
+  }
+}
+
+fn show_fields_refusal(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> text {
+  for f in fields {
+    why = show_refusal(b, f.content, seen);
+    if why != "" {
+      return why;
+    }
+    is_ref = f.content >= 0 && f.content < len(b.types) && (match b.types[f.content].parts[0] { PtDbRef => true, _ => false });
+    if is_ref && f.target < len(b.types) && f.target > 6 {
+      why = show_refusal(b, f.target, seen);
+      if why != "" {
+        return why;
+      }
+    }
+  }
+  ""
+}
+
+// `Cx::show_fn`: the routine that renders a value of type `tp`.
+fn show_fn(tp: integer) -> text {
+  if tp == 0 || tp == 1 {
+    "loft_show_long"
+  } else if tp == 2 {
+    "loft_show_single"
+  } else if tp == 3 {
+    "loft_show_float"
+  } else if tp == 4 {
+    "loft_show_bool"
+  } else if tp == 5 {
+    "loft_show_text"
+  } else if tp == 6 {
+    "loft_show_char"
+  } else {
+    "loft_show{tp}"
+  }
+}
+
+// `Cx::show_top_call`: render the value at `r`, of type `tp`, into `s`; "" with the function
+// refused where the type cannot be rendered.
+pub fn show_top_call(x: Cx, w: W, tp: integer, s: text, r: text, fmt: text) -> text {
+  why = show_refusal(x.b, tp, []);
+  if why != "" {
+    refuse(w, why);
+    return "";
+  }
+  if ptypes::reaches_reference(x.b.types, tp, []) {
+    return "loft_show_top({s}, {show_fn(tp)}, {r}, {fmt})";
+  }
+  "{show_fn(tp)}({s}, {r}, {fmt}, 0)"
+}
+
+// `Cx::default_is_zero`: is record type `tp`'s default image all zero bytes?
+fn default_is_zero(b: ir::Bundle, tp: integer) -> boolean {
+  for byte in types::default_image(b.types, tp) {
+    if byte != 0 {
+      return false;
+    }
+  }
+  true
+}
+
+// `Stores::content`: the element type of collection type `tp`, 65535 for any other type.
+fn content_of(b: ir::Bundle, tp: integer) -> integer {
+  match b.types[tp].parts[0] {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtOrdered { content, keys: _ } => content,
+    PtSorted { content, keys: _ } => content,
+    PtIndex { content, keys: _ } => content,
+    PtHash { content, fields: _ } => content,
+    PtRadix { content, fields: _ } => content,
+    PtTrie { content, key: _ } => content,
+    _ => 65535,
+  }
+}
+
+// The variable `OpCreateStack(v)` names, -1 for any other node (`stack_var`).
+fn stack_var(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => if cgen_fn::def_name(b, def_nr) == "OpCreateStack" && len(args) == 1 { loop_shape::var_of(args[0]) } else { -1 },
+    _ => -1,
+  }
+}
+
+// The bytes a narrow integer type is written in, 0 for any other type (`narrow_kind`).
+fn narrow_width(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return 0;
+  }
+  match b.types[tp].parts[0] {
+    PtByte { start: _, nullable: _ } => 1,
+    PtShort { start: _, nullable: _ } => 2,
+    PtShortRaw { start: _, nullable: _ } => 2,
+    PtInt { start: _, nullable: _ } => 4,
+    PtIntRaw { start: _, nullable: _ } => 4,
+    _ => 0,
+  }
+}
+
+// `write_file`: a variable's value written to a file in the file's byte order.  A record's
+// own serialiser is not carried.
+fn write_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  var = stack_var(x.b, args[1]);
+  if var < 0 {
+    refuse(w, "a file write of a value that is not a variable");
+    return none();
+  }
+  tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+  file = cgen_fn::expr(x, w, args[0], ind);
+  fr = temp(w, "ref");
+  line(w, ind, "{fr} = {as_ref(w, file)};");
+  value = cgen_fn::expr(x, w, ir::NdVar { n: var }, ind);
+  narrow = narrow_width(x.b, tp);
+  plain_enum = tp >= 0 && tp < len(x.b.types) && (match x.b.types[tp].parts[0] { PtEnum { values: _ } => true, _ => false });
+  ser = if tp == 0 || tp == 1 {
+    "loft_put(&loft_b, (uint64_t) ({as_int(w, value)}), 8, loft_le);"
+  } else if tp == 2 {
+    "loft_put(&loft_b, (uint64_t) (loft_bits32({as_single(w, value)})), 4, loft_le);"
+  } else if tp == 3 {
+    "loft_put(&loft_b, (uint64_t) (loft_bits64({as_float(w, value)})), 8, loft_le);"
+  } else if tp == 4 {
+    "loft_push_char(&loft_b, (char) {as_bool(w, value)});"
+  } else if tp == 5 {
+    "loft_text_append(&loft_b, {as_view(w, value)});"
+  } else if tp == 6 {
+    "loft_put(&loft_b, (uint64_t) ({as_char(w, value)}), 4, loft_le);"
+  } else if narrow > 0 {
+    "loft_put(&loft_b, (uint64_t) ((uint64_t) {as_int(w, value)}), {narrow}, loft_le);"
+  } else if plain_enum {
+    "loft_push_char(&loft_b, (char) {as_enum(w, value)});"
+  } else {
+    refuse(w, "a file write of a record");
+    ""
+  };
+  if w.why != "" {
+    return none();
+  }
+  line(w, ind, "{{");
+  line(w, ind + 1, "loft_text loft_b = {{ 0, 0, 0 }};");
+  // The byte order only where the encoding reads it (a text appends as it stands).
+  if ser.contains("loft_le") {
+    line(w, ind + 1, "int loft_le = loft_file_le({fr});");
+  }
+  line(w, ind + 1, ser);
+  line(w, ind + 1, "loft_write_file({fr}, &loft_b);");
+  line(w, ind + 1, "loft_text_free(&loft_b);");
+  line(w, ind, "}}");
+  E { code: "(void) 0", kind: K_VOID }
+}
+
+// Is a narrow integer type read signed (`narrow_kind`'s second answer)?
+fn narrow_signed(b: ir::Bundle, tp: integer) -> boolean {
+  match b.types[tp].parts[0] {
+    PtByte { start, nullable: _ } => start < 0,
+    PtShort { start, nullable: _ } => start < 0,
+    PtShortRaw { start, nullable: _ } => start < 0,
+    PtInt { start: _, nullable: _ } => true,
+    _ => false,
+  }
+}
+
+// `Stores::binary_size`: the bytes a value of type `tp` takes in a file.
+fn binary_size(b: ir::Bundle, tp: integer) -> integer {
+  if tp == 2 || tp == 6 {
+    return 4;
+  }
+  if tp == 0 || tp == 1 || tp == 3 {
+    return 8;
+  }
+  if tp == 4 {
+    return 1;
+  }
+  if tp == 5 || tp < 0 || tp >= len(b.types) {
+    return 0;
+  }
+  match b.types[tp].parts[0] {
+    PtStruct { fields } => fields_binary_size(b, fields),
+    PtEnumValue { value: _, fields } => fields_binary_size(b, fields),
+    PtEnum { values: _ } => 1,
+    PtByte { start: _, nullable: _ } => 1,
+    PtShort { start: _, nullable: _ } => 2,
+    PtShortRaw { start: _, nullable: _ } => 2,
+    PtInt { start: _, nullable: _ } => 4,
+    PtIntRaw { start: _, nullable: _ } => 4,
+    _ => 0,
+  }
+}
+
+fn fields_binary_size(b: ir::Bundle, fields: vector<ir::DbField>) -> integer {
+  total = 0;
+  for f in fields {
+    if f.name != "enum" && f.position != 65535 {
+      total += binary_size(b, f.content);
+    }
+  }
+  total
+}
+
+// `read_file`: a value read from a file into a variable, decoded at the site.  A record's own
+// deserialiser is not carried.
+fn read_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  var = stack_var(x.b, args[1]);
+  if var < 0 {
+    refuse(w, "a file read into a value that is not a variable");
+    return none();
+  }
+  tp = cgen_fn::literal(w, args[3], "type") ?? return none();
+  // `@FR-R-TypedRead`: a typed read of a file the loop holds goes through its cursor.
+  if cgen_file::held_read(x, w, args, ind) {
+    return E { code: "(void) 0", kind: K_VOID };
+  }
+  pair = [args[0], args[2]];
+  file = cgen_fn::arg(x, w, pair, 0, ind);
+  amount = cgen_fn::arg(x, w, pair, 1, ind);
+  fr = temp(w, "ref");
+  nr = temp(w, "int");
+  line(w, ind, "{fr} = {as_ref(w, file)};");
+  line(w, ind, "{nr} = {as_int(w, amount)};");
+  is_text = tp == 5;
+  width = binary_size(x.b, tp);
+  name = w.names[var]!;
+  narrow = narrow_width(x.b, tp);
+  plain_enum = tp >= 0 && tp < len(x.b.types) && (match x.b.types[tp].parts[0] { PtEnum { values: _ } => true, _ => false });
+  set = "";
+  if is_text {
+    if !((w.shapes[var] ?? "") == "text" && text_held(w, var)) {
+      refuse(w, "a file read into a text that is not a local");
+      return none();
+    }
+    set = "loft_text_set(&{name}, loft_lit((const char *) loft_d, (size_t) loft_n));";
+  } else if tp == 0 || tp == 1 {
+    set = "{{ uint64_t u = loft_take(loft_d, 8, loft_le); memcpy(&{name}, &u, 8); }}";
+  } else if tp == 2 {
+    set = "{name} = loft_f32((uint32_t) loft_take(loft_d, 4, loft_le));";
+  } else if tp == 3 {
+    set = "{name} = loft_f64(loft_take(loft_d, 8, loft_le));";
+  } else if tp == 4 {
+    set = "{name} = loft_d[0];";
+  } else if tp == 6 {
+    set = "{name} = (uint32_t) loft_take(loft_d, 4, loft_le);";
+  } else if narrow > 0 {
+    bits = narrow * 8;
+    if narrow_signed(x.b, tp) {
+      set = "{{ uint64_t u = loft_take(loft_d, {narrow}, loft_le); {name} = u >= (UINT64_C(1) << {bits - 1}) ? (int64_t) u - (int64_t) (UINT64_C(1) << {bits}) : (int64_t) u; }}";
+    } else {
+      set = "{name} = (int64_t) loft_take(loft_d, {narrow}, loft_le);";
+    }
+  } else if plain_enum {
+    set = "{name} = loft_d[0];";
+  } else {
+    refuse(w, "a file read of a record");
+    return none();
+  }
+  line(w, ind, "{{");
+  // A read of up to 15 bytes lands in a stack buffer: no allocation per value.
+  line(w, ind + 1, "uint8_t loft_b[16];");
+  line(w, ind + 1, "uint8_t *loft_d;");
+  line(w, ind + 1, "int64_t loft_n = loft_read_file_in({fr}, {nr}, {if is_text { 1 } else { 0 }}, {width}, loft_b, sizeof loft_b, &loft_d);");
+  line(w, ind + 1, "int loft_le = loft_file_le({fr});");
+  ok = if is_text { "loft_n >= 0" } else { "loft_n >= {width} && loft_n == {nr}" };
+  line(w, ind + 1, "if ({ok}) {set}");
+  line(w, ind + 1, "(void) loft_le;");
+  line(w, ind + 1, "if (loft_d != loft_b) free(loft_d);");
+  line(w, ind, "}}");
+  E { code: "(void) 0", kind: K_VOID }
+}
+
+// The natives over a keyed collection the writer answers itself (`keyed_native`): a hash's
+// records in key order or as they lie, a radix's in order, and the find-or-insert of a hash
+// entry.  `done` says whether `route` is one of them.
+pub fn keyed_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  if (route == "n_hash_sorted" || route == "n_hash_unsorted") && len(args) == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    h = cgen_fn::expr(x, w, args[0], ind);
+    f = if route == "n_hash_sorted" { "loft_hash_sorted" } else { "loft_hash_unsorted" };
+    return E { code: "{f}({as_ref(w, h)}, loft_keys{tp}, {len(x.b.types[tp].keys)})", kind: K_REF };
+  }
+  if route == "n_radix_sorted" && len(args) == 2 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_radix_sorted({as_ref(w, r)})", kind: K_REF };
+  }
+  if (route == "n_keyed_entry_ints" || route == "n_keyed_entry_text") && len(args) >= 3 {
+    place = vector_place(x, w, args[0], args[1], args[2], ind);
+    if w.why != "" {
+      return none();
+    }
+    if w.keyed < 0 {
+      refuse(w, "a keyed entry outside a hash");
+      return none();
+    }
+    tp = w.keyed;
+    elem = w.elem;
+    ct = temp(w, "ref");
+    line(w, ind, "{ct} = {place};");
+    nk = len(x.b.types[tp].keys);
+    given = len(args) - 3;
+    parts = if nk < 1 { 1 } else if nk > given { given } else { nk };
+    is_text = route == "n_keyed_entry_text";
+    codes: vector<text> = [];
+    for k in 0..parts {
+      e = cgen_fn::expr(x, w, args[3 + k]!, ind);
+      codes += [if is_text { as_view(w, e) } else { as_int(w, e) }];
+    }
+    if len(codes) == 0 {
+      refuse(w, "a keyed entry without a key");
+      return none();
+    }
+    if is_text {
+      return E { code: "loft_keyed_entry_text(loft_types, {elem}, {ct}, loft_keys{tp}, {nk}, {codes[0]})", kind: K_REF };
+    }
+    return E { code: "loft_keyed_entry_ints(loft_types, {elem}, {ct}, loft_keys{tp}, {nk}, (int64_t[]){{ {codes.join(", ")} }})", kind: K_REF };
+  }
+  done = false;
+  none()
+}
+
+// Is statement `v` the binding of a keyed lookup — `x = OpGetRecord(…)`?
+pub fn binds_lookup(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdSet { var: _, inner } => {
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args: _ } => cgen_fn::def_name(b, def_nr) == "OpGetRecord",
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+// `filed_record`: the hash type statement `v` filed a record into — `OpFinishRecord(parent,
+// rec, tp, fld)` into a hash of one integer key — or -1.  An over-approximation: the Rust
+// writer also asks that the parent is a path it can name.
+pub fn filed_record(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if cgen_fn::def_name(b, def_nr) != "OpFinishRecord" || len(args) != 4 {
+        return -1;
+      }
+      tp = match loop_shape::unspan(args[2]) { NdInt { n } => n, _ => -1 };
+      fld = match loop_shape::unspan(args[3]) { NdInt { n } => n, _ => -1 };
+      if tp < 0 || tp >= len(b.types) || fld < 0 || loop_shape::var_of(args[1]) < 0 {
+        return -1;
+      }
+      fields = match b.types[tp].parts[0] {
+        PtStruct { fields: fs } => fs,
+        _ => return -1,
+      };
+      if fld >= len(fields) {
+        return -1;
+      }
+      content = fields[fld]!.content;
+      if content < 0 || content >= len(b.types) || keyed_kind(b, content) != "hash" {
+        return -1;
+      }
+      keys = b.types[content].keys;
+      if len(keys) != 1 || !(keys[0].type_nr == 1 || keys[0].type_nr == 2) {
+        return -1;
+      }
+      content
+    },
+    _ => -1,
+  }
+}
+
+// Does the unit bind a lazy store (`Cx::lazy`)?  Asked of every definition's code: an
+// over-approximation of the functions the unit reaches.
+fn lazy_unit(x: Cx) -> boolean {
+  if x.lazy < 0 {
+    bound = [false];
+    for d in x.b.data.definitions {
+      if len(d.code) > 0 && !bound[0]! {
+        bound[0] = calls_bind_lazy(x.b, d.code[0]!);
+      }
+    }
+    x.lazy = if bound[0]! { 1 } else { 0 };
+  }
+  x.lazy == 1
+}
+
+fn calls_bind_lazy(b: ir::Bundle, code: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == "n_store_bind_lazy" {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// One key part's value as a `loft_kv`, for a part of kind `type_nr` (`key_value`).
+fn key_value(w: W, e: E, type_nr: integer) -> text {
+  kind = if type_nr < 0 { -type_nr } else { type_nr };
+  if kind == 3 {
+    return "loft_kv_single({as_single(w, e)})";
+  }
+  if kind == 4 {
+    return "loft_kv_float({as_float(w, e)})";
+  }
+  if kind == 6 {
+    return "loft_kv_text({as_view(w, e)})";
+  }
+  if e.kind == K_BOOL || e.kind == K_COND {
+    return "loft_kv_int((int64_t) {as_bool(w, e)})";
+  }
+  if e.kind == K_ENUM {
+    return "loft_kv_int((int64_t) {as_enum(w, e)})";
+  }
+  if e.kind == K_CHAR {
+    return "loft_kv_int((int64_t) {as_char(w, e)})";
+  }
+  "loft_kv_int({as_int(w, e)})"
+}
+
+// `iterate`: the start of a walk over a keyed collection between two key bounds —
+// `OpIterate(data, on, arg, keys, nfrom, from…, ntill, till…)`.
+fn iterate(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  keys = match args[3] {
+    NdKeys { keys: ks } => ks,
+    _ => {
+      refuse(w, "operator OpIterate");
+      return none();
+    },
+  };
+  on = cgen_fn::literal(w, args[1], "walk kind") ?? return none();
+  walk_arg = cgen_fn::literal(w, args[2], "walk argument") ?? return none();
+  if len(args) < 5 {
+    refuse(w, "a walk without its bounds");
+    return none();
+  }
+  nfrom = cgen_fn::literal(w, args[4], "bound count") ?? return none();
+  till_at = 5 + nfrom;
+  if nfrom < 0 || till_at >= len(args) {
+    refuse(w, "a walk without its upper bound");
+    return none();
+  }
+  ntill = cgen_fn::literal(w, args[till_at]!, "bound count") ?? return none();
+  if ntill < 0 || till_at + 1 + ntill > len(args) {
+    refuse(w, "a walk without its upper bound");
+    return none();
+  }
+  if nfrom > len(keys) || ntill > len(keys) {
+    refuse(w, "a walk bound with more values than keys");
+    return none();
+  }
+  all: vector<ir::Node> = [args[0]];
+  for k in 0..nfrom {
+    all += [args[5 + k]!];
+  }
+  for k in 0..ntill {
+    all += [args[till_at + 1 + k]!];
+  }
+  data = as_ref(w, cgen_fn::arg(x, w, all, 0, ind));
+  from_values: vector<text> = [];
+  till_values: vector<text> = [];
+  for k in 0..nfrom {
+    from_values += [key_value(w, cgen_fn::arg(x, w, all, 1 + k, ind), keys[k]!.type_nr)];
+  }
+  for k in 0..ntill {
+    till_values += [key_value(w, cgen_fn::arg(x, w, all, 1 + nfrom + k, ind), keys[k]!.type_nr)];
+  }
+  if w.why != "" {
+    return none();
+  }
+  parts: vector<text> = [];
+  for k in keys {
+    parts += ["{{ {k.type_nr}, {k.position}, {k.start} }}"];
+  }
+  ka = if len(keys) == 0 { "0" } else { "(const loft_key[]){{ {parts.join(", ")} }}" };
+  f = if nfrom == 0 { "0" } else { "(loft_kv[]){{ {from_values.join(", ")} }}" };
+  t = if ntill == 0 { "0" } else { "(loft_kv[]){{ {till_values.join(", ")} }}" };
+  ex = if on & 128 == 0 { 1 } else { 0 };
+  reverse = if on & 64 != 0 { 1 } else { 0 };
+  nk = len(keys);
+  kind = on & 63;
+  if kind == 1 {
+    return E { code: "loft_ix_iterate({data}, {ex}, {reverse}, {ka}, {nk}, {f}, {nfrom}, {t}, {ntill})", kind: K_INT };
+  }
+  if kind == 3 {
+    return E { code: "loft_seq_iterate({data}, 0, {ex}, {ka}, {nk}, {f}, {nfrom}, {t}, {ntill})", kind: K_INT };
+  }
+  if kind == 2 {
+    return E { code: "loft_seq_iterate({data}, {walk_arg}, {ex}, {ka}, {nk}, {f}, {nfrom}, {t}, {ntill})", kind: K_INT };
+  }
+  if kind == 4 && nfrom == 0 && ntill == 0 {
+    return E { code: "loft_scratch_iterate({data})", kind: K_INT };
+  }
+  refuse(w, "a walk of kind {kind}");
+  none()
+}
+
+// `get_record`: the record a keyed collection holds under the given key values.  Under the
+// plain rules: no table handle; a lookup right after a record was filed into the same hash,
+// and a unit that binds a lazy store, are refused by name.
+fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+  kind = keyed_kind(x.b, tp);
+  if kind == "" {
+    refuse(w, "a keyed operation on another kind of type");
+    return none();
+  }
+  if lazy_unit(x) {
+    refuse(w, "a lookup in a unit that binds a lazy store");
+    return none();
+  }
+  keys = x.b.types[tp].keys;
+  nk = len(keys);
+  given = len(args) - 3;
+  if given > nk {
+    refuse(w, "a lookup with more values than keys");
+    return none();
+  }
+  if w.filed_next == tp && given == 1 && loop_shape::var_of(loop_shape::unspan(args[3])) >= 0 {
+    refuse(w, "a lookup right after a record was filed");
+    return none();
+  }
+  all: vector<ir::Node> = [args[0]];
+  for a in args {
+    if a#index >= 3 {
+      all += [a];
+    }
+  }
+  data = as_ref(w, cgen_fn::arg(x, w, all, 0, ind));
+  values: vector<text> = [];
+  for k in 0..given {
+    values += [key_value(w, cgen_fn::arg(x, w, all, k + 1, ind), keys[k]!.type_nr)];
+  }
+  if w.why != "" {
+    return none();
+  }
+  kv = if given == 0 { "0" } else { "(loft_kv[]){{ {values.join(", ")} }}" };
+  key_table = "loft_keys{tp}";
+  typed = "";
+  if kind == "hash" && given == nk && given >= 1 && given <= 4 {
+    ints: vector<text> = [];
+    for v in values {
+      t = keys[v#index]!.type_nr;
+      if (t == 1 || t == 2) && v.starts_with("loft_kv_int(") && v.ends_with(")") {
+        ints += [v[12..v.size() - 1]];
+      }
+    }
+    if len(ints) == given {
+      // `(R-TableHandle)`: the one-integer lookup goes through the place's handle.
+      found = if given == 1 { cgen_table::handle(x, w, args[0]) } else { "" };
+      typed = if given == 1 { if found != "" { "loft_hh_find_i64(&{found}, {data}, {key_table}, {ints[0]})" } else { "loft_h_find_i64({data}, {key_table}, {ints[0]})" } } else { "loft_h_find_ints({data}, {key_table}, {given}, (int64_t[]){{ {ints.join(", ")} }})" };
+    }
+  }
+  if typed == "" && kind == "hash" && given == 1 && nk == 1 && keys[0].type_nr == 6 && values[0].starts_with("loft_kv_text(") && values[0].ends_with(")") {
+    typed = "loft_h_find_text({data}, {key_table}, {values[0][13..values[0].size() - 1]})";
+  }
+  size = x.b.types[content_of(x.b, tp)].size;
+  find = if kind == "hash" {
+    if typed != "" { typed } else { "loft_h_find({data}, {key_table}, {kv}, {given})" }
+  } else if kind == "sorted" {
+    "loft_seq_find({data}, {size}, {key_table}, {nk}, {kv}, {given})"
+  } else if kind == "index" {
+    "loft_ix_find({data}, {key_table}, {nk}, {kv}, {given})"
+  } else if kind == "ordered" {
+    "loft_seq_find({data}, 0, {key_table}, {nk}, {kv}, {given})"
+  } else if kind == "array" {
+    refuse(w, "a keyed lookup in an array");
+    ""
+  } else {
+    "loft_rx_find({data}, {key_table}, {nk}, {if kind == "trie" { 1 } else { 0 }}, {kv}, {given})"
+  };
+  E { code: find, kind: K_REF }
+}
+
+// `clear_releases_nothing`: a clear of a vector whose elements own nothing — a local vector
+// of scalars, or a plain vector field of elements that own no heap and are not linked.
+fn clear_releases_nothing(b: ir::Bundle, w: W, v: ir::Node) -> boolean {
+  if (env_variable("LOFT_NO_PLAIN_CLEAR") ?? "0") != "0" {
+    return false;
+  }
+  match loop_shape::unspan(v) {
+    NdVar { n } => {
+      match binds::base(b.data.definitions[w.index]!.variables.variables[n]!.type_def[0] ?? ir::TyVoid) {
+        TyVector { inner, dep: _ } => {
+          match binds::base(inner) {
+            TyInteger { spec: _ } => true,
+            TyFloat => true,
+            TySingle => true,
+            TyCharacter => true,
+            TyBoolean => true,
+            TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+            _ => false,
+          }
+        },
+        _ => false,
+      }
+    },
+    NdCall { def_nr, args } => {
+      if cgen_fn::def_name(b, def_nr) != "OpGetField" || len(args) < 3 {
+        return false;
+      }
+      tp = match loop_shape::unspan(args[2]) { NdInt { n } => n, _ => -1 };
+      if tp < 0 || tp >= len(b.types) {
+        return false;
+      }
+      match b.types[tp].parts[0] {
+        PtVector { content } => content != 65535 && content < len(b.types) && !types::owns_heap(b.types, content) && !b.types[content].linked,
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+// `clear_before_mint`: statement `i` of `ops[..end]` clears a vector local the next statement
+// mints a new room for.
+pub fn clear_before_mint(b: ir::Bundle, ops: vector<ir::Node>, i: integer, end: integer) -> boolean {
+  if (env_variable("LOFT_NO_PROLOGUE_CLEAR_DROP") ?? "0") != "0" {
+    return false;
+  }
+  cleared = match loop_shape::unspan(ops[i]!) {
+    NdCall { def_nr, args } => if cgen_fn::def_name(b, def_nr) == "OpClearVector" && len(args) > 0 { loop_shape::var_of(loop_shape::unspan(args[0])) } else { -1 },
+    _ => -1,
+  };
+  if cleared < 0 {
+    return false;
+  }
+  for o in ops {
+    if o#index <= i || o#index >= end {
+      continue;
+    }
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      NdCall { def_nr, args } => {
+        if cgen_fn::def_name(b, def_nr) != "OpDatabase" || len(args) < 2 {
+          return false;
+        }
+        minted = loop_shape::var_of(loop_shape::unspan(args[0]));
+        tp = match loop_shape::unspan(args[1]) { NdInt { n } => n, _ => -1 };
+        return minted == cleared && is_vector_wrapper(b, tp);
+      },
+      _ => return false,
+    }
+  }
+  false
+}
+
+// `reserve_push_run` (`@FR-R-PushFill`'s run clause): a run of two or more scalar pushes onto
+// one vector known to be empty reserves the run's room once.  Answers the statement after the
+// run, -1 where statement `at` starts none.  The run's header (its pushes written through one
+// held header) is the vector hoist's, which is not carried.
+pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer, head: &boolean) -> integer {
+  head = false;
+  if (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
+    return -1;
+  }
+  shown: vector<ir::Node> = ops[0..end];
+  first = opt_push::push_at(x.b, shown, at);
+  if first.size == 0 {
+    return -1;
+  }
+  count = 1;
+  next = first.next;
+  run_end = next;
+  vals: vector<ir::Node> = [first.val];
+  for _ in 0..end {
+    for _ in 0..end {
+      if next >= end || !(loop_shape::unspan(shown[next]!) is NdLine) {
+        break;
+      }
+      next += 1;
+    }
+    p = opt_push::push_at(x.b, shown, next);
+    if p.size == 0 || p.path != first.path || p.size != first.size || loop_shape::unspan(p.vector) != loop_shape::unspan(first.vector) {
+      break;
+    }
+    count += 1;
+    vals += [p.val];
+    next = p.next;
+    run_end = next;
+  }
+  if count < 2 || !opt_push::known_empty(x.b, shown, at, first.vector) || cgen_hoist::windowed_path(w, first.path) || cgen_hoist::push_head(x, w, first.vector) >= 0 {
+    return -1;
+  }
+  v = as_ref(w, cgen_fn::expr(x, w, first.vector, ind));
+  // The header clause: values computed from scalars and operators cannot move the store, and
+  // the run's one growth is the reservation — so its pushes write through one header and its
+  // held record address.
+  header = (env_variable("LOFT_NO_PUSH_RUN_HEADER") ?? "0") == "0" && (env_variable("LOFT_NO_VECTOR_HOIST") ?? "0") == "0";
+  def = x.b.data.definitions[w.index]!;
+  for val in vals {
+    if header && !opt_push::run_value_plain(x.b, def, first.root, val) {
+      header = false;
+    }
+  }
+  if !header {
+    line(w, ind, "loft_vec_reserve_run({v}, INT64_C({count}), {first.size});");
+    return run_end;
+  }
+  // The header first: a vector that already has room for the run takes no reservation call.
+  h = "ph{len(w.decls) + 1}";
+  w.decls += ["loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"];
+  line(w, ind, "{h} = loft_ph_of({v}, {first.size});");
+  line(w, ind, "if (LOFT_UNLIKELY({h}.cap < {count} || {h}.len > {h}.cap - {count})) {h} = loft_ph_reserved({h}, INT64_C({count}), {first.size});");
+  w.push_heads += [PushHead { path: first.path, name: h, size: first.size, based: true }];
+  head = true;
+  run_end
+}
+
+// `hash_reserve` (`@FR-R-PushFill`'s hash clause): a counted loop that files records into one
+// hash reserves the table's room for its trips before it runs.
+pub fn hash_reserve(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  if (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_HASH_RESERVE") ?? "0") != "0" {
+    return;
+  }
+  hf = opt_push::hash_fill_loop(x.b, lp) ?? return;
+  hi = as_int(w, cgen_fn::expr(x, w, hf.hi, ind));
+  lo = if hf.next >= 0 { w.names[hf.next]! } else { "loft_add({w.names[hf.index]!}, INT64_C(1))" };
+  h = w.names[hf.hash]!;
+  flush(w, ind);
+  line(w, ind, "{{ int64_t pn = loft_add(loft_sub({hi}, {lo}), INT64_C({if hf.inclusive { 1 } else { 0 }})); if (pn > 0 && pn != LOFT_NULL && {h}.store_nr != 0xFFFF && {h}.rec != 0) loft_hash_reserve(loft_types, {hf.tp}, {h}, loft_add(loft_hash_len({h}), loft_mul(pn, INT64_C({hf.per_pass})))); }}");
+}
+
+// `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write
+// every field, so the minted element needs no default image first?
+pub fn mint_complete(b: ir::Bundle, w: W, tp: integer) -> boolean {
+  fact = b.data.definitions[w.index]!.no_prefill;
+  for part in fact.split(';') {
+    if part.starts_with("m") {
+      for n in part[1..part.size()].split(',') {
+        if n == "{tp}" {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// `record_collection` for a plain vector: the vector `OpNewRecord(data, ptp, fld)` appends to
+// — `data` itself (`fld` 65535) or its vector field — with the element type left in `w.elem`.
+// A keyed collection and a linked group are not carried.
+fn vector_place(x: Cx, w: W, data: ir::Node, ptp_node: ir::Node, fld_node: ir::Node, ind: integer) -> text {
+  ptp = cgen_fn::literal(w, ptp_node, "type") ?? return "";
+  fld = cgen_fn::literal(w, fld_node, "field") ?? return "";
+  if ptp < 0 || ptp >= len(x.b.types) {
+    refuse(w, "a type out of range");
+    return "";
+  }
+  base = as_ref(w, cgen_fn::expr(x, w, data, ind));
+  w.keyed = -1;
+  if fld == 65535 {
+    match x.b.types[ptp].parts[0] {
+      PtVector { content } => {
+        w.elem = content;
+        return base;
+      },
+      _ => {
+        if keyed_kind(x.b, ptp) == "" {
+          refuse(w, "a new record in a collection other than a vector");
+          return "";
+        }
+        w.elem = content_of(x.b, ptp);
+        w.keyed = ptp;
+        return base;
+      },
+    }
+  }
+  fields = match x.b.types[ptp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    PtEnumValue { value: _, fields: fs } => fs,
+    _ => {
+      refuse(w, "a new record in a field of a non-struct");
+      return "";
+    },
+  };
+  if fld < 0 || fld >= len(fields) {
+    refuse(w, "a field out of range");
+    return "";
+  }
+  for o in fields[fld]!.other_indexes {
+    if o != 65535 {
+      refuse(w, "a new record in a linked group");
+      return "";
+    }
+  }
+  vtp = fields[fld]!.content;
+  if vtp >= 0 && vtp < len(x.b.types) {
+    match x.b.types[vtp].parts[0] {
+      PtVector { content } => {
+        w.elem = content;
+        return "loft_field({base}, {fields[fld]!.position})";
+      },
+      _ => {},
+    }
+    if keyed_kind(x.b, vtp) != "" {
+      w.elem = content_of(x.b, vtp);
+      w.keyed = vtp;
+      return "loft_field({base}, {fields[fld]!.position})";
+    }
+  }
+  refuse(w, "a new record in a field that is not a vector");
+  ""
+}
+
+// `Cx::keyed`: the kind of keyed collection type `tp` is, "" for any other type.
+fn keyed_kind(b: ir::Bundle, tp: integer) -> text {
+  if tp < 0 || tp >= len(b.types) {
+    return "";
+  }
+  match b.types[tp].parts[0] {
+    PtHash { content: _, fields: _ } => "hash",
+    PtSorted { content: _, keys: _ } => "sorted",
+    PtIndex { content: _, keys: _ } => "index",
+    PtOrdered { content: _, keys: _ } => "ordered",
+    PtArray { content: _ } => "array",
+    PtRadix { content: _, fields: _ } => "spatial",
+    PtTrie { content: _, key: _ } => "trie",
+    _ => "",
+  }
+}
+
+// `adopted_init` (`@FR-R-RetAdopt`): a caller that offered no buffer gets one minted exactly
+// as the witness would have been; an offered one is emptied, as the delivery's clear did.
+pub fn adopted_init(x: Cx, w: W, ind: integer) {
+  done = false;
+  mint = ref_operator(x, w, "OpDatabase", [ir::NdVar { n: w.adopt_buf }, ir::NdInt { n: w.adopt_tp }], ind, done);
+  if w.why != "" {
+    return;
+  }
+  buf = w.names[w.adopt_buf]!;
+  clear = if clear_releases_nothing(x.b, w, ir::NdVar { n: w.adopt_buf }) { "loft_vec_clear({buf})" } else { "loft_vec_clear_release(loft_types, loft_ntypes, {buf})" };
+  line(w, ind, "if ({buf}.store_nr == 0xFFFF || {buf}.rec == 0) {{ {mint.code}; }} else {{ {clear}; }}");
+  line(w, ind, "{w.names[w.adopt_v]!} = {buf};");
+}

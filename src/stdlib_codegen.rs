@@ -7,29 +7,14 @@
 //! `make compiled-stdlib`).  The interpreter's half — routing calls to those bodies at start-up
 //! — is `compiled_stdlib`.
 
-use crate::data::{Data, Value};
+use crate::data::Data;
 use crate::database::Stores;
 use crate::opt::native_key::prefix_fingerprint;
-use std::collections::HashSet;
 use std::fmt::Write as _;
 
-/// The standard-library functions that are compiled: the ones the shared-store bridge can
-/// carry, that have a loft body, and whose body LOOPS.  A body without a loop is one or two
-/// operations the interpreter already runs as such (`sin` is one `OpMathFuncFloat`), where the
-/// bridge would add a call and win nothing, and it is where output and file primitives sit.
-/// Derived from the IR, so a function joins the set the day its body starts to loop — which is
-/// how a kernel's loft body, restored, is compiled (@PLN181 P2).
-#[must_use]
-pub fn export_set(data: &Data) -> HashSet<u32> {
-    crate::native_gate::shared_store_dispatchable(data)
-        .into_iter()
-        .filter(|&d| {
-            let code = &data.def(d).code;
-            *code != Value::Null
-                && code.any_node(&mut |n| matches!(n, Value::Loop(_) | Value::Iter(..)))
-        })
-        .collect()
-}
+/// The functions that are compiled (`native_gate::export_set`), named here for this module's
+/// own callers: the C writer's bodies ask the same set from the layer both writers sit on.
+pub use crate::native_gate::export_set;
 
 /// The compiled standard library as source to build inside this crate: the library artifact
 /// [`crate::native_lib::generate_shared_cdylib_lib_rs`] emits for [`export_set`], with the crate

@@ -20,6 +20,18 @@ pub fn moved(at: Pos, off: integer) -> Pos {
   Pos { s: at.s, r: at.r, p: at.p + off }
 }
 
+// The place the reference stored at `(store, rec, pos)` names, by value: `place_ref` without
+// an out-vector, so a caller mints no store for the answer.
+pub fn place_pos(store: integer, rec: integer, pos: integer) -> Pos {
+  Pos { s: c_place_ref_part(store, rec, pos, 0), r: c_place_ref_part(store, rec, pos, 1), p: c_place_ref_part(store, rec, pos, 2) }
+}
+
+// Element `idx` (`size` bytes each) of the vector at `(store, rec, pos)`, by value: `vec_get`
+// without an out-vector; the null reference past either end.
+pub fn vec_pos(store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> Pos {
+  Pos { s: c_vec_get_part(0, store, rec, pos, size, idx), r: c_vec_get_part(1, store, rec, pos, size, idx), p: c_vec_get_part(2, store, rec, pos, size, idx) }
+}
+
 fn c_format_int(out: vector<u8>, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) -> integer;
 #c "loft_crt_format_int" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -49,6 +61,28 @@ pub fn format_int(val: integer?, radix: integer, width: integer, token: integer,
     n = c_format_int(buf, val ?? 0, val == null, radix, width, token, plus, note, dir);
   }
   text_from_byte_range(buf, 0, n)
+}
+
+fn c_append_int(store: integer, rec: integer, pos: integer, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer);
+#c "loft_crt_append_int" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_append_float(store: integer, rec: integer, pos: integer, bits: integer, is_null: boolean, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean);
+#c "loft_crt_append_float" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_append_text(store: integer, rec: integer, pos: integer, val: text, bytes: integer, width: integer, dir: integer, token: integer);
+#c "loft_crt_append_text" "void(int64_t, int64_t, int64_t, const char*, int64_t, int64_t, int64_t, int64_t)"
+
+// `format_int`, `format_float` and `format_text` appended in place to the text they are for:
+// the text local in the stack store's frame slot `pos` (`rec` -1) or the text `(store, rec,
+// pos)` names.  No text is built between.
+pub fn append_int(store: integer, rec: integer, pos: integer, val: integer?, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) {
+  c_append_int(store, rec, pos, val ?? 0, val == null, radix, width, token, plus, note, dir);
+}
+
+pub fn append_float(store: integer, rec: integer, pos: integer, val: float?, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) {
+  c_append_float(store, rec, pos, if val == null { 0 } else { val!.bits() }, val == null, width, precision, token, plus, dir, single);
+}
+
+pub fn append_text(store: integer, rec: integer, pos: integer, val: text?, width: integer, dir: integer, token: integer) {
+  c_append_text(store, rec, pos, val ?? "", bytes_of(val), width, dir, token);
 }
 
 // `val` formatted as `OpFormatFloat` (or, with `single`, `OpFormatSingle`) formats it.
@@ -278,6 +312,12 @@ pub fn peek_f64(base: integer, at: integer) -> float {
 }
 #c_twin "loft_twin_peek_f64" "double(int64_t, int64_t)"
 
+// A single: its four bytes, the quiet NaN's pattern for null (`put_f32`).
+pub fn peek_f32(base: integer, at: integer) -> single {
+  single_from_bits(c_peek(SW_U32, base, at))
+}
+#c_twin "loft_twin_peek_f32" "float(int64_t, int64_t)"
+
 pub fn poke_i64(base: integer, at: integer, v: integer?) {
   c_poke(SW_I64, base, at, v ?? 0, v == null);
 }
@@ -297,6 +337,11 @@ pub fn poke_f64(base: integer, at: integer, v: float?) {
   c_poke_f64(base, at, [v ?? 0.0 / 0.0]);
 }
 #c_twin "loft_twin_poke_f64" "void(int64_t, int64_t, double)"
+
+pub fn poke_f32(base: integer, at: integer, v: single?) {
+  c_poke(SW_U32, base, at, if v == null { 2143289344 } else { v!.bits() }, false);
+}
+#c_twin "loft_twin_poke_f32" "void(int64_t, int64_t, float)"
 
 fn c_stack_base(store: integer) -> integer;
 #c "loft_crt_stack_base" "int64_t(int64_t)"
@@ -661,6 +706,63 @@ pub fn hold_room(bytes: integer) -> integer {
   c_hold_room(bytes)
 }
 
+// A reference as a frame slot holds it — its store, record and position, four bytes each —
+// written at the address `to`, and one copied from the address `from`: what an arm of the
+// dispatch loop answers a reference with, in place.
+pub fn poke_ref(to: integer, store: integer, rec: integer, pos: integer) {
+  c_poke(SW_U32, to, 0, store, false);
+  c_poke(SW_U32, to, 4, rec, false);
+  c_poke(SW_U32, to, 8, pos, false);
+}
+#c_twin "loft_twin_poke_ref" "void(int64_t, int64_t, int64_t, int64_t)"
+
+pub fn copy_ref(from: integer, to: integer) {
+  c_move(0, from, to, 12);
+}
+#c_twin "loft_twin_copy_ref" "void(int64_t, int64_t)"
+
+fn c_vec_get_part(part: integer, store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> integer;
+#c "loft_crt_vec_get_part" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_get_dbref_part(part: integer, store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_get_dbref_part" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `OpGetVector`'s element and `OpGetDbRef`'s field, the reference written at the address
+// `to` where `vec_get` and `get_dbref` write it into a vector.  (The bodies read the answer
+// a part at a time — 0 its store, 1 its record, 2 its position: a twin's body binds no
+// vector of its own.)
+pub fn vec_get_to(to: integer, store: integer, rec: integer, pos: integer, size: integer, idx: integer?) {
+  if idx == null {
+    poke_ref(to, 65535, 0, 0);
+  } else {
+    poke_ref(to, c_vec_get_part(0, store, rec, pos, size, idx!), c_vec_get_part(1, store, rec, pos, size, idx!), c_vec_get_part(2, store, rec, pos, size, idx!));
+  }
+}
+#c_twin "loft_twin_vec_get_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn get_dbref_to(to: integer, store: integer, rec: integer, pos: integer, fld: integer) {
+  poke_ref(to, c_get_dbref_part(0, store, rec, pos, fld), c_get_dbref_part(1, store, rec, pos, fld), c_get_dbref_part(2, store, rec, pos, fld));
+}
+#c_twin "loft_twin_get_dbref_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_place_ref_part(store: integer, rec: integer, pos: integer, part: integer) -> integer;
+#c "loft_crt_place_ref_part" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+// `OpGetStackRef`'s answer (`place_ref`: the reference stored at `(store, rec, pos)`) written
+// at the address `to`.
+pub fn place_ref_to(to: integer, store: integer, rec: integer, pos: integer) {
+  poke_ref(to, c_place_ref_part(store, rec, pos, 0), c_place_ref_part(store, rec, pos, 1), c_place_ref_part(store, rec, pos, 2));
+}
+#c_twin "loft_twin_place_ref_to" "void(int64_t, int64_t, int64_t, int64_t)"
+
+fn c_slot_get_part(part: integer, s: integer, r: integer, p: integer, fld: integer) -> integer;
+#c "loft_crt_slot_get_part" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `OpGetSlotRef`'s answer (`slot_get`) written at the address `to`.
+pub fn slot_get_to(to: integer, s: integer, r: integer, p: integer, fld: integer) {
+  poke_ref(to, c_slot_get_part(0, s, r, p, fld), c_slot_get_part(1, s, r, p, fld), c_slot_get_part(2, s, r, p, fld));
+}
+#c_twin "loft_twin_slot_get_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 // `n` bytes moved from byte `from` to byte `to` of the address `base`, with no test of the
 // positions, as `peek_*` reads.
 pub fn move_bytes(base: integer, from: integer, to: integer, n: integer) {
@@ -710,6 +812,112 @@ pub fn stack_str_of_field(store: integer, at: integer, s: integer, r: integer, p
 // A `*_dest` native's write: `val` appended to the text the reference `(s, r, p)` names.
 pub fn ref_text_append(s: integer, r: integer, p: integer, val: text?) {
   c_ref_text_append(s, r, p, val ?? "", bytes_of(val));
+}
+
+fn c_view_measure(which: integer, store: integer, at: integer) -> integer;
+#c "loft_crt_view_measure" "int64_t(int64_t, int64_t, int64_t)"
+fn c_view_compare(which: integer, store: integer, a: integer, b: integer) -> integer;
+#c "loft_crt_view_compare" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+fn c_view_char(store: integer, at: integer, idx: integer) -> integer;
+#c "loft_crt_view_char" "int64_t(int64_t, int64_t, int64_t)"
+fn c_set_text_view(store: integer, rec: integer, pos: integer, fld: integer, stk: integer, at: integer, refill: boolean);
+#c "loft_crt_set_text_view" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_ref_text_append_view(s: integer, r: integer, p: integer, stk: integer, at: integer);
+#c "loft_crt_ref_text_append_view" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// A text view in its frame slot at `at` of the stack store, read in place (no text is copied
+// out): its bytes, its characters and whether it is a text at all — 0 and false for the null
+// text; two views compared; the character holding byte `idx` (0: none).
+pub fn view_size(store: integer, at: integer) -> integer {
+  c_view_measure(0, store, at)
+}
+
+pub fn view_length(store: integer, at: integer) -> integer {
+  c_view_measure(1, store, at)
+}
+
+pub fn view_some(store: integer, at: integer) -> boolean {
+  c_view_measure(2, store, at) != 0
+}
+
+pub fn view_eq(store: integer, a: integer, b: integer) -> boolean {
+  c_view_compare(0, store, a, b) != 0
+}
+
+pub fn view_lt(store: integer, a: integer, b: integer) -> boolean {
+  c_view_compare(1, store, a, b) != 0
+}
+
+pub fn view_le(store: integer, a: integer, b: integer) -> boolean {
+  c_view_compare(2, store, a, b) != 0
+}
+
+pub fn view_char(store: integer, at: integer, idx: integer?) -> integer {
+  if idx == null { 0 } else { c_view_char(store, at, idx!) }
+}
+
+fn c_view_search(which: integer, store: integer, at: integer, val: integer) -> integer;
+#c "loft_crt_view_search" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+fn c_view_byte(store: integer, at: integer, i: integer) -> integer;
+#c "loft_crt_view_byte" "int64_t(int64_t, int64_t, int64_t)"
+
+// The text natives on the views in their slots (`at`: the text, `val`: what is looked for):
+// the byte position of the first or (`last`) the last `val`, null for none; whether the text
+// starts or (`ends`) ends with it; the byte at `i`, 0 out of range.  A null text reads as the
+// empty one.
+pub fn view_find(store: integer, at: integer, val: integer, last: boolean) -> integer? {
+  c_view_search(if last { 1 } else { 0 }, store, at, val)
+}
+
+pub fn view_starts(store: integer, at: integer, val: integer, ends: boolean) -> boolean {
+  c_view_search(if ends { 3 } else { 2 }, store, at, val) != 0
+}
+
+pub fn view_byte(store: integer, at: integer, i: integer) -> integer {
+  c_view_byte(store, at, i)
+}
+
+// `OpSetText` (`refill`: `OpSetTextReplace`) of the view in the stack slot at `at`, and that
+// view appended to the text the reference `(s, r, p)` names.
+pub fn set_text_view(store: integer, rec: integer, pos: integer, fld: integer, stk: integer, at: integer, refill: boolean) {
+  c_set_text_view(store, rec, pos, fld, stk, at, refill);
+}
+
+pub fn ref_text_append_view(s: integer, r: integer, p: integer, stk: integer, at: integer) {
+  c_ref_text_append_view(s, r, p, stk, at);
+}
+
+fn c_c_call(stk: integer, top: integer, sym: text, symlen: integer, args: text, nargs: integer, ret_bits: integer, ret_signed: boolean, idx: integer, ok: vector<integer>) -> integer;
+#c "loft_crt_c_call" "int64_t(int64_t, int64_t, const char*, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t*, int64_t)"
+
+// A program's own `#c` binding called on its arguments under `top` (`State::c_call_native`):
+// the answer, `ok[0]` -1 where the symbol was not found.
+pub fn c_call(stk: integer, top: integer, sym: text, args: text, ret_bits: integer, ret_signed: boolean, idx: integer, ok: vector<integer>) -> integer {
+  c_c_call(stk, top, sym, sym.size(), args, args.size(), ret_bits, ret_signed, idx, ok)
+}
+
+fn c_view_float(stk: integer, at: integer) -> float;
+#c "loft_crt_view_float" "double(int64_t, int64_t)"
+fn c_view_single(stk: integer, at: integer) -> float;
+#c "loft_crt_view_single" "double(int64_t, int64_t)"
+
+// The view in its frame slot read as a float or a single, as `text as float` reads it: null
+// where it is not a number.
+pub fn view_float(stk: integer, at: integer) -> float {
+  c_view_float(stk, at)
+}
+
+pub fn view_single(stk: integer, at: integer) -> single {
+  c_view_single(stk, at) as single
+}
+
+fn c_ref_text_replace_view(s: integer, r: integer, p: integer, stk: integer, self_at: integer, val_at: integer, with_at: integer);
+#c "loft_crt_ref_text_replace_view" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `self.replace(value, with)` over the three views in their slots, appended to the text the
+// reference names; a null view is the empty text.
+pub fn ref_text_replace_view(s: integer, r: integer, p: integer, stk: integer, self_at: integer, val_at: integer, with_at: integer) {
+  c_ref_text_replace_view(s, r, p, stk, self_at, val_at, with_at);
 }
 
 // `OpClearStackText`: the text the reference `(s, r, p)` names emptied.
@@ -897,6 +1105,15 @@ pub fn store_buf(out: vector<integer>, store: integer, rec: integer, pos: intege
   c_store_buf(out, store, rec, pos, if only { 1 } else { 0 });
 }
 
+// `store_buf`'s answer written at the address `to` (`OpStoreBuf`'s arm).  The routine mints a
+// store, so the body calls it once and reads the answer from a vector of three.
+pub fn store_buf_to(to: integer, store: integer, rec: integer, pos: integer, only: boolean) {
+  out: vector<integer> = [65535, 0, 0];
+  c_store_buf(out, store, rec, pos, if only { 1 } else { 0 });
+  poke_ref(to, out[0] ?? 65535, out[1] ?? 0, out[2] ?? 0);
+}
+#c_twin "loft_twin_store_buf_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 // `OpAdoptChildRec`: the field's child record adopted from the value.
 pub fn adopt_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer) {
   c_adopt_child_rec(tp, fs, fr, fp, vs, vr, vp);
@@ -995,8 +1212,9 @@ pub fn log(sev: integer, m: text, f: text, line: integer) {
 }
 
 // `store_load_key(r, path, key)`: one record under an integer or a text key read from the image.
-pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text, is_text: boolean) -> boolean {
-  c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey, tkey.size(), if is_text { 1 } else { 0 }) != 0
+pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text?, is_text: boolean) -> boolean {
+  // A null key crosses as the null text (-1), the key the Rust native files under `STRING_NULL`.
+  c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey ?? "", bytes_of(tkey), if is_text { 1 } else { 0 }) != 0
 }
 
 // `store_load_keys(r, path, keys)`: every key of the vector read; how many records were.
@@ -1313,6 +1531,20 @@ pub fn stack_move(store: integer, from: integer, to: integer, n: integer) {
   c_stack_move(store, from, to, n);
 }
 
+// `stack_str` into the caller's scratch buffer `buf`, grown when the text is longer: no store
+// is made per call.
+pub fn stack_str_in(buf: vector<u8>, store: integer, at: integer) -> text? {
+  n = c_stack_str(buf, store, at);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf += room(n - len(buf));
+    n = c_stack_str(buf, store, at);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
 // The text the view at `at` shows, or null.
 pub fn stack_str(store: integer, at: integer) -> text? {
   buf = room(64);
@@ -1404,6 +1636,7 @@ pub fn get_float(store: integer, rec: integer, pos: integer, fld: integer, singl
 pub fn set_float(store: integer, rec: integer, pos: integer, fld: integer, v: float?, single: boolean) {
   c_set_float(store, rec, pos, fld, [v ?? 0.0], v == null, single);
 }
+#c_twin "loft_twin_set_float" "void(int64_t, int64_t, int64_t, int64_t, double, int64_t)"
 
 // `OpGetField`: the position of the record embedded at byte `fld` (`loft_field`); its store and
 // record are the host's own.
@@ -1720,10 +1953,28 @@ pub fn vec_push(which: integer, store: integer, rec: integer, pos: integer, min:
   c_vec_push(which, store, rec, pos, min, v ?? 0, v == null);
 }
 
+fn c_vec_elem_int(store: integer, rec: integer, pos: integer, size: integer, idx: integer, fld: integer) -> integer;
+#c "loft_crt_vec_elem_int" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_vec_elem_set_int(store: integer, rec: integer, pos: integer, size: integer, idx: integer, fld: integer, v: integer, is_null: boolean);
+#c "loft_crt_vec_elem_set_int" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// The integer field `fld` of element `idx` (`size` bytes each) of a vector, read and written
+// in one step: null where there is no such element or `idx` is null, and no write to one.
+pub fn vec_elem_int(store: integer, rec: integer, pos: integer, size: integer, idx: integer?, fld: integer) -> integer? {
+  if idx == null { null } else { c_vec_elem_int(store, rec, pos, size, idx!, fld) }
+}
+
+pub fn vec_elem_set_int(store: integer, rec: integer, pos: integer, size: integer, idx: integer?, fld: integer, v: integer?) {
+  if idx != null {
+    c_vec_elem_set_int(store, rec, pos, size, idx!, fld, v ?? 0, v == null);
+  }
+}
+
 // `OpPushFloat`, or with `single` `OpPushSingle`.
 pub fn vec_push_float(store: integer, rec: integer, pos: integer, v: float?, single: boolean) {
   c_vec_push_float(store, rec, pos, [v ?? 0.0], v == null, single);
 }
+#c_twin "loft_twin_vec_push_float" "void(int64_t, int64_t, int64_t, double, int64_t)"
 
 // `OpNewRecord` on a vector: a new element of `size` bytes at its end, into `out[0..3]`.
 pub fn vec_append(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer) {
@@ -1801,6 +2052,15 @@ pub fn key_float(v: float?, single: boolean) {
 
 pub fn key_text(v: text?) {
   c_key_text(v ?? "", bytes_of(v));
+}
+
+fn c_key_view(store: integer, at: integer);
+#c "loft_crt_key_view" "void(int64_t, int64_t)"
+
+// A text part as the view in the frame slot at `at` of the stack store, not copied: for a key
+// the operator reads before it pops the slot.
+pub fn key_view(store: integer, at: integer) {
+  c_key_view(store, at);
 }
 
 // `OpGetRecord` on a hash of type `tp`: the record keyed by the top `n` parts, into `out[0..3]`,
@@ -1933,6 +2193,17 @@ pub fn show_leaf(kind: integer, store: integer, rec: integer, pos: integer, fmt:
   n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
   if n > len(buf) {
     buf = room(n);
+    n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// `show_leaf` through the caller's buffer `buf`, grown when the rendering is longer: no store is
+// made per field rendered.
+pub fn show_leaf_in(buf: vector<u8>, kind: integer, store: integer, rec: integer, pos: integer, fmt: integer, min: integer, nullable: boolean) -> text {
+  n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
+  if n > len(buf) {
+    buf += room(n - len(buf));
     n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
   }
   text_from_byte_range(buf, 0, n)
@@ -2165,6 +2436,22 @@ pub fn arguments_into(out: vector<integer>) {
   c_arguments(out);
 }
 
+fn c_panic(msg: text, mlen: integer, file: text, flen: integer, line: integer);
+#c "loft_crt_panic" "void(const char*, int64_t, const char*, int64_t, int64_t)"
+
+// `panic` reported at the place given — the interpreted program's, not this caller's.
+pub fn panic_at(message: text, file: text, line: integer) {
+  c_panic(message, message.size(), file, file.size(), line);
+}
+
+fn c_env_variables(out: vector<integer>, size: integer) -> integer;
+#c "loft_crt_env_variables" "int64_t(int64_t*, int64_t, int64_t)"
+
+// `env_variables()` in the program's stores: `EnvVariable` records of `size` bytes, into `out`.
+pub fn env_variables_into(out: vector<integer>, size: integer) {
+  c_env_variables(out, size);
+}
+
 fn c_add_type_name(v: text, bytes: integer);
 #c "loft_crt_add_type_name" "void(const char*, int64_t)"
 
@@ -2305,4 +2592,40 @@ fn c_body_call_dest(entry: integer, stk: integer, sp: integer, s: integer, r: in
 // appended to the text `(s, r, p)` names, nothing pushed; the new top is the arguments' base.
 pub fn body_call_dest(entry: integer, stk: integer, sp: integer, s: integer, r: integer, p: integer) -> integer {
   c_body_call_dest(entry, stk, sp, s, r, p)
+}
+
+// ── The engine-host kernel (`lib/engine_host`, the C runtime's `loft_engine.h`) ──────────────────
+
+fn c_kernel(which: integer, a: integer, b: integer, s: text, slen: integer) -> integer;
+#c "loft_crt_kernel" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t)"
+
+// Kernel routine `which` (`natives::KERNEL_*`) on integer operands `a`, `b` and text `t`: its
+// scalar answer (a boolean as 0 / 1; 0 for a routine that answers nothing).
+pub fn kernel(which: integer, a: integer, b: integer, t: text) -> integer {
+  c_kernel(which, a, b, t, t.size())
+}
+
+fn c_kernel_text(out: vector<u8>, cap: integer, which: integer) -> integer;
+#c "loft_crt_kernel_text" "int64_t(char*, int64_t, int64_t)"
+
+// A kernel routine's text answer (`which`: 0 the event payload, 1 the sync payload, 2 and 3 the
+// client's, 4 the default host), read through the kept buffer `buf`; null for the null text.
+pub fn kernel_text(buf: vector<u8>, which: integer) -> text? {
+  n = c_kernel_text(buf, len(buf), which);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf += room(n - len(buf));
+    n = c_kernel_text(buf, len(buf), which);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+fn c_kernel_fetch(m: text, ml: integer, u: text, ul: integer, b: text, bl: integer, h: text, hl: integer) -> integer;
+#c "loft_crt_kernel_fetch" "int64_t(const char*, int64_t, const char*, int64_t, const char*, int64_t, const char*, int64_t)"
+
+// `http_fetch(method, url, body, headers)`: the request's id.
+pub fn kernel_fetch(m: text, u: text, b: text, h: text) -> integer {
+  c_kernel_fetch(m, m.size(), u, u.size(), b, b.size(), h, h.size())
 }

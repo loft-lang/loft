@@ -1,5 +1,5 @@
 diff --git a/src/c/bodies.rs b/src/c/bodies.rs
-index c065880bf..d7580098a 100644
+index 2e4950fc8..5bd7b1c06 100644
 --- a/src/c/bodies.rs
 +++ b/src/c/bodies.rs
 @@ -45,17 +45,12 @@
@@ -221,10 +221,10 @@ index c065880bf..d7580098a 100644
          e,
          "    memcpy(loft_crt_slot_at(stk, base), &r, sizeof r);\n    return base + {};\n}}",
 diff --git a/src/c/body.rs b/src/c/body.rs
-index 999ce42b9..3dc8671d7 100644
+index f980cbde7..53b20eb12 100644
 --- a/src/c/body.rs
 +++ b/src/c/body.rs
-@@ -9289,42 +9289,6 @@ impl<'a> FnWriter<'a> {
+@@ -9360,42 +9360,6 @@ impl<'a> FnWriter<'a> {
          crate::opt::range::op_range_at_site(self.cx.data, &facts.0, ranges, name, args).is_some()
      }
  
@@ -267,7 +267,7 @@ index 999ce42b9..3dc8671d7 100644
      /// This function's non-sentinel and range facts (`non_sentinel_vars`, `range_vars`), a
      /// `__nn` twin's seeded parameters included; computed once.
      fn nn_facts(
-@@ -9353,7 +9317,6 @@ impl<'a> FnWriter<'a> {
+@@ -9424,7 +9388,6 @@ impl<'a> FnWriter<'a> {
                      &self.char_walks,
                      &self.rg_seed,
                  );
@@ -276,7 +276,7 @@ index 999ce42b9..3dc8671d7 100644
                  self.range_facts = Some(f.clone());
                  f
 diff --git a/src/c/mod.rs b/src/c/mod.rs
-index 17ff56ff6..454c716cc 100644
+index 93eea9421..885b15ae4 100644
 --- a/src/c/mod.rs
 +++ b/src/c/mod.rs
 @@ -2023,7 +2023,6 @@ pub fn emit_unit_for(
@@ -400,19 +400,17 @@ index 17ff56ff6..454c716cc 100644
  /// `@FR-R-Inline`: a function of at most twelve statements is declared `inline`.  The hint
  /// raises the compiler's inlining budget for it, so a small helper called from a hot loop —
  /// a push through `put`, an accessor — is taken into its caller, and the caller's locals stay
-@@ -3252,10 +3145,6 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
-         return Err("parameters that do not match their arguments".into());
+@@ -3253,8 +3146,6 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
      }
      let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
--    if mask == 0 {
+     if mask == 0 {
 -        trace_shapes(cx, d, &shapes);
 -        trace_counters(cx, d);
--    }
-     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
-     // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
-     let apr_at = if mask & APR_BIT == 0 {
+         body::trace_texts(cx, d);
+         // `LOFT_TRACE_WRITES=1` — may a call of this function write a store (`call_keeps_stores`,
+         // negated)?  A layer of the loft-written generator's comparison.
 diff --git a/src/data.rs b/src/data.rs
-index 5c15b54f7..934986d50 100644
+index a77fbc0d0..0b59bba8e 100644
 --- a/src/data.rs
 +++ b/src/data.rs
 @@ -6829,23 +6829,6 @@ impl Data {
@@ -440,7 +438,7 @@ index 5c15b54f7..934986d50 100644
      /// template: parse-time state the IR bundle does not carry, so the program cache's
      /// manifest writes it and a warm load replays it (`startup_cache`).
 diff --git a/src/data_store.rs b/src/data_store.rs
-index 92faaa8b0..83534f4a3 100644
+index ad321823c..9959f267d 100644
 --- a/src/data_store.rs
 +++ b/src/data_store.rs
 @@ -318,7 +318,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
@@ -460,7 +458,7 @@ index 92faaa8b0..83534f4a3 100644
  
  /// `Data` record (the root).
  pub(crate) const DATA_SOURCE: u32 = 0;
-@@ -1709,7 +1708,6 @@ mod tests {
+@@ -1716,7 +1715,6 @@ mod tests {
          );
          assert_eq!(pos(ids.definition, "op_hot"), DEF_OP_HOT);
          assert_eq!(pos(ids.definition, "op_cold"), DEF_OP_COLD);
@@ -489,7 +487,7 @@ index 7c3a79dac..8b93d69dd 100644
      // them to recreate the cross-source `def_names` bindings (loft#1359).
      let imports = r.field_recvec(ds::DATA_IMPORTS, ds::IMPORT_STRIDE);
 diff --git a/src/ir_schema_gen.rs b/src/ir_schema_gen.rs
-index f489797a1..54add69c9 100644
+index fdab12479..adf4259cb 100644
 --- a/src/ir_schema_gen.rs
 +++ b/src/ir_schema_gen.rs
 @@ -757,7 +757,6 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
@@ -501,7 +499,7 @@ index f489797a1..54add69c9 100644
      let _ = t128; // may be unused
      let t129 = db.vector(t79);
 diff --git a/src/ir_store.rs b/src/ir_store.rs
-index 99382c386..bb2e532b9 100644
+index cda072fa4..442079d3b 100644
 --- a/src/ir_store.rs
 +++ b/src/ir_store.rs
 @@ -416,8 +416,7 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
@@ -527,10 +525,10 @@ index 99382c386..bb2e532b9 100644
      // The import tables: `rebuild_indices` reconstructs `def_names` under each
      // definition's OWN source and then REPLAYS these, so an image without them
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index a7fe2361a..c51380edf 100644
+index e50684522..b47a63d59 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -3933,7 +3933,7 @@ use #count instead"
+@@ -3941,7 +3941,7 @@ use #count instead"
      pub(crate) fn keyed_snapshot(
          &mut self,
          expr: &mut Value,
@@ -539,7 +537,7 @@ index a7fe2361a..c51380edf 100644
          is_par: bool,
      ) -> Option<(u16, Value)> {
          let mut fill = Value::Null;
-@@ -3957,14 +3957,6 @@ use #count instead"
+@@ -3965,14 +3965,6 @@ use #count instead"
              let is_radix = matches!(in_type.base(), Type::Radix(_, _, _) | Type::Trie(_, _, _));
              let scratch_tp = Type::Reference(content, dep.clone());
              let scratch_var = self.create_unique("hash_scratch", &scratch_tp);
@@ -554,7 +552,7 @@ index a7fe2361a..c51380edf 100644
              let hash_tp_id = self.get_type(in_type);
              let tp_arg = if hash_tp_id == u16::MAX {
                  0
-@@ -4427,8 +4419,7 @@ use #count instead"
+@@ -4435,8 +4427,7 @@ use #count instead"
              // (`OpFreeScratch`, a no-op when co-located).  u16::MAX = not on=4.
              let is_par = matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
              let mut hash_scratch_var: u16 = u16::MAX;
@@ -565,10 +563,10 @@ index a7fe2361a..c51380edf 100644
                  hash_scratch_var = scratch_var;
                  fill = snapshot;
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index a5f95f4e5..909451c58 100644
+index 7d5a7e6ad..5ab00facf 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -23021,28 +23021,6 @@ impl Parser {
+@@ -23043,28 +23043,6 @@ impl Parser {
                                  // by the zero-trust consumer as a one-line accessor that
                                  // silently corrupted its result.
                                  || self.return_projects_into_local(&v)
@@ -598,20 +596,10 @@ index a5f95f4e5..909451c58 100644
                                  // view of the record the literal minted (`__vdb_N`), which the
                                  // frame frees on this path, so it must reach the caller's buffer
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index ee1125562..f856a3f98 100644
+index 430e24833..230227a68 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -5313,9 +5313,6 @@ use a separate collection or add after the loop"
-         // program compiles today and keeps its binding (and its loop-record admission).
-         // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
-         // A loop's VARIABLE is never that body local: its binding ended with its own loop.
--        // The same note before that filter: the per-loop split asks it too, of a bind that
--        // differs from the ended one only in absence.
--        let ended_any = self.bind_after_end.map(|(v, _)| v);
-         let ended_bind = self
-             .bind_after_end
-             .take()
-@@ -5516,14 +5513,9 @@ use a separate collection or add after the loop"
+@@ -5528,14 +5528,9 @@ use a separate collection or add after the loop"
              && ended_bind == Some(var_nr)
              && (ended_loop_var
                  || (!s_type.is_unknown()
@@ -628,27 +616,21 @@ index ee1125562..f856a3f98 100644
          {
              var_nr = self.rebind_after_block(var_nr, &s_type);
              new_binding = Value::Var(var_nr);
-@@ -7210,18 +7202,9 @@ use a separate collection or add after the loop"
-             && cur_loop != u16::MAX
-             && born_in != u16::MAX
-             && born_in != cur_loop
+@@ -7229,12 +7224,9 @@ use a separate collection or add after the loop"
+             // TInt { min: 50 } }`) became a binding of that block, and the read after the
+             // block was refused as out of scope.
+             && ended_any == Some(var_nr)
 -            && (self
 +            && self
                  .vars
                  .retype_would_be_refused(var_nr, &s_type, &self.data)
--                // The other loop's binding has ENDED (`@FR-B-Scope`: its body local cannot
--                // be read here), so a bind that differs from it in absence starts a binding
--                // too: `@FR-N-Join` joins the writes of one binding, not of two loops.  Asked
--                // of a binding the name's own resolution saw ended (`bind_after_end`): a loop
--                // NUMBER is not the same on both passes, so `born_in` alone also holds for
--                // the live binding of this very loop, whose non-null write into its `τ?` is
--                // the join itself.
--                || (ended_any == Some(var_nr)
--                    && self.vars.rebind_differs_in_absence(var_nr, &s_type)))
+-                // A bind that differs from the ended one in absence starts a binding too:
+-                // `@FR-N-Join` joins the writes of one binding, not of two loops.
+-                || self.vars.rebind_differs_in_absence(var_nr, &s_type))
          {
              // The SOURCE spelling, not the bound one.  A variable already split once is
              // named `e#b1`, and registering the next split under that would key the third
-@@ -7233,10 +7216,6 @@ use a separate collection or add after the loop"
+@@ -7246,10 +7238,6 @@ use a separate collection or add after the loop"
              var_nr = self
                  .vars
                  .body_local_binding(&name, var_nr, &s_type, &mut self.lexer);
@@ -697,10 +679,10 @@ index 3135bc647..a42869577 100644
              if t != Type::Null
                  && !self.convert_store(
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index d12dd9c61..16a9c4d7b 100644
+index fa9d494ff..64f3ded88 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -3966,7 +3966,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -3965,7 +3965,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
              in_type = in_type.depending(vec_var);
              fill = v_set(vec_var, expr);
              expr = Value::Var(vec_var);
@@ -710,10 +692,10 @@ index d12dd9c61..16a9c4d7b 100644
              fill = snapshot;
          }
 diff --git a/src/value_record.rs b/src/value_record.rs
-index e3048aa37..22382b1b6 100644
+index fcea65a24..f7b37fa0a 100644
 --- a/src/value_record.rs
 +++ b/src/value_record.rs
-@@ -2788,13 +2788,7 @@ impl Exits<'_> {
+@@ -2875,13 +2875,7 @@ impl Exits<'_> {
                  Value::Call(op, a) if *op == ops.ref_alias
                      && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(b) if *b == buf))));
              let guard = matches!(o.unspan(), Value::If(cond, ..) if is_buffer_guard(o.unspan(), cond, buf, ops));
@@ -728,7 +710,7 @@ index e3048aa37..22382b1b6 100644
                  continue;
              }
              if tail && Some(i) == final_at && !matches!(o.unspan(), Value::Return(_)) {
-@@ -2820,19 +2814,6 @@ impl Exits<'_> {
+@@ -2907,19 +2901,6 @@ impl Exits<'_> {
              self.mv(n.unspan_mut(), r, vars);
              return;
          }

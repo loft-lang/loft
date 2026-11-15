@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-R-ValueRecord`, `(R-ValueLocal)`'s parameter gate — a small record parameter travels as
+// the tuple of its fields unless the body, with every function it calls, may write a record
+// of ITS TYPE that exists before the call.  The walk keys a write by record type: storing a
+// text, rebinding a variable, clearing or appending to a vector that holds no `V` write no
+// `V`; a vector, a hash, an inline holder or a struct enum that holds one does.  A call back
+// into a function still being walked adds nothing beyond that function's own walk, and an
+// answer that leans on an open walk is not kept for later callers.  A parameter that aliases
+// the record a callee writes must read the write back, which a tuple copy could not.
+//
+// The values, by hand, beside each assert.
+//
+// @falsified-at: hand-measured (2026-11-15) — with the walk keeping a provisional answer
+// (`memo.insert` without the `assumed.is_empty()` test) `hz(e, e, 1, t)` answered 21 for 29 on
+// `--interpret`: `hz`'s `p` passed the gate as a tuple and read its field before `gb` wrote it.
+
+struct V { x: integer, y: integer, z: integer }
+struct H { v: V, n: text }
+enum E { Plain, Held { v: V } }
+
+fn c1(p: V, t: vector<text>) -> integer { t += ["a"]; t[0] = "b"; p.x + p.y + p.z + len(t) }
+fn c2(p: V, t: vector<text>) -> integer { t.clear(); p.x * 2 + len(t) }
+fn c3(p: V, w: vector<V>) -> integer { s = p.x; w.clear(); s + len(w) }
+fn c4(p: V, w: vector<H>) -> integer { s = p.y; w.clear(); s + len(w) }
+fn c5(p: V, w: hash<V[x]>) -> integer { s = p.z; w[9] = null; s }
+fn c6(p: V, q: V) -> integer { q.x = 5; p.x }
+fn c8(p: V, w: vector<E>) -> integer { s = p.x; w.clear(); s + len(w) }
+
+// The write inside the recursion, through an aliased parameter.
+fn r9(p: V, w: V, n: integer) -> integer { if n == 0 { w.x = 5; return p.x; } r9(p, w, n - 1) }
+// A mutual recursion that writes nothing.
+fn ra(p: V, n: integer) -> integer { if n == 0 { p.x } else { rb(p, n - 1) + 1 } }
+fn rb(p: V, n: integer) -> integer { ra(p, n) }
+// A mutual recursion with the write in the other function.
+fn fa(p: V, w: V, n: integer) -> integer { if n == 0 { p.x } else { fb(p, w, n - 1) } }
+fn fb(p: V, w: V, n: integer) -> integer { w.x = 9; fa(p, w, n) }
+
+// `hx` is walked first and enters the cycle through `ga`, so `gb` is walked while `ga` is
+// open; `hz`, walked after, reads its `p` after `gb`, which it hands only `w`.  The text
+// appends route these bodies through the walk the typed write set cannot do.
+fn hx(p: V, w: V, n: integer, t: vector<text>) -> integer { ga(p, w, n, t) }
+fn ga(p: V, w: V, n: integer, t: vector<text>) -> integer { t += ["a"]; if n == 0 { return p.x; } r = gb(p, w, n - 1, t); w.x = 9; r + p.x }
+fn gb(p: V, w: V, n: integer, t: vector<text>) -> integer { t += ["b"]; s = ga(p, w, n, t); s + p.x }
+fn hz(p: V, w: V, n: integer, t: vector<text>) -> integer { s = gb(w, w, n, t); s + p.x }
+
+// A tuple carrier handed on to a tuple parameter, alone, in a loop, through recursion.
+fn mv(p: V, d: integer) -> V { V { x: p.x + d, y: p.y * 2, z: p.z - d } }
+fn take(p: V, t: vector<text>) -> integer { t += ["k"]; p.x * 100 + p.y * 10 + p.z }
+fn l1(p: V, t: vector<text>) -> integer { q = mv(p, 1); take(q, t) + take(q, t) }
+fn l2(p: V, t: vector<text>) -> integer { s = 0; for i in 0..3 { q = mv(p, i); s += take(q, t); } s }
+fn rt(p: V, t: vector<text>, n: integer) -> integer { if n == 0 { take(p, t) } else { take(p, t) + rt(p, t, n - 1) } }
+fn l4(p: V, t: vector<text>) -> integer { rt(mv(p, 1), t, 2) }
+
+fn main() {
+  a = V { x: 11, y: 22, z: 33 };
+  t: vector<text> = ["q"];
+  // 11 + 22 + 33 + 2 elements.
+  assert(c1(a, t) == 68 && t[0] == "b" && len(t) == 2, "c1 {t[0]} {len(t)}");
+  assert(c2(a, t) == 22 && len(t) == 0, "c2");
+  vs = [V { x: 3, y: 4, z: 5 }];
+  assert(c3(a, vs) == 11 && len(vs) == 0, "c3");
+  hs = [H { v: V { x: 6, y: 7, z: 8 }, n: "h" }];
+  assert(c4(a, hs) == 22 && len(hs) == 0, "c4");
+  hh: hash<V[x]> = [V { x: 9, y: 1, z: 2 }];
+  assert(c5(a, hh) == 33, "c5");
+  b = V { x: 1, y: 2, z: 3 };
+  // `p` and `q` name one record: the write is read back.
+  assert(c6(b, b) == 5 && b.x == 5, "c6 {b.x}");
+  es = [Held { v: V { x: 4, y: 4, z: 4 } }];
+  assert(c8(a, es) == 11 && len(es) == 0, "c8");
+  b9 = V { x: 1, y: 2, z: 3 };
+  assert(r9(b9, b9, 3) == 5 && b9.x == 5, "r9");
+  // 11 + three `+ 1`.
+  assert(ra(a, 3) == 14, "ra");
+  d = V { x: 1, y: 2, z: 3 };
+  assert(fa(d, d, 1) == 9 && d.x == 9, "fa");
+  g = V { x: 1, y: 2, z: 3 };
+  tg: vector<text> = [];
+  // gb(1): ga(1) -> gb(0) -> ga(0) = 1; gb(0) = 2; ga(1) writes 9: 2 + 9 = 11; gb(1) = 11 + 9.
+  assert(gb(g, g, 1, tg) == 20 && g.x == 9 && len(tg) == 4, "gb {len(tg)}");
+  e = V { x: 1, y: 2, z: 3 };
+  // As gb(1) above, 20, then hz's own p reads the 9 gb wrote: 29.
+  got = hz(e, e, 1, tg);
+  assert(got == 29 && e.x == 9 && len(tg) == 8, "hz {got}");
+  assert(hx(e, e, 0, tg) == 9, "hx");
+  tl: vector<text> = [];
+  // mv(a, 1) = (12, 44, 32): 1200 + 440 + 32 = 1672, twice.
+  assert(l1(a, tl) == 3344 && len(tl) == 2, "l1");
+  // (11, 44, 33) 1573 + (12, 44, 32) 1672 + (13, 44, 31) 1771.
+  assert(l2(a, tl) == 5016 && len(tl) == 5, "l2");
+  // 1672 three times.
+  assert(l4(a, tl) == 5016 && len(tl) == 8, "l4");
+}

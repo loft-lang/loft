@@ -1,0 +1,207 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/tabulate.rs`: `@FR-R-Tabulate`, a branchy classifier of a byte
+// answered from a table.  A function of one integer answering an integer, whose body this
+// evaluator can run, is evaluated for every argument in `0..256`; an argument whose evaluation
+// would overflow, answer null or reach a node the evaluator does not model declines the whole
+// function.
+
+use ir;
+use binds;
+use opt_non_sentinel;
+
+// The arguments a table covers: a byte.
+pub const DOMAIN = 256;
+// The branches a body takes at least before a table pays for its load.
+const MIN_BRANCHES = 8;
+
+const OUT_INT = 0;
+const OUT_BOOL = 1;
+const OUT_UNIT = 2;
+const OUT_RETURN = 3;
+
+// What a node evaluates to (`Out`): an integer, a boolean, nothing, or a `return` that ends
+// the body.
+struct Out {
+  kind: integer,
+  value: integer,
+  on: boolean,
+}
+
+// The locals of one evaluation, by variable number.
+struct Env {
+  set: vector<boolean>,
+  value: vector<integer>,
+}
+
+// Plain `integer`: the 64-bit value the writers carry, null its sentinel.
+fn plain_integer(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec } => spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295),
+    _ => false,
+  }
+}
+
+fn int_out(v: integer?) -> Out? {
+  if v == null {
+    return null;
+  }
+  Out { kind: OUT_INT, value: v, on: false }
+}
+
+fn unit_out() -> Out? {
+  Out { kind: OUT_UNIT, value: 0, on: false }
+}
+
+fn return_out(v: integer) -> Out? {
+  Out { kind: OUT_RETURN, value: v, on: false }
+}
+
+fn bool_out(on: boolean) -> Out? {
+  Out { kind: OUT_BOOL, value: 0, on: on }
+}
+
+// An operand that must be an integer, or null.
+fn int_of(defs: vector<ir::Definition>, v: ir::Node, env: Env) -> integer? {
+  o = eval(defs, v, env) ?? return null;
+  if o.kind == OUT_INT { o.value } else { null }
+}
+
+// `eval`: `v` evaluated with the locals in `env`, or null for anything the evaluator does
+// not model, an overflow, or a null.
+fn eval(defs: vector<ir::Definition>, v: ir::Node, env: Env) -> Out? {
+  match v {
+    NdSpan { pos: _, inner } => eval(defs, inner, env),
+    NdLine { n: _ } => unit_out(),
+    NdNull => unit_out(),
+    NdInt { n } => int_out(n),
+    NdLong { n } => int_out(n),
+    NdBoolean { b } => bool_out(b),
+    NdVar { n } => if env.set[n] ?? false { int_out(env.value[n]!) } else { null },
+    NdSet { var, inner } => {
+      val = int_of(defs, inner, env) ?? return null;
+      if var < 0 || var >= len(env.set) {
+        return null;
+      }
+      env.set[var] = true;
+      env.value[var] = val;
+      unit_out()
+    },
+    NdReturn { inner } => {
+      val = int_of(defs, inner, env) ?? return null;
+      return_out(val)
+    },
+    NdIf { cond, t, f } => {
+      test = eval(defs, cond, env) ?? return null;
+      if test.kind != OUT_BOOL {
+        return null;
+      }
+      if test.on {
+        return eval(defs, t, env);
+      }
+      eval(defs, f, env)
+    },
+    NdBlock { block } => {
+      last = Out { kind: OUT_UNIT, value: 0, on: false };
+      for op in block[0].operators {
+        step = eval(defs, op, env) ?? return null;
+        last = step;
+        if last.kind == OUT_RETURN {
+          return last;
+        }
+      }
+      last
+    },
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(defs) {
+        return null;
+      }
+      name = defs[def_nr]!.name;
+      if name == "OpMinSingleInt" {
+        if len(args) != 1 {
+          return null;
+        }
+        a = int_of(defs, args[0], env) ?? return null;
+        return int_out(-a);
+      }
+      modelled = name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable" || name == "OpMulIntNullable" || name == "OpEqInt" || name == "OpNeInt" || name == "OpLtInt" || name == "OpLeInt" || name == "OpGtInt" || name == "OpGeInt" || name == "OpLandInt" || name == "OpLorInt" || name == "OpEorInt";
+      if !modelled || len(args) != 2 {
+        return null;
+      }
+      a = int_of(defs, args[0], env) ?? return null;
+      b = int_of(defs, args[1], env) ?? return null;
+      if name == "OpAddInt" || name == "OpAddIntNullable" {
+        int_out(a + b)
+      } else if name == "OpMinInt" || name == "OpMinIntNullable" {
+        int_out(a - b)
+      } else if name == "OpMulInt" || name == "OpMulIntNullable" {
+        int_out(a * b)
+      } else if name == "OpLandInt" {
+        int_out(a & b)
+      } else if name == "OpLorInt" {
+        int_out(a | b)
+      } else if name == "OpEorInt" {
+        int_out(a ^ b)
+      } else if name == "OpEqInt" {
+        bool_out(a == b)
+      } else if name == "OpNeInt" {
+        bool_out(a != b)
+      } else if name == "OpLtInt" {
+        bool_out(a < b)
+      } else if name == "OpLeInt" {
+        bool_out(a <= b)
+      } else if name == "OpGtInt" {
+        bool_out(a > b)
+      } else {
+        bool_out(a >= b)
+      }
+    },
+    _ => null,
+  }
+}
+
+// `table`: the table of function `d` — its answer for every argument in `0..DOMAIN` — or an
+// empty vector when `d` is not such a classifier or one evaluation declines.
+pub fn table(b: ir::Bundle, d: integer) -> vector<integer> {
+  if (env_variable("LOFT_NO_TABULATE") ?? "0") != "0" || d < 0 || d >= len(b.data.definitions) {
+    return [];
+  }
+  def = b.data.definitions[d]!;
+  if !opt_non_sentinel::has_body(def) || def.rust != "" || len(def.attributes) != 1 || len(def.returned) == 0 {
+    return [];
+  }
+  param = def.attributes[0];
+  if param.hidden || !plain_integer(param.typedef[0]!) || !plain_integer(def.returned[0]!) {
+    return [];
+  }
+  count = len(def.variables.variables);
+  p = binds::var_named(def.variables, param.name);
+  if p < 0 || p >= count {
+    return [];
+  }
+  code = def.code[0]!;
+  branches = [0];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdIf { cond: _, t: _, f: _ } => branches[0] = branches[0]! + 1,
+      _ => {},
+    }
+  });
+  if branches[0]! < MIN_BRANCHES {
+    return [];
+  }
+  out: vector<integer> = [];
+  for arg in 0..DOMAIN {
+    env = Env { set: [for _ in 0..count { false }], value: [for _ in 0..count { 0 }] };
+    env.set[p] = true;
+    env.value[p] = arg;
+    answer = eval(b.data.definitions, code, env) ?? return [];
+    if answer.kind != OUT_INT && answer.kind != OUT_RETURN {
+      return [];
+    }
+    out += [answer.value];
+  }
+  out
+}

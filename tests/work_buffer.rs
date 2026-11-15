@@ -117,14 +117,30 @@ fn refs_in(trace: &str, name: &str) -> (Vec<String>, Vec<String>) {
     (promoted, kept)
 }
 
-/// The IR header of `fn <name>(…)`: its parameter list as printed.
+/// The IR header of `fn <name>(…)`: its parameter list as printed, up to the `)` that closes
+/// it — a tuple parameter's type (`var_self: (i64,)`) holds parentheses of its own.
 fn header_of<'a>(ir: &'a str, name: &str) -> &'a str {
     let head = format!("\nfn {name}(");
     let start = ir
         .find(&head)
         .unwrap_or_else(|| panic!("{name} was not printed"));
     let rest = &ir[start + head.len()..];
-    let end = rest.find(')').unwrap_or(rest.len());
+    let mut depth = 0usize;
+    let end = rest
+        .char_indices()
+        .find(|&(_, c)| match c {
+            '(' => {
+                depth += 1;
+                false
+            }
+            ')' if depth == 0 => true,
+            ')' => {
+                depth -= 1;
+                false
+            }
+            _ => false,
+        })
+        .map_or(rest.len(), |(i, _)| i);
     &rest[..end]
 }
 

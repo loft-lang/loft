@@ -1,0 +1,294 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-FileHold` (`src/lower/file_hold.rs`, `src/c/body/files.rs`): a
+// loop that reads one `File` nothing else in it can see holds the file's cursor for its run
+// and gives it back on every exit; its typed reads go through the held cursor.
+
+use ir;
+use cgen_w::*;
+use cgen_fn;
+use loop_shape;
+use opt_non_sentinel;
+
+fn def_named(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// `holds_file`: can a value of type `tp` hold or reach a `File`?  `seen` is per definition 0
+// unasked, 1 no (or being asked), 2 yes.
+fn holds_file(b: ir::Bundle, file: integer, tp: ir::TypeT, seen: vector<integer>) -> boolean {
+  match tp {
+    TyNull => false,
+    TyVoid => false,
+    TyNever => false,
+    TyInteger { spec: _ } => false,
+    TyBoolean => false,
+    TyFloat => false,
+    TySingle => false,
+    TyCharacter => false,
+    TyText { dep: _ } => false,
+    TyKeys => false,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TyReference { n, dep: _ } => record_holds_file(b, file, n, seen),
+    TySorted { n, keys: _, dep: _ } => record_holds_file(b, file, n, seen),
+    TyIndex { n, keys: _, dep: _ } => record_holds_file(b, file, n, seen),
+    TyRadix { n, names: _, dep: _ } => record_holds_file(b, file, n, seen),
+    TyHash { n, names: _, dep: _ } => record_holds_file(b, file, n, seen),
+    TyTrie { n, key: _, dep: _ } => record_holds_file(b, file, n, seen),
+    TyRefVar { inner } => holds_file(b, file, inner, seen),
+    TyVector { inner, dep: _ } => holds_file(b, file, inner, seen),
+    TyOptional { inner } => holds_file(b, file, inner, seen),
+    TyRewritten { inner } => holds_file(b, file, inner, seen),
+    TyTuple { elems } => {
+      for t in elems {
+        if holds_file(b, file, t, seen) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => true,
+  }
+}
+
+fn record_holds_file(b: ir::Bundle, file: integer, d: integer, seen: vector<integer>) -> boolean {
+  if d == file {
+    return true;
+  }
+  if d < 0 || d >= len(b.data.definitions) {
+    return true;
+  }
+  if seen[d]! != 0 {
+    return seen[d]! == 2;
+  }
+  seen[d] = 1;
+  holds = false;
+  for a in b.data.definitions[d]!.attributes {
+    if !holds && holds_file(b, file, a.typedef[0] ?? ir::TyVoid, seen) {
+      holds = true;
+    }
+  }
+  seen[d] = if holds { 2 } else { 1 };
+  holds
+}
+
+// The variable `OpCreateStack(Var)` names, -1 for another node.
+fn stack_var(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if cgen_fn::def_name(b, def_nr) != "OpCreateStack" || len(args) != 1 {
+        return -1;
+      }
+      match args[0] {
+        NdVar { n } => n,
+        _ => -1,
+      }
+    },
+    _ => -1,
+  }
+}
+
+// `held_read_shape`: the width of a typed integer read through a held cursor — negative for
+// a signed one — 0 where the read is none.
+fn read_shape(x: Cx, w: W, args: vector<ir::Node>) -> integer {
+  if len(args) != 4 {
+    return 0;
+  }
+  var = stack_var(x.b, args[1]);
+  if var < 0 || (w.shapes[var] ?? "") != "int" {
+    return 0;
+  }
+  n = match loop_shape::unspan(args[2]) {
+    NdInt { n: k } => k,
+    NdLong { n: k } => k ?? -1,
+    _ => -1,
+  };
+  tp = match loop_shape::unspan(args[3]) {
+    NdInt { n: k } => k,
+    _ => return 0,
+  };
+  width = 0;
+  signed = true;
+  if tp == 0 || tp == 1 {
+    width = 8;
+  } else if tp == 4 || tp == 6 || tp < 0 || tp >= len(x.b.types) {
+    return 0;
+  } else {
+    match x.b.types[tp].parts[0] {
+      PtByte { start, nullable: _ } => {
+        width = 1;
+        signed = start < 0;
+      },
+      PtShort { start, nullable: _ } => {
+        width = 2;
+        signed = start < 0;
+      },
+      PtShortRaw { start, nullable: _ } => {
+        width = 2;
+        signed = start < 0;
+      },
+      PtInt { start: _, nullable: _ } => { width = 4; },
+      _ => {},
+    }
+  }
+  if width == 0 || n != width {
+    return 0;
+  }
+  if signed { -width } else { width }
+}
+
+// `held_float_shape`: an eight-byte float read.
+fn float_shape(x: Cx, w: W, args: vector<ir::Node>) -> boolean {
+  if len(args) != 4 {
+    return false;
+  }
+  var = stack_var(x.b, args[1]);
+  var >= 0 && (w.shapes[var] ?? "") == "float" && loop_shape::unspan(args[2]) == NdInt { n: 8 } && loop_shape::unspan(args[3]) == NdInt { n: 3 }
+}
+
+// `held_file`: the one `File` loop `lp` reads and nothing else in it can see, -1 for none.
+fn held_file(x: Cx, w: W, lp: ir::Block) -> integer {
+  file = def_named(x.b, "File");
+  if file < 0 || def_named(x.b, "OpReadFile") < 0 {
+    return -1;
+  }
+  d = x.b.data.definitions[w.index]!;
+  count = len(d.variables.variables);
+  seen: vector<integer> = [for _ in 0..len(x.b.data.definitions) { 0 }];
+  named: vector<integer> = [for _ in 0..count { 0 }];
+  reads: vector<integer> = [for _ in 0..count { 0 }];
+  declined = [false];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    var = -1;
+    match n {
+      NdVar { n: v } => { var = v; },
+      NdTupleGet { var: v, idx: _ } => { var = v; },
+      NdTuplePut { var: v, idx: _, inner: _ } => { var = v; },
+      NdSet { var: v, inner: _ } => {
+        if v >= 0 && v < count && holds_file(x.b, file, d.variables.variables[v]!.type_def[0] ?? ir::TyVoid, seen) {
+          declined[0] = true;
+        }
+      },
+      NdCallRef { var: _, args: _ } => { declined[0] = true; },
+      NdFnRef { def_nr: _, var: _, t: _ } => { declined[0] = true; },
+      NdFnRefDnr { n: _ } => { declined[0] = true; },
+      NdIter { var: _, create: _, next: _, init: _ } => { declined[0] = true; },
+      NdYield { inner: _ } => { declined[0] = true; },
+      NdParallel { arms: _ } => { declined[0] = true; },
+      NdRawExpr { s: _ } => { declined[0] = true; },
+      NdCall { def_nr, args } => {
+        if cgen_fn::def_name(x.b, def_nr) == "OpReadFile" && len(args) > 0 {
+          f = loop_shape::var_of(loop_shape::unspan(args[0]));
+          if f >= 0 && f < count && (read_shape(x, w, args) != 0 || float_shape(x, w, args)) {
+            reads[f] = reads[f]! + 1;
+          }
+        }
+      },
+      _ => {},
+    }
+    if var >= 0 && var < count && holds_file(x.b, file, d.variables.variables[var]!.type_def[0] ?? ir::TyVoid, seen) {
+      named[var] = named[var]! + 1;
+    }
+  });
+  if declined[0]! {
+    return -1;
+  }
+  f = -1;
+  for n in named {
+    if n > 0 {
+      if f >= 0 {
+        return -1;
+      }
+      f = n#index;
+    }
+  }
+  if f < 0 {
+    return -1;
+  }
+  v = d.variables.variables[f]!;
+  plain = match v.type_def[0] ?? ir::TyVoid {
+    TyReference { n, dep: _ } => n == file,
+    _ => false,
+  };
+  if plain && !v.captured && reads[f]! == named[f]! { f } else { -1 }
+}
+
+// The hold of file `f`, -1 for none.
+fn hold_of(w: W, f: integer) -> integer {
+  for h in w.file_holds {
+    if h.file == f {
+      return h#index;
+    }
+  }
+  -1
+}
+
+// `open_file_hold`: before loop `lp`, take the cursor of the file it reads; answers whether
+// it did.
+pub fn open_hold(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
+  if (env_variable("LOFT_NO_FILE_HOLD") ?? "0") != "0" {
+    return false;
+  }
+  f = held_file(x, w, lp);
+  if f < 0 || hold_of(w, f) >= 0 {
+    return false;
+  }
+  c = "fc{len(w.decls) + 1}";
+  w.decls += ["loft_fcur {c};"];
+  w.decls += ["loft_fpos {c}p;"];
+  file = as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: f }, ind));
+  line(w, ind, "{c}p = loft_fcur_hold(&{c}, {file});");
+  w.file_holds += [FileHold { file: f, name: c, depth: len(w.loops) }];
+  true
+}
+
+// The loop's own end gives the cursor back.
+pub fn close_hold(w: W, ind: integer) {
+  c = w.file_holds[len(w.file_holds) - 1].name;
+  w.file_holds = w.file_holds[0..len(w.file_holds) - 1];
+  line(w, ind, "loft_fcur_release(&{c}, {c}p);");
+}
+
+// `release_holds`: give back the cursor of every hold of a loop at depth `from` or deeper,
+// innermost first — a `break` or `continue` past it, a `return`.
+pub fn release_holds(w: W, from: integer, ind: integer) {
+  for i in rev(0..len(w.file_holds)) {
+    if w.file_holds[i]!.depth >= from {
+      c = w.file_holds[i]!.name;
+      line(w, ind, "loft_fcur_release(&{c}, {c}p);");
+    }
+  }
+}
+
+// A typed read of a held file (`@FR-R-TypedRead`): written through the cursor; false where
+// the read is none.
+pub fn held_read(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> boolean {
+  if len(w.file_holds) == 0 || len(args) != 4 {
+    return false;
+  }
+  f = loop_shape::var_of(loop_shape::unspan(args[0]));
+  at = if f >= 0 { hold_of(w, f) } else { -1 };
+  var = stack_var(x.b, args[1]);
+  if at < 0 || var < 0 {
+    return false;
+  }
+  c = w.file_holds[at].name;
+  shape = read_shape(x, w, args);
+  if shape != 0 {
+    line(w, ind, "loft_fcur_read(&{c}, &{c}p, {if shape < 0 { -shape } else { shape }}, {if shape < 0 { 1 } else { 0 }}, &{w.names[var]!});");
+    return true;
+  }
+  if float_shape(x, w, args) {
+    line(w, ind, "loft_fcur_readf(&{c}, &{c}p, &{w.names[var]!});");
+    return true;
+  }
+  false
+}

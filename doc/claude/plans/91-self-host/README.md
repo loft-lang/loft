@@ -22,7 +22,9 @@ programs at its last census, in an earlier `handoff-*.md`; not re-measured since
 passes and the bytecode writer are not ported yet.  The bytecode runner built as a port of
 the Rust interpreter — its generated operator table, what is still to build and where it
 differs from Rust — is [1b-fill-port.md](1b-fill-port.md).  What it still takes from Rust, and
-the order that ends in, is [rust-dependencies.md](rust-dependencies.md).
+the order that ends in, is [rust-dependencies.md](rust-dependencies.md); the design of a build
+without Rust — a C-only build from a seed, then source in and run, then loft rebuilding
+itself — is [rust-free-build.md](rust-free-build.md).
 
 **1b is behind the reference (owner,
 2026-11-12):** the IR lifetime work (@PLN211) landed after its last census and its port of the
@@ -211,9 +213,12 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
    manager, the debugger, the REPL, the language server, `gendoc` and the exports, then the
    selfhost harness and the comparison as loft programs; each part diffed against the Rust
    tool's output on the same input before the Rust part is removed.
-6. **Rust retired.**  The library leftovers (strand 10: `plugin_runtime`'s crates, the
-   library CI's cargo build and rustc leg, the `bench.rs` twins), the rustc backend
-   (`src/generation/`) and every `src/*.rs` file removed; no Cargo in the build.  Gate: loft
+6. **Rust out of the project.**  The library leftovers (strand 10: `plugin_runtime`'s crates,
+   the library CI's cargo build and rustc leg, the `bench.rs` twins) removed; the Rust
+   implementation — every `src/*.rs`, the rustc backend (`src/generation/`), Cargo — moved to
+   a repository of its own, kept as the REFERENCE implementation the answers are compared
+   with, not the main one (owner, 2026-11-15; [rust-free-build.md § The end
+   state](rust-free-build.md#the-end-state-rust-as-the-reference-implementation)).  Gate: loft
    built from C alone, its full suite green on the interpreter and the C backend.
 
 **Beside the path:** strands 2–4 (bundles) ride stage 2 — 4 falls out of it.  Strand 7 is
@@ -258,6 +263,13 @@ find defects in the implementation it copies.
   frozen corpus is what the port is compared with, and the bootstrap gate (stage 2's C
   equals stage 1's) is the same comparison over the compiler's own sources.  Where the
   corpus lives is strand 11's decision, beside the suite's recorded answers.
+- **The position is committed and gated.**  Each stage's survey writes its counts (per
+  layer, per form, with the switch list they were taken under) to a baseline file beside it,
+  compares the next run against it, and fails on any drop or any difference; it runs on the
+  nightly, and a count typed into a plan by hand is a report of that file, never the gate.
+- **The helpers are in the tree.**  Every script a port is worked with — the survey, the
+  one-body diff, the speed measurement — is committed beside the port, never kept in a
+  session's scratch directory.
 - **Deterministic output is a precondition, on both sides.**  Byte-identical layers
   cannot depend on a hash map's iteration order or on an address.  The reproducible-build
   workflow already asks this of the binary; a port that meets a non-deterministic order

@@ -20,7 +20,7 @@ P_KEYED = 18;
 P_ARRAY = 6;
 
 // `Stores::reaches_reference`: can a value of `tp` hold a stored reference?
-fn reaches_reference(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
+pub fn reaches_reference(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
   t = ts[tp];
   if t == null {
     return false;
@@ -66,7 +66,7 @@ fn any_field_reaches(ts: vector<ir::DbType>, fields: vector<ir::DbField>, seen: 
 }
 
 // `Stores::child_rec_is_value`: an out-of-line field whose content is a value of its own.
-fn child_rec_is_value(ts: vector<ir::DbType>, c: integer) -> boolean {
+pub fn child_rec_is_value(ts: vector<ir::DbType>, c: integer) -> boolean {
   c < len(ts) && !(ts[c]?.name ?? "__").starts_with("__")
 }
 

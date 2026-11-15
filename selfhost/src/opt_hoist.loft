@@ -1,0 +1,801 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the BASE clause of `hoist::hoistable` (`src/opt/hoist.rs`,
+// `src/opt/header.rs`): a loop whose body writes no store may hold the header of each vector
+// it indexes for its whole run (`@FR-R-Header`).
+//
+// Every tier above the base is off (the switches of `cgen_w::PLAIN_SWITCHES`): no write in
+// place, no held scalar, no push or mint, no callee inputs, no header held apart.
+
+use ir;
+use binds;
+use own;
+use loop_shape;
+use opt_names;
+use opt_non_sentinel;
+use opt_push;
+use opt_writes;
+use opt_facts;
+use opt_apart;
+use opt_wset;
+
+// One vector a loop may hold: its path, the path's root variable, the expression naming it.
+pub struct Held {
+  pub path: text,
+  pub root: integer,
+  pub vector: ir::Node,
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `rebound_vars` with `close_over_links`: the variables the loop rebinds — a `Set`, a tuple
+// write, the re-mint of a hidden pass-2 buffer — and every link that may name one of them.
+fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boolean> {
+  count = len(d.variables.variables);
+  rebound: vector<boolean> = [for _ in 0..count { false }];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < count { rebound[var] = true; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if var < count { rebound[var] = true; } },
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if (name == "OpDatabase" || name == "OpDatabaseNP") && len(args) > 0 {
+          buf = loop_shape::var_of(loop_shape::unspan(args[0]));
+          if buf >= 0 && buf < count && d.variables.variables[buf]!.name.starts_with("__ref_p2_") {
+            rebound[buf] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  for _ in 0..count {
+    grew = false;
+    for v in 0..count {
+      if rebound[v]! {
+        continue;
+      }
+      for t in binds::link_targets(d.variables, v) {
+        if t >= 0 && t < count && rebound[t]! {
+          rebound[v] = true;
+          grew = true;
+        }
+      }
+    }
+    if !grew {
+      break;
+    }
+  }
+  rebound
+}
+
+// `vector_candidates`: the vectors the loop's body indexes (`OpGetVector`, its nullable twin)
+// by a pure path, in first-appearance order, but for those rooted at a variable the body
+// rebinds.
+fn vector_candidates(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<Held> {
+  found = indexed_vectors(b, d, lp);
+  rebound = rebound_vars(b, d, lp);
+  out: vector<Held> = [];
+  for f in found {
+    if !rebound[f.root]! {
+      out += [f];
+    }
+  }
+  out
+}
+
+// `indexed_vectors`: the vectors the body indexes by a pure path, rebound or not.
+fn indexed_vectors(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<Held> {
+  found: vector<Held> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable") {
+          root = -1;
+          path = opt_push::vector_path(b, args[0], root);
+          if path != "" {
+            // A bare variable must TYPE as a vector; a field path is shape-trusted.
+            typed = !path.ends_with(":") || (match binds::base(d.variables.variables[root]!.type_def[0] ?? ir::TyVoid) { TyVector { inner: _, dep: _ } => true, _ => false });
+            seen = false;
+            for f in found {
+              if f.path == path {
+                seen = true;
+              }
+            }
+            if typed && !seen {
+              found += [Held { path: path, root: root, vector: args[0] }];
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  found
+}
+
+// `LoopHoist`: what a loop may hold for its run — the headers of the vectors it reads, the
+// push headers of the paths it pushes to — whether no statement of it grows a store, and
+// whether its one growth is the pushes of one path.
+pub struct LoopHoist {
+  pub vectors: vector<Held>,
+  pub pushes: vector<Held>,
+  // The paths the loop mints records into that take a push header (`@FR-R-PushRec`).
+  pub mint_pushes: vector<Held>,
+  pub growth_free: boolean,
+  pub sole_push: boolean,
+  // The roots of what the loop grows: its pushed and minted paths and its reservations.
+  pub movers: vector<integer>,
+  // The record scalars the loop reads once before it (`@FR-R-Scalar`).
+  pub scalars: vector<Scalar>,
+  // The gate declined the loop: what it holds is the apart clause's.
+  pub declined: boolean,
+}
+
+// A record scalar a loop may hold: the record variable, the field's offset, the record's
+// schema type and the read itself.
+pub struct Scalar {
+  pub root: integer,
+  pub fld: integer,
+  pub tp: integer,
+  pub call: ir::Node,
+}
+
+fn nothing() -> LoopHoist {
+  LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true }
+}
+
+// `owned_local`: a local that owns its store — no parameter, no link, not captured, and
+// depending on nothing but its own hidden store witness.
+pub fn owned_local(d: ir::Definition, r: integer) -> boolean {
+  v = d.variables.variables[r]!;
+  if v.argument || v.captured || (binds::base(v.type_def[0] ?? ir::TyVoid) is TyRefVar) {
+    return false;
+  }
+  for dep in own::tp_depend(d.variables, r) {
+    if !d.variables.variables[dep]!.name.starts_with("__vdb") {
+      return false;
+    }
+  }
+  true
+}
+
+// `work_buffer_arg`: is `r` a parameter that is a hidden work buffer?
+pub fn work_buffer_arg(d: ir::Definition, r: integer) -> boolean {
+  pos = 0;
+  for v in d.variables.variables {
+    if v.argument {
+      if v#index == r {
+        return pos < len(d.attributes) && d.attributes[pos]!.work_buffer;
+      }
+      pos += 1;
+    }
+  }
+  false
+}
+
+// `retbuf_var`: the variable of the function's hidden return buffer, -1 for none.
+pub fn retbuf_var(d: ir::Definition) -> integer {
+  attr = binds::hidden_return_buffer_attr(d) ?? return -1;
+  binds::var_named(d.variables, d.attributes[attr]!.name)
+}
+
+// The paths the loop pushes to (`@FR-R-Push`): its fusable scalar pushes, then its kept
+// ranges, each path once, in first-appearance order.
+fn pushed_paths(b: ir::Bundle, lp: ir::Block) -> vector<Held> {
+  found: vector<Held> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        path = "";
+        root = -1;
+        if opt_push::fused(b, def_name(b, def_nr), args, path, root) > 0 {
+          seen = false;
+          for f in found {
+            if f.path == path {
+              seen = true;
+            }
+          }
+          if !seen {
+            found += [Held { path: path, root: root, vector: args[0] }];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        root = -1;
+        path = opt_push::keep_range(b, def_name(b, def_nr), args, root);
+        if path != "" {
+          seen = false;
+          for f in found {
+            if f.path == path {
+              seen = true;
+            }
+          }
+          if !seen {
+            found += [Held { path: path, root: root, vector: args[0] }];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  found
+}
+
+// The roots of the reservations in the loop (`pre_alloc_path`).
+fn reserved_roots(b: ir::Bundle, lp: ir::Block) -> vector<integer> {
+  roots: vector<integer> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        root = -1;
+        if def_name(b, def_nr) == "OpPreAllocVector" && len(args) == 3 && opt_push::vector_path(b, args[0], root) != "" {
+          roots += [root];
+        }
+      },
+      _ => {},
+    }
+  });
+  roots
+}
+
+// `hoistable` under the write and push tiers: the vectors loop `lp` of function `vd` may hold
+// for its run and the paths it pushes to — nothing where a statement of its body may move a
+// store otherwise, where it rebinds a path it pushes to, or where a push could alias another
+// held vector.  The mint tier, the held scalars, the callee inputs and every apart clause are
+// not carried.
+fn hoist_paths(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
+  tier = (if (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0" { 1 } else { 0 }) + (if (env_variable("LOFT_NO_PUSH_HOIST") ?? "0") == "0" { 4 } else { 0 }) + (if (env_variable("LOFT_NO_MINT_HOIST") ?? "0") == "0" { 8 } else { 0 });
+  d = b.data.definitions[vd]!;
+  fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+  blocked = false;
+  for op in lp.operators {
+    if !blocked && opt_writes::blocks_under(b, w, vd, op, tier, fresh) {
+      blocked = true;
+    }
+  }
+  // `(R-Header)`'s text clause: a loop the gate declines is asked again with its text sets
+  // admitted.
+  text_grown = false;
+  if blocked {
+    if (env_variable("LOFT_NO_TEXT_SET_HEADER") ?? "0") != "0" {
+      return apart_hoist(b, w, facts, vd, lp);
+    }
+    again: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+    for op in lp.operators {
+      if opt_writes::blocks_under(b, w, vd, op, tier + 16, again) {
+        return apart_hoist(b, w, facts, vd, lp);
+      }
+    }
+    text_grown = true;
+  }
+  out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false, movers: [], scalars: [], declined: false };
+  pushes: vector<Held> = if tier & 4 != 0 { pushed_paths(b, lp) } else { [] };
+  // The paths the body mints a record element into, each with whether every mint group on
+  // it qualifies for the record push.
+  mints: vector<Held> = [];
+  qualifies: vector<boolean> = [];
+  if tier & 8 != 0 {
+    record_push = (env_variable("LOFT_NO_RECORD_PUSH") ?? "0") == "0";
+    heap_push = (env_variable("LOFT_NO_HEAP_RECORD_PUSH") ?? "0") == "0";
+    whole = ir::NdInsert { items: lp.operators };
+    opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+      match n {
+        NdCall { def_nr, args } => {
+          if def_name(b, def_nr) == "OpNewRecord" {
+            path = "";
+            root = -1;
+            vtp = 0;
+            vector = opt_push::mint_target(b, d, "OpNewRecord", args, path, root, vtp);
+            if path != "" {
+              q = record_push && opt_push::mint_push_qualifies(b, vtp, heap_push);
+              at = -1;
+              for m in mints {
+                if m.path == path {
+                  at = m#index;
+                }
+              }
+              if at >= 0 {
+                qualifies[at] = qualifies[at]! && q;
+              } else {
+                mints += [Held { path: path, root: root, vector: vector }];
+                qualifies += [q];
+              }
+            }
+          }
+        },
+        _ => {},
+      }
+    });
+  }
+  movers: vector<integer> = [];
+  for p in pushes {
+    seen = false;
+    for m in movers {
+      if m == p.root {
+        seen = true;
+      }
+    }
+    if !seen {
+      movers += [p.root];
+    }
+  }
+  for p in mints {
+    seen = false;
+    for m in movers {
+      if m == p.root {
+        seen = true;
+      }
+    }
+    if !seen {
+      movers += [p.root];
+    }
+  }
+  for r in reserved_roots(b, lp) {
+    seen = false;
+    for m in movers {
+      if m == r {
+        seen = true;
+      }
+    }
+    if !seen {
+      movers += [r];
+    }
+  }
+  out.movers = movers;
+  // A loop admitted through its text sets grows the stores they claim in: it may not also
+  // push, mint or reserve, and its bases are kept only for vectors proven apart from every
+  // store a text set writes — none when a target's root is unknown.
+  if text_grown {
+    if len(movers) > 0 || len(pushes) > 0 || len(mints) > 0 {
+      return apart_hoist(b, w, facts, vd, lp);
+    }
+    out.movers = text_set_roots(b, lp);
+    out.growth_free = false;
+    return out;
+  }
+  if len(pushes) == 0 && len(mints) == 0 {
+    return out;
+  }
+  // A pushed path the body rebinds declines the loop (the rebound-mover clause is not
+  // carried).
+  rebound = rebound_vars(b, d, lp);
+  for p in pushes {
+    if rebound[p.root]! {
+      return apart_hoist(b, w, facts, vd, lp);
+    }
+  }
+  for p in mints {
+    if rebound[p.root]! {
+      return apart_hoist(b, w, facts, vd, lp);
+    }
+  }
+  // The movers: every pushed and every minted path.
+  moved: vector<Held> = [];
+  for p in pushes {
+    moved += [p];
+  }
+  for p in mints {
+    moved += [p];
+  }
+  others = false;
+  for q in out.vectors {
+    pushed = false;
+    for p in moved {
+      if p.path == q.path {
+        pushed = true;
+      }
+    }
+    if !pushed {
+      others = true;
+    }
+  }
+  retbuf = retbuf_var(d);
+  kept: vector<Held> = [];
+  if len(moved) > 1 || others {
+    // Every push root must be exclusive: a local that owns its store, the function's own
+    // return buffer, a work buffer.
+    any_retbuf = false;
+    for p in moved {
+      if !(owned_local(d, p.root) || p.root == retbuf || work_buffer_arg(d, p.root)) {
+        return apart_hoist(b, w, facts, vd, lp);
+      }
+      if p.root == retbuf {
+        any_retbuf = true;
+      }
+    }
+    for q in out.vectors {
+      // …or a vector the store facts prove apart from every mover.
+      apart = opt_facts::enabled();
+      for m in movers {
+        if apart && !opt_facts::distinct(b, facts, q.root, m) {
+          apart = false;
+        }
+      }
+      // A mover itself stays for now: it leaves the read list below.
+      is_mover = false;
+      for p in moved {
+        if p.path == q.path {
+          is_mover = true;
+        }
+      }
+      if is_mover || owned_local(d, q.root) || (d.variables.variables[q.root]!.argument && !any_retbuf) || apart {
+        kept += [q];
+      }
+    }
+  } else {
+    kept = out.vectors;
+  }
+  // A pushed path leaves the read list: it has one holder.
+  out.vectors = [];
+  for q in kept {
+    pushed = false;
+    for p in moved {
+      if p.path == q.path {
+        pushed = true;
+      }
+    }
+    if !pushed {
+      out.vectors += [q];
+    }
+  }
+  out.pushes = pushes;
+  for m in mints {
+    if qualifies[m#index]! {
+      out.mint_pushes += [m];
+    }
+  }
+  out.growth_free = false;
+  out.sole_push = len(pushes) == 1 && len(mints) == 0 && len(movers) == 1 && movers[0] == pushes[0].root;
+  out
+}
+
+// The size the fusable pushes of the loop onto `path` agree on (`push_size`), 0 where they
+// do not or there is none.
+pub fn push_size(b: ir::Bundle, lp: ir::Block, path: text) -> integer {
+  state = [0, 1];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        at = "";
+        root = -1;
+        size = opt_push::fused(b, def_name(b, def_nr), args, at, root);
+        if size > 0 && at == path {
+          if state[0]! != 0 && state[0]! != size {
+            state[1] = 0;
+          }
+          state[0] = size;
+        }
+      },
+      _ => {},
+    }
+  });
+  if state[1]! == 1 { state[0]! } else { 0 }
+}
+
+// `view_def_header`: statement `at` of `stmts` binds a vector local `d` to another vector's
+// path, and the statements after it index `d`, never rebind it and write no store (in place
+// only, with `in_place`): `d`'s header may be taken at the bind.  The local, or -1.
+pub fn view_def_header(b: ir::Bundle, w: opt_writes::Writes, vd: integer, stmts: vector<ir::Node>, at: integer, in_place: boolean) -> integer {
+  def = b.data.definitions[vd]!;
+  d = -1;
+  rhs = ir::NdNull;
+  match loop_shape::unspan(stmts[at]!) {
+    NdSet { var, inner } => {
+      d = var;
+      rhs = inner;
+    },
+    _ => return -1,
+  }
+  is_vector = match opt_names::peel_link(def.variables.variables[d]!.type_def[0] ?? ir::TyVoid) {
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  };
+  if !is_vector {
+    return -1;
+  }
+  root = -1;
+  if opt_push::vector_path(b, rhs, root) == "" || root == d {
+    return -1;
+  }
+  for op in stmts {
+    if op#index > at && (if in_place { opt_writes::blocks_in_place_untyped(b, w, vd, op) } else { opt_writes::blocks_plain(b, w, vd, op) }) {
+      return -1;
+    }
+  }
+  targets = binds::link_targets(def.variables, d);
+  state = [false, false];
+  rest = ir::NdInsert { items: stmts[at + 1..len(stmts)] };
+  opt_non_sentinel::walk(rest, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => {
+        if var == d {
+          state[0] = true;
+        }
+        for t in targets {
+          if t == var {
+            state[0] = true;
+          }
+        }
+      },
+      NdTuplePut { var, idx: _, inner: _ } => {
+        if var == d {
+          state[0] = true;
+        }
+        for t in targets {
+          if t == var {
+            state[0] = true;
+          }
+        }
+      },
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable") && loop_shape::unspan(args[0]) == NdVar { n: d } {
+          state[1] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  if state[1]! && !state[0]! { d } else { -1 }
+}
+
+// The element size of the records the loop mints into `path` (`mint_size`), 0 for none.
+pub fn mint_size(b: ir::Bundle, vd: integer, lp: ir::Block, path: text) -> integer {
+  d = b.data.definitions[vd]!;
+  size = [0];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if size[0]! == 0 && def_name(b, def_nr) == "OpNewRecord" {
+          at = "";
+          root = -1;
+          vtp = 0;
+          opt_push::mint_target(b, d, "OpNewRecord", args, at, root, vtp);
+          if at == path && vtp >= 0 && vtp < len(b.types) {
+            match b.types[vtp].parts[0] {
+              PtVector { content } => { if content >= 0 && content < len(b.types) { size[0] = b.types[content].size; } },
+              _ => {},
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  size[0]!
+}
+
+// `apart_hoist`: what a loop the gate declines still holds — the headers of the vectors it
+// only reads, in stores proved apart from everything that declined it.
+fn apart_hoist(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
+  if !opt_facts::enabled() || (env_variable("LOFT_NO_APART_HEADERS") ?? "0") != "0" {
+    return nothing();
+  }
+  d = b.data.definitions[vd]!;
+  candidates = vector_candidates(b, d, lp);
+  paths: vector<text> = [];
+  roots: vector<integer> = [];
+  for c in candidates {
+    paths += [c.path];
+    roots += [c.root];
+  }
+  lent: vector<boolean> = [for v in d.variables.variables { work_buffer_arg(d, v#index) }];
+  keep = opt_apart::apart_headers(b, w, facts, vd, lp, paths, roots, lent);
+  out = nothing();
+  for c in candidates {
+    if keep[c#index]! {
+      out.vectors += [c];
+    }
+  }
+  // The loop grows no store these headers live in, so each carries its base.
+  out.growth_free = len(out.vectors) > 0;
+  out
+}
+
+// Is every rebind of `v` in the body a navigation — a field or an element of something?
+// Two flat walks: a lambda nested in one that captures a vector is loft#2487.
+fn navigates(b: ir::Bundle, lp: ir::Block, v: integer) -> boolean {
+  ok = [true];
+  values: vector<ir::Node> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => { if var == v { values += [inner]; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if var == v { ok[0] = false; } },
+      _ => {},
+    }
+  });
+  bound = ir::NdInsert { items: values };
+  opt_non_sentinel::walk(bound, fn(m: ir::Node) {
+    match m {
+      NdCall { def_nr, args: _ } => {
+        name = def_name(b, def_nr);
+        if !(name == "OpGetField" || name == "OpGetVector" || name == "OpGetVectorNullable") {
+          ok[0] = false;
+        }
+      },
+      NdBlock { block: _ } => { ok[0] = false; },
+      NdIf { cond: _, t: _, f: _ } => { ok[0] = false; },
+      NdLoop { block: _ } => { ok[0] = false; },
+      _ => {},
+    }
+  });
+  ok[0]!
+}
+
+// `rebound_apart_headers` (`@FR-R-Header`'s rebind clause) joined to a verdict: a bare
+// vector the loop rebinds by navigating is held apart and derived again after each rebind.
+pub fn with_rebound(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block, v: LoopHoist) {
+  if !opt_facts::enabled() || (env_variable("LOFT_NO_APART_HEADERS") ?? "0") != "0" || (env_variable("LOFT_NO_REBOUND_HEADER") ?? "0") != "0" {
+    return;
+  }
+  d = b.data.definitions[vd]!;
+  rebound = rebound_vars(b, d, lp);
+  candidates: vector<Held> = [];
+  for c in indexed_vectors(b, d, lp) {
+    if c.path.ends_with(":") && rebound[c.root]! && navigates(b, lp, c.root) {
+      candidates += [c];
+    }
+  }
+  if len(candidates) == 0 {
+    return;
+  }
+  paths: vector<text> = [];
+  roots: vector<integer> = [];
+  for c in candidates {
+    paths += [c.path];
+    roots += [c.root];
+  }
+  lent: vector<boolean> = [for x in d.variables.variables { work_buffer_arg(d, x#index) }];
+  keep = opt_apart::apart_headers(b, w, facts, vd, lp, paths, roots, lent);
+  // Held alone, the stores they live in grow nowhere in the loop: each carries its base.
+  alone = len(v.vectors) == 0 && len(v.pushes) == 0 && len(v.mint_pushes) == 0 && len(v.scalars) == 0;
+  for c in candidates {
+    if !keep[c#index]! {
+      continue;
+    }
+    held = false;
+    for q in v.vectors {
+      if q.path == c.path {
+        held = true;
+      }
+    }
+    if !held {
+      v.vectors += [c];
+    }
+  }
+  if alone && len(v.vectors) > 0 {
+    v.growth_free = true;
+  }
+}
+
+fn scalar_getter(name: text) -> boolean {
+  name == "OpGetInt" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetSingle" || name == "OpGetFloat" || name == "OpGetBoolean" || name == "OpGetCharacter" || name == "OpGetEnum"
+}
+
+// `scalar_read`: the record variable of a scalar field read `getter(Var(v), fld)`, with the
+// offset in `fld`; -1 for any other call.
+pub fn scalar_read(name: text, args: vector<ir::Node>, fld: &integer) -> integer {
+  if !scalar_getter(name) || len(args) < 2 {
+    return -1;
+  }
+  v = loop_shape::var_of(loop_shape::unspan(args[0]));
+  match loop_shape::unspan(args[1]) {
+    NdInt { n } => { fld = n; },
+    _ => return -1,
+  }
+  v
+}
+
+// `hoistable`: the vector headers and the record scalars loop `lp` may derive once up front.
+pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
+  out = hoist_paths(b, w, facts, vd, lp);
+  if out.declined || (env_variable("LOFT_NO_SCALAR_HOIST") ?? "0") != "0" {
+    return out;
+  }
+  d = b.data.definitions[vd]!;
+  rebound = rebound_vars(b, d, lp);
+  found: vector<Scalar> = [];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        fld = 0;
+        v = scalar_read(def_name(b, def_nr), args, fld);
+        if v >= 0 && v < len(rebound) && !rebound[v]! {
+          tp = opt_wset::plain_tp(b, d.variables.variables[v]!.type_def[0] ?? ir::TyVoid);
+          known = false;
+          for f in found {
+            if f.root == v && f.fld == fld {
+              known = true;
+            }
+          }
+          if tp >= 0 && !known {
+            found += [Scalar { root: v, fld: fld, tp: tp, call: n }];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if len(found) == 0 {
+    return out;
+  }
+  written = opt_wset::empty();
+  fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+  for op in lp.operators {
+    if !opt_wset::body_writes(b, w, vd, op, fresh, written) {
+      // A statement the write-set walk cannot type: no scalar hoists in this loop.
+      return out;
+    }
+  }
+  for f in found {
+    if !opt_wset::evicts(written, f.tp, f.fld) {
+      out.scalars += [f];
+    }
+  }
+  out
+}
+
+// The root variable of a text set's target — a variable, or a field or element of one; -1
+// where it is neither.
+fn place_root(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdVar { n } => n,
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if len(args) > 0 && (name == "OpGetVector" || name == "OpGetVectorNullable" || name == "OpGetField") { place_root(b, args[0]) } else { -1 }
+    },
+    _ => -1,
+  }
+}
+
+// `text_set_roots`: the roots of the records the body's text sets write; none when one is
+// unknown.
+fn text_set_roots(b: ir::Bundle, lp: ir::Block) -> vector<integer> {
+  roots: vector<integer> = [];
+  known = [true];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && (name == "OpSetText" || name == "OpSetTextReplace") {
+          r = if len(args) > 0 { place_root(b, args[0]) } else { -1 };
+          if r < 0 {
+            known[0] = false;
+          } else {
+            seen = false;
+            for o in roots {
+              if o == r {
+                seen = true;
+              }
+            }
+            if !seen {
+              roots += [r];
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if known[0]! { roots } else { [] }
+}

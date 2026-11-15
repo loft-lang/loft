@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
@@ -12,6 +13,7 @@
 use ir;
 use loop_shape;
 use opt_non_sentinel;
+use char_walk;
 
 // An inclusive range of values; the sentinel is never inside.
 pub struct Range {
@@ -43,8 +45,18 @@ struct BodyRange {
 }
 
 // The facts one function's ranges are read under.
+// The range a run-time guard proved of an integer field of a record variable.
+pub struct FieldRange {
+  pub root: integer,
+  pub off: integer,
+  pub lo: integer,
+  pub hi: integer,
+}
+
 pub struct Ranges {
   vars: vector<Held>,
+  // `@FR-R-RangedCall`'s guarded fields.
+  fields: vector<FieldRange>,
   elems: vector<ElemRange>,
   bodies: vector<BodyRange>,
   // The stepped counters of exclusive counted loops whose `counter + 1` cannot overflow.
@@ -78,24 +90,33 @@ pub struct Walk {
   pub hoist_null: boolean,
 }
 
+// The character walks of function `d` (`char_walk::walks`) as this analysis reads them.
+pub fn walks_of(b: ir::Bundle, d: integer) -> vector<Walk> {
+  out: vector<Walk> = [];
+  for w in char_walk::walks(b, d) {
+    out += [Walk { scope: w.scope, hoist_null: w.hoist_null }];
+  }
+  out
+}
+
 // A callee is evaluated over its arguments' facts at most this many calls deep.
 CALL_DEPTH = 3;
 // The widest a text size or a vector length can be.
 U32_MAX = 4294967295;
 I64_MAX = 9223372036854775807;
 
-fn empty_ranges(count: integer) -> Ranges {
-  Ranges { vars: [for _ in 0..count { Held { has: false, lo: 0, hi: 0 } }], elems: [], bodies: [], steps: [for _ in 0..count { false }] }
+pub fn empty_ranges(count: integer) -> Ranges {
+  Ranges { vars: [for _ in 0..count { Held { has: false, lo: 0, hi: 0 } }], fields: [], elems: [], bodies: [], steps: [for _ in 0..count { false }] }
 }
 
-fn var_range(rv: Ranges, v: integer) -> Range? {
+pub fn var_range(rv: Ranges, v: integer) -> Range? {
   if v < 0 || v >= len(rv.vars) || !rv.vars[v]!.has {
     return null;
   }
   Range { lo: rv.vars[v]!.lo, hi: rv.vars[v]!.hi }
 }
 
-fn set_var(rv: Ranges, v: integer, r: Range) {
+pub fn set_var(rv: Ranges, v: integer, r: Range) {
   if v >= 0 && v < len(rv.vars) {
     rv.vars[v]!.has = true;
     rv.vars[v]!.lo = r.lo;
@@ -206,8 +227,16 @@ fn ranged(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolea
         return null;
       }
       name = defs[def_nr]!.name;
-      // A guarded field read is ranged by a twin's seeds alone; a plain function has none.
+      // A guarded field read: the run-time test in front of the code proved the field in
+      // range, and nothing in it writes the field.
       if name == "OpGetInt" && len(args) >= 2 && loop_shape::var_of(args[0]) >= 0 && opt_non_sentinel::int_of(args[1]) != null {
+        of = loop_shape::var_of(args[0]);
+        at = opt_non_sentinel::int_of(args[1]) ?? 0;
+        for i in rev(0..len(rv.fields)) {
+          if rv.fields[i]!.root == of && rv.fields[i]!.off == at {
+            return Range { lo: rv.fields[i]!.lo, hi: rv.fields[i]!.hi };
+          }
+        }
         return null;
       }
       op = op_range(b, p, c, nn, rv, name, args, depth);
@@ -265,6 +294,27 @@ fn masked(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolea
   null
 }
 
+// `plain_form`: the plain form of an operator the range proof may write — `wrapping_*` for the
+// four arithmetic operators, `/` and `%` for a division whose range excludes a zero divisor;
+// "" for every other operator.
+pub fn plain_form(name: text, count: integer) -> text {
+  if count == 2 && (name == "OpAddInt" || name == "OpAddIntNullable") {
+    "wrapping_add"
+  } else if count == 2 && (name == "OpMinInt" || name == "OpMinIntNullable") {
+    "wrapping_sub"
+  } else if count == 2 && (name == "OpMulInt" || name == "OpMulIntNullable") {
+    "wrapping_mul"
+  } else if count == 1 && name == "OpMinSingleInt" {
+    "wrapping_neg"
+  } else if count == 2 && (name == "OpDivInt" || name == "OpDivIntNullable") {
+    "/"
+  } else if count == 2 && (name == "OpRemInt" || name == "OpRemIntNullable") {
+    "%"
+  } else {
+    ""
+  }
+}
+
 // `op_range`: the range of operator `name` over `args`, where its result cannot leave the
 // type.
 // What a writer asks at the integer operator it is about to write (`op_range_at_site`):
@@ -284,7 +334,7 @@ pub fn op_range_at_site(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn:
   op_range(b, p, c, nn, rv, name, args, 0)
 }
 
-fn op_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, name: text, args: vector<ir::Node>, depth: integer) -> Range? {
+pub fn op_range(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, nn: vector<boolean>, rv: Ranges, name: text, args: vector<ir::Node>, depth: integer) -> Range? {
   n = len(args);
   if (name == "OpSizeText" || name == "OpLengthText" || name == "OpLengthVector" || name == "t_4text_size" || name == "t_4text_len" || name == "t_6vector_len") && n == 1 {
     return Range { lo: 0, hi: U32_MAX };
@@ -400,7 +450,7 @@ fn named_var(d: ir::Definition, name: text) -> integer {
 }
 
 // `Definition::is_loft_defined`: a function with a body the program or a library wrote.
-fn is_loft_defined(d: ir::Definition) -> boolean {
+pub fn is_loft_defined(d: ir::Definition) -> boolean {
   (d.name.starts_with("n_") || d.name.starts_with("t_") || d.instance_of >= 0) && opt_non_sentinel::has_body(d)
 }
 
@@ -1344,17 +1394,26 @@ pub fn range_vars(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: intege
   range_vars_seeded(b, p, c, d, nn, walks, empty_ranges(count))
 }
 
-fn range_vars_seeded(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, nn: vector<boolean>, walks: vector<Walk>, seeds: Ranges) -> Ranges {
+pub fn range_vars_seeded(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, nn: vector<boolean>, walks: vector<Walk>, seeds: Ranges) -> Ranges {
+  def = b.data.definitions[d]!;
+  // A definition that is no function (a constant's initialiser, a template) stores no
+  // variables: it has no facts.
+  if len(def.code) == 0 || def.def_type != 1 {
+    return empty_ranges(len(def.variables.variables));
+  }
+  range_vars_code(b, p, c, d, def.code[0]!, nn, walks, seeds)
+}
+
+// `range_vars` over `code`, a part of function `d`'s body (a guarded copy's block) or all of
+// it, from `seeds`.
+pub fn range_vars_code(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: integer, code: ir::Node, nn: vector<boolean>, walks: vector<Walk>, seeds: Ranges) -> Ranges {
   def = b.data.definitions[d]!;
   vars = def.variables.variables;
   count = len(vars);
   rv = empty_ranges(count);
-  // A definition that is no function (a constant's initialiser, a template) stores no
-  // variables: it has no facts.
-  if len(def.code) == 0 || def.def_type != 1 {
-    return rv;
+  for f in seeds.fields {
+    rv.fields += [f];
   }
-  code = def.code[0]!;
   escaped: vector<boolean> = [for _ in 0..count { false }];
   opt_non_sentinel::collect_escapes(b, code, escaped);
   // A seeded variable holds its seed only while nothing in the code can change it.
@@ -1410,6 +1469,73 @@ fn range_vars_seeded(b: ir::Bundle, p: opt_non_sentinel::Proof, c: Calls, d: int
     }
   }
   rv
+}
+
+// The facts the body of the loop `scope` is written under where `rv.bodies` narrows a variable
+// there (`body_facts`): `rv` with each of them at its narrowed range; null where none is.
+pub fn body_facts(rv: Ranges, scope: integer) -> Ranges? {
+  any = false;
+  for br in rv.bodies {
+    if br.scope == scope {
+      any = true;
+    }
+  }
+  if !any {
+    return null;
+  }
+  over = Ranges { vars: rv.vars, fields: rv.fields, elems: rv.elems, bodies: rv.bodies, steps: rv.steps };
+  for br in rv.bodies {
+    if br.scope == scope {
+      set_var(over, br.var, Range { lo: br.lo, hi: br.hi });
+    }
+  }
+  over
+}
+
+// `guarded_facts`' merge: `known` with the copy's facts for the variables `keep` admits — a
+// variable both range keeps their intersection — and each leaf within `[-g, g]`.
+pub fn merge_guarded(known: Ranges, copy: Ranges, keep: vector<boolean>, leaves: vector<integer>, g: integer, seeds: Ranges) -> Ranges {
+  merged = Ranges { vars: known.vars, fields: known.fields, elems: known.elems, bodies: known.bodies, steps: known.steps };
+  for h in copy.vars {
+    v = h#index;
+    if !h.has || !(keep[v] ?? false) {
+      continue;
+    }
+    if merged.vars[v]!.has {
+      lo = if merged.vars[v]!.lo > h.lo { merged.vars[v]!.lo } else { h.lo };
+      hi = if merged.vars[v]!.hi < h.hi { merged.vars[v]!.hi } else { h.hi };
+      set_var(merged, v, Range { lo: lo, hi: hi });
+    } else {
+      set_var(merged, v, Range { lo: h.lo, hi: h.hi });
+    }
+  }
+  for e in copy.elems {
+    if !(keep[e.tuple] ?? false) {
+      continue;
+    }
+    found = false;
+    for m in merged.elems {
+      if m.tuple == e.tuple && m.at == e.at {
+        found = true;
+        if e.lo > m.lo {
+          m.lo = e.lo;
+        }
+        if e.hi < m.hi {
+          m.hi = e.hi;
+        }
+      }
+    }
+    if !found {
+      merged.elems += [ElemRange { tuple: e.tuple, at: e.at, lo: e.lo, hi: e.hi }];
+    }
+  }
+  for f in seeds.fields {
+    merged.fields += [f];
+  }
+  for v in leaves {
+    set_var(merged, v, Range { lo: -g, hi: g });
+  }
+  merged
 }
 
 // The trace line of `d`'s ranges (`LOFT_TRACE_FACTS`' `[ranges]` line): `number=lo..hi` for

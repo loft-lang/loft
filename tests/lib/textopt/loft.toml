@@ -1,0 +1,7 @@
+[package]
+name    = "textopt"
+version = "0.1.0"
+loft    = ">=0.8"
+
+[library]
+entry   = "src/textopt.loft"

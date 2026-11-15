@@ -1,11 +1,11 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator: a second compiled target, C
+// @I68 — Native Rust generator: a second compiled target, C — the compiled stdlib bodies the loft runner's shim carries
 //! @PLN91 — compiled standard-library bodies for the loft bytecode runner (`loft --emit-c-bodies`).
 //!
 //! The Rust interpreter runs a standard-library function the Rust build compiled through its
 //! `loft_shared_<fn>` bridge, on the program's own `Stores` (`compiled_stdlib`), for the set
-//! `stdlib_codegen::export_set` picks.  The loft
+//! `native_gate::export_set` picks.  The loft
 //! runner does the same through this fragment: the C of each such function, written by the C
 //! writer, and one ENTRY per function that reads its arguments from the runner's stack as the
 //! bytecode's call leaves them and writes its answer where the return puts it.
@@ -135,7 +135,7 @@ fn signature(data: &Data, d: u32) -> Result<(Vec<Slot>, Slot), String> {
 }
 
 /// The fragment: the bodies of the standard-library functions the Rust build compiles
-/// (`stdlib_codegen::export_set`) that it carries, their entries, and the lookup.
+/// (`native_gate::export_set`) that it carries, their entries, and the lookup.
 ///
 /// # Errors
 /// The C writer's refusal of a body it was asked for.

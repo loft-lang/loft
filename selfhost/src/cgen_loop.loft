@@ -1,0 +1,1737 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the loops of the function writer: `loop_stmt` … `loop_core` of
+// `src/c/body.rs` and the rules a loop is written under — `@FR-R-Peel` (`body/peel.rs`),
+// `@FR-R-StickySum` (`body/sticky.rs`), `@FR-R-SpecChain` (`body/spec_chain.rs`),
+// `@FR-R-GuardedChain` (`body/chain.rs`), `@FR-R-Invariant` (`hold_invariants`,
+// `opt::hoist::invariant_chains`) and `@FR-R-RangedCall`'s guarded copy (`range_guard`).
+//
+// The Rust writer names a node an analysis admitted by its ADDRESS.  A loft node has none to
+// ask, so each rule here keeps what decides the admission and asks it of the node being
+// written: a memo by the chain's spelling, a guarded operator by the guard's leaves, both for
+// the loop whose body the node stands in (`W.memos`' top frame, `ChainFrame.depth`).  A nested
+// loop is walked by neither analysis, so that loop is the only one whose answer a node has.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_names;
+use opt_non_sentinel;
+use opt_range;
+use opt_ranged_call;
+use cgen_fn;
+use cgen_text;
+use cgen_ref;
+use cgen_hoist;
+use cgen_win;
+use cgen_file;
+use opt_hoist;
+use cgen_w::*;
+
+// The trips a peeled loop may have, and the IR nodes its copies may hold together.
+const MAX_TRIPS = 8;
+const MAX_NODES = 1200;
+
+// `f` on every node of every statement of `ops` (`Value::walk` over a statement list).
+fn walk_all(ops: vector<ir::Node>, f: fn(ir::Node)) {
+  for op in ops {
+    opt_non_sentinel::walk(op, f);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// `@FR-R-Invariant`
+
+// The integer operators an invariant chain may be built from (`INVARIANT_OPS`), by arity.
+fn invariant_op(name: text, count: integer) -> boolean {
+  if count == 1 {
+    return name == "OpMinSingleInt";
+  }
+  count == 2 && (name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt" || name == "OpLandInt" || name == "OpLorInt" || name == "OpEorInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable" || name == "OpMulIntNullable")
+}
+
+// The operator and variable-leaf counts of a chain (`arith_chain`'s answer).
+struct ChainSize {
+  ops: integer,
+  vars: integer,
+}
+
+// `arith_chain`: is `v` a chain of the invariant operators over literals and variables the
+// loop neither rebinds nor lets escape?  Its operator count and variable-leaf count, or null.
+fn arith_chain(b: ir::Bundle, v: ir::Node, banned: vector<boolean>) -> ChainSize? {
+  match loop_shape::unspan(v) {
+    NdInt { n: _ } => ChainSize { ops: 0, vars: 0 },
+    NdLong { n: _ } => ChainSize { ops: 0, vars: 0 },
+    NdVar { n } => if banned[n] ?? true { null } else { ChainSize { ops: 0, vars: 1 } },
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) || !invariant_op(b.data.definitions[def_nr]!.name, len(args)) {
+        return null;
+      }
+      size = ChainSize { ops: 1, vars: 0 };
+      for a in args {
+        part = arith_chain(b, a, banned) ?? return null;
+        size.ops += part.ops;
+        size.vars += part.vars;
+      }
+      size
+    },
+    _ => null,
+  }
+}
+
+// `same_chain`: structural equality with every span peeled — two spellings of one chain at two
+// source positions are one memo.
+fn same_chain(a: ir::Node, b: ir::Node) -> boolean {
+  left = loop_shape::unspan(a);
+  right = loop_shape::unspan(b);
+  match left {
+    NdCall { def_nr: d, args: xs } => {
+      match right {
+        NdCall { def_nr: e, args: ys } => {
+          if d != e || len(xs) != len(ys) {
+            return false;
+          }
+          for p in xs {
+            if !same_chain(p, ys[p#index]!) {
+              return false;
+            }
+          }
+          true
+        },
+        _ => false,
+      }
+    },
+    _ => left == right,
+  }
+}
+
+// `rebound_vars`: the variables the loop rebinds — a `Set` or a tuple write anywhere in it,
+// and the re-mint of a hidden pass-2 buffer.  (A `&` link's closure is not asked: a body with
+// a link is not carried.)
+fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boolean> {
+  count = len(d.variables.variables);
+  rebound: vector<boolean> = [for _ in 0..count { false }];
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < count { rebound[var] = true; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if var < count { rebound[var] = true; } },
+      NdCall { def_nr, args } => {
+        name = b.data.definitions[def_nr]!.name;
+        if (name == "OpDatabase" || name == "OpDatabaseNP") && len(args) > 0 {
+          buf = loop_shape::var_of(loop_shape::unspan(args[0]));
+          if buf >= 0 && buf < count && d.variables.variables[buf]!.name.starts_with("__ref_p2_") {
+            rebound[buf] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  rebound
+}
+
+// `collect_chains`, pre-order: a node that is a chain is recorded whole and not descended
+// into; a nested loop is left to its own pass; any other node's children are walked.
+fn collect_chains(b: ir::Bundle, v: ir::Node, banned: vector<boolean>, out: vector<Memo>) {
+  node = loop_shape::unspan(v);
+  match node {
+    NdLoop { block: _ } => { return; },
+    _ => {},
+  }
+  size = arith_chain(b, node, banned);
+  if size != null {
+    if size.ops == 0 || size.vars == 0 {
+      return;
+    }
+    for known in out {
+      if same_chain(known.chain, node) {
+        return;
+      }
+    }
+    out += [Memo { name: "", chain: node, hoisted: false }];
+    return;
+  }
+  match node {
+    NdCall { def_nr: _, args } => { for a in args { collect_chains(b, a, banned, out); } },
+    NdCallRef { var: _, args } => { for a in args { collect_chains(b, a, banned, out); } },
+    NdInsert { items } => { for a in items { collect_chains(b, a, banned, out); } },
+    NdTuple { items } => { for a in items { collect_chains(b, a, banned, out); } },
+    NdParallel { arms } => { for a in arms { collect_chains(b, a, banned, out); } },
+    NdBlock { block } => { for a in block[0].operators { collect_chains(b, a, banned, out); } },
+    NdSet { var: _, inner } => collect_chains(b, inner, banned, out),
+    NdReturn { inner } => collect_chains(b, inner, banned, out),
+    NdDrop { inner } => collect_chains(b, inner, banned, out),
+    NdYield { inner } => collect_chains(b, inner, banned, out),
+    NdTuplePut { var: _, idx: _, inner } => collect_chains(b, inner, banned, out),
+    NdIf { cond, t, f } => {
+      collect_chains(b, cond, banned, out);
+      collect_chains(b, t, banned, out);
+      collect_chains(b, f, banned, out);
+    },
+    NdIter { var: _, create, next, init } => {
+      collect_chains(b, create, banned, out);
+      collect_chains(b, next, banned, out);
+      collect_chains(b, init, banned, out);
+    },
+    _ => {},
+  }
+}
+
+// Does `v` hold a `yield` or parallel arms, or (`refs`) a call through a function value?
+fn holds_opaque(v: ir::Node, refs: boolean) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { hit[0] = true; },
+      NdParallel { arms: _ } => { hit[0] = true; },
+      NdCallRef { var: _, args: _ } => { if refs { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `invariant_chains`: the maximal invariant integer chains of loop `lp`, in first-appearance
+// order.
+fn invariant_chains(x: Cx, w: W, lp: ir::Block) -> vector<Memo> {
+  out: vector<Memo> = [];
+  for op in lp.operators {
+    if holds_opaque(op, false) {
+      return out;
+    }
+  }
+  d = x.b.data.definitions[w.index]!;
+  banned = rebound_vars(x.b, d, lp);
+  for op in lp.operators {
+    opt_non_sentinel::collect_escapes(x.b, op, banned);
+  }
+  for op in lp.operators {
+    collect_chains(x.b, op, banned, out);
+  }
+  out
+}
+
+// `silent_chain`: a chain of the operators that report nothing, which may be evaluated before
+// the loop.
+fn silent_chain(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdVar { n: _ } => true,
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdCall { def_nr, args } => {
+      name = b.data.definitions[def_nr]!.name;
+      if !(name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt" || name == "OpMinSingleInt" || name == "OpLandInt" || name == "OpLorInt" || name == "OpEorInt") {
+        return false;
+      }
+      for a in args {
+        if !silent_chain(b, a) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+// `hold_invariants`: before loop `lp`, a memo for each invariant chain it spells — evaluated
+// here when the chain is silent, else at its first use.  Always opens the loop's frame.
+fn hold_invariants(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  frame = MemoFrame { memos: [] };
+  if (env_variable("LOFT_NO_INVARIANT_HOIST") ?? "0") == "0" {
+    for ch in invariant_chains(x, w, lp) {
+      name = "ia{len(w.decls) + 1}";
+      // One entry, two lines: the memo and its flag each stand alone.
+      w.decls += ["int64_t {name} = LOFT_NULL;\n    int {name}_set = 0;"];
+      line(w, ind, "{name}_set = 0;");
+      hoisted = false;
+      if (env_variable("LOFT_NO_MEMO_HOIST") ?? "0") == "0" && silent_chain(x.b, ch.chain) {
+        w.no_memo += 1;
+        e = cgen_fn::expr(x, w, ch.chain, ind);
+        w.no_memo -= 1;
+        line(w, ind, "{name} = {as_int(w, e)};");
+        line(w, ind, "{name}_set = 1;");
+        hoisted = true;
+      }
+      frame.memos += [Memo { name: name, chain: ch.chain, hoisted: hoisted }];
+    }
+  }
+  w.memos += [frame];
+}
+
+// `invariant_of`: the memo the loop being written keeps for the chain `v` spells, as its
+// place in that loop's frame; -1 for none.
+pub fn invariant_of(w: W, v: ir::Node) -> integer {
+  if w.no_memo > 0 || len(w.memos) == 0 {
+    return -1;
+  }
+  frame = w.memos[len(w.memos) - 1];
+  if len(frame.memos) == 0 {
+    return -1;
+  }
+  match loop_shape::unspan(v) {
+    NdCall { def_nr: _, args: _ } => {},
+    _ => { return -1; },
+  }
+  for m in frame.memos {
+    if same_chain(m.chain, v) {
+      return m#index;
+    }
+  }
+  -1
+}
+
+// `invariant_use`: a memoised chain's use — the first use evaluates the chain where it stands
+// and records it; every use answers the memo.  Under `LOFT_VERIFY` every use evaluates the
+// chain again and the proof asserts the memo agrees.
+pub fn invariant_use(x: Cx, w: W, at: integer, ind: integer) -> E {
+  top = w.memos[len(w.memos) - 1];
+  held = Memo { name: top.memos[at]!.name, chain: top.memos[at]!.chain, hoisted: top.memos[at]!.hoisted };
+  name = held.name;
+  w.no_memo += 1;
+  if !held.hoisted {
+    line(w, ind, "if (!{name}_set) {{");
+    e = cgen_fn::expr(x, w, held.chain, ind + 1);
+    line(w, ind + 1, "{name} = {as_int(w, e)};");
+    line(w, ind + 1, "{name}_set = 1;");
+    line(w, ind, "}}");
+  }
+  line(w, ind, "#ifdef LOFT_VERIFY");
+  before = len(w.temps);
+  fresh = cgen_fn::expr(x, w, held.chain, ind);
+  w.no_memo -= 1;
+  // A plain temporary only this check reads is declared under its `#ifdef` too.
+  for t in w.temps {
+    if t#index >= before && (t.shape == "int" || t.shape == "int32" || t.shape == "bool" || t.shape == "float" || t.shape == "single" || t.shape == "char") {
+      t.verify = true;
+    }
+  }
+  line(w, ind, "LOFT_PROVED({as_int(w, fresh)} == {name}, \"R-Invariant:{name}\");");
+  line(w, ind, "#endif");
+  E { code: name, kind: K_INT }
+}
+
+// ---------------------------------------------------------------------------------------------
+// `@FR-R-StickySum`
+
+// `leaves_past`: does a `break` or `continue` in the loop leave past its own exit?
+fn leaves_past(v: ir::Node, depth: integer) -> boolean {
+  match loop_shape::unspan(v) {
+    NdBreak { n } => n > depth,
+    NdContinue { n } => n > depth,
+    NdLoop { block } => {
+      for o in block[0].operators {
+        if leaves_past(o, depth + 1) {
+          return true;
+        }
+      }
+      false
+    },
+    NdCall { def_nr: _, args } => any_leaves(args, depth),
+    NdCallRef { var: _, args } => any_leaves(args, depth),
+    NdInsert { items } => any_leaves(items, depth),
+    NdTuple { items } => any_leaves(items, depth),
+    NdParallel { arms } => any_leaves(arms, depth),
+    NdBlock { block } => any_leaves(block[0].operators, depth),
+    NdSet { var: _, inner } => leaves_past(inner, depth),
+    NdReturn { inner } => leaves_past(inner, depth),
+    NdDrop { inner } => leaves_past(inner, depth),
+    NdYield { inner } => leaves_past(inner, depth),
+    NdTuplePut { var: _, idx: _, inner } => leaves_past(inner, depth),
+    NdIf { cond, t, f } => leaves_past(cond, depth) || leaves_past(t, depth) || leaves_past(f, depth),
+    NdIter { var: _, create, next, init } => leaves_past(create, depth) || leaves_past(next, depth) || leaves_past(init, depth),
+    _ => false,
+  }
+}
+
+fn any_leaves(nodes: vector<ir::Node>, depth: integer) -> boolean {
+  for n in nodes {
+    if leaves_past(n, depth) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Value::var_named_here`: the variable this node names, -1 for none.
+fn var_named_here(n: ir::Node) -> integer {
+  match n {
+    NdVar { n: v } => v,
+    NdSet { var, inner: _ } => var,
+    NdTupleGet { var, idx: _ } => var,
+    NdTuplePut { var, idx: _, inner: _ } => var,
+    NdFnRefDnr { n: v } => v,
+    NdCallRef { var, args: _ } => var,
+    NdIter { var, create: _, next: _, init: _ } => var,
+    NdFnRef { def_nr: _, var, t: _ } => var,
+    _ => -1,
+  }
+}
+
+// `Value::reads_var`: does this expression read or name variable `v` anywhere?
+fn reads_var(node: ir::Node, v: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    if var_named_here(n) == v {
+      hit[0] = true;
+    }
+  });
+  hit[0]!
+}
+
+// Is `rhs` an update `source ± e` — a sum operator over `source` first, `e` reading neither
+// `v` nor `t` (-1: not asked)?
+fn sum_step(b: ir::Bundle, rhs: ir::Node, source: integer, v: integer, t: integer) -> boolean {
+  match loop_shape::unspan(rhs) {
+    NdCall { def_nr, args } => {
+      name = b.data.definitions[def_nr]!.name;
+      if !(name == "OpAddInt" || name == "OpMinInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable") || len(args) != 2 {
+        return false;
+      }
+      if loop_shape::var_of(loop_shape::unspan(args[0])) != source {
+        return false;
+      }
+      !reads_var(args[1], v) && (t < 0 || !reads_var(args[1], t))
+    },
+    _ => false,
+  }
+}
+
+// Does a call in `code` hand variable `v` out by reference (`OpCreateStack`)?
+fn by_reference(b: ir::Bundle, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if !b.data.definitions[def_nr]!.name.contains("CreateStack") {
+        return false;
+      }
+      for a in args {
+        if loop_shape::var_of(loop_shape::unspan(a)) == v {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
+// `t_update`: is `t` a temp the sum `v` is staged through — written once in the loop, as
+// `t = v ± e`, and nowhere else in the function but by a null init, never by reference?
+fn t_update(b: ir::Bundle, code: ir::Node, lp: ir::Block, t: integer, v: integer) -> boolean {
+  in_loop = [0];
+  shaped = [true];
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == t {
+          in_loop[0] = in_loop[0]! + 1;
+          if !sum_step(b, inner, v, v, t) {
+            shaped[0] = false;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  elsewhere = [0];
+  handed = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == t && loop_shape::unspan(inner) != NdNull {
+          elsewhere[0] = elsewhere[0]! + 1;
+        }
+      },
+      _ => {
+        if by_reference(b, n, t) {
+          handed[0] = true;
+        }
+      },
+    }
+  });
+  in_loop[0]! == 1 && shaped[0]! && elsewhere[0]! == 1 && !handed[0]!
+}
+
+// What `sum_only` gathers: the updates counted and the staged temps.
+struct Sums {
+  updates: integer,
+  temps: vector<integer>,
+}
+
+// One node of `sum_only`'s walk: every write of `v` is its own update or takes a staged temp.
+fn sum_ok(b: ir::Bundle, code: ir::Node, lp: ir::Block, node: ir::Node, v: integer, s: Sums) -> boolean {
+  n = loop_shape::unspan(node);
+  match n {
+    NdSet { var, inner } => {
+      if var == v {
+        tmp = loop_shape::var_of(loop_shape::unspan(inner));
+        if tmp >= 0 {
+          if tmp != v && t_update(b, code, lp, tmp, v) {
+            known = false;
+            for t in s.temps {
+              if t == tmp {
+                known = true;
+              }
+            }
+            if !known {
+              s.temps += [tmp];
+            }
+            s.updates += 1;
+            return true;
+          }
+          return false;
+        }
+        if !sum_step(b, inner, v, v, -1) {
+          return false;
+        }
+        s.updates += 1;
+        return true;
+      }
+    },
+    NdVar { n: read } => {
+      if read == v {
+        return true;
+      }
+    },
+    _ => {},
+  }
+  if by_reference(b, n, v) || var_named_here(n) == v {
+    return false;
+  }
+  match n {
+    NdCall { def_nr: _, args } => all_sum_ok(b, code, lp, args, v, s),
+    NdCallRef { var: _, args } => all_sum_ok(b, code, lp, args, v, s),
+    NdInsert { items } => all_sum_ok(b, code, lp, items, v, s),
+    NdTuple { items } => all_sum_ok(b, code, lp, items, v, s),
+    NdParallel { arms } => all_sum_ok(b, code, lp, arms, v, s),
+    NdBlock { block } => all_sum_ok(b, code, lp, block[0].operators, v, s),
+    NdLoop { block } => all_sum_ok(b, code, lp, block[0].operators, v, s),
+    NdSet { var: _, inner } => sum_ok(b, code, lp, inner, v, s),
+    NdReturn { inner } => sum_ok(b, code, lp, inner, v, s),
+    NdDrop { inner } => sum_ok(b, code, lp, inner, v, s),
+    NdYield { inner } => sum_ok(b, code, lp, inner, v, s),
+    NdTuplePut { var: _, idx: _, inner } => sum_ok(b, code, lp, inner, v, s),
+    NdIf { cond, t, f } => all_sum_ok(b, code, lp, [cond, t, f], v, s),
+    NdIter { var: _, create, next, init } => all_sum_ok(b, code, lp, [create, next, init], v, s),
+    _ => true,
+  }
+}
+
+// Every node of `nodes` is walked, as the Rust walk visits every child whatever one answered.
+fn all_sum_ok(b: ir::Bundle, code: ir::Node, lp: ir::Block, nodes: vector<ir::Node>, v: integer, s: Sums) -> boolean {
+  good = true;
+  for n in nodes {
+    if good && !sum_ok(b, code, lp, n, v, s) {
+      good = false;
+    }
+  }
+  good
+}
+
+// `sum_ranged`: does `(R-Range)` prove every update of `v` in the loop plain?
+fn sum_ranged(x: Cx, w: W, lp: ir::Block, v: integer) -> boolean {
+  count = [0];
+  open = [0];
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == v {
+          match loop_shape::unspan(inner) {
+            NdCall { def_nr, args } => {
+              name = x.b.data.definitions[def_nr]!.name;
+              as_sum = if name == "OpAddInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable" { name } else { "OpMinInt" };
+              count[0] = count[0]! + 1;
+              if !range_proves(x, w, as_sum, args) {
+                open[0] = open[0]! + 1;
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  count[0]! > 0 && open[0]! == 0
+}
+
+// `open_sticky_sums`: the sums loop `lp` takes, each with a fresh flag set before the loop.
+// Answers how many entries of `w.sticky` are this loop's.
+fn open_sticky_sums(x: Cx, w: W, lp: ir::Block, ind: integer) -> vector<Sum> {
+  out: vector<Sum> = [];
+  if (env_variable("LOFT_NO_STICKY_SUM") ?? "0") != "0" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" {
+    return out;
+  }
+  if any_leaves(lp.operators, 0) {
+    return out;
+  }
+  cands: vector<integer> = [];
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => {
+        seen = false;
+        for c in cands {
+          if c == var {
+            seen = true;
+          }
+        }
+        if !seen {
+          cands += [var];
+        }
+      },
+      _ => {},
+    }
+  });
+  code = x.b.data.definitions[w.index]!.code[0]!;
+  for v in cands {
+    if (w.shapes[v] ?? "") != "int" || sticky_flag(w, v) != "" || sum_ranged(x, w, lp, v) {
+      continue;
+    }
+    s = Sums { updates: 0, temps: [] };
+    if !all_sum_ok(x.b, code, lp, lp.operators, v, s) || s.updates == 0 {
+      continue;
+    }
+    plain = true;
+    for t in s.temps {
+      if (w.shapes[t] ?? "") != "int" {
+        plain = false;
+      }
+    }
+    if !plain {
+      continue;
+    }
+    flag = "ss{len(w.decls) + 1}";
+    w.decls += ["int {flag} = 0;"];
+    line(w, ind, "{flag} = ({w.names[v]!} == LOFT_NULL);");
+    w.sticky += [Sum { var: v, flag: flag }];
+    out += [Sum { var: v, flag: flag }];
+    for t in s.temps {
+      tflag = "ss{len(w.decls) + 1}";
+      w.decls += ["int {tflag} = 0;"];
+      w.sticky += [Sum { var: t, flag: tflag }];
+      w.sticky_temps += [Staged { temp: t, sum: v }];
+      out += [Sum { var: t, flag: tflag }];
+    }
+  }
+  out
+}
+
+// `close_sticky_sums`: after the loop's exit label, each sum the loop took answers null where
+// its flag is set.
+fn close_sticky_sums(w: W, sums: vector<Sum>, ind: integer) {
+  for s in sums {
+    line(w, ind, "if ({s.flag}) {w.names[s.var]!} = LOFT_NULL;");
+    kept: vector<Sum> = [];
+    for k in w.sticky {
+      if k.var != s.var {
+        kept += [Sum { var: k.var, flag: k.flag }];
+      }
+    }
+    w.sticky = kept;
+    staged: vector<Staged> = [];
+    for k in w.sticky_temps {
+      if k.temp != s.var {
+        staged += [Staged { temp: k.temp, sum: k.sum }];
+      }
+    }
+    w.sticky_temps = staged;
+  }
+}
+
+// `never_null`: is `v` never null under this function's facts — ranged, or non-sentinel?
+fn never_null(x: Cx, w: W, v: ir::Node) -> boolean {
+  ranged(x, w, v) || opt_non_sentinel::non_sentinel(x.b, x.p, w.nn, v)
+}
+
+// `sticky_update`: `var = x` for a sum an enclosing loop took — the plain operator, its events
+// into the loop's flag.  Answers whether it wrote it.
+pub fn sticky_update(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) -> boolean {
+  flag = sticky_flag(w, var);
+  if flag == "" {
+    return false;
+  }
+  // The sum takes its staged temp: the temp's flag becomes the sum's.
+  from = loop_shape::var_of(loop_shape::unspan(value));
+  if from >= 0 {
+    for st in w.sticky_temps {
+      if st.temp == from && st.sum == var {
+        tflag = sticky_flag(w, from);
+        if tflag != "" {
+          line(w, ind, "{flag} = {tflag};");
+          line(w, ind, "{w.names[var]!} = {w.names[from]!};");
+          return true;
+        }
+      }
+    }
+  }
+  match loop_shape::unspan(value) {
+    NdCall { def_nr, args } => {
+      name = x.b.data.definitions[def_nr]!.name;
+      ovf = if name == "OpAddInt" || name == "OpAddIntNullable" {
+        "LOFT_ADD_OVF"
+      } else if name == "OpMinInt" || name == "OpMinIntNullable" {
+        "LOFT_SUB_OVF"
+      } else {
+        return false
+      };
+      // An update `(R-Range)` proves cannot fault is that rule's: plain, no flag.
+      if range_proves(x, w, name, args) {
+        return false;
+      }
+      // A staged temp's step reads the sum's raw value and starts from the sum's flag.
+      source = var;
+      start = "";
+      for st in w.sticky_temps {
+        if st.temp == var && start == "" {
+          source = st.sum;
+          start = sticky_flag(w, st.sum);
+          if start == "" {
+            refuse(w, "a staged temp without its sum");
+            return true;
+          }
+        }
+      }
+      if loop_shape::var_of(loop_shape::unspan(args[0])) != source {
+        return false;
+      }
+      e = cgen_fn::expr(x, w, args[1], ind);
+      t = temp(w, "int");
+      line(w, ind, "{t} = {as_int(w, e)};");
+      if start != "" {
+        line(w, ind, "{flag} = {start};");
+      }
+      if !never_null(x, w, args[1]) {
+        line(w, ind, "{flag} |= ({t} == LOFT_NULL);");
+      }
+      acc = w.names[var]!;
+      line(w, ind, "{flag} |= {ovf}({w.names[source]!}, {t}, &{acc});");
+      line(w, ind, "{flag} |= ({acc} == LOFT_NULL);");
+      true
+    },
+    _ => false,
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// `@FR-R-SpecChain`
+
+fn chain_name(name: text) -> boolean {
+  name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt" || name == "OpLandInt" || name == "OpLorInt" || name == "OpEorInt"
+}
+
+fn bitwise(name: text) -> boolean {
+  name == "OpLandInt" || name == "OpLorInt" || name == "OpEorInt"
+}
+
+// One node of a speculative chain, in post-order: a leaf (its temp, and whether it may be
+// null) or an operator over two nodes.
+struct SpecNode {
+  leaf: boolean,
+  code: text,
+  may_be_null: boolean,
+  name: text,
+  lhs: integer,
+  rhs: integer,
+  proven: boolean,
+  bounded: boolean,
+}
+
+// The operators of a chain and how many of them no proof writes plain.
+struct Census {
+  ops: integer,
+  open: integer,
+}
+
+// The two-operand chain operator `v` is, as its name; "" for any other node.
+fn chain_call(b: ir::Bundle, v: ir::Node) -> text {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      name = b.data.definitions[def_nr]!.name;
+      if len(args) == 2 && chain_name(name) { name } else { "" }
+    },
+    _ => "",
+  }
+}
+
+fn call_args(v: ir::Node) -> vector<ir::Node> {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr: _, args } => args,
+    _ => [],
+  }
+}
+
+// `chain_census`: the operators of the chain under `v` and the ones no proof writes plain.
+fn chain_census(x: Cx, w: W, v: ir::Node, c: Census) {
+  if invariant_of(w, v) >= 0 {
+    return;
+  }
+  name = chain_call(x.b, v);
+  if name == "" {
+    return;
+  }
+  args = call_args(v);
+  c.ops += 1;
+  if bitwise(name) || !range_proves(x, w, name, args) {
+    c.open += 1;
+  }
+  chain_census(x, w, args[0], c);
+  chain_census(x, w, args[1], c);
+}
+
+// `chain_nodes`: post-order nodes of the chain under `v`, each leaf evaluated into a temp in
+// the checked chain's order; answers `v`'s node.
+fn chain_nodes(x: Cx, w: W, v: ir::Node, nodes: vector<SpecNode>, ind: integer) -> integer {
+  name = if invariant_of(w, v) >= 0 { "" } else { chain_call(x.b, v) };
+  if name != "" {
+    args = call_args(v);
+    proven = !bitwise(name) && range_proves(x, w, name, args);
+    bounded = bitwise(name) && ranged(x, w, v);
+    lhs = chain_nodes(x, w, args[0], nodes, ind);
+    rhs = chain_nodes(x, w, args[1], nodes, ind);
+    nodes += [SpecNode { leaf: false, code: "", may_be_null: false, name: name, lhs: lhs, rhs: rhs, proven: proven, bounded: bounded }];
+    return len(nodes) - 1;
+  }
+  literal = match loop_shape::unspan(v) {
+    NdInt { n } => "INT64_C({n})",
+    _ => "",
+  };
+  if literal != "" {
+    nodes += [SpecNode { leaf: true, code: literal, may_be_null: false, name: "", lhs: 0, rhs: 0, proven: false, bounded: false }];
+    return len(nodes) - 1;
+  }
+  e = cgen_fn::expr(x, w, v, ind);
+  t = temp(w, "int");
+  line(w, ind, "{t} = {as_int(w, e)};");
+  nodes += [SpecNode { leaf: true, code: t, may_be_null: !never_null(x, w, v), name: "", lhs: 0, rhs: 0, proven: false, bounded: false }];
+  len(nodes) - 1
+}
+
+// `checked_chain`: the chain as the checked operators write it, over the same leaves.
+fn checked_chain(nodes: vector<SpecNode>, at: integer) -> text {
+  n = nodes[at]!;
+  if n.leaf {
+    return n.code;
+  }
+  f = if n.name == "OpAddInt" {
+    "loft_add"
+  } else if n.name == "OpMinInt" {
+    "loft_sub"
+  } else if n.name == "OpMulInt" {
+    "loft_mul"
+  } else if n.name == "OpLandInt" {
+    "loft_and"
+  } else if n.name == "OpLorInt" {
+    "loft_or"
+  } else {
+    "loft_xor"
+  };
+  "{f}({checked_chain(nodes, n.lhs)}, {checked_chain(nodes, n.rhs)})"
+}
+
+// `chain_admitted`: does `(R-GuardedChain)` own an operator of the chain under `v`?
+fn chain_admitted(x: Cx, w: W, v: ir::Node) -> boolean {
+  if len(w.chains) == 0 {
+    return false;
+  }
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if admitted_at(x, w, x.b.data.definitions[def_nr]!.name, args) >= 0 {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `spec_chain`: `var = value` for an integer local and a chain of at least two operators not
+// all proven plain, inside a loop — the processor's operators, every event the checked chain
+// would answer null for gathered in one flag.  Answers whether it wrote it.
+pub fn spec_chain(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) -> boolean {
+  if (env_variable("LOFT_NO_SPEC_CHAIN") ?? "0") != "0" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" || len(w.loops) == 0 {
+    return false;
+  }
+  if chain_call(x.b, value) == "" {
+    return false;
+  }
+  args = call_args(value);
+  c = Census { ops: 0, open: 0 };
+  chain_census(x, w, value, c);
+  // One operator is worth it only where the local carries itself: `acc = acc + e`.
+  carried = false;
+  for a in args {
+    if loop_shape::var_of(loop_shape::unspan(a)) == var {
+      carried = true;
+    }
+  }
+  if (c.ops < 2 && !carried) || c.open == 0 || chain_admitted(x, w, value) {
+    return false;
+  }
+  nodes: vector<SpecNode> = [];
+  root = chain_nodes(x, w, value, nodes, ind);
+  bad = temp(w, "int");
+  line(w, ind, "{bad} = 0;");
+  for n in nodes {
+    if n.leaf && n.may_be_null {
+      line(w, ind, "{bad} |= ({n.code} == LOFT_NULL);");
+    }
+  }
+  vals: vector<text> = [];
+  site = "\"R-Range:{w.name}\"";
+  for n in nodes {
+    if n.leaf {
+      vals += [n.code];
+      continue;
+    }
+    a = vals[n.lhs]!;
+    b = vals[n.rhs]!;
+    r = temp(w, "int");
+    // A product by a literal keeps `loft_mul`, whose bounds fold against the constant.
+    if n.name == "OpMulInt" && !n.proven && (a.starts_with("INT64_C(") || b.starts_with("INT64_C(")) {
+      line(w, ind, "{r} = loft_mul({a}, {b});");
+      line(w, ind, "{bad} |= ({r} == LOFT_NULL);");
+      vals += [r];
+      continue;
+    }
+    code = if n.name == "OpAddInt" && n.proven {
+      "{r} = LOFT_PLAIN_ADD({a}, {b}, {site});"
+    } else if n.name == "OpMinInt" && n.proven {
+      "{r} = LOFT_PLAIN_SUB({a}, {b}, {site});"
+    } else if n.name == "OpMulInt" && n.proven {
+      "{r} = LOFT_PLAIN_MUL({a}, {b}, {site});"
+    } else if n.name == "OpAddInt" {
+      "{bad} |= LOFT_ADD_OVF({a}, {b}, &{r});"
+    } else if n.name == "OpMinInt" {
+      "{bad} |= LOFT_SUB_OVF({a}, {b}, &{r});"
+    } else if n.name == "OpMulInt" {
+      "{bad} |= LOFT_MUL_OVF({a}, {b}, &{r});"
+    } else if n.name == "OpLandInt" {
+      "{r} = ({a}) & ({b});"
+    } else if n.name == "OpLorInt" {
+      "{r} = ({a}) | ({b});"
+    } else {
+      "{r} = ({a}) ^ ({b});"
+    };
+    line(w, ind, code);
+    // An inner result equal to the sentinel reads as null to the operator above.
+    if n#index != root && !n.proven && !n.bounded {
+      line(w, ind, "{bad} |= ({r} == LOFT_NULL);");
+    }
+    vals += [r];
+  }
+  name = w.names[var]!;
+  line(w, ind, "if (LOFT_UNLIKELY({bad})) {{");
+  line(w, ind + 1, "{name} = {checked_chain(nodes, root)};");
+  line(w, ind, "}} else {{");
+  line(w, ind + 1, "{name} = {vals[root]!};");
+  line(w, ind, "}}");
+  true
+}
+
+// ---------------------------------------------------------------------------------------------
+// `@FR-R-GuardedChain`
+
+// The chain operators of a guard, by arity (`chain_op`).
+fn chain_op(name: text, count: integer) -> boolean {
+  if count == 1 {
+    return name == "OpMinSingleInt";
+  }
+  count == 2 && (name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable" || name == "OpMulIntNullable")
+}
+
+fn magnitude(n: integer) -> integer {
+  if n < 0 { -n } else { n }
+}
+
+// `chain_bound`: the C bound of chain node `v` — a literal by its magnitude, a counter by
+// `loft_gc_cb` (`loft_gc_nc<k>` for a nested loop's), an invariant by `loft_gc_v<k>`, `+`/`-`
+// summing and `*` multiplying — or "" where a leaf is none of these.  `counters` is false
+// while bounding a nested loop's own seed and end.  A record scalar an enclosing frame holds
+// is no leaf yet: no body that reads one is carried.
+fn chain_bound(x: Cx, w: W, f: ChainFrame, v: ir::Node, counters: boolean, inv: vector<integer>) -> text {
+  match loop_shape::unspan(v) {
+    NdInt { n } => "INT64_C({magnitude(n)})",
+    NdLong { n } => if n == null { "" } else { "INT64_C({magnitude(n)})" },
+    NdVar { n } => {
+      if f.own[n] ?? false {
+        return if counters { "loft_gc_cb" } else { "" };
+      }
+      nest = f.nested[n] ?? -1;
+      if nest >= 0 {
+        return if counters { "loft_gc_nc{nest}" } else { "" };
+      }
+      integer_var = match opt_names::peel_link(x.b.data.definitions[f.d]!.variables.variables[n]!.type_def[0]!) {
+        TyInteger { spec: _ } => true,
+        _ => false,
+      };
+      if (f.written[n] ?? true) || (f.escaped[n] ?? true) || !integer_var {
+        return "";
+      }
+      // `inv` holds the invariants (a variable's number) and the held record scalars
+      // (-(its place in `w.scalars`) - 1), each numbered among its own kind.
+      at = 0;
+      for k in inv {
+        if k == n {
+          return "loft_gc_v{at}";
+        }
+        if k >= 0 {
+          at += 1;
+        }
+      }
+      inv += [n];
+      "loft_gc_v{at}"
+    },
+    NdCall { def_nr, args } => {
+      name = x.b.data.definitions[def_nr]!.name;
+      count = len(args);
+      if count == 2 && (name == "OpAddInt" || name == "OpMinInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable" || name == "OpMulInt" || name == "OpMulIntNullable") {
+        lhs = chain_bound(x, w, f, args[0], counters, inv);
+        if lhs == "" {
+          return "";
+        }
+        rhs = chain_bound(x, w, f, args[1], counters, inv);
+        if rhs == "" {
+          return "";
+        }
+        return if name.starts_with("OpMul") { "loft_gc_mul({lhs}, {rhs}, &loft_gc_ok)" } else { "loft_gc_add({lhs}, {rhs}, &loft_gc_ok)" };
+      }
+      if count == 1 && name == "OpMinSingleInt" {
+        return chain_bound(x, w, f, args[0], counters, inv);
+      }
+      // A record scalar an enclosing loop holds (`loft_gc_s<k>`).
+      if name == "OpGetInt" {
+        fld = 0;
+        rec = opt_hoist::scalar_read(name, args, fld);
+        held = -1;
+        for i in rev(0..len(w.scalars)) {
+          if w.scalars[i]!.root == rec && w.scalars[i]!.fld == fld {
+            held = i;
+            break;
+          }
+        }
+        if rec < 0 || held < 0 {
+          return "";
+        }
+        nth = 0;
+        for k in inv {
+          if k == -held - 1 {
+            return "loft_gc_s{nth}";
+          }
+          if k < 0 {
+            nth += 1;
+          }
+        }
+        inv += [-held - 1];
+        return "loft_gc_s{nth}";
+      }
+      ""
+    },
+    _ => "",
+  }
+}
+
+// What the guard's walk gathers: each maximal chain's bound, the admitted operators that are
+// no index offset, and how many of those no range proof writes plain.
+struct Gathered {
+  chains: vector<text>,
+  admitted: integer,
+  open: integer,
+}
+
+// Every chain operator under `v` counted (`collect_ops`), an index offset left out.
+fn count_ops(x: Cx, w: W, v: ir::Node, offset: boolean, g: Gathered) {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      name = x.b.data.definitions[def_nr]!.name;
+      if chain_op(name, len(args)) && !offset {
+        g.admitted += 1;
+        if !range_proves(x, w, name, args) {
+          g.open += 1;
+        }
+      }
+      for a in args {
+        count_ops(x, w, a, false, g);
+      }
+    },
+    _ => {},
+  }
+}
+
+// Is `v` one `+` or `-` of two leaves — an index offset where it is an element read's index?
+fn offset_shape(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      name = b.data.definitions[def_nr]!.name;
+      if len(args) != 2 || !(name == "OpAddInt" || name == "OpMinInt" || name == "OpAddIntNullable" || name == "OpMinIntNullable") {
+        return false;
+      }
+      for a in args {
+        leaf = match loop_shape::unspan(a) {
+          NdVar { n: _ } => true,
+          NdInt { n: _ } => true,
+          NdLong { n: _ } => true,
+          _ => false,
+        };
+        if !leaf {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+// The guard's walk: last statement first and a node's children last first, as the Rust walk
+// takes them off its stack.  A chain operator whose whole subtree bounds is admitted whole;
+// one that does not is descended for smaller ones; a nested loop guards its own chains.
+fn gather(x: Cx, w: W, f: ChainFrame, v: ir::Node, offset: boolean, inv: vector<integer>, g: Gathered) {
+  node = loop_shape::unspan(v);
+  match node {
+    NdLoop { block: _ } => { return; },
+    NdCall { def_nr, args } => {
+      name = x.b.data.definitions[def_nr]!.name;
+      if chain_op(name, len(args)) {
+        // A chain that does not bound leaves the invariants as they were.
+        trial = inv;
+        bound = chain_bound(x, w, f, node, true, trial);
+        if bound != "" {
+          for k in trial {
+            if k#index >= len(inv) {
+              inv += [k];
+            }
+          }
+          g.chains += [bound];
+          count_ops(x, w, node, offset, g);
+          return;
+        }
+      }
+      element = len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable");
+      for i in rev(0..len(args)) {
+        gather(x, w, f, args[i]!, element && i == 2 && offset_shape(x.b, args[i]!), inv, g);
+      }
+    },
+    NdCallRef { var: _, args } => { for i in rev(0..len(args)) { gather(x, w, f, args[i]!, false, inv, g); } },
+    NdInsert { items } => { for i in rev(0..len(items)) { gather(x, w, f, items[i]!, false, inv, g); } },
+    NdTuple { items } => { for i in rev(0..len(items)) { gather(x, w, f, items[i]!, false, inv, g); } },
+    NdParallel { arms } => { for i in rev(0..len(arms)) { gather(x, w, f, arms[i]!, false, inv, g); } },
+    NdBlock { block } => {
+      ops = block[0].operators;
+      for i in rev(0..len(ops)) {
+        gather(x, w, f, ops[i]!, false, inv, g);
+      }
+    },
+    NdSet { var: _, inner } => gather(x, w, f, inner, false, inv, g),
+    NdReturn { inner } => gather(x, w, f, inner, false, inv, g),
+    NdDrop { inner } => gather(x, w, f, inner, false, inv, g),
+    NdYield { inner } => gather(x, w, f, inner, false, inv, g),
+    NdTuplePut { var: _, idx: _, inner } => gather(x, w, f, inner, false, inv, g),
+    NdIf { cond, t, f: other } => {
+      gather(x, w, f, other, false, inv, g);
+      gather(x, w, f, t, false, inv, g);
+      gather(x, w, f, cond, false, inv, g);
+    },
+    NdIter { var: _, create, next, init } => {
+      gather(x, w, f, init, false, inv, g);
+      gather(x, w, f, next, false, inv, g);
+      gather(x, w, f, create, false, inv, g);
+    },
+    _ => {},
+  }
+}
+
+// A counted loop nested in a guarded one (`nested_counted_loops`): its counters, the seed of
+// its stepped counter and its end.
+struct Nested {
+  rc: loop_shape::RangeCounters,
+  seed: ir::Node,
+  hi: ir::Node,
+}
+
+// The one value `ops` assign variable `v` outside a step `v = v + …` (`steps` skips those);
+// `found` counts them.
+fn sole_set(b: ir::Bundle, ops: vector<ir::Node>, v: integer, steps: boolean, found: vector<integer>) -> ir::Node {
+  held: vector<ir::Node> = [];
+  walk_all(ops, fn(m: ir::Node) {
+    match m {
+      NdSet { var, inner } => {
+        if var == v {
+          is_step = false;
+          if steps {
+            match loop_shape::unspan(inner) {
+              NdCall { def_nr, args } => {
+                is_step = b.data.definitions[def_nr]!.name == "OpAddInt" && len(args) == 2 && loop_shape::var_of(loop_shape::unspan(args[0])) == v;
+              },
+              _ => {},
+            }
+          }
+          if !is_step {
+            found[0] = found[0]! + 1;
+            held += [inner];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if len(held) > 0 { held[len(held) - 1] } else { NdNull }
+}
+
+// `nested_counted_loops`: every counted loop nested anywhere in `lp`, with the seed of its
+// stepped counter.  A loop whose seed is set from two places, or not at all in `lp`, is left
+// out.
+fn nested_counted_loops(b: ir::Bundle, lp: ir::Block) -> vector<Nested> {
+  loops: vector<ir::Block> = [];
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdLoop { block } => { loops += [block[0]]; },
+      _ => {},
+    }
+  });
+  out: vector<Nested> = [];
+  for inner in loops {
+    rc = loop_shape::range_counters(inner, b.data.definitions) ?? continue;
+    stepped = if rc.next >= 0 { rc.next } else { rc.index };
+    seeds = [0];
+    seed = sole_set(b, lp.operators, stepped, true, seeds);
+    if seeds[0]! != 1 {
+      continue;
+    }
+    // An end that is a local set once in this body is read as the value it was set from.
+    hi = rc.hi;
+    end = loop_shape::var_of(loop_shape::unspan(rc.hi));
+    if end >= 0 {
+      ends = [0];
+      from = sole_set(b, lp.operators, end, false, ends);
+      if ends[0]! == 1 {
+        hi = from;
+      }
+    }
+    out += [Nested { rc: rc, seed: seed, hi: hi }];
+  }
+  out
+}
+
+// The guard `chain_guard` decided for a loop: its flag and whether the loop is written twice.
+struct Guard {
+  name: text,
+  twice: boolean,
+  frame: ChainFrame,
+}
+
+// `chain_guard`: the guard of counted loop `lp`, written before it — or null: no chain, one
+// admitted operator, a nested loop whose seed or end is not a leaf, or the release-pass probe.
+fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
+  if (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" || (env_variable("LOFT_NO_GUARDED_CHAIN") ?? "0") != "0" {
+    return null;
+  }
+  rc = loop_shape::range_counters(lp, x.b.data.definitions) ?? return null;
+  d = x.b.data.definitions[w.index]!;
+  count = len(d.variables.variables);
+  escaped: vector<boolean> = [for _ in 0..count { false }];
+  opt_non_sentinel::collect_escapes(x.b, d.code[0]!, escaped);
+  nested = nested_counted_loops(x.b, lp);
+  own: vector<boolean> = [for _ in 0..count { false }];
+  own[rc.loop_var] = true;
+  own[rc.index] = true;
+  if rc.next >= 0 {
+    own[rc.next] = true;
+  }
+  nest: vector<integer> = [for _ in 0..count { -1 }];
+  for n in nested {
+    // The first nested loop that names a counter is the one a bound spells.
+    if nest[n.rc.loop_var]! < 0 { nest[n.rc.loop_var] = n#index; }
+    if nest[n.rc.index]! < 0 { nest[n.rc.index] = n#index; }
+    if n.rc.next >= 0 && nest[n.rc.next]! < 0 { nest[n.rc.next] = n#index; }
+  }
+  // `written_vars`: the rebound variables and every iterator's.
+  written = rebound_vars(x.b, d, lp);
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdIter { var, create: _, next: _, init: _ } => { if var < count { written[var] = true; } },
+      _ => {},
+    }
+  });
+  frame = ChainFrame { d: w.index, depth: len(w.memos), guard: "", own: own, nested: nest, written: written, escaped: escaped };
+  inv: vector<integer> = [];
+  g = Gathered { chains: [], admitted: 0, open: 0 };
+  for i in rev(1..len(lp.operators)) {
+    gather(x, w, frame, lp.operators[i]!, false, inv, g);
+  }
+  if len(g.chains) == 0 || g.admitted < 2 || g.open < 2 {
+    return null;
+  }
+  // The nested loops' seeds and ends, bounded over the same leaves (no counters).
+  seeds: vector<text> = [];
+  ends: vector<text> = [];
+  for n in nested {
+    s = chain_bound(x, w, frame, n.seed, false, inv);
+    if s == "" {
+      return null;
+    }
+    h = chain_bound(x, w, frame, n.hi, false, inv);
+    if h == "" {
+      return null;
+    }
+    seeds += [s];
+    ends += [h];
+  }
+  lo = if rc.next >= 0 { w.names[rc.next]! } else { "loft_gc_add({w.names[rc.index]!}, INT64_C(1), &loft_gc_ok)" };
+  hi = as_int(w, cgen_fn::expr(x, w, rc.hi, ind));
+  flush(w, ind);
+  w.chain_guards += 1;
+  guard = "loft_gc{w.chain_guards}";
+  w.decls += ["int {guard} = 0;"];
+  line(w, ind, "{{");
+  line(w, ind + 1, "int loft_gc_ok = 1;");
+  line(w, ind + 1, "int64_t loft_gc_lo = {lo}, loft_gc_hi = {hi};");
+  line(w, ind + 1, "if (loft_gc_lo == LOFT_NULL || loft_gc_hi == LOFT_NULL) loft_gc_ok = 0;");
+  line(w, ind + 1, "int64_t loft_gc_cb = loft_gc_add(loft_gc_max(loft_gc_abs(loft_gc_lo, &loft_gc_ok), loft_gc_abs(loft_gc_hi, &loft_gc_ok)), INT64_C(1), &loft_gc_ok);");
+  vars_at = 0;
+  for v in inv {
+    if v >= 0 {
+      line(w, ind + 1, "int64_t loft_gc_v{vars_at} = loft_gc_abs({w.names[v]!}, &loft_gc_ok);");
+      vars_at += 1;
+    }
+  }
+  held_at = 0;
+  for v in inv {
+    if v < 0 {
+      line(w, ind + 1, "int64_t loft_gc_s{held_at} = loft_gc_abs({w.scalars[-v - 1]!.name}, &loft_gc_ok);");
+      held_at += 1;
+    }
+  }
+  for s in seeds {
+    line(w, ind + 1, "int64_t loft_gc_nc{s#index} = loft_gc_add(loft_gc_max({s}, {ends[s#index]!}), INT64_C(1), &loft_gc_ok);");
+  }
+  for c in g.chains {
+    line(w, ind + 1, "(void) {c};");
+  }
+  line(w, ind + 1, "(void) loft_gc_cb;");
+  for k in 0..vars_at {
+    line(w, ind + 1, "(void) loft_gc_v{k};");
+  }
+  for k in 0..held_at {
+    line(w, ind + 1, "(void) loft_gc_s{k};");
+  }
+  for s in seeds {
+    line(w, ind + 1, "(void) loft_gc_nc{s#index};");
+  }
+  line(w, ind + 1, "{guard} = loft_gc_ok;");
+  line(w, ind, "}}");
+  // A body that must not run twice — a yield, parallel arms, a call through a function value,
+  // a loop inside, a call of a function with a body — is written once and branches per
+  // operator.
+  once = [false];
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { once[0] = true; },
+      NdParallel { arms: _ } => { once[0] = true; },
+      NdCallRef { var: _, args: _ } => { once[0] = true; },
+      NdLoop { block: _ } => { once[0] = true; },
+      NdCall { def_nr, args: _ } => {
+        callee = x.b.data.definitions[def_nr]!;
+        if binds::has_code(callee) {
+          once[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  Guard { name: guard, twice: !once[0]!, frame: frame }
+}
+
+// The guarded frame that admits operator `name` over `args` for the loop being written: its
+// place in `w.chains`, -1 for none.
+fn admitted_at(x: Cx, w: W, name: text, args: vector<ir::Node>) -> integer {
+  if !chain_op(name, len(args)) {
+    return -1;
+  }
+  for i in rev(0..len(w.chains)) {
+    f = w.chains[i]!;
+    if f.depth != len(w.memos) {
+      continue;
+    }
+    // The iterator's operators are no guard's, and neither is a chain evaluated for its
+    // memo: the Rust writer evaluates the memo's own copy, whose nodes no guard admitted.
+    if w.in_iter > 0 || w.no_memo > 0 {
+      return -1;
+    }
+    scratch: vector<integer> = [];
+    for a in args {
+      if chain_bound(x, w, f, a, true, scratch) == "" {
+        return -1;
+      }
+    }
+    return i;
+  }
+  -1
+}
+
+// `chain_operator`: an admitted chain operator — C's plain operator in a guarded loop's plain
+// copy, or `guard ? plain : checked` in a loop written once.  `done` says whether it wrote it.
+pub fn chain_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if len(w.chains) == 0 || !chain_op(name, len(args)) || range_proves(x, w, name, args) {
+    return none();
+  }
+  at = admitted_at(x, w, name, args);
+  if at < 0 {
+    return none();
+  }
+  guard = w.chains[at]!.guard;
+  done = true;
+  plain = "";
+  checked = "";
+  if len(args) == 1 {
+    a = as_int(w, cgen_fn::arg(x, w, args, 0, ind));
+    plain = "(-({a}))";
+    checked = "loft_neg({a})";
+  } else {
+    first = cgen_fn::arg(x, w, args, 0, ind);
+    second = cgen_fn::arg(x, w, args, 1, ind);
+    a = as_int(w, first);
+    b = as_int(w, second);
+    if name.starts_with("OpAdd") {
+      plain = "(({a}) + ({b}))";
+      checked = "loft_add({a}, {b})";
+    } else if name.starts_with("OpMin") {
+      plain = "(({a}) - ({b}))";
+      checked = "loft_sub({a}, {b})";
+    } else {
+      plain = "(({a}) * ({b}))";
+      checked = "loft_mul({a}, {b})";
+    }
+  }
+  E { code: if guard == "" { plain } else { "({guard} ? {plain} : {checked})" }, kind: K_INT }
+}
+
+// A copy of frame `f` under `guard` ("": every admitted operator is plain).
+fn framed(f: ChainFrame, guard: text) -> ChainFrame {
+  ChainFrame { d: f.d, depth: f.depth, guard: guard, own: f.own, nested: f.nested, written: f.written, escaped: f.escaped }
+}
+
+// `guarded_copies`: loop `lp` as its chain guard writes it — an innermost loop twice (the
+// plain copy under the guard, the checked loop as the `else`), any other guarded loop once
+// with each admitted operator branching on the guard.
+fn guarded_copies(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  guard = chain_guard(x, w, lp, ind);
+  if guard == null {
+    loop_core(x, w, lp, ind);
+    return;
+  }
+  if guard.twice {
+    line(w, ind, "if ({guard.name}) {{");
+    w.chains += [framed(guard.frame, "")];
+    loop_core(x, w, lp, ind + 1);
+    w.chains = w.chains[0..len(w.chains) - 1];
+    line(w, ind, "}} else {{");
+    loop_core(x, w, lp, ind + 1);
+    line(w, ind, "}}");
+    return;
+  }
+  w.chains += [framed(guard.frame, guard.name)];
+  loop_core(x, w, lp, ind);
+  w.chains = w.chains[0..len(w.chains) - 1];
+}
+
+// ---------------------------------------------------------------------------------------------
+// `@FR-R-Peel`
+
+// The values a peeled loop's variable takes, and its counters.
+struct Peel {
+  lo: integer,
+  hi: integer,
+  loop_var: integer,
+  index: integer,
+  next: integer,
+}
+
+// `peel::seeds`: the counter seeds the (at most two) statements before `ops[i]` set to a
+// constant, when `ops[i]` is a loop.
+pub fn peel_seeds(ops: vector<ir::Node>, i: integer) -> vector<Seed> {
+  out: vector<Seed> = [];
+  match loop_shape::unspan(ops[i]!) {
+    NdLoop { block: _ } => {},
+    _ => { return out; },
+  }
+  first = if i >= 2 { i - 2 } else { 0 };
+  for k in rev(first..i) {
+    match loop_shape::unspan(ops[k]!) {
+      NdSet { var, inner } => {
+        match loop_shape::unspan(inner) {
+          NdInt { n } => { out += [Seed { var: var, value: n }]; },
+          NdLong { n } => { if n != null { out += [Seed { var: var, value: n }]; } },
+          _ => {},
+        }
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+// `peel_plan`: a counted loop of a few trips with constant bounds, written once per trip.
+fn peel_plan(x: Cx, w: W, lp: ir::Block) -> Peel? {
+  if (env_variable("LOFT_NO_PEEL") ?? "0") != "0" {
+    return null;
+  }
+  rc = loop_shape::range_counters(lp, x.b.data.definitions) ?? return null;
+  if rc.inclusive {
+    return null;
+  }
+  hi = match loop_shape::unspan(rc.hi) {
+    NdInt { n } => n,
+    NdLong { n } => n ?? return null,
+    _ => return null,
+  };
+  // The counter that steps: `next` in the two-counter form, the index itself otherwise.
+  counter = if rc.next >= 0 { rc.next } else { rc.index };
+  seed: integer? = null;
+  for s in w.peel_seeds {
+    if s.var == counter && seed == null {
+      seed = s.value;
+    }
+  }
+  if seed == null {
+    return null;
+  }
+  // The first value yielded: one past the seed in the single-counter form, the seed itself
+  // in the two-counter form.
+  lo = if rc.next >= 0 { seed } else { seed + 1 };
+  if lo == null {
+    return null;
+  }
+  trips = hi - lo;
+  if trips == null || trips < 1 || trips > MAX_TRIPS {
+    return null;
+  }
+  nodes = [0];
+  refused = [false];
+  walk_all(lp.operators[1..len(lp.operators)], fn(n: ir::Node) {
+    nodes[0] = nodes[0]! + 1;
+    match n {
+      NdLoop { block: _ } => { refused[0] = true; },
+      NdYield { inner: _ } => { refused[0] = true; },
+      NdParallel { arms: _ } => { refused[0] = true; },
+      // The counters step only in their iterator.
+      NdSet { var, inner: _ } => {
+        if var == rc.index || var == rc.loop_var || (rc.next >= 0 && var == rc.next) {
+          refused[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  if refused[0]! || nodes[0]! * trips > MAX_NODES {
+    return null;
+  }
+  Peel { lo: lo, hi: hi, loop_var: rc.loop_var, index: rc.index, next: rc.next }
+}
+
+// `peel_loop`: the copies — per trip a block setting the counters to the trip's value, then
+// the body.  Each copy is a loop of its own to the body's `break` and `continue`.
+fn peel_loop(x: Cx, w: W, lp: ir::Block, p: Peel, ind: integer) {
+  idx = w.names[p.index]!;
+  var = w.names[p.loop_var]!;
+  next = if p.next >= 0 { w.names[p.next]! } else { "" };
+  labels: vector<integer> = [];
+  body = lp.operators[1..len(lp.operators)];
+  // Each copy is written from the binding state the loop starts with.
+  bound_at_entry = w.bound;
+  for k in p.lo..p.hi {
+    w.bound = bound_at_entry;
+    w.labels += 1;
+    m = w.labels;
+    labels += [m];
+    w.loops += [m];
+    line(w, ind, "{{");
+    if next != "" {
+      line(w, ind + 1, "{idx} = INT64_C({k}); {var} = INT64_C({k}); {next} = INT64_C({k + 1});");
+    } else {
+      line(w, ind + 1, "{idx} = INT64_C({k}); {var} = INT64_C({k});");
+    }
+    cgen_fn::stmts(x, w, body, ind + 1);
+    w.loops = w.loops[0..len(w.loops) - 1];
+    line(w, ind + 1, "cont_{m}:;");
+    line(w, ind, "}}");
+  }
+  // As the whole range leaves them: the index at the last value yielded and the counter that
+  // steps one past it.
+  last = p.hi - 1;
+  if next != "" {
+    line(w, ind, "{idx} = INT64_C({last}); {next} = INT64_C({last + 1});");
+  } else {
+    line(w, ind, "{idx} = INT64_C({last + 1});");
+  }
+  for m in labels {
+    line(w, ind, "brk_{m}:;");
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The loop
+
+// `loop_core`: the loop itself — its labels, its `for (;;)` and its body.
+fn loop_core(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  if w.why != "" {
+    return;
+  }
+  for s in w.walk_scopes {
+    if s == lp.scope {
+      refuse(w, "a character walk");
+      return;
+    }
+  }
+  // The loop's own label is taken before the plan: a peeled loop's copies number after it.
+  w.labels += 1;
+  l = w.labels;
+  plan = peel_plan(x, w, lp);
+  if plan != null {
+    peel_loop(x, w, lp, plan, ind);
+    return;
+  }
+  w.loops += [l];
+  sums = open_sticky_sums(x, w, lp, ind);
+  line(w, ind, "for (;;) {{");
+  // The iterator — the loop's first statement — steps its counters outside every guard.
+  w.iter_pending = true;
+  cgen_fn::ops_stmt(x, w, lp.operators, ind + 1);
+  w.iter_pending = false;
+  line(w, ind, "cont_{l}:;");
+  line(w, ind, "}}");
+  line(w, ind, "brk_{l}:;");
+  close_sticky_sums(w, sums, ind);
+  w.loops = w.loops[0..len(w.loops) - 1];
+}
+
+// `loop_stmt`: a loop as a statement.  A range that holds throughout its body narrows the
+// facts its statements are written under (`body_facts`); the memos it holds are bound before
+// it (`loop_copy`).  The holds of a vector, a record scalar, a push or a file are not asked: a
+// body with one is not carried.
+pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  // `@FR-R-PushFill`'s text clause opens a push window for a text the loop pushes into: not
+  // carried.
+  if cgen_text::pushes_text(x, lp.operators) {
+    refuse(w, "a text push window");
+    return;
+  }
+  pushed = false;
+  if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") == "0" {
+    narrowed = if len(w.over) > 0 { opt_range::body_facts(w.over[len(w.over) - 1]!, lp.scope) } else { opt_range::body_facts(w.rv, lp.scope) };
+    if narrowed != null {
+      w.over += [narrowed];
+      pushed = true;
+    }
+  }
+  held_file = plain_rules() && cgen_file::open_hold(x, w, lp, ind);
+  hold_invariants(x, w, lp, ind);
+  held_headers = len(w.headers);
+  held_pushes = len(w.push_heads);
+  held_scalars = len(w.scalars);
+  verdict = if plain_rules() { cgen_hoist::hold_vectors(x, w, lp, ind) } else { opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true } };
+  ranged_counters = len(w.in_range);
+  ranged_lens = len(w.in_range_lens);
+  grid_known = len(w.grid_facts);
+  if plain_rules() {
+    cgen_hoist::counters_in_range(x, w, lp);
+    cgen_hoist::grid_counter_facts(x, w, lp);
+  }
+  window = plain_rules() && cgen_win::open_window(x, w, lp, ind);
+  if plain_rules() && !window {
+    cgen_ref::hash_reserve(x, w, lp, ind);
+  }
+  if plain_rules() {
+    cgen_hoist::hold_pushes(x, w, lp, verdict, ind);
+  }
+  // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
+  // so both copies are its fallback.
+  fill = if plain_rules() { cgen_win::fill_head(x, w, lp, ind) } else { "" };
+  if fill != "" {
+    line(w, ind, "if (!{fill}) {{");
+    guarded_copies(x, w, lp, ind + 1);
+    cgen_win::fill_tail(x, w, lp, ind);
+  } else {
+    guarded_copies(x, w, lp, ind);
+  }
+  w.in_range = w.in_range[0..ranged_counters];
+  w.in_range_lens = w.in_range_lens[0..ranged_lens];
+  cgen_hoist::release(w, held_headers, held_pushes);
+  w.scalars = w.scalars[0..held_scalars];
+  w.grid_facts = w.grid_facts[0..grid_known];
+  if window {
+    cgen_win::close_window(x, w, ind);
+  }
+  if held_file {
+    // The loop's own end; its other exits gave the cursor back where they leave.
+    cgen_file::close_hold(w, ind);
+  }
+  w.memos = w.memos[0..len(w.memos) - 1];
+  if pushed {
+    w.over = w.over[0..len(w.over) - 1];
+  }
+}
+
+// `range_guard`: `@FR-R-RangedCall`'s guarded copy for the `For` block `node` — the test
+// (`|x| <= G` for each leaf, spelled so that a null fails it) and the facts the copy runs
+// under; "" where the plan declines.
+pub fn range_guard(x: Cx, w: W, node: ir::Node, ops: vector<ir::Node>, facts: vector<opt_range::Ranges>) -> text {
+  if (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+    return "";
+  }
+  has_loop = false;
+  // The loop's hoisted integer fields join the guard (`verdict`'s scalars).
+  fields: vector<opt_ranged_call::GuardField> = [];
+  for op in ops {
+    if holds_opaque(op, true) {
+      return "";
+    }
+    match loop_shape::unspan(op) {
+      NdLoop { block } => {
+        if !has_loop && plain_rules() && cgen_hoist::hoists() {
+          for sc in opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, block[0]).scalars {
+            if loop_shape::call_name(x.b.data.definitions, loop_shape::unspan(sc.call)) == "OpGetInt" {
+              fields += [opt_ranged_call::GuardField { root: sc.root, off: sc.fld, call: sc.call }];
+            }
+          }
+        }
+        has_loop = true;
+      },
+      _ => {},
+    }
+  }
+  if !has_loop {
+    return "";
+  }
+  walks = opt_range::walks_of(x.b, w.index);
+  plan = if len(w.over) > 0 {
+    opt_ranged_call::guard_plan(x.b, x.p, x.c, x.gains, w.index, w.nn, w.over[len(w.over) - 1]!, walks, node, fields)
+  } else {
+    opt_ranged_call::guard_plan(x.b, x.p, x.c, x.gains, w.index, w.nn, w.rv, walks, node, fields)
+  };
+  if plan == null {
+    return "";
+  }
+  test: vector<text> = [];
+  for fl in plan.fields {
+    kept = w.pending;
+    w.pending = [];
+    read = as_int(w, cgen_fn::expr(x, w, fl.call, 1));
+    nested = w.pending;
+    w.pending = kept;
+    for t in nested {
+      w.pending += [t];
+    }
+    test += ["((uint64_t) ({read}) + UINT64_C({opt_ranged_call::G}) <= UINT64_C({2 * opt_ranged_call::G}))"];
+  }
+  for v in plan.leaves {
+    test += ["((uint64_t) ({w.names[v]!}) + UINT64_C({opt_ranged_call::G}) <= UINT64_C({2 * opt_ranged_call::G}))"];
+  }
+  facts += [plan.facts];
+  test.join(" && ")
+}

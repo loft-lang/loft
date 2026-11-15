@@ -1,0 +1,661 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the scalar pushes a rule may fuse (`opt::writes::fused_push`,
+// `vector_path`, `push_operands`) and `src/empty_slot.rs`: is a vector known to be empty where
+// a statement list ends?
+
+use ir;
+use loop_shape;
+use opt_non_sentinel;
+use binds;
+use opt_names;
+use opt_writes;
+use types;
+
+// One scalar push as a rule reads it: the vector's path, the vector and value nodes, the
+// element's size.  `size` 0: no fusable push.
+pub struct Push {
+  pub path: text,
+  pub root: integer,
+  pub vector: ir::Node,
+  pub val: ir::Node,
+  pub size: integer,
+  // The index of the statement after the push.
+  pub next: integer,
+  // The push operator and its operands (a byte push carries its bias).
+  pub op: text,
+  pub args: vector<ir::Node>,
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `vector_path`: a vector expression as the path it names — a variable, then the offsets of
+// the fields read off it — as `root:off,off`; "" for any other expression.  `root` takes the
+// variable.
+pub fn vector_path(b: ir::Bundle, v: ir::Node, root: &integer) -> text {
+  match loop_shape::unspan(v) {
+    NdVar { n } => {
+      root = n;
+      "{n}:"
+    },
+    NdCall { def_nr, args } => {
+      if len(args) != 3 || def_name(b, def_nr) != "OpGetField" {
+        return "";
+      }
+      off = match loop_shape::unspan(args[1]) {
+        NdInt { n } => n,
+        _ => return "",
+      };
+      base = vector_path(b, args[0], root);
+      if base == "" { "" } else { "{base}{off}," }
+    },
+    _ => "",
+  }
+}
+
+// The element size of a fusable push operator (`FUSABLE_PUSHES`), 0 for any other operator.
+fn push_size(name: text) -> integer {
+  if name == "OpPushByte" || name == "OpPushBoolean" || name == "OpPushEnum" {
+    1
+  } else if name == "OpPushInt4" || name == "OpPushCharacter" || name == "OpPushSingle" {
+    4
+  } else if name == "OpPushInt" || name == "OpPushFloat" {
+    8
+  } else {
+    0
+  }
+}
+
+fn none(ops: vector<ir::Node>) -> Push {
+  Push { path: "", root: -1, vector: ir::NdNull, val: ir::NdNull, size: 0, next: len(ops), op: "", args: [] }
+}
+
+fn is_pre_alloc(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args: _ } => def_name(b, def_nr) == "OpPreAllocVector",
+    _ => false,
+  }
+}
+
+// `push_at`: the scalar push starting at statement `at` — a bare push, or the
+// `OpPreAllocVector(v, 1, w)` a push onto a local is lowered with, in an `Insert` pair or as
+// the statement before the push.
+pub fn push_at(b: ir::Bundle, ops: vector<ir::Node>, at: integer) -> Push {
+  if at < 0 || at >= len(ops) {
+    return none(ops);
+  }
+  push = ops[at]!;
+  next = at + 1;
+  match loop_shape::unspan(ops[at]!) {
+    NdInsert { items } => {
+      if len(items) != 2 || !is_pre_alloc(b, items[0]) {
+        return none(ops);
+      }
+      push = items[1];
+    },
+    _ => {
+      if is_pre_alloc(b, ops[at]!) {
+        if at + 1 >= len(ops) {
+          return none(ops);
+        }
+        push = ops[at + 1]!;
+        next = at + 2;
+      }
+    },
+  }
+  match loop_shape::unspan(push) {
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      size = push_size(name);
+      if size == 0 {
+        return none(ops);
+      }
+      // `push_operands`: a byte push carries its bias between the vector and the value.
+      if (name == "OpPushByte" && len(args) != 3) || (name != "OpPushByte" && len(args) != 2) {
+        return none(ops);
+      }
+      root = -1;
+      path = vector_path(b, args[0], root);
+      if path == "" {
+        return none(ops);
+      }
+      Push { path: path, root: root, vector: args[0], val: args[len(args) - 1], size: size, next: next, op: name, args: args }
+    },
+    _ => none(ops),
+  }
+}
+
+// The arguments of `v` when it is a call of `name`; `hit` says whether it is one.
+fn call_args(b: ir::Bundle, v: ir::Node, name: text, hit: &boolean) -> vector<ir::Node> {
+  hit = false;
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == name {
+        hit = true;
+        return args;
+      }
+      []
+    },
+    _ => [],
+  }
+}
+
+// Do `a`'s first two operands name the slot — `Var(root)`, `Int(off)`?
+fn on_slot(a: vector<ir::Node>, root: integer, off: integer) -> boolean {
+  if len(a) < 2 {
+    return false;
+  }
+  loop_shape::unspan(a[0]) == NdVar { n: root } && loop_shape::unspan(a[1]) == NdInt { n: off }
+}
+
+// `empties`: does statement `op` leave the vector in slot `(root, off)` empty?
+pub fn empties(b: ir::Bundle, op: ir::Node, root: integer, off: integer) -> boolean {
+  hit = false;
+  set = call_args(b, op, "OpSetInt4", hit);
+  if hit {
+    return on_slot(set, root, off) && len(set) > 2 && loop_shape::unspan(set[2]) == NdInt { n: 0 };
+  }
+  clear = call_args(b, op, "OpClearVector", hit);
+  if hit {
+    if len(clear) == 0 {
+      return false;
+    }
+    field = call_args(b, clear[0], "OpGetField", hit);
+    return hit && on_slot(field, root, off);
+  }
+  match loop_shape::unspan(op) {
+    NdIf { cond: _, t, f } => loop_shape::unspan(f) != NdNull && empties(b, t, root, off) && empties(b, f, root, off),
+    NdBlock { block } => block_empties(b, block[0].operators, root, off),
+    _ => false,
+  }
+}
+
+fn names_var(o: ir::Node, v: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(o, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == v { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn block_empties(b: ir::Bundle, ops: vector<ir::Node>, root: integer, off: integer) -> boolean {
+  for i in rev(0..len(ops)) {
+    op = ops[i]!;
+    if empties(b, op, root, off) {
+      return true;
+    }
+    if names_var(op, root) && !only_elsewhere(b, op, root, off) {
+      return false;
+    }
+  }
+  false
+}
+
+// Does every mention of `root` in `o` only reach ANOTHER field — `OpGetField(root, off2, …)`
+// or a write `OpSet…(root, off2, …)`?
+fn only_elsewhere(b: ir::Bundle, o: ir::Node, root: integer, off: integer) -> boolean {
+  all = [0];
+  other = [0];
+  opt_non_sentinel::walk(o, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == root { all[0] = all[0]! + 1; } },
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if (name == "OpGetField" || name.starts_with("OpSet")) && len(args) > 1 && loop_shape::unspan(args[0]) == NdVar { n: root } {
+          match loop_shape::unspan(args[1]) {
+            NdInt { n: at } => { if at != off { other[0] = other[0]! + 1; } },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  all[0]! == other[0]!
+}
+
+// The slot `OpGetField(Var(r), Int(off), …)` names; `root` -1 for any other node.
+fn field_of(b: ir::Bundle, v: ir::Node, off: &integer) -> integer {
+  hit = false;
+  a = call_args(b, v, "OpGetField", hit);
+  if !hit || len(a) < 2 {
+    return -1;
+  }
+  r = loop_shape::var_of(loop_shape::unspan(a[0]));
+  match loop_shape::unspan(a[1]) {
+    NdInt { n } => {
+      off = n;
+      r
+    },
+    _ => -1,
+  }
+}
+
+// `known_empty`: is `vector` EMPTY where the first `count` statements of `ops` end?
+pub fn known_empty(b: ir::Bundle, ops: vector<ir::Node>, count: integer, vector: ir::Node) -> boolean {
+  // The slot: the field itself, or the wrapper field a local vector is bound to.
+  local = loop_shape::var_of(loop_shape::unspan(vector));
+  root = -1;
+  off = 0;
+  if local >= 0 {
+    for o in ops {
+      if o#index >= count || root >= 0 {
+        continue;
+      }
+      match loop_shape::unspan(o) {
+        NdSet { var, inner } => {
+          if var == local {
+            // The first bind of the local that names a field.
+            root = field_of(b, inner, off);
+          }
+        },
+        _ => {},
+      }
+    }
+    if root < 0 {
+      return false;
+    }
+  } else {
+    root = field_of(b, vector, off);
+    if root < 0 {
+      return false;
+    }
+  }
+  for i in rev(0..count) {
+    op = ops[i]!;
+    if empties(b, op, root, off) {
+      return true;
+    }
+    rebinds = match loop_shape::unspan(op) {
+      NdSet { var, inner: _ } => local >= 0 && var == local,
+      _ => false,
+    };
+    if rebinds {
+      continue;
+    }
+    if (names_var(op, root) && !only_elsewhere(b, op, root, off)) || (local >= 0 && names_var(op, local)) {
+      return false;
+    }
+  }
+  false
+}
+
+// `simple_invariant` (`opt::push_window`): an expression the loop cannot change — a variable
+// not in `banned`, a literal, a sum, difference or product of such, a scalar read of a field
+// or an element of a record held in a variable not in `banned`.
+pub fn simple_invariant(b: ir::Bundle, v: ir::Node, banned: vector<integer>) -> boolean {
+  match loop_shape::unspan(v) {
+    NdVar { n } => !has(banned, n),
+    NdBlock { block } => block[0].name == "ncc" && literal_discharge(block[0].operators),
+    NdInt { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdEnum { ord: _, tp: _ } => true,
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if name == "OpAddInt" || name == "OpMinInt" || name == "OpMulInt" || name == "OpAddFloat" || name == "OpMinFloat" || name == "OpMulFloat" {
+        return len(args) == 2 && simple_invariant(b, args[0], banned) && simple_invariant(b, args[1], banned);
+      }
+      getters = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
+      scalar = false;
+      for g in getters {
+        if g == name {
+          scalar = true;
+        }
+      }
+      if scalar && len(args) == 3 {
+        root = loop_shape::var_of(loop_shape::unspan(args[0]));
+        return root >= 0 && !has(banned, root) && (loop_shape::unspan(args[1]) is NdInt) && (loop_shape::unspan(args[2]) is NdInt);
+      }
+      if (name == "OpGetInt" || name == "OpGetLong" || name == "OpGetFloat" || name == "OpGetSingle") && len(args) == 2 {
+        root = loop_shape::var_of(loop_shape::unspan(args[0]));
+        return root >= 0 && !has(banned, root) && (loop_shape::unspan(args[1]) is NdInt);
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
+fn has(list: vector<integer>, x: integer) -> boolean {
+  for l in list {
+    if l == x {
+      return true;
+    }
+  }
+  false
+}
+
+// `lit ?? d` over a literal that is not the sentinel is that literal (`literal_discharge`).
+fn literal_discharge(ops: vector<ir::Node>) -> boolean {
+  if len(ops) != 2 {
+    return false;
+  }
+  t = -1;
+  lit_ok = false;
+  match ops[0] {
+    NdSet { var, inner } => {
+      t = var;
+      lit_ok = match loop_shape::unspan(inner) {
+        NdInt { n: _ } => true,
+        NdBoolean { b: _ } => true,
+        NdLong { n } => n != null,
+        NdFloat { f } => f != null,
+        _ => false,
+      };
+    },
+    _ => return false,
+  }
+  match ops[1] {
+    NdIf { cond: _, t: then, f: other } => {
+      plain = match loop_shape::unspan(other) {
+        NdInt { n: _ } => true,
+        NdLong { n: _ } => true,
+        NdFloat { f: _ } => true,
+        NdBoolean { b: _ } => true,
+        _ => false,
+      };
+      lit_ok && loop_shape::unspan(then) == NdVar { n: t } && plain
+    },
+    _ => false,
+  }
+}
+
+// `@FR-R-PushFill`'s hash clause: a counted loop whose body files records into ONE hash.
+pub struct HashFill {
+  pub hash: integer,
+  pub tp: integer,
+  pub per_pass: integer,
+  pub index: integer,
+  pub next: integer,
+  pub inclusive: boolean,
+  pub hi: ir::Node,
+}
+
+// The hash a node files a record into, with its type in `tp`; -1 for any other node.
+fn mint_of(b: ir::Bundle, n: ir::Node, tp: &integer) -> integer {
+  match loop_shape::unspan(n) {
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if !(name == "OpNewRecord" || name == "n_keyed_entry_ints" || name == "n_keyed_entry_text") || len(args) < 2 {
+        return -1;
+      }
+      h = match loop_shape::unspan(args[0]) { NdVar { n: x } => x, _ => -1 };
+      t = match loop_shape::unspan(args[1]) { NdInt { n: x } => x, _ => -1 };
+      if h < 0 || t < 0 || t >= len(b.types) {
+        return -1;
+      }
+      match b.types[t].parts[0] {
+        PtHash { content: _, fields: _ } => {
+          tp = t;
+          h
+        },
+        _ => -1,
+      }
+    },
+    _ => -1,
+  }
+}
+
+// The most records one pass of `n` files: both arms of a choice are not both taken.
+fn most(b: ir::Bundle, n: ir::Node) -> integer {
+  tp = 0;
+  if mint_of(b, n, tp) >= 0 {
+    return 1;
+  }
+  match loop_shape::unspan(n) {
+    NdIf { cond, t, f } => {
+      a = most(b, t);
+      c = most(b, f);
+      return most(b, cond) + (if a > c { a } else { c });
+    },
+    _ => {},
+  }
+  total = 0;
+  for child in binds::children(n) {
+    total += most(b, child);
+  }
+  total
+}
+
+// `hash_fill_loop`: the hash a plain counted loop fills, or null.
+pub fn hash_fill_loop(b: ir::Bundle, lp: ir::Block) -> HashFill? {
+  if lp.name != "For loop" || len(lp.operators) != 2 {
+    return null;
+  }
+  body = match loop_shape::unspan(lp.operators[1]) {
+    NdBlock { block } => block[0].operators,
+    _ => return null,
+  };
+  rc = loop_shape::range_counters(lp, b.data.definitions) ?? return null;
+  // The body block walked whole: a lambda in a loop that captures a vector is loft#2487.
+  state = [-1, 0, 0, 0, 0];
+  whole = lp.operators[1];
+  {
+    opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+      match n {
+        NdBreak { n: _ } => { state[2] = 1; },
+        NdReturn { inner: _ } => { state[2] = 1; },
+        NdContinue { n: _ } => { state[2] = 1; },
+        NdLoop { block: _ } => { state[2] = 1; },
+        NdYield { inner: _ } => { state[2] = 1; },
+        NdParallel { arms: _ } => { state[2] = 1; },
+        _ => {},
+      }
+      tp = 0;
+      h = mint_of(b, n, tp);
+      if h >= 0 {
+        if state[0]! >= 0 && (state[0]! != h || state[1]! != tp) {
+          state[3] = 1;
+        } else {
+          state[0] = h;
+          state[1] = tp;
+        }
+      }
+    });
+  }
+  hash = state[0]!;
+  if state[2]! == 1 || hash < 0 || state[3]! == 1 {
+    return null;
+  }
+  {
+    opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+      match n {
+        NdSet { var, inner: _ } => { if var == hash { state[4] = 1; } },
+        _ => {},
+      }
+    });
+  }
+  if state[4]! == 1 {
+    return null;
+  }
+  banned = [rc.loop_var, rc.index, hash];
+  if rc.next >= 0 {
+    banned += [rc.next];
+  }
+  if !simple_invariant(b, rc.hi, banned) {
+    return null;
+  }
+  per_pass = 0;
+  for s in body {
+    per_pass += most(b, s);
+  }
+  if per_pass == 0 {
+    return null;
+  }
+  HashFill { hash: hash, tp: state[1]!, per_pass: per_pass, index: rc.index, next: rc.next, inclusive: rc.inclusive, hi: rc.hi }
+}
+
+// The movers `blocks_header_hoist` admits under its push tier: a fusable scalar push over a
+// pure path, the reservation a push onto a local is lowered with, a self-slice pop.
+pub fn mover(b: ir::Bundle, name: text, args: vector<ir::Node>) -> boolean {
+  root = -1;
+  size = push_size(name);
+  if size > 0 {
+    if (name == "OpPushByte" && len(args) != 3) || (name != "OpPushByte" && len(args) != 2) {
+      return false;
+    }
+    return vector_path(b, args[0], root) != "";
+  }
+  if name == "OpPreAllocVector" && len(args) == 3 {
+    return vector_path(b, args[0], root) != "";
+  }
+  keep_range(b, name, args, root) != ""
+}
+
+// `keep_range_path`: the path a self-slice pop `OpKeepRange(v, lo, hi, tp)` keeps, "" for any
+// other operator.
+pub fn keep_range(b: ir::Bundle, name: text, args: vector<ir::Node>, root: &integer) -> text {
+  if name != "OpKeepRange" || len(args) != 4 || (env_variable("LOFT_NO_KEEP_RANGE_REFRESH") ?? "0") != "0" {
+    return "";
+  }
+  vector_path(b, args[0], root)
+}
+
+// The element size of the fusable push `name` over `args` with its vector's path in `path`
+// and root in `root`; 0 for any other call.
+pub fn fused(b: ir::Bundle, name: text, args: vector<ir::Node>, path: &text, root: &integer) -> integer {
+  size = push_size(name);
+  if size == 0 || (name == "OpPushByte" && len(args) != 3) || (name != "OpPushByte" && len(args) != 2) {
+    return 0;
+  }
+  path = vector_path(b, args[0], root);
+  if path == "" { 0 } else { size }
+}
+
+// `run_value_plain`: a pushed value a held header's single expression can carry — scalar
+// variables other than the vector's root and operators, no call of a function, no statement.
+pub fn run_value_plain(b: ir::Bundle, d: ir::Definition, root: integer, val: ir::Node) -> boolean {
+  ok = [true];
+  opt_non_sentinel::walk(val, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => {
+        if x == root || !scalar_type(binds::base(d.variables.variables[x]!.type_def[0] ?? ir::TyVoid)) {
+          ok[0] = false;
+        }
+      },
+      NdCall { def_nr, args: _ } => { if !def_name(b, def_nr).starts_with("Op") { ok[0] = false; } },
+      NdCallRef { var: _, args: _ } => { ok[0] = false; },
+      NdBlock { block: _ } => { ok[0] = false; },
+      NdLoop { block: _ } => { ok[0] = false; },
+      NdInsert { items: _ } => { ok[0] = false; },
+      NdSet { var: _, inner: _ } => { ok[0] = false; },
+      NdIf { cond: _, t: _, f: _ } => { ok[0] = false; },
+      _ => {},
+    }
+  });
+  ok[0]!
+}
+
+fn scalar_type(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  }
+}
+
+// `mint_target`: the plain vector a record mint (`OpNewRecord`, its `NP` twin) or its finish
+// appends to — a vector local, or a plain vector field of a plain record local — as its
+// path (in `path`, root in `root`), its schema type (in `vector_tp`) and the expression that
+// names it; `path` "" for any other call.
+pub fn mint_target(b: ir::Bundle, d: ir::Definition, name: text, args: vector<ir::Node>, path: &text, root: &integer, vector_tp: &integer) -> ir::Node {
+  path = "";
+  arity = if name == "OpNewRecord" || name == "OpNewRecordNP" { 3 } else if name == "OpFinishRecord" { 4 } else { 0 };
+  if arity == 0 || len(args) != arity {
+    return ir::NdNull;
+  }
+  tp = match loop_shape::unspan(args[arity - 2]!) { NdInt { n } => n, _ => -1 };
+  fld = match loop_shape::unspan(args[arity - 1]!) { NdInt { n } => n, _ => -1 };
+  if tp < 0 || fld < 0 || tp > 65535 {
+    return ir::NdNull;
+  }
+  r = -1;
+  base = vector_path(b, args[0], r);
+  if base == "" || r < 0 || r >= len(d.variables.variables) {
+    return ir::NdNull;
+  }
+  var_tp = d.variables.variables[r]!.type_def[0] ?? ir::TyVoid;
+  bare_vector = match opt_names::peel_link(var_tp) {
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  };
+  if base.ends_with(":") && bare_vector {
+    path = base;
+    root = r;
+    vector_tp = tp;
+    return args[0];
+  }
+  if fld == 65535 || (env_variable("LOFT_NO_FIELD_MINT") ?? "0") != "0" || !opt_writes::is_plain_record(b, var_tp) || tp >= len(b.types) {
+    return ir::NdNull;
+  }
+  // `plain_vector_field`: a plain vector field that belongs to no linked group.
+  fields = match b.types[tp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    _ => return ir::NdNull,
+  };
+  if fld >= len(fields) || len(fields[fld]!.other_indexes) != 0 {
+    return ir::NdNull;
+  }
+  content = fields[fld]!.content;
+  plain = content >= 0 && content < len(b.types) && (match b.types[content].parts[0] { PtVector { content: _ } => true, _ => false });
+  get_field = -1;
+  for def in b.data.definitions {
+    if def.name == "OpGetField" && get_field < 0 {
+      get_field = def#index;
+    }
+  }
+  if !plain || get_field < 0 {
+    return ir::NdNull;
+  }
+  pos = fields[fld]!.position;
+  path = "{base}{pos},";
+  root = r;
+  vector_tp = content;
+  ir::NdCall { def_nr: get_field, args: [args[0], ir::NdInt { n: pos }, ir::NdInt { n: content }] }
+}
+
+// `mint_push_qualifies`: a mint into a plain vector of records — a struct, or a user struct
+// enum — takes a push header; a heap-owning element only with `heap`.
+pub fn mint_push_qualifies(b: ir::Bundle, vector_tp: integer, heap: boolean) -> boolean {
+  if vector_tp < 0 || vector_tp >= len(b.types) {
+    return false;
+  }
+  elem = match b.types[vector_tp].parts[0] {
+    PtVector { content } => content,
+    _ => return false,
+  };
+  if elem < 0 || elem >= len(b.types) {
+    return false;
+  }
+  record = match b.types[elem].parts[0] {
+    PtStruct { fields: _ } => true,
+    PtEnum { values } => {
+      held = false;
+      for v in values {
+        if v.nr != 65535 {
+          held = true;
+        }
+      }
+      held && (env_variable("LOFT_NO_ENUM_RECORD") ?? "0") == "0" && !b.types[elem].name.starts_with("__nullable<")
+    },
+    _ => false,
+  };
+  record && (heap || !types::owns_heap(b.types, elem))
+}
+
+// Is `name` a fusable scalar push (`FUSABLE_PUSHES`)?
+pub fn is_fusable(name: text) -> boolean {
+  push_size(name) > 0
+}

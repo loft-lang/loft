@@ -1090,6 +1090,13 @@ impl State {
         }
     }
 
+    /// The line table as (code position, line) pairs in position order — what a run image
+    /// carries for `stack_trace()` (`ir_store::run_image_debug`).
+    #[must_use]
+    pub fn line_table(&self) -> Vec<(u32, u32)> {
+        self.line_numbers.iter().map(|(&p, &l)| (p, l)).collect()
+    }
+
     /// `@FR-R-CallLine` — the source line of the call made at `call_pos`: the nearest line entry STRICTLY before
     /// it.  Entries sit before the first instruction of each line, and a frame's `call_pos` is
     /// already past the whole Call instruction, so an entry AT it belongs to the next statement

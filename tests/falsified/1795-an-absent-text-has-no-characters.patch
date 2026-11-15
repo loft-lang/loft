@@ -1,8 +1,8 @@
 diff --git a/default/01_code.loft b/default/01_code.loft
-index 40959b490..5987bc5a2 100644
+index 539b64736..b08be5ed6 100644
 --- a/default/01_code.loft
 +++ b/default/01_code.loft
-@@ -1099,10 +1099,8 @@ fn OpConstText(_value: const text) -> text;
+@@ -1103,10 +1103,8 @@ fn OpConstText(_value: const text) -> text;
  fn OpConvTextFromNull() -> text;
  #rust"Str::new(crate::state::STRING_NULL)"
  #loft"s.push_null_text();"
@@ -11,10 +11,10 @@ index 40959b490..5987bc5a2 100644
  fn OpLengthText(v1: text) -> __word;
 -#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
 +#rust"@v1.chars().count() as i64"
- #loft"if v1 == null {{ 0 }} else {{ len(v1!) }}"
+ #loft"if v1 == null {{ 0 }} else {{ len(v1!) }} #arm crt::view_length(stk, v1_pos)"
  /// Number of characters (Unicode code points) in the text — the human
  /// count, as in every mainstream language. For a byte length (bounds checks, the
-@@ -1112,10 +1110,9 @@ pub fn len(self: text) -> integer {
+@@ -1116,10 +1114,9 @@ pub fn len(self: text) -> integer {
  }
  #pure
  
@@ -23,7 +23,7 @@ index 40959b490..5987bc5a2 100644
  #cold
 -#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
 +#rust"@v1.len() as i64"
- #loft"if v1 == null {{ 0 }} else {{ v1!.size() }}"
+ #loft"if v1 == null {{ 0 }} else {{ v1!.size() }} #arm crt::view_size(stk, v1_pos)"
  /// Number of bytes in the text. This is the bound for byte-positioned
  /// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs

@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
@@ -13,216 +14,36 @@
 // call of a function and every other shape are refused by name.
 
 use ir;
+use binds;
+use cgen_names;
 use cgen_types;
+use cgen_w::*;
+use cgen_loop;
+use cgen_text;
+use cgen_ref;
+use cgen_bind;
+use cgen_cold;
+use cgen_split;
+use cgen_recptr;
+use cgen_hoist;
+use own;
+use opt_facts;
+use opt_adopt;
+use opt_hoist;
+use cgen_win;
+use cgen_table;
+use cgen_file;
+use cgen_texts;
+use cgen_natives;
+use opt_names;
+use opt_writes;
+use char_walk;
+use opt_frame_calls;
+use opt_ranged_call;
+use opt_tabulate;
 use loop_shape;
 use opt_non_sentinel;
 use opt_range;
-
-// The shape of a C expression's value (`K`).
-K_INT = 0;
-K_INT32 = 1;
-K_COND = 2;
-K_BOOL = 3;
-K_VOID = 4;
-
-// A C expression and the shape of its value (`E`).
-struct E {
-  code: text,
-  kind: integer,
-}
-
-// A temporary and its shape.
-struct Temp {
-  name: text,
-  shape: text,
-}
-
-// One function's writer (`FnWriter`): what it has written and where a fault reports.
-struct W {
-  name: text,
-  file: text,
-  line: integer,
-  shapes: vector<text>,
-  ret: text,
-  body: text,
-  temps: vector<Temp>,
-  // The first construct this writer does not carry; "" while everything was.
-  why: text,
-  cur_line: integer,
-  // The site a located value reports at (`span_site`): its file as a C string, "" for none.
-  span_file: text,
-  span_line: integer,
-}
-
-// A function's body as C, or why it was not written (`refused` is "" for a written one).
-pub struct Written {
-  pub text: text,
-  pub refused: text,
-}
-
-fn refuse(w: W, why: text) {
-  if w.why == "" {
-    w.why = why;
-  }
-}
-
-fn none() -> E {
-  E { code: "", kind: K_VOID }
-}
-
-// `s` as a C string literal (`body::c_string`): a quote, a backslash and a question mark
-// escaped (no trigraph), every byte outside printable ASCII in octal.
-pub fn c_string(s: text) -> text {
-  out = "\"";
-  for i in 0..s.size() {
-    b = s.byte_at(i);
-    if b == 34 {
-      out += "\\\"";
-    } else if b == 92 {
-      out += "\\\\";
-    } else if b == 63 {
-      out += "\\?";
-    } else if b >= 32 && b <= 126 {
-      out += s[i..i + 1];
-    } else {
-      out += "\\{b / 64}{b / 8 % 8}{b % 8}";
-    }
-  }
-  out + "\""
-}
-
-// A C-safe name for variable `v` (`var_name`): its number first, so two loft names that
-// sanitise alike stay apart; every character that is no ASCII letter or digit an underscore.
-fn var_name(name: text, v: integer) -> text {
-  clean = "";
-  for ch in name {
-    code = ch as integer;
-    letter = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
-    if letter {
-      clean += "{ch}";
-    } else {
-      clean += "_";
-    }
-  }
-  "v{v}_{clean}"
-}
-
-// The C type a value of `shape` is held in (`held`); "" for a shape this writer does not carry.
-fn held(shape: text) -> text {
-  if shape == "int" {
-    "int64_t"
-  } else if shape == "bool" {
-    "uint8_t"
-  } else if shape == "void" {
-    "void"
-  } else {
-    ""
-  }
-}
-
-// The initial value of a local of `shape`: its null (`Cx::initial`).
-fn initial(shape: text) -> text {
-  if shape == "int" { "LOFT_NULL" } else { "LOFT_BOOL_NULL" }
-}
-
-fn kind_of(shape: text) -> integer {
-  if shape == "int" {
-    K_INT
-  } else if shape == "bool" {
-    K_BOOL
-  } else {
-    K_VOID
-  }
-}
-
-fn line(w: W, ind: integer, s: text) {
-  for _ in 0..ind {
-    w.body += "    ";
-  }
-  w.body += "{s}\n";
-}
-
-fn temp(w: W, shape: text) -> text {
-  t = "t{len(w.temps) + 1}";
-  w.temps += [Temp { name: t, shape: shape }];
-  t
-}
-
-fn is_temp(w: W, code: text) -> boolean {
-  for t in w.temps {
-    if t.name == code {
-      return true;
-    }
-  }
-  false
-}
-
-// `c` without one pair of outer parentheses that enclose all of it (`bare`).
-fn bare(c: text) -> text {
-  n = c.size();
-  if n < 2 || c[0..1] != "(" || c[n - 1..n] != ")" {
-    return c;
-  }
-  depth = 0;
-  for i in 1..n - 1 {
-    b = c.byte_at(i);
-    if b == 40 {
-      depth += 1;
-    } else if b == 41 {
-      depth -= 1;
-    }
-    if depth < 0 {
-      return c;
-    }
-  }
-  if depth == 0 { c[1..n - 1] } else { c }
-}
-
-fn as_int(w: W, e: E) -> text {
-  if e.kind == K_INT {
-    e.code
-  } else if e.kind == K_INT32 {
-    "loft_w64({e.code})"
-  } else if e.kind == K_BOOL {
-    "((int64_t) ({e.code}))"
-  } else {
-    refuse(w, "an integer expected");
-    ""
-  }
-}
-
-fn as_cond(w: W, e: E) -> text {
-  if e.kind == K_COND {
-    e.code
-  } else if e.kind == K_BOOL {
-    "({e.code} == 1)"
-  } else {
-    refuse(w, "a condition expected");
-    ""
-  }
-}
-
-fn as_bool(w: W, e: E) -> text {
-  if e.kind == K_BOOL {
-    e.code
-  } else if e.kind == K_COND {
-    "(uint8_t) ({bare(e.code)})"
-  } else {
-    refuse(w, "a boolean expected");
-    ""
-  }
-}
-
-fn as_shape(w: W, e: E, shape: text) -> text {
-  if shape == "int" {
-    as_int(w, e)
-  } else if shape == "bool" {
-    as_bool(w, e)
-  } else {
-    refuse(w, "a value of shape {shape}");
-    ""
-  }
-}
 
 // Is `code` one identifier: letters, digits and underscores only?
 fn identifier(code: text) -> boolean {
@@ -322,54 +143,79 @@ fn names_var(v: ir::Node, x: integer) -> boolean {
 }
 
 // `may_write_var`: may evaluating `v` write variable `x`?  A parameter may share what it names.
-fn may_write_var(b: ir::Bundle, d: ir::Definition, v: ir::Node, x: integer) -> boolean {
+fn may_write_var(b: ir::Bundle, w: W, v: ir::Node, x: integer) -> boolean {
   if !may_write(b, v) {
     return false;
   }
-  if d.variables.variables[x]!.argument {
+  // A borrowed text is a view of bytes another name may rewrite — unless every bind of it
+  // is a literal.
+  if w.params[x]! || ((w.borrowed[x] ?? false) && !(w.literal_views[x] ?? false)) {
     return true;
   }
   names_var(v, x)
 }
 
-// The first two fixed parameters of every routine below are the program and the function
-// being written; `p`, `c`, `nn` and `rv` are that function's facts as `opt_range` reads them.
+// Every routine below takes the unit's context `x` and the function's writer `w` first.
 
 // Operand `i` of `args`, evaluated in order (`arg`): a value a later operand may change is
 // held in a temporary.
-fn arg(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, args: vector<ir::Node>, i: integer, ind: integer) -> E {
+fn arg(x: Cx, w: W, args: vector<ir::Node>, i: integer, ind: integer) -> E {
   operand = args[i]!;
   bare_operand = loop_shape::unspan(operand);
   later_writes = false;
   for j in i + 1..len(args) {
     hit = match bare_operand {
-      NdVar { n } => may_write_var(b, d, args[j]!, n),
-      _ => may_write(b, args[j]!),
+      NdVar { n } => may_write_var(x.b, w, args[j]!, n),
+      _ => may_write(x.b, args[j]!),
     };
     if hit {
       later_writes = true;
     }
   }
-  value = expr(b, d, p, c, nn, rv, w, operand, ind);
+  arg_with(x, w, operand, later_writes, ind)
+}
+
+// Operand `operand`, evaluated as `arg` does (`arg_with`); `later_writes` says whether an
+// operand after it may write.
+fn arg_with(x: Cx, w: W, operand: ir::Node, later_writes: boolean, ind: integer) -> E {
+  bare_operand = loop_shape::unspan(operand);
+  value = expr(x, w, operand, ind);
   if w.why != "" {
     return value;
+  }
+  // A text block's tail view reads a local, as a variable operand does.
+  reads_local = match bare_operand {
+    NdVar { n: _ } => true,
+    NdBlock { block: _ } => value.kind == K_VIEW && pending_text_temp(w, value.code) == "",
+    _ => false,
+  };
+  if later_writes && reads_local && value.kind == K_VIEW {
+    held = temp(w, "text");
+    line(w, ind, "loft_text_set(&{held}, {value.code});");
+    return held_value(w, held, "text");
   }
   simple = match bare_operand {
     NdVar { n: _ } => !later_writes,
     NdInt { n: _ } => true,
     NdLong { n: _ } => true,
     NdBoolean { b: _ } => true,
+    NdText { s: _ } => true,
     _ => false,
   };
-  if simple || value.kind == K_VOID || is_temp(w, value.code) {
+  if simple || value.kind == K_VIEW || value.kind == K_VOID || is_temp(w, value.code) {
     return value;
   }
-  shape = if value.kind == K_INT { "int" } else { "bool" };
+  shape = shape_of_kind(value.kind);
   if value.kind == K_INT32 {
     refuse(w, "a 32-bit operand");
     return value;
   }
-  code = if value.kind == K_INT { value.code } else { as_bool(w, value) };
+  if value.kind == K_TUP {
+    held_tuple = temp(w, value.tup);
+    line(w, ind, "{held_tuple} = {value.code};");
+    return E { code: held_tuple, kind: K_TUP, tup: value.tup };
+  }
+  code = if shape == "bool" { as_bool(w, value) } else { value.code };
   t = temp(w, shape);
   line(w, ind, "{t} = {code};");
   E { code: t, kind: kind_of(shape) }
@@ -449,7 +295,7 @@ fn literal32(v: ir::Node, e: E) -> E {
 
 // An operator call (`operator`): the plain form where the range proof holds, else the checked
 // helper; a comparison; the boolean operators.
-fn op_call(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   for a in args {
     if loop_shape::unspan(a) == NdNull {
       refuse(w, "a null operand of {name}");
@@ -457,58 +303,1100 @@ fn op_call(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_
     }
   }
   count = len(args);
+  if len(w.headers) > 0 || len(w.push_heads) > 0 {
+    through_header = false;
+    held_read = cgen_hoist::held_access(x, w, name, args, ind, through_header);
+    if through_header {
+      return held_read;
+    }
+  }
+  if len(w.windows) > 0 {
+    through_window = false;
+    in_window = cgen_win::windowed(x, w, name, args, ind, through_window);
+    if through_window {
+      return in_window;
+    }
+  }
+  if len(w.push_heads) > 0 {
+    through_push = false;
+    pushed = cgen_hoist::pushed_op(x, w, name, args, ind, through_push);
+    if through_push {
+      return pushed;
+    }
+  }
+  if len(w.scalars) > 0 {
+    read_fld = 0;
+    read_of = opt_hoist::scalar_read(name, args, read_fld);
+    if read_of >= 0 {
+      for i in rev(0..len(w.scalars)) {
+        if w.scalars[i]!.root == read_of && w.scalars[i]!.fld == read_fld {
+          return E { code: w.scalars[i]!.name, kind: kind_of(w.scalars[i]!.shape) };
+        }
+      }
+    }
+  }
+  if len(w.rec_ptrs) > 0 {
+    through = false;
+    held_access = cgen_recptr::rec_ptr_access(x, w, name, args, ind, through);
+    if through {
+      return held_access;
+    }
+  }
+  if len(w.chains) > 0 {
+    done = false;
+    guarded = cgen_loop::chain_operator(x, w, name, args, ind, done);
+    if done {
+      return guarded;
+    }
+  }
   plain = plain_macro(name, count);
-  if plain != "" && opt_range::op_range_at_site(b, p, c, nn, rv, name, args) != null {
+  if plain != "" && range_proves(x, w, name, args) {
     where = "\"R-Range:{w.name}\"";
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
+    first = arg(x, w, args, 0, ind);
     if count == 1 {
       return E { code: "{plain}({as_int(w, first)}, {where})", kind: K_INT };
     }
-    second = arg(b, d, p, c, nn, rv, w, args, 1, ind);
+    second = arg(x, w, args, 1, ind);
     return E { code: "{plain}({as_int(w, first)}, {as_int(w, second)}, {where})", kind: K_INT };
   }
   helper = checked(name);
   if helper != "" && count == 2 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
-    second = arg(b, d, p, c, nn, rv, w, args, 1, ind);
+    first = arg(x, w, args, 0, ind);
+    second = arg(x, w, args, 1, ind);
     at = if helper.ends_with("_at") { ", {site(w)}" } else { "" };
     return E { code: "{helper}({as_int(w, first)}, {as_int(w, second)}{at})", kind: K_INT };
   }
   op = comparison(name);
   if op != "" && count == 2 {
-    first = literal32(args[0]!, arg(b, d, p, c, nn, rv, w, args, 0, ind));
-    second = literal32(args[1]!, arg(b, d, p, c, nn, rv, w, args, 1, ind));
+    first = literal32(args[0]!, arg(x, w, args, 0, ind));
+    second = literal32(args[1]!, arg(x, w, args, 1, ind));
     if first.kind == K_INT32 && second.kind == K_INT32 {
       return compared(first.code, op, second.code);
     }
     return compared(as_int(w, first), op, as_int(w, second));
   }
   if (name == "OpEqBool" || name == "OpNeBool") && count == 2 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
-    second = arg(b, d, p, c, nn, rv, w, args, 1, ind);
+    first = arg(x, w, args, 0, ind);
+    second = arg(x, w, args, 1, ind);
     return compared(as_bool(w, first), if name == "OpEqBool" { "==" } else { "!=" }, as_bool(w, second));
   }
   if name == "OpNot" && count == 1 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
+    first = arg(x, w, args, 0, ind);
     return E { code: "(!{as_cond(w, first)})", kind: K_COND };
   }
   if (name == "OpMinSingleInt" || name == "OpMinSingleLong") && count == 1 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
+    first = arg(x, w, args, 0, ind);
     return E { code: "loft_neg({as_int(w, first)})", kind: K_INT };
   }
   if (name == "OpConvBoolFromInt" || name == "OpConvBoolFromLong") && count == 1 {
-    first = arg(b, d, p, c, nn, rv, w, args, 0, ind);
+    first = arg(x, w, args, 0, ind);
     return E { code: "({as_int(w, first)} != LOFT_NULL)", kind: K_COND };
   }
   if (name == "OpConvIntFromNull" || name == "OpConvLongFromNull") && count == 0 {
     return E { code: "LOFT_NULL", kind: K_INT };
   }
+  is_text_op = false;
+  // The text writes through a `&` parameter name the caller's text the same way.
+  plain = if name == "OpAppendStackText" {
+    "OpAppendText"
+  } else if name == "OpClearStackText" {
+    "OpClearText"
+  } else if name == "OpFormatStackInt" {
+    "OpFormatInt"
+  } else if name == "OpFormatStackFloat" {
+    "OpFormatFloat"
+  } else if name == "OpFormatStackSingle" {
+    "OpFormatSingle"
+  } else if name == "OpFormatStackText" {
+    "OpFormatText"
+  } else if name == "OpFormatStackDatabase" {
+    "OpFormatDatabase"
+  } else {
+    name
+  };
+  texted = cgen_text::text_operator(x, w, plain, args, ind, is_text_op);
+  if is_text_op {
+    return texted;
+  }
+  is_ref_op = false;
+  stored = cgen_ref::ref_operator(x, w, plain, args, ind, is_ref_op);
+  if is_ref_op {
+    return stored;
+  }
+  scalar_operator(x, w, name, args, ind)
+}
+
+// An integer literal operand of an operator (`literal`): a field offset, a size, a type
+// number; null where it is computed.
+fn literal(w: W, v: ir::Node, what: text) -> integer? {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n,
+    NdLong { n } => n,
+    _ => {
+      refuse(w, "a computed {what}");
+      null
+    },
+  }
+}
+
+// An integer literal operand, null for a computed one.
+fn int_literal(v: ir::Node) -> integer? {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n,
+    NdLong { n } => n,
+    _ => null,
+  }
+}
+
+// The one operand of a unary operator, evaluated (`one`).
+fn one(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  if len(args) != 1 {
+    refuse(w, "{name} without one operand");
+    return none();
+  }
+  arg(x, w, args, 0, ind)
+}
+
+// The conversions and the enum operators (`scalar_operator`).
+fn scalar_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  count = len(args);
+  if name == "OpRangeDefault" {
+    if count != 4 {
+      refuse(w, "OpRangeDefault with an unexpected operand list");
+      return none();
+    }
+    lo = literal(w, args[1], "range bound");
+    hi = literal(w, args[2], "range bound");
+    dflt = literal(w, args[3], "range default");
+    v = expr(x, w, args[0], ind);
+    return E { code: "loft_range_default_at({as_int(w, v)}, {c_long(lo)}, {c_long(hi)}, {c_long(dflt)}, {site(w)})", kind: K_INT };
+  }
+  if name == "OpConvEnumFromNull" {
+    return E { code: "(uint8_t) 255", kind: K_ENUM };
+  }
+  if name == "OpConstEnum" {
+    if count == 0 {
+      refuse(w, "OpConstEnum without a value");
+      return none();
+    }
+    return expr(x, w, args[0], ind);
+  }
+  if name == "OpConvIntFromEnum" {
+    a = as_enum(w, one(x, w, name, args, ind));
+    return E { code: "({a} == 255 ? LOFT_NULL : (int64_t) {a})", kind: K_INT };
+  }
+  if name == "OpCastEnumFromInt" {
+    a = as_int(w, one(x, w, name, args, ind));
+    return E { code: "({a} == LOFT_NULL ? (uint8_t) 255 : (uint8_t) {a})", kind: K_ENUM };
+  }
+  if name == "OpConvBoolFromEnum" {
+    a = as_enum(w, one(x, w, name, args, ind));
+    return E { code: "({a} != 255 && {a} != 0)", kind: K_COND };
+  }
+  float_operator(x, w, name, args, ind)
+}
+
+// An operand as a float or a single.
+fn as_fp(w: W, e: E, single: boolean) -> text {
+  if single { as_single(w, e) } else { as_float(w, e) }
+}
+
+// The float and single operators (`float_operator`): `Float` names a double, `Single` a float.
+fn float_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  single = name.ends_with("Single") || name == "OpDivSingleNullable" || name == "OpRemSingleNullable";
+  k = if single { K_SINGLE } else { K_FLOAT };
+  // The unguarded division and remainder report a zero divisor.
+  div = if name == "OpDivFloat" {
+    "loft_fdiv_at"
+  } else if name == "OpRemFloat" {
+    "loft_frem_at"
+  } else if name == "OpDivSingle" {
+    "loft_sdiv_at"
+  } else if name == "OpRemSingle" {
+    "loft_srem_at"
+  } else {
+    ""
+  };
+  if div != "" {
+    a = arg(x, w, args, 0, ind);
+    b = arg(x, w, args, 1, ind);
+    return E { code: "{div}({as_fp(w, a, single)}, {as_fp(w, b, single)}, {site(w)})", kind: k };
+  }
+  infix = if name == "OpAddFloat" || name == "OpAddSingle" {
+    "+"
+  } else if name == "OpMinFloat" || name == "OpMinSingle" {
+    "-"
+  } else if name == "OpMulFloat" || name == "OpMulSingle" {
+    "*"
+  } else if name == "OpDivFloatNullable" || name == "OpDivSingleNullable" {
+    "/"
+  } else {
+    ""
+  };
+  if infix != "" {
+    a = arg(x, w, args, 0, ind);
+    b = arg(x, w, args, 1, ind);
+    return E { code: "({as_fp(w, a, single)} {infix} {as_fp(w, b, single)})", kind: k };
+  }
+  call2 = if name == "OpRemFloatNullable" {
+    "fmod"
+  } else if name == "OpPowFloat" {
+    "pow"
+  } else if name == "OpRemSingleNullable" {
+    "fmodf"
+  } else if name == "OpPowSingle" {
+    "powf"
+  } else {
+    ""
+  };
+  if call2 != "" {
+    a = arg(x, w, args, 0, ind);
+    b = arg(x, w, args, 1, ind);
+    return E { code: "{call2}({as_fp(w, a, single)}, {as_fp(w, b, single)})", kind: k };
+  }
+  cmp = if name == "OpEqFloat" || name == "OpEqSingle" {
+    "loft_feq"
+  } else if name == "OpNeFloat" || name == "OpNeSingle" {
+    "!loft_feq"
+  } else if name == "OpLtFloat" || name == "OpLtSingle" {
+    "loft_flt"
+  } else if name == "OpLeFloat" || name == "OpLeSingle" {
+    "loft_fle"
+  } else {
+    ""
+  };
+  if cmp != "" {
+    a = arg(x, w, args, 0, ind);
+    b = arg(x, w, args, 1, ind);
+    return E { code: "{cmp}({as_fp(w, a, single)}, {as_fp(w, b, single)})", kind: K_COND };
+  }
+  unary = if name == "OpMinSingleFloat" || name == "OpMinSingleSingle" {
+    "-"
+  } else if name == "OpAbsFloat" {
+    "fabs"
+  } else if name == "OpAbsSingle" {
+    "fabsf"
+  } else {
+    ""
+  };
+  if unary != "" {
+    a = one(x, w, name, args, ind);
+    return E { code: "({unary}({as_fp(w, a, single)}))", kind: k };
+  }
+  float_conversion(x, w, name, args, ind)
+}
+
+// The conversions to and from floats and their math functions (`float_bits`,
+// `float_conversion`).
+fn float_conversion(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  count = len(args);
+  if name == "OpFloatBits" {
+    return E { code: "loft_f2bits({as_float(w, one(x, w, name, args, ind))})", kind: K_INT };
+  }
+  if name == "OpFloatFromBits" {
+    return E { code: "loft_bits2f({as_int(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
+  }
+  if name == "OpSingleBits" {
+    return E { code: "loft_s2bits({as_single(w, one(x, w, name, args, ind))})", kind: K_INT };
+  }
+  if name == "OpSingleFromBits" {
+    return E { code: "loft_bits2s({as_int(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
+  }
+  if name == "OpConvFloatFromNull" && count == 0 {
+    return E { code: "(double) NAN", kind: K_FLOAT };
+  }
+  if name == "OpConvSingleFromNull" && count == 0 {
+    return E { code: "(float) NAN", kind: K_SINGLE };
+  }
+  if (name == "OpConvFloatFromInt" || name == "OpConvFloatFromLong") && count == 1 {
+    return E { code: "loft_i2f({as_int(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
+  }
+  if name == "OpConvSingleFromInt" && count == 1 {
+    return E { code: "loft_i2s({as_int(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
+  }
+  if name == "OpCastIntFromFloat" && count == 1 {
+    a = as_float(w, one(x, w, name, args, ind));
+    return E { code: "loft_f2i_at({a}, {site(w)})", kind: K_INT };
+  }
+  if name == "OpCastIntFromSingle" && count == 1 {
+    a = as_single(w, one(x, w, name, args, ind));
+    return E { code: "loft_f2i_at((double) {a}, {site(w)})", kind: K_INT };
+  }
+  if name == "OpConvBoolFromFloat" && count == 1 {
+    return E { code: "(!isnan({as_float(w, one(x, w, name, args, ind))}))", kind: K_COND };
+  }
+  if name == "OpConvBoolFromSingle" && count == 1 {
+    return E { code: "(!isnan({as_single(w, one(x, w, name, args, ind))}))", kind: K_COND };
+  }
+  if name == "OpCastSingleFromFloat" && count == 1 {
+    return E { code: "((float) {as_float(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
+  }
+  if name == "OpConvFloatFromSingle" && count == 1 {
+    return E { code: "((double) {as_single(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
+  }
+  // The constants as the shortest literals that round-trip.
+  if name == "OpMathPiFloat" && count == 0 {
+    return E { code: "3.141592653589793", kind: K_FLOAT };
+  }
+  if name == "OpMathEFloat" && count == 0 {
+    return E { code: "2.718281828459045", kind: K_FLOAT };
+  }
+  if (name == "OpMathFuncFloat" || name == "OpMathFuncSingle") && count == 2 {
+    id = literal(w, args[0], "math function") ?? 0;
+    a = expr(x, w, args[1], ind);
+    if name.ends_with("Single") {
+      return E { code: "loft_math1s({id}, {as_single(w, a)})", kind: K_SINGLE };
+    }
+    return E { code: "loft_math1({id}, {as_float(w, a)})", kind: K_FLOAT };
+  }
+  if (name == "OpMathFunc2Float" || name == "OpMathFunc2Single") && count == 3 {
+    id = literal(w, args[0], "math function") ?? 0;
+    pair = [args[1], args[2]];
+    a = arg(x, w, pair, 0, ind);
+    b = arg(x, w, pair, 1, ind);
+    if name.ends_with("Single") {
+      return E { code: "loft_math2s({id}, {as_single(w, a)}, {as_single(w, b)})", kind: K_SINGLE };
+    }
+    return E { code: "loft_math2({id}, {as_float(w, a)}, {as_float(w, b)})", kind: K_FLOAT };
+  }
+  char_operator(x, w, name, args, ind)
+}
+
+// The character operators that touch no text and no store (`char_operator`).
+fn char_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  count = len(args);
+  if name == "OpConvCharacterFromInt" && count == 1 {
+    v = expr(x, w, args[0], ind);
+    return E { code: "loft_char_of_at({as_int(w, v)}, {site(w)})", kind: K_CHAR };
+  }
+  if name == "OpConvIntFromCharacter" && count == 1 {
+    v = expr(x, w, args[0], ind);
+    return E { code: "loft_char_int({as_char(w, v)})", kind: K_INT };
+  }
+  if name == "OpConvBoolFromCharacter" && count == 1 {
+    v = expr(x, w, args[0], ind);
+    return E { code: "({as_char(w, v)} != 0)", kind: K_COND };
+  }
+  if name == "OpLengthCharacter" && count == 1 {
+    v = expr(x, w, args[0], ind);
+    return E { code: "loft_char_len({as_char(w, v)})", kind: K_INT };
+  }
   refuse(w, "operator {name}");
   none()
 }
 
+// The C shape an operator's value is held in (`op_shape`), for the operators carried; "" for
+// any other.
+fn op_shape(name: text) -> text {
+  ints = ["OpAddInt", "OpAddLong", "OpMinInt", "OpMinLong", "OpMulInt", "OpMulLong", "OpDivInt", "OpDivLong", "OpRemInt", "OpRemLong", "OpGetInt", "OpLengthVector", "OpLengthText", "OpSizeText", "OpMinSingleInt", "OpBitNotSingleInt", "OpSizeStruct", "OpSizeHash", "OpMinSingleLong", "OpConvIntFromNull", "OpConvLongFromNull", "OpConvIntFromEnum", "OpLengthSorted", "OpRangeDefault", "OpGetByte", "OpGetByteNullable", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetInt4", "OpLandInt", "OpLandLong", "OpLorInt", "OpLorLong", "OpEorInt", "OpEorLong", "OpSLeftInt", "OpSLeftLong", "OpSRightInt", "OpSRightLong", "OpConvIntFromCharacter", "OpLengthCharacter", "OpAddIntNullable", "OpMinIntNullable", "OpMulIntNullable", "OpDivIntNullable", "OpRemIntNullable", "OpCastIntFromText", "OpCastLongFromText", "OpCastIntFromFloat", "OpCastIntFromSingle", "OpFloatBits", "OpSingleBits"];
+  bools = ["OpEqInt", "OpEqLong", "OpNeInt", "OpNeLong", "OpLtInt", "OpLtLong", "OpLeInt", "OpLeLong", "OpEqBool", "OpNeBool", "OpNot", "OpEqText", "OpNeText", "OpRefIsNull", "OpConvBoolFromInt", "OpConvBoolFromLong", "OpConvBoolFromEnum", "OpConvBoolFromRef", "OpGetBoolean", "OpVectorIsNull", "OpDistinctStore", "OpConvBoolFromText", "OpConvBoolFromCharacter", "OpConvBoolFromNull", "OpRemoveVector", "OpStoreLive", "OpEqContent", "OpNeContent", "OpEqRef", "OpNeRef", "OpEqFloat", "OpNeFloat", "OpLtFloat", "OpLeFloat", "OpEqSingle", "OpNeSingle", "OpLtSingle", "OpLeSingle", "OpConvBoolFromFloat", "OpConvBoolFromSingle"];
+  refs = ["OpPlaceRecord", "OpConstRef", "OpGetDbRef", "OpGetField", "OpGetVector", "OpGetVectorNullable", "OpNullRefSentinel", "OpInsertVector", "OpRefFromChildRec", "OpSlotTag", "OpStoreBuf", "OpStoreBufOnly", "OpChildRecInPlace", "OpChildRec", "OpCopyClosure", "OpCoroutineRetain"];
+  enums = ["OpGetEnum", "OpCastEnumFromInt", "OpConvEnumFromNull", "OpConstEnum"];
+  texts = ["OpGetText", "OpCastTextFromEnum", "OpCastEnumFromText", "OpCastVectorFromText", "OpConvTextFromNull", "OpCastTextFromBool", "OpGetTextSub"];
+  floats = ["OpFloatFromBits", "OpAddFloat", "OpMinFloat", "OpMulFloat", "OpDivFloat", "OpDivFloatNullable", "OpRemFloat", "OpRemFloatNullable", "OpPowFloat", "OpMinSingleFloat", "OpAbsFloat", "OpConvFloatFromNull", "OpConvFloatFromInt", "OpConvFloatFromLong", "OpConvFloatFromSingle", "OpMathPiFloat", "OpMathEFloat", "OpMathFuncFloat", "OpMathFunc2Float", "OpGetFloat"];
+  singles = ["OpSingleFromBits", "OpAddSingle", "OpMinSingle", "OpMulSingle", "OpDivSingle", "OpDivSingleNullable", "OpRemSingle", "OpRemSingleNullable", "OpPowSingle", "OpMinSingleSingle", "OpAbsSingle", "OpConvSingleFromNull", "OpConvSingleFromInt", "OpCastSingleFromFloat", "OpMathFuncSingle", "OpMathFunc2Single", "OpGetSingle"];
+  chars = ["OpConvCharacterFromInt", "OpConvCharacterFromNull", "OpTextCharacter", "OpTextCharacterNullable", "OpGetCharacter"];
+  if name == "OpNarrow32" {
+    return "int32";
+  }
+  for n in ints { if n == name { return "int"; } }
+  for n in bools { if n == name { return "bool"; } }
+  for n in refs { if n == name { return "ref"; } }
+  for n in enums { if n == name { return "enum"; } }
+  for n in texts { if n == name { return "text"; } }
+  for n in floats { if n == name { return "float"; } }
+  for n in singles { if n == name { return "single"; } }
+  for n in chars { if n == name { return "char"; } }
+  ""
+}
+
+// Does `f`'s own body divide or take a remainder by a literal?
+fn divides(b: ir::Bundle, f: integer) -> boolean {
+  def = b.data.definitions[f]!;
+  if len(def.code) == 0 {
+    return false;
+  }
+  hit = [false];
+  opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if (name == "OpRemInt" || name == "OpDivInt") && len(args) > 1 {
+          match loop_shape::unspan(args[1]) {
+            NdInt { n: _ } => hit[0] = true,
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `nn_twin_bits`: the bit set of `d`'s parameters this call's arguments prove non-sentinel
+// that the program-wide fact does not — only for a callee where the seed can buy a plain
+// operator: one that divides or takes a remainder by a literal, itself or in a function it
+// calls directly.
+fn nn_twin_bits(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> integer {
+  if (env_variable("LOFT_NO_NN_TWINS") ?? "0") != "0" {
+    return 0;
+  }
+  cand = opt_non_sentinel::candidate_params(x.b, d);
+  if len(cand) == 0 {
+    return 0;
+  }
+  worth = divides(x.b, d);
+  if !worth {
+    callees: vector<integer> = [];
+    opt_non_sentinel::walk(x.b.data.definitions[d]!.code[0]!, fn(n: ir::Node) {
+      match n {
+        NdCall { def_nr, args: _ } => {
+          if def_nr >= 0 && def_nr < len(x.b.data.definitions) && opt_non_sentinel::has_body(x.b.data.definitions[def_nr]!) {
+            callees += [def_nr];
+          }
+        },
+        _ => {},
+      }
+    });
+    for f in callees {
+      if divides(x.b, f) {
+        worth = true;
+        break;
+      }
+    }
+  }
+  if !worth {
+    return 0;
+  }
+  global = opt_non_sentinel::proven_param_flags(x.b, x.p, d);
+  bits = 0;
+  for a in args {
+    i = a#index;
+    if i >= 23 {
+      break;
+    }
+    if (cand[i] ?? false) && !(global[i] ?? false) && opt_non_sentinel::non_sentinel(x.b, x.p, w.nn, a) {
+      bits = bits | (1 << i);
+    }
+  }
+  bits
+}
+
+// `ranged_call`: may this call of `d` take its `__rg` twin — the rule is on, `d` is a loft
+// function whose ranged variant gains, and every integer argument is proven within `[-L, L]`
+// under this body's facts.
+fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
+  if (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+    return false;
+  }
+  if !cgen_names::is_loft_defined(x.b, d) || !opt_ranged_call::variant_gains(x.b, x.p, x.c, x.gains, d, 0) {
+    return false;
+  }
+  if len(w.over) > 0 {
+    return opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, w.over[len(w.over) - 1]!, d, args);
+  }
+  opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, w.rv, d, args)
+}
+
+// A call of function `d` (`call`): its arguments evaluated in order, then the function or the
+// twin this site's facts admit.  A callee this writer does not carry is refused by name.
+fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
+  def = x.b.data.definitions[d]!;
+  // Every route below is keyed by the callee's name, and only a standard-library definition
+  // is answered by one.
+  route = cgen_names::runtime_name(x.b, d);
+  // The store's memory report names each type by the unit's type-name table.
+  if route == "n_store_memory" && len(args) == 0 {
+    report = temp(w, "text");
+    line(w, ind, "loft_text_free(&{report});");
+    line(w, ind, "{report} = loft_store_memory(loft_tnames, loft_ntnames);");
+    return held_value(w, report, "text");
+  }
+  // The length of a vector whose header a loop holds is the header's (`held_len`).
+  if route == "t_6vector_len" && len(args) == 1 && (len(w.headers) > 0 || len(w.push_heads) > 0) {
+    held_header = cgen_hoist::held_vector(x, w, args[0]);
+    if held_header != "" {
+      return E { code: "{held_header}.len", kind: K_INT };
+    }
+    pushing = cgen_hoist::push_head(x, w, args[0]);
+    if pushing >= 0 {
+      return E { code: "((int64_t) {w.push_heads[pushing].name}.len)", kind: K_INT };
+    }
+  }
+  if plain_rules() {
+    is_keyed_native = false;
+    answered = cgen_ref::keyed_native(x, w, route, args, ind, is_keyed_native);
+    if is_keyed_native {
+      return answered;
+    }
+  }
+  // A record as JSON text (`struct_json_native`).
+  if (route == "n_struct_to_json" || route == "n_struct_to_json_pretty") && len(args) == 2 {
+    tp = literal(w, args[1], "type") ?? return none();
+    val = expr(x, w, args[0], ind);
+    json = temp(w, "text");
+    line(w, ind, "loft_text_free(&{json});");
+    shown = cgen_ref::show_top_call(x, w, tp, "&{json}", as_ref(w, val), if route == "n_struct_to_json" { "2" } else { "3" });
+    if w.why != "" {
+      return none();
+    }
+    line(w, ind, "{shown};");
+    return held_value(w, json, "text");
+  }
+  if (route.starts_with("n_store_") && route != "n_store_upgrade_owed_next") || route == "n_spatial_range" || route == "n_trie_prefix" || route == "t_4hash_len" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "t_4text_to_lowercase" || route == "t_4text_to_uppercase" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
+    refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
+    return none();
+  }
+  native = if route == "" { "" } else { cgen_natives::native_c(route) ?? "" };
+  if native == "" && (!binds::is_loft_defined(def) || def.c_symbol != "") {
+    refuse(w, "a call of a function without a loft body");
+    return none();
+  }
+  ret = if len(def.returned) == 0 { "" } else { cgen_types::ctype(def.returned[0]!) ?? "" };
+  if held(ret) == "" || ((is_tuple(ret) || ret == "fn" || ret == "ref") && !plain_rules()) {
+    refuse(w, "a call returning shape {ret}");
+    return none();
+  }
+  if len(def.attributes) != len(args) {
+    refuse(w, "a call whose arguments do not match its parameters");
+    return none();
+  }
+  shapes: vector<text> = [];
+  linked: vector<boolean> = [];
+  for a in def.attributes {
+    link = match cgen_types::base(a.typedef[0]!) {
+      TyRefVar { inner: _ } => true,
+      _ => false,
+    };
+    shape = cgen_types::ctype(opt_names::peel_link(a.typedef[0]!)) ?? "";
+    if held(shape) == "" || shape == "void" || ((is_tuple(shape) || shape == "fn" || shape == "ref") && !plain_rules()) {
+      refuse(w, "a call with a parameter of shape {shape}");
+      return none();
+    }
+    shapes += [shape];
+    linked += [link];
+  }
+  // A link argument is the address of the caller's variable, written before the values.
+  xs: vector<text> = [for _ in 0..len(args) { "" }];
+  for a in args {
+    i = a#index;
+    if linked[i]! {
+      xs[i] = link_arg(x, w, a, shapes[i]!, true, ind);
+      if w.why != "" {
+        return none();
+      }
+    }
+  }
+  for a in args {
+    i = a#index;
+    if linked[i]! {
+      continue;
+    }
+    if loop_shape::unspan(a) == NdNull {
+      xs[i] = if shapes[i]! == "text" { "loft_null_text()" } else { "(({held(shapes[i]!)}) {initial(shapes[i]!)})" };
+      continue;
+    }
+    named = function_literal(x.b, a);
+    if shapes[i]! == "fn" && named >= 0 {
+      xs[i] = fn_value(named);
+      continue;
+    }
+    later_writes = false;
+    for j in i + 1..len(args) {
+      if !linked[j]! && loop_shape::unspan(args[j]!) != NdNull && may_write(x.b, args[j]!) {
+        later_writes = true;
+      }
+    }
+    // A text field handed to a callee that writes no store is read in place.
+    reads = !opt_writes::call_writes_store(x.b, x.writes, d);
+    value = if reads { cgen_text::text_read(x, w, a, later_writes, ind) } else { arg_with(x, w, a, later_writes, ind) };
+    xs[i] = as_shape(w, value, shapes[i]!);
+    if w.why != "" {
+      return none();
+    }
+  }
+  t = cgen_names::plain(d);
+  if native == "" {
+    if len(args) <= 23 {
+      t.nn = nn_twin_bits(x, w, d, args);
+    }
+    t.rg = ranged_call(x, w, d, args);
+  }
+  name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
+  if !cgen_names::is_plain(t) {
+    request_twin(x, t);
+    name = cgen_names::twin_name(x.b, x.dups, t);
+  }
+  code = "{name}({xs.join(", ")})";
+  // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
+  // through its `__wr` twin, and the call's value is a view of that buffer.
+  if ret == "text" && cgen_names::is_plain(t) && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
+    at = answers_work(x.b, d, true);
+    if at >= 0 && at < len(xs) && plain_place(xs[at]!) {
+      twin = work_twin(x, d);
+      if x.work_twins[d]! == 3 {
+        refuse(w, "a work twin that is not carried: {x.why_work}");
+        return none();
+      }
+      if twin != "" {
+        line(w, ind, "{twin}({xs.join(", ")});");
+        if call_site_buffer(args[at]!) && xs[at]!.starts_with("&") {
+          w.pending_work += [xs[at]![1..xs[at]!.size()]];
+        }
+        return E { code: "loft_view({xs[at]!})", kind: K_VIEW };
+      }
+    }
+  }
+  if ret == "text" {
+    held = temp(w, "text");
+    line(w, ind, "loft_text_free(&{held});");
+    line(w, ind, "{held} = {code};");
+    return held_value(w, held, "text");
+  }
+  E { code: code, kind: kind_of(ret) }
+}
+
+// The variable a link argument names (`link_arg`), as its address.  `first`: the outermost
+// call, which also refuses a store place (`place_arg`).
+fn link_arg(x: Cx, w: W, a: ir::Node, shape: text, first: boolean, ind: integer) -> text {
+  v = -1;
+  match loop_shape::unspan(a) {
+    // A text result's buffer: `{ __work = ""; OpCreateStack(__work) }`.
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        refuse(w, "a link block with no operators");
+        return "";
+      }
+      outer = w.pending;
+      w.pending = [];
+      for o in ops {
+        if o#index < len(ops) - 1 {
+          stmt(x, w, o, ind);
+        }
+      }
+      inner = w.pending;
+      w.pending = outer;
+      for t in inner {
+        w.pending += [t];
+      }
+      return link_arg(x, w, ops[len(ops) - 1], shape, false, ind);
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(x.b, def_nr);
+      if name != "OpCreateStack" {
+        // A field, an element or another link's place goes to a twin that takes a place.
+        refuse(w, if first && (name == "OpGetField" || name == "OpGetVector" || name == "OpVarRef") { "a store place handed to a & parameter" } else { "a link made by {name}" });
+        return "";
+      }
+      if len(args) == 1 {
+        v = loop_shape::var_of(loop_shape::unspan(args[0]));
+      }
+      if v < 0 {
+        refuse(w, "a link to a computed place");
+        return "";
+      }
+    },
+    NdVar { n } => {
+      if !(w.links[n] ?? false) {
+        refuse(w, "a link to the value NdVar");
+        return "";
+      }
+      v = n;
+    },
+    _ => {
+      refuse(w, "a link to the value {construct(loop_shape::unspan(a))}");
+      return "";
+    },
+  }
+  if (w.shapes[v] ?? "") != shape || (shape == "text" && !text_held(w, v)) {
+    refuse(w, "a link to a variable of another shape");
+    return "";
+  }
+  var_addr(w, v)
+}
+
+// Is `v` the null text — `OpConvTextFromNull()`, what `return null` is in a text function?
+fn is_null_text(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => len(args) == 0 && def_name(b, def_nr) == "OpConvTextFromNull",
+    _ => false,
+  }
+}
+
+// Does `v` answer the work buffer `param` (`answers`): the parameter itself, the null text,
+// or — through blocks — a block ending in one of those?
+fn answers(b: ir::Bundle, v: ir::Node, param: integer, through: boolean) -> boolean {
+  match loop_shape::unspan(v) {
+    NdVar { n } => n == param,
+    NdBlock { block } => {
+      if through && is_null_text(b, v) {
+        return true;
+      }
+      ops = block[0].operators;
+      through && len(ops) > 0 && answers(b, ops[len(ops) - 1], param, true)
+    },
+    _ => through && is_null_text(b, v),
+  }
+}
+
+// `answers_work`: the place among `d`'s parameters of the one `&text` work buffer every exit
+// of it answers; -1 for any other function.
+fn answers_work(b: ir::Bundle, d: integer, through: boolean) -> integer {
+  if d < 0 || d >= len(b.data.definitions) {
+    return -1;
+  }
+  def = b.data.definitions[d]!;
+  if !def.name.starts_with("n_") || !binds::has_code(def) || len(def.returned) == 0 || (cgen_types::ctype(def.returned[0]!) ?? "") != "text" {
+    return -1;
+  }
+  at = -1;
+  param = -1;
+  pos = 0;
+  for v in def.variables.variables {
+    if !v.argument {
+      continue;
+    }
+    work = match cgen_types::base(v.type_def[0]!) {
+      TyRefVar { inner } => (cgen_types::ctype(inner) ?? "") == "text",
+      _ => false,
+    };
+    if work {
+      if at >= 0 {
+        return -1;
+      }
+      at = pos;
+      param = v#index;
+    }
+    pos += 1;
+  }
+  if at < 0 {
+    return -1;
+  }
+  ok = [true];
+  opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner } => { if !answers(b, inner, param, through) { ok[0] = false; } },
+      _ => {},
+    }
+  });
+  tail_ok = match def.code[0]! {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        return -1;
+      }
+      match loop_shape::unspan(ops[len(ops) - 1]) {
+        NdReturn { inner } => answers(b, inner, param, through),
+        NdVar { n } => n == param,
+        _ => false,
+      }
+    },
+    _ => return -1,
+  };
+  if ok[0]! && tail_ok { at } else { -1 }
+}
+
+// Is `code` a C place that reads the same twice and does nothing else — `name`, `&name`,
+// `&(*name)` (`plain_place`)?
+fn plain_place(code: text) -> boolean {
+  inner = code;
+  if code.starts_with("&(*") && code.ends_with(")") {
+    inner = code[3..code.size() - 1];
+  } else if code.starts_with("&") {
+    inner = code[1..code.size()];
+  }
+  inner != "" && identifier(inner)
+}
+
+// Is `arg` a work buffer made for this one call — the IR's default reference
+// `{ w = ""; ref(w) }` (`call_site_buffer`)?
+fn call_site_buffer(arg: ir::Node) -> boolean {
+  ops = match loop_shape::unspan(arg) {
+    NdBlock { block } => block[0].operators,
+    _ => return false,
+  };
+  if len(ops) != 2 {
+    return false;
+  }
+  work = match ops[0] {
+    NdSet { var, inner } => if loop_shape::unspan(inner) == NdText { s: "" } { var } else { -1 },
+    _ => -1,
+  };
+  if work < 0 {
+    return false;
+  }
+  match ops[1] {
+    NdCall { def_nr: _, args } => len(args) == 1 && args[0] == NdVar { n: work },
+    _ => false,
+  }
+}
+
+// `work_twin`: the name of `d`'s `__wr` twin — its body written answering the caller's
+// buffer — or "" where the twin is declined.  `x.work_twins[d]` is 3 where this writer does
+// not carry the twin's body.
+fn work_twin(x: Cx, d: integer) -> text {
+  name = "{cgen_names::c_name(x.b, x.dups, d)}__wr";
+  state = x.work_twins[d]!;
+  if state != 0 {
+    return if state == 2 { name } else { "" };
+  }
+  // Named before it is written: a twin whose body calls itself meets its own name.
+  x.work_twins[d] = 2;
+  def = x.b.data.definitions[d]!;
+  at = answers_work(x.b, d, true);
+  declined = at < 0;
+  // `plain_params`: a signature the twin does not take.
+  for a in def.attributes {
+    heap = match a.typedef[0]! {
+      TyReference { n: _, dep: _ } => true,
+      TyVector { inner: _, dep: _ } => true,
+      TyEnum { n: _, is_ref, dep: _ } => is_ref,
+      _ => false,
+    };
+    if a.hidden && !a.work_buffer && heap {
+      declined = true;
+    }
+  }
+  param = -1;
+  pos = 0;
+  for v in def.variables.variables {
+    if v.argument {
+      if pos == at {
+        param = v#index;
+      }
+      pos += 1;
+    }
+    if v.store_text_link {
+      declined = true;
+    }
+  }
+  if pos != len(def.attributes) || declined || param < 0 {
+    x.work_twins[d] = 1;
+    return "";
+  }
+  written = write_body(x, cgen_names::plain(d), param, false, []);
+  if written.refused != "" {
+    x.work_twins[d] = 3;
+    x.why_work = written.refused;
+    return "";
+  }
+  name
+}
+
+// `Cx::fn_value`: definition `d` used as a value.
+fn fn_value(d: integer) -> text {
+  "loft_fn_of(INT64_C({if d < 0 { -d } else { d }}))"
+}
+
+// The function an integer literal names where a function value is expected (`is_function`),
+// -1 for any other node.
+fn function_literal(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdInt { n } => if n >= 0 && n < len(b.data.definitions) && b.data.definitions[n]!.def_type == 1 { n } else { -1 },
+    _ => -1,
+  }
+}
+
+// `Cx::fn_sig`: the number of the dispatcher for these parameter shapes, their modes and
+// this result, made on first use.
+fn fn_sig(x: Cx, key: text) -> integer {
+  for s in x.sigs {
+    if s == key {
+      return s#index;
+    }
+  }
+  x.sigs += [key];
+  len(x.sigs) - 1
+}
+
+// A function value read out of a record: `{ d = …; …; closure }` (`fn_ref_field_read`).
+fn fn_ref_field_read(x: Cx, w: W, all: vector<ir::Node>, target: text, ind: integer) {
+  ops: vector<ir::Node> = [];
+  for o in all {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => { ops += [o]; },
+    }
+  }
+  if len(ops) < 2 {
+    refuse(w, "a function value read with an unexpected shape");
+    return;
+  }
+  first = expr(x, w, ops[0], ind);
+  dt = temp(w, "int");
+  line(w, ind, "{dt} = {as_int(w, first)};");
+  for o in ops {
+    if o#index > 0 && o#index < len(ops) - 1 {
+      stmt(x, w, o, ind);
+    }
+  }
+  clos = expr(x, w, ops[len(ops) - 1], ind);
+  line(w, ind, "{target} = loft_fn_make({dt}, {as_ref(w, clos)});");
+}
+
+// A call through function value `v` (`call_ref`): the dispatcher of its signature.
+fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E {
+  params: vector<ir::TypeT> = [];
+  result = ir::TyVoid;
+  match cgen_types::base(x.b.data.definitions[w.index]!.variables.variables[v]!.type_def[0]!) {
+    TyFunction { args: ps, result: r, dep: _, consts: _ } => {
+      params = ps;
+      result = r;
+    },
+    _ => {
+      refuse(w, "a call through a value that is not a function");
+      return none();
+    },
+  }
+  shapes: vector<text> = [];
+  links: vector<boolean> = [];
+  for p in params {
+    link = false;
+    shape = match cgen_types::base(p) {
+      TyRefVar { inner } => {
+        link = true;
+        cgen_types::ctype(inner) ?? ""
+      },
+      _ => cgen_types::ctype(p) ?? "",
+    };
+    if shape == "" || shape == "void" {
+      refuse(w, "a function value with a parameter of no C shape");
+      return none();
+    }
+    if held(shape) == "" {
+      refuse(w, "a call through a function value with a parameter of shape {shape}");
+      return none();
+    }
+    shapes += [shape];
+    links += [link];
+  }
+  ret = cgen_types::ctype(result) ?? "";
+  if ret == "" || held(ret) == "" {
+    refuse(w, "a function value returning shape {ret}");
+    return none();
+  }
+  if len(args) < len(shapes) {
+    refuse(w, "a call through a function value with arguments left out");
+    return none();
+  }
+  xs: vector<text> = [for _ in 0..len(shapes) { "" }];
+  modes: vector<text> = [];
+  for s in shapes {
+    i = s#index;
+    if links[i]! {
+      xs[i] = link_arg(x, w, args[i]!, s, true, ind);
+      if w.why != "" {
+        return none();
+      }
+      modes += ["{s}:1"];
+    } else {
+      modes += ["{s}:0"];
+    }
+  }
+  sig = fn_sig(x, "{modes.join(",")}->{ret}");
+  for s in shapes {
+    i = s#index;
+    if links[i]! {
+      continue;
+    }
+    a = args[i]!;
+    if loop_shape::unspan(a) == NdNull {
+      xs[i] = if s == "text" { "loft_null_text()" } else { "(({held(s)}) {initial(s)})" };
+      continue;
+    }
+    named = function_literal(x.b, a);
+    if s == "fn" && named >= 0 {
+      xs[i] = fn_value(named);
+      continue;
+    }
+    later_writes = false;
+    for j in i + 1..len(shapes) {
+      if !links[j]! && loop_shape::unspan(args[j]!) != NdNull && !(shapes[j]! == "fn" && function_literal(x.b, args[j]!) >= 0) && may_write(x.b, args[j]!) {
+        later_writes = true;
+      }
+    }
+    xs[i] = as_shape(w, arg_with(x, w, a, later_writes, ind), s);
+    if w.why != "" {
+      return none();
+    }
+  }
+  list = [w.names[v]!];
+  for a in xs {
+    list += [a];
+  }
+  code = "loft_call{sig}({list.join(", ")})";
+  if ret == "text" {
+    held_t = temp(w, "text");
+    line(w, ind, "loft_text_free(&{held_t});");
+    line(w, ind, "{held_t} = {code};");
+    return held_value(w, held_t, "text");
+  }
+  E { code: code, kind: kind_of(ret) }
+}
+
+// One member, or a whole tuple, copied from `from` to `to` (`copy_member`): a text into the
+// target's own buffer.
+fn copy_member(w: W, from: text, to: text, shape: text, ind: integer) {
+  if shape == "text" {
+    line(w, ind, "loft_text_set(&{to}, loft_view(&{from}));");
+  } else if is_tuple(shape) {
+    for m in tuple_members(shape) {
+      copy_member(w, "{from}.f{m#index}", "{to}.f{m#index}", m, ind);
+    }
+  } else {
+    line(w, ind, "{to} = {from};");
+  }
+}
+
+// A tuple literal into `target` (`assign_tuple`): every element is evaluated before any is
+// stored — `s = (s.1, s.0)` reads the old members; a literal reads nothing.
+fn assign_tuple(x: Cx, w: W, vals: vector<ir::Node>, target: text, shape: text, ind: integer) {
+  if !is_tuple(shape) {
+    refuse(w, "a tuple literal into a non-tuple");
+    return;
+  }
+  members = tuple_members(shape);
+  if len(members) != len(vals) {
+    refuse(w, "a tuple literal of another arity");
+    return;
+  }
+  constant = true;
+  for v in vals {
+    plain = match loop_shape::unspan(v) {
+      NdInt { n: _ } => true,
+      NdLong { n: _ } => true,
+      NdFloat { f: _ } => true,
+      NdSingle { f: _ } => true,
+      NdBoolean { b: _ } => true,
+      NdText { s: _ } => true,
+      NdNull => true,
+      _ => false,
+    };
+    if !plain {
+      constant = false;
+    }
+  }
+  if len(vals) > 1 && !constant {
+    held_members: vector<text> = [];
+    for v in vals {
+      t = temp(w, members[v#index]!);
+      assign(x, w, v, t, members[v#index]!, ind);
+      held_members += [t];
+    }
+    for t in held_members {
+      copy_member(w, t, "{target}.f{t#index}", members[t#index]!, ind);
+    }
+    return;
+  }
+  for v in vals {
+    assign(x, w, v, "{target}.f{v#index}", members[v#index]!, ind);
+  }
+}
+
 // The C shape a compound evaluates to (`shape_of`), for the compounds carried; "" refuses.
-fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
+pub fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
   match loop_shape::unspan(v) {
     NdBlock { block } => {
       if len(block[0].result) == 0 {
@@ -524,55 +1412,138 @@ fn shape_of(b: ir::Bundle, w: W, v: ir::Node) -> text {
     NdInt { n: _ } => "int",
     NdLong { n: _ } => "int",
     NdBoolean { b: _ } => "bool",
+    NdEnum { ord: _, tp: _ } => "enum",
+    NdFloat { f: _ } => "float",
+    NdSingle { f: _ } => "single",
+    NdText { s: _ } => "text",
     NdVar { n } => w.shapes[n] ?? "",
+    NdFnRef { def_nr: _, var: _, t: _ } => "fn",
+    NdFnRefDnr { n: _ } => "int",
+    NdTupleGet { var, idx } => {
+      members = tuple_members(w.shapes[var] ?? "");
+      if idx < len(members) { members[idx]! } else { "" }
+    },
+    NdTuple { items } => {
+      members: vector<text> = [];
+      for i in items {
+        m = shape_of(b, w, i);
+        if m == "" {
+          return "";
+        }
+        members += [m];
+      }
+      "tuple({members.join(",")})"
+    },
+    NdCallRef { var, args: _ } => {
+      match cgen_types::base(b.data.definitions[w.index]!.variables.variables[var]!.type_def[0]!) {
+        TyFunction { args: _, result, dep: _, consts: _ } => cgen_types::ctype(result) ?? "",
+        _ => "",
+      }
+    },
+    NdCall { def_nr, args: _ } => {
+      def = b.data.definitions[def_nr]!;
+      if def.name.starts_with("Op") {
+        return op_shape(def.name);
+      }
+      if len(def.returned) == 0 { "" } else { cgen_types::ctype(def.returned[0]!) ?? "" }
+    },
     _ => "",
   }
 }
 
+// A float literal's bit pattern as hexadecimal digits (`f64::to_bits`).  A loft float holds
+// one NaN, its null, and `bits()` answers null for the pattern of `-0.0`.
+fn float_bits(f: float) -> text {
+  if f == null {
+    return "7ff8000000000000";
+  }
+  bits = f.bits();
+  if bits == null { "8000000000000000" } else { "{bits:x}" }
+}
+
 // A C expression for `v`'s value (`expr`); the statements it needs are written first.
-fn expr(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) -> E {
+fn expr(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
   if w.why != "" {
     return none();
   }
+  if len(w.sticky) > 0 {
+    read = loop_shape::var_of(loop_shape::unspan(v));
+    if read >= 0 && sticky_flag(w, read) != "" {
+      return E { code: "({sticky_flag(w, read)} ? LOFT_NULL : {w.names[read]!})", kind: K_INT };
+    }
+  }
+  memo = cgen_loop::invariant_of(w, v);
+  if memo >= 0 {
+    return cgen_loop::invariant_use(x, w, memo, ind);
+  }
   at = innermost_span(v);
   if at == null {
-    return expr_value(b, d, p, c, nn, rv, w, v, ind);
+    return expr_value(x, w, v, ind);
   }
   saved_file = w.span_file;
   saved_line = w.span_line;
   w.span_file = c_string(at.file);
   w.span_line = at.line;
-  value = expr_value(b, d, p, c, nn, rv, w, v, ind);
+  value = expr_value(x, w, v, ind);
   w.span_file = saved_file;
   w.span_line = saved_line;
   value
 }
 
-fn expr_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) -> E {
+fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
   node = loop_shape::unspan(v);
   match node {
     NdInt { n } => E { code: "INT64_C({n})", kind: K_INT },
     NdLong { n } => if n == null { E { code: "LOFT_NULL", kind: K_INT } } else { E { code: "INT64_C({n})", kind: K_INT } },
     NdBoolean { b: on } => E { code: if on { "1" } else { "0" }, kind: K_COND },
+    NdEnum { ord, tp: _ } => E { code: "(uint8_t) {ord}", kind: K_ENUM },
+    NdFloat { f } => E { code: "loft_f64(UINT64_C(0x{float_bits(f)}))", kind: K_FLOAT },
+    NdSingle { f } => E { code: "loft_f32(UINT32_C({if f == null { "0x7fc00000" } else { "{f.bits():#x}" }}))", kind: K_SINGLE },
+    NdText { s: literal } => E { code: "loft_lit({c_string(literal)}, {literal.size()})", kind: K_VIEW },
+    // The definition number a function value names, as an integer.
+    NdFnRefDnr { n } => E { code: "{w.names[n]!}.d", kind: K_INT },
+    NdFnRef { def_nr, var, t: _ } => {
+      if var == 65535 {
+        return E { code: fn_value(def_nr), kind: K_FN };
+      }
+      E { code: "loft_fn_make(INT64_C({def_nr}), {w.names[var]!})", kind: K_FN }
+    },
+    NdCallRef { var, args } => call_ref(x, w, var, args, ind),
     NdVar { n } => {
       shape = w.shapes[n] ?? "";
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
         return none();
       }
-      E { code: var_name(d.variables.variables[n]!.name, n), kind: kind_of(shape) }
+      if text_held(w, n) {
+        return E { code: "loft_view(&{w.names[n]!})", kind: K_VIEW };
+      }
+      E { code: w.names[n]!, kind: kind_of(shape), tup: if is_tuple(shape) { shape } else { "" } }
     },
-    NdCall { def_nr, args } => {
-      name = def_name(b, def_nr);
-      if !name.starts_with("Op") {
-        refuse(w, "a call of a function");
+    NdTupleGet { var, idx } => {
+      members = tuple_members(w.shapes[var] ?? "");
+      if idx >= len(members) {
+        refuse(w, "a tuple read of a non-tuple");
         return none();
       }
-      op_call(b, d, p, c, nn, rv, w, name, args, ind)
+      member = members[idx]!;
+      place = "{w.names[var]!}.f{idx}";
+      if member == "text" {
+        return E { code: "loft_view(&{place})", kind: K_VIEW };
+      }
+      E { code: place, kind: kind_of(member), tup: if is_tuple(member) { member } else { "" } }
     },
-    NdBlock { block: _ } => compound(b, d, p, c, nn, rv, w, node, ind),
-    NdInsert { items: _ } => compound(b, d, p, c, nn, rv, w, node, ind),
-    NdIf { cond: _, t: _, f: _ } => compound(b, d, p, c, nn, rv, w, node, ind),
+    NdCall { def_nr, args } => {
+      name = def_name(x.b, def_nr);
+      if !name.starts_with("Op") {
+        return call(x, w, def_nr, args, ind);
+      }
+      op_call(x, w, name, args, ind)
+    },
+    NdBlock { block: _ } => compound(x, w, node, ind),
+    NdInsert { items: _ } => compound(x, w, node, ind),
+    NdIf { cond: _, t: _, f: _ } => compound(x, w, node, ind),
+    NdTuple { items: _ } => compound(x, w, node, ind),
     NdNull => {
       refuse(w, "a null without a type");
       none()
@@ -585,10 +1556,35 @@ fn expr_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: o
 }
 
 // A compound read as a value: held in a temporary its statements assign.
-fn compound(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, node: ir::Node, ind: integer) -> E {
-  shape = shape_of(b, w, node);
+fn compound(x: Cx, w: W, node: ir::Node, ind: integer) -> E {
+  chosen = false;
+  view = cgen_text::view_choice(x, w, node, ind, chosen);
+  if chosen {
+    return view;
+  }
+  shape = shape_of(x.b, w, node);
+  // What the compound's own statements leave pending is this statement's (`nested`).
+  outer = w.pending;
+  w.pending = [];
+  value = compound_value(x, w, node, shape, ind);
+  inner = w.pending;
+  w.pending = outer;
+  for t in inner {
+    w.pending += [t];
+  }
+  value
+}
+
+fn compound_value(x: Cx, w: W, node: ir::Node, shape: text, ind: integer) -> E {
+  if shape == "text" {
+    tailed = false;
+    tail = cgen_text::text_tail_view(x, w, node, ind, tailed);
+    if tailed {
+      return tail;
+    }
+  }
   if shape == "void" {
-    stmt(b, d, p, c, nn, rv, w, node, ind);
+    stmt(x, w, node, ind);
     return E { code: "(void) 0", kind: K_VOID };
   }
   if held(shape) == "" {
@@ -596,8 +1592,8 @@ fn compound(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt
     return none();
   }
   t = temp(w, shape);
-  assign(b, d, p, c, nn, rv, w, node, t, shape, ind);
-  E { code: t, kind: kind_of(shape) }
+  assign(x, w, node, t, shape, ind);
+  held_value(w, t, shape)
 }
 
 // The first word of a node, for a refusal.
@@ -669,12 +1665,38 @@ fn int_literal_fallback(b: ir::Bundle, cond: ir::Node, else_arm: ir::Node) -> bo
   }
 }
 
-// A scope-exit free (`is_release_statement`), for the forms a scalar body can hold.
+// A scope-exit free, or the store lock the cleanup window may hold (`is_release_statement`):
+// a statement that yields no value, so a value block's value is the last statement before its
+// releases.
 fn is_free(b: ir::Bundle, v: ir::Node) -> boolean {
   match loop_shape::unspan(v) {
     NdCall { def_nr, args: _ } => {
       name = def_name(b, def_nr);
-      name.starts_with("OpFree") || name == "OpDropFnRef" || name == "n_set_store_lock"
+      name.starts_with("OpFree") || name == "OpDropFnRef" || (name.starts_with("t_") && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll"))) || name == "n_set_store_lock"
+    },
+    NdIf { cond: _, t, f } => {
+      if loop_shape::unspan(f) != NdNull {
+        return false;
+      }
+      is_free(b, t)
+    },
+    NdInsert { items } => {
+      any = false;
+      for i in items {
+        if is_free(b, i) {
+          any = true;
+          continue;
+        }
+        plain = match loop_shape::unspan(i) {
+          NdSet { var: _, inner: _ } => true,
+          NdLine { n: _ } => true,
+          _ => false,
+        };
+        if !plain {
+          return false;
+        }
+      }
+      any
     },
     _ => false,
   }
@@ -682,55 +1704,168 @@ fn is_free(b: ir::Bundle, v: ir::Node) -> boolean {
 
 // `target = null` for a value of `shape` (`null_into`).
 fn null_into(w: W, target: text, shape: text, ind: integer) {
+  if is_tuple(shape) {
+    for m in tuple_members(shape) {
+      null_into(w, "{target}.f{m#index}", m, ind);
+    }
+    return;
+  }
   if shape == "int" {
     line(w, ind, "{target} = LOFT_NULL;");
   } else if shape == "bool" {
     line(w, ind, "{target} = LOFT_BOOL_NULL;");
+  } else if shape == "enum" {
+    line(w, ind, "{target} = 255;");
+  } else if shape == "float" {
+    line(w, ind, "{target} = (double) NAN;");
+  } else if shape == "single" {
+    line(w, ind, "{target} = (float) NAN;");
+  } else if shape == "char" {
+    line(w, ind, "{target} = 0;");
+  } else if shape == "text" {
+    line(w, ind, "loft_text_set(&{target}, loft_null_text());");
+  } else if shape == "ref" {
+    line(w, ind, "{target} = loft_ref_null();");
+  } else if shape == "fn" {
+    line(w, ind, "{target} = loft_fn_of(LOFT_NULL);");
   } else if shape != "void" {
     refuse(w, "a null of shape {shape}");
   }
 }
 
 // Write the statements `v` needs and put its value in `target`, of `shape` (`assign`).
-fn assign(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
+fn assign(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
   if w.why != "" {
     return;
   }
   at = innermost_span(v);
   if at == null {
-    assign_value(b, d, p, c, nn, rv, w, v, target, shape, ind);
+    assign_value(x, w, v, target, shape, ind);
     return;
   }
   saved_file = w.span_file;
   saved_line = w.span_line;
   w.span_file = c_string(at.file);
   w.span_line = at.line;
-  assign_value(b, d, p, c, nn, rv, w, v, target, shape, ind);
+  assign_value(x, w, v, target, shape, ind);
   w.span_file = saved_file;
   w.span_line = saved_line;
 }
 
-fn assign_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
+fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
   node = loop_shape::unspan(v);
+  // A function named where a function value is expected.
+  if shape == "fn" && function_literal(x.b, node) >= 0 {
+    line(w, ind, "{target} = {fn_value(function_literal(x.b, node))};");
+    return;
+  }
+  if is_tuple(shape) && tuple_has_text(shape) {
+    match node {
+      // A tuple that holds a text is copied member by member: each text into its own buffer.
+      NdVar { n: src } => {
+        for m in tuple_members(shape) {
+          assign(x, w, ir::NdTupleGet { var: src, idx: m#index }, "{target}.f{m#index}", m, ind);
+        }
+        return;
+      },
+      NdTupleGet { var: src, idx } => {
+        copy_member(w, "{w.names[src]!}.f{idx}", target, shape, ind);
+        return;
+      },
+      _ => {},
+    }
+  }
   match node {
     NdNull => null_into(w, target, shape, ind),
-    NdBlock { block } => assign_seq(b, d, p, c, nn, rv, w, block[0].operators, target, shape, ind),
-    NdInsert { items } => assign_seq(b, d, p, c, nn, rv, w, items, target, shape, ind),
+    NdTuple { items } => assign_tuple(x, w, items, target, shape, ind),
+    NdBlock { block } => {
+      if shape == "fn" && block[0].name == "fn_ref_field_read" {
+        fn_ref_field_read(x, w, block[0].operators, target, ind);
+        return;
+      }
+      delivery = w.adopt_v >= 0 && block[0].name == "one_buffer_vec_copy";
+      if delivery {
+        w.in_delivery += 1;
+      }
+      assign_seq(x, w, block[0].operators, target, shape, ind);
+      if delivery {
+        w.in_delivery -= 1;
+      }
+    },
+    NdInsert { items } => assign_seq(x, w, items, target, shape, ind),
     NdIf { cond, t, f } => {
-      cold = null_test(b, cond) && !int_literal_fallback_value(b, cond, f);
-      test = as_cond(w, expr(b, d, p, c, nn, rv, w, cond, ind));
+      cold = null_test(x.b, cond) && !int_literal_fallback_value(x.b, cond, f);
+      test = as_cond(w, expr(x, w, cond, ind));
       line(w, ind, "if ({bare(test)}) {{");
-      assign(b, d, p, c, nn, rv, w, t, target, shape, ind + 1);
+      assign(x, w, t, target, shape, ind + 1);
       line(w, ind, "}} else {{");
       if cold {
         line(w, ind + 1, "LOFT_COLD_PATH();");
       }
-      assign(b, d, p, c, nn, rv, w, f, target, shape, ind + 1);
+      assign(x, w, f, target, shape, ind + 1);
       line(w, ind, "}}");
     },
-    NdReturn { inner: _ } => stmt(b, d, p, c, nn, rv, w, node, ind),
+    NdReturn { inner: _ } => stmt(x, w, node, ind),
+    NdBreak { n: _ } => stmt(x, w, node, ind),
+    NdContinue { n: _ } => stmt(x, w, node, ind),
     _ => {
-      value = as_shape(w, expr(b, d, p, c, nn, rv, w, node, ind), shape);
+      // A self tail call's loop leaves only by a `return`: it has no value to put anywhere.
+      tail_loop = match node {
+        NdLoop { block } => block[0].name == "tail_self",
+        _ => false,
+      };
+      if tail_loop {
+        stmt(x, w, node, ind);
+        return;
+      }
+      e = expr(x, w, node, ind);
+      if w.why != "" {
+        return;
+      }
+      if shape == "text" {
+        // A text held in a statement temporary moves into the target: nothing else names it.
+        moved = pending_text_temp(w, e.code);
+        // `@FR-R-BufferReturn`'s bind clause: the target takes the call site's own buffer.
+        work = "";
+        if e.code.starts_with("loft_view(&") && e.code.ends_with(")") {
+          named = e.code[11..e.code.size() - 1];
+          for pw in w.pending_work {
+            if pw == named && named != target {
+              work = named;
+            }
+          }
+        }
+        if moved != "" {
+          line(w, ind, "loft_text_move(&{target}, &{moved});");
+        } else if work != "" {
+          line(w, ind, "loft_text_move(&{target}, &{work});");
+        } else {
+          line(w, ind, "loft_text_set(&{target}, {as_view(w, e)});");
+        }
+        return;
+      }
+      if shape == "void" {
+        line(w, ind, "{e.code};");
+        return;
+      }
+      if is_tuple(shape) && tuple_has_text(shape) {
+        if is_temp(w, e.code) {
+          copy_member(w, e.code, target, shape, ind);
+          return;
+        }
+        if w.frees_old_tuple {
+          // `move_tuple_in`: the old texts are released, the value's buffers move in.
+          old: vector<text> = [];
+          tuple_text_leaves(target, shape, old);
+          frees = "";
+          for t in old {
+            frees += " loft_text_free(&{t});";
+          }
+          line(w, ind, "{{ {held(shape)} mv = {as_shape(w, e, shape)};{frees} {target} = mv; }}");
+          return;
+        }
+      }
+      value = as_shape(w, e, shape);
       // An arm that keeps the value assigns the target to itself: nothing to write.
       if w.why == "" && value != target {
         line(w, ind, "{target} = {value};");
@@ -741,9 +1876,9 @@ fn assign_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c:
 
 // A value block (`assign_seq`): the value is the last operator that is neither a line marker,
 // an assignment nor a free; what follows it runs once it is taken.
-fn assign_seq(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, ops: vector<ir::Node>, target: text, shape: text, ind: integer) {
-  if tail_captured(b, w, ops) {
-    refuse(w, "a value the bytecode leaves on its stack before a return");
+fn assign_seq(x: Cx, w: W, ops: vector<ir::Node>, target: text, shape: text, ind: integer) {
+  if tail_capture(x.b, w, ops) >= 0 {
+    ops_stmt(x, w, ops, ind);
     return;
   }
   at = -1;
@@ -751,7 +1886,7 @@ fn assign_seq(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: o
     value = match loop_shape::unspan(o) {
       NdLine { n: _ } => false,
       NdSet { var: _, inner: _ } => false,
-      _ => !is_free(b, o),
+      _ => !is_free(x.b, o),
     };
     if value {
       at = o#index;
@@ -761,43 +1896,262 @@ fn assign_seq(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: o
     refuse(w, "a value block with no value");
     return;
   }
+  // What the statements before the value bind — a record pointer — serves the value as well,
+  // so it closes after the value, with the block.
+  held = len(w.rec_ptrs);
+  frames = len(w.headers);
+  grid_bound = len(w.grid_binds);
+  stmts_upto(x, w, ops, at, ind);
+  assign(x, w, ops[at]!, target, shape, ind);
+  flush(w, ind);
   for o in ops {
-    if o#index < at {
-      stmt(b, d, p, c, nn, rv, w, o, ind);
-    } else if o#index == at {
-      assign(b, d, p, c, nn, rv, w, o, target, shape, ind);
-    } else {
-      stmt(b, d, p, c, nn, rv, w, o, ind);
+    if o#index > at {
+      stmt(x, w, o, ind);
     }
+  }
+  w.grid_binds = w.grid_binds[0..grid_bound];
+  w.rec_ptrs = w.rec_ptrs[0..held];
+  if len(w.headers) > frames {
+    w.headers = w.headers[0..frames];
   }
 }
 
-// Does `ops` end `[value, frees…, return null]` (`tail_capture`), in a function that answers
-// a value?  That reading is not carried yet.
-fn tail_captured(b: ir::Bundle, w: W, ops: vector<ir::Node>) -> boolean {
-  if w.ret == "void" {
-    return false;
-  }
-  last: ir::Node = NdNull;
+// The last statement of `ops` before `end` that is no line marker (and, with `value`, no
+// free); -1 for none.
+fn last_before(b: ir::Bundle, ops: vector<ir::Node>, end: integer, value: boolean) -> integer {
+  at = -1;
   for o in ops {
-    match loop_shape::unspan(o) {
-      NdLine { n: _ } => {},
-      _ => last = loop_shape::unspan(o),
+    if o#index >= end {
+      break;
+    }
+    marker = match loop_shape::unspan(o) {
+      NdLine { n: _ } => true,
+      _ => false,
+    };
+    if !marker && !(value && is_free(b, o)) {
+      at = o#index;
     }
   }
-  match last {
-    NdReturn { inner } => loop_shape::unspan(inner) == NdNull || is_free(b, inner),
-    _ => false,
+  at
+}
+
+// `tail_capture`: a value the scopes pass left for the bytecode's evaluation stack — `[value,
+// frees…, return null]`, where the return answers the value still on the stack top.  The
+// position of the value when `ops` ends that way, -1 otherwise; the return is the last
+// statement that is no line marker.
+fn tail_capture(b: ir::Bundle, w: W, ops: vector<ir::Node>) -> integer {
+  if w.ret == "void" {
+    return -1;
   }
+  ret = last_before(b, ops, len(ops), false);
+  if ret < 0 {
+    return -1;
+  }
+  match loop_shape::unspan(ops[ret]!) {
+    NdReturn { inner } => {
+      if loop_shape::unspan(inner) != NdNull && !is_free(b, inner) {
+        return -1;
+      }
+    },
+    _ => { return -1; },
+  }
+  at = last_before(b, ops, ret, true);
+  if at < 0 || shape_of(b, w, ops[at]!) != w.ret {
+    return -1;
+  }
+  at
+}
+
+// `ops` for their effect, returning the value a `tail_capture` names (`ops_stmt`).
+fn ops_stmt(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
+  at = tail_capture(x.b, w, ops);
+  if at < 0 {
+    stmts(x, w, ops, ind);
+    return;
+  }
+  ret = last_before(x.b, ops, len(ops), false);
+  stmts_upto(x, w, ops, at, ind);
+  r = temp(w, w.ret);
+  assign(x, w, ops[at]!, r, w.ret, ind);
+  flush(w, ind);
+  for o in ops {
+    if o#index > at && o#index < ret {
+      stmt(x, w, o, ind);
+    }
+  }
+  match loop_shape::unspan(ops[ret]!) {
+    NdReturn { inner } => stmt(x, w, inner, ind),
+    _ => {},
+  }
+  ret_held(w, r, ind);
+}
+
+// Return the value temporary `r` already holds (`ret_held`): a text result's buffer moves out
+// before the epilogue frees every text the function holds.
+fn ret_held(w: W, r: text, ind: integer) {
+  if is_tuple(w.ret) {
+    moved: vector<text> = [];
+    tuple_text_leaves(r, w.ret, moved);
+    if len(moved) > 0 {
+      line(w, ind, "{held(w.ret)} {r}_out = {r};");
+      for m in moved {
+        line(w, ind, "{m}.p = 0;");
+      }
+      epilogue(w, ind);
+      line(w, ind, "return {r}_out;");
+      return;
+    }
+  }
+  if w.ret == "text" {
+    line(w, ind, "loft_text {r}_out = {r};");
+    line(w, ind, "{r}.p = 0;");
+    epilogue(w, ind);
+    line(w, ind, "return {r}_out;");
+    return;
+  }
+  epilogue(w, ind);
+  line(w, ind, "return {r};");
+}
+
+// A block's statements in order (`stmts`, `stmts_in`).
+fn stmts(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
+  // The record pointers and view headers this block bound close with it.
+  held = len(w.rec_ptrs);
+  frames = len(w.headers);
+  grid_bound = len(w.grid_binds);
+  stmts_upto(x, w, ops, len(ops), ind);
+  w.grid_binds = w.grid_binds[0..grid_bound];
+  w.rec_ptrs = w.rec_ptrs[0..held];
+  if len(w.headers) > frames {
+    w.headers = w.headers[0..frames];
+  }
+}
+
+// `ops[..end]`, the statements of a list whose remainder the caller writes (`stmts_upto`).
+// The statements just before a loop seed its counters (`@FR-R-Peel`).
+fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
+  // The end of the push run a reservation was made for, and whether a push header is open
+  // for it.
+  run_end = 0;
+  run_head = false;
+  // The statements a held push run already wrote.
+  skip_to = 0;
+  for o in ops {
+    if o#index >= end || w.why != "" {
+      break;
+    }
+    if o#index < skip_to {
+      continue;
+    }
+    if run_head && o#index >= run_end {
+      w.push_heads = w.push_heads[0..len(w.push_heads) - 1];
+      run_head = false;
+    }
+    if o#index >= run_end && plain_rules() && len(w.push_heads) > 0 {
+      past = cgen_hoist::held_push_run(x, w, ops, o#index, end, ind);
+      if past >= 0 {
+        skip_to = past;
+        continue;
+      }
+    }
+    if o#index >= run_end && plain_rules() {
+      opened = false;
+      reserved = cgen_ref::reserve_push_run(x, w, ops, o#index, end, ind, opened);
+      if reserved >= 0 {
+        run_end = reserved;
+        run_head = opened;
+      }
+    }
+    // A clear of a vector the next statement mints anew releases nothing that is kept.
+    if cgen_ref::clear_before_mint(x.b, ops, o#index, end) {
+      continue;
+    }
+    if plain_rules() {
+      match loop_shape::unspan(o) {
+        NdSet { var: bound_var, inner: bound_to } => cgen_hoist::grid_bind(x, w, bound_var, bound_to),
+        _ => {},
+      }
+    }
+    w.peel_seeds = cgen_loop::peel_seeds(ops, o#index);
+    if plain_rules() {
+      cgen_hoist::range_facts(x, w, ops, o#index);
+      cgen_hoist::range_ends(w, ops, o#index);
+    }
+    // A loop's first statement is its iterator: no guard of that loop admits its operators.
+    if o#index == 0 && w.iter_pending {
+      w.iter_pending = false;
+      w.in_iter += 1;
+      stmt(x, w, o, ind);
+      w.in_iter -= 1;
+    } else {
+      stmt(x, w, o, ind);
+    }
+    if plain_rules() && w.why == "" {
+      cgen_recptr::bind_record_ptr(x, w, ops, o#index, ind);
+      cgen_hoist::bind_view_header(x, w, ops, o#index, ind);
+    }
+  }
+  if run_head {
+    w.push_heads = w.push_heads[0..len(w.push_heads) - 1];
+  }
+}
+
+// A block as a statement (`block_stmt`).  `@FR-R-RangedCall`'s guarded copy: a `For` block
+// once more behind `|x| <= G` for each leaf the plan names, its calls taking their ranged
+// twins under the copy's facts.
+fn block_stmt(x: Cx, w: W, node: ir::Node, name: text, ops: vector<ir::Node>, ind: integer) {
+  if name == "For block" && !w.in_range_copy {
+    facts: vector<opt_range::Ranges> = [];
+    test = cgen_loop::range_guard(x, w, node, ops, facts);
+    if test != "" {
+      flush(w, ind);
+      line(w, ind, "if ({test}) {{");
+      w.in_range_copy = true;
+      w.over += [facts[0]!];
+      ops_stmt(x, w, ops, ind + 1);
+      w.over = w.over[0..len(w.over) - 1];
+      line(w, ind, "}} else {{");
+      ops_stmt(x, w, ops, ind + 1);
+      w.in_range_copy = false;
+      line(w, ind, "}}");
+      return;
+    }
+  }
+  // `@FR-R-RetAdopt` — inside the exit delivery of an adopted result local the buffer's
+  // clear and its append emit nothing.
+  delivery = w.adopt_v >= 0 && name == "one_buffer_vec_copy";
+  if delivery {
+    w.in_delivery += 1;
+  }
+  ops_stmt(x, w, ops, ind);
+  if delivery {
+    w.in_delivery -= 1;
+  }
+}
+
+// The label of the loop `depth` loops out (`label`), -1 past the outermost.
+fn label(w: W, depth: integer) -> integer {
+  n = len(w.loops);
+  if depth < 0 || depth >= n {
+    refuse(w, "a break or continue {depth} loops out of {n}");
+    return -1;
+  }
+  w.loops[n - 1 - depth]!
 }
 
 // Return `v`'s value, or nothing (`ret_value`).
-fn ret_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) {
+fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
   absent = loop_shape::unspan(v) == NdNull;
   if w.ret == "void" {
-    if !absent {
-      stmt(b, d, p, c, nn, rv, w, v, ind);
+    // A `__wr` twin answers its caller's buffer: nothing to hand back; a null answer is the
+    // null text in that buffer.
+    answered = w.work_ret >= 0 && loop_shape::var_of(loop_shape::unspan(v)) == w.work_ret;
+    if !absent && !answered && w.work_ret >= 0 && is_null_text(x.b, v) {
+      line(w, ind, "loft_text_set(&{w.names[w.work_ret]!}, loft_null_text());");
+    } else if !absent && !answered {
+      stmt(x, w, v, ind);
     }
+    epilogue(w, ind);
     line(w, ind, "return;");
     return;
   }
@@ -805,15 +2159,35 @@ fn ret_value(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: op
   if absent {
     null_into(w, r, w.ret, ind);
   } else {
-    assign(b, d, p, c, nn, rv, w, v, r, w.ret, ind);
+    assign(x, w, v, r, w.ret, ind);
   }
-  line(w, ind, "return {r};");
+  ret_held(w, r, ind);
 }
 
 // Write `v` for its effect (`stmt`, `stmt_inner`, `stmt_kind`).
-fn stmt(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) {
+fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   if w.why != "" {
     return;
+  }
+  // A minted room is forgotten by any statement but the bind of its vector and the write of
+  // the vector's empty handle (`room_keeps`).
+  if !room_keeps(x.b, w, v) {
+    for r in w.room_minted {
+      if r >= 0 {
+        w.room_minted[r#index] = -1;
+      }
+    }
+  }
+  // What the previous statement filed reaches this one only when it is a lookup's binding;
+  // every other statement forgets it (a line marker is no statement).
+  is_line = match loop_shape::unspan(v) {
+    NdLine { n: _ } => true,
+    _ => false,
+  };
+  if !is_line {
+    filed = w.filed;
+    w.filed = -1;
+    w.filed_next = if cgen_ref::binds_lookup(x.b, v) { filed } else { -1 };
   }
   // An assignment or a `return` of a located value reports a fault in it at that line.
   at = match loop_shape::unspan(v) {
@@ -822,26 +2196,148 @@ fn stmt(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_ran
     _ => null,
   };
   if at == null {
-    stmt_kind(b, d, p, c, nn, rv, w, v, ind);
-    return;
+    stmt_kind(x, w, v, ind);
+  } else {
+    saved_file = w.span_file;
+    saved_line = w.span_line;
+    w.span_file = c_string(at.file);
+    w.span_line = at.line;
+    stmt_kind(x, w, v, ind);
+    w.span_file = saved_file;
+    w.span_line = saved_line;
   }
-  saved_file = w.span_file;
-  saved_line = w.span_line;
-  w.span_file = c_string(at.file);
-  w.span_line = at.line;
-  stmt_kind(b, d, p, c, nn, rv, w, v, ind);
-  w.span_file = saved_file;
-  w.span_line = saved_line;
+  if w.why == "" && len(w.headers) > 0 {
+    match loop_shape::unspan(v) {
+      NdSet { var: set_var, inner: _ } => cgen_hoist::refresh_rebound(w, set_var, ind),
+      _ => {},
+    }
+  }
+  if !is_line {
+    w.filed_next = -1;
+    w.filed = cgen_ref::filed_record(x.b, v);
+  }
 }
 
-fn stmt_kind(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) {
+// `scopes::link_set_repoints`: does `var = value` re-point the `&` variable — a bind to a
+// variable, to another link, or (a scalar link) to a store place — rather than write through?
+fn link_set_repoints(b: ir::Bundle, w: W, var: integer, value: ir::Node) -> boolean {
+  def = b.data.definitions[w.index]!;
+  inner = match cgen_types::base(def.variables.variables[var]!.type_def[0]!) {
+    TyRefVar { inner: target } => target,
+    _ => return false,
+  };
+  scalar_link = match cgen_types::base(inner) {
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  };
+  match loop_shape::unspan(value) {
+    NdCall { def_nr, args: _ } => {
+      callee = b.data.definitions[def_nr]!;
+      answers_ref = len(callee.returned) > 0 && (match cgen_types::base(callee.returned[0]!) { TyReference { n: _, dep: _ } => true, _ => false });
+      callee.name == "OpCreateStack" || callee.name == "OpVarRef" || (scalar_link && answers_ref) || def.variables.variables[var]!.store_text_link
+    },
+    _ => false,
+  }
+}
+
+// Is `value` a field or an element — a store place a scalar link may name (`direct_place`)?
+fn store_place(b: ir::Bundle, value: ir::Node) -> boolean {
+  match loop_shape::unspan(value) {
+    NdCall { def_nr, args: _ } => def_name(b, def_nr) == "OpGetVector" || def_name(b, def_nr) == "OpGetField",
+    _ => false,
+  }
+}
+
+// `stack_target`: the address a link bind names — a variable's, or what another link holds;
+// "" for any other value.
+fn stack_target(b: ir::Bundle, w: W, value: ir::Node) -> text {
+  match loop_shape::unspan(value) {
+    NdCall { def_nr, args } => {
+      if len(args) != 1 {
+        return "";
+      }
+      t = match args[0] {
+        NdVar { n } => n,
+        _ => return "",
+      };
+      name = def_name(b, def_nr);
+      // A plain text parameter is the caller's view: no link writes it.
+      if name == "OpCreateStack" && !(w.params[t]! && !w.links[t]! && w.shapes[t]! == "text") {
+        return var_addr(w, t);
+      }
+      if name == "OpVarRef" && w.links[t]! {
+        return w.raw[t]!;
+      }
+      ""
+    },
+    _ => "",
+  }
+}
+
+// Is `x` a variable whose room was just minted?
+fn of_minted(w: W, x: ir::Node) -> boolean {
+  v = loop_shape::var_of(loop_shape::unspan(x));
+  v >= 0 && w.room_minted[v]! >= 0
+}
+
+// `room_keeps`: does statement `v` leave the minted rooms as they are?
+fn room_keeps(b: ir::Bundle, w: W, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdLine { n: _ } => true,
+    NdSet { var: _, inner } => {
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args } => def_name(b, def_nr) == "OpGetField" && len(args) > 0 && of_minted(w, args[0]),
+        _ => false,
+      }
+    },
+    NdCall { def_nr, args } => def_name(b, def_nr) == "OpSetInt4" && len(args) > 2 && of_minted(w, args[0]) && loop_shape::unspan(args[2]) == NdInt { n: 0 },
+    _ => false,
+  }
+}
+
+// `note_site`: a line marker sets the line the statements after it come from; a statement
+// that calls into a frame first records that line as its frame's call site.
+fn note_site(x: Cx, w: W, v: ir::Node, ind: integer) {
+  match loop_shape::unspan(v) {
+    NdLine { n } => w.cur_line = n,
+    NdBlock { block: _ } => {},
+    NdInsert { items: _ } => {},
+    _ => {
+      if w.cur_line != 0 && opt_frame_calls::calls_a_frame(x.b, v) {
+        line(w, ind, "loft_frame_site({w.cur_line});");
+      }
+    },
+  }
+}
+
+fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
+  note_site(x, w, v, ind);
+  // `@FR-R-Cold`: a variable only an outlined arm uses is the arm's own — its frees go with it.
+  match v {
+    NdCall { def_nr: _, args: _ } => {
+      freed = cgen_cold::text_free(x.b, v);
+      if freed >= 0 && w.undeclared[freed]! {
+        return;
+      }
+    },
+    _ => {},
+  }
   match v {
     NdNull => {},
-    NdLine { n } => w.cur_line = n,
+    NdLine { n: _ } => {},
     NdVar { n: _ } => {},
     NdInt { n: _ } => {},
     NdLong { n: _ } => {},
     NdBoolean { b: _ } => {},
+    NdFloat { f: _ } => {},
+    NdSingle { f: _ } => {},
+    NdEnum { ord: _, tp: _ } => {},
+    NdText { s: _ } => {},
     NdSpan { pos, inner } => {
       saved_file = w.span_file;
       saved_line = w.span_line;
@@ -849,51 +2345,127 @@ fn stmt_kind(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: op
         w.span_file = c_string(pos.file);
         w.span_line = pos.line;
       }
-      stmt(b, d, p, c, nn, rv, w, inner, ind);
+      stmt(x, w, inner, ind);
       w.span_file = saved_file;
       w.span_line = saved_line;
     },
-    NdBlock { block } => {
-      if block[0].name == "For block" {
-        refuse(w, "a loop");
-        return;
-      }
-      if tail_captured(b, w, block[0].operators) {
-        refuse(w, "a value the bytecode leaves on its stack before a return");
-        return;
-      }
-      for o in block[0].operators {
-        stmt(b, d, p, c, nn, rv, w, o, ind);
-      }
+    NdBlock { block } => block_stmt(x, w, v, block[0].name, block[0].operators, ind),
+    NdLoop { block } => cgen_loop::loop_stmt(x, w, block[0], ind),
+    NdBreak { n } => {
+      l = label(w, n);
+      flush(w, ind);
+      // The holds of the loops it leaves; the target's own goes back after its end.
+      cgen_file::release_holds(w, len(w.loops) - n, ind);
+      line(w, ind, "goto brk_{l};");
+    },
+    NdContinue { n } => {
+      l = label(w, n);
+      flush(w, ind);
+      // The holds of the loops it leaves; the target's own stays held.
+      cgen_file::release_holds(w, len(w.loops) - n, ind);
+      line(w, ind, "goto cont_{l};");
     },
     NdInsert { items } => {
       for o in items {
-        stmt(b, d, p, c, nn, rv, w, o, ind);
+        stmt(x, w, o, ind);
       }
     },
     NdSet { var, inner } => {
+      // `@FR-R-Cold`: an outlined arm's own variable is initialised there.
+      if w.undeclared[var]! {
+        return;
+      }
       shape = w.shapes[var] ?? "";
-      if shape != "int" && shape != "bool" {
+      if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
         return;
       }
-      assign(b, d, p, c, nn, rv, w, inner, var_name(d.variables.variables[var]!.name, var), shape, ind);
+      // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
+      // every later read and write of it goes through.
+      if w.links[var]! && (!w.params[var]! || link_set_repoints(x.b, w, var, inner)) {
+        to = stack_target(x.b, w, inner);
+        if to == "" && shape != "ref" && store_place(x.b, inner) {
+          refuse(w, "a link to a store place");
+          return;
+        }
+        if to != "" {
+          w.bound[var] = true;
+          line(w, ind, "{w.raw[var]!} = {to};");
+          return;
+        }
+        if !w.bound[var]! {
+          refuse(w, "an & local bound to something other than a variable");
+          return;
+        }
+      }
+      first = !w.bound[var]!;
+      w.bound[var] = true;
+      if shape == "text" && (w.borrowed[var] ?? false) {
+        cgen_text::borrowed_bind(x, w, var, inner, ind);
+        return;
+      }
+      if shape == "int" && (cgen_loop::sticky_update(x, w, var, inner, ind) || cgen_loop::spec_chain(x, w, var, inner, ind)) {
+        return;
+      }
+      if shape == "text" && !text_held(w, var) {
+        refuse(w, "assigns a text parameter");
+        return;
+      }
+      if shape == "ref" {
+        if w.links[var]! {
+          cgen_bind::link_rebind(x, w, var, inner, ind);
+          return;
+        }
+        // `@FR-R-RetAdopt` — the adopted local's bind: it IS the return buffer.
+        if var == w.adopt_v && def_name(x.b, match loop_shape::unspan(inner) { NdCall { def_nr, args: _ } => def_nr, _ => -1 }) == "OpGetField" {
+          cgen_ref::adopted_init(x, w, ind);
+          return;
+        }
+        cgen_bind::ref_set(x, w, var, inner, first, ind);
+        return;
+      }
+      // A local that owns its tuple's texts releases them where a whole tuple moves in.
+      outer_frees = w.frees_old_tuple;
+      w.frees_old_tuple = !w.params[var]! && !w.links[var]!;
+      assign(x, w, inner, w.names[var]!, shape, ind);
+      w.frees_old_tuple = outer_frees;
+      flush(w, ind);
+    },
+    NdTuplePut { var, idx, inner } => {
+      members = tuple_members(w.shapes[var] ?? "");
+      if idx >= len(members) {
+        refuse(w, "a tuple write into a non-tuple");
+        return;
+      }
+      assign(x, w, inner, "{w.names[var]!}.f{idx}", members[idx]!, ind);
+      flush(w, ind);
     },
     NdIf { cond, t, f } => {
-      cold = null_test(b, cond) && !int_literal_fallback(b, cond, f);
-      test = as_cond(w, expr(b, d, p, c, nn, rv, w, cond, ind));
+      outlined = if len(w.cold) == 0 { -1 } else { cgen_cold::cold_index(w, t) };
+      if outlined >= 0 {
+        cgen_cold::cold_if(x, w, outlined, cond, f, ind);
+        return;
+      }
+      cold = null_test(x.b, cond) && !int_literal_fallback(x.b, cond, f);
+      test = as_cond(w, expr(x, w, cond, ind));
       line(w, ind, "if ({bare(test)}) {{");
-      stmt(b, d, p, c, nn, rv, w, t, ind + 1);
+      grid_known = len(w.grid_facts);
+      if plain_rules() {
+        cgen_hoist::grid_test_facts(x, w, cond, t);
+      }
+      stmt(x, w, t, ind + 1);
+      w.grid_facts = w.grid_facts[0..grid_known];
       if loop_shape::unspan(f) != NdNull {
         line(w, ind, "}} else {{");
         if cold {
           line(w, ind + 1, "LOFT_COLD_PATH();");
         }
-        stmt(b, d, p, c, nn, rv, w, f, ind + 1);
+        stmt(x, w, f, ind + 1);
       }
       line(w, ind, "}}");
+      flush(w, ind);
     },
-    NdReturn { inner } => ret_value(b, d, p, c, nn, rv, w, inner, ind),
+    NdReturn { inner } => ret_value(x, w, inner, ind),
     NdDrop { inner } => {
       whole = match loop_shape::unspan(inner) {
         NdIf { cond: _, t: _, f: _ } => true,
@@ -902,19 +2474,26 @@ fn stmt_kind(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: op
         _ => false,
       };
       if whole {
-        stmt(b, d, p, c, nn, rv, w, inner, ind);
+        stmt(x, w, inner, ind);
       } else {
-        dropped(b, d, p, c, nn, rv, w, inner, ind);
+        dropped(x, w, inner, ind);
       }
     },
-    NdCall { def_nr: _, args: _ } => dropped(b, d, p, c, nn, rv, w, v, ind),
+    NdCall { def_nr: _, args: _ } => dropped(x, w, v, ind),
+    NdCallRef { var: _, args: _ } => dropped(x, w, v, ind),
+    // A tuple in statement position is a dropped value: each member runs for its effect.
+    NdTuple { items } => {
+      for m in items {
+        stmt(x, w, ir::NdDrop { inner: m }, ind);
+      }
+    },
     _ => refuse(w, "the construct {construct(v)}"),
   }
 }
 
 // A value computed and dropped: `(void) e;`, or the bare call of one that answers nothing.
-fn dropped(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_range::Calls, nn: vector<boolean>, rv: opt_range::Ranges, w: W, v: ir::Node, ind: integer) {
-  e = expr(b, d, p, c, nn, rv, w, v, ind);
+fn dropped(x: Cx, w: W, v: ir::Node, ind: integer) {
+  e = expr(x, w, v, ind);
   if w.why != "" {
     return;
   }
@@ -923,6 +2502,7 @@ fn dropped(b: ir::Bundle, d: ir::Definition, p: opt_non_sentinel::Proof, c: opt_
   } else {
     line(w, ind, "(void) {e.code};");
   }
+  flush(w, ind);
 }
 
 // `statement_count`: the body's own lines, without the blank ones and the bare braces.
@@ -944,18 +2524,63 @@ fn statement_count(body: text) -> integer {
 // The C definition of `d`'s body, `<name>__fr` (`function`, `FnWriter::write` and the whole
 // form of `framed`), or the first construct that is not carried.  `index` is `d`'s definition
 // number; `p` and `c` are the program's proof and call memo.
-pub fn write_function(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::Calls, index: integer) -> Written {
-  d = b.data.definitions[index]!;
+// Does a `&` local of `d` link a store place (`store_links`): a bind of it that re-points
+// names neither a variable nor another link?
+fn store_linked(b: ir::Bundle, d: ir::Definition, links: vector<boolean>) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(d.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if links[var]! && !d.variables.variables[var]!.argument {
+          match loop_shape::unspan(inner) {
+            NdCall { def_nr, args: _ } => {
+              callee = b.data.definitions[def_nr]!;
+              answers_ref = len(callee.returned) > 0 && (match cgen_types::base(callee.returned[0]!) { TyReference { n: _, dep: _ } => true, _ => false });
+              if callee.name != "OpCreateStack" && callee.name != "OpVarRef" && answers_ref {
+                hit[0] = true;
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
+  // `@FR-R-Cold`'s loft clause: the ordinary body only, and written again in place where
+  // the body did not keep to the plan.
+  if cgen_names::is_plain(twin) && plain_rules() {
+    tried = write_body(x, twin, -1, true, []);
+    if tried.refused != cgen_cold::COLD_ESCAPED {
+      return tried;
+    }
+  }
+  write_body(x, twin, -1, false, [])
+}
+
+// The body of twin `twin` (`FnWriter::write`); with `work_ret` a `__wr` twin's — the body
+// alone, answering nothing, its result the caller's buffer `work_ret`.
+fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>) -> Written {
+  index = twin.d;
+  d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
     return Written { text: "", refused: "a function without a loft body" };
   }
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
-  ret = if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
-  if held(ret) == "" {
+  ret = if work_ret >= 0 || len(helper) > 0 { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
   params: vector<text> = [];
+  names: vector<text> = [];
+  raw: vector<text> = [];
+  links: vector<boolean> = [];
+  is_param: vector<boolean> = [];
   for v in d.variables.variables {
     shape = shapes[v#index]!;
     if held(shape) == "" || shape == "void" {
@@ -965,20 +2590,66 @@ pub fn write_function(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::C
       TyRefVar { inner: _ } => true,
       _ => false,
     };
-    if link || v.store_text_link {
-      return Written { text: "", refused: "a `&` variable" };
+    if v.store_text_link {
+      return Written { text: "", refused: "a link to a text in a store" };
     }
+    if is_tuple(shape) && !plain_rules() {
+      return Written { text: "", refused: "a variable of shape {shape}" };
+    }
+    if shape == "fn" && !plain_rules() {
+      return Written { text: "", refused: "a variable of shape fn" };
+    }
+    if shape == "ref" && !plain_rules() {
+      return Written { text: "", refused: "a variable of shape ref" };
+    }
+    own = var_name(v.name, v#index);
+    raw += [own];
+    names += [if link { "(*{own})" } else { own }];
+    links += [link];
+    is_param += [v.argument];
     if v.argument {
-      params += ["{held(shape)} {var_name(v.name, v#index)}"];
+      params += [if link { "{held(shape)} *{own}" } else { "{passed(shape)} {own}" }];
     }
+  }
+  // A `&` local every bind of which names a field or an element links a store place.
+  if store_linked(x.b, d, links) {
+    return Written { text: "", refused: "a link to a store place" };
   }
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  nn = opt_non_sentinel::non_sentinel_vars(b, p, index);
-  rv = opt_range::range_vars(b, p, c, index, nn, []);
+  if twin.places != 0 || twin.inv || twin.nk || twin.apr || twin.apv || twin.kh || twin.ap || twin.ds || twin.vf {
+    return Written { text: "", refused: "a twin of a rule that is not carried" };
+  }
+  // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
+  // parameters within `[-L, L]`.
+  seeded: vector<integer> = [];
+  for i in 0..26 {
+    if twin.nn & (1 << i) != 0 {
+      seeded += [i];
+    }
+  }
+  // The text facts the body is set up with (`FnWriter::new`).
+  texts = cgen_texts::borrowed_texts(x.b, index);
+  if len(texts.lazy) > 0 || len(texts.tables) > 0 {
+    return Written { text: "", refused: "a lazy split or a split table" };
+  }
+  if len(texts.tested) > 0 {
+    return Written { text: "", refused: "a tested text borrow" };
+  }
+  // `@FR-R-Cold`'s loft clause outlines an early exit that builds a text: not carried.
+  if !plain_rules() && cgen_names::is_plain(twin) && (env_variable("LOFT_NO_COLD_EXIT") ?? "0") == "0" && cgen_text::may_outline(d, d.code[0]!) {
+    return Written { text: "", refused: "a cold exit that builds a text" };
+  }
+  nn = opt_non_sentinel::non_sentinel_vars_seeded(x.b, x.p, index, seeded);
+  seeds = if twin.rg { opt_ranged_call::param_seeds(x.b, index) } else { opt_range::empty_ranges(len(d.variables.variables)) };
   w = W {
+    index: index,
     name: d.name,
+    names: names,
+    params: is_param,
+    nn: nn,
+    rv: opt_range::range_vars_seeded(x.b, x.p, x.c, index, nn, opt_range::walks_of(x.b, index), seeds),
     file: d.position.file,
     line: d.position.line,
     shapes: shapes,
@@ -989,39 +2660,185 @@ pub fn write_function(b: ir::Bundle, p: opt_non_sentinel::Proof, c: opt_range::C
     cur_line: 0,
     span_file: "",
     span_line: 0,
+    loops: [],
+    labels: 0,
+    decls: [],
+    sticky: [],
+    sticky_temps: [],
+    memos: [],
+    no_memo: 0,
+    chains: [],
+    chain_guards: 0,
+    iter_pending: false,
+    in_iter: 0,
+    over: [],
+    in_range_copy: false,
+    peel_seeds: [],
+    walk_scopes: [for cw in char_walk::walks(x.b, index) { cw.scope }],
+    borrowed: texts.borrowed,
+    literal_views: cgen_texts::literal_views(x.b, index, texts.borrowed),
+    pending: [],
+    work_alias: -1,
+    work_dest: "",
+    raw: raw,
+    links: links,
+    bound: is_param,
+    pending_work: [],
+    work_ret: work_ret,
+    field_view: false,
+    defs: own::function_defs(x.b, index, x.ops),
+    room_minted: [for _ in 0..len(d.variables.variables) { -1 }],
+    elem: -1,
+    keyed: -1,
+    filed: -1,
+    filed_next: -1,
+    cold: [],
+    undeclared: [for _ in 0..len(d.variables.variables) { false }],
+    frees_old_tuple: false,
+    rec_ptrs: [],
+    headers: [],
+    push_heads: [],
+    windows: [],
+    file_holds: [],
+    length_locals: [],
+    length_asked: false,
+    grid_facts: [],
+    grid_binds: [],
+    range_ends: [],
+    set_many: [],
+    table_places: if plain_rules() { cgen_table::places(x.b, index) } else { [] },
+    table_paths: [],
+    table_names: [],
+    adopt_v: -1,
+    adopt_vdb: -1,
+    adopt_buf: -1,
+    adopt_tp: -1,
+    in_delivery: 0,
+    scalars: [],
+    facts: opt_facts::facts_of(x.b, index),
+    range_lens: [],
+    alias_var: -1,
+    alias_vec: ir::NdNull,
+    in_range: [],
+    in_range_lens: [],
   };
+  // `@FR-R-RetAdopt`: the result local that is built in the return buffer.
+  if plain_rules() && (env_variable("LOFT_NO_RETBUF_ADOPT") ?? "0") == "0" {
+    adopted = opt_adopt::ret_adopt(x.b, index);
+    if adopted != null {
+      w.adopt_v = adopted.v;
+      w.adopt_vdb = adopted.vdb;
+      w.adopt_buf = adopted.buf;
+      w.adopt_tp = adopted.db_tp;
+      w.facts.adopted_v = adopted.v;
+      w.facts.adopted_vdb = adopted.vdb;
+    }
+  }
   code = d.code[0]!;
+  if len(helper) > 0 {
+    // A helper declares only what its arm names besides the parameters.
+    code = helper[0].arm;
+    for v in d.variables.variables {
+      owned = false;
+      for o in helper[0].own {
+        if o == v#index {
+          owned = true;
+        }
+      }
+      w.undeclared[v#index] = !v.argument && !owned;
+    }
+  }
+  if cold_on {
+    planned = cgen_cold::cold_plan(x, w);
+    if planned != "" {
+      return Written { text: "", refused: planned };
+    }
+  }
+  if plain_rules() {
+    cgen_recptr::bind_param_ptrs(x, w, code);
+  }
   if ret == "void" {
-    stmt(b, d, p, c, nn, rv, w, code, 1);
+    stmt(x, w, code, 1);
+    epilogue(w, 1);
   } else {
-    r = temp(w, ret);
-    assign(b, d, p, c, nn, rv, w, code, r, ret, 1);
-    line(w, 1, "return {r};");
+    ret_value(x, w, code, 1);
   }
   if w.why != "" {
     return Written { text: "", refused: w.why };
   }
   out = "";
   for v in d.variables.variables {
-    if !v.argument {
+    if !v.argument && !w.undeclared[v#index]! {
       shape = shapes[v#index]!;
-      out += "    {held(shape)} {var_name(v.name, v#index)} = {initial(shape)};\n";
+      if w.links[v#index]! {
+        out += "    {held(shape)} *{w.raw[v#index]!} = 0;\n";
+      } else if shape == "text" && w.borrowed[v#index]! {
+        out += "    loft_str {var_name(v.name, v#index)} = {{ 0, 0 }};\n";
+      } else {
+        out += "    {held(shape)} {var_name(v.name, v#index)} = {initial(shape)};\n";
+      }
     }
   }
+  // A temporary of a plain type takes no initial value; one that owns something keeps it.
   for t in w.temps {
-    out += "    {held(t.shape)} {t.name};\n";
+    if t.verify {
+      out += "#ifdef LOFT_VERIFY\n";
+    }
+    if t.shape == "text" || t.shape == "fn" || is_tuple(t.shape) {
+      out += "    {held(t.shape)} {t.name} = {initial(t.shape)};\n";
+    } else {
+      out += "    {held(t.shape)} {t.name};\n";
+    }
+    if t.verify {
+      out += "#endif\n";
+    }
   }
-  out += w.body;
-  statements = statement_count(w.body);
+  for decl in w.decls {
+    out += "    {decl}\n";
+  }
+  out += cgen_text::hold_line(w);
+  body = cgen_text::expand_epilogues(w);
+  statements = statement_count(body);
+  out += body;
+  if len(w.cold) > 0 {
+    if cgen_cold::cold_escaped(w, out) {
+      return Written { text: "", refused: cgen_cold::COLD_ESCAPED };
+    }
+    for a in w.cold {
+      part = write_body(x, twin, -1, false, [a]);
+      if part.refused != "" {
+        return Written { text: "", refused: part.refused };
+      }
+    }
+  }
+  out = cgen_text::park_work_texts(w, d, out);
+  // `@FR-R-Tabulate`: a classifier of a byte reads its answer from the table the compiler
+  // evaluated when its one parameter is in the table's range, and runs its body otherwise.
+  if len(params) == 1 && params[0].starts_with("int64_t ") && ret == "int" {
+    tab = opt_tabulate::table(x.b, index);
+    if len(tab) > 0 {
+      entries: vector<text> = [];
+      for v in tab {
+        entries += ["INT64_C({v})"];
+      }
+      pname = params[0][8..params[0].size()];
+      out = "    static const int64_t loft_tab[{opt_tabulate::DOMAIN}] = {{ {entries.join(", ")} }}; /* @FR-R-Tabulate */\n    if ((uint64_t) {pname} < {opt_tabulate::DOMAIN}) return loft_tab[{pname}];\n{out}";
+    }
+  }
   // `@FR-R-Inline`: a small function's body is always inlined into its frame wrapper; a
   // larger one up to the helper size is decided once the twins are written.
   storage = if statements <= 12 {
     "LOFT_HOT_INLINE"
-  } else if statements <= 80 {
+  } else if statements <= 80 && twin.nn == 0 {
     "static /*loft_hot_body:{index}*/"
   } else {
     "static"
   };
   list = if len(params) == 0 { "void" } else { params.join(", ") };
-  Written { text: "{storage} {held(ret)} {d.name}__fr({list}) {{\n{out}}}\n", refused: "" }
+  // `(R-CSplit)` writes a body over its budget of call sites in parts: not carried.
+  if cgen_split::over_budget(storage, list, out) {
+    return Written { text: "", refused: "a body the writer splits" };
+  }
+  name = cgen_names::twin_name(x.b, x.dups, twin);
+  Written { text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "" }
 }

@@ -42,13 +42,34 @@ pub mod sites;
 /// result type is a plain no-heap struct of at most [`VALUE_RECORD_MAX_FIELDS`](layout::VALUE_RECORD_MAX_FIELDS) scalar
 /// fields; and EVERY call site in the program consumes the result by reading fields off a
 /// local it binds — never storing it, passing it on, returning it or binding it into a
-/// collection.  A single non-reading site declines the whole function, so no site has to
-/// materialise a record out of a tuple and no site can be made slower.
+/// collection.  In a writer's plan a single non-reading site declines the whole function, so
+/// no site has to materialise a record out of a tuple and no site can be made slower; the
+/// IR's plan ([`value_records_twinned`]) keeps such a site on the record form instead.
 ///
 /// `library` is a library artifact's generation: its dispatches can end in the call back to
 /// the interpreter, whose callee takes and answers records (loft#2129).
-#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecords {
+    plan(data, stores, library, false)
+}
+
+/// The plan the IR's own pass (`value_record::rewrite_program`) starts from: as
+/// [`value_records`], but a site that consumes an admitted function's RECORD — an operand
+/// position — does not decline the function.  That pass serves such a site with the
+/// function's record form and gives the tuple to a TWIN, so a site that owes a record runs
+/// the code it ran before and no site is made slower; the decline that keeps a writer
+/// without twins from materialising a record is not this pass's.  `LOFT_NO_VR_TWIN_SITES=1`
+/// restores the declining gate here too.
+pub fn value_records_twinned(data: &Data, stores: &Stores) -> ValueRecords {
+    plan(data, stores, false, !twin_sites_disabled())
+}
+
+fn twin_sites_disabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("LOFT_NO_VR_TWIN_SITES").is_ok_and(|v| v != "0"))
+}
+
+#[expect(clippy::too_many_lines, reason = "inherited")]
+fn plan(data: &Data, stores: &Stores, library: bool, twin_sites: bool) -> ValueRecords {
     let mut out = ValueRecords::default();
     if value_record_disabled() {
         return out;
@@ -480,7 +501,18 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             } else {
                 Pos::Operand
             };
-            site_walk(cdef.code(), top, &c, &mut declined);
+            // A twinned plan's operand sites keep the record form (`value_records_twinned`).
+            let mut kept_sites = HashSet::new();
+            site_walk(
+                cdef.code(),
+                top,
+                &c,
+                if twin_sites {
+                    &mut kept_sites
+                } else {
+                    &mut declined
+                },
+            );
             if let Some(ps) = params.get(&caller) {
                 let served = served_reads(cdef.code(), &locals, own.is_some(), data);
                 let cvars = cdef.variables();

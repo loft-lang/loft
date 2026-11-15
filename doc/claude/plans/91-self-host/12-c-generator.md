@@ -92,6 +92,8 @@ print it; `cgen_survey.py` gets a `--layer <name>` per row as it is built.
 | `iterations` | the `#index` of every `for e in v` loop its own bound keeps from overflowing (`opt::iteration::bounded_iteration_index`) | `LOFT_TRACE_COUNTERS` (its second line) — **compared**: `--layer iterations` |
 | `nn` | the non-sentinel facts a function's operators are written under (`opt::non_sentinel`) | `LOFT_TRACE_FACTS` (its `[nn]` line) — **compared**: `--layer nn` |
 | `ranges` | the range facts a body's operators were written under (`opt::range`) | `LOFT_TRACE_FACTS` (its `[ranges]` line) — compared: `--layer ranges`; differs where an accumulator steps under a character walk, until the walks are handed over |
+| `writes` | whether a call of a function may write a store (`opt::writes::call_writes_store`) | `LOFT_TRACE_WRITES` — **compared**: `--layer writes` |
+| `texts` | the text facts a body is set up with: the borrowed locals, the literal views, the tested borrows, the slice borrows, the lazy splits, the split tables | `LOFT_TRACE_TEXTS` — **compared** field by field: `--layer texts` |
 | `census` | each rewrite a function admitted, by rule (`make rewrite-census`) | `LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN` |
 | `declines` | each rewrite declined, with its reason (`make decline-census`) | the decline census |
 | `inline` | each function's statement count and its inline verdict | `LOFT_TRACE_INLINE` |
@@ -180,6 +182,38 @@ The range facts need `opt/char_walk.rs` and `opt/range.rs`
 operation answers).  With both layers equal, the writer's core walk (`body.rs` `write`:
 declarations, temporaries, statements, calls, `if`) starts producing text.
 
+### The rules still switched off in plain mode
+
+`cgen_w::PLAIN_SWITCHES` names them (18): `VALUE_RECORD`, `DISTINCT_VERSION`, `REBOUND_MOVER`, `APART_MINT`, `CALLEE_INPUTS`, `GROWN_HEADER`, `GUARD_BOUND`, `VERSION`, `TRANSIENT`, `DEFERRED_COPY`, `LOOP_RECORD`, `APART`, `APPEND_LOOP_WINDOW`, `APPEND_TWIN`, `HAND_OVER`, `VR_PTR`, `FNREF_PARK`, `FNREF_BUFFER`.
+A rule leaves the list when both sides agree on the whole corpus with it on.  Where a coarse
+switch covers several clauses, its finer switches take its place first and each clause is
+ported on its own.
+
+What the loft writer still refuses beside the rules, by bodies of the corpus: a body the
+writer splits (272), `OpCoroutineNext` (115) and `yield` (107) — the generators — a
+character walk (95), `OpPlaceRecord` (86), a lazy split or a split table (65).  Whole-unit
+assembly (the first-use numbering of `loft_call<n>` and `loft_tup<n>`, the framed wrapper,
+the twins) follows the bodies.
+
+The helpers of a port, in the session's scratch directory and rebuilt from this description
+when it is gone: `cycle.sh` builds the generator with `--ship` and runs the plain and the
+default `bodies` layer (it prints `N of 1076 units agree`, so a generator that dies on some
+units cannot pass as "0 different"); `one.sh FILE FUNCTION` prints the unified diff of one
+body, the Rust writer's against the loft writer's, under the plain switches.
+
+### An open design question: a rule keyed on node identity
+
+`opt/below_len.rs` (`LOFT_NO_GUARD_BOUND`, `@FR-R-Base`'s guard clause) answers the set of
+index nodes a passed test keeps below their vector's length BY ADDRESS, and the writer asks by
+address.  The loft writer cannot: a node collected into a vector is a copy (`&a == &b` finds no
+match — measured), and two equal `v[i]`, one under the test and one outside it, rule out asking
+by structure.  Three ways to carry it: the writer keeps the analysis' live facts itself, pushed
+at an `if` and killed where `visit` kills them (with save and restore around every loop it
+writes twice); the lowering marks a guarded index in the IR, which both writers then read; a
+path or ordinal key, which the writer has no way to know.  The second is the direction the
+other rules took (@PLN211) and changes the Rust side.  Until it is decided the switch stays in
+`PLAIN_SWITCHES`.
+
 ## What decides a step is done
 
 - The survey's count for the step's form did not drop and rose by what the step named.
@@ -206,8 +240,11 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 | layer `counters` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer counters` |
 | layer `iterations` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer iterations` |
 | layer `nn` | 6 044 function rows (the functions that ask a fact), all equal | `cgen_survey.py --cgen --layer nn` |
-| layer `bodies` | tests/scripts: of 5 446 function bodies the Rust writer wrote, the loft writer wrote 48 equal and 2 different (`(R-Tabulate)`, not ported: `n_b64v`) and refused 5 163; the refusals by count: a variable of shape ref 2 235, a result of shape ref 934, a variable of shape text 903, a result of shape text 486, a float result 115, a call of a function 100, a loop 76 | `cgen_survey.py --cgen --layer bodies --scripts-only` |
-| layer `ranges` | tests/scripts: 438 of 444 programs equal (2 888 rows); the 6 that differ each hold an accumulator under a character walk (`±4294967295`) | `cgen_survey.py --generator <interpreted cgen, LOFT_NO_IR_VALUE_RECORD=1> --layer ranges --scripts-only` |
+| layer `bodies` | the whole corpus (1076 units), default rules: of 13 537 function bodies the Rust writer wrote, the loft writer wrote 2 633 equal and none different (a function that holds a record or a vector is refused there) | `cgen_survey.py --generator <built cgen> --layer bodies` |
+| layer `bodies`, plain | the whole corpus with both sides under `cgen_w::PLAIN_SWITCHES` (the rules not carried yet, off): of 13 346 bodies, 12 138 equal and none different, 1 325 refused (the names a unit numbers by first use — `loft_call<n>`, `loft_tup<n>` — renumbered per body) | `cgen_survey.py --plain --generator <built cgen> --layer bodies` |
+| layer `writes` | 13 263 function rows over 1075 units, all equal | `cgen_survey.py --generator <built cgen> --layer writes` |
+| layer `texts` | 13 263 function rows over 1075 units, all six fields equal | `cgen_survey.py --generator <built cgen> --layer texts` |
+| layer `ranges` | tests/scripts: 444 of 444 programs equal (2 939 rows), the character walks read from `char_walk::walks` | `cgen_survey.py --generator <interpreted cgen, LOFT_NO_IR_VALUE_RECORD=1> --layer ranges --scripts-only` |
 
 The image carries per definition whether its body is under the 32-bit regime
 (`Definition.width32` in `ir.loft`, `Data::body_width32`): without it a `#width 32` file's unit
@@ -225,7 +262,27 @@ came out 64-bit from the image.
 | `selfhost/src/opt_iteration.loft` | `src/opt/iteration.rs` | `iteration_head`, `bounded_iteration_index`; `element_binding` is not ported yet |
 | `selfhost/src/opt_non_sentinel.loft` | `src/opt/non_sentinel.rs` | whole: `non_sentinel`, the callees' answers, the program-wide parameter proof (a greatest fixpoint over every call site, `src/fixpoint.rs` written out), the counter and iteration seeds, the escapes; the per-thread memos are one `Proof` record |
 | `selfhost/src/opt_range.loft` | `src/opt/range.rs` | `range`, `op_range`, `rem_range`, `elem_range`, `call_range` with its memo (`Calls`), `range_vars` with the counter, accumulator (`movement`, `call_step`, `step_down_by_trips`), `while` and tuple-element seeds; `plain_form` and `blocker` (the writer's questions) are not ported yet; the character walks arrive as `Walk { scope, hoist_null }`, empty until `char_walk.loft` carries both |
-| `selfhost/src/cgen_fn.loft` | `src/c/body.rs` (`FnWriter`), `function` and the whole form of `framed` in `src/c/mod.rs` | the FUNCTION WRITER, first slice: a function whose variables are 64-bit integers and booleans, answering nothing or one of those — assignments, `if`, blocks, `return`, the integer operators (plain where `opt_range::op_range_at_site` proves them, else checked), comparisons with the 32-bit literal form, `OpNot`, the integer null test with its `LOFT_COLD_PATH()`, temporaries by `arg`'s rule; every other shape is refused by name (a loop, a call of a function, text, a record, a float, a tuple, a `&` variable, `(R-Tabulate)`'s table, a tail capture) |
+| `selfhost/src/cgen_w.loft` | `Cx`, `FnWriter`, `E`, `K` and the leaf routines of `src/c/body.rs` and `src/c/mod.rs` (`held`, `initial`, `as_int` …) | what the writer's files share, declared before either is read |
+| `selfhost/src/cgen_fn.loft` | `src/c/body.rs` (`FnWriter`), `function` and the whole form of `framed` in `src/c/mod.rs` | the FUNCTION WRITER for a function whose variables, parameters and result are scalars (integer, boolean, float, single, enum, character): assignments, `if`, blocks with their tail capture, `return`, `break`, `continue`, the operators of those shapes (plain where the range proof holds), calls of loft functions with their `__nn` and `__rg` twins, frame sites, temporaries by `arg`'s rule, `(R-Tabulate)`; every other shape is refused by name (text, a record, a function value, a tuple, a `&` variable, a call of the standard library) |
+| `selfhost/src/cgen_text.loft` | the text operators, `format_long`, `text_reads`, `view_choice`, `text_tail_view`, `format_into_dest`, `borrowed_bind`, `held_texts`, `expand_epilogues`, `park_work_texts` of `src/c/body.rs` | text locals, parameters and results, literals, the text and format operators, printing, a borrowed text's view, the work-text park; refused by name: a text read out of a store, a `&text` parameter and `(R-BufferReturn)`, a tested borrow, a lazy split or a split table, a text push window, a cold exit, a body `(R-CSplit)` may split |
+| `selfhost/src/cgen_ref.loft` | `store_operator`, `free_operator`, `database_operator`, `ref_operator`, `field_operator`, `narrow_operator`, the plain arms of `vector_operator`, `keep_room_operator` | field reads and writes, `OpDatabase`, the frees, element reads, the scalar pushes; under the plain rules only |
+| `selfhost/src/cgen_bind.loft` | `set_stmt_arms` from `keyed-null` on: `join_stmt`, `call_copy`, `element_copy`, `reading_view_copy`, `whole_value_bind`, `displacing_rebind`, `owned_vector_null`, `swap_safe` | a record or vector local's bind, on `binds.loft`, `own.loft` and `bgen_set::re_bind_of`; refused by name: keyed-null, a record from a call through a function value or a tuple member, a rebind of a `&` record |
+| `selfhost/src/cgen_cold.loft` | `src/c/body/cold.rs`: `cold_plan`, `cold_arm`, `cold_if`, `cold_finish` | `@FR-R-Cold`'s loft clause under the plain rules — the helper's call in the body, the helper's own body written to learn whether it is refused (its text joins the unit with unit assembly); an arm is identified by equality, where the Rust writer keys it by address |
+| `selfhost/src/cgen_split.loft` | `strip`, `idents`, `call_sites` of `src/c/split.rs` | `(R-CSplit)`'s size test only: a body over the budget of runtime-call sites is refused by name; the split's own text is not carried |
+| `selfhost/src/opt_push.loft` | `opt::writes::fused_push`, `vector_path`, `push_operands`; `src/empty_slot.rs`; `opt::push_window::simple_invariant`; `hoist::hash_fill_loop` | the scalar push a rule may fuse, whether a vector is known empty, a loop-invariant expression, the hash a counted loop fills |
+| `selfhost/src/opt_view.loft` | `hoist::view_extent_verdict`, `record_view_ptr`, `param_view_ptr`, `scalar_field_uses`, `free_before_use`; `body_writes::view_field` | `@FR-R-RecPtr`'s verdict without the store-apartness facts |
+| `selfhost/src/cgen_recptr.loft` | `bind_param_ptrs`, `bind_record_ptr`, `rec_ptr_access` of `src/c/body.rs` | a record view's address taken once and its scalar field accesses through it; not the held-element address nor the text clause |
+| `selfhost/src/opt_hoist.loft` | the base clause of `hoist::hoistable`, `header::vector_candidates`, `body_writes::rebound_vars` | the vectors a loop that writes no store may hold for its run |
+| `selfhost/src/cgen_hoist.loft` | `hold_vectors`, `held_access`, `held_proof`, `place_of`, `index_arg`, `held_len` of `src/c/body.rs` | `@FR-R-Header`'s base clause: the held header, the reads, the length and the scalar element writes through it; the tiers above it are plain switches |
+| `selfhost/src/cgen_loop.loft` | `loop_stmt` … `loop_core`, `range_guard` in `src/c/body.rs`; `body/peel.rs`, `body/sticky.rs`, `body/spec_chain.rs`, `body/chain.rs`; `opt::hoist::invariant_chains` | a loop over scalars with `(R-Peel)`, `(R-StickySum)`, `(R-SpecChain)`, `(R-GuardedChain)`, `(R-Invariant)` and `(R-RangedCall)`'s guarded copy; a node an analysis admitted is found by what decided the admission, not by an address; the holds of a vector, a record scalar, a push or a file are not asked |
+| `selfhost/src/cgen_names.loft` | `c_name`, `twin_name`, `runtime_name`, `is_operator` in `src/c/mod.rs`; `duplicate_fn_names`, `disambiguated_fn_ident` in `src/opt/names.rs` | whole; a twin is a record of its flags, not a bit mask |
+| `selfhost/src/opt_ranged_call.loft` | `src/opt/ranged_call.rs` | the gain test, `args_ranged`, `param_seeds`, and `guard_plan` for its variable clause; a hoisted record field is not a guard's leaf yet |
+| `selfhost/src/opt_frame_calls.loft` | `src/opt/frame_calls.rs` | whole (`calls_a_frame`, `GuardFree`) |
+| `selfhost/src/opt_tabulate.loft` | `src/opt/tabulate.rs` | whole |
+| `selfhost/src/opt_writes.loft` | `may_write_store`, `call_writes_store`, `in_place_only_writer` and their allowances in `src/opt/writes.rs`; the memo and cycle guards of `src/opt/facts.rs` | the question with no tier on and no owned buffers; the tiers a loop's verdict turns on are not asked yet |
+| `selfhost/src/opt_lazy_split.loft`, `opt_split_table.loft` | `src/opt/lazy_split.rs`, `opt::hoist::split_tables`, `split_call` and `one_op_wrapper` of `src/ir_shape.rs` | whole |
+| `selfhost/src/opt_text_borrow.loft`, `opt_store_text_borrow.loft` | `src/opt/text_borrow.rs` (`borrowed_text_walks`, `text_escapes_with`), `opt::hoist::borrowed_discharge_temps`, `src/opt/store_text_borrow.rs` | whole for what the C writer asks (`local_roots`); the walk's re-read (`TextBorrow.read`) is not kept |
+| `selfhost/src/cgen_texts.loft` | `borrowed_texts`, `literal_views`, `view_bind`, `work_view_bind` in `src/c/body.rs` | whole; the writer does not write a text yet |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
@@ -244,12 +301,26 @@ Each was fixed where it was met, with its guard (rule 2 and 3 of the port).
 | loft#2490 | an early `return R { … }` from a function answering a small record `R?`, after a condition that calls another such function, answered null on the interpreter: the IR value-record pass left a literal that ends in its own `return` in its store form — fixed in `Exits::walk` (`src/value_record.rs`) | `tests/scripts/2490-an-early-return-of-a-small-record-literal-is-its-tuple.loft` |
 | loft#2491 | the shipped C build refused `match f(v) { B { n } => vr(rv, n), … }`: the value-record site gate took a block's last operator for its value, and the match block frees its subject after the arms — fixed in `site_walk` (`src/opt/value_records/sites.rs`) | `tests/c_split/ship_value_before_frees.loft` |
 | loft#2487 | a lambda written in a loop that captures a vector frees the vector's store at the end of the first round, both backends — **open**: filed with its cause and a verified workaround (bind the lambda before the loop); the port gives each walk a function of its own | none yet |
+| loft#2493 | a `match` whose result an earlier arm made optional refused a later arm that is a block ending in a local of the base type | `tests/scripts/2493-…loft` |
+| loft#2496 | a lambda capturing a local whose type pass 1 cannot know beside a `vector<boolean>` had no storage for the capture | `tests/scripts/2496-…loft` |
+| loft#2497 | a walk `for x in f()` over a call's vector of a record declared later is refused, or — the record in a module that uses this one back — leaks the vector — **open**: filed with both repros; the writer's shared records are declared in `cgen_w.loft`, before the files that walk them | none yet |
+| loft#2499 | a `match` with a leaving arm, last in an `if` branch that has an `else`, was dropped: the arm that matched did not run (silent) | `tests/scripts/2499-…loft` |
+| loft#2498 | the C backend's transient form of a record registered itself as its own member | `tests/scripts/2498-…loft` |
 | loft#2485 | a bind after its block ended moved the ended binding's type (a false gating warning), and a per-loop binding never ended | `tests/callarg_nstore.rs` |
 
 Not fixed, noted: a `hash<T[k]>` local cannot be formatted (`"{h}"`: "Cannot format type"),
 where a record holding one can.  A recursion over a tree that calls itself in tail position
 draws `warning[tail-call-not-jumped]` (@C155, by design: such a call keeps its frame); the
 port's recursive proofs go through a wrapper that binds the answer.
+
+## Peers
+
+The other streams this strand shares code and merges with, by the name their session
+answers to: **loft3-ac** gathers the work branches into the pull requests and takes the sha
+of each push of `laptop-c-perf`; **loft2-c0** writes the interpreter in loft
+(`tuxedo-pln204-int32`) and owns `ir.loft`, `load.loft`, `binds.loft`, `own.loft` and
+`char_walk.loft`.  This strand's session is **loft-c2**.  Where a session cannot be reached,
+the note for it goes in the commit message it will merge.
 
 ## Open questions, answered by the first probes
 
@@ -263,3 +334,68 @@ port's recursive proofs go through a wrapper that binds the answer.
 4. Hash iteration order: wherever the Rust generator walks a `HashMap` or `HashSet`, its
    output is sorted first or the unit would not be reproducible; each such site is ported with
    its sort, and a site found unsorted is a defect of the Rust generator, fixed there.
+
+## Review 2026-11-15 — the strand against the port method, and the interpreter stream beside it
+
+Read on `laptop-c-perf` at its 81st strand-12 commit, two days after the design landed, with
+the interpreter stream (`tuxedo-pln204-int32`, strand 1b) measured against the same items.
+
+**The position.**  25,000 lines of loft in 42 files against the 66,000 of `src/c` and
+`src/opt`; every analysis layer equal over the corpus (shapes, reach, functions, counters,
+iterations, nn, writes, texts on every function row; ranges on 444 of 444 scripts); under the
+plain switches about 11,300 to 12,100 of 13,300 bodies equal and none different; with every
+rule on, 2,633; whole units byte-identical, the empty program only.  Twelve language defects
+met, ten fixed with a guard.  Six of the 81 commits touched the Rust reference, each adding a
+trace and none changing what it writes.  What the execution got right: the layers before the
+text, so a differing body names the first analysis whose state differs; equal or refused by
+name, never different, so the count reads as progress; and the reference kept as the truth,
+with the one design question (a rule keyed on node identity) raised rather than settled
+locally.
+
+**What the strand owes, in order.**
+
+1. **The position is committed and gated.**  Every number above was measured by hand and
+   typed into this plan; no committed file and no CI step would notice a push under which
+   five hundred bodies stop agreeing.  `cgen_survey.py` writes its per-layer counts and the
+   plain-switch list to a baseline beside it, compares the next run against it, and fails on
+   any drop or any `differ`; the run is a nightly's size (1,075 units), so it is a nightly
+   job, and the selfhost cargo test keeps the kernels.  This is the port method's rule for
+   every port, and the interpreter stream owes the same (below).
+2. **No workaround for an open defect in the port's source.**  loft#2487 and loft#2497 are
+   open and the generator's shape carries a detour for each (a function per walk; the shared
+   records declared before the files that walk them), against rule 2 and the dogfood rule's
+   "not even a temporary one".  Both are lifetime defects of the kind @PLN211 is clearing;
+   they are fixed now and the detours taken out, or the port waits on them.
+3. **Unit assembly before the next switch.**  Bodies are the bulk of the work and not the
+   goal: the first-use numbering of `loft_call<n>` and `loft_tup<n>`, the framed wrapper, the
+   twins and `split` are what turn equal bodies into a unit `cmp` accepts.  A whole unit also
+   lets `scripts/c_sweep.py` compile the loft-written C and run it against the interpreter — a
+   second oracle at no cost — and is where the 3× bar is actually carried across.
+4. **The generator's own speed, per unit, beside the Rust generator's** — open question 3,
+   promised from G-2a, has no number.  The pivot was made for compile time, and a survey runs
+   that cost over 1,075 units each cycle.
+5. **The helpers are committed.**  `cycle.sh` and `one.sh` live in a session's scratch
+   directory, to be rebuilt from a paragraph; they belong in `selfhost/bench` beside the
+   survey (BUS_FACTOR.md: everything needed is in the repository).
+
+**The interpreter stream against the same five** (`tuxedo-pln204-int32`, 477 commits since
+2026-11-12, 71,000 lines of loft, the C runtime shim 3,200 lines of C):
+
+| item | strand 12 | strand 1b |
+|---|---|---|
+| position committed and gated | no | no — `run_image_survey.py` reads 1,193 of 1,194 and `compare.py` runs strict per layer, but neither carries an expected count, and `tests/selfhost.rs` keeps one emitted-image program |
+| workaround for an open defect in the source | two | none found (`selfhost/src` carries the word nowhere); X23 is a register row, not a detour |
+| the whole-artefact gate | not started | reached: the runner on loft-written code 1,135 of 1,194 agree, 0 differ; the rest of the layers measured per program (1b-compare.md) |
+| speed measured against the reference | no | yes, continuously: `bench_speed.py` geometric mean 0.92 of `loft --interpret` over 94 routines, worst 2.25, from 2.03 two days before |
+| helpers committed | `cycle.sh`, `one.sh` missing | `bench_speed.py`, `run_image_survey.py`, `fill_speed.sh` committed |
+
+So the interpreter stream already does what items 2 to 5 ask, and the strand takes its
+practice: the survey as the first thing a session runs, the speed number beside every
+position, the scripts in the tree.  What neither stream has is item 1, and it is the one that
+matters most as the commit rate rises: at forty commits a day a count that is only re-typed
+by hand is a streak, not a gate.
+
+On starting this strand before the interpreter is complete, which this epic's README ruled out
+until 2026-11-14: it costs nothing, since the oracle is the Rust image and not the loft
+interpreter; the one coupling is the shared IR files, and the one addition made there
+(`Definition.width32`) is the kind the layout rule says to announce first.

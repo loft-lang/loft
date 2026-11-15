@@ -83,7 +83,11 @@ pub(crate) fn is_text_dest_native(name: &str) -> bool {
 /// dest-passed via `n_set_bridge_dest` + `gen_cdylib_text_dest_call` instead of
 /// `stores.scratch`.
 pub(crate) fn is_cdylib_text_call(def: &crate::data::Definition) -> bool {
-    !def.native().is_empty() && matches!(def.returned(), Type::Text(_))
+    // `.base()` peels `Optional`, as `is_c_text_call` does: a `text?` crosses by the same
+    // destination.  Without it a compiled library's `-> text?` was called with no
+    // destination and read the bridge's empty answer — a text, a null and a view of the
+    // caller's record all came back as "".
+    !def.native().is_empty() && matches!(def.returned().base(), Type::Text(_))
 }
 
 /// A **`#c` binding** returning text: a C `char *` brought back

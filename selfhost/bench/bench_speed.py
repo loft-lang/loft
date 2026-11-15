@@ -23,12 +23,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 def rows(out):
     """routine -> (us, hash) from a benchmark's rows."""
     got = {}
-    lines = out.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith("routine\t") and i + 1 < len(lines):
-            f = lines[i + 1].split("\t")
-            if len(f) >= 7 and f[2].isdigit():
-                got[f[0]] = (int(f[2]), f[6])
+    seen = False
+    for line in out.splitlines():
+        if line.startswith("routine\t"):
+            seen = True
+            continue
+        f = line.split("\t")
+        if seen and len(f) >= 7 and f[1].isdigit() and f[2].isdigit():
+            got[f[0]] = (int(f[2]), f[6])
     return got
 
 

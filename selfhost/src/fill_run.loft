@@ -90,6 +90,9 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
   ptab = natives::par_natives(img);
   pjobs: vector<natives::ParJob> = [];
   pbufs: vector<natives::ParBuf> = [];
+  // The scheduler's registers `[sp, pc, depth]`, one vector for every hand-off: a literal per
+  // worker return made a store per element.
+  regs: vector<integer> = [0, 0, 0];
   while s.code_pos != end && !s.stopped {
     if trace {
       first = crt::get_u8(s.code, s.code_pos);
@@ -122,8 +125,10 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
       // A `par` worker returned: its answer taken, then the job's next worker entered at the
       // same depth, or after the last the job's result left for the caller.
       s.native = -1;
-      regs = [s.stack_pos, s.code_pos, s.depth];
-      more = natives::par_return(s.stk, regs, pjobs, pbufs, io);
+      regs[0] = s.stack_pos;
+      regs[1] = s.code_pos;
+      regs[2] = s.depth;
+      more = natives::par_return(s.stk, regs, pjobs, pbufs, io, s.tbuf);
       s.stack_pos = regs[0] ?? 0;
       if more {
         back = s.code_pos;
@@ -135,13 +140,18 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
     } else if s.native >= 0 {
       idx = s.native;
       s.native = -1;
+      if trace {
+        eprintln("at {s.code_pos} sp {s.stack_pos} native {img.natives[idx] ?? ""}");
+      }
       pk = ptab[idx] ?? 0;
       if natives::par_is_job(pk) {
         // A queue's or a fold's native: its first worker entered as a call, or with no rows
         // its empty answer given at once.
         jobs = len(pjobs);
         back = s.code_pos;
-        regs = [s.stack_pos, s.code_pos, s.depth];
+        regs[0] = s.stack_pos;
+        regs[1] = s.code_pos;
+        regs[2] = s.depth;
         if natives::par_start(pk, img, s.stk, regs, pjobs, pbufs, io, why) < 0 {
           s.stop("not carried: {why[0] ?? ""}");
         } else {
@@ -154,10 +164,13 @@ fn run_to(img: ir::RunImage, s: state::State, end: integer) {
         }
       } else if pk > 0 {
         s.stack_pos = natives::par_buf(pk, s.stk, s.stack_pos, pbufs, io);
+      } else if natives::is_state_native(s.handlers[idx] ?? -1) {
+        // The natives the `State` carries itself (`OpStaticCall`'s arm calls them too).
+        s.light_call(s.handlers[idx] ?? -1, idx);
       } else {
         // The natives are the hand-built runner's ports, over the same stack store.
         tl[0] = s.table_loaded;
-        sp = natives::call_native(natives::native_handler(img.natives[idx] ?? ""), idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
+        sp = natives::call_native(s.handlers[idx] ?? -1, idx, img, s.stk, s.stack_pos, io, tl, sidecar_ix, s.ptold, why);
         s.table_loaded = tl[0] ?? false;
         if sp < 0 {
           s.stop("not carried: {img.natives[idx] ?? "native {idx}"}");

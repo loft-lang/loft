@@ -97,7 +97,7 @@ fn carried(e: el::El, d: integer, state_src: text) -> boolean {
   if e.b.data.definitions[d]!.rust == "" {
     has_method(e, d, state_src)
   } else {
-    template(e, d) != null
+    fn_part(template(e, d) ?? "") != ""
   }
 }
 
@@ -121,6 +121,20 @@ fn answer_type(w: text) -> text {
     "dbref" => "state::DbRef?",
     _ => "integer?",
   }
+}
+
+// A template may hold a second form for the dispatch loop behind ` #arm ` (see `inline_arm`):
+// the part the operator's function is written from, and the part its arm is.
+ARM_MARK = " #arm ";
+
+fn fn_part(body: text) -> text {
+  at = body.find(ARM_MARK);
+  if at == null { body } else { body[0..at!].trim() }
+}
+
+fn arm_part(body: text) -> text {
+  at = body.find(ARM_MARK);
+  if at == null { "" } else { body[at! + len(ARM_MARK)..len(body)].trim() }
 }
 
 // The template of definition `d`, or null where it has none.
@@ -233,9 +247,14 @@ fn name_char(c: character) -> boolean {
 }
 
 // `body` with each of `names` — as a whole word outside a text literal, and not a member
-// (`x.name`, `m::name`) — given `suffix`: every arm's locals are the function's, so each
-// operator's are named apart.
+// (`x.name`, `m::name`) — given `suffix`.
 fn respell(body: text, names: vector<text>, suffix: text) -> text {
+  rename(body, names, [for n in names { "{n}{suffix}" }])
+}
+
+// `body` with each of `names` — a whole word outside a text literal, not a member — spelled
+// as its entry of `to`.
+fn rename(body: text, names: vector<text>, to: vector<text>) -> text {
   out = "";
   word = "";
   before = ' ';
@@ -246,13 +265,15 @@ fn respell(body: text, names: vector<text>, suffix: text) -> text {
       continue;
     }
     if word != "" {
-      hit = false;
+      hit = -1;
       if before != '.' && before != ':' {
-        for n in names {
-          hit = hit || n == word;
+        for k in 0..len(names) {
+          if (names[k] ?? "") == word {
+            hit = k;
+          }
         }
       }
-      out += if hit { "{word}{suffix}" } else { word };
+      out += if hit >= 0 { to[hit] ?? word } else { word };
       before = ' ';
       word = "";
     }
@@ -263,6 +284,65 @@ fn respell(body: text, names: vector<text>, suffix: text) -> text {
     before = c;
   }
   out.trim()
+}
+
+// `body` with each field read of a reference in `refs` — `r.store_nr`, `r.rec`, `r.pos`, the
+// name a whole word outside a text literal — spelled as the scalar local an arm holds it in
+// (`r_s`, `r_r`, `r_p`).
+fn ref_fields(body: text, refs: vector<text>) -> text {
+  out = "";
+  word = "";
+  pending = "";
+  before = ' ';
+  quoted = false;
+  for c in "{body} " {
+    if !quoted && name_char(c) {
+      word += "{c}";
+      continue;
+    }
+    if word != "" {
+      if pending != "" {
+        sfx = match word {
+          "store_nr" => "_s",
+          "rec" => "_r",
+          "pos" => "_p",
+          _ => "",
+        };
+        out += if sfx == "" { "{pending}.{word}" } else { "{pending}{sfx}" };
+        pending = "";
+        word = "";
+      } else {
+        hit = false;
+        if c == '.' && before != '.' && before != ':' {
+          for n in refs {
+            hit = hit || n == word;
+          }
+        }
+        if hit {
+          pending = word;
+          word = "";
+          before = '.';
+          continue;
+        }
+        out += word;
+        word = "";
+      }
+    } else if pending != "" {
+      out += "{pending}.";
+      pending = "";
+    }
+    if c == '"' {
+      quoted = !quoted;
+    }
+    out += "{c}";
+    before = c;
+  }
+  out.trim()
+}
+
+// Does `body` name `name` as a whole word outside a text literal, not as a member?
+fn names_word(body: text, name: text) -> boolean {
+  respell(body, [name], "#") != body.trim()
 }
 
 // Does `body` name the state `s` itself?
@@ -302,6 +382,7 @@ fn operand_bytes(w: text) -> integer {
     "i32" => 4,
     "i64" => 8,
     "f64" => 8,
+    "f32" => 4,
     _ => 0,
   }
 }
@@ -312,8 +393,12 @@ fn slot_width(w: text) -> text {
   match w {
     "i64" => "i64",
     "f64" => "f64",
+    // A single: its four bytes in the slot (`crt::peek_f32`).
+    "f32" => "f32",
     "bool" => "u8",
     "u8" => "u8",
+    // A character: its code point in four bytes, 0 for null.
+    "char" => "u32",
     _ => "",
   }
 }
@@ -325,67 +410,152 @@ fn slot_width(w: text) -> text {
 // stops.  The operands are read as the generated function reads them (`--reads`).
 fn call_arm(slot: integer) -> text {
   out = "    {slot} => {{\n";
-  out += "      d_nr_{slot} = crt::peek_i64(cbase, ip + 1);\n";
-  out += "      args_size_{slot} = crt::peek_u16(cbase, ip + 9);\n";
-  out += "      to_{slot} = crt::peek_i64(cbase, ip + 11);\n";
+  out += "      ri0 = crt::peek_i64(cbase, ip + 1);\n";
+  out += "      ri1 = crt::peek_u16(cbase, ip + 9);\n";
+  out += "      ri2 = crt::peek_i64(cbase, ip + 11);\n";
   out += "      if fd < state::MAX_CALL_DEPTH && sp + state::FRAME_HEADROOM <= cap {{\n";
   out += "        ip += 19;\n";
-  out += "        at_{slot} = fd * state::FRAME_BYTES;\n";
-  out += "        crt::poke_i64(fbase, at_{slot}, d_nr_{slot});\n";
-  out += "        crt::poke_i64(fbase, at_{slot} + 8, ip);\n";
-  out += "        crt::poke_i64(fbase, at_{slot} + 16, sp - args_size_{slot});\n";
-  out += "        crt::poke_i64(fbase, at_{slot} + 24, args_size_{slot});\n";
+  out += "        ri3 = fd * state::FRAME_BYTES;\n";
+  out += "        crt::poke_i64(fbase, ri3, ri0);\n";
+  out += "        crt::poke_i64(fbase, ri3 + 8, ip);\n";
+  out += "        crt::poke_i64(fbase, ri3 + 16, sp - ri1);\n";
+  out += "        crt::poke_i64(fbase, ri3 + 24, ri1);\n";
   out += "        fd += 1;\n";
   out += "        crt::poke_u32(base, sp, ip);\n";
   out += "        sp += 8;\n";
-  out += "        ip = to_{slot};\n";
+  out += "        ip = ri2;\n";
   out + "        continue;\n      }}\n    }}\n"
 }
 
 // `OpReturn` as an arm of `run` — `State::fn_return` where the return is a plain one
-// (`State::plain_return`, asked once after each operator that ran on the `State`): the
+// (`State::plain_returns`, asked once after each operator that ran on the `State`): the
 // answer moved down to the arguments' base, the top just above it, the position the call
 // pushed taken back, the frame dropped.  The guard keeps every byte it reads and writes
 // inside the stack; any other return runs through the `State`.
 fn return_arm(slot: integer) -> text {
   out = "    {slot} => {{\n";
-  out += "      ret_{slot} = crt::peek_u16(cbase, ip + 1);\n";
-  out += "      value_{slot} = crt::peek_u16(cbase, ip + 3);\n";
-  out += "      discard_{slot} = crt::peek_u16(cbase, ip + 5);\n";
-  out += "      if rp < 0 {{\n        rp = if s.plain_return() {{ 1 }} else {{ 0 }};\n      }}\n";
-  out += "      step_{slot} = (value_{slot} + 7) / 8 * 8;\n";
-  out += "      fn_stack_{slot} = sp - discard_{slot};\n";
-  out += "      if rp == 1 && fd > 0 && discard_{slot} <= sp && step_{slot} <= discard_{slot} && fn_stack_{slot} + ret_{slot} <= top {{\n";
-  out += "        ip = crt::peek_u32(base, fn_stack_{slot} + ret_{slot});\n";
-  out += "        if value_{slot} == 8 {{\n";
-  out += "          crt::poke_i64(base, fn_stack_{slot}, crt::peek_i64(base, sp - 8));\n";
-  out += "        }} else if value_{slot} > 0 {{\n";
-  out += "          crt::move_bytes(base, sp - step_{slot}, fn_stack_{slot}, value_{slot});\n";
+  out += "      ri0 = crt::peek_u16(cbase, ip + 1);\n";
+  out += "      ri1 = crt::peek_u16(cbase, ip + 3);\n";
+  out += "      ri2 = crt::peek_u16(cbase, ip + 5);\n";
+  out += "      if rp < 0 {{\n        rp = s.plain_returns();\n      }}\n";
+  out += "      ri3 = (ri1 + 7) / 8 * 8;\n";
+  out += "      ri4 = sp - ri2;\n";
+  out += "      if (rp == 1 || (rp >= 2 && fd != rp - 2)) && fd > 0 && ri2 <= sp && ri3 <= ri2 && ri4 + ri0 <= top {{\n";
+  out += "        ip = crt::peek_u32(base, ri4 + ri0);\n";
+  out += "        if ri1 == 8 {{\n";
+  out += "          crt::poke_i64(base, ri4, crt::peek_i64(base, sp - 8));\n";
+  out += "        }} else if ri1 > 0 {{\n";
+  out += "          crt::move_bytes(base, sp - ri3, ri4, ri1);\n";
   out += "        }}\n";
-  out += "        sp = fn_stack_{slot} + step_{slot};\n";
+  out += "        sp = ri4 + ri3;\n";
   out += "        fd -= 1;\n";
   out + "        continue;\n      }}\n    }}\n"
 }
 
+// Every arm's locals are the function's, and a function binds a limited number of variables:
+// an arm's locals are taken from a pool by type — `ri0`… for an integer, `rf0`… for a float,
+// `rs0`… for a single, `rb0`… for a boolean — in the order the arm binds them.  `names` and
+// `locals` are the arm's names and what each is spelled as; `kind` is "i", "f", "s" or "b".
+fn pool(names: vector<text>, locals: vector<text>, name: text, kind: text) -> text {
+  n = 0;
+  for l in locals {
+    if l.starts_with("r{kind}") {
+      n += 1;
+    }
+  }
+  names += [name];
+  locals += ["r{kind}{n}"];
+  "r{kind}{n}"
+}
+
 // Operator `d` in slot `slot` as an arm of `run`, or "" where its template needs the `State`:
-// an operand `run` does not read, a stack value wider than a slot's scalar, or a method that
-// moves the positions.
-fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
-  if slot >= 255 || template.contains("DbRef") {
+// an operand `run` does not read, a stack value wider than a slot's scalar, a reference named
+// whole, or a method that moves the positions.  A template's form behind ` #arm ` is the arm's
+// own: it may name `base`, `stk`, `ip` (past the operands) and `sp` (the top after the pops),
+// a reference or text argument's slot as the address `<name>_at` or the position
+// `<name>_pos`, `out_at` (the address it writes a reference answer at) and integers of its own
+// (`tmp0`…).  Before it: `slots:` (every `u16` operand is a frame slot the guard tests),
+// `slots(a, b):` (those alone), `guard(<test>):` (a test of its own).  A text answer the form
+// pushes itself, and so does a `State` method behind `answer:`.
+fn inline_arm(def: ir::Definition, slot: integer, whole: text) -> text {
+  // A slot past 254 is two bytes in the code — 255, then the slot less 255: its arm is one of
+  // the second byte's (`run_fn`), its operands a byte further.
+  wide = slot >= 255;
+  // The arm's own form where the template gives one; `slots:` before it asks for the guard
+  // of the frame slots its `u16` operands name.
+  template = arm_part(whole);
+  explicit = template != "";
+  asks_slots = template.starts_with("slots:");
+  if asks_slots {
+    template = template[6..len(template)].trim();
+  }
+  // `slots(a, b):` — the guard for those operands alone, where others are not frame slots.
+  slot_names: vector<text> = [];
+  if template.starts_with("slots(") {
+    close = template.find("): ");
+    if close != null {
+      for n in template[6..close!].split(',') {
+        slot_names += [n.trim()];
+      }
+      template = template[close! + 3..len(template)].trim();
+      asks_slots = true;
+    }
+  }
+  // `guard(<test>):` — a test of its own the arm's guard takes, on the operands and `sp`.
+  own_guard = "";
+  if template.starts_with("guard(") {
+    till = template.find("): ");
+    if till != null {
+      own_guard = template[6..till!];
+      template = template[till! + 3..len(template)].trim();
+    }
+  }
+  // `answer:` — the body is a call on the `State` that leaves the operator's answer on the stack
+  // itself, as a text answer is pushed by its template (the method sets the top).
+  own_answer = false;
+  if template.starts_with("answer:") {
+    own_answer = true;
+    template = template[7..len(template)].trim();
+  }
+  if !explicit {
+    template = fn_part(whole);
+    if def.rust == "" {
+      return "";
+    }
+  }
+  if template.contains("DbRef") {
     return "";
   }
-  if def.name == "OpCall" {
+  if def.name == "OpCall" && !wide {
     return call_arm(slot);
   }
-  if def.name == "OpReturn" {
+  if def.name == "OpReturn" && !wide {
     return return_arm(slot);
   }
   sfx = "_{slot}";
   names: vector<text> = [];
+  locals: vector<text> = [];
   reads = "";
-  span = 1;
+  span = if wide { 2 } else { 1 };
   slots_guard = "";
-  uses_slots = template.contains("_var_");
+  uses_slots = template.contains("_var_") || asks_slots;
+  refs: vector<text> = [];
+  for a in def.attributes {
+    w = width(a.typedef[0] ?? ir::TyVoid);
+    if !a.name.starts_with("_") && a.mutable && (w == "dbref" || w == "str") {
+      refs += [a.name];
+    }
+  }
+  // A reference argument is read in its slot: each field the template names a scalar local,
+  // `<name>_at` the slot's address, `<name>_pos` its position in the stack.  A text argument
+  // is its view's slot, by `_at` and `_pos` alone.  A template that names the whole reference
+  // or text is not an arm.
+  template = ref_fields(template, refs);
+  for n in refs {
+    if names_word(template, n) {
+      return "";
+    }
+  }
   for a in def.attributes {
     if !a.name.starts_with("_") && !a.mutable {
       w = width(a.typedef[0] ?? ir::TyVoid);
@@ -393,16 +563,16 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
       if n == 0 {
         return "";
       }
-      names += [a.name];
+      local = pool(names, locals, a.name, if w == "bool" { "b" } else if w == "f64" { "f" } else if w == "f32" { "s" } else { "i" });
       if !template.contains(a.name) {
         span += n;
         continue;
       }
-      reads += "      {a.name}{sfx} = crt::peek_{if w == "bool" { "u8" } else { w }}(cbase, ip + {span}){if w == "bool" { " == 1" } else { "" }};\n";
+      reads += "      {local} = crt::peek_{if w == "bool" { "u8" } else { w }}(cbase, ip + {span}){if w == "bool" { " == 1" } else { "" }};\n";
       span += n;
-      if uses_slots && w == "u16" {
+      if uses_slots && w == "u16" && (len(slot_names) == 0 || slot_names.contains(a.name)) {
         // A frame slot a step or more under the top lies inside the stack, read or written.
-        slots_guard += " && {a.name}{sfx} >= 8 && {a.name}{sfx} <= POPPED";
+        slots_guard += " && {local} >= 8 && {local} <= POPPED";
       }
     }
   }
@@ -411,18 +581,42 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
   k = len(def.attributes) - 1;
   while k >= 0 {
     a = def.attributes[k]!;
-    if !a.name.starts_with("_") && a.mutable {
+    wa = width(a.typedef[0] ?? ir::TyVoid);
+    if !a.name.starts_with("_") && a.mutable && (wa == "dbref" || wa == "str") {
+      popped += 16;
+      for part in ["s", "r", "p", "at", "pos"] {
+        if names_word(template, "{a.name}_{part}") {
+          local = pool(names, locals, "{a.name}_{part}", "i");
+          pops += if part == "at" {
+            "        {local} = base + sp - {popped};\n"
+          } else if part == "pos" {
+            "        {local} = sp - {popped};\n"
+          } else {
+            "        {local} = crt::peek_u32(base, sp - {popped - if part == "s" { 0 } else if part == "r" { 4 } else { 8 }});\n"
+          };
+        }
+      }
+    } else if !a.name.starts_with("_") && a.mutable {
       w = slot_width(width(a.typedef[0] ?? ir::TyVoid));
       if w == "" {
         return "";
       }
       popped += 8;
-      names += [a.name];
+      local = pool(names, locals, a.name, if w == "f64" { "f" } else if w == "f32" { "s" } else { "i" });
       if template.contains(a.name) {
-        pops += "        {a.name}{sfx} = crt::peek_{w}(base, sp - {popped});\n";
+        pops += "        {local} = crt::peek_{w}(base, sp - {popped});\n";
       }
     }
     k -= 1;
+  }
+  // A reference answer is written by the template itself, at the address `out_at`.
+  writes_ref = names_word(template, "out_at");
+  out_at = pool(names, locals, "out_at", "i");
+  // `tmp0`…: integers of the template's own.
+  for t in 0..4 {
+    if names_word(template, "tmp{t}") {
+      pool(names, locals, "tmp{t}", "i");
+    }
   }
   ret = def.returned[0] ?? ir::TyVoid;
   void = match ret {
@@ -431,22 +625,30 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
   };
   rw = if void { "" } else { answer_width(ret) };
   // A text answer is a view its template pushes itself.
-  if !void && rw != "str" && slot_width(rw) == "" {
+  if !void && rw != "str" && slot_width(rw) == "" && !(rw == "dbref" && writes_ref) && !own_answer {
     return "";
   }
-  body = respell(template, names, sfx);
+  body = rename(template, names, locals);
   body = body.replace("s.code_pos", "ip");
   // A frame slot: `get_var` reads at the top less its position, `put_var` writes a step above.
-  for w in ["i64", "f64", "u8"] {
+  for w in ["i64", "f64", "f32", "u8"] {
     body = body.replace("s.get_var_{w}(", "crt::peek_{w}(base, sp - ");
     body = body.replace("s.put_var_{w}(", "crt::poke_{w}(base, sp + 8 - ");
   }
   body = body.replace("s.get_var_bool(", "state::rget_bool(base, sp, ");
+  body = body.replace("s.get_var_char(", "crt::peek_u32(base, sp - ");
+  body = body.replace("s.put_var_char(", "crt::poke_u32(base, sp + 8 - ");
   // A template that needs more of the `State` runs on it: the positions written first and
   // read back after, as the register table's `regs_out` / `regs_in` bracket such an operator.
-  through = names_state(body.replace("s.raise_recoverable(", "raise("));
+  through = names_state(body.replace("s.raise_", "raise_"));
+  if own_answer && !through {
+    return "";
+  }
   if through {
-    body = respell(template, names, sfx);
+    body = rename(template, names, locals);
+    if writes_ref {
+      return "";
+    }
   }
   // `(R-OperandSpan)`: `safe` is the last position a whole operand span of any arm fits at.
   if span > OPERAND_SPAN {
@@ -455,18 +657,29 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
   // The loop's head has tested the code position and the top (a free step above it): an arm
   // tests what it pops and the frame slots it names.
   guard = if popped > 0 { "sp >= {popped}" } else { "true" };
+  if writes_ref && popped == 0 {
+    // A reference pushed with nothing popped takes two free steps.
+    guard = "sp <= top - 8";
+  }
   guard += slots_guard.replace("POPPED", if popped > 0 { "sp - {popped}" } else { "sp" });
+  if own_guard != "" {
+    guard += " && {rename(own_guard, names, locals)}";
+  }
   if guard.starts_with("true && ") {
     guard = guard[8..len(guard)];
   }
-  out = "    {slot} => {{\n{reads}      if {guard} {{\n{pops}";
+  out = "    {if wide { slot - 255 } else { slot }} => {{\n{reads}      if {guard} {{\n{pops}";
   if popped > 0 {
     out += "        sp -= {popped};\n";
   }
   out += "        ip += {span};\n";
+  if writes_ref {
+    out += "        {out_at} = base + sp;\n        {body}\n        sp += 16;\n";
+    return out + "        continue;\n      }}\n    }}\n";
+  }
   if through {
     out += "        s.code_pos = ip;\n        s.stack_pos = sp;\n        s.depth = fd;\n";
-    if void || rw == "str" {
+    if void || rw == "str" || own_answer {
       out += "        {body}\n";
     } else {
       out += "        nv{sfx}: {answer_type(rw)} = {body};\n        s.put_stack_{rw}(nv{sfx});\n";
@@ -475,16 +688,19 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
     out += "        ip = s.code_pos;\n        sp = s.stack_pos;\n        cap = s.stack_cap;\n        top = cap - 8;\n        base = crt::stack_base(stk);\n        fd = s.depth;\n        rp = -1;\n";
     return out + "        continue;\n      }}\n    }}\n";
   }
-  if void {
+  if void || rw == "str" {
     out += "        {body}\n";
   } else {
-    out += "        nv{sfx}: {answer_type(rw)} = {body};\n";
+    nv = if rw == "bool" { "nvb" } else if rw == "f64" { "nvf" } else if rw == "f32" { "nvs" } else { "nvi" };
+    out += "        {nv}: {answer_type(rw)} = {body};\n";
     put = if rw == "bool" {
-      "crt::poke_u8(base, sp, state::bool_byte(nv{sfx}))"
+      "crt::poke_u8(base, sp, state::bool_byte({nv}))"
     } else if rw == "u8" {
-      "crt::poke_u8(base, sp, nv{sfx} ?? 255)"
+      "crt::poke_u8(base, sp, {nv} ?? 255)"
+    } else if rw == "char" {
+      "crt::poke_u32(base, sp, {nv} ?? 0)"
     } else {
-      "crt::poke_{rw}(base, sp, nv{sfx})"
+      "crt::poke_{rw}(base, sp, {nv})"
     };
     out += "        {put};\n        sp += 8;\n";
   }
@@ -493,7 +709,7 @@ fn inline_arm(def: ir::Definition, slot: integer, template: text) -> text {
 
 // `run`: the dispatch loop over the arms, and under them the step every other operator — and
 // every arm whose guard fails — takes through the `State`.
-fn run_fn(arms: text) -> text {
+fn run_fn(arms: text, wide_arms: text) -> text {
   out = "\n// The dispatch loop: `s` run from its code position until that is `end`, the run stops, or\n";
   out += "// a native is to be called (`s.native`).  The positions are locals; the `State` holds them\n";
   out += "// whenever an operator runs through it.\n";
@@ -502,7 +718,9 @@ fn run_fn(arms: text) -> text {
   out += "  base = crt::stack_base(stk);\n  cbase = s.code_held;\n  fbase = s.fbase;\n  fd = s.depth;\n  rp = -1;\n";
   out += "  top = cap - 8;\n  safe = len(s.code) - {OPERAND_SPAN};\n";
   out += "  while ip != end {{\n    if ip >= 0 && ip <= safe && sp >= 0 && sp <= top {{\n";
-  out += "      match crt::peek_u8(cbase, ip) {{\n{arms}      _ => {{}}\n      }}\n    }}\n";
+  out += "      match crt::peek_u8(cbase, ip) {{\n{arms}";
+  out += "    255 => {{\n      match crt::peek_u8(cbase, ip + 1) {{\n{wide_arms}      _ => {{}}\n      }}\n    }}\n";
+  out += "      _ => {{}}\n      }}\n    }}\n";
   out += "    s.code_pos = ip;\n    s.stack_pos = sp;\n    s.depth = fd;\n    op = s.code_u8();\n";
   out += "    if op == 255 {{\n      op = 255 + s.code_u8();\n    }}\n";
   out += "    if !execute(s, op) {{\n      s.unknown = op;\n      s.stop(\"not carried: slot {{op}}\");\n    }}\n";
@@ -529,9 +747,9 @@ pub fn generate(e: el::El, state_src: text) -> text {
         out += "\npub fn {fn_name(def.name)}(s: state::State) {{\n  s.{operator_name(def.name)}();\n}}\n";
       }
     } else {
-      body = template(e, d);
-      if body != null {
-        out += operator_fn(def, body!);
+      body = fn_part(template(e, d) ?? "");
+      if body != "" {
+        out += operator_fn(def, body);
       }
     }
   }
@@ -545,15 +763,20 @@ pub fn generate(e: el::El, state_src: text) -> text {
   }
   out += "    _ => return false,\n  }}\n  true\n}}\n";
   arms = "";
+  wide_arms = "";
   for slot in 0..len(order) {
     d = order[slot] ?? 0;
     def = e.b.data.definitions[d]!;
-    body = if def.rust == "" { null } else { template(e, d) };
+    body = template(e, d);
     if body != null {
-      arms += inline_arm(def, slot, body!);
+      if slot >= 255 {
+        wide_arms += inline_arm(def, slot, body!);
+      } else {
+        arms += inline_arm(def, slot, body!);
+      }
     }
   }
-  out + run_fn(arms)
+  out + run_fn(arms, wide_arms)
 }
 
 // Each operator's reads, one line in slot order: its name, then `code name:width` for each

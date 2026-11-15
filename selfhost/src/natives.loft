@@ -32,7 +32,7 @@ N_WRITE_BYTES = 9;
 N_VECTOR_SUM_INT = 10;
 N_OS_TEMP_DIR_DEST = 11;
 N_KEYED_ENTRY_INTS = 12;
-N_KEYED_ENTRY_TEXT = 13;
+pub N_KEYED_ENTRY_TEXT = 13;
 N_READ_BYTES = 14;
 N_ARGUMENTS = 15;
 N_STORE_MEMORY_DEST = 16;
@@ -70,6 +70,36 @@ N_JSON_ERRORS_DEST = 52;
 N_PARSE_ERRORS_OF = 53;
 // The JsonValue natives: one number each, from `N_JV` on, in `jv_which`'s order.
 N_JV = 60;
+// The engine-host kernel's natives (`lib/engine_host`): `N_KERNEL + which` for a routine with a
+// scalar answer (`crt::kernel`, which the C runtime's `loft_crt_kernel` selects by `which`),
+// `N_KERNEL_TEXT + which` for one that appends its text answer to a destination, and
+// `N_KERNEL_FETCH`.  Each routine's operands and answer by `KERNEL_SHAPES`: two digits per
+// routine, the operands (0 none, 1 an integer, 2 two, 3 a text, 4 an integer and a text, 5 a
+// text and two integers) then the answer (0 an integer, 1 a boolean, 2 none).
+pub N_KERNEL = 400;
+pub N_KERNEL_TEXT = 450;
+pub N_KERNEL_FETCH = 460;
+KERNEL_COUNT = 39;
+KERNEL_SHAPES = [21, 0, 1, 0, 0, 0, 1, 41, 30, 12, 0, 1, 2, 2, 31, 11, 12, 12, 41, 1, 0, 0, 11, 51, 0, 1, 2, 1, 0, 0, 0, 1, 12, 31, 1, 0, 1, 2, 0];
+// Natives the `State` carries itself (`is_state_native`), past the `N_JV` range.
+pub N_STACK_TRACE = 200;
+pub N_C_CALL = 201;
+pub N_REFLECT_TYPE = 202;
+pub N_TYPE_NAMED = 203;
+pub N_REFLECT_FIELD = 204;
+pub N_REFLECT_FIELD_PATH = 205;
+N_EPRINT = 206;
+pub N_ENV_VARIABLES = 207;
+N_PATH_SEP = 208;
+N_MTIME = 209;
+N_IS_SYMLINK = 210;
+N_DIRECTORY_DEST = 211;
+N_USER_DIRECTORY_DEST = 212;
+N_PROGRAM_DIRECTORY_DEST = 213;
+N_OS_CACHE_DIR_DEST = 214;
+N_YMD_DAYS_AGO_DEST = 215;
+N_EXIT = 216;
+N_PANIC = 217;
 N_TEXT_BYTE_AT = 28;
 N_TEXT_REPLACE_DEST = 29;
 N_TEXT_RFIND = 30;
@@ -81,6 +111,68 @@ N_SET_STORE_LOCK = 63;
 pub fn native_handler(name: text) -> integer {
   match name {
     "n_assert" => N_ASSERT,
+    "n_stack_trace" => N_STACK_TRACE,
+    "n_kernel_listen" => N_KERNEL + 0,
+    "n_kernel_pump" => N_KERNEL + 1,
+    "n_kernel_next_event" => N_KERNEL + 2,
+    "n_kernel_event_cid" => N_KERNEL + 3,
+    "n_kernel_event_kind" => N_KERNEL + 4,
+    "n_kernel_event_status" => N_KERNEL + 5,
+    "n_kernel_tick_due" => N_KERNEL + 6,
+    "n_kernel_send" => N_KERNEL + 7,
+    "n_kernel_broadcast" => N_KERNEL + 8,
+    "n_kernel_idle" => N_KERNEL + 9,
+    "n_kernel_clients" => N_KERNEL + 10,
+    "n_kernel_alive" => N_KERNEL + 11,
+    "n_kernel_stop" => N_KERNEL + 12,
+    "n_kernel_frame" => N_KERNEL + 13,
+    "n_kernel_post" => N_KERNEL + 14,
+    "n_kernel_udp_bound" => N_KERNEL + 15,
+    "n_kernel_sync_class" => N_KERNEL + 16,
+    "n_kernel_sync_class_keyed" => N_KERNEL + 17,
+    "n_kernel_keyframe" => N_KERNEL + 18,
+    "n_kernel_sync_next" => N_KERNEL + 19,
+    "n_kernel_sync_cid" => N_KERNEL + 20,
+    "n_kernel_sync_seq" => N_KERNEL + 21,
+    "n_kernel_local" => N_KERNEL + 22,
+    "n_kernel_connect" => N_KERNEL + 23,
+    "n_kernel_client_pump" => N_KERNEL + 24,
+    "n_kernel_client_alive" => N_KERNEL + 25,
+    "n_kernel_client_stop" => N_KERNEL + 26,
+    "n_kernel_client_next_event" => N_KERNEL + 27,
+    "n_kernel_client_event_kind" => N_KERNEL + 28,
+    "n_kernel_client_event_cid" => N_KERNEL + 29,
+    "n_kernel_client_event_status" => N_KERNEL + 30,
+    "n_kernel_client_tick_due" => N_KERNEL + 31,
+    "n_kernel_client_idle" => N_KERNEL + 32,
+    "n_kernel_client_send" => N_KERNEL + 33,
+    "n_kernel_client_sync_next" => N_KERNEL + 34,
+    "n_kernel_client_sync_seq" => N_KERNEL + 35,
+    "n_kernel_client_udp_bound" => N_KERNEL + 36,
+    "n_kernel_client_frame" => N_KERNEL + 37,
+    "n_kernel_swap_step" => N_KERNEL + 38,
+    "n_kernel_event_payload_dest" => N_KERNEL_TEXT + 0,
+    "n_kernel_sync_payload_dest" => N_KERNEL_TEXT + 1,
+    "n_kernel_client_event_payload_dest" => N_KERNEL_TEXT + 2,
+    "n_kernel_client_sync_payload_dest" => N_KERNEL_TEXT + 3,
+    "n_kernel_default_host_dest" => N_KERNEL_TEXT + 4,
+    "n_kernel_http_fetch" => N_KERNEL_FETCH,
+    "n_eprint" => N_EPRINT,
+    "n_env_variables" => N_ENV_VARIABLES,
+    "n_path_sep" => N_PATH_SEP,
+    "n_mtime" => N_MTIME,
+    "n_is_symlink" => N_IS_SYMLINK,
+    "n_directory_dest" => N_DIRECTORY_DEST,
+    "n_user_directory_dest" => N_USER_DIRECTORY_DEST,
+    "n_program_directory_dest" => N_PROGRAM_DIRECTORY_DEST,
+    "n_os_cache_dir_dest" => N_OS_CACHE_DIR_DEST,
+    "n_ymd_days_ago_dest" => N_YMD_DAYS_AGO_DEST,
+    "n_exit" => N_EXIT,
+    "n_panic" => N_PANIC,
+    "n_reflect_type" => N_REFLECT_TYPE,
+    "n_type_named" => N_TYPE_NAMED,
+    "n_reflect_field" => N_REFLECT_FIELD,
+    "n_reflect_field_path" => N_REFLECT_FIELD_PATH,
     "n_env_variable_dest" => N_ENV_VARIABLE_DEST,
     "n_now" => N_NOW,
     "n_ticks" => N_TICKS,
@@ -176,7 +268,7 @@ pub fn native_handler(name: text) -> integer {
   }
 }
 
-fn get(stk: integer, at: integer) -> integer? {
+pub fn get(stk: integer, at: integer) -> integer? {
   crt::get_int(stk, 1, 8 + at, 0)
 }
 
@@ -228,35 +320,61 @@ fn ensure_table(ts: vector<ir::DbType>, tl: vector<boolean>) {
   }
 }
 
-// The `n` key parts of collection type `tp` on the stack under `top` — the first key on top, as
-// `State::stack_keys` pops them — pushed onto the C runtime's key stack in key order, each read
-// as `stack_keys` reads it by its content (`types::key_contents`): an integer of any width, a single, a float, a
-// boolean's byte, a text, a character, any other (an enum) a byte.  Answers the bytes they take,
-// -1 with nothing pushed when a part's type does not resolve.
-pub fn push_keys(ts: vector<ir::DbType>, stk: integer, tp: integer, n: integer, top: integer) -> integer {
-  kc = types::key_contents(ts, tp);
-  if kc == null || n > len(kc) {
+// The `n` key parts on the stack under `top` — the first key on top, as `State::stack_keys`
+// pops them — pushed onto the C runtime's key stack in key order, each read as its plan says
+// (`State::keyed_facts`: the part count at `plan` in `parts`, then each part's `KP_*`).
+// Answers the bytes they take, -1 with nothing pushed when the type has no plan for them.
+pub fn push_keys(parts: const vector<integer>, plan: integer, stk: integer, n: integer, top: integer) -> integer {
+  if plan < 0 || n > (parts[plan] ?? 0) {
     return -1;
   }
   at = top;
   for i in 0..n {
-    code = kc[i] ?? 0;
-    at -= if code == 5 { 16 } else { 8 };
-    if code == 2 || code == 3 {
-      crt::key_float(crt::get_float(stk, 1, 8 + at, 0, code == 2), code == 2);
-    } else if code == 5 {
-      crt::key_text(crt::stack_str(stk, at));
-    } else if code == 4 {
+    code = parts[plan + 1 + i] ?? KP_INT;
+    at -= if code == KP_TEXT { 16 } else { 8 };
+    if code == KP_FLOAT || code == KP_SINGLE {
+      crt::key_float(crt::get_float(stk, 1, 8 + at, 0, code == KP_SINGLE), code == KP_SINGLE);
+    } else if code == KP_TEXT {
+      // The view in its slot, not a copy: the slot holds it until the operator pops it.
+      crt::key_view(stk, at);
+    } else if code == KP_BOOLEAN {
       crt::key_int(crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0));
-    } else if code == 6 {
+    } else if code == KP_CHARACTER {
       crt::key_int(crt::get_w(crt::W_CHARACTER, stk, 1, 8 + at, 0, 0));
-    } else if code >= 7 && !narrow_integer(ts, code) {
+    } else if code == KP_ENUM {
       crt::key_int(crt::get_w(crt::W_ENUM, stk, 1, 8 + at, 0, 0));
     } else {
       crt::key_int(get(stk, at));
     }
   }
   top - at
+}
+
+// How a key part of content type `code` (`types::key_contents`) lies in its stack slot.
+pub KP_INT = 0;
+pub KP_FLOAT = 1;
+pub KP_SINGLE = 2;
+pub KP_TEXT = 3;
+pub KP_BOOLEAN = 4;
+pub KP_CHARACTER = 5;
+pub KP_ENUM = 6;
+
+pub fn key_part(ts: vector<ir::DbType>, code: integer) -> integer {
+  if code == 3 {
+    KP_FLOAT
+  } else if code == 2 {
+    KP_SINGLE
+  } else if code == 5 {
+    KP_TEXT
+  } else if code == 4 {
+    KP_BOOLEAN
+  } else if code == 6 {
+    KP_CHARACTER
+  } else if code >= 7 && !narrow_integer(ts, code) {
+    KP_ENUM
+  } else {
+    KP_INT
+  }
 }
 
 // Is type `tp` one of the narrow integer encodings (`Parts::Int`/`IntRaw`/`Short`/`ShortRaw`/
@@ -309,422 +427,145 @@ pub fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
 // arguments popped and its result pushed on the stack store `stk` at `sp0`, as Rust's native
 // does.  Answers the new stack top, or -1 with the reason in `why[0]` when the runner does not
 // carry it.
-pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
+// The natives that need only the stack and a scratch vector `io` for a reference — no
+// image, table or loader state: `call_native` hands them here, and the dispatch loop calls
+// them from `OpStaticCall`'s arm without leaving `run` (`State::light_call`).  Answers the
+// new top, or -1 for a native this does not carry.
+pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   if nh == N_ASSERT {
-    line = get(stk, sp - 8);
-    file = crt::stack_str(stk, sp - 24);
-    message = crt::stack_str(stk, sp - 40);
-    test = get_bool(stk, sp - 48);
-    sp -= 48;
-    assert(test, message ?? "", file ?? "", line ?? 0);
+    return native_assert(nh, stk, sp, io, tb);
   } else if nh == N_ENV_VARIABLE_DEST {
-    crt::slot_ref(io, stk, sp - 16);
-    vname = crt::stack_str(stk, sp - 32);
-    sp -= 32;
-    // An unset variable is Rust's null text appended (`Stores::os_variable`), not an empty one.
-    ev = env_variable(vname ?? "");
-    if ev == null {
-      crt::ref_text_append_null(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    } else {
-      crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ev);
-    }
+    return native_env_variable_dest(nh, stk, sp, io, tb);
   } else if nh == N_NOW || nh == N_TICKS {
-    set(stk, sp, if nh == N_NOW { now() } else { ticks() });
-    sp += 8;
+    return native_now(nh, stk, sp, io, tb);
   } else if nh == N_PROTECT || nh == N_UNPROTECT {
-    sp -= 16;
-    crt::slot_ref(io, stk, sp);
-    crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
-  } else if nh == N_CHAR_PREDICATE {
-    // A character's class, by loft's own predicates (these natives, compiled).
-    cpn = img.natives[idx] ?? "";
-    cpc = (crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0) ?? 0) as character;
-    sp -= 8;
-    set_bool(stk, sp, if cpn.ends_with("is_lowercase") { cpc.is_lowercase() } else if cpn.ends_with("is_uppercase") { cpc.is_uppercase() } else if cpn.ends_with("is_numeric") { cpc.is_numeric() } else if cpn.ends_with("is_alphanumeric") { cpc.is_alphanumeric() } else if cpn.ends_with("is_alphabetic") { cpc.is_alphabetic() } else if cpn.ends_with("is_whitespace") { cpc.is_whitespace() } else { cpc.is_control() });
-    sp += 8;
+    return native_protect(nh, stk, sp, io, tb);
   } else if nh == N_IS_DIR || nh == N_IS_FILE {
-    idp = crt::stack_str(stk, sp - 16) ?? "";
-    sp -= 16;
-    set_bool(stk, sp, if nh == N_IS_DIR { is_dir(idp) } else { is_file(idp) });
-    sp += 8;
+    return native_is_dir(nh, stk, sp, io, tb);
   } else if nh == N_FILE_MAP {
-    // The file's bytes as a read-only vector (the C runtime's `file_map`); null where it
-    // cannot be mapped.
-    fmp = crt::stack_str(stk, sp - 16) ?? "";
-    sp -= 16;
-    crt::file_map(io, fmp);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
+    return native_file_map(nh, stk, sp, io, tb);
   } else if nh == N_GET_STORE_LOCK {
-    // `d#lock`: is the store the reference names locked?
-    sp -= 16;
-    crt::slot_ref(io, stk, sp);
-    set_bool(stk, sp, crt::store_native(2, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0) != 0);
-    sp += 8;
+    return native_get_store_lock(nh, stk, sp, io, tb);
   } else if nh == N_SET_STORE_LOCK {
-    // `d#lock = v`: the lock popped, then the reference.
-    slk = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp - 8, 0, 0) ?? 0;
-    sp -= 24;
-    crt::slot_ref(io, stk, sp);
-    crt::store_native(3, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if slk == 1 { 1 } else { 0 });
+    return native_set_store_lock(nh, stk, sp, io, tb);
   } else if nh == N_LIST_DIR {
-    // The directory's entries, a vector in a store of its own (the C runtime's `list_dir`).
-    ldp = crt::stack_str(stk, sp - 16) ?? "";
-    sp -= 16;
-    crt::list_dir(io, ldp);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
-  } else if nh == N_RADIX_SORTED || nh == N_SPATIAL_RANGE || nh == N_TRIE_PREFIX {
-    // A spatial or trie walk's snapshot (all of it, a spatial range, a trie prefix), as a
-    // scratch vector — `radix_snap` as today's runner reaches it.
-    ensure_table(img.types, tl);
-    rsints: vector<integer> = [];
-    rspre: text? = null;
-    rswhich = 0;
-    if nh == N_SPATIAL_RANGE {
-      rswhich = 1;
-      for ri in 0..8 {
-        rsints += [get(stk, sp - 64 + 8 * ri) ?? 0];
-      }
-      sp -= 64;
-    } else if nh == N_TRIE_PREFIX {
-      rswhich = 2;
-      rsints = [get(stk, sp - 8) ?? 0];
-      rspre = crt::stack_str(stk, sp - 24);
-      sp -= 24;
-    }
-    rstp = get(stk, sp - 8) ?? 0;
-    crt::slot_ref(io, stk, sp - 24);
-    sp -= 24;
-    crt::radix_snap(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rswhich, rstp, rsints, rspre);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
+    return native_list_dir(nh, stk, sp, io, tb);
   } else if nh == N_UPGRADE_OWED_NEXT {
-    // No conversion is owed: the runner loads only an image of its own layout (it carries no
-    // converter), as the C runtime built without one answers.
-    set(stk, sp, -1);
-    sp += 8;
+    return native_upgrade_owed_next(nh, stk, sp, io, tb);
   } else if nh == N_UPGRADE_OWED_FINISH {
-    set_bool(stk, sp, true);
-    sp += 8;
+    return native_upgrade_owed_finish(nh, stk, sp, io, tb);
   } else if nh == N_UPGRADE_OWED_REF {
-    crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
-    sp += 16;
+    return native_upgrade_owed_ref(nh, stk, sp, io, tb);
   } else if nh == N_UPGRADE_ROUTINE {
-    // A routine registered for a conversion the runner never makes.
-    sp -= 24;
-  } else if nh == N_LOG {
-    // The message, the file and the line popped; logged as a compiled program logs it.
-    lgn = img.natives[idx] ?? "";
-    lgl = get(stk, sp - 8) ?? 0;
-    lgf = crt::stack_str(stk, sp - 24) ?? "";
-    lgm = crt::stack_str(stk, sp - 40) ?? "";
-    sp -= 40;
-    crt::log(if lgn == "n_log_info" { 0 } else if lgn == "n_log_warn" { 1 } else if lgn == "n_log_error" { 2 } else { 3 }, lgm, lgf, lgl);
-  } else if nh == N_SOURCE_DIR_DEST {
-    crt::slot_ref(io, stk, sp - 16);
-    sp -= 16;
-    // The program's own directory, which the image carries (the runner's anchor is its own).
-    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, img.source);
-  } else if nh == N_STORE_VERIFY {
-    ensure_table(img.types, tl);
-    crt::slot_ref(io, stk, sp - 16);
-    sp -= 16;
-    set_bool(stk, sp, crt::store_verify(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
-    sp += 8;
-  } else if nh == N_LOAD_KEY {
-    // A paged load of one key (`paged_load`): the key, the path and the collection's place
-    // popped; its root type's sidecar and plan from the image.
-    ensure_table(img.types, tl);
-    lkname = img.natives[idx] ?? "";
-    lktext = lkname == "n_store_load_key_text";
-    lkint = 0;
-    lkt = "";
-    lkls = NULL_STORE;
-    lklr = 0;
-    lklp = 0;
-    lkts = NULL_STORE;
-    lktr = 0;
-    lktp = 0;
-    lkhi = 0;
-    if lkname == "n_store_load_range" {
-      lkhi = get(stk, sp - 8) ?? 0;
-      lkint = get(stk, sp - 16) ?? 0;
-      sp -= 16;
-    } else if lkname == "n_store_load_box" {
-      // The limit, the till and from corners.
-      lkint = get(stk, sp - 8) ?? -1;
-      crt::slot_ref(io, stk, sp - 24);
-      lkts = io[0] ?? NULL_STORE;
-      lktr = io[1] ?? 0;
-      lktp = io[2] ?? 0;
-      crt::slot_ref(io, stk, sp - 40);
-      lkls = io[0] ?? NULL_STORE;
-      lklr = io[1] ?? 0;
-      lklp = io[2] ?? 0;
-      sp -= 40;
-    } else if lkname == "n_store_load_prefix" {
-      // The prefix and the limit.
-      lkint = get(stk, sp - 8) ?? -1;
-      lkt = crt::stack_str(stk, sp - 24) ?? "";
-      sp -= 24;
-    } else if lkname == "n_store_load_keys" || lkname == "n_store_load_keys_text" {
-      crt::slot_ref(io, stk, sp - 16);
-      lkls = io[0] ?? NULL_STORE;
-      lklr = io[1] ?? 0;
-      lklp = io[2] ?? 0;
-      sp -= 16;
-    } else if lktext {
-      // A null text is its one NUL byte to the Rust native (`STRING_NULL`), which is also the
-      // key a caller writes as `"\0"`: the key that byte files a record under.
-      lkt = crt::stack_str(stk, sp - 16) ?? "\0";
-      sp -= 16;
-    } else {
-      lkint = get(stk, sp - 8) ?? 0;
-      sp -= 8;
-    }
-    lkpath = crt::stack_str(stk, sp - 16) ?? "";
-    crt::slot_ref(io, stk, sp - 32);
-    sp -= 32;
-    lkk = crt::store_known(io[0] ?? NULL_STORE);
-    lki = -1;
-    for i in 0..len(img.sidecars) {
-      if (img.sidecars[i]?.tp ?? -1) == lkk {
-        lki = i;
-      }
-    }
-    if lki < 0 {
-      why[0] = "a paged load without a sidecar the runner can use: {img.natives[idx] ?? ""}";
-      return -1;
-    }
-    if len(sidecar_ix) == 0 {
-      for sc in img.sidecars {
-        sidecar_ix += [crt::sidecar_add(sc.tp, sc.hash, sc.walks, sc.before, sc.after, sc.dump, img.oldest, img.bridge)];
-      }
-    }
-    lks = img.sidecars[lki]!;
-    if lkname == "n_store_load_range" {
-      set(stk, sp, crt::pg_load_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prangerefusal, lks.prangecontent, lks.tp, lkint, lkhi));
-    } else if lkname == "n_store_load_box" {
-      set(stk, sp, crt::pg_load_box(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.pboxrefusal, lks.pcontent, lks.pcoll, lkls, lklr, lklp, lkts, lktr, lktp, lkint, img.types[lks.pcoll]?.name ?? ""));
-    } else if lkname == "n_store_load_prefix" {
-      if lks.pkind != 1 {
-        why[0] = "a prefix load from a store that holds no trie: n_store_load_prefix";
-        return -1;
-      }
-      set(stk, sp, crt::pg_load_prefix(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lkt, lkint));
-    } else if lkname == "n_store_load_keys" || lkname == "n_store_load_keys_text" {
-      set(stk, sp, crt::pg_load_keys(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkls, lklr, lklp, lkname == "n_store_load_keys_text"));
-    } else {
-      set_bool(stk, sp, crt::pg_load_key(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkint, lkt, lktext));
-    }
-    sp += 8;
-  } else if nh == N_STORE_PERSIST_COPY || nh == N_STORE_LOAD || nh == N_STORE_LOAD_UNTRUSTED {
-    // A store's image written or loaded with its root type's sidecar (`RunSidecar`), the one the
-    // C backend names at the call: the store's root type picks it here.
-    ensure_table(img.types, tl);
-    pcpath = crt::stack_str(stk, sp - 16) ?? "";
-    crt::slot_ref(io, stk, sp - 32);
-    sp -= 32;
-    pcs = io[0] ?? NULL_STORE;
-    pck = crt::store_known(pcs);
-    pci = -1;
-    for i in 0..len(img.sidecars) {
-      if (img.sidecars[i]?.tp ?? -1) == pck {
-        pci = i;
-      }
-    }
-    if pci < 0 || (nh == N_STORE_PERSIST_COPY && (img.sidecars[pci]?.refs ?? false)) {
-      why[0] = "a store persisted or loaded without a sidecar the runner can use: {img.natives[idx] ?? ""}";
-      return -1;
-    }
-    if len(sidecar_ix) == 0 {
-      for sc in img.sidecars {
-        sidecar_ix += [crt::sidecar_add(sc.tp, sc.hash, sc.walks, sc.before, sc.after, sc.dump, img.oldest, img.bridge)];
-      }
-    }
-    pcix = sidecar_ix[pci] ?? -1;
-    set_bool(stk, sp, if nh == N_STORE_PERSIST_COPY { crt::image_write(pcs, io[1] ?? 0, io[2] ?? 0, pcpath, pcix) } else { crt::image_load(pcs, io[1] ?? 0, io[2] ?? 0, pcpath, pcix, nh == N_STORE_LOAD_UNTRUSTED) });
-    sp += 8;
+    return native_upgrade_routine(nh, stk, sp, io, tb);
   } else if nh == N_YIELD_FRAME {
-    // The frame-yield flag only a host's frame loop reads; a run from an image has none.
-    sp = sp;
+    return native_yield_frame(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_RFIND {
-    rfv = crt::stack_str(stk, sp - 16) ?? "";
-    rfs = crt::stack_str(stk, sp - 32) ?? "";
-    sp -= 32;
-    set(stk, sp, rfs.rfind(rfv));
-    sp += 8;
+    return native_text_rfind(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_FIND {
-    // The byte position of the first `value` in `self`, null when there is none.
-    fval = crt::stack_str(stk, sp - 16) ?? "";
-    fself = crt::stack_str(stk, sp - 32) ?? "";
-    sp -= 32;
-    set(stk, sp, fself.find(fval));
-    sp += 8;
+    return native_text_find(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END {
-    // A view of the same text, narrowed in place (Rust's `str::trim*`).
-    crt::stack_text_trim(stk, sp - 16, if nh == N_TEXT_TRIM { 0 } else if nh == N_TEXT_TRIM_START { 1 } else { 2 });
+    return native_text_trim(nh, stk, sp, io, tb);
   } else if nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST {
-    // The text's case changed, appended to the destination.
-    crt::slot_ref(io, stk, sp - 16);
-    ucv = crt::stack_str(stk, sp - 32) ?? "";
-    sp -= 32;
-    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if nh == N_TO_UPPERCASE_DEST { ucv.to_uppercase() } else { ucv.to_lowercase() });
+    return native_to_uppercase_dest(nh, stk, sp, io, tb);
   } else if nh == N_WRITE_TEXT_RAW {
-    // The text popped, then the File; whether it was written.
-    crt::slot_ref(io, stk, sp - 32);
-    wtr = crt::write_text_raw(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::stack_str(stk, sp - 16));
-    sp -= 32;
-    set_bool(stk, sp, wtr);
-    sp += 8;
+    return native_write_text_raw(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_BYTE_AT {
-    // The byte at `i` (from the end when negative), 0 out of range (`text_byte_at_native`).
-    bai = get(stk, sp - 8) ?? 0;
-    bas = crt::stack_str(stk, sp - 24) ?? "";
-    sp -= 24;
-    set(stk, sp, bas.byte_at(bai));
-    sp += 8;
+    return native_text_byte_at(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_REPLACE_DEST {
-    // `self.replace(value, with)` appended to the destination.
-    crt::slot_ref(io, stk, sp - 16);
-    rwith = crt::stack_str(stk, sp - 32) ?? "";
-    rval = crt::stack_str(stk, sp - 48) ?? "";
-    rself = crt::stack_str(stk, sp - 64) ?? "";
-    sp -= 64;
-    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rself.replace(rval, rwith));
+    return native_text_replace_dest(nh, stk, sp, io, tb);
   } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
-    nv = crt::stack_str(stk, sp - 16) ?? "";
-    ns2 = crt::stack_str(stk, sp - 32) ?? "";
-    sp -= 32;
-    set_bool(stk, sp, if nh == N_STARTS_WITH { ns2.starts_with(nv) } else { ns2.ends_with(nv) });
-    sp += 8;
+    return native_starts_with(nh, stk, sp, io, tb);
   } else if nh == N_WRITE_BYTES {
-    // The byte vector popped, then the path; answers whether it was written.
-    crt::slot_ref(io, stk, sp - 16);
-    wpath = crt::stack_str(stk, sp - 32) ?? "";
-    sp -= 32;
-    set_bool(stk, sp, crt::write_bytes(wpath, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
-    sp += 8;
+    return native_write_bytes(nh, stk, sp, io, tb);
   } else if nh == N_VECTOR_SUM_INT {
-    acc = get(stk, sp - 8);
-    crt::slot_ref(io, stk, sp - 24);
-    sp -= 24;
-    set(stk, sp, crt::vector_sum_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acc));
-    sp += 8;
+    return native_vector_sum_int(nh, stk, sp, io, tb);
   } else if nh == N_OS_TEMP_DIR_DEST {
-    crt::slot_ref(io, stk, sp - 16);
-    sp -= 16;
-    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_temp_dir());
-  } else if nh == N_KEYED_ENTRY_INTS {
-    // `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` — the entry under
-    // the key in the hash `record_collection` names, found or filed with its key written.
-    if !(tl[0] ?? false) {
-      ensure_table(img.types, tl);
-    }
-    kptp = get(stk, sp - 48) ?? 0;
-    kfld = get(stk, sp - 40) ?? 0;
-    krc = types::record_collection(img.types, kptp, kfld);
-    if (krc.fld != 65535 && krc.at == null) || types::hash_element(img.types, krc.tp) == null {
-      why[0] = "a keyed entry in a collection that is not a hash: n_keyed_entry_ints";
-      return -1;
-    }
-    kkeys = len(img.types[krc.tp]!.keys);
-    kn = if kkeys < 1 { 1 } else if kkeys > 4 { 4 } else { kkeys };
-    for ki in 0..kn {
-      crt::key_int(get(stk, sp - 32 + ki * 8));
-    }
-    crt::slot_ref(io, stk, sp - 64);
-    sp -= 64;
-    crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (krc.at ?? 0), types::content_of(img.types, krc.tp) ?? 0, krc.tp, kn);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
-  } else if nh == N_KEYED_ENTRY_TEXT {
-    // `keyed_entry_text(data, parent_tp, fld, key)`: as the integer form, one text key.
-    ensure_table(img.types, tl);
-    tptp = get(stk, sp - 32) ?? 0;
-    tfld = get(stk, sp - 24) ?? 0;
-    trc = types::record_collection(img.types, tptp, tfld);
-    if (trc.fld != 65535 && trc.at == null) || types::hash_element(img.types, trc.tp) == null {
-      why[0] = "a keyed entry in a collection that is not a hash: n_keyed_entry_text";
-      return -1;
-    }
-    crt::key_text(crt::stack_str(stk, sp - 16));
-    crt::slot_ref(io, stk, sp - 48);
-    sp -= 48;
-    crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (trc.at ?? 0), types::content_of(img.types, trc.tp) ?? 0, trc.tp, 1);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
+    return native_os_temp_dir_dest(nh, stk, sp, io, tb);
   } else if nh == N_READ_BYTES {
-    // The file's bytes, a vector in a store of its own (the C runtime's `read_bytes`).
-    rpath = crt::stack_str(stk, sp - 16) ?? "";
-    sp -= 16;
-    crt::read_bytes(io, rpath);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
+    return native_read_bytes(nh, stk, sp, io, tb);
   } else if nh == N_ARGUMENTS {
-    crt::arguments_into(io);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
-  } else if nh == N_STORE_MEMORY_DEST {
-    // The C runtime's report, its types named as the image names them, into the text the
-    // destination reference names.
-    crt::slot_ref(io, stk, sp - 16);
-    sp -= 16;
-    crt::type_names([for tn in img.types { tn.name }]);
-    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::store_memory());
+    return native_arguments(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST {
-    // The bytes `lo..hi` of a byte vector — the whole of it for `text_from_bytes` — as a
-    // text into the destination.
-    crt::slot_ref(io, stk, sp - 16);
-    tds = io[0] ?? NULL_STORE;
-    tdr = io[1] ?? 0;
-    tdp = io[2] ?? 0;
-    sp -= 16;
-    tlo: integer? = 0;
-    thi: integer? = 0;
-    if nh == N_TEXT_FROM_BYTE_RANGE_DEST {
-      thi = get(stk, sp - 8);
-      tlo = get(stk, sp - 16);
-      sp -= 16;
-    }
-    crt::slot_ref(io, stk, sp - 16);
-    sp -= 16;
-    if nh == N_TEXT_FROM_BYTES_DEST {
-      thi = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    }
-    crt::ref_text_append(tds, tdr, tdp, crt::vec_text_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tlo, thi));
-  } else if nh == N_JSON_PARSE {
-    // `json_parse(raw)`: the C runtime's reader, the tree in a store of its own.
-    ensure_table(img.types, tl);
-    ptypes::json_layout(img.types, ptold);
-    jraw = crt::stack_str(stk, sp - 16) ?? "";
-    sp -= 16;
-    crt::json_parse(io, jraw);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
+    return native_text_from_byte_range_dest(nh, stk, sp, io, tb);
   } else if nh == N_JSON_ERRORS_DEST {
-    crt::slot_ref(io, stk, sp - 16);
-    sp -= 16;
-    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::json_errors());
+    return native_json_errors_dest(nh, stk, sp, io, tb);
+  } else if nh == N_EPRINT {
+    return native_eprint(nh, stk, sp, io, tb);
+  } else if nh == N_PATH_SEP {
+    return native_path_sep(nh, stk, sp, io, tb);
+  } else if nh == N_MTIME {
+    return native_mtime(nh, stk, sp, io, tb);
+  } else if nh == N_IS_SYMLINK {
+    return native_is_symlink(nh, stk, sp, io, tb);
+  } else if nh == N_DIRECTORY_DEST {
+    return native_directory_dest(nh, stk, sp, io, tb);
+  } else if nh == N_USER_DIRECTORY_DEST {
+    return native_user_directory_dest(nh, stk, sp, io, tb);
+  } else if nh == N_PROGRAM_DIRECTORY_DEST {
+    return native_program_directory_dest(nh, stk, sp, io, tb);
+  } else if nh == N_OS_CACHE_DIR_DEST {
+    return native_os_cache_dir_dest(nh, stk, sp, io, tb);
+  } else if nh == N_YMD_DAYS_AGO_DEST {
+    return native_ymd_days_ago_dest(nh, stk, sp, io, tb);
+  } else if nh == N_EXIT {
+    return native_exit(nh, stk, sp, io, tb);
+  } else if nh == N_PANIC {
+    return native_panic(nh, stk, sp, io, tb);
+  } else if (nh >= N_KERNEL && nh < N_KERNEL + KERNEL_COUNT) || (nh >= N_KERNEL_TEXT && nh < N_KERNEL_TEXT + 5) || nh == N_KERNEL_FETCH {
+    return native_kernel(nh, stk, sp, io, tb);
+  } else {
+    return -1;
+  }
+  sp
+}
+
+// Whether native handler `nh` is one the `State` carries itself (`State::light_call`): the
+// keyed entries, which read the record target's facts it derives once; `stack_trace`, which
+// reads the frame list; a program's own `#c` binding, which the image describes.
+pub fn is_state_native(nh: integer) -> boolean {
+  nh == N_KEYED_ENTRY_INTS || nh == N_KEYED_ENTRY_TEXT || nh == N_STACK_TRACE || nh == N_C_CALL || nh == N_REFLECT_TYPE || nh == N_TYPE_NAMED || nh == N_REFLECT_FIELD || nh == N_REFLECT_FIELD_PATH || nh == N_ENV_VARIABLES
+}
+
+// Whether `light` carries native handler `nh`.
+pub fn is_light(nh: integer) -> boolean {
+  nh == N_ASSERT || nh == N_ENV_VARIABLE_DEST || nh == N_NOW || nh == N_TICKS || nh == N_PROTECT || nh == N_UNPROTECT || nh == N_IS_DIR || nh == N_IS_FILE || nh == N_FILE_MAP || nh == N_GET_STORE_LOCK || nh == N_SET_STORE_LOCK || nh == N_LIST_DIR || nh == N_UPGRADE_OWED_NEXT || nh == N_UPGRADE_OWED_FINISH || nh == N_UPGRADE_OWED_REF || nh == N_UPGRADE_ROUTINE || nh == N_YIELD_FRAME || nh == N_TEXT_RFIND || nh == N_TEXT_FIND || nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END || nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST || nh == N_WRITE_TEXT_RAW || nh == N_TEXT_BYTE_AT || nh == N_TEXT_REPLACE_DEST || nh == N_STARTS_WITH || nh == N_ENDS_WITH || nh == N_WRITE_BYTES || nh == N_VECTOR_SUM_INT || nh == N_OS_TEMP_DIR_DEST || nh == N_READ_BYTES || nh == N_ARGUMENTS || nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST || nh == N_JSON_ERRORS_DEST || nh == N_EPRINT || nh == N_PATH_SEP || nh == N_MTIME || nh == N_IS_SYMLINK || nh == N_DIRECTORY_DEST || nh == N_USER_DIRECTORY_DEST || nh == N_PROGRAM_DIRECTORY_DEST || nh == N_OS_CACHE_DIR_DEST || nh == N_YMD_DAYS_AGO_DEST || nh == N_EXIT || nh == N_PANIC || (nh >= N_KERNEL && nh < N_KERNEL + KERNEL_COUNT) || (nh >= N_KERNEL_TEXT && nh < N_KERNEL_TEXT + 5) || nh == N_KERNEL_FETCH
+}
+
+pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
+  sp = sp0;
+  if is_light(nh) {
+    return light(nh, stk, sp0, io, []);
+  }
+  if nh == N_CHAR_PREDICATE {
+    return native_char_predicate(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_RADIX_SORTED || nh == N_SPATIAL_RANGE || nh == N_TRIE_PREFIX {
+    return native_radix_sorted(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_LOG {
+    return native_log(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_SOURCE_DIR_DEST {
+    return native_source_dir_dest(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_STORE_VERIFY {
+    return native_store_verify(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_LOAD_KEY {
+    return native_load_key(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_STORE_PERSIST_COPY || nh == N_STORE_LOAD || nh == N_STORE_LOAD_UNTRUSTED {
+    return native_store_persist_copy(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_KEYED_ENTRY_INTS {
+    return native_keyed_entry_ints(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_KEYED_ENTRY_TEXT {
+    return native_keyed_entry_text(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_STORE_MEMORY_DEST {
+    return native_store_memory_dest(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
+  } else if nh == N_JSON_PARSE {
+    return native_json_parse(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
   } else if nh == N_PARSE_ERRORS_OF {
-    crt::slot_ref(io, stk, sp - 16);
-    sp -= 16;
-    crt::parse_errors_of(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
+    return native_parse_errors_of(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
   } else if nh >= N_JV && nh < N_JV + 50 {
-    sp = call_jv(nh - N_JV, img, stk, sp, io, tl, ptold);
+    return native_jv(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
   } else if nh == N_HASH_SORTED || nh == N_HASH_UNSORTED {
-    // A hash's records as a vector, in key order or the hash's own (a scratch vector).
-    ensure_table(img.types, tl);
-    htp = get(stk, sp - 8) ?? 0;
-    crt::slot_ref(io, stk, sp - 24);
-    sp -= 24;
-    crt::hash_sorted(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, htp, nh == N_HASH_UNSORTED);
-    crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
-    sp += 16;
+    return native_hash_sorted(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
   } else {
     nname = img.natives[idx] ?? "native {idx}";
     why[0] = "a native the runner does not carry: {nname}";
@@ -1135,12 +976,12 @@ pub fn par_start(pk: integer, img: ir::RunImage, stk: integer, regs: vector<inte
 // in released), a function reference's 20 bytes, a fold's accumulator — then the next worker
 // called (true, `regs` updated), or after the last the job's buffer pushed and its count
 // answered, a fold its result (false).
-pub fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>) -> boolean {
+pub fn par_return(stk: integer, regs: vector<integer>, pjobs: vector<ParJob>, pbufs: vector<ParBuf>, io: vector<integer>, tb: vector<u8>) -> boolean {
   sp = regs[0] ?? 0;
   k = len(pjobs) - 1;
   kind = pjobs[k]!.kind;
   if kind == PAR_QUEUE_TEXT {
-    pjobs[k].texts += [crt::stack_str(stk, sp - 16)];
+    pjobs[k].texts += [crt::stack_str_in(tb, stk, sp - 16)];
     sp -= 16;
     for w in 0..pjobs[k]!.wtexts {
       crt::slot_text_free(stk, pjobs[k]!.wbase + w * 24);
@@ -1302,5 +1143,752 @@ pub fn par_buf(pk: integer, stk: integer, sp: integer, pbufs: vector<ParBuf>, io
     return sp + 16;
   }
   set(stk, sp - 8, pbufs[bi]!.res[idx]);
+  sp
+}
+
+// `light`'s branch for `nh == N_ASSERT`.
+fn native_assert(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  line = get(stk, sp - 8);
+  file = crt::stack_str_in(tb, stk, sp - 24);
+  message = crt::stack_str_in(tb, stk, sp - 40);
+  test = get_bool(stk, sp - 48);
+  sp -= 48;
+  assert(test, message ?? "", file ?? "", line ?? 0);
+  sp
+}
+
+// `light`'s branch for `nh == N_ENV_VARIABLE_DEST`.
+fn native_env_variable_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  crt::slot_ref(io, stk, sp - 16);
+  vname = crt::stack_str_in(tb, stk, sp - 32);
+  sp -= 32;
+  // An unset variable is Rust's null text appended (`Stores::os_variable`), not an empty one.
+  ev = env_variable(vname ?? "");
+  if ev == null {
+    crt::ref_text_append_null(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  } else {
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ev);
+  }
+  sp
+}
+
+// `light`'s branch for `nh == N_NOW || nh == N_TICKS`.
+fn native_now(nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  set(stk, sp, if nh == N_NOW { now() } else { ticks() });
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_PROTECT || nh == N_UNPROTECT`.
+fn native_protect(nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  sp -= 16;
+  crt::slot_ref(io, stk, sp);
+  crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
+  sp
+}
+
+// `light`'s branch for `nh == N_IS_DIR || nh == N_IS_FILE`.
+fn native_is_dir(nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  idp = crt::stack_str_in(tb, stk, sp - 16) ?? "";
+  sp -= 16;
+  set_bool(stk, sp, if nh == N_IS_DIR { is_dir(idp) } else { is_file(idp) });
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_FILE_MAP`.
+fn native_file_map(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The file's bytes as a read-only vector (the C runtime's `file_map`); null where it
+  // cannot be mapped.
+  fmp = crt::stack_str_in(tb, stk, sp - 16) ?? "";
+  sp -= 16;
+  crt::file_map(io, fmp);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `light`'s branch for `nh == N_GET_STORE_LOCK`.
+fn native_get_store_lock(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // `d#lock`: is the store the reference names locked?
+  sp -= 16;
+  crt::slot_ref(io, stk, sp);
+  set_bool(stk, sp, crt::store_native(2, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0) != 0);
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_SET_STORE_LOCK`.
+fn native_set_store_lock(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // `d#lock = v`: the lock popped, then the reference.
+  slk = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp - 8, 0, 0) ?? 0;
+  sp -= 24;
+  crt::slot_ref(io, stk, sp);
+  crt::store_native(3, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if slk == 1 { 1 } else { 0 });
+  sp
+}
+
+// `light`'s branch for `nh == N_LIST_DIR`.
+fn native_list_dir(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The directory's entries, a vector in a store of its own (the C runtime's `list_dir`).
+  ldp = crt::stack_str_in(tb, stk, sp - 16) ?? "";
+  sp -= 16;
+  crt::list_dir(io, ldp);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `light`'s branch for `nh == N_UPGRADE_OWED_NEXT`.
+fn native_upgrade_owed_next(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // No conversion is owed: the runner loads only an image of its own layout (it carries no
+  // converter), as the C runtime built without one answers.
+  set(stk, sp, -1);
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_UPGRADE_OWED_FINISH`.
+fn native_upgrade_owed_finish(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  set_bool(stk, sp, true);
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_UPGRADE_OWED_REF`.
+fn native_upgrade_owed_ref(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
+  sp += 16;
+  sp
+}
+
+// `light`'s branch for `nh == N_UPGRADE_ROUTINE`.
+fn native_upgrade_routine(_nh: integer, _stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // A routine registered for a conversion the runner never makes.
+  sp -= 24;
+  sp
+}
+
+// `light`'s branch for `nh == N_YIELD_FRAME`.
+fn native_yield_frame(_nh: integer, _stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The frame-yield flag only a host's frame loop reads; a run from an image has none.
+  sp = sp;
+  sp
+}
+
+// `light`'s branch for `nh == N_TEXT_RFIND`.
+fn native_text_rfind(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  sp -= 32;
+  set(stk, sp, crt::view_find(stk, sp, sp + 16, true));
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_TEXT_FIND`.
+fn native_text_find(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The byte position of the first `value` in `self`, null when there is none.
+  sp -= 32;
+  set(stk, sp, crt::view_find(stk, sp, sp + 16, false));
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END`.
+fn native_text_trim(nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // A view of the same text, narrowed in place (Rust's `str::trim*`).
+  crt::stack_text_trim(stk, sp - 16, if nh == N_TEXT_TRIM { 0 } else if nh == N_TEXT_TRIM_START { 1 } else { 2 });
+  sp
+}
+
+// `light`'s branch for `nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST`.
+fn native_to_uppercase_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The text's case changed, appended to the destination.
+  crt::slot_ref(io, stk, sp - 16);
+  ucv = crt::stack_str_in(tb, stk, sp - 32) ?? "";
+  sp -= 32;
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if nh == N_TO_UPPERCASE_DEST { ucv.to_uppercase() } else { ucv.to_lowercase() });
+  sp
+}
+
+// `light`'s branch for `nh == N_WRITE_TEXT_RAW`.
+fn native_write_text_raw(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The text popped, then the File; whether it was written.
+  crt::slot_ref(io, stk, sp - 32);
+  wtr = crt::write_text_raw(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::stack_str_in(tb, stk, sp - 16));
+  sp -= 32;
+  set_bool(stk, sp, wtr);
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_TEXT_BYTE_AT`.
+fn native_text_byte_at(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The byte at `i` (from the end when negative), 0 out of range (`text_byte_at_native`).
+  bai = get(stk, sp - 8) ?? 0;
+  sp -= 24;
+  set(stk, sp, crt::view_byte(stk, sp, bai));
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_TEXT_REPLACE_DEST`.
+fn native_text_replace_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // `self.replace(value, with)` appended to the destination.
+  crt::slot_ref(io, stk, sp - 16);
+  // The three views read where they lie.
+  sp -= 64;
+  crt::ref_text_replace_view(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, stk, sp, sp + 16, sp + 32);
+  sp
+}
+
+// `light`'s branch for `nh == N_STARTS_WITH || nh == N_ENDS_WITH`.
+fn native_starts_with(nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  sp -= 32;
+  set_bool(stk, sp, crt::view_starts(stk, sp, sp + 16, nh == N_ENDS_WITH));
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_WRITE_BYTES`.
+fn native_write_bytes(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The byte vector popped, then the path; answers whether it was written.
+  crt::slot_ref(io, stk, sp - 16);
+  wpath = crt::stack_str_in(tb, stk, sp - 32) ?? "";
+  sp -= 32;
+  set_bool(stk, sp, crt::write_bytes(wpath, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_VECTOR_SUM_INT`.
+fn native_vector_sum_int(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  acc = get(stk, sp - 8);
+  crt::slot_ref(io, stk, sp - 24);
+  sp -= 24;
+  set(stk, sp, crt::vector_sum_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, acc));
+  sp += 8;
+  sp
+}
+
+// `light`'s branch for `nh == N_OS_TEMP_DIR_DEST`.
+fn native_os_temp_dir_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  crt::slot_ref(io, stk, sp - 16);
+  sp -= 16;
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_temp_dir());
+  sp
+}
+
+// `light`'s branch for `nh == N_READ_BYTES`.
+fn native_read_bytes(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The file's bytes, a vector in a store of its own (the C runtime's `read_bytes`).
+  rpath = crt::stack_str_in(tb, stk, sp - 16) ?? "";
+  sp -= 16;
+  crt::read_bytes(io, rpath);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `light`'s branch for `nh == N_ARGUMENTS`.
+fn native_arguments(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  crt::arguments_into(io);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `light`'s branch for `nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST`.
+fn native_text_from_byte_range_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  // The bytes `lo..hi` of a byte vector — the whole of it for `text_from_bytes` — as a
+  // text into the destination.
+  crt::slot_ref(io, stk, sp - 16);
+  tds = io[0] ?? NULL_STORE;
+  tdr = io[1] ?? 0;
+  tdp = io[2] ?? 0;
+  sp -= 16;
+  tlo: integer? = 0;
+  thi: integer? = 0;
+  if nh == N_TEXT_FROM_BYTE_RANGE_DEST {
+    thi = get(stk, sp - 8);
+    tlo = get(stk, sp - 16);
+    sp -= 16;
+  }
+  crt::slot_ref(io, stk, sp - 16);
+  sp -= 16;
+  if nh == N_TEXT_FROM_BYTES_DEST {
+    thi = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  }
+  crt::ref_text_append(tds, tdr, tdp, crt::vec_text_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tlo, thi));
+  sp
+}
+
+// `light`'s branch for `nh == N_JSON_ERRORS_DEST`.
+fn native_json_errors_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  sp = sp0;
+  crt::slot_ref(io, stk, sp - 16);
+  sp -= 16;
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::json_errors());
+  sp
+}
+
+// `call_native`'s branch for `nh == N_CHAR_PREDICATE`.
+fn native_char_predicate(_nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, _io: vector<integer>, _tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  // A character's class, by loft's own predicates (these natives, compiled).
+  cpn = img.natives[idx] ?? "";
+  cpc = (crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0) ?? 0) as character;
+  sp -= 8;
+  set_bool(stk, sp, if cpn.ends_with("is_lowercase") { cpc.is_lowercase() } else if cpn.ends_with("is_uppercase") { cpc.is_uppercase() } else if cpn.ends_with("is_numeric") { cpc.is_numeric() } else if cpn.ends_with("is_alphanumeric") { cpc.is_alphanumeric() } else if cpn.ends_with("is_alphabetic") { cpc.is_alphabetic() } else if cpn.ends_with("is_whitespace") { cpc.is_whitespace() } else { cpc.is_control() });
+  sp += 8;
+  sp
+}
+
+// `call_native`'s branch for `nh == N_RADIX_SORTED || nh == N_SPATIAL_RANGE || nh == N_TRIE_PREFIX`.
+fn native_radix_sorted(nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  // A spatial or trie walk's snapshot (all of it, a spatial range, a trie prefix), as a
+  // scratch vector — `radix_snap` as today's runner reaches it.
+  ensure_table(img.types, tl);
+  rsints: vector<integer> = [];
+  rspre: text? = null;
+  rswhich = 0;
+  if nh == N_SPATIAL_RANGE {
+    rswhich = 1;
+    for ri in 0..8 {
+      rsints += [get(stk, sp - 64 + 8 * ri) ?? 0];
+    }
+    sp -= 64;
+  } else if nh == N_TRIE_PREFIX {
+    rswhich = 2;
+    rsints = [get(stk, sp - 8) ?? 0];
+    rspre = crt::stack_str(stk, sp - 24);
+    sp -= 24;
+  }
+  rstp = get(stk, sp - 8) ?? 0;
+  crt::slot_ref(io, stk, sp - 24);
+  sp -= 24;
+  crt::radix_snap(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rswhich, rstp, rsints, rspre);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `call_native`'s branch for `nh == N_LOG`.
+fn native_log(_nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, _io: vector<integer>, _tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  // The message, the file and the line popped; logged as a compiled program logs it.
+  lgn = img.natives[idx] ?? "";
+  lgl = get(stk, sp - 8) ?? 0;
+  lgf = crt::stack_str(stk, sp - 24) ?? "";
+  lgm = crt::stack_str(stk, sp - 40) ?? "";
+  sp -= 40;
+  crt::log(if lgn == "n_log_info" { 0 } else if lgn == "n_log_warn" { 1 } else if lgn == "n_log_error" { 2 } else { 3 }, lgm, lgf, lgl);
+  sp
+}
+
+// `call_native`'s branch for `nh == N_SOURCE_DIR_DEST`.
+fn native_source_dir_dest(_nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, _tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  crt::slot_ref(io, stk, sp - 16);
+  sp -= 16;
+  // The program's own directory, which the image carries (the runner's anchor is its own).
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, img.source);
+  sp
+}
+
+// `call_native`'s branch for `nh == N_STORE_VERIFY`.
+fn native_store_verify(_nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  ensure_table(img.types, tl);
+  crt::slot_ref(io, stk, sp - 16);
+  sp -= 16;
+  set_bool(stk, sp, crt::store_verify(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+  sp += 8;
+  sp
+}
+
+// `call_native`'s branch for `nh == N_LOAD_KEY`.
+fn native_load_key(_nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, _ptold: vector<boolean>, why: vector<text>) -> integer {
+  sp = sp0;
+  // A paged load of one key (`paged_load`): the key, the path and the collection's place
+  // popped; its root type's sidecar and plan from the image.
+  ensure_table(img.types, tl);
+  lkname = img.natives[idx] ?? "";
+  lktext = lkname == "n_store_load_key_text";
+  lkint = 0;
+  lkt = "";
+  lkls = NULL_STORE;
+  lklr = 0;
+  lklp = 0;
+  lkts = NULL_STORE;
+  lktr = 0;
+  lktp = 0;
+  lkhi = 0;
+  if lkname == "n_store_load_range" {
+    lkhi = get(stk, sp - 8) ?? 0;
+    lkint = get(stk, sp - 16) ?? 0;
+    sp -= 16;
+  } else if lkname == "n_store_load_box" {
+    // The limit, the till and from corners.
+    lkint = get(stk, sp - 8) ?? -1;
+    crt::slot_ref(io, stk, sp - 24);
+    lkts = io[0] ?? NULL_STORE;
+    lktr = io[1] ?? 0;
+    lktp = io[2] ?? 0;
+    crt::slot_ref(io, stk, sp - 40);
+    lkls = io[0] ?? NULL_STORE;
+    lklr = io[1] ?? 0;
+    lklp = io[2] ?? 0;
+    sp -= 40;
+  } else if lkname == "n_store_load_prefix" {
+    // The prefix and the limit.
+    lkint = get(stk, sp - 8) ?? -1;
+    lkt = crt::stack_str(stk, sp - 24) ?? "";
+    sp -= 24;
+  } else if lkname == "n_store_load_keys" || lkname == "n_store_load_keys_text" {
+    crt::slot_ref(io, stk, sp - 16);
+    lkls = io[0] ?? NULL_STORE;
+    lklr = io[1] ?? 0;
+    lklp = io[2] ?? 0;
+    sp -= 16;
+  } else if lktext {
+    // A null text is its one NUL byte to the Rust native (`STRING_NULL`), which is also the
+    // key a caller writes as `"\0"`: the key that byte files a record under.
+    lkt = crt::stack_str(stk, sp - 16) ?? "\0";
+    sp -= 16;
+  } else {
+    lkint = get(stk, sp - 8) ?? 0;
+    sp -= 8;
+  }
+  lkpath = crt::stack_str(stk, sp - 16) ?? "";
+  crt::slot_ref(io, stk, sp - 32);
+  sp -= 32;
+  lkk = crt::store_known(io[0] ?? NULL_STORE);
+  lki = -1;
+  for i in 0..len(img.sidecars) {
+    if (img.sidecars[i]?.tp ?? -1) == lkk {
+      lki = i;
+    }
+  }
+  if lki < 0 {
+    why[0] = "a paged load without a sidecar the runner can use: {img.natives[idx] ?? ""}";
+    return -1;
+  }
+  if len(sidecar_ix) == 0 {
+    for sc in img.sidecars {
+      sidecar_ix += [crt::sidecar_add(sc.tp, sc.hash, sc.walks, sc.before, sc.after, sc.dump, img.oldest, img.bridge)];
+    }
+  }
+  lks = img.sidecars[lki]!;
+  if lkname == "n_store_load_range" {
+    set(stk, sp, crt::pg_load_range(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prangerefusal, lks.prangecontent, lks.tp, lkint, lkhi));
+  } else if lkname == "n_store_load_box" {
+    set(stk, sp, crt::pg_load_box(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.pboxrefusal, lks.pcontent, lks.pcoll, lkls, lklr, lklp, lkts, lktr, lktp, lkint, img.types[lks.pcoll]?.name ?? ""));
+  } else if lkname == "n_store_load_prefix" {
+    if lks.pkind != 1 {
+      why[0] = "a prefix load from a store that holds no trie: n_store_load_prefix";
+      return -1;
+    }
+    set(stk, sp, crt::pg_load_prefix(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lkt, lkint));
+  } else if lkname == "n_store_load_keys" || lkname == "n_store_load_keys_text" {
+    set(stk, sp, crt::pg_load_keys(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkls, lklr, lklp, lkname == "n_store_load_keys_text"));
+  } else {
+    set_bool(stk, sp, crt::pg_load_key(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, lkpath, sidecar_ix[lki] ?? -1, lks.prefusal, lks.pcontent, lks.pcoll, lks.pkind, lkint, lkt, lktext));
+  }
+  sp += 8;
+  sp
+}
+
+// `call_native`'s branch for `nh == N_STORE_PERSIST_COPY || nh == N_STORE_LOAD || nh == N_STORE_LOAD_UNTRUSTED`.
+fn native_store_persist_copy(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, _ptold: vector<boolean>, why: vector<text>) -> integer {
+  sp = sp0;
+  // A store's image written or loaded with its root type's sidecar (`RunSidecar`), the one the
+  // C backend names at the call: the store's root type picks it here.
+  ensure_table(img.types, tl);
+  pcpath = crt::stack_str(stk, sp - 16) ?? "";
+  crt::slot_ref(io, stk, sp - 32);
+  sp -= 32;
+  pcs = io[0] ?? NULL_STORE;
+  pck = crt::store_known(pcs);
+  pci = -1;
+  for i in 0..len(img.sidecars) {
+    if (img.sidecars[i]?.tp ?? -1) == pck {
+      pci = i;
+    }
+  }
+  if pci < 0 || (nh == N_STORE_PERSIST_COPY && (img.sidecars[pci]?.refs ?? false)) {
+    why[0] = "a store persisted or loaded without a sidecar the runner can use: {img.natives[idx] ?? ""}";
+    return -1;
+  }
+  if len(sidecar_ix) == 0 {
+    for sc in img.sidecars {
+      sidecar_ix += [crt::sidecar_add(sc.tp, sc.hash, sc.walks, sc.before, sc.after, sc.dump, img.oldest, img.bridge)];
+    }
+  }
+  pcix = sidecar_ix[pci] ?? -1;
+  set_bool(stk, sp, if nh == N_STORE_PERSIST_COPY { crt::image_write(pcs, io[1] ?? 0, io[2] ?? 0, pcpath, pcix) } else { crt::image_load(pcs, io[1] ?? 0, io[2] ?? 0, pcpath, pcix, nh == N_STORE_LOAD_UNTRUSTED) });
+  sp += 8;
+  sp
+}
+
+// `call_native`'s branch for `nh == N_KEYED_ENTRY_INTS`.
+fn native_keyed_entry_ints(_nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, why: vector<text>) -> integer {
+  sp = sp0;
+  // `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` — the entry under
+  // the key in the hash `record_collection` names, found or filed with its key written.
+  if !(tl[0] ?? false) {
+    ensure_table(img.types, tl);
+  }
+  kptp = get(stk, sp - 48) ?? 0;
+  kfld = get(stk, sp - 40) ?? 0;
+  krc = types::record_collection(img.types, kptp, kfld);
+  if (krc.fld != 65535 && krc.at == null) || types::hash_element(img.types, krc.tp) == null {
+    why[0] = "a keyed entry in a collection that is not a hash: n_keyed_entry_ints";
+    return -1;
+  }
+  kkeys = len(img.types[krc.tp]!.keys);
+  kn = if kkeys < 1 { 1 } else if kkeys > 4 { 4 } else { kkeys };
+  for ki in 0..kn {
+    crt::key_int(get(stk, sp - 32 + ki * 8));
+  }
+  crt::slot_ref(io, stk, sp - 64);
+  sp -= 64;
+  crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (krc.at ?? 0), types::content_of(img.types, krc.tp) ?? 0, krc.tp, kn);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `call_native`'s branch for `nh == N_KEYED_ENTRY_TEXT`.
+fn native_keyed_entry_text(_nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, why: vector<text>) -> integer {
+  sp = sp0;
+  // `keyed_entry_text(data, parent_tp, fld, key)`: as the integer form, one text key.
+  ensure_table(img.types, tl);
+  tptp = get(stk, sp - 32) ?? 0;
+  tfld = get(stk, sp - 24) ?? 0;
+  trc = types::record_collection(img.types, tptp, tfld);
+  if (trc.fld != 65535 && trc.at == null) || types::hash_element(img.types, trc.tp) == null {
+    why[0] = "a keyed entry in a collection that is not a hash: n_keyed_entry_text";
+    return -1;
+  }
+  crt::key_text(crt::stack_str(stk, sp - 16));
+  crt::slot_ref(io, stk, sp - 48);
+  sp -= 48;
+  crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (trc.at ?? 0), types::content_of(img.types, trc.tp) ?? 0, trc.tp, 1);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `call_native`'s branch for `nh == N_STORE_MEMORY_DEST`.
+fn native_store_memory_dest(_nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, _tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  // The C runtime's report, its types named as the image names them, into the text the
+  // destination reference names.
+  crt::slot_ref(io, stk, sp - 16);
+  sp -= 16;
+  crt::type_names([for tn in img.types { tn.name }]);
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::store_memory());
+  sp
+}
+
+// `call_native`'s branch for `nh == N_JSON_PARSE`.
+fn native_json_parse(_nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, _sidecar_ix: vector<integer>, ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  // `json_parse(raw)`: the C runtime's reader, the tree in a store of its own.
+  ensure_table(img.types, tl);
+  ptypes::json_layout(img.types, ptold);
+  jraw = crt::stack_str(stk, sp - 16) ?? "";
+  sp -= 16;
+  crt::json_parse(io, jraw);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `call_native`'s branch for `nh == N_PARSE_ERRORS_OF`.
+fn native_parse_errors_of(_nh: integer, _idx: integer, _img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, _tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  crt::slot_ref(io, stk, sp - 16);
+  sp -= 16;
+  crt::parse_errors_of(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// `call_native`'s branch for `nh >= N_JV && nh < N_JV + 50`.
+fn native_jv(nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, _sidecar_ix: vector<integer>, ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  sp = call_jv(nh - N_JV, img, stk, sp, io, tl, ptold);
+  sp
+}
+
+// `call_native`'s branch for `nh == N_HASH_SORTED || nh == N_HASH_UNSORTED`.
+fn native_hash_sorted(nh: integer, _idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, _sidecar_ix: vector<integer>, _ptold: vector<boolean>, _why: vector<text>) -> integer {
+  sp = sp0;
+  // A hash's records as a vector, in key order or the hash's own (a scratch vector).
+  ensure_table(img.types, tl);
+  htp = get(stk, sp - 8) ?? 0;
+  crt::slot_ref(io, stk, sp - 24);
+  sp -= 24;
+  crt::hash_sorted(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, htp, nh == N_HASH_UNSORTED);
+  crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+  sp += 16;
+  sp
+}
+
+// The natives a program calls on its process and its environment, each the runner's own
+// standard-library function on the same process (`light`).
+fn native_eprint(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  eprint(crt::stack_str_in(tb, stk, sp0 - 16) ?? "");
+  sp0 - 16
+}
+
+fn native_path_sep(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  crt::stack_put(crt::SW_U32, stk, sp0, path_sep() as integer);
+  sp0 + 8
+}
+
+fn native_mtime(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  t = mtime(crt::stack_str_in(tb, stk, sp0 - 16) ?? "");
+  set(stk, sp0 - 16, t);
+  sp0 - 8
+}
+
+fn native_is_symlink(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  b = is_symlink(crt::stack_str_in(tb, stk, sp0 - 16) ?? "");
+  set_bool(stk, sp0 - 16, b);
+  sp0 - 8
+}
+
+// A directory query: the destination popped, then the path suffix; the answer appended.
+fn native_directory_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  crt::slot_ref(io, stk, sp0 - 16);
+  v = crt::stack_str_in(tb, stk, sp0 - 32) ?? "";
+  d = if nh == N_USER_DIRECTORY_DEST { user_directory(v) } else if nh == N_PROGRAM_DIRECTORY_DEST { program_directory(v) } else { directory(v) };
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, d);
+  sp0 - 32
+}
+
+fn native_user_directory_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  native_directory_dest(nh, stk, sp0, io, tb)
+}
+
+fn native_program_directory_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  native_directory_dest(nh, stk, sp0, io, tb)
+}
+
+fn native_os_cache_dir_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  crt::slot_ref(io, stk, sp0 - 16);
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_cache_dir());
+  sp0 - 16
+}
+
+fn native_ymd_days_ago_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
+  crt::slot_ref(io, stk, sp0 - 16);
+  days = get(stk, sp0 - 24) ?? 0;
+  crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ymd_days_ago(days));
+  sp0 - 24
+}
+
+fn native_exit(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
+  exit(get(stk, sp0 - 8) ?? 0);
+  sp0 - 8
+}
+
+// `panic(message, file, line)`: the line, the file and the message popped, the runner's own
+// `panic` given the program's place.
+fn native_panic(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
+  line = get(stk, sp0 - 8) ?? 0;
+  file = crt::stack_str_in(tb, stk, sp0 - 24) ?? "";
+  message = crt::stack_str_in(tb, stk, sp0 - 40) ?? "";
+  crt::panic_at(message, file, line);
+  sp0 - 40
+}
+
+// An engine-host kernel native (`N_KERNEL`…): its operands read off the stack by the routine's
+// shape (`KERNEL_SHAPES`; an integer 8 bytes, a text's view 16), the C runtime's routine called
+// (`crt::kernel`), the answer pushed; a text routine's answer appended to the destination on
+// top, as a `_dest` native's is.
+fn native_kernel(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  if nh == N_KERNEL_FETCH {
+    h = crt::stack_str_in(tb, stk, sp0 - 16) ?? "";
+    b = crt::stack_str_in(tb, stk, sp0 - 32) ?? "";
+    u = crt::stack_str_in(tb, stk, sp0 - 48) ?? "";
+    m = crt::stack_str_in(tb, stk, sp0 - 64) ?? "";
+    set(stk, sp0 - 64, crt::kernel_fetch(m, u, b, h));
+    return sp0 - 56;
+  }
+  if nh >= N_KERNEL_TEXT {
+    crt::slot_ref(io, stk, sp0 - 16);
+    t = crt::kernel_text(tb, nh - N_KERNEL_TEXT);
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, t ?? "");
+    return sp0 - 16;
+  }
+  which = nh - N_KERNEL;
+  code = KERNEL_SHAPES[which] ?? 0;
+  args = code / 10;
+  answer = code % 10;
+  sp = sp0;
+  a = 0;
+  b = 0;
+  t = "";
+  if args == 1 {
+    a = get(stk, sp - 8) ?? 0;
+    sp -= 8;
+  } else if args == 2 {
+    b = get(stk, sp - 8) ?? 0;
+    a = get(stk, sp - 16) ?? 0;
+    sp -= 16;
+  } else if args == 3 {
+    t = crt::stack_str_in(tb, stk, sp - 16) ?? "";
+    sp -= 16;
+  } else if args == 4 {
+    t = crt::stack_str_in(tb, stk, sp - 16) ?? "";
+    a = get(stk, sp - 24) ?? 0;
+    sp -= 24;
+  } else if args == 5 {
+    b = get(stk, sp - 8) ?? 0;
+    a = get(stk, sp - 16) ?? 0;
+    t = crt::stack_str_in(tb, stk, sp - 32) ?? "";
+    sp -= 32;
+  }
+  v = crt::kernel(which, a, b, t);
+  if answer == 0 {
+    set(stk, sp, v);
+    sp += 8;
+  } else if answer == 1 {
+    set_bool(stk, sp, v != 0);
+    sp += 8;
+  }
   sp
 }

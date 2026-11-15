@@ -1,0 +1,581 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-RecPtr`'s verdict (`src/opt/hoist.rs`: `view_extent_verdict`,
+// `record_view_ptr`, `param_view_ptr`, `scalar_field_uses`, `free_before_use`) and the field
+// shapes it reads (`opt::body_writes::view_field`, `sub_record`): may a record view's address
+// be taken once and serve the field reads and writes that follow?
+//
+// Without the store-apartness facts (`LOFT_NO_DISTINCT_GROWTH`), a twin's parameters and the
+// buffers an emitter owns: every statement of the remainder must write in place.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_names;
+use opt_non_sentinel;
+use opt_push;
+use opt_writes;
+use opt_facts;
+use el_ir;
+use own;
+use types;
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `view_field`: the root variable of the record `base` names through inline sub-records, with
+// the byte offset of field `fld` from that root in `off`; -1 for any other shape.
+pub fn view_field(b: ir::Bundle, base: ir::Node, fld: ir::Node, off: &integer) -> integer {
+  at = match loop_shape::unspan(fld) {
+    NdInt { n } => n,
+    _ => return -1,
+  };
+  root = -1;
+  path = opt_push::vector_path(b, base, root);
+  if path == "" {
+    return -1;
+  }
+  total = at;
+  offs = path[path.find(":")! + 1..path.size()];
+  for part in offs.split(',') {
+    if part != "" {
+      total += part as integer ?? 0;
+    }
+  }
+  off = total;
+  root
+}
+
+// `sub_record`: the root of an inline sub-record `OpGetField(…, off, tp)`; -1 otherwise.
+fn sub_record_root(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if len(args) != 3 || def_name(b, def_nr) != "OpGetField" || !(loop_shape::unspan(args[2]) is NdInt) {
+        return -1;
+      }
+      root = -1;
+      if opt_push::vector_path(b, v, root) == "" { -1 } else { root }
+    },
+    _ => -1,
+  }
+}
+
+// `copy_into_sub`: a copy into an inline sub-record of `r`.
+fn copy_into_sub(b: ir::Bundle, n: ir::Node, r: integer) -> boolean {
+  match n {
+    NdCall { def_nr, args } => def_name(b, def_nr) == "OpCopyRecord" && len(args) == 3 && sub_record_root(b, args[1]) == r,
+    _ => false,
+  }
+}
+
+// `scalar_kind` / `setter_kind`: a fusable scalar field read or in-place write.
+fn fusable_access(name: text) -> boolean {
+  if name == "OpGetInt" || name == "OpGetSingle" || name == "OpGetFloat" || name == "OpSetInt" || name == "OpSetSingle" || name == "OpSetFloat" || name == "OpSetEnum" {
+    return true;
+  }
+  name == "OpGetEnum" && (env_variable("LOFT_NO_ENUM_RECORD") ?? "0") == "0"
+}
+
+// `scalar_field_uses`: how many fusable scalar reads and writes in `stmts` reach a field of
+// view `r`.
+pub fn scalar_field_uses(b: ir::Bundle, stmts: vector<ir::Node>, from: integer, r: integer) -> integer {
+  count = [0];
+  whole = ir::NdInsert { items: stmts[from..len(stmts)] };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        off = 0;
+        if len(args) >= 2 && fusable_access(def_name(b, def_nr)) && view_field(b, args[0], args[1], off) == r {
+          count[0] = count[0]! + 1;
+        }
+      },
+      _ => {},
+    }
+  });
+  count[0]!
+}
+
+// Is `op` a field read, a field write or a sub-record copy of view `r` (`bind_record_ptr`'s
+// `field_use`)?
+pub fn field_use(b: ir::Bundle, op: ir::Node, r: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(op, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        off = 0;
+        if len(args) >= 2 && (name.starts_with("OpGet") || name.starts_with("OpSet")) && view_field(b, args[0], args[1], off) == r {
+          hit[0] = true;
+        }
+        if copy_into_sub(b, n, r) {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// Does `op` write a scalar field of view `r` in place, or copy into a sub-record of it — what
+// the address's lock flag is read for?
+pub fn writes_view(b: ir::Bundle, op: ir::Node, r: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(op, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        off = 0;
+        if len(args) == 3 && (name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetSingle" || name == "OpSetEnum") && view_field(b, args[0], args[1], off) == r {
+          hit[0] = true;
+        }
+        if copy_into_sub(b, n, r) {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `struct_enum_view`: a struct-enum record that is no `__nullable<…>` wrapper.
+fn struct_enum_view(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  if (env_variable("LOFT_NO_ENUM_RECORD") ?? "0") != "0" {
+    return false;
+  }
+  d = match opt_names::peel_link(t) {
+    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+    TyReference { n, dep: _ } => if n >= 0 && n < len(b.data.definitions) && b.data.definitions[n]!.def_type == 3 { n } else { -1 },
+    _ => -1,
+  };
+  d >= 0 && !b.data.definitions[d]!.name.starts_with("__nullable<")
+}
+
+// What one leaf of `free_before_use` says: does it use the view, does it release a record?
+struct Leaf {
+  uses: boolean,
+  frees: boolean,
+}
+
+fn leaf_of(b: ir::Bundle, d: ir::Definition, leaf: ir::Node, r: integer) -> Leaf {
+  state = [false, false];
+  opt_non_sentinel::walk(leaf, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == r { state[0] = true; } },
+      NdCall { def_nr, args } => {
+        if opt_writes::releases_record(d, def_name(b, def_nr), args) {
+          state[1] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  Leaf { uses: state[0]!, frees: state[1]! }
+}
+
+fn jumps(v: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdBreak { n: _ } => { hit[0] = true; },
+      NdContinue { n: _ } => { hit[0] = true; },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `scan` of `free_before_use_by`: is a record released when `v` ends, given whether one was
+// released before it?  0 no, 1 yes, 2: a use of the view after a release.
+fn scan(b: ir::Bundle, d: ir::Definition, v: ir::Node, released: boolean, r: integer) -> integer {
+  match loop_shape::unspan(v) {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      now = released;
+      for op in ops {
+        s = scan(b, d, op, now, r);
+        if s == 2 {
+          return 2;
+        }
+        now = s == 1;
+      }
+      returns = false;
+      for i in rev(0..len(ops)) {
+        if !(ops[i]! is NdLine) {
+          returns = loop_shape::unspan(ops[i]!) is NdReturn;
+          break;
+        }
+      }
+      // A block that returns carries no release past itself.
+      if returns && !jumps(v) { if released { 1 } else { 0 } } else if now { 1 } else { 0 }
+    },
+    NdIf { cond, t, f } => {
+      c = scan(b, d, cond, released, r);
+      if c == 2 {
+        return 2;
+      }
+      a = scan(b, d, t, c == 1, r);
+      if a == 2 {
+        return 2;
+      }
+      o = scan(b, d, f, c == 1, r);
+      if o == 2 {
+        return 2;
+      }
+      if a == 1 || o == 1 { 1 } else { 0 }
+    },
+    NdLoop { block } => {
+      ops = block[0].operators;
+      now = released;
+      for op in ops {
+        s = scan(b, d, op, now, r);
+        if s == 2 {
+          return 2;
+        }
+        now = s == 1;
+      }
+      if now && !released {
+        // A release in one pass precedes every use in the next.
+        again = true;
+        for op in ops {
+          s = scan(b, d, op, again, r);
+          if s == 2 {
+            return 2;
+          }
+          again = s == 1;
+        }
+      }
+      if now { 1 } else { 0 }
+    },
+    _ => {
+      l = leaf_of(b, d, loop_shape::unspan(v), r);
+      if l.uses && (released || l.frees) {
+        return 2;
+      }
+      if released || l.frees { 1 } else { 0 }
+    },
+  }
+}
+
+// `free_before_use`: in statement order, is a record released before a use of view `r`?
+fn free_before_use(b: ir::Bundle, d: ir::Definition, stmts: vector<ir::Node>, from: integer, r: integer) -> boolean {
+  released = false;
+  for op in stmts {
+    if op#index < from {
+      continue;
+    }
+    s = scan(b, d, op, released, r);
+    if s == 2 {
+      return true;
+    }
+    released = s == 1;
+  }
+  false
+}
+
+// `view_extent_verdict`: may the address of view `r` serve the statements `stmts[from..]` of
+// function `vd`?  They read or write a scalar field of it, none of them may move a store or
+// rebind the view, and no record is released before a use of it.
+pub fn view_extent_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, stmts: vector<ir::Node>, from: integer, r: integer, extra_use: boolean) -> boolean {
+  d = b.data.definitions[vd]!;
+  targets = binds::link_targets(d.variables, r);
+  state = [false, false];
+  whole = ir::NdInsert { items: stmts[from..len(stmts)] };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => {
+        if var == r {
+          state[0] = true;
+        }
+        for t in targets {
+          if t == var {
+            state[0] = true;
+          }
+        }
+      },
+      NdTuplePut { var, idx: _, inner: _ } => {
+        if var == r {
+          state[0] = true;
+        }
+        for t in targets {
+          if t == var {
+            state[0] = true;
+          }
+        }
+      },
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) {
+          callee = b.data.definitions[def_nr]!;
+          name = callee.name;
+          on_r = len(args) > 0 && loop_shape::unspan(args[0]) == NdVar { n: r };
+          // A native op with the view as its first operand that is no read, no in-place set
+          // and no comparison re-seats or releases the place.
+          native = !binds::has_code(callee) || callee.rust != "";
+          compare = name == "OpEqRef" || name == "OpNeRef" || name == "OpConvBoolFromRef" || name == "OpRefIsNull";
+          if on_r && native && !name.starts_with("OpGet") && !opt_writes::in_place_set(name) && !compare && name != "OpCopyRecord" {
+            state[0] = true;
+          }
+          off = 0;
+          if len(args) >= 2 && fusable_access(name) && view_field(b, args[0], args[1], off) == r && (on_r || (env_variable("LOFT_NO_NESTED_FIELD") ?? "0") == "0") {
+            state[1] = true;
+          }
+          // `copy_serves_view`: a flat copy from or into the view is a read or a write of its
+          // bytes.
+          if name == "OpCopyRecord" && len(args) == 3 && (loop_shape::unspan(args[0]) == NdVar { n: r } || loop_shape::unspan(args[1]) == NdVar { n: r }) && flat_copy(b, args) {
+            state[1] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  // `extra_use`: the writer's own count of the uses this walk does not see.
+  if !state[1]! && !extra_use {
+    return false;
+  }
+  // The remainder clause: a push or mint into a store proved apart from the view's cannot
+  // move it, so the push and mint tiers open when every mover's root is apart from `r`.
+  tier = 1;
+  if opt_facts::enabled() {
+    roots = mover_roots(b, d, stmts, from);
+    apart = len(roots) > 0;
+    for m in roots {
+      if !opt_facts::distinct(b, facts, r, m) {
+        apart = false;
+      }
+    }
+    if apart {
+      tier = 13;
+    }
+  }
+  fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+  for op in stmts {
+    if op#index >= from && opt_writes::blocks_under(b, w, vd, op, tier, fresh) {
+      return false;
+    }
+  }
+  !free_before_use(b, d, stmts, from, r) && !state[0]!
+}
+
+// `hoist::flat_copy` of an `OpCopyRecord`'s operands: a record that owns no heap, read from a
+// variable and not released by the copy.
+fn flat_copy(b: ir::Bundle, args: vector<ir::Node>) -> boolean {
+  if (env_variable("LOFT_NO_FLAT_COPY") ?? "0") != "0" {
+    return false;
+  }
+  raw = match loop_shape::unspan(args[2]) {
+    NdInt { n } => n,
+    _ => return false,
+  };
+  if raw & 32768 != 0 || loop_shape::var_of(loop_shape::unspan(args[0])) < 0 {
+    return false;
+  }
+  tp = raw & 16383;
+  if tp >= len(b.types) {
+    return false;
+  }
+  flat = match b.types[tp].parts[0] {
+    PtStruct { fields: _ } => true,
+    PtEnumValue { value: _, fields: _ } => true,
+    _ => false,
+  };
+  flat && !types::owns_heap(b.types, tp)
+}
+
+// `param_view_ptr`: may parameter `p`'s address be taken at entry for the whole body?
+pub fn param_view_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, stmts: vector<ir::Node>, p: integer) -> boolean {
+  tp = b.data.definitions[vd]!.variables.variables[p]!.type_def[0]!;
+  if (tp is TyOptional) || !opt_writes::is_plain_record(b, tp) {
+    return false;
+  }
+  view_extent_ok(b, w, facts, vd, stmts, 0, p, false)
+}
+
+// `record_view_ptr`: may the address of the view statement `at` binds be taken there, for the
+// statements `stmts[at + 1..]`?
+pub fn record_view_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, stmts: vector<ir::Node>, at: integer, extra_use: boolean) -> boolean {
+  r = -1;
+  bound_null = false;
+  match loop_shape::unspan(stmts[at]!) {
+    NdSet { var, inner } => {
+      r = var;
+      bound_null = loop_shape::unspan(inner) is NdNull;
+    },
+    _ => return false,
+  }
+  tp = b.data.definitions[vd]!.variables.variables[r]!.type_def[0]!;
+  view_tp = match tp {
+    TyOptional { inner } => inner,
+    _ => tp,
+  };
+  if !opt_writes::is_plain_record(b, view_tp) && !struct_enum_view(b, view_tp) {
+    return false;
+  }
+  if bound_null {
+    return false;
+  }
+  view_extent_ok(b, w, facts, vd, stmts, at + 1, r, extra_use)
+}
+
+// `reads_text_field`: do the statements `stmts[from..]` read a text field of view `r`?
+pub fn reads_text_field(b: ir::Bundle, stmts: vector<ir::Node>, from: integer, r: integer) -> boolean {
+  hit = [false];
+  rest = ir::NdInsert { items: stmts[from..len(stmts)] };
+  opt_non_sentinel::walk(rest, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr) == "OpGetText" && len(args) > 1 && loop_shape::unspan(args[0]) == NdVar { n: r } && (loop_shape::unspan(args[1]) is NdInt) {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `mover_roots`: the roots of what `stmts[from..]` grows — a fusable push, a reservation, a
+// record mint — each once, in first-appearance order.
+fn mover_roots(b: ir::Bundle, d: ir::Definition, stmts: vector<ir::Node>, from: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  rest = ir::NdInsert { items: stmts[from..len(stmts)] };
+  opt_non_sentinel::walk(rest, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        path = "";
+        root = -1;
+        if opt_push::fused(b, name, args, path, root) == 0 {
+          root = -1;
+          if !(name == "OpPreAllocVector" && len(args) == 3 && opt_push::vector_path(b, args[0], root) != "") {
+            root = -1;
+            vtp = 0;
+            opt_push::mint_target(b, d, name, args, path, root, vtp);
+            if path == "" {
+              root = -1;
+            }
+          }
+        }
+        if root >= 0 {
+          seen = false;
+          for o in out {
+            if o == root {
+              seen = true;
+            }
+          }
+          if !seen {
+            out += [root];
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  out
+}
+
+fn scalar_getter(name: text) -> boolean {
+  name == "OpGetInt" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetSingle" || name == "OpGetFloat" || name == "OpGetBoolean" || name == "OpGetCharacter" || name == "OpGetEnum"
+}
+
+// `mentions_apart`: does every variable `n` mentions name no store, or one proved apart from
+// `r`'s?  The record a scalar field read reads is not asked: the read moves nothing.
+fn mentions_apart(b: ir::Bundle, facts: opt_facts::Facts, d: ir::Definition, r: integer, n: ir::Node) -> boolean {
+  node = loop_shape::unspan(n);
+  match node {
+    NdVar { n: v } => {
+      if v == r {
+        return false;
+      }
+      tp = if v >= 0 && v < len(d.variables.variables) { binds::base(d.variables.variables[v]!.type_def[0] ?? ir::TyVoid) } else { ir::TyVoid };
+      names_store = v >= 0 && v < len(d.variables.variables) && (own::is_dbref(tp) || (tp is TyRefVar));
+      return !names_store || opt_facts::distinct(b, facts, r, v);
+    },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && scalar_getter(b.data.definitions[def_nr]!.name) && len(args) > 0 && (loop_shape::unspan(args[0]) is NdVar) {
+        for a in args {
+          if a#index > 0 && !mentions_apart(b, facts, d, r, a) {
+            return false;
+          }
+        }
+        return true;
+      }
+    },
+    _ => {},
+  }
+  for child in el_ir::children(node) {
+    if !mentions_apart(b, facts, d, r, child) {
+      return false;
+    }
+  }
+  true
+}
+
+fn apart_all(b: ir::Bundle, facts: opt_facts::Facts, d: ir::Definition, r: integer, nodes: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for n in nodes {
+    out += [apart_node(b, facts, d, r, n)];
+  }
+  out
+}
+
+// One node of `apart_calls`' rewrite, its children after it (`Value::map_nodes`).
+fn apart_node(b: ir::Bundle, facts: opt_facts::Facts, d: ir::Definition, r: integer, n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: apart_node(b, facts, d, r, inner) },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        apart = true;
+        for a in args {
+          if apart && !mentions_apart(b, facts, d, r, a) {
+            apart = false;
+          }
+        }
+        if apart {
+          def = b.data.definitions[def_nr]!;
+          // A call into a store apart from `r`'s is its operands; a release there is nothing.
+          if binds::has_code(def) && !def.name.starts_with("Op") {
+            return ir::NdInsert { items: apart_all(b, facts, d, r, args) };
+          }
+          if def.name == "OpFreeRef" || def.name == "OpFreeRefIfDistinct" {
+            return ir::NdNull;
+          }
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: apart_all(b, facts, d, r, args) }
+    },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: apart_all(b, facts, d, r, args) },
+    NdBlock { block } => ir::NdBlock { block: [ir::Block { operators: apart_all(b, facts, d, r, block[0].operators), ..block[0] }] },
+    NdLoop { block } => ir::NdLoop { block: [ir::Block { operators: apart_all(b, facts, d, r, block[0].operators), ..block[0] }] },
+    NdInsert { items } => ir::NdInsert { items: apart_all(b, facts, d, r, items) },
+    NdTuple { items } => ir::NdTuple { items: apart_all(b, facts, d, r, items) },
+    NdParallel { arms } => ir::NdParallel { arms: apart_all(b, facts, d, r, arms) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: apart_node(b, facts, d, r, inner) },
+    NdReturn { inner } => ir::NdReturn { inner: apart_node(b, facts, d, r, inner) },
+    NdDrop { inner } => ir::NdDrop { inner: apart_node(b, facts, d, r, inner) },
+    NdYield { inner } => ir::NdYield { inner: apart_node(b, facts, d, r, inner) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: apart_node(b, facts, d, r, inner) },
+    NdIf { cond, t, f } => ir::NdIf { cond: apart_node(b, facts, d, r, cond), t: apart_node(b, facts, d, r, t), f: apart_node(b, facts, d, r, f) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: apart_node(b, facts, d, r, create), next: apart_node(b, facts, d, r, next), init: apart_node(b, facts, d, r, init) },
+    _ => n,
+  }
+}
+
+// `apart_calls` (`@FR-R-RecPtr`'s call clause): the statements after `at` as the verdict
+// reads them — a call of a function whose every operand names a store apart from `r`'s
+// cannot move `r`'s record, so it reads as its operands; a release there reads as nothing.
+pub fn apart_calls(b: ir::Bundle, facts: opt_facts::Facts, vd: integer, r: integer, ops: vector<ir::Node>, at: integer) -> vector<ir::Node> {
+  if !opt_facts::enabled() || (env_variable("LOFT_NO_APART_CALL") ?? "0") != "0" {
+    return ops;
+  }
+  d = b.data.definitions[vd]!;
+  out: vector<ir::Node> = [];
+  for op in ops {
+    out += [if op#index > at { apart_node(b, facts, d, r, op) } else { op }];
+  }
+  out
+}

@@ -108,9 +108,7 @@ fn from_ints(e: vector<integer>) -> crt::Pos {
 
 // The place the stored reference at `at` names (a record local's slot).
 fn followed(at: crt::Pos) -> crt::Pos {
-  e: vector<integer> = [0, 0, 0];
-  crt::place_ref(e, at.s, at.r, at.p);
-  from_ints(e)
+  crt::place_pos(at.s, at.r, at.p)
 }
 
 pub fn write(ts: vector<ir::DbType>, file: crt::Pos, val: crt::Pos, tp: integer) {
