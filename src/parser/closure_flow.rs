@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! `@FR-L-Escape` — a capturing closure passed to a parameter its callee KEEPS (loft#2492).
 //!
@@ -64,10 +65,13 @@ fn kept_here(
     }
     // A capture's write: `OpSetInt4(record, pos, FnRefDnr(v))` into a `__closure_*` record.
     let into_record = |args: &[Value]| -> bool {
-        matches!(args, [host, _, dnr] if matches!(dnr.unspan(), Value::FnRefDnr(_))
-            && matches!(host.unspan(), Value::Var(h)
-                if matches!(vars.tp(*h).base(), Type::Reference(r, _)
-                    if data.def(*r).name().starts_with("__closure_"))))
+        let [host, _, dnr] = args else { return false };
+        let Value::Var(h) = host.unspan() else {
+            return false;
+        };
+        let host_type = vars.tp(*h).base();
+        matches!(dnr.unspan(), Value::FnRefDnr(_))
+            && matches!(host_type, Type::Reference(r, _) if data.def(*r).name().starts_with("__closure_"))
     };
     fn walk(
         node: &Value,
