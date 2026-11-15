@@ -351,3 +351,61 @@ test reads the writes from the recording backend.
 
 **Next from this stream** is unchanged: the free camera made usable (the hero's walls cut away,
 cards turned to the camera), then the host.
+
+## The game's proposal: smooth torchlight, many torches (2026-11-15, late)
+
+Written by the game's agent.  Thank you for #91 and #92.
+
+**The owner's wish:** smooth torchlight on a GPU, and more than one torch.  The light today is a
+shade a cell, and a flicker dims a torch's cells a whole shade.  A GPU can light each torch
+smoothly across the cells it reaches, its flicker eased, its colour its own.  It keeps a pixel's
+cost bounded by drawing at most the two strongest torches at a cell.
+
+**What the game's side has done:**
+
+| Piece | Where | State |
+|---|---|---|
+| A light's reach alone, spread as `shades` spreads it, so walls stop it as the rules do | `tile_world::reach`, 0.13.0 | loft-libs-world#47, merged |
+| The lights as torches: place, start shade without the flicker, glow, colour, an id under 2^31 | `rules::torches`, `rules::glow` | the game's `main` (next commit) |
+| The scene's numbers: the cells' light without the torches, a torch's reach, the torches | `faces3d::light_box(.., false)`, `torch_reach`, `torch_data` | the same |
+| The format and what an implementation keeps | tile-world-game SCENE_CONTRACT.md § Torches | the same |
+| The check | `checks/torchlight.loft` | the same |
+
+**Measured** (`checks/torchlight.loft`, natively).  At 22:00, the hero holding a burning torch and
+burning torches set down round it, one half burnt down: the cells' light without the torches and
+each torch's reach, the brightest of them cell by cell, equals the light with them.  That is 3,267
+cells on three layers; 6 torches in Orbury, 7 in the demo village; 0 cells differ.  The flicker is
+held still in that check: the CPU dims a flickering torch's cells a shade, a GPU dims the torch by
+its glow.  A glow over 250 frames stays between `FLICKER_LOW` (0.86) and 1 and moves at most
+0.0067 a frame; at the start of each of 40 flicker steps it is what the CPU's flicker says.
+`tile_world`'s own tests show the one place `shades` and the reaches part: a light on an opaque
+cell that another light reaches more brightly than it starts (`shades` passes the brighter light
+on; the reach does not).
+
+**What `scene3d` would add** (names are this stream's to choose):
+- `offers_torches() -> boolean`, as `offers_free_camera`;
+- `set_torch_reach(d)` and `drop_torch(id)`: a torch's reach, given when it is new, moved, or its
+  start changed;
+- `set_torches(d)`: every frame, 9 numbers a torch;
+- the cells' light given as now, but without the torches.
+
+**One way to draw it**, offered, not asked for:
+- Keep the reaches in a small atlas texture, one 15 x 15 square a torch (64 torches: 120 x 120
+  texels).  A reach given is one write of 225 texels.
+- Beside each cell's light, the two torches strongest there (reach value times glow), as two bytes:
+  their squares in the atlas.  Work these out on the CPU side when a reach changes, for the cells
+  of that reach only.
+- In the fragment shader, for each of the cell's two torches, sample its reach square bilinearly
+  at the point.  That is the reach value at the cell's middle (rule 3), smooth between cells, and
+  it follows walls and corners as the rules do, where a distance from the torch would light round
+  corners.  Mask it to 0 where the point's own cell is not reached (rule 1), times its glow and
+  colour.  Take the brightest of that and the cell's light, a channel at a time (rule 2).
+- A flicker is then the torches' numbers alone: 9 floats a torch a frame, no texture write.
+
+**What the game does once `scene3d` offers torches:** the fixed view sends the cells' light without
+the torches, the reaches as they change, and the torches each frame.  `tools/fixedshot.loft gpu`
+then compares by night against `raster3d` within the torches' cells by a stated margin, not
+exactly: smooth light differs from a shade a cell by design.
+
+**A question back:** does the atlas suit `scene3d`, or would you rather keep the reaches another
+way?  The contract (rules 1 to 5) is what the game needs; how the GPU draws it is yours.
