@@ -862,6 +862,20 @@ fn callee_shape(
     // A returned local that no call handed `buf` binds: a delivery local when every set of it
     // is an exit value, else a VIEW of a record, read field-wise where it is returned.
     let mut delivered: HashSet<u16> = HashSet::default();
+    // A local a literal fills IN PLACE (`OpDatabase(l, tp); OpSetX(l, …)`, the record built
+    // into a work local, then `return l`) owns a record its sets do not show: its one set is
+    // the `l = null` the scope pass declares it with.  It is a VIEW, read field-wise and freed
+    // where it is returned, never a delivery local retyped as the tuple.
+    let mut minted: HashSet<u16> = HashSet::default();
+    def.code().any_node(&mut |c| {
+        if let Value::Call(op, a) = c
+            && *op == ops.database
+            && let Some(Value::Var(v)) = a.first().map(Value::unspan)
+        {
+            minted.insert(*v);
+        }
+        false
+    });
     let mut tail_calls = sh.tail_calls.clone();
     let mut returned = sh.returned.clone();
     let mut todo: Vec<u16> = returned.difference(&sh.bound).copied().collect();
@@ -881,7 +895,7 @@ fn callee_shape(
                 }
                 return Err("a returned local that is no forward, delivery or view");
             }
-        } else if sets.iter().all(|(_, ok, ..)| *ok) {
+        } else if sets.iter().all(|(_, ok, ..)| *ok) && !minted.contains(&l) {
             delivered.insert(l);
             for (_, _, calls, _, answers) in sets {
                 tail_calls.extend(calls.iter().copied());

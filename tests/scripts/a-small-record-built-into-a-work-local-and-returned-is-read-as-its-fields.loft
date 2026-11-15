@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-R-ValueRecord` — a small record a function builds into a WORK local and returns
+// (`OpDatabase(__ref_p2_1, …); OpSetInt(__ref_p2_1, …); return __ref_p2_1`, the form the
+// parser writes where the function's own call sits in a loop that holds the return buffer)
+// owns that record: the value-record pass's tuple twin reads its fields and frees it where it
+// is returned.  It is no delivery local, whose every value is set as an exit, although its
+// only `Set` is the `= null` the scope pass declares it with — retyped as the tuple, the
+// literal kept writing into it as a record (`--interpret`: a free of the stack store, then a
+// crash; the C backend: "a reference expected, a Tup(…) found").
+//
+// The values, by hand: `deep(1, 0)` takes k = 0 at every level, 1 -> 2 -> 3 -> 4 at depth 3,
+// so it answers (4, 3).  `walk([1, 2], 0)` holds no element over 3 at depths 0 to 2 and
+// recurses on [x + 1] for each x: [2] at depth 1, [3] at 2, [4] at 3, which answers (4, 3).
+// `deep(1, 9)` stops at depth 9 > 5 before any element passes 3: absent.  A record that never
+// left the function is freed, so the run ends with no store left over.
+//
+// @falsified-at: hand-measured (2026-11-15) — on 69ea42654 (the pass before this rule) the
+// `deep` cell freed the stack store and crashed on `--interpret`, and `loft --emit-c`
+// refused `deep_tuple`; with `LOFT_NO_IR_VALUE_RECORD=1` both answered (4, 3).
+
+pub struct Range { pub lo: integer, pub hi: integer }
+
+fn deep(x: integer, d: integer) -> Range? {
+  if x > 3 { return Range { lo: x, hi: d }; }
+  if d > 5 { return null; }
+  for k in 0..2 {
+    r = deep(x + k + 1, d + 1);
+    if r != null { return r; }
+  }
+  null
+}
+
+fn walk(v: vector<integer>, d: integer) -> Range? {
+  for x in v {
+    if x > 3 { return Range { lo: x, hi: d }; }
+  }
+  if d > 2 { return null; }
+  for x in v {
+    r = walk([x + 1], d + 1);
+    if r != null { return r; }
+  }
+  null
+}
+
+fn main() {
+  a = deep(1, 0);
+  assert(a != null, "deep(1, 0) answers a range");
+  assert(a!.lo == 4 && a!.hi == 3, "deep(1, 0) is (4, 3), not ({a!.lo}, {a!.hi})");
+  b = walk([1, 2], 0);
+  assert(b != null, "walk answers a range");
+  assert(b!.lo == 4 && b!.hi == 3, "walk is (4, 3), not ({b!.lo}, {b!.hi})");
+  assert(deep(1, 9) == null, "deep(1, 9) stops before any element passes 3");
+  println("{a!.lo} {a!.hi} {b!.lo} {b!.hi}");
+}
