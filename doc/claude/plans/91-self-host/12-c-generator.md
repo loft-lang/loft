@@ -201,6 +201,19 @@ default `bodies` layer (it prints `N of 1076 units agree`, so a generator that d
 units cannot pass as "0 different"); `one.sh FILE FUNCTION` prints the unified diff of one
 body, the Rust writer's against the loft writer's, under the plain switches.
 
+### An open design question: a rule keyed on node identity
+
+`opt/below_len.rs` (`LOFT_NO_GUARD_BOUND`, `@FR-R-Base`'s guard clause) answers the set of
+index nodes a passed test keeps below their vector's length BY ADDRESS, and the writer asks by
+address.  The loft writer cannot: a node collected into a vector is a copy (`&a == &b` finds no
+match — measured), and two equal `v[i]`, one under the test and one outside it, rule out asking
+by structure.  Three ways to carry it: the writer keeps the analysis' live facts itself, pushed
+at an `if` and killed where `visit` kills them (with save and restore around every loop it
+writes twice); the lowering marks a guarded index in the IR, which both writers then read; a
+path or ordinal key, which the writer has no way to know.  The second is the direction the
+other rules took (@PLN211) and changes the Rust side.  Until it is decided the switch stays in
+`PLAIN_SWITCHES`.
+
 ## What decides a step is done
 
 - The survey's count for the step's form did not drop and rose by what the step named.
