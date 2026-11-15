@@ -10164,7 +10164,21 @@ use a separate collection or add after the loop"
                         (Type::RefVar(inner), Type::Reference(have, _) | Type::Enum(have, true, _))
                             if matches!(inner.base(), Type::Reference(want, _)
                                 | Type::Enum(want, true, _) if want == have));
-                if !place_view {
+                // loft#2497 — an annotation naming a record declared BELOW is written, not a
+                // guess: `out: vector<Memo>` is `vector<Unknown(stub)>` on pass 1, which
+                // `change_var_type` reads as unknown and drops, so the local stayed `Unknown`.
+                // Pass 1 then never promoted it onto `__retbuf` (the tail had no vector type)
+                // and pass 2 did, after the local had minted its own backing store — the
+                // two passes disagreed on the frame and the store leaked once per call.  The
+                // stub is the type's own name: `resolve_adopted_stubs` makes it the record
+                // between the passes, as it does for a parameter's.
+                let annotated_stub = self.first_pass
+                    && matches!(self.vars.tp(v_nr), Type::Unknown(0))
+                    && matches!(tp, Type::Vector(..))
+                    && tp.any_node(&mut |t| matches!(t, Type::Unknown(n) if *n != 0));
+                if annotated_stub {
+                    self.vars.set_type(v_nr, tp.clone());
+                } else if !place_view {
                     self.change_var_type(v_nr, &tp);
                 }
                 // (I-Join) — an EXPLICIT `: Type` annotation pins the variable's type, so

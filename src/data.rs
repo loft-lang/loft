@@ -10757,6 +10757,28 @@ impl Data {
                         attr.typedef = new_ty;
                     }
                 }
+                // …except that "pass 2 re-parses a signature" is not what `parse_function`
+                // does: it stores `returned` on pass 1 only.  The TUPLE case above is why a
+                // swept tuple return is unsound, and `refuse_forward_tuple_returns` refuses
+                // it; a stub NESTED in any other return (`-> vector<Memo>` with `Memo`
+                // declared below) has no promotion to redo and nothing else re-resolves it
+                // — `fill_all` peels only a bare `Unknown` and its `?`.  Left in place, every
+                // caller read the call as `vector<unknown>`: `for m in chains(k) { m.name }`
+                // was refused and `v = chains(k);` broke the statement after it (loft#2497).
+                if self.definitions[d_nr].def_type == DefType::Function {
+                    let ret = &self.definitions[d_nr].returned;
+                    let bare = match ret {
+                        Type::Optional(inner) => inner.as_ref(),
+                        other => other,
+                    };
+                    let nested = !matches!(bare, Type::Unknown(_))
+                        && !ret.any_node(&mut |t| matches!(t, Type::Tuple(_)));
+                    if nested
+                        && let Some(new_ty) = Self::rewrite_type_opt(ret, stub_nr, &target)
+                    {
+                        self.definitions[d_nr].returned = new_ty;
+                    }
+                }
                 // …and the function's variable table, which the two-pass parser
                 // pre-populates in pass 1.  A local declared with a forward-referenced
                 // type sits there as `Unknown(stub)`, and pass 2 — which resolves the name

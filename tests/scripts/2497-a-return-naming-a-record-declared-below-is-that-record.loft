@@ -1,0 +1,134 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2497 — a function whose return type NAMES a record declared further down
+// (`-> vector<Memo>`, `struct Memo` below it).  Two halves, each a pass-1 placeholder that
+// pass 2 did not see through:
+// (1) the return type kept the forward stub inside the `vector<…>` for good, so every caller
+//     read `vector<unknown>`: `for m in chains(k) { m.name }` was refused and `v = chains(k);`
+//     broke the statement after it;
+// (2) an ANNOTATED local of that type (`out: vector<Memo> = []`) was `unknown` on pass 1, so
+//     pass 1 never made it the return buffer and pass 2 did, after the local had built its
+//     own store — one store leaked per call (a module cycle reached this half alone).
+// Each value is hand-computed; the leak check is the harness's.
+//
+// @falsified-at: 5330b3690 — interpret exit 1 -> 0, native exit 1 -> 0
+//   ARMED: nothing for the run — a plain run reports a store not freed at exit; the records
+//   half reads `LOFT_OWN_ORACLE=check-records`.
+//   HOLDS: leak, panic and refusals are clean on both trees (`falsify` requires HERE clean);
+//   the control refuses (1) before (2) can leak, so the leak half is pinned by the
+//   store-records oracle instead: `own_sweep.py --oracle check-records` reads CAUGHT on
+//   the module-cycle shape of loft#2497 with the uncured build, CLEAN with this one.
+// CHANNEL: the values; (1) did not compile, (2) leaked.
+// Axes this file MOVES:  how the answer is built (annotated local, inferred local, literal,
+//                        early return); the element (record, enum, a vector of them); how
+//                        the caller takes it (walk, bind and index, length); the walk
+//                        (plain, `par`).
+// Axes it HOLDS FIXED:   every type is declared below every function that names it.
+
+fn c_inf(k: integer) -> vector<Memo> {
+  out = base(k);
+  out
+}
+
+fn c_lit(k: integer) -> vector<Memo> {
+  [Memo { name: "l{k}", n: k }, Memo { name: "x", n: 1 }]
+}
+
+fn c_count(k: integer) -> integer {
+  v: vector<Memo> = [];
+  v += [Memo { name: "c", n: k }];
+  v += [Memo { name: "d", n: 2 }];
+  len(v) * 100 + v[0].n
+}
+
+fn c_nest(k: integer) -> vector<vector<Memo>> {
+  o: vector<vector<Memo>> = [];
+  o += [base(k)];
+  o += [base(k + 1)];
+  o
+}
+
+fn c_enum(k: integer) -> vector<Shape> {
+  s: vector<Shape> = [];
+  s += [Sq { side: k }];
+  s += [Dot];
+  s
+}
+
+fn c_early(k: integer) -> vector<Memo> {
+  out: vector<Memo> = [];
+  out += [Memo { name: "e{k}", n: k }];
+  if k > 5 { return out; }
+  out += [Memo { name: "f", n: 0 }];
+  out
+}
+
+fn base(k: integer) -> vector<Memo> {
+  out: vector<Memo> = [];
+  if k > 3 { out += [Memo { name: "m{k}", n: k }]; }
+  out
+}
+
+fn hold(decls: vector<text>, k: integer) {
+  for ch in base(k) {
+    decls += ["int {ch.name}"];
+  }
+}
+
+fn first(k: integer) -> text {
+  v = base(k);
+  if len(v) == 0 { return "-"; }
+  v[0].name
+}
+
+fn twice(r: Memo) -> integer { r.n * 2 }
+
+// A `par` walk sizes its element on pass 1, where `Memo` was a stub with no definition: an
+// internal compiler error before, for a parameter and an annotated local alike.
+fn par_total(rows: vector<Memo>) -> integer {
+  t = 0;
+  for r in rows par(b = twice(r), 4) { t += b; }
+  t
+}
+
+fn area(s: Shape) -> integer {
+  match s {
+    Sq { side } => side * side,
+    _ => 1,
+  }
+}
+
+struct Memo { name: text, n: integer }
+
+enum Shape { Dot, Sq { side: integer } }
+
+fn test_a_walk_and_a_bind_over_the_answer() {
+  decls: vector<text> = [];
+  hold(decls, 3);
+  hold(decls, 4);
+  assert("{len(decls)} {decls[0] ?? "-"} {first(3)} {first(5)}" == "1 int m4 - m5",
+    "{len(decls)} {first(3)} {first(5)}");
+}
+
+fn test_each_way_of_building_the_answer() {
+  a = 0;
+  for m in c_inf(4) { a += m.n; }
+  b = "";
+  for m in c_lit(7) { b += m.name; }
+  d = 0;
+  for row in c_nest(3) { d = d * 10 + len(row); }
+  e = 0;
+  for s in c_enum(3) { e += area(s); }
+  f = "";
+  for m in c_early(6) { f += m.name; }
+  for m in c_early(2) { f += "/{m.name}"; }
+  assert("{a} {b} {c_count(9)} {d} {e} {f}" == "4 l7x 209 1 10 e6/e2/f",
+    "{a} {b} {c_count(9)} {d} {e} {f}");
+}
+
+fn test_a_par_walk_over_the_answer() {
+  rows: vector<Memo> = [Memo { name: "a", n: 1 }, Memo { name: "b", n: 2 }, Memo { name: "c", n: 3 }];
+  assert(par_total(rows) == 12, "par_total: {par_total(rows)}");
+  assert(par_total(c_lit(6)) == 14, "par over a call: {par_total(c_lit(6))}");
+}

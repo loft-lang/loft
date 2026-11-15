@@ -5743,6 +5743,12 @@ use #count instead"
                 // question arises (loft#1298) — so a keyed element's stride is unmeasured,
                 // and a number nothing can check is not a fact to write down.
                 4
+            } else if elm_td == u32::MAX && self.first_pass {
+                // loft#2497 — a record declared BELOW is still its pass-1 stub, which has no
+                // definition to size: `for r in rows par(…)` over a `vector<Row>` with `Row`
+                // declared later was an internal compiler error here.  Pass 1's IR is thrown
+                // away, and pass 2 sizes the resolved record.
+                4
             } else {
                 let known = self.data.def(elm_td).known_type();
                 let db_size = i32::from(self.database.size(known));
