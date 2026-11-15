@@ -1062,7 +1062,10 @@ fn materialize_run_image(
             e.set_field_str(stores, 0, n);
         }
     }
-    for (off, list) in [(ds::RUNIMG_DEF_FILES, &debug.def_files), (ds::RUNIMG_LINES, &debug.lines)] {
+    for (off, list) in [
+        (ds::RUNIMG_DEF_FILES, &debug.def_files),
+        (ds::RUNIMG_LINES, &debug.lines),
+    ] {
         crate::vector::pre_alloc_vector(&slot(off), count(list.len()), 4, &mut stores.allocations);
         let v = rec.field_recvec(off, 4);
         for &at in list {
@@ -1095,7 +1098,11 @@ pub fn run_image_debug(
     let mut def_files = Vec::with_capacity(data.definitions.len());
     for def in &data.definitions {
         let is_fn = matches!(def.def_type, crate::data::DefType::Function);
-        names.push(if is_fn { def.trace_name() } else { String::new() });
+        names.push(if is_fn {
+            def.trace_name()
+        } else {
+            String::new()
+        });
         let file = def.position().file.to_string();
         let n = u32::try_from(file_of.len()).unwrap_or(u32::MAX);
         let at = *file_of.entry(file.clone()).or_insert_with(|| {
@@ -1138,7 +1145,11 @@ fn run_image_c_call(data: &Data, name: &str) -> Option<String> {
     }
     let sig = crate::c_signature::of(data, d, crate::c_signature::CTarget::host())?.ok()?;
     let mut args = String::new();
-    for a in def.attributes().iter().filter(|a| !a.name.starts_with("__") && !a.name.starts_with('#')) {
+    for a in def
+        .attributes()
+        .iter()
+        .filter(|a| !a.name.starts_with("__") && !a.name.starts_with('#'))
+    {
         args.push(match a.typedef.base() {
             Type::Boolean | Type::Enum(_, false, _) => 'b',
             Type::Character => 'c',
@@ -1146,7 +1157,8 @@ fn run_image_c_call(data: &Data, name: &str) -> Option<String> {
             _ => return None,
         });
     }
-    if args.len() != sig.params.len() || !sig.params.iter().all(|p| matches!(p, CType::Int { .. })) {
+    if args.len() != sig.params.len() || !sig.params.iter().all(|p| matches!(p, CType::Int { .. }))
+    {
         return None;
     }
     let ret = match sig.ret {
