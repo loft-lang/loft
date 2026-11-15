@@ -124,6 +124,8 @@ pub struct State {
   pub lio: vector<integer>,
   // The bytes a popped text is copied through (`get_stack_str`), kept between operators.
   pub tbuf: vector<u8>,
+  // The code's length, for the operand readers' one test (the code never changes once loaded).
+  pub code_len: integer,
 }
 
 // What `OpNewRecord` / `OpFinishRecord` file a record into, derived once per parent type and
@@ -284,7 +286,7 @@ pub fn plain_return(self: State) -> boolean {
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }] };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], lights: [], lio: [0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code) };
   ptab = natives::par_natives(img);
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
@@ -341,7 +343,7 @@ fn ensure_stack(self: State, step: integer) {
 
 // Are `n` more bytes of code there?  Past the end the run stops (`code_out_of_range`).
 fn code_has(self: State, n: integer) -> boolean {
-  if self.code_pos < 0 || self.code_pos + n > len(self.code) {
+  if self.code_pos < 0 || self.code_pos + n > self.code_len {
     if self.fault == "" {
       self.stop("the code position {self.code_pos} is outside the bytecode ({len(self.code)} bytes)");
     }
@@ -378,7 +380,7 @@ pub fn code_u8(self: State) -> integer {
   if !self.code_has(1) {
     return 0;
   }
-  v = crt::get_u8(self.code, self.code_pos);
+  v = crt::peek_u8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v
 }
@@ -387,7 +389,7 @@ pub fn code_i8(self: State) -> integer {
   if !self.code_has(1) {
     return 0;
   }
-  v = crt::get_i8(self.code, self.code_pos);
+  v = crt::peek_i8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v
 }
@@ -396,7 +398,7 @@ pub fn code_u16(self: State) -> integer {
   if !self.code_has(2) {
     return 0;
   }
-  v = crt::get_u16(self.code, self.code_pos);
+  v = crt::peek_u16(self.code_held, self.code_pos);
   self.code_pos += 2;
   v
 }
@@ -405,7 +407,7 @@ pub fn code_i16(self: State) -> integer {
   if !self.code_has(2) {
     return 0;
   }
-  v = crt::get_i16(self.code, self.code_pos);
+  v = crt::peek_i16(self.code_held, self.code_pos);
   self.code_pos += 2;
   v
 }
@@ -414,7 +416,7 @@ pub fn code_u32(self: State) -> integer {
   if !self.code_has(4) {
     return 0;
   }
-  v = crt::get_u32(self.code, self.code_pos);
+  v = crt::peek_u32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -423,7 +425,7 @@ pub fn code_i32(self: State) -> integer {
   if !self.code_has(4) {
     return 0;
   }
-  v = crt::get_i32(self.code, self.code_pos);
+  v = crt::peek_i32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -432,7 +434,7 @@ pub fn code_i64(self: State) -> integer {
   if !self.code_has(8) {
     return 0;
   }
-  v = crt::get_i64(self.code, self.code_pos);
+  v = crt::peek_i64(self.code_held, self.code_pos);
   self.code_pos += 8;
   v
 }
@@ -441,7 +443,7 @@ pub fn code_f32(self: State) -> single {
   if !self.code_has(4) {
     return 0.0f;
   }
-  v = crt::get_f32(self.code, self.code_pos);
+  v = crt::peek_f32(self.code_held, self.code_pos);
   self.code_pos += 4;
   v
 }
@@ -450,7 +452,7 @@ pub fn code_f64(self: State) -> float {
   if !self.code_has(8) {
     return 0.0;
   }
-  v = crt::get_f64(self.code, self.code_pos);
+  v = crt::peek_f64(self.code_held, self.code_pos);
   self.code_pos += 8;
   v
 }
@@ -460,7 +462,7 @@ pub fn code_bool(self: State) -> boolean {
   if !self.code_has(1) {
     return false;
   }
-  v = crt::get_u8(self.code, self.code_pos);
+  v = crt::peek_u8(self.code_held, self.code_pos);
   self.code_pos += 1;
   v == 1
 }
@@ -1150,6 +1152,12 @@ pub fn local_tag(self: State, of: integer, a: integer) -> integer? {
 
 // Type `tp`'s default image, derived on its first use.
 pub fn default_of(self: State, tp: integer) -> vector<u8> {
+  self.image_ready(tp);
+  self.images[tp] ?? []
+}
+
+// Type `tp`'s default image derived (`images`), for a caller that reads it in place.
+pub fn image_ready(self: State, tp: integer) {
   while len(self.imaged) <= tp {
     self.images += [[]];
     self.imaged += [false];
@@ -1158,7 +1166,6 @@ pub fn default_of(self: State, tp: integer) -> vector<u8> {
     self.images[tp] = types::default_image(self.types, tp);
     self.imaged[tp] = true;
   }
-  self.images[tp] ?? []
 }
 
 // Fact `k` (`F_*`) of type `tp`, derived by its `types::` function on the first ask; null
@@ -1306,7 +1313,9 @@ fn new_record_of(self: State, defaults: boolean) {
     crt::vec_append(self.lio, vs, vr, vp, t.size);
   }
   if defaults {
-    crt::fill(self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, self.default_of(t.elem));
+    // The image read where it is kept: `default_of` would answer a copy.
+    self.image_ready(t.elem);
+    crt::fill(self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0, self.images[t.elem]!);
   }
   crt::set_slot_ref(self.stk, at, self.lio[0] ?? NULL_STORE, self.lio[1] ?? 0, self.lio[2] ?? 0);
 }
