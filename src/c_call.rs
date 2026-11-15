@@ -410,6 +410,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
         }
     }
     slots.reverse();
+    let slots = stack_image(slots, &binding.sig.params);
 
     let Some(f) = resolve(&binding.sig.symbol) else {
         panic!("{}", missing_symbol_message(&binding.sig.symbol));
@@ -460,6 +461,52 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
     // The declared width is what makes this right; read raw, a negative `int`
     // would arrive as a large positive.
     stores.put(stack, narrow_return(raw, &binding.sig.ret));
+}
+
+/// The argument slots as the callee reads them.
+///
+/// A trampoline passes every argument as one `u64`: the first eight in registers, the rest in
+/// 8-byte stack slots.  That IS the C convention where a stack argument takes a whole slot
+/// (x86-64, AArch64 Linux).  Apple's AArch64 convention packs stack arguments at their own
+/// size and alignment instead, so a ninth `int32_t` and a tenth share one 8-byte word: called
+/// through 8-byte slots, the callee read the tenth argument from the upper half of the ninth's
+/// slot and every later one from the wrong place — `tiles`' `tl_draw_ground` (fourteen
+/// arguments) drew another picture under the interpreter than compiled, with nothing said.
+///
+/// So the stack arguments are laid out here as the callee expects them and handed on as the
+/// words of that image, which the trampoline's contiguous 8-byte slots reproduce byte for byte.
+#[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
+fn stack_image(slots: Vec<u64>, params: &[CType]) -> Vec<u64> {
+    const IN_REGISTERS: usize = 8;
+    if slots.len() <= IN_REGISTERS || slots.len() != params.len() {
+        return slots;
+    }
+    let mut image: Vec<u8> = Vec::new();
+    for (value, param) in slots[IN_REGISTERS..].iter().zip(&params[IN_REGISTERS..]) {
+        let size = match param {
+            CType::Int { bits, .. } => usize::from(*bits / 8).clamp(1, 8),
+            _ => 8,
+        };
+        while image.len() % size != 0 {
+            image.push(0);
+        }
+        image.extend_from_slice(&value.to_le_bytes()[..size]);
+    }
+    while image.len() % 8 != 0 {
+        image.push(0);
+    }
+    let mut out = slots[..IN_REGISTERS].to_vec();
+    for word in image.chunks_exact(8) {
+        let mut w = [0u8; 8];
+        w.copy_from_slice(word);
+        out.push(u64::from_le_bytes(w));
+    }
+    out
+}
+
+#[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
+fn stack_image(slots: Vec<u64>, _params: &[CType]) -> Vec<u64> {
+    slots
 }
 
 /// The message for a call past the ladder, worded once.

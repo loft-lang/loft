@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The neutral layer: names no backend, depends on none.
+fn lyr_use(table: integer) -> integer;
+#c "lyr_use" "int64_t(int64_t)"
+fn lyr_apply(x: integer) -> integer;
+#c "lyr_apply" "int64_t(int64_t)"
+fn lyr_name() -> text;
+#c "lyr_name" "const char*()"
+
+/// Hand the layer a backend's table; false for a null table or one of another version.
+pub fn use_backend(table: integer) -> boolean { lyr_use(table) != 0 }
+/// The call the layer passes on; -1 with no backend.
+pub fn apply(x: integer) -> integer { lyr_apply(x) }
+pub fn name() -> text { lyr_name() }

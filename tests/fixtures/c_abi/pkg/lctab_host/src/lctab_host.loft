@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The host: asks each backend in turn and hands the layer the first that answers.
+use lctab;
+use lctab_none;
+use lctab_a;
+pub fn open() -> boolean {
+  for t in [lctab_none::table(), lctab_a::table()] {
+    if t != 0 { return lctab::use_backend(t); }
+  }
+  false
+}

@@ -296,19 +296,19 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
         .expect("generated cdylib source should exist");
     let lib_rs = fa::read_to_string(&rs_path).expect("read generated cdylib source");
     assert!(
-        lib_rs.contains("loft_shared_n_triple"),
+        lib_rs.contains("loft_shared_mathmixed__n_triple"),
         "triple should have a native bridge"
     );
     assert!(
-        lib_rs.contains("loft_shared_n_apply_inc"),
+        lib_rs.contains("loft_shared_mathmixed__n_apply_inc"),
         "apply_inc calls a function value the cdylib carries — it compiles (@PLN199 C2)"
     );
     assert!(
-        !lib_rs.contains("loft_shared_n_label"),
+        !lib_rs.contains("loft_shared_mathmixed__n_label"),
         "label (a `single`-returning function value) must NOT be dispatched native — it stays interpreted"
     );
     assert!(
-        !lib_rs.contains("loft_shared_n___lambda"),
+        !lib_rs.contains("loft_shared_mathmixed__n___lambda"),
         "a synthetic lambda must NOT be a native dispatch target"
     );
 
@@ -1781,7 +1781,7 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
     assert!(run().status.success(), "baseline run");
     let artifact = sole_artifact(&native_auto);
     assert!(
-        write_decoy_cdylib(&artifact, &["loft_shared_n_factorial"], &tmp),
+        write_decoy_cdylib(&artifact, &["loft_shared_mathnative__n_factorial"], &tmp),
         "rustc could not build the decoy cdylib"
     );
 
@@ -2038,4 +2038,69 @@ fn a_dependency_version_is_part_of_its_users_native_artifact() {
         artifacts, 2,
         "each resolution names its own artifact, so the second order built two as well"
     );
+}
+
+/// Two compiled libraries that each export a function of one name answer with their own
+/// (loft#2507; @C97: a library's public symbols live under its module).  The host finds a library's
+/// bridge by name across every library it loaded, so the name carries the library's own:
+/// with the bare name, all three calls below ran the first library's `total`.  By hand, for
+/// n = 4 (0 + 1 + 2 + 3 = 6): 6 + 11, 6 + 22, 6 + 33.
+///
+/// @falsified-at fb83c7c2e + this change: `library_bridge_ident` without the library's name
+/// answers `17 17 17`.
+#[test]
+fn two_compiled_libraries_exporting_one_name_each_answer_their_own() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_samename_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    for (pkg, base) in [("samea", 11), ("sameb", 22), ("samec", 33)] {
+        let dir = tmp.join("lib").join(pkg);
+        fa::create_dir_all(dir.join("src")).unwrap();
+        fa::write(
+            dir.join("loft.toml"),
+            format!(
+                "[package]\nname = \"{pkg}\"\nversion = \"0.1.0\"\n\n\
+                 [library]\nentry = \"src/{pkg}.loft\"\ncompile = \"native\"\n"
+            ),
+        )
+        .unwrap();
+        fa::write(
+            dir.join("src").join(format!("{pkg}.loft")),
+            format!(
+                "pub fn total(n: integer) -> integer {{\n  t = {base};\n  \
+                 for i in 0..n {{ t += i; }}\n  t\n}}\n"
+            ),
+        )
+        .unwrap();
+    }
+    let prog = tmp.join("main.loft");
+    fa::write(
+        &prog,
+        "use samea;\nuse sameb;\nuse samec;\n\
+         fn main() {\n  for n in [4] {\n    \
+         println(\"{samea::total(n)} {sameb::total(n)} {samec::total(n)}\");\n  }\n}\n",
+    )
+    .unwrap();
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .env("LOFT_REQUIRE_NATIVE", "1")
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(tmp.join("lib"))
+        .arg(&prog)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "17 28 39\n",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fa::remove_dir_all(&tmp);
 }

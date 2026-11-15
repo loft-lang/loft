@@ -5679,6 +5679,101 @@ fn main() {\n\
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
 
+/// A C function's arguments past the eighth arrive whatever their width, on both backends.
+/// The interpreter passes every argument as one 8-byte slot, which is the convention where a
+/// stack argument takes a whole slot; Apple's AArch64 packs stack arguments at their own size,
+/// and there the slots are laid out as the callee reads them (`c_call::stack_image`).  By
+/// hand, argument i weighted by i: 1..8 squared sum to 204; 9 * -9, 10 * 10, 11 * 11000000000,
+/// 12 * -12, 13 * 13, 14 * 14 add -81 + 100 + 121000000000 - 144 + 169 + 196.
+///
+/// @falsified-at adc39000c + this change: on an Apple-silicon Mac, without `stack_image` the
+/// interpreter answers another number than the C backend.
+#[test]
+fn stack_arguments_of_every_width_arrive_on_both_backends() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let src = "use lcshim::*;\n\
+fn main() {\n\
+  println(\"{shim_wide(1, 2, 3, 4, 5, 6, 7, 8, -9, 10, 11000000000, -12, 13, 14)}\");\n\
+}\n";
+    let want = "121000000444\n";
+    let libdir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = scratch("wide");
+    let file = dir.join("wide.loft");
+    fa::write(&file, src).expect("write program");
+    for mode in ["--interpret", "--native-c"] {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .env("LOFT_TIMEOUT", "600")
+            .arg(mode)
+            .arg("--lib")
+            .arg(&libdir)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// A backend's table of C functions reaches another library's C in every build
+/// (@PLN209 GPU_LAYER.md L0): `lctab` holds the table it is handed and names no backend;
+/// `lctab_a` and `lctab_b` each export one; `lctab_none` answers 0, as a backend does on a
+/// machine without its stack, and `lctab_host` skips it.  A symbol one library declares and
+/// another defines would resolve only where every library's C is linked into one binary, so
+/// the table is checked where each library's C is its own shared library too (the
+/// interpreter, `--dynamic`).  By hand: no backend answers -1; `lctab_a` is 4 * 3 + 7 = 19;
+/// `lctab_b` is 4 * 5 + 11 = 31; a null table is refused and leaves `lctab_b` in place.
+///
+/// @falsified-at fb83c7c2e + this change: a fixture without its `[c] shim` line fails every
+/// mode (the `#c` symbol is not found); `lctab_b` multiplying by 6 fails the `b` line.
+#[test]
+fn a_backend_table_crosses_libraries_in_every_build() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let src = "use lctab;\nuse lctab_host;\nuse lctab_b;\n\
+fn main() {\n\
+  println(\"none {lctab::apply(4)} {lctab::name()}\");\n\
+  println(\"host {lctab_host::open()} {lctab::apply(4)} {lctab::name()}\");\n\
+  println(\"b {lctab::use_backend(lctab_b::table())} {lctab::apply(4)} {lctab::name()}\");\n\
+  println(\"null {lctab::use_backend(0)} {lctab::apply(4)} {lctab::name()}\");\n\
+}\n";
+    let want = "none -1 none\nhost true 19 lctab_a\nb true 31 lctab_b\nnull false 31 lctab_b\n";
+    let libdir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = scratch("table");
+    let file = dir.join("table.loft");
+    fa::write(&file, src).expect("write program");
+    let modes: [&[&str]; 4] = [
+        &["--interpret"],
+        &["--native-c"],
+        &["--native-c", "--ship"],
+        &["--native-c", "--ship", "--dynamic"],
+    ];
+    for mode in modes {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .env("LOFT_TIMEOUT", "600")
+            .args(mode)
+            .arg("--lib")
+            .arg(&libdir)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
 /// `#c_twin`: the interpreter runs a twin's loft body and the C backend calls its C routine, and
 /// the two answer the same — a vector crossing with its count, a float crossing as itself.  The
 /// C calls the routines rather than compiling the bodies.  Hand-computed: `[10, 20, 30]` weighed

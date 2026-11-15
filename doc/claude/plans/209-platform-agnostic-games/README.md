@@ -17,7 +17,8 @@ over [@PLN72](https://github.com/loft-lang/plans/issues/72)).
 | Phase | State |
 |---|---|
 | F1–F12, F8b | Open |
-| G1–G4, G3b | Open — the 3D work (graphics, stage, the moros editor) continues alongside arc F; G reshapes its boundary |
+| G1, G3b | Open — the 3D work (graphics, stage, the moros editor) continues alongside arc F; G reshapes its boundary |
+| G2–G4 | Open — cut into steps in [GPU_LAYER.md](GPU_LAYER.md): a GPU layer that names no stack, with GL, Metal, Vulkan and console backends as libraries beneath it |
 
 ## Goal
 
@@ -196,36 +197,28 @@ platform sections; graphics' own X11, Cocoa and browser windows go.  Windows' GL
 G10) is written here, once.
 - Goes red when: graphics' suite and its 0.9 pixel comparisons change on any machine.
 
-**G2 — the GPU boundary (L).**  `Shader` / state calls become pipelines (shader, vertex layout,
-blend, depth, cull together), render passes (a target, how it is loaded and stored) and uniform
-blocks bound by slot from a typed loft struct — the model Metal, Direct3D 12, Vulkan and the
-console APIs share.  GL and WebGL2 implement it by setting state when a pipeline is bound.
-- Goes red when: stage and every graphics example draw other pixels than on 0.11.
-
-**G3 — one shader source, then Metal (L).**  Shaders are written once, in a shading subset of
-loft (§ Decisions), compiled by loft to GLSL first: today's graphics and stage shaders, rewritten
-in it, draw the same pixels on GL and WebGL2 as their hand-written GLSL.  Then a Metal emitter;
-Metal is the first second backend because two very different APIs expose a bad boundary fastest.
-A platform may carry a hand-tuned variant of a shader (API.md rule 6), checked against the common
-one's output.
-- Goes red when: a rewritten shader draws other pixels than its GLSL original; a scene draws
-  other pixels on Metal than on GL beyond a measured tolerance; a shader's CPU (C) build answers
-  other pixels than its GPU build beyond that tolerance.
+**G2–G4 — the GPU boundary, one shader source, the further backends.**  Cut into steps in
+[GPU_LAYER.md](GPU_LAYER.md), which is the plan for them.  The boundary is a library of its own
+that depends on no backend (owner, 2026-11-15): `Shader` / state calls become pipelines (shader,
+vertex layout, blend, depth, cull together), render passes and uniform blocks bound by slot from
+a typed loft struct — the model Metal, Direct3D 12, Vulkan and the console APIs share — and each
+stack (GL and WebGL2, Metal, Vulkan, a console's in a private repo under its maker's licence) is
+a library beneath it.  Direct3D only when Xbox is a target, else through ANGLE.
 
 **G3b — meshes reworked per target (M).**  The ship build's asset rework (F8b) extended to
 meshes: a `.glb` simplified for a target's screen and tier by edge collapse, in loft-libs-assets.
 - Goes red when: a simplified mesh leaves its source by more than its declared `max_error`
   (measured as the largest surface distance); its triangle count does not fall for a lower tier.
 
-**G4 — further backends (L each).**  Vulkan (Linux, Android, Steam Deck); a console backend in a
-private repo, implementing the same C interface under its maker's licence; Direct3D only when Xbox
-is a target, else through ANGLE.
-
 ## Decisions
 
 - **The libraries offer, the game chooses** (owner).  Several displays, gamepads, touch, round
   screens: the libraries support each well enough that a game can use it, and whether a game does
   is the game's decision.  No library forces a choice or hides a capability the machine has.
+- **A backend is a library; the layer games build against depends on none** (owner,
+  2026-11-15).  A library may be about one stack — GL, Metal, Vulkan, the Tanmatsu's renderer, a
+  console's; the GPU layer names no stack, so a console backend can be added without changing
+  it ([GPU_LAYER.md](GPU_LAYER.md) § The shape).
 - **One shader source: a shading subset of loft** (owner).  Pure functions over fixed-size vectors
   and matrices — no heap, no text — compiled by loft to GLSL, Metal, HLSL and C.  A uniform block
   is a loft struct, so its layout cannot disagree with the shader; the C build runs a shader on the

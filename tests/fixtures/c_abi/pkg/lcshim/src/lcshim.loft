@@ -29,6 +29,12 @@ pub fn shim_rgb_sum(v: vector<Px>) -> integer;                  #c "lcs_shim_rgb
 // From the shim's SECOND source file (`lc_shim_two.c`).
 pub fn shim_half(a: integer) -> integer;                       #c "lcs_shim_half" "int64_t(int64_t)"
 
+// Fourteen arguments, the ones past the eighth of four widths (`tests/c_emit.rs`).
+pub fn shim_wide(a1: integer, a2: integer, a3: integer, a4: integer, a5: integer, a6: integer,
+                 a7: integer, a8: integer, b9: integer, b10: integer, b11: integer, b12: integer,
+                 b13: integer, b14: integer) -> integer;
+#c "lcs_shim_wide" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int32_t, int8_t, int64_t, int16_t, int32_t, int32_t)"
+
 // `#c_twin` — a loft body and the C version the C backend calls in its place; the other backends
 // run the body, and the two answer the same (`tests/c_emit.rs`).  A twin may take a float: only
 // the C backend calls the routine, through its prototype.

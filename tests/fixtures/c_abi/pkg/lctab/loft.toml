@@ -1,0 +1,13 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+[package]
+name = "lctab"
+version = "0.1.0"
+loft = ">=2026.11.0"
+description = "A fixture of the backend-table guard (tests/c_emit.rs)"
+
+[library]
+entry = "src/lctab.loft"
+
+[c]
+shim = "c/lctab.c"
