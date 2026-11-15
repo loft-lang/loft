@@ -108,10 +108,9 @@ The first two are run by hand; neither is a test yet.
 | Part | State |
 |---|---|
 | operator templates and `State` methods | every operator is carried (`create.loft` prints the count; `--missing` lists none).  The `State`'s methods are in `state.loft` and `state_ops.loft`.  Operators no program of the corpus runs are checked by the build only: the child-record and store-buffer families beyond `OpStoreBuf`, `OpEvacuate`, `OpAdoptVector`, `OpCopyClosure`, the slot-cell writes, the store tags |
-| natives (`OpStaticCall`) | `natives.loft`.  Not ported, and what still stops corpus programs: `stack_trace` and `type_named` (both need the definitions' names, which the run image does not carry), and a `#c` function a program declares itself |
-| `stack_trace()` | not carried: the line of each bytecode position and a function's variable table are known only to the bytecode writer.  They come with the bytecode writer in loft ([rust-dependencies.md](rust-dependencies.md), steps 1–2), not from the Rust image writer |
-| a paged load by a text key that holds a NUL byte | fails one corpus program (`store_load_key_text`, Col-Trie 2241); not diagnosed |
-| `par` | a queue's or a fold's workers run one after another by `natives.loft`'s scheduler (`par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return |
+| natives (`OpStaticCall`) | `natives.loft`; the run image carries the definitions' names, files and lines and a program's own `#c` bindings, so `stack_trace`, reflection (`type_of`, `type_named`, `field_value`) and a program's `#c` functions run.  Not carried (no corpus program reaches them): the networking kernel (`kernel_*`), live rebuild and swap, the lazy stores, `store_load_url`, `git_query`, `process_run`, host input and output |
+| `stack_trace()` | carried: frames, function names and call lines from the image's line table; a frame's arguments and variables are empty (the variable table is the bytecode writer's) |
+| `par` | a queue's or a fold's workers run one after another by `natives.loft`'s scheduler (`par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return.  On threads: [1b-par-threads.md](1b-par-threads.md) (what the rules allow, what the runner has to change) |
 | compiled library code | not built: every library function runs as bytecode (difference 9).  To build: the standard library's and each `use`d library's compiled bodies linked into the runner and called at `OpStaticCall`, as Rust calls its bridges |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |

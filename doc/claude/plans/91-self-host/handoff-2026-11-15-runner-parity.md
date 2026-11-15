@@ -67,7 +67,9 @@ getting faster where the runner exposed a mechanism.  How the loop and an arm wo
    each routine to one core, so `par_text` reads 1.55 there, but on four cores the runner takes
    3.0 s against the Rust interpreter's 1.08 s (task-clock = elapsed: one CPU).  Workers on
    threads need runner state per thread over a store table the C runtime does not share
-   safely today — a design item.
+   safely today — a design item: [1b-par-threads.md](1b-par-threads.md) (the rules allow it;
+   the blockers are the runner's per-operator `State` writes, the crt shim's globals, and
+   adopting the program's record results).
 5. An empty vector local makes its store at the declaration, on both backends — the runner's
    `show::write` paid one per formatted value until it stopped declaring one it rarely fills
    (6c065851c).  A store made at the first append would remove the class.
