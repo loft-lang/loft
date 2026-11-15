@@ -1993,6 +1993,9 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
       continue;
     }
     w.peel_seeds = cgen_loop::peel_seeds(ops, o#index);
+    if plain_rules() {
+      cgen_hoist::range_facts(x, w, ops, o#index);
+    }
     // A loop's first statement is its iterator: no guard of that loop admits its operators.
     if o#index == 0 && w.iter_pending {
       w.iter_pending = false;
@@ -2580,6 +2583,11 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     frees_old_tuple: false,
     rec_ptrs: [],
     headers: [],
+    range_lens: [],
+    alias_var: -1,
+    alias_vec: ir::NdNull,
+    in_range: [],
+    in_range_lens: [],
   };
   code = d.code[0]!;
   if len(helper) > 0 {

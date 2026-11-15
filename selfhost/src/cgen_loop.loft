@@ -1582,10 +1582,17 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   }
   hold_invariants(x, w, lp, ind);
   held_headers = if plain_rules() { cgen_hoist::hold_vectors(x, w, lp, ind) } else { 0 };
+  ranged_counters = len(w.in_range);
+  ranged_lens = len(w.in_range_lens);
+  if plain_rules() {
+    cgen_hoist::counters_in_range(x, w, lp);
+  }
   if plain_rules() {
     cgen_ref::hash_reserve(x, w, lp, ind);
   }
   guarded_copies(x, w, lp, ind);
+  w.in_range = w.in_range[0..ranged_counters];
+  w.in_range_lens = w.in_range_lens[0..ranged_lens];
   cgen_hoist::release(w, held_headers);
   w.memos = w.memos[0..len(w.memos) - 1];
   if pushed {

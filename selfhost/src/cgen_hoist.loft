@@ -12,6 +12,7 @@ use loop_shape;
 use opt_hoist;
 use opt_push;
 use opt_range;
+use opt_non_sentinel;
 use cgen_fn;
 use cgen_names;
 use cgen_w::*;
@@ -72,6 +73,190 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
 pub fn release(w: W, count: integer) {
   if count > 0 {
     w.headers = w.headers[0..len(w.headers) - count];
+  }
+}
+
+// `len_bind`: `n = len(v)` — the variable in `var`, the vector as the answer; `var` -1 for
+// any other statement.
+fn len_bind(x: Cx, op: ir::Node, var: &integer) -> ir::Node {
+  var = -1;
+  match loop_shape::unspan(op) {
+    NdSet { var: v, inner } => {
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args } => {
+          name = cgen_fn::def_name(x.b, def_nr);
+          if len(args) == 1 && (name == "t_6vector_len" || name == "OpLengthVector") {
+            var = v;
+            return args[0];
+          }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  ir::NdNull
+}
+
+// What statement `i` of `ops` is written under (`peel::range_lens`, and the `len_alias` a
+// `for` block takes from the statement before it): for a loop, the range ends the two
+// statements before it bind to a vector's length.
+pub fn range_facts(x: Cx, w: W, ops: vector<ir::Node>, i: integer) {
+  w.range_lens = [];
+  match loop_shape::unspan(ops[i]!) {
+    NdLoop { block: _ } => {
+      first = if i >= 2 { i - 2 } else { 0 };
+      for k in rev(first..i) {
+        op = ops[k]!;
+        end = -1;
+        vec = len_bind(x, op, end);
+        if end >= 0 {
+          w.range_lens += [RangeLen { end: end, vec: vec, via: -1 }];
+          continue;
+        }
+        match loop_shape::unspan(op) {
+          NdSet { var, inner } => {
+            // `end = n` where the statement before the `for` block was `n = len(v)`.
+            n = loop_shape::var_of(loop_shape::unspan(inner));
+            if n >= 0 && n == w.alias_var {
+              w.range_lens += [RangeLen { end: var, vec: w.alias_vec, via: n }];
+            }
+          },
+          _ => {},
+        }
+      }
+    },
+    NdBlock { block } => {
+      // `n = len(v)` right before a `for` block: the block's range end `n` is `len(v)`.
+      if block[0].name == "For block" {
+        w.alias_var = -1;
+        for k in rev(0..i) {
+          if !(loop_shape::unspan(ops[k]!) is NdLine) {
+            bound = -1;
+            vec = len_bind(x, ops[k]!, bound);
+            if bound >= 0 {
+              w.alias_var = bound;
+              w.alias_vec = vec;
+            }
+            break;
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+}
+
+// `counters_in_range`: in `for i in 0..len(v)` with `v` held for the loop, the counters are
+// inside `v` when the body assigns none of them.
+pub fn counters_in_range(x: Cx, w: W, lp: ir::Block) {
+  if (env_variable("LOFT_NO_COUNTER_IN_RANGE") ?? "0") != "0" {
+    return;
+  }
+  rc = loop_shape::range_counters(lp, x.b.data.definitions) ?? return;
+  if rc.inclusive {
+    return;
+  }
+  end = loop_shape::var_of(loop_shape::unspan(rc.hi));
+  if end < 0 {
+    return;
+  }
+  counter = if rc.next >= 0 { rc.next } else { rc.index };
+  start = if rc.next >= 0 { 0 } else { -1 };
+  seeded = false;
+  for s in w.peel_seeds {
+    if s.var == counter && s.value == start {
+      seeded = true;
+    }
+  }
+  if !seeded {
+    return;
+  }
+  // The body may move none of the counters, nor the local a range end was copied from.
+  count = len(w.shapes);
+  assigned: vector<boolean> = [for _ in 0..count { false }];
+  body = ir::NdInsert { items: lp.operators[1..len(lp.operators)] };
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var < count { assigned[var] = true; } },
+      _ => {},
+    }
+  });
+  if assigned[rc.index]! || assigned[rc.loop_var]! || (rc.next >= 0 && assigned[rc.next]!) {
+    return;
+  }
+  for r in w.range_lens {
+    if r.end != end {
+      continue;
+    }
+    h = held_vector(x, w, r.vec);
+    if h == "" || (r.via >= 0 && assigned[r.via]!) {
+      continue;
+    }
+    w.in_range_lens += [InRange { var: end, header: h }];
+    if r.via >= 0 {
+      w.in_range_lens += [InRange { var: r.via, header: h }];
+    }
+    w.in_range += [InRange { var: rc.index, header: h }];
+    w.in_range += [InRange { var: rc.loop_var, header: h }];
+  }
+}
+
+fn in_list(list: vector<InRange>, var: integer, held: text) -> boolean {
+  for r in list {
+    if r.var == var && r.header == held {
+      return true;
+    }
+  }
+  false
+}
+
+// `counter_index`: the index `idx` as a counter proved inside the vector `held` describes —
+// the counter itself, or `(counter + step) % len` — else "".
+fn counter_index(x: Cx, w: W, idx: ir::Node, held: text) -> text {
+  ctr = loop_shape::var_of(loop_shape::unspan(idx));
+  if ctr >= 0 {
+    return if in_list(w.in_range, ctr, held) { w.names[ctr]! } else { "" };
+  }
+  // `wrapped_counter`: `counter % len` or `(counter + step) % len`.
+  match loop_shape::unspan(idx) {
+    NdCall { def_nr, args } => {
+      name = cgen_fn::def_name(x.b, def_nr);
+      if len(args) != 2 || !(name == "OpRemInt" || name == "OpRemIntNullable") {
+        return "";
+      }
+      n = loop_shape::var_of(loop_shape::unspan(args[1]));
+      step = 0;
+      c = loop_shape::var_of(loop_shape::unspan(args[0]));
+      if c < 0 {
+        match loop_shape::unspan(args[0]) {
+          NdCall { def_nr: add, args: sum } => {
+            if len(sum) != 2 || cgen_fn::def_name(x.b, add) != "OpAddInt" {
+              return "";
+            }
+            c = match sum[0] { NdVar { n: v } => v, _ => -1 };
+            step = match sum[1] { NdInt { n: k } => k, _ => -1 };
+            if c < 0 || step < 0 || step > 65536 {
+              return "";
+            }
+          },
+          _ => return "",
+        }
+      }
+      if n < 0 || !in_list(w.in_range, c, held) || !in_list(w.in_range_lens, n, held) {
+        return "";
+      }
+      i = w.names[c]!;
+      len_name = w.names[n]!;
+      if step == 0 {
+        return i;
+      }
+      if step == 1 && (env_variable("LOFT_NO_WRAP_SELECT") ?? "0") == "0" {
+        return "({i} == {len_name} - INT64_C(1) ? INT64_C(0) : {i} + INT64_C(1))";
+      }
+      "(({i} + INT64_C({step})) % {len_name})"
+    },
+    _ => "",
   }
 }
 
@@ -187,6 +372,10 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     }
     done = true;
     size = cgen_fn::literal(w, args[1], "element size") ?? return none();
+    counted = counter_index(x, w, args[2], h);
+    if counted != "" {
+      return E { code: "({held_proof(x, w, args[0], h)}, loft_vh_at_ref({h}, {size}, {counted}))", kind: K_REF };
+    }
     i = as_int(w, cgen_fn::expr(x, w, args[2], ind));
     nn = "";
     index = index_arg(x, w, args[2], i, nn);
@@ -216,12 +405,16 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     done = true;
     size = cgen_fn::literal(w, el.size, "element size") ?? return none();
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    k = if name == "OpGetInt" { K_INT } else { K_FLOAT };
+    counted = counter_index(x, w, el.idx, held);
+    if counted != "" {
+      return E { code: "({held_proof(x, w, el.vec, held)}, {if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" }}({held}, {size}, {counted}, {fld}))", kind: k };
+    }
     i = as_int(w, cgen_fn::expr(x, w, el.idx, ind));
     nn = "";
     index = index_arg(x, w, el.idx, i, nn);
     proof = held_proof(x, w, el.vec, held);
     f = if name == "OpGetInt" { "loft_vh_get_int" } else { "loft_vh_get_float" };
-    k = if name == "OpGetInt" { K_INT } else { K_FLOAT };
     if el.report {
       return E { code: "({proof}, {f}_at{nn}({held}, {size}, {index}, {fld}, {cgen_fn::site(w)}))", kind: k };
     }
@@ -246,10 +439,13 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     size = cgen_fn::literal(w, el.size, "element size") ?? return none();
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     proof = held_proof(x, w, el.vec, held);
-    i = as_int(w, cgen_fn::expr(x, w, el.idx, ind));
+    counted = counter_index(x, w, el.idx, held);
+    i = if counted != "" { "" } else { as_int(w, cgen_fn::expr(x, w, el.idx, ind)) };
     nn = "";
-    index = index_arg(x, w, el.idx, i, nn);
-    addr = if el.report { "loft_vh_addr_at{nn}({held}, {size}, {index}, {cgen_fn::site(w)})" } else { "loft_vh_addr{nn}({held}, {size}, {index})" };
+    index = if counted != "" { "" } else { index_arg(x, w, el.idx, i, nn) };
+    addr = if counted != "" {
+      "loft_vh_at_addr({held}, {size}, {counted})"
+    } else if el.report { "loft_vh_addr_at{nn}({held}, {size}, {index}, {cgen_fn::site(w)})" } else { "loft_vh_addr{nn}({held}, {size}, {index})" };
     if count == 3 {
       min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
       return E { code: "({proof}, {reader}({addr}, {fld}, {c_long(min)}))", kind: kind };
