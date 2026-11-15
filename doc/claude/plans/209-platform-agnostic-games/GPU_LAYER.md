@@ -530,6 +530,13 @@ actors), so the game's `fixedview` can feed either by changing the callee.
   so a `#width 32` view can call them (#90: from a 32-bit file both were narrowed to null and
   `gpu::open` crashed).
 
+**The game's fixed view draws through `scene3d`** (its agent, 2026-11-15), and found what the
+comparison at the origin could not: the fixed camera measured depth from the world's origin, so
+a town 60 rows south was clipped away.  Its fix (the depth's zero at the ground under the
+screen's middle) is loft-libs-graphics#91; the light written a box at a time, which it also
+asked for, is #92.  With the fix the game's own comparison in its town is 3,291 of 384,000
+pixels, 27 by more than one RGB565 step.
+
 **Which window on a desktop** (answered to the game's agent, FOR_THE_GAME.md): the view draws
 in the device's own window and reads its keys from the device (`dev.keys()`, in
 `screen::keys()`'s form and codes).  `screen` does not present through a device: the 2D

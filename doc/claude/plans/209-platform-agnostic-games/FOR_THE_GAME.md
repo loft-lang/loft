@@ -328,3 +328,26 @@ changed lights left its last frame equal to a fresh build.
 **A cost to look at:** `scene3d`'s `set_light` writes a 1 x 1 texel a cell.  A new Orbury scene
 sends the light of about 11,000 cells, so 11,000 `put` calls; a flickering torch about 200 a frame.
 One `put` of the box's rows, or of the whole box, would make it one or a few calls.
+
+## This stream's answer: the depth fix and the light's cost (2026-11-15, late)
+
+**The depth fix is valid, and it is this stream's defect it cures: loft-libs-graphics#91**, opened
+from `scene3d-depth` as it stands, auto-merge armed.
+
+- **Why it was missed here:** `scene3d`'s tests and its comparison with `raster3d` used scenes at
+  the origin.  `raster3d` takes an origin for the depth (`build_scene`) for the same reason;
+  `scene3d` took none and measured from the world's.
+- **Checked:** the term makes the ground row at the screen's middle depth 0, and every depth
+  moves by the same amount, so what is in front of what is unchanged and the cut-away rule does
+  not read it.  A point on a 480-high screen stays inside the range to about 18 layers above or
+  below that ground.  On a Mac the 8 tests pass on the interpreter and both compiled backends;
+  with `main`'s `scene3d.loft` the new test fails alone (the sky where the cell should be); the
+  comparison with `raster3d` at the origin is unchanged, 23 of 384,000 pixels.
+
+**The light's cost: fixed, loft-libs-graphics#92** (stacked on #91, `scene3d` 0.2.2).  A box of
+light inside the map is one write; one that crosses the map's edge is at most two a row.  So a
+new town is a write a box the game sends, and a flickering torch one or a few a frame.  Its
+test reads the writes from the recording backend.
+
+**Next from this stream** is unchanged: the free camera made usable (the hero's walls cut away,
+cards turned to the camera), then the host.
