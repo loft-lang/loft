@@ -145,6 +145,33 @@ fn every_guard_says_how_to_score_it_again() {
     );
 }
 
+/// `tests/scripts/` keeps only the programs this repository NAMES; a new language test is a
+/// cell in the language suite under its rule (TESTING.md § `tests/scripts/`).
+///
+/// The suite is the main container by volume — it grew by a thousand cells in the five weeks
+/// after it became its own repository — but 189 scripts landed here in the same weeks, and 144
+/// of them were named by nothing but their falsification receipt or a plan page: cells by the
+/// suite's own definition, kept here by habit and by a paragraph of TESTING.md written when the
+/// suite still lived in this tree.  A trend column cannot stop that; a gate at the PR can.
+///
+/// The rule — what counts as naming a script — lives in `scripts/scripts_named.py` and nowhere
+/// else; `tests/scripts_unpinned.baseline` is the backlog to move, a RATCHET that only shrinks.
+/// `make scripts-named` lists, `make scripts-named-bless` re-records after a move.
+#[test]
+fn every_script_test_is_named_by_this_repository() {
+    let out = loft::platform::process::harness_command("python3")
+        .args(["scripts/scripts_named.py", "check"])
+        .output()
+        .expect("cannot run scripts/scripts_named.py");
+    assert!(
+        out.status.success(),
+        "a tests/scripts/ file nothing names, or a stale baseline line (TESTING.md § \
+         `tests/scripts/`; a new language test is a cell in ../loft-suite):\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// No tracked file carries MERGE-CONFLICT debris.
 ///
 /// `CHANGELOG.md` — the file a USER reads — shipped a bare `=======` and a

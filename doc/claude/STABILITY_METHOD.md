@@ -593,7 +593,9 @@ the commit count tells the two apart), the register at the week's last commit (r
 defined, the rewrite family and its growth that week, annotated, guarded by a test or the
 rewrite census), the deviation registers and the open entries whose tracking reference is
 dead or missing (`deviations_stale`, the `rule_tags.py registers --issues` check read every
-week instead of by hand), the design decisions, the consumer gate's
+week instead of by hand), the script tests added here beside the suite's cells added and the
+scripts nothing in the repository names (`scripts/scripts_named.py`, the backlog to move), the
+design decisions, the consumer gate's
 scheduled nights green, the release gate's age, and the portal's median and release cut
 per host.  The series file is the trend; the script's docstring is the column key.
 

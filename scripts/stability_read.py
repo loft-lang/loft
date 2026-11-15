@@ -55,6 +55,13 @@ One row per ISO week (Monday).  The columns, by source:
                        `make rule-coverage` with the suite beside the tree reads higher)
     census_only        guarded by the census alone
     deviations_open    the formal chapters' stated OPEN counts, summed
+    scripts_added      tests/scripts/*.loft files added on main that week — beside
+    cells_added        the language suite's cells added that week (the checkout beside the
+                       tree, LOFT_SUITE_DIR or ../loft-suite; `-` without one): the suite is
+                       the main container, so the first should read far below the second
+    scripts_unpinned   tests/scripts/*.loft files nothing in the repository names at the
+                       week's last commit (`scripts/scripts_named.py list`): the backlog to
+                       move into the suite, gated on the PR so it only shrinks
     deviations_stale   open deviation entries whose tracking reference is DEAD at the
                        week's end: none named (and not ruled `not resolvable in a
                        release`), or every issue or plan it names already closed — the
@@ -89,9 +96,11 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rule_tags as rt  # noqa: E402 — the register's one home (`open_register`), read at a commit
+import scripts_named  # noqa: E402 — which tests/scripts files nothing names, read at a commit
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERIES = os.path.join(ROOT, "index", "stability_weekly.tsv")
+SUITE = os.environ.get("LOFT_SUITE_DIR", os.path.join(ROOT, "..", "loft-suite"))
 NOTES = os.path.join(ROOT, "index", "stability_notes.tsv")
 REPO = "loft-lang/loft"
 CONSUMERS = ["jjstwerff/moros", "jjstwerff/dryopea", "jjstwerff/crawler"]
@@ -100,7 +109,8 @@ CITE = re.compile(r"@FR-([A-Z][A-Za-z0-9-]{1,40})(?![-A-Za-z0-9])")
 COLUMNS = ["week_of", "partial", "filed", "silent_wrong", "sev_high", "consumer_hit", "regression",
            "ci_shaped", "closed", "strained", "settled", "strained_pct", "zero_streak",
            "close_h_median", "open_sw_main", "consumer_commits", "rules", "rules_R", "rules_R_new",
-           "annotated", "guarded", "census_only", "deviations_open", "deviations_stale", "decisions",
+           "annotated", "guarded", "census_only", "deviations_open", "deviations_stale",
+           "scripts_added", "cells_added", "scripts_unpinned", "decisions",
            "consumer_green", "release_gate_age", "portal", "note"]
 
 
@@ -389,6 +399,7 @@ def rows(since, until, cache=None):
         sha = tree_at(ref, end)
         r = repo_row(sha) if sha else {}
         stale = stale_deviations(sha, end, memo, signed) if sha else []
+        unpinned = len(scripts_named.unpinned(sha)) if sha else "-"
         sched = [c for d, ev, c in consumer_runs if ev == "schedule" and w <= parse_day(d) <= end]
         gate = [(d, c) for d, ev, c in gate_runs if parse_day(d) <= end]
         gate_age = f"{(end - parse_day(gate[0][0])).days}d:{gate[0][1]}" if gate else "never"
@@ -411,12 +422,30 @@ def rows(since, until, cache=None):
             annotated=r.get("annotated", "-"), guarded=r.get("guarded", "-"),
             census_only=r.get("census_only", "-"), deviations_open=r.get("deviations_open", "-"),
             deviations_stale=len(stale) if sha else "-", _stale=stale,
+            scripts_added=files_added("loft", ref, w, end, "tests/scripts"),
+            cells_added=cells_added(w, end), scripts_unpinned=unpinned,
             decisions=r.get("decisions", "-"),
             consumer_green=f"{sum(c == 'success' for c in sched)}/{len(sched)}",
             release_gate_age=gate_age, portal=r.get("portal", "-"),
             note=notes.get(w.isoformat(), "-")))
         prev_r = r.get("rules_R") if r else prev_r
     return out
+
+
+def files_added(repo, ref, since, until, under, cwd=None):
+    """How many `.loft` files `ref` added under `under` between two days (inclusive)."""
+    r = subprocess.run(["git", "log", f"--since={since.isoformat()}", f"--until={until.isoformat()}T23:59:59",
+                        "--diff-filter=A", "--format=", "--name-only", ref, "--", under],
+                       cwd=cwd or ROOT, capture_output=True, text=True)
+    return sum(1 for l in r.stdout.split("\n") if l.endswith(".loft"))
+
+
+def cells_added(since, until):
+    if not os.path.isdir(os.path.join(SUITE, ".git")):
+        return "-"
+    ref = "origin/main" if subprocess.run(["git", "rev-parse", "-q", "--verify", "origin/main"], cwd=SUITE,
+                                          capture_output=True).returncode == 0 else "HEAD"
+    return files_added("suite", ref, since, until, "rules", cwd=SUITE)
 
 
 def read_notes():
@@ -476,7 +505,9 @@ def main():
               f"({r['strained_pct']} %), zero streak {r['zero_streak']} week(s) — stable reads at 2; "
               f"silent-wrong open on main {r['open_sw_main']}; consumer gate green {r['consumer_green']}; "
               f"release gate {r['release_gate_age']}; rewrite rules +{r['rules_R_new']}; "
-              f"deviations with a dead reference {r['deviations_stale']}"
+              f"deviations with a dead reference {r['deviations_stale']}; "
+              f"script tests added {r['scripts_added']} against {r['cells_added']} suite cells, "
+              f"{r['scripts_unpinned']} scripts nothing names"
               + (f" ({', '.join(r['_stale'])})" if r.get("_stale") else ""))
     if a.record:
         kept = {r["week_of"]: r for r in read_series()}
