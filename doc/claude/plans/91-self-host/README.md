@@ -258,6 +258,13 @@ find defects in the implementation it copies.
   frozen corpus is what the port is compared with, and the bootstrap gate (stage 2's C
   equals stage 1's) is the same comparison over the compiler's own sources.  Where the
   corpus lives is strand 11's decision, beside the suite's recorded answers.
+- **The position is committed and gated.**  Each stage's survey writes its counts (per
+  layer, per form, with the switch list they were taken under) to a baseline file beside it,
+  compares the next run against it, and fails on any drop or any difference; it runs on the
+  nightly, and a count typed into a plan by hand is a report of that file, never the gate.
+- **The helpers are in the tree.**  Every script a port is worked with — the survey, the
+  one-body diff, the speed measurement — is committed beside the port, never kept in a
+  session's scratch directory.
 - **Deterministic output is a precondition, on both sides.**  Byte-identical layers
   cannot depend on a hash map's iteration order or on an address.  The reproducible-build
   workflow already asks this of the binary; a port that meets a non-deterministic order
