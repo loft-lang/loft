@@ -129,6 +129,13 @@ pub struct State {
   pub tbuf: vector<u8>,
   // The code's length, for the operand readers' one test (the code never changes once loaded).
   pub code_len: integer,
+  // The image's tables for `stack_trace()` and a program's own `#c` bindings
+  // (`RunImage.names`, `def_files`, `files`, `lines`, `cnatives`).
+  pub names: vector<text>,
+  pub def_files: vector<u32>,
+  pub files: vector<text>,
+  pub lines: vector<u32>,
+  pub cnatives: vector<text>,
 }
 
 // What `OpNewRecord` / `OpFinishRecord` file a record into, derived once per parent type and
@@ -291,17 +298,38 @@ pub fn plain_return(self: State) -> boolean {
   len(self.fn_bufs) == 0 && len(self.fn_calls) == 0 && len(self.dest_calls) == 0 && len(self.par_depths) == 0 && self.arm_depth < 0
 }
 
+// Which returns are plain, for the dispatch loop's arm: 0 none, 1 every one, `2 + d` every one
+// but the return AT depth `d` — the innermost `par` worker's or the `par` arm's frame, the only
+// return `fn_return` hands back to the scheduler.  A call deeper inside a worker (its `sqrt`)
+// returns plainly.  A worker and an arm both in flight answer 0.
+pub fn plain_returns(self: State) -> integer {
+  if len(self.fn_bufs) > 0 || len(self.fn_calls) > 0 || len(self.dest_calls) > 0 {
+    return 0;
+  }
+  np = len(self.par_depths);
+  if np == 0 && self.arm_depth < 0 {
+    return 1;
+  }
+  if np > 0 && self.arm_depth >= 0 {
+    return 0;
+  }
+  2 + (if np > 0 { self.par_depths[np - 1] ?? 0 } else { self.arm_depth })
+}
+
 // A state over the image's code and types with a stack store of `size` bytes, both positions
 // at 0.
 pub fn new_state(img: ir::RunImage, size: integer) -> State {
   io: vector<integer> = [0, 0, 0];
   crt::stack_new(io, size);
-  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], tkeys: [], tcache: [for _ in 0..2 * TCACHE { -1 }], lights: [], lio: [0, 0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code) };
+  s = State { code: img.code, code_pos: 0, stk: io[0] ?? 0, stack_pos: 0, stack_cap: size, fbase: crt::hold_room((MAX_CALL_DEPTH + FRAME_SPARE) * FRAME_BYTES), depth: 0, fault: "", stopped: false, unknown: -1, reported: [], types: img.types, table_loaded: false, native: -1, images: [], imaged: [], consts: [], starts: img.starts, fnrefs: img.fnrefs, fnref_of: [for _ in 0..len(img.starts) { -1 }], fn_bufs: [], fn_calls: [], fn_borrowed: [], cos: [co_empty()], co_active: [], co_generation: 1, gens: img.gens, ptold: [false, false], interned: [], handlers: [], shared: [], shared_dest: [], dest_calls: [], par_depths: [], arm_offsets: [], arm_depth: -1, code_held: crt::hold_bytes(img.code), texts_held: 0, store_insts: img.store_insts, call_target: -1, bodies: [], bodies_dest: [], kfacts: [], key_parts: [], tfacts: [], targets: [], tkeys: [], tcache: [for _ in 0..2 * TCACHE { -1 }], lights: [], lio: [0, 0, 0, 0], tbuf: [for _ in 0..256 { 0 as u8 }], code_len: len(img.code), names: img.names, def_files: img.def_files, files: img.files, lines: img.lines, cnatives: img.cnatives };
   ptab = natives::par_natives(img);
   for i in 0..len(img.natives) {
     name = img.natives[i] ?? "";
     // A native the runner carries itself keeps its own port.
     handler = natives::native_handler(name);
+    if handler < 0 && (img.cnatives[i] ?? "") != "" {
+      handler = natives::N_C_CALL;
+    }
     s.handlers += [handler];
     s.lights += [if (natives::is_light(handler) || natives::is_state_native(handler)) && (ptab[i] ?? 0) == 0 { handler } else { -1 }];
     carried = handler >= 0;
@@ -342,7 +370,7 @@ pub fn new_state(img: ir::RunImage, size: integer) -> State {
 
 // `State::ensure_stack`: room for `step` more bytes above the top, the stack store doubled
 // (`grow_stack`) when it has none.
-fn ensure_stack(self: State, step: integer) {
+pub fn ensure_stack(self: State, step: integer) {
   if self.stack_pos + step > self.stack_cap {
     self.stack_cap = (self.stack_pos + step) * 2;
     crt::stack_grow(self.stk, self.stack_cap);
@@ -364,7 +392,7 @@ fn code_has(self: State, n: integer) -> boolean {
 
 // Is there a value of `step` bytes to pop?  Below the stack's start the run stops
 // (`stack_underflow`).
-fn can_pop(self: State, step: integer) -> boolean {
+pub fn can_pop(self: State, step: integer) -> boolean {
   if self.stack_pos < step {
     if self.fault == "" {
       self.stop("the stack holds {self.stack_pos} bytes where {step} are popped");

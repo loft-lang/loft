@@ -108,10 +108,9 @@ The first two are run by hand; neither is a test yet.
 | Part | State |
 |---|---|
 | operator templates and `State` methods | every operator is carried (`create.loft` prints the count; `--missing` lists none).  The `State`'s methods are in `state.loft` and `state_ops.loft`.  Operators no program of the corpus runs are checked by the build only: the child-record and store-buffer families beyond `OpStoreBuf`, `OpEvacuate`, `OpAdoptVector`, `OpCopyClosure`, the slot-cell writes, the store tags |
-| natives (`OpStaticCall`) | `natives.loft`.  Not ported, and what still stops corpus programs: `stack_trace` and `type_named` (both need the definitions' names, which the run image does not carry), and a `#c` function a program declares itself |
-| `stack_trace()` | not carried: the line of each bytecode position and a function's variable table are known only to the bytecode writer.  They come with the bytecode writer in loft ([rust-dependencies.md](rust-dependencies.md), steps 1–2), not from the Rust image writer |
-| a paged load by a text key that holds a NUL byte | fails one corpus program (`store_load_key_text`, Col-Trie 2241); not diagnosed |
-| `par` | a queue's or a fold's workers run one after another by `natives.loft`'s scheduler (`par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return |
+| natives (`OpStaticCall`) | `natives.loft`; the run image carries the definitions' names, files and lines and a program's own `#c` bindings, so `stack_trace`, reflection (`type_of`, `type_named`, `field_value`) and a program's `#c` functions run.  Not carried (no corpus program reaches them): the networking kernel (`kernel_*`), live rebuild and swap, the lazy stores, `store_load_url`, `git_query`, `process_run`, host input and output |
+| `stack_trace()` | carried: frames, function names and call lines from the image's line table; a frame's arguments and variables are empty (the variable table is the bytecode writer's) |
+| `par` | a queue's or a fold's workers run one after another by `natives.loft`'s scheduler (`par_start` / `par_return`), entered from `fill_run.loft`; `State.par_depths` hands the run back at each worker's return.  On threads: [1b-par-threads.md](1b-par-threads.md) (what the rules allow, what the runner has to change) |
 | compiled library code | the fragment is built, the call is not: `loft --emit-c-bodies` (`src/c/bodies.rs`) writes the standard-library bodies the Rust build compiles (`stdlib_codegen::export_set`) into the C runtime shim at each shim build, never committed, with `loft_body_find` / `loft_body_call` / `loft_body_call_dest` as its entries.  It carries the seven text predicates and the four text answers (`dir`, `basename`, `resolve`, `char_slice`), held to `--interpret` by `tests/crt_bodies.rs`; a body with a hidden return buffer or a vector argument (`split`, `split_text`, `join`, `File.lines`) is declined and says why in the fragment's header.  To build: `State::static_call` calling an entry and running the loft body on a negative answer, the survey unchanged with the bodies on, then each `use`d library's bodies.  Until then every library function runs as bytecode (difference 9) |
 | a survey mode in the test suite | the survey is a tool; the tests are `selfhost/tests/fill.loft` over the kernels |
 | the two table checks as tests | see above |
@@ -186,10 +185,12 @@ on the integer kernels) and `selfhost/bench/bench_speed.py` (every routine of th
 suite, `bench/NN_*`, each timed by the program itself).  Compare builds by user-mode
 instruction counts (`perf stat -e instructions:u`, a large run less a tiny one): on a busy
 machine the times and the cycle counts move by a factor of two, the instruction counts not at
-all.  The gate is the generated runner at the Rust interpreter's time.  On the integer kernels
+all.  A timed price runs the SAME image four times or more on each build: one runner binary can
+settle in two speeds on one image (the `sum` row read 564 µs and 405 µs on alternate runs),
+and a single run of each build then prices the layout, not the change.  The gate is the generated runner at the Rust interpreter's time.  On the integer kernels
 it is under it (fib 0.4, mix 0.8, collatz 0.9 of the Rust interpreter's cycles); over the
-benchmark suite's 94 routines the geometric mean is 0.92 of the Rust interpreter's time on this
-machine, 1.10 on a second (before the last arms), the worst 2.3 (`map_json`, rendering records
-through `show`'s text buffers) — the routines over 1.3 are the worklist, by what their
+benchmark suite's 94 routines the geometric mean is 0.88 of the Rust interpreter's time (0.99
+on a second machine, a few commits earlier), the worst 1.8 (`map_json`, rendering records
+through `show`), 68 of 94 at or under it — the routines over 1.3 are the worklist, by what their
 operators and natives are (`LOFT_FILL_TRACE=1` prints each operator and each native the run
 reaches).

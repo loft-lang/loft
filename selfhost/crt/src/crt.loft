@@ -20,6 +20,18 @@ pub fn moved(at: Pos, off: integer) -> Pos {
   Pos { s: at.s, r: at.r, p: at.p + off }
 }
 
+// The place the reference stored at `(store, rec, pos)` names, by value: `place_ref` without
+// an out-vector, so a caller mints no store for the answer.
+pub fn place_pos(store: integer, rec: integer, pos: integer) -> Pos {
+  Pos { s: c_place_ref_part(store, rec, pos, 0), r: c_place_ref_part(store, rec, pos, 1), p: c_place_ref_part(store, rec, pos, 2) }
+}
+
+// Element `idx` (`size` bytes each) of the vector at `(store, rec, pos)`, by value: `vec_get`
+// without an out-vector; the null reference past either end.
+pub fn vec_pos(store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> Pos {
+  Pos { s: c_vec_get_part(0, store, rec, pos, size, idx), r: c_vec_get_part(1, store, rec, pos, size, idx), p: c_vec_get_part(2, store, rec, pos, size, idx) }
+}
+
 fn c_format_int(out: vector<u8>, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) -> integer;
 #c "loft_crt_format_int" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -875,6 +887,15 @@ pub fn ref_text_append_view(s: integer, r: integer, p: integer, stk: integer, at
   c_ref_text_append_view(s, r, p, stk, at);
 }
 
+fn c_c_call(stk: integer, top: integer, sym: text, symlen: integer, args: text, nargs: integer, ret_bits: integer, ret_signed: boolean, idx: integer, ok: vector<integer>) -> integer;
+#c "loft_crt_c_call" "int64_t(int64_t, int64_t, const char*, int64_t, const char*, int64_t, int64_t, int64_t, int64_t, int64_t*, int64_t)"
+
+// A program's own `#c` binding called on its arguments under `top` (`State::c_call_native`):
+// the answer, `ok[0]` -1 where the symbol was not found.
+pub fn c_call(stk: integer, top: integer, sym: text, args: text, ret_bits: integer, ret_signed: boolean, idx: integer, ok: vector<integer>) -> integer {
+  c_c_call(stk, top, sym, sym.size(), args, args.size(), ret_bits, ret_signed, idx, ok)
+}
+
 fn c_view_float(stk: integer, at: integer) -> float;
 #c "loft_crt_view_float" "double(int64_t, int64_t)"
 fn c_view_single(stk: integer, at: integer) -> float;
@@ -1084,6 +1105,15 @@ pub fn store_buf(out: vector<integer>, store: integer, rec: integer, pos: intege
   c_store_buf(out, store, rec, pos, if only { 1 } else { 0 });
 }
 
+// `store_buf`'s answer written at the address `to` (`OpStoreBuf`'s arm).  The routine mints a
+// store, so the body calls it once and reads the answer from a vector of three.
+pub fn store_buf_to(to: integer, store: integer, rec: integer, pos: integer, only: boolean) {
+  out: vector<integer> = [65535, 0, 0];
+  c_store_buf(out, store, rec, pos, if only { 1 } else { 0 });
+  poke_ref(to, out[0] ?? 65535, out[1] ?? 0, out[2] ?? 0);
+}
+#c_twin "loft_twin_store_buf_to" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 // `OpAdoptChildRec`: the field's child record adopted from the value.
 pub fn adopt_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer) {
   c_adopt_child_rec(tp, fs, fr, fp, vs, vr, vp);
@@ -1182,8 +1212,9 @@ pub fn log(sev: integer, m: text, f: text, line: integer) {
 }
 
 // `store_load_key(r, path, key)`: one record under an integer or a text key read from the image.
-pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text, is_text: boolean) -> boolean {
-  c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey, tkey.size(), if is_text { 1 } else { 0 }) != 0
+pub fn pg_load_key(s: integer, r: integer, p: integer, path: text, sc: integer, refusal: text, content: integer, coll: integer, kind: integer, key: integer, tkey: text?, is_text: boolean) -> boolean {
+  // A null key crosses as the null text (-1), the key the Rust native files under `STRING_NULL`.
+  c_pg_load_key(s, r, p, path, path.size(), sc, refusal, refusal.size(), content, coll, kind, key, tkey ?? "", bytes_of(tkey), if is_text { 1 } else { 0 }) != 0
 }
 
 // `store_load_keys(r, path, keys)`: every key of the vector read; how many records were.
@@ -2167,6 +2198,17 @@ pub fn show_leaf(kind: integer, store: integer, rec: integer, pos: integer, fmt:
   text_from_byte_range(buf, 0, n)
 }
 
+// `show_leaf` through the caller's buffer `buf`, grown when the rendering is longer: no store is
+// made per field rendered.
+pub fn show_leaf_in(buf: vector<u8>, kind: integer, store: integer, rec: integer, pos: integer, fmt: integer, min: integer, nullable: boolean) -> text {
+  n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
+  if n > len(buf) {
+    buf += room(n - len(buf));
+    n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
 // Does a collection field hold none?
 pub fn vec_absent(store: integer, rec: integer, pos: integer) -> boolean {
   c_vec_absent(store, rec, pos) != 0
@@ -2394,6 +2436,22 @@ pub fn arguments_into(out: vector<integer>) {
   c_arguments(out);
 }
 
+fn c_panic(msg: text, mlen: integer, file: text, flen: integer, line: integer);
+#c "loft_crt_panic" "void(const char*, int64_t, const char*, int64_t, int64_t)"
+
+// `panic` reported at the place given — the interpreted program's, not this caller's.
+pub fn panic_at(message: text, file: text, line: integer) {
+  c_panic(message, message.size(), file, file.size(), line);
+}
+
+fn c_env_variables(out: vector<integer>, size: integer) -> integer;
+#c "loft_crt_env_variables" "int64_t(int64_t*, int64_t, int64_t)"
+
+// `env_variables()` in the program's stores: `EnvVariable` records of `size` bytes, into `out`.
+pub fn env_variables_into(out: vector<integer>, size: integer) {
+  c_env_variables(out, size);
+}
+
 fn c_add_type_name(v: text, bytes: integer);
 #c "loft_crt_add_type_name" "void(const char*, int64_t)"
 
@@ -2534,4 +2592,40 @@ fn c_body_call_dest(entry: integer, stk: integer, sp: integer, s: integer, r: in
 // appended to the text `(s, r, p)` names, nothing pushed; the new top is the arguments' base.
 pub fn body_call_dest(entry: integer, stk: integer, sp: integer, s: integer, r: integer, p: integer) -> integer {
   c_body_call_dest(entry, stk, sp, s, r, p)
+}
+
+// ── The engine-host kernel (`lib/engine_host`, the C runtime's `loft_engine.h`) ──────────────────
+
+fn c_kernel(which: integer, a: integer, b: integer, s: text, slen: integer) -> integer;
+#c "loft_crt_kernel" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t)"
+
+// Kernel routine `which` (`natives::KERNEL_*`) on integer operands `a`, `b` and text `t`: its
+// scalar answer (a boolean as 0 / 1; 0 for a routine that answers nothing).
+pub fn kernel(which: integer, a: integer, b: integer, t: text) -> integer {
+  c_kernel(which, a, b, t, t.size())
+}
+
+fn c_kernel_text(out: vector<u8>, cap: integer, which: integer) -> integer;
+#c "loft_crt_kernel_text" "int64_t(char*, int64_t, int64_t)"
+
+// A kernel routine's text answer (`which`: 0 the event payload, 1 the sync payload, 2 and 3 the
+// client's, 4 the default host), read through the kept buffer `buf`; null for the null text.
+pub fn kernel_text(buf: vector<u8>, which: integer) -> text? {
+  n = c_kernel_text(buf, len(buf), which);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf += room(n - len(buf));
+    n = c_kernel_text(buf, len(buf), which);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+fn c_kernel_fetch(m: text, ml: integer, u: text, ul: integer, b: text, bl: integer, h: text, hl: integer) -> integer;
+#c "loft_crt_kernel_fetch" "int64_t(const char*, int64_t, const char*, int64_t, const char*, int64_t, const char*, int64_t)"
+
+// `http_fetch(method, url, body, headers)`: the request's id.
+pub fn kernel_fetch(m: text, u: text, b: text, h: text) -> integer {
+  c_kernel_fetch(m, m.size(), u, u.size(), b, b.size(), h, h.size())
 }

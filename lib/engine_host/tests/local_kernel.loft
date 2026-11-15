@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The local kernel (`run_local`): drift-free ticks with no transport, a message `post`ed to the
+// kernel arriving as an event from cid -1 on a later pump, `client_stop` from inside a tick
+// leaving the loop, and `client_send` reporting false with no peer.
+use engine_host;
+
+struct Seen { frames: integer not null, events: integer not null, payload: text, cid: integer not null }
+
+fn test_a_local_kernel_ticks_receives_its_post_and_stops() {
+  s = Seen { frames: 0, events: 0, payload: "", cid: 0 };
+  engine_host::run_local(1000,
+    fn(ev: engine_host::Event) {
+      s.events += 1;
+      s.payload = ev.payload;
+      s.cid = ev.cid;
+    },
+    fn() {
+      s.frames += 1;
+      if s.frames == 1 {
+        engine_host::post("ping");
+      }
+      if s.frames >= 5 {
+        engine_host::client_stop();
+      }
+    });
+  assert(s.frames == 5, "five ticks, then the stop: {s.frames}");
+  assert(s.events == 1 && s.payload == "ping", "the post arrives once: {s.events} {s.payload}");
+  assert(s.cid == -1, "a local post comes from cid -1: {s.cid}");
+  assert(!engine_host::client_send("1:hello"), "no peer to send to");
+}

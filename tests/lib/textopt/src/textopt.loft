@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A compiled library's `-> text?` answers, each a different source of the text: an element
+// of a vector field, a text field, the parameter itself, a null, the empty text, an absent
+// element.  The script calling them interprets; the library declares no `compile`, as the
+// published ones do, and is compiled because it is `use`d (@C71).
+
+pub struct Opts { pub keys: vector<text>, pub vals: vector<text> }
+pub struct Named { pub label: text, pub n: integer }
+
+// The `arguments::get` shape: a loop answering a text element of a vector field, or null.
+pub fn lookup(self: Opts, name: text) -> text? {
+  for k in self.keys {
+    if k == name {
+      i = k#index;
+      if i < len(self.vals) { return self.vals[i] }
+      return null
+    }
+  }
+  null
+}
+
+pub fn element(self: Opts, i: integer) -> text? { self.vals[i] }
+
+pub fn label_of(self: Named) -> text? { self.label }
+
+pub fn same(t: text) -> text? { t }
+
+pub fn none_unless_big(self: Named) -> text? { if self.n > 100 { self.label } else { null } }
+
+pub fn empty_when_positive(self: Named) -> text? { if self.n > 0 { "" } else { null } }

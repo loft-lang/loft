@@ -304,15 +304,17 @@ static void loft_format_long(loft_text *s, int64_t val, uint8_t radix, int64_t w
         for (n = 0; n < k; n++) buf[n] = rev[k - 1 - n];
         buf[n] = 0;
         prefix = note ? "0b" : "";
-    } else if (radix == 8) {
-        n = snprintf(buf, sizeof buf, "%llo", (unsigned long long) u);
-        prefix = note ? "0o" : "";
-    } else if (radix == 16) {
-        n = snprintf(buf, sizeof buf, "%llx", (unsigned long long) u);
-        prefix = note ? "0x" : "";
-    } else if (radix == LOFT_HEX_UPPER) {
-        n = snprintf(buf, sizeof buf, "%llX", (unsigned long long) u);
-        prefix = note ? "0x" : "";
+    } else if (radix == 8 || radix == 16 || radix == LOFT_HEX_UPPER) {
+        /* The digits written from the end of `buf`, as `{:o}` / `{:x}` / `{:X}` print them. */
+        const char *digits = radix == LOFT_HEX_UPPER ? "0123456789ABCDEF" : "0123456789abcdef";
+        unsigned shift = radix == 8 ? 3 : 4;
+        uint64_t mask = radix == 8 ? 7 : 15;
+        char *end = buf + sizeof buf, *at = end;
+        do { *--at = digits[u & mask]; u >>= shift; } while (u);
+        n = (int) (end - at);
+        memmove(buf, at, (size_t) n);
+        buf[n] = 0;
+        prefix = radix == 8 ? (note ? "0o" : "") : (note ? "0x" : "");
     } else {
         fputs("loft: unknown radix\n", stderr);
         abort();
@@ -1027,9 +1029,48 @@ static uint8_t loft_ends_with(loft_str s, loft_str v) {
     return (uint8_t) (v.len <= s.len && loft_mem_at(s, s.len - v.len, v));
 }
 
+/* How common byte `c` is in text, highest first: the order `memchr`'s searchers rank a needle's
+ * bytes by, so a search stops on the needle's RAREST byte and not on its first — the first of
+ * "alpha" is the commonest letter there is.  Bytes not listed rank rare. */
+static int loft_byte_commonness(unsigned char c) {
+    static const char order[] = " etaoinsrhldcumfpgwybvkxjqzETAOINSRHLDCUMFPGWYBVKXJQZ,.\n0123456789";
+    const char *at = memchr(order, c, sizeof order - 1);
+    return at ? (int) (sizeof order - 1 - (size_t) (at - order)) : 0;
+}
+
+/* The offset of needle `v`'s rarest byte (`loft_byte_commonness`): the byte a search scans
+ * for.  Asked once per search, not once per match. */
+static size_t loft_rare_index(loft_str v) {
+    size_t k = 0;
+    int best = v.len ? loft_byte_commonness((unsigned char) v.p[0]) : 0;
+    for (size_t i = 1; i < v.len; i++) {
+        int c = loft_byte_commonness((unsigned char) v.p[i]);
+        if (c < best) best = c, k = i;
+    }
+    return k;
+}
+
+/* The first byte offset at or after `from` where `v` occurs in `s`, or -1: `memchr` for the
+ * needle's byte at `k` (`loft_rare_index`), then the whole needle compared around each hit
+ * (`str::find`'s answer; an empty needle is found at `from`). */
+static int64_t loft_mem_find_at(loft_str s, size_t from, loft_str v, size_t k) {
+    if (v.len == 0) return from <= s.len ? (int64_t) from : -1;
+    if (v.len > s.len || from > s.len - v.len) return -1;
+    const char *end = s.p + (s.len - v.len) + k + 1;
+    const char *at = s.p + from + k;
+    while (at < end) {
+        const char *hit = (const char *) memchr(at, (unsigned char) v.p[k], (size_t) (end - at));
+        if (!hit) return -1;
+        const char *start = hit - k;
+        if (memcmp(start, v.p, v.len) == 0) return (int64_t) (start - s.p);
+        at = hit + 1;
+    }
+    return -1;
+}
+
 static int64_t loft_find(loft_str s, loft_str v) {
-    for (size_t at = 0; at + v.len <= s.len; at++) if (loft_mem_at(s, at, v)) return (int64_t) at;
-    return LOFT_NULL;
+    int64_t at = loft_mem_find_at(s, 0, v, loft_rare_index(v));
+    return at < 0 ? LOFT_NULL : at;
 }
 
 static int64_t loft_rfind(loft_str s, loft_str v) {
@@ -1098,16 +1139,13 @@ static loft_text loft_replace(loft_str s, loft_str v, loft_str w) {
         loft_push(&out, w.p, w.len);
         return out;
     }
-    /* As str::replace: find the next match by its first byte, push the run before it whole. */
+    /* As str::replace: find the next match (`loft_mem_find_at`), push the run before it whole. */
+    size_t k = loft_rare_index(v);
     while (at < s.len) {
-        const char *hit = (const char *) memchr(s.p + at, (unsigned char) v.p[0], s.len - at);
-        while (hit && ((size_t) (hit - s.p) + v.len > s.len || memcmp(hit, v.p, v.len) != 0)) {
-            size_t next = (size_t) (hit - s.p) + 1;
-            hit = next < s.len ? (const char *) memchr(s.p + next, (unsigned char) v.p[0], s.len - next) : 0;
-        }
-        size_t to = hit ? (size_t) (hit - s.p) : s.len;
+        int64_t hit = loft_mem_find_at(s, at, v, k);
+        size_t to = hit < 0 ? s.len : (size_t) hit;
         loft_push(&out, s.p + at, to - at);
-        if (!hit) break;
+        if (hit < 0) break;
         loft_push(&out, w.p, w.len);
         at = to + v.len;
     }
@@ -7044,8 +7082,26 @@ static int64_t loft_vector_sum_int(loft_ref v, int64_t acc) {
         int64_t stop = at + LOFT_SUM_BLOCK < n ? at + LOFT_SUM_BLOCK : n;
         uint64_t room = acc == LOFT_NULL ? 0 : (acc < 0 ? (uint64_t) 0 - (uint64_t) acc : (uint64_t) acc);
         if (acc == LOFT_NULL || room >= (uint64_t) INT64_MAX - (uint64_t) LOFT_SUM_BLOCK * (uint64_t) LOFT_SUM_BOUND) break;
+        /* Eight lane accumulators, so the vectorised body runs four independent add chains as
+         * LLVM's unrolled `sum_blocks_i64` does — one accumulator is one chain, which waits on
+         * itself every element pair.  Sums are modulo 2^64 and the bound test an OR: the lanes
+         * fold to the same answer. */
+        uint64_t hs[8] = { 0 }, ss[8] = { 0 };
+        int64_t i = at;
+        for (; i + 8 <= stop; i += 8) {
+            for (int j = 0; j < 8; j++) {
+                int64_t x;
+                memcpy(&x, base + (size_t) (i + j) * 8, 8);
+                hs[j] |= ((uint64_t) x + (uint64_t) LOFT_SUM_BOUND) >> 41;
+                ss[j] += (uint64_t) x;
+            }
+        }
         uint64_t high = 0, sum = 0;
-        for (int64_t i = at; i < stop; i++) {
+        for (int j = 0; j < 8; j++) {
+            high |= hs[j];
+            sum += ss[j];
+        }
+        for (; i < stop; i++) {
             int64_t x;
             memcpy(&x, base + (size_t) i * 8, 8);
             high |= ((uint64_t) x + (uint64_t) LOFT_SUM_BOUND) >> 41;

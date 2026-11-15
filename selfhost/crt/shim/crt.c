@@ -19,6 +19,9 @@
 #define LOFT_PARSE 1
 /* A mapped file (`file_map`): a store whose bytes are the mapping's, read-only. */
 #define LOFT_FOREIGN 1
+/* The engine-host kernel (`lib/engine_host`): the runtime's own (`loft_engine.h`), its sockets
+ * and its HTTPS client, as a C program that reaches a kernel native is built. */
+#define LOFT_ENGINE 1
 #include "../../../src/c/loft_crt.h"
 /* The file routines (@PLN91 S6's files): a File record of the interpreted program is read and
  * written by the runtime's own `loft_get_file`, `loft_write_file`, `loft_read_file`, …, and a
@@ -29,6 +32,9 @@
 /* A second pass over the radix walks defines their paged twins, as the C backend's unit order. */
 #include "../../../src/c/loft_radix_walk.h"
 #include "../../../src/c/loft_paged_load.h"
+#include "../../../src/c/loft_sock.h"
+#include "../../../src/c/loft_https.h"
+#include "../../../src/c/loft_engine.h"
 
 /* The text parser (`loft_parse.h`, `loft_json.h`) reads its unit's type table and asks which
  * types are a vector variable's own store (`main_vector<T>`); for the runner both come from the
@@ -664,6 +670,49 @@ void loft_crt_ref_text_append_view(int64_t s, int64_t r, int64_t p, int64_t stk,
     loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
     loft_str v = *(loft_str *) loft_crt_slot_at(stk, at);
     if (t) loft_text_concat(t, v);
+}
+
+/* A program's own `#c` binding, called as the interpreter's `c_call` calls it: the symbol looked
+ * up once per native (`idx`) in what the process has loaded, each argument read at its stack
+ * slot's width (`args`: `b` a byte, `c` four bytes, `i` eight; the first deepest under `top`)
+ * and handed over as a 64-bit integer, the answer narrowed to the C return's width and sign
+ * (`ret_bits` 0 for none).  -1 in `*ok` where the symbol is not found or the arity is past the
+ * ladder; the caller stops the run then. */
+#include <dlfcn.h>
+#define LOFT_CRT_CCALLS 4096
+static void *loft_crt_cfn[LOFT_CRT_CCALLS];
+int64_t loft_crt_c_call(int64_t stk, int64_t top, const char *sym, int64_t symlen, const char *args,
+                        int64_t nargs, int64_t ret_bits, int64_t ret_signed, int64_t idx, int64_t *ok,
+                        int64_t okn) {
+    if (okn < 1) return 0;
+    ok[0] = -1;
+    if (nargs < 0 || nargs > 8 || idx < 0 || idx >= LOFT_CRT_CCALLS || symlen <= 0) return 0;
+    void *f = loft_crt_cfn[idx];
+    if (!f) {
+        f = dlsym(RTLD_DEFAULT, sym);
+        if (!f) return 0;
+        loft_crt_cfn[idx] = f;
+    }
+    int64_t a[8] = { 0 };
+    for (int64_t k = 0; k < nargs; k++) {
+        const uint8_t *q = loft_crt_slot_at(stk, top - 8 * (nargs - k));
+        if (args[k] == 'b') { uint8_t v; memcpy(&v, q, 1); a[k] = v; }
+        else if (args[k] == 'c') { uint32_t v; memcpy(&v, q, 4); a[k] = v; }
+        else { memcpy(&a[k], q, 8); }
+    }
+    typedef int64_t (*f0)(void);
+    typedef int64_t (*f8)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
+    int64_t r;
+    if (nargs == 0) r = ((f0) f)();
+    else r = ((f8) f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+    ok[0] = 0;
+    switch (ret_bits) {
+    case 0: return 0;
+    case 8: return ret_signed ? (int64_t) (int8_t) r : (int64_t) (uint8_t) r;
+    case 16: return ret_signed ? (int64_t) (int16_t) r : (int64_t) (uint16_t) r;
+    case 32: return ret_signed ? (int64_t) (int32_t) r : (int64_t) (uint32_t) r;
+    default: return r;
+    }
 }
 
 /* `OpCastFloatFromText` / `OpCastSingleFromText` on the view in its frame slot: the runtime's
@@ -1466,6 +1515,14 @@ int64_t loft_crt_store_buf(int64_t *out, int64_t no, int64_t store, int64_t rec,
     loft_ref h = loft_crt_ref(store, rec, pos);
     loft_crt_put_ref(out, no, only ? loft_store_buf_only(h) : loft_store_buf(h));
     return 0;
+}
+
+/* `store_buf`'s answer written at the address `to` (`OpStoreBuf`'s arm). */
+extern void loft_twin_store_buf_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t only);
+LOFT_STEP_FN void loft_twin_store_buf_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t only) {
+    loft_ref h = loft_crt_ref(store, rec, pos);
+    loft_ref b = only ? loft_store_buf_only(h) : loft_store_buf(h);
+    loft_twin_poke_ref(to, b.store_nr, b.rec, b.pos);
 }
 
 /* OpAdoptChildRec (`Stores::adopt_child_rec`): the field's child record adopted from the value. */
@@ -2650,6 +2707,19 @@ void loft_crt_add_arg(const char *v, int64_t bytes) {
 }
 
 /* `arguments()`: the program's arguments in a store of their own, into `out`. */
+/* `panic(message, file, line)` reported at the PROGRAM's place: the runtime's own `loft_panic`
+ * (a loft call to `panic` gets the caller's place injected by the compiler). */
+void loft_crt_panic(const char *msg, int64_t mlen, const char *file, int64_t flen, int64_t line) {
+    loft_panic(loft_crt_str(msg, mlen), loft_crt_str(file, flen), line);
+}
+
+/* `env_variables()`: the environment as `EnvVariable` records of `size` bytes, the C runtime's
+ * own (`loft_env_variables`), into `out`. */
+int64_t loft_crt_env_variables(int64_t *out, int64_t no, int64_t size) {
+    loft_crt_put_ref(out, no, loft_env_variables((uint32_t) size));
+    return 0;
+}
+
 int64_t loft_crt_arguments(int64_t *out, int64_t no) {
     loft_crt_put_ref(out, no, loft_arguments());
     return 0;
@@ -3056,3 +3126,78 @@ int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, i
     return -1;
 }
 #endif
+
+/* ── The engine-host kernel for the runner (`lib/engine_host`, `loft_engine.h`) ────────────────
+ * One entry for every kernel routine that answers a scalar, selected by `which` (the runner's
+ * `natives::KERNEL_*` order): its integer operands `a`, `b` and its text operand. */
+int64_t loft_crt_kernel(int64_t which, int64_t a, int64_t b, const char *s, int64_t slen) {
+    loft_str t = loft_crt_str(s, slen);
+    switch (which) {
+    case 0: return loft_kernel_listen(a, b);
+    case 1: return loft_kernel_pump();
+    case 2: return loft_kernel_next_event();
+    case 3: return loft_kernel_event_cid();
+    case 4: return loft_kernel_event_kind();
+    case 5: return loft_kernel_event_status();
+    case 6: return loft_kernel_tick_due();
+    case 7: return loft_kernel_send(a, t);
+    case 8: return loft_kernel_broadcast(t);
+    case 9: loft_kernel_idle(a); return 0;
+    case 10: return loft_kernel_clients();
+    case 11: return loft_kernel_alive();
+    case 12: loft_kernel_stop(); return 0;
+    case 13: loft_kernel_frame(); return 0;
+    case 14: return loft_kernel_post(t);
+    case 15: return loft_kernel_udp_bound(a);
+    case 16: loft_kernel_sync_class(a); return 0;
+    case 17: loft_kernel_sync_class_keyed(a); return 0;
+    case 18: return loft_kernel_keyframe(a, t);
+    case 19: return loft_kernel_sync_next();
+    case 20: return loft_kernel_sync_cid();
+    case 21: return loft_kernel_sync_seq();
+    case 22: return loft_kernel_local(a);
+    case 23: return loft_kernel_connect(t, a, b);
+    case 24: return loft_kernel_client_pump();
+    case 25: return loft_kernel_client_alive();
+    case 26: loft_kernel_client_stop(); return 0;
+    case 27: return loft_kernel_client_next_event();
+    case 28: return loft_kernel_client_event_kind();
+    case 29: return loft_kernel_client_event_cid();
+    case 30: return loft_kernel_client_event_status();
+    case 31: return loft_kernel_client_tick_due();
+    case 32: loft_kernel_client_idle(a); return 0;
+    case 33: return loft_kernel_client_send(t);
+    case 34: return loft_kernel_client_sync_next();
+    case 35: return loft_kernel_client_sync_seq();
+    case 36: return loft_kernel_client_udp_bound();
+    case 37: loft_kernel_client_frame(); return 0;
+    case 38: return loft_kernel_swap_step();
+    default: return LOFT_NULL;
+    }
+}
+
+/* A kernel routine that answers a text (`which`: the event payload, the sync payload, the
+ * client's two, the default host), its bytes into `out` (`cap` bytes): its length, which the
+ * caller reads again with a larger buffer when it exceeds `cap`; -1 for the null text. */
+int64_t loft_crt_kernel_text(char *out, int64_t cap, int64_t which) {
+    loft_text v;
+    switch (which) {
+    case 0: v = loft_kernel_event_payload(); break;
+    case 1: v = loft_kernel_sync_payload(); break;
+    case 2: v = loft_kernel_client_event_payload(); break;
+    case 3: v = loft_kernel_client_sync_payload(); break;
+    case 4: v = loft_kernel_default_host(); break;
+    default: return -1;
+    }
+    loft_str w = loft_view(&v);
+    int64_t n = loft_str_is_null(w) ? -1 : (int64_t) w.len;
+    if (n > 0) memcpy(out, w.p, (size_t) (n < cap ? n : cap));
+    loft_text_free(&v);
+    return n;
+}
+
+/* `http_fetch(method, url, body, headers)`: the request's id, its completion a kind-3 event. */
+int64_t loft_crt_kernel_fetch(const char *m, int64_t ml, const char *u, int64_t ul, const char *b, int64_t bl,
+                              const char *h, int64_t hl) {
+    return loft_kernel_http_fetch(loft_crt_str(m, ml), loft_crt_str(u, ul), loft_crt_str(b, bl), loft_crt_str(h, hl));
+}

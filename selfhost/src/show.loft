@@ -94,6 +94,8 @@ struct Ctx {
   tail_path: vector<text>,
   tail_pathed: boolean,
   closers: vector<text>,
+  // The bytes a leaf is rendered through (`crt::show_leaf_in`), kept for the whole walk.
+  buf: vector<u8>,
 }
 
 // A reference's place in the text until its target's pointer is known: a marker no rendered
@@ -178,7 +180,7 @@ fn place_of(c: Ctx, s: integer, r: integer, p: integer) -> text? {
 // under `$refs` — an object gains it as its last member, any other value is wrapped as
 // `{"$value": …, "$refs": […]}`.  A value that reaches no reference renders as it is.
 pub fn render(ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
-  c = Ctx { on: reaches_reference(ts, tp, []), path: [], at_key: [], at_ptr: [], targets: [], tail_rec: 0, tail_tp: 0, tail_ind: 0, tail_path: [], tail_pathed: false, closers: [] };
+  c = Ctx { on: reaches_reference(ts, tp, []), path: [], at_key: [], at_ptr: [], targets: [], tail_rec: 0, tail_tp: 0, tail_ind: 0, tail_path: [], tail_pathed: false, closers: [], buf: [for _ in 0..64 { 0 as u8 }] };
   if !c.on {
     write(c, ts, tp, at, fmt, ind, o);
     return;
@@ -254,13 +256,26 @@ pub fn render(ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, i
 // `ShowDb::write`: the value, and then every out-of-line child its last fields chained to — a
 // loop, so a chain of any length takes no call per link — and the closing texts that waited.
 fn write(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
-  mark = len(c.closers);
-  saved: vector<text> = [];
   if c.on {
-    for seg in c.path {
-      saved += [seg];
-    }
+    write_pathed(c, ts, tp, at, fmt, ind, o);
+  } else {
+    write_chain(c, ts, tp, at, fmt, ind, o);
   }
+}
+
+// `write` with a path kept: the chain written, then the path it started at put back.  Apart, so
+// a value written without a path makes no copy of one.
+fn write_pathed(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+  saved: vector<text> = [];
+  for seg in c.path {
+    saved += [seg];
+  }
+  write_chain(c, ts, tp, at, fmt, ind, o);
+  c.path = saved;
+}
+
+fn write_chain(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+  mark = len(c.closers);
   write_one(c, ts, tp, at, fmt, ind, o);
   while c.tail_rec != 0 {
     rec = c.tail_rec;
@@ -277,9 +292,6 @@ fn write(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer
   while len(c.closers) > mark {
     o += c.closers[len(c.closers) - 1] ?? "";
     c.closers.remove(len(c.closers) - 1);
-  }
-  if c.on {
-    c.path = saved;
   }
 }
 
@@ -298,7 +310,7 @@ fn write_one(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: int
   r = at.r;
   p = at.p;
   if tp <= 6 {
-    o += crt::show_leaf(tp, s, r, p, fmt, 0, false);
+    o += crt::show_leaf_in(c.buf, tp, s, r, p, fmt, 0, false);
     return;
   }
   if r == 0 {
@@ -346,19 +358,19 @@ fn write_one(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: int
         show_hash(c, ts, tp, content, at, fmt, ind, o);
       }
     }
-    PtByte { start, nullable } => { o += crt::show_leaf(crt::SHOW_BYTE, s, r, p, fmt, start, nullable); }
-    PtShort { start, nullable } => { o += crt::show_leaf(crt::SHOW_SHORT, s, r, p, fmt, start, nullable); }
-    PtShortRaw { start, nullable } => { o += crt::show_leaf(crt::SHOW_SHORT_RAW, s, r, p, fmt, start, nullable); }
-    PtInt { start: _, nullable } => { o += crt::show_leaf(crt::SHOW_INT4, s, r, p, fmt, 0, nullable); }
-    PtIntRaw { start: _, nullable } => { o += crt::show_leaf(crt::SHOW_INT_RAW, s, r, p, fmt, 0, nullable); }
-    PtDbRef => { o += crt::show_leaf(crt::SHOW_DBREF, s, r, p, fmt, 0, false); }
+    PtByte { start, nullable } => { o += crt::show_leaf_in(c.buf, crt::SHOW_BYTE, s, r, p, fmt, start, nullable); }
+    PtShort { start, nullable } => { o += crt::show_leaf_in(c.buf, crt::SHOW_SHORT, s, r, p, fmt, start, nullable); }
+    PtShortRaw { start, nullable } => { o += crt::show_leaf_in(c.buf, crt::SHOW_SHORT_RAW, s, r, p, fmt, start, nullable); }
+    PtInt { start: _, nullable } => { o += crt::show_leaf_in(c.buf, crt::SHOW_INT4, s, r, p, fmt, 0, nullable); }
+    PtIntRaw { start: _, nullable } => { o += crt::show_leaf_in(c.buf, crt::SHOW_INT_RAW, s, r, p, fmt, 0, nullable); }
+    PtDbRef => { o += crt::show_leaf_in(c.buf, crt::SHOW_DBREF, s, r, p, fmt, 0, false); }
     PtChildRec { content } => {
       child = crt::get_w(8, s, r, p, 0, 0) ?? 0;
       if child != 0 && child_is_value(ts, content) {
         // An out-of-line child that is a value of its own: the record it names.
         write(c, ts, content, crt::Pos { s: s, r: child, p: 8 }, fmt, ind, o);
       } else {
-        o += crt::show_leaf(crt::SHOW_CHILD, s, r, p, fmt, 0, false);
+        o += crt::show_leaf_in(c.buf, crt::SHOW_CHILD, s, r, p, fmt, 0, false);
       }
     }
     _ => panic("a format the lowering refuses"),

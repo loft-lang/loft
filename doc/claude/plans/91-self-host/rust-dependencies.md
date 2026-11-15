@@ -11,6 +11,8 @@ functions without any Rust code, and work on it is loft or C — never a `.rs` f
 page lists every place where it does not meet that rule yet, what each one costs to remove,
 and the order to build the next version in.  The plan's whole path to a tree without Rust is
 [README.md § The path](README.md); this page is the interpreter's part of it, by dependency.
+The design those steps serve — the three levels of "without Rust" and what each needs — is
+[rust-free-build.md](rust-free-build.md).
 
 ## Contents
 - [What needs no Rust](#what-needs-no-rust)

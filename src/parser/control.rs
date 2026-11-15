@@ -6293,7 +6293,7 @@ impl Parser {
             }
             // A then arm that never finishes by a construct of its own — a `match` whose every
             // arm leaves — keeps that construct: it is the arm's code, not a `null` to retype.
-            let then_never = matches!(true_type, Type::Never);
+            let then_never = matches!(true_type.base(), Type::Never);
             if matches!(true_type, Type::Null | Type::Never)
                 || then_tuple_nulls.is_some()
                 || true_is_empty_literal
@@ -6728,10 +6728,10 @@ impl Parser {
         // that finishes without a value it is a statement that finishes (loft#2499).  Typed
         // `never`, an enclosing `if` read it as its arm's diverging tail and put the sibling's
         // null in its place, so the arm that matched did not run.
-        if matches!(r, Type::Never) && self.match_void_arm {
+        if matches!(r.base(), Type::Never) && self.match_void_arm {
             r = Type::Void;
             if let Value::Block(bl) = code
-                && matches!(bl.result, Type::Never)
+                && matches!(bl.result.base(), Type::Never)
             {
                 bl.result = Type::Void;
             }

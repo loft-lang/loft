@@ -1274,7 +1274,7 @@ fn OpNullRefSentinel() -> reference;
 fn OpInitRefSentinel(pos: const u16);
 #loft" #arm slots: crt::poke_ref(base + sp - pos, 65535, 0, 0);"
 fn OpFreeRef(v1: reference);
-#loft" #arm guard(s.table_loaded && crt::peek_u32(base, sp - 16) != 65535): crt::free_ref(v1.store_nr, v1.rec, v1.pos);"
+#loft" #arm guard(s.table_loaded && (crt::peek_u32(base, sp - 16) != 65535 || crt::peek_u32(base, sp - 12) == 0)): if v1.store_nr != 65535 {{ crt::free_ref(v1.store_nr, v1.rec, v1.pos); }}"
 // Plan-57 store-identity gate (verification builds only — emitted by the gated
 // `LOFT_STORE_TAG` IR post-pass, never in normal builds, so the bytecode stays
 // byte-identical).  OpStoreTag stamps the store with an allocation-site id;
@@ -2165,7 +2165,7 @@ fn OpMoveChildRec(field: reference, src: reference, tp: const u16);
 // `OpDatabase` claims its result as a record there (`keys::STORE_BUF_BIT`).
 fn OpStoreBuf(host: reference) -> reference;
 #rust"stores.store_buf(&@host)"
-#loft"state_ops::store_buf(host, false)"
+#loft"state_ops::store_buf(host, false) #arm crt::store_buf_to(out_at, host.store_nr, host.rec, host.pos, false);"
 #pure
 // `@FR-R-HostStore`: the out-of-line `field` takes `value` — a record its callee claimed in the
 // field's store, or the child the field already holds — by its number; any other value is
@@ -2178,7 +2178,7 @@ fn OpAdoptChildRec(field: reference, value: reference, tp: const u16);
 // function hands on when a caller may have offered a record of its own, which it never writes.
 fn OpStoreBufOnly(buf: reference) -> reference;
 #rust"stores.store_buf_only(&@buf)"
-#loft"state_ops::store_buf(buf, true)"
+#loft"state_ops::store_buf(buf, true) #arm crt::store_buf_to(out_at, buf.store_nr, buf.rec, buf.pos, true);"
 #pure
 // `@FR-R-HostStore`'s result clause: `rec`, a result its function drops, released — its store
 // whole when that is not `answer`'s, else the record with what it owns, the store living on for
@@ -2314,7 +2314,7 @@ pub fn size(self: const trie) -> integer {
 #pure
 // Call a predefined system function (but not an operator).
 fn OpStaticCall(call: const u16);
-#loft" #arm guard((s.lights[call] ?? -1) >= 0): s.light_call(s.lights[call] ?? -1);"
+#loft" #arm guard((s.lights[call] ?? -1) >= 0): s.light_call(s.lights[call] ?? -1, call);"
 // Create a DbRef that points INTO the current stack frame (not into a data store).
 //
 // `pos` is a compile-time u16 offset.  At runtime the produced DbRef is:

@@ -6593,6 +6593,15 @@ to bisect to.
   `resolve_move(from: Vec3, …)`, whose body only builds `Vec3`s through `vec3`, carries its
   parameters, and `vec3` stops being consumed as a record at those sites (the moros/dryopea
   lane: `vec3` and `hex_to_world` tuples, four mints and frees fewer per `resolve_move`).
+  The walk keys a native's write by RECORD TYPE as the write set does: a text setter writes
+  no byte of a no-heap record, `OpPutRef` writes a frame slot, and a non-`const` operand is
+  a route only when its type — a variable's, or the schema type a field projection carries
+  — can hold the parameter's type (`holds_schema_type`).  A call back into a function still
+  being walked contributes nothing beyond that function's own walk (the least fixpoint; a
+  result that leans on an open walk is not memoised), so a write-free recursion such as the
+  runner's `show::write` chain carries its parameters.  A drop function and a type's
+  `OpCopy` hook keep record parameters: the release and copy machinery hand them the
+  record, through no call site this rule rewrites.
   Cells `loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft` (c4b and c5b are
   the aliasing negatives: a parameter that names the record written reads the write back,
   which a tuple copy could not).  Declines:
