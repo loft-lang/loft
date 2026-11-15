@@ -2287,7 +2287,7 @@ pub fn clear_before_mint(b: ir::Bundle, ops: vector<ir::Node>, i: integer, end: 
 // held header) is the vector hoist's, which is not carried.
 pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer, head: &boolean) -> integer {
   head = false;
-  if (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
     return -1;
   }
   shown: vector<ir::Node> = ops[0..end];
@@ -2346,7 +2346,7 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
 // `hash_reserve` (`@FR-R-PushFill`'s hash clause): a counted loop that files records into one
 // hash reserves the table's room for its trips before it runs.
 pub fn hash_reserve(x: Cx, w: W, lp: ir::Block, ind: integer) {
-  if (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_HASH_RESERVE") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_HASH_RESERVE") ?? "0") != "0" {
     return;
   }
   hf = opt_push::hash_fill_loop(x.b, lp) ?? return;

@@ -261,6 +261,9 @@ struct W {
   // and type, in pairs, the place's own member first.
   group: text,
   group_members: vector<integer>,
+  // A generator's element shape ("" outside one, `gen_elem`), and the yields written so far.
+  gen_elem: text,
+  yields: integer,
   // `@FR-R-SameRead`'s filed clause: the hash type the previous statement filed a record
   // into (-1 for none), and the one a lookup's binding may read it from.
   filed: integer,
@@ -419,6 +422,11 @@ pub struct Written {
   pub storage: text,
   // `(R-CSplit)`: the body is over its budget — written whole, its MSVC parts not carried.
   pub split: boolean,
+  // A generator (`write_gen`): `text` is its creator's body; the frame struct and the
+  // prototypes, written before the unit's functions, and the resume and release, after them.
+  pub generator: boolean,
+  pub gen_decls: text,
+  pub gen_bodies: text,
 }
 
 fn refuse(w: W, why: text) {

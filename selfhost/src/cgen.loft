@@ -316,6 +316,10 @@ fn body_line(cx: Cx, t: cgen_names::Twin) -> text {
   if wr.split {
     return "[refused]\t{name}\ta body the writer splits\n";
   }
+  // A generator has no frame wrapper, so no body the Rust writer traces.
+  if wr.generator {
+    return "";
+  }
   "[bodies]\t{name}\t{wr.text.replace("\\", "\\\\").replace("\n", "\\n")}\n"
 }
 

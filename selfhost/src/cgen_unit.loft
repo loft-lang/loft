@@ -267,6 +267,15 @@ fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>)
   if wr.refused != "" {
     return "{x.b.data.definitions[t.d]!.name}: {wr.refused}";
   }
+  // A generator is its creator, with no frame of its own (`write_gen`): the frame struct and
+  // its prototypes among the bodies' declarations, the resume and the release among them.
+  if wr.generator {
+    x.gen_decls += wr.gen_decls;
+    x.gen_bodies += wr.gen_bodies;
+    p.protos += "static loft_ref {wr.name}({wr.list});\n";
+    p.bodies += "\nstatic loft_ref {wr.name}({wr.list}) {{\n{wr.text}}}\n";
+    return "";
+  }
   if wr.storage.starts_with("static /*loft_hot:") {
     candidates += [t.d];
   }

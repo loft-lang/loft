@@ -235,7 +235,7 @@ fn hold_of(w: W, f: integer) -> integer {
 // `open_file_hold`: before loop `lp`, take the cursor of the file it reads; answers whether
 // it did.
 pub fn open_hold(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
-  if (env_variable("LOFT_NO_FILE_HOLD") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_FILE_HOLD") ?? "0") != "0" {
     return false;
   }
   f = held_file(x, w, lp);

@@ -1,0 +1,754 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN91 strand 12 — the C generator written in loft: generators (@F34, `src/c/body/generator.rs`).
+//
+// A function returning `iterator<T>` becomes a frame struct holding every local, a creator
+// that fills the frame from the arguments, a resume function that restores the locals, jumps
+// to the label after the last `yield` and saves them again at the next one, and a release.
+// The body is written as any other; a `yield` and a `return` are the only statements that read
+// differently.  The runtime half is the generator table in `loft_rt.h`.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_types;
+use cgen_text;
+use binds;
+use own;
+use loop_shape;
+
+// The element shape of a function returning `iterator<T>`, "" for any other function and
+// "void" for a generator of nothing.
+pub fn gen_elem(d: ir::Definition) -> text {
+  if len(d.returned) == 0 {
+    return "";
+  }
+  match cgen_types::base(d.returned[0]!) {
+    TyIterator { step, inner: _ } => {
+      c = cgen_types::ctype(step) ?? "void";
+      if c == "" { "void" } else { c }
+    },
+    _ => "",
+  }
+}
+
+// `yield x`: the value through `out`, the locals into the frame, and the label the next resume
+// jumps to.
+pub fn gen_yield(x: Cx, w: W, value: ir::Node, ind: integer) {
+  c = w.gen_elem;
+  if c == "" {
+    refuse(w, "a yield outside a generator");
+    return;
+  }
+  // A tuple holding a text is copied into the consumer's value member by member: the texts
+  // are the consumer's own copies, the rest moves (`(G-Own)`).
+  leaves: vector<text> = [];
+  if is_tuple(c) {
+    tuple_text_leaves("t", c, leaves);
+  }
+  if len(leaves) > 0 {
+    t = temp(w, c);
+    cgen_fn::assign(x, w, value, t, c, ind);
+    cgen_fn::copy_member(w, t, "(*({held(c)} *) out)", c, ind);
+  } else {
+    e = cgen_fn::expr(x, w, value, ind);
+    if c == "text" {
+      line(w, ind, "loft_text_set((loft_text *) out, {as_view(w, e)});");
+    } else {
+      line(w, ind, "*({held(c)} *) out = {as_shape(w, e, c)};");
+    }
+  }
+  // `(G-Own)`: the consumer owns what it is handed, so the generator forgets the temps
+  // holding it before it suspends — its release and its tail then find them null.  A temp
+  // declared inside the yielded value ended with its block and is skipped.
+  f = x.b.data.definitions[w.index]!.variables;
+  inner_scopes: vector<integer> = [];
+  block_scopes(value, inner_scopes);
+  for t in yield_handed_temps(x.b, w.index, value) {
+    inside = false;
+    for sc in inner_scopes {
+      if sc == f.variables[t]!.scope {
+        inside = true;
+      }
+    }
+    if inside {
+      continue;
+    }
+    shape = w.shapes[t] ?? "";
+    if shape == "ref" {
+      line(w, ind, "{w.names[t]!} = loft_ref_null();");
+    } else if shape == "fn" {
+      line(w, ind, "{w.names[t]!}.clos = loft_ref_null();");
+    }
+  }
+  flush(w, ind);
+  w.yields += 1;
+  k = w.yields;
+  line(w, ind, "fr->state = {k};");
+  line(w, ind, "LOFT_SAVE{w.index};");
+  line(w, ind, "return;");
+  line(w, 0, "loft_y{k}:;");
+}
+
+// The scope of every block inside `n`.
+fn block_scopes(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdBlock { block } => {
+      out += [block[0]!.scope];
+      for o in block[0]!.operators {
+        block_scopes(o, out);
+      }
+    },
+    NdSpan { pos: _, inner } => block_scopes(inner, out),
+    NdIf { cond, t, f } => {
+      block_scopes(cond, out);
+      block_scopes(t, out);
+      block_scopes(f, out);
+    },
+    NdSet { var: _, inner } => block_scopes(inner, out),
+    NdCall { def_nr: _, args } => {
+      for a in args {
+        block_scopes(a, out);
+      }
+    },
+    NdTuple { items } => {
+      for a in items {
+        block_scopes(a, out);
+      }
+    },
+    NdReturn { inner } => block_scopes(inner, out),
+    NdDrop { inner } => block_scopes(inner, out),
+    NdLoop { block } => {
+      for o in block[0]!.operators {
+        block_scopes(o, out);
+      }
+    },
+    NdInsert { items } => {
+      for a in items {
+        block_scopes(a, out);
+      }
+    },
+    _ => {},
+  }
+}
+
+// `coroutine_layout::yield_handed_over`: does a yield of `tp` hand its records to the consumer?
+fn handed_over(tp: ir::TypeT) -> boolean {
+  match cgen_types::base(tp) {
+    TyTuple { elems } => {
+      any = false;
+      for e in elems {
+        if holds_dbref(e) {
+          any = true;
+          if !member_handed(e) {
+            return false;
+          }
+        }
+      }
+      any
+    },
+    _ => member_handed(tp),
+  }
+}
+
+fn member_handed(e: ir::TypeT) -> boolean {
+  match cgen_types::base(e) {
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TyVector { inner: _, dep: _ } => true,
+    _ => false,
+  }
+}
+
+// `data::holds_dbref`: a heap value, or a tuple holding one at any depth.
+fn holds_dbref(t: ir::TypeT) -> boolean {
+  b = cgen_types::base(t);
+  match b {
+    TyTuple { elems } => {
+      for e in elems {
+        if holds_dbref(e) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => own::is_dbref(b),
+  }
+}
+
+// `coroutine_layout::yield_handed_temps`: the compiler temps a yield of `value` hands to the
+// consumer — the value's tail, each member of a tuple, a call's `__retbuf` arguments, a
+// yielded lambda's closure record and its adopted copies, an unboxed tuple's work-ref — with
+// each one's owner where it is a view of another temp.
+fn yield_handed_temps(b: ir::Bundle, d: integer, value: ir::Node) -> vector<integer> {
+  def = b.data.definitions[d]!;
+  out: vector<integer> = [];
+  if len(def.returned) == 0 {
+    return out;
+  }
+  ok = match cgen_types::base(def.returned[0]!) {
+    TyIterator { step, inner: _ } => handed_over(step) || (cgen_types::base(step) is TyFunction),
+    _ => false,
+  };
+  if !ok {
+    return out;
+  }
+  f = def.variables;
+  handed_temps(b, f, value, out);
+  i = 0;
+  while i < len(out) {
+    for dep in own::tp_depend(f, out[i]!) {
+      if handed_temp(f, dep) {
+        known = false;
+        for o in out {
+          if o == dep {
+            known = true;
+          }
+        }
+        if !known {
+          out += [dep];
+        }
+      }
+    }
+    i += 1;
+  }
+  out
+}
+
+// A compiler temp of a heap or function type: one a yield can hand over.
+fn handed_temp(f: ir::Function, v: integer) -> boolean {
+  if v < 0 || v >= len(f.variables) {
+    return false;
+  }
+  var = f.variables[v]!;
+  if var.argument || !binds::is_compiler_generated(f, v) {
+    return false;
+  }
+  t = cgen_types::base(var.type_def[0] ?? ir::TyVoid);
+  own::is_dbref(t) || (t is TyFunction)
+}
+
+fn contains(out: vector<integer>, v: integer) -> boolean {
+  for o in out {
+    if o == v {
+      return true;
+    }
+  }
+  false
+}
+
+fn handed_temps(b: ir::Bundle, f: ir::Function, value: ir::Node, out: vector<integer>) {
+  bare = loop_shape::unspan(value);
+  match bare {
+    NdBlock { block } => {
+      bl = block[0]!;
+      ops = bl.operators;
+      // A yielded lambda's closure build: the record hands over the copies it adopted too.
+      if bl.name == "fn_ref_with_closure" && len(ops) > 0 {
+        match loop_shape::unspan(ops[len(ops) - 1]!) {
+          NdFnRef { def_nr: _, var: wv, t: _ } => {
+            for op in ops {
+              match loop_shape::unspan(op) {
+                NdCall { def_nr, args } => {
+                  if b.data.definitions[def_nr]!.name == "OpSetDbRef" && len(args) > 2 && loop_shape::var_of(loop_shape::unspan(args[0]!)) == wv {
+                    c = loop_shape::var_of(loop_shape::unspan(args[2]!));
+                    if c >= 0 && handed_temp(f, c) && !contains(out, c) {
+                      out += [c];
+                    }
+                  }
+                },
+                _ => {},
+              }
+            }
+          },
+          _ => {},
+        }
+      }
+      // A tuple unboxed from a call's record: the work-ref holding it is handed over.
+      if bl.name == "tuple_unbox" && len(ops) > 0 && (env_variable("LOFT_NO_UNBOX_YIELD_HANDOVER") ?? "") == "" {
+        match loop_shape::unspan(ops[0]!) {
+          NdSet { var: wv, inner } => {
+            if loop_shape::unspan(inner) is NdCall && handed_temp(f, wv) && !contains(out, wv) {
+              out += [wv];
+            }
+          },
+          _ => {},
+        }
+      }
+    },
+    _ => {},
+  }
+  tail = bare;
+  while tail is NdBlock {
+    tail = match tail {
+      NdBlock { block } => {
+        ops = block[0]!.operators;
+        if len(ops) == 0 {
+          return;
+        }
+        loop_shape::unspan(ops[len(ops) - 1]!)
+      },
+      _ => tail,
+    };
+  }
+  match tail {
+    NdVar { n } => {
+      if handed_temp(f, n) {
+        out += [n];
+      }
+    },
+    NdFnRef { def_nr: _, var: wv, t: _ } => {
+      if wv != 65535 && handed_temp(f, wv) {
+        out += [wv];
+      }
+    },
+    NdCall { def_nr, args } => {
+      attrs = b.data.definitions[def_nr]!.attributes;
+      for a in args {
+        if a#index < len(attrs) && attrs[a#index]!.name.starts_with("__retbuf") {
+          v = loop_shape::var_of(loop_shape::unspan(a));
+          if v >= 0 && handed_temp(f, v) {
+            out += [v];
+          }
+        }
+      }
+    },
+    NdTuple { items } => {
+      for it in items {
+        handed_temps(b, f, it, out);
+      }
+    },
+    _ => {},
+  }
+}
+
+// `held_type`: the static type of `v` where a handle is held — a variable, a tuple member, a
+// field of a record or an element of a vector (`(G-Hold)`); null for any other value.
+fn held_type(x: Cx, w: W, v: ir::Node) -> ir::TypeT? {
+  f = x.b.data.definitions[w.index]!.variables;
+  match loop_shape::unspan(v) {
+    NdVar { n } => peel(f.variables[n]!.type_def[0] ?? ir::TyVoid),
+    NdTupleGet { var, idx } => match cgen_types::base(f.variables[var]!.type_def[0] ?? ir::TyVoid) {
+      TyTuple { elems } => elems[idx],
+      _ => null,
+    },
+    NdCall { def_nr, args } => {
+      name = x.b.data.definitions[def_nr]!.name;
+      if name == "OpGetVector" && len(args) > 0 {
+        vt = held_type(x, w, args[0]!) ?? return null;
+        return match cgen_types::base(vt) {
+          TyVector { inner, dep: _ } => inner,
+          _ => null,
+        };
+      }
+      if name == "OpGetRecord" && len(args) > 0 {
+        ct = held_type(x, w, args[0]!) ?? return null;
+        r = match cgen_types::base(ct) {
+          TyHash { n, names: _, dep: _ } => n,
+          TySorted { n, keys: _, dep: _ } => n,
+          TyIndex { n, keys: _, dep: _ } => n,
+          TyRadix { n, names: _, dep: _ } => n,
+          TyTrie { n, key: _, dep: _ } => n,
+          _ => -1,
+        };
+        return if r < 0 { null } else { ir::TyReference { n: r, dep: [] } };
+      }
+      if (name == "OpGetDbRef" || name == "OpGetField") && len(args) > 1 {
+        pos = match loop_shape::unspan(args[1]!) {
+          NdInt { n } => n,
+          _ => return null,
+        };
+        tp = held_type(x, w, args[0]!) ?? return null;
+        match cgen_types::base(tp) {
+          TyReference { n, dep: _ } => {
+            def = x.b.data.definitions[n]!;
+            known = def.known_type;
+            for a in def.attributes {
+              for fl in types_fields(x, known) {
+                if fl.name == a.name && fl.position == pos {
+                  return peel(a.typedef[0] ?? ir::TyVoid);
+                }
+              }
+            }
+            return null;
+          },
+          TyTuple { elems: _ } => return null,
+          _ => return if pos == 0 { tp } else { null },
+        }
+      }
+      null
+    },
+    _ => null,
+  }
+}
+
+fn types_fields(x: Cx, tp: integer) -> vector<ir::DbField> {
+  if tp < 0 || tp >= len(x.b.types) {
+    return [];
+  }
+  match x.b.types[tp].parts[0] {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => [],
+  }
+}
+
+fn peel(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyRefVar { inner } => inner,
+    TyOptional { inner } => inner,
+    _ => t,
+  }
+}
+
+// The generator operators, `done` false for another.
+pub fn gen_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  // The next value: the iterator's element type, its null when the generator has run to its
+  // end.
+  if name == "OpCoroutineNext" && len(args) >= 2 {
+    tp = held_type(x, w, args[0]!);
+    if tp == null {
+      refuse(w, "a generator step on a value of no known type");
+      return none();
+    }
+    elem = match cgen_types::base(tp!) {
+      TyIterator { step, inner: _ } => step,
+      _ => {
+        refuse(w, "a generator step on a value that is not an iterator");
+        return none();
+      },
+    };
+    c = cgen_types::ctype(elem) ?? "";
+    if c == "" || c == "void" {
+      refuse(w, "a generator of nothing");
+      return none();
+    }
+    v = loop_shape::var_of(loop_shape::unspan(args[0]!));
+    g = if v >= 0 { w.names[v]! } else { as_ref(w, cgen_fn::expr(x, w, args[0]!, ind)) };
+    t = temp(w, c);
+    if c == "text" {
+      line(w, ind, "loft_text_set(&{t}, loft_null_text());");
+      line(w, ind, "loft_gen_next({g}, &{t});");
+      return held_value(w, t, "text");
+    }
+    // An exhausted generator answers null members: a text member reads its null, set in the
+    // buffer the step reuses.
+    leaves: vector<text> = [];
+    if is_tuple(c) {
+      tuple_text_leaves(t, c, leaves);
+    }
+    if len(leaves) == 0 {
+      cgen_fn::null_into(w, t, c, ind);
+    } else {
+      null_keeping_texts(w, t, c, ind);
+      for l in leaves {
+        line(w, ind, "loft_text_set(&{l}, loft_null_text());");
+      }
+    }
+    line(w, ind, "loft_gen_next({g}, &{t});");
+    return E { code: t, kind: kind_of(c), tup: if is_tuple(c) { c } else { "" } };
+  }
+  if name == "OpCoroutineRetain" && len(args) == 1 {
+    g = cgen_fn::expr(x, w, args[0]!, ind);
+    return E { code: "loft_gen_retain({as_ref(w, g)})", kind: K_REF };
+  }
+  if name == "OpCoroutineExhausted" && len(args) == 1 {
+    g = cgen_fn::expr(x, w, args[0]!, ind);
+    return E { code: "loft_gen_exhausted({as_ref(w, g)})", kind: K_BOOL };
+  }
+  done = false;
+  none()
+}
+
+// `null_tuple_keeping_texts`: every member of tuple `t` but its texts at its initial value.
+fn null_keeping_texts(w: W, t: text, c: text, ind: integer) {
+  if c == "text" {
+    return;
+  }
+  if is_tuple(c) {
+    for m in tuple_members(c) {
+      null_keeping_texts(w, "{t}.f{m#index}", m, ind);
+    }
+    return;
+  }
+  line(w, ind, "{t} = ({held(c)}) {initial(c)};");
+}
+
+// One frame field: its C type, its name, its shape ("void" for a link, the caller's), and
+// whether it is a parameter.
+struct Field {
+  ty: text,
+  name: text,
+  shape: text,
+  param: boolean,
+}
+
+// `held_args` (`@FR-G-Arg-Rebind`): the parameters whose store the frame holds for its life —
+// every heap argument passed by value.
+fn held_args(x: Cx, w: W) -> vector<text> {
+  f = x.b.data.definitions[w.index]!.variables;
+  out: vector<text> = [];
+  for v in f.variables {
+    i = v#index;
+    if w.params[i]! && !w.links[i]! && w.shapes[i]! == "ref" && own::is_dbref(cgen_types::base(v.type_def[0] ?? ir::TyVoid)) {
+      out += [w.raw[i]!];
+    }
+  }
+  out
+}
+
+// `abandoned_stores`: the heap locals a generator stopped before its end still owns — every
+// local of a heap type or a generator handle that owns its store and that no closure adopted,
+// and every generator handle it was handed.
+fn abandoned_stores(x: Cx, w: W) -> vector<text> {
+  f = x.b.data.definitions[w.index]!.variables;
+  out: vector<text> = [];
+  for v in f.variables {
+    i = v#index;
+    t = v.type_def[0] ?? ir::TyVoid;
+    generator = cgen_types::base(t) is TyIterator;
+    if w.links[i]! || w.shapes[i]! != "ref" {
+      continue;
+    }
+    if w.params[i]! && !generator {
+      continue;
+    }
+    if !(own::is_dbref(t) || generator) {
+      continue;
+    }
+    if !owns_store(f, i) || binds::is_captured(f, i) {
+      continue;
+    }
+    out += [w.raw[i]!];
+  }
+  out
+}
+
+// `Function::owns_store`: no inline ref, no skip-free, and independent — no dependency, or a
+// lone dependency on itself for anything but a record.
+fn owns_store(f: ir::Function, v: integer) -> boolean {
+  var = f.variables[v]!;
+  if binds::is_inline_ref(f, v) || var.skip_free {
+    return false;
+  }
+  deps = own::tp_depend(f, v);
+  record = match cgen_types::base(var.type_def[0] ?? ir::TyVoid) {
+    TyReference { n: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  };
+  len(deps) == 0 || (len(deps) == 1 && deps[0]! == v && !record)
+}
+
+// `distinct_free_pairs`: the `OpFreeRefIfDistinct(a, w)` pairs of two locals in the body.
+fn distinct_free_pairs(x: Cx, w: W) -> vector<text> {
+  out: vector<text> = [];
+  code = x.b.data.definitions[w.index]!.code[0]!;
+  collect_pairs(x, w, code, out);
+  out
+}
+
+fn collect_pairs(x: Cx, w: W, n: ir::Node, out: vector<text>) {
+  match n {
+    NdCall { def_nr, args } => {
+      if x.b.data.definitions[def_nr]!.name == "OpFreeRefIfDistinct" && len(args) == 2 {
+        a = loop_shape::var_of(loop_shape::unspan(args[0]!));
+        b = loop_shape::var_of(loop_shape::unspan(args[1]!));
+        if a >= 0 && b >= 0 {
+          pair = "{w.raw[a]!}\t{w.raw[b]!}";
+          known = false;
+          for o in out {
+            if o == pair {
+              known = true;
+            }
+          }
+          if !known {
+            out += [pair];
+          }
+        }
+      }
+      for a in args {
+        collect_pairs(x, w, a, out);
+      }
+    },
+    NdBlock { block } => { for o in block[0]!.operators { collect_pairs(x, w, o, out); } },
+    NdLoop { block } => { for o in block[0]!.operators { collect_pairs(x, w, o, out); } },
+    NdSpan { pos: _, inner } => collect_pairs(x, w, inner, out),
+    NdIf { cond, t, f } => {
+      collect_pairs(x, w, cond, out);
+      collect_pairs(x, w, t, out);
+      collect_pairs(x, w, f, out);
+    },
+    NdSet { var: _, inner } => collect_pairs(x, w, inner, out),
+    NdReturn { inner } => collect_pairs(x, w, inner, out),
+    NdDrop { inner } => collect_pairs(x, w, inner, out),
+    NdYield { inner } => collect_pairs(x, w, inner, out),
+    NdInsert { items } => { for o in items { collect_pairs(x, w, o, out); } },
+    NdTuple { items } => { for o in items { collect_pairs(x, w, o, out); } },
+    _ => {},
+  }
+}
+
+// `write_gen`: after the body is written into `w` — the creator's body as the text, and the
+// frame, the resume and the release as the parts.
+pub fn write_gen(x: Cx, w: W, name: text, list: text) -> Written {
+  d = w.index;
+  line(w, 0, "loft_gen_end:");
+  epilogue(w, 1);
+  line(w, 1, "fr->done = 1;");
+  // `@FR-G-Arg-Rebind`: a frame that ran to its end gives back its argument holds.
+  holds = held_args(x, w);
+  for n in holds {
+    line(w, 1, "loft_release_frame_hold(fr->hold_{n});");
+    line(w, 1, "fr->hold_{n} = loft_ref_null();");
+  }
+  if w.why != "" {
+    return Written { text: "", refused: w.why };
+  }
+  // Every variable and temporary is a field: a parameter as it is passed, the rest as they
+  // are held; a `&` parameter is the pointer to the caller's variable, kept as passed.
+  fields: vector<Field> = [];
+  for s in w.shapes {
+    i = s#index;
+    link = w.links[i]!;
+    ty = if link { "{held(s)} *" } else if w.params[i]! { passed(s) } else { held(s) };
+    fields += [Field { ty: ty, name: w.raw[i]!, shape: if link { "void" } else { s }, param: w.params[i]! }];
+  }
+  for t in w.temps {
+    fields += [Field { ty: held(t.shape), name: t.name, shape: t.shape, param: false }];
+  }
+  decls = "typedef struct {{ int32_t state; int32_t done;";
+  for f in fields {
+    decls += " {f.ty} {f.name};";
+    if f.param && f.shape == "text" {
+      decls += " loft_text own_{f.name};";
+    }
+  }
+  for n in holds {
+    decls += " loft_ref hold_{n};";
+  }
+  decls += " }} loft_gen{d};\nstatic void loft_resume{d}(void *frp, void *out);\nstatic void loft_genfree{d}(void *frp);\n";
+  // A generator with a link names its locals IN the frame: a link to one points at the frame
+  // field, which lives across resumes, where a restored copy would not.
+  in_frame = false;
+  for l in w.links {
+    if l {
+      in_frame = true;
+    }
+  }
+  saves: vector<text> = [];
+  if !in_frame {
+    for f in fields {
+      saves += ["fr->{f.name} = {f.name};"];
+    }
+  }
+  bodies = "\n#define LOFT_SAVE{d} do {{ {saves.join(" ")} }} while (0)\nstatic void loft_resume{d}(void *frp, void *out) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n";
+  for f in fields {
+    if in_frame {
+      bodies += "#define {f.name} (fr->{f.name})\n";
+    } else {
+      bodies += "    {f.ty} {f.name} = fr->{f.name};\n";
+    }
+  }
+  bodies += "    (void) out;\n    switch (fr->state) {{\n";
+  for k in 1..w.yields + 1 {
+    bodies += "    case {k}: goto loft_y{k};\n";
+  }
+  bodies += "    default: break;\n    }}\n";
+  bodies += cgen_text::expand_epilogues(w);
+  bodies += "}}\n#undef LOFT_SAVE{d}\n";
+  if in_frame {
+    for f in fields {
+      bodies += "#undef {f.name}\n";
+    }
+  }
+  bodies += release(x, w, fields, holds);
+  creator = creator_text(w, fields, holds);
+  creator += "    return loft_gen_new(fr, loft_resume{d}, loft_genfree{d});\n";
+  // A tuple shape among the fields is numbered by the unit's tuple structs.
+  Written { text: resolve_tuples(x, creator), refused: "", name: name, ret: "loft_ref", list: resolve_tuples(x, list), storage: "static", generator: true, gen_decls: resolve_tuples(x, decls), gen_bodies: resolve_tuples(x, bodies) }
+}
+
+// The release: a generator stopped before its end still holds its texts — its own, the ones
+// its tuples hold, and its copies of text arguments — and the stores it owns.
+fn release(x: Cx, w: W, fields: vector<Field>, holds: vector<text>) -> text {
+  d = w.index;
+  out = "static void loft_genfree{d}(void *frp) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n    if (!fr->done) {{\n";
+  for f in fields {
+    if f.shape == "text" && !f.param {
+      out += "        loft_text_free(&fr->{f.name});\n";
+    }
+    if is_tuple(f.shape) && !f.param {
+      leaves: vector<text> = [];
+      tuple_text_leaves("fr->{f.name}", f.shape, leaves);
+      for l in leaves {
+        out += "        loft_text_free(&{l});\n";
+      }
+    }
+  }
+  // `@FR-H-FreeTwice` — a local the body frees only where it is DISTINCT from a witness is
+  // released the same way here, before the witness.  `LOFT_C_PLAIN_ABANDON_FREE=1` frees each
+  // plainly.
+  pairs = if (env_variable("LOFT_C_PLAIN_ABANDON_FREE") ?? "") != "" { [] } else { distinct_free_pairs(x, w) };
+  stores = abandoned_stores(x, w);
+  paired: vector<text> = [];
+  for p in pairs {
+    ab = p.split('\t');
+    n = ab[0]!;
+    for s in stores {
+      if s == n {
+        out += "        if (fr->{n}.rec != 0 && fr->{n}.store_nr != fr->{ab[1]!}.store_nr) {{ loft_free_ref(fr->{n}); }} fr->{n} = loft_ref_null();\n";
+      }
+    }
+    paired += [n];
+  }
+  for n in stores {
+    skip = false;
+    for p in paired {
+      if p == n {
+        skip = true;
+      }
+    }
+    if skip {
+      continue;
+    }
+    out += "        if (fr->{n}.rec != 0) {{ loft_free_ref(fr->{n}); fr->{n} = loft_ref_null(); }}\n";
+  }
+  out += "    }}\n";
+  for f in fields {
+    if f.shape == "text" && f.param {
+      out += "    loft_text_free(&fr->own_{f.name});\n";
+    }
+  }
+  for n in holds {
+    out += "    loft_release_frame_hold(fr->hold_{n});\n";
+  }
+  out + "    free(fr);\n}}\n"
+}
+
+// The creator: the frame, its arguments — a text copied, since the generator outlives the
+// caller's view — and every other field at its initial value.
+fn creator_text(w: W, fields: vector<Field>, holds: vector<text>) -> text {
+  d = w.index;
+  out = "    loft_gen{d} *fr = (loft_gen{d} *) calloc(1, sizeof *fr);\n    if (!fr) {{ fputs(\"loft: out of memory\\n\", stderr); abort(); }}\n";
+  for f in fields {
+    if f.param {
+      if f.shape == "text" {
+        out += "    fr->own_{f.name} = loft_text_own({f.name});\n    fr->{f.name} = loft_view(&fr->own_{f.name});\n";
+      } else {
+        out += "    fr->{f.name} = {f.name};\n";
+      }
+    } else if f.shape == "void" {
+      // A `&` local: no target until it is bound.
+      out += "    fr->{f.name} = 0;\n";
+    } else {
+      out += "    fr->{f.name} = ({f.ty}) {initial(f.shape)};\n";
+    }
+  }
+  for n in holds {
+    out += "    fr->hold_{n} = loft_hold_for_frame({n}) ? {n} : loft_ref_null();\n";
+  }
+  out
+}

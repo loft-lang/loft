@@ -36,6 +36,7 @@ use cgen_table;
 use cgen_clibs;
 use cgen_par;
 use cgen_store;
+use cgen_gen;
 use lower;
 use cgen_file;
 use cgen_texts;
@@ -712,6 +713,13 @@ fn float_conversion(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
 // The character operators that touch no text and no store (`char_operator`).
 fn char_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   count = len(args);
+  if name.starts_with("OpCoroutine") {
+    is_gen_op = false;
+    stepped = cgen_gen::gen_operator(x, w, name, args, ind, is_gen_op);
+    if is_gen_op {
+      return stepped;
+    }
+  }
   if name == "OpConvCharacterFromInt" && count == 1 {
     v = expr(x, w, args[0], ind);
     return E { code: "loft_char_of_at({as_int(w, v)}, {site(w)})", kind: K_CHAR };
@@ -834,7 +842,7 @@ fn nn_twin_bits(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> integer {
 // function whose ranged variant gains, and every integer argument is proven within `[-L, L]`
 // under this body's facts.
 fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
-  if (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
     return false;
   }
   if !cgen_names::is_loft_defined(x.b, d) || !opt_ranged_call::variant_gains(x.b, x.p, x.c, x.gains, d, 0) {
@@ -2567,7 +2575,16 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       line(w, ind, "}}");
       flush(w, ind);
     },
-    NdReturn { inner } => ret_value(x, w, inner, ind),
+    // A generator's `return` ends it: what it returns is done for its effect.
+    NdReturn { inner } => {
+      if w.gen_elem != "" {
+        stmt(x, w, inner, ind);
+        line(w, ind, "goto loft_gen_end;");
+      } else {
+        ret_value(x, w, inner, ind);
+      }
+    },
+    NdYield { inner } => cgen_gen::gen_yield(x, w, inner, ind),
     NdDrop { inner } => {
       whole = match loop_shape::unspan(inner) {
         NdIf { cond: _, t: _, f: _ } => true,
@@ -2674,7 +2691,7 @@ fn link_kind(tp: ir::TypeT) -> boolean {
 pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   // `@FR-R-Cold`'s loft clause: the ordinary body only, and written again in place where
   // the body did not keep to the plan.
-  if cgen_names::is_plain(twin) && plain_rules() {
+  if cgen_names::is_plain(twin) && plain_rules() && cgen_gen::gen_elem(x.b.data.definitions[twin.d]!) == "" {
     tried = write_body(x, twin, -1, true, []);
     if tried.refused != cgen_cold::COLD_ESCAPED {
       return tried;
@@ -2693,7 +2710,15 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
-  ret = if work_ret >= 0 || len(helper) > 0 { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  // A generator (`write_gen`): its body is the resume function's, written for its effect.
+  gen_elem = if work_ret >= 0 || len(helper) > 0 { "" } else { cgen_gen::gen_elem(d) };
+  if gen_elem == "void" {
+    return Written { text: "", refused: "a generator of nothing" };
+  }
+  if gen_elem != "" && !cgen_names::is_plain(twin) {
+    return Written { text: "", refused: "a generator handed a store place for a & parameter" };
+  }
+  ret = if work_ret >= 0 || len(helper) > 0 || gen_elem != "" { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
   if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
@@ -2815,6 +2840,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     keyed: -1,
     group: "",
     group_members: [],
+    gen_elem: gen_elem,
+    yields: 0,
     filed: -1,
     filed_next: -1,
     filed_path: "",
@@ -2833,7 +2860,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     grid_binds: [],
     range_ends: [],
     set_many: [],
-    table_places: if plain_rules() { cgen_table::places(x.b, index) } else { [] },
+    // A generator's locals live in its frame between resumes: it holds no table handle.
+    table_places: if plain_rules() && gen_elem == "" { cgen_table::places(x.b, index) } else { [] },
     table_paths: [],
     table_names: [],
     adopt_v: -1,
@@ -2874,6 +2902,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       }
       w.undeclared[v#index] = !v.argument && !owned;
     }
+  }
+  if gen_elem != "" {
+    stmt(x, w, code, 1);
+    return cgen_gen::write_gen(x, w, cgen_names::twin_name(x.b, x.dups, twin), if len(params) == 0 { "void" } else { params.join(", ") });
   }
   if cold_on {
     planned = cgen_cold::cold_plan(x, w);

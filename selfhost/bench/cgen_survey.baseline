@@ -2,7 +2,7 @@
  "bodies|default|program|corpus": {
   "agree": 1077,
   "differ": 0,
-  "equal": 2633,
+  "equal": 2673,
   "functions": 13560,
   "refused": 0,
   "switches": [
@@ -11,9 +11,9 @@
   "units": 1077
  },
  "bodies|plain|program|corpus": {
-  "agree": 1076,
-  "differ": 3,
-  "equal": 12615,
+  "agree": 1077,
+  "differ": 0,
+  "equal": 12865,
   "functions": 13359,
   "refused": 0,
   "switches": [
@@ -107,10 +107,10 @@
   "units": 1077
  },
  "tables|plain|program|corpus": {
-  "agree": 901,
+  "agree": 1010,
   "differ": 0,
-  "refused": 176,
-  "rows": 901,
+  "refused": 67,
+  "rows": 1010,
   "switches": [
    "LOFT_NO_APART",
    "LOFT_NO_APART_MINT",
