@@ -412,7 +412,7 @@ index 17ff56ff6..454c716cc 100644
      // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
      let apr_at = if mask & APR_BIT == 0 {
 diff --git a/src/data.rs b/src/data.rs
-index 5c15b54f7..934986d50 100644
+index e47fc57b5..0c7a6a98a 100644
 --- a/src/data.rs
 +++ b/src/data.rs
 @@ -6829,23 +6829,6 @@ impl Data {
@@ -527,7 +527,7 @@ index 99382c386..bb2e532b9 100644
      // The import tables: `rebuild_indices` reconstructs `def_names` under each
      // definition's OWN source and then REPLAYS these, so an image without them
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index a7fe2361a..c51380edf 100644
+index 60ee8945a..4112a5591 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
 @@ -3933,7 +3933,7 @@ use #count instead"
@@ -598,20 +598,10 @@ index a5f95f4e5..909451c58 100644
                                  // view of the record the literal minted (`__vdb_N`), which the
                                  // frame frees on this path, so it must reach the caller's buffer
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index ee1125562..f856a3f98 100644
+index 430e24833..230227a68 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -5313,9 +5313,6 @@ use a separate collection or add after the loop"
-         // program compiles today and keeps its binding (and its loop-record admission).
-         // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
-         // A loop's VARIABLE is never that body local: its binding ended with its own loop.
--        // The same note before that filter: the per-loop split asks it too, of a bind that
--        // differs from the ended one only in absence.
--        let ended_any = self.bind_after_end.map(|(v, _)| v);
-         let ended_bind = self
-             .bind_after_end
-             .take()
-@@ -5516,14 +5513,9 @@ use a separate collection or add after the loop"
+@@ -5528,14 +5528,9 @@ use a separate collection or add after the loop"
              && ended_bind == Some(var_nr)
              && (ended_loop_var
                  || (!s_type.is_unknown()
@@ -628,27 +618,21 @@ index ee1125562..f856a3f98 100644
          {
              var_nr = self.rebind_after_block(var_nr, &s_type);
              new_binding = Value::Var(var_nr);
-@@ -7210,18 +7202,9 @@ use a separate collection or add after the loop"
-             && cur_loop != u16::MAX
-             && born_in != u16::MAX
-             && born_in != cur_loop
+@@ -7229,12 +7224,9 @@ use a separate collection or add after the loop"
+             // TInt { min: 50 } }`) became a binding of that block, and the read after the
+             // block was refused as out of scope.
+             && ended_any == Some(var_nr)
 -            && (self
 +            && self
                  .vars
                  .retype_would_be_refused(var_nr, &s_type, &self.data)
--                // The other loop's binding has ENDED (`@FR-B-Scope`: its body local cannot
--                // be read here), so a bind that differs from it in absence starts a binding
--                // too: `@FR-N-Join` joins the writes of one binding, not of two loops.  Asked
--                // of a binding the name's own resolution saw ended (`bind_after_end`): a loop
--                // NUMBER is not the same on both passes, so `born_in` alone also holds for
--                // the live binding of this very loop, whose non-null write into its `τ?` is
--                // the join itself.
--                || (ended_any == Some(var_nr)
--                    && self.vars.rebind_differs_in_absence(var_nr, &s_type)))
+-                // A bind that differs from the ended one in absence starts a binding too:
+-                // `@FR-N-Join` joins the writes of one binding, not of two loops.
+-                || self.vars.rebind_differs_in_absence(var_nr, &s_type))
          {
              // The SOURCE spelling, not the bound one.  A variable already split once is
              // named `e#b1`, and registering the next split under that would key the third
-@@ -7233,10 +7216,6 @@ use a separate collection or add after the loop"
+@@ -7246,10 +7238,6 @@ use a separate collection or add after the loop"
              var_nr = self
                  .vars
                  .body_local_binding(&name, var_nr, &s_type, &mut self.lexer);
