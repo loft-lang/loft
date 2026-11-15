@@ -208,9 +208,12 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
    manager, the debugger, the REPL, the language server, `gendoc` and the exports, then the
    selfhost harness and the comparison as loft programs; each part diffed against the Rust
    tool's output on the same input before the Rust part is removed.
-6. **Rust retired.**  The library leftovers (strand 10: `plugin_runtime`'s crates, the
-   library CI's cargo build and rustc leg, the `bench.rs` twins), the rustc backend
-   (`src/generation/`) and every `src/*.rs` file removed; no Cargo in the build.  Gate: loft
+6. **Rust out of the project.**  The library leftovers (strand 10: `plugin_runtime`'s crates,
+   the library CI's cargo build and rustc leg, the `bench.rs` twins) removed; the Rust
+   implementation — every `src/*.rs`, the rustc backend (`src/generation/`), Cargo — moved to
+   a repository of its own, kept as the REFERENCE implementation the answers are compared
+   with, not the main one (owner, 2026-11-15; [rust-free-build.md § The end
+   state](rust-free-build.md#the-end-state-rust-as-the-reference-implementation)).  Gate: loft
    built from C alone, its full suite green on the interpreter and the C backend.
 
 **Beside the path:** strands 2–4 (bundles) ride stage 2 — 4 falls out of it.  Strand 7 is

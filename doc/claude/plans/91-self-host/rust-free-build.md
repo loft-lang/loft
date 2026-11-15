@@ -22,6 +22,7 @@ each is checked.  Everything below that says "measured" was measured on 2026-11-
 - [What crosses every level](#what-crosses-every-level)
 - [The order, and what can run in parallel](#the-order-and-what-can-run-in-parallel)
 - [Decisions to take](#decisions-to-take)
+- [The end state: Rust as the reference implementation](#the-end-state-rust-as-the-reference-implementation)
 - [How each level is checked](#how-each-level-is-checked)
 
 ## Three levels of "without Rust"
@@ -278,6 +279,43 @@ L3: src/opt/ ─► C writer ─► bodies ─► driver ─► bootstrap fixpoi
    Recommended: built in, measured against parsing before it is decided.
 5. **When the oracle is retired** — after which gates hold, over which corpus, and how the
    answers are recorded.
+
+## The end state: Rust as the reference implementation
+
+**The owner's direction (2026-11-15):** eventually the Rust implementation leaves this project.
+It stays usable as a reference — the implementation answers are compared with — but it is not
+the main one.  Not now: it waits behind L2 and L3.  What the split means, so that the work
+before it does not make it harder:
+
+**What stays in this project — the language and its main implementation:** the formal
+definition (`doc/claude/formal/`), the standard library's declarations and loft bodies
+(`default/*.loft`), the C runtime (`src/c/*.h`), the implementation in loft (`selfhost/`),
+the seed, the documentation, the tooling in loft.  The language suite is a repository of its
+own already (`loft-suite`) and judges both implementations.
+
+**What goes to the reference's own repository:** `src/*.rs` and Cargo — the Rust front end,
+the bytecode interpreter, the rustc writer (`src/generation/`), the Rust C writer and driver —
+and the Rust tests (`tests/*.rs`).
+
+**What has to be untangled first**, each a step of its own:
+
+| Shared today | How it separates |
+|---|---|
+| `default/*.loft` holds `#rust` bodies beside the `#loft` templates | the declarations and loft bodies stay; the `#rust` bodies move to the reference, which reads the stdlib from this project at a pinned version |
+| the C runtime is written for both C writers | it stays here and is the main implementation's; the reference uses it at a pinned version, and a runtime change is checked against the reference's C writer while that is the oracle |
+| every gate compares with `loft --interpret`, `--emit-image`, `--emit-run-image`, `--emit-c` | the reference is a pinned binary the harness calls (a release, built from its repository); a gate names the reference version it was measured against |
+| the seed is written by the Rust C writer | after L3 the loft generator writes it; until then the reference writes it, from this project's sources |
+| the debugger, LSP, REPL, package manager, exports are Rust | strand 8: each ported and diffed against the reference's output before its Rust leaves |
+
+**When the two disagree,** the formal definition decides — it lives here, so the main
+implementation's repository holds the rule both are judged by.  A disagreement the definition
+does not settle extends the definition; it is never settled by "the reference does it this
+way".  Until the split, the plan's rule holds unchanged: the loft implementation is a faithful
+port, and a difference from the Rust one is a defect of the port.
+
+**The precondition for the split:** L2 and L3 hold over the corpus and the suite (source in and
+run, the C equal, the bootstrap fixpoint), and the comparisons the gates make with the
+reference are recorded answers wherever the reference is to be dropped from the daily loop.
 
 ## How each level is checked
 
