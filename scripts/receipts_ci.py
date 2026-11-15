@@ -197,7 +197,16 @@ def main():
             print(f"{p.relative_to(ROOT)}: no longer applies and a three-way merge conflicts — "
                   f"re-derive it by hand (GUARDS.md § The patch receipt); guard "
                   f"{', '.join(cites[p.name])}")
+        # A receipt no guard cites by `@falsified-by:` is out of this job's reach, and
+        # `doc_hygiene::every_patch_receipt_still_applies` still fails it when it stops
+        # applying (a guard that records a REF control keeps its patch as the runnable form).
+        orphans = [p for p in stale if p not in reach]
+        for p in orphans:
+            print(f"{p.relative_to(ROOT)}: no longer applies, and no guard cites it, so the PR's "
+                  "run cannot refresh it — every_patch_receipt_still_applies fails: re-derive it "
+                  "by hand at this tree")
         ok = len([p for p in stale if p in reach]) - len(bad)
+        bad += orphans
         if ok:
             print(f"{ok} stale receipt(s) refresh cleanly; the PR's run re-scores them")
         return 1 if bad else 0
