@@ -20290,23 +20290,45 @@ impl Parser {
     /// `OpGetDbRef` read, on any arm)?  That record's store belongs to whatever holds it, not
     /// to this frame or an argument, so `@FR-F-Ret`'s fresh value is a copy made here.
     fn return_reads_a_stored_reference(&self, tail: &Value) -> bool {
+        self.reads_a_stored_reference(tail, &mut Vec::new())
+    }
+
+    /// [`Self::return_reads_a_stored_reference`] with the variables a block of the tail bound
+    /// to such a read: `h.link ?? S { … }` binds the read to its `__ncc` local and hands the
+    /// local up on the arm where it is set (loft#2511).
+    fn reads_a_stored_reference(&self, tail: &Value, bound: &mut Vec<u16>) -> bool {
         match tail.unspan() {
             Value::Return(inner) | Value::Drop(inner) => {
-                self.return_reads_a_stored_reference(inner)
+                self.reads_a_stored_reference(inner, bound)
             }
-            Value::Block(bl) => bl
-                .operators
-                .last()
-                .is_some_and(|t| self.return_reads_a_stored_reference(t)),
-            Value::Insert(ops) => ops
-                .last()
-                .is_some_and(|t| self.return_reads_a_stored_reference(t)),
+            Value::Block(bl) => self.ops_read_a_stored_reference(&bl.operators, bound),
+            Value::Insert(ops) => self.ops_read_a_stored_reference(ops, bound),
             Value::If(_, t, f) => {
-                self.return_reads_a_stored_reference(t) || self.return_reads_a_stored_reference(f)
+                self.reads_a_stored_reference(t, bound) || self.reads_a_stored_reference(f, bound)
             }
             Value::Call(d, _) => *d == self.data.def_nr("OpGetDbRef"),
+            Value::Var(v) => bound.contains(v),
             _ => false,
         }
+    }
+
+    fn ops_read_a_stored_reference(&self, ops: &[Value], bound: &mut Vec<u16>) -> bool {
+        let Some((tail, before)) = ops.split_last() else {
+            return false;
+        };
+        let mark = bound.len();
+        for op in before {
+            if let Value::Set(v, rhs) = op.unspan() {
+                if self.reads_a_stored_reference(rhs, bound) {
+                    bound.push(*v);
+                } else {
+                    bound.retain(|b| b != v);
+                }
+            }
+        }
+        let hit = self.reads_a_stored_reference(tail, bound);
+        bound.truncate(mark.min(bound.len()));
+        hit
     }
 
     fn return_projects_into_local(&self, tail: &Value) -> bool {
