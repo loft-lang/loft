@@ -28,6 +28,12 @@ pub(crate) fn c_backend_selected() -> bool {
     std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("c"))
 }
 
+/// `LOFT_NATIVE_BACKEND=rust`: the rustc writer is asked for where the C backend is the default
+/// (`--native-android`), as `--native-rust` asks for it.
+pub(crate) fn rust_backend_selected() -> bool {
+    std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("rust"))
+}
+
 /// The C compiler: `LOFT_CC`, else `CC`, else the host's own (`platform::host_c_compiler`:
 /// `cc`, or on Windows without one the MSVC `cl` rustc's own target links with).
 pub(crate) fn cc_program() -> String {

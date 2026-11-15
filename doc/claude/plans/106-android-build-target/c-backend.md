@@ -153,14 +153,13 @@ entry makes that work unchanged:
 
 ## Selecting the path, and retiring the old one
 
-- While both exist, `--native-android` builds through the C path whenever the C backend is
-  selected (`c_backend_selected()`, which the C9 flip makes the default).
-  `LOFT_NATIVE_BACKEND=rust` keeps the rustc path, a bisect switch with its one home in
-  NATIVE_SWITCHES.md.
-- At the flip, as main-switch.md orders it, the rustc path goes in one commit: the
-  `android-activity` / `oboe` / `android_logger` dependencies, the generated cargo crate, the
-  fixture's `android_gl.rs`, and the rustc writer itself.  NATIVE.md § Android target is
-  rewritten for the C path, and its "fixture-only" warning goes with the fixture.
+- `--native-android` builds through the C path by default (A5).  `--native-rust`, or
+  `LOFT_NATIVE_BACKEND=rust`, keeps the rustc path as the bisect switch.
+- The rustc path is not deleted (owner): it moves to an attic, a directory that is not
+  compiled, with the rustc writer itself, once `--native`'s default is the C backend too and the
+  rustc writer's rules and tests have other homes.  What moves: the generated cargo crate, the
+  `android-activity` / `oboe` / `android_logger` dependencies and the fixture's
+  `android_gl.rs`.  The last release binary with the rustc path stays the runnable reference.
 
 ## How it is verified
 
@@ -198,7 +197,7 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
 | **A2** | `GG_ANDROID` in `graphics_gl.c`; the `__ANDROID__` guard on X11; audio through miniaudio | the guards `b3_rects`, `b3_render`, `b4_touch`, `b4_audio`, `b4_stack` pass on the PUBLISHED `graphics` and `audio`; each library republished through its own CI (the `loft-library` skill) |
 | **A3** | files: `internalDataPath`, the program's files packed and extracted (@C164), the program directory | `b3_text` (a font and an image the program names, opened by its PC paths) passes; the corpus programs left in the baseline read repo-root paths under `#cwd` |
 | **A4** | TLS for the device, the `net` component shipped in the APK, Android's trust store, the `INTERNET` permission | `b4_https` passes: an `https://` fetch answers the same in the emulator as on the desktop, a bad certificate refused alike |
-| **A5** | the flip: `--native-android` on the C path by default; the rustc Android path deleted with the rustc writer | one release cycle in which the Android build test and the nightly emulator run used only the C path |
+| **A5** | the flip: `--native-android` on the C path by default; the rustc Android path kept behind `--native-rust`, for the attic with the rustc writer | the Android build test and the nightly emulator run use only the C path for one release cycle |
 
 A0 and A1 need no library change and prove the claim the rest stands on.  A2 is the largest
 piece (the graphics back end), and the only one that changes a published library.

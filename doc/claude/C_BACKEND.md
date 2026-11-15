@@ -19,6 +19,8 @@ loft --native-c prog.loft [args]   # emit, build with LOFT_CC / CC / cc, cache t
                                    #   --ship is -O3, --native-debug -O0 -g,
                                    #   --native-emit [out.c] writes the C; LOFT_NATIVE_BACKEND=c
                                    #   makes --native mean this; LOFT_KEEP_NATIVE_C=1 keeps the .c
+loft --native-android app.apk prog.loft  # the C built as an Android app by the NDK's clang (the
+                                   #   default; --native-rust takes the rustc writer instead)
 LOFT_C_LINT=1 loft --native-c p.loft  # compile afresh with -Wall -Wextra instead of -w and
                                    #   print the warnings; =strict makes each an error, =all also
                                    #   reports the runtime's helpers a unit does not call (a pragma

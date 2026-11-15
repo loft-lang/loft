@@ -319,8 +319,9 @@ fn print_help() {
     println!("                                (default: .loft/<script>.wasm beside the script)");
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
     println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
-    println!("                                ANDROID_NDK_HOME + ANDROID_HOME); a *.so output");
-    println!("                                builds just the library");
+    println!("                                ANDROID_NDK_HOME + ANDROID_HOME) through the C");
+    println!("                                backend; a *.so output builds just the library;");
+    println!("                                with --native-rust, through the rustc writer");
     println!("  --assets a,b                  the files an app carries (--native-esp, --html,");
     println!("                                --native-android), beside the program: files,");
     println!("                                directories, `*` in a name, `!` to drop a match;");
@@ -9431,6 +9432,12 @@ fn main() {
             .to_str()
             .unwrap_or("out.wasm")
             .to_string();
+    }
+    // `--native-android` builds through the C backend unless the rustc writer is asked for
+    // (`--native-rust`, `LOFT_NATIVE_BACKEND=rust`), which stays beside it as the bisect path
+    // (doc/claude/plans/106-android-build-target/c-backend.md, A5).
+    if native_android.is_some() && !native_rust && !c_driver::rust_backend_selected() {
+        native_c = true;
     }
     // `--native-rust` chooses the writer; alone it is `--native` through it, beside
     // `--native-emit`, `--html`, `--native-wasm` or `--native-android` it only chooses which

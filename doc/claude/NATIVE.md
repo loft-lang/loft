@@ -923,35 +923,23 @@ a correctness gap.
 
 ## Android target
 
-**@PLN106 — SHIPPED 2026-07-15.** `loft --native-android [out.apk|out.so] prog.loft` cross-compiles the **same** target-agnostic
-generated core to Android — a build target is a **descriptor over one core**, not a codegen
-fork. All Android knowledge lives in `src/android.rs` (the `AndroidTarget` descriptor +
-`AndroidSdk`): it wraps the unchanged `output_native_reachable` emit in a generated cargo crate
-(program as crate root + a fixed `android_main` via the `android-activity` NativeActivity
-feature), cross-builds a lean `loft` rlib (fingerprint-keyed, isolated `target/loft/android/`),
-then packages a signed APK (aapt2 → `jar` → zipalign → apksigner, per-tree debug keystore) or
-emits the bare `.so`. Env: `ANDROID_NDK_HOME`, `ANDROID_HOME`, `JAVA_HOME`;
-`LOFT_ANDROID_TARGET` (default `aarch64-linux-android`; use `x86_64-linux-android` for the KVM
-emulator), `LOFT_ANDROID_API` (default 24). Needs a `fn main`.
+`loft --native-android [out.apk|out.so] prog.loft` builds the program as an Android app through
+the C backend: the C unit, loft's Android entry (`src/c/android/loft_android_main.c`) and the
+NDK's app glue, compiled by the NDK's clang and packaged as a signed APK by `src/android.rs`
+(design: [plans/106-android-build-target/c-backend.md](plans/106-android-build-target/c-backend.md)).
+Env: `ANDROID_NDK_HOME`, `ANDROID_HOME`, `JAVA_HOME`; `LOFT_ANDROID_TARGET` (default
+`aarch64-linux-android`; `x86_64-linux-android` for the KVM emulator), `LOFT_ANDROID_API`
+(default 24).  Needs a `fn main`.  A library's `[c] shim` compiles for the device: `graphics`
+(0.13 and later) draws through EGL and OpenGL ES 3, `audio` plays through miniaudio, an
+`https://` fetch runs the TLS client against Android's CA store, and the app carries the files
+its program names (@C164).  Checked by `tests/android_target.rs` (the build),
+`scripts/c_sweep.py --android` (every corpus program on an emulator against the interpreter)
+and `scripts/android_guards.py` (drawing, input, sound, files and HTTPS).
 
-⚠ **That backend is FIXTURE-ONLY.** Graphics/input/audio run through the cfg-gated Android
-backend at `tests/fixtures/libs/graphics/native/src/android_gl.rs`, which exists on **no branch**
-of the canonical `loft-libs-graphics` — so an **installed** `graphics` cannot target Android,
-and @PLN106's goldens prove the fixture rather than the published package. Flow-back filed as
-[loft-libs-graphics#32](https://github.com/loft-lang/loft-libs-graphics/issues/32); the fixture
-is pinned at `graphics-v0.1.1` against a `main` at v0.5.5, so it needs a rebase forward, not a
-copy. What that backend does
-(`native/src/android_gl.rs`): raw EGL/GLES-3.0 on `app.native_window()` (GLES 3.0 = WebGL2, so
-website GL programs run unchanged) + android-activity's event pump. An UNCHANGED loft program
-gets: rendering (clear/shapes/shaders/text), **touch** (feeds `gl_mouse_*` from `MotionEvent`s),
-**keyboard/IME** (`gl_show_keyboard()` + `gl_key_pressed` from `KeyEvent`s), and **audio**
-(oboe/AAudio via `audio_play_raw`). Two Android-specific runtime seams: `__run` runs INLINE on
-the `android_main` ALooper thread (the graphics poll must own it — see `generation/mod.rs`), and
-a `.init_array` constructor sets `RUST_MIN_STACK` to `NATIVE_MAIN_STACK` (512 MiB) so the
-call-depth guard's stack assumption holds (that thread is a default-stack `std::thread::spawn`).
-Vector-arg native fns (`gl_set_mat4`, `audio_play_raw`, …) export their store-aware `n_*` under
-the raw C-ABI symbol on Android (the `--native` C-ABI marshals `(LoftStore, LoftRef)`, not
-`(ptr, count)`). Full history + on-device goldens: [plans/106-android-build-target/](plans/106-android-build-target/README.md).
+`--native-rust --native-android` (or `LOFT_NATIVE_BACKEND=rust`) still builds through the rustc
+writer, the bisect path until that writer moves to the attic: the emit in a generated cargo crate
+over `android-activity`, with its graphics from a fixture rather than the published library
+([NATIVE-history.md § Android through the rustc writer](NATIVE-history.md#android-through-the-rustc-writer)).
 
 ## See also
 - [PERFORMANCE.md](PERFORMANCE.md) — Benchmark results and detailed designs for O4 (direct collection emit), O5 (pure function `stores` omission), O6 (`long` sentinel removal) — the native-codegen performance items
