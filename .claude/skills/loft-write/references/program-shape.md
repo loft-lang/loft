@@ -26,7 +26,9 @@ struct, vector, tuple, enum — is `Equatable` (@C91).
 ## Backtick strings (`` `...` ``)
 
 **Multi-line.** Supports `{expr}` interpolation. Bare `"` is literal.
-Auto-strips common leading indentation (based on closing backtick column).
+Every line drops the indentation of the FIRST line after the opening backtick (not the
+smallest one, and not the closing backtick's column): start that line at the column the text
+should count from.  The newline before the closing backtick is dropped too.
 
 <!-- from tests/reference/skill-constants.loft -->
 ```loft
