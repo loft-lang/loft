@@ -22,7 +22,9 @@ programs at its last census, in an earlier `handoff-*.md`; not re-measured since
 passes and the bytecode writer are not ported yet.  The bytecode runner built as a port of
 the Rust interpreter — its generated operator table, what is still to build and where it
 differs from Rust — is [1b-fill-port.md](1b-fill-port.md).  What it still takes from Rust, and
-the order that ends in, is [rust-dependencies.md](rust-dependencies.md).
+the order that ends in, is [rust-dependencies.md](rust-dependencies.md); the design of a build
+without Rust — a C-only build from a seed, then source in and run, then loft rebuilding
+itself — is [rust-free-build.md](rust-free-build.md).
 
 **One rule for every stage — a reimplementation, not a new language (owner,
 2026-10-30):** the same IR, the same bytecode, the same memory structures, the same
