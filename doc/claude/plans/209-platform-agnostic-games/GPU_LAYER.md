@@ -12,14 +12,14 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 
 P1, P2, P3, L0, L1, L2, L2b and M0 are done (2026-11-15).  L2b amended § The shape's reach:
 a backend names the layer's header by the layer's name (@C164).
-Next: L3 (`gpu_gl`); publishing waits for the name (open question 2) and for @C164 in a
-released loft.  V0
+Next: L4 (graphics' own drawing onto `gpu`), and L3's X11 run on the Linux machine.
+Publishing waits for the name (open question 2) and for @C164 in a released loft.  V0
 waits for a Linux machine.
 
 | Track | Steps | State |
 |---|---|---|
 | P — the game on a Mac, on the GL that is there | P1–P5 | P1–P3 done; P4 stood in for until L3; P5 measured standing still |
-| L — the neutral layer | L0–L8 | L0–L2b done; L3–L8 open |
+| L — the neutral layer | L0–L8 | L0–L2b done; L3 in review, X11 not run; L4–L8 open |
 | M — the Metal backend | M0–M4 | M0 done; M1–M4 open |
 | V — the Vulkan backend | V0–V4 | Open |
 | H — one shader source | H1–H4 | Open |
@@ -253,6 +253,31 @@ Nothing here waits for the neutral layer or for Metal.
   slots) with a source per shading language, until track H replaces the sources.
   Goes red when: a scene through `gpu` + `gpu_gl` differs by a byte from the same scene through
   graphics 0.12, on X11, on a Mac and in a page.
+  **Built (2026-11-15), in review: loft-libs-graphics#84** (`gpu_gl` 0.1.0) — on a Mac and in
+  a page; **X11 is not done** (rule 5: it needs the Linux machine).
+  `tests/same_as_graphics.loft` draws each scene both ways and compares the captures byte
+  for byte: depth and blend, cull / scissor / viewport, a texture put and sampled nearest, a
+  texture sampled between its pixels, copies read from an offset with an index list, lines,
+  and a colour and depth target shown over the window.  The eight tests pass on the
+  interpreter, `--native-c`, `--native` and a `--native-c --ship` program on a Mac, and in
+  both writers' pages (headless Chrome).  Seven planted breaks each turn one red; two of them
+  (a texture not clamped, the block's size unchecked) passed the first version of the tests
+  and got a case each.
+  How it is built: `gpu_gl/c/gl_base.h` is graphics' `graphics_gl.c` with its names under
+  another prefix, derived by a script whose `--check` fails on drift, so the window hosts and
+  the texture and framebuffer code are the proven ones and both libraries link into one
+  program.  Two copies exist until L4 makes graphics' `Window` a device.
+  A source tagged `"glsl-330"` follows three rules a later source for another stack mirrors:
+  inputs by location in the program's order, one `std140` block, samplers named `tex<n>`.
+  What it met:
+  - the page bridge had no uniform-block calls: four were added to `doc/loft-gl-wasm.js`, and
+    `glGetProgramiv` there now answers a count as the number;
+  - WebGL2 reports a block's size unrounded (20 bytes for a vector and a float), OpenGL
+    rounded (32): the backend's check compares whole vectors;
+  - in a page graphics and `gpu` draw in the page's one context and graphics takes the state
+    it finds — the reason L4 makes graphics' window the device, not a second one beside it.
+  **Open:** the table's host part has no key state, pointer or typed text yet; L4 needs them
+  when graphics' `Window` reads its events through the device.
 - **L4 — graphics' own drawing moves, one part a step (S each).**  `Painter`, `Sprites`,
   `GroupMeshes`, text textures, `quad`: each onto `gpu`, each compared with its 0.12 pixels.
   Goes red when: that part's tests draw another byte.

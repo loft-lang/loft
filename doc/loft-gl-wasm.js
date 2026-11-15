@@ -500,9 +500,27 @@ function buildLoftImports(canvas, output, getMem, asyncCtrl) {
       gg_glAttachShader(p, sh) { gl.attachShader(get(p), get(sh)); },
       gg_glLinkProgram(p) { gl.linkProgram(get(p)); },
       gg_glGetProgramiv(p, pname, out) {
-        const v = pname === 0x8B84 ? (gl.getProgramInfoLog(get(p)) || '').length + 1
-                                   : (gl.getProgramParameter(get(p), pname) ? 1 : 0);
-        dv().setInt32(out, v, true);
+        // A count (the active uniform blocks) is the number itself; a status is 1 or 0.
+        const r = pname === 0x8B84 ? (gl.getProgramInfoLog(get(p)) || '').length + 1
+                                   : gl.getProgramParameter(get(p), pname);
+        dv().setInt32(out, typeof r === 'number' ? r : (r ? 1 : 0), true);
+      },
+      // Uniform blocks: a program's block bound to a buffer, and where the compiled program
+      // put each of its fields (what a backend checks a declared layout against).
+      gg_glUniformBlockBinding(p, index, binding) { gl.uniformBlockBinding(get(p), index, binding); },
+      gg_glBindBufferBase(target, index, id) { gl.bindBufferBase(target, index, get(id)); },
+      gg_glGetActiveUniformBlockiv(p, index, pname, out) {
+        const r = gl.getActiveUniformBlockParameter(get(p), index, pname);
+        const d = dv();
+        if (typeof r === 'number') d.setInt32(out, r, true);
+        else if (r && r.length !== undefined) for (let i = 0; i < r.length; i++) d.setInt32(out + 4 * i, r[i], true);
+        else d.setInt32(out, r ? 1 : 0, true);
+      },
+      gg_glGetActiveUniformsiv(p, n, idxPtr, pname, out) {
+        const idx = Array.from(new Uint32Array(mem(), idxPtr, n));
+        const r = gl.getActiveUniforms(get(p), idx, pname) || [];
+        const d = dv();
+        for (let i = 0; i < r.length; i++) d.setInt32(out + 4 * i, Number(r[i]) | 0, true);
       },
       gg_glGetProgramInfoLog(p, max, lenPtr, buf) { writeLog(gl.getProgramInfoLog(get(p)) || '', max, lenPtr, buf); },
       gg_glDeleteProgram(p) { const o = get(p); if (o) { gl.deleteProgram(o); objs[p] = null; } },
