@@ -480,6 +480,22 @@ What stands between the two on one machine is the window, not the drawing:
   384,000 pixels a frame in loft is not measured and unlikely to be free).
 - **On the Tanmatsu nothing changes:** no device opens, `screen` shows the frame.
 
+**The game's agent wrote the contract down the same day** (`SCENE_CONTRACT.md` in
+tile-world-game, at `8d9e40f`; working name `scene3d`): the same seam, the same mapping onto
+`gpu`, and two questions it leaves to this stream — the library's name and home, and the GPU
+implementation, which is not started.  Read against `gpu` as it is, the contract asks four
+things the layer does not have yet:
+
+| The contract says | What `gpu` lacks |
+|---|---|
+| The GPU's picture is compared with the CPU's at 800 x 480 | `capture` reads the window only: a target's pixels cannot be read back |
+| The frame is shown by the host; a desktop has the fixed and the free camera in one program | The device's keys, pointer and typed text (above) |
+| The overlay is the 2D game's pixels, and the CPU frame is RGB565 | A texture taken from RGB565 (above) |
+| The host asks each implementation in turn | `gpu_host` (L6) picks a backend, not yet a scene implementation |
+
+Nothing in it needs the boundary changed: tiles are buffers, the light and the hidden groups
+are textures or draw ranges, actors are copies, the camera is a matrix in the block.
+
 ## Review
 
 A sibling stream reviewed this plan against sokol, bgfx, wgpu, Godot and Unreal
