@@ -14,6 +14,28 @@ The game's agent reads this as `HANDOFF_FROM_LOFT.md`, on the branch
 `0a3829a`, with the state of the loft fixes and what the GPU layer will ask of its view.  At
 that commit the game already builds its `Canvas` from a `vector<u32>` (item 1 below).
 
+## The scene contract's GPU side: `scene3d`
+
+`SCENE_CONTRACT.md` asks this stream for the GPU implementation.  It is loft-libs-graphics#88
+(`scene3d` 0.1.0, with `gpu` 0.2.0 and `gpu_gl`), and it takes what `raster3d` takes:
+
+| `raster3d` | `scene3d` |
+|---|---|
+| `new_scene(sky)` | `scene3d::new_scene(dev, gpu::INTO_WINDOW, sky)`, the sky as `0xAARRGGBB` |
+| `add_picture(scene, texels)` | `scene.add_picture(texels)` — the same 16 x 16 RGB565 |
+| `set_tile(scene, key, d)`, `drop_tile` | `scene.set_tile(dev, key, d)`, `scene.drop_tile(key)` — the same `d` |
+| `set_light(scene, d)` | `scene.set_light(d)` — the same `d` |
+| `set_actors(scene, d, keep_seen)` | `scene.set_actors(d, keep_seen)` — the same eleven numbers |
+| `set_overlay(scene, px, w, h, scale)` | `scene.set_overlay(dev, px, w, h, scale)` |
+| `move_camera(scene, px, py)`, `build_scene` | `scene.fixed_camera(px, py)`; no origin to set |
+| — | `scene.free_camera(eye, at, field)`, after `scene.offers_free_camera()` |
+| `draw_frame(scene, out)`, `screen::show` | `scene.draw(dev)`, `dev.present()` |
+
+Drawn through both, one scene differs in 21 of 384,000 pixels beyond what the CPU's RGB565
+costs (GPU_LAYER.md § The CPU tier and `gpu` side by side).  What it does not take yet:
+pictures of any size, models, a cut-away for the free camera.  `gpu` is published; `gpu_gl`
+is not yet, so for now it is fetched from the libraries' `main` like the others.
+
 ## What the libraries now give
 
 - **`screen` opens a window on macOS** (screen 0.2.0, loft-libs-game#32): the 2D game plays

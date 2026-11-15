@@ -12,8 +12,8 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 
 P1, P2, P3, L0, L1, L2, L2b and M0 are done (2026-11-15).  L2b amended § The shape's reach:
 a backend names the layer's header by the layer's name (@C164).
-Next: M1 (the first Metal triangle, on this Mac), and L3's and L4's X11 runs on the Linux
-machine.  L5 (stage) changes a published library that would then depend on `gpu`, so it waits
+Next: the host and the one `Scene` (§ The CPU tier and `gpu` side by side, what is left), then
+M1 (the first Metal triangle); L3's and L4's X11 runs wait for the Linux machine.  L5 (stage) changes a published library that would then depend on `gpu`, so it waits
 for `gpu` to be published (§ Open questions 2).
 Publishing waits for the name (open question 2) and for @C164 in a released loft.  V0
 waits for a Linux machine.
@@ -505,6 +505,34 @@ things the layer does not have yet:
 
 Nothing in it needs the boundary changed: tiles are buffers, the light and the hidden groups
 are textures or draw ranges, actors are copies, the camera is a matrix in the block.
+
+**The GPU implementation is built (2026-11-15): loft-libs-graphics#88, `scene3d` 0.1.0**, in
+review.  It takes the arrays `raster3d` takes (the same faces, light boxes and eleven-number
+actors), so the game's `fixedview` can feed either by changing the callee.
+
+- **How:** a buffer a tile; the cells' light in a texture (16 bits a cell, with a bit that
+  says it was given) the vertex stage reads by a face's light cell; the cut-away by
+  `raster3d`'s own rule, ported — wall groups whose triangles cover the hero's card and reach
+  nearer — re-uploading only the tiles that hold a group that changed; actors as vertices
+  built each frame; the fixed camera as a parallel matrix, the free one in perspective.
+- **Measured against `raster3d`** (the contract's check), one scene through both at 800 x 480
+  on a Mac: of 384,000 pixels, 21 differ by more than 16 of 255 a channel; 147,741 differ
+  within that, which is the CPU reducing a lit colour to RGB565; the same block is cut away.
+  With the cut-away off 3,847 pixels are out, with the camera a pixel off 11,564: the
+  comparison tells.  The rasterisers agree on which pixel a triangle covers almost
+  everywhere, so the tolerance the contract asks for can be stated: two steps of five bits a
+  channel, and a few tens of pixels.
+- **Not yet:** pictures of any size, models, the free camera's cut-away and cards turned to
+  it, a light map wider than 256 x 256 cells on 8 layers.
+
+**What is left for "written once":**
+
+1. `raster3d` as a library beside `scene3d`, reshaped to the contract (the game's agent is
+   still changing it: take it when its API has settled, with its `bench/` checks).
+2. One `Scene` a view holds whichever draws it, and a host that picks, shows the frame (a
+   CPU frame through `put_rgb565` and one image, or the GPU's own pass) and hands over the
+   input — so the game's loop has no branch for the machine.
+3. The comparison above as a test, once both are libraries.
 
 ## Review
 
