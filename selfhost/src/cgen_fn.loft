@@ -912,14 +912,22 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     h = as_ref(w, expr(x, w, args[0], ind));
     return E { code: if hh != "" { "loft_hh_len(&{hh}, {h})" } else { "loft_hash_len({h})" }, kind: K_INT };
   }
-  if route.starts_with("n_store_") {
+  // A character class (`c.is_numeric()` …): the unit's range table of the class.
+  if route.starts_with("t_9character_is_") && len(args) == 1 {
+    class_fn = cgen_unicode::unicode_class(x, route[16..route.size()]);
+    if class_fn != "" {
+      ch = expr(x, w, args[0], ind);
+      return E { code: "{class_fn}({as_char(w, ch)})", kind: K_BOOL };
+    }
+  }
+  if route.starts_with("n_store_") || route == "n_spatial_range" || route == "n_trie_prefix" {
     is_store_native = false;
     stored = cgen_store::store_native(x, w, route, args, ind, is_store_native);
     if is_store_native {
       return stored;
     }
   }
-  if (route.starts_with("n_store_") && route != "n_store_upgrade_owed_next") || route == "n_spatial_range" || route == "n_trie_prefix" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
+  if (route.starts_with("n_store_") && !route.starts_with("n_store_upgrade_owed_") && route != "n_store_reclaim") || route == "n_spatial_range" || route == "n_trie_prefix" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
     refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
     return none();
   }

@@ -160,7 +160,125 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     r = as_ref(w, cgen_fn::expr(x, w, args[0]!, ind));
     return E { code: "loft_store_verify(loft_types, loft_ntypes, {r})", kind: K_BOOL };
   }
+  // `rx[lo..hi, …]` on a spatial index: the slice of the records inside the box.
+  if route == "n_spatial_range" && len(args) == 10 {
+    tp = cgen_fn::literal(w, args[1]!, "type") ?? return none();
+    keys = cgen_tables::keys_name(x, tp);
+    nk = len(x.b.types[tp]!.keys);
+    all: vector<ir::Node> = [args[0]!];
+    for k in 2..10 {
+      all += [args[k]!];
+    }
+    r = as_ref(w, cgen_fn::arg(x, w, all, 0, ind));
+    ints: vector<text> = [];
+    for k in 1..9 {
+      ints += [as_int(w, cgen_fn::arg(x, w, all, k, ind))];
+    }
+    return E { code: "loft_spatial_range({r}, {keys}, {nk}, {ints.join(", ")})", kind: K_REF };
+  }
+  // `t[prefix]` on a trie: the slice of the records whose key starts with the prefix.
+  if route == "n_trie_prefix" && len(args) == 4 {
+    tp = cgen_fn::literal(w, args[1]!, "type") ?? return none();
+    keys = cgen_tables::keys_name(x, tp);
+    three = [args[0]!, args[2]!, args[3]!];
+    r = as_ref(w, cgen_fn::arg(x, w, three, 0, ind));
+    pre = as_view(w, cgen_fn::arg(x, w, three, 1, ind));
+    limit = as_int(w, cgen_fn::arg(x, w, three, 2, ind));
+    return E { code: "loft_trie_prefix({r}, {keys}, {pre}, {limit})", kind: K_REF };
+  }
+  if route == "n_store_load_key" || route == "n_store_load_key_text" || route == "n_store_load_keys" || route == "n_store_load_keys_text" || route == "n_store_load_prefix" || route == "n_store_load_box" || route == "n_store_load_range" {
+    return paged_load(x, w, route, args, ind);
+  }
   done = false;
+  none()
+}
+
+// `paged_plan`: what a working-set loader serves, as the host read it off the image's root
+// (`Bundle.sidecars`'s plan): the collection, its element type, the refusal it answers with
+// and its key parts — with the root's sidecar registered.
+struct Plan {
+  sc: text,
+  refusal: text,
+  content: integer,
+  keys: text,
+  nk: integer,
+  kind: text,
+  coll_name: text,
+}
+
+fn paged_plan(x: Cx, w: W, route: text, local: ir::Node) -> Plan? {
+  root = root_of(x, w, local, "a loaded value whose store type is not known here");
+  if root < 0 {
+    return null;
+  }
+  row = row_of(x, root);
+  if row == null {
+    refuse(w, "a persisted root the image has no layout facts for");
+    return null;
+  }
+  range = route == "n_store_load_range";
+  coll = if range { root } else { row!.pcoll };
+  // The loaders a hash and a trie both serve share the image's refusal; a prefix load wants a
+  // trie, a box load a spatial index (`pboxrefusal`), a range load a sorted root.
+  why = if range { row!.prangerefusal } else if route == "n_store_load_box" { row!.pboxrefusal } else { row!.prefusal };
+  if route == "n_store_load_prefix" && row!.pkind != 1 {
+    refuse(w, "a prefix load of a store that holds no trie");
+    return null;
+  }
+  content = if range { row!.prangecontent } else { row!.pcontent };
+  cgen_tables::name_types(x);
+  sc = sidecar_of(x, w, root);
+  if w.why != "" {
+    return null;
+  }
+  keys = "0";
+  nk = 0;
+  if why == "" && content >= 0 {
+    cgen_tables::describe_type(x, content);
+    keys = cgen_tables::keys_name(x, coll);
+    nk = len(x.b.types[coll]!.keys);
+  } else {
+    content = 0;
+  }
+  kind = if !range && row!.pkind == 1 { "LOFT_PG_TRIE" } else if !range && row!.pkind == 2 { "LOFT_PG_RADIX" } else { "LOFT_PG_HASH" };
+  name = if coll >= 0 && coll < len(x.b.types) { x.b.types[coll]!.name } else { "" };
+  Plan { sc: sc, refusal: if why == "" { "0" } else { c_string(why) }, content: content, keys: keys, nk: nk, kind: kind, coll_name: c_string(name) }
+}
+
+// `paged_load`: a working-set loader (`store_load_key` and its siblings, `loft_paged_load.h`),
+// its operands evaluated in order.
+fn paged_load(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer) -> E {
+  if len(args) < 2 {
+    refuse(w, "{route} without its operands");
+    return none();
+  }
+  plan = paged_plan(x, w, route, args[0]!) ?? return none();
+  local = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+  path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+  head = "loft_types, {local}, {path}, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {plan.nk}";
+  if route == "n_store_load_key" && len(args) >= 3 {
+    return E { code: "(uint8_t) (loft_pg_load_keys({head}, {plan.kind}, (loft_kv[]) {{ loft_kv_int({as_int(w, cgen_fn::arg(x, w, args, 2, ind))}) }}, 1) > 0)", kind: K_BOOL };
+  }
+  if route == "n_store_load_key_text" && len(args) >= 3 {
+    return E { code: "(uint8_t) (loft_pg_load_keys({head}, {plan.kind}, (loft_kv[]) {{ loft_kv_text({as_view(w, cgen_fn::arg(x, w, args, 2, ind))}) }}, 1) > 0)", kind: K_BOOL };
+  }
+  if (route == "n_store_load_keys" || route == "n_store_load_keys_text") && len(args) >= 3 {
+    return E { code: "loft_pg_load_key_list({head}, {plan.kind}, {as_ref(w, cgen_fn::arg(x, w, args, 2, ind))}, {if route == "n_store_load_keys_text" { 1 } else { 0 }})", kind: K_INT };
+  }
+  if route == "n_store_load_prefix" && len(args) >= 4 {
+    pre = as_view(w, cgen_fn::arg(x, w, args, 2, ind));
+    return E { code: "loft_pg_load_prefix({head}, {pre}, {as_int(w, cgen_fn::arg(x, w, args, 3, ind))})", kind: K_INT };
+  }
+  if route == "n_store_load_box" && len(args) >= 5 {
+    from = as_ref(w, cgen_fn::arg(x, w, args, 2, ind));
+    till = as_ref(w, cgen_fn::arg(x, w, args, 3, ind));
+    return E { code: "loft_pg_load_box({head}, {from}, {till}, {as_int(w, cgen_fn::arg(x, w, args, 4, ind))}, {plan.coll_name})", kind: K_INT };
+  }
+  if route == "n_store_load_range" && len(args) >= 4 {
+    lo = as_int(w, cgen_fn::arg(x, w, args, 2, ind));
+    return E { code: "loft_pg_load_range(loft_types, {local}, {path}, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {lo}, {as_int(w, cgen_fn::arg(x, w, args, 3, ind))})", kind: K_INT };
+  }
+  refuse(w, "{route} without its operands");
   none()
 }
 

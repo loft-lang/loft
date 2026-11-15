@@ -113,8 +113,6 @@ fn resolve_hot(code: text, candidates: vector<integer>) -> text {
   out
 }
 
-// The tables a written body names that this file does not write yet, by their C prefix.
-UNIT_TABLES = ["loft_uc_"];
 
 // `Stores::position`: the byte offset of field `name` of record type `tp`.
 fn field_at(b: ir::Bundle, tp: integer, name: text) -> integer {
@@ -323,11 +321,6 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
   }
   // The dispatchers name their signatures' shapes: a tuple among them is numbered there.
   dispatch.code = resolve_tuples(x, dispatch.code);
-  for t in UNIT_TABLES {
-    if fr_bodies.find(t) != null || bodies.find(t) != null {
-      return not_carried("the unit's table {t}");
-    }
-  }
   typedefs = cgen_tables::typedefs(x, names);
   // The parse table after the type tables it names (`parse_table`, `main_vector_test`).
   if cgen_parse::parses(x) || reaches(b, reached, "n_parse_errors_of") {

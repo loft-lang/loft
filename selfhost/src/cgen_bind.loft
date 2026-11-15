@@ -246,8 +246,26 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
   }
   match bare_value {
     NdTupleGet { var: _, idx: _ } => {
-      refuse(w, "a record bound from a tuple member");
-      return;
+      // `@FR-B-Copy` — a tuple member bound first (`(ca, cb) = (mk(1), mk(2))` lowers to
+      // `ca = __ref_3.0`) to a local that owns: `bind_lowering`'s `TupleElementCopy` (F5),
+      // copied into the local's own store; bound plainly, the local and the tuple member were
+      // two frees of one store.  `LOFT_C_OWN_TUPLE_MEMBER_BIND=1` binds it plainly.
+      member = match tp {
+        TyReference { n, dep: _ } => n,
+        _ => -1,
+      };
+      // Any other member bind is the plain bind the arms below write, as the Rust writer's.
+      if first && member >= 0 && len(own::tp_depend(f, var)) == 0 && binds::owner_witness(f, var) == null && (env_variable("LOFT_C_OWN_TUPLE_MEMBER_BIND") ?? "") == "" {
+        bytes = b.data.definitions[member]!.known_type;
+        cgen_tables::copy_type(x, bytes);
+        e = cgen_fn::expr(x, w, value, ind);
+        r = temp(w, "ref");
+        line(w, ind, "{r} = {as_ref(w, e)};");
+        fresh_unless_owned(x, w, f, var, value, first, name, ind);
+        line(w, ind, "loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
+        flush(w, ind);
+        return;
+      }
     },
     _ => {},
   }
