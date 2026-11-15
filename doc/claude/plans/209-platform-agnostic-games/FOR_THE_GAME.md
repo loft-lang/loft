@@ -172,6 +172,15 @@ cp <loft>/target/components/libloft_net.dylib .
 - **Not run:** the first-person view at this commit (nobody was at the keyboard to press F1),
   and the game built with the installed loft instead of this branch's.
 
-**Noted from the game's side:** `raster3d` and `faces3d` are `#width 32`; tile_world 0.12.0
-compiles so.  `scene3d` is an ordinary 64-bit library that takes single-precision arrays, so
-a 32-bit view can call it; that call has not been tried from a `#width 32` file.
+**A 32-bit view calling `scene3d`: tried, and it needed a fix** (loft-libs-graphics#90, stacked
+on #89).  From a `#width 32` file a 64-bit library's plain `integer` answer is narrowed, and
+one that does not fit reads null (loft's WIDTH32.md): `gpu_gl::table()` is an address and a
+colour is `0xAARRGGBB`, so both arrived as null and `gpu::open` crashed.  They are `i64` now.
+What a 32-bit view writes:
+
+- the sky and a clear colour as a 64-bit literal: `0xFF94BFE6l`;
+- its faces, light boxes and actors as it builds them for `raster3d` — a `vector<single>`;
+- a pixel read from `dev.capture()` into an `i64`, not a plain `integer`: it is above 2^31.
+
+`scene3d/tests/width32.loft` is that view in small, on the interpreter and both compiled
+backends.

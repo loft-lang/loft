@@ -524,6 +524,11 @@ actors), so the game's `fixedview` can feed either by changing the callee.
   channel, and a few tens of pixels.
 - **Not yet:** pictures of any size, models, the free camera's cut-away and cards turned to
   it, a light map wider than 256 x 256 cells on 8 layers.
+- **After the game's answer** (FOR_THE_GAME.md): `scene3d` 0.2.0 takes `vector<single>`, as
+  the single-precision `raster3d` does (loft-libs-graphics#89; 23 of 384,000 pixels against
+  it); and a table and a colour are `i64` across `gpu`, `gpu_record`, `gpu_gl` and `scene3d`,
+  so a `#width 32` view can call them (#90: from a 32-bit file both were narrowed to null and
+  `gpu::open` crashed).
 
 **What is left for "written once":**
 
