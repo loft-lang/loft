@@ -107,6 +107,14 @@ pub fn light_call(self: state::State, h: integer, idx: integer) {
     self.c_call_native(idx);
     return;
   }
+  if h == natives::N_REFLECT_TYPE {
+    self.reflect_type_native();
+    return;
+  }
+  if h == natives::N_TYPE_NAMED {
+    self.type_named_native();
+    return;
+  }
   if natives::is_state_native(h) {
     self.keyed_entry(h == natives::N_KEYED_ENTRY_TEXT);
     return;
@@ -144,6 +152,160 @@ pub fn call_line(self: state::State, call_pos: integer) -> integer {
     }
   }
   if lo == 0 { 0 } else { self.lines[2 * lo - 1] ?? 0 }
+}
+
+// The byte position of field `name` in the record type `tp`, -1 for none; and whether that
+// field is an 8-byte integer (else a 4-byte one, the `LOFT_STD_INT4` regime).
+fn field_at(self: state::State, tp: integer, name: text) -> integer {
+  for f in types::record_fields(self.types, tp) {
+    if f.name == name {
+      return f.position;
+    }
+  }
+  -1
+}
+
+fn field_wide(self: state::State, tp: integer, name: text) -> boolean {
+  for f in types::record_fields(self.types, tp) {
+    if f.name == name {
+      return (self.types[f.content]?.size ?? 8) == 8;
+    }
+  }
+  true
+}
+
+// An integer written at its field's width.
+fn put_int_at(s: integer, r: integer, p: integer, fld: integer, wide: boolean, v: integer) {
+  if wide {
+    crt::set_int(s, r, p, fld, v);
+  } else {
+    crt::set_w(crt::W_INT4, s, r, p, fld, 0, v);
+  }
+}
+
+// `reflect_type(kt)` / `type_named(name)` (native.rs `reflect_type_into`): a `TypeInfo` record
+// for type `kt` in a store of its own — its name, kind, size, collection and element, then the
+// field, variant and key vectors — its reference pushed.  The record positions are the
+// program schema's `TypeInfo`, `FieldInfo`, `VariantInfo`, `KeyInfo`.
+pub fn reflect_push(self: state::State, kt: integer) {
+  self.load_table();
+  ti = self.type_nr("TypeInfo");
+  fi = self.type_nr("FieldInfo");
+  vi = self.type_nr("VariantInfo");
+  ki = self.type_nr("KeyInfo");
+  if ti < 0 || fi < 0 || vi < 0 || ki < 0 {
+    self.stop("not carried: reflection without the TypeInfo types");
+    return;
+  }
+  // `database` remakes a store its argument already names.
+  self.lio[0] = state::NULL_STORE;
+  self.lio[1] = 0;
+  self.lio[2] = 0;
+  crt::database(self.lio, self.types[ti]?.size ?? 0, ti);
+  s = self.lio[0] ?? state::NULL_STORE;
+  r = self.lio[1] ?? 0;
+  p = self.lio[2] ?? 0;
+  known = kt >= 0 && kt < len(self.types);
+  crt::set_text(s, r, p, self.field_at(ti, "name"), if known { self.types[kt]?.name ?? "" } else { "#{kt}" });
+  crt::set_w(crt::W_BYTE, s, r, p, self.field_at(ti, "kind"), 0, types::reflect_kind(self.types, kt));
+  put_int_at(s, r, p, self.field_at(ti, "size"), self.field_wide(ti, "size"), if known { self.types[kt]?.size ?? 0 } else { 0 });
+  crt::set_w(crt::W_BYTE, s, r, p, self.field_at(ti, "collection"), 0, if known { types::reflect_collection(self.types, kt) } else { 1 });
+  elem = if known { types::reflect_element(self.types, kt) } else { null };
+  crt::set_text(s, r, p, self.field_at(ti, "element"), if elem == null { "" } else { self.types[elem!]?.name ?? "#{elem!}" });
+  if known {
+    fields = types::record_fields(self.types, kt);
+    if (types::reflect_kind(self.types, kt) == 8 || types::reflect_kind(self.types, kt) == 10) {
+      fsize = self.types[fi]?.size ?? 0;
+      fpos = p + self.field_at(ti, "fields");
+      for f in fields {
+        crt::vec_append(self.lio, s, r, fpos, fsize);
+        es = self.lio[0] ?? state::NULL_STORE;
+        er = self.lio[1] ?? 0;
+        ep = self.lio[2] ?? 0;
+        crt::set_text(es, er, ep, self.field_at(fi, "name"), f.name);
+        crt::set_text(es, er, ep, self.field_at(fi, "type_name"), self.types[f.content]?.name ?? "#{f.content}");
+        put_int_at(es, er, ep, self.field_at(fi, "position"), self.field_wide(fi, "position"), f.position);
+        crt::set_w(crt::W_BYTE, es, er, ep, self.field_at(fi, "kind"), 0, types::reflect_kind(self.types, f.content));
+        crt::set_w(crt::W_BYTE, es, er, ep, self.field_at(fi, "nullable"), 0, if f.nullable { 1 } else { 0 });
+        crt::vec_finish(s, r, fpos);
+      }
+    }
+    match self.types[kt]?.parts[0] {
+      PtEnum { values } => {
+        vsize = self.types[vi]?.size ?? 0;
+        vpos = p + self.field_at(ti, "variants");
+        for v in values {
+          crt::vec_append(self.lio, s, r, vpos, vsize);
+          es = self.lio[0] ?? state::NULL_STORE;
+          er = self.lio[1] ?? 0;
+          ep = self.lio[2] ?? 0;
+          crt::set_text(es, er, ep, self.field_at(vi, "name"), v.name);
+          // 1-indexed: the store spells "absent" as 0.
+          put_int_at(es, er, ep, self.field_at(vi, "tag"), self.field_wide(vi, "tag"), v#index + 1);
+          crt::vec_finish(s, r, vpos);
+        }
+      }
+      _ => {}
+    }
+    keys = types::reflect_keys(self.types, kt);
+    if len(keys) > 0 && elem != null {
+      efields = types::record_fields(self.types, elem!);
+      // Whole or nothing: a key the element's fields do not hold drops the list.
+      whole = true;
+      k = 0;
+      while k + 1 < len(keys) {
+        if efields[keys[k] ?? -1] == null {
+          whole = false;
+        }
+        k += 2;
+      }
+      if whole {
+        ksize = self.types[ki]?.size ?? 0;
+        kpos = p + self.field_at(ti, "keys");
+        k = 0;
+        while k + 1 < len(keys) {
+          ef = efields[keys[k] ?? 0]!;
+          crt::vec_append(self.lio, s, r, kpos, ksize);
+          es = self.lio[0] ?? state::NULL_STORE;
+          er = self.lio[1] ?? 0;
+          ep = self.lio[2] ?? 0;
+          crt::set_text(es, er, ep, self.field_at(ki, "name"), ef.name);
+          put_int_at(es, er, ep, self.field_at(ki, "position"), self.field_wide(ki, "position"), ef.position);
+          crt::set_w(crt::W_BYTE, es, er, ep, self.field_at(ki, "ascending"), 0, keys[k + 1] ?? 1);
+          crt::vec_finish(s, r, kpos);
+          k += 2;
+        }
+      }
+    }
+  }
+  self.ensure_stack(16);
+  crt::set_slot_ref(self.stk, self.stack_pos, s, r, p);
+  self.stack_pos += 16;
+}
+
+pub fn reflect_type_native(self: state::State) {
+  kt = self.get_stack_i64() ?? -1;
+  self.reflect_push(kt);
+}
+
+pub fn type_named_native(self: state::State) {
+  name = self.get_stack_str() ?? "";
+  kt = self.type_nr(name);
+  // `Stores::name` also answers the DECLARED spelling of a type `finish_type` renamed — a
+  // `vector<T>` held as `array<T>`, a `sorted<T[k]>` as `ordered<T[k]>`; the image keeps
+  // only the new name.
+  if kt < 0 && name.starts_with("vector<") {
+    kt = self.type_nr("array<{name[7..name.size()]}");
+  } else if kt < 0 && name.starts_with("sorted<") {
+    kt = self.type_nr("ordered<{name[7..name.size()]}");
+  }
+  if kt < 0 {
+    self.ensure_stack(16);
+    crt::set_slot_ref(self.stk, self.stack_pos, state::NULL_STORE, 0, 0);
+    self.stack_pos += 16;
+    return;
+  }
+  self.reflect_push(kt);
 }
 
 // `stack_trace()` (`n_stack_trace`): the frames outermost first, each its function, file and

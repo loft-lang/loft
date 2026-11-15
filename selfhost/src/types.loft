@@ -843,3 +843,103 @@ pub fn record_collection(ts: vector<ir::DbType>, ptp: integer, fld: integer) -> 
   }
   RecordColl { tp: ptp, fld: fld, at: null }
 }
+
+// ── Reflection (native.rs `reflect_type_into`, over the layout descriptor's nodes, which
+// `Stores::transcribe` maps one to one from a type's parts). ──────────────────────────────
+
+// `reflect_kind`: the `TypeKind` number of type `kt` — a base type's own (integer 1 … character
+// 7), a narrow integer 1, a record 8, an enum 9, a variant 10, a vector or array 11, a keyed
+// collection 12, a reference or child record 13, anything else 14.
+pub fn reflect_kind(ts: vector<ir::DbType>, kt: integer) -> integer {
+  if kt < 0 || kt >= len(ts) {
+    return 14;
+  }
+  match ts[kt]?.parts[0] {
+    PtBase => if kt <= 6 { kt + 1 } else { 1 },
+    PtByte { start: _, nullable: _ } => 1,
+    PtShort { start: _, nullable: _ } => 1,
+    PtInt { start: _, nullable: _ } => 1,
+    PtShortRaw { start: _, nullable: _ } => 1,
+    PtStruct { fields: _ } => 8,
+    PtEnum { values: _ } => 9,
+    PtEnumValue { value: _, fields: _ } => 10,
+    PtVector { content: _ } => 11,
+    PtArray { content: _ } => 11,
+    PtSorted { content: _, keys: _ } => 12,
+    PtOrdered { content: _, keys: _ } => 12,
+    PtHash { content: _, fields: _ } => 12,
+    PtIndex { content: _, keys: _ } => 12,
+    PtRadix { content: _, fields: _ } => 12,
+    PtTrie { content: _, key: _ } => 12,
+    PtDbRef => 13,
+    PtChildRec { content: _ } => 13,
+    _ => 14,
+  }
+}
+
+// `reflect_collection`: hash 2, index 3, sorted 4, ordered 5, radix 6, trie 7, else 1.
+pub fn reflect_collection(ts: vector<ir::DbType>, kt: integer) -> integer {
+  match ts[kt]?.parts[0] {
+    PtHash { content: _, fields: _ } => 2,
+    PtIndex { content: _, keys: _ } => 3,
+    PtSorted { content: _, keys: _ } => 4,
+    PtOrdered { content: _, keys: _ } => 5,
+    PtRadix { content: _, fields: _ } => 6,
+    PtTrie { content: _, key: _ } => 7,
+    _ => 1,
+  }
+}
+
+// The element type a vector, an array, a child record or a keyed collection holds; null else.
+pub fn reflect_element(ts: vector<ir::DbType>, kt: integer) -> integer? {
+  match ts[kt]?.parts[0] {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtChildRec { content } => content,
+    PtSorted { content, keys: _ } => content,
+    PtOrdered { content, keys: _ } => content,
+    PtHash { content, fields: _ } => content,
+    PtIndex { content, keys: _ } => content,
+    PtRadix { content, fields: _ } => content,
+    PtTrie { content, key: _ } => content,
+    _ => null,
+  }
+}
+
+// `reflect_keys`: a keyed collection's key fields as (field index, ascending 1/0) pairs in key
+// order — a hash's, a radix's and a trie's all ascending.
+pub fn reflect_keys(ts: vector<ir::DbType>, kt: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  match ts[kt]?.parts[0] {
+    PtHash { content: _, fields } => {
+      for k in fields {
+        out += [k, 1];
+      }
+    }
+    PtRadix { content: _, fields } => {
+      for k in fields {
+        out += [k, 1];
+      }
+    }
+    PtTrie { content: _, key } => {
+      out += [key, 1];
+    }
+    PtSorted { content: _, keys } => {
+      for k in keys {
+        out += [k.nr, if k.asc { 1 } else { 0 }];
+      }
+    }
+    PtOrdered { content: _, keys } => {
+      for k in keys {
+        out += [k.nr, if k.asc { 1 } else { 0 }];
+      }
+    }
+    PtIndex { content: _, keys } => {
+      for k in keys {
+        out += [k.nr, if k.asc { 1 } else { 0 }];
+      }
+    }
+    _ => {}
+  }
+  out
+}
