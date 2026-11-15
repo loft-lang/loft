@@ -431,11 +431,14 @@ header.  Two things are kept true in public so that it can be:
    and shows the frame and hands over the input either way, so the game's loop has no branch
    for the machine.  H4 (the C emitter) stays as the shader test path.
 2. **The name** — settled (owner, 2026-11-15): the layer is `gpu`, a backend `gpu_<stack>`.
-   `gpu` 0.1.0 is ready to publish from the libraries' `main` (`scripts/registry_maintain.sh
-   --only gpu`; its dry run lists that one version and nothing else) and is not published yet.
-   `gpu_record` and `gpu_gl` follow once a released loft has @C164, with their include
-   changed to `"gpu/gpu_backend.h"` and their `loft` floor raised; `gpu_paint` when stage
-   needs it.
+   `gpu` 0.1.0 and `gpu_paint` 0.1.0 are in the registry.  `gpu_record` and `gpu_gl` were
+   refused by the publish gate, rightly: their `../../gpu/c/gpu_backend.h` names no file in a
+   package built on its own, as it names none once installed.  What gets them published:
+   - loft's `main` carries @C164 (this branch, through the next gather);
+   - loft-libs-graphics#87 (a draft, stacked on #86) switches both to `"gpu/gpu_backend.h"`;
+     its `loft` floors are raised to the build that carries @C164, then it merges;
+   - the publish gate builds a shim with its dependencies' headers staged
+     (`scripts/thirdparty.py`, on this branch), so it can build them then.
 
 ## The CPU tier and `gpu` side by side (read from tile-world-game at `f1b5bf1`, 2026-11-15)
 
@@ -480,6 +483,12 @@ What stands between the two on one machine is the window, not the drawing:
   from RGB565 (`raster3d` and `screen` speak it; `gpu` takes `0xAARRGGBB`, and turning
   384,000 pixels a frame in loft is not measured and unlikely to be free).
 - **On the Tanmatsu nothing changes:** no device opens, `screen` shows the frame.
+
+**Three of the four are built (2026-11-15): loft-libs-graphics#86** (`gpu` 0.2.0, the table at
+version 2): `dev.key_down`, `pointer_x` / `pointer_y` / `buttons`, `typed`, `events`;
+`texture.put_rgb565`; `dev.capture_of(target)`.  `gpu_gl` shows an RGB565 frame in colours
+computed by hand and reads a target back, on a Mac on four build modes and in both writers'
+pages; injected keys are not tested.  Left: a host that picks the scene's implementation.
 
 **The game's agent wrote the contract down the same day** (`SCENE_CONTRACT.md` in
 tile-world-game, at `8d9e40f`; working name `scene3d`): the same seam, the same mapping onto
