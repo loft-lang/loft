@@ -599,7 +599,7 @@ design decisions, the consumer gate's
 scheduled nights green, the release gate's age, and the portal's median and release cut
 per host.  The series file is the trend; the script's docstring is the column key.
 
-**Who runs it, and who reads it (owner, 2026-11-15).**  The read is not a cadence of the
+**Who runs it, and who reads it (owner).**  The read is not a cadence of the
 owner's: the gathering stream — the one that joins the work branches and builds the pull
 requests, not a feature stream — runs `make stability-read ARGS="--record"` with each
 gather, at least once a week, and the row lands in `index/stability_weekly.tsv` with the

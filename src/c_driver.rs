@@ -1042,15 +1042,32 @@ pub(crate) fn build(
 /// generator's.  `None` when the variable is not set.  A generator that refuses the program,
 /// fails or writes nothing is an `Err` naming why — never a fallback to the Rust unit, which
 /// would let a refusal pass as a run.  The generator reads the runtime headers from
-/// `LOFT_CGEN_RUNTIME`, else this tree's `src/c`; `LOFT_CGEN_IMAGE=<path>` keeps the image.
+/// `LOFT_CGEN_RUNTIME`, else the `src/c` of the tree the generator lies in, found from its path
+/// at run time: the binary names no directory of the machine that built it, so a build from a
+/// checkout and one from an export are the same bytes.  `LOFT_CGEN_IMAGE=<path>` keeps the image.
 #[cfg(feature = "mmap")]
 pub(crate) fn loft_written_unit(
     data: &loft::data::Data,
     stores: &loft::database::Stores,
 ) -> Option<Result<String, String>> {
     let generator = std::env::var("LOFT_CGEN").ok().filter(|g| !g.is_empty())?;
-    let runtime = std::env::var("LOFT_CGEN_RUNTIME")
-        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/src/c").to_string());
+    let runtime = match std::env::var("LOFT_CGEN_RUNTIME")
+        .ok()
+        .filter(|r| !r.is_empty())
+        .or_else(|| {
+            std::path::Path::new(&generator)
+                .ancestors()
+                .map(|a| a.join("src").join("c"))
+                .find(|c| fa::exists(c.join("loft_rt.h")))
+                .map(|c| c.to_string_lossy().into_owned())
+        }) {
+        Some(r) => r,
+        None => {
+            return Some(Err(format!(
+                "LOFT_CGEN: no `src/c` above `{generator}`; set LOFT_CGEN_RUNTIME to the runtime headers"
+            )));
+        }
+    };
     let stem = std::env::temp_dir().join(format!("loft_cgen_{}", std::process::id()));
     let image = format!("{}.store", stem.display());
     let unit = format!("{}.c", stem.display());

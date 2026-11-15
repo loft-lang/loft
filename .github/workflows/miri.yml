@@ -940,6 +940,7 @@ jobs:
           python scripts\c_sweep.py --verbose --mode default --shard ${{ matrix.shard }}/6
 
   c-sweep-android:
+    # @windows-exempt: an Android emulator run — the device is Linux whatever the host, and the Android build itself is the host-independent C driver the windows-latest CI legs build
     # @nightly-class: report — the C backend's Android build answering other than the interpreter (a new target, raised to unsound at its flip)
     # doc/claude/plans/106-android-build-target/c-backend.md A1 — every corpus program built as
     # an Android app through the C (`loft --native-c --native-android`) and run on an x86_64
@@ -2085,7 +2086,7 @@ jobs:
     # @windows-exempt: platform-free — writes an issue
     name: → tracked issue (red-steps digest)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, release-gate-sweeps, debug-asserts, audit,
+            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
@@ -2102,7 +2103,7 @@ jobs:
     # @windows-exempt: platform-free — writes the daily status
     name: Daily status (the one place to look)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, release-gate-sweeps, debug-asserts, audit,
+            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.

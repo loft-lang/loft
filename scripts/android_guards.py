@@ -83,6 +83,9 @@ def one(src: Path, libs: list) -> tuple:
 
 
 def main(argv) -> int:
+    if any(a in ("-h", "--help") for a in argv[1:]):
+        print(__doc__.strip())
+        return 0
     libs, names, i = [], [], 1
     while i < len(argv):
         if argv[i] == "--lib":
