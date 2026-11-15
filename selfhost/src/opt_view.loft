@@ -18,6 +18,8 @@ use opt_non_sentinel;
 use opt_push;
 use opt_writes;
 use opt_facts;
+use el_ir;
+use own;
 use types;
 
 fn def_name(b: ir::Bundle, d: integer) -> text {
@@ -473,5 +475,107 @@ fn mover_roots(b: ir::Bundle, d: ir::Definition, stmts: vector<ir::Node>, from: 
       _ => {},
     }
   });
+  out
+}
+
+fn scalar_getter(name: text) -> boolean {
+  name == "OpGetInt" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetSingle" || name == "OpGetFloat" || name == "OpGetBoolean" || name == "OpGetCharacter" || name == "OpGetEnum"
+}
+
+// `mentions_apart`: does every variable `n` mentions name no store, or one proved apart from
+// `r`'s?  The record a scalar field read reads is not asked: the read moves nothing.
+fn mentions_apart(b: ir::Bundle, facts: opt_facts::Facts, d: ir::Definition, r: integer, n: ir::Node) -> boolean {
+  node = loop_shape::unspan(n);
+  match node {
+    NdVar { n: v } => {
+      if v == r {
+        return false;
+      }
+      tp = if v >= 0 && v < len(d.variables.variables) { binds::base(d.variables.variables[v]!.type_def[0] ?? ir::TyVoid) } else { ir::TyVoid };
+      names_store = v >= 0 && v < len(d.variables.variables) && (own::is_dbref(tp) || (tp is TyRefVar));
+      return !names_store || opt_facts::distinct(b, facts, r, v);
+    },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && scalar_getter(b.data.definitions[def_nr]!.name) && len(args) > 0 && (loop_shape::unspan(args[0]) is NdVar) {
+        for a in args {
+          if a#index > 0 && !mentions_apart(b, facts, d, r, a) {
+            return false;
+          }
+        }
+        return true;
+      }
+    },
+    _ => {},
+  }
+  for child in el_ir::children(node) {
+    if !mentions_apart(b, facts, d, r, child) {
+      return false;
+    }
+  }
+  true
+}
+
+fn apart_all(b: ir::Bundle, facts: opt_facts::Facts, d: ir::Definition, r: integer, nodes: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for n in nodes {
+    out += [apart_node(b, facts, d, r, n)];
+  }
+  out
+}
+
+// One node of `apart_calls`' rewrite, its children after it (`Value::map_nodes`).
+fn apart_node(b: ir::Bundle, facts: opt_facts::Facts, d: ir::Definition, r: integer, n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: apart_node(b, facts, d, r, inner) },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        apart = true;
+        for a in args {
+          if apart && !mentions_apart(b, facts, d, r, a) {
+            apart = false;
+          }
+        }
+        if apart {
+          def = b.data.definitions[def_nr]!;
+          // A call into a store apart from `r`'s is its operands; a release there is nothing.
+          if binds::has_code(def) && !def.name.starts_with("Op") {
+            return ir::NdInsert { items: apart_all(b, facts, d, r, args) };
+          }
+          if def.name == "OpFreeRef" || def.name == "OpFreeRefIfDistinct" {
+            return ir::NdNull;
+          }
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: apart_all(b, facts, d, r, args) }
+    },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: apart_all(b, facts, d, r, args) },
+    NdBlock { block } => ir::NdBlock { block: [ir::Block { operators: apart_all(b, facts, d, r, block[0].operators), ..block[0] }] },
+    NdLoop { block } => ir::NdLoop { block: [ir::Block { operators: apart_all(b, facts, d, r, block[0].operators), ..block[0] }] },
+    NdInsert { items } => ir::NdInsert { items: apart_all(b, facts, d, r, items) },
+    NdTuple { items } => ir::NdTuple { items: apart_all(b, facts, d, r, items) },
+    NdParallel { arms } => ir::NdParallel { arms: apart_all(b, facts, d, r, arms) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: apart_node(b, facts, d, r, inner) },
+    NdReturn { inner } => ir::NdReturn { inner: apart_node(b, facts, d, r, inner) },
+    NdDrop { inner } => ir::NdDrop { inner: apart_node(b, facts, d, r, inner) },
+    NdYield { inner } => ir::NdYield { inner: apart_node(b, facts, d, r, inner) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: apart_node(b, facts, d, r, inner) },
+    NdIf { cond, t, f } => ir::NdIf { cond: apart_node(b, facts, d, r, cond), t: apart_node(b, facts, d, r, t), f: apart_node(b, facts, d, r, f) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: apart_node(b, facts, d, r, create), next: apart_node(b, facts, d, r, next), init: apart_node(b, facts, d, r, init) },
+    _ => n,
+  }
+}
+
+// `apart_calls` (`@FR-R-RecPtr`'s call clause): the statements after `at` as the verdict
+// reads them — a call of a function whose every operand names a store apart from `r`'s
+// cannot move `r`'s record, so it reads as its operands; a release there reads as nothing.
+pub fn apart_calls(b: ir::Bundle, facts: opt_facts::Facts, vd: integer, r: integer, ops: vector<ir::Node>, at: integer) -> vector<ir::Node> {
+  if !opt_facts::enabled() || (env_variable("LOFT_NO_APART_CALL") ?? "0") != "0" {
+    return ops;
+  }
+  d = b.data.definitions[vd]!;
+  out: vector<ir::Node> = [];
+  for op in ops {
+    out += [if op#index > at { apart_node(b, facts, d, r, op) } else { op }];
+  }
   out
 }
