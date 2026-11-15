@@ -173,11 +173,14 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
    `scripts/c_sweep_android.baseline`, a list that only shrinks.  On GitHub: the ubuntu runner with KVM and
    the community emulator action; locally, this box.  Its wall time is measured before the job
    is wired, and a long run is sharded, never given a larger limit.
-3. **The goldens, rebased onto the published libraries**: `b3_rects`, `b3_text`, `b3_render`
-   (graphics), `b4_touch`, `b4_ime` (input), `b4_audio`, `b4_stack`.  Each is an emulator
-   screenshot (`adb exec-out screencap`) of the same loft program, compared within a pixel
-   tolerance fixed at A2 from the emulator's own run-to-run noise.  They now prove the
-   published package, not a fixture.
+3. **The guards, on the published libraries** (`tests/android/`, run by
+   `scripts/android_guards.py` on the nightly's first emulator shard): `b3_rects` (a painter),
+   `b3_render` (the program's own `#version 330 core` shaders), `b4_touch` (a tap the runner
+   sends), `b4_audio` (the frames the audio device took) and `b4_stack` (a recursion that needs
+   more than 2 MiB).  Each prints what it read back, so the comparison with its hand-computed
+   `.expected` is exact: no screenshot and no pixel tolerance.  `b3_text` needs a font packaged
+   with the app (A3); `b4_ime` waits for a soft-keyboard call, which the published `graphics`
+   does not have.
 
 ## The phases, each with a gate
 
@@ -185,7 +188,7 @@ The two oracles the project already trusts: the interpreter's answer, and @PLN10
 |---|---|---|
 | **A0** | `build_android` in the driver; `src/c/android/loft_android_main.c` with the entry, logcat and the renamed `main`; the NDK's glue with the 8 MiB app thread | a headless program's APK prints, in logcat, exactly what `loft --interpret` prints; a recursion that needs more than the default 1 MiB stack passes, and fails without the change |
 | **A1** | the build test (verification 1) and the emulator differential (verification 2) over the headless corpus | every headless corpus program agrees, 0 differ; the differ list is a committed baseline that only shrinks (main-switch.md phase 0's rule) |
-| **A2** | `GG_ANDROID` in `graphics_gl.c`; the `__ANDROID__` guard on X11; audio through miniaudio | `b3_*`, `b4_touch`, `b4_ime` and `b4_audio` pass on the PUBLISHED `graphics` and `audio`; each library republished through its own CI (the `loft-library` skill) |
+| **A2** | `GG_ANDROID` in `graphics_gl.c`; the `__ANDROID__` guard on X11; audio through miniaudio | the guards `b3_rects`, `b3_render`, `b4_touch`, `b4_audio`, `b4_stack` pass on the PUBLISHED `graphics` and `audio`; each library republished through its own CI (the `loft-library` skill) |
 | **A3** | files: `internalDataPath`, assets packaged and extracted, the program directory | a program that loads a font and an image from its package draws `b3_text` with no path changed |
 | **A4** | TLS for the triple and the Android trust store | an `https://` fetch answers the same in the emulator as on the desktop |
 | **A5** | the flip: `--native-android` on the C path by default; the rustc Android path deleted with the rustc writer | one release cycle in which the Android build test and the nightly emulator run used only the C path |

@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Android guard (scripts/android_guards.py): the audio library opens the device (AAudio, or
+// OpenSL ES) and the device takes the mix: in three seconds at 44100 frames a second its
+// callback has taken more than 100000 frames.
+use audio;
+
+fn main() {
+  audio::init();
+  println("start {audio::start()}");
+  tone: vector<single> = [];
+  for i in 0..132300 { tone += [(sin(i as float * 0.0627) * 0.2) as single]; }
+  v = audio::play_raw(tone, 44100, 0.5);
+  t = ticks();
+  while ticks() - t < 3000000 { }
+  println("running {audio::output_running()} voice {v != null} taken {audio::output_frames() > 100000}");
+  audio::stop_output();
+}

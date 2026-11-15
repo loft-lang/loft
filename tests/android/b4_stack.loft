@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Android guard (scripts/android_guards.py): the program's thread has the desktop's 8 MiB
+// stack, not bionic's 1 MiB.  Each frame keeps four texts and two floats live across the call;
+// 9000 of them need more than 2 MiB (the desktop C build crashes under `ulimit -s 2048`) and
+// stay under loft's frame limit.  Every frame adds exactly 1.
+fn deep(n: integer) -> integer {
+  if n <= 0 { return 0; }
+  t1 = "a{n}";
+  t2 = "b{n}";
+  t3 = "c{n}";
+  t4 = "d{n}";
+  f1 = n as float * 1.5;
+  f2 = n as float * 2.5;
+  b = deep(n - 1);
+  b + 1 + len(t1) + len(t2) - len(t3) - len(t4) + (f1 - f2 + n as float) as integer
+}
+
+fn main() {
+  println("deep {deep(9000)}");
+}
