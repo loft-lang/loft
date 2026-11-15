@@ -605,9 +605,9 @@ tests/
 
 ## The compiled backend a test runs on
 
-The C backend is the compiled backend every change is tested on: `make`, `find_problems.sh`
-and CI's PR gate set `LOFT_NATIVE_BACKEND=c`, so `--native` compiles through the C.  The
-rustc-native backend runs in the daily schedule ([CI_BUDGET.md](CI_BUDGET.md) § What
+The C backend is the compiled backend every change is tested on: `--native` compiles through
+the C by default, in `make`, `find_problems.sh` and CI's PR gate alike.  The rustc writer
+(`--native-rust`, `LOFT_NATIVE_BACKEND=rust`) runs in the daily schedule ([CI_BUDGET.md](CI_BUDGET.md) § What
 runs when — today).  The C's coverage is what makes it stable, so a test:
 
 - **compiles a program through the C** — `--native` under that variable, or `--native-c`.  A

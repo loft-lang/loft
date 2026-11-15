@@ -22,14 +22,15 @@ pub(crate) enum Tier {
     Debug,
 }
 
-/// Is the C backend the one `--native` drives?  `LOFT_NATIVE_BACKEND=c` (or `--native-c`,
-/// which the caller folds in).  Any other value of the variable is the rustc writer.
+/// Is the C backend the one `--native` drives?  It is the default (@PLN203 C9); only
+/// `LOFT_NATIVE_BACKEND=rust` (or `--native-rust`, which the caller folds in) takes the rustc
+/// writer, which stays as the bisect path until it moves to the attic.
 pub(crate) fn c_backend_selected() -> bool {
-    std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("c"))
+    !rust_backend_selected()
 }
 
-/// `LOFT_NATIVE_BACKEND=rust`: the rustc writer is asked for where the C backend is the default
-/// (`--native-android`), as `--native-rust` asks for it.
+/// `LOFT_NATIVE_BACKEND=rust`: the rustc writer is asked for instead of the C backend, as
+/// `--native-rust` asks for it.
 pub(crate) fn rust_backend_selected() -> bool {
     std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("rust"))
 }

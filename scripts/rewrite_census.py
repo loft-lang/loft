@@ -75,7 +75,7 @@ import rule_phases  # noqa: E402  (the phase table, beside this script)
 # Each compiled writer: its name in the baseline, the source it writes, its flags.  `rust` is
 # the rustc writer (census phase `native`), `c` the C writer (phase `c`).
 WRITERS = {
-    "rust": (".rs", lambda out: ["--native-emit", str(out), "--lean"]),
+    "rust": (".rs", lambda out: ["--native-rust", "--native-emit", str(out), "--lean"]),
     "c": (".c", lambda out: ["--emit-c", str(out)]),
 }
 
@@ -161,7 +161,7 @@ def census(loft, prog, writer):
 
 def rust_writer_env():
     """The environment for a census run, minus `LOFT_NATIVE_BACKEND`: each writer is chosen by
-    its flag (`WRITERS` — `--native-emit` for Rust, `--emit-c` for C), and `make ci` exports
+    its flag (`WRITERS` — `--native-rust --native-emit` for Rust, `--emit-c` for C), and `make ci` exports
     `LOFT_NATIVE_BACKEND=c` to every step, under which `--native-emit` writes C — the Rust row
     then counted the C writer's rewrites and read every rule the C does not fire as a drop."""
     return {k: v for k, v in os.environ.items() if k != "LOFT_NATIVE_BACKEND"}
@@ -180,7 +180,7 @@ def warm_dependencies(loft, progs):
             if commit == "-":
                 continue
             subprocess.run(
-                [loft, "--native-emit", str(Path(tmp) / "warm.rs"), "--lean", *argv],
+                [loft, "--native-rust", "--native-emit", str(Path(tmp) / "warm.rs"), "--lean", *argv],
                 cwd=cwd, capture_output=True, timeout=600,
                 env={**rust_writer_env(), "LOFT_REWRITE_CENSUS": ""},
             )

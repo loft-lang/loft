@@ -117,7 +117,7 @@ build_and_run() {
   # and full optimisation.  A performance lane measures the optimised build; the
   # semantics runs are the test runner's.  `LOFT_NATIVE_BACKEND=` (empty) asks for the
   # rustc emitter: `make ci` exports the C backend, and its C does not compile as Rust.
-  LOFT_NATIVE_BACKEND= "$LOFT" --native-emit "$build/ratio_native.rs" --lean --path "$ROOT/" "$dir/bench.loft" > /dev/null
+  LOFT_NATIVE_BACKEND= "$LOFT" --native-rust --native-emit "$build/ratio_native.rs" --lean --path "$ROOT/" "$dir/bench.loft" > /dev/null
   rustc "${RELEASE_ARGS[@]}" --edition=2024 \
     --extern "loft=$LOFT_LIB/libloft.rlib" -L "$LOFT_LIB/deps" \
     -o "$build/ratio_native" "$build/ratio_native.rs"

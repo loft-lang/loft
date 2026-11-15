@@ -261,7 +261,8 @@ fn print_help() {
     println!(
         "  --dump                        compile to bytecode, dump to stderr, and exit (no execution)"
     );
-    println!("  --native                      compile to native Rust via rustc and run (default)");
+    println!("  --native                      compile through C and the host's C compiler and run");
+    println!("                                (default); --native-rust takes the rustc writer");
     println!("  --ship                        build the program as it ships: only reachable");
     println!("                                functions, fully optimised, no live/debug tier,");
     println!("                                native libraries linked in (unless --dynamic or");
@@ -311,9 +312,9 @@ fn print_help() {
     println!("  --native-c                    like --native but through C and the host's C");
     println!("                                compiler (LOFT_CC, CC, else cc); combines with");
     println!("                                --ship, --native-debug, --native-emit");
-    println!("                                [out.c]; LOFT_NATIVE_BACKEND=c selects it too");
+    println!("                                [out.c]; it is what --native means");
     println!("  --native-rust                 like --native but through the Rust writer and");
-    println!("                                rustc whatever LOFT_NATIVE_BACKEND says; with");
+    println!("                                rustc (LOFT_NATIVE_BACKEND=rust too); with");
     println!("                                --native-emit it writes the Rust");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
     println!("                                (default: .loft/<script>.wasm beside the script)");
@@ -7668,8 +7669,8 @@ fn main() {
     // and preserve the generated `.rs` on disk so DWARF's `.debug_line`
     // table points at a real file the debugger can show.
     let mut native_debug = false;
-    // @PLN203 C1 — `--native-c` (or `LOFT_NATIVE_BACKEND=c`): `--native` compiles through
-    // the C backend and the host's C compiler instead of rustc.
+    // @PLN203 C9 — `--native` compiles through the C backend and the host's C compiler by
+    // default; `--native-rust` or `LOFT_NATIVE_BACKEND=rust` takes the rustc writer instead.
     let mut native_c = c_driver::c_backend_selected();
     // @PLN203 C9 — `--native-rust`: the Rust writer and rustc for this run, whatever
     // `LOFT_NATIVE_BACKEND` selects.  Kept one release past the flip; until then it is how a
@@ -9468,8 +9469,8 @@ fn main() {
         {
             eprintln!(
                 "loft: rustc is off for this run (LOFT_NO_RUSTC=1), and this build goes \
-                 through it — build through the C backend instead (`--native-c`, or \
-                 LOFT_NATIVE_BACKEND=c)"
+                 through it — build through the C backend instead (drop `--native-rust` and \
+                 LOFT_NATIVE_BACKEND=rust)"
             );
             std::process::exit(2);
         }
@@ -9908,7 +9909,7 @@ fn main() {
     }
     // A C build with no fallback skips every host cdylib.  A default run that the C backend
     // refuses falls back to the interpreter (`native_fallback_reason`), which needs them, so
-    // `LOFT_NATIVE_BACKEND=c` alone does not set it.
+    // the C default alone does not set it.
     if emit_c.is_some()
         || emit_c_bodies.is_some()
         || (native_c && native_requested)

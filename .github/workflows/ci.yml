@@ -1507,7 +1507,7 @@ jobs:
       - name: Run the rules on the rustc-native backend (daily)
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
-          LOFT_NATIVE_BACKEND: ''
+          LOFT_NATIVE_BACKEND: rust
         run: >
           python3 loft-suite/loft-suite run --loft target/release/loft --mode native
           --jobs 4 --timeout 300 --junit target/loft-suite-native-junit.xml

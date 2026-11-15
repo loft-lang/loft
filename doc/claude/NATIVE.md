@@ -4,6 +4,10 @@
 
 # Native Rust Code Generation
 
+`--native` builds through the C backend ([C_BACKEND.md](C_BACKEND.md)).  This doc is the
+rustc writer, which `--native-rust` (or `LOFT_NATIVE_BACKEND=rust`) still takes as the bisect
+path until it moves to the attic.
+
 Plan for making the existing Rust code generation backend (`src/generation/`) produce
 compilable, runnable code. The generated code must produce the same results as the
 bytecode interpreter for every loft program.

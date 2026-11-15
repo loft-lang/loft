@@ -17,8 +17,8 @@ writes C that answers differently from the interpreter.
 loft --native-c prog.loft [args]   # emit, build with LOFT_CC / CC / cc, cache the binary in
                                    #   .loft/cache/native-c-<key>, run it (exit 2 on a refusal);
                                    #   --ship is -O3, --native-debug -O0 -g,
-                                   #   --native-emit [out.c] writes the C; LOFT_NATIVE_BACKEND=c
-                                   #   makes --native mean this; LOFT_KEEP_NATIVE_C=1 keeps the .c
+                                   #   --native-emit [out.c] writes the C; plain --native means this
+                                   #   (--native-rust takes rustc); LOFT_KEEP_NATIVE_C=1 keeps the .c
 loft --native-android app.apk prog.loft  # the C built as an Android app by the NDK's clang (the
                                    #   default; --native-rust takes the rustc writer instead)
 LOFT_C_LINT=1 loft --native-c p.loft  # compile afresh with -Wall -Wextra instead of -w and
@@ -51,8 +51,8 @@ python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.y
                                                #   runs four shards per PR, miri.yml the
                                                #   --poison and --asan sweeps nightly.  The PR's
                                                #   Test job and its Language suite job compile
-                                               #   `--native` through the C (LOFT_NATIVE_BACKEND=c,
-                                               #   on every leg)
+                                               #   `--native` through the C (the default, on
+                                               #   every leg)
 make c-sweep ARGS="…"                          # the release loft built first, then the sweep
 python3 scripts/image_probe.py                 # every corpus program: the C written from the
                                                #   program IMAGE (LOFT_EMIT_FROM_IMAGE=1) against
@@ -693,8 +693,8 @@ with the interpreter's unloaded-library panic, so a library a C program needs is
 native part is a `[c] shim`, a prebuilt C library or a component.  A C build therefore never
 builds a Rust cdylib (`native_build::c_target`, set for `--emit-c` and an explicit
 `--native-c`; guard `a_c_build_builds_no_rust_native_crate`).  A default run that the C
-backend refuses falls back to the interpreter, which loads them, so `LOFT_NATIVE_BACKEND=c`
-alone does not set it.  A prebuilt library is asked for a native through its
+backend refuses falls back to the interpreter, which loads them, so the C default alone does
+not set it.  A prebuilt library is asked for a native through its
 `loft_register_v1` table first, which may name another symbol (`loft_save_png => n_save_png`),
 then by the native's own name (`loft_ffi_lookup`).
 
