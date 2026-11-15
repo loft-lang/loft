@@ -604,7 +604,12 @@ gather, at least once a week, and the row lands in `index/stability_weekly.tsv` 
 join.  The owner's half-month pass and the release pass READ the series: its last rows and
 the summary line are the position, so a pass triggered by observation starts from the
 numbers rather than recomputing them.  A week with no row is itself a finding of the next
-pass.  A
+pass.  The read MEASURES nothing: its portal column reads the rows committed under
+`bench/portal/results/` and prints each row's date, so a stale measurement shows as its age.
+A measurement needs a quiet box, which the gathering stream's does not have, so the
+performance stream (the laptop) records the row — `make perf-check ARGS="--record"` on the
+judged lanes — and the gathering stream asks for one whenever the read shows the laptop row
+older than a week.  A
 report, never a gate: it reads the tracker through `gh api` when signed in and the public
 endpoint when not, and the tracker labels as they are NOW, so a past week's `open_sw_main`
 is an approximation from the filing and closing stamps.
