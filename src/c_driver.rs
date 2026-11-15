@@ -467,6 +467,24 @@ fn wasm_toolchain() -> &'static WasmToolchain {
     })
 }
 
+/// The dependency headers `shim_sources` include (@C164), under each dependency's name in a
+/// directory of this process under `scratch`; `None` when no shim of this program includes
+/// one, or the directory cannot be written (the compile then names the header it misses).
+fn staged_dep_headers(
+    scratch: &std::path::Path,
+    shim_sources: &[String],
+) -> Option<std::path::PathBuf> {
+    if loft::c_shim::all_dep_headers().is_empty() {
+        return None;
+    }
+    let dir = scratch.join(format!("loft_wasm_inc_{}", std::process::id()));
+    let paths: Vec<std::path::PathBuf> =
+        shim_sources.iter().map(std::path::PathBuf::from).collect();
+    fa::create_dir_all(&dir).ok()?;
+    loft::c_shim::put_dep_headers_of(&dir, &paths).ok()?;
+    Some(dir)
+}
+
 /// `--native-wasm` through the C (@PLN203 C6): the unit built for WASI by clang into
 /// `out`, as `scripts/c_sweep.py --wasm` builds and validates it.  setjmp is wasm's
 /// exception-handling proposal in its standard encoding (a host runs it with exceptions on —
@@ -547,6 +565,11 @@ pub(crate) fn build_wasm(
     if let Some(ld) = &tc.ld {
         cmd.push_arg(format!("--ld-path={ld}"));
     }
+    // @C164 — the dependency headers the shims include, under each dependency's name.
+    let dep_inc = staged_dep_headers(&scratch, shim_sources);
+    if let Some(dir) = &dep_inc {
+        cmd.push_arg("-I").push_arg(dir);
+    }
     cmd.push_arg(&src);
     cmd.push_args(shim_sources);
     cmd.push_arg("-o").push_arg(out);
@@ -561,6 +584,9 @@ pub(crate) fn build_wasm(
     let ran = cmd.run(b"");
     if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
         let _ = fa::remove_file(&src);
+    }
+    if let Some(dir) = &dep_inc {
+        let _ = fa::remove_dir_all(dir);
     }
     let ran = ran.map_err(|e| {
         format!(

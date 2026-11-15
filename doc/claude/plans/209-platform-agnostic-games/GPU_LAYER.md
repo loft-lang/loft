@@ -11,13 +11,14 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 ## Status
 
 P1, P2, P3, L0, L1 and M0 are done and L2 is in review (2026-11-15); none changed § The shape.
-Next: L2b (in loft), then L3 (`gpu_gl`); publishing waits for the name (open question 2).  V0
+Next: L3 (`gpu_gl`); publishing waits for the name (open question 2) and for @C164 in a
+released loft.  V0
 waits for a Linux machine.
 
 | Track | Steps | State |
 |---|---|---|
 | P — the game on a Mac, on the GL that is there | P1–P5 | P1–P3 done; P4 stood in for until L3; P5 measured standing still |
-| L — the neutral layer | L0–L8 | L0, L1 done; L2 in review; L2b, L3–L8 open |
+| L — the neutral layer | L0–L8 | L0, L1, L2b done; L2 in review; L3–L8 open |
 | M — the Metal backend | M0–M4 | M0 done; M1–M4 open |
 | V — the Vulkan backend | V0–V4 | Open |
 | H — one shader source | H1–H4 | Open |
@@ -220,23 +221,32 @@ Nothing here waits for the neutral layer or for Metal.
 - **L2b — a backend finds the layer's header once both are installed (M, in loft).**  L0
   measured the table with the packages side by side under their plain names.  Installed from
   the registry a package's directory is `<name>-<version>`, and a backend's
-  `#include "../../gpu/c/gpu_backend.h"` then names no file: measured 2026-11-15 with `gpu`
-  and `gpu_record` under a scratch `~/.loft/registry/`, on the interpreter and `--native-c`
-  ("fatal error: '../../gpu/c/gpu_backend.h' file not found").  A shim compiles with fixed
-  flags and includes only by a path relative to its source (@C158), so nothing a package
-  writes can cure it.
-  Recommended: loft gives a shim's compile the `c/` directory of each package its `loft.toml`
-  declares as a dependency, so a backend writes `#include "gpu_backend.h"`; the header joins
-  the shim's cache key as a local include does.  The sites that compile a shim:
-  `c_shim::build` (from `parser/packages.rs` and `install.rs`), `cc_archive` (`c/mod.rs`,
-  `c/tls.rs`), `static_archive_for` (`native_utils.rs`), `wasm_objects` (`main.rs`) and the
-  ship tier's sources-with-the-unit link (`c_driver.rs`).  It amends @C158, so it is a design
-  decision with its own id.
-  The other way, with no change in loft: each backend carries a copy of the header, and
-  `GPU_BACKEND_VERSION` with a pinned hash of the header in `gpu`'s own tests makes a changed
-  copy loud.  Two copies of one rule; taken only if the first is refused.
+  `#include "../../gpu/c/gpu_backend.h"` then names no file.  A shim compiles with fixed flags
+  and includes only by a path relative to its source (@C158), so nothing a package writes
+  cures it.
   Goes red when: `lctab_a`, installed as `lctab_a-0.1.0` beside `lctab-0.1.0`, does not
   compile in any build mode.
+  **Done (2026-11-15, owner's choice): @C164.**  A shim writes
+  `#include "<dependency>/<header>.h"` for a package its `loft.toml` declares, and loft puts
+  that dependency's headers (the `*.h` beside its own shim sources, from the copy the program
+  resolved) where every shim compile searches.  They join the shim's cache key and the startup
+  cache.  Measured with `gpu` and `gpu_record` under a scratch registry: the same frame log
+  on the interpreter, `--native-c`, `--native-c --ship`, `--native`, both writers' wasm and
+  both writers' pages, with the backend named before or after the layer and with only the
+  backend named.  The guard is
+  `a_backend_finds_the_layers_header_wherever_the_two_are_installed` (tests/c_emit.rs): the
+  `lctab` fixtures under versioned directory names, each mode cold and from the startup
+  cache.  It fails with header staging off, and its warm `--native-c` run fails with the
+  cache's `chdr` lines left out.  Three things it met:
+  - a backend's loft file need not `use` the layer (only its C includes the header), so its
+    shim waits for the layer to register, not for its own file's `use`s;
+  - a warm start skips the parse that declared the headers, and a C build compiles a shim
+    after it: the first form failed on every second `--native-c` run;
+  - the C writer's wasm build compiles shim sources with the unit and had no directory of
+    loft's on its search path, so it is a seventh site.
+  **Open:** loft-libs-graphics#83 keeps the relative include, which loft's `main` can build
+  side by side.  `gpu_record` moves to `"gpu/gpu_backend.h"` and raises its `loft` floor in
+  the change that follows @C164 reaching loft's `main`.
 - **L3 — `gpu_gl` (M).**  Today's GL code behind the table; graphics 0.12's own API untouched
   beside it.  Shaders arrive as a set: one declaration (inputs, the uniform block, the texture
   slots) with a source per shading language, until track H replaces the sources.

@@ -9,6 +9,11 @@ What [GPU_LAYER.md](GPU_LAYER.md) track P found that is the game's own to change
 stream does not edit the game; each line was tried in a scratch copy of the game's `main`
 (dc27cf0) on an Apple-silicon Mac, with loft at `tuxedo-pr2438-post`.
 
+The game's agent reads this as `HANDOFF_FROM_LOFT.md`, on the branch
+`loft-handoff-2026-11-15` of the game's repo: the same findings, read against the game at
+`0a3829a`, with the state of the loft fixes and what the GPU layer will ask of its view.  At
+that commit the game already builds its `Canvas` from a `vector<u32>` (item 1 below).
+
 ## What the libraries now give
 
 - **`screen` opens a window on macOS** (screen 0.2.0, loft-libs-game#32): the 2D game plays

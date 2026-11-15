@@ -254,6 +254,34 @@ pub fn install_one(
     install_resolved(package_name, constraint, opts, false)
 }
 
+/// What installing a package says about its `[c] shim`, built now so a missing C compiler is
+/// heard of while installing: that it built, why it did not, or — for a shim that includes a
+/// dependency's header (@C164) — that it builds on first use, because which copy of that
+/// dependency a program loads is the program's resolution to make.  `None` without a shim.
+fn shim_note(dir: &std::path::Path, m: &crate::manifest::Manifest, name: &str) -> Option<String> {
+    if m.c_shim.is_empty() {
+        return None;
+    }
+    let deps: Vec<String> = m.dependencies.iter().map(|(d, _)| d.clone()).collect();
+    let wanted = crate::c_shim::wanted_deps(&dir.to_string_lossy(), &m.c_shim, &deps);
+    if !wanted.is_empty() {
+        return Some(format!(
+            "  C shim builds on first use: it includes a header of `{}`",
+            wanted.join("`, `")
+        ));
+    }
+    Some(
+        match crate::c_shim::build(&dir.to_string_lossy(), &m.c_shim) {
+            Ok(so) => format!(
+                "  C shim built: {}",
+                crate::file_access::file_name(&so)
+                    .unwrap_or_else(|| so.to_string_lossy().into_owned())
+            ),
+            Err(why) => format!("  C shim NOT built — {why}; `use {name}` will report it again"),
+        },
+    )
+}
+
 /// [`install_one`], saying whether the packages `package_name` pulls in keep their lock pins
 /// ([`resolve_named`]'s `keep_locked`).
 fn install_resolved(
@@ -350,27 +378,8 @@ fn install_resolved(
             // again — with the source position of the `use` — if the package is
             // actually used. Refusing the install would make a missing `cc`
             // block packages the user may never call into.
-            let deps: Vec<String> = m.dependencies.iter().map(|(d, _)| d.clone()).collect();
-            let wanted = crate::c_shim::wanted_deps(&dir.to_string_lossy(), &m.c_shim, &deps);
-            if !wanted.is_empty() {
-                // @C164 — it includes a dependency's header, and which copy of that
-                // dependency a program loads is the program's resolution to make.
-                report.surface.push(format!(
-                    "  C shim builds on first use: it includes a header of `{}`",
-                    wanted.join("`, `")
-                ));
-            } else if !m.c_shim.is_empty() {
-                match crate::c_shim::build(&dir.to_string_lossy(), &m.c_shim) {
-                    Ok(so) => report.surface.push(format!(
-                        "  C shim built: {}",
-                        crate::file_access::file_name(&so)
-                            .unwrap_or_else(|| so.to_string_lossy().into_owned())
-                    )),
-                    Err(why) => report.surface.push(format!(
-                        "  C shim NOT built — {why}; `use {}` will report it again",
-                        r.name
-                    )),
-                }
+            if let Some(note) = shim_note(&dir, &m, &r.name) {
+                report.surface.push(note);
             }
         }
         report

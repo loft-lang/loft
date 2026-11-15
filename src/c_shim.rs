@@ -179,7 +179,9 @@ fn dep_header_files(dirs: &[String]) -> Vec<(String, crate::file_access::PathTex
             let Some(name) = crate::file_access::file_name(&entry) else {
                 continue;
             };
-            if name.ends_with(".h") && !out.iter().any(|(n, _)| *n == name) {
+            if crate::file_access::has_extension(&entry, "h")
+                && !out.iter().any(|(n, _)| *n == name)
+            {
                 out.push((name, entry));
             }
         }
@@ -841,6 +843,23 @@ fn stem_of(pkg_dir: &str) -> String {
     }
 }
 
+/// What a wasm32 compile of the shim of the package at `pkg_dir` searches, written into
+/// `include`: loft's small C library and its headers, `loft_width.h`, and the headers of the
+/// dependencies the shim includes one of (@C164).
+fn put_wasm_headers(include: &std::path::Path, pkg_dir: &str) -> Result<(), String> {
+    for (name, text) in [
+        ("string.h", WASM_STRING_H),
+        ("stdlib.h", WASM_STDLIB_H),
+        ("stdio.h", WASM_STDIO_H),
+        ("loft_wasm_libc.c", WASM_LIBC),
+        ("loft_width.h", LOFT_WIDTH_H),
+    ] {
+        crate::file_access::write(include.join(name), text)
+            .map_err(|e| format!("cannot write {name}: {e}"))?;
+    }
+    put_dep_headers(include, pkg_dir)
+}
+
 /// The shim route — the shim as wasm32 OBJECTS for a wasm target
 /// (`--native-wasm`, `--html`): each source compiled by a C cross-compiler
 /// (`LOFT_WASM_CC`, else `clang`) freestanding against the headers of `src/c/wasm/`, plus
@@ -893,18 +912,7 @@ pub fn wasm_objects(
         let _ = crate::file_access::remove_dir_all(&stage);
         Err(msg)
     };
-    for (name, text) in [
-        ("string.h", WASM_STRING_H),
-        ("stdlib.h", WASM_STDLIB_H),
-        ("stdio.h", WASM_STDIO_H),
-        ("loft_wasm_libc.c", WASM_LIBC),
-        ("loft_width.h", LOFT_WIDTH_H),
-    ] {
-        if let Err(e) = crate::file_access::write(include.join(name), text) {
-            return fail(format!("cannot write {name}: {e}"));
-        }
-    }
-    if let Err(why) = put_dep_headers(&include, pkg_dir) {
+    if let Err(why) = put_wasm_headers(&include, pkg_dir) {
         return fail(why);
     }
     let mut sources_to_build: Vec<(std::path::PathBuf, std::path::PathBuf)> = paths

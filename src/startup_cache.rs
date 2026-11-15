@@ -451,6 +451,21 @@ pub fn native_lib_context(html: bool, open_world: bool) -> String {
     )
 }
 
+/// Hand the shim builder the dependency headers a cached parse declared (@C164), grouped by
+/// package.
+fn declare_dep_headers(lines: Vec<(String, String, Vec<String>)>) {
+    let mut by_pkg: Vec<(String, Vec<(String, Vec<String>)>)> = Vec::new();
+    for (pkg_dir, dep, dirs) in lines {
+        match by_pkg.iter_mut().find(|(dir, _)| *dir == pkg_dir) {
+            Some((_, deps)) => deps.push((dep, dirs)),
+            None => by_pkg.push((pkg_dir, vec![(dep, dirs)])),
+        }
+    }
+    for (pkg_dir, deps) in by_pkg {
+        crate::c_shim::declare_dep_headers(&pkg_dir, deps);
+    }
+}
+
 /// Whole-program warm load: if a valid bundle exists for `script_abspath` and
 /// every source it was built from is unchanged, load the entire `Data` + type
 /// schema into `p` and return `Some(user_def_start)` — the def-table index
@@ -591,16 +606,7 @@ pub fn warm_load_program(
     // The `[c]` declarations: both backends read them from `Data` after the parse.
     p.data.c_libraries = state.c_libraries;
     // @C164 — and the dependency headers their shims include, for a compile after this load.
-    let mut by_pkg: Vec<(String, Vec<(String, Vec<String>)>)> = Vec::new();
-    for (pkg_dir, dep, dirs) in state.dep_headers {
-        match by_pkg.iter_mut().find(|(dir, _)| *dir == pkg_dir) {
-            Some((_, deps)) => deps.push((dep, dirs)),
-            None => by_pkg.push((pkg_dir, vec![(dep, dirs)])),
-        }
-    }
-    for (pkg_dir, deps) in by_pkg {
-        crate::c_shim::declare_dep_headers(&pkg_dir, deps);
-    }
+    declare_dep_headers(state.dep_headers);
     // Replay what the cold parse said.  The parser did not run, so these are the only
     // diagnostics this run will have; `main` renders them through the same path a cold run
     // uses, so `LOFT_ERRORS`, colour and the warnings-off filter all still apply.
@@ -1035,7 +1041,7 @@ mod ncrate_manifest_tests {
         let hash = crate::cache::file_hash(&src_str).expect("hash source");
         let manifest = dir.join("m.manifest");
         let content = format!(
-            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nclib 0 libpq.so.5\t/pkgs/my db\nclib 1 lib/own.so\t/pkgs/foo\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
+            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nclib 0 libpq.so.5\t/pkgs/my db\nclib 1 lib/own.so\t/pkgs/foo\nchdr /pkgs/my db\tlayer\t/pkgs/layer one/c\t/pkgs/layer one/inc\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
             crate::cache::build_signature(),
             hex32(&hash),
             src_str,
@@ -1070,6 +1076,18 @@ mod ncrate_manifest_tests {
                 },
             ],
             "each clib header round-trips, a package dir keeping its space"
+        );
+        assert_eq!(
+            state.dep_headers,
+            vec![(
+                "/pkgs/my db".to_string(),
+                "layer".to_string(),
+                vec![
+                    "/pkgs/layer one/c".to_string(),
+                    "/pkgs/layer one/inc".to_string()
+                ],
+            )],
+            "a chdr header round-trips, each directory keeping its space (@C164)"
         );
         assert_eq!(state.native_ctx, "c", "the actx header round-trips");
         assert_eq!(

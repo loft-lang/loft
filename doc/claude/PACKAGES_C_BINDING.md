@@ -398,6 +398,24 @@ includes vendored code by a path relative to its source, and reaches a system
 library by `dlopen` (`optional-libs`, or its own call) rather than by a link
 flag.  A key of that name is ignored, never applied.
 
+**A dependency's header is included by the dependency's name** (`@C164`).  A
+library that exposes a C interface to the packages that depend on it — a table
+of functions a backend fills in — ships the header beside its own shim sources,
+and a dependant's shim writes:
+
+```c
+#include "gpu/gpu_backend.h"      /* `gpu` is a [dependencies] entry of this package */
+```
+
+loft puts the `*.h` files beside that dependency's `[c] shim` sources under its
+name where the shim's compile searches, from the copy of the dependency the
+program resolved.  A path relative to the source (`../../gpu/c/…`) reaches the
+header only while the two packages sit side by side: an installed package's
+directory is `<name>-<version>`.  The headers are part of the shim's cache key,
+so a new version of the dependency rebuilds its dependants' shims.  A shim that
+includes a header of a dependency the program did not load is an error naming
+the dependency.
+
 #### Optional libraries — `optional-libs` (arc G)
 
 **`libs` means the package does not work without it.**  Absent, the failure is

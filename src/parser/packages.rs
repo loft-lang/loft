@@ -1958,7 +1958,8 @@ impl Parser {
             let ready = wanted
                 .iter()
                 .all(|dep| self.c_header_dirs.iter().any(|(name, _, _)| name == dep));
-            if !ready && !(every && crate::file_access::is_under(&here, pkg_dir)) {
+            let forced = every && crate::file_access::is_under(&here, pkg_dir);
+            if !ready && !forced {
                 i += 1;
                 continue;
             }
