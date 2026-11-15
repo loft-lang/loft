@@ -14,14 +14,14 @@ P1, P2, P3, L0, L1, L2, L2b and M0 are done (2026-11-15).  L2b amended § The sh
 a backend names the layer's header by the layer's name (@C164).
 Next: M1 (the first Metal triangle, on this Mac), and L3's and L4's X11 runs on the Linux
 machine.  L5 (stage) changes a published library that would then depend on `gpu`, so it waits
-for `gpu` to be published.
+for `gpu` to be published (§ Open questions 2).
 Publishing waits for the name (open question 2) and for @C164 in a released loft.  V0
 waits for a Linux machine.
 
 | Track | Steps | State |
 |---|---|---|
 | P — the game on a Mac, on the GL that is there | P1–P5 | P1–P3 done; P4 stood in for until L3; P5 measured standing still |
-| L — the neutral layer | L0–L8 | L0–L3 done on a Mac and in a page (X11 not run); L4's painter and sprites in review; L5–L8 open |
+| L — the neutral layer | L0–L8 | L0–L3 and L4's painter and sprites done on a Mac and in a page (X11 not run); L5–L8 open |
 | M — the Metal backend | M0–M4 | M0 done; M1–M4 open |
 | V — the Vulkan backend | V0–V4 | Open |
 | H — one shader source | H1–H4 | Open |
@@ -255,7 +255,7 @@ Nothing here waits for the neutral layer or for Metal.
   slots) with a source per shading language, until track H replaces the sources.
   Goes red when: a scene through `gpu` + `gpu_gl` differs by a byte from the same scene through
   graphics 0.12, on X11, on a Mac and in a page.
-  **Built (2026-11-15), in review: loft-libs-graphics#84** (`gpu_gl` 0.1.0) — on a Mac and in
+  **Built (2026-11-15), loft-libs-graphics#84 merged** (`gpu_gl` 0.1.0) — on a Mac and in
   a page; **X11 is not done** (rule 5: it needs the Linux machine).
   `tests/same_as_graphics.loft` draws each scene both ways and compares the captures byte
   for byte: depth and blend, cull / scissor / viewport, a texture put and sampled nearest, a
@@ -289,7 +289,7 @@ Nothing here waits for the neutral layer or for Metal.
   call, so a painter there cannot mean the same thing; and a 0.12 `Shader` is any GLSL with
   uniforms set by name, which no pipeline can stand in for.  So each part is built as a
   library on `gpu`, compared with graphics' pixels, and graphics keeps its own until L7.
-  **Painter and Sprites: built, in review as loft-libs-graphics#85** (`gpu_paint` 0.1.0):
+  **Painter and Sprites: done, loft-libs-graphics#85 merged** (`gpu_paint` 0.1.0):
   `painter(dev, into)` with `rect`, `image`, `sprite`, `resize`, and `sprites(…)` with `draw`
   for a sprite in a scene with depth; graphics' three programs with their uniforms as one
   block each.  Five tests compare it byte for byte with graphics 0.12 on a Mac (interpreter,
@@ -427,7 +427,12 @@ header.  Two things are kept true in public so that it can be:
    Recommended: the second.  Pipelines and passes cost a small machine with no GPU, and the
    frame tier is already the floor every game is held to; H4 then earns its place as the
    shader test path.  The owner's "like the Tanmatsu" may mean the first: the owner's call.
-2. **The name** — `gpu` here is a working name; the catalogue's naming rules decide it.
+2. **The name** — settled (owner, 2026-11-15): the layer is `gpu`, a backend `gpu_<stack>`.
+   `gpu` 0.1.0 is ready to publish from the libraries' `main` (`scripts/registry_maintain.sh
+   --only gpu`; its dry run lists that one version and nothing else) and is not published yet.
+   `gpu_record` and `gpu_gl` follow once a released loft has @C164, with their include
+   changed to `"gpu/gpu_backend.h"` and their `loft` floor raised; `gpu_paint` when stage
+   needs it.
 
 ## Review
 
