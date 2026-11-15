@@ -2158,6 +2158,17 @@ pub fn show_leaf(kind: integer, store: integer, rec: integer, pos: integer, fmt:
   text_from_byte_range(buf, 0, n)
 }
 
+// `show_leaf` through the caller's buffer `buf`, grown when the rendering is longer: no store is
+// made per field rendered.
+pub fn show_leaf_in(buf: vector<u8>, kind: integer, store: integer, rec: integer, pos: integer, fmt: integer, min: integer, nullable: boolean) -> text {
+  n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
+  if n > len(buf) {
+    buf += room(n - len(buf));
+    n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
 // Does a collection field hold none?
 pub fn vec_absent(store: integer, rec: integer, pos: integer) -> boolean {
   c_vec_absent(store, rec, pos) != 0
