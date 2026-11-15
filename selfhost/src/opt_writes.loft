@@ -709,7 +709,9 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
       if def_nr >= 0 && def_nr < len(b.data.definitions) {
         def = b.data.definitions[vd]!;
         name = b.data.definitions[def_nr]!.name;
-        admitted = false;
+        // `(R-Header)`'s text clause (+16): a text set claims and frees in its record's store
+        // and changes no vector's record or length.
+        admitted = in_place & 16 != 0 && (name == "OpSetText" || name == "OpSetTextReplace");
         if in_place & 8 != 0 {
           mpath = "";
           mroot = -1;

@@ -262,10 +262,26 @@ fn hoist_paths(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd
   tier = (if (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0" { 1 } else { 0 }) + (if (env_variable("LOFT_NO_PUSH_HOIST") ?? "0") == "0" { 4 } else { 0 }) + (if (env_variable("LOFT_NO_MINT_HOIST") ?? "0") == "0" { 8 } else { 0 });
   d = b.data.definitions[vd]!;
   fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+  blocked = false;
   for op in lp.operators {
-    if opt_writes::blocks_under(b, w, vd, op, tier, fresh) {
+    if !blocked && opt_writes::blocks_under(b, w, vd, op, tier, fresh) {
+      blocked = true;
+    }
+  }
+  // `(R-Header)`'s text clause: a loop the gate declines is asked again with its text sets
+  // admitted.
+  text_grown = false;
+  if blocked {
+    if (env_variable("LOFT_NO_TEXT_SET_HEADER") ?? "0") != "0" {
       return apart_hoist(b, w, facts, vd, lp);
     }
+    again: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+    for op in lp.operators {
+      if opt_writes::blocks_under(b, w, vd, op, tier + 16, again) {
+        return apart_hoist(b, w, facts, vd, lp);
+      }
+    }
+    text_grown = true;
   }
   out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false, movers: [], scalars: [], declined: false };
   pushes: vector<Held> = if tier & 4 != 0 { pushed_paths(b, lp) } else { [] };
@@ -341,6 +357,17 @@ fn hoist_paths(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd
     }
   }
   out.movers = movers;
+  // A loop admitted through its text sets grows the stores they claim in: it may not also
+  // push, mint or reserve, and its bases are kept only for vectors proven apart from every
+  // store a text set writes — none when a target's root is unknown.
+  if text_grown {
+    if len(movers) > 0 || len(pushes) > 0 || len(mints) > 0 {
+      return apart_hoist(b, w, facts, vd, lp);
+    }
+    out.movers = text_set_roots(b, lp);
+    out.growth_free = false;
+    return out;
+  }
   if len(pushes) == 0 && len(mints) == 0 {
     return out;
   }
@@ -725,4 +752,50 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
     }
   }
   out
+}
+
+// The root variable of a text set's target — a variable, or a field or element of one; -1
+// where it is neither.
+fn place_root(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdVar { n } => n,
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if len(args) > 0 && (name == "OpGetVector" || name == "OpGetVectorNullable" || name == "OpGetField") { place_root(b, args[0]) } else { -1 }
+    },
+    _ => -1,
+  }
+}
+
+// `text_set_roots`: the roots of the records the body's text sets write; none when one is
+// unknown.
+fn text_set_roots(b: ir::Bundle, lp: ir::Block) -> vector<integer> {
+  roots: vector<integer> = [];
+  known = [true];
+  whole = ir::NdInsert { items: lp.operators };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && (name == "OpSetText" || name == "OpSetTextReplace") {
+          r = if len(args) > 0 { place_root(b, args[0]) } else { -1 };
+          if r < 0 {
+            known[0] = false;
+          } else {
+            seen = false;
+            for o in roots {
+              if o == r {
+                seen = true;
+              }
+            }
+            if !seen {
+              roots += [r];
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if known[0]! { roots } else { [] }
 }
