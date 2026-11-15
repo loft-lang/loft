@@ -55,19 +55,23 @@ getting faster where the runner exposed a mechanism.  How the loop and an arm wo
    `map_json` ~1.27, `replace` 1.37, `par_map_float` 1.32, `record_append` 1.29 — read each one's histogram first
    (`LOFT_FILL_TRACE=1`, the one-routine images: keep `main`'s setup, drop the other timing
    blocks).
-4. An empty vector local makes its store at the declaration, on both backends — the runner's
+4. **`par` runs on one thread in the runner** (1b-fill-port.md § the `par` row): the bench pins
+   each routine to one core, so `par_text` reads 1.55 there, but on four cores the runner takes
+   3.0 s against the Rust interpreter's 1.08 s (task-clock = elapsed: one CPU).  Workers on
+   threads need runner state per thread over a store table the C runtime does not share
+   safely today — a design item.
+5. An empty vector local makes its store at the declaration, on both backends — the runner's
    `show::write` paid one per formatted value until it stopped declaring one it rarely fills
    (6c065851c).  A store made at the first append would remove the class.
-5. Not done on this tip: `make ci`, `make wasm` + `make surface-gen` (default/01_code.loft's
-   `#loft` lines moved the wasm stamp), the language suite cell
-   `a-small-record-handed-on-as-a-record-keeps-its-tuple-elsewhere.loft` (written, passes both
-   backends and both switch positions; not in loft-suite yet — switching that checkout's
+6. Not done on this tip: a local `make ci` (GitHub CI is the gate here), and the language suite
+   cell `a-small-record-handed-on-as-a-record-keeps-its-tuple-elsewhere.loft` (written, passes
+   both backends and both switch positions; not in loft-suite yet — switching that checkout's
    branch was refused, it needs the owner's go).
-6. Branch-carried reds from the merged compiled-bodies work, not this arc: the feature
-   catalogue (four uncatalogued files), the `@FR-N-Shape` ratchet (1180 -> 1183), the layer
-   ratchet, decision C162 without a guard under `tests/` (its cells are in loft-suite), three
-   loft-suite cells red on `--native` only (two `B-Copy`, one `H-Free`; red on the committed
-   tip before c94efcd89, green on installed main), `main`'s nightly rustc-native suite reds (two `B-Copy`, one `H-Free`).
+7. Reds this branch carries and cannot close alone: three loft-suite cells red on `--native`
+   only (two `B-Copy`, one `H-Free`) — `origin/main` 5330b3690 (#2482) fixed them, and the branch
+   does not contain it yet, so they close when it is brought onto `origin/main` (a rebase of a
+   pushed branch: the owner's call); decision C162 has no guard under `tests/` (its cells are in
+   loft-suite); the `@FR-N-Shape` ratchet (1180 -> 1183).
 
 ## How to measure
 
