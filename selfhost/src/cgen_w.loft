@@ -239,6 +239,9 @@ struct W {
   // whether it is a `&` link, and whether a statement written so far has bound it.
   raw: vector<text>,
   links: vector<boolean>,
+  // `store_links`: the `&` locals (and place-twin parameters) that link a store place — a
+  // `loft_ref` read and written through the place's own get and set (`link_access`).
+  store_links: vector<boolean>,
   bound: vector<boolean>,
   // `@FR-R-BufferReturn`'s bind clause: the work buffers a `__wr` call of the current
   // statement filled that were made for that call alone.
