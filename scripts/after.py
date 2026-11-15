@@ -365,9 +365,8 @@ def main():
         if dirty:
             print("last-pr not recorded: the tree has uncommitted changes, so HEAD is not what was checked")
         else:
-            full = git("rev-parse", base).strip()
-            (STATE / "last-pr").write_text(f"{git('rev-parse', 'HEAD').strip()} {full} {stamp}\n",
-                                           encoding="utf-8")
+            record = f"{git('rev-parse', 'HEAD').strip()} {git('rev-parse', base).strip()} {stamp}\n"
+            (STATE / "last-pr").write_text(record, encoding="utf-8")
     if args.dispatch:
         local, remote = git("rev-parse", "HEAD").strip(), git("rev-parse", f"origin/{branch}").strip()
         if local != remote or git("status", "--porcelain", "--untracked-files=no").strip():
