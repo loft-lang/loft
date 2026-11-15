@@ -93,8 +93,20 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
   name = w.names[var]!;
   bare_value = loop_shape::unspan(value);
   is_null = bare_value is NdNull;
+  // `keyed_null`: a keyed collection's local takes a store of its own, typed where the
+  // schema names the collection's type.
   if is_null && binds::owns_keyed_store(tp) {
-    refuse(w, "the bind arm keyed-null");
+    if first {
+      line(w, ind, "{name} = loft_ref_null();");
+    }
+    if !(binds::is_inline_ref(f, var) || binds::is_overwritten_view(f, var)) {
+      keyed = lower::hash_type_of(b, v.type_def);
+      if keyed == null {
+        line(w, ind, "loft_database(&{name}, 8);");
+      } else {
+        line(w, ind, "loft_database_typed(&{name}, {cgen_ref::enum_parent_size(b, keyed!)}, {keyed!});");
+      }
+    }
     return;
   }
   vector_dep_free = match base {
