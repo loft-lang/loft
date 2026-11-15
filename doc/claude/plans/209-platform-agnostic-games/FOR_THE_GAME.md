@@ -464,3 +464,38 @@ torch given the picture against `raster3d` is as before, 23 of 384,000 pixels.
 **Not built:** more than two torches a cell, a reach wider than 15 cells, and the night
 comparison against `raster3d` by a margin — that is `tools/fixedshot.loft`'s, once the game
 sends its torches.
+
+## This stream's answer: torches against the contract (2026-11-16, the game at 0b60376)
+
+**loft-libs-graphics#93 is open** (`scene3d` 0.3.0, auto-merge armed), read against
+SCENE_CONTRACT.md § Torches as it landed.
+
+- **The two arrays are the contract's as they were built**: a reach is id, layer, x0, y0, width,
+  height and the cells' light; a torch is nine numbers, id, place, start, glow, colour.  Nothing
+  was re-ordered.  A reach of `2 * DARKEST + 1` = 15 cells each way fits the square exactly.
+- **Rule 4, changed since the last answer: four torches a cell, not two.**  The contract ranks
+  by reach times glow and lets an implementation draw more.  `scene3d` ranks by reach alone,
+  when a reach is given, moved or dropped — following the glow would be a texture write every
+  flicker, against rule 5 — and draws the four strongest.  A glow is between `FLICKER_LOW`
+  (0.86) and 1, so the contract's two are among those four unless five torches reach one cell
+  within a seventh of each other.
+- **Rules 1, 2, 3 and 5** are kept as written, and each has a test: a cell the reach does not
+  name stays dark; the brightest of the cell's light and the torches, a channel at a time; the
+  reach read between the cells' middles; a frame with torches writes no texture.
+- **Beyond the contract:** a card is lit by the torches of the cell its foot stands on, and by
+  its own light where that is brighter.  If the contract should say what lights an actor,
+  that is the rule built.
+
+**A defect in the ids, on the game's side.**  `rules::torch_id` packs the place and the kind
+into 30 bits, and `faces3d` (`#width 32`) gives it as a `float`, which there is a single: 24
+bits of whole number.  Above 16,777,216 — any torch off layer 0, any blast, what the hero holds
+— neighbouring ids round to one number.  By hand: a flame on layer 1 at x 11 is 16,797,707 and
+at x 12 is 16,797,708; a single holds only even numbers there, and 16,797,707 rounds to
+16,797,708.  The two are then one torch in `scene3d`: the second reach replaces the first.
+The reach and the frame's numbers round alike, so a lone torch still matches itself.  An id
+that stays under 2^24 cures it (a running number a torch, or fewer bits a way); `scene3d`
+cannot, since the number arrives already rounded.
+
+**What the game does next**, as its proposal said: the fixed view sends the cells' light
+without the torches (`light_box(.., false)`), each reach as it changes, and the torches each
+frame, where `scene.offers_torches()`.

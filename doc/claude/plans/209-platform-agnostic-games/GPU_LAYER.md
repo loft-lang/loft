@@ -537,6 +537,12 @@ screen's middle) is loft-libs-graphics#91; the light written a box at a time, wh
 asked for, is #92.  With the fix the game's own comparison in its town is 3,291 of 384,000
 pixels, 27 by more than one RGB565 step.
 
+**Torches** (the owner's wish: smooth torchlight on a GPU, more than one torch).  The game's
+contract gained § Torches; `scene3d` 0.3.0 draws it (loft-libs-graphics#93): each torch's
+reach in an atlas, the four torches strongest at a cell in a map laid out as the light's, the
+reach read between the cells' middles in the fragment stage, a flicker as the block's numbers
+alone.  Checked against values worked out by hand in every build mode and both pages.
+
 **Which window on a desktop** (answered to the game's agent, FOR_THE_GAME.md): the view draws
 in the device's own window and reads its keys from the device (`dev.keys()`, in
 `screen::keys()`'s form and codes).  `screen` does not present through a device: the 2D
