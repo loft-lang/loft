@@ -33,6 +33,13 @@ and the platform census — because there a miss costs a whole run, and on green
 `.git/loft-after/last-pr` (HEAD and the base it covered), which `scripts/pr_push.py` reads.
 A test this box always fails for its own reasons (a stale fixture) is named one per line in
 `.git/loft-after/known-red`: kept out of the run, and listed, so a NEW red stands out.
+
+A rerun repeats only what it must.  A step that passed on a commit is skipped when every path
+changed since then is one it never reads (`NEVER_READS`: the cargo and lint steps, which
+read no `.md` and no script); every other step always runs.  The tests cannot be skipped that
+way — the subject map sends a diff it cannot place to the whole curated set — so the tests a
+run left red run FIRST next time, and while one still fails the full set is not run: a fix
+that did not work shows in seconds.  `--fresh` runs everything.
 The seconds-long checks that need no binary run concurrently while the dev binary builds;
 the build-dependent steps run one at a time (one cargo at a time on this box).  A red step's
 output is kept under `.git/loft-after/` and its tail printed.  The marker advances on green.
@@ -119,6 +126,7 @@ class Step:
     def __init__(self, name, cmd, why, phase, needs=None):
         self.name, self.cmd, self.why, self.phase, self.needs = name, cmd, why, phase, needs
         self.ok = None
+        self.cached = None
         self.secs = 0.0
         self.out = ""
 
@@ -180,7 +188,89 @@ def suite_note():
               "point LOFT_SUITE_DIR at a checkout of the pin, or suite-backed checks read the wrong cells")
 
 
-def plan(mode, paths, base, want_tests, pr=False):
+# The paths a step provably never reads.  Read off what each one compiles or runs: `build.rs`
+# reads `src`, `default`, `loft-ffi/src` and the environment; the Rust sources include
+# `doc/*.js` (so `doc/` is NOT here) and no `.md` or script; `ownership_drop_gate` and every
+# python step read scripts, so they are not here at all.  A step missing from this table
+# always runs.
+_NO_DOCS_OR_SCRIPTS = r"\.md$|^scripts/"
+NEVER_READS = {
+    "fmt": r"^(?!.*\.rs$)(?!(\.)?rustfmt\.toml$)",
+    "build": _NO_DOCS_OR_SCRIPTS,
+    "cargo check": _NO_DOCS_OR_SCRIPTS,
+    "clippy": _NO_DOCS_OR_SCRIPTS,
+    "clippy tests": _NO_DOCS_OR_SCRIPTS,
+    "allocation pins": _NO_DOCS_OR_SCRIPTS,
+}
+# What a step's result also depends on besides the tree.
+CACHE_ENV = ("LOFT_SUITE_DIR", "LOFT_NATIVE_BACKEND", "RUSTFLAGS", "CARGO_TARGET_DIR")
+CACHE = STATE / "steps.json"
+REDS = STATE / "previous-reds.json"
+
+
+def load_json(f):
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def cache_key(step):
+    return {"cmd": step.cmd, "env": {k: os.environ.get(k, "") for k in CACHE_ENV}}
+
+
+def is_ancestor(a, b):
+    return subprocess.run(["git", "merge-base", "--is-ancestor", a, b], cwd=ROOT,
+                          capture_output=True).returncode == 0
+
+
+def passed_at(step, cache):
+    """The commit this step passed on, when nothing it reads changed since; else None."""
+    rx = NEVER_READS.get(step.name)
+    rec = cache.get(step.name)
+    if not rx or not rec or rec.get("key") != cache_key(step) or not is_ancestor(rec["sha"], "HEAD"):
+        return None
+    return rec["sha"] if all(re.search(rx, p) for p in changed_paths(rec["sha"])) else None
+
+
+def record_passes(steps):
+    """Remember each passed NEVER_READS step at HEAD — only when the tree it ran on IS HEAD,
+    up to paths that step does not read (an untracked source it compiled would not be)."""
+    if git("status", "--porcelain", "--untracked-files=no").strip():
+        return
+    head = git("rev-parse", "HEAD").strip()
+    untracked = git("ls-files", "--others", "--exclude-standard").split()
+    cache = load_json(CACHE)
+    for s in steps:
+        rx = NEVER_READS.get(s.name)
+        if s.ok and not s.cached and rx and all(re.search(rx, p) for p in untracked):
+            cache[s.name] = {"sha": head, "key": cache_key(s)}
+    CACHE.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+
+
+FAIL_LINE = re.compile(r"FAIL \[ *[0-9.]+s\] \( *[0-9]+/[0-9]+\) (\S+) (\S+)")
+
+
+def record_reds(step):
+    """Keep the tests a run left red, so the next run starts with them."""
+    reds = sorted({m.groups() for m in FAIL_LINE.finditer(step.out)})
+    if step.ok or not reds:
+        REDS.unlink(missing_ok=True)
+        return
+    REDS.write_text(json.dumps({"tests": reds}), encoding="utf-8")
+
+
+def reds_step():
+    reds = load_json(REDS).get("tests") or []
+    if not reds:
+        return None
+    expr = " | ".join(f"(binary_id(={b}) & test(={t}))" for b, t in reds)
+    return Step("previous reds",
+                f"LOFT_NATIVE_BACKEND=${{LOFT_NATIVE_BACKEND-c}} cargo nextest run --no-fail-fast --status-level fail -E \"{expr}\"",
+                ", ".join(t for _b, t in reds[:2]) + (f" +{len(reds) - 2}" if len(reds) > 2 else ""), "B")
+
+
+def plan(mode, paths, base, want_tests, pr=False, fresh=False):
     steps = []
     rs = first_match(paths, r"\.rs$|^Cargo\.(toml|lock)$")
     src = first_match(paths, r"^src/")
@@ -234,7 +324,10 @@ def plan(mode, paths, base, want_tests, pr=False):
         steps.append(Step("allocation pins", "cargo test -q --test frontend_counts -- --ignored",
                           src or stdlib, "B"))
     census = first_match(paths, r"\.(py|sh)$|^scripts/windows_smoke\.tsv$|^\.github/")
-    if pr and (census or added):
+    # With the tests running, the census rides in their one nextest run (a step of its own
+    # paid the test-profile compile again for eight tests that take under a second).
+    census_in_tests = pr and bool(census or added) and want_tests
+    if pr and (census or added) and not want_tests:
         steps.append(Step("platform census",
                           "cargo nextest run --no-fail-fast --status-level fail -E 'test(/^platform_census::/)'",
                           census or ", ".join(added[:2]), "B"))
@@ -247,15 +340,22 @@ def plan(mode, paths, base, want_tests, pr=False):
                               ", ".join(guards[:2]) + (f" +{len(guards) - 2}" if len(guards) > 2 else ""),
                               "B", needs="bin"))
     if want_tests:
+        census_expr = "test(/^platform_census::/)"
+        def tests_expr(e):
+            return without_known_red(f"({e}) | {census_expr}" if census_in_tests else e)
+        if not fresh:
+            first = reds_step()
+            if first:
+                steps.append(first)
         ok, filt, _ = sh(f"bash -c 'source scripts/test_subjects.sh; changed_filter {base}'")
         # The expression is the first line; `changed_filter` reports the subjects it chose
         # on a second line, which nextest would read as unparsed input.
         filt = filt.strip().splitlines()[0] if filt.strip() else ""
         if ok and filt.strip():
-            steps.append(Step("tests", f"LOFT_NATIVE_BACKEND=${{LOFT_NATIVE_BACKEND-c}} cargo nextest run --no-fail-fast --status-level fail -E \"{without_known_red(filt.strip())}\"",
+            steps.append(Step("tests", f"LOFT_NATIVE_BACKEND=${{LOFT_NATIVE_BACKEND-c}} cargo nextest run --no-fail-fast --status-level fail -E \"{tests_expr(filt.strip())}\"",
                               f"the subjects the diff touches ({filt.strip()[:60]}…)", "B"))
         else:
-            expr = without_known_red("$(bash -c 'source scripts/test_subjects.sh; curated_filter')")
+            expr = tests_expr("$(bash -c 'source scripts/test_subjects.sh; curated_filter')")
             steps.append(Step("tests", "LOFT_NATIVE_BACKEND=${LOFT_NATIVE_BACKEND-c} cargo nextest run --no-fail-fast --status-level fail "
                               f"-E \"{expr}\"",
                               "the diff touches what every binary depends on — the curated set", "B"))
@@ -272,6 +372,8 @@ def run_step(step):
 
 
 def line(step):
+    if step.cached:
+        return f"  skip  {step.name:18}     0s   passed at {step.cached[:9]}; nothing it reads changed since"
     mark = "ok  " if step.ok else "FAIL"
     return f"  {mark}  {step.name:18} {step.secs:6.0f}s   {step.why}"
 
@@ -285,6 +387,8 @@ def main():
     ap.add_argument("--no-tests", action="store_true", help="skip the test binaries (a fix's default is on)")
     ap.add_argument("--pr", action="store_true",
                     help="before a push to an open PR: add the PR-only checks, record last-pr on green")
+    ap.add_argument("--fresh", action="store_true",
+                    help="run every step: no step skipped as passed, no previous reds first")
     ap.add_argument("--dispatch", action="store_true",
                     help="after a green run: check the branch is pushed, dispatch the runner's workflows")
     args = ap.parse_args()
@@ -299,12 +403,20 @@ def main():
     if not paths:
         print("nothing changed — nothing to run")
         return 0
-    steps, runner = plan(args.mode, paths, base, want_tests, pr=args.pr)
+    steps, runner = plan(args.mode, paths, base, want_tests, pr=args.pr, fresh=args.fresh)
+    cache = {} if args.fresh else load_json(CACHE)
+    for s in steps:
+        s.cached = passed_at(s, cache)
+        if s.cached:
+            s.ok = True
     suite_note()
     if known_red() and want_tests:
         print(f"  note  kept out as this box's known reds ({STATE / 'known-red'}): {', '.join(known_red())}")
     if args.dry_run:
         for s in steps:
+            if s.cached:
+                print(f"  skip  {s.name:18} {s.phase}   passed at {s.cached[:9]}; nothing it reads changed since")
+                continue
             print(f"  plan  {s.name:18} {s.phase}   {s.why}\n        {s.cmd[:110]}")
         for name, why in runner:
             print(f"  runner {name:17}     stale ({why}) — scripts/derive-ci.sh")
@@ -321,8 +433,18 @@ def main():
     b_steps = [s for s in steps if s.phase == "B"]
     print(f"phase A — {len(a_steps)} check(s) beside the build; phase B — {len(b_steps)} step(s), one at a time")
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(run_step, s) for s in a_steps]
+        futures = [pool.submit(run_step, s) for s in a_steps if not s.cached]
+        reds_left = False
         for s in b_steps:
+            if s.cached:
+                print(line(s))
+                continue
+            if s.name == "tests" and reds_left:
+                # The full set waits until the previous reds are green: a fix that did not
+                # work shows in seconds, and nine minutes of other tests add nothing to it.
+                s.ok, s.out = False, "not run: the previous reds still fail (`--fresh` runs everything)"
+                print(line(s))
+                continue
             if s.name == "tests":
                 # The native harness links the release rlib (`make check-rlib`); a stale one
                 # fails those tests with a message shaped like a code defect.
@@ -335,8 +457,16 @@ def main():
                 continue
             run_step(s)
             print(line(s))
+            if s.name == "previous reds" and not s.ok:
+                reds_left = True
+            if s.name == "tests":
+                record_reds(s)
         for f in futures:
             print(line(f.result()))
+        for s in a_steps:
+            if s.cached:
+                print(line(s))
+    record_passes(steps)
     total = time.monotonic() - t0
     failed = [s for s in steps if not s.ok]
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
