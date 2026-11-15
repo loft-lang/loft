@@ -672,9 +672,10 @@ scripts/claim.py check N           # who holds it
   (`take N --take-over`) and then fixes, watches or releases it as its own.
 - **One stream keeps the list near green.**  Outside the PR gatherings, the stream the owner
   names for it sweeps the open issues about every two hours: each one without a live claim is
-  taken and fixed, or handed to the agent whose branch or area it is — handed over only when
-  that agent can cut a clean fix, one commit that applies alone without its branch's other
-  unmerged work; otherwise the sweeping stream fixes it itself.  An automated issue
+  taken and fixed, or handed to the agent whose branch or area it is, which is better: that
+  agent makes a thorough fix on its own branch.  A red on an open PR is different: it is handed
+  over only when that agent can cut a clean fix, one commit that applies alone without its
+  branch's other unmerged work; otherwise the PR's stream fixes it itself.  An automated issue
   (the advisory list, a `nightly-failure`) is first checked against what `main` and the open
   PR already fix.  The same sweep reads `main`'s latest scheduled CI run (`gh run list --branch
   main --event schedule`) — the aim is a GREEN daily run, now that loft is stabilising — and
