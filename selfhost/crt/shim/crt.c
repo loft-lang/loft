@@ -19,6 +19,9 @@
 #define LOFT_PARSE 1
 /* A mapped file (`file_map`): a store whose bytes are the mapping's, read-only. */
 #define LOFT_FOREIGN 1
+/* The engine-host kernel (`lib/engine_host`): the runtime's own (`loft_engine.h`), its sockets
+ * and its HTTPS client, as a C program that reaches a kernel native is built. */
+#define LOFT_ENGINE 1
 #include "../../../src/c/loft_crt.h"
 /* The file routines (@PLN91 S6's files): a File record of the interpreted program is read and
  * written by the runtime's own `loft_get_file`, `loft_write_file`, `loft_read_file`, …, and a
@@ -29,6 +32,9 @@
 /* A second pass over the radix walks defines their paged twins, as the C backend's unit order. */
 #include "../../../src/c/loft_radix_walk.h"
 #include "../../../src/c/loft_paged_load.h"
+#include "../../../src/c/loft_sock.h"
+#include "../../../src/c/loft_https.h"
+#include "../../../src/c/loft_engine.h"
 
 /* The text parser (`loft_parse.h`, `loft_json.h`) reads its unit's type table and asks which
  * types are a vector variable's own store (`main_vector<T>`); for the runner both come from the
@@ -3120,3 +3126,78 @@ int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, i
     return -1;
 }
 #endif
+
+/* ── The engine-host kernel for the runner (`lib/engine_host`, `loft_engine.h`) ────────────────
+ * One entry for every kernel routine that answers a scalar, selected by `which` (the runner's
+ * `natives::KERNEL_*` order): its integer operands `a`, `b` and its text operand. */
+int64_t loft_crt_kernel(int64_t which, int64_t a, int64_t b, const char *s, int64_t slen) {
+    loft_str t = loft_crt_str(s, slen);
+    switch (which) {
+    case 0: return loft_kernel_listen(a, b);
+    case 1: return loft_kernel_pump();
+    case 2: return loft_kernel_next_event();
+    case 3: return loft_kernel_event_cid();
+    case 4: return loft_kernel_event_kind();
+    case 5: return loft_kernel_event_status();
+    case 6: return loft_kernel_tick_due();
+    case 7: return loft_kernel_send(a, t);
+    case 8: return loft_kernel_broadcast(t);
+    case 9: loft_kernel_idle(a); return 0;
+    case 10: return loft_kernel_clients();
+    case 11: return loft_kernel_alive();
+    case 12: loft_kernel_stop(); return 0;
+    case 13: loft_kernel_frame(); return 0;
+    case 14: return loft_kernel_post(t);
+    case 15: return loft_kernel_udp_bound(a);
+    case 16: loft_kernel_sync_class(a); return 0;
+    case 17: loft_kernel_sync_class_keyed(a); return 0;
+    case 18: return loft_kernel_keyframe(a, t);
+    case 19: return loft_kernel_sync_next();
+    case 20: return loft_kernel_sync_cid();
+    case 21: return loft_kernel_sync_seq();
+    case 22: return loft_kernel_local(a);
+    case 23: return loft_kernel_connect(t, a, b);
+    case 24: return loft_kernel_client_pump();
+    case 25: return loft_kernel_client_alive();
+    case 26: loft_kernel_client_stop(); return 0;
+    case 27: return loft_kernel_client_next_event();
+    case 28: return loft_kernel_client_event_kind();
+    case 29: return loft_kernel_client_event_cid();
+    case 30: return loft_kernel_client_event_status();
+    case 31: return loft_kernel_client_tick_due();
+    case 32: loft_kernel_client_idle(a); return 0;
+    case 33: return loft_kernel_client_send(t);
+    case 34: return loft_kernel_client_sync_next();
+    case 35: return loft_kernel_client_sync_seq();
+    case 36: return loft_kernel_client_udp_bound();
+    case 37: loft_kernel_client_frame(); return 0;
+    case 38: return loft_kernel_swap_step();
+    default: return LOFT_NULL;
+    }
+}
+
+/* A kernel routine that answers a text (`which`: the event payload, the sync payload, the
+ * client's two, the default host), its bytes into `out` (`cap` bytes): its length, which the
+ * caller reads again with a larger buffer when it exceeds `cap`; -1 for the null text. */
+int64_t loft_crt_kernel_text(char *out, int64_t cap, int64_t which) {
+    loft_text v;
+    switch (which) {
+    case 0: v = loft_kernel_event_payload(); break;
+    case 1: v = loft_kernel_sync_payload(); break;
+    case 2: v = loft_kernel_client_event_payload(); break;
+    case 3: v = loft_kernel_client_sync_payload(); break;
+    case 4: v = loft_kernel_default_host(); break;
+    default: return -1;
+    }
+    loft_str w = loft_view(&v);
+    int64_t n = loft_str_is_null(w) ? -1 : (int64_t) w.len;
+    if (n > 0) memcpy(out, w.p, (size_t) (n < cap ? n : cap));
+    loft_text_free(&v);
+    return n;
+}
+
+/* `http_fetch(method, url, body, headers)`: the request's id, its completion a kind-3 event. */
+int64_t loft_crt_kernel_fetch(const char *m, int64_t ml, const char *u, int64_t ul, const char *b, int64_t bl,
+                              const char *h, int64_t hl) {
+    return loft_kernel_http_fetch(loft_crt_str(m, ml), loft_crt_str(u, ul), loft_crt_str(b, bl), loft_crt_str(h, hl));
+}

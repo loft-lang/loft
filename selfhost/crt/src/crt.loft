@@ -2594,3 +2594,39 @@ pub fn body_call(entry: integer, stk: integer, sp: integer) -> integer {
 pub fn body_call_dest(entry: integer, stk: integer, sp: integer, s: integer, r: integer, p: integer) -> integer {
   c_body_call_dest(entry, stk, sp, s, r, p)
 }
+
+// ── The engine-host kernel (`lib/engine_host`, the C runtime's `loft_engine.h`) ──────────────────
+
+fn c_kernel(which: integer, a: integer, b: integer, s: text, slen: integer) -> integer;
+#c "loft_crt_kernel" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t)"
+
+// Kernel routine `which` (`natives::KERNEL_*`) on integer operands `a`, `b` and text `t`: its
+// scalar answer (a boolean as 0 / 1; 0 for a routine that answers nothing).
+pub fn kernel(which: integer, a: integer, b: integer, t: text) -> integer {
+  c_kernel(which, a, b, t, t.size())
+}
+
+fn c_kernel_text(out: vector<u8>, cap: integer, which: integer) -> integer;
+#c "loft_crt_kernel_text" "int64_t(char*, int64_t, int64_t)"
+
+// A kernel routine's text answer (`which`: 0 the event payload, 1 the sync payload, 2 and 3 the
+// client's, 4 the default host), read through the kept buffer `buf`; null for the null text.
+pub fn kernel_text(buf: vector<u8>, which: integer) -> text? {
+  n = c_kernel_text(buf, len(buf), which);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf += room(n - len(buf));
+    n = c_kernel_text(buf, len(buf), which);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+fn c_kernel_fetch(m: text, ml: integer, u: text, ul: integer, b: text, bl: integer, h: text, hl: integer) -> integer;
+#c "loft_crt_kernel_fetch" "int64_t(const char*, int64_t, const char*, int64_t, const char*, int64_t, const char*, int64_t)"
+
+// `http_fetch(method, url, body, headers)`: the request's id.
+pub fn kernel_fetch(m: text, u: text, b: text, h: text) -> integer {
+  c_kernel_fetch(m, m.size(), u, u.size(), b, b.size(), h, h.size())
+}

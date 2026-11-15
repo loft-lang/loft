@@ -26,11 +26,12 @@ REPOS = ["loft-libs-core", "loft-libs-game", "loft-libs-graphics", "loft-libs-do
 TEST_FN = re.compile(r"^fn (test\w*)\s*\(\s*\)", re.M)
 
 
-def tests_of(libs, repos):
-    """Every (repo, package, test file, test name) of the repositories."""
+def tests_of(libs, repos, here=None):
+    """Every (repo, package, test file, test name) of the repositories — and, with `here`, of
+    this tree's own `lib/` (the in-tree libraries: `engine_host`, …), named `lib`."""
     out = []
-    for repo in repos:
-        root = os.path.join(libs, repo)
+    roots = [(r, os.path.join(libs, r)) for r in repos] + ([("lib", here)] if here else [])
+    for repo, root in roots:
         if not os.path.isdir(root):
             continue
         for pkg in sorted(os.listdir(root)):
@@ -39,7 +40,7 @@ def tests_of(libs, repos):
                 continue
             for name in sorted(os.listdir(tdir)):
                 f = os.path.join(tdir, name)
-                if not name.endswith(".loft"):
+                if not name.endswith(".loft") or not os.path.isfile(f):
                     continue
                 src = open(f, encoding="utf-8", errors="replace").read()
                 if re.search(r"^fn main\s*\(", src, re.M):
@@ -94,14 +95,17 @@ def main():
     ap.add_argument("--loft", default=os.path.join(root, "target", "release", "loft"))
     ap.add_argument("--libs", default=os.path.dirname(root), help="the directory holding the loft-libs-* checkouts")
     ap.add_argument("--repo", action="append", default=[], help="a repository (repeatable; default every published one)")
+    ap.add_argument("--in-tree", action="store_true", help="also this tree's own lib/ packages")
+    ap.add_argument("--in-tree-only", action="store_true", help="this tree's own lib/ packages alone")
     ap.add_argument("--runner", default=None, help="a runner built already (DIR/run_image_run)")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--show", action="append", default=[], help="list the tests of a verdict (repeatable)")
     o = ap.parse_args()
-    repos = o.repo or REPOS
-    libargs = []
+    repos = [] if o.in_tree_only else (o.repo or REPOS)
+    here = os.path.join(root, "lib") if (o.in_tree or o.in_tree_only) else None
+    libargs = ["--lib", os.path.join(root, "lib")]
     for r in REPOS:
         if os.path.isdir(os.path.join(o.libs, r)):
             libargs += ["--lib", os.path.join(o.libs, r)]
@@ -120,7 +124,7 @@ def main():
             runner = os.path.join(out, "run_image_run")
             if not os.path.exists(runner):
                 sys.exit(f"the runner did not build:\n{p.stderr[-2000:]}")
-        items = tests_of(o.libs, repos)
+        items = tests_of(o.libs, repos, here)
         counts = collections.Counter()
         per_repo = collections.defaultdict(collections.Counter)
         why = collections.Counter()
@@ -139,7 +143,7 @@ def main():
                     shown.append(f"{verdict}\t{item[0]}/{item[1]}/tests/{os.path.basename(item[2])}::{item[3]}\t{what}")
         print(f"{counts['agree']} of {len(items)} library tests agree ({passed} of them pass on the interpreter); " +
               ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "differ", "fault", "noimage") if counts[k]))
-        for repo in repos:
+        for repo in repos + (["lib"] if here else []):
             c = per_repo[repo]
             if c:
                 print(f"  {repo}: " + ", ".join(f"{c[k]} {k}" for k in ("agree", "stores", "leak", "stopped", "differ", "fault", "noimage") if c[k]))

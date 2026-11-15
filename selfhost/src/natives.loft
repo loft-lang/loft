@@ -70,6 +70,17 @@ N_JSON_ERRORS_DEST = 52;
 N_PARSE_ERRORS_OF = 53;
 // The JsonValue natives: one number each, from `N_JV` on, in `jv_which`'s order.
 N_JV = 60;
+// The engine-host kernel's natives (`lib/engine_host`): `N_KERNEL + which` for a routine with a
+// scalar answer (`crt::kernel`, which the C runtime's `loft_crt_kernel` selects by `which`),
+// `N_KERNEL_TEXT + which` for one that appends its text answer to a destination, and
+// `N_KERNEL_FETCH`.  Each routine's operands and answer by `KERNEL_SHAPES`: two digits per
+// routine, the operands (0 none, 1 an integer, 2 two, 3 a text, 4 an integer and a text, 5 a
+// text and two integers) then the answer (0 an integer, 1 a boolean, 2 none).
+pub N_KERNEL = 400;
+pub N_KERNEL_TEXT = 450;
+pub N_KERNEL_FETCH = 460;
+KERNEL_COUNT = 39;
+KERNEL_SHAPES = [21, 0, 1, 0, 0, 0, 1, 41, 30, 12, 0, 1, 2, 2, 31, 11, 12, 12, 41, 1, 0, 0, 11, 51, 0, 1, 2, 1, 0, 0, 0, 1, 12, 31, 1, 0, 1, 2, 0];
 // Natives the `State` carries itself (`is_state_native`), past the `N_JV` range.
 pub N_STACK_TRACE = 200;
 pub N_C_CALL = 201;
@@ -101,6 +112,51 @@ pub fn native_handler(name: text) -> integer {
   match name {
     "n_assert" => N_ASSERT,
     "n_stack_trace" => N_STACK_TRACE,
+    "n_kernel_listen" => N_KERNEL + 0,
+    "n_kernel_pump" => N_KERNEL + 1,
+    "n_kernel_next_event" => N_KERNEL + 2,
+    "n_kernel_event_cid" => N_KERNEL + 3,
+    "n_kernel_event_kind" => N_KERNEL + 4,
+    "n_kernel_event_status" => N_KERNEL + 5,
+    "n_kernel_tick_due" => N_KERNEL + 6,
+    "n_kernel_send" => N_KERNEL + 7,
+    "n_kernel_broadcast" => N_KERNEL + 8,
+    "n_kernel_idle" => N_KERNEL + 9,
+    "n_kernel_clients" => N_KERNEL + 10,
+    "n_kernel_alive" => N_KERNEL + 11,
+    "n_kernel_stop" => N_KERNEL + 12,
+    "n_kernel_frame" => N_KERNEL + 13,
+    "n_kernel_post" => N_KERNEL + 14,
+    "n_kernel_udp_bound" => N_KERNEL + 15,
+    "n_kernel_sync_class" => N_KERNEL + 16,
+    "n_kernel_sync_class_keyed" => N_KERNEL + 17,
+    "n_kernel_keyframe" => N_KERNEL + 18,
+    "n_kernel_sync_next" => N_KERNEL + 19,
+    "n_kernel_sync_cid" => N_KERNEL + 20,
+    "n_kernel_sync_seq" => N_KERNEL + 21,
+    "n_kernel_local" => N_KERNEL + 22,
+    "n_kernel_connect" => N_KERNEL + 23,
+    "n_kernel_client_pump" => N_KERNEL + 24,
+    "n_kernel_client_alive" => N_KERNEL + 25,
+    "n_kernel_client_stop" => N_KERNEL + 26,
+    "n_kernel_client_next_event" => N_KERNEL + 27,
+    "n_kernel_client_event_kind" => N_KERNEL + 28,
+    "n_kernel_client_event_cid" => N_KERNEL + 29,
+    "n_kernel_client_event_status" => N_KERNEL + 30,
+    "n_kernel_client_tick_due" => N_KERNEL + 31,
+    "n_kernel_client_idle" => N_KERNEL + 32,
+    "n_kernel_client_send" => N_KERNEL + 33,
+    "n_kernel_client_sync_next" => N_KERNEL + 34,
+    "n_kernel_client_sync_seq" => N_KERNEL + 35,
+    "n_kernel_client_udp_bound" => N_KERNEL + 36,
+    "n_kernel_client_frame" => N_KERNEL + 37,
+    "n_kernel_swap_step" => N_KERNEL + 38,
+    "n_kernel_event_payload_dest" => N_KERNEL_TEXT + 0,
+    "n_kernel_sync_payload_dest" => N_KERNEL_TEXT + 1,
+    "n_kernel_client_event_payload_dest" => N_KERNEL_TEXT + 2,
+    "n_kernel_client_sync_payload_dest" => N_KERNEL_TEXT + 3,
+    "n_kernel_default_host_dest" => N_KERNEL_TEXT + 4,
+    "n_kernel_http_fetch" => N_KERNEL_FETCH,
     "n_eprint" => N_EPRINT,
     "n_env_variables" => N_ENV_VARIABLES,
     "n_path_sep" => N_PATH_SEP,
@@ -457,6 +513,8 @@ pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: v
     return native_exit(nh, stk, sp, io, tb);
   } else if nh == N_PANIC {
     return native_panic(nh, stk, sp, io, tb);
+  } else if (nh >= N_KERNEL && nh < N_KERNEL + KERNEL_COUNT) || (nh >= N_KERNEL_TEXT && nh < N_KERNEL_TEXT + 5) || nh == N_KERNEL_FETCH {
+    return native_kernel(nh, stk, sp, io, tb);
   } else {
     return -1;
   }
@@ -472,7 +530,7 @@ pub fn is_state_native(nh: integer) -> boolean {
 
 // Whether `light` carries native handler `nh`.
 pub fn is_light(nh: integer) -> boolean {
-  nh == N_ASSERT || nh == N_ENV_VARIABLE_DEST || nh == N_NOW || nh == N_TICKS || nh == N_PROTECT || nh == N_UNPROTECT || nh == N_IS_DIR || nh == N_IS_FILE || nh == N_FILE_MAP || nh == N_GET_STORE_LOCK || nh == N_SET_STORE_LOCK || nh == N_LIST_DIR || nh == N_UPGRADE_OWED_NEXT || nh == N_UPGRADE_OWED_FINISH || nh == N_UPGRADE_OWED_REF || nh == N_UPGRADE_ROUTINE || nh == N_YIELD_FRAME || nh == N_TEXT_RFIND || nh == N_TEXT_FIND || nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END || nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST || nh == N_WRITE_TEXT_RAW || nh == N_TEXT_BYTE_AT || nh == N_TEXT_REPLACE_DEST || nh == N_STARTS_WITH || nh == N_ENDS_WITH || nh == N_WRITE_BYTES || nh == N_VECTOR_SUM_INT || nh == N_OS_TEMP_DIR_DEST || nh == N_READ_BYTES || nh == N_ARGUMENTS || nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST || nh == N_JSON_ERRORS_DEST || nh == N_EPRINT || nh == N_PATH_SEP || nh == N_MTIME || nh == N_IS_SYMLINK || nh == N_DIRECTORY_DEST || nh == N_USER_DIRECTORY_DEST || nh == N_PROGRAM_DIRECTORY_DEST || nh == N_OS_CACHE_DIR_DEST || nh == N_YMD_DAYS_AGO_DEST || nh == N_EXIT || nh == N_PANIC
+  nh == N_ASSERT || nh == N_ENV_VARIABLE_DEST || nh == N_NOW || nh == N_TICKS || nh == N_PROTECT || nh == N_UNPROTECT || nh == N_IS_DIR || nh == N_IS_FILE || nh == N_FILE_MAP || nh == N_GET_STORE_LOCK || nh == N_SET_STORE_LOCK || nh == N_LIST_DIR || nh == N_UPGRADE_OWED_NEXT || nh == N_UPGRADE_OWED_FINISH || nh == N_UPGRADE_OWED_REF || nh == N_UPGRADE_ROUTINE || nh == N_YIELD_FRAME || nh == N_TEXT_RFIND || nh == N_TEXT_FIND || nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END || nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST || nh == N_WRITE_TEXT_RAW || nh == N_TEXT_BYTE_AT || nh == N_TEXT_REPLACE_DEST || nh == N_STARTS_WITH || nh == N_ENDS_WITH || nh == N_WRITE_BYTES || nh == N_VECTOR_SUM_INT || nh == N_OS_TEMP_DIR_DEST || nh == N_READ_BYTES || nh == N_ARGUMENTS || nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST || nh == N_JSON_ERRORS_DEST || nh == N_EPRINT || nh == N_PATH_SEP || nh == N_MTIME || nh == N_IS_SYMLINK || nh == N_DIRECTORY_DEST || nh == N_USER_DIRECTORY_DEST || nh == N_PROGRAM_DIRECTORY_DEST || nh == N_OS_CACHE_DIR_DEST || nh == N_YMD_DAYS_AGO_DEST || nh == N_EXIT || nh == N_PANIC || (nh >= N_KERNEL && nh < N_KERNEL + KERNEL_COUNT) || (nh >= N_KERNEL_TEXT && nh < N_KERNEL_TEXT + 5) || nh == N_KERNEL_FETCH
 }
 
 pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
@@ -1775,4 +1833,62 @@ fn native_panic(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, 
   message = crt::stack_str_in(tb, stk, sp0 - 40) ?? "";
   crt::panic_at(message, file, line);
   sp0 - 40
+}
+
+// An engine-host kernel native (`N_KERNEL`…): its operands read off the stack by the routine's
+// shape (`KERNEL_SHAPES`; an integer 8 bytes, a text's view 16), the C runtime's routine called
+// (`crt::kernel`), the answer pushed; a text routine's answer appended to the destination on
+// top, as a `_dest` native's is.
+fn native_kernel(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
+  if nh == N_KERNEL_FETCH {
+    h = crt::stack_str_in(tb, stk, sp0 - 16) ?? "";
+    b = crt::stack_str_in(tb, stk, sp0 - 32) ?? "";
+    u = crt::stack_str_in(tb, stk, sp0 - 48) ?? "";
+    m = crt::stack_str_in(tb, stk, sp0 - 64) ?? "";
+    set(stk, sp0 - 64, crt::kernel_fetch(m, u, b, h));
+    return sp0 - 56;
+  }
+  if nh >= N_KERNEL_TEXT {
+    crt::slot_ref(io, stk, sp0 - 16);
+    t = crt::kernel_text(tb, nh - N_KERNEL_TEXT);
+    crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, t ?? "");
+    return sp0 - 16;
+  }
+  which = nh - N_KERNEL;
+  code = KERNEL_SHAPES[which] ?? 0;
+  args = code / 10;
+  answer = code % 10;
+  sp = sp0;
+  a = 0;
+  b = 0;
+  t = "";
+  if args == 1 {
+    a = get(stk, sp - 8) ?? 0;
+    sp -= 8;
+  } else if args == 2 {
+    b = get(stk, sp - 8) ?? 0;
+    a = get(stk, sp - 16) ?? 0;
+    sp -= 16;
+  } else if args == 3 {
+    t = crt::stack_str_in(tb, stk, sp - 16) ?? "";
+    sp -= 16;
+  } else if args == 4 {
+    t = crt::stack_str_in(tb, stk, sp - 16) ?? "";
+    a = get(stk, sp - 24) ?? 0;
+    sp -= 24;
+  } else if args == 5 {
+    b = get(stk, sp - 8) ?? 0;
+    a = get(stk, sp - 16) ?? 0;
+    t = crt::stack_str_in(tb, stk, sp - 32) ?? "";
+    sp -= 32;
+  }
+  v = crt::kernel(which, a, b, t);
+  if answer == 0 {
+    set(stk, sp, v);
+    sp += 8;
+  } else if answer == 1 {
+    set_bool(stk, sp, v != 0);
+    sp += 8;
+  }
+  sp
 }
