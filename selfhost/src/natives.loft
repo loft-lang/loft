@@ -339,66 +339,66 @@ pub fn walk_bound_bytes(kt: vector<integer>, n: integer) -> integer {
 // image, table or loader state: `call_native` hands them here, and the dispatch loop calls
 // them from `OpStaticCall`'s arm without leaving `run` (`State::light_call`).  Answers the
 // new top, or -1 for a native this does not carry.
-pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+pub fn light(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   if nh == N_ASSERT {
-    return native_assert(nh, stk, sp, io);
+    return native_assert(nh, stk, sp, io, tb);
   } else if nh == N_ENV_VARIABLE_DEST {
-    return native_env_variable_dest(nh, stk, sp, io);
+    return native_env_variable_dest(nh, stk, sp, io, tb);
   } else if nh == N_NOW || nh == N_TICKS {
-    return native_now(nh, stk, sp, io);
+    return native_now(nh, stk, sp, io, tb);
   } else if nh == N_PROTECT || nh == N_UNPROTECT {
-    return native_protect(nh, stk, sp, io);
+    return native_protect(nh, stk, sp, io, tb);
   } else if nh == N_IS_DIR || nh == N_IS_FILE {
-    return native_is_dir(nh, stk, sp, io);
+    return native_is_dir(nh, stk, sp, io, tb);
   } else if nh == N_FILE_MAP {
-    return native_file_map(nh, stk, sp, io);
+    return native_file_map(nh, stk, sp, io, tb);
   } else if nh == N_GET_STORE_LOCK {
-    return native_get_store_lock(nh, stk, sp, io);
+    return native_get_store_lock(nh, stk, sp, io, tb);
   } else if nh == N_SET_STORE_LOCK {
-    return native_set_store_lock(nh, stk, sp, io);
+    return native_set_store_lock(nh, stk, sp, io, tb);
   } else if nh == N_LIST_DIR {
-    return native_list_dir(nh, stk, sp, io);
+    return native_list_dir(nh, stk, sp, io, tb);
   } else if nh == N_UPGRADE_OWED_NEXT {
-    return native_upgrade_owed_next(nh, stk, sp, io);
+    return native_upgrade_owed_next(nh, stk, sp, io, tb);
   } else if nh == N_UPGRADE_OWED_FINISH {
-    return native_upgrade_owed_finish(nh, stk, sp, io);
+    return native_upgrade_owed_finish(nh, stk, sp, io, tb);
   } else if nh == N_UPGRADE_OWED_REF {
-    return native_upgrade_owed_ref(nh, stk, sp, io);
+    return native_upgrade_owed_ref(nh, stk, sp, io, tb);
   } else if nh == N_UPGRADE_ROUTINE {
-    return native_upgrade_routine(nh, stk, sp, io);
+    return native_upgrade_routine(nh, stk, sp, io, tb);
   } else if nh == N_YIELD_FRAME {
-    return native_yield_frame(nh, stk, sp, io);
+    return native_yield_frame(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_RFIND {
-    return native_text_rfind(nh, stk, sp, io);
+    return native_text_rfind(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_FIND {
-    return native_text_find(nh, stk, sp, io);
+    return native_text_find(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END {
-    return native_text_trim(nh, stk, sp, io);
+    return native_text_trim(nh, stk, sp, io, tb);
   } else if nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST {
-    return native_to_uppercase_dest(nh, stk, sp, io);
+    return native_to_uppercase_dest(nh, stk, sp, io, tb);
   } else if nh == N_WRITE_TEXT_RAW {
-    return native_write_text_raw(nh, stk, sp, io);
+    return native_write_text_raw(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_BYTE_AT {
-    return native_text_byte_at(nh, stk, sp, io);
+    return native_text_byte_at(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_REPLACE_DEST {
-    return native_text_replace_dest(nh, stk, sp, io);
+    return native_text_replace_dest(nh, stk, sp, io, tb);
   } else if nh == N_STARTS_WITH || nh == N_ENDS_WITH {
-    return native_starts_with(nh, stk, sp, io);
+    return native_starts_with(nh, stk, sp, io, tb);
   } else if nh == N_WRITE_BYTES {
-    return native_write_bytes(nh, stk, sp, io);
+    return native_write_bytes(nh, stk, sp, io, tb);
   } else if nh == N_VECTOR_SUM_INT {
-    return native_vector_sum_int(nh, stk, sp, io);
+    return native_vector_sum_int(nh, stk, sp, io, tb);
   } else if nh == N_OS_TEMP_DIR_DEST {
-    return native_os_temp_dir_dest(nh, stk, sp, io);
+    return native_os_temp_dir_dest(nh, stk, sp, io, tb);
   } else if nh == N_READ_BYTES {
-    return native_read_bytes(nh, stk, sp, io);
+    return native_read_bytes(nh, stk, sp, io, tb);
   } else if nh == N_ARGUMENTS {
-    return native_arguments(nh, stk, sp, io);
+    return native_arguments(nh, stk, sp, io, tb);
   } else if nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST {
-    return native_text_from_byte_range_dest(nh, stk, sp, io);
+    return native_text_from_byte_range_dest(nh, stk, sp, io, tb);
   } else if nh == N_JSON_ERRORS_DEST {
-    return native_json_errors_dest(nh, stk, sp, io);
+    return native_json_errors_dest(nh, stk, sp, io, tb);
   } else {
     return -1;
   }
@@ -419,7 +419,7 @@ pub fn is_light(nh: integer) -> boolean {
 pub fn call_native(nh: integer, idx: integer, img: ir::RunImage, stk: integer, sp0: integer, io: vector<integer>, tl: vector<boolean>, sidecar_ix: vector<integer>, ptold: vector<boolean>, why: vector<text>) -> integer {
   sp = sp0;
   if is_light(nh) {
-    return light(nh, stk, sp0, io);
+    return light(nh, stk, sp0, io, []);
   }
   if nh == N_CHAR_PREDICATE {
     return native_char_predicate(nh, idx, img, stk, sp, io, tl, sidecar_ix, ptold, why);
@@ -1030,11 +1030,11 @@ pub fn par_buf(pk: integer, stk: integer, sp: integer, pbufs: vector<ParBuf>, io
 }
 
 // `light`'s branch for `nh == N_ASSERT`.
-fn native_assert(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_assert(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   line = get(stk, sp - 8);
-  file = crt::stack_str(stk, sp - 24);
-  message = crt::stack_str(stk, sp - 40);
+  file = crt::stack_str_in(tb, stk, sp - 24);
+  message = crt::stack_str_in(tb, stk, sp - 40);
   test = get_bool(stk, sp - 48);
   sp -= 48;
   assert(test, message ?? "", file ?? "", line ?? 0);
@@ -1042,10 +1042,10 @@ fn native_assert(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>)
 }
 
 // `light`'s branch for `nh == N_ENV_VARIABLE_DEST`.
-fn native_env_variable_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_env_variable_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   crt::slot_ref(io, stk, sp - 16);
-  vname = crt::stack_str(stk, sp - 32);
+  vname = crt::stack_str_in(tb, stk, sp - 32);
   sp -= 32;
   // An unset variable is Rust's null text appended (`Stores::os_variable`), not an empty one.
   ev = env_variable(vname ?? "");
@@ -1058,7 +1058,7 @@ fn native_env_variable_dest(_nh: integer, stk: integer, sp0: integer, io: vector
 }
 
 // `light`'s branch for `nh == N_NOW || nh == N_TICKS`.
-fn native_now(nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_now(nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   set(stk, sp, if nh == N_NOW { now() } else { ticks() });
   sp += 8;
@@ -1066,7 +1066,7 @@ fn native_now(nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> 
 }
 
 // `light`'s branch for `nh == N_PROTECT || nh == N_UNPROTECT`.
-fn native_protect(nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_protect(nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   sp -= 16;
   crt::slot_ref(io, stk, sp);
@@ -1075,9 +1075,9 @@ fn native_protect(nh: integer, stk: integer, sp0: integer, io: vector<integer>) 
 }
 
 // `light`'s branch for `nh == N_IS_DIR || nh == N_IS_FILE`.
-fn native_is_dir(nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_is_dir(nh: integer, stk: integer, sp0: integer, _io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
-  idp = crt::stack_str(stk, sp - 16) ?? "";
+  idp = crt::stack_str_in(tb, stk, sp - 16) ?? "";
   sp -= 16;
   set_bool(stk, sp, if nh == N_IS_DIR { is_dir(idp) } else { is_file(idp) });
   sp += 8;
@@ -1085,11 +1085,11 @@ fn native_is_dir(nh: integer, stk: integer, sp0: integer, _io: vector<integer>) 
 }
 
 // `light`'s branch for `nh == N_FILE_MAP`.
-fn native_file_map(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_file_map(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   // The file's bytes as a read-only vector (the C runtime's `file_map`); null where it
   // cannot be mapped.
-  fmp = crt::stack_str(stk, sp - 16) ?? "";
+  fmp = crt::stack_str_in(tb, stk, sp - 16) ?? "";
   sp -= 16;
   crt::file_map(io, fmp);
   crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
@@ -1098,7 +1098,7 @@ fn native_file_map(_nh: integer, stk: integer, sp0: integer, io: vector<integer>
 }
 
 // `light`'s branch for `nh == N_GET_STORE_LOCK`.
-fn native_get_store_lock(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_get_store_lock(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // `d#lock`: is the store the reference names locked?
   sp -= 16;
@@ -1109,7 +1109,7 @@ fn native_get_store_lock(_nh: integer, stk: integer, sp0: integer, io: vector<in
 }
 
 // `light`'s branch for `nh == N_SET_STORE_LOCK`.
-fn native_set_store_lock(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_set_store_lock(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // `d#lock = v`: the lock popped, then the reference.
   slk = crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp - 8, 0, 0) ?? 0;
@@ -1120,10 +1120,10 @@ fn native_set_store_lock(_nh: integer, stk: integer, sp0: integer, io: vector<in
 }
 
 // `light`'s branch for `nh == N_LIST_DIR`.
-fn native_list_dir(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_list_dir(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   // The directory's entries, a vector in a store of its own (the C runtime's `list_dir`).
-  ldp = crt::stack_str(stk, sp - 16) ?? "";
+  ldp = crt::stack_str_in(tb, stk, sp - 16) ?? "";
   sp -= 16;
   crt::list_dir(io, ldp);
   crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
@@ -1132,7 +1132,7 @@ fn native_list_dir(_nh: integer, stk: integer, sp0: integer, io: vector<integer>
 }
 
 // `light`'s branch for `nh == N_UPGRADE_OWED_NEXT`.
-fn native_upgrade_owed_next(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_upgrade_owed_next(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // No conversion is owed: the runner loads only an image of its own layout (it carries no
   // converter), as the C runtime built without one answers.
@@ -1142,7 +1142,7 @@ fn native_upgrade_owed_next(_nh: integer, stk: integer, sp0: integer, _io: vecto
 }
 
 // `light`'s branch for `nh == N_UPGRADE_OWED_FINISH`.
-fn native_upgrade_owed_finish(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_upgrade_owed_finish(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   set_bool(stk, sp, true);
   sp += 8;
@@ -1150,7 +1150,7 @@ fn native_upgrade_owed_finish(_nh: integer, stk: integer, sp0: integer, _io: vec
 }
 
 // `light`'s branch for `nh == N_UPGRADE_OWED_REF`.
-fn native_upgrade_owed_ref(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_upgrade_owed_ref(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   crt::set_slot_ref(stk, sp, NULL_STORE, 0, 0);
   sp += 16;
@@ -1158,7 +1158,7 @@ fn native_upgrade_owed_ref(_nh: integer, stk: integer, sp0: integer, _io: vector
 }
 
 // `light`'s branch for `nh == N_UPGRADE_ROUTINE`.
-fn native_upgrade_routine(_nh: integer, _stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_upgrade_routine(_nh: integer, _stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // A routine registered for a conversion the runner never makes.
   sp -= 24;
@@ -1166,7 +1166,7 @@ fn native_upgrade_routine(_nh: integer, _stk: integer, sp0: integer, _io: vector
 }
 
 // `light`'s branch for `nh == N_YIELD_FRAME`.
-fn native_yield_frame(_nh: integer, _stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_yield_frame(_nh: integer, _stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // The frame-yield flag only a host's frame loop reads; a run from an image has none.
   sp = sp;
@@ -1174,7 +1174,7 @@ fn native_yield_frame(_nh: integer, _stk: integer, sp0: integer, _io: vector<int
 }
 
 // `light`'s branch for `nh == N_TEXT_RFIND`.
-fn native_text_rfind(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_text_rfind(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   sp -= 32;
   set(stk, sp, crt::view_find(stk, sp, sp + 16, true));
@@ -1183,7 +1183,7 @@ fn native_text_rfind(_nh: integer, stk: integer, sp0: integer, _io: vector<integ
 }
 
 // `light`'s branch for `nh == N_TEXT_FIND`.
-fn native_text_find(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_text_find(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // The byte position of the first `value` in `self`, null when there is none.
   sp -= 32;
@@ -1193,7 +1193,7 @@ fn native_text_find(_nh: integer, stk: integer, sp0: integer, _io: vector<intege
 }
 
 // `light`'s branch for `nh == N_TEXT_TRIM || nh == N_TEXT_TRIM_START || nh == N_TEXT_TRIM_END`.
-fn native_text_trim(nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_text_trim(nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // A view of the same text, narrowed in place (Rust's `str::trim*`).
   crt::stack_text_trim(stk, sp - 16, if nh == N_TEXT_TRIM { 0 } else if nh == N_TEXT_TRIM_START { 1 } else { 2 });
@@ -1201,22 +1201,22 @@ fn native_text_trim(nh: integer, stk: integer, sp0: integer, _io: vector<integer
 }
 
 // `light`'s branch for `nh == N_TO_UPPERCASE_DEST || nh == N_TO_LOWERCASE_DEST`.
-fn native_to_uppercase_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_to_uppercase_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   // The text's case changed, appended to the destination.
   crt::slot_ref(io, stk, sp - 16);
-  ucv = crt::stack_str(stk, sp - 32) ?? "";
+  ucv = crt::stack_str_in(tb, stk, sp - 32) ?? "";
   sp -= 32;
   crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, if nh == N_TO_UPPERCASE_DEST { ucv.to_uppercase() } else { ucv.to_lowercase() });
   sp
 }
 
 // `light`'s branch for `nh == N_WRITE_TEXT_RAW`.
-fn native_write_text_raw(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_write_text_raw(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   // The text popped, then the File; whether it was written.
   crt::slot_ref(io, stk, sp - 32);
-  wtr = crt::write_text_raw(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::stack_str(stk, sp - 16));
+  wtr = crt::write_text_raw(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::stack_str_in(tb, stk, sp - 16));
   sp -= 32;
   set_bool(stk, sp, wtr);
   sp += 8;
@@ -1224,7 +1224,7 @@ fn native_write_text_raw(_nh: integer, stk: integer, sp0: integer, io: vector<in
 }
 
 // `light`'s branch for `nh == N_TEXT_BYTE_AT`.
-fn native_text_byte_at(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_text_byte_at(_nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // The byte at `i` (from the end when negative), 0 out of range (`text_byte_at_native`).
   bai = get(stk, sp - 8) ?? 0;
@@ -1235,7 +1235,7 @@ fn native_text_byte_at(_nh: integer, stk: integer, sp0: integer, _io: vector<int
 }
 
 // `light`'s branch for `nh == N_TEXT_REPLACE_DEST`.
-fn native_text_replace_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_text_replace_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // `self.replace(value, with)` appended to the destination.
   crt::slot_ref(io, stk, sp - 16);
@@ -1246,7 +1246,7 @@ fn native_text_replace_dest(_nh: integer, stk: integer, sp0: integer, io: vector
 }
 
 // `light`'s branch for `nh == N_STARTS_WITH || nh == N_ENDS_WITH`.
-fn native_starts_with(nh: integer, stk: integer, sp0: integer, _io: vector<integer>) -> integer {
+fn native_starts_with(nh: integer, stk: integer, sp0: integer, _io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   sp -= 32;
   set_bool(stk, sp, crt::view_starts(stk, sp, sp + 16, nh == N_ENDS_WITH));
@@ -1255,11 +1255,11 @@ fn native_starts_with(nh: integer, stk: integer, sp0: integer, _io: vector<integ
 }
 
 // `light`'s branch for `nh == N_WRITE_BYTES`.
-fn native_write_bytes(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_write_bytes(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   // The byte vector popped, then the path; answers whether it was written.
   crt::slot_ref(io, stk, sp - 16);
-  wpath = crt::stack_str(stk, sp - 32) ?? "";
+  wpath = crt::stack_str_in(tb, stk, sp - 32) ?? "";
   sp -= 32;
   set_bool(stk, sp, crt::write_bytes(wpath, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
   sp += 8;
@@ -1267,7 +1267,7 @@ fn native_write_bytes(_nh: integer, stk: integer, sp0: integer, io: vector<integ
 }
 
 // `light`'s branch for `nh == N_VECTOR_SUM_INT`.
-fn native_vector_sum_int(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_vector_sum_int(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   acc = get(stk, sp - 8);
   crt::slot_ref(io, stk, sp - 24);
@@ -1278,7 +1278,7 @@ fn native_vector_sum_int(_nh: integer, stk: integer, sp0: integer, io: vector<in
 }
 
 // `light`'s branch for `nh == N_OS_TEMP_DIR_DEST`.
-fn native_os_temp_dir_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_os_temp_dir_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   crt::slot_ref(io, stk, sp - 16);
   sp -= 16;
@@ -1287,10 +1287,10 @@ fn native_os_temp_dir_dest(_nh: integer, stk: integer, sp0: integer, io: vector<
 }
 
 // `light`'s branch for `nh == N_READ_BYTES`.
-fn native_read_bytes(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_read_bytes(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, tb: vector<u8>) -> integer {
   sp = sp0;
   // The file's bytes, a vector in a store of its own (the C runtime's `read_bytes`).
-  rpath = crt::stack_str(stk, sp - 16) ?? "";
+  rpath = crt::stack_str_in(tb, stk, sp - 16) ?? "";
   sp -= 16;
   crt::read_bytes(io, rpath);
   crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
@@ -1299,7 +1299,7 @@ fn native_read_bytes(_nh: integer, stk: integer, sp0: integer, io: vector<intege
 }
 
 // `light`'s branch for `nh == N_ARGUMENTS`.
-fn native_arguments(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_arguments(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   crt::arguments_into(io);
   crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
@@ -1308,7 +1308,7 @@ fn native_arguments(_nh: integer, stk: integer, sp0: integer, io: vector<integer
 }
 
 // `light`'s branch for `nh == N_TEXT_FROM_BYTE_RANGE_DEST || nh == N_TEXT_FROM_BYTES_DEST`.
-fn native_text_from_byte_range_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_text_from_byte_range_dest(nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   // The bytes `lo..hi` of a byte vector — the whole of it for `text_from_bytes` — as a
   // text into the destination.
@@ -1334,7 +1334,7 @@ fn native_text_from_byte_range_dest(nh: integer, stk: integer, sp0: integer, io:
 }
 
 // `light`'s branch for `nh == N_JSON_ERRORS_DEST`.
-fn native_json_errors_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>) -> integer {
+fn native_json_errors_dest(_nh: integer, stk: integer, sp0: integer, io: vector<integer>, _tb: vector<u8>) -> integer {
   sp = sp0;
   crt::slot_ref(io, stk, sp - 16);
   sp -= 16;

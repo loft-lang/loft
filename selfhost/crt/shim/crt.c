@@ -666,6 +666,16 @@ void loft_crt_ref_text_append_view(int64_t s, int64_t r, int64_t p, int64_t stk,
     if (t) loft_text_concat(t, v);
 }
 
+/* `OpCastFloatFromText` / `OpCastSingleFromText` on the view in its frame slot: the runtime's
+ * own parse (`loft_float_of_text`, as the C backend casts), NaN — null — where it is not a
+ * number, the null text included. */
+double loft_crt_view_float(int64_t stk, int64_t at) {
+    return loft_float_of_text(*(loft_str *) loft_crt_slot_at(stk, at));
+}
+double loft_crt_view_single(int64_t stk, int64_t at) {
+    return (double) loft_single_of_text(*(loft_str *) loft_crt_slot_at(stk, at));
+}
+
 /* `self.replace(value, with)` over the three views in their frame slots, the answer appended
  * to the text `(s, r, p)` names — the runtime's own `loft_replace`, no text copied out first.  A
  * null view reads as the empty text, as the native's `?? ""` does. */

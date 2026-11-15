@@ -857,6 +857,21 @@ pub fn ref_text_append_view(s: integer, r: integer, p: integer, stk: integer, at
   c_ref_text_append_view(s, r, p, stk, at);
 }
 
+fn c_view_float(stk: integer, at: integer) -> float;
+#c "loft_crt_view_float" "double(int64_t, int64_t)"
+fn c_view_single(stk: integer, at: integer) -> float;
+#c "loft_crt_view_single" "double(int64_t, int64_t)"
+
+// The view in its frame slot read as a float or a single, as `text as float` reads it: null
+// where it is not a number.
+pub fn view_float(stk: integer, at: integer) -> float {
+  c_view_float(stk, at)
+}
+
+pub fn view_single(stk: integer, at: integer) -> single {
+  c_view_single(stk, at) as single
+}
+
 fn c_ref_text_replace_view(s: integer, r: integer, p: integer, stk: integer, self_at: integer, val_at: integer, with_at: integer);
 #c "loft_crt_ref_text_replace_view" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 

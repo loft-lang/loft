@@ -303,11 +303,11 @@ fn OpCastIntFromText(v1: text) -> __word;
 fn OpCastSingleFromText(v1: text) -> single;
 #cold
 #rust"@v1.parse().unwrap_or(f32::NAN)"
-#loft"if v1 == null {{ null }} else {{ v1! as single? }}"
+#loft"if v1 == null {{ null }} else {{ v1! as single? }} #arm crt::view_single(stk, v1_pos)"
 fn OpCastFloatFromText(v1: text) -> __fword;
 #cold
 #rust"@v1.parse().unwrap_or(f64::NAN)"
-#loft"if v1 == null {{ null }} else {{ v1! as float? }}"
+#loft"if v1 == null {{ null }} else {{ v1! as float? }} #arm crt::view_float(stk, v1_pos)"
 fn OpAbsInt(v1: __word) -> __word;
 #rust"ops::op_abs_int(@v1)"
 #loft"if v1 == null {{ null }} else {{ v1.abs() }}"

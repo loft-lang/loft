@@ -103,7 +103,7 @@ pub fn light_call(self: state::State, h: integer) {
     self.keyed_entry(h == natives::N_KEYED_ENTRY_TEXT);
     return;
   }
-  sp = natives::light(h, self.stk, self.stack_pos, self.lio);
+  sp = natives::light(h, self.stk, self.stack_pos, self.lio, self.tbuf);
   if sp < 0 {
     self.stop("not carried: native handler {h}");
   } else {

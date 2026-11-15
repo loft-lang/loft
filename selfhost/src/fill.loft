@@ -5578,6 +5578,28 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
+    20 => {
+      if sp >= 16 {
+        ri0 = sp - 16;
+        sp -= 16;
+        ip += 2;
+        nvs: single? = crt::view_single(stk, ri0);
+        crt::poke_f32(base, sp, nvs);
+        sp += 8;
+        continue;
+      }
+    }
+    21 => {
+      if sp >= 16 {
+        ri0 = sp - 16;
+        sp -= 16;
+        ip += 2;
+        nvf: float? = crt::view_float(stk, ri0);
+        crt::poke_f64(base, sp, nvf);
+        sp += 8;
+        continue;
+      }
+    }
     22 => {
       if true {
         ip += 2;
