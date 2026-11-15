@@ -1,8 +1,8 @@
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index f130482c0..d91d913fd 100644
+index 60ee8945a..831ef720d 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -3975,20 +3975,6 @@ use #count instead"
+@@ -5729,20 +5729,6 @@ use #count instead"
                  // vector in 4-byte increments matching `OpSetInt4`'s
                  // narrow writes.
                  4
@@ -20,6 +20,6 @@ index f130482c0..d91d913fd 100644
 -                // question arises (loft#1298) — so a keyed element's stride is unmeasured,
 -                // and a number nothing can check is not a fact to write down.
 -                4
-             } else {
-                 let known = self.data.def(elm_td).known_type();
-                 let db_size = i32::from(self.database.size(known));
+             } else if elm_td == u32::MAX && self.first_pass {
+                 // loft#2497 — a record declared BELOW is still its pass-1 stub, which has no
+                 // definition to size: `for r in rows par(…)` over a `vector<Row>` with `Row`
