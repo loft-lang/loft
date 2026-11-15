@@ -256,13 +256,26 @@ pub fn render(ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, i
 // `ShowDb::write`: the value, and then every out-of-line child its last fields chained to — a
 // loop, so a chain of any length takes no call per link — and the closing texts that waited.
 fn write(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
-  mark = len(c.closers);
-  saved: vector<text> = [];
   if c.on {
-    for seg in c.path {
-      saved += [seg];
-    }
+    write_pathed(c, ts, tp, at, fmt, ind, o);
+  } else {
+    write_chain(c, ts, tp, at, fmt, ind, o);
   }
+}
+
+// `write` with a path kept: the chain written, then the path it started at put back.  Apart, so
+// a value written without a path makes no copy of one.
+fn write_pathed(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+  saved: vector<text> = [];
+  for seg in c.path {
+    saved += [seg];
+  }
+  write_chain(c, ts, tp, at, fmt, ind, o);
+  c.path = saved;
+}
+
+fn write_chain(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+  mark = len(c.closers);
   write_one(c, ts, tp, at, fmt, ind, o);
   while c.tail_rec != 0 {
     rec = c.tail_rec;
@@ -279,9 +292,6 @@ fn write(c: Ctx, ts: vector<ir::DbType>, tp: integer, at: crt::Pos, fmt: integer
   while len(c.closers) > mark {
     o += c.closers[len(c.closers) - 1] ?? "";
     c.closers.remove(len(c.closers) - 1);
-  }
-  if c.on {
-    c.path = saved;
   }
 }
 
