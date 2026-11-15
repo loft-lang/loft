@@ -428,7 +428,7 @@ fn call_arm(slot: integer) -> text {
 }
 
 // `OpReturn` as an arm of `run` — `State::fn_return` where the return is a plain one
-// (`State::plain_return`, asked once after each operator that ran on the `State`): the
+// (`State::plain_returns`, asked once after each operator that ran on the `State`): the
 // answer moved down to the arguments' base, the top just above it, the position the call
 // pushed taken back, the frame dropped.  The guard keeps every byte it reads and writes
 // inside the stack; any other return runs through the `State`.
@@ -437,10 +437,10 @@ fn return_arm(slot: integer) -> text {
   out += "      ri0 = crt::peek_u16(cbase, ip + 1);\n";
   out += "      ri1 = crt::peek_u16(cbase, ip + 3);\n";
   out += "      ri2 = crt::peek_u16(cbase, ip + 5);\n";
-  out += "      if rp < 0 {{\n        rp = if s.plain_return() {{ 1 }} else {{ 0 }};\n      }}\n";
+  out += "      if rp < 0 {{\n        rp = s.plain_returns();\n      }}\n";
   out += "      ri3 = (ri1 + 7) / 8 * 8;\n";
   out += "      ri4 = sp - ri2;\n";
-  out += "      if rp == 1 && fd > 0 && ri2 <= sp && ri3 <= ri2 && ri4 + ri0 <= top {{\n";
+  out += "      if (rp == 1 || (rp >= 2 && fd != rp - 2)) && fd > 0 && ri2 <= sp && ri3 <= ri2 && ri4 + ri0 <= top {{\n";
   out += "        ip = crt::peek_u32(base, ri4 + ri0);\n";
   out += "        if ri1 == 8 {{\n";
   out += "          crt::poke_i64(base, ri4, crt::peek_i64(base, sp - 8));\n";

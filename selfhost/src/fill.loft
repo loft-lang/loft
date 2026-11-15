@@ -3066,11 +3066,11 @@ pub fn run(s: state::State, end: integer) {
       ri1 = crt::peek_u16(cbase, ip + 3);
       ri2 = crt::peek_u16(cbase, ip + 5);
       if rp < 0 {
-        rp = if s.plain_return() { 1 } else { 0 };
+        rp = s.plain_returns();
       }
       ri3 = (ri1 + 7) / 8 * 8;
       ri4 = sp - ri2;
-      if rp == 1 && fd > 0 && ri2 <= sp && ri3 <= ri2 && ri4 + ri0 <= top {
+      if (rp == 1 || (rp >= 2 && fd != rp - 2)) && fd > 0 && ri2 <= sp && ri3 <= ri2 && ri4 + ri0 <= top {
         ip = crt::peek_u32(base, ri4 + ri0);
         if ri1 == 8 {
           crt::poke_i64(base, ri4, crt::peek_i64(base, sp - 8));
