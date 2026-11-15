@@ -349,7 +349,9 @@ def read_series():
         return []
     out = []
     for line in open(SERIES, encoding="utf-8"):
-        if line.startswith("#") or not line.strip():
+        # The header line names the columns: read as a row it was keyed `week_of`, sorted
+        # after every date, and written back as a second header at the end of each record.
+        if line.startswith("#") or not line.strip() or line.startswith("week_of\t"):
             continue
         out.append(dict(zip(COLUMNS, line.rstrip("\n").split("\t"))))
     return out
