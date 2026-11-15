@@ -14,6 +14,7 @@ use loop_shape;
 use cgen_fn;
 use cgen_bind;
 use ptypes;
+use opt_non_sentinel;
 use types;
 use cgen_w::*;
 
@@ -768,6 +769,26 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     }
     return E { code: "loft_rx_table_bytes({coll_c})", kind: K_INT };
   }
+  // The displaced function value keeps no closure it shares a store with the new one.
+  if name == "OpFnRefDetachShared" && count == 2 {
+    old_f = loop_shape::var_of(args[0]);
+    new_f = loop_shape::var_of(args[1]);
+    if old_f >= 0 && new_f >= 0 && (w.shapes[old_f] ?? "") == "fn" && (w.shapes[new_f] ?? "") == "fn" {
+      o = w.names[old_f]!;
+      return E { code: "{{ if ({o}.clos.rec == 0 || {o}.clos.store_nr == {w.names[new_f]!}.clos.store_nr) {o}.clos = loft_ref_null(); }}", kind: K_VOID };
+    }
+  }
+  if (name == "OpVectorRef" || name == "OpVectorRefNullable") && count == 2 {
+    a = cgen_fn::arg(x, w, args, 0, ind);
+    b = cgen_fn::arg(x, w, args, 1, ind);
+    if name == "OpVectorRef" {
+      return E { code: "loft_array_get_at({as_ref(w, a)}, {as_int(w, b)}, {cgen_fn::site(w)})", kind: K_REF };
+    }
+    return E { code: "loft_array_get({as_ref(w, a)}, {as_int(w, b)})", kind: K_REF };
+  }
+  if name == "OpGetRecord" && count >= 3 {
+    return get_record(x, w, args, ind);
+  }
   if name == "OpGetBoolean" && count == 2 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
@@ -1141,6 +1162,237 @@ fn read_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   line(w, ind + 1, "if (loft_d != loft_b) free(loft_d);");
   line(w, ind, "}}");
   E { code: "(void) 0", kind: K_VOID }
+}
+
+// The natives over a keyed collection the writer answers itself (`keyed_native`): a hash's
+// records in key order or as they lie, a radix's in order, and the find-or-insert of a hash
+// entry.  `done` says whether `route` is one of them.
+pub fn keyed_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  if (route == "n_hash_sorted" || route == "n_hash_unsorted") && len(args) == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    h = cgen_fn::expr(x, w, args[0], ind);
+    f = if route == "n_hash_sorted" { "loft_hash_sorted" } else { "loft_hash_unsorted" };
+    return E { code: "{f}({as_ref(w, h)}, loft_keys{tp}, {len(x.b.types[tp].keys)})", kind: K_REF };
+  }
+  if route == "n_radix_sorted" && len(args) == 2 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_radix_sorted({as_ref(w, r)})", kind: K_REF };
+  }
+  if (route == "n_keyed_entry_ints" || route == "n_keyed_entry_text") && len(args) >= 3 {
+    place = vector_place(x, w, args[0], args[1], args[2], ind);
+    if w.why != "" {
+      return none();
+    }
+    if w.keyed < 0 {
+      refuse(w, "a keyed entry outside a hash");
+      return none();
+    }
+    tp = w.keyed;
+    elem = w.elem;
+    ct = temp(w, "ref");
+    line(w, ind, "{ct} = {place};");
+    nk = len(x.b.types[tp].keys);
+    given = len(args) - 3;
+    parts = if nk < 1 { 1 } else if nk > given { given } else { nk };
+    is_text = route == "n_keyed_entry_text";
+    codes: vector<text> = [];
+    for k in 0..parts {
+      e = cgen_fn::expr(x, w, args[3 + k]!, ind);
+      codes += [if is_text { as_view(w, e) } else { as_int(w, e) }];
+    }
+    if len(codes) == 0 {
+      refuse(w, "a keyed entry without a key");
+      return none();
+    }
+    if is_text {
+      return E { code: "loft_keyed_entry_text(loft_types, {elem}, {ct}, loft_keys{tp}, {nk}, {codes[0]})", kind: K_REF };
+    }
+    return E { code: "loft_keyed_entry_ints(loft_types, {elem}, {ct}, loft_keys{tp}, {nk}, (int64_t[]){{ {codes.join(", ")} }})", kind: K_REF };
+  }
+  done = false;
+  none()
+}
+
+// Is statement `v` the binding of a keyed lookup — `x = OpGetRecord(…)`?
+pub fn binds_lookup(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdSet { var: _, inner } => {
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args: _ } => cgen_fn::def_name(b, def_nr) == "OpGetRecord",
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+// `filed_record`: the hash type statement `v` filed a record into — `OpFinishRecord(parent,
+// rec, tp, fld)` into a hash of one integer key — or -1.  An over-approximation: the Rust
+// writer also asks that the parent is a path it can name.
+pub fn filed_record(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if cgen_fn::def_name(b, def_nr) != "OpFinishRecord" || len(args) != 4 {
+        return -1;
+      }
+      tp = match loop_shape::unspan(args[2]) { NdInt { n } => n, _ => -1 };
+      fld = match loop_shape::unspan(args[3]) { NdInt { n } => n, _ => -1 };
+      if tp < 0 || tp >= len(b.types) || fld < 0 || loop_shape::var_of(args[1]) < 0 {
+        return -1;
+      }
+      fields = match b.types[tp].parts[0] {
+        PtStruct { fields: fs } => fs,
+        _ => return -1,
+      };
+      if fld >= len(fields) {
+        return -1;
+      }
+      content = fields[fld]!.content;
+      if content < 0 || content >= len(b.types) || keyed_kind(b, content) != "hash" {
+        return -1;
+      }
+      keys = b.types[content].keys;
+      if len(keys) != 1 || !(keys[0].type_nr == 1 || keys[0].type_nr == 2) {
+        return -1;
+      }
+      content
+    },
+    _ => -1,
+  }
+}
+
+// Does the unit bind a lazy store (`Cx::lazy`)?  Asked of every definition's code: an
+// over-approximation of the functions the unit reaches.
+fn lazy_unit(x: Cx) -> boolean {
+  if x.lazy < 0 {
+    bound = [false];
+    for d in x.b.data.definitions {
+      if len(d.code) > 0 && !bound[0]! {
+        bound[0] = calls_bind_lazy(x.b, d.code[0]!);
+      }
+    }
+    x.lazy = if bound[0]! { 1 } else { 0 };
+  }
+  x.lazy == 1
+}
+
+fn calls_bind_lazy(b: ir::Bundle, code: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == "n_store_bind_lazy" {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// One key part's value as a `loft_kv`, for a part of kind `type_nr` (`key_value`).
+fn key_value(w: W, e: E, type_nr: integer) -> text {
+  kind = if type_nr < 0 { -type_nr } else { type_nr };
+  if kind == 3 {
+    return "loft_kv_single({as_single(w, e)})";
+  }
+  if kind == 4 {
+    return "loft_kv_float({as_float(w, e)})";
+  }
+  if kind == 6 {
+    return "loft_kv_text({as_view(w, e)})";
+  }
+  if e.kind == K_BOOL || e.kind == K_COND {
+    return "loft_kv_int((int64_t) {as_bool(w, e)})";
+  }
+  if e.kind == K_ENUM {
+    return "loft_kv_int((int64_t) {as_enum(w, e)})";
+  }
+  if e.kind == K_CHAR {
+    return "loft_kv_int((int64_t) {as_char(w, e)})";
+  }
+  "loft_kv_int({as_int(w, e)})"
+}
+
+// `get_record`: the record a keyed collection holds under the given key values.  Under the
+// plain rules: no table handle; a lookup right after a record was filed into the same hash,
+// and a unit that binds a lazy store, are refused by name.
+fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+  kind = keyed_kind(x.b, tp);
+  if kind == "" {
+    refuse(w, "a keyed operation on another kind of type");
+    return none();
+  }
+  if lazy_unit(x) {
+    refuse(w, "a lookup in a unit that binds a lazy store");
+    return none();
+  }
+  keys = x.b.types[tp].keys;
+  nk = len(keys);
+  given = len(args) - 3;
+  if given > nk {
+    refuse(w, "a lookup with more values than keys");
+    return none();
+  }
+  if w.filed_next == tp && given == 1 && loop_shape::var_of(loop_shape::unspan(args[3])) >= 0 {
+    refuse(w, "a lookup right after a record was filed");
+    return none();
+  }
+  all: vector<ir::Node> = [args[0]];
+  for a in args {
+    if a#index >= 3 {
+      all += [a];
+    }
+  }
+  data = as_ref(w, cgen_fn::arg(x, w, all, 0, ind));
+  values: vector<text> = [];
+  for k in 0..given {
+    values += [key_value(w, cgen_fn::arg(x, w, all, k + 1, ind), keys[k]!.type_nr)];
+  }
+  if w.why != "" {
+    return none();
+  }
+  kv = if given == 0 { "0" } else { "(loft_kv[]){{ {values.join(", ")} }}" };
+  key_table = "loft_keys{tp}";
+  typed = "";
+  if kind == "hash" && given == nk && given >= 1 && given <= 4 {
+    ints: vector<text> = [];
+    for v in values {
+      t = keys[v#index]!.type_nr;
+      if (t == 1 || t == 2) && v.starts_with("loft_kv_int(") && v.ends_with(")") {
+        ints += [v[12..v.size() - 1]];
+      }
+    }
+    if len(ints) == given {
+      typed = if given == 1 { "loft_h_find_i64({data}, {key_table}, {ints[0]})" } else { "loft_h_find_ints({data}, {key_table}, {given}, (int64_t[]){{ {ints.join(", ")} }})" };
+    }
+  }
+  if typed == "" && kind == "hash" && given == 1 && nk == 1 && keys[0].type_nr == 6 && values[0].starts_with("loft_kv_text(") && values[0].ends_with(")") {
+    typed = "loft_h_find_text({data}, {key_table}, {values[0][13..values[0].size() - 1]})";
+  }
+  size = x.b.types[content_of(x.b, tp)].size;
+  find = if kind == "hash" {
+    if typed != "" { typed } else { "loft_h_find({data}, {key_table}, {kv}, {given})" }
+  } else if kind == "sorted" {
+    "loft_seq_find({data}, {size}, {key_table}, {nk}, {kv}, {given})"
+  } else if kind == "index" {
+    "loft_ix_find({data}, {key_table}, {nk}, {kv}, {given})"
+  } else if kind == "ordered" {
+    "loft_seq_find({data}, 0, {key_table}, {nk}, {kv}, {given})"
+  } else if kind == "array" {
+    refuse(w, "a keyed lookup in an array");
+    ""
+  } else {
+    "loft_rx_find({data}, {key_table}, {nk}, {if kind == "trie" { 1 } else { 0 }}, {kv}, {given})"
+  };
+  E { code: find, kind: K_REF }
 }
 
 // `mint_complete` (`@FR-R-CompleteWrite`): does the function's literal of type `tp` write

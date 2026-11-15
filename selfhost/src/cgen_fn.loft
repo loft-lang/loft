@@ -766,6 +766,13 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     line(w, ind, "{report} = loft_store_memory(loft_tnames, loft_ntnames);");
     return held_value(w, report, "text");
   }
+  if plain_rules() {
+    is_keyed_native = false;
+    answered = cgen_ref::keyed_native(x, w, route, args, ind, is_keyed_native);
+    if is_keyed_native {
+      return answered;
+    }
+  }
   // A record as JSON text (`struct_json_native`).
   if (route == "n_struct_to_json" || route == "n_struct_to_json_pretty") && len(args) == 2 {
     tp = literal(w, args[1], "type") ?? return none();
@@ -2029,6 +2036,17 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
       }
     }
   }
+  // What the previous statement filed reaches this one only when it is a lookup's binding;
+  // every other statement forgets it (a line marker is no statement).
+  is_line = match loop_shape::unspan(v) {
+    NdLine { n: _ } => true,
+    _ => false,
+  };
+  if !is_line {
+    filed = w.filed;
+    w.filed = -1;
+    w.filed_next = if cgen_ref::binds_lookup(x.b, v) { filed } else { -1 };
+  }
   // An assignment or a `return` of a located value reports a fault in it at that line.
   at = match loop_shape::unspan(v) {
     NdSet { var: _, inner } => innermost_span(inner),
@@ -2037,15 +2055,19 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   };
   if at == null {
     stmt_kind(x, w, v, ind);
-    return;
+  } else {
+    saved_file = w.span_file;
+    saved_line = w.span_line;
+    w.span_file = c_string(at.file);
+    w.span_line = at.line;
+    stmt_kind(x, w, v, ind);
+    w.span_file = saved_file;
+    w.span_line = saved_line;
   }
-  saved_file = w.span_file;
-  saved_line = w.span_line;
-  w.span_file = c_string(at.file);
-  w.span_line = at.line;
-  stmt_kind(x, w, v, ind);
-  w.span_file = saved_file;
-  w.span_line = saved_line;
+  if !is_line {
+    w.filed_next = -1;
+    w.filed = cgen_ref::filed_record(x.b, v);
+  }
 }
 
 // `scopes::link_set_repoints`: does `var = value` re-point the `&` variable — a bind to a
@@ -2506,6 +2528,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     room_minted: [for _ in 0..len(d.variables.variables) { -1 }],
     elem: -1,
     keyed: -1,
+    filed: -1,
+    filed_next: -1,
     cold: [],
     undeclared: [for _ in 0..len(d.variables.variables) { false }],
     frees_old_tuple: false,

@@ -128,6 +128,8 @@ pub struct Cx {
   pub sigs: vector<text>,
   // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
   pub tuples: vector<text>,
+  // Does the unit bind a lazy store (`Cx::lazy`)?  -1 not asked yet, else 0 or 1.
+  pub lazy: integer,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -145,6 +147,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     ops: own::ops_of(b),
     sigs: [],
     tuples: [],
+    lazy: -1,
   }
 }
 
@@ -236,6 +239,10 @@ struct W {
   // the place is one (-1 for a plain vector).
   elem: integer,
   keyed: integer,
+  // `@FR-R-SameRead`'s filed clause: the hash type the previous statement filed a record
+  // into (-1 for none), and the one a lookup's binding may read it from.
+  filed: integer,
+  filed_next: integer,
   // `@FR-R-Cold`: the outlined arms, and per variable whether the body leaves it to one of
   // them (or, in a helper, to the function) — it is then neither declared nor bound here.
   cold: vector<ColdArm>,
