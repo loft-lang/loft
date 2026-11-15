@@ -59,7 +59,11 @@ def one(item, loft, runner, tmp, env, timeout, libargs):
         fh.write(src if t == "main" else src + f"\n\nfn main() {{\n  {t}();\n}}\n")
     img = os.path.join(tmp, stem + ".run")
     cwd = tmp
-    rc, _, err = proc([loft, *libargs, "--emit-run-image", img, prog], env, timeout, cwd=cwd)
+    # The runner carries no compiled library code (1b-fill-port.md difference 9): its image keeps
+    # every library function as bytecode.  The interpreter it is compared with runs as a user's
+    # does, its `use`d libraries compiled.
+    rc, _, err = proc([loft, *libargs, "--emit-run-image", img, prog],
+                      {**env, "LOFT_NO_NATIVE_LIBS": "1"}, timeout, cwd=cwd)
     if rc != 0:
         return item, "noimage", (err.strip().splitlines()[-1:] or [""])[0][:90], False
     rc, want, err = proc([loft, *libargs, "--interpret", prog], env, timeout, cwd=cwd)
