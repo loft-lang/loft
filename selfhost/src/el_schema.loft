@@ -68,6 +68,26 @@ pub fn fill_all(e: el::El) {
       e.b.data.definitions[d#index].attributes += [disc];
     }
   }
+  // A `vector<S?>` beside a keyed collection of `S` in one struct shares its records with it
+  // (`link_shared_nullable_views`: the keyed field is re-typed over `__nullable<S>`) — not
+  // carried: refused by name.
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_STRUCT || d.source != e.source {
+      continue;
+    }
+    for a in d.attributes {
+      tagged = match a.typedef[0] ?? ir::TyVoid { TyVector { inner } => match inner { TyEnum { n } => if starts_with(el::def(e, n).name, "__nullable<") { n } else { -1 }, _ => -1 }, _ => -1 };
+      if tagged < 0 {
+        continue;
+      }
+      for b in d.attributes {
+        k = el_types::keyed_elem(el_types::base(b.typedef[0] ?? ir::TyVoid));
+        if k >= 0 && "__nullable<{el::def(e, k).name}>" == el::def(e, tagged).name {
+          el::refuse(e, "a vector of nullable records beside a keyed collection of them in one struct");
+        }
+      }
+    }
+  }
   // Each `vector<T>` field's `main_vector<T>` wrapper (and `vector<T>`) where no construct made
   // it, at the position the lexer has reached: the end of the file.
   eof = el::pos_at(e, len(e.p.src) - 1);
@@ -281,7 +301,8 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     },
     _ => {}
   }
-  if !typed {
+  // (A tagged `__nullable<S>` element's row follows its holder's: made where `main_vector` is filled.)
+  if !typed && !starts_with(nm, "__nullable<") {
     vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
@@ -361,65 +382,11 @@ fn synth_nullable_struct_fields(e: el::El) {
   }
 }
 
-// The struct an embedded `S?` field holds (`synth_nullable_target`: a plain struct of the
-// program, not a type variable's placeholder), or -1.
-pub fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer {
-  match t {
-    TyOptional { inner } => {
-      match inner {
-        TyReference { n, dep } => {
-          if !dep.contains(el_types::MARKER) && el::def(e, n).def_type == el::DT_STRUCT && el::def(e, n).synthetic == "" && el_types::type_var(e, inner) < 0 {
-            return n;
-          }
-        },
-        _ => {}
-      }
-    },
-    _ => {}
-  }
-  -1
-}
+// (`nullable_record_of`, `nullable_enum_for`: `el_types`, where a `vector<S?>` asks too.)
+pub fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer { el_types::nullable_record_of(e, t) }
 
-// `Data::nullable_enum_for`: the synthetic `__nullable<S>` — a struct enum of a unit `Null`
-// (discriminant 1) and a `Some` (2) holding `payload: S` inline — made once per struct.  The
-// enum is keyed on the struct's own source (two libraries may each have a `Chunk`); its
-// variants are added under the current one, at the position the lexer stands on: the file's end.
 pub fn nullable_enum_for(e: el::El, sd: integer) -> integer {
-  name = "__nullable<{el::def(e, sd).name}>";
-  src = el::def(e, sd).source;
-  have = el::source_nr(e, src, name);
-  if have >= 0 {
-    return have;
-  }
-  at = el::pos_at(e, len(e.p.src) - 1);
-  own = e.source;
-  e.source = src;
-  en = el::add_def(e, name, at, el::DT_ENUM);
-  e.source = own;
-  self_tp = ir::TyEnum { n: en, is_ref: true, dep: [] };
-  el::set_returned(e, en, self_tp);
-  enumerate = el::def_nr(e, "enumerate");
-  nv = el::add_def(e, "Null", at, el::DT_ENUM_VALUE);
-  e.b.data.definitions[nv].parent = en;
-  el::set_returned(e, nv, self_tp);
-  null_attr = el::attribute("Null", self_tp);
-  null_attr.constant = true;
-  null_attr.value = [ir::NdEnum { ord: 1, tp: NO_TYPE }];
-  e.b.data.definitions[en].attributes += [null_attr];
-  sv = el::add_def(e, "Some", at, el::DT_ENUM_VALUE);
-  e.b.data.definitions[sv].parent = en;
-  el::set_returned(e, sv, self_tp);
-  some_attr = el::attribute("Some", self_tp);
-  some_attr.constant = true;
-  some_attr.value = [ir::NdEnum { ord: 2, tp: NO_TYPE }];
-  e.b.data.definitions[en].attributes += [some_attr];
-  disc = el::attribute("enum", ir::TyEnum { n: enumerate, is_ref: false, dep: [] });
-  disc.value = [ir::NdEnum { ord: 2, tp: NO_TYPE }];
-  e.b.data.definitions[sv].attributes += [disc, el::attribute("payload", ir::TyReference { n: sd, dep: [] })];
-  e.b.data.definitions[en].synthetic = "@PLN25 nullable-enum for embedded struct field";
-  e.b.data.definitions[nv].synthetic = "@PLN25 nullable-enum Null variant";
-  e.b.data.definitions[sv].synthetic = "@PLN25 nullable-enum Some variant";
-  en
+  el_types::nullable_enum_for(e, sd, el::pos_at(e, len(e.p.src) - 1))
 }
 
 // `typedef::fill_database` for a plain struct: a schema type under the struct's name, each

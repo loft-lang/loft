@@ -673,7 +673,8 @@ pub fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: 
   // A struct enum's element is read as the enum's place in it (its store type at 0), a vector's
   // as the inner vector's.
   pk = element_place_type(e, elem);
-  if record && pk >= 0 && !e.first_pass {
+  // (A tagged `__nullable<S>` element is the slot itself: its tag is at the element's start.)
+  if record && pk >= 0 && !e.first_pass && !is_nullable_wrapper(e, elem) {
     get = el_ir::cl(e, "OpGetField", [get, ir::NdInt { n: 0 }, ir::NdInt { n: pk }]);
   }
   // A tuple element is read as its record.

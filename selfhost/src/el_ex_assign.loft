@@ -320,6 +320,16 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
     t = result;
   }
   discharged = false;
+  // `convert`'s tagged arm (`@FR-L-Null-Tag`): a `__nullable<S>` tail of a `-> S?` body is read
+  // through its tag, absence the reference null sentinel.
+  if context == "return from block" && len(l) > 0 && is_nullable_wrapper(e, t) && result is TyOptional && struct_ref(e, el_types::base(result)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(t)) {
+    rx = el_ex_place::read_through_tag(e, vars, ex(l[-1] ?? ir::NdNull, t));
+    if rx == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    l = l[..-1] + [rx!.code];
+    t = rx!.tp;
+  }
   converted = false;
   // A function body's tail is a store into its result (`convert_store`): converted to it, and
   // the body typed as the result even where the two are equal (a `u8` tail of `-> integer`).
@@ -1323,6 +1333,12 @@ pub fn type_name_of(e: el::El, vars: el_vars::Vars, st: integer?) -> Ex {
     STy { name: nm, member, args, keys, limit, nullable } => if member == "" && len(args) == 0 && len(keys) == 0 && limit == null && !nullable { nm } else { "" },
     _ => ""
   };
+  // `type_name(x.f)` is read as the type spelling `x` with an associated name: a value's field,
+  // which Rust reads as an expression — not carried.
+  if match e.p.nodes[st!] { STy { assoc } => assoc != "", _ => false } {
+    el::refuse(e, "a `type_name` of a field read");
+    return ex(ir::NdNull, text_t);
+  }
   for tv in e.type_vars {
     if tv.spelling == plain_name {
       el::refuse(e, "a `type_name` of a type variable");
@@ -2538,6 +2554,15 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   vars.assign_target = v;
   x = expression(e, vars, rhs!);
   vars.assign_target = outer_target;
+  // `@FR-L-Null-Which`: a local spells `S?` as the pointer, so a tagged slot (a field, a vector
+  // element) bound to one is read through its tag here, on both passes; a `&` keeps the slot.
+  if op == "=" && is_nullable_wrapper(e, x.tp) && !(match e.p.nodes[rhs!] { SUnary { op: uo } => uo == "&", _ => false }) {
+    rx = el_ex_place::read_through_tag(e, vars, x);
+    if rx == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    x = rx!;
+  }
   // `@FR-B-Scope`, loft#1700: a bind after the name's block ended, at a type its old binding
   // refuses or that differs from it only in absence, is a new binding with a variable of its
   // own, named by the statement's position (`rebind_after_block`).

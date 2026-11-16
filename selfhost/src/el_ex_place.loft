@@ -1046,6 +1046,46 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       el::refuse(e, "a repeated vector item");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // An item of a `vector<S?>` field (`parse_item`'s tagged arms, as `vector_build` has them).
+    if is_nullable_wrapper(e, inner) {
+      tsyn = el_types::struct_enum_def(inner);
+      pay = nullable_payload(e, tsyn);
+      steps: vector<ir::Node> = [];
+      if literal_of(e, it, pay) {
+        nb = nullable_some_literal(e, vars, tsyn, it);
+        if nb == null {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        if !e.first_pass {
+          steps = [el_ir::cl(e, "OpCopyRecord", [nb!, at, ir::NdInt { n: el::def(e, tsyn).known_type + 16384 }])];
+        }
+      } else {
+        tx = el_ex_assign::expression(e, vars, it);
+        if tx.tp is TyNull {
+          steps = [];
+        } else if struct_ref(e, el_types::base(tx.tp)) == pay {
+          if !e.first_pass {
+            if el_ir::reads_var(tx.code, rec) {
+              el::refuse(e, "a field append whose item reads the field's record");
+              return ex(ir::NdNull, ir::TyVoid);
+            }
+            steps = nullable_slot_write(e, vars, tsyn, at, tx.code, fresh: true);
+          }
+        } else {
+          if !el_types::is_unknown(tx.tp) {
+            el::refuse(e, "an item of a vector of nullable records that is no record of it: {type_kind(tx.tp)}");
+          }
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+      }
+      if !e.first_pass {
+        el_vars::set_var_type(vars, elm, ir::TyReference { n: el::variant_of(e, tsyn, "Some"), dep: [rec] });
+        ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+        ls += steps;
+        ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+      }
+      continue;
+    }
     sd = struct_literal_def(e, it);
     if sd >= 0 {
       if !el_types::is_equal(e, inner, ir::TyReference { n: sd, dep: [] }) {
@@ -2359,19 +2399,36 @@ pub fn nullable_set_null(e: el::El, syn: integer, to: ir::Node) -> ir::Node {
 // from `value`, an `S` that may be the null sentinel — held in a work-ref, then, where it is
 // present, the slot's old payload released, the discriminant set present and the payload
 // copied in; where it is absent, the slot set absent.
-pub fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_ref: ir::Node, value: ir::Node) -> vector<ir::Node> {
+pub fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_ref: ir::Node, value: ir::Node, fresh: boolean = false) -> vector<ir::Node> {
   sd = nullable_payload(e, syn);
   src = el_vars::work_ref(vars, ir::TyReference { n: sd, dep: [] });
   kt = el::def(e, syn).known_type;
   some_kt = el::def(e, el::variant_of(e, syn, "Some")).known_type;
   present: vector<ir::Node> = [];
-  if kt != el_schema::NO_TYPE {
+  // `@FR-H-Claim`: a FRESH slot (an element the construction just minted) holds no value to
+  // release; its payload copy is flagged a fresh destination and its absent arm only sets the tag.
+  if kt != el_schema::NO_TYPE && !fresh {
     present += [el_ir::cl(e, "OpClearKeyed", [slot_ref, ir::NdInt { n: kt }])];
   }
-  s_kt = ir::NdInt { n: el::def(e, sd).known_type };
-  present += [el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: src }, el_ir::cl(e, "OpGetField", [slot_ref, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, s_kt]), s_kt])];
+  s_kt = ir::NdInt { n: el::def(e, sd).known_type + (if fresh { 16384 } else { 0 }) };
+  pay_kt = ir::NdInt { n: el::def(e, sd).known_type };
+  present += [el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: src }, el_ir::cl(e, "OpGetField", [slot_ref, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, pay_kt]), s_kt])];
   test = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: src }])]);
-  [el_ir::v_set(src, value), el_ir::v_if(test, ir::NdInsert { items: present }, nullable_set_null(e, syn, slot_ref))]
+  absent = if fresh { el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 0, tp: el_schema::NO_TYPE }]) } else { nullable_set_null(e, syn, slot_ref) };
+  // `@FR-B-View`: a stash of a projection (`s.h`, `v[i]`) views the projection's root.
+  if !e.first_pass {
+    match el_ir::unspan(value) {
+      NdCall { def_nr: vd, args: va } => {
+        root = if starts_with(el::def(e, vd).name, "OpGet") && len(va) > 0 { place_root(e, va[0]) } else { -1 };
+        if root >= 0 {
+          el_vars::depend(vars, src, root);
+        }
+      },
+      NdTupleGet { var: tv } => { el_vars::depend(vars, src, tv); },
+      _ => {}
+    }
+  }
+  [el_ir::v_set(src, value), el_ir::v_if(test, ir::NdInsert { items: present }, absent)]
 }
 
 // `read_through_tag` (`emit_nullable_slot_read`, `@FR-L-Null-Tag`): a tagged `__nullable<S>`

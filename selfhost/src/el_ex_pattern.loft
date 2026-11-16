@@ -1956,10 +1956,38 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     _ => ir::TyUnknown { n: 0 }
   };
   nested_want = match declared { TyVector { inner: _ } => declared, _ => held_elem };
+  tsyn = match declared { TyEnum { n: tn } => if is_nullable_wrapper(e, declared) { tn } else { -1 }, _ => -1 };
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
       return refused_build();
+    }
+    // An item of a `vector<S?>` (`parse_item`'s tagged arms): a `null` leaves the fresh element's
+    // tag absent, an `S { … }` literal is built as a `Some` and copied in, any other `S` is
+    // written through the fresh form of `emit_nullable_slot_write` — each as it is read, so
+    // its work-refs are numbered with its own buffers.
+    if tsyn >= 0 {
+      pay = el_ex_place::nullable_payload(e, tsyn);
+      if el_ex_place::literal_of(e, it, pay) {
+        nb = el_ex_place::nullable_some_literal(e, vars, tsyn, it);
+        if nb == null {
+          return refused_build();
+        }
+        xs += [ex(if e.first_pass { ir::NdInsert { items: [] } } else { el_ir::cl(e, "OpCopyRecord", [nb!, ir::NdVar { n: elm }, ir::NdInt { n: el::def(e, tsyn).known_type + 16384 }]) }, declared)];
+        continue;
+      }
+      tx = el_ex_assign::expression(e, vars, it);
+      if tx.tp is TyNull {
+        xs += [ex(ir::NdInsert { items: [] }, declared)];
+      } else if struct_ref(e, el_types::base(tx.tp)) == pay {
+        xs += [ex(if e.first_pass { ir::NdInsert { items: [] } } else { ir::NdInsert { items: el_ex_place::nullable_slot_write(e, vars, tsyn, ir::NdVar { n: elm }, tx.code, fresh: true) } }, declared)];
+      } else {
+        if !el_types::is_unknown(tx.tp) {
+          el::refuse(e, "an item of a vector of nullable records that is no record of it: {type_kind(tx.tp)}");
+        }
+        return refused_build();
+      }
+      continue;
     }
     sd = struct_literal_def(e, it);
     if sd < 0 {
@@ -2296,6 +2324,20 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // freed after when it gives it away (`call_gives_away_its_store`).  Any other item is copied in.
   // `build_vector_list`'s record arm for a struct enum: the element made through the vector, the
   // item's record copied into it (a call that gives its store away frees it after), finished.
+  // A tagged element (`vector<S?>`): made through the vector, its item's steps written into it.
+  if tsyn >= 0 && len(xs) > 0 {
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: el::variant_of(e, tsyn, "Some"), dep: [v] });
+    at = ir::NdVar { n: elm };
+    for x in xs {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      match x.code {
+        NdInsert { items: steps } => { ls += steps; },
+        _ => { ls += [x.code]; }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
   if len(recs) == 0 && len(xs) > 0 && push == "" && senum >= 0 {
     el_vars::set_var_type(vars, elm, ir::TyEnum { n: senum, is_ref: true, dep: [v] });
     at = ir::NdVar { n: elm };

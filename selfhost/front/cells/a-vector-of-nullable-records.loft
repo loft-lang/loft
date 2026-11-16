@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `vector<S?>` stores the tagged `__nullable<S>` (`e2_nullable_elem`, minted where
+// the type is read).  A literal's items — `null`, a call, an `S { … }` — fill fresh slots
+// (`emit_nullable_slot_write`, fresh); an element bound to a local is read through its tag
+// (`read_through_tag`); a loop's element is the slot, and `e == null` proves it present on the
+// else side (`heap_null_test`); an element is written and set absent; a struct's `vector<S?>`
+// field is filled from its literal and appended to.
+// Prints: 2 true 209 5 9 true 9 2 | 3 5 true
+
+struct S { a: integer }
+struct B { items: vector<S?>, k: integer }
+
+fn mk(n: integer) -> S { S { a: n } }
+
+fn main() {
+  v: vector<S?> = [null, mk(2), S { a: 3 }];
+  x = v[1];
+  y = v[0];
+  v += [S { a: 4 }];
+  v += [null];
+  s = 0;
+  for e in v { s += e.a ?? 100; }
+  t = 0;
+  n = 0;
+  for p in v { if p == null { n += 1; } else { t += p.a; } }
+  v[0] = S { a: 9 };
+  v[1] = null;
+  b = B { items: [mk(1), null], k: 2 };
+  b.items += [S { a: 5 }];
+  z = b.items[2];
+  println("{x.a ?? -1} {y == null} {s} {len(v)} {v[0].a ?? -1} {v[1] == null} {t} {n} | {len(b.items)} {z.a ?? -1} {b.items[1] == null}");
+}

@@ -99,6 +99,42 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       el::refuse(e, "a repeated vector item");
       return null;
     }
+    // An item of a `vector<S?>` field (`parse_item`'s tagged arms, as `vector_build` has them).
+    if is_nullable_wrapper(e, inner) {
+      tsyn = el_types::struct_enum_def(inner);
+      pay = el_ex_place::nullable_payload(e, tsyn);
+      tat = ir::NdVar { n: elm };
+      steps: vector<ir::Node> = [];
+      if el_ex_place::literal_of(e, it, pay) {
+        nb = el_ex_place::nullable_some_literal(e, vars, tsyn, it);
+        if nb == null {
+          return null;
+        }
+        if !e.first_pass {
+          steps = [el_ir::cl(e, "OpCopyRecord", [nb!, tat, ir::NdInt { n: el::def(e, tsyn).known_type + 16384 }])];
+        }
+      } else {
+        tx = el_ex_assign::expression(e, vars, it);
+        if tx.tp is TyNull {
+          steps = [];
+        } else if struct_ref(e, el_types::base(tx.tp)) == pay {
+          if !e.first_pass {
+            steps = el_ex_place::nullable_slot_write(e, vars, tsyn, tat, tx.code, fresh: true);
+          }
+        } else {
+          if !el_types::is_unknown(tx.tp) {
+            el::refuse(e, "an item of a vector of nullable records that is no record of it: {type_kind(tx.tp)}");
+          }
+          return null;
+        }
+      }
+      if !e.first_pass {
+        el_vars::set_var_type(vars, elm, ir::TyReference { n: el::variant_of(e, tsyn, "Some"), dep: el_types::deps(el_vars::tp(vars, elm)) });
+        xs += [ex(ir::NdInsert { items: [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + steps + [el_ir::cl(e, "OpFinishRecord", [r, tat, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])] }, inner)];
+        built += [true];
+      }
+      continue;
+    }
     // `new_record` for a literal item of a record element: the element made in the field's
     // vector, the literal's fields written into it, the element finished.
     el_ex_place::unqualify_literal(e, it);
@@ -457,6 +493,8 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
     _ => el_ex_assign::expression(e, vars, re!)
   };
   // A field of an `S?` slot is read through its tag: absent reads as the null `S?`.
+  // (A guard's proof is of the slot — the receiver as it was written, before the tag's read.)
+  slot_code = x.code;
   if is_nullable_wrapper(e, x.tp) {
     rx = el_ex_place::read_through_tag(e, vars, x);
     if rx == null {
@@ -515,7 +553,7 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
   }
   // A field of a record that may be null (`x: S?`) may be null too — unless a guard proved
   // the record present here (`(N-Guard)`).
-  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(x.code)) };
+  proven = match el_ir::unspan(slot_code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(slot_code)) };
   // A tagged `S?` slot spells its own absence (`wrap_projection_nullable`).
   if rt is TyOptional && !(t is TyOptional) && !proven && !is_nullable_wrapper(e, t) {
     t = ir::TyOptional { inner: t };

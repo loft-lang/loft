@@ -1662,16 +1662,45 @@ pub fn and_presence(a: DivProof, b: DivProof) -> DivProof {
   if a.v >= 0 && a.then { a } else if b.v >= 0 && b.then { b } else { DivProof { v: -1, then: false } }
 }
 
-pub fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
+// The local whose tag `n` reads (`OpConvIntFromEnum(OpGetEnum(v, 0))`), or -1.
+pub fn tag_read_of(e: el::El, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdCall { def_nr: cv, args: ca } => {
+      if el::def(e, cv).name != "OpConvIntFromEnum" || len(ca) != 1 {
+        return -1;
+      }
+      match el_ir::unspan(ca[0]) {
+        NdCall { def_nr: gv, args: ga } => {
+          if el::def(e, gv).name != "OpGetEnum" || len(ga) != 2 || !is_zero(ga[1]!) {
+            return -1;
+          }
+          match el_ir::unspan(ga[0]) { NdVar { n: v } => v, _ => -1 }
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+pub fn presence_proof(e: el::El, vars: el_vars::Vars, test: ir::Node) -> DivProof {
   none = DivProof { v: -1, then: false };
   match test {
-    NdSpan { pos: _, inner } => presence_proof(e, inner),
+    NdSpan { pos: _, inner } => presence_proof(e, vars, inner),
     NdVar { n } => DivProof { v: n, then: true },
     // `a && b` (`if a { b } else { false }`): where it holds, both conjuncts do — either one's
     // presence proof is the conjunction's (`narrowings_from_condition`).
-    NdIf { cond, t, f } => if el_ir::unspan(t) == ir::NdBoolean { b: true } { presence_proof(e, cond) } else if el_ir::unspan(f) == ir::NdBoolean { b: false } { and_presence(presence_proof(e, cond), presence_proof(e, t)) } else { none },
+    NdIf { cond, t, f } => if el_ir::unspan(t) == ir::NdBoolean { b: true } { presence_proof(e, vars, cond) } else if el_ir::unspan(f) == ir::NdBoolean { b: false } { and_presence(presence_proof(e, vars, cond), presence_proof(e, vars, t)) } else { none },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
+      // `heap_null_test`'s tagged arm: `s == null` on a `__nullable<S>` local reads its tag
+      // (`OpEqInt(OpConvIntFromEnum(OpGetEnum(s, 0)), 0)`), proving it present where it fails.
+      if nm == "OpEqInt" && len(args) == 2 && is_zero(args[1]!) {
+        tagged = tag_read_of(e, args[0]!);
+        if tagged >= 0 && is_nullable_wrapper(e, el_vars::tp(vars, tagged)) {
+          return DivProof { v: tagged, then: false };
+        }
+      }
       if len(args) == 2 && (starts_with(nm, "OpEq") || starts_with(nm, "OpNe")) {
         for side in [0, 1] {
           match el_ir::unspan(args[side]!) {
@@ -1685,7 +1714,7 @@ pub fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
         return none;
       }
       if nm == "OpNot" {
-        inner = presence_proof(e, args[0]!);
+        inner = presence_proof(e, vars, args[0]!);
         return DivProof { v: inner.v, then: !inner.then };
       }
       if nm != "OpRefIsNull" && nm != "OpVectorIsNull" && !starts_with(nm, "OpConvBoolFrom") {
@@ -1781,7 +1810,7 @@ pub fn assume_condition(e: el::El, vars: el_vars::Vars, test: ir::Node, side: bo
   if dv.then == side {
     push_nonzero(vars, dv.v);
   }
-  pp = presence_proof(e, test);
+  pp = presence_proof(e, vars, test);
   if pp.then == side {
     push_present(vars, pp.v);
   }
