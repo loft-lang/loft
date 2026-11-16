@@ -191,7 +191,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   // A record (or `τ?`) answered by an `if` of parameters, literals and nulls borrows those
   // parameters.
-  if rb >= 0 && e.first_pass && el_types::base(result) is TyReference {
+  // (Both passes: a recursive arm's borrow is known only once the first pass typed the function.)
+  if rb >= 0 && el_types::base(result) is TyReference {
     ps = if_tail_params(e, vars, code);
     if ps != null {
       r0 = el::def(e, e.context).returned[0];
@@ -427,6 +428,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         // Where the arms are the answer the body is typed as the `if`, which borrows what either
         // arm does (`joined_deps`; a literal arm borrows nothing).
         ad = arms_deps(code);
+        // The body is typed with the result as this pass met it: a borrow the arms add now (a
+        // recursive arm's, known only after the first pass) reaches the declaration, not the body.
+        if ad != null && arms_answer && len(el_types::deps(result)) > 0 {
+          ad = [for dv in ad! if el_types::deps(result).contains(dv) { dv }];
+        }
         // A `return` that merged a parameter's borrow this pass (`record_return`'s `MergeAttr`)
         // is in the result now.
         now = el::def(e, e.context).returned[0];
@@ -1167,8 +1173,8 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
   tail = match code { NdBlock { block } => if block[0].name == "Object" { code } else { el_ir::unspan(el_ir::last(block[0].operators)) }, _ => code };
   match tail {
     NdIf { cond: _, t, f } => {
-      a = if_tail_params(e, vars, t);
-      b = if_tail_params(e, vars, f);
+      a = call_arm_params(e, vars, t) ?? if_tail_params(e, vars, t);
+      b = call_arm_params(e, vars, f) ?? if_tail_params(e, vars, f);
       if a == null || b == null {
         return null;
       }
@@ -1195,6 +1201,11 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
       if fr >= 0 && vars.vars[fr]!.argument {
         return [fr];
       }
+      // An element of a vector parameter (through its fields) borrows that parameter.
+      er = place_root(e, tail);
+      if er >= 0 && vars.vars[er]!.argument && el::def(e, def_nr).name == "OpGetVector" {
+        return [er];
+      }
       null
     },
     // The first pass's `null` arm, before it answers the sentinel.
@@ -1205,11 +1216,46 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
       if block[0].name == "Object" {
         return [];
       }
+      // A call arm given a home in this frame (`own_joined_call_arms`) borrows nothing.
+      if block[0].name == "join-arm-owner" {
+        return [];
+      }
       if block[0].name == "scalar_match" {
         mps = if_tail_params(e, vars, el_ir::last(block[0].operators));
         return mps;
       }
       null
+    },
+    _ => null
+  }
+}
+
+// An arm whose value is a call of a function the program declares: the parameters its answer
+// borrows, as the arm's block is typed (none for a call answering a fresh record, the callee's
+// borrowed arguments for one answering a view).  Null for any other arm.
+pub fn call_arm_params(e: el::El, vars: el_vars::Vars, arm: ir::Node) -> vector<integer>? {
+  match el_ir::unspan(arm) {
+    NdBlock { block } => {
+      if block[0].name != "block" || len(block[0].operators) != 1 {
+        return null;
+      }
+      match el_ir::unspan(block[0].operators[0]) {
+        NdCall { def_nr } => {
+          nm = el::def(e, def_nr).name;
+          if !(starts_with(nm, "n_") || starts_with(nm, "t_")) {
+            return null;
+          }
+          r: vector<integer> = [];
+          for d in el_types::deps(block[0].result[0] ?? ir::TyVoid) {
+            if d < 0 || d >= len(vars.vars) || !vars.vars[d]!.argument {
+              return null;
+            }
+            r += [d];
+          }
+          r
+        },
+        _ => null
+      }
     },
     _ => null
   }

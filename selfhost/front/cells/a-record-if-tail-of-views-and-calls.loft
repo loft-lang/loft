@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record answered by an `if` whose arms are a parameter, a parameter's field, an element of a vector parameter, a call answering a fresh record (`own_joined_call_arms`: its buffer bound, then answered) or a recursive call answering a view: the result borrows the parameters the arms hand back, a recursive arm's known only after the first pass.
+// Prints: 1 2 7 3 7
+
+struct S { n: integer }
+struct H { link: S?, own: S, items: vector<S> }
+fn mk(n: integer) -> S { S { n: n } }
+fn fb(h: H, c: boolean) -> S { if c { h.own } else { S { n: 35 } } }
+fn fc(a: S, c: boolean) -> S { if c { a } else { mk(7) } }
+fn fd(v: vector<S>, d: S) -> S { if len(v) == 0 { d } else { v[0] } }
+fn fe(a: S, b: S, n: integer) -> S { if n == 0 { a } else { fe(b, a, n - 1) } }
+fn main() {
+  h = H { link: S { n: 1 }, own: S { n: 2 }, items: [S { n: 3 }] };
+  x = h.link;
+  y = fb(h, true);
+  z = fc(y, false);
+  w = fd(h.items, z);
+  q = fe(y, z, 1);
+  println("{x.n ?? -1} {y.n} {z.n} {w.n} {q.n}");
+}
