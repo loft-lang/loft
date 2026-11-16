@@ -51,6 +51,7 @@ use opt_tabulate;
 use loop_shape;
 use opt_non_sentinel;
 use opt_range;
+use cgen_value;
 
 // Is `code` one identifier: letters, digits and underscores only?
 fn identifier(code: text) -> boolean {
@@ -1083,6 +1084,12 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     xs[i] = as_shape(w, value, shapes[i]!);
     if w.why != "" {
       return none();
+    }
+  }
+  // An IR tuple the callee takes by pointer (`Cx::vr_ptr_params`): its address.
+  for i in cgen_value::vr_ptr_params(x, d) {
+    if i < len(xs) {
+      xs[i] = cgen_value::tuple_arg_address(w, args, i, xs[i]!, shapes[i]!, ind);
     }
   }
   t = cgen_names::plain(d);
@@ -3087,6 +3094,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   raw: vector<text> = [];
   links: vector<boolean> = [];
   is_param: vector<boolean> = [];
+  // `@FR-R-ValueRecord`'s pointer clause: the parameters that arrive as `const loft_tupN *`.
+  by_ptr = cgen_value::vr_ptr_params(x, index);
+  ordinal = 0;
   for v in d.variables.variables {
     shape = shapes[v#index]!;
     if held(shape) == "" || shape == "void" {
@@ -3109,11 +3119,13 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     raw += [own];
     // @PLN219 — a `&S` whose `S` is held out of line points at a slot cell, which may name a
     // field: read through the test.
-    names += [if link && binds::slot_link_def(x.b, v.type_def[0]!) != null { "loft_slot_read(*{own})" } else if link { "(*{own})" } else { own }];
+    pointed = v.argument && by_ptr.contains(ordinal);
+    names += [if link && binds::slot_link_def(x.b, v.type_def[0]!) != null { "loft_slot_read(*{own})" } else if link || pointed { "(*{own})" } else { own }];
     links += [link];
     is_param += [v.argument];
     if v.argument {
-      params += [if link { "{held(shape)} *{own}" } else { "{passed(shape)} {own}" }];
+      params += [if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" }];
+      ordinal += 1;
     }
   }
   if len(params) != len(d.attributes) {

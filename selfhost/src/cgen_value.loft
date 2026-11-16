@@ -1,0 +1,156 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — value records passed by pointer: `Cx::vr_ptr_params` (`src/c/mod.rs`),
+// `vr_param_read_only` (`src/value_record.rs`) and `tuple_arg_address`
+// (`src/c/body/value.rs`).  `@FR-R-ValueRecord`'s pointer clause: a parameter the body only
+// READS arrives as `const loft_tupN *`, so the callee reads the caller's struct where it is.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_types;
+use loop_shape;
+use opt_non_sentinel;
+
+const SCALAR_GETTERS = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
+
+// Is `t` a scalar (`data::is_scalar`): a type no heap stands behind?
+fn scalar(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  }
+}
+
+// `vr_ptr_params`: the parameter positions of `d` at which a value record arrives by pointer.
+// The IR's tuples (a tuple the source writes) of three or more SCALAR members the body only
+// reads.  `LOFT_NO_VR_PTR=1` passes every value record by value.  The `@FR-R-ValueRecord`
+// records' half (`ValueRecords::params`) and the `__apv` twins' exclusion come with
+// `LOFT_NO_VALUE_RECORD` and `LOFT_NO_APART`: under either switch that half is empty.
+pub fn vr_ptr_params(x: Cx, d: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if (env_variable("LOFT_NO_VR_PTR") ?? "0") != "0" || d < 0 || d >= len(x.b.data.definitions) {
+    return out;
+  }
+  def = x.b.data.definitions[d]!;
+  // A definition without a body reads nothing, as `vr_param_read_only` reads a null body.
+  body = if len(def.code) == 0 { ir::NdNull } else { def.code[0]! };
+  i = 0;
+  for v in def.variables.variables {
+    if !v.argument {
+      continue;
+    }
+    wide = match cgen_types::base(v.type_def[0] ?? ir::TyVoid) {
+      TyTuple { elems } => len(elems) >= 3 && all_scalar(elems),
+      _ => false,
+    };
+    if wide && param_read_only(x.b, body, v#index) {
+      out += [i];
+    }
+    i += 1;
+  }
+  out
+}
+
+fn all_scalar(ts: vector<ir::TypeT>) -> boolean {
+  for t in ts {
+    if !scalar(t) {
+      return false;
+    }
+  }
+  true
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn mentions(v: ir::Node, a: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if x == a { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `vr_param_read_only` (`param_read_only` without the lent set): does `body` only read
+// parameter `a` — never rebind it, write into it, or hand it where it may be written?
+fn param_read_only(b: ir::Bundle, body: ir::Node, a: integer) -> boolean {
+  calls: vector<ir::Node> = [];
+  ok = [true];
+  opt_non_sentinel::walk(body, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var == a { ok[0] = false; } },
+      NdTuplePut { var, idx: _, inner: _ } => { if var == a { ok[0] = false; } },
+      NdCall { def_nr: _, args: _ } => { calls += [n]; },
+      _ => {},
+    }
+  });
+  if !ok[0]! {
+    return false;
+  }
+  for c in calls {
+    match c {
+      NdCall { def_nr, args } => {
+        if def_nr < 0 || def_nr >= len(b.data.definitions) {
+          continue;
+        }
+        def = b.data.definitions[def_nr]!;
+        name = def.name;
+        for x in args {
+          i = x#index;
+          writes_into = (name.starts_with("OpSet") && i == 0) || (name == "OpCopyRecord" && i == 1);
+          if writes_into {
+            if mentions(x, a) {
+              return false;
+            }
+          } else if loop_shape::var_of(loop_shape::unspan(x)) == a {
+            read = SCALAR_GETTERS.contains(name) || name == "OpGetField" || name == "OpConvBoolFromRef" || name == "OpRefIsNull" || name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpClear" || (name == "OpCopyRecord" && i == 0);
+            if !read && !name.starts_with("Op") && i < len(def.attributes) {
+              read = match cgen_types::base(def.attributes[i]!.typedef[0] ?? ir::TyVoid) {
+                TyRefVar { inner: _ } => false,
+                _ => true,
+              };
+            }
+            if !read {
+              return false;
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  true
+}
+
+// `tuple_arg_address`: the address argument `i` (written `code`, of `shape`) goes to a callee
+// that takes it by pointer as — the variable's own where the argument is a variable no other
+// argument names, else a temporary's.
+fn tuple_arg_address(w: W, args: vector<ir::Node>, i: integer, code: text, shape: text, ind: integer) -> text {
+  v = loop_shape::var_of(loop_shape::unspan(args[i]!));
+  if v >= 0 && code == (w.names[v] ?? "") {
+    named = false;
+    for o in args {
+      if o#index != i && mentions(o, v) {
+        named = true;
+      }
+    }
+    if !named {
+      return "&{code}";
+    }
+  }
+  t = temp(w, shape);
+  line(w, ind, "{t} = {code};");
+  "&{t}"
+}
