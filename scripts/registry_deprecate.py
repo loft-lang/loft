@@ -14,7 +14,7 @@ line is left, the range resolves to the newest release (@C166), and whether it w
 test result (registry validation), not something the line can say — drawing 0.5.0, whose graphics
 line is all Rust-only, passes on graphics 0.12.1.
 
-Usage:  registry_deprecate.py <index.json> [--write] [--manifests DIR]
+Usage:  registry_deprecate.py <index.json> [--write] [--manifests DIR] [--only PKG]
         registry_deprecate.py --self-test
 
 Reads each release's `loft.toml` from the local registry cache (`~/.loft/registry`) or from
@@ -176,6 +176,10 @@ def main(argv):
     packages = index["packages"]
     found = deprecations(
         packages, lambda n, v: manifest_of(n, v, packages[n]["versions"][v], cache))
+    # `--only PKG`: one library's deprecations, so each is its own reviewed, signed change.
+    if "--only" in argv:
+        only = argv[argv.index("--only") + 1]
+        found = {k: why for k, why in found.items() if k[0] == only}
     by_reason = {}
     for (n, v), why in sorted(found.items(), key=lambda kv: (kv[0][0], _key(kv[0][1]))):
         by_reason.setdefault(why, []).append(f"{n}@{v}")
