@@ -865,7 +865,8 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               ft = el::def(e, vd).attributes[fa]!.typedef[0];
               // A vector or record field binds as a view of the subject (`vector<T>["s"]`), a text
               // field as the text it reads.
-              if ft is TyVector || (ft is TyReference && struct_ref(e, ft) >= 0) {
+              // An out-of-line field (a struct enum's child) binds as that view too.
+              if ft is TyVector || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) {
                 // `@FR-P-Cap-View`: the capture borrows the subject's source variable — a place's
                 // root where the subject is read in place (`match_borrow_source`).
                 sroot = el_ex_match::match_borrow_source(e, vars, subj);

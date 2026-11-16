@@ -165,7 +165,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   if op == "=" && calls(e, el_ir::unspan(p.code), "OpRefFromChildRec") {
     field = match el_ir::unspan(p.code) { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
     kt = match field { NdCall { args } => match el_ir::unspan(args[2] ?? ir::NdNull) { NdInt { n } => n, _ => -1 }, _ => -1 };
-    sd = struct_ref(e, el_types::base(p.tp));
+    sd = el_schema::out_of_line_content(e, p.tp);
     if kt < 0 || sd < 0 || !calls(e, field, "OpGetField") {
       el::refuse(e, "an out-of-line write whose place is no field");
       return ex(ir::NdNull, ir::TyVoid);
@@ -2362,7 +2362,7 @@ pub fn nullable_some_literal(e: el::El, vars: el_vars::Vars, syn: integer, node:
 // (`out_of_line_kt`: `u16::MAX` on the first pass, before any layout).
 fn child_field(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) -> vector<ir::Node> {
   at = el::def(e, d).attributes[a]!;
-  sd = match el_types::base(at.typedef[0]) { TyReference { n } => n, _ => -1 };
+  sd = el_schema::out_of_line_content(e, at.typedef[0]);
   kt = if e.first_pass || sd < 0 { 65535 } else { el::def(e, sd).known_type };
   [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: base + field_position(e, d, at.name) }, ir::NdInt { n: kt }]), ir::NdInt { n: kt }]
 }
@@ -2408,14 +2408,17 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
   if e.p.nodes[fe] is SNull {
     return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), k]);
   }
-  literal = struct_literal_def(e, fe) == sd;
+  // A struct enum's child is a literal of any of its variants.
+  vl = el_ex_pattern::variant_literal_def(e, fe);
+  literal = struct_literal_def(e, fe) == sd || (vl >= 0 && el::def(e, vl).parent == sd);
   x = el_ex_assign::expression(e, vars, fe);
   if e.first_pass {
     return ir::NdInsert { items: [] };
   }
   if !literal {
     xc = el_ir::unspan(x.code);
-    same = struct_ref(e, el_types::base(x.tp)) == sd;
+    xd = match el_types::base(x.tp) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+    same = xd >= 0 && (xd == sd || (el::def(e, xd).def_type == el::DT_ENUM_VALUE && el::def(e, xd).parent == sd));
     // The record the field lies in, handed to its own child, is demoted into it
     // (`place_demote`, `OpDemoteRec`): not carried.
     if same && xc is NdVar && xc == ir::NdVar { n: place_root(e, field) } {
@@ -2468,7 +2471,7 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
 // A literal's out-of-line field `a` of record `d` at `r`, given the value at `fe`.
 fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: integer, fe: integer) -> ir::Node? {
   fk = child_field(e, d, a, r, 0);
-  sd = match el_types::base(el::def(e, d).attributes[a]!.typedef[0]) { TyReference { n } => n, _ => -1 };
+  sd = el_schema::out_of_line_content(e, el::def(e, d).attributes[a]!.typedef[0]);
   kt = match fk[1]! { NdInt { n } => n, _ => 65535 };
   out_of_line_set(e, vars, fk[0]!, kt, sd, fe)
 }

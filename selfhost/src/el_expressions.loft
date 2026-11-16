@@ -824,7 +824,9 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
   bl = match code { NdBlock { block } => block[0], _ => return null };
   v = match el_ir::unspan(el_ir::last(bl.operators)) { NdVar { n } => n, _ => return null };
   ret = el::def(e, d).returned[0];
-  if !(el_types::base(ret) is TyReference) {
+  // A struct-enum parameter handed back is borrowed as a record parameter is (`MergeAttr`).
+  enum_param = el_types::struct_enum_def(ret) >= 0 && !(ret is TyOptional) && vars.vars[v]!.argument && !hidden_param(e, vars, v) && attr_nr(el::def(e, d), el_vars::name_of(vars, v)) >= 0;
+  if !(el_types::base(ret) is TyReference) && !enum_param {
     return null;
   }
   dep = el_types::deps(ret);

@@ -1344,7 +1344,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     // Typed as the subject is (`create_unique("match_subj", &subject_type)`): a `w!` block
     // keeps the borrow of the local it answers; a call's answer is typed here without its buffer.
     // (Asked of the syntax: the first pass has no block to read.)
-    ht = if match e.p.nodes[subject] { SPostfix { op } => op == "!", _ => false } { st } else { el_types::without_deps(st) };
+    // A call answering a view of its arguments keeps what it borrows of them the same way.
+    view_call = match el_ir::unspan(x.code) { NdCall { def_nr } => returns_argument_view(el::def(e, def_nr)), _ => false };
+    ht = if view_call || match e.p.nodes[subject] { SPostfix { op } => op == "!", _ => false } { st } else { el_types::without_deps(st) };
     held = el_vars::create_unique(vars, "match_subj", ht);
     el_vars::set_defined(vars, held);
     held_set = el_ir::v_set(held, x.code);

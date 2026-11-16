@@ -45,15 +45,6 @@ pub fn fill_all(e: el::El) {
       }
     }
   }
-  // A struct whose fields reach it again — `Tree { left: Tree? }`, `A { b: B }` with
-  // `B { a: A? }` — is laid out with that field out of line, a child (`@FR-L-OutOfLine`,
-  // `out_of_line`).  A cycle through a struct ENUM is not carried: refused before any layout.
-  for d in 0..len(e.b.data.definitions) {
-    if el::def(e, d).source == e.source && el::def(e, d).def_type == el::DT_ENUM && reaches(e, d, d, []) {
-      el::refuse(e, "a type whose fields contain it again (an out-of-line child)");
-      return;
-    }
-  }
   // `actual_types_deferred` before it: each enum the file declared, in definition order, a
   // schema enum of its name whose values its variants are, each variant valued its position
   // (`register_enum_db`, `stamp_enum_variants`).
@@ -480,20 +471,13 @@ fn fill_database(e: el::El, d: integer) {
     if a.constant {
       continue;
     }
-    // A struct-enum field one of whose variants holds this record is an out-of-line child
-    // (`@FR-L-OutOfLine`, `field_is_out_of_line`): not carried.
-    se = el_types::struct_enum_def(a.typedef[0]);
-    if se >= 0 && holds_record(e, se, d, []) {
-      el::refuse(e, "a struct-enum field that would contain its host (an out-of-line child)");
-      return;
-    }
     // `τ?` is stored at `τ`'s own layout (`@FR-L-Null`).
     ft = el_types::base(a.typedef[0]);
     // `@FR-L-OutOfLine`: a field whose record holds its host is the number of a child record
     // in the host's store, typed by the content it holds (`child_rec<S>`).
     c = -1;
     if out_of_line(e, d, a#index) {
-      sd = match ft { TyReference { n } => n, _ => -1 };
+      sd = out_of_line_content(e, ft);
       if el::def(e, sd).known_type == NO_TYPE {
         fill_database(e, sd);
       }
@@ -515,19 +499,28 @@ fn fill_database(e: el::El, d: integer) {
   }
 }
 
-// `Data::field_is_out_of_line` (`@FR-L-OutOfLine`, @C159) for a plain struct field: attribute
-// `a` of `d` is a record — `S` or `S?`, no pointer — whose fields reach `d` again inline, so it
-// cannot lie inside its host.  A struct-enum field that does is refused where it is laid out.
+// `Data::field_is_out_of_line` (`@FR-L-OutOfLine`, @C159): attribute `a` of `d` is a record or
+// a struct enum — `S` or `S?`, no pointer — whose fields reach `d` again inline, so it cannot
+// lie inside its host.
 pub fn out_of_line(e: el::El, d: integer, a: integer) -> boolean {
   at = el::def(e, d).attributes[a];
   if at == null || at!.constant {
     return false;
   }
-  sd = match el_types::base(at!.typedef[0] ?? ir::TyVoid) {
-    TyReference { n, dep } => if dep.contains(el_types::MARKER) { -1 } else { n },
+  sd = out_of_line_content(e, at!.typedef[0] ?? ir::TyVoid);
+  sd >= 0 && holds_record(e, sd, d, [])
+}
+
+// The definition an out-of-line field of type `t` would hold: a plain struct's, or a struct
+// enum's (its row is the content: the child is any of its variants), not a pointer's and not
+// a compiler's own type; -1 for any other type.
+pub fn out_of_line_content(e: el::El, t: ir::TypeT) -> integer {
+  sd = match el_types::base(t) {
+    TyReference { n, dep } => if dep.contains(el_types::MARKER) || el::def(e, n).def_type != el::DT_STRUCT { -1 } else { n },
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
     _ => -1
   };
-  sd >= 0 && el::def(e, sd).def_type == el::DT_STRUCT && !starts_with(el::def(e, sd).name, "__") && holds_record(e, sd, d, [])
+  if sd >= 0 && !starts_with(el::def(e, sd).name, "__") { sd } else { -1 }
 }
 
 // `Stores::child_rec`: the store type `child_rec<name of content>` — a four-byte record number

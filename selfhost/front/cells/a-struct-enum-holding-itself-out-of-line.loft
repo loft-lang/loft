@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a variant field whose struct enum holds the variant is out of line (child_rec<E>, the enum's row its content): its child literals built in the child or copied in, a match binding of it a view through OpRefFromChildRec.
+// Prints: 7
+enum Ex { Num { v: integer }, Add { l: Ex, r: Ex } }
+
+fn eval(e: Ex) -> integer {
+  match e {
+    Num { v } => v,
+    Add { l, r } => eval(l) + eval(r)
+  }
+}
+
+fn main() {
+  x = Add { l: Num { v: 1 }, r: Add { l: Num { v: 2 }, r: Num { v: 4 } } };
+  println("{eval(x)}");
+}
