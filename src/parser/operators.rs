@@ -4304,11 +4304,17 @@ impl Parser {
         // read as a view of `b`, the temporary's scope ended without freeing what it held, and
         // the copy leaked once per discharge (the self-hosted elaborator's `default_image`;
         // main, both backends).  `LOFT_NO_NCR_CALL_OWNS=1` keeps the call's borrows.
+        // The verdict must be the same on both passes, since pass 2 does not re-type a local
+        // whose type differs only in deps.  A RECURSIVE call names the function being parsed,
+        // which has no code until its first pass ends while its return borrows are already
+        // inferred from the arms above the call: asked `is_loft_defined` alone, pass 1 kept
+        // the borrows, the local stayed a view and the owned answer leaked once per discharge.
         let block_tp = if matches!(
             lhs_type.base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
         ) && matches!(code.unspan(), Value::Call(d, _)
-                if !self.data.def(*d).name().starts_with("Op") && self.data.def(*d).is_loft_defined())
+                if !self.data.def(*d).name().starts_with("Op")
+                    && (self.data.def(*d).is_loft_defined() || *d == self.context))
             && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_CALL_OWNS").is_some())
         {
             lhs_type.without_deps()
