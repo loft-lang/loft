@@ -399,6 +399,37 @@ pub fn lock_within_budget(f: &std::fs::File, what: &str) -> Result<(), std::time
     }
 }
 
+/// [`lock_within_budget`] for a SHARED hold: any number of shared holders at once, none beside
+/// an exclusive one.  The wasm runtime builds hold the global native-build lock shared, so two
+/// shapes build side by side while a package build, which holds it exclusive, never runs beside
+/// either.
+///
+/// # Errors
+/// How long it waited, when the run's budget would expire before the lock came free.
+pub fn lock_shared_within_budget(f: &std::fs::File, what: &str) -> Result<(), std::time::Duration> {
+    let started = Instant::now();
+    let Some(budget) = remaining() else {
+        blocked_on(what);
+        let _ = f.lock_shared();
+        unblocked();
+        return Ok(());
+    };
+    let margin = std::time::Duration::from_millis(1500).min(budget / 2);
+    let deadline = started + budget.saturating_sub(margin);
+    blocked_on(what);
+    loop {
+        if f.try_lock_shared().is_ok() {
+            unblocked();
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            unblocked();
+            return Err(started.elapsed());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Clear the blocked note set by [`blocked_on`].
 pub fn unblocked() {
     if !ARMED.load(Ordering::Relaxed) {
@@ -639,4 +670,39 @@ pub fn env_grace_secs() -> u64 {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(2)
+}
+
+#[cfg(test)]
+mod tests {
+    /// The two runtime shapes hold the global native-build lock SHARED and a package build
+    /// holds it exclusive: shared holders coexist, an exclusive one waits for all of them.
+    #[test]
+    fn shared_holders_coexist_and_keep_an_exclusive_one_out() {
+        let path = std::env::temp_dir().join(format!("loft_lock_test_{}", std::process::id()));
+        let open = || {
+            crate::file_access::open_with(
+                &path,
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(false),
+            )
+            .expect("the lock file")
+        };
+        let (html, wasi, package) = (open(), open(), open());
+        super::lock_shared_within_budget(&html, "the html runtime").expect("first shared");
+        assert!(
+            wasi.try_lock_shared().is_ok(),
+            "a second shape builds beside the first"
+        );
+        assert!(
+            package.try_lock().is_err(),
+            "a package build waits for the runtime builds"
+        );
+        let _ = html.unlock();
+        let _ = wasi.unlock();
+        assert!(package.try_lock().is_ok(), "and runs once they are done");
+        let _ = package.unlock();
+        let _ = crate::file_access::remove_file(&path);
+    }
 }

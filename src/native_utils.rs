@@ -411,19 +411,25 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
         // present rather than trigger an implicit cargo build.
         return crate::file_access::exists(&rlib).then_some(profile_dir);
     }
-    // Serialise cross-process builds on the SAME global lock the package
-    // auto-build uses, so parallel `loft` invocations (e.g. the concurrent
-    // html_wasm / html_asyncify test binaries) don't race cargo's shared registry
-    // index/cache or each other's output dir.
-    let _build_lock = crate::file_access::open_with(
-        std::env::temp_dir().join("loft-native-build.lock"),
-        std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false),
-    )
-    .ok();
-    if let Some(f) = &_build_lock {
+    // Two locks.  The global native-build lock the package auto-builds take EXCLUSIVE, held
+    // here SHARED: a package build (which may link this runtime) never runs beside a runtime
+    // build, while two runtime shapes — each in its own cargo target dir, whose registry and
+    // build dir cargo locks itself — build side by side (CI warms html and wasi at once; on one
+    // lock they ran one after the other, 4m10 then 4m31 on macOS).  And a lock of this SHAPE,
+    // held exclusive, so two processes wanting the same runtime build it once.
+    let open_lock = |name: &str| {
+        crate::file_access::open_with(
+            std::env::temp_dir().join(name),
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false),
+        )
+        .ok()
+    };
+    let _build_lock = open_lock("loft-native-build.lock");
+    let _shape_lock = open_lock(&format!("loft-runtime-{}.lock", shape.name()));
+    if let (Some(global), Some(own)) = (&_build_lock, &_shape_lock) {
         // loft#1238 — the wait is timed separately from the build.  Under a parallel test
         // runner every wasm-shaped process reaches this lock at once after a loft rebuild, so
         // the wall-clock a single run reports can be almost entirely SOMEONE ELSE'S build; a
@@ -432,7 +438,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
         // here is queued behind another's cold build, and its kill message used to say
         // `phase=parse`.
         let waiting = format!(
-            "the global native-build lock (for the {} wasm runtime rlib)",
+            "the native-build locks (for the {} wasm runtime rlib)",
             shape.name()
         );
         // loft#1238 — bounded by the run's remaining budget; see `timeout::lock_within_budget`.
@@ -442,7 +448,9 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
             shape.name(),
             "waiting for the global build lock",
             || {
-                if let Err(waited) = loft::timeout::lock_within_budget(f, &waiting) {
+                let held = loft::timeout::lock_shared_within_budget(global, &waiting)
+                    .and_then(|()| loft::timeout::lock_within_budget(own, &waiting));
+                if let Err(waited) = held {
                     gave_up = Some(waited);
                 }
             },
