@@ -8,8 +8,8 @@
 // result type; the fn-ref dispatch arms declined or grouped; then a fixpoint that only removes —
 // the presence carried, the body gate, the site gate, the parameter gate.
 //
-// The view-leaf clause (@PLN164 C5) declines here: a record whose layout holds a view part is
-// never admitted (`view_leaf_plan` not carried yet).
+// The view-leaf clause (@PLN164 C5) is carried for the null view (`opt_vr_view`); an exit
+// that fills a view field by an append declines its function.
 
 use ir;
 use loop_shape;
@@ -24,6 +24,7 @@ use opt_vr_shape;
 use opt_vr_leaves;
 use opt_vr_locals;
 use opt_vr_sites;
+use opt_vr_view;
 
 fn view_field_on() -> boolean {
   (env_variable("LOFT_NO_VIEW_FIELD") ?? "0") == "0"
@@ -303,7 +304,27 @@ pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layou
       d = k#index;
       why = opt_vr_locals::value_body(b, ops, d, vr, admitted, sp);
       if why == "" && has_view_part(vr, k) {
-        why = if b.data.definitions[d]!.pub_visible { "a view leaf would cross a library API (R-Escape)" } else { "a heap field is not a view leaf" };
+        if b.data.definitions[d]!.pub_visible {
+          why = "a view leaf would cross a library API (R-Escape)";
+        } else {
+          vlocals = opt_vr_locals::value_locals_in(b, ops, d, vr, admitted, sp);
+          vbody = b.data.definitions[d]!.code[0]!;
+          vsz = opt_vr_shape::sizes(vbody);
+          vleaves = opt_vr_leaves::collect_leaves(b, vbody, vsz, vlocals, true);
+          vok = false;
+          plan_d = opt_vr_view::view_leaf_plan(b, vr, d, vleaves, k, vok);
+          if vok {
+            kept_v: vector<opt_vr_layout::VView> = [];
+            for x in vr.views {
+              if x.d != d {
+                kept_v += [x];
+              }
+            }
+            vr.views = kept_v + plan_d;
+          } else {
+            why = "a heap field is not a view leaf";
+          }
+        }
       }
       if why != "" {
         cand[d] = -1;
@@ -326,6 +347,9 @@ pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layou
       own_d = if admitted2[caller]! >= 0 { caller } else { -1 };
       c = opt_vr_shape::Ctx { b: b, ops: ops, d: caller, admitted: admitted2, params: vr.params, locals: locals, own: own_d, sites: vr.sites, sp: sp2 };
       opt_vr_sites::site_walk(c, cdef.code[0]!, if own_d >= 0 { opt_vr_sites::POS_TAIL } else { opt_vr_sites::POS_OPERAND }, declined);
+      if len(vr.views) > 0 {
+        opt_vr_view::view_sites_declined(b, caller, vr.views, admitted2, locals, vr, declined);
+      }
       if has_p {
         body = cdef.code[0]!;
         sz = opt_vr_shape::sizes(body);
@@ -363,6 +387,13 @@ pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layou
   }
   vr.sp = opt_vr_shape::surely_present_fns(b, ops, cand, vr.params, vr.sites);
   vr.fns = cand;
+  kept_views: vector<opt_vr_layout::VView> = [];
+  for x in vr.views {
+    if cand[x.d]! >= 0 {
+      kept_views += [x];
+    }
+  }
+  vr.views = kept_views;
   vr
 }
 
