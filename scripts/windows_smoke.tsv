@@ -80,6 +80,7 @@ scripts/pub_migrate.py	--help
 scripts/receipts_ci.py	--help
 scripts/reference-review.py	--help
 scripts/registry-sign.sh	--help
+scripts/registry_deprecate.py	--help
 scripts/registry_retention_check.py	--help
 scripts/release-checklist.py	--help
 scripts/release-gate.sh	--help
@@ -135,6 +136,7 @@ selfhost/bench/slowest.py	--help
 selfhost/compare/compare.py	--help
 selfhost/cover/census.py	--help
 selfhost/front/elab_gate.py	--help
+selfhost/front/elab_probe.py	--help
 selfhost/front/state_diff.py	--help
 selfhost/front/tokens_gate.py	--help
 selfhost/seed/build.sh	--help

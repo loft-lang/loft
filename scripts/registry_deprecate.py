@@ -164,6 +164,9 @@ def _self_test():
 def main(argv):
     if argv[1:2] == ["--self-test"]:
         return _self_test()
+    if argv[1:2] in (["-h"], ["--help"]):
+        print(__doc__)
+        return 0
     if len(argv) < 2:
         sys.stderr.write(__doc__)
         return 2
