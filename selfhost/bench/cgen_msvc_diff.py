@@ -56,7 +56,10 @@ def without_msvc_split(lines):
 
 
 def main():
-    if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return
+    if len(sys.argv) < 3:
         sys.exit(__doc__)
     with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
         want = without_msvc_split(fh.read().split("\n"))
