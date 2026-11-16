@@ -1180,7 +1180,7 @@ elab	refused	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft
 elab	refused	tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft
 elab	refused	tests/scripts/a-call-text-moves-into-its-local.loft
 elab	refused	tests/scripts/a-call-two-wrappers-share-is-made-once.loft
-elab	differ	tests/scripts/a-captured-view-of-a-call-result-is-released-once-past-an-early-exit.loft
+elab	differ	loft-suite/rules/heap/H-Free/a-captured-view-of-a-call-result-is-released-once-past-an-early-exit.loft
 elab	refused	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft
 elab	refused	tests/scripts/a-compound-keyed-insert-writes-the-entry-its-key-names.loft
 elab	refused	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft
