@@ -2136,7 +2136,7 @@ pub fn elem_size(t: ir::TypeT) -> integer {
     TyCharacter => 4,
     TyEnum { n: _, is_ref } => if is_ref { -2 } else { 1 },
     // A nullable struct enum is its enum's record (null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { -1 } else { 8 }, _ => -1 },
     _ => -1
   }
 }
@@ -2144,6 +2144,10 @@ pub fn elem_size(t: ir::TypeT) -> integer {
 // The store type of a `vector<T>` (`vector<…>` of the element's store type): a narrow integer's
 // is named after its width (`vector<byte>`), not its definition (`vector<integer(0, 255)>`).
 pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
+  // A `vector<integer?>` is laid out as the `vector<integer>` it is.
+  if el_types::nullable_integer(e, t) {
+    return el_schema::schema_type(e, "vector<integer>");
+  }
   match t {
     TyInteger { spec } => {
       if el_types::narrow_width(spec) > 0 {
@@ -2181,6 +2185,8 @@ pub fn read_op(t: ir::TypeT) -> text {
     TySingle => "OpGetSingle",
     TyCharacter => "OpGetCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpGetEnum" },
+    // A nullable plain integer element is read as the integer it is stored as.
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpGetInt" }, _ => "" },
     _ => ""
   }
 }

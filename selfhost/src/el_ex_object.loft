@@ -766,7 +766,15 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
       return ex(ir::NdNull, ir::TyVoid);
     }
     el_vars::drop_use(vars, v);
-    steps += [el_ir::v_set(v, ir::NdTupleGet { var: tmp, idx: i })];
+    // `destructure_constant_member`: a constant member of a tuple literal is read as itself
+    // into a scalar local its author declared, so the store sees the literal.
+    declared_scalar = (vars.annotated.contains(v) || (vars.vars[v].argument && !hidden_param(e, vars, v))) && is_scalar(el_vars::tp(vars, v)) && is_scalar(et);
+    constant = match el_ir::unspan(x.code) {
+      NdTuple { items } => match el_ir::unspan(items[i] ?? ir::NdNull) { NdInt { n: _ } => true, NdFloat { f: _ } => true, NdSingle { f: _ } => true, NdBoolean { b: _ } => true, _ => false },
+      _ => false
+    };
+    read = if declared_scalar && constant { match el_ir::unspan(x.code) { NdTuple { items } => items[i]!, _ => ir::NdNull } } else { ir::NdTupleGet { var: tmp, idx: i } };
+    steps += [el_ir::v_set(v, read)];
   }
   ex(ir::NdInsert { items: steps }, ir::TyVoid)
 }

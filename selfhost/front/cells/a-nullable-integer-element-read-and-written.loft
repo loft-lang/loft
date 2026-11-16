@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: an element of a vector<integer?> read in a counted loop, at a negative index, and written — a value, and null (its own sentinel).
+// Prints: 21 3 6 4
+fn main() {
+  v: vector<integer?> = [null, 3];
+  w = [5, 6];
+  s = 0;
+  for i in 0..len(v) { s += v[i] ?? 7; }
+  for i in 0..len(w) { s += w[i]; }
+  x = v[-1];
+  y = w[-1];
+  v[0] = 4;
+  v[1] = null;
+  println("{s} {x ?? -1} {y} {v[0] ?? -1}");
+}

@@ -581,7 +581,7 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
   if cw >= 0 {
     t = el_types::with_deps(t, [cw]);
   }
-  if may_miss {
+  if may_miss && !(t is TyOptional) {
     t = ir::TyOptional { inner: t };
   }
   code = if record && !e.first_pass && linked_record(e, inner) { el_ir::cl(e, "OpVectorRef", [x.code, i.code]) } else { el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]) };

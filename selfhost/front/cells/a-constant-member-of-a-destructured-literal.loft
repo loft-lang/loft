@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a constant member of a destructured tuple literal is read as itself into a scalar local its author declared (destructure_constant_member); any other member off the pattern's temp.
+// Prints: 5 true 7 8
+fn opt(k: integer) -> integer? { if k > 0 { k } else { null } }
+
+fn main() {
+  a: integer = 0;
+  b: integer? = 0;
+  (a, b) = (5, opt(0));
+  c = 0;
+  d = 0;
+  (c, d) = (opt(7) ?? -1, 8);
+  println("{a} {b == null} {c} {d}");
+}

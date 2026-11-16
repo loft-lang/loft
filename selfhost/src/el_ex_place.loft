@@ -398,7 +398,9 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       nv: ir::Node? = null;
       if x.tp is TyNull {
         // The assignment's range guard is asked of a `null` too (`guard_declared_range`).
-        nl = if field_place { el_convert::null_of(e, pb) } else { null };
+        // An element declared `τ?` (`vector<integer?>`) takes its null as a `τ?` field does.
+        elem_nullable = !field_place && match rd_place { NdCall { args } => place_type(e, vars, args[0] ?? ir::NdNull) is TyOptional, _ => false };
+        nl = if field_place || elem_nullable { el_convert::null_of(e, pb) } else { null };
         nv = if nl == null { null } else { el_convert::guard_range(e, nl!, pt, x.tp, true) };
       } else {
         nv = stored(e, vars, x, pb);
