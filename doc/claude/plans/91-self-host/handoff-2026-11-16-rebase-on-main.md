@@ -17,7 +17,7 @@ full loft interpreter, the in-between data of the two implementations compared a
   runner surveys, one heavy job at a time.
 - Gate E at the new pin, before the uncommitted ports below: 733 of 2125 agree, 12 differ.  The
   differs were new Rust behaviour from main plus programs a cleared refusal newly exposed.
-- With the ports below: **758 of 2125 agree, 1362 refused, 5 differ** (verdict files diffed run
+- With the ports below: **759 of 2125 agree, 1360 refused, 6 differ** (verdict files diffed run
   against run: every moved program is one a port named).
 
 ## Ported this session (Rust function → loft)
