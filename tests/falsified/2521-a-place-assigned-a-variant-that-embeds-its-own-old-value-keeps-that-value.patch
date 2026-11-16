@@ -1,18 +1,7 @@
 diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index cb7f2266d..783256705 100644
 --- b/src/parser/objects.rs
 +++ a/src/parser/objects.rs
-@@ -58,9 +58,6 @@ pub(crate) struct FieldSinks {
-     /// projection place the literal is written into: the literal is parsed again, built apart
-     /// and copied in (`Parser::inplace_place_declined`).
-     decline_place: bool,
--    /// The literal is written into a PROJECTION place (`place_hint`), which can decline to the
--    /// build-apart road (`decline_place`); a whole-variable destination cannot.
--    projection_place: bool,
-     /// `@FR-R-Demote` — the literal's destination variable, the fields whose value is that
-     /// variable whole, how many other field values mention it, and (pass 2) the field the
-     /// prelude already filled by moving the old record into it.
-@@ -6188,16 +6185,7 @@ impl Parser {
+@@ -6199,23 +6199,7 @@
              let staged = if let Some((xv, xoff)) = self_read_root
                  && self.reads_place(&value, xv, xoff)
              {
@@ -22,19 +11,18 @@ index cb7f2266d..783256705 100644
 -                // 7, inner: e[0]! }` copied the record with `tag` already over `Leaf.v`).  A
 -                // projection place declines instead: the literal is built apart and copied in,
 -                // every value read from the old record.
--                if out_of_line && sinks.projection_place {
+-                // Only an ENUM VARIANT literal declines: a struct literal's displaced child is
+-                // MOVED into the new record (`@FR-R-Demote`'s place clause), which reads it before
+-                // any write — a list push `h.next = Node { v, next: h.next }` declined copied the
+-                // whole chain on every push.
+-                if out_of_line
+-                    && sinks.projection_place
+-                    && self.data.def_type(td_nr) == DefType::EnumValue
+-                {
 -                    sinks.decline_place = true;
 -                    false
 -                } else if xoff == crate::use_analysis::ANY_FIELD {
 +                if xoff == crate::use_analysis::ANY_FIELD {
-                     !primed
-                 } else if primed {
-                     sinks.decline_place = true;
-@@ -6864,7 +6852,6 @@ impl Parser {
-         {
-             self_read_root = Some(place);
-             place_hint = Some(code.clone());
--            sinks.projection_place = true;
-         }
-         if let Value::Var(v_nr) = code
-             && hint_is_the_whole_value
+                     // loft#2527 — an element of the root itself (`e[0] = Node { v: 8, next:
+                     // e[0] }`) read by an OUT-OF-LINE field: staged as a view, the literal's
+                     // writes overwrite the element before the field write copies it in.  The
