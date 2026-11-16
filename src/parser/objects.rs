@@ -58,6 +58,9 @@ pub(crate) struct FieldSinks {
     /// projection place the literal is written into: the literal is parsed again, built apart
     /// and copied in (`Parser::inplace_place_declined`).
     decline_place: bool,
+    /// The literal is written into a PROJECTION place (`place_hint`), which can decline to the
+    /// build-apart road (`decline_place`); a whole-variable destination cannot.
+    projection_place: bool,
     /// `@FR-R-Demote` — the literal's destination variable, the fields whose value is that
     /// variable whole, how many other field values mention it, and (pass 2) the field the
     /// prelude already filled by moving the old record into it.
@@ -6196,7 +6199,16 @@ impl Parser {
             let staged = if let Some((xv, xoff)) = self_read_root
                 && self.reads_place(&value, xv, xoff)
             {
-                if xoff == crate::use_analysis::ANY_FIELD {
+                // loft#2521, `@FR-B-Copy` — an OUT-OF-LINE field's value is copied in by its
+                // field write (`OpSetChildRec`), which runs after the writes before it; staged,
+                // the temp is a view of the place those writes overwrite (`e[0] = Wrap { tag:
+                // 7, inner: e[0]! }` copied the record with `tag` already over `Leaf.v`).  A
+                // projection place declines instead: the literal is built apart and copied in,
+                // every value read from the old record.
+                if out_of_line && sinks.projection_place {
+                    sinks.decline_place = true;
+                    false
+                } else if xoff == crate::use_analysis::ANY_FIELD {
                     !primed
                 } else if primed {
                     sinks.decline_place = true;
@@ -6863,6 +6875,7 @@ impl Parser {
         {
             self_read_root = Some(place);
             place_hint = Some(code.clone());
+            sinks.projection_place = true;
         }
         if let Value::Var(v_nr) = code
             && hint_is_the_whole_value

@@ -75,7 +75,7 @@ pub struct Site {
 
 // The calls of loft bodies in `node`, in walk order.  The callers ask `of` outside the walk's
 // closure: an `Inputs` answered from the memo and bound inside a closure is released by it
-// (loft#2522).
+// (loft#2523).
 pub fn calls_in(b: ir::Bundle, node: ir::Node) -> vector<Site> {
   out: vector<Site> = [];
   opt_non_sentinel::walk(node, fn(n: ir::Node) {
@@ -190,8 +190,6 @@ fn compute(b: ir::Bundle, w: opt_writes::Writes, d: integer) -> Inputs {
       }
     }
   }
-  // Bound after the early returns: a local a closure captures, released on an exit taken
-  // before the closure is built, was released twice (with its result buffer).
   rebound = opt_hoist::rebound_vars(b, def, body);
   out = none();
   opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
