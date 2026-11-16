@@ -958,7 +958,7 @@ fn root_name(e: el::El, n: integer) -> text {
 }
 
 // Does the syntax at `n` name `name` anywhere?
-fn mentions_name(e: el::El, n: integer, name: text) -> boolean {
+pub fn mentions_name(e: el::El, n: integer, name: text) -> boolean {
   match e.p.nodes[n] {
     SName { name: nm, member } => if member == "" && nm == name { return true; },
     _ => {}

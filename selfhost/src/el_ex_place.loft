@@ -1670,7 +1670,16 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   }
   // A local the first pass found borrowing another (`s = me(t)` later) is not built into:
   // `parse_object` builds its literal apart, in a `__ref_p2_N`, and binds it.
-  if !e.first_pass && !vars.vars[v].argument && len(el_types::deps(vt)) > 0 {
+  // `viewed_by_an_earlier_bind`: so is a local an earlier bind of this pass left viewing
+  // another's store on some path (`r = b.tp` in one arm, a fresh record in the other) — the
+  // type keeps only the last bind's borrows.
+  viewed_before = false;
+  for vd in vars.viewed[v] ?? [] {
+    if vd != v && vd != 65535 {
+      viewed_before = true;
+    }
+  }
+  if !e.first_pass && !vars.vars[v].argument && (len(el_types::deps(vt)) > 0 || viewed_before) {
     el_vars::mark_built(vars, v);
     // A variant's buffer is typed as its enum (`object_expr`'s `wt`), the record as the variant.
     wt = if el::def(e, d).def_type == el::DT_ENUM_VALUE { ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
@@ -1704,7 +1713,10 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   p2_mark = vars.work_ref_p2;
   vars.rebuild_attempt = watch_hit;
   vars.own_buffer_hit = false;
+  demote = if e.first_pass { -1 } else { demote_field(e, vars, v, d, fields) };
+  vars.demote_var = if demote < 0 { -1 } else { v };
   list = object_fields(e, vars, v, d, fields);
+  vars.demote_var = -1;
   vars.rebuild_attempt = false;
   if list == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1785,6 +1797,20 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     abandon_work_refs(vars, ref_mark, p2_mark);
     o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
+  }
+  // `demote_prelude` (`@FR-R-Demote`): where the local holds a record, its payload moves into
+  // a fresh child of its own store that becomes the field, the record — its number kept —
+  // left zeroed for the other fields (`OpDemoteRec`); where it is absent the literal's own
+  // prelude runs and the field is left absent.
+  if demote >= 0 && len(ops) >= 2 {
+    content = el_schema::out_of_line_content(e, el::def(e, d).attributes[demote]!.typedef[0]);
+    off = ir::NdInt { n: field_position(e, d, el::def(e, d).attributes[demote]!.name) };
+    hv = ir::NdVar { n: v };
+    present = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [hv]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [hv]));
+    moved = el_ir::v_block([el_ir::cl(e, "OpDemoteRec", [hv, off, ir::NdInt { n: el::def(e, content).known_type }])], ir::TyVoid, "demote");
+    fresh = el_ir::v_block([ops[0]!, ops[1]!, el_ir::cl(e, "OpSetInt4", [hv, off, ir::NdInt { n: 0 }])], ir::TyVoid, "demote_fresh");
+    rest = ops[2..];
+    ops = [el_ir::v_if(present, moved, fresh)] + rest;
   }
   // A promoted return buffer (an argument) is built into: its mint guarded to reuse a buffer
   // the caller handed in live, and no reset.
@@ -1907,6 +1933,53 @@ pub fn abandon_work_refs(vars: el_vars::Vars, ref_mark: integer, p2_mark: intege
   }
 }
 
+// Is the syntax at `n` the bare name `name`?
+fn is_bare_name(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: nm, member } => member == "" && nm == name,
+    _ => false
+  }
+}
+
+// `@FR-R-Demote`'s test: the literal of `d` built in place into local `v` gives `v` itself as
+// the whole value of one out-of-line field whose content is the literal's own type — the
+// struct, or for a variant its enum where `v` is of that enum — and reads `v` nowhere else.
+// The field's attribute number, or -1.
+pub fn demote_field(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields: vector<integer>) -> integer {
+  if vars.vars[v].argument || el_vars::is_compiler_generated(vars, v) {
+    return -1;
+  }
+  a = -1;
+  for fi in fields {
+    fe = -1;
+    fa = -1;
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, e: fv } => {
+        fe = fv ?? -1;
+        fa = attr_nr(el::def(e, d), fname);
+      },
+      _ => {}
+    }
+    if fe < 0 || fa < 0 {
+      return -1;
+    }
+    whole = is_bare_name(e, fe, el_vars::name_of(vars, v));
+    if whole && a < 0 {
+      a = fa;
+    } else if el_ex_assign::mentions_name(e, fe, el_vars::name_of(vars, v)) {
+      return -1;
+    }
+  }
+  if a < 0 || !el_schema::out_of_line(e, d, a) {
+    return -1;
+  }
+  content = el_schema::out_of_line_content(e, el::def(e, d).attributes[a]!.typedef[0]);
+  if el::def(e, d).def_type == el::DT_ENUM_VALUE {
+    return if content == el::def(e, d).parent && el_types::struct_enum_def(el_vars::tp(vars, v)) == content { a } else { -1 };
+  }
+  if content == d { a } else { -1 }
+}
+
 pub fn skip_free_named(vars: el_vars::Vars, n: text) {
   nr = el_vars::var(vars, n);
   if nr >= 0 && !vars.vars[nr].argument {
@@ -2005,7 +2078,10 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           if ol == null {
             return null;
           }
-          list += [ol!];
+          // A demoted field is left alone: the prelude filled it.
+          if e.first_pass || !el_ir::empty_insert(ol!) {
+            list += [ol!];
+          }
           found += [fname];
           continue;
         }
@@ -2422,6 +2498,10 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
     // The record the field lies in, handed to its own child, is demoted into it
     // (`place_demote`, `OpDemoteRec`): not carried.
     if same && xc is NdVar && xc == ir::NdVar { n: place_root(e, field) } {
+      // `object_into` moved the old record into this field already (`demote_prelude`).
+      if vars.demote_var == place_root(e, field) {
+        return ir::NdInsert { items: [] };
+      }
       el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
       return null;
     }

@@ -68,6 +68,14 @@ pub fn sets_var(n: ir::Node, v: integer) -> boolean {
   false
 }
 
+// Is `n` an insert of nothing?
+pub fn empty_insert(n: ir::Node) -> boolean {
+  match n {
+    NdInsert { items } => len(items) == 0,
+    _ => false
+  }
+}
+
 // The variables `n` reads, each once, in the order met (`fix_place_before_value`'s `read`).
 pub fn vars_read(n: ir::Node, out: vector<integer>) -> vector<integer> {
   r = out;

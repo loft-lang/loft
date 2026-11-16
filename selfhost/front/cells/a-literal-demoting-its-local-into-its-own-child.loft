@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a literal rebound into its own local with that local as the whole value of an out-of-line field demotes the old record into the field (demote_prelude: OpDemoteRec where the local holds a record, the literal's own prelude where it is absent).
+// Prints: 4 3 7
+struct N { v: integer, next: N? }
+
+fn main() {
+  h = N { v: 1 };
+  for i in 2..5 { h = N { v: i, next: h }; }
+  r: N? = null;
+  r = N { v: 7, next: r };
+  println("{h.v} {h.next.v} {r.v}");
+}
