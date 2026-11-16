@@ -132,6 +132,16 @@ probe `scratchpad/p/cw1.loft`), of a keyed collection (21), of a tuple or a link
 programs whose call through a local is refused only because its lambda was.  loft3 took
 605f3d2f5 as this branch's cut for the next PR and fixed loft#2520 on `tuxedo-pr2518-next`.
 
+**Owed after the next PR lands (loft3's union on `tuxedo-pr2518-next`, suite pin b2194ff):**
+gate E reads 886 of 2185 there with 2 DIFFER, both variable numbering, committed as `differ`
+rows in that branch's baseline — cure them in the elaborator after rebasing:
+1. `rules/matching/M-Match/a-match-subject-from-a-later-function-keeps-its-own-temp.loft`
+   (loft#2520's cell): Rust mints one more `__work` text temp (`__work_3` where the port has
+   `__work_2`).  Compiler change c10d11b64 names a match subject temp by its SITE (pass 1's
+   number per site; a site pass 1 did not mint at is `_match_subj_late_N`) — mirror it.
+2. `tests/scripts/a-captured-view-of-a-call-result-is-released-once-past-an-early-exit.loft`:
+   the closure build's function type reads `deps { items: [10] }` in Rust, `[9]` in the port.
+
 ## Open, in order
 
 1. **Out-of-line children** (`@FR-L-OutOfLine`) are carried in their first increments — layout
