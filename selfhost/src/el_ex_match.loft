@@ -940,7 +940,24 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // A range comprehension whose body is one constant fills (`try_const_fill_comprehension`),
   // and one over constant bounds may unroll (`try_const_unroll_comprehension`) — not carried.
-  if ranged && (constant_body(e, b.code) || (filter != null && rw!.constant)) {
+  // `try_const_fill_comprehension`, carried for a local bound to `[for _ in 0..n { K }]` with
+  // `n` a name or a literal: the constant pushed once and copied `n` times (`OpAppendCopy`).
+  // Any other fill (a value position's "Const fill comprehension" block, a start that is not
+  // zero) and every unroll are refused by name.
+  fill_count = -1;
+  if ranged && filter == null && constant_body(e, b.code) && !starts_with(el_vars::name_of(vars, v), "_") {
+    match e.p.nodes[source] {
+      SRange { lo, hi, inclusive } => {
+        zero = lo != null && match e.p.nodes[lo!] { SInt { v: lv0 } => lv0 == 0, _ => false };
+        simple = hi != null && (e.p.nodes[hi!] is SInt || match e.p.nodes[hi!] { SName { member } => member == "", _ => false });
+        if zero && simple && !inclusive {
+          fill_count = hi!;
+        }
+      },
+      _ => {}
+    }
+  }
+  if ranged && fill_count < 0 && (constant_body(e, b.code) || (filter != null && rw!.constant)) {
     el::refuse(e, "a range comprehension that fills or unrolls a constant");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -969,7 +986,8 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el::refuse(e, "a comprehension over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  comp = el_vars::create_unique(vars, "comp", in_t);
+  // (A fill runs no loop and mints no `_comp_N`.)
+  comp = if fill_count >= 0 { -1 } else { el_vars::create_unique(vars, "comp", in_t) };
   steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
   if !ranged && !sliced {
     steps += [vector_past_end(e, vec, idx)];
@@ -986,6 +1004,26 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
   ];
+  if fill_count >= 0 {
+    value = ir::NdNull;
+    match b.code {
+      NdBlock { block } => {
+        for o in block[0].operators {
+          if !el_ir::is_line(o) {
+            value = el_ir::unspan(o);
+          }
+        }
+      },
+      _ => { value = el_ir::unspan(b.code); }
+    }
+    count = el_ex_assign::expression(e, vars, fill_count);
+    items += [
+      el_ir::cl(e, "OpPreAllocVector", [ir::NdVar { n: v }, ir::NdInt { n: 2 }, ir::NdInt { n: elem_size(in_t) }]),
+      el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, ir::NdVar { n: v }, value)),
+      el_ir::cl(e, "OpAppendCopy", [ir::NdVar { n: v }, count.code, ir::NdInt { n: r.vec_known }])
+    ];
+    return ex(ir::NdInsert { items: items }, ir::TyVoid);
+  }
   // `try_const_unroll_comprehension`: a constant empty range builds the empty vector, no loop.
   if ranged && rw!.empty {
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
