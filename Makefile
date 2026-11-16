@@ -1435,7 +1435,11 @@ game:
 	    echo "    FAIL: target/release/libloft.rlib missing (needed for proc-macros)"; exit 1; }
 	@echo "  [5/7] compiling Brick Buster to self-contained HTML ..."
 	@$(MAKE) --no-print-directory brick-buster-pack
-	@./target/release/loft --html doc/brick-buster.html \
+	@# The deployed page is the rustc writer's: steps above build the wasm32-unknown-unknown
+	@# rlib it links, and tools/check_html_bundle.mjs checks that shape.  `--html` alone now
+	@# builds through the C (@PLN203 C9); the site moves to the C page once the browser probe
+	@# passes on it.
+	@./target/release/loft --native-rust --html doc/brick-buster.html \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    tools/brick-buster/25-brick-buster.loft \
 	    >/tmp/loft_game_html.log 2>&1 || { \
@@ -1493,7 +1497,11 @@ crystal-editor:
 	    echo "    FAIL: wasm rlib build — see /tmp/loft_crystal_wasm.log"; \
 	    tail -20 /tmp/loft_crystal_wasm.log; exit 1; }
 	@echo "  [4/5] compiling Crystal Editor to self-contained HTML ..."
-	@./target/release/loft --html doc/crystal-editor.html \
+	@# The deployed page is the rustc writer's: steps above build the wasm32-unknown-unknown
+	@# rlib it links, and tools/check_html_bundle.mjs checks that shape.  `--html` alone now
+	@# builds through the C (@PLN203 C9); the site moves to the C page once the browser probe
+	@# passes on it.
+	@./target/release/loft --native-rust --html doc/crystal-editor.html \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    tools/audience-demo/crystal_editor.loft \
 	    >/tmp/loft_crystal_html.log 2>&1 || { \
