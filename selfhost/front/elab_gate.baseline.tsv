@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	879	of	2168
+layer	elab	agree	886	of	2171
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -417,7 +417,6 @@ elab	refused	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-co
 elab	refused	loft-suite/rules/heap/H-ShortRef/a-name-into-content-answers-as-the-disturbance-rules-say.loft
 elab	refused	loft-suite/rules/heap/H-Sound/every-path-frees-each-owned-store-once-and-no-other.loft
 elab	refused	loft-suite/rules/heap/H-Stride/1670-a-vector-operation-walks-the-stride-its-layout-has.loft
-elab	refused	loft-suite/rules/heap/H-Stride/a-dense-removal-slides-by-the-declared-width.loft
 elab	refused	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft
 elab	refused	loft-suite/rules/heap/H-SwapIn/a-keyed-local-rebound-from-a-call-takes-the-store-only-when-it-is-given-up.loft
 elab	refused	loft-suite/rules/heap/H-SwapIn/a-rebind-from-a-call-answers-what-the-copy-answers-wherever-the-exchange-runs.loft
@@ -579,7 +578,6 @@ elab	refused	loft-suite/rules/operational/E-Asgn-Compound/1819-a-compound-assign
 elab	refused	loft-suite/rules/operational/E-Asgn-Compound/1825-a-compound-place-with-a-side-effecting-index-is-addressed-once.loft
 elab	refused	loft-suite/rules/operational/E-Asgn-Compound/1827-a-text-compound-appends-the-rendering-of-any-value.loft
 elab	refused	loft-suite/rules/operational/E-Asgn-Compound/2426-a-tuple-member-of-a-call-indexed-element-is-one-place.loft
-elab	refused	loft-suite/rules/operational/E-Asgn-Compound/an-uncomputable-compound-is-null-at-every-place.loft
 elab	refused	loft-suite/rules/operational/E-Asgn-Discharge/a-compound-write-through-a-discharge-reads-the-default-and-writes-the-place.loft
 elab	refused	loft-suite/rules/operational/E-Asgn/1574-a-literal-rebuilt-into-a-local-is-computed-from-the-old-record.loft
 elab	refused	loft-suite/rules/operational/E-Asgn/1575-a-literal-handed-to-a-call-that-returns-it-is-computed-from-the-old-record.loft
@@ -714,7 +712,6 @@ elab	refused	loft-suite/rules/rewrites/R-AppendTwin/an-append-twin-runs-a-builde
 elab	refused	loft-suite/rules/rewrites/R-Base/158-a-base-survives-a-growth-of-another-store.loft
 elab	refused	loft-suite/rules/rewrites/R-Base/a-byte-read-through-a-held-header-takes-its-base-at-the-read.loft
 elab	refused	loft-suite/rules/rewrites/R-BoundAppend/a-result-bound-then-appended-is-appended-at-the-end-of-the-destination.loft
-elab	refused	loft-suite/rules/rewrites/R-BoundedNest/a-bounded-nest-answers-the-checked-loop-beside-counters-fills-and-pushes.loft
 elab	refused	loft-suite/rules/rewrites/R-CompleteWrite/157-complete-write.loft
 elab	refused	loft-suite/rules/rewrites/R-CompleteWrite/a-reused-record-is-written-whole-by-every-literal.loft
 elab	refused	loft-suite/rules/rewrites/R-CompleteWrite/a-struct-enum-field-is-covered-only-by-a-write-as-wide-as-it.loft
@@ -1228,7 +1225,6 @@ elab	refused	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft
 elab	refused	tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft
 elab	refused	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft
 elab	refused	tests/scripts/a-pure-call-made-twice-is-computed-once.loft
-elab	refused	tests/scripts/a-push-fill-stores-each-element-kind.loft
 elab	refused	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft
 elab	refused	tests/scripts/a-read-only-record-copy-is-a-view.loft
 elab	refused	tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft
