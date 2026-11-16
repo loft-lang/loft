@@ -7,7 +7,7 @@
 
 use super::Scopes;
 use super::drops::drop_hook;
-use super::insert_free::scope_free_op_var;
+use super::insert_free::is_scope_exit_cleanup;
 use crate::data::{Data, Type, Value};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::variables::Function;
@@ -218,14 +218,20 @@ pub(super) fn collect_return_sources(expr: &Value, data: &Data, out: &mut Vec<u1
 }
 
 /// The last operator of a sequence that carries the block's VALUE — i.e. skipping
-/// trailing scope-exit frees (`OpFreeRef` / `OpFreeText` / `OpFreeRefIfDistinct`) and
-/// `Line` position markers. A value-returning block can end in a free of a block-local
-/// (a captured `_mv_<f>` text, a `..rest` `__vdb`) appended after the result, so the
-/// naive `.last()` would mistake that free for the value.
+/// trailing scope-exit cleanup ([`is_scope_exit_cleanup`]: a free, a tuple member's free, a
+/// freed reference's reset, the guarded free of a local a call may answer in one of several
+/// buffers) and `Line` position markers. A value-returning block can end in a free of a
+/// block-local (a captured `_mv_<f>` text, a `..rest` `__vdb`) appended after the result, so
+/// the naive `.last()` would mistake that free for the value.  The cleanup set is the one
+/// `insert_free` reads a block's value past: a narrower list here read the guarded free
+/// `if OpDistinctStore(v, b₁) { if OpDistinctStore(v, b₂) { OpFreeRef(v) } }` — what a
+/// local bound from a callee with a work-buffer parameter gets — as a tail `match`'s value,
+/// found no return source in it, and the exit freed the work ref the answer had been
+/// materialised into: the caller freed it again.
 pub(super) fn last_non_free_result<'a>(ops: &'a [Value], data: &Data) -> Option<&'a Value> {
     ops.iter()
         .rev()
-        .find(|op| scope_free_op_var(op, data).is_none() && !matches!(op.unspan(), Value::Line(_)))
+        .find(|op| !is_scope_exit_cleanup(op, data) && !matches!(op.unspan(), Value::Line(_)))
 }
 
 /// loft#1515 shape 2 — move a join-return's source hooks INTO its arms, so the arm is the path.
