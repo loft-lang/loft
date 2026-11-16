@@ -3,7 +3,7 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 <!-- size-exempt: a dated handoff record, read once (DOC_QUALITY § Maintainer docs 2) -->
-# Handoff 2026-11-16 (afternoon): gate E at 833 of 2153, a fast loop for the long tail
+# Handoff 2026-11-16 (afternoon): gate E at 851 of 2158, a fast loop for the long tail
 
 Branch `tuxedo-pln204-int32`, pushed; PR #2518 (loft3's gather) carries it up to 77024883f
 (819 of 2151) and re-wrote gate E's baseline at ITS suite pin 898bc05 — after it merges, rebase
@@ -14,11 +14,11 @@ interpreter, the in-between data of the two implementations compared at every la
 
 | Layer | Gate | Position |
 |---|---|---|
-| front end (gate E) | `selfhost/front/elab_gate.py` | **833 of 2153 agree, 1320 refused, 0 differ**; baseline committed for fc10743c3 |
+| front end (gate E) | `selfhost/front/elab_gate.py` | **851 of 2158 agree, 1307 refused, 0 differ** (818 of the 2125 outside the cells; 765 at the day's start); baseline committed per code commit |
 | writer / runner | `bgen_survey.py`, `run_image_survey.py` | as `handoff-2026-11-16-day.md`; their re-pinned baselines are still uncommitted in `../loft2-repin` |
 
 The corpus is 2143 because the gate has a part of its own now: `selfhost/front/cells/*.loft`
-(28 cells, all agreeing) — one shape per cell that the corpus does not hold ALONE.
+(33 cells, all agreeing) — one shape per cell that the corpus does not hold ALONE.
 
 ## What gate E's remaining 1342 are
 

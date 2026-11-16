@@ -1101,6 +1101,11 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     if !(a.code is NdVar) && !(a.tp is TyOptional) && (struct_ref(e, rb) >= 0 || el_convert::struct_enum(rb)) && place_root(e, a.code) >= 0 {
       return a;
     }
+    // A link to an out-of-line child (`l = &t.next`) is the child's view the same way, absent
+    // where the field holds none.
+    if calls(e, el_ir::unspan(a.code), "OpRefFromChildRec") && place_root(e, a.code) >= 0 {
+      return a;
+    }
     // A link to a vector is the vector's view itself — a local or a field of one, typed as
     // borrowing it — where a bare bind would copy (`@FR-B-Copy`).
     if a.tp is TyVector && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
