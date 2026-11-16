@@ -28,6 +28,7 @@ use cgen_ref;
 use cgen_hoist;
 use cgen_win;
 use cgen_fnref;
+use cgen_append;
 use own;
 use opt_view;
 use opt_facts;
@@ -1688,6 +1689,7 @@ fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
   if plain_rules() {
     cgen_hoist::hold_pushes(x, w, lp, verdict, ind);
   }
+  ap_windows = cgen_append::open_loop_windows(x, w, lp, ind);
   text_windows = cgen_win::open_text_windows(x, w, lp, ind);
   // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
   // so both copies are its fallback.
@@ -1699,6 +1701,7 @@ fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
   } else {
     guarded_copies(x, w, lp, ind);
   }
+  cgen_append::close_loop_windows(w, ap_windows, ind);
   cgen_win::close_text_windows(w, text_windows, ind);
   w.in_range = w.in_range[0..ranged_counters];
   w.in_range_lens = w.in_range_lens[0..ranged_lens];

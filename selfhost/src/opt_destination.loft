@@ -1,0 +1,765 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/lower/destination.rs`: `@FR-R-Destination`, a call whose result's one
+// heap field is moved whole into a fresh element is built IN that element.
+//
+// `sub = f(args); if sub.ok { e = mint(C); move(sub.value → e); finish(C, e); p = sub.next }`:
+// the DESTINATION TWIN `f__d(args, e)` is f's body with its return buffer bound to `e` — the
+// moved field sits at offset 0, every write the body makes to it lands in `e`, and the scalar
+// fields go to locals the twin answers as a tuple.  Admission asks the callee (`shape`) and the
+// caller (`site`).
+
+use ir;
+use binds;
+use loop_shape;
+use opt_hoist;
+use opt_append_twin;
+use opt_non_sentinel;
+use el_ir;
+
+// `LOFT_NO_DESTINATION=1` — every call keeps its buffer and its move.
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_DESTINATION") ?? "0") == "0"
+}
+
+// One scalar field of the result record, answered by the twin as a tuple element: its offset,
+// the tuple member's shape (`int`, `bool`, `float`, `single`), its setter and getter.
+pub struct Scalar {
+  pub off: integer,
+  pub shape: text,
+  pub setter: text,
+  pub getter: text,
+}
+
+// What a destination twin of a callee is: its buffer variable (-1: no twin), the moved field's
+// byte range and type, and the scalar fields in offset order.
+pub struct Shape {
+  pub rb: integer,
+  pub vo: integer,
+  pub vend: integer,
+  pub vt: integer,
+  pub scalars: vector<Scalar>,
+}
+
+fn no_shape() -> Shape {
+  Shape { rb: -1, vo: 0, vend: 0, vt: 0, scalars: [] }
+}
+
+// The tuple shape the twin answers, as the writer spells a tuple shape.
+pub fn tuple_shape(sh: Shape) -> text {
+  parts: vector<text> = [for s in sh.scalars { s.shape }];
+  "tuple({parts.join(",")})"
+}
+
+pub fn scalar_at(sh: Shape, off: integer) -> integer {
+  for s in sh.scalars {
+    if s.off == off {
+      return s#index;
+    }
+  }
+  -1
+}
+
+// The memo of `shape`, per (callee, offset): the answers asked so far.
+pub struct Memo {
+  pub keys: vector<integer>,
+  pub shapes: vector<Shape>,
+}
+
+pub fn new_memo() -> Memo {
+  Memo { keys: [], shapes: [] }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn int(v: ir::Node) -> integer? {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n,
+    _ => null,
+  }
+}
+
+fn is_var(v: ir::Node, x: integer) -> boolean {
+  loop_shape::var_of(loop_shape::unspan(v)) == x
+}
+
+fn trace() -> boolean {
+  (env_variable("LOFT_TRACE_DESTINATION") ?? "") != ""
+}
+
+fn scalar_kind(t: ir::TypeT, s: Scalar) -> boolean {
+  match binds::base(t) {
+    TyInteger { spec: _ } => { s.shape = "int"; s.setter = "OpSetInt"; s.getter = "OpGetInt"; true },
+    TyBoolean => { s.shape = "bool"; s.setter = "OpSetBoolean"; s.getter = "OpGetBoolean"; true },
+    TyFloat => { s.shape = "float"; s.setter = "OpSetFloat"; s.getter = "OpGetFloat"; true },
+    TySingle => { s.shape = "single"; s.setter = "OpSetSingle"; s.getter = "OpGetSingle"; true },
+    _ => false,
+  }
+}
+
+// `shape`: does callee `d` have a destination twin for its result field at byte offset `vo`?
+pub fn shape(b: ir::Bundle, d: integer, vo: integer, m: Memo) -> Shape {
+  key = d * 65536 + vo;
+  for k in m.keys {
+    if k == key {
+      return m.shapes[k#index]!;
+    }
+  }
+  out = compute_shape(b, d, vo);
+  if trace() {
+    println(if out.rb >= 0 { "destination: {def_name(b, d)} has a twin for +{vo} answering {tuple_shape(out)}" } else { "destination: {def_name(b, d)} has no twin for +{vo}" });
+  }
+  m.keys += [key];
+  m.shapes += [out];
+  out
+}
+
+fn mentions(v: ir::Node, x: integer) -> integer {
+  c = [0];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdVar { n: y } => { if y == x { c[0] = c[0]! + 1; } },
+      _ => {},
+    }
+  });
+  c[0]!
+}
+
+// `buffer_uses`: the callee's buffer mentions — how many, how many an admitted form accounts
+// for — and whether one sits at an offset no form serves (`bad`).
+fn buffer_uses(b: ir::Bundle, code: ir::Node, sh: Shape, bad: &boolean) -> boolean {
+  rb = sh.rb;
+  total = mentions(code, rb);
+  nodes: vector<ir::Node> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) { nodes += [n]; });
+  accounted = 0;
+  bad = false;
+  for n in nodes {
+    match n {
+      NdReturn { inner } => { if is_var(inner, rb) { accounted += 1; } },
+      NdCall { def_nr, args } => {
+        op = def_name(b, def_nr);
+        if op == "OpFreeRefIfDistinct" && len(args) > 1 && is_var(args[1]!, rb) {
+          accounted += 1;
+        }
+        if len(args) == 0 || !is_var(args[0]!, rb) {
+          continue;
+        }
+        if op == "OpRefIsNull" || op == "OpConvBoolFromRef" || op == "OpDatabase" || op == "OpPlaceRecord" {
+          accounted += 1;
+        } else if op == "OpGetField" {
+          off = if len(args) > 1 { int(args[1]!) } else { null };
+          tp = if len(args) > 2 { int(args[2]!) } else { null };
+          if off != null && tp != null && tp! >= 0 && tp! < len(b.types) && off! >= sh.vo && off! + b.types[tp!]!.size <= sh.vend {
+            accounted += 1;
+          } else {
+            bad = true;
+          }
+        } else if op.starts_with("OpSet") {
+          off = if len(args) > 1 { int(args[1]!) } else { null };
+          k = if off == null { -1 } else { scalar_at(sh, off!) };
+          if off != null && off! >= sh.vo && off! < sh.vend {
+            accounted += 1;
+          } else if off != null && k >= 0 && sh.scalars[k]!.setter == op {
+            accounted += 1;
+          } else {
+            bad = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  accounted == total
+}
+
+fn compute_shape(b: ir::Bundle, d: integer, vo: integer) -> Shape {
+  def = b.data.definitions[d]!;
+  if !binds::is_loft_defined(def) || (len(def.returned) > 0 && (binds::base(def.returned[0]!) is TyIterator)) {
+    return no_shape();
+  }
+  rb = opt_hoist::retbuf_var(def);
+  if rb < 0 {
+    return no_shape();
+  }
+  rd = match binds::base(def.variables.variables[rb]!.type_def[0] ?? ir::TyVoid) {
+    TyReference { n, dep: _ } => n,
+    _ => return no_shape(),
+  };
+  kt = b.data.definitions[rd]!.known_type;
+  if kt < 0 || kt >= len(b.types) {
+    return no_shape();
+  }
+  fields = match b.types[kt].parts[0] {
+    PtStruct { fields: fs } => fs,
+    _ => return no_shape(),
+  };
+  moved_off = -1;
+  moved_tp = -1;
+  scalars: vector<Scalar> = [];
+  for f in fields {
+    off = f.position;
+    if off == vo {
+      moved_off = off;
+      moved_tp = f.content;
+      continue;
+    }
+    attr = -1;
+    for a in b.data.definitions[rd]!.attributes {
+      if attr < 0 && a.name == f.name {
+        attr = a#index;
+      }
+    }
+    if attr < 0 {
+      return no_shape();
+    }
+    s = Scalar { off: off, shape: "", setter: "", getter: "" };
+    if !scalar_kind(b.data.definitions[rd]!.attributes[attr]!.typedef[0] ?? ir::TyVoid, s) {
+      return no_shape();
+    }
+    scalars += [s];
+  }
+  // The moved field must start where the buffer does.
+  if moved_off != 0 || len(scalars) == 0 {
+    return no_shape();
+  }
+  sorted: vector<Scalar> = [];
+  for _ in 0..len(scalars) {
+    best = -1;
+    for s in scalars {
+      taken = false;
+      for t in sorted {
+        if t.off == s.off {
+          taken = true;
+        }
+      }
+      if !taken && (best < 0 || s.off < scalars[best]!.off) {
+        best = s#index;
+      }
+    }
+    sorted += [scalars[best]!];
+  }
+  sh = Shape { rb: rb, vo: moved_off, vend: moved_off + b.types[moved_tp]!.size, vt: moved_tp, scalars: sorted };
+  bad = false;
+  if len(def.code) == 0 || !buffer_uses(b, def.code[0]!, sh, bad) || bad {
+    if trace() {
+      println("destination: {def.name} declines — its buffer has an unaccounted mention");
+    }
+    return no_shape();
+  }
+  sh
+}
+
+// One level of a destination chain: the call, its twin's shape, where it builds, and the
+// statements of its `ok` arm around the next level.
+pub struct Level {
+  pub callee: integer,
+  pub call_args: vector<ir::Node>,
+  pub at: integer,
+  pub shape: Shape,
+  // The `ok` field's tuple index.
+  pub ok: integer,
+  // Where the twin writes: the element, or a field of it.
+  pub dest: ir::Node,
+  pub pre: vector<ir::Node>,
+  pub post: vector<ir::Node>,
+  pub else_v: ir::Node,
+}
+
+// A caller window the twins replace: the statements it consumes (`first` -1: no site), the
+// element's mint (hoisted above the first call) and the chain of calls, outermost first.
+pub struct Site {
+  pub first: integer,
+  pub last: integer,
+  pub mint: vector<ir::Node>,
+  pub levels: vector<Level>,
+}
+
+fn no_site() -> Site {
+  Site { first: -1, last: -1, mint: [], levels: [] }
+}
+
+fn skip_lines(ops: vector<ir::Node>, i: integer) -> integer {
+  j = i;
+  while j < len(ops) && (ops[j]! is NdLine) {
+    j += 1;
+  }
+  j
+}
+
+// One window: the optional refill of the pooled buffer, `r = f(…, B)`, `if r.ok { … } else
+// { … }` and the free of `r` against `B`.  `r` -1 for none.
+struct Window {
+  first: integer,
+  last: integer,
+  r: integer,
+  callee: integer,
+  call_args: vector<ir::Node>,
+  at: integer,
+  ok_off: integer,
+  then_ops: vector<ir::Node>,
+  else_v: ir::Node,
+}
+
+fn no_window() -> Window {
+  Window { first: -1, last: -1, r: -1, callee: -1, call_args: [], at: -1, ok_off: 0, then_ops: [], else_v: ir::NdNull }
+}
+
+fn call_of(b: ir::Bundle, v: ir::Node, name: text, args: &vector<ir::Node>) -> boolean {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args: a } => {
+      if def_name(b, def_nr) == name {
+        args = a;
+        return true;
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
+fn window(b: ir::Bundle, ops: vector<ir::Node>, i: integer) -> Window {
+  k = i;
+  refill = -1;
+  if k >= len(ops) {
+    return no_window();
+  }
+  match loop_shape::unspan(ops[k]!) {
+    NdIf { cond, t: _, f: _ } => {
+      ta: vector<ir::Node> = [];
+      if call_of(b, cond, "OpRefIsNull", ta) && len(ta) > 0 {
+        refill = loop_shape::var_of(loop_shape::unspan(ta[0]!));
+        if refill >= 0 {
+          k = skip_lines(ops, k + 1);
+        }
+      }
+    },
+    _ => {},
+  }
+  if k >= len(ops) {
+    return no_window();
+  }
+  r = -1;
+  callee = -1;
+  call_args: vector<ir::Node> = [];
+  match loop_shape::unspan(ops[k]!) {
+    NdSet { var, inner } => {
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args } => {
+          r = var;
+          callee = def_nr;
+          call_args = args;
+        },
+        _ => return no_window(),
+      }
+    },
+    _ => return no_window(),
+  }
+  at = binds::hidden_return_buffer_attr(b.data.definitions[callee]!) ?? return no_window();
+  buf = if at < len(call_args) { match loop_shape::unspan(call_args[at]!) { NdVar { n } => n, _ => -1 } } else { -1 };
+  if buf < 0 || (refill >= 0 && refill != buf) {
+    return no_window();
+  }
+  ki = skip_lines(ops, k + 1);
+  if ki >= len(ops) {
+    return no_window();
+  }
+  test = ir::NdNull;
+  then_v = ir::NdNull;
+  else_v = ir::NdNull;
+  match loop_shape::unspan(ops[ki]!) {
+    NdIf { cond, t, f } => { test = cond; then_v = t; else_v = f; },
+    _ => return no_window(),
+  }
+  fi = skip_lines(ops, ki + 1);
+  if fi >= len(ops) {
+    return no_window();
+  }
+  fa: vector<ir::Node> = [];
+  if !call_of(b, ops[fi]!, "OpFreeRefIfDistinct", fa) || len(fa) < 2 || !is_var(fa[0]!, r) || !is_var(fa[1]!, buf) {
+    return no_window();
+  }
+  ta: vector<ir::Node> = [];
+  if !call_of(b, test, "OpGetBoolean", ta) || len(ta) < 2 || !is_var(ta[0]!, r) {
+    return no_window();
+  }
+  ok_off = int(ta[1]!) ?? return no_window();
+  then_ops = match loop_shape::unspan(then_v) {
+    NdBlock { block } => block[0].operators,
+    _ => return no_window(),
+  };
+  Window { first: i, last: fi, r: r, callee: callee, call_args: call_args, at: at, ok_off: ok_off, then_ops: then_ops, else_v: else_v }
+}
+
+// What the chain's last `ok` arm holds: the element's mint (statement indices) and where it
+// stands, the element and its container, the result aliases (`[alias, level, …]`), each
+// result's destination, and the statement indices the twins replace.
+struct LastArm {
+  mint: vector<integer>,
+  mint_j: integer,
+  e: integer,
+  container: integer,
+  aliases: vector<integer>,
+  dests: vector<ir::Node>,
+  drop: vector<integer>,
+}
+
+fn level_of(v: ir::Node, rs: vector<integer>) -> integer {
+  for r in rs {
+    if is_var(v, r) {
+      return r#index;
+    }
+  }
+  -1
+}
+
+fn last_arm(b: ir::Bundle, t_ops: vector<ir::Node>, rs: vector<integer>, ok: &boolean) -> LastArm {
+  ok = false;
+  out = LastArm { mint: [], mint_j: -1, e: -1, container: -1, aliases: [], dests: [], drop: [] };
+  for op in t_ops {
+    j = op#index;
+    match loop_shape::unspan(op) {
+      NdSet { var: e, inner } => {
+        na: vector<ir::Node> = [];
+        if call_of(b, inner, "OpNewRecord", na) && len(na) > 0 && loop_shape::var_of(loop_shape::unspan(na[0]!)) >= 0 {
+          if out.mint_j >= 0 {
+            return out;
+          }
+          c = loop_shape::var_of(loop_shape::unspan(na[0]!));
+          prev = -1;
+          for q in rev(0..j) {
+            if prev < 0 && !(t_ops[q]! is NdLine) {
+              prev = q;
+            }
+          }
+          pa: vector<ir::Node> = [];
+          if prev >= 0 && call_of(b, t_ops[prev]!, "OpPreAllocVector", pa) && len(pa) > 0 && is_var(pa[0]!, c) {
+            out.mint += [prev];
+          }
+          out.mint += [j];
+          out.mint_j = j;
+          out.e = e;
+          out.container = c;
+        }
+      },
+      _ => {},
+    }
+  }
+  if out.mint_j < 0 {
+    return out;
+  }
+  dests: vector<ir::Node> = [for _ in rs { ir::NdNull }];
+  found: vector<boolean> = [for _ in rs { false }];
+  for op in t_ops {
+    j = op#index;
+    alias_bound = false;
+    match loop_shape::unspan(op) {
+      NdSet { var: a, inner } => {
+        ga: vector<ir::Node> = [];
+        if call_of(b, inner, "OpGetField", ga) && len(ga) > 1 && int(ga[1]!) == 0 {
+          m = level_of(ga[0]!, rs);
+          if m >= 0 {
+            out.aliases += [a, m];
+            out.drop += [j];
+            alias_bound = true;
+          }
+        }
+      },
+      _ => {},
+    }
+    if alias_bound {
+      continue;
+    }
+    ma: vector<ir::Node> = [];
+    if call_of(b, op, "OpMoveField", ma) && len(ma) == 3 {
+      src = ma[0]!;
+      dst = ma[1]!;
+      m = -1;
+      sv = loop_shape::var_of(loop_shape::unspan(src));
+      if sv >= 0 {
+        for x in out.aliases {
+          if x#index % 2 == 0 && x == sv {
+            m = out.aliases[x#index + 1]!;
+          }
+        }
+      } else {
+        ga: vector<ir::Node> = [];
+        if call_of(b, src, "OpGetField", ga) && len(ga) > 1 && int(ga[1]!) == 0 {
+          m = level_of(ga[0]!, rs);
+        }
+      }
+      if m < 0 {
+        continue;
+      }
+      ga2: vector<ir::Node> = [];
+      dest_ok = is_var(dst, out.e) || (call_of(b, dst, "OpGetField", ga2) && len(ga2) > 0 && is_var(ga2[0]!, out.e));
+      if !dest_ok || found[m]! || j < out.mint_j {
+        return out;
+      }
+      dests[m] = dst;
+      found[m] = true;
+      out.drop += [j];
+    }
+  }
+  for f in found {
+    if !f {
+      return out;
+    }
+  }
+  out.dests = dests;
+  ok = true;
+  out
+}
+
+// `dest_zeros`: the zero-inits of the element's bytes the twins fill.
+fn dest_zeros(b: ir::Bundle, t_ops: vector<ir::Node>, e: integer, dests: vector<ir::Node>, shapes: vector<Shape>) -> vector<integer> {
+  lows: vector<integer> = [];
+  highs: vector<integer> = [];
+  for d in dests {
+    lo = match loop_shape::unspan(d) {
+      NdCall { def_nr: _, args } => if len(args) > 1 { int(args[1]!) ?? 0 } else { 0 },
+      _ => 0,
+    };
+    sh = shapes[d#index]!;
+    lows += [lo];
+    highs += [lo + (sh.vend - sh.vo)];
+  }
+  out: vector<integer> = [];
+  for op in t_ops {
+    a: vector<ir::Node> = [];
+    if call_of(b, op, "OpSetInt4", a) && len(a) > 2 && is_var(a[0]!, e) && int(a[2]!) == 0 {
+      off = int(a[1]!);
+      if off != null {
+        for lo in lows {
+          if off! >= lo && off! < highs[lo#index]! {
+            out += [op#index];
+            break;
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+// `rewrite_reads`: every scalar read of result `r` (chain level `m`) in `v` as `__ds#m#.k`, which
+// the writer resolves to that level's tuple; a read of `r` that is not a scalar getter at a
+// scalar offset sets `bad`.
+fn rewrite_reads(b: ir::Bundle, v: ir::Node, r: integer, m: integer, sh: Shape, bad: &boolean) -> ir::Node {
+  match v {
+    NdCall { def_nr, args } => {
+      if len(args) > 0 && is_var(args[0]!, r) {
+        op = def_name(b, def_nr);
+        off = if len(args) > 1 { int(args[1]!) } else { null };
+        k = if off == null { -1 } else { scalar_at(sh, off!) };
+        if k >= 0 && sh.scalars[k]!.getter == op {
+          return ir::NdRawExpr { s: "__ds#{m}#.{k}" };
+        }
+        bad = true;
+        return v;
+      }
+      ir::NdCall { def_nr: def_nr, args: rewrite_all(b, args, r, m, sh, bad) }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rewrite_reads(b, inner, r, m, sh, bad) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: rewrite_all(b, args, r, m, sh, bad) },
+    NdBlock { block } => ir::NdBlock { block: [rewrite_block(b, block[0], r, m, sh, bad)] },
+    NdLoop { block } => ir::NdLoop { block: [rewrite_block(b, block[0], r, m, sh, bad)] },
+    NdInsert { items } => ir::NdInsert { items: rewrite_all(b, items, r, m, sh, bad) },
+    NdTuple { items } => ir::NdTuple { items: rewrite_all(b, items, r, m, sh, bad) },
+    NdParallel { arms } => ir::NdParallel { arms: rewrite_all(b, arms, r, m, sh, bad) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: rewrite_reads(b, inner, r, m, sh, bad) },
+    NdReturn { inner } => ir::NdReturn { inner: rewrite_reads(b, inner, r, m, sh, bad) },
+    NdDrop { inner } => ir::NdDrop { inner: rewrite_reads(b, inner, r, m, sh, bad) },
+    NdYield { inner } => ir::NdYield { inner: rewrite_reads(b, inner, r, m, sh, bad) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: rewrite_reads(b, inner, r, m, sh, bad) },
+    NdIf { cond, t, f } => ir::NdIf { cond: rewrite_reads(b, cond, r, m, sh, bad), t: rewrite_reads(b, t, r, m, sh, bad), f: rewrite_reads(b, f, r, m, sh, bad) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: rewrite_reads(b, create, r, m, sh, bad), next: rewrite_reads(b, next, r, m, sh, bad), init: rewrite_reads(b, init, r, m, sh, bad) },
+    _ => v,
+  }
+}
+
+fn rewrite_all(b: ir::Bundle, ops: vector<ir::Node>, r: integer, m: integer, sh: Shape, bad: &boolean) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    out += [rewrite_reads(b, o, r, m, sh, bad)];
+  }
+  out
+}
+
+fn rewrite_block(b: ir::Bundle, bl: ir::Block, r: integer, m: integer, sh: Shape, bad: &boolean) -> ir::Block {
+  ir::Block { name: bl.name, operators: rewrite_all(b, bl.operators, r, m, sh, bad), result: bl.result, scope: bl.scope, var_size: bl.var_size }
+}
+
+// `chain`: the windows from statement `i`, each level's found inside the `ok` arm of the one
+// before, with where in that arm it starts and ends (`cuts`, `[start, end, …]`).
+fn chain(b: ir::Bundle, ops: vector<ir::Node>, i: integer, cuts: vector<integer>) -> vector<Window> {
+  first = window(b, ops, i);
+  if first.r < 0 {
+    return [];
+  }
+  wins: vector<Window> = [first];
+  for _ in 0..9 {
+    t = wins[len(wins) - 1]!.then_ops;
+    found = -1;
+    w = no_window();
+    for j in 0..len(t) {
+      if found < 0 {
+        cand = window(b, t, j);
+        if cand.r >= 0 {
+          found = j;
+          w = cand;
+        }
+      }
+    }
+    if found < 0 {
+      return wins;
+    }
+    if len(wins) >= 8 {
+      return [];
+    }
+    cuts += [found, w.last];
+    wins += [w];
+  }
+  []
+}
+
+// One statement of a level's arm, rewritten: the chain's scalar reads named; any other use of a
+// result, an alias or (before the mint) the element declines (`ok` false).
+fn rewrite(b: ir::Bundle, op: ir::Node, before_mint: boolean, e: integer, rs: vector<integer>, shapes: vector<Shape>, aliases: vector<integer>, ok: &boolean) -> ir::Node {
+  if before_mint && mentions(op, e) > 0 {
+    ok = false;
+    return op;
+  }
+  v = op;
+  bad = false;
+  for r in rs {
+    v = rewrite_reads(b, v, r, r#index, shapes[r#index]!, bad);
+  }
+  if bad {
+    ok = false;
+    return op;
+  }
+  for r in rs {
+    if mentions(v, r) > 0 {
+      ok = false;
+    }
+  }
+  for a in aliases {
+    if a#index % 2 == 0 && mentions(v, a) > 0 {
+      ok = false;
+    }
+  }
+  v
+}
+
+// `site`: the window chain from statement `i` of `ops`, in function `d`, when every call in it
+// has a twin, the last `ok` arm mints one element and moves each call's result into it once,
+// and the results are read otherwise only as scalars.
+pub fn site(b: ir::Bundle, ops: vector<ir::Node>, i: integer, d: integer, m: Memo) -> Site {
+  cuts: vector<integer> = [];
+  wins = chain(b, ops, i, cuts);
+  if len(wins) == 0 {
+    return no_site();
+  }
+  rs: vector<integer> = [for w in wins { w.r }];
+  t_ops = wins[len(wins) - 1]!.then_ops;
+  ok = false;
+  arm = last_arm(b, t_ops, rs, ok);
+  if !ok {
+    return no_site();
+  }
+  shapes: vector<Shape> = [];
+  for w in wins {
+    sh = shape(b, w.callee, 0, m);
+    if sh.rb < 0 {
+      return no_site();
+    }
+    shapes += [sh];
+  }
+  drop = arm.drop;
+  for z in dest_zeros(b, t_ops, arm.e, arm.dests, shapes) {
+    drop += [z];
+  }
+  for j in arm.mint {
+    drop += [j];
+  }
+  levels: vector<Level> = [];
+  fine = true;
+  for w in wins {
+    lv = w#index;
+    last = lv + 1 == len(wins);
+    c0 = if last { len(w.then_ops) } else { cuts[2 * lv]! };
+    c1 = if last { len(w.then_ops) } else { cuts[2 * lv + 1]! };
+    pre: vector<ir::Node> = [];
+    for j in 0..c0 {
+      if last && drop.contains(j) {
+        continue;
+      }
+      pre += [rewrite(b, w.then_ops[j]!, last && j < arm.mint_j, arm.e, rs, shapes, arm.aliases, fine)];
+    }
+    post: vector<ir::Node> = [];
+    if !last {
+      for j in c1 + 1..len(w.then_ops) {
+        post += [rewrite(b, w.then_ops[j]!, false, arm.e, rs, shapes, arm.aliases, fine)];
+      }
+    }
+    if !fine {
+      return no_site();
+    }
+    for r in rs {
+      if mentions(w.else_v, r) > 0 {
+        return no_site();
+      }
+    }
+    if mentions(w.else_v, arm.e) > 0 {
+      return no_site();
+    }
+    k = scalar_at(shapes[lv]!, w.ok_off);
+    if k < 0 || shapes[lv]!.scalars[k]!.shape != "bool" {
+      return no_site();
+    }
+    levels += [Level { callee: w.callee, call_args: [], at: w.at, shape: shapes[lv]!, ok: k, dest: arm.dests[lv]!, pre: pre, post: post, else_v: w.else_v }];
+  }
+  // The calls' arguments: no reach into the container; a scalar of an earlier result named.
+  f = b.data.definitions[d]!.variables;
+  reach = opt_append_twin::views(f, arm.container);
+  for w in wins {
+    out: vector<ir::Node> = [];
+    for a in w.call_args {
+      if a#index == w.at {
+        out += [a];
+        continue;
+      }
+      for v in reach {
+        if v && mentions(a, v#index) > 0 {
+          return no_site();
+        }
+      }
+      out += [rewrite(b, a, false, arm.e, rs, shapes, arm.aliases, fine)];
+    }
+    if !fine {
+      return no_site();
+    }
+    levels[w#index].call_args = out;
+  }
+  // The results belong to the window: every mention of them lies inside it.
+  w0 = wins[0]!;
+  code = b.data.definitions[d]!.code[0] ?? ir::NdNull;
+  for r in rs {
+    inside = 0;
+    for j in w0.first..w0.last + 1 {
+      inside += mentions(ops[j]!, r);
+    }
+    if mentions(code, r) != inside {
+      return no_site();
+    }
+  }
+  if trace() {
+    println("destination: {def_name(b, d)} builds {len(wins)} call(s) of {def_name(b, wins[0]!.callee)}(…) in one element");
+  }
+  Site { first: w0.first, last: w0.last, mint: [for j in arm.mint { t_ops[j]! }], levels: levels }
+}

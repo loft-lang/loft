@@ -281,16 +281,14 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (14).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
+`cgen_w::PLAIN_SWITCHES` names them (11).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
 
 | switch | corpus | benches | tests |
 |---|---|---|---|
 | `VALUE_RECORD` | 510 | 114 | 175 |
 | `CALLEE_INPUTS` | 97 | 170 | 7 |
 | `TRANSIENT` | 92 | 14 | 22 |
-| `APPEND_TWIN` (+ `APPEND_LOOP_WINDOW`) | 32 | 5 | 14 |
 | `APART` | 29 | 9 | 10 |
-| `DESTINATION` | 19 | 4 | 0 |
 | `GUARD_BOUND` | 8 | 69 | 2 |
 | `DEFERRED_COPY` | 0 | 0 | 29 |
 | `VERSION` | 0 | 0 | 0 — rests on `CALLEE_INPUTS`' `__inv` twins |
@@ -301,7 +299,13 @@ Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`)
 `ValueRecords::params` half comes with `VALUE_RECORD`), `HAND_OVER` (`opt_hand_over.loft`, `cgen_rotate.loft`,
 the `__nk` twin), `GROWN_HEADER` (`opt_apart::grown_headers`, `kept_growth_param`, the `__kh` twin,
 `cgen_hoist::refresh_grown`), `FNREF_BUFFER` and `FNREF_PARK` (`cgen_fnref.loft`, the `loft_call<n>b`
-dispatchers), `DISTINCT_VERSION` (`cgen_loop::distinct_version`, the store facts' `assumed` pairs).
+dispatchers), `DISTINCT_VERSION` (`cgen_loop::distinct_version`, the store facts' `assumed` pairs),
+`APPEND_TWIN` and `APPEND_LOOP_WINDOW` (`opt_append_twin.loft`, `cgen_append.loft`: the `__ap` twin,
+its window clause, the loop windows), `DESTINATION` (`opt_destination.loft`, `cgen_dest.loft`: the
+`__d` twin and the caller's chain).  A rewrite that writes COPIES of IR nodes (the destination
+chain's call and arm statements, an append site's call, the rotate's call, the keyed in-place
+literal) writes them under `no_memo`: the Rust writer keys an invariant's memo and a guarded
+chain's admission by node address, which no copy carries.
 No port needed: `REBOUND_MOVER` (the C writer's `verdict` hands `hoistable` no owned buffers, so
 `rebinds_alias_free` declines every rebind on either side) and `LOOP_RECORD` (decided and applied in
 the IR, `opt::loop_record`; the C writes what the IR says).  Unswitched rules the tests corpus showed
@@ -426,6 +430,8 @@ came out 64-bit from the image.
 | `selfhost/src/cgen_value.loft` | `Cx::vr_ptr_params`, `vr_param_read_only`, `tuple_arg_address` | `@FR-R-ValueRecord`'s pointer clause for the IR's tuples; the value records' half waits for `VALUE_RECORD` |
 | `selfhost/src/opt_hand_over.loft`, `cgen_rotate.loft` | `src/lower/hand_over.rs`, `Stores::plain_vectors_of`; `rotate_site`, `nokeep` of `src/c/body.rs` | `@FR-R-HandOver`'s rotate clause and its `__nk` twin; an apart source (`apr_rotate`) waits for `APART` |
 | `selfhost/src/cgen_fnref.loft` | `src/c/body/loop_record.rs`; the kept-buffer half of `opaque_callref_stmt`, `call_ref` and `src/c/fnval.rs` | `@FR-R-FnRefBuffer` and its frame clause (the park slots) |
+| `selfhost/src/opt_append_twin.loft`, `cgen_append.loft` | `src/opt/append_twin.rs`; `append_site`, `append_call`, `append_twin`, `append_twin_buffer_op`, `apw_operator`, `open_loop_windows` of `src/c/body.rs`; `Cx::ap_window` | `@FR-R-AppendTwin` with its window and loop clauses |
+| `selfhost/src/opt_destination.loft`, `cgen_dest.loft` | `src/lower/destination.rs`; `destination_site`, `destination_level`, `destination_names`, `dest_scalar_set`, `dest_return` of `src/c/body.rs` | `@FR-R-Destination` |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at

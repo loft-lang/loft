@@ -28,6 +28,7 @@ use cgen_parse;
 use opt_push;
 use cgen_keyed;
 use cgen_value;
+use cgen_append;
 use binds;
 use opt_non_sentinel;
 use types;
@@ -82,6 +83,10 @@ pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
   carried = cgen_value::slice_carrier_operator(x, w, name, args, done);
   if done {
     return carried;
+  }
+  in_twin = cgen_append::buffer_op(x, w, name, args, ind, done);
+  if done {
+    return in_twin;
   }
   if w.adopt_v >= 0 && len(args) > 0 {
     operand = loop_shape::var_of(args[0]);
@@ -511,6 +516,12 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     return E { code: "loft_vec_finish({place})", kind: K_VOID };
   }
   if name == "OpClearVector" && count == 1 {
+    // `@FR-R-AppendTwin`: in a twin a clear of the buffer, or of a view of it, would empty the
+    // caller's elements; eligibility admitted it only before the body's first write.
+    cleared_var = match args[0]! { NdVar { n } => n, _ => -1 };
+    if cleared_var >= 0 && (w.ap_views[cleared_var] ?? false) {
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
     plain = clear_releases_nothing(x.b, w, args[0]);
     v = cgen_fn::expr(x, w, args[0], ind);
     if plain {
@@ -2301,7 +2312,7 @@ fn clear_releases_nothing(b: ir::Bundle, w: W, v: ir::Node) -> boolean {
 
 // `clear_before_mint`: statement `i` of `ops[..end]` clears a vector local the next statement
 // mints a new room for.
-pub fn clear_before_mint(b: ir::Bundle, ops: vector<ir::Node>, i: integer, end: integer) -> boolean {
+pub fn clear_before_mint(b: ir::Bundle, w: W, ops: vector<ir::Node>, i: integer, end: integer) -> boolean {
   if (env_variable("LOFT_NO_PROLOGUE_CLEAR_DROP") ?? "0") != "0" {
     return false;
   }
@@ -2309,7 +2320,8 @@ pub fn clear_before_mint(b: ir::Bundle, ops: vector<ir::Node>, i: integer, end: 
     NdCall { def_nr, args } => if cgen_fn::def_name(b, def_nr) == "OpClearVector" && len(args) > 0 { loop_shape::var_of(loop_shape::unspan(args[0])) } else { -1 },
     _ => -1,
   };
-  if cleared < 0 {
+  // An append twin's buffer is the caller's vector: its clear is the twin's own to skip.
+  if cleared < 0 || (w.ap_views[cleared] ?? false) {
     return false;
   }
   for o in ops {

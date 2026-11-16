@@ -1,0 +1,357 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-AppendTwin` as `src/c/body.rs` writes it: the statement-level site
+// (`append_site`), the call that takes the `__ap` twin (`append_call`), the twin's own body
+// (`append_twin`, `append_twin_buffer_op`), the window clause (`apw_operator`, the window an
+// append-twin call is handed) and the loop clause (`open_loop_windows`).
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_win;
+use binds;
+use loop_shape;
+use opt_append_twin;
+use opt_non_sentinel;
+use cgen_ref;
+use el_ir;
+
+// `LOFT_NO_APPEND_TWIN=1` — `X += f(args)` builds f's result in a buffer of its own and copies
+// it into X again.
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_APPEND_TWIN") ?? "0") == "0"
+}
+
+// `Cx::ap_window`: the element size of `d`'s append twin's window, 0 where that twin keeps
+// finding its buffer through the store; one answer per definition.
+pub fn ap_window(x: Cx, d: integer) -> integer {
+  if d < 0 || d >= len(x.ap_windows) {
+    return 0;
+  }
+  if x.ap_windows[d]! == -1 {
+    x.ap_windows[d] = opt_append_twin::window_size(x.b, d);
+  }
+  x.ap_windows[d]!
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn on(set: vector<boolean>, v: ir::Node) -> boolean {
+  x = loop_shape::var_of(loop_shape::unspan(v));
+  x >= 0 && (set[x] ?? false)
+}
+
+// `append_twin`: an `__ap` twin's return buffer is the caller's vector, so none of its clears
+// run and it is minted only where the caller handed none; the result never adopts the buffer.
+// With the window clause the buffer, every view of it and every view the body binds of one are
+// written through the caller's window (`(*loft_apw)`).  Answers the window parameter to add.
+pub fn twin_body(x: Cx, w: W) -> text {
+  buf = opt_append_twin::buffer(x.b, w.index);
+  if buf < 0 {
+    return "";
+  }
+  f = x.b.data.definitions[w.index]!.variables;
+  w.ap_buf = buf;
+  w.ap_views = opt_append_twin::views(f, buf);
+  w.adopt_v = -1;
+  w.adopt_vdb = -1;
+  w.adopt_buf = -1;
+  w.adopt_tp = -1;
+  w.facts.adopted_v = -1;
+  w.facts.adopted_vdb = -1;
+  size = ap_window(x, w.index);
+  if size == 0 {
+    return "";
+  }
+  paths: vector<boolean> = [for v in w.ap_views { v }];
+  paths[buf] = true;
+  def = x.b.data.definitions[w.index]!;
+  if len(def.code) > 0 {
+    nodes: vector<ir::Node> = [];
+    opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) { nodes += [n]; });
+    for n in nodes {
+      match n {
+        NdSet { var, inner } => {
+          match loop_shape::unspan(inner) {
+            NdCall { def_nr, args } => {
+              nm = def_name(x.b, def_nr);
+              if (nm == "OpGetField" || nm == "OpRefAlias") && len(args) > 0 && on(paths, args[0]!) {
+                paths[var] = true;
+              }
+            },
+            _ => {},
+          }
+        },
+        _ => {},
+      }
+    }
+  }
+  for p in paths {
+    if p {
+      v = p#index;
+      w.ap_views[v] = true;
+      w.windows += [Window { path: "{v}:", name: "(*loft_apw)", pv: w.names[v]!, size: size }];
+    }
+  }
+  w.apw = size;
+  "loft_win *loft_apw"
+}
+
+// `append_site`: `X += f(args)` where f has an append twin, written as the call of `f__ap` with
+// X as its buffer, so f's appends land after X's elements.  Answers whether it wrote it.
+pub fn append_site(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
+  if !enabled() || w.gen_elem != "" {
+    return false;
+  }
+  site = opt_append_twin::call_site(x.b, v, w.index, w.ap_memo);
+  if site.callee < 0 {
+    return false;
+  }
+  args = site.args;
+  args[site.at] = site.dest;
+  w.ap_site = site.callee;
+  // The rewritten call is a copy of the IR: no node-keyed decision admits it.
+  w.no_memo += 1;
+  e = cgen_fn::expr(x, w, ir::NdCall { def_nr: site.callee, args: args }, ind);
+  w.no_memo -= 1;
+  if w.why != "" {
+    return true;
+  }
+  if w.ap_site >= 0 {
+    refuse(w, "@FR-R-AppendTwin: the rewritten call of {def_name(x.b, site.callee)} was written without its twin");
+    return true;
+  }
+  // The twin answers the buffer it filled, which the statement does not read.
+  if e.kind == K_VOID {
+    line(w, ind, "{e.code};");
+  } else {
+    line(w, ind, "(void) {e.code};");
+  }
+  true
+}
+
+// `append_call`'s handed half: inside a twin, a call handing the twin's buffer, or a view of
+// it, as the callee's buffer takes the callee's twin too.
+pub fn handed(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
+  if w.ap_buf < 0 || d < 0 || d >= len(x.b.data.definitions) {
+    return false;
+  }
+  at = binds::hidden_return_buffer_attr(x.b.data.definitions[d]!) ?? return false;
+  at < len(args) && (match args[at]! { NdVar { n } => w.ap_views[n] ?? false, _ => false })
+}
+
+// The window argument a call of `d`'s `__ap` twin takes (`@FR-R-AppendTwin`'s window clause):
+// this twin's own where the buffer is one of its window paths, an enclosing loop's, or one
+// opened over the buffer for the call (`fresh` names it, and `xs` gains the argument).
+pub fn window_arg(x: Cx, w: W, d: integer, args: vector<ir::Node>, xs: vector<text>, fresh: &text) -> integer {
+  fresh = "";
+  size = ap_window(x, d);
+  if size == 0 {
+    return 0;
+  }
+  at = binds::hidden_return_buffer_attr(x.b.data.definitions[d]!) ?? return -1;
+  bv = if at < len(args) { loop_shape::var_of(loop_shape::unspan(args[at]!)) } else { -1 };
+  if w.apw > 0 && bv >= 0 && (w.ap_views[bv] ?? false) {
+    xs += ["loft_apw"];
+    return size;
+  }
+  for i in rev(0..len(w.ap_loop_windows)) {
+    if bv >= 0 && w.ap_loop_windows[i]!.var == bv {
+      xs += ["&{w.ap_loop_windows[i]!.name}"];
+      return size;
+    }
+  }
+  win = "loft_aw{len(w.decls)}";
+  w.decls += ["loft_win {win};"];
+  fresh = win;
+  xs += ["&{win}"];
+  size
+}
+
+// `append_twin_buffer_op`: in a twin the buffer is the caller's vector — its length reset is
+// skipped and it is minted only where the caller handed none.  `done` false for any other op.
+pub fn buffer_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if w.ap_buf < 0 || len(args) == 0 {
+    return none();
+  }
+  first = match args[0]! { NdVar { n } => n, _ => -1 };
+  if first != w.ap_buf {
+    return none();
+  }
+  if name == "OpSetInt4" {
+    done = true;
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  if name == "OpDatabase" && len(args) == 2 {
+    done = true;
+    buf = w.ap_buf;
+    w.ap_buf = -1;
+    inner = false;
+    mint = cgen_ref::ref_operator(x, w, name, args, ind, inner);
+    w.ap_buf = buf;
+    return E { code: "if ({w.names[buf]!}.store_nr == 0xFFFF) {{ {mint.code}; }}", kind: K_VOID };
+  }
+  none()
+}
+
+// `apw_operator`: a text's bytes or a scalar vector's elements appended to one of the twin's
+// window paths go through the caller's window.  `done` false for any other op.
+pub fn window_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if w.apw == 0 || len(args) == 0 {
+    return none();
+  }
+  v = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+  if v < 0 || !(w.ap_views[v] ?? false) {
+    return none();
+  }
+  pv = w.names[v]!;
+  if name == "OpAppendTextBytes" && len(args) == 4 {
+    done = true;
+    ops = [args[1]!, args[2]!, args[3]!];
+    t = cgen_fn::arg(x, w, ops, 0, ind);
+    lo = cgen_fn::arg(x, w, ops, 1, ind);
+    hi = cgen_fn::arg(x, w, ops, 2, ind);
+    return E { code: "loft_win_text(&(*loft_apw), {pv}, {as_view(w, t)}, {as_int(w, lo)}, {as_int(w, hi)})", kind: K_VOID };
+  }
+  if name == "OpAppendVector" && len(args) == 3 {
+    done = true;
+    e = cgen_fn::expr(x, w, args[1]!, ind);
+    return E { code: "loft_win_vec(&(*loft_apw), {pv}, {as_ref(w, e)}, {w.apw})", kind: K_VOID };
+  }
+  // The self-replace a buffer's own view delivers: nothing changes.
+  if name == "OpReplaceVector" && len(args) == 3 {
+    o = match args[1]! { NdVar { n } => n, _ => -1 };
+    if o >= 0 && (w.ap_views[o] ?? false) {
+      done = true;
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+  }
+  if name == "OpSliceVector" && len(args) == 5 {
+    done = true;
+    ops = [args[1]!, args[2]!, args[3]!];
+    src = cgen_fn::arg(x, w, ops, 0, ind);
+    lo = cgen_fn::arg(x, w, ops, 1, ind);
+    hi = cgen_fn::arg(x, w, ops, 2, ind);
+    return E { code: "loft_win_slice(&(*loft_apw), {pv}, {as_ref(w, src)}, {as_int(w, lo)}, {as_int(w, hi)}, {w.apw})", kind: K_VOID };
+  }
+  none()
+}
+
+// `open_loop_windows` (`@FR-R-AppendTwin`'s loop clause): open ONE window, before loop `lp`, for
+// each buffer the loop touches only through its append sites, and answer how many it opened;
+// `close_loop_windows` syncs them after the loop's end.  The loop may leave only by its own end.
+// `LOFT_NO_APPEND_LOOP_WINDOW=1`.
+pub fn open_loop_windows(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
+  if !enabled() || w.gen_elem != "" || (env_variable("LOFT_NO_APPEND_LOOP_WINDOW") ?? "0") != "0" {
+    return 0;
+  }
+  f = x.b.data.definitions[w.index]!.variables;
+  leaves = false;
+  stmts: vector<ir::Node> = [];
+  for op in lp.operators {
+    cgen_win::loop_statements(op, 0, stmts, leaves);
+  }
+  site_vars: vector<integer> = [];
+  site_sizes: vector<integer> = [];
+  sites: vector<ir::Node> = [];
+  for st in stmts {
+    site = opt_append_twin::call_site(x.b, st, w.index, w.ap_memo);
+    if site.callee < 0 {
+      continue;
+    }
+    dv = match loop_shape::unspan(site.dest) { NdVar { n } => n, _ => -1 };
+    size = ap_window(x, site.callee);
+    if dv < 0 || size == 0 || (w.apw > 0 && (w.ap_views[dv] ?? false)) {
+      continue;
+    }
+    site_vars += [dv];
+    site_sizes += [size];
+    sites += [loop_shape::unspan(st)];
+  }
+  if leaves || len(site_vars) == 0 {
+    return 0;
+  }
+  opened = 0;
+  seen: vector<integer> = [];
+  for dv in site_vars {
+    taken = seen.contains(dv);
+    for lw in w.ap_loop_windows {
+      if lw.var == dv {
+        taken = true;
+      }
+    }
+    if taken {
+      continue;
+    }
+    seen += [dv];
+    size = site_sizes[dv#index]!;
+    mixed = false;
+    for o in site_vars {
+      if o == dv && site_sizes[o#index]! != size {
+        mixed = true;
+      }
+    }
+    if mixed {
+      continue;
+    }
+    reach = opt_append_twin::views(f, dv);
+    elsewhere = false;
+    for op in lp.operators {
+      if !elsewhere && outside_sites(x.b, op, reach, sites) {
+        elsewhere = true;
+      }
+    }
+    if elsewhere {
+      continue;
+    }
+    win = "loft_aw{len(w.decls)}";
+    w.decls += ["loft_win {win};"];
+    line(w, ind, "{win} = loft_win_of({w.names[dv]!}, {size});");
+    w.ap_loop_windows += [LoopWindow { var: dv, name: win }];
+    opened += 1;
+  }
+  opened
+}
+
+// `mentions_outside` over the append sites: does `v` name a variable of `reach` outside them?
+fn outside_sites(b: ir::Bundle, v: ir::Node, reach: vector<boolean>, sites: vector<ir::Node>) -> boolean {
+  for s in sites {
+    if v == s {
+      return false;
+    }
+  }
+  named = match v {
+    NdVar { n } => n,
+    NdSet { var, inner: _ } => var,
+    NdTupleGet { var, idx: _ } => var,
+    NdTuplePut { var, idx: _, inner: _ } => var,
+    NdCallRef { var, args: _ } => var,
+    NdIter { var, create: _, next: _, init: _ } => var,
+    _ => -1,
+  };
+  if named >= 0 && (reach[named] ?? false) {
+    return true;
+  }
+  for c in el_ir::children(v) {
+    if outside_sites(b, c, reach, sites) {
+      return true;
+    }
+  }
+  false
+}
+
+// After the loop: the last `n` loop windows synced, the innermost first.
+pub fn close_loop_windows(w: W, n: integer, ind: integer) {
+  for _ in 0..n {
+    last = w.ap_loop_windows[len(w.ap_loop_windows) - 1]!;
+    line(w, ind, "loft_win_sync({last.name});");
+    w.ap_loop_windows = w.ap_loop_windows[0..len(w.ap_loop_windows) - 1];
+  }
+}

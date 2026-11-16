@@ -1,0 +1,559 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/append_twin.rs`: `@FR-R-AppendTwin`, `X += f(args)` built in X.
+//
+// The append twin `f__ap(args, X)` is f's body with X as the buffer and none of its clears: the
+// body's appends land after X's own elements, and the copy is gone.  Sound exactly when the body
+// never OBSERVES what the buffer held on entry, which `eligible` decides from the IR.
+
+use ir;
+use binds;
+use own;
+use loop_shape;
+use opt_hoist;
+use opt_push;
+use opt_non_sentinel;
+
+// The memo of `eligible`, per definition: 0 not asked, 1 eligible (or in progress), 2 not.
+pub struct Memo {
+  pub known: vector<integer>,
+}
+
+pub fn new_memo(b: ir::Bundle) -> Memo {
+  Memo { known: [for _ in 0..len(b.data.definitions) { 0 }] }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `buffer`: the function's hidden vector return buffer, -1 for none.
+pub fn buffer(b: ir::Bundle, d: integer) -> integer {
+  def = b.data.definitions[d]!;
+  if len(def.returned) == 0 || !(binds::base(def.returned[0]!) is TyVector) {
+    return -1;
+  }
+  opt_hoist::retbuf_var(def)
+}
+
+// `body_writes::views`: variable `x` and every variable whose type depends on one of these.
+pub fn views(f: ir::Function, x: integer) -> vector<boolean> {
+  set: vector<boolean> = [for _ in 0..len(f.variables) { false }];
+  if x < 0 || x >= len(set) {
+    return set;
+  }
+  set[x] = true;
+  grew = true;
+  while grew {
+    grew = false;
+    for v in 0..len(f.variables) {
+      if set[v] ?? false {
+        continue;
+      }
+      for dep in own::tp_depend(f, v) {
+        if set[dep] ?? false {
+          set[v] = true;
+          grew = true;
+          break;
+        }
+      }
+    }
+  }
+  set
+}
+
+const FLOW = 0;
+const OPERAND = 1;
+
+struct Scan {
+  f: ir::Function,
+  buf: integer,
+  vb: vector<boolean>,
+  written: boolean,
+  // The first node that declined, for `LOFT_TRACE_APPEND_TWIN`.
+  why: text,
+}
+
+fn is_view(s: Scan, v: ir::Node) -> boolean {
+  on(s.vb, v)
+}
+
+// Is `v` a variable of `set`?  (A variable lookup never reads index -1, which counts from the
+// end.)
+fn on(set: vector<boolean>, v: ir::Node) -> boolean {
+  x = loop_shape::var_of(loop_shape::unspan(v));
+  x >= 0 && (set[x] ?? false)
+}
+
+fn is_loft_defined(b: ir::Bundle, d: integer) -> boolean {
+  d >= 0 && d < len(b.data.definitions) && binds::is_loft_defined(b.data.definitions[d]!)
+}
+
+// Scan every argument as an operand: none may be a view of the buffer.
+fn operands(b: ir::Bundle, s: Scan, m: Memo, args: vector<ir::Node>, from: integer) -> boolean {
+  for i in from..len(args) {
+    if !scan(b, s, m, args[i]!, OPERAND) {
+      return false;
+    }
+  }
+  true
+}
+
+fn scan(b: ir::Bundle, s: Scan, m: Memo, v: ir::Node, pos: integer) -> boolean {
+  ok = scan_node(b, s, m, v, pos);
+  if !ok && s.why == "" {
+    s.why = match loop_shape::unspan(v) {
+      NdCall { def_nr, args: _ } => "{def_name(b, def_nr)} (written={s.written})",
+      NdVar { n } => "a view read as an operand: {s.f.variables[n]!.name}",
+      _ => "{loop_shape::unspan(v)}",
+    };
+  }
+  ok
+}
+
+fn scan_node(b: ir::Bundle, s: Scan, m: Memo, v: ir::Node, pos: integer) -> boolean {
+  match loop_shape::unspan(v) {
+    NdVar { n: x } => !(s.vb[x] ?? false) || pos == FLOW,
+    NdSet { var: x, inner: rhs } => {
+      match loop_shape::unspan(rhs) {
+        NdCall { def_nr, args } => {
+          if def_name(b, def_nr) == "OpRefAlias" && len(args) > 0 && is_view(s, args[0]!) {
+            s.vb[x] = true;
+            return operands(b, s, m, args, 1);
+          }
+        },
+        _ => {},
+      }
+      if s.vb[x] ?? false {
+        // `view = OpGetField(B, …)` / `w = OpRefAlias(B)`: deriving a view.
+        match loop_shape::unspan(rhs) {
+          NdCall { def_nr, args } => {
+            nm = def_name(b, def_nr);
+            if (nm == "OpGetField" || nm == "OpRefAlias") && len(args) > 0 && is_view(s, args[0]!) {
+              return operands(b, s, m, args, 1);
+            }
+          },
+          _ => {},
+        }
+        // A local typed as a view that is handed ANOTHER store carries that store out as the
+        // result, which a twin's caller never reads.
+        if !yields_buffer(b, s, rhs) {
+          return false;
+        }
+        return scan(b, s, m, rhs, FLOW);
+      }
+      scan(b, s, m, rhs, OPERAND)
+    },
+    NdCall { def_nr, args } => call(b, s, m, def_nr, args),
+    NdBlock { block } => list(b, s, m, block[0].operators, pos),
+    NdLoop { block } => list(b, s, m, block[0].operators, pos),
+    NdInsert { items } => {
+      for op in items {
+        if !scan(b, s, m, op, FLOW) {
+          return false;
+        }
+      }
+      true
+    },
+    NdIf { cond, t, f } => scan(b, s, m, cond, OPERAND) && scan(b, s, m, t, pos) && scan(b, s, m, f, pos),
+    // Every exit answers the buffer: the twin's caller ignores the answer.
+    NdReturn { inner } => yields_buffer(b, s, inner) && scan(b, s, m, inner, FLOW),
+    NdDrop { inner } => scan(b, s, m, inner, OPERAND),
+    NdCallRef { var: _, args: _ } => false,
+    NdParallel { arms: _ } => false,
+    NdYield { inner: _ } => false,
+    _ => {
+      // Any other node is read as an operand: a view among the variables it names is a read.
+      ok = [true];
+      opt_non_sentinel::walk(loop_shape::unspan(v), fn(n: ir::Node) {
+        match n {
+          NdVar { n: x } => { if s.vb[x] ?? false { ok[0] = false; } },
+          _ => {},
+        }
+      });
+      ok[0]!
+    },
+  }
+}
+
+fn list(b: ir::Bundle, s: Scan, m: Memo, ops: vector<ir::Node>, pos: integer) -> boolean {
+  for op in ops {
+    if !scan(b, s, m, op, if op#index + 1 == len(ops) { pos } else { FLOW }) {
+      return false;
+    }
+  }
+  true
+}
+
+// `yields_buffer`: does a value bound to a buffer view hold the buffer — a view, a null init, a
+// block or both arms of an `if` that end in one, or a call answering the buffer it is handed?
+fn yields_buffer(b: ir::Bundle, s: Scan, v: ir::Node) -> boolean {
+  yes = yields(b, s, v);
+  if trace() && !yes {
+    println("append-twin:   not the buffer: {loop_shape::unspan(v)}");
+  }
+  yes
+}
+
+fn yields(b: ir::Bundle, s: Scan, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdNull => true,
+    NdVar { n: x } => x == s.buf || (s.vb[x] ?? false),
+    NdBlock { block } => len(block[0].operators) > 0 && yields_buffer(b, s, block[0].operators[len(block[0].operators) - 1]!),
+    NdInsert { items } => len(items) > 0 && yields_buffer(b, s, items[len(items) - 1]!),
+    NdIf { cond: _, t, f } => yields_buffer(b, s, t) && yields_buffer(b, s, f),
+    // `return B` ending a block answers what it returns (loft#2116).
+    NdReturn { inner } => yields_buffer(b, s, inner),
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      // The null a match's fallthrough answers: appended, it adds nothing.
+      if len(args) == 0 && nm == "OpNullRefSentinel" {
+        return true;
+      }
+      if (nm == "OpGetField" || nm == "OpRefAlias") && len(args) > 0 && is_view(s, args[0]!) {
+        return true;
+      }
+      if !is_loft_defined(b, def_nr) {
+        return false;
+      }
+      at = binds::hidden_return_buffer_attr(b.data.definitions[def_nr]!) ?? return false;
+      at < len(args) && is_view(s, args[at]!)
+    },
+    _ => false,
+  }
+}
+
+fn is_int(v: ir::Node, k: integer) -> boolean {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n == k,
+    _ => false,
+  }
+}
+
+fn call(b: ir::Bundle, s: Scan, m: Memo, d: integer, args: vector<ir::Node>) -> boolean {
+  name = def_name(b, d);
+  first_is_view = len(args) > 0 && is_view(s, args[0]!);
+  first_is_b = len(args) > 0 && loop_shape::var_of(loop_shape::unspan(args[0]!)) == s.buf;
+  // The leading forms: before the body writes, clearing or minting the buffer changes nothing a
+  // twin's caller can see — the twin skips them.
+  if name == "OpClearVector" && first_is_view {
+    return !s.written && len(args) == 1;
+  }
+  if name == "OpDatabase" && first_is_b {
+    return !s.written && operands(b, s, m, args, 1);
+  }
+  if name == "OpSetInt4" && first_is_b {
+    return !s.written && len(args) > 2 && is_int(args[1]!, 0) && is_int(args[2]!, 0);
+  }
+  // Appends into the buffer: the values may not read it.
+  if (name == "OpAppendVector" || name == "OpAppendTextBytes" || name == "OpPreAllocVector" || name == "OpSliceVector" || name.starts_with("OpPush")) && first_is_view {
+    s.written = true;
+    return operands(b, s, m, args, 1);
+  }
+  // `OpReplaceVector(B, view)` — the self-replace a buffer's own view delivers.
+  if name == "OpReplaceVector" && first_is_b && len(args) > 1 && is_view(s, args[1]!) {
+    return operands(b, s, m, args, 2);
+  }
+  if is_loft_defined(b, d) {
+    at = binds::hidden_return_buffer_attr(b.data.definitions[d]!);
+    if at != null && at! < len(args) && is_view(s, args[at!]!) {
+      // The buffer handed on as the callee's own buffer.
+      s.written = true;
+      for a in args {
+        if a#index != at! && !scan(b, s, m, a, OPERAND) {
+          return false;
+        }
+      }
+      return eligible(b, d, m);
+    }
+  }
+  operands(b, s, m, args, 0)
+}
+
+// `eligible`: does `d` have an append twin?  A fixpoint over the call graph: a function in
+// progress counts as eligible, so a recursive builder can call its own twin.
+pub fn eligible(b: ir::Bundle, d: integer, m: Memo) -> boolean {
+  if d < 0 || d >= len(m.known) {
+    return false;
+  }
+  if m.known[d]! != 0 {
+    return m.known[d]! == 1;
+  }
+  def = b.data.definitions[d]!;
+  if !binds::is_loft_defined(def) {
+    return false;
+  }
+  buf = buffer(b, d);
+  if buf < 0 {
+    m.known[d] = 2;
+    return false;
+  }
+  m.known[d] = 1;
+  s = Scan { f: def.variables, buf: buf, vb: views(def.variables, buf), written: false, why: "" };
+  // The body's tail is its last exit, unless it is a `return` the walk asks itself.
+  code = def.code[0] ?? ir::NdNull;
+  tail_ok = match loop_shape::unspan(code) {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        true
+      } else {
+        last = ops[len(ops) - 1]!;
+        (loop_shape::unspan(last) is NdReturn) || yields_buffer(b, s, last)
+      }
+    },
+    _ => false,
+  };
+  if !tail_ok {
+    s.why = "the body's tail answers another store";
+  }
+  ok = tail_ok && scan(b, s, m, code, FLOW);
+  m.known[d] = if ok { 1 } else { 2 };
+  if trace() {
+    println(if ok { "append-twin: {def.name} has a twin" } else { "append-twin: {def.name} observes its buffer at {s.why}" });
+  }
+  ok
+}
+
+// An admitted `OpAppendVector(X, f(args…, buf), tp)`: the callee (-1 for none), its arguments,
+// the position of its buffer argument and X.
+pub struct Site {
+  pub callee: integer,
+  pub args: vector<ir::Node>,
+  pub at: integer,
+  pub dest: ir::Node,
+}
+
+fn no_site() -> Site {
+  Site { callee: -1, args: [], at: -1, dest: ir::NdNull }
+}
+
+fn mentions_any(v: ir::Node, reach: vector<boolean>) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdVar { n: x } => { if reach[x] ?? false { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `call_site`: the append statement `stmt` of function `d` when its callee has an append twin
+// and no argument reaches X, whose root is the frame's own buffer, a lent work buffer or a local.
+fn trace() -> boolean {
+  (env_variable("LOFT_TRACE_APPEND_TWIN") ?? "") != ""
+}
+
+fn decline(b: ir::Bundle, d: integer, callee: integer, why: text) -> Site {
+  if trace() {
+    println("append-twin: {def_name(b, d)} += {def_name(b, callee)}(…) declined — {why}");
+  }
+  no_site()
+}
+
+pub fn call_site(b: ir::Bundle, stmt: ir::Node, d: integer, m: Memo) -> Site {
+  a: vector<ir::Node> = [];
+  match loop_shape::unspan(stmt) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) != "OpAppendVector" || len(args) != 3 {
+        return no_site();
+      }
+      a = args;
+    },
+    _ => return no_site(),
+  }
+  dest = a[0]!;
+  callee = -1;
+  cargs: vector<ir::Node> = [];
+  match loop_shape::unspan(a[1]!) {
+    NdCall { def_nr, args } => {
+      callee = def_nr;
+      cargs = args;
+    },
+    _ => return no_site(),
+  }
+  if callee < 0 || callee >= len(b.data.definitions) {
+    return no_site();
+  }
+  at = binds::hidden_return_buffer_attr(b.data.definitions[callee]!) ?? return no_site();
+  if at >= len(cargs) || !(loop_shape::unspan(cargs[at]!) is NdVar) {
+    return no_site();
+  }
+  root = -1;
+  if opt_push::vector_path(b, dest, root) == "" {
+    return decline(b, d, callee, "the destination is not a vector path");
+  }
+  f = b.data.definitions[d]!.variables;
+  own_buf = buffer(b, d);
+  if f.variables[root]!.argument && (own_buf < 0 || !(views(f, own_buf)[root] ?? false)) && !opt_hoist::work_buffer_arg(b.data.definitions[d]!, root) {
+    return decline(b, d, callee, "the destination is a parameter");
+  }
+  reach = views(f, root);
+  for x in cargs {
+    if x#index != at && mentions_any(x, reach) {
+      return decline(b, d, callee, "an argument reaches the destination");
+    }
+  }
+  if !eligible(b, callee, m) {
+    return decline(b, d, callee, "the callee observes its buffer");
+  }
+  Site { callee: callee, args: cargs, at: at, dest: dest }
+}
+
+// `LOFT_NO_APPEND_WINDOW=1` — every append twin finds its buffer through the store.
+fn window_enabled() -> boolean {
+  (env_variable("LOFT_NO_APPEND_WINDOW") ?? "0") == "0"
+}
+
+// A scalar element type — what a window copies as bytes: the base numbers and booleans (not
+// text, type 5) and the narrow integer kinds.
+fn scalar_elem(b: ir::Bundle, tp: integer) -> boolean {
+  if tp >= 0 && tp <= 6 && tp != 5 {
+    return true;
+  }
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  match b.types[tp].parts[0] {
+    PtByte { start: _, nullable: _ } => true,
+    PtShort { start: _, nullable: _ } => true,
+    PtShortRaw { start: _, nullable: _ } => true,
+    PtInt { start: _, nullable: _ } => true,
+    PtIntRaw { start: _, nullable: _ } => true,
+    _ => false,
+  }
+}
+
+// What a write into a window path adds to `window_of`'s answer: its element size, 0 for an
+// operation that writes nothing a window carries, -1 for one a window cannot take.
+fn window_write(b: ir::Bundle, name: text, args: vector<ir::Node>, self_replace: boolean) -> integer {
+  if name == "OpAppendTextBytes" {
+    return 1;
+  }
+  if name == "OpPreAllocVector" {
+    return match loop_shape::unspan(args[2] ?? ir::NdNull) { NdInt { n } => if n > 0 { n } else { -1 }, _ => -1 };
+  }
+  at = if name == "OpAppendVector" { 2 } else if name == "OpSliceVector" { 4 } else { -1 };
+  if at >= 0 {
+    return match loop_shape::unspan(args[at] ?? ir::NdNull) {
+      NdInt { n } => if n >= 0 && n <= 65535 && scalar_elem(b, n) { b.types[n]!.size } else { -1 },
+      _ => -1,
+    };
+  }
+  if name == "OpReplaceVector" {
+    return if self_replace { 0 } else { -1 };
+  }
+  if name == "OpInsertVector" {
+    return -1;
+  }
+  if name.starts_with("OpPush") {
+    path = "";
+    root = -1;
+    size = opt_push::fused(b, name, args, path, root);
+    return if size == 0 { -1 } else { size };
+  }
+  0
+}
+
+// `window_size` (`@FR-R-AppendTwin`'s WINDOW clause): the element size of `d`'s append twin's
+// buffer when that twin can write through its caller's push window — every write into its
+// buffer, or a view of it, one a window takes, all of one element size; 0 when it cannot.  Each
+// question starts a fresh memo.
+pub fn window_size(b: ir::Bundle, d: integer) -> integer {
+  if !window_enabled() {
+    return 0;
+  }
+  sizes: vector<integer> = [for _ in 0..len(b.data.definitions) { -2 }];
+  s = window_of(b, d, sizes);
+  if s > 0 { s } else { 0 }
+}
+
+// `window_of`: -1 none, 0 in progress, else the size (`sizes`: -2 not asked).
+fn window_of(b: ir::Bundle, d: integer, sizes: vector<integer>) -> integer {
+  if sizes[d]! != -2 {
+    return sizes[d]!;
+  }
+  em = new_memo(b);
+  if !eligible(b, d, em) {
+    sizes[d] = -1;
+    return -1;
+  }
+  buf = buffer(b, d);
+  if buf < 0 {
+    return -1;
+  }
+  sizes[d] = 0;
+  def = b.data.definitions[d]!;
+  vb = views(def.variables, buf);
+  code = def.code[0] ?? ir::NdNull;
+  // Views the body binds itself (`v = OpGetField(B, …)`, `w = OpRefAlias(B)`).
+  nodes: vector<ir::Node> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) { nodes += [n]; });
+  for n in nodes {
+    match n {
+      NdSet { var: x, inner } => {
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr, args } => {
+            nm = def_name(b, def_nr);
+            if (nm == "OpGetField" || nm == "OpRefAlias") && len(args) > 0 {
+              if on(vb, args[0]!) {
+                vb[x] = true;
+              }
+            }
+          },
+          _ => {},
+        }
+      },
+      _ => {},
+    }
+  }
+  size = 0;
+  ok = true;
+  callees: vector<integer> = [];
+  for n in nodes {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        on0 = len(args) > 0 && on(vb, args[0]!);
+        if on0 {
+          on1 = len(args) > 1 && on(vb, args[1]!);
+          wsz = window_write(b, name, args, on1);
+          if wsz < 0 {
+            ok = false;
+          } else if wsz > 0 {
+            if size == 0 {
+              size = wsz;
+            } else if size != wsz {
+              ok = false;
+            }
+          }
+        }
+        if is_loft_defined(b, def_nr) {
+          at = binds::hidden_return_buffer_attr(b.data.definitions[def_nr]!);
+          if at != null && at! < len(args) && on(vb, args[at!]!) {
+            callees += [def_nr];
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  for c in callees {
+    cs = window_of(b, c, sizes);
+    if cs < 0 {
+      ok = false;
+    } else if cs > 0 {
+      if size == 0 {
+        size = cs;
+      } else if size != cs {
+        ok = false;
+      }
+    }
+  }
+  answer = if ok && size != 0 { size } else { -1 };
+  sizes[d] = answer;
+  answer
+}

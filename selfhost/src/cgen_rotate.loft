@@ -30,7 +30,10 @@ pub fn rotate_site(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer
   }
   pairs: vector<text> = [for p in plan { "{p}u" }];
   plan_c = "(const uint32_t[]){{ {pairs.join(", ")} }}";
+  // The vector's spelling and the twin's call are new nodes: no node-keyed decision admits them.
+  w.no_memo += 1;
   vec = as_ref(w, cgen_fn::expr(x, w, site.vector, ind));
+  w.no_memo -= 1;
   src = as_ref(w, cgen_fn::expr(x, w, site.src, ind));
   if w.why != "" {
     return -1;
@@ -40,7 +43,9 @@ pub fn rotate_site(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer
     cgen_fn::stmt(x, w, s, ind + 1);
   }
   w.nk_call = site.g;
+  w.no_memo += 1;
   cgen_fn::stmt(x, w, ir::NdCall { def_nr: site.g, args: [site.owner, ir::NdInt { n: 1 }] }, ind + 1);
+  w.no_memo -= 1;
   if w.nk_call >= 0 {
     refuse(w, "the rotate's call of its suffix keep took no __nk twin");
     return -1;

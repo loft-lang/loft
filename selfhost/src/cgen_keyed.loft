@@ -29,6 +29,15 @@ struct Write {
 // is minted for the literal and nothing is copied.  A text key keeps the plain form (a staged
 // view could name memory the claim moves).  `taken` false: the plain form writes it.
 pub fn keyed_in_place(x: Cx, w: W, args: vector<ir::Node>, ind: integer, taken: &boolean) -> E {
+  // The site is read off a copy of the call (`keyed_in_place`'s `call`): no node-keyed decision
+  // (an invariant's memo, a guarded chain) admits what it writes.
+  w.no_memo += 1;
+  e = in_place(x, w, args, ind, taken);
+  w.no_memo -= 1;
+  e
+}
+
+fn in_place(x: Cx, w: W, args: vector<ir::Node>, ind: integer, taken: &boolean) -> E {
   taken = false;
   if !opt_keyed_place::enabled() {
     return none();

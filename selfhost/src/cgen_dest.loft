@@ -1,0 +1,200 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Destination` as `src/c/body.rs` writes it: the caller half
+// (`destination_site`, `destination_level`, `destination_names`) and the `__d` twin's half
+// (`destination`, `ds_decls`, `dest_scalar_set`, `dest_return`).
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_tables;
+use loop_shape;
+use opt_destination;
+
+// `destination`: a `__d` twin's return buffer is the caller's fresh element; a write to one of
+// its scalar fields is the local the twin answers (`loft_ds<k>`), and the result never adopts
+// the buffer.
+pub fn twin_body(x: Cx, w: W) {
+  w.ds = opt_destination::shape(x.b, w.index, 0, x.dest_memo);
+  for s in w.ds.scalars {
+    w.decls += ["{held(s.shape)} loft_ds{s#index} = 0;"];
+  }
+}
+
+// `dest_scalar_set`: a write to a scalar field of the buffer, by that field's own setter, is the
+// twin's local — the field lies past the caller's element the buffer stands for.
+pub fn scalar_set(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if w.ds.rb < 0 || len(args) != 3 {
+    return none();
+  }
+  if loop_shape::var_of(loop_shape::unspan(args[0]!)) != w.ds.rb {
+    return none();
+  }
+  off = match loop_shape::unspan(args[1]!) { NdInt { n } => n, _ => return none() };
+  k = -1;
+  for s in w.ds.scalars {
+    if k < 0 && s.off == off && s.setter == name {
+      k = s#index;
+    }
+  }
+  if k < 0 {
+    return none();
+  }
+  done = true;
+  shape = w.ds.scalars[k]!.shape;
+  e = cgen_fn::expr(x, w, args[2]!, ind);
+  v = if shape == "float" { as_float(w, e) } else if shape == "single" { as_single(w, e) } else if shape == "bool" { as_bool(w, e) } else { as_int(w, e) };
+  E { code: "loft_ds{k} = {v}", kind: K_VOID }
+}
+
+// Is `v` the twin's `return buf`?
+pub fn returns_buffer(w: W, v: ir::Node) -> boolean {
+  w.ds.rb >= 0 && loop_shape::var_of(loop_shape::unspan(v)) == w.ds.rb
+}
+
+// `dest_return`: `return buf` answers the scalar locals.
+pub fn dest_return(w: W, ind: integer) {
+  if !is_tuple(w.ret) {
+    return;
+  }
+  r = temp(w, w.ret);
+  parts: vector<text> = [for s in w.ds.scalars { "loft_ds{s#index}" }];
+  line(w, ind, "{r} = ({tuple_placeholder(w.ret)}){{ {parts.join(", ")} }};");
+  cgen_fn::ret_held(w, r, ind);
+}
+
+// `destination_names`: the chain's `__ds#m#.k` placeholders as the C tuples already named.
+fn names_in(w: W, v: ir::Node, names: vector<text>, shapes: vector<text>) -> ir::Node {
+  match v {
+    NdRawExpr { s } => {
+      for t in names {
+        m = t#index;
+        pre = "__ds#{m}#.";
+        if s.starts_with(pre) {
+          k = s[pre.size()..s.size()];
+          code = "{t}.f{k}";
+          members = tuple_members(shapes[m]!);
+          ki = (k as integer?) ?? 0;
+          raw_expr(w, code, members[ki] ?? "int");
+          return ir::NdRawExpr { s: code };
+        }
+      }
+      v
+    },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: names_all(w, args, names, shapes) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: names_in(w, inner, names, shapes) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: names_all(w, args, names, shapes) },
+    NdBlock { block } => ir::NdBlock { block: [names_block(w, block[0], names, shapes)] },
+    NdLoop { block } => ir::NdLoop { block: [names_block(w, block[0], names, shapes)] },
+    NdInsert { items } => ir::NdInsert { items: names_all(w, items, names, shapes) },
+    NdTuple { items } => ir::NdTuple { items: names_all(w, items, names, shapes) },
+    NdParallel { arms } => ir::NdParallel { arms: names_all(w, arms, names, shapes) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: names_in(w, inner, names, shapes) },
+    NdReturn { inner } => ir::NdReturn { inner: names_in(w, inner, names, shapes) },
+    NdDrop { inner } => ir::NdDrop { inner: names_in(w, inner, names, shapes) },
+    NdYield { inner } => ir::NdYield { inner: names_in(w, inner, names, shapes) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: names_in(w, inner, names, shapes) },
+    NdIf { cond, t, f } => ir::NdIf { cond: names_in(w, cond, names, shapes), t: names_in(w, t, names, shapes), f: names_in(w, f, names, shapes) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: names_in(w, create, names, shapes), next: names_in(w, next, names, shapes), init: names_in(w, init, names, shapes) },
+    _ => v,
+  }
+}
+
+fn names_all(w: W, ops: vector<ir::Node>, names: vector<text>, shapes: vector<text>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    out += [names_in(w, o, names, shapes)];
+  }
+  out
+}
+
+fn names_block(w: W, bl: ir::Block, names: vector<text>, shapes: vector<text>) -> ir::Block {
+  ir::Block { name: bl.name, operators: names_all(w, bl.operators, names, shapes), result: bl.result, scope: bl.scope, var_size: bl.var_size }
+}
+
+// `destination_site`: the element's mint, hoisted above the chain, then each call into its
+// destination — the callee's `__d` twin writing the moved field into the element and answering
+// its scalars — and its `ok` arm with the moves gone; each destination filled so far released on
+// a failing path.  The index of the window's last statement, or -1 where `ops[i]` opens none.
+pub fn destination_site(x: Cx, w: W, ops: vector<ir::Node>, i: integer, ind: integer) -> integer {
+  if !opt_destination::enabled() || w.gen_elem != "" {
+    return -1;
+  }
+  site = opt_destination::site(x.b, ops, i, w.index, x.dest_memo);
+  if site.first < 0 {
+    return -1;
+  }
+  for m in site.mint {
+    cgen_fn::stmt(x, w, m, ind);
+  }
+  names: vector<text> = [];
+  shapes: vector<text> = [];
+  filled: vector<ir::Node> = [];
+  filled_tp: vector<integer> = [];
+  level(x, w, site.levels, 0, names, shapes, filled, filled_tp, ind);
+  site.last
+}
+
+fn level(x: Cx, w: W, levels: vector<opt_destination::Level>, at: integer, names: vector<text>, shapes: vector<text>, filled: vector<ir::Node>, filled_tp: vector<integer>, ind: integer) {
+  lv = levels[at]!;
+  args = names_all(w, lv.call_args, names, shapes);
+  args[lv.at] = lv.dest;
+  w.ds_site = lv.callee;
+  // The rewritten call and the arms' statements are copies of the IR: no decision keyed by a
+  // node of it (an invariant's memo, a guarded chain) admits them, as in the Rust writer.
+  w.no_memo += 1;
+  e = cgen_fn::expr(x, w, ir::NdCall { def_nr: lv.callee, args: args }, ind);
+  w.no_memo -= 1;
+  if w.why != "" {
+    return;
+  }
+  if w.ds_site >= 0 {
+    refuse(w, "@FR-R-Destination: the rewritten call of {cgen_fn::def_name(x.b, lv.callee)} was written without its twin");
+    return;
+  }
+  shape = opt_destination::tuple_shape(lv.shape);
+  t = temp(w, shape);
+  line(w, ind, "{t} = {e.code};");
+  names += [t];
+  shapes += [shape];
+  filled += [lv.dest];
+  filled_tp += [lv.shape.vt];
+  line(w, ind, "if ({t}.f{lv.ok} == 1) {{");
+  for op in lv.pre {
+    if op is NdLine {
+      continue;
+    }
+    w.no_memo += 1;
+    cgen_fn::stmt(x, w, names_in(w, op, names, shapes), ind + 1);
+    w.no_memo -= 1;
+  }
+  if at + 1 < len(levels) {
+    level(x, w, levels, at + 1, names, shapes, filled, filled_tp, ind + 1);
+  }
+  // The levels are one chain: after the inner one, this level's names are the first `at + 1`.
+  own_names = names[0..at + 1];
+  own_shapes = shapes[0..at + 1];
+  for op in lv.post {
+    if op is NdLine {
+      continue;
+    }
+    w.no_memo += 1;
+    cgen_fn::stmt(x, w, names_in(w, op, own_names, own_shapes), ind + 1);
+    w.no_memo -= 1;
+  }
+  line(w, ind, "}} else {{");
+  for k in rev(0..at + 1) {
+    vt = filled_tp[k]!;
+    cgen_tables::copy_type(x, vt);
+    w.no_memo += 1;
+    r = cgen_fn::expr(x, w, filled[k]!, ind + 1);
+    w.no_memo -= 1;
+    line(w, ind + 1, "loft_remove_claims(loft_types, {vt}, {as_ref(w, r)});");
+  }
+  cgen_fn::stmt(x, w, lv.else_v, ind + 1);
+  line(w, ind, "}}");
+}
