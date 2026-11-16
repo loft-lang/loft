@@ -3231,6 +3231,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     in_range: [],
     in_range_lens: [],
     raw_exprs: [],
+    text_windows: [],
     raw_shapes: [],
   };
   // `store_links`: a place twin's `&` parameters (`twin.places`, by parameter) and a store
