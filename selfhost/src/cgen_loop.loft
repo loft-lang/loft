@@ -27,6 +27,10 @@ use cgen_text;
 use cgen_ref;
 use cgen_hoist;
 use cgen_win;
+use cgen_fnref;
+use own;
+use opt_view;
+use opt_facts;
 use cgen_file;
 use opt_hoist;
 use cgen_w::*;
@@ -1625,6 +1629,45 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
       pushed = true;
     }
   }
+  cgen_fnref::take_parked(w, lp, ind);
+  loop_stmt_inner(x, w, lp, ind);
+  // `@FR-R-FnRefBuffer`: the records this loop keeps are freed once, after every copy of it.
+  cgen_fnref::release_kept(w, lp, ind);
+  if pushed {
+    w.over = w.over[0..len(w.over) - 1];
+  }
+}
+
+
+// `loop_stmt_inner`: `@FR-R-Alias`'s versioned clause (`distinct_version`) — the copy that
+// assumes the parameters apart from the return buffer runs when a test of their store numbers
+// says so at its entry, the plain one otherwise.
+fn loop_stmt_inner(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  tests: vector<integer> = [];
+  pairs: vector<integer> = [];
+  if plain_rules() && distinct_version(x, w, lp, tests, pairs) {
+    parts: vector<text> = [];
+    for t in tests {
+      if t#index % 2 == 0 {
+        parts += ["{w.names[tests[t#index + 1]!]!}.store_nr != {w.names[t]!}.store_nr"];
+      }
+    }
+    flush(w, ind);
+    line(w, ind, "if ({parts.join(" && ")}) {{");
+    w.facts.assumed = pairs;
+    loop_copy(x, w, lp, ind + 1);
+    w.facts.assumed = [];
+    line(w, ind, "}} else {{");
+    loop_copy(x, w, lp, ind + 1);
+    line(w, ind, "}}");
+    return;
+  }
+  loop_copy(x, w, lp, ind);
+}
+
+// `loop_copy`: one copy of loop `lp` with what it holds — the file cursor, the invariants, the
+// vector and push headers, the windows, the fill — and their release after it.
+fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
   held_file = plain_rules() && cgen_file::open_hold(x, w, lp, ind);
   hold_invariants(x, w, lp, ind);
   held_headers = len(w.headers);
@@ -1670,9 +1713,167 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
     cgen_file::close_hold(w, ind);
   }
   w.memos = w.memos[0..len(w.memos) - 1];
-  if pushed {
-    w.over = w.over[0..len(w.over) - 1];
+}
+
+// `distinct_version` (`@FR-R-Alias`'s versioned clause): when loop `lp` grows this function's
+// return buffer and would hold more headers if each parameter's store were apart from the
+// buffer's, the pairs to test at run time (`tests`, `[param, buffer, …]`) and the pairs the
+// tested copy may assume apart (`pairs`).  False for a loop that gains nothing, cannot be copied
+// (a `yield`, a `par`, a function-value call), or under `LOFT_NO_DISTINCT_VERSION=1`.
+fn distinct_version(x: Cx, w: W, lp: ir::Block, tests: &vector<integer>, pairs: &vector<integer>) -> boolean {
+  if (env_variable("LOFT_NO_DISTINCT_VERSION") ?? "0") != "0" || !opt_facts::enabled() || len(w.facts.assumed) > 0 {
+    return false;
   }
+  opaque = [false];
+  opt_non_sentinel::walk(ir::NdInsert { items: lp.operators }, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { opaque[0] = true; },
+      NdParallel { arms: _ } => { opaque[0] = true; },
+      NdCallRef { var: _, args: _ } => { opaque[0] = true; },
+      _ => {},
+    }
+  });
+  if opaque[0]! {
+    return false;
+  }
+  d = x.b.data.definitions[w.index]!;
+  f = d.variables;
+  rb = opt_hoist::retbuf_var(d);
+  if rb < 0 {
+    return false;
+  }
+  bufs: vector<integer> = [rb];
+  tested = rb;
+  if w.adopt_v >= 0 && w.adopt_buf == rb {
+    bufs += [w.adopt_v, w.adopt_vdb];
+    tested = w.adopt_v;
+  }
+  params: vector<integer> = [];
+  for v in f.variables {
+    if v.argument && v#index != rb && own::is_dbref(binds::base(v.type_def[0] ?? ir::TyVoid)) {
+      params += [v#index];
+    }
+  }
+  if len(params) == 0 {
+    return false;
+  }
+  ok = false;
+  plain = cgen_hoist::verdict(x, w, lp, ok);
+  if !ok {
+    return false;
+  }
+  grows = false;
+  for m in opt_view::mover_roots(x.b, d, lp.operators, 0) {
+    if chain_reaches(f, m, bufs) {
+      grows = true;
+    }
+  }
+  touches = grows;
+  for p in plain.pushes {
+    if bufs.contains(p.root) {
+      touches = true;
+    }
+  }
+  for p in plain.mint_pushes {
+    if bufs.contains(p.root) {
+      touches = true;
+    }
+  }
+  for m in plain.movers {
+    if bufs.contains(m) {
+      touches = true;
+    }
+  }
+  if !touches {
+    return false;
+  }
+  assumed: vector<integer> = [];
+  for p in params {
+    for bf in bufs {
+      assumed += [p, bf];
+    }
+  }
+  w.facts.assumed = assumed;
+  versioned = cgen_hoist::verdict(x, w, lp, ok);
+  w.facts.assumed = [];
+  if !ok {
+    return false;
+  }
+  // A path counts only when no enclosing frame holds it already.
+  gained: vector<integer> = [];
+  for v in versioned.vectors {
+    held = false;
+    for q in plain.vectors {
+      if q.path == v.path {
+        held = true;
+      }
+    }
+    if held || cgen_hoist::held_header(w, v.path) != "" {
+      continue;
+    }
+    r = param_root(f, v.root, params);
+    if r >= 0 && !gained.contains(r) {
+      gained += [r];
+    }
+  }
+  if len(gained) == 0 {
+    return false;
+  }
+  for r in gained {
+    known = false;
+    for t in tests {
+      if t#index % 2 == 0 && t == r && tests[t#index + 1]! == tested {
+        known = true;
+      }
+    }
+    if !known {
+      tests += [r, tested];
+    }
+    for bf in bufs {
+      have = false;
+      for q in pairs {
+        if q#index % 2 == 0 && q == r && pairs[q#index + 1]! == bf {
+          have = true;
+        }
+      }
+      if !have {
+        pairs += [r, bf];
+      }
+    }
+  }
+  true
+}
+
+// `chain_reaches`: does `v`'s single-dependency chain reach one of `bufs`?
+fn chain_reaches(f: ir::Function, v: integer, bufs: vector<integer>) -> boolean {
+  cur = v;
+  for _ in 0..len(f.variables) {
+    if bufs.contains(cur) {
+      return true;
+    }
+    deps = own::tp_depend(f, cur);
+    if len(deps) != 1 || deps[0]! == cur {
+      return false;
+    }
+    cur = deps[0]!;
+  }
+  false
+}
+
+// `param_root`: the parameter of `params` `v`'s single-dependency chain reaches, -1 for none.
+fn param_root(f: ir::Function, v: integer, params: vector<integer>) -> integer {
+  cur = v;
+  for _ in 0..16 {
+    if params.contains(cur) {
+      return cur;
+    }
+    deps = own::tp_depend(f, cur);
+    if len(deps) != 1 {
+      return -1;
+    }
+    cur = deps[0]!;
+  }
+  -1
 }
 
 // `range_guard`: `@FR-R-RangedCall`'s guarded copy for the `For` block `node` — the test

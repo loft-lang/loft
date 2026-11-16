@@ -112,7 +112,7 @@ fn promo_base(t: ir::TypeT) -> ir::TypeT {
 }
 
 // `dispatch_arm`: the arm calling `d`, or why not.
-fn dispatch_arm(x: Cx, d: integer, ret: text, out: &text) -> text {
+fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, out: &text) -> text {
   def = x.b.data.definitions[d]!;
   args: vector<text> = [];
   buffers: vector<text> = [];
@@ -123,6 +123,7 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, out: &text) -> text {
     _ => -1,
   };
   uses_vec_buf = false;
+  rb_used = false;
   for a in def.attributes {
     t = a.typedef[0] ?? ir::TyVoid;
     if a.name == "__closure" {
@@ -140,6 +141,10 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, out: &text) -> text {
       if vec_buf >= 0 && ret == "ref" {
         uses_vec_buf = true;
         args += ["hb"];
+      } else if buf && !rb_used && ret == "ref" && same_record(t, def.returned[0] ?? ir::TyVoid) {
+        // `@FR-R-FnRefBuffer`: the record buffer is the caller's store.
+        rb_used = true;
+        args += ["rb"];
       } else {
         args += ["loft_ref_null()"];
       }
@@ -152,7 +157,9 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, out: &text) -> text {
   for w in buffers {
     out += " loft_text {w} = {{ 0, 0, 0 }};";
   }
-  hold = ret == "ref" && len(def.returned) > 0 && heap_type(def.returned[0]!);
+  // `@FR-R-FnRefBuffer`: a buffer call is made by a bind that adopts a minted answer or copies
+  // an older one at once (`opaque_callref_stmt`), so nothing is held for it.
+  hold = ret == "ref" && len(def.returned) > 0 && heap_type(def.returned[0]!) && !buf;
   if hold {
     out += " uint64_t sn = loft_stores_allocated;";
   }
@@ -179,12 +186,28 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, out: &text) -> text {
 }
 
 // `dispatch_code`: every dispatcher, after the prototypes of `fns`, the functions the unit
-// writes.  The `@FR-R-FnRefBuffer` variants (`loft_call{n}b`) are not carried: that rule is
-// among the plain switches.
+// writes — and beside one a kept binding calls with its store, its `loft_call{n}b` variant
+// (`@FR-R-FnRefBuffer`: the caller's store, handed to a target's record buffer).
 pub fn dispatch_code(x: Cx, fns: vector<integer>) -> Dispatch {
   out = "";
   for key in x.sigs {
     id = key#index;
+    for buf in [false, true] {
+      if buf && !x.sigs_buf.contains(id) {
+        continue;
+      }
+      why = dispatcher(x, fns, key, id, buf, out);
+      if why != "" {
+        return Dispatch { code: "", refused: why };
+      }
+    }
+  }
+  Dispatch { code: out, refused: "" }
+}
+
+// One dispatcher of signature `key` (number `id`), its `b` variant when `buf`; "" or a refusal.
+fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean, out: &text) -> text {
+  {
     ps = sig_params(key);
     ret = sig_ret(key);
     list: vector<text> = ["loft_fn f"];
@@ -192,7 +215,10 @@ pub fn dispatch_code(x: Cx, fns: vector<integer>) -> Dispatch {
       i = p#index;
       list += [if p.mode == 2 { "loft_ref a{i}" } else if p.mode == 1 { "{held(p.shape)} *a{i}" } else { "{passed(p.shape)} a{i}" }];
     }
-    out += "\nstatic {held(ret)} loft_call{id}({list.join(", ")}) {{\n    switch (f.d) {{\n";
+    if buf {
+      list += ["loft_ref rb"];
+    }
+    out += "\nstatic {held(ret)} loft_call{id}{if buf { "b" } else { "" }}({list.join(", ")}) {{\n    switch (f.d) {{\n";
     want = linked_key(key);
     for v in x.fn_values {
       if !v {
@@ -203,11 +229,11 @@ pub fn dispatch_code(x: Cx, fns: vector<integer>) -> Dispatch {
         continue;
       }
       if !writes(fns, d) {
-        return Dispatch { code: "", refused: "a function value {x.b.data.definitions[d]!.name} the unit does not write (a native as a value)" };
+        return "a function value {x.b.data.definitions[d]!.name} the unit does not write (a native as a value)";
       }
-      why = dispatch_arm(x, d, ret, out);
+      why = dispatch_arm(x, d, ret, buf, out);
       if why != "" {
-        return Dispatch { code: "", refused: why };
+        return why;
       }
     }
     out += "    default:\n        break;\n    }}\n";
@@ -219,7 +245,7 @@ pub fn dispatch_code(x: Cx, fns: vector<integer>) -> Dispatch {
       out += "    {{ {held(ret)} r = {initial(ret)}; return r; }}\n}}\n";
     }
   }
-  Dispatch { code: out, refused: "" }
+  ""
 }
 
 // `drop_code`: `loft_drop_closure`, a value's closure record released through its cascade.
@@ -236,4 +262,15 @@ pub fn drop_code(x: Cx, fns: vector<integer>) -> text {
     }
   }
   out + "    default:\n        return;\n    }}\n}}\n"
+}
+
+// Are `a` and `r` references to one record definition?
+fn same_record(a: ir::TypeT, r: ir::TypeT) -> boolean {
+  match binds::base(a) {
+    TyReference { n: x, dep: _ } => match binds::base(r) {
+      TyReference { n: y, dep: _ } => x == y,
+      _ => false,
+    },
+    _ => false,
+  }
 }

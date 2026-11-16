@@ -12,6 +12,7 @@ use cgen_tables;
 use cgen::(Cx);
 use loop_shape;
 use opt_hoist;
+use opt_apart;
 use opt_length;
 use opt_facts;
 use opt_push;
@@ -80,6 +81,7 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
   opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
+  pending_grown = opt_hoist::with_grown(x.b, x.writes, w.facts, w.index, lp, verdict);
   // `@FR-R-Scalar`: each record scalar the verdict admits is read once, into a local.
   for sc in verdict.scalars {
     known = false;
@@ -151,6 +153,9 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
     h = "h{len(w.decls) + 1}";
     w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
     line(w, ind, "{h} = loft_vh_of({as_ref(w, e)});");
+    if pending_grown.contains(v.path) {
+      w.grown_headers += [h];
+    }
     w.headers += [Header { path: v.path, name: h, frame: base }];
   }
   verdict
@@ -1151,6 +1156,72 @@ fn grid_index(x: Cx, w: W, idx: ir::Node, held: text) -> text {
         wd = grid_c(w, width);
         return if h == "" || wd == "" { "" } else { "loft_grid_fits({held}, {h}, {wd})" };
       }
+    }
+  }
+  ""
+}
+
+// `refresh_grown_header`: after a growth statement, each grown header held for a vector it
+// names is derived again — but one the statement handed a `__kh` twin, which kept it current.
+pub fn refresh_grown(x: Cx, w: W, op: ir::Node, ind: integer) {
+  if len(w.grown_headers) == 0 {
+    return;
+  }
+  passed = w.kh_passed;
+  w.kh_passed = [];
+  for g in opt_apart::growth_args(x.b, op) {
+    path = "{g}:";
+    for hd in w.headers {
+      if hd.path == path && w.grown_headers.contains(hd.name) && !passed.contains(hd.name) {
+        line(w, ind, "{hd.name} = loft_vh_of({w.names[g]!});");
+      }
+    }
+  }
+}
+
+// `kept_header_arg`: the grown header, with its base, a call of `d` with `args` hands the
+// callee's `__kh` twin (`opt_apart::kept_growth_param`'s parameter), "" for none.
+pub fn kept_header_arg(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> text {
+  if len(w.grown_headers) == 0 || w.gen_elem != "" {
+    return "";
+  }
+  k = opt_apart::kept_growth_param(x.b, x.writes, d);
+  if k < 0 || k >= len(args) {
+    return "";
+  }
+  v = match loop_shape::unspan(args[k]!) {
+    NdVar { n } => n,
+    _ => return "",
+  };
+  path = "{v}:";
+  for i in rev(0..len(w.headers)) {
+    hd = w.headers[i]!;
+    if hd.path == path && hd.frame == 1 && w.grown_headers.contains(hd.name) {
+      return hd.name;
+    }
+  }
+  ""
+}
+
+// `verdict`: what loop `lp` may hold under the store facts as they stand — the hoistable paths,
+// the rebound apart headers and the growth half's — with nothing written; `ok` false where no
+// verdict is asked (a generator, `LOFT_NO_VECTOR_HOIST`).
+pub fn verdict(x: Cx, w: W, lp: ir::Block, ok: &boolean) -> opt_hoist::LoopHoist {
+  ok = enabled() && w.gen_elem == "";
+  v = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
+  if !ok {
+    return v;
+  }
+  opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, v);
+  opt_hoist::with_grown(x.b, x.writes, w.facts, w.index, lp, v);
+  v
+}
+
+// The header an enclosing loop holds for `path`, "" for none (`held_path`).
+pub fn held_header(w: W, path: text) -> text {
+  for i in rev(0..len(w.headers)) {
+    if w.headers[i]!.path == path {
+      return w.headers[i]!.name;
     }
   }
   ""
