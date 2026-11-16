@@ -1,11 +1,5 @@
 # The programs that do not match as Android apps yet (c_sweep.py --android --baseline).
-# loft-suite/…/F-Ret/…: loft#2511, on the desktop too.  191-source-dir: prints the program's
-# directory, which on a device is the app's.  The rest are `#cwd` programs reading paths from
-# the repository root, which an app does not have (@C164).
-loft-suite/rules/calls/F-Ret/a-function-returning-a-stored-reference-hands-back-a-copy.loft
-tests/docs/13-file.loft
-tests/scripts/19-files.loft
+# 191-source-dir: prints the program's directory, which on a device is the app's.  A `#cwd`
+# program is refused by the sweep itself (it reads paths from the repository root, which an app
+# does not have, @C164), so none is listed here.
 tests/scripts/191-source-dir.loft
-tests/scripts/2237-a-key-order-image-converts-on-every-backend.loft
-tests/scripts/37-stress.loft
-tests/scripts/golden-images-whole.loft

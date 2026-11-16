@@ -511,6 +511,11 @@ def one_android(path: str):
     text = src.read_text(encoding="utf-8", errors="replace")
     if not HAS_MAIN.search(text):
         return path, "refused", "no `fn main`: an Android app runs a program, not its tests", None, {}
+    # A `#cwd` program reads and writes relative to the process's working directory — the
+    # repository root here — which an app does not have: its files are the ones the program
+    # names, packed beside it (@C164), and a `#cwd` program's are not.  A class, not a list.
+    if CWD_DIRECTIVE.search(text):
+        return path, "refused", "a `#cwd` program reads the working directory, which an app does not have (@C164)", None, {}
     tmp = os.path.join(SCRATCH or tempfile.gettempdir(),
                        f"{Path(path).stem[:60]}-{zlib.crc32(path.encode()):08x}")
     shutil.rmtree(tmp, ignore_errors=True)
@@ -543,6 +548,25 @@ def one_android(path: str):
     with ANDROID_LOCK:
         a_code, a_out = android_session(apk, ANDROID_RUN_LIMIT)
     times["android"] = time.monotonic() - t0
+    first = android_verdict(path, i_out, a_code, a_out, times)
+    # A device session can fail on its own: an `adb exec-out` that answers nothing reads as a
+    # program that printed nothing, an exit-code read that never succeeds as a hang.  Only those
+    # two shapes are run once more, and a rerun that matches is reported FLAKY — listed, never a
+    # silent pass; a program that answers wrong on the device answers wrong twice.
+    suspect = a_code == "timeout" or (first[1] == "differ" and not a_out.strip()
+                                      and unreported(i_out[1]).strip())
+    if not suspect:
+        return first
+    with ANDROID_LOCK:
+        a_code, a_out = android_session(apk, ANDROID_RUN_LIMIT)
+    again = android_verdict(path, i_out, a_code, a_out, times)
+    if again[1] == "match":
+        return path, "flaky", f"{first[2]}; the rerun matched", None, times
+    return again
+
+
+def android_verdict(path, i_out, a_code, a_out, times):
+    """One device session's verdict against the interpreter's `i_out`."""
     if a_code == "install":
         return path, "cc-error", f"[android] install: {a_out.decode(errors='replace').strip()[:150]}", None, times
     if a_code == "timeout":
@@ -663,6 +687,7 @@ def main(argv: list[str]) -> int:
     buckets = Counter()
     reasons: dict = {}
     bad = []
+    flaky = []
     timings = {}
     # The emulator needs the cores too: beside it, a few builds keep its one queue fed.
     workers = min(4, os.cpu_count() or 4) if android else (os.cpu_count() or 4)
@@ -680,11 +705,15 @@ def main(argv: list[str]) -> int:
                               ignore_errors=True)
             if bucket == "refused":
                 reasons.setdefault(why, []).append(path)
+            elif bucket == "flaky":
+                flaky.append((path, why))
             elif bucket in ("differ", "cc-error", "sanitizer", "slow"):
                 bad.append((path, bucket, why, outs))
     total = len(files)
     print(f"C backend over {total} programs: " + ", ".join(
         f"{buckets[b]} {b}" for b in ("match", "differ", "cc-error", "sanitizer", "slow", "refused")))
+    for path, why in sorted(flaky):
+        print(f"  flaky    {path} — {why}")
     for path, bucket, why, outs in sorted(bad):
         print(f"  {bucket:8} {path}" + (f" — {why}" if why else ""))
         print(f"           {os.path.join(SCRATCH, f'{Path(path).stem[:60]}-{zlib.crc32(path.encode()):08x}')}")
