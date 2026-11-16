@@ -60,6 +60,7 @@ use cgen_inputs;
 use opt_version;
 use cgen_version;
 use cgen_deferred;
+use cgen_apart;
 use opt_lease;
 use opt_below_len;
 use opt_destination;
@@ -1915,6 +1916,10 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     },
     NdCallRef { var, args } => call_ref(x, w, var, args, ind),
     NdVar { n } => {
+      // `@FR-R-Apart` instance 3: an apart vector is its inline buffer.
+      if cgen_apart::is_vec(w, n) {
+        return E { code: "loft_apv{n}", kind: K_REF };
+      }
       shape = w.shapes[n] ?? "";
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
@@ -1952,6 +1957,14 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       // caller's site), for the writer of this call alone.
       saved_kind = w.call_kind;
       saved_site = w.call_site;
+      // `@FR-R-Apart` instance 3: an apart vector's element, push, length or clear.
+      if cgen_apart::any(w) {
+        apart_done = false;
+        apart_e = cgen_apart::vec_op(x, w, name, v, args, ind, apart_done);
+        if apart_done {
+          return apart_e;
+        }
+      }
       w.call_kind = cgen_version::call_kind(w, v);
       w.call_site = cgen_version::site_of(v);
       out = if !name.starts_with("Op") { call(x, w, def_nr, args, ind) } else { op_call(x, w, name, typed_nulls(x.b, def_nr, args), ind) };
@@ -2931,6 +2944,9 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       if w.undeclared[var]! {
         return;
       }
+      if cgen_apart::stmt(x, w, v, ind) {
+        return;
+      }
       shape = w.shapes[var] ?? "";
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
@@ -3013,6 +3029,9 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       flush(w, ind);
     },
     NdIf { cond, t, f } => {
+      if cgen_apart::stmt(x, w, v, ind) {
+        return;
+      }
       // A fast twin's decided `if`: the arm it takes.
       decided = cgen_version::decided(w, cond);
       if decided >= 0 {
@@ -3560,6 +3579,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     dc_null_only: [],
     dc_pending: 0,
     dc_ctx: [],
+    apv: if plain_rules() { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
     loop_call_at: [],
     ap_buf: -1,
     ap_views: [],
@@ -3648,6 +3668,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     cgen_dest::twin_body(x, w);
   }
   cgen_text::declare_owns(w);
+  cgen_apart::decls(w);
   // An `__ap` twin's result never adopts the buffer: it is the caller's vector; a `__d` twin's
   // is the caller's element.
   if w.ap_buf >= 0 || twin.ds {
@@ -3701,7 +3722,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   out = "";
   for v in d.variables.variables {
-    if !v.argument && !w.undeclared[v#index]! {
+    // An apart vector and its companions are no records (`@FR-R-Apart`).
+    if !v.argument && !w.undeclared[v#index]! && !cgen_apart::holds(w, v#index) {
       shape = shapes[v#index]!;
       if w.store_links[v#index]! {
         out += "    loft_ref {w.raw[v#index]!} = {{ 0xFFFF, 0, 0, 0 }};\n";

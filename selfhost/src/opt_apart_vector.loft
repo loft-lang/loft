@@ -1,0 +1,522 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Apart` instance 3 as `src/opt/apart_vector.rs` decides it: a
+// `vector<float>` local that never leaves its function is held as an inline buffer with a spill
+// (`loft_apvec`): its pushes, element reads and writes and its length touch no store.  The gate
+// answers per body which vector variables are APART and which only serve them (COMPANIONS: the
+// store a plain local is minted into, the save of a work buffer's incoming value).
+
+use ir;
+use loop_shape;
+use el_ir;
+use cgen_types;
+use opt_length;
+
+// The apart vectors of one body and the companions that serve them, per variable.
+pub struct VecRoles {
+  pub apart: vector<boolean>,
+  pub companions: vector<boolean>,
+  pub any: boolean,
+}
+
+pub fn no_roles() -> VecRoles {
+  VecRoles { apart: [], companions: [], any: false }
+}
+
+// `holds`: an apart vector or one of their companions.
+pub fn holds(r: VecRoles, v: integer) -> boolean {
+  (r.apart[v] ?? false) || (r.companions[v] ?? false)
+}
+
+pub fn disabled() -> boolean {
+  (env_variable("LOFT_NO_APART") ?? "0") != "0" || (env_variable("LOFT_NO_APART_VECTOR") ?? "0") != "0"
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn var_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) { NdVar { n } => n, _ => -1 }
+}
+
+// An element address `OpGetVector[Nullable](v, 8, i)` of a plain vector variable: `v`, -1 for
+// none.  The parts are answered by value, never through an `&` out-parameter (loft#2528).
+fn element_of(b: ir::Bundle, x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if (name != "OpGetVector" && name != "OpGetVectorNullable") || len(args) != 3 {
+        return -1;
+      }
+      if !(match loop_shape::unspan(args[1]!) { NdInt { n } => n == 8, _ => false }) {
+        return -1;
+      }
+      var_of(args[0]!)
+    },
+    _ => -1,
+  }
+}
+
+fn arg(x: ir::Node, i: integer) -> ir::Node {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr: _, args } => if i < len(args) { args[i]! } else { ir::NdNull },
+    _ => ir::NdNull,
+  }
+}
+
+fn elem_nullable(b: ir::Bundle, x: ir::Node) -> boolean {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args: _ } => def_name(b, def_nr) == "OpGetVectorNullable",
+    _ => false,
+  }
+}
+
+fn is_zero(v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) { NdInt { n } => n == 0, _ => false }
+}
+
+// `read`: an element READ `OpGetFloat(<element of v>, 0)` — `v`, -1 for none; its index is
+// `read_idx`, its nullability `read_nullable`.
+pub fn read(b: ir::Bundle, x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) != "OpGetFloat" || len(args) != 2 || !is_zero(args[1]!) {
+        return -1;
+      }
+      element_of(b, args[0]!)
+    },
+    _ => -1,
+  }
+}
+
+pub fn read_idx(x: ir::Node) -> ir::Node {
+  arg(arg(x, 0), 2)
+}
+
+pub fn read_nullable(b: ir::Bundle, x: ir::Node) -> boolean {
+  elem_nullable(b, arg(x, 0))
+}
+
+// `write`: an element WRITE `OpSetFloat(<element of v>, 0, val)` — `v`, -1 for none; its index
+// is `read_idx`, its value `write_val`.
+pub fn write(b: ir::Bundle, x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) != "OpSetFloat" || len(args) != 3 || !is_zero(args[1]!) {
+        return -1;
+      }
+      if elem_nullable(b, args[0]!) {
+        return -1;
+      }
+      element_of(b, args[0]!)
+    },
+    _ => -1,
+  }
+}
+
+pub fn write_val(x: ir::Node) -> ir::Node {
+  arg(x, 2)
+}
+
+// `unary`: the one-operand vector op `x` is — "len", "clear", "free" — or "".
+pub fn unary_op(b: ir::Bundle, x: ir::Node) -> text {
+  if opt_length::clear_of(b, x) >= 0 {
+    return "clear";
+  }
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args } => {
+      if len(args) != 1 || var_of(args[0]!) < 0 {
+        return "";
+      }
+      name = def_name(b, def_nr);
+      if name == "OpLengthVector" || name == "t_6vector_len" { "len" } else if name == "OpFreeRef" { "free" } else { "" }
+    },
+    _ => "",
+  }
+}
+
+// The vector of `unary_op`'s op, -1 for none.
+pub fn unary_v(b: ir::Bundle, x: ir::Node) -> integer {
+  c = opt_length::clear_of(b, x);
+  if c >= 0 {
+    return c;
+  }
+  if unary_op(b, x) == "" { -1 } else { var_of(arg(x, 0)) }
+}
+
+// `push`: `OpPushFloat(v, val)` — `v`, -1 for none; its value `push_val`.
+pub fn push(b: ir::Bundle, x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args } => if def_name(b, def_nr) == "OpPushFloat" && len(args) == 2 { var_of(args[0]!) } else { -1 },
+    _ => -1,
+  }
+}
+
+pub fn push_val(x: ir::Node) -> ir::Node {
+  arg(x, 1)
+}
+
+fn is_float_vector(t: ir::TypeT) -> boolean {
+  if t is TyOptional {
+    return false;
+  }
+  match cgen_types::base(t) {
+    TyVector { inner, dep: _ } => cgen_types::base(inner) is TyFloat,
+    _ => false,
+  }
+}
+
+struct Walk {
+  b: ir::Bundle,
+  cand: vector<boolean>,
+  // Per candidate, its companions, flattened as `[v, c, …]`.
+  comp: vector<integer>,
+  out: vector<boolean>,
+  loose: vector<boolean>,
+  used: vector<boolean>,
+}
+
+fn is_cand(w: Walk, v: integer) -> boolean {
+  w.cand[v] ?? false
+}
+
+fn tie(w: Walk, v: integer, c: integer) {
+  if !is_cand(w, v) {
+    return;
+  }
+  for p in w.comp {
+    if p#index % 2 == 0 && p == v && w.comp[p#index + 1]! == c {
+      return;
+    }
+  }
+  w.comp += [v, c];
+}
+
+fn mark(m: vector<boolean>, v: integer) {
+  if v >= 0 && v < len(m) {
+    m[v] = true;
+  }
+}
+
+fn walk(w: Walk, x: ir::Node) {
+  b = w.b;
+  rv = read(b, x);
+  if rv >= 0 && is_cand(w, rv) {
+    mark(w.used, rv);
+    walk_part(w, read_idx(x));
+    return;
+  }
+  wv = write(b, x);
+  if wv >= 0 && is_cand(w, wv) {
+    walk(w, read_idx(x));
+    walk_part(w, write_val(x));
+    return;
+  }
+  pv = push(b, x);
+  if pv >= 0 && is_cand(w, pv) {
+    mark(w.used, pv);
+    walk_part(w, push_val(x));
+    return;
+  }
+  uv = unary_v(b, x);
+  if uv >= 0 && is_cand(w, uv) {
+    return;
+  }
+  init = opt_length::buffer_init(b, x);
+  if len(init) > 0 && is_cand(w, init[0]!) {
+    for c in init {
+      if c#index > 0 {
+        tie(w, init[0]!, c);
+      }
+    }
+    return;
+  }
+  match loop_shape::unspan(x) {
+    NdVar { n } => mark(w.loose, n),
+    NdSet { var, inner } => {
+      if is_cand(w, var) {
+        match loop_shape::unspan(inner) {
+          NdNull => {},
+          NdCall { def_nr, args } => {
+            if def_name(b, def_nr) == "OpGetField" {
+              c = if len(args) > 0 { var_of(args[0]!) } else { -1 };
+              if c >= 0 {
+                tie(w, var, c);
+              } else {
+                mark(w.out, var);
+              }
+            } else {
+              mark(w.out, var);
+              walk_part(w, inner);
+            }
+          },
+          _ => {
+            mark(w.out, var);
+            walk_part(w, inner);
+          },
+        }
+      } else {
+        walk_part(w, inner);
+      }
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      any_cand = false;
+      for a in args {
+        if is_cand(w, var_of(a)) {
+          any_cand = true;
+        }
+      }
+      if (name == "OpPutRef" || name == "OpFreeRefIfDistinct" || name == "OpPreAllocVector") && any_cand {
+        vars: vector<integer> = [];
+        for a in args {
+          u = var_of(a);
+          if u >= 0 {
+            vars += [u];
+          }
+        }
+        for v in vars {
+          if is_cand(w, v) {
+            for c in vars {
+              if c != v {
+                tie(w, v, c);
+              }
+            }
+          }
+        }
+        for a in args {
+          if var_of(a) < 0 {
+            walk(w, a);
+          }
+        }
+        return;
+      }
+      for a in args {
+        walk(w, a);
+      }
+    },
+    NdIter { var, create: _, next: _, init: _ } => {
+      mark(w.loose, var);
+      for c in el_ir::children(loop_shape::unspan(x)) {
+        walk(w, c);
+      }
+    },
+    NdCallRef { var, args: _ } => {
+      mark(w.loose, var);
+      for c in el_ir::children(loop_shape::unspan(x)) {
+        walk(w, c);
+      }
+    },
+    NdFnRef { def_nr: _, var, t: _ } => {
+      mark(w.loose, var);
+    },
+    NdFnRefDnr { n } => {
+      mark(w.loose, n);
+    },
+    _ => {
+      for c in el_ir::children(loop_shape::unspan(x)) {
+        walk(w, c);
+      }
+    },
+  }
+}
+
+fn walk_part(w: Walk, x: ir::Node) {
+  walk(w, x);
+}
+
+fn companion_statement(b: ir::Bundle, x: ir::Node, c: integer) -> boolean {
+  match loop_shape::unspan(x) {
+    NdSet { var, inner } => var == c && (loop_shape::unspan(inner) is NdNull),
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if (name != "OpDatabase" && name != "OpSetInt4" && name != "OpFreeRef") || len(args) == 0 || var_of(args[0]!) != c {
+        return false;
+      }
+      for a in args {
+        if a#index > 0 && var_of(a) >= 0 {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+// Every mention of `c` in `x` outside its own statements and the admitted vector shapes.
+fn companion_loose(b: ir::Bundle, x: ir::Node, c: integer, held: vector<boolean>) -> boolean {
+  if companion_statement(b, x, c) {
+    return false;
+  }
+  init = opt_length::buffer_init(b, x);
+  if len(init) > 0 && (held[init[0]!] ?? false) {
+    for o in init {
+      if o#index > 0 && o == c {
+        return false;
+      }
+    }
+  }
+  match loop_shape::unspan(x) {
+    NdVar { n } => n == c,
+    NdSet { var, inner } => {
+      if held[var] ?? false {
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr, args } => {
+            if def_name(b, def_nr) == "OpGetField" && len(args) > 0 && var_of(args[0]!) == c {
+              return false;
+            }
+          },
+          _ => {},
+        }
+        r = companion_loose(b, inner, c, held);
+        return r;
+      }
+      var == c || companion_loose(b, inner, c, held)
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      any_held = false;
+      for a in args {
+        if held[var_of(a)] ?? false {
+          any_held = true;
+        }
+      }
+      if (name == "OpPutRef" || name == "OpFreeRefIfDistinct") && any_held {
+        for a in args {
+          if var_of(a) < 0 && companion_loose(b, a, c, held) {
+            return true;
+          }
+        }
+        return false;
+      }
+      for a in args {
+        if companion_loose(b, a, c, held) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => {
+      for ch in el_ir::children(loop_shape::unspan(x)) {
+        if companion_loose(b, ch, c, held) {
+          return true;
+        }
+      }
+      false
+    },
+  }
+}
+
+// `roles`: the apart vectors of `vd`'s body; `any` false when it holds none.
+pub fn roles(b: ir::Bundle, vd: integer) -> VecRoles {
+  if disabled() || vd < 0 || vd >= len(b.data.definitions) {
+    return no_roles();
+  }
+  def = b.data.definitions[vd]!;
+  if cgen_types::base(def.returned[0] ?? ir::TyVoid) is TyIterator {
+    return no_roles();
+  }
+  code = def.code[0] ?? ir::NdNull;
+  if code is NdNull {
+    return no_roles();
+  }
+  count = len(def.variables.variables);
+  cand: vector<boolean> = [for _ in 0..count { false }];
+  any_cand = false;
+  for v in def.variables.variables {
+    if !is_float_vector(v.type_def[0] ?? ir::TyVoid) || v.captured {
+      continue;
+    }
+    if v.argument {
+      work = false;
+      for a in def.attributes {
+        if a.name == v.name && a.work_buffer {
+          work = true;
+        }
+      }
+      if !work {
+        continue;
+      }
+    }
+    cand[v#index] = true;
+    any_cand = true;
+  }
+  if !any_cand {
+    return no_roles();
+  }
+  yields = [false];
+  opt_walk_yield(code, yields);
+  if yields[0]! {
+    return no_roles();
+  }
+  w = Walk { b: b, cand: cand, comp: [], out: [for _ in 0..count { false }], loose: [for _ in 0..count { false }], used: [for _ in 0..count { false }] };
+  walk(w, code);
+  held: vector<boolean> = [for _ in 0..count { false }];
+  for c in cand {
+    v = c#index;
+    if c && !w.out[v]! && !w.loose[v]! && w.used[v]! {
+      held[v] = true;
+    }
+  }
+  // A companion serves one vector, is no apart vector itself, and has no other mention.
+  for _ in 0..count + 1 {
+    drop: vector<integer> = [];
+    owner: vector<integer> = [for _ in 0..count { -1 }];
+    for h in held {
+      v = h#index;
+      if !h {
+        continue;
+      }
+      for p in w.comp {
+        if p#index % 2 != 0 || p != v {
+          continue;
+        }
+        c = w.comp[p#index + 1]!;
+        shared = owner[c]! >= 0 && owner[c]! != v;
+        owner[c] = v;
+        if shared || held[c]! || def.variables.variables[c]!.argument || companion_loose(b, code, c, held) {
+          drop += [v];
+        }
+      }
+    }
+    if len(drop) == 0 {
+      break;
+    }
+    for v in drop {
+      held[v] = false;
+    }
+  }
+  companions: vector<boolean> = [for _ in 0..count { false }];
+  any = false;
+  for h in held {
+    if !h {
+      continue;
+    }
+    any = true;
+    for p in w.comp {
+      if p#index % 2 == 0 && p == h#index {
+        companions[w.comp[p#index + 1]!] = true;
+      }
+    }
+  }
+  if !any {
+    return no_roles();
+  }
+  VecRoles { apart: held, companions: companions, any: true }
+}
+
+fn opt_walk_yield(v: ir::Node, found: vector<boolean>) {
+  match loop_shape::unspan(v) {
+    NdYield { inner: _ } => { found[0] = true; },
+    NdParallel { arms: _ } => { found[0] = true; },
+    _ => {
+      for c in el_ir::children(loop_shape::unspan(v)) {
+        opt_walk_yield(c, found);
+      }
+    },
+  }
+}

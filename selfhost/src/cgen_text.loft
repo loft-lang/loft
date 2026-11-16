@@ -16,6 +16,7 @@ use cgen::(Cx);
 use loop_shape;
 use cgen_win;
 use cgen_lazy;
+use cgen_apart;
 use opt_hoist;
 use opt_non_sentinel;
 use cgen_fn;
@@ -642,6 +643,8 @@ fn held_texts(w: W) -> vector<text> {
       tuple_text_leaves(t.name, t.shape, texts);
     }
   }
+  // The spills of the apart vectors (`@FR-R-Apart` instance 3).
+  cgen_apart::texts(w, texts);
   texts
 }
 

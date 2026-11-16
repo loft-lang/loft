@@ -15,6 +15,7 @@ use cgen::(Cx);
 use loop_shape;
 use opt_view;
 use cgen_fn;
+use cgen_apart;
 use cgen_hoist;
 use cgen_names;
 use cgen_w::*;
@@ -202,7 +203,7 @@ pub fn bind_param_ptrs(x: Cx, w: W, code: ir::Node) {
   };
   for p in w.params {
     v = p#index;
-    if !p || (w.shapes[v] ?? "") != "ref" || w.links[v]! || opt_view::scalar_field_uses(x.b, stmts, 0, v) < 2 {
+    if !p || (w.shapes[v] ?? "") != "ref" || cgen_apart::holds(w, v) || w.links[v]! || opt_view::scalar_field_uses(x.b, stmts, 0, v) < 2 {
       continue;
     }
     if !opt_view::param_view_ok(x.b, x.writes, w.facts, w.index, stmts, v) {
@@ -222,7 +223,7 @@ pub fn bind_record_ptr(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: int
     NdSet { var, inner: _ } => var,
     _ => return,
   };
-  if (w.shapes[r] ?? "") != "ref" {
+  if (w.shapes[r] ?? "") != "ref" || cgen_apart::holds(w, r) {
     return;
   }
   for p in w.rec_ptrs {
