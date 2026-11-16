@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a boxed tuple with a text member: the tail's formatted text is written into the record (`OpSetText`); a call's answer bound to a local is that record, member `i` its field `_i`; a destructure reads the text from the held answer.
+// Prints: m3 3 m4 4
+
+fn mk(k: integer) -> (text, integer) { ("m{k}", k) }
+fn main() {
+  a = mk(3);
+  (s, n) = mk(4);
+  println("{a.0} {a.1} {s} {n}");
+}

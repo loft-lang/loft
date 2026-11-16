@@ -1137,6 +1137,7 @@ pub fn captured_name(e: el::El, vars: el_vars::Vars, n: integer, own: vector<tex
 // literals (`(T-Cons)`): a stack tuple, typed by its members.  Any other member — nullable,
 // null, a call's record — is refused by name.
 pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
+  in_boxed_tail = vars.boxed_tail >= 0 && vars.site == vars.boxed_tail;
   items: vector<ir::Node> = [];
   tps: vector<ir::TypeT> = [];
   for n in elems {
@@ -1209,8 +1210,11 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
           }
         },
         _ => {
-          el::refuse(e, "a tuple with a text member that is no literal or variable");
-          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          // (A boxed return's tail writes the member into its record: any text value.)
+          if !in_boxed_tail {
+            el::refuse(e, "a tuple with a text member that is no literal or variable");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
         }
       }
     }
@@ -1285,6 +1289,21 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
             t = ir::TyText { dep: [tv] };
           }
           return ex(ir::NdTupleGet { var: tv, idx: index }, t);
+        },
+        // A boxed tuple a call answered is its `__tuple<…>` record: member `i` its field `_i`.
+        TyReference { n: bd } => {
+          if starts_with(el::def(e, bd).name, "__tuple<") && index >= 0 && index < len(el::def(e, bd).attributes) {
+            mt = el::def(e, bd).attributes[index]!.typedef[0] ?? ir::TyVoid;
+            if !(mt is TyText || el_convert::plain_scalar(mt)) {
+              el::refuse(e, "a member of a boxed tuple that is no plain scalar or text");
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            got = field_get(e, bd, index, x.code);
+            if got == null {
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            return ex(got!, if mt is TyText { ir::TyText { dep: [tv] } } else { mt });
+          }
         },
         _ => {}
       }
@@ -2596,7 +2615,11 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   vars.bind_rhs = op == "=";
   outer_target = vars.assign_target;
   vars.assign_target = v;
+  // A boxed tuple a call answers is bound as the record it is (`a = mk(3)`).
+  outer_boxed = vars.boxed_tuple_at;
+  vars.boxed_tuple_at = if op == "=" { match e.p.nodes[rhs!] { SCall { at: ca } => ca, _ => -1 } } else { -1 };
   x = expression(e, vars, rhs!);
+  vars.boxed_tuple_at = outer_boxed;
   vars.assign_target = outer_target;
   // `@FR-L-Null-Which`: a local spells `S?` as the pointer, so a tagged slot (a field, a vector
   // element) bound to one is read through its tag here, on both passes; a `&` keeps the slot.

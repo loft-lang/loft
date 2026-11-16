@@ -203,7 +203,12 @@ pub struct Vars {
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
   pub dn4_coalesce: boolean = false,
   // A destructure's right-hand call may answer a BOXED tuple (`boxed_tuple_return`): its record.
-  pub boxed_tuple_call: boolean = false,
+  pub boxed_tuple_at: integer = -1,
+  // The tuple literal at the tail of a function answering a boxed tuple: its members are
+  // written into the record, so a text member may be any value.
+  pub boxed_tail: integer = -1,
+  // The call `call_args` is asked about: its `(` token's call node, set by `call_expression`.
+  pub call_at: integer = -2,
   // The assignment seam's conversion is in flight (`Parser::parse_assign`, which reaches the
   // checked narrowing without `convert`'s entry guard): `el_convert::implicit_checked_narrow` reads it.
   pub assign_seam: boolean = false,

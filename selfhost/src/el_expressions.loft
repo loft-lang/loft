@@ -32,6 +32,20 @@ use el_ex_vector;
 pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   vars.body = body;
   result = el::def(e, e.context).returned[0];
+  vars.boxed_tail = -1;
+  if match el_types::base(result) { TyReference { n: rn } => starts_with(el::def(e, rn).name, "__tuple<"), _ => false } {
+    match e.p.nodes[body] {
+      SBlock { stmts } => {
+        if len(stmts) > 0 {
+          match e.p.nodes[stmts[-1]!] {
+            SStmt { e: se, semi } => { if !semi && se != null { vars.boxed_tail = se!; } },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   b = el_ex_assign::parse_block(e, vars, body, "return from block", result);
   // `block_result`'s conversion of a `null` tail to the declared result: the type's own null
   // (`Parser::null_value`) — the sentinel of a record or a vector, a scalar's or a text's
@@ -189,7 +203,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         bdef = el::def(e, btd);
         if len(bl.operators) == 0 || len(items) != len(bdef.attributes) {
           if !e.first_pass {
-            el::refuse(e, "a boxed tuple answered by something other than a tuple literal");
+            el::refuse(e, "a boxed tuple answered by something other than a tuple literal: {tail_kind(e, vars, code)}");
           }
           boxed_bad = true;
         }
@@ -197,7 +211,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         ops: vector<ir::Node> = [el_ir::v_set(bw, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: bw }, ir::NdInt { n: bdef.known_type }])];
         for it in items {
           mt = el_types::base(bdef.attributes[it#index]!.typedef[0] ?? ir::TyVoid);
-          if !(el_convert::plain_scalar(mt) || struct_ref(e, mt) >= 0) || (bdef.attributes[it#index]!.typedef[0] ?? ir::TyVoid) is TyOptional {
+          if !(el_convert::plain_scalar(mt) || mt is TyText || struct_ref(e, mt) >= 0) || (bdef.attributes[it#index]!.typedef[0] ?? ir::TyVoid) is TyOptional {
             el::refuse(e, "a boxed tuple with a member that is no plain scalar or record");
             boxed_bad = true;
           }

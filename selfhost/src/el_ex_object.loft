@@ -811,10 +811,10 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
   if rhs == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  outer_boxed = vars.boxed_tuple_call;
-  vars.boxed_tuple_call = e.p.nodes[rhs!] is SCall;
+  outer_boxed = vars.boxed_tuple_at;
+  vars.boxed_tuple_at = match e.p.nodes[rhs!] { SCall { at: ca } => ca, _ => -1 };
   x = el_ex_assign::expression(e, vars, rhs!);
-  vars.boxed_tuple_call = outer_boxed;
+  vars.boxed_tuple_at = outer_boxed;
   if el_types::is_unknown(x.tp) {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -834,7 +834,7 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
       bt = ba.typedef[0] ?? ir::TyVoid;
       bnm = match e.p.nodes[pl] { SName { name, member } => if member == "" { name } else { "" }, _ => "" };
       bsd = struct_ref(e, bt);
-      plain = el_convert::plain_scalar(bt) && read_op(bt) != "" && match bt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true };
+      plain = (bt is TyText || el_convert::plain_scalar(bt)) && read_op(bt) != "" && match bt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true };
       if bnm == "" || bnm == "_" || !(plain || (bsd >= 0 && literal_def(e, bsd) && !(bt is TyOptional))) {
         el::refuse(e, "a destructure of a boxed tuple into a place that is not a name, or of a member that is no plain scalar or record");
         return ex(ir::NdNull, ir::TyVoid);
@@ -1256,7 +1256,9 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   if hinted_literal(e, d, args, 0, built) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  vars.call_at = at;
   r = el_ex_call::call_args(e, vars, d, list, types);
+  vars.call_at = -2;
   if r == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -1976,7 +1978,9 @@ pub fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, nam
   if hinted_literal(e, d, args, 1, built) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  vars.call_at = at;
   r = el_ex_call::call_args(e, vars, d, list, types);
+  vars.call_at = -2;
   if r == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
