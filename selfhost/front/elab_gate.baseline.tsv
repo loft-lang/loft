@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	841	of	2155
+layer	elab	agree	844	of	2156
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -716,7 +716,6 @@ elab	refused	loft-suite/rules/ownership/O-Witness/2476-a-view-bound-from-a-choic
 elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-reassigned-after-the-build-frees-its-own-store.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-rebuilt-in-a-loop-keeps-the-store-it-still-names.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-discharged-projection-rebound-from-a-call-is-witnessed.loft
-elab	refused	loft-suite/rules/ownership/O-Witness/a-match-of-views-beside-a-call-bind-is-witnessed.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft
 elab	refused	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft
 elab	refused	loft-suite/rules/rewrites/R-AppendTwin/an-append-twin-runs-a-builder-whose-leaves-are-inlined.loft
@@ -862,7 +861,6 @@ elab	refused	loft-suite/rules/types/C-Refl/a-vector-element-of-one-range-meets-e
 elab	refused	loft-suite/rules/types/C-Tuple/a-heap-tuple-returned-from-a-call-widens-its-members.loft
 elab	refused	loft-suite/rules/types/C-Tuple/a-tuple-converts-member-by-member.loft
 elab	refused	loft-suite/rules/types/C-Var/2315-a-variant-or-null-arm-joins-an-optional-enum-result-over-any-subject.loft
-elab	refused	loft-suite/rules/types/C-Var/2336-a-variant-typed-local-widens-to-its-enum-and-keeps-every-variant.loft
 elab	refused	loft-suite/rules/types/C-Var/a-bare-variant-takes-the-enum-that-owns-it.loft
 elab	refused	loft-suite/rules/types/C-Var/a-declared-tuple-with-an-enum-member-keeps-its-type-as-a-reference-source.loft
 elab	refused	loft-suite/rules/types/C-Var/a-tuple-member-is-parsed-against-its-declared-type.loft
