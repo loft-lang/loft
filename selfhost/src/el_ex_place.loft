@@ -1301,6 +1301,15 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
   ex(el_ir::v_set(v, code), ir::TyVoid)
 }
 
+// The type a plain struct literal names (`KIce { … }`), or "" for an update, a qualified literal
+// or any other expression.
+fn literal_names(e: el::El, n: integer) -> text {
+  match e.p.nodes[n] {
+    SStructLit { name, member, base } => if member == "" && base == null { name } else { "" },
+    _ => ""
+  }
+}
+
 // `Parser::parse_assign`'s annotation branch, `name: T = value`: the local is made as an
 // undeclared binding's is, takes the declared type (`change_var_type`), and the value — read
 // against it — must be of that type.  A `&` or `const` declaration, and a value the declared type
@@ -1357,8 +1366,8 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   }
   // A local declared as a VARIANT (`ice: KIce = KIce { … }`) is built in place as a struct
   // local is: the literal is of the declared record itself.
-  dvd = struct_ref(e, el_types::base(declared!));
-  if e.p.nodes[rhs!] is SStructLit && dvd >= 0 && el::def(e, dvd).def_type == el::DT_ENUM_VALUE && struct_literal_def(e, rhs!) == dvd && !vars.vars[v].argument && !(declared! is TyOptional) {
+  dvd = match el_types::base(declared!) { TyReference { n } => n, _ => -1 };
+  if e.p.nodes[rhs!] is SStructLit && dvd >= 0 && el::def(e, dvd).def_type == el::DT_ENUM_VALUE && literal_names(e, rhs!) == el::def(e, dvd).name && !vars.vars[v].argument && !(declared! is TyOptional) {
     vars.bind_declares = true;
     o = object_into(e, vars, v, rhs!);
     vars.bind_declares = false;
@@ -1557,7 +1566,9 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // refs are abandoned (`abandon_work_refs`: kept, never freed).
   // The local's type: a struct, or the struct enum a variant literal rebuilds it as.
   root_d = match el_types::base(vt) { TyReference { n } => n, TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
-  literal_of_root = root_d >= 0 && (root_d == d || el::def(e, d).parent == root_d);
+  // Asked of the literal's own record only (`Type::Reference(d) | Enum(d, true) if d == td_nr`): a
+  // variant literal rebuilding a local of its enum is built in place.
+  literal_of_root = root_d >= 0 && root_d == d;
   if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && literal_of_root && el_types::owns_droppable(e, root_d, []) && any_user_call(e, ops[2..]) {
     if vars.vars[v].argument {
       el::refuse(e, "a literal of a droppable built apart for a parameter it rebinds");

@@ -700,6 +700,11 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
   ex(el_ir::v_block(ops, bt, "ncr"), bt)
 }
 
+// `kept` with every user-named local of `all` put back, in `all`'s order.
+fn keep_user_locals(vars: el_vars::Vars, kept: vector<integer>, all: vector<integer>) -> vector<integer> {
+  [for d in all if kept.contains(d) || (d >= 0 && d < len(vars.vars) && !starts_with(el_vars::name_of(vars, d), "_")) { d }]
+}
+
 // `null_coalesce_exit`'s block type (loft#2481): a record a loft function answers is a fresh one
 // the block hands over — its call's borrows dropped (`LOFT_NO_NCR_CALL_OWNS` unset) — any other
 // subject keeps them.
@@ -1420,10 +1425,11 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // `arm_join_type` with `joined_deps` (loft#978): a record arm's dep on a store the arm itself
   // mints (a literal's `__ref_p2_N`) is its ownership marker, not a borrow — the arm block is
-  // typed without it, and the `if` borrows what either arm still names.
+  // typed without it, and the `if` borrows what either arm still names.  A local the program
+  // declares in the arm (`{ a: W = …; a }`) is a binding, not a marker: its dep is kept.
   if (el_types::base(t.tp) is TyReference || el_types::struct_enum_def(t.tp) >= 0) && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
-    td = outside_deps(t.code, el_types::deps(t.tp));
-    fd = outside_deps(f.code, el_types::deps(f.tp));
+    td = keep_user_locals(vars, outside_deps(t.code, el_types::deps(t.tp)), el_types::deps(t.tp));
+    fd = keep_user_locals(vars, outside_deps(f.code, el_types::deps(f.tp)), el_types::deps(f.tp));
     deps = td;
     for x in fd {
       if !deps.contains(x) {

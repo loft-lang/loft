@@ -17,7 +17,7 @@ full loft interpreter, the in-between data of the two implementations compared a
   runner surveys, one heavy job at a time.
 - Gate E at the new pin, before the uncommitted ports below: 733 of 2125 agree, 12 differ.  The
   differs were new Rust behaviour from main plus programs a cleared refusal newly exposed.
-- With the ports below: **739 of 2125 agree, 1380 refused, 6 differ** (verdict files diffed run
+- With the ports below: **740 of 2125 agree, 1380 refused, 5 differ** (verdict files diffed run
   against run: every moved program is one a port named).
 
 ## Ported this session (Rust function → loft)
@@ -40,23 +40,29 @@ full loft interpreter, the in-between data of the two implementations compared a
 - `@FR-O-Detach` for a parameter rebind reads a VIEW of the parameter too (`views_of`); a
   literal reading one is built apart.
 - A local declared as a variant (`ice: KIce = KIce { … }`) is built in place.
+- A dense record `if` keeps a user-named local's dep the arm binds (`{ a: W = …; a }` borrows
+  `a`); the minted-store filter drops only compiler work refs.  Making the `if` filter nothing
+  at all was measured: 723 agree, 22 differ — the filter is right for literal arms.
+- A variant literal rebuilding a local of its enum is built in place (the `(H-Drop)` build-apart
+  asks the literal's own record only); a local declared as a variant is built in place.
 - `branch_yields_null` as Rust's: a bare `null` counts on the second pass only, a forward call's
   block and a value behind a halt answer nothing.
 
 ## Open, in order
 
-1. The six differs: `139-drop-cascade` (an `if` arm whose tail is a local declared in the
-   arm) — an arm-local's borrow kept in the
-   arm and the join (`ref(W)["a","b"]`), which the port's join typing drops; C-Var 2441
-   (`__ref_p2` numbering); F-ParamRebind (an artifact of Rust's abandoned in-place attempt,
+1. The five differs: `139-drop-cascade`, now at `c14` — Rust parses a vector field's items
+   before it builds each element, so the items' call buffers (`__ref_3`, `__ref_4`) number before
+   the copies' `__ref_p2_4`/`_5`; the port interleaves; F-ParamRebind (an artifact of Rust's abandoned in-place attempt,
    `__vdb_1`); `E-Uncomp-Seen` (port `src/parser/fit.rs`, @PLN152 step 5); N-Join 2478's new
    `above_ended` (port `@FR-B-Scope`'s `rebind_after_block`, loft#1700: `block_path`,
    `bound_in_block`, `bind_after_end`, the split at `expressions.rs` ~5520 with
    `rebind_differs_in_absence`, the name restore at block end); `a-lifted-call-result-adopts-
-   like-a-named-bind` — a `return v` of a view of a local: Rust's work ref is substituted by
-   `__retbuf` (`Bind { substitute: true }`), the port's views-local path renames the attribute
-   onto it (`materialised_return`); and a text return through a call keeps the call's borrow
-   (`text["z"]`) on the body block.
+   like-a-named-bind` — `mkcv`'s `return v` (a view of a local) keeps `__retbuf` in Rust, where
+   the port's views-local path renames the buffer onto a work ref.  Copying into `__retbuf` on
+   that path instead was MEASURED and broke four agreeing programs (H-Move 1628 and 2004, N-Road,
+   `a-transient-twin-writes-only-what-it-built`): the rename is right for them, so what decides
+   `mkcv` is another clause of `classify_ret_promotion_inner` — read it before porting.  Also a
+   text return through a call keeps the call's borrow (`text["z"]`) on the body block.
 2. Re-write the baselines at the new pin once gate E has no differ.
 3. loft#2515 (filed, compiler half fixed in 72a943412, guard cell loft-suite 728fcfd): the
    static checker still MISSES it with `LOFT_NO_RET_TYPE_MATCH=1` (`own_sweep.py`: uaf,re-free).
