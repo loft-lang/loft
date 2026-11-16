@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	851	of	2158
+layer	elab	agree	853	of	2159
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -60,7 +60,6 @@ elab	refused	loft-suite/rules/binding/B-Disturb/a-match-payload-view-read-after-
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-bound-in-a-later-match-arm-materialises-across-a-rebind.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-of-an-element-outlives-a-removal.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-read-after-a-loop-is-copied-only-where-a-path-disturbed-it.loft
-elab	refused	loft-suite/rules/binding/B-OutOfLine/a-link-to-a-child-writes-through.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-write-copies-into-the-host.loft
