@@ -55,6 +55,7 @@ use cgen_value;
 use cgen_fnref;
 use cgen_append;
 use cgen_dest;
+use cgen_lazy;
 use opt_destination;
 use opt_append_twin;
 use cgen_rotate;
@@ -449,6 +450,20 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     held_access = cgen_recptr::rec_ptr_access(x, w, name, args, ind, through);
     if through {
       return held_access;
+    }
+  }
+  if len(w.lazy) > 0 {
+    through_lazy = false;
+    lazy_read = cgen_lazy::lazy_op(x, w, name, args, through_lazy);
+    if through_lazy {
+      return lazy_read;
+    }
+  }
+  if len(w.split_tabs) > 0 {
+    through_tab = false;
+    tab_read = cgen_lazy::table_op(x, w, name, args, ind, through_tab);
+    if through_tab {
+      return tab_read;
     }
   }
   if len(w.chains) > 0 {
@@ -3282,12 +3297,6 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   // The text facts the body is set up with (`FnWriter::new`).
   texts = cgen_texts::borrowed_texts(x.b, index);
-  if len(texts.lazy) > 0 || len(texts.tables) > 0 {
-    return Written { text: "", refused: "a lazy split or a split table" };
-  }
-  if len(texts.tested) > 0 {
-    return Written { text: "", refused: "a tested text borrow" };
-  }
   // `@FR-R-Cold`'s loft clause outlines an early exit that builds a text: not carried.
   if !plain_rules() && cgen_names::is_plain(twin) && (env_variable("LOFT_NO_COLD_EXIT") ?? "0") == "0" && cgen_text::may_outline(d, d.code[0]!) {
     return Written { text: "", refused: "a cold exit that builds a text" };
@@ -3326,6 +3335,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     in_range_copy: false,
     peel_seeds: [],
     walk_scopes: if (env_variable("LOFT_NO_CHAR_WALK") ?? "0") != "0" { [] } else { [for cw in char_walk::walks(x.b, index) { cw.scope }] },
+    char_walks: if (env_variable("LOFT_NO_CHAR_WALK") ?? "0") != "0" { [] } else { char_walk::walks(x.b, index) },
     borrowed: texts.borrowed,
     literal_views: cgen_texts::literal_views(x.b, index, texts.borrowed),
     pending: [],
@@ -3389,6 +3399,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     lr_recs: [],
     callref_buf: "",
     list_stmt: false,
+    lazy: if (env_variable("LOFT_NO_LAZY_SPLIT") ?? "0") != "0" { [] } else { texts.lazy },
+    split_tabs: if (env_variable("LOFT_NO_SPLIT_TABLE") ?? "0") != "0" { [] } else { texts.tables },
+    tab_alias: [],
+    tested: texts.tested,
     ap_buf: -1,
     ap_views: [],
     apw: 0,
@@ -3414,6 +3428,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       ordinal += 1;
     }
   }
+  cgen_lazy::declare_tables(w);
   w.store_links = store_links_of(x.b, w, d, seed);
   w.lr_recs = cgen_fnref::fnref_kept(x, w);
   ordinal = 0;
@@ -3462,6 +3477,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if twin.ds {
     cgen_dest::twin_body(x, w);
   }
+  cgen_text::declare_owns(w);
   // An `__ap` twin's result never adopts the buffer: it is the caller's vector; a `__d` twin's
   // is the caller's element.
   if w.ap_buf >= 0 || twin.ds {

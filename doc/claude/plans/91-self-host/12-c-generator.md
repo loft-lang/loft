@@ -281,7 +281,7 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (11).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
+`cgen_w::PLAIN_SWITCHES` names them (7).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
 
 | switch | corpus | benches | tests |
 |---|---|---|---|
@@ -292,7 +292,6 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 | `GUARD_BOUND` | 8 | 69 | 2 |
 | `DEFERRED_COPY` | 0 | 0 | 29 |
 | `VERSION` | 0 | 0 | 0 — rests on `CALLEE_INPUTS`' `__inv` twins |
-| `CHAR_WALK`, `LAZY_SPLIT`, `SPLIT_TABLE`, `TESTED_BORROW` | +109, +41, +34, +5 refused | | |
 
 Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`), `TEXT_WINDOW`
 (`cgen_win::open_text_windows`), `APART_MINT` (`opt_hoist::apart_mint`), `VR_PTR` (`cgen_value.loft`; its
@@ -302,7 +301,10 @@ the `__nk` twin), `GROWN_HEADER` (`opt_apart::grown_headers`, `kept_growth_param
 dispatchers), `DISTINCT_VERSION` (`cgen_loop::distinct_version`, the store facts' `assumed` pairs),
 `APPEND_TWIN` and `APPEND_LOOP_WINDOW` (`opt_append_twin.loft`, `cgen_append.loft`: the `__ap` twin,
 its window clause, the loop windows), `DESTINATION` (`opt_destination.loft`, `cgen_dest.loft`: the
-`__d` twin and the caller's chain).  A rewrite that writes COPIES of IR nodes (the destination
+`__d` twin and the caller's chain), `CHAR_WALK` (`cgen_loop::char_walk_loop`), `LAZY_SPLIT` and
+`SPLIT_TABLE` (`cgen_lazy.loft`: the `loft_ls` iterator, the `loft_stab` table, its free at every
+exit; a borrowed bind leaves their pieces to their readers), `TESTED_BORROW`
+(`cgen_text::borrowed_assign`, the `loft_own<v>` text).  A rewrite that writes COPIES of IR nodes (the destination
 chain's call and arm statements, an append site's call, the rotate's call, the keyed in-place
 literal) writes them under `no_memo`: the Rust writer keys an invariant's memo and a guarded
 chain's admission by node address, which no copy carries.
@@ -432,6 +434,7 @@ came out 64-bit from the image.
 | `selfhost/src/cgen_fnref.loft` | `src/c/body/loop_record.rs`; the kept-buffer half of `opaque_callref_stmt`, `call_ref` and `src/c/fnval.rs` | `@FR-R-FnRefBuffer` and its frame clause (the park slots) |
 | `selfhost/src/opt_append_twin.loft`, `cgen_append.loft` | `src/opt/append_twin.rs`; `append_site`, `append_call`, `append_twin`, `append_twin_buffer_op`, `apw_operator`, `open_loop_windows` of `src/c/body.rs`; `Cx::ap_window` | `@FR-R-AppendTwin` with its window and loop clauses |
 | `selfhost/src/opt_destination.loft`, `cgen_dest.loft` | `src/lower/destination.rs`; `destination_site`, `destination_level`, `destination_names`, `dest_scalar_set`, `dest_return` of `src/c/body.rs` | `@FR-R-Destination` |
+| `selfhost/src/cgen_lazy.loft` | `lazy_split_bind`, `lazy_split_op`, `split_tab_bind`, `split_tab_op` of `src/c/body.rs`; the `loft_stab` part of `FnWriter::new` and `epilogue` | `@FR-R-LazySplit`, `@FR-R-SplitTable` |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at

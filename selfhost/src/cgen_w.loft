@@ -22,6 +22,10 @@ use opt_adopt;
 use opt_ranged_call;
 use opt_append_twin;
 use opt_destination;
+use char_walk;
+use opt_store_text_borrow;
+use opt_split_table;
+use opt_lazy_split;
 
 // The shape of a C expression's value (`K`).
 K_INT = 0;
@@ -241,6 +245,8 @@ struct W {
   peel_seeds: vector<Seed>,
   // The scopes of this function's character walks.
   walk_scopes: vector<integer>,
+  // `@FR-R-CharWalk`: the function's character walks (`char_walks`), by loop scope.
+  char_walks: vector<char_walk::CharWalk>,
   // `@FR-R-TextBorrow`: the text locals held as a `loft_str` view, and the ones every bind of
   // which is a literal.
   borrowed: vector<boolean>,
@@ -373,6 +379,13 @@ struct W {
   // call is the caller half's rewritten call (-1 for none).
   ds: opt_destination::Shape,
   ds_site: integer,
+  // `@FR-R-LazySplit` and `@FR-R-SplitTable`: the function's lazy loops and bound split
+  // tables, and per walk alias of a table, the table's local (`[alias, table, …]`).
+  lazy: vector<opt_lazy_split::LazySplit>,
+  split_tabs: vector<opt_split_table::SplitTable>,
+  tab_alias: vector<integer>,
+  // `@FR-R-TextBorrow`'s tested clause: the borrows a bind tests, with their root parameters.
+  tested: vector<opt_store_text_borrow::Tested>,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -416,6 +429,9 @@ fn epilogue(w: W, ind: integer) {
   // A `return` from inside a held loop: the cursors go back before the frame does.
   for i in rev(0..len(w.file_holds)) {
     line(w, ind, "loft_fcur_release(&{w.file_holds[i]!.name}, {w.file_holds[i]!.name}p);");
+  }
+  for t in w.split_tabs {
+    line(w, ind, "loft_stab_free(&st{t.var});");
   }
   line(w, ind, EPILOGUE_MARK);
 }
@@ -662,7 +678,7 @@ fn held(shape: text) -> text {
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
 // what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_CALLEE_INPUTS", "LOFT_NO_GUARD_BOUND", "LOFT_NO_VERSION", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_APART", "LOFT_NO_CHAR_WALK", "LOFT_NO_LAZY_SPLIT", "LOFT_NO_SPLIT_TABLE", "LOFT_NO_TESTED_BORROW"];
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_CALLEE_INPUTS", "LOFT_NO_GUARD_BOUND", "LOFT_NO_VERSION", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_APART"];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {
