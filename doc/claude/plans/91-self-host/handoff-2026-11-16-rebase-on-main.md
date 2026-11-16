@@ -1,0 +1,80 @@
+<!--
+Copyright (c) 2026 Jurjen Stellingwerff
+SPDX-License-Identifier: LGPL-3.0-or-later
+-->
+<!-- size-exempt: a dated handoff record, read once (DOC_QUALITY § Maintainer docs 2) -->
+# Handoff 2026-11-16 — rebased on main; gate E's differs after the move, and loft#2515
+
+Branch `tuxedo-pln204-int32`, rebased on `origin/main` d191761c2 (#2513).  Main held this branch
+up to 64361031e by content; only the four later commits were replayed.  Goal (owner, /goal): the
+full loft interpreter, the in-between data of the two implementations compared at every layer.
+
+## Where it stands
+
+- Main moved the suite pin to 508580956 (`tests/loft-suite.pin`).  **Every survey baseline was
+  written at the old pin** (`selfhost/front/elab_gate.baseline.tsv`, `selfhost/bench/*.baseline.tsv`)
+  and fails `require_pin` until re-written: gate E first (it needs 0 differ), then the writer and
+  runner surveys, one heavy job at a time.
+- Gate E at the new pin, before the uncommitted ports below: 733 of 2125 agree, 12 differ.  The
+  differs were new Rust behaviour from main plus programs a cleared refusal newly exposed.
+- With the ports below: **739 of 2125 agree, 1380 refused, 6 differ** (verdict files diffed run
+  against run: every moved program is one a port named).
+
+## Ported this session (Rust function → loft)
+
+- `literal_exits_into_buffer` (committed, 601cddf7c); skipped for a `null` tail, as Rust's
+  delivery arms are never reached there (uncommitted).
+- `coalesce_with` mints `__ncc_N` for a subject of unknown type on pass 1 (committed).
+- Pattern groups `(2 | 3)`, `null` arms, a nullable scalar subject peeled, text struct bindings,
+  root captures `w: V { … }` (`root_capture`, with the variant proved for the arm body).
+- Closure cells (`el_cell.loft`: `cell_struct_name`, `synthesize_cell_structs`,
+  `flip_scalars_to_box_types`, `auto_deref_boxed_scalar`, `maybe_prepend_cell_alloc`); a map of
+  the Rust sites is in the session scratchpad only — re-derive from `vectors.rs` 3019–3200 and
+  9481–9600 if needed.
+- loft#2499: a `match` that is `never` beside a `void` arm is `void`; the sibling's null goes
+  behind ANY then arm typed `never` (both arms never included); DN1's `if` widening by
+  `branch_yields_null`.
+- loft#2481: an `ncr` block over a loft call answering a record drops the call's borrows, on
+  both passes.
+- A record item that is no literal in a vector FIELD reuses `record_item_copy`.
+- `@FR-O-Detach` for a parameter rebind reads a VIEW of the parameter too (`views_of`); a
+  literal reading one is built apart.
+- A local declared as a variant (`ice: KIce = KIce { … }`) is built in place.
+- `branch_yields_null` as Rust's: a bare `null` counts on the second pass only, a forward call's
+  block and a value behind a halt answer nothing.
+
+## Open, in order
+
+1. The six differs: `139-drop-cascade` (an `if` arm whose tail is a local declared in the
+   arm) — an arm-local's borrow kept in the
+   arm and the join (`ref(W)["a","b"]`), which the port's join typing drops; C-Var 2441
+   (`__ref_p2` numbering); F-ParamRebind (an artifact of Rust's abandoned in-place attempt,
+   `__vdb_1`); `E-Uncomp-Seen` (port `src/parser/fit.rs`, @PLN152 step 5); N-Join 2478's new
+   `above_ended` (port `@FR-B-Scope`'s `rebind_after_block`, loft#1700: `block_path`,
+   `bound_in_block`, `bind_after_end`, the split at `expressions.rs` ~5520 with
+   `rebind_differs_in_absence`, the name restore at block end); `a-lifted-call-result-adopts-
+   like-a-named-bind` — a `return v` of a view of a local: Rust's work ref is substituted by
+   `__retbuf` (`Bind { substitute: true }`), the port's views-local path renames the attribute
+   onto it (`materialised_return`); and a text return through a call keeps the call's borrow
+   (`text["z"]`) on the body block.
+2. Re-write the baselines at the new pin once gate E has no differ.
+3. loft#2515 (filed, compiler half fixed in 72a943412, guard cell loft-suite 728fcfd): the
+   static checker still MISSES it with `LOFT_NO_RET_TYPE_MATCH=1` (`own_sweep.py`: uaf,re-free).
+   `src/store_records.rs` is 6545 lines, over the 5000-line ceiling, so the check waits on that
+   file's split.  The cell's `@falsified-at` receipt is pending (`make falsify`).
+4. CI on the branch (run 43775747754): the scripts ratchet is fixed (bc2257796 — its message
+   says 23 scripts; the count is 72); `html_wasm rust_writer::html_debug_tier_runs_on_wasm`
+   took 349.5 s against the 300 s budget.  Not caused by this branch's changes as far as read;
+   time it locally on a quiet box and find where the time goes.
+
+## Method notes
+
+- One program against the kept tools: `elab_gate.one(loft, defs, elab, std, path, tmp, env, i)`
+  with `LOFT_ELAB_KEEP=1`; the oracle's report is `defs <image> program <std>`.
+- A loft panic's frame list needs `loft --interpret`; bare `loft` compiles through rustc first
+  (20+ minutes for the elaborator).
+- A gate lists its corpus before it builds: never add or delete a file in the pinned suite
+  worktree during a run.  New cells go in `../loft-suite-91` (branch `91-self-host`).
+- The definitions table emptied mid-elaboration was loft#2515 in the compiled elaborator itself
+  (`value_of` reads `def(e, cd).attributes[0]!.typedef[0]`): a store fault in the port is a
+  language-defect candidate before it is a port defect.

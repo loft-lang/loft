@@ -900,17 +900,33 @@ pub fn all_in(xs: vector<text>, ys: vector<text>) -> boolean {
   true
 }
 
-// `branch_yields_null`: a written null, or a null literal call, at a branch's end.
+// `branch_yields_null`: a written null, or a null literal call, at a branch's end.  On the first
+// pass a bare null is also the placeholder of a call pass 1 cannot type (`first_pass_null_arm`),
+// so it counts on the second only; a forward call's block and a value behind a halt
+// (`give_halt_a_value`) answer nothing.
 pub fn branch_yields_null(e: el::El, v: ir::Node) -> boolean {
   match v {
     NdSpan { inner } => branch_yields_null(e, inner),
-    NdNull => true,
-    NdBlock { block } => len(block[0].operators) > 0 && branch_yields_null(e, block[0].operators[-1]),
+    NdNull => !e.first_pass,
+    NdBlock { block } => len(block[0].operators) > 0 && block[0].name != "forward_call" && !behind_a_halt(e, block[0].operators) && branch_yields_null(e, block[0].operators[-1]),
     NdInsert { items } => len(items) > 0 && branch_yields_null(e, items[-1]),
     NdIf { cond: _, t, f } => branch_yields_null(e, t) || branch_yields_null(e, f),
     NdCall { def_nr, args } => len(args) == 0 && starts_with(el::def(e, def_nr).name, "OpConv") && ends_with(el::def(e, def_nr).name, "FromNull"),
     _ => false
   }
+}
+
+// `behind_a_halt`: an operator before the block's last is an `exit` or a `panic`.
+fn behind_a_halt(e: el::El, ops: vector<ir::Node>) -> boolean {
+  for o in ops {
+    if o#index < len(ops) - 1 {
+      match el_ir::unspan(o) {
+        NdCall { def_nr } => if el::def(e, def_nr).name == "n_exit" || el::def(e, def_nr).name == "n_panic" { return true; },
+        _ => {}
+      }
+    }
+  }
+  false
 }
 
 // `parse_match_arm_body`: a block read as a "match_arm" block, or an expression converted to the

@@ -665,7 +665,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
-    return ex(ir::NdNull, b);
+    return ex(ir::NdNull, ncr_type(e, x.code, b));
   }
   // A vector is tested with `OpVectorIsNull` (`handle_present`'s collection arm), held as read.
   vec = b is TyVector;
@@ -696,7 +696,24 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     ops += [el_ir::v_set(held, code)];
   }
   ops += [test, subject];
-  ex(el_ir::v_block(ops, b, "ncr"), b)
+  bt = ncr_type(e, x.code, b);
+  ex(el_ir::v_block(ops, bt, "ncr"), bt)
+}
+
+// `null_coalesce_exit`'s block type (loft#2481): a record a loft function answers is a fresh one
+// the block hands over — its call's borrows dropped (`LOFT_NO_NCR_CALL_OWNS` unset) — any other
+// subject keeps them.
+pub fn ncr_type(e: el::El, subject: ir::Node, b: ir::TypeT) -> ir::TypeT {
+  heap = struct_ref(e, b) >= 0 || el_convert::struct_enum(b);
+  match el_ir::unspan(subject) {
+    NdCall { def_nr } => if heap && !starts_with(el::def(e, def_nr).name, "Op") && loft_defined(el::def(e, def_nr)) { el_types::without_deps(b) } else { b },
+    _ => b
+  }
+}
+
+// `Definition::is_loft_defined`: a function with a body the program or a library wrote.
+pub fn loft_defined(d: ir::Definition) -> boolean {
+  (starts_with(d.name, "n_") || starts_with(d.name, "t_") || starts_with(d.name, "f_") || d.instance_of >= 0) && len(d.code) > 0 && d.code[0]! is NdBlock
 }
 
 // The line a token starts on.
@@ -1221,18 +1238,21 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // `@FR-C-Never`: a then arm that never finishes answers nothing, so it takes the else's type
   // (`true_type = false_type`, its block re-typed).
-  if t.tp is TyNever && !(f.tp is TyNever) && !(f.tp is TyNull) {
-    hv = if ends_in_halt(e, t.code) { halt_null(e, f.tp) } else { null };
+  // Both arms never finishing is no exception: the null still goes behind the then arm's.
+  if t.tp is TyNever && !(f.tp is TyNull) {
+    // The halt — or the construct of its own that never finishes, a `match` whose every arm
+    // leaves (`then_never`) — stays, and the sibling's null goes behind it.
+    hv = if f.tp is TyNever { ir::NdNull } else { halt_null(e, f.tp) ?? ir::NdNull };
     tc = t.code;
-    if hv != null {
-      match tc {
-        NdBlock { block } => {
+    match tc {
+      NdBlock { block } => {
+        if len(block[0].operators) > 0 {
           hb = block[0];
-          hb.operators += [hv!];
+          hb.operators += [hv];
           tc = ir::NdBlock { block: [hb] };
-        },
-        _ => {}
-      }
+        }
+      },
+      _ => {}
     }
     t = ex(block_typed(tc, f.tp), f.tp);
   }
@@ -1456,6 +1476,11 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       }
     }
     return ex(el_ir::v_if(c.code, t.code, f.code), el_types::with_deps(t.tp, ds));
+  }
+  // `@PLN25` DN1: an arm whose code ends in a null — the sibling's null behind a then arm that
+  // never finishes, a null literal call — beside a non-null scalar arm makes the join `τ?`.
+  if !(t.tp is TyOptional) && el_convert::plain_scalar(t.tp) && el_ex_pattern::branch_yields_null(e, t.code) != el_ex_pattern::branch_yields_null(e, f.code) {
+    return ex(el_ir::v_if(c.code, t.code, f.code), ir::TyOptional { inner: t.tp });
   }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
 }

@@ -821,6 +821,35 @@ pub fn closure_fn_type(e: el::El, d: integer) -> ir::TypeT {
   }
 }
 
+// `views_of`: does `code` read a local whose borrows name `v` (a view of it)?
+pub fn reads_view_of(vars: el_vars::Vars, code: ir::Node, v: integer) -> boolean {
+  for w in 0..len(vars.vars) {
+    if w != v && el_types::deps(el_vars::tp(vars, w)).contains(v) && el_ir::reads_var(code, w) {
+      return true;
+    }
+  }
+  false
+}
+
+// The same asked of the syntax at `n`, before it is read: a bare name of a local viewing `v`.
+pub fn syntax_reads_view_of(e: el::El, vars: el_vars::Vars, n: integer, v: integer) -> boolean {
+  match e.p.nodes[n] {
+    SName { name, member } => {
+      w = if member == "" { el_vars::var(vars, name) } else { -1 };
+      if w >= 0 && w != v && el_types::deps(el_vars::tp(vars, w)).contains(v) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if syntax_reads_view_of(e, vars, c, v) {
+      return true;
+    }
+  }
+  false
+}
+
 // Every bare name in the syntax at `n` that names a local of the enclosing body (`vars`) and no
 // parameter of the lambda (`own`), in first-use order.
 pub fn captured_names(e: el::El, vars: el_vars::Vars, n: integer, own: vector<text>) -> vector<text> {
@@ -1929,7 +1958,9 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   pt0 = el_types::base(el_vars::tp(vars, v));
   // The literal's own lowering (P2.1 inside `parse_object`): its reads of the parameter staged
   // first, the detach where a local's build resets it, the record built into the slot.
-  if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && e.p.nodes[rhs!] is SStructLit && struct_literal_def(e, rhs!) == struct_ref(e, pt0) {
+  // A literal that reads a VIEW of the parameter is built apart (`rebuild_watch`'s
+  // `build_apart`): the in-place road would free what the view still names.
+  if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && e.p.nodes[rhs!] is SStructLit && struct_literal_def(e, rhs!) == struct_ref(e, pt0) && !syntax_reads_view_of(e, vars, rhs!, v) {
     orig = if e.first_pass { -1 } else { el_vars::rebind_witness(vars, v) };
     vars.vars[v].argument = false;
     vars.bind_declares = declaring;
@@ -1957,7 +1988,7 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     }
     return ex(ir::NdInsert { items: out }, ir::TyVoid);
   }
-  if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && !(e.p.nodes[rhs!] is SStructLit) && !(e.p.nodes[rhs!] is SVecLit) {
+  if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && (!(e.p.nodes[rhs!] is SStructLit) || syntax_reads_view_of(e, vars, rhs!, v)) && !(e.p.nodes[rhs!] is SVecLit) {
     x = expression(e, vars, rhs!);
     sd = struct_ref(e, el_types::base(x.tp));
     if !e.first_pass && (sd < 0 || !copies_as(e, struct_ref(e, pt0), sd)) {
@@ -1971,7 +2002,9 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     orig = el_vars::rebind_witness(vars, v);
     free = el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: v }, ir::NdVar { n: orig }]);
     detach = el_ir::cl(e, "OpInitRefSentinel", [ir::NdVar { n: v }]);
-    if el_ir::reads_var(x.code, v) {
+    // `@FR-O-Detach`: a value reading the binding, or a VIEW of it, is computed first
+    // (`LOFT_NO_DETACH_VIEW_READS` unset).
+    if el_ir::reads_var(x.code, v) || reads_view_of(vars, x.code, v) {
       held = el_vars::work_ref(vars, el_vars::tp(vars, v));
       return ex(ir::NdInsert { items: [el_ir::v_set(held, x.code), free, detach, el_ir::v_set(v, ir::NdVar { n: held })] }, ir::TyVoid);
     }

@@ -1355,6 +1355,15 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
       return ex(ir::NdInsert { items: list }, ir::TyVoid);
     }
   }
+  // A local declared as a VARIANT (`ice: KIce = KIce { … }`) is built in place as a struct
+  // local is: the literal is of the declared record itself.
+  dvd = struct_ref(e, el_types::base(declared!));
+  if e.p.nodes[rhs!] is SStructLit && dvd >= 0 && el::def(e, dvd).def_type == el::DT_ENUM_VALUE && struct_literal_def(e, rhs!) == dvd && !vars.vars[v].argument && !(declared! is TyOptional) {
+    vars.bind_declares = true;
+    o = object_into(e, vars, v, rhs!);
+    vars.bind_declares = false;
+    return ex(o.code, ir::TyVoid);
+  }
   // A literal of a variant of the declared struct enum is built in the local, which the
   // declaration already typed as the enum (`variant_rebinds_local`); a parameter the caller
   // passed is built in a buffer of the enum's type and bound.

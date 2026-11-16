@@ -1974,7 +1974,7 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
-    return ex(ir::NdNull, b);
+    return ex(ir::NdNull, el_ex_null::ncr_type(e, x.code, b));
   }
   code = if record { nullable_getter(e, x.code) } else if vec { x.code } else { nullable_arith(e, x.code, true) };
   held = -1;
@@ -1997,7 +1997,8 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
     ops += [el_ir::v_set(held, code)];
   }
   ops += [test, subject];
-  ex(el_ir::v_block(ops, b, "ncr"), b)
+  bt = el_ex_null::ncr_type(e, x.code, b);
+  ex(el_ir::v_block(ops, bt, "ncr"), bt)
 }
 
 // An element read with the nullable getter (`OpGetVectorNullable` / `OpVectorRefNullable`), for a

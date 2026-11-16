@@ -1364,6 +1364,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   named_true = false;
   named_false = false;
   any_wild = false;
+  hoisted_caps: vector<ir::Node> = [];
+  // `match_void_arm`: an arm that finishes without a value.
+  void_arm = false;
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
@@ -1373,15 +1376,42 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         aliases: vector<el_vars::VarName> = [];
         binding_arm = false;
         alts: vector<el_ex_pattern::VAlt> = [];
+        cap_proof: vector<el_vars::Proven> = [];
         if sd >= 0 {
-          va = el_ex_pattern::variant_arm(e, vars, pats, sd, x.code);
+          // `root_capture` (`@FR-P-Cap`): `w: V { … }` at the arm's root binds the matched subject
+          // as `w#N`, a view of the subject's own place (`OpGetField(subject, 0, T)`, borrowing
+          // its source, never freed), hoisted ahead of the arm chain; the variant the arm tests
+          // is proven for its body, so a field read through `w` reads that variant's own field
+          // (`capture_variant`).  The inner pattern is the arm's.
+          vpats = pats;
+          cap_names: vector<el_vars::VarName> = [];
+          if len(pats) == 1 {
+            match e.p.nodes[pats[0]!] {
+              PCap { name: cn, pat: cp, at_sign } => {
+                if !at_sign && cp != null {
+                  bt = el_types::base(st);
+                  src = match el_ir::unspan(x.code) { NdVar { n } => [n], _ => [] };
+                  cv = pattern_bind(vars, cn, el_types::with_deps(el_types::without_deps(bt), src), cap_names);
+                  vars.vars[cv].skip_free = true;
+                  hoisted_caps += [el_ir::v_set(cv, el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sd).known_type }]))];
+                  vd = match e.p.nodes[cp!] { PName { name: vn, member } => if member == "" { el::variant_of(e, sd, vn) } else { -1 }, _ => -1 };
+                  if vd >= 0 {
+                    cap_proof = [el_vars::Proven { place: ir::NdVar { n: cv }, disc: el_ex_object::variant_ord(e, vd) }];
+                  }
+                  vpats = [cp!];
+                }
+              },
+              _ => {}
+            }
+          }
+          va = el_ex_pattern::variant_arm(e, vars, vpats, sd, x.code);
           if va == null {
             return ex(ir::NdNull, ir::TyUnknown { n: 0 });
           }
           cond = va!.cond;
           wild = cond == null;
           binds = va!.binds;
-          aliases = va!.aliases;
+          aliases = cap_names + va!.aliases;
           alts = va!.alts;
         } else if scalar_subject && len(pats) == 1 && el_ex_pattern::binding_name(e, pats[0]!) != "" {
           // A bare name that names nothing (`n => n * 2`) binds the subject and matches anything
@@ -1444,8 +1474,12 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         facts = el_ex_call::assume_guard(e, vars, ug);
+        vars.proven += cap_proof;
         b = el_ex_pattern::arm_body(e, vars, body, expected);
         forget_facts(vars, facts);
+        if el_types::base(b.tp) is TyVoid {
+          void_arm = true;
+        }
         if sd >= 0 {
           owned = el_ex_assign::jo_arm_copy(e, vars, b);
           if owned != null {
@@ -1656,6 +1690,11 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
       chain = el_ir::v_if(a.cond!, a.code, chain);
     }
   }
+  // `@FR-C-Never` (loft#2499): a match never finishes only when EVERY arm does not — beside an
+  // arm that finishes without a value it is a statement that finishes.
+  if result is TyNever && void_arm {
+    result = ir::TyVoid;
+  }
   if scalar_subject {
     // `dn1_widen_branch_null`: a non-null scalar result that a branch answers as null is `τ?`;
     // the block keeps the type the arms settled on.
@@ -1671,7 +1710,10 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   // A struct enum read in place needs no `match` block; a held subject is set inside one.
   if sd >= 0 {
     if held_set != null {
-      return own_match_arms(e, vars, ex(el_ir::v_block([held_set!, chain], result, "match"), result));
+      return own_match_arms(e, vars, ex(el_ir::v_block([held_set!] + hoisted_caps + [chain], result, "match"), result));
+    }
+    if len(hoisted_caps) > 0 {
+      return own_match_arms(e, vars, ex(el_ir::v_block(hoisted_caps + [chain], result, "match"), result));
     }
     return own_match_arms(e, vars, ex(chain, result));
   }

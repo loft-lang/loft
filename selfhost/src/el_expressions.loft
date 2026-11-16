@@ -2321,7 +2321,8 @@ fn build_literal_exits(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer,
 // so the callee answers one store whichever exit it takes; any other exit keeps every per-exit
 // store.  (The chain-renamed buffer's half, `chain_return_buffer_var`, is not carried here.)
 pub fn literal_exits_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
-  if e.first_pass || attr_nr(el::def(e, e.context), "__retbuf") < 0 || el::def(e, e.context).name.contains("__lambda") {
+  // A `null` tail is no record: Rust's delivery arms, which run this pass, are never reached.
+  if e.first_pass || attr_nr(el::def(e, e.context), "__retbuf") < 0 || el::def(e, e.context).name.contains("__lambda") || null_sentinel_tail(e, code) || el_ir::unspan(body_tail(code)) is NdNull {
     return code;
   }
   td = heap_def(el_vars::tp(vars, rb));
