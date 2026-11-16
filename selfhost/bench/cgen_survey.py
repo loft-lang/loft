@@ -35,6 +35,8 @@ import argparse, collections, concurrent.futures as cf, os, re, shutil, subproce
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"))
+from c_sweep import unreported  # noqa: E402  a store report is masked as the C sweep masks it
 
 
 # Where the C runtime's headers are: the generator reads them, as the Rust build embeds them.
@@ -229,6 +231,12 @@ def run_one(f, loft, generator, tmp, env, timeout, bench=False):
         nrc, nout, nerr = run([loft, "--native-c", f] + tail, gen_env)
         if bench:
             iout, nout = bench_rows(iout), bench_rows(nout)
+        # A printed `store_memory()` report names each side's own stores (the interpreter's
+        # value stack and constants, its bytecode positions), which no compiled program has: it
+        # is masked as `scripts/c_sweep.py` masks it, and a program that reads the report's
+        # counts checks them itself.
+        iout = unreported(iout.encode()).decode(errors="replace")
+        nout = unreported(nout.encode()).decode(errors="replace")
         if nrc != 0 and ("error:" in nerr and ".c:" in nerr):
             return f, "nobuild", same + " " + next((l for l in nerr.splitlines() if "error:" in l), "")[:150]
         if irc == 0 and nrc == 0 and iout == nout:
