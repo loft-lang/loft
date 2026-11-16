@@ -2431,10 +2431,18 @@ pub fn if_not_names(e: el::El, st: integer, name: text) -> boolean {
     return false;
   }
   match e.p.nodes[se] {
-    SIf { cond } => match e.p.nodes[cond] {
-      SUnary { op, e: u } => op == "!" && u != null && match e.p.nodes[u!] { SName { name: n, member } => n == name && member == "", _ => false },
-      _ => false
-    },
+    SIf { cond } => cond_tests_not(e, cond, name),
+    _ => false
+  }
+}
+
+// Does the condition at `c` hold `!name` — itself, or an operand of `&&` / `||` (`fuse_fit_test`
+// asks every `!` the condition parses)?
+fn cond_tests_not(e: el::El, c: integer, name: text) -> boolean {
+  match e.p.nodes[c] {
+    SUnary { op, e: u } => op == "!" && u != null && match e.p.nodes[u!] { SName { name: n, member } => n == name && member == "", _ => false },
+    SBin { op, l, r } => (op == "&&" || op == "||") && (cond_tests_not(e, l, name) || cond_tests_not(e, r, name)),
+    SParen { e: pe } => pe != null && cond_tests_not(e, pe!, name),
     _ => false
   }
 }

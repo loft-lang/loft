@@ -17,7 +17,7 @@ full loft interpreter, the in-between data of the two implementations compared a
   runner surveys, one heavy job at a time.
 - Gate E at the new pin, before the uncommitted ports below: 733 of 2125 agree, 12 differ.  The
   differs were new Rust behaviour from main plus programs a cleared refusal newly exposed.
-- With the ports below: **740 of 2125 agree, 1380 refused, 5 differ** (verdict files diffed run
+- With the ports below: **741 of 2125 agree, 1381 refused, 3 differ** (verdict files diffed run
   against run: every moved program is one a port named).
 
 ## Ported this session (Rust function → loft)
@@ -45,30 +45,35 @@ full loft interpreter, the in-between data of the two implementations compared a
   at all was measured: 723 agree, 22 differ — the filter is right for literal arms.
 - A variant literal rebuilding a local of its enum is built in place (the `(H-Drop)` build-apart
   asks the literal's own record only); a local declared as a variant is built in place.
+- `@FR-B-Scope`'s split (loft#1700, `rebind_after_block`): the open blocks and each binding's
+  block on `Vars`; a bind after the name's block ended, at a type the old binding refuses or that
+  differs from it only in absence, is `name#<line * 100000 + column>`; a bind in ANOTHER loop is
+  left to the per-loop split.
 - `branch_yields_null` as Rust's: a bare `null` counts on the second pass only, a forward call's
   block and a value behind a halt answer nothing.
 
 ## Open, in order
 
-1. The five differs: `139-drop-cascade`, now at `c14` — Rust parses a vector field's items
+1. The three differs: `139-drop-cascade`, now at `c14` — Rust parses a vector field's items
    before it builds each element, so the items' call buffers (`__ref_3`, `__ref_4`) number before
    the copies' `__ref_p2_4`/`_5`; the port interleaves; F-ParamRebind (an artifact of Rust's abandoned in-place attempt,
-   `__vdb_1`); `E-Uncomp-Seen` (port `src/parser/fit.rs`, @PLN152 step 5); N-Join 2478's new
-   `above_ended` (port `@FR-B-Scope`'s `rebind_after_block`, loft#1700: `block_path`,
-   `bound_in_block`, `bind_after_end`, the split at `expressions.rs` ~5520 with
-   `rebind_differs_in_absence`, the name restore at block end); `a-lifted-call-result-adopts-
+   `__vdb_1`); `a-lifted-call-result-adopts-
    like-a-named-bind` — `mkcv`'s `return v` (a view of a local) keeps `__retbuf` in Rust, where
    the port's views-local path renames the buffer onto a work ref.  Copying into `__retbuf` on
    that path instead was MEASURED and broke four agreeing programs (H-Move 1628 and 2004, N-Road,
    `a-transient-twin-writes-only-what-it-built`): the rename is right for them, so what decides
    `mkcv` is another clause of `classify_ret_promotion_inner` — read it before porting.  Also a
    text return through a call keeps the call's borrow (`text["z"]`) on the body block.
-2. Re-write the baselines at the new pin once gate E has no differ.
-3. loft#2515 (filed, compiler half fixed in 72a943412, guard cell loft-suite 728fcfd): the
+2. Refused by name now, to port: the fit fusion (`E-Uncomp-Seen`, `src/parser/fit.rs`, @PLN152
+   step 5 — the refusal also reads `!place` inside `&&` / `||`), and loft#1145's per-loop split
+   (`body_local_binding`, `name#bN`; `157-record-ptr`).  `2177-a-malformed-image-…` registers
+   `vector<u8>` (known 100) ahead of the program's structs in Rust and after them in the port.
+3. Re-write the baselines at the new pin once gate E has no differ.
+4. loft#2515 (filed, compiler half fixed in 72a943412, guard cell loft-suite 728fcfd): the
    static checker still MISSES it with `LOFT_NO_RET_TYPE_MATCH=1` (`own_sweep.py`: uaf,re-free).
    `src/store_records.rs` is 6545 lines, over the 5000-line ceiling, so the check waits on that
    file's split.  The cell's `@falsified-at` receipt is pending (`make falsify`).
-4. CI on the branch (run 43775747754): the scripts ratchet is fixed (bc2257796 — its message
+5. CI on the branch (run 43775747754): the scripts ratchet is fixed (bc2257796 — its message
    says 23 scripts; the count is 72); `html_wasm rust_writer::html_debug_tier_runs_on_wasm`
    took 349.5 s against the 300 s budget.  Not caused by this branch's changes as far as read;
    time it locally on a quiet box and find where the time goes.

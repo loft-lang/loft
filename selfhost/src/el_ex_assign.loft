@@ -176,7 +176,16 @@ pub fn bind_root(e: el::El, n: ir::Node, w: integer, rt: ir::TypeT) -> ir::Node 
 // `Parser::parse_block_inner` for a `{ … }`: a line marker where a statement starts on a later
 // line than the last marker, each statement, a statement's value dropped where a `;` follows it
 // or the block answers nothing, and the last statement's value the block's.
+// `Parser::parse_block`: a block is open while its statements parse (`@FR-B-Scope`): a binding
+// split inside it hands its spelling back when it ends.
 pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, result: ir::TypeT) -> Ex {
+  el_vars::open_block(vars);
+  r = block_body(e, vars, n, context, result);
+  el_vars::close_block(vars);
+  r
+}
+
+fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result: ir::TypeT) -> Ex {
   stmts: vector<integer> = [];
   match e.p.nodes[n] {
     SBlock { stmts: ss } => { stmts = ss; },
@@ -819,6 +828,69 @@ pub fn closure_fn_type(e: el::El, d: integer) -> ir::TypeT {
     },
     _ => t
   }
+}
+
+// `Function::retype_would_be_refused`: would binding `t` to the inferred `nr` be refused as a
+// type change?  An annotated local and a parameter are no candidates; an unknown or null type on
+// either side, two collection shapes, and a `τ?` slot given its `τ` are accepted.
+pub fn retype_refused(e: el::El, vars: el_vars::Vars, nr: integer, t: ir::TypeT) -> boolean {
+  if vars.vars[nr].argument || vars.annotated.contains(nr) {
+    return false;
+  }
+  cur = el_vars::tp(vars, nr);
+  if el_types::is_unknown(cur) || el_types::is_unknown(t) || cur is TyNull || t is TyNull {
+    return false;
+  }
+  if shaped(cur) && shaped(t) {
+    return false;
+  }
+  if el_types::is_equal(e, cur, t) {
+    return false;
+  }
+  match cur { TyOptional { inner } => if el_types::is_equal(e, inner, el_types::base(t)) { return false; }, _ => {} }
+  match t { TyOptional { inner } => if el_types::is_equal(e, inner, el_types::base(cur)) { return false; }, _ => {} }
+  true
+}
+
+fn shaped(t: ir::TypeT) -> boolean {
+  t is TyTuple || t is TyVector || t is TyIterator || el_types::is_collection(t)
+}
+
+// `Function::rebind_differs_in_absence`: does `t` differ from the inferred `nr`'s type only in
+// absence — one `τ?`, the other `τ`?
+pub fn differs_in_absence(e: el::El, vars: el_vars::Vars, nr: integer, t: ir::TypeT) -> boolean {
+  if vars.vars[nr].argument || vars.annotated.contains(nr) {
+    return false;
+  }
+  cur = el_vars::tp(vars, nr);
+  if cur is TyOptional && t is TyOptional {
+    return false;
+  }
+  match cur {
+    TyOptional { inner } => !(t is TyNull) && !(t is TyRefVar) && !el_types::is_unknown(t) && el_types::is_equal(e, inner, t),
+    _ => match t {
+      TyOptional { inner } => !(cur is TyNull) && !(cur is TyRefVar) && !el_types::is_unknown(cur) && el_types::is_equal(e, inner, cur),
+      _ => false
+    }
+  }
+}
+
+// `Parser::rebind_after_block`: the new binding `name#<line * 100000 + column>` of the ended
+// `old`, named by the position after the statement (pass-stable, where a counter is not), typed
+// as its value, its spelling taken over until the enclosing block ends.
+pub fn rebind_after_block(e: el::El, vars: el_vars::Vars, old: integer, t: ir::TypeT, at: integer) -> integer {
+  bound = el_vars::name_of(vars, old);
+  name = if bound.contains("#") { bound[0..bound.find("#") ?? len(bound)] } else { bound };
+  p = el::pos_at(e, el_ex_pattern::statement_end(e, at));
+  col = if p.pos > 99999 { 99999 } else { p.pos };
+  nv = el_vars::add_variable(vars, "{name}#{p.line * 100000 + col}", el_types::unrewritten(t));
+  el_vars::set_defined(vars, nv);
+  el_vars::set_name(vars, name, nv);
+  if len(vars.rebind_frames) > 0 {
+    vars.rebind_frames[-1].names += [el_vars::VarName { name: name, nr: old }];
+  }
+  el_vars::record_binding(vars, nv);
+  nv
 }
 
 // `views_of`: does `code` read a local whose borrows name `v` (a view of it)?
@@ -1920,13 +1992,31 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   written = "";
   // Is this the bind that DECLARES the local (read before `binding_var` marks it defined)?
   declaring = true;
+  // `@FR-B-Scope` (`bind_after_end`): the binding this name had ended with its block; the bind
+  // below may start one of its own once its value's type is known (`rebind_after_block`).
+  ended_bind = -1;
   match e.p.nodes[target] {
     SName { name, member } => {
       if member == "" {
         known = el_vars::var(vars, name);
         declaring = known < 0 || (!el_vars::was_defined(vars, known) && !vars.vars[known].argument);
+        // A body local bound again in ANOTHER loop is the per-loop split's (loft#1145), asked by
+        // the loops both binds stand in; a loop's own variable is never that local.
+        was_ended = known >= 0 && el_vars::binding_ended(vars, known);
+        if known >= 0 && el_vars::name_of(vars, known) == name && was_ended {
+          now = el_vars::current_loop(vars);
+          was = el_vars::binding_loop(vars, known);
+          if el_vars::was_loop_var(vars, known) || !(now >= 0 && was >= 0 && now != was) {
+            ended_bind = known;
+          }
+        }
         v = el_ex_object::binding_var(e, vars, name);
         written = name;
+        // `check_block_scope` at a binding name: a new binding, or one whose block ended, is
+        // bound here.
+        if v >= 0 && ((was_ended && v == known) || !el_vars::binding_recorded(vars, v)) {
+          el_vars::record_binding(vars, v);
+        }
       }
     },
     _ => {}
@@ -2208,6 +2298,12 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   vars.assign_target = v;
   x = expression(e, vars, rhs!);
   vars.assign_target = outer_target;
+  // `@FR-B-Scope`, loft#1700: a bind after the name's block ended, at a type its old binding
+  // refuses or that differs from it only in absence, is a new binding with a variable of its
+  // own, named by the statement's position (`rebind_after_block`).
+  if ended_bind >= 0 && ended_bind == v && !el_types::is_unknown(x.tp) && (retype_refused(e, vars, v, x.tp) || differs_in_absence(e, vars, v, x.tp)) {
+    v = rebind_after_block(e, vars, v, x.tp, at);
+  }
   if el_ex_place::promotes_text_param(e, vars, v) {
     v = el_vars::promote_text_param(vars, v);
   }
