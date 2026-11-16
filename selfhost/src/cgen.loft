@@ -149,6 +149,8 @@ pub struct Cx {
   pub v_parts: vector<opt_version::Leaf>,
   pub v_pres: vector<boolean>,
   pub v_sites: vector<boolean>,
+  // `@FR-R-DeferredCopy`: per definition, whether its statements are numbered yet.
+  pub dc_numbered: vector<boolean>,
   // `Cx::dest_memo`: the destination shapes asked so far.
   pub dest_memo: opt_destination::Memo,
   // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
@@ -213,6 +215,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     v_parts: [],
     v_pres: [],
     v_sites: [],
+    dc_numbered: [for _ in 0..len(b.data.definitions) { false }],
     dest_memo: opt_destination::new_memo(),
     tuples: [],
     lazy: -1,

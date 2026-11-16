@@ -1,0 +1,447 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the liveness half of `src/lease.rs` (`Frame::read_after`,
+// `read_itself_after`, `readers_of`, `Pass`): is a variable's value — or a view of it — read
+// after a statement on some path?  The Rust pass finds the statement by identity; here the
+// statement carries a DC ID span (`cgen_deferred` numbers the function's statements before it
+// writes it), and the pass finds the span with that ID.
+
+use ir;
+use loop_shape;
+use own;
+use el_ir;
+use cgen_types;
+
+// The DC statement IDs (`pos` of a line-0 span): clear of `opt_version`'s ID range (below
+// -1 000 000) and its site range (-900 000 to -500 000).
+pub const DC_BASE = -900001;
+const DC_LAST = -1000000;
+
+// The DC ID a node's span chain carries, 0 for none.
+pub fn dc_id(v: ir::Node) -> integer {
+  match v {
+    NdSpan { pos, inner } => if pos.line == 0 && pos.file == "" && pos.pos <= DC_BASE && pos.pos > DC_LAST { DC_BASE - pos.pos + 1 } else { dc_id(inner) },
+    _ => 0,
+  }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `releases_first_arg`: a free (`Data::op_sets().frees`) or a drop function.
+pub fn releases_first_arg(b: ir::Bundle, d: integer) -> boolean {
+  name = def_name(b, d);
+  if name == "OpFreeRef" || name == "OpFreeRefTag" || name == "OpFreeRecordIn" || name == "OpFreeRefIfDistinct" || name == "OpFreeRefOrHandUp" || name == "OpFreeText" {
+    return true;
+  }
+  d >= 0 && d < len(b.data.definitions) && b.data.definitions[d]!.def_type == 1 && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll") || name.ends_with("_OpDropAllExcept"))
+}
+
+// ---- the values an expression may produce (`leaves`) ---------------------------------------
+
+// A leaf: 0 a whole variable, 1 a member of the container rooted at it, 2 a `&` link to it,
+// 3 a fresh value.
+struct LeafOf {
+  kind: integer,
+  v: integer,
+}
+
+fn source_leaves(src: ir::Node, out: vector<ir::Node>) {
+  match loop_shape::unspan(src) {
+    NdIf { cond: _, t, f } => {
+      source_leaves(t, out);
+      leaves_of_arm(f, out);
+    },
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) > 0 {
+        leaves_of_arm(ops[len(ops) - 1]!, out);
+      }
+    },
+    NdInsert { items } => {
+      if len(items) > 0 {
+        leaves_of_arm(items[len(items) - 1]!, out);
+      }
+    },
+    _ => { out += [loop_shape::unspan(src)]; },
+  }
+}
+
+fn leaves_of_arm(v: ir::Node, out: vector<ir::Node>) {
+  source_leaves(v, out);
+}
+
+// `use_analysis::projection_root`: the root variable of a field, element or tuple-member read.
+fn projection_root(b: ir::Bundle, n: ir::Node) -> integer {
+  match loop_shape::unspan(n) {
+    NdTupleGet { var, idx: _ } => var,
+    NdCall { def_nr, args } => {
+      if !def_name(b, def_nr).starts_with("OpGet") || len(args) == 0 {
+        return -1;
+      }
+      place_root(b, args[0]!)
+    },
+    _ => -1,
+  }
+}
+
+fn place_root(b: ir::Bundle, n: ir::Node) -> integer {
+  match loop_shape::unspan(n) {
+    NdVar { n: v } => v,
+    _ => projection_root(b, n),
+  }
+}
+
+fn leaves(b: ir::Bundle, src: ir::Node) -> vector<LeafOf> {
+  raw: vector<ir::Node> = [];
+  source_leaves(src, raw);
+  out: vector<LeafOf> = [];
+  for l in raw {
+    root = projection_root(b, l);
+    if root >= 0 {
+      out += [LeafOf { kind: 1, v: root }];
+      continue;
+    }
+    match l {
+      NdVar { n } => { out += [LeafOf { kind: 0, v: n }]; },
+      NdCall { def_nr, args } => {
+        v = if def_name(b, def_nr) == "OpCreateStack" && len(args) > 0 { match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => -1 } } else { -1 };
+        out += [if v >= 0 { LeafOf { kind: 2, v: v } } else { LeafOf { kind: 3, v: -1 } }];
+      },
+      _ => { out += [LeafOf { kind: 3, v: -1 }]; },
+    }
+  }
+  out
+}
+
+fn scalar_var(f: ir::Function, w: integer) -> boolean {
+  match cgen_types::base(f.variables[w]!.type_def[0] ?? ir::TyVoid) {
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    _ => false,
+  }
+}
+
+// `Frame::readers_of`: `var` and every variable that views it, directly or through another view.
+pub fn readers_of(b: ir::Bundle, def: ir::Definition, var: integer) -> vector<boolean> {
+  f = def.variables;
+  count = len(f.variables);
+  out: vector<boolean> = [for _ in 0..count { false }];
+  if var < 0 || var >= count {
+    return out;
+  }
+  out[var] = true;
+  set_w: vector<integer> = [];
+  set_v: vector<vector<LeafOf>> = [];
+  opt_walk(def.code[0] ?? ir::NdNull, fn(n: ir::Node) {
+    match n {
+      NdSet { var: w, inner } => {
+        set_w += [w];
+        set_v += [leaves(b, inner)];
+      },
+      _ => {},
+    }
+  });
+  for _ in 0..count + 1 {
+    grew = false;
+    for w in set_w {
+      if w < 0 || w >= count || out[w]! || scalar_var(f, w) {
+        continue;
+      }
+      views = false;
+      for l in set_v[w#index]! {
+        if (l.kind == 1 || l.kind == 2) && l.v >= 0 && l.v < count && out[l.v]! {
+          views = true;
+        }
+        if l.kind == 0 && l.v >= 0 && l.v < count && out[l.v]! {
+          for dep in own::tp_depend(f, w) {
+            if dep == l.v {
+              views = true;
+            }
+          }
+        }
+      }
+      if views {
+        out[w] = true;
+        grew = true;
+      }
+    }
+    if !grew {
+      break;
+    }
+  }
+  out
+}
+
+// A pre-order walk over every node, spans included (their inner node is walked).
+fn opt_walk(v: ir::Node, f: fn(ir::Node)) {
+  match v {
+    NdSpan { pos: _, inner } => opt_walk(inner, f),
+    _ => {
+      f(v);
+      for c in el_ir::children(v) {
+        opt_walk(c, f);
+      }
+    },
+  }
+}
+
+// ---- the pass ----------------------------------------------------------------------------
+
+struct Pass {
+  b: ir::Bundle,
+  f: ir::Function,
+  var: integer,
+  uses: vector<boolean>,
+  target: integer,
+  // Per enclosing loop, innermost last: live at its exit, live at its header.
+  exits: vector<boolean>,
+  headers: vector<boolean>,
+  // 0 unreached, 1 dead, 2 live.
+  found: integer,
+}
+
+fn read(p: Pass, w: integer) -> boolean {
+  p.uses[w] ?? false
+}
+
+fn names_prefix(p: Pass, arg: ir::Node, prefix: text) -> boolean {
+  match loop_shape::unspan(arg) {
+    NdVar { n } => n >= 0 && n < len(p.f.variables) && p.f.variables[n]!.name.starts_with(prefix),
+    _ => false,
+  }
+}
+
+fn arg_at(args: vector<ir::Node>, i: integer) -> ir::Node {
+  if i < len(args) { args[i]! } else { ir::NdNull }
+}
+
+fn is_scaffold(p: Pass, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      name = def_name(p.b, def_nr);
+      releases_first_arg(p.b, def_nr) || (name == "OpCopyRecord" && names_prefix(p, arg_at(args, 1), "__disp_")) || (name == "OpDatabase" && names_prefix(p, arg_at(args, 0), "__disp_"))
+    },
+    NdSet { var: w, inner } => {
+      name = if w >= 0 && w < len(p.f.variables) { p.f.variables[w]!.name } else { "" };
+      name.starts_with("__hoff_") || name.starts_with("__disp_") || (match loop_shape::unspan(inner) { NdCall { def_nr, args: _ } => def_name(p.b, def_nr) == "OpNullRefSentinel", _ => false })
+    },
+    NdIf { cond, t, f } => {
+      if claimant_disarm(p, cond, t, f) {
+        return true;
+      }
+      is_guard(p, cond, t, f) && scaffold_or_null(p, t) && scaffold_or_null(p, f) && (has_release(p, t) || has_release(p, f))
+    },
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        return false;
+      }
+      for o in ops {
+        if !is_scaffold(p, loop_shape::unspan(o)) {
+          return false;
+        }
+      }
+      true
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return false;
+      }
+      for o in items {
+        if !is_scaffold(p, loop_shape::unspan(o)) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+fn claimant_disarm(p: Pass, cond: ir::Node, t: ir::Node, f: ir::Node) -> boolean {
+  match loop_shape::unspan(cond) {
+    NdCall { def_nr, args } => {
+      if def_name(p.b, def_nr) != "OpDistinctStore" || len(args) != 2 {
+        return false;
+      }
+      if !(loop_shape::unspan(args[1]!) is NdTupleGet) || !(loop_shape::unspan(t) is NdNull) {
+        return false;
+      }
+      a = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+      match loop_shape::unspan(f) {
+        NdSet { var: s, inner } => a >= 0 && a == s && (match loop_shape::unspan(inner) { NdCall { def_nr: d2, args: _ } => def_name(p.b, d2) == "OpNullRefSentinel", _ => false }),
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+fn scaffold_or_null(p: Pass, n: ir::Node) -> boolean {
+  node = loop_shape::unspan(n);
+  (node is NdNull) || is_scaffold(p, node)
+}
+
+fn is_guard(p: Pass, cond: ir::Node, t: ir::Node, f: ir::Node) -> boolean {
+  match loop_shape::unspan(cond) {
+    NdCall { def_nr, args } => {
+      name = def_name(p.b, def_nr);
+      if name == "OpDistinctStore" {
+        for a in args {
+          match loop_shape::unspan(a) {
+            NdVar { n: w } => {
+              if read(p, w) && !releases(p, t, w) && !releases(p, f, w) {
+                return false;
+              }
+            },
+            _ => {},
+          }
+        }
+        return true;
+      }
+      name == "OpConvBoolFromRef"
+    },
+    NdVar { n: w } => w >= 0 && w < len(p.f.variables) && p.f.variables[w]!.name.starts_with("__hoff_"),
+    _ => false,
+  }
+}
+
+fn has_release(p: Pass, n: ir::Node) -> boolean {
+  hit = [false];
+  opt_walk(n, fn(m: ir::Node) {
+    match m {
+      NdCall { def_nr, args } => {
+        if releases_first_arg(p.b, def_nr) || (def_name(p.b, def_nr) == "OpCopyRecord" && names_prefix(p, arg_at(args, 1), "__disp_")) {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn releases(p: Pass, n: ir::Node, w: integer) -> boolean {
+  hit = [false];
+  opt_walk(n, fn(m: ir::Node) {
+    match m {
+      NdCall { def_nr, args } => {
+        if releases_first_arg(p.b, def_nr) && len(args) > 0 && (match loop_shape::unspan(args[0]!) { NdVar { n: x } => x == w, _ => false }) {
+          hit[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn seq(p: Pass, ops: vector<ir::Node>, after: boolean) -> boolean {
+  live = after;
+  for i in rev(0..len(ops)) {
+    live = before(p, ops[i]!, live);
+  }
+  live
+}
+
+fn before_part(p: Pass, node: ir::Node, after: boolean) -> boolean {
+  r = before(p, node, after);
+  r
+}
+
+// `Pass::before`: liveness before `node`, given liveness after it.
+fn before(p: Pass, node: ir::Node, after: boolean) -> boolean {
+  if p.target > 0 && dc_id(node) == p.target {
+    p.found = if after { 2 } else { 1 };
+  }
+  n = loop_shape::unspan(node);
+  if is_scaffold(p, n) {
+    return after;
+  }
+  match n {
+    NdVar { n: w } => read(p, w) || after,
+    NdTupleGet { var, idx: _ } => read(p, var) || after,
+    NdSet { var: w, inner } => before_part(p, inner, if w == p.var { false } else { after }),
+    NdCall { def_nr, args } => {
+      if def_name(p.b, def_nr) == "OpDatabase" && len(args) > 0 && (match loop_shape::unspan(args[0]!) { NdVar { n: v } => v == p.var, _ => false }) {
+        return false;
+      }
+      seq(p, args, after)
+    },
+    NdCallRef { var: w, args } => {
+      live = seq(p, args, after);
+      read(p, w) || live
+    },
+    NdBlock { block } => seq(p, block[0].operators, after),
+    NdInsert { items } => seq(p, items, after),
+    NdTuple { items } => seq(p, items, after),
+    NdParallel { arms } => seq(p, arms, after),
+    NdIf { cond, t, f } => {
+      lt = before(p, t, after);
+      lf = before(p, f, after);
+      before_part(p, cond, lt || lf)
+    },
+    NdLoop { block } => {
+      header = false;
+      for _ in 0..4 {
+        p.exits += [after];
+        p.headers += [header];
+        entry = seq(p, block[0].operators, header);
+        p.exits = p.exits[0..len(p.exits) - 1];
+        p.headers = p.headers[0..len(p.headers) - 1];
+        if entry == header {
+          return entry || header;
+        }
+        header = entry;
+      }
+      header
+    },
+    NdIter { var: _, create, next, init } => {
+      header = false;
+      for _ in 0..4 {
+        p.exits += [after];
+        p.headers += [header];
+        l = before(p, init, header);
+        l = before(p, next, l);
+        entry = before(p, create, l);
+        p.exits = p.exits[0..len(p.exits) - 1];
+        p.headers = p.headers[0..len(p.headers) - 1];
+        if entry == header {
+          return entry || header;
+        }
+        header = entry;
+      }
+      header
+    },
+    NdBreak { n: k } => {
+      depth = len(p.exits) - 1 - k;
+      if depth >= 0 { p.exits[depth]! } else { after }
+    },
+    NdContinue { n: k } => {
+      depth = len(p.headers) - 1 - k;
+      if depth >= 0 { p.headers[depth]! } else { after }
+    },
+    NdReturn { inner } => before_part(p, inner, false),
+    NdDrop { inner } => before_part(p, inner, after),
+    NdYield { inner } => before_part(p, inner, after),
+    NdTuplePut { var, idx: _, inner } => before_part(p, inner, read(p, var) || after),
+    _ => after,
+  }
+}
+
+// `Frame::read_after` (`itself` false) and `read_itself_after` (true) at the statement whose DC
+// ID is `site`: -1 unreached, 0 not read again, 1 read on some path.
+pub fn read_after(b: ir::Bundle, def: ir::Definition, site: integer, var: integer, itself: boolean) -> integer {
+  count = len(def.variables.variables);
+  uses: vector<boolean> = if itself { [for i in 0..count { i == var }] } else { readers_of(b, def, var) };
+  p = Pass { b: b, f: def.variables, var: var, uses: uses, target: site, exits: [], headers: [], found: 0 };
+  before(p, def.code[0] ?? ir::NdNull, false);
+  if p.found == 0 { -1 } else if p.found == 1 { 0 } else { 1 }
+}

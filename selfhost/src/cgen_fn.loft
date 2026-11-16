@@ -59,6 +59,8 @@ use cgen_lazy;
 use cgen_inputs;
 use opt_version;
 use cgen_version;
+use cgen_deferred;
+use opt_lease;
 use opt_below_len;
 use opt_destination;
 use opt_append_twin;
@@ -2671,6 +2673,32 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
       }
     }
   }
+  // `@FR-R-DeferredCopy`: a deferred bind takes the source's reference; any statement that may
+  // write a source's store takes the copies it would otherwise disturb first.  A DC span hands
+  // its ID to the statement inside it.
+  dc_at = 0;
+  dc_span = false;
+  if len(w.dc) > 0 && !is_line {
+    dc_span = opt_lease::dc_id(v) > 0 && (match v { NdSpan { pos, inner: _ } => pos.line == 0 && pos.pos <= opt_lease::DC_BASE, _ => false });
+    if dc_span {
+      w.dc_pending = opt_lease::dc_id(v);
+      w.dc_ctx += [w.dc_pending];
+    } else {
+      dc_at = w.dc_pending;
+      if !(v is NdSpan) {
+        w.dc_pending = 0;
+      }
+      match loop_shape::unspan(v) {
+        NdSet { var, inner } => {
+          if cgen_deferred::set(x, w, dc_at, var, inner, ind) {
+            return;
+          }
+        },
+        _ => {},
+      }
+      cgen_deferred::before(x, w, v, dc_at, ind);
+    }
+  }
   if !is_line && cgen_append::append_site(x, w, v, ind) {
     return;
   }
@@ -2696,6 +2724,16 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
       NdSet { var: set_var, inner: _ } => cgen_hoist::refresh_rebound(w, set_var, ind),
       _ => {},
     }
+  }
+  if w.why == "" && len(w.dc) > 0 && !dc_span {
+    match loop_shape::unspan(v) {
+      NdSet { var: dc_var, inner: _ } => cgen_deferred::after(w, dc_at, dc_var, ind),
+      _ => {},
+    }
+  }
+  if dc_span {
+    w.dc_pending = 0;
+    w.dc_ctx = w.dc_ctx[0..len(w.dc_ctx) - 1];
   }
   // A span is written as the statement it wraps, which refreshes for itself.
   if w.why == "" && !(v is NdSpan) {
@@ -3319,6 +3357,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if plain_rules() && len(x.b.data.definitions[index]!.code) > 0 {
     cgen_version::mark_sites(x, index);
   }
+  // `@FR-R-DeferredCopy`: the statements numbered where a copy may be deferred.
+  if plain_rules() {
+    cgen_deferred::number_function(x, index);
+  }
   d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
     return Written { text: "", refused: "a function without a loft body" };
@@ -3514,6 +3556,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     v_flag: [],
     v_reads: [],
     v_hold: [],
+    dc: [],
+    dc_null_only: [],
+    dc_pending: 0,
+    dc_ctx: [],
     loop_call_at: [],
     ap_buf: -1,
     ap_views: [],
@@ -3635,6 +3681,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     if planned != "" {
       return Written { text: "", refused: planned };
     }
+  }
+  if plain_rules() {
+    cgen_deferred::plan(x, w);
+    cgen_deferred::declare(w);
   }
   if plain_rules() {
     cgen_recptr::bind_param_ptrs(x, w, code);
