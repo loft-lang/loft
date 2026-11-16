@@ -2121,12 +2121,31 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     el::refuse(e, "a vector append to a local with no store yet");
     return refused_build();
   }
-  if !append && has_store && !value && !vars.vars[v].argument {
+  if !append && has_store && !value && !vars.vars[v].argument && !e.first_pass {
+    reads = false;
     for x in xs {
       if el_ir::reads_var(x.code, v) {
+        reads = true;
+      }
+    }
+    // The items that read it are staged as an append's are (`literal_reads_dest` asks the
+    // literal, appended or bound); what that staging does not carry stays refused.
+    if reads {
+      if !el_ex_null::build_vals_carry(e, vars, v, in_t, xs) {
         el::refuse(e, "a vector literal rebinding a local it reads");
         return refused_build();
       }
+      carried: vector<Ex> = [];
+      for x in xs {
+        if el_ir::reads_var(x.code, v) {
+          tmp = el_vars::create_unique(vars, "build_val", in_t);
+          staged += [el_ir::v_set(tmp, x.code)];
+          carried += [ex(ir::NdVar { n: tmp }, x.tp)];
+        } else {
+          carried += [x];
+        }
+      }
+      xs = carried;
     }
   }
   r = rows!;

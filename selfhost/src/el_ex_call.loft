@@ -938,9 +938,11 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       if i < len(list) {
         match el_ir::unspan(list[i]) {
           NdVar { n: av } => { if !ds.contains(av) { ds += [av]; } },
-          _ => if !(ret is TyOptional) {
+          // (Of such a value's borrows a `τ?` result still keeps the user's own locals — a
+          // `c ?? Rec {..}` argument lends `c` — and drops the compiler's stores.)
+          _ => {
             for x in el_types::deps(types[i] ?? ir::TyVoid) {
-              if !ds.contains(x) {
+              if !ds.contains(x) && (!(ret is TyOptional) || !starts_with(el_vars::name_of(vars, x), "__")) {
                 ds += [x];
               }
             }
@@ -2051,6 +2053,11 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   vars.dn4_coalesce = e.p.nodes[l] is SAs;
   x = el_ex_assign::expression(e, vars, l);
   vars.dn4_coalesce = outer;
+  // A record local read first into a bind's destination borrows nothing (`parse_var`'s `into`
+  // arm: the bind copies); any other read of it borrows the local.
+  if l == vars.read_into && x.code is NdVar && struct_ref(e, el_types::base(x.tp)) >= 0 {
+    x.tp = el_types::with_deps(x.tp, []);
+  }
   // An `S?` slot's subject is the `S?` it holds (`read_through_tag`).
   if is_nullable_wrapper(e, x.tp) {
     rx = el_ex_place::read_through_tag(e, vars, x);
@@ -2130,9 +2137,11 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // A local tested where it stands answers a plain `if`, which a bind types by its arms: the
   // literal's arm borrows nothing, so neither does the result.
   // On both passes: a `return` of it renames the buffer onto its first arm on the first.
+  // The `if` borrows what its subject's read borrows: nothing where that read was a bind's
+  // first (`coalesce` strips it there, `parse_var`'s `into` arm), the local where it is an
+  // argument — which lends it to the call's result (`call_dependencies`).
   if x.code is NdVar {
-    vt = el_types::without_deps(lhs);
-    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), vt);
+    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), lhs);
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);

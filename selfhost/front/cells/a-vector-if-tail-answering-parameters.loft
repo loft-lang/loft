@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector 'if' at a function's tail whose arms answer parameters or literals: each arm copied into the return buffer where it ends (materialize_vector_arms_into), the body borrowing the parameters.
+// Prints: [3] [0] [1,2]
+fn pick(flag: boolean, a: vector<integer>, b: vector<integer>) -> vector<integer> { if flag { a } else { b } }
+fn same(ks: vector<integer>, k: integer) -> vector<integer> { if k > 0 { ks } else { [k] } }
+
+fn main() {
+  x = [1, 2];
+  y = [3];
+  p = pick(false, x, y);
+  s = same(x, 0);
+  println("{p} {s} {x}");
+}

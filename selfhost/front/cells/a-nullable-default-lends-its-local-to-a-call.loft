@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: 'c ?? Rec {..}' on a local borrows the local: bound, the local types by its arms and borrows nothing; as an argument, the call's result borrows it (call_dependencies).
+// Prints: 1 1
+struct Canvas { data: vector<integer>, w: integer }
+fn keepn(a: Canvas) -> Canvas? { a }
+fn mk_opt(t: integer) -> Canvas? { if t % 2 == 0 { return null } Canvas { data: [t], w: t } }
+fn main() {
+  c: Canvas? = mk_opt(1);
+  d = c ?? Canvas { data: [9, 9], w: 70 };
+  k = keepn(c ?? Canvas { data: [8], w: 60 });
+  println("{d.w} {(k?).w}");
+}
