@@ -281,14 +281,14 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (21).  Each one's reach — the corpus bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`, 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
+`cgen_w::PLAIN_SWITCHES` names them (20).  Each one's reach — the corpus bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`, 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
 
 | switch | bodies | switch | bodies |
 |---|---|---|---|
 | `VALUE_RECORD` | 510 | `GUARD_BOUND` | 8 |
 | `CALLEE_INPUTS` | 97 | `HAND_OVER` | 6 |
 | `TRANSIENT` | 92 | `GROWN_HEADER` | 2 |
-| `DISTINCT_VERSION` | 40 | `VR_PTR` | 2 |
+| `DISTINCT_VERSION` | 40 | | |
 | `APPEND_TWIN` | 32 | `CHAR_WALK` | +109 refused |
 | `APART` | 29 | `LAZY_SPLIT` | +41 refused |
 | `DESTINATION` | 19 | `SPLIT_TABLE` | +34 refused |
@@ -296,7 +296,8 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 `VERSION`, `DEFERRED_COPY`, `LOOP_RECORD`, `APPEND_LOOP_WINDOW` and `FNREF_PARK` change no corpus body: each is read for whether the C writer can reach it at all (as `REBOUND_MOVER` could not) before it is ported or dropped.
 Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`), `TEXT_WINDOW`
-(`cgen_win::open_text_windows`), `APART_MINT` (`opt_hoist::apart_mint`), `REBOUND_MOVER` (no port
+(`cgen_win::open_text_windows`), `APART_MINT` (`opt_hoist::apart_mint`), `VR_PTR` (`cgen_value.loft`;
+its `ValueRecords::params` half comes with `VALUE_RECORD`), `REBOUND_MOVER` (no port
 needed: the C writer's `verdict` hands `hoistable` no owned buffers, so `rebinds_alias_free` declines
 every rebind on either side).  A rule is tried before it leaves the list with
 `CGEN_ON=LOFT_NO_X selfhost/bench/cgen_live.sh --diff FILE` (`LOFT_CGEN_ON` tells the generator).
@@ -415,6 +416,7 @@ came out 64-bit from the image.
 | `selfhost/src/cgen_texts.loft` | `borrowed_texts`, `literal_views`, `view_bind`, `work_view_bind` in `src/c/body.rs` | whole; the writer does not write a text yet |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
 | `selfhost/src/opt_keyed_place.loft`, `cgen_keyed.loft` | `src/opt/keyed_place.rs`; `keyed_in_place`, `stage_literal_writes` of `src/c/body/keyed.rs` | whole: `@FR-R-InPlaceLiteral`'s keyed clause; a rewrite's C operand is an `NdRawExpr` the writer names with `raw_expr` (`FnWriter::raw`) |
+| `selfhost/src/cgen_value.loft` | `Cx::vr_ptr_params`, `vr_param_read_only`, `tuple_arg_address` | `@FR-R-ValueRecord`'s pointer clause for the IR's tuples; the value records' half waits for `VALUE_RECORD` |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at
