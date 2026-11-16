@@ -1114,6 +1114,17 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       return ex(el_ir::cl(e, "OpNot", [c!]), ir::TyBoolean);
     }
   }
+  // A record that is not declared nullable is tested the same way (it may hold the sentinel);
+  // a struct enum, nullable or not, by its own null test (`null_test`'s enum arm).
+  if op == "!" && struct_ref(e, el_types::base(x.tp)) >= 0 && !starts_with(el::def(e, struct_ref(e, el_types::base(x.tp))).name, "__tuple<") {
+    return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [x.code])]), ir::TyBoolean);
+  }
+  if op == "!" && el_convert::struct_enum(el_types::base(x.tp)) {
+    absent = el_ex_null::enum_null_test(e, vars, x.code, el_types::base(x.tp));
+    if absent != null {
+      return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpNot", [absent!])]), ir::TyBoolean);
+    }
+  }
   // `@FR-Op-Back` for a unary form: `-x` on a program's own type is `x.negate()`
   // (`unary_through_operator`), its type the method's.
   if op == "-" {

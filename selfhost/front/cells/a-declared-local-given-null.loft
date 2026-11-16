@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: null into a declared local is the declared type's own null (Parser::null_value): a record's, a struct enum's or a vector's reference sentinel, a plain enum's, a text's or a scalar's OpConv…FromNull.
+// Prints: true true true true true true true true / false false
+struct S { a: integer }
+enum E { A { n: integer }, B }
+enum Hue { Red, Green }
+
+fn main() {
+  x: S? = null;
+  y: S = null;
+  e: E? = null;
+  h: Hue? = null;
+  t: text = null;
+  f: float = null;
+  i: integer = null;
+  v: vector<integer> = null;
+  println("{x == null} {y == null} {e == null} {h == null} {t == null} {f == null} {i == null} {v == null}");
+  x = S { a: 1 };
+  e = B;
+  println("{x == null} {e == null}");
+}
