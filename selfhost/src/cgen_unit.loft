@@ -102,15 +102,62 @@ fn wrapper(x: Cx, d: integer, wr: Written) -> text {
 }
 
 // `resolve_hot_helpers`: the helper markers resolved — `static inline` / `LOFT_HOT_INLINE` for a
-// candidate a hinted twin reaches, `static` for every other.  An `__inv` twin is what makes a
-// helper hot (`hot_helpers`), and the writer refuses those, so every marker resolves to
-// `static` here; a unit that asks for one is refused before it reaches this.
-fn resolve_hot(code: text, candidates: vector<integer>) -> text {
+// candidate a hinted twin reaches (`hot_helpers`), `static` for every other.
+fn resolve_hot(code: text, candidates: vector<integer>, hot: vector<boolean>) -> text {
   out = code;
   for d in candidates {
-    out = out.replace("static /*loft_hot:{d}*/", "static").replace("static /*loft_hot_body:{d}*/", "static");
+    if hot[d] ?? false {
+      out = out.replace("static /*loft_hot:{d}*/", "static inline").replace("static /*loft_hot_body:{d}*/", "LOFT_HOT_INLINE");
+    } else {
+      out = out.replace("static /*loft_hot:{d}*/", "static").replace("static /*loft_hot_body:{d}*/", "static");
+    }
   }
   out
+}
+
+// `Cx::hot_helpers`: the candidates that run inside a loop calling an `__inv` twin — called in
+// that loop's body (`loop_callees`) or by the twin — and the ones those reach through calls of
+// candidates.  The loop is what is hot, not the function around it.
+fn hot_helpers(x: Cx, candidates: vector<integer>) -> vector<boolean> {
+  count = len(x.b.data.definitions);
+  cand: vector<boolean> = [for _ in 0..count { false }];
+  for c in candidates {
+    cand[c] = true;
+  }
+  hot: vector<boolean> = [for _ in 0..count { false }];
+  work: vector<integer> = [];
+  for t in x.twins {
+    if t.inv {
+      work += [t.d];
+    }
+  }
+  for c in 0..count {
+    if x.loop_callees[c]! && cand[c]! {
+      hot[c] = true;
+      work += [c];
+    }
+  }
+  seen: vector<boolean> = [for _ in 0..count { false }];
+  while len(work) > 0 {
+    f = work[len(work) - 1]!;
+    work = work[0..len(work) - 1];
+    if f < 0 || f >= count || seen[f]! {
+      continue;
+    }
+    seen[f] = true;
+    opt_non_sentinel::walk(x.b.data.definitions[f]!.code[0] ?? ir::NdNull, fn(n: ir::Node) {
+      match n {
+        NdCall { def_nr, args: _ } => {
+          if def_nr >= 0 && def_nr < count && cand[def_nr]! {
+            hot[def_nr] = true;
+            work += [def_nr];
+          }
+        },
+        _ => {},
+      }
+    });
+  }
+  hot
 }
 
 
@@ -305,9 +352,6 @@ struct Pieces {
 
 // One function or twin written into `p`, or why not.
 fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>) -> text {
-  if t.inv {
-    return "a hot helper an __inv twin reaches";
-  }
   // A `#c` binding (@PLN24): the C function itself, called through its declared signature —
   // no frame of its own, so no `__fr` wrapper.
   forward = cgen_clibs::is_forwarded(x.b, t.d);
@@ -410,7 +454,8 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
   if reflects(b, reached) {
     typedefs += b.reflect + reflect_entry();
   }
-  written = "{head}{typedefs}{resolve_hot(decls, candidates)}{resolve_hot(protos, candidates)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates)}{resolve_hot(bodies, candidates)}";
+  hot = hot_helpers(x, candidates);
+  written = "{head}{typedefs}{resolve_hot(decls, candidates, hot)}{resolve_hot(protos, candidates, hot)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates, hot)}{resolve_hot(bodies, candidates, hot)}";
   if reaches(b, reached, "n_store_bind_lazy") {
     table = lazy_driver_table(x, why);
     if why != "" {

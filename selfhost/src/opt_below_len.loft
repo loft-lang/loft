@@ -1,0 +1,382 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Base`'s guard clause as `src/opt/below_len.rs` answers it: the
+// element accesses a passed test keeps below their vector's length.  `v[e]` reads or writes an
+// element whose index is below `len(v)` when a test `e < len(v)` passed on every path to it and
+// nothing evaluated since could resize `v` or assign a variable `e` names
+// (`forward_walk::check_body`'s answer).
+//
+// The Rust analysis answers the index SLOTS by address and the writer asks by address.  A loft
+// node handed around is a copy, so the answer is carried IN the IR instead: `mark` writes the
+// function's code again with each guarded slot wrapped in a marker span (`MARK`, line 0, which
+// every position reader skips and every `unspan` sees through), and the writer asks the slot it
+// holds (`guarded`).  A copy a rewrite makes of a node keeps its marker, so the writer asks only
+// outside such copies, where the Rust writer's address test can match.
+
+use ir;
+use loop_shape;
+use opt_length;
+use el_ir;
+
+// The marker's `pos` (a span at line 0 locates nothing).
+pub const MARK = -2802;
+
+// A test that passed: `e < len(v)`, with the variables `e` names.
+struct Fact {
+  v: integer,
+  e: ir::Node,
+  vars: vector<integer>,
+}
+
+struct Live {
+  facts: vector<Fact>,
+}
+
+struct Ctx {
+  b: ir::Bundle,
+  d: ir::Definition,
+  own_len: vector<integer>,
+  marked: integer,
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// Is `LOFT_NO_GUARD_BOUND` unset?
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_GUARD_BOUND") ?? "0") == "0"
+}
+
+// Is the index slot `idx` one a passed test keeps below its vector's length?
+pub fn guarded(idx: ir::Node) -> boolean {
+  match idx {
+    NdSpan { pos, inner: _ } => pos.line == 0 && pos.pos == MARK && pos.file == "",
+    _ => false,
+  }
+}
+
+// The code of function `vd` with each guarded index slot marked, and how many in `count`.
+pub fn mark(b: ir::Bundle, vd: integer, count: &integer) -> ir::Node {
+  def = b.data.definitions[vd]!;
+  code = def.code[0] ?? ir::NdNull;
+  cx = Ctx { b: b, d: def, own_len: opt_length::own_length_locals(b, vd), marked: 0 };
+  live = Live { facts: [] };
+  out = visit(cx, code, live);
+  count = cx.marked;
+  out
+}
+
+// The same index expression: a variable, a constant, or a pure integer operator over such.
+fn same(a: ir::Node, b: ir::Node) -> boolean {
+  match loop_shape::unspan(a) {
+    NdVar { n: x } => match loop_shape::unspan(b) { NdVar { n: y } => x == y, _ => false },
+    NdInt { n: x } => match loop_shape::unspan(b) { NdInt { n: y } => x == y, _ => false },
+    NdLong { n: x } => match loop_shape::unspan(b) { NdLong { n: y } => (x == null) == (y == null) && (x ?? 0) == (y ?? 0), _ => false },
+    NdCall { def_nr: f, args: xa } => match loop_shape::unspan(b) {
+      NdCall { def_nr: g, args: ya } => {
+        if f != g || len(xa) != len(ya) {
+          return false;
+        }
+        for x in xa {
+          if !same(x, ya[x#index]!) {
+            return false;
+          }
+        }
+        true
+      },
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+// An index expression a fact can carry — variables and constants under `+`, `-`, `*` — with
+// its variables gathered into `vars`.
+fn pure(cx: Ctx, e: ir::Node, vars: vector<integer>) -> boolean {
+  match loop_shape::unspan(e) {
+    NdVar { n } => {
+      seen = false;
+      for v in vars {
+        if v == n {
+          seen = true;
+        }
+      }
+      if !seen {
+        vars += [n];
+      }
+      true
+    },
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdCall { def_nr, args } => {
+      name = def_name(cx.b, def_nr);
+      if name != "OpAddInt" && name != "OpSubInt" && name != "OpMulInt" {
+        return false;
+      }
+      for a in args {
+        if !pure(cx, a, vars) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+// The vectors `l` is the length of: `len(v)` of the frame's own vector, or a local holding it.
+fn length_of(cx: Ctx, l: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  match loop_shape::unspan(l) {
+    NdCall { def_nr, args } => {
+      name = def_name(cx.b, def_nr);
+      if len(args) == 1 && (name == "OpLengthVector" || name == "t_6vector_len") {
+        v = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+        if v >= 0 && opt_length::own_vector(cx.d, v) {
+          out += [v];
+        }
+      }
+    },
+    NdVar { n } => {
+      for m in cx.own_len {
+        if m#index % 2 == 0 && m == n {
+          out += [cx.own_len[m#index + 1]!];
+        }
+      }
+    },
+    _ => {},
+  }
+  out
+}
+
+// The facts a passed test `test` establishes, added to `into`.
+fn facts(cx: Ctx, test: ir::Node, into: Live) {
+  match loop_shape::unspan(test) {
+    NdIf { cond, t, f } => {
+      if match loop_shape::unspan(f) { NdBoolean { b: on } => !on, _ => false } {
+        facts(cx, cond, into);
+        facts(cx, t, into);
+      }
+    },
+    NdCall { def_nr, args } => {
+      if len(args) != 2 {
+        return;
+      }
+      name = def_name(cx.b, def_nr);
+      index = if name == "OpLtInt" { args[0]! } else if name == "OpGtInt" { args[1]! } else { return };
+      bound = if name == "OpLtInt" { args[1]! } else { args[0]! };
+      vars: vector<integer> = [];
+      if pure(cx, index, vars) {
+        for v in length_of(cx, bound) {
+          into.facts += [Fact { v: v, e: index, vars: vars }];
+        }
+      }
+    },
+    _ => {},
+  }
+}
+
+// `forward_walk::check_body` for a walk over vector `v` with index variable `idx` (-1 for
+// none): may `node` resize `v` or assign `v` or `idx`?  True where it cannot.
+fn check_body(cx: Ctx, v: integer, idx: integer, node: ir::Node) -> boolean {
+  src_param = v >= 0 && v < len(cx.d.variables.variables) && cx.d.variables.variables[v]!.argument;
+  match node {
+    NdSpan { pos: _, inner } => check_body(cx, v, idx, inner),
+    NdVar { n } => n != v,
+    NdSet { var, inner } => {
+      if var == v || var == idx {
+        return false;
+      }
+      check_body(cx, v, idx, inner)
+    },
+    NdCallRef { var: _, args: _ } => false,
+    NdYield { inner: _ } => false,
+    NdParallel { arms: _ } => false,
+    NdCall { def_nr, args } => {
+      name = def_name(cx.b, def_nr);
+      reads = name == "OpGetVector" || name == "OpGetVectorNullable" || name == "OpLengthVector" || name == "OpVecGetInt" || name == "OpVecGetIntNullable";
+      for a in args {
+        n = match loop_shape::unspan(a) { NdVar { n: x } => x, _ => -1 };
+        if n >= 0 {
+          if n == v {
+            if !reads {
+              return false;
+            }
+            continue;
+          }
+          if src_param && n < len(cx.d.variables.variables) && cx.d.variables.variables[n]!.argument && by_reference(cx.d.variables.variables[n]!.type_def[0] ?? ir::TyVoid) {
+            return false;
+          }
+        }
+        if !check_body(cx, v, idx, a) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => {
+      for c in el_ir::children(node) {
+        if !check_body(cx, v, idx, c) {
+          return false;
+        }
+      }
+      true
+    },
+  }
+}
+
+fn by_reference(t: ir::TypeT) -> boolean {
+  match t {
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  }
+}
+
+// Forget every fact `node` may end.
+fn kill(cx: Ctx, live: Live, node: ir::Node) {
+  kept: vector<Fact> = [];
+  for f in live.facts {
+    ok = true;
+    if len(f.vars) == 0 {
+      ok = check_body(cx, f.v, -1, node);
+    }
+    for x in f.vars {
+      if ok && !check_body(cx, f.v, x, node) {
+        ok = false;
+      }
+    }
+    if ok {
+      kept += [f];
+    }
+  }
+  live.facts = kept;
+}
+
+fn copy(live: Live) -> Live {
+  Live { facts: [for f in live.facts { f }] }
+}
+
+// `visit`, writing the node again with each guarded index slot marked.
+fn visit(cx: Ctx, node: ir::Node, live: Live) -> ir::Node {
+  match node {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: visit(cx, inner, live) },
+    NdIf { cond, t, f } => {
+      c2 = visit(cx, cond, live);
+      kill(cx, live, cond);
+      then_facts = copy(live);
+      facts(cx, cond, then_facts);
+      t2 = visit(cx, t, then_facts);
+      else_facts = copy(live);
+      f2 = visit(cx, f, else_facts);
+      kill(cx, live, node);
+      ir::NdIf { cond: c2, t: t2, f: f2 }
+    },
+    NdLoop { block } => {
+      kill(cx, live, node);
+      inner = copy(live);
+      ops = block[0].operators;
+      out: vector<ir::Node> = [];
+      at = 0;
+      while at < len(ops) && (loop_shape::unspan(ops[at]!) is NdLine) {
+        out += [visit(cx, ops[at]!, inner)];
+        at += 1;
+      }
+      // `while c { … }`: the loop's first statement is `if !c break`.
+      if at < len(ops) {
+        first = ops[at]!;
+        out += [visit(cx, first, inner)];
+        kill(cx, inner, first);
+        match loop_shape::unspan(first) {
+          NdIf { cond, t: _, f: _ } => match loop_shape::unspan(cond) {
+            NdCall { def_nr, args } => {
+              if len(args) == 1 && def_name(cx.b, def_nr) == "OpNot" {
+                facts(cx, args[0]!, inner);
+              }
+            },
+            _ => {},
+          },
+          _ => {},
+        }
+        at += 1;
+      }
+      while at < len(ops) {
+        out += [visit(cx, ops[at]!, inner)];
+        kill(cx, inner, ops[at]!);
+        at += 1;
+      }
+      bl = block[0];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: out, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdBlock { block } => {
+      out: vector<ir::Node> = [];
+      for op in block[0].operators {
+        out += [visit(cx, op, live)];
+        kill(cx, live, op);
+      }
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: out, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdCall { def_nr, args } => {
+      hit = false;
+      name = def_name(cx.b, def_nr);
+      if len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable") {
+        v = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+        if v >= 0 {
+          for f in live.facts {
+            if f.v == v && same(f.e, args[2]!) {
+              hit = true;
+            }
+          }
+        }
+      }
+      out: vector<ir::Node> = [];
+      for a in args {
+        seen = visit(cx, a, live);
+        if hit && a#index == 2 {
+          out += [ir::NdSpan { pos: ir::Position { file: "", line: 0, pos: MARK }, inner: seen }];
+        } else {
+          out += [seen];
+        }
+        if !(loop_shape::unspan(a) is NdVar) {
+          kill(cx, live, a);
+        }
+      }
+      if hit {
+        cx.marked += 1;
+      }
+      ir::NdCall { def_nr: def_nr, args: out }
+    },
+    _ => {
+      cs = el_ir::children(node);
+      if len(cs) == 0 {
+        return node;
+      }
+      out: vector<ir::Node> = [];
+      for c in cs {
+        out += [visit(cx, c, live)];
+        kill(cx, live, c);
+      }
+      with_children(node, out)
+    },
+  }
+}
+
+// `node` with its direct children (`el_ir::children`' order) replaced by `cs`.
+fn with_children(node: ir::Node, cs: vector<ir::Node>) -> ir::Node {
+  match node {
+    NdCallRef { var, args: _ } => ir::NdCallRef { var: var, args: cs },
+    NdInsert { items: _ } => ir::NdInsert { items: cs },
+    NdTuple { items: _ } => ir::NdTuple { items: cs },
+    NdParallel { arms: _ } => ir::NdParallel { arms: cs },
+    NdSet { var, inner: _ } => ir::NdSet { var: var, inner: cs[0]! },
+    NdReturn { inner: _ } => ir::NdReturn { inner: cs[0]! },
+    NdDrop { inner: _ } => ir::NdDrop { inner: cs[0]! },
+    NdYield { inner: _ } => ir::NdYield { inner: cs[0]! },
+    NdTuplePut { var, idx, inner: _ } => ir::NdTuplePut { var: var, idx: idx, inner: cs[0]! },
+    NdIter { var, create: _, next: _, init: _ } => ir::NdIter { var: var, create: cs[0]!, next: cs[1]!, init: cs[2]! },
+    _ => node,
+  }
+}

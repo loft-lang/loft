@@ -134,6 +134,12 @@ pub struct Cx {
   pub sigs_buf: vector<integer>,
   // `Cx::ap_windows`: per definition, its append twin's window size (-1 not asked, 0 none).
   pub ap_windows: vector<integer>,
+  // `Cx::loop_callees`: per definition, whether a loop that calls an `__inv` twin calls it too —
+  // a root of the hot helpers as much as the twin is.
+  pub loop_callees: vector<boolean>,
+  // `@FR-R-Base`'s guard clause: per definition, whether its guarded index slots are marked in
+  // its code yet (`opt_below_len::mark`).
+  pub guards_marked: vector<boolean>,
   // `Cx::dest_memo`: the destination shapes asked so far.
   pub dest_memo: opt_destination::Memo,
   // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
@@ -191,6 +197,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     sigs: [],
     sigs_buf: [],
     ap_windows: [for _ in 0..len(b.data.definitions) { -1 }],
+    loop_callees: [for _ in 0..len(b.data.definitions) { false }],
+    guards_marked: [for _ in 0..len(b.data.definitions) { false }],
     dest_memo: opt_destination::new_memo(),
     tuples: [],
     lazy: -1,

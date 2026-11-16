@@ -1707,6 +1707,18 @@ fn loop_stmt_inner(x: Cx, w: W, lp: ir::Block, ind: integer) {
 // `loop_copy`: one copy of loop `lp` with what it holds — the file cursor, the invariants, the
 // vector and push headers, the windows, the fill — and their release after it.
 fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  // The functions the loop's body calls (`loop_calls`).
+  w.loop_call_at += [len(w.loop_calls)];
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        if def_nr >= 0 {
+          w.loop_calls += [def_nr];
+        }
+      },
+      _ => {},
+    }
+  });
   held_file = plain_rules() && cgen_file::open_hold(x, w, lp, ind);
   hold_invariants(x, w, lp, ind);
   held_headers = len(w.headers);
@@ -1754,6 +1766,9 @@ fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
     cgen_file::close_hold(w, ind);
   }
   w.memos = w.memos[0..len(w.memos) - 1];
+  at = w.loop_call_at[len(w.loop_call_at) - 1]!;
+  w.loop_calls = w.loop_calls[0..at];
+  w.loop_call_at = w.loop_call_at[0..len(w.loop_call_at) - 1];
 }
 
 // `distinct_version` (`@FR-R-Alias`'s versioned clause): when loop `lp` grows this function's

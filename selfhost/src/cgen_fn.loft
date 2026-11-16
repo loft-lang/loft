@@ -56,6 +56,8 @@ use cgen_fnref;
 use cgen_append;
 use cgen_dest;
 use cgen_lazy;
+use cgen_inputs;
+use opt_below_len;
 use opt_destination;
 use opt_append_twin;
 use cgen_rotate;
@@ -917,17 +919,19 @@ fn nn_twin_bits(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> integer {
 // `ranged_call`: may this call of `d` take its `__rg` twin — the rule is on, `d` is a loft
 // function whose ranged variant gains, and every integer argument is proven within `[-L, L]`
 // under this body's facts.
-fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
+fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>, inv: boolean) -> boolean {
   if w.gen_elem != "" || (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
     return false;
   }
   if !cgen_names::is_loft_defined(x.b, d) || !opt_ranged_call::variant_gains(x.b, x.p, x.c, x.gains, d, 0) {
     return false;
   }
-  if len(w.over) > 0 {
-    return opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, w.over[len(w.over) - 1]!, d, args);
+  facts = if len(w.over) > 0 { w.over[len(w.over) - 1]! } else { w.rv };
+  if !opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, facts, d, args) {
+    return false;
   }
-  opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, w.rv, d, args)
+  // An `__inv` twin's scalar inputs are seeded too, so each must be proven here.
+  !inv || cgen_inputs::inputs_ranged(x, w, d, args, facts)
 }
 
 // A call of function `d` (`call`): its arguments evaluated in order, then the function or the
@@ -1168,6 +1172,24 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       t.kh = true;
     }
   }
+  // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
+  if !t.kh && native == "" && len(args) < 64 {
+    taken = false;
+    inputs = cgen_inputs::twin_inputs(x, w, d, args, ind, taken);
+    if w.why != "" {
+      return none();
+    }
+    if taken {
+      xs += inputs;
+      t.inv = true;
+      // The loop is what is hot: the functions its body calls are roots of the hot helpers.
+      if len(w.loop_call_at) > 0 {
+        for c in w.loop_calls[w.loop_call_at[len(w.loop_call_at) - 1]!..len(w.loop_calls)] {
+          x.loop_callees[c] = true;
+        }
+      }
+    }
+  }
   if w.nk_call == d {
     w.nk_call = -1;
     t.nk = true;
@@ -1182,7 +1204,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     if len(args) <= 23 {
       t.nn = nn_twin_bits(x, w, d, args);
     }
-    t.rg = ranged_call(x, w, d, args);
+    t.rg = ranged_call(x, w, d, args, t.inv);
   }
   name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
   if !cgen_names::is_plain(t) {
@@ -3216,6 +3238,16 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
 // alone, answering nothing, its result the caller's buffer `work_ret`.
 fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>) -> Written {
   index = twin.d;
+  // `@FR-R-Base`'s guard clause: the guarded index slots marked in the code every body of the
+  // function is written from (`opt_below_len::mark`).
+  if opt_below_len::enabled() && !x.guards_marked[index]! && len(x.b.data.definitions[index]!.code) > 0 {
+    x.guards_marked[index] = true;
+    marked = 0;
+    code = opt_below_len::mark(x.b, index, marked);
+    if marked > 0 {
+      x.b.data.definitions[index].code = [code];
+    }
+  }
   d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
     return Written { text: "", refused: "a function without a loft body" };
@@ -3284,7 +3316,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  if twin.inv || twin.apr || twin.apv || twin.vf {
+  if twin.apr || twin.apv || twin.vf {
     return Written { text: "", refused: "a twin of a rule that is not carried" };
   }
   // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
@@ -3302,7 +3334,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     return Written { text: "", refused: "a cold exit that builds a text" };
   }
   nn = opt_non_sentinel::non_sentinel_vars_seeded(x.b, x.p, index, seeded);
-  seeds = if twin.rg { opt_ranged_call::param_seeds(x.b, index) } else { opt_range::empty_ranges(len(d.variables.variables)) };
+  seeds = if twin.rg && twin.inv { cgen_inputs::twin_seeds(x, index) } else if twin.rg { opt_ranged_call::param_seeds(x.b, index) } else { opt_range::empty_ranges(len(d.variables.variables)) };
   w = W {
     index: index,
     name: d.name,
@@ -3403,6 +3435,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     split_tabs: if (env_variable("LOFT_NO_SPLIT_TABLE") ?? "0") != "0" { [] } else { texts.tables },
     tab_alias: [],
     tested: texts.tested,
+    loop_calls: [],
+    loop_call_at: [],
     ap_buf: -1,
     ap_views: [],
     apw: 0,
@@ -3449,6 +3483,14 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     ap_param = cgen_append::twin_body(x, w);
     if ap_param != "" {
       params += [ap_param];
+    }
+  }
+  // An `__inv` twin takes the header of each vector it indexes and each record scalar it reads
+  // from its caller, which holds them; its body serves them as a loop's held ones.
+  if twin.inv {
+    why_not = cgen_inputs::twin_params(x, w, params);
+    if why_not != "" {
+      return Written { text: "", refused: why_not };
     }
   }
   // A `__kh` twin: the caller's header for its vector parameter, by pointer — held, with its
@@ -3588,7 +3630,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   // `@FR-R-Inline`: a small function's body is always inlined into its frame wrapper; a
   // larger one up to the helper size is decided once the twins are written.  // (`hot_helper_size`: only a function written plain, or as its `__rg` twin, is a candidate.)
-  storage = if statements <= 12 {
+  // `@FR-R-Inline`'s twin clause (`hot_twin`): an `__inv` twin exists only because a loop holds
+  // its inputs for the call, so up to 64 statements it is hinted inline.
+  hot_twin = twin.inv && statements <= 64 && (env_variable("LOFT_NO_INLINE_TWIN") ?? "0") == "0" && (env_variable("LOFT_NO_INLINE_HINT") ?? "0") == "0";
+  storage = if statements <= 12 || hot_twin {
     "LOFT_HOT_INLINE"
   } else if statements <= 80 && plain_but_rg(twin) {
     "static /*loft_hot_body:{index}*/"
@@ -3605,7 +3650,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   name = cgen_names::twin_name(x.b, x.dups, twin);
   // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
   // marker resolved once the twins are written, or out of line.
-  outer = if statements <= 12 { "static inline" } else if statements <= 80 && twin.nn == 0 { "static /*loft_hot:{index}*/" } else { "static" };
+  outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && twin.nn == 0 { "static /*loft_hot:{index}*/" } else { "static" };
   Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer }
 }
 
