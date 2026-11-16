@@ -3,7 +3,7 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 <!-- size-exempt: a dated handoff record, read once (DOC_QUALITY § Maintainer docs 2) -->
-# Handoff 2026-11-16 (afternoon, evening): gate E at 879 of 2168, a fast loop for the long tail
+# Handoff 2026-11-16 (afternoon, evening): gate E at 890 of 2172, a fast loop for the long tail
 
 Branch `tuxedo-pln204-int32`, pushed; PR #2518 (loft3's gather) carries it up to 77024883f
 (819 of 2151) and re-wrote gate E's baseline at ITS suite pin 898bc05 — after it merges, rebase
@@ -114,11 +114,23 @@ because 32 programs met it and its layout is one small table of ops.
 element) admits five to seven; a single refusal's own shape admits one or two.  Rank by the
 programs that meet a family, then read its source lines (`elab_probe.py fam`) before choosing.
 
-**Next**: the other element widths behind `a vector of this element type` (`u32`: `int_raw`
-rows, the element built by `OpNewRecord` + `OpSetInt4Raw`; a wide literal `[9223372036854775806,
-1]`: plain `vector<integer>` at stride 8; `vector<i32?>`), then `a function returning a vector
-from this tail` (57 programs meet it: slice-pattern arms, `q ?? [..]`, a field of a call),
-then the still-refused record tails (`an owned local`, `a borrowing local`, `block ncr`).
+**Night (to 12ca00191): 890 of 2172, 0 differ, the real gate's own figure.**  `u32`, `i32?`
+and wide-literal vectors; a function-valued struct field (`fn_number_write`,
+`fn_ref_field_read`, `fn_call_tmp`).  By formal rule: 101 of the suite's 459 rules agree on
+every program, 165 on some, 193 on none (`rewrites` 55 of 107; closures, interfaces,
+operators, tuples and capabilities none whole).
+
+**A call through a function value prints its temporary's variable NUMBER** (`fn_ref[18](…)`):
+the one place the reports compare the ORDER variables were made in.  A temp Rust mints on the
+first pass and the port only on the second agrees by name and differs there — read Rust's order
+with `LOFT_VAR_TABLE=<fn>` and mint on the first pass too.
+
+**Next: function values**, where the refused programs cluster — a lambda's capture of a
+function (11), of a vector it writes (11: the closure shares it as a read one does; the body's
+`c += [x]` is `OpAppendVector(capture, {Vector …}, 0)` with the push aimed at the capture —
+probe `scratchpad/p/cw1.loft`), of a keyed collection (21), of a tuple or a link; then the 51
+programs whose call through a local is refused only because its lambda was.  loft3 took
+605f3d2f5 as this branch's cut for the next PR and fixed loft#2520 on `tuxedo-pr2518-next`.
 
 ## Open, in order
 
