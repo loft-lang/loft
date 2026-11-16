@@ -606,6 +606,10 @@ pub struct Function {
     /// MINTS has to come out identical on both passes or every slot number after it
     /// shifts.  Cleared by `append`, beside `unique`, for that reason.
     loop_binds: HashMap<String, u16>,
+    /// The number pass 1 gave each match SITE's subject temp (`_match_subj_N`), keyed by the
+    /// lexer position where it was minted ([`Function::match_subject`]).  Carried by `append`:
+    /// pass 2 reads it to hand each site pass 1's name back.
+    subject_sites: HashMap<(u32, u32), u16>,
     /// loft#1160 — the field access each variant-payload BINDING in this function was
     /// projected from (`_mv_<field> = OpGetField(subject, off, tp)`), with the type that
     /// names the variant, by the binding's variable number.
@@ -958,6 +962,7 @@ impl Function {
             file: file.to_string(),
             unique: HashMap::new(),
             loop_binds: HashMap::new(),
+            subject_sites: HashMap::new(),
             mv_field_origin: HashMap::new(),
             tuphold_origin: HashMap::new(),
             text_payload_views: std::collections::HashSet::new(),
@@ -1208,6 +1213,9 @@ impl Function {
         // per pass, so the entries line up.
         self.body_binds.clear();
         self.body_binds.clone_from(&other.body_binds);
+        // CARRIED: pass 2 hands each match site the subject name pass 1 gave it.
+        self.subject_sites.clear();
+        self.subject_sites.clone_from(&other.subject_sites);
         self.loops.clear();
         self.loops.append(&mut other.loops);
         self.variables.clear();
@@ -1285,6 +1293,7 @@ impl Function {
             current_loop: u16::MAX,
             unique: HashMap::new(),
             loop_binds: HashMap::new(),
+            subject_sites: other.subject_sites.clone(),
             mv_field_origin: HashMap::new(),
             // Carried for the same reason `append` carries it: the scope pass reads this map
             // off the copy it works on, long after parsing.
@@ -3075,6 +3084,37 @@ impl Function {
             self.variables[v as usize].type_def = type_def.clone();
         }
         self.add_variable(&full, type_def, lexer)
+    }
+
+    /// The temp a `match` evaluates its subject into once (`@FR-M-Match`), named for its SITE.
+    ///
+    /// Whether a match mints this temp depends on its subject's type: a plain enum, a scalar,
+    /// a vector or a struct-enum that is not a place mints one; a struct-enum place does not.
+    /// Pass 1 cannot type a subject that comes from a function declared lower in the file, so
+    /// it mints nothing there, and pass 2 does.  Numbered by a counter, pass 2's extra temp took
+    /// the NEXT site's pass-1 name and type, and every later site moved one name along: a
+    /// struct-enum read into pass 1's `integer` temp (loft#2520).  So the number is pass 1's
+    /// for the site (`site`, the lexer position at the mint, identical on both passes), and a
+    /// site pass 1 did not mint at gets a name of its own family, `_match_subj_late_N`, which
+    /// only pass 2 counts.
+    pub fn match_subject(
+        &mut self,
+        site: (u32, u32),
+        first_pass: bool,
+        type_def: &Type,
+        lexer: &mut Lexer,
+    ) -> u16 {
+        if first_pass {
+            let v = self.unique("match_subj", type_def, lexer);
+            if let Some(&nr) = self.unique.get("match_subj") {
+                self.subject_sites.entry(site).or_insert(nr);
+            }
+            return v;
+        }
+        match self.subject_sites.get(&site) {
+            Some(&nr) => self.add_variable(&format!("_match_subj_{nr}"), type_def, lexer),
+            None => self.unique("match_subj_late", type_def, lexer),
+        }
     }
 
     /// loft#2326 — `v` is a match capture pass 1 bound at `Unknown` (its subject's enum not

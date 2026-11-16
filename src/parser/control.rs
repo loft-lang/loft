@@ -6965,7 +6965,7 @@ impl Parser {
             if !valid_enum || (is_struct && is_place(&subject, &self.data)) {
                 (subject, None)
             } else {
-                let v = self.create_unique("match_subj", &subject_type);
+                let v = self.create_match_subject(&subject_type);
                 self.vars.defined(v);
                 (Value::Var(v), Some((v, subject)))
             };
@@ -12357,7 +12357,7 @@ impl Parser {
         match_pos: &crate::lexer::Position,
     ) -> Type {
         // Store subject in a temp var to avoid re-evaluation.
-        let v = self.create_unique("match_subj", subject_type);
+        let v = self.create_match_subject(subject_type);
         self.vars.defined(v);
 
         self.lexer.token("{");
@@ -13572,7 +13572,7 @@ impl Parser {
             }
             _ => None,
         };
-        let v = subject_var.unwrap_or_else(|| self.create_unique("match_subj", subject_type));
+        let v = subject_var.unwrap_or_else(|| self.create_match_subject(subject_type));
         self.vars.defined(v);
         // `@FR-B-View`: the subject temp is a second name for the subject, so it borrows what
         // the subject borrows.  Pass 2 meets pass 1's variable, typed before the subject's
