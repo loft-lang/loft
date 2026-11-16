@@ -238,18 +238,22 @@ When a CVE surfaces against a published version:
        --body "<advisory rationale + reference URLs>"
    ```
 
-Severity tiers (effects on the loft binary's runtime check):
+Severity tiers — what installing a package release, and building or running a program that
+loads it, does when an advisory names that release (@C167; one verdict for both,
+`registry_advisories::assess`):
 
 | Tier | Behaviour |
 |---|---|
-| `security_critical` | Loud error block at start of every run; user proceeds anyway (default).  Opt-in refusal via `LOFT_STRICT_SECURITY=1` / `--strict-security` (CI gates). |
-| `security_high` | Loud warning, always proceeds. |
-| `security_low` / `bug` | One-line warning per run. |
+| `security_critical` | Refused: the install stops before fetching, a build is a compile error — naming the advisory and `loft install <pkg>@<fixed>`.  `LOFT_SECURITY_OVERRIDE=<id>[,<id>…]` lets it through with a warning. |
+| `security_high` | Warning; refused like critical under `LOFT_STRICT_SECURITY=1` (CI gates). |
+| `security_low` / `bug` | One-line warning.  A known hardware failure is a `bug` (or `security_high` if it can do damage). |
 | `deprecated` | One-line note. |
 
-The default-warn policy mirrors `cargo audit` — security fixes
-can introduce breaking changes, and the user often needs to
-run their cached vulnerable code while porting.
+The override is the way to keep running a vulnerable release while porting off it — security
+fixes can break an API — and it names the advisory, so the choice is written down where it is
+made.  Only a VERIFIED feed counts: a feed whose signature does not verify could refuse any
+package or hide a refusal.  The install refreshes the cached feed when it is stale; a build or
+run reads the cache and never fetches.
 
 ### 5c. Update the dep set
 

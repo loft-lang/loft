@@ -476,3 +476,29 @@ then declares a range that names the new line.  Decided 2026-11-16 (owner).
 `a_floor_with_no_release_in_its_line_takes_the_newest`,
 `the_top_package_keeps_the_line_its_caller_found` (`src/install.rs`) and
 `a_ranges_api_line_floor_is_its_lower_bound` (`src/registry_index.rs`).
+
+
+## C167 — A `security_critical` advisory refuses the package release it names
+
+**Decision.** When the signed advisory feed names a package release, installing it and building
+or running a program that loads it follow one verdict (`registry_advisories::assess`):
+`security_critical` refuses — the install stops before fetching, a build is a compile error —
+naming the advisory and the fixed release, unless `LOFT_SECURITY_OVERRIDE` lists the advisory
+id; `security_high` warns, and refuses under `LOFT_STRICT_SECURITY=1`; `security_low`, `bug` and
+`deprecated` print one line.  Only a verified feed counts; the install refreshes the cached feed
+when it is stale, and a build or run reads the cache and never fetches.
+**Why.** A security hole or a hardware failure in a release must stop a project that pins it,
+which the `deprecated` field (held for a pin) does not.  The advisory channel was built for this —
+affected ranges, the fixed release, a severity, its own signature and a 24-hour refresh — and
+refused only for the loft binary itself: a package's critical advisory printed a block and the
+program went on.  Refusing by default with an audited override keeps what the earlier warn-by-
+default was for — running a vulnerable release while porting off it — and writes the choice down
+where it is made.
+**Revisit when.** An advisory needs a tier between warning and refusal (a release that may run
+but not be newly installed), or a project needs a standing exception kept in its manifest
+rather than the environment.  Decided 2026-11-16 (owner).
+**Holds at:** `@C167` — `src/registry_advisories.rs` (`assess`, `assess_with`,
+`verified_cached_feed`), `src/install.rs` (`install_resolved`), `src/parser/packages.rs`
+(`check_advisory`); guards `an_advisory_refuses_or_warns_by_its_severity`,
+`security_high_refuses_only_when_strict` (`src/registry_advisories.rs`) and
+`a_security_critical_advisory_refuses_the_install` (`tests/registry_e2e.rs`).

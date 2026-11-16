@@ -784,7 +784,10 @@ with no `[c]` shim, prebuilt library or component), which loft does not build.  
 `--expect`, and every other version and package must stay byte-identical).  A DEPENDANT of a
 deprecated release is not inferred deprecated: with nothing left in its range's API line it
 resolves to the newest release, and whether it works there is registry validation's to say.
-No scope of `registry-validation` tests a deprecated release.  Deprecating a release a project
+No scope of `registry-validation` tests a deprecated release.  A release with a security hole or
+a known hardware failure is not deprecated but named in an ADVISORY (`advisories.json`, signed
+the same way): that channel refuses a `security_critical` release even for a pin or a lock
+(LIBRARY_PUBLISH.md § the severity tiers, @C167).  Deprecating a release a project
 could pin is a deliberate break, recorded with `freeze:broken` (.github/LABELS.md).
 
 ## Migration to a real server (later)
