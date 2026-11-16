@@ -1537,6 +1537,13 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   vars.assign_seam = true;
   c = if pre != null { pre } else { stored(e, vars, x, declared!) };
   vars.assign_seam = false;
+  // A tuple into a local declared a tuple of other member types converts member by member.
+  if c == null && x.tp is TyTuple {
+    match declared! {
+      TyTuple { elems: want } => { c = el_ex_assign::tuple_declared(e, vars, x, want); },
+      _ => {}
+    }
+  }
   // `null` into a declared local is the declared type's own null (`Parser::null_value`): a
   // record's, a struct enum's or a vector's reference sentinel, a scalar's, a plain enum's or a
   // text's `OpConv…FromNull`.

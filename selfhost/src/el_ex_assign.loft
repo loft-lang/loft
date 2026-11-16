@@ -1058,6 +1058,46 @@ pub fn holds_lambda(e: el::El, n: integer) -> boolean {
   false
 }
 
+// A tuple value bound to a local declared a tuple of other member types (`convert`'s tuple
+// arm): a literal's members are converted where they stand — an integer to a float, a `null`
+// to the member's own null, a dense value into a `τ?` member as it is; any other tuple value is
+// held in a `__tconv_N` and each member read from it converted (a "tuple_convert" block).  Null
+// where a member has no conversion, or is no scalar or text.
+pub fn tuple_declared(e: el::El, vars: el_vars::Vars, x: Ex, want: vector<ir::TypeT>) -> ir::Node? {
+  have = match x.tp { TyTuple { elems } => elems, _ => return null };
+  if len(have) != len(want) {
+    return null;
+  }
+  // A heap member's conversion keeps the store its copy made (`tuple_member_move`): not carried.
+  for w in want {
+    wb = el_types::base(w);
+    if !(is_scalar(wb) || wb is TyText) {
+      return null;
+    }
+  }
+  lit = match el_ir::unspan(x.code) { NdTuple { items } => items, _ => [] };
+  held = -1;
+  if len(lit) != len(want) {
+    held = el_vars::create_unique(vars, "_tconv", x.tp);
+  }
+  out: vector<ir::Node> = [];
+  for w in want {
+    i = w#index;
+    src = if held >= 0 { ir::NdTupleGet { var: held, idx: i } } else { lit[i]! };
+    ht = have[i]!;
+    c = if ht is TyNull { el_convert::null_of(e, el_types::without_deps(el_types::base(w))) } else { stored(e, vars, ex(src, ht), w) };
+    if c == null {
+      return null;
+    }
+    out += [c!];
+  }
+  if held < 0 {
+    return ir::NdTuple { items: out };
+  }
+  wt = ir::TyTuple { elems: want };
+  el_ir::v_block([el_ir::v_set(held, x.code), ir::NdTuple { items: out }], wt, "tuple_convert")
+}
+
 // A bare name in the syntax at `n` that names a local of the enclosing body (`vars`) and no
 // parameter of the lambda (`own`): the first such, or "".
 pub fn captured_name(e: el::El, vars: el_vars::Vars, n: integer, own: vector<text>) -> text {
@@ -1126,6 +1166,13 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
         }
       },
       _ => {}
+    }
+    // A `null` member of a tuple read against a declared tuple type of its arity is that
+    // member's own null, written where the declaration converts the members (`tuple_declared`).
+    if x.tp is TyNull && vars.expect_node >= 0 && match vars.expect { TyTuple { elems: we } => len(we) == len(elems), _ => false } {
+      items += [ir::NdNull];
+      tps += [ir::TyNull];
+      continue;
     }
     // A nullable plain scalar is held as it is: its null is the scalar's own sentinel.
     nullable_scalar = match x.tp { TyOptional { inner } => is_scalar(inner), _ => false };

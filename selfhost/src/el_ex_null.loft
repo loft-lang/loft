@@ -1842,6 +1842,11 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional)) {
       return record_return(e, vars, v, result);
     }
+    // `return null` from a `vector<T>?` or a struct-enum `E?` function answers the reference
+    // null sentinel and delivers nothing into the buffer.
+    if result is TyOptional && (el_types::base(result) is TyVector || el_types::struct_enum_def(result) >= 0) && v.tp is TyNull {
+      return ex(ir::NdReturn { inner: el_ir::cl(e, "OpNullRefSentinel", []) }, ir::TyNever);
+    }
     // A text is returned as it is, the declared result borrowing what the value borrows
     // (`parse_return`'s `text_return(ls)`); one this frame owns is written into the hidden
     // buffer after the pass (`el_tret`).

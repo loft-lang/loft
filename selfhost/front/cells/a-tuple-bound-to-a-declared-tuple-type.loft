@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a tuple bound to a local declared a tuple of other member types converts member by member: a literal's where they stand (an integer to a float, null to the member's null), a tuple local's through a __tconv_N (tuple_convert).
+// Prints: 5 9 2 250 -1 3 ab
+fn main() {
+  tf: (float, integer) = (5, 9);
+  a = (1, 2);
+  x: (integer, float) = a;
+  n: (integer?, integer) = (250, 1);
+  z: (integer?, integer) = (null, 5);
+  t: (integer, text?) = (3, "ab");
+  println("{tf.0} {tf.1} {x.1} {n.0 ?? -1} {z.0 ?? -1} {t.0} {t.1 ?? "-"}");
+}
