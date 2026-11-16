@@ -73,8 +73,8 @@ an assignment there binds a local of the lambda's own and a read is refused.  Th
 for a closure after a block that reads or writes that block's local.
 **`LOFT_AMP_FIELD_ONLY=1`** (`@FR-B-Ref-Write`, parse time, BOTH backends) copies a record written
 whole through a `&` parameter or link only where the value is a field read or a bare variable —
-with it off (`Parser::amp_rhs_is_place`), every place is copied: an element read, a tuple
-element, a `!`-unwrapped projection.  The bisect step for a caller's local that aliases another
+with it off (`Parser::amp_rhs_is_place`), an element read is copied too, bare or
+`!`-unwrapped.  The bisect step for a caller's local that aliases another
 argument's record after a call.
 **`LOFT_STRUCT_ELEMENT_SELF_READ_VIEW=1`** (`@FR-B-Copy`, parse time, BOTH backends) stages the
 read of an element of the literal's own root (`e[0] = Node { v: 8, next: e[0] }`) as a VIEW when

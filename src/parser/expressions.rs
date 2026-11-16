@@ -12607,21 +12607,20 @@ use a separate collection or add after the loop"
         true
     }
 
-    /// Is a `&` write-through's right-hand side a PLACE — a view of another record, which the
-    /// caller's binding must receive as a COPY (`@FR-B-Copy`)?  Every projection spelling: a
-    /// field or element read (`use_analysis::is_projection_op`), a tuple element (a `TupleGet`,
-    /// which is no call), and the `!` unwrap of one, whose `ncr` block binds the projection
-    /// before its null check.  A construction or a call's result is no place: it is a store of
-    /// its own, installed as it is.
+    /// Is a `&` write-through's right-hand side a READ of another record — which the caller's
+    /// binding must receive as a COPY (`@FR-B-Copy`)?  A field read and an ELEMENT read
+    /// (`OpGetVector`, and the `!` unwrap's `OpGetVectorNullable`), bare or inside the unwrap's
+    /// `ncr` block, which binds the read before its null check.  Not an out-of-line child
+    /// (`OpRefFromChildRec`): a link that walks a chain (`cur = cur.next`) or a front push
+    /// repoints there, and a copy per step copied the whole list each time (loft#2528's first
+    /// cure, which a suite run measured at 27 GB).  A construction or a call's result is a
+    /// store of its own, installed as it is.
     fn amp_rhs_is_place(&self, code: &Value) -> bool {
         match code.unspan() {
-            // `v[i]` read as nullable (`OpGetVectorNullable`, the `!` unwrap's element read) lies
-            // in `v`'s store as `OpGetVector`'s does; the shared predicate leaves it to callers.
-            Value::Call(d, _) => {
-                crate::use_analysis::is_projection_op(&self.data, *d)
-                    || self.data.def(*d).name() == "OpGetVectorNullable"
-            }
-            Value::TupleGet(..) => true,
+            Value::Call(d, _) => matches!(
+                self.data.def(*d).name(),
+                "OpGetField" | "OpGetVector" | "OpGetVectorNullable"
+            ),
             Value::Block(bl) if bl.name == "ncr" => match bl.operators.first().map(Value::unspan) {
                 Some(Value::Set(_, subject)) => self.amp_rhs_is_place(subject),
                 _ => false,
