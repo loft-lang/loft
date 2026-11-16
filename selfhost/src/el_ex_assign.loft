@@ -629,7 +629,9 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       for c in captured_names(e, vars, body!, own) {
         cv = el_vars::var(vars, c);
         ct = el_vars::tp(vars, cv);
-        if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) {
+        // A vector the lambda writes is shared through its pointer as a read one is
+        // (`@FR-L-CapHeap`): the write goes through the capture, no cell.
+        if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) {
           boxable = if e.first_pass { el_cell::cell_name(e, ct) != "" } else { el_cell::cell_of(e, ct) >= 0 };
           if !boxable {
             el::refuse(e, "a lambda that captures a local of its function: written by it, of this type {type_kind(ct)}");

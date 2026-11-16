@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector a lambda appends to is shared through the closure's pointer as a read one is (`@FR-L-CapHeap`, no cell); the body's `c += [x]` builds the literal as a value whose `_vec_N` first names the capture, pushes the item onto the capture itself, and appends the value (`OpAppendVector(capture, {Vector …}, 0)`).
+// Prints: [1,2,3,4] 4
+
+fn main() {
+  c = [1];
+  add = fn(x: integer) { c += [x]; };
+  add(2);
+  c += [3];
+  add(4);
+  println("{c} {len(c)}");
+}

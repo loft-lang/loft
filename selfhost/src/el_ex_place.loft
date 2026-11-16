@@ -1297,6 +1297,42 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     },
     _ => {}
   }
+  // A literal appended to a vector the lambda CAPTURES (`c += [x]`, `parse_append_vector` on a
+  // place that is no variable): the literal is built as a value whose `_vec_N` first names the
+  // capture, each scalar item pushed onto the capture itself, and the (empty) value appended.
+  if v < 0 && op == "+=" && e.p.nodes[rhs] is SVecLit && e.closure_var >= 0 && match e.p.nodes[target] { SName { member: tm } => tm == "", _ => false } {
+    cap = el_ex_assign::expression(e, vars, target);
+    inner = match el_types::base(cap.tp) { TyVector { inner: ci } => ci, _ => ir::TyUnknown { n: 0 } };
+    if !el_types::is_unknown(inner) && el_ex_pattern::push_op(inner) != "" && !(cap.tp is TyOptional) && match el_ir::unspan(cap.code) { NdCall { def_nr: cd } => el::def(e, cd).name == "OpGetDbRef", _ => false } {
+      b = el_ex_pattern::vector_value(e, vars, rhs, elem: inner);
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      match el_ir::unspan(b.x.code) {
+        NdBlock { block: vb } => {
+          bl = vb[0];
+          vec = match el_ir::unspan(el_ir::last(bl.operators)) { NdVar { n: bv } => bv, _ => -1 };
+          ops: vector<ir::Node> = if vec >= 0 { [el_ir::v_set(vec, cap.code)] } else { [] };
+          for o in bl.operators {
+            pushed = match el_ir::unspan(o) {
+              NdCall { def_nr: od, args: oa } => if starts_with(el::def(e, od).name, "OpPush") && len(oa) > 0 && el_ir::unspan(oa[0]) == ir::NdVar { n: vec } { ir::NdCall { def_nr: od, args: [cap.code] + oa[1..] } } else { o },
+              NdSet { var: sv } => if sv != vec { ir::NdNull } else { o },
+              _ => o
+            };
+            if vec < 0 || pushed is NdNull {
+              el::refuse(e, "an append to a captured vector of items that are no plain scalars");
+              return ex(ir::NdNull, ir::TyVoid);
+            }
+            ops += [pushed];
+          }
+          bl.operators = ops;
+          return ex(el_ir::cl(e, "OpAppendVector", [cap.code, ir::NdBlock { block: [bl] }, ir::NdInt { n: 0 }]), ir::TyVoid);
+        },
+        _ => {}
+      }
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
   if v < 0 {
     el::refuse(e, "a compound assignment to a place that is not a known local");
     return ex(ir::NdNull, ir::TyVoid);
