@@ -92,10 +92,11 @@ full loft interpreter, the in-between data of the two implementations compared a
    static checker still MISSES it with `LOFT_NO_RET_TYPE_MATCH=1` (`own_sweep.py`: uaf,re-free).
    `src/store_records.rs` is 6545 lines, over the 5000-line ceiling, so the check waits on that
    file's split.  The cell's `@falsified-at` receipt is pending (`make falsify`).
-5. CI on the branch (run 43775747754): the scripts ratchet is fixed (bc2257796 — its message
-   says 23 scripts; the count is 72); `html_wasm rust_writer::html_debug_tier_runs_on_wasm`
-   took 349.5 s against the 300 s budget.  Not caused by this branch's changes as far as read;
-   time it locally on a quiet box and find where the time goes.
+5. CI on the branch: green on run 43805867322 (after the scripts-ratchet fix bc2257796, whose
+   message says 23 scripts; the count is 72).  The first run's duration-gate red —
+   `html_wasm rust_writer::html_debug_tier_runs_on_wasm` at 349.5 s against 300 — did not recur:
+   the test sits near the budget, and its cost is still worth finding (GOALS: a test over 300 s
+   is wrong).
 
 ## Method notes
 
