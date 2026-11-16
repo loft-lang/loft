@@ -1596,7 +1596,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         } else if unsettled(result) {
           // An arm's dep on a store it mints itself (a literal's work ref) is no borrow of the
           // join (`arm_join_type`).
-          result = if el_types::base(b.tp) is TyReference { el_types::with_deps(b.tp, outside_deps(b.code, el_types::deps(b.tp))) } else { b.tp };
+          result = if el_types::base(b.tp) is TyReference { el_types::with_deps(b.tp, outside_deps(e, b.code, el_types::deps(b.tp))) } else { b.tp };
         } else if b.tp is TyOptional && !(result is TyOptional) {
           result = ir::TyOptional { inner: result };
         }
@@ -1634,7 +1634,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         }
         if el_types::is_heap_record(el_types::base(result)) && el_types::is_heap_record(el_types::base(b.tp)) {
           joined = el_types::deps(result);
-          for x2 in outside_deps(b.code, el_types::deps(b.tp)) {
+          for x2 in outside_deps(e, b.code, el_types::deps(b.tp)) {
             if !joined.contains(x2) {
               joined += [x2];
             }
@@ -1645,7 +1645,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         // a bare literal arm keeps it.
         ac = b.code;
         if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
-          ac = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { el_ex_null::arm_typed(b.code, outside_deps(b.code, el_types::deps(b.tp))) }, _ => b.code };
+          ac = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { el_ex_null::arm_typed(b.code, outside_deps(e, b.code, el_types::deps(b.tp))) }, _ => b.code };
         }
         if len(alts) > 0 {
           // One arm per listed pattern, each binding its own fields ahead of the body (or of the
@@ -1658,7 +1658,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
             } else {
               ai = el_ir::v_block(al.binds + [b.code], b.tp, "match_arm");
               if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
-                ai = el_ex_null::arm_typed(ai, outside_deps(ai, el_types::deps(b.tp)));
+                ai = el_ex_null::arm_typed(ai, outside_deps(e, ai, el_types::deps(b.tp)));
               }
               out += [MArm { cond: al.cond, code: ai, tp: b.tp }];
             }

@@ -1243,7 +1243,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     }
     // Both arms are typed as the else (`true_type = false_type`), whose dep on a store the arm
     // itself mints is no borrow (`arm_join_type`, `outside_deps`).
-    et = el_types::with_deps(f.tp, outside_deps(f.code, el_types::deps(f.tp)));
+    et = el_types::with_deps(f.tp, outside_deps(e, f.code, el_types::deps(f.tp)));
     t = ex(block_typed(tc, et), et);
     f = ex(f.code, et);
   }
@@ -1325,7 +1325,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     tt = t.tp;
     tc = t.code;
     if record_null && !vector_null {
-      td = outside_deps(t.code, el_types::deps(t.tp));
+      td = outside_deps(e, t.code, el_types::deps(t.tp));
       tt = el_types::with_deps(t.tp, td);
       tc = arm_typed(t.code, td);
     }
@@ -1381,8 +1381,8 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // literal arm's dep on the store it mints is no borrow (`arm_join_type`); each arm keeps its
   // own type.
   if (t.tp is TyOptional) != (f.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0 && struct_ref(e, el_types::base(t.tp)) == struct_ref(e, el_types::base(f.tp)) {
-    ds = outside_deps(t.code, el_types::deps(t.tp));
-    fd = outside_deps(f.code, el_types::deps(f.tp));
+    ds = outside_deps(e, t.code, el_types::deps(t.tp));
+    fd = outside_deps(e, f.code, el_types::deps(f.tp));
     for x in fd {
       if !ds.contains(x) {
         ds += [x];
@@ -1434,8 +1434,8 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // typed without it, and the `if` borrows what either arm still names.  A local the program
   // declares in the arm (`{ a: W = …; a }`) is a binding, not a marker: its dep is kept.
   if (el_types::base(t.tp) is TyReference || el_types::struct_enum_def(t.tp) >= 0) && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
-    td = keep_user_locals(vars, outside_deps(t.code, el_types::deps(t.tp)), el_types::deps(t.tp));
-    fd = keep_user_locals(vars, outside_deps(f.code, el_types::deps(f.tp)), el_types::deps(f.tp));
+    td = keep_user_locals(vars, outside_deps(e, t.code, el_types::deps(t.tp)), el_types::deps(t.tp));
+    fd = keep_user_locals(vars, outside_deps(e, f.code, el_types::deps(f.tp)), el_types::deps(f.tp));
     deps = td;
     for x in fd {
       if !deps.contains(x) {

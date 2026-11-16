@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a struct enum answered by a `match` whose arms hand back a capture viewing the subject, the subject itself or a call: the whole branch is copied into the caller's buffer (`ref_return`'s copy leg, `materialized_view_return`); the join borrows an arm's capture, which the arm binds and does not mint (`arm_join_type`); a unit variant set as an out-of-line child.
+// Prints: true true true
+
+enum T { TInt, TOpt { inner: T }, TVec { inner: T, n: integer } }
+
+fn base(t: T) -> T { match t { TOpt { inner } => inner, _ => t } }
+fn deep(t: T) -> T { match t { TOpt { inner } => deep(inner), TVec { inner, n } => if n > 0 { inner } else { t }, _ => t } }
+
+fn main() {
+  m = TVec { inner: TInt, n: 2 };
+  a = TOpt { inner: m };
+  b = base(a);
+  c = deep(a);
+  println("{b is TVec} {c is TInt} {base(c) is TInt}");
+}

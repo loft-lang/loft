@@ -2565,6 +2565,10 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
     if same && xc is NdVar {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
     }
+    // A unit variant (`TVec { inner: TInt }`): its record, built in a work ref, set as the child.
+    if same && match xc { NdBlock { block: ub } => ub[0].name == "EnumUnitLit", _ => false } {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
     // `write_back_call`: a call answering its argument or a record built in the caller's buffer
     // (`t.left = insert(t.left, k)`) is bound as a borrow of the host, copied in where it must
     // be, and a store the callee minted for this call — neither the host's nor the buffer's —

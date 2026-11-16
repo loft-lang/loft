@@ -316,6 +316,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   if rb >= 0 && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
     delivered = var_return(e, vars, code, rb);
+    if delivered == null {
+      // The branch copied whole types the body as the buffer's record (`view_answer`).
+      delivered = branch_view_return(e, vars, code, rb);
+      view_answer = delivered != null && !e.first_pass;
+    }
     if delivered != null {
       code = delivered!;
       // A literal an earlier `return` answers is built into the buffer here too
@@ -905,6 +910,90 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
   bl.operators[-1] = copy!;
   bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb])];
   ir::NdBlock { block: [bl] }
+}
+
+// `ref_return`'s copy leg for a BRANCH tail (`classify_ret_promotion` refuses to rename a
+// candidate that views an argument, loft#1482; `materialize_return_into` then copies the whole
+// branch): an `if` whose leaves are parameters, locals viewing only parameters (a match arm's
+// capture), and calls — with at least one such local — is copied into the caller's buffer as
+// one value.  A branch with a null leaf, a nullable local or a `return` inside is copied arm by
+// arm in Rust: not carried, so it answers null and the tail stays refused.
+pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir::Node? {
+  d = e.context;
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 || !(el_ir::unspan(el_ir::last(bl.operators)) is NdIf) {
+    return null;
+  }
+  ret = el::def(e, d).returned[0];
+  ba = attr_nr(el::def(e, d), "__retbuf");
+  if ret is TyOptional || heap_def(ret) < 0 || ba < 0 {
+    return null;
+  }
+  views = branch_view_leaves(e, vars, el_ir::last(bl.operators));
+  if views <= 0 {
+    return null;
+  }
+  dep = el_types::deps(ret);
+  if !dep.contains(ba) {
+    dep += [ba];
+  }
+  e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep)];
+  if e.first_pass {
+    return code;
+  }
+  kt = ir::NdInt { n: el::def(e, heap_def(ret)).known_type };
+  b = ir::NdVar { n: rb };
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb]);
+  bl.operators[-1] = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [el_ir::last(bl.operators), b, kt]), b], owned, "materialized_view_return");
+  bl.result = [owned];
+  ir::NdBlock { block: [bl] }
+}
+
+// The leaves of a branch tail that are locals viewing only parameters; -1 where a leaf is
+// anything but a parameter, such a local, or a call of a function the program declares.
+fn branch_view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => {
+      a = branch_view_leaves(e, vars, t);
+      b = branch_view_leaves(e, vars, f);
+      if a < 0 || b < 0 { -1 } else { a + b }
+    },
+    NdBlock { block } => {
+      nm = block[0].name;
+      if nm == "join-arm-owner" {
+        return 0;
+      }
+      if (nm != "block" && nm != "match_arm") || len(block[0].operators) == 0 {
+        return -1;
+      }
+      // An arm that can leave the function is copied arm by arm.
+      for op in block[0].operators {
+        if el_ir::unspan(op) is NdReturn {
+          return -1;
+        }
+      }
+      branch_view_leaves(e, vars, el_ir::last(block[0].operators))
+    },
+    NdVar { n: v } => {
+      if el_vars::tp(vars, v) is TyOptional || heap_def(el_vars::tp(vars, v)) < 0 {
+        return -1;
+      }
+      if vars.vars[v]!.argument {
+        return 0;
+      }
+      for x in el_types::deps(el_vars::tp(vars, v)) {
+        if x == v || !vars.vars[x]!.argument {
+          return -1;
+        }
+      }
+      if len(el_types::deps(el_vars::tp(vars, v))) > 0 { 1 } else { -1 }
+    },
+    NdCall { def_nr } => {
+      nm = el::def(e, def_nr).name;
+      if starts_with(nm, "n_") || starts_with(nm, "t_") { 0 } else { -1 }
+    },
+    _ => -1
+  }
 }
 
 // `return_views_local`: the local's record borrows the store of a local of this frame, not only

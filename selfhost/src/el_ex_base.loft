@@ -1859,15 +1859,39 @@ pub fn nullable_arith(e: el::El, code: ir::Node, outer: boolean) -> ir::Node {
   }
 }
 
-// The deps of an arm that it does not mint itself (`use_analysis::minted_vars`: set inside it).
-pub fn outside_deps(arm: ir::Node, deps: vector<integer>) -> vector<integer> {
+// The deps of an arm that it does not mint itself (`use_analysis::minted_vars`: the destination
+// of an `OpDatabase` inside it).  A local the arm merely binds — a match capture viewing the
+// subject — is no mint: the join borrows it.
+pub fn outside_deps(e: el::El, arm: ir::Node, deps: vector<integer>) -> vector<integer> {
+  db = el::def_nr(e, "OpDatabase");
   kept: vector<integer> = [];
   for d in deps {
-    if !sets_var(arm, d) {
+    if !mints_var(arm, d, db) {
       kept += [d];
     }
   }
   kept
+}
+
+// Is `v` the destination of an `OpDatabase` (definition `db`) anywhere in `n`?
+pub fn mints_var(n: ir::Node, v: integer, db: integer) -> boolean {
+  match n {
+    NdSet { var: _, inner } => mints_var(inner, v, db),
+    NdSpan { inner } => mints_var(inner, v, db),
+    NdReturn { inner } => mints_var(inner, v, db),
+    NdBlock { block } => { for o in block[0].operators { if mints_var(o, v, db) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if mints_var(o, v, db) { return true; } } false },
+    NdInsert { items } => { for o in items { if mints_var(o, v, db) { return true; } } false },
+    NdIf { cond, t, f } => mints_var(cond, v, db) || mints_var(t, v, db) || mints_var(f, v, db),
+    NdCall { def_nr, args } => {
+      if def_nr == db && len(args) > 0 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
+        return true;
+      }
+      for a in args { if mints_var(a, v, db) { return true; } }
+      false
+    },
+    _ => false
+  }
 }
 
 // Is `v` set anywhere in `n`?
