@@ -1065,6 +1065,13 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
       tps += [el_types::without_deps(el_types::unrewritten(x.tp))];
       continue;
     }
+    // A call of a loft function answering a fresh record (its hidden buffer) is the member as it
+    // is, typed as the bare record: the tuple owns what the call made.
+    if el_types::base(x.tp) is TyReference && !(x.tp is TyOptional) && el_ex_match::gives_away_its_store(e, x.code) && el_ir::unspan(x.code) is NdCall {
+      items += [x.code];
+      tps += [el_types::without_deps(x.tp)];
+      continue;
+    }
     // `tuple_member_owned_copy`: a struct-enum parameter is held as it is — a view of the
     // argument, no copy (its type has no copy hook to lease).
     match x.tp {
