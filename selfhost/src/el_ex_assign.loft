@@ -711,7 +711,17 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> Ex {
   // A closure answering a text is not carried: the borrows of its body's answer (a parameter's
   // view) and of its capture fields are not reproduced yet.
-  // A closure answering a text delivers it through its hidden `&text` buffer, as any lambda.
+  // A closure answering a text delivers it through its hidden `&text` buffer, as any lambda.  One
+  // that also writes a shared record capture types its answer by the lambda's placeholder for
+  // that capture (`["p"]`), a variable this port's lambdas do not keep: refused by name.
+  if !e.first_pass && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText {
+    for c in caps {
+      if record_type(e, c.tp) && writes_through(e, body, c.name) {
+        el::refuse(e, "a closure answering a text that writes a record capture");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    }
+  }
   if e.first_pass {
     end = match e.p.nodes[body] { SBlock { end: be } => be, _ => 0 };
     // The cells of the written captures, made before the record (`synthesize_cell_structs`);
@@ -914,6 +924,30 @@ pub fn rebind_after_block(e: el::El, vars: el_vars::Vars, old: integer, t: ir::T
   }
   el_vars::record_binding(vars, nv);
   nv
+}
+
+// Does the syntax at `n` assign to a place rooted at the name `name` (`p.a += x`)?
+fn writes_through(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SAssign { target } => if root_name(e, target) == name { return true; },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if writes_through(e, c, name) {
+      return true;
+    }
+  }
+  false
+}
+
+// The bare name a place expression (`p`, `p.a`, `p.v[i]`) is rooted at, or "".
+fn root_name(e: el::El, n: integer) -> text {
+  match e.p.nodes[n] {
+    SName { name, member } => if member == "" { name } else { "" },
+    SMember { e: re } => if re == null { "" } else { root_name(e, re!) },
+    SIndex { e: ie } => if ie == null { "" } else { root_name(e, ie!) },
+    _ => ""
+  }
 }
 
 // Does the syntax at `n` name `name` anywhere?

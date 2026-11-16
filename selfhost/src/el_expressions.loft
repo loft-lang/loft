@@ -223,6 +223,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     cc = capture_tail_copy(e, vars, code, rb);
     if cc != null {
       code = cc!;
+    } else if ncc_over_capture(e, code) {
+      // Rust materialises each arm into a work ref the late buffer is renamed onto, the body
+      // borrowing the lambda's placeholder for the capture — a variable this port's lambdas do
+      // not keep: refused by name.
+      el::refuse(e, "a lambda answering a `??` over its capture");
     }
   }
   // A lambda's late buffer is delivered nothing else: its body builds the record it answers as
@@ -2290,6 +2295,17 @@ fn respan(n: ir::Node, inner: ir::Node) -> ir::Node {
   match n {
     NdSpan { pos, inner: i } => ir::NdSpan { pos: pos, inner: respan(i, inner) },
     _ => inner
+  }
+}
+
+// Is the body's tail an `ncc` block holding a read rooted at the closure record?
+fn ncc_over_capture(e: el::El, code: ir::Node) -> boolean {
+  match body_tail(code) {
+    NdBlock { block } => block[0].name == "ncc" && len(block[0].operators) > 0 && match el_ir::unspan(block[0].operators[0]!) {
+      NdSet { var: _, inner } => el_ir::reads_var(inner, e.closure_var),
+      _ => false
+    },
+    _ => false
   }
 }
 
