@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	817	of	2150
+layer	elab	agree	819	of	2151
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -1150,7 +1150,6 @@ elab	refused	tests/scripts/25-nullable-sequences.loft
 elab	refused	tests/scripts/25-nullable-vector-scalar-element.loft
 elab	refused	tests/scripts/25-sorted-enum-variant-range.loft
 elab	refused	tests/scripts/2501-a-bare-variant-against-a-field-of-a-record-a-module-cycle-declares.loft
-elab	refused	tests/scripts/292-pln17-three-state-boolean.loft
 elab	refused	tests/scripts/30-expressions.loft
 elab	refused	tests/scripts/35b-sequence-capture.loft
 elab	refused	tests/scripts/35f-alternation.loft
