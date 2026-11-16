@@ -674,13 +674,13 @@ fn loft_rlib_path() -> Option<std::path::PathBuf> {
 }
 
 /// [`loft_rlib_path`] for a loft binary at `exe_dir`.  The uplifted `libloft.rlib` is made the
-/// newest per-unit rlib FIRST ([`crate::native_lib::refresh_runtime_uplift`], what every build
+/// newest per-unit rlib FIRST ([`crate::cargo_layout::refresh_runtime_uplift`], what every build
 /// that links it does), so the fingerprint is of the rlib a build links.  Reading it before a
 /// refresh hashed a stale uplift a restored cache left, and the first build afterwards refreshed
 /// it: two answers in one tree — CI's `cache warm --runtime html` stamped the wasm runtime with
 /// the stale one, and the first `--html` test rebuilt it for seven minutes while another waited.
 fn rlib_path_in(exe_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    crate::native_lib::refresh_runtime_uplift(exe_dir);
+    crate::cargo_layout::refresh_runtime_uplift(exe_dir);
     // The same debris rule `toolchain::find_loft_rlib` applies (#304: both name one rlib).
     let debris = crate::cargo_layout::classic_deps_is_debris(exe_dir)
         && !crate::env_once!(std::env::var_os("LOFT_NATIVE_CLASSIC_DEPS_FIRST").is_some());

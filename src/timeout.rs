@@ -348,6 +348,9 @@ pub fn first_giveup_report(key: &str) -> bool {
     true
 }
 
+/// The lock file [`lock_within_budget`] and [`lock_shared_within_budget`] hold.
+pub type LockFile = std::fs::File;
+
 /// Acquire an advisory file lock, giving up rather than letting the wait consume the run's
 /// budget.  `Err(waited)` means it gave up; the caller reports and fails.
 ///
@@ -370,7 +373,7 @@ pub fn first_giveup_report(key: &str) -> bool {
 ///
 /// `Err(waited)` when a deadline is armed and the lock was still held with too little budget
 /// left to use it — `waited` is how long this process queued before giving up.
-pub fn lock_within_budget(f: &std::fs::File, what: &str) -> Result<(), std::time::Duration> {
+pub fn lock_within_budget(f: &LockFile, what: &str) -> Result<(), std::time::Duration> {
     let started = Instant::now();
     let Some(budget) = remaining() else {
         // Unarmed: the historical behaviour, and the right one — nothing is counting.
@@ -406,7 +409,7 @@ pub fn lock_within_budget(f: &std::fs::File, what: &str) -> Result<(), std::time
 ///
 /// # Errors
 /// How long it waited, when the run's budget would expire before the lock came free.
-pub fn lock_shared_within_budget(f: &std::fs::File, what: &str) -> Result<(), std::time::Duration> {
+pub fn lock_shared_within_budget(f: &LockFile, what: &str) -> Result<(), std::time::Duration> {
     let started = Instant::now();
     let Some(budget) = remaining() else {
         blocked_on(what);
@@ -679,16 +682,7 @@ mod tests {
     #[test]
     fn shared_holders_coexist_and_keep_an_exclusive_one_out() {
         let path = std::env::temp_dir().join(format!("loft_lock_test_{}", std::process::id()));
-        let open = || {
-            crate::file_access::open_with(
-                &path,
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(false),
-            )
-            .expect("the lock file")
-        };
+        let open = || crate::file_access::open_lock_file(path.as_path()).expect("the lock file");
         let (html, wasi, package) = (open(), open(), open());
         super::lock_shared_within_budget(&html, "the html runtime").expect("first shared");
         assert!(
