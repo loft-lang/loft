@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	853	of	2159
+layer	elab	agree	860	of	2161
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -413,7 +413,6 @@ elab	refused	loft-suite/rules/heap/H-RefHome/a-generic-recursive-enum-links-its-
 elab	refused	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft
-elab	refused	loft-suite/rules/heap/H-RefVal/a-heap-read-and-write-follow-the-null-and-index-rules.loft
 elab	refused	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft
 elab	refused	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft
 elab	refused	loft-suite/rules/heap/H-ShortRef/a-name-into-content-answers-as-the-disturbance-rules-say.loft
@@ -515,7 +514,6 @@ elab	refused	loft-suite/rules/layout/L-Null-Text/1795-an-absent-text-has-no-char
 elab	refused	loft-suite/rules/layout/L-Null-Which/1367-a-tagged-projection-bound-to-a-local-is-the-pointer.loft
 elab	refused	loft-suite/rules/layout/L-Null-Which/2443-a-struct-enum-element-read-off-a-call-borrows-the-vector.loft
 elab	refused	loft-suite/rules/layout/L-Null-Which/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.loft
-elab	refused	loft-suite/rules/layout/L-Null-Which/the-field-decides-whether-a-nullable-takes-a-tag.loft
 elab	refused	loft-suite/rules/layout/L-Null/1143-a-returned-nullable-keyed-parameter-is-still-the-callers.loft
 elab	refused	loft-suite/rules/layout/L-Null/1150-a-keyed-return-that-can-be-absent-hands-back-what-it-built.loft
 elab	refused	loft-suite/rules/layout/L-Null/1316-a-nullable-reference-field-is-still-a-pointer.loft
@@ -666,7 +664,6 @@ elab	refused	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branc
 elab	refused	loft-suite/rules/ownership/O-Latest/1324-a-reassigned-capture-suppresses-the-store-the-record-holds.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/1447b-a-captured-keyed-local-rebinds-into-a-fresh-store.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/a-captured-vector-from-a-call-frees-the-store-its-rebind-leaves.loft
-elab	refused	loft-suite/rules/ownership/O-Latest/a-nullable-record-local-owns-its-latest-store-at-every-rebind.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft
 elab	refused	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft
@@ -1051,7 +1048,6 @@ elab	refused	tests/scripts/157-twin-base.loft
 elab	refused	tests/scripts/157-vector-param-inputs.loft
 elab	refused	tests/scripts/158-bounded-sum.loft
 elab	refused	tests/scripts/158-copy-in-place.loft
-elab	refused	tests/scripts/158-enum-record.loft
 elab	refused	tests/scripts/158-field-mint.loft
 elab	refused	tests/scripts/158-guard-free.loft
 elab	refused	tests/scripts/158-heap-discharge-buffer.loft
@@ -1249,7 +1245,6 @@ elab	refused	tests/scripts/a-rebind-from-a-fresh-result-moves-on-both-backends.l
 elab	refused	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft
 elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft
-elab	refused	tests/scripts/a-record-that-owns-no-heap-is-copied-as-its-bytes.loft
 elab	refused	tests/scripts/a-repeated-element-fills-in-one-block.loft
 elab	refused	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft
 elab	refused	tests/scripts/a-returned-field-of-an-owned-local-hands-its-store-over.loft
