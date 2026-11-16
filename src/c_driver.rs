@@ -1172,7 +1172,12 @@ pub(crate) fn loft_written_unit(
             data,
             stores,
             &image,
-            &loft::ir_store::bundle_facts(data, stores, loft::c::c_library_facts(data)),
+            &loft::ir_store::bundle_facts(
+                data,
+                stores,
+                loft::c::c_library_facts(data),
+                loft::c::host_facts(data, stores),
+            ),
         )
         .map_err(|e| format!("the program image could not be written: {e}"))?;
         let out = Spawn::new(Program::os(&generator))

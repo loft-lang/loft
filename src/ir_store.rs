@@ -972,9 +972,16 @@ pub struct UpgradeShape {
     pub ids: Vec<u16>,
 }
 
-/// [`BundleFacts`] for `data` laid out in `program`, with the C libraries' facts `clibs`.
+/// [`BundleFacts`] for `data` laid out in `program`, with the C libraries' facts `clibs` and
+/// the host's `host` — both resolved by the C layer above this one (`c::c_library_facts`,
+/// `c::host_facts`), which the caller asks.
 #[must_use]
-pub fn bundle_facts(data: &Data, program: &Stores, clibs: Vec<CLibFacts>) -> BundleFacts {
+pub fn bundle_facts(
+    data: &Data,
+    program: &Stores,
+    clibs: Vec<CLibFacts>,
+    host: HostFacts,
+) -> BundleFacts {
     let sidecars = run_image_sidecars(data, program);
     let routines = crate::parser::Parser::upgrade_routines(data);
     let mut upgrade_types = Vec::new();
@@ -1004,7 +1011,7 @@ pub fn bundle_facts(data: &Data, program: &Stores, clibs: Vec<CLibFacts>) -> Bun
         oldest: release.oldest.clone(),
         bridge: release.bridge.clone(),
         version: release.version.clone(),
-        host: crate::c::host_facts(data, program),
+        host,
     }
 }
 
