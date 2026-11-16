@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	860	of	2161
+layer	elab	agree	866	of	2164
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -382,7 +382,6 @@ elab	refused	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-t
 elab	refused	loft-suite/rules/heap/H-Free/a-call-taking-a-join-arm-call-frees-the-store-it-made.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-call-taking-a-scalar-vector-built-inline-frees-the-record-it-made.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-comprehension-releases-each-call-it-copies-whatever-its-layout.loft
-elab	refused	loft-suite/rules/heap/H-Free/a-discharge-read-in-place-frees-its-copy.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-element-is-rewritten-is-a-view.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-local-bound-in-each-pass-frees-each-copied-answer.loft
@@ -531,7 +530,6 @@ elab	refused	loft-suite/rules/layout/L-OutOfLine/a-worker-returns-a-tree-into-a-
 elab	refused	loft-suite/rules/layout/L-Ref/a-fn-ref-field-holding-a-closure-is-a-function-id-and-its-closure-record.loft
 elab	refused	loft-suite/rules/layout/L-Ref/pointer-fields-of-every-width-sit-aligned-beside-narrow-scalars.loft
 elab	refused	loft-suite/rules/layout/L-Struct/1718-a-virtual-field-has-no-slot-on-native.loft
-elab	refused	loft-suite/rules/layout/L-Struct/a-record-packs-by-descending-alignment-and-pads-to-its-largest.loft
 elab	refused	loft-suite/rules/layout/L-Total/a-fn-ref-field-a-capturing-lambda-reaches-carries-its-closure.loft
 elab	refused	loft-suite/rules/layout/L-Total/a-fn-ref-field-no-capturing-lambda-reaches-is-a-function-id.loft
 elab	refused	loft-suite/rules/layout/L-Total/every-type-has-one-layout-whichever-spelling-asks.loft
@@ -1028,7 +1026,6 @@ elab	refused	tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-d
 elab	refused	tests/scripts/1468-a-nullable-call-result-binds-without-an-ownerless-copy.loft
 elab	refused	tests/scripts/1511-a-call-result-in-a-tuple-member-releases-once.loft
 elab	refused	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft
-elab	refused	tests/scripts/1522-a-rebind-releases-the-buffer-it-adopted.loft
 elab	refused	tests/scripts/1523-a-displaced-free-asks-the-container-it-came-from.loft
 elab	refused	tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft
 elab	refused	tests/scripts/157-a-fresh-element-text-keeps-the-loop-hold.loft
