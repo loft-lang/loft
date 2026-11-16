@@ -1967,7 +1967,9 @@ pub fn sink_arm(e: el::El, vars: el_vars::Vars, v: integer, n: ir::Node, t: ir::
 // call's but borrowing otherwise, has the first pass's borrows cleared — once per local — so
 // the bind gives it the call's as this pass resolves them.
 pub fn rebuild_call_deps(e: el::El, vars: el_vars::Vars, v: integer, op: text, x: Ex) {
-  if e.first_pass || op != "=" || vars.vars[v].argument || vars.rebuilt.contains(v) {
+  // A `&` link's borrows name the place it links, which a whole write copies into: no guess of
+  // the call's to correct.
+  if e.first_pass || op != "=" || vars.vars[v].argument || vars.rebuilt.contains(v) || vars.amp_places.contains(v) {
     return;
   }
   has_body = match el_ir::unspan(x.code) {
@@ -1980,6 +1982,38 @@ pub fn rebuild_call_deps(e: el::El, vars: el_vars::Vars, v: integer, op: text, x
   }
   vars.rebuilt += [v];
   el_vars::set_var_type(vars, v, el_types::with_deps(cur, []));
+}
+
+// `parse_object`'s in-place attempt for a parameter rebound by a literal of its struct that
+// reads a view of it: the literal is first parsed into the parameter (its entry witness taken,
+// its fields built in place), then the rebuild watch sends it back to be built apart.  Only the
+// attempt's variables stay — its work refs abandoned, its code dropped.  False when a field of
+// the attempt is refused.
+fn param_rebuild_attempt(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> boolean {
+  fields: vector<integer> = [];
+  match e.p.nodes[n] {
+    SStructLit { member, fields: fs, base } => {
+      if member != "" || base != null {
+        return true;
+      }
+      fields = fs;
+    },
+    _ => {}
+  }
+  ref_mark = vars.work_ref;
+  p2_mark = vars.work_ref_p2;
+  el_vars::rebind_witness(vars, v);
+  vars.vars[v].argument = false;
+  el_vars::mark_built(vars, v);
+  vars.rebuild_attempt = true;
+  vars.own_buffer_hit = false;
+  list = el_ex_place::object_fields(e, vars, v, struct_literal_def(e, n), fields);
+  vars.rebuild_attempt = false;
+  vars.own_buffer_hit = false;
+  vars.vars[v].argument = true;
+  el_vars::unmark_built(vars, v);
+  el_ex_place::abandon_work_refs(vars, ref_mark, p2_mark);
+  list != null
 }
 
 // Is syntax node `n` a `&` of something (a link, not a copy)?
@@ -2161,6 +2195,9 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     return ex(ir::NdInsert { items: out }, ir::TyVoid);
   }
   if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && (!(e.p.nodes[rhs!] is SStructLit) || syntax_reads_view_of(e, vars, rhs!, v)) && !(e.p.nodes[rhs!] is SVecLit) {
+    if !e.first_pass && e.p.nodes[rhs!] is SStructLit && struct_literal_def(e, rhs!) == struct_ref(e, pt0) && !param_rebuild_attempt(e, vars, v, rhs!) {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
     x = expression(e, vars, rhs!);
     sd = struct_ref(e, el_types::base(x.tp));
     if !e.first_pass && (sd < 0 || !copies_as(e, struct_ref(e, pt0), sd)) {

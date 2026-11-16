@@ -1459,7 +1459,9 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     refuse_known(e, x.tp, "a value its declared type converts: {type_kind(x.tp)} to {type_kind(declared!)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // `parse_assign_op`'s `change_var`: the local borrows what the value borrows.
+  // `parse_assign_op`'s `change_var`: the local borrows what the value borrows — a declared
+  // local bound from a call clears its first-pass borrows first, as a plain bind does.
+  el_ex_assign::rebuild_call_deps(e, vars, v, "=", x);
   if el_types::is_equal(e, declared!, x.tp) || (declared! is TyOptional && el_types::is_equal(e, el_types::base(declared!), el_types::base(x.tp))) {
     el_vars::change_var_type(e, vars, v, x.tp);
   } else if x.tp is TyOptional && !(declared! is TyOptional) && el_types::is_heap_record(el_types::base(declared!)) && el_types::is_equal(e, declared!, el_types::base(x.tp)) {
@@ -1551,10 +1553,35 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     o = el_ex_object::object_fresh(e, vars, d, fields, wt);
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
+  // `rebuild_watch` (`arm_rebuild_watch`): a collection field whose value names the local, or a
+  // local viewing its store, would read what the in-place re-init clears — the literal is then
+  // parsed again built apart, and this attempt's work refs are abandoned (below).  Watched on
+  // the second pass, for a literal of the local's own record or a variant of its enum.
+  watch_hit = false;
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && !(el_types::base(vt) is TyUnknown) {
+    watch = el_expressions::store_viewers(vars, v) + [v];
+    for fi in fields {
+      match e.p.nodes[fi] {
+        SFieldInit { name: fname, e: fe } => {
+          a = attr_nr(el::def(e, d), fname);
+          if a >= 0 && fe != null {
+            at = el_types::base(el::def(e, d).attributes[a]!.typedef[0]);
+            if (at is TyVector || keyed_kind(at)) && names_one_of(e, vars, fe!, watch) {
+              watch_hit = true;
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
   el_vars::mark_built(vars, v);
   ref_mark = vars.work_ref;
   p2_mark = vars.work_ref_p2;
+  vars.rebuild_attempt = watch_hit;
+  vars.own_buffer_hit = false;
   list = object_fields(e, vars, v, d, fields);
+  vars.rebuild_attempt = false;
   if list == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -1622,6 +1649,18 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
         _ => {}
       }
     }
+  }
+  // The watch fired: this attempt — its staging included — is abandoned and the literal built
+  // apart in a `__ref_p2_N` of its own, then bound.
+  if watch_hit {
+    vars.own_buffer_hit = false;
+    if vars.vars[v].argument {
+      el::refuse(e, "a parameter rebuilt in place by a literal whose collection field reads it");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    abandon_work_refs(vars, ref_mark, p2_mark);
+    o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
+    return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
   // A promoted return buffer (an argument) is built into: its mint guarded to reuse a buffer
   // the caller handed in live, and no reset.

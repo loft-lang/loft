@@ -170,6 +170,11 @@ pub struct Vars {
   pub amp_vectors: vector<integer>,
   // Locals a `&` bound to a place in a store (`pi = &o.i`, `pe = &v[0]`, `is_amp_link`).
   pub amp_places: vector<integer>,
+  // An in-place literal build that a rebuild watch may abandon is being parsed (`object_into`'s
+  // attempt): a vector field built in a buffer of its own is carried only there.
+  pub rebuild_attempt: boolean = false,
+  // That attempt met `parse_vector`'s own-buffer arm (`field_vector`).
+  pub own_buffer_hit: boolean = false,
   // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
   pub work_ctext: integer = 0,
   // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
