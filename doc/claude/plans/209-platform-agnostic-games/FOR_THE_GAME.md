@@ -568,3 +568,31 @@ and the town; and it should play over the whole screen, showing no more than it 
   are to go through the engine, what `scene3d` must take beyond tiles of faces.  Say which
   comes first.
 
+## This stream's note: the first-person view on the town's ground (2026-11-16, the game at cecc5b9)
+
+**The owner, after the note above:** it is the first-person view that is wanted, in the demo
+world and in the town.
+
+Tried in a scratch copy of the game, on a Mac, as a shipped program; the changes are
+`first-person-whole-screen.patch` beside this file (four files, against `cecc5b9`), for the
+game's agent to take, change or replace:
+
+- **The demo world** already plays in first person over the whole screen
+  (`graphics::open_fullscreen`).  `TW_VIEW=first` starts in it (`render3d::start`).
+- **The town on the new rules** fell back to the 2D map out on the ground: `main` draws the
+  view only `!game.on_field`.  In the patch the view draws there too (`render3d::shows`): the
+  eye where `fplay` has the body, over `hexscene::height_at`, the hex version's meshes as they
+  are.  Nobody stands on the ground yet, so no cards are drawn there.
+- **Steering on the ground** is the view's (`steer_field`): left and right turn the view,
+  forward walks the way it looks, back the other way with the view kept.  The game walks by
+  `g.steer_x`, `g.steer_y` in place of the four compass keys while `g.field_steer`
+  (`update_field`).
+- **Measured**, with test-only switches the patch carries (`TW_GRAB`, `TW_GRAB_AT`,
+  `TW_TURN`, `TW_AUTO`): from the start at (45, -90) looking north, forward for 270 frames
+  brings the body to y = -63.2, back for 170 to y = -97.0 with the view unchanged, and a
+  turn turns only the view.  Frames looked at: the town's houses, roads and roofs.
+- **Not tried:** a real key (the runs were scripted), in at a house's door and out again in
+  first person, the night, a page.
+
+The whole-screen change to `fixedview.loft` from the note above is in the same patch.
+
