@@ -317,6 +317,14 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     delivered = var_return(e, vars, code, rb);
     if delivered != null {
       code = delivered!;
+      // A literal an earlier `return` answers is built into the buffer here too
+      // (`literal_exits_into_buffer`), beside a tail that hands a parameter back.
+      if !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
+        code = literal_exits_into_buffer(e, vars, code, rb, result);
+        if el_types::base(result) is TyReference {
+          code = stage_exits(e, vars, code, rb);
+        }
+      }
     } else if !e.first_pass {
       // A `??` tail viewing parameters alone answers that view (`MergeAttr`), before any
       // delivery is asked of it.

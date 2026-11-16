@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: an out-of-line field written from a call that answers its argument (write_back_call: bound as a borrow of the host, a store minted for the call released) and from a read of its own child (move_child: OpMoveChildRec); a literal an early return answers is built into the buffer beside a parameter tail.
+// Prints: 5 8 true
+struct Tree { k: integer, left: Tree?, right: Tree? }
+
+fn insert(t: Tree?, k: integer) -> Tree {
+  if t == null { return Tree { k: k }; }
+  if k < t.k { t.left = insert(t.left, k); } else { t.right = insert(t.right, k); }
+  t
+}
+
+fn main() {
+  t = Tree { k: 5 };
+  t = insert(t, 3);
+  t = insert(t, 8);
+  t.left = t.left.left;
+  println("{t.k} {t.right.k} {t.left == null}");
+}

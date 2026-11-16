@@ -2508,8 +2508,24 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
     if same && xc is NdVar {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
     }
-    if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") && el_ex_match::gives_away_its_store(e, x.code) {
-      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + 32768 }]);
+    // `write_back_call`: a call answering its argument or a record built in the caller's buffer
+    // (`t.left = insert(t.left, k)`) is bound as a borrow of the host, copied in where it must
+    // be, and a store the callee minted for this call — neither the host's nor the buffer's —
+    // released.
+    if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
+      wb = write_back_call(e, vars, field, k, xc);
+      if wb != null {
+        return wb;
+      }
+    }
+    // `move_child`: a read of a child rooted at this field's own child (`t.left = t.left.right`)
+    // installs that child's record by its number (`OpMoveChildRec`).
+    src = child_chain_of(e, field, xc);
+    if src != null {
+      return el_ir::cl(e, "OpMoveChildRec", [field, src!, k]);
+    }
+    if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + (if el_ex_match::gives_away_its_store(e, x.code) { 32768 } else { 0 }) }]);
     }
     el::refuse(e, "an out-of-line field given a value that is no literal, local or fresh call of its record");
     return null;
@@ -2546,6 +2562,60 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
   }
   vars.vars[w].skip_free = true;
   ir::NdInsert { items: ops }
+}
+
+// `Parser::write_back_call`, or null where `call` is no call of a function that answers a
+// borrowed view through a record buffer of its own.
+fn write_back_call(e: el::El, vars: el_vars::Vars, field: ir::Node, k: ir::Node, call: ir::Node) -> ir::Node? {
+  buf = -1;
+  match call {
+    NdCall { def_nr, args } => {
+      if returns_argument_view(el::def(e, def_nr)) {
+        buf = hidden_ref_arg(vars, args);
+      }
+    },
+    _ => {}
+  }
+  host = place_root(e, field);
+  if buf < 0 || host < 0 {
+    return null;
+  }
+  d = match el_types::base(el_vars::tp(vars, buf)) { TyReference { n } => n, _ => -1 };
+  if d < 0 {
+    return null;
+  }
+  r = el_vars::create_unique(vars, "written_back", ir::TyReference { n: d, dep: [host] });
+  el_vars::set_defined(vars, r);
+  vars.vars[r].skip_free = true;
+  rv = ir::NdVar { n: r };
+  release = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [rv, ir::NdVar { n: host }]), el_ir::cl(e, "OpFreeRefIfDistinct", [rv, ir::NdVar { n: buf }]), ir::NdNull);
+  el_ir::v_block([el_ir::v_set(r, call), el_ir::cl(e, "OpSetChildRec", [field, rv, k]), release], ir::TyVoid, "write_back_call")
+}
+
+// `Parser::child_chain_of`: the field address the value's own child sits in, where the value
+// is a chain of child reads (`OpRefFromChildRec(OpGetField(…))`) walked down to the child
+// `field` itself holds; null for any other value.
+fn child_chain_of(e: el::El, field: ir::Node, val: ir::Node) -> ir::Node? {
+  if !calls(e, val, "OpRefFromChildRec") {
+    return null;
+  }
+  src = match val { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+  cur = src;
+  for _step in 0..64 {
+    if !calls(e, cur, "OpGetField") {
+      return null;
+    }
+    base = match cur { NdCall { args } => if len(args) == 3 && el_ir::unspan(args[1]!) is NdInt { el_ir::unspan(args[0]!) } else { ir::NdNull }, _ => ir::NdNull };
+    if !calls(e, base, "OpRefFromChildRec") {
+      return null;
+    }
+    inner = match base { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+    if inner == field {
+      return src;
+    }
+    cur = inner;
+  }
+  null
 }
 
 // A literal's out-of-line field `a` of record `d` at `r`, given the value at `fe`.
