@@ -5732,7 +5732,7 @@ fn main() {\n\
 ///
 /// @falsified-at fb83c7c2e + this change: a fixture without its `[c] shim` line fails every
 /// mode (the `#c` symbol is not found); `lctab_b` multiplying by 6 fails the `b` line.
-/// A backend includes the layer's header as `"lctab/lctab_backend.h"` (@C164), so this guard
+/// A backend includes the layer's header as `"lctab/lctab_backend.h"` (@C165), so this guard
 /// also fails on a loft that does not put a dependency's headers before a shim's compile.
 #[test]
 fn a_backend_table_crosses_libraries_in_every_build() {
@@ -5793,7 +5793,7 @@ fn copy_package(from: &std::path::Path, to: &std::path::Path) {
 }
 
 /// A backend's C includes the layer's header by the layer's NAME, wherever the two packages
-/// are installed (@C164, @PLN209 GPU_LAYER.md L2b): `lctab_a.c` writes
+/// are installed (@C165, @PLN209 GPU_LAYER.md L2b): `lctab_a.c` writes
 /// `#include "lctab/lctab_backend.h"`, and loft puts the headers of each dependency a shim
 /// includes one of where its compile finds them.  The two packages sit here in directories
 /// named as the registry names an installed one (`<name>-<version>`), where no path relative

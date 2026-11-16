@@ -141,7 +141,7 @@ through `scene3d` once #89 is on the libraries' `main`.
   a registered `gpu_record` 0.1.0 would fail to build for everyone who installs it.  Measured
   with both under a scratch `~/.loft/registry/` (GPU_LAYER.md L2b).  The README that told a
   backend to include it so was this stream's, and is corrected in #87.
-- The cure is in loft, as decision @C164 on this branch: a shim includes a declared
+- The cure is in loft, as decision @C165 on this branch: a shim includes a declared
   dependency's header by the dependency's name (`#include "gpu/gpu_backend.h"`), and loft
   puts that dependency's headers where the shim's compile finds them, from the copy the
   program resolved.  The gate builds a shim the same way now (`scripts/thirdparty.py`, on
@@ -150,7 +150,7 @@ through `scene3d` once #89 is on the libraries' `main`.
   package fix proposed above, done by name instead of by path.
 - `gpu_record` 0.1.0 is also behind its layer: `gpu` on `main` is 0.2.0 with the backend
   table at version 2, and a backend built for version 1 is refused when a device opens.
-- What registers the backends, in order: @C164 reaches loft's `main`; loft-libs-graphics#87
+- What registers the backends, in order: @C165 reaches loft's `main`; loft-libs-graphics#87
   (a draft) switches `gpu_record` and `gpu_gl` to the by-name include and raises their `loft`
   floor to the build that carries it; both are published at 0.2.0 from the merged `main`.
   The `gpu_record-v0.1.0` tag and release stay as they are, unregistered.
@@ -194,7 +194,7 @@ unpacked beside the package by path builds only where the packages sit under the
 the game's `libs/` holds them; `loft install` lays them out as `<name>-<version>`, so the gate was
 right to refuse.  The game's agent changed nothing in the gate and registered nothing more: `gpu`
 and `gpu_paint` 0.1.0 stay registered as they are, `gpu_record-v0.1.0` stays released and
-unregistered.  The backends wait for the order this stream gives: @C164 on loft's `main`,
+unregistered.  The backends wait for the order this stream gives: @C165 on loft's `main`,
 loft-libs-graphics#87, then `gpu_record` and `gpu_gl` 0.2.0.  Opening a loft PR for this branch is
 the owner's call (loft's CLAUDE.md § Branch policy, rule 3); the game's agent has put it to the owner.
 
@@ -271,7 +271,7 @@ keys from the device.  Nothing is to be built for a window the 2D frame and the 
 | `gpu` 0.2.0: a device's input, an RGB565 frame, a target read back | on the libraries' `main` (#86) |
 | `scene3d` 0.2.0: `vector<single>` | on the libraries' `main` (#89) |
 | A table and a colour as `i64`, for a `#width 32` view; `dev.keys()` | loft-libs-graphics#90, open, auto-merge armed |
-| `gpu_gl`, the backend that draws | on `main`, fetched by branch; not in the registry until @C164 is on loft's `main` and #87 lands |
+| `gpu_gl`, the backend that draws | on `main`, fetched by branch; not in the registry until @C165 is on loft's `main` and #87 lands |
 
 So the game's step — the fixed view giving its scene to `raster3d` or to `scene3d` — can
 start when #90 has merged.

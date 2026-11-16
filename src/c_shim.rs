@@ -131,7 +131,7 @@ pub fn put_bodies(dir: &std::path::Path, paths: &[std::path::PathBuf]) -> Result
 type DepHeaders = Vec<(String, Vec<String>)>;
 
 /// The dependency headers of each package whose shim includes one, by package directory
-/// (@C164).  Declared by the parse — or by a warm load, from the parse it replays — before a
+/// (@C165).  Declared by the parse — or by a warm load, from the parse it replays — before a
 /// shim is compiled, so every compile of one package reads the headers of the copies this
 /// program resolved, whichever site compiles it.
 static DEP_HEADERS: std::sync::Mutex<Vec<(String, DepHeaders)>> = std::sync::Mutex::new(Vec::new());
@@ -192,7 +192,7 @@ fn dep_header_files(dirs: &[String]) -> Vec<(String, crate::file_access::PathTex
 
 /// Put the headers of the dependencies the package at `pkg_dir` declared
 /// ([`declare_dep_headers`]) into `dir`, each dependency's under its own name: a shim then
-/// includes one as `"<dependency>/<header>.h"` (@C164).  `dir` is the directory a shim compile
+/// includes one as `"<dependency>/<header>.h"` (@C165).  `dir` is the directory a shim compile
 /// already searches (`loft_width.h`'s).
 ///
 /// # Errors
@@ -546,7 +546,7 @@ fn identity(
     if wants_bodies(&paths) {
         hasher.update(bodies_identity().as_bytes());
     }
-    // A dependency's headers are part of what the shim compiles to (@C164): another copy of
+    // A dependency's headers are part of what the shim compiles to (@C165): another copy of
     // the dependency, or a changed header in it, is another artefact.
     for (dep, dirs) in dep_headers(pkg_dir) {
         hasher.update(dep.as_bytes());
@@ -845,7 +845,7 @@ fn stem_of(pkg_dir: &str) -> String {
 
 /// What a wasm32 compile of the shim of the package at `pkg_dir` searches, written into
 /// `include`: loft's small C library and its headers, `loft_width.h`, and the headers of the
-/// dependencies the shim includes one of (@C164).
+/// dependencies the shim includes one of (@C165).
 fn put_wasm_headers(include: &std::path::Path, pkg_dir: &str) -> Result<(), String> {
     for (name, text) in [
         ("string.h", WASM_STRING_H),

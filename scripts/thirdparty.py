@@ -636,7 +636,7 @@ def dep_package_dir(root, d, dep):
 
 def stage_dep_headers(root, d, deps, stage):
     """Put each declared dependency's headers under its name in `stage`, as loft does before it
-    compiles a shim (@C164): a shim includes one as `"<dependency>/<header>.h"`.  The headers
+    compiles a shim (@C165): a shim includes one as `"<dependency>/<header>.h"`.  The headers
     are the `*.h` beside the dependency's own `[c] shim` sources.  Answers the dependencies
     whose package was not found."""
     missing = []
@@ -662,7 +662,7 @@ def shim_artifact(root, d, shim, deps=()):
     """[(library, how)] — build the shim as a shared object and read what it links (`NEEDED`)
     and the library names its strings hold.  Empty when no C compiler is here.  `deps` are the
     package's declared dependencies, whose headers the shim may include by the dependency's
-    name (@C164)."""
+    name (@C165)."""
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if not cc or os.name == "nt":
         return []

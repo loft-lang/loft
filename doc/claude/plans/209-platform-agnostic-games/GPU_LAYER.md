@@ -11,11 +11,11 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 ## Status
 
 P1, P2, P3, L0, L1, L2, L2b and M0 are done (2026-11-15).  L2b amended § The shape's reach:
-a backend names the layer's header by the layer's name (@C164).
+a backend names the layer's header by the layer's name (@C165).
 Next: the host and the one `Scene` (§ The CPU tier and `gpu` side by side, what is left), then
 M1 (the first Metal triangle); L3's and L4's X11 runs wait for the Linux machine.  L5 (stage) changes a published library that would then depend on `gpu`, so it waits
 for `gpu` to be published (§ Open questions 2).
-Publishing waits for the name (open question 2) and for @C164 in a released loft.  V0
+Publishing waits for the name (open question 2) and for @C165 in a released loft.  V0
 waits for a Linux machine.
 
 | Track | Steps | State |
@@ -231,7 +231,7 @@ Nothing here waits for the neutral layer or for Metal.
   cures it.
   Goes red when: `lctab_a`, installed as `lctab_a-0.1.0` beside `lctab-0.1.0`, does not
   compile in any build mode.
-  **Done (2026-11-15, owner's choice): @C164.**  A shim writes
+  **Done (2026-11-15, owner's choice): @C165.**  A shim writes
   `#include "<dependency>/<header>.h"` for a package its `loft.toml` declares, and loft puts
   that dependency's headers (the `*.h` beside its own shim sources, from the copy the program
   resolved) where every shim compile searches.  They join the shim's cache key and the startup
@@ -251,7 +251,7 @@ Nothing here waits for the neutral layer or for Metal.
     loft's on its search path, so it is a seventh site.
   **Open:** `gpu_record` on the libraries' `main` keeps the relative include, which loft's
   `main` can build side by side.  `gpu_record` moves to `"gpu/gpu_backend.h"` and raises its `loft` floor in
-  the change that follows @C164 reaching loft's `main`.
+  the change that follows @C165 reaching loft's `main`.
 - **L3 — `gpu_gl` (M).**  Today's GL code behind the table; graphics 0.12's own API untouched
   beside it.  Shaders arrive as a set: one declaration (inputs, the uniform block, the texture
   slots) with a source per shading language, until track H replaces the sources.
@@ -434,9 +434,9 @@ header.  Two things are kept true in public so that it can be:
    `gpu` 0.1.0 and `gpu_paint` 0.1.0 are in the registry.  `gpu_record` and `gpu_gl` were
    refused by the publish gate, rightly: their `../../gpu/c/gpu_backend.h` names no file in a
    package built on its own, as it names none once installed.  What gets them published:
-   - loft's `main` carries @C164 (this branch, through the next gather);
+   - loft's `main` carries @C165 (this branch, through the next gather);
    - loft-libs-graphics#87 (a draft, stacked on #86) switches both to `"gpu/gpu_backend.h"`;
-     its `loft` floors are raised to the build that carries @C164, then it merges;
+     its `loft` floors are raised to the build that carries @C165, then it merges;
    - the publish gate builds a shim with its dependencies' headers staged
      (`scripts/thirdparty.py`, on this branch), so it can build them then.
 

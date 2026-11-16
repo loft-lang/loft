@@ -309,7 +309,7 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
     put(main.join("loft_assets.c"), &assets)?;
     // @PLN217 — the build's width for the libraries' C (`loft_int`, `loft_float`).
     put(main.join("loft_width.h"), loft::c_shim::LOFT_WIDTH_H)?;
-    // @C164 — the dependency headers a shim includes, under each dependency's name; `main`
+    // @C165 — the dependency headers a shim includes, under each dependency's name; `main`
     // is on the include path as `loft_width.h`'s directory.
     let shim_paths: Vec<std::path::PathBuf> =
         app.shims.iter().map(std::path::PathBuf::from).collect();

@@ -1875,7 +1875,7 @@ impl Parser {
         m.native_crate.is_some() && crate::platform::native_cabi_link()
     }
 
-    /// @C164 — the headers of `wanted` (dependencies the shim of the package at `pkg_dir`
+    /// @C165 — the headers of `wanted` (dependencies the shim of the package at `pkg_dir`
     /// includes a header of), declared to the shim builder from the copies this parse
     /// registered.  False while one of them is not registered yet.
     fn declare_shim_headers(&self, pkg_dir: &str, wanted: &[String]) -> bool {
@@ -1944,7 +1944,7 @@ impl Parser {
         }
     }
 
-    /// @C164 — build the shims that waited for a dependency's headers.  With `every` false,
+    /// @C165 — build the shims that waited for a dependency's headers.  With `every` false,
     /// those whose dependencies are all registered now: called as each package registers.
     /// With `every` true, also one whose package owns the file being read, whatever is still
     /// missing: called on the second pass, when every package that loads has registered, so
@@ -1988,7 +1988,7 @@ impl Parser {
     pub(super) fn register_c_libraries(&mut self, m: &manifest::Manifest, pkg_dir: &str) {
         let mut entries: Vec<(String, Vec<String>)> =
             m.c_libs.iter().map(|l| (l.clone(), Vec::new())).collect();
-        // @C164 — where a dependant's shim finds this package's headers: beside its own shim
+        // @C165 — where a dependant's shim finds this package's headers: beside its own shim
         // sources.
         let name = m.name.clone().unwrap_or_else(|| {
             crate::file_access::file_name(pkg_dir).unwrap_or_else(|| pkg_dir.to_string())

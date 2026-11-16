@@ -398,7 +398,7 @@ includes vendored code by a path relative to its source, and reaches a system
 library by `dlopen` (`optional-libs`, or its own call) rather than by a link
 flag.  A key of that name is ignored, never applied.
 
-**A dependency's header is included by the dependency's name** (`@C164`).  A
+**A dependency's header is included by the dependency's name** (`@C165`).  A
 library that exposes a C interface to the packages that depend on it — a table
 of functions a backend fills in — ships the header beside its own shim sources,
 and a dependant's shim writes:

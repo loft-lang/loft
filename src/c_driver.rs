@@ -467,7 +467,7 @@ fn wasm_toolchain() -> &'static WasmToolchain {
     })
 }
 
-/// The dependency headers `shim_sources` include (@C164), under each dependency's name in a
+/// The dependency headers `shim_sources` include (@C165), under each dependency's name in a
 /// directory of this process under `scratch`; `None` when no shim of this program includes
 /// one, or the directory cannot be written (the compile then names the header it misses).
 fn staged_dep_headers(
@@ -565,7 +565,7 @@ pub(crate) fn build_wasm(
     if let Some(ld) = &tc.ld {
         cmd.push_arg(format!("--ld-path={ld}"));
     }
-    // @C164 — the dependency headers the shims include, under each dependency's name.
+    // @C165 — the dependency headers the shims include, under each dependency's name.
     let dep_inc = staged_dep_headers(&scratch, shim_sources);
     if let Some(dir) = &dep_inc {
         cmd.push_arg("-I").push_arg(dir);

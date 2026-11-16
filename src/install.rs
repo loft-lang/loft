@@ -256,7 +256,7 @@ pub fn install_one(
 
 /// What installing a package says about its `[c] shim`, built now so a missing C compiler is
 /// heard of while installing: that it built, why it did not, or — for a shim that includes a
-/// dependency's header (@C164) — that it builds on first use, because which copy of that
+/// dependency's header (@C165) — that it builds on first use, because which copy of that
 /// dependency a program loads is the program's resolution to make.  `None` without a shim.
 fn shim_note(dir: &std::path::Path, m: &crate::manifest::Manifest, name: &str) -> Option<String> {
     if m.c_shim.is_empty() {

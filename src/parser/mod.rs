@@ -836,10 +836,10 @@ pub struct Parser {
     /// searched in `dir`, and the dep is only pulled in while the lexer is back
     /// on the file that named the package (loft#714).
     pending_pkg_deps: Vec<(String, String, String)>,
-    /// @C164 — every package registered so far, by name: its directory and the directories of
+    /// @C165 — every package registered so far, by name: its directory and the directories of
     /// its `[c] shim` sources, where a dependant's shim finds its headers.
     c_header_dirs: Vec<(String, String, Vec<String>)>,
-    /// @C164 — shims that include a header of a dependency not yet registered: (package
+    /// @C165 — shims that include a header of a dependency not yet registered: (package
     /// directory, shim sources, the dependencies wanted).  Built once the package's own file
     /// has resolved its `use`s (`build_pending_shims`).
     pending_shims: Vec<(String, Vec<String>, Vec<String>)>,
@@ -3122,7 +3122,7 @@ impl Parser {
         self.report_manifest_errors();
         // A shim still waiting for a dependency's headers on the second pass waits for a
         // package that did not load: it is built as it is, and the compiler names the header
-        // it does not find (@C164).
+        // it does not find (@C165).
         if !self.first_pass {
             self.build_pending_shims(true);
         }

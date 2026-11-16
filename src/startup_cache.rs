@@ -147,7 +147,7 @@ struct ManifestState {
     /// Without the replay a C-binding program runs on its first launch and fails on its
     /// second, with "symbol not found" or an undefined symbol at link time.
     c_libraries: Vec<crate::data::CLibrary>,
-    /// @C164 — the dependency headers each shim includes (`c_shim::declare_dep_headers`): a
+    /// @C165 — the dependency headers each shim includes (`c_shim::declare_dep_headers`): a
     /// package's directory, a dependency's name and the directories of that dependency's shim
     /// sources.  A C build compiles a shim after the parse, and a warm load never ran the
     /// parse that declared them; without the replay the second C build of a program finds no
@@ -451,7 +451,7 @@ pub fn native_lib_context(html: bool, open_world: bool) -> String {
     )
 }
 
-/// Hand the shim builder the dependency headers a cached parse declared (@C164), grouped by
+/// Hand the shim builder the dependency headers a cached parse declared (@C165), grouped by
 /// package.
 fn declare_dep_headers(lines: Vec<(String, String, Vec<String>)>) {
     let mut by_pkg: Vec<(String, Vec<(String, Vec<String>)>)> = Vec::new();
@@ -605,7 +605,7 @@ pub fn warm_load_program(
     }
     // The `[c]` declarations: both backends read them from `Data` after the parse.
     p.data.c_libraries = state.c_libraries;
-    // @C164 — and the dependency headers their shims include, for a compile after this load.
+    // @C165 — and the dependency headers their shims include, for a compile after this load.
     declare_dep_headers(state.dep_headers);
     // Replay what the cold parse said.  The parser did not run, so these are the only
     // diagnostics this run will have; `main` renders them through the same path a cold run
@@ -785,7 +785,7 @@ pub fn save_program(
         }
         lines.push('\n');
     }
-    // @C164 — the dependency headers of the packages this program loaded.
+    // @C165 — the dependency headers of the packages this program loaded.
     for (pkg_dir, deps) in crate::c_shim::all_dep_headers() {
         if !p.data.c_libraries.iter().any(|c| c.pkg_dir == pkg_dir) {
             continue;
@@ -1087,7 +1087,7 @@ mod ncrate_manifest_tests {
                     "/pkgs/layer one/inc".to_string()
                 ],
             )],
-            "a chdr header round-trips, each directory keeping its space (@C164)"
+            "a chdr header round-trips, each directory keeping its space (@C165)"
         );
         assert_eq!(state.native_ctx, "c", "the actx header round-trips");
         assert_eq!(
