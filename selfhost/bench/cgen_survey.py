@@ -301,6 +301,17 @@ def gate(o, key, switches, numbers):
 GATED = ("agree", "equal", "pass", "rows", "same")
 
 
+def tests_only(path):
+    """A program run as its tests (`c::emit_tests`): no `main`, a `test_*` function, none of the
+    annotations `census.plain` leaves out."""
+    try:
+        src = open(path, encoding="utf-8").read()
+    except OSError:
+        return False
+    return (not census.SKIP.search(src) and re.search(r"^\s*fn main\s*\(", src, re.M) is None
+            and re.search(r"^\s*(pub\s+)?fn test_\w*\s*\(\s*\)", src, re.M) is not None)
+
+
 def bench_files(root):
     """The benches `--bench` runs without `--files`: this tree's `bench/NN_*/bench.loft`, then
     every library bench of the checkouts `make perf-libs` keeps (`$LOFT_PERF_LIBS`, by default
@@ -317,6 +328,8 @@ def bench_files(root):
 def config_key(o):
     scope = ("files:" + os.path.basename(o.files)) if o.files else (
         "benches" if o.bench else ("scripts" if o.scripts_only else "corpus"))
+    if o.tests and not o.files and not o.bench:
+        scope += ":tests"
     if o.chapter:
         scope += ":" + ",".join(sorted(o.chapter))
     what = "run" if o.run else (o.layer or "unit")
@@ -356,6 +369,9 @@ def main():
                          "differ, or when the switches are not the baseline's")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true", help="tests/scripts only, not the language suite")
+    ap.add_argument("--tests", action="store_true",
+                    help="the corpus's programs WITHOUT a main instead — a suite cell's tests' unit "
+                         "(its `test_*` functions as the roots, `c::test_functions`)")
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--timeout", type=int, default=120)
@@ -391,7 +407,8 @@ def main():
             if not os.path.exists(o.generator):
                 sys.exit(f"the generator did not build:\n{p.stderr[-2000:]}")
         files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
-                                                           o.chapter, o.scripts_only) if census.plain(f)]
+                                                           o.chapter, o.scripts_only)
+                 if (tests_only(f) if o.tests else census.plain(f))]
         if o.files:
             with open(o.files, encoding="utf-8") as fh:
                 files = [os.path.abspath(l.rstrip("\n").split("\t")[-1]) for l in fh if l.strip()]
