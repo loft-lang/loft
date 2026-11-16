@@ -3,7 +3,7 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 <!-- size-exempt: a dated handoff record, read once (DOC_QUALITY § Maintainer docs 2) -->
-# Handoff 2026-11-16 (afternoon, evening): gate E at 866 of 2164, a fast loop for the long tail
+# Handoff 2026-11-16 (afternoon, evening): gate E at 879 of 2168, a fast loop for the long tail
 
 Branch `tuxedo-pln204-int32`, pushed; PR #2518 (loft3's gather) carries it up to 77024883f
 (819 of 2151) and re-wrote gate E's baseline at ITS suite pin 898bc05 — after it merges, rebase
@@ -104,12 +104,21 @@ element types.
 <std>` answers in three seconds once its cache is warm, 4m40 after an edit — no faster than
 the 7-minute development build for a changed tree, but a second probe costs nothing.
 
-**Next, by near-admit rank**: a record (struct enum) answered by a `match` tail of a capture
-or its subject — Rust's `ref_return` copy leg, `materialize_return_into`
-(`materialized_view_return`, control.rs), which the port has only for a lambda's capture
-(`capture_tail_copy`); read the whole function and its five call sites before porting.  Then
-`a vector item of another type than the field's` (17), the other nullable element types
-(`u8?`, `single?`, `text?`: each its own layout), `a field the struct does not declare` (17).
+**Later still (commits 62d05d2e9 … the `vector<i32>` commit): 879 of 2168, 0 differ.**
+`ref_return`'s copy leg for a branch tail (`materialize_return_into`: whole, and arm by arm
+where an arm answers null), `arm_join_type` filtering MINTS only, a struct enum beside `null`,
+the unit variant before a `{`, and `vector<i32>` — the best yield of the day (seven programs),
+because 32 programs met it and its layout is one small table of ops.
+
+**What paid, measured over the day**: an area many programs MEET (an element width, a tagged
+element) admits five to seven; a single refusal's own shape admits one or two.  Rank by the
+programs that meet a family, then read its source lines (`elab_probe.py fam`) before choosing.
+
+**Next**: the other element widths behind `a vector of this element type` (`u32`: `int_raw`
+rows, the element built by `OpNewRecord` + `OpSetInt4Raw`; a wide literal `[9223372036854775806,
+1]`: plain `vector<integer>` at stride 8; `vector<i32?>`), then `a function returning a vector
+from this tail` (57 programs meet it: slice-pattern arms, `q ?? [..]`, a field of a call),
+then the still-refused record tails (`an owned local`, `a borrowing local`, `block ncr`).
 
 ## Open, in order
 
