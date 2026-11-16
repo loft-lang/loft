@@ -1617,6 +1617,19 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
       }
     }
     if (el::def(e, pd).returned[0]) == ir::TyEnum { n: pd, is_ref: true, dep: [] } {
+      // A unit variant directly before a `{` (`if e == Owned { … }`): Rust's second pass first
+      // reads it as an object literal, minting that literal's `__ref_p2_N`, and backs out —
+      // the work ref stays declared.
+      if !e.first_pass && el::def(e, d).known_type != el_schema::NO_TYPE {
+        match e.p.nodes[vars.site] {
+          SName { at: na, member: nm } => {
+            if nm == "" && na + 1 < len(e.p.src) && e.p.src[na + 1] is LBrace {
+              el_vars::work_ref_p2(vars, ir::TyEnum { n: pd, is_ref: true, dep: [] });
+            }
+          },
+          _ => {}
+        }
+      }
       return unit_variant(e, vars, pd, d);
     }
   }

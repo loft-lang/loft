@@ -1285,7 +1285,9 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
   // its arms typed as the variant.
   variant_null = f.tp is TyNull && !(t.tp is TyOptional) && el_expressions::variant_parent(e, t.tp) >= 0;
-  record_null = vector_null || variant_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
+  // A struct enum held at its enum beside a `null` arm joins as a record does (`(N-Join)`).
+  enum_rec_null = f.tp is TyNull && !(t.tp is TyOptional) && el_types::struct_enum_def(t.tp) >= 0 && !is_nullable_wrapper(e, t.tp);
+  record_null = vector_null || variant_null || enum_rec_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
   // A plain enum's null is `OpConvEnumFromNull` of its store type (`null_of`).
   enum_null = match t.tp { TyEnum { is_ref } => !is_ref, _ => false };
   // An arm already `τ?` of a plain scalar or a plain enum beside a `null` arm: the null is `τ`'s,
@@ -1319,7 +1321,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       ft = if variant_null { ir::TyEnum { n: el_expressions::variant_parent(e, t.tp), is_ref: true, dep: el_types::deps(t.tp) } } else { t.tp };
       return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: ft });
     }
-    nl = if vector_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
+    nl = if vector_null || enum_rec_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
     // A record arm's dep on a store it mints (a literal's `__ref_p2_N`) is its ownership
     // marker, not a borrow (`arm_join_type`, loft#978): the arms are typed without it.
     tt = t.tp;

@@ -926,11 +926,16 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
   }
   ret = el::def(e, d).returned[0];
   ba = attr_nr(el::def(e, d), "__retbuf");
-  if ret is TyOptional || heap_def(ret) < 0 || ba < 0 {
+  td = heap_def(el_types::base(ret));
+  if td < 0 || ba < 0 {
     return null;
   }
   views = branch_view_leaves(e, vars, el_ir::last(bl.operators));
   if views <= 0 {
+    return null;
+  }
+  // A null arm is the result's absence: only a `τ?` result has one.
+  if branch_yields_null(e, el_ir::last(bl.operators)) && !(ret is TyOptional) {
     return null;
   }
   dep = el_types::deps(ret);
@@ -941,12 +946,49 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
   if e.first_pass {
     return code;
   }
-  kt = ir::NdInt { n: el::def(e, heap_def(ret)).known_type };
-  b = ir::NdVar { n: rb };
   owned = el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb]);
-  bl.operators[-1] = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [el_ir::last(bl.operators), b, kt]), b], owned, "materialized_view_return");
-  bl.result = [owned];
+  bl.operators[-1] = copy_arms(e, vars, el_ir::last(bl.operators), rb, td, owned);
+  bl.result = [if ret is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
   ir::NdBlock { block: [bl] }
+}
+
+// `arms_yield_null`: does a branch answer `null` on some path?
+fn branch_yields_null(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => branch_yields_null(e, t) || branch_yields_null(e, f),
+    NdBlock { block } => block[0].name != "Object" && len(block[0].operators) > 0 && branch_yields_null(e, el_ir::last(block[0].operators)),
+    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    NdNull => true,
+    _ => false
+  }
+}
+
+// `materialize_return_into`: a branch that can answer null is copied ARM BY ARM, a null arm
+// left as it is; any other value is copied whole (`{ w = null; OpDatabase(w, kt);
+// OpCopyRecord(<value>, w, kt); w }`).
+fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => { return ir::NdSpan { pos: pos, inner: copy_arms(e, vars, inner, rb, td, owned) }; },
+    _ => {}
+  }
+  if branch_yields_null(e, n) {
+    match n {
+      NdIf { cond, t, f } => { return ir::NdIf { cond: cond, t: copy_arms(e, vars, t, rb, td, owned), f: copy_arms(e, vars, f, rb, td, owned) }; },
+      NdBlock { block } => {
+        ab = block[0];
+        ab.operators[len(ab.operators) - 1] = copy_arms(e, vars, el_ir::last(ab.operators), rb, td, owned);
+        // The block now yields the buffer or null, no longer a view of its local.
+        if el_types::base(ab.result[0] ?? ir::TyVoid) is TyReference {
+          ab.result = [owned];
+        }
+        return ir::NdBlock { block: [ab] };
+      },
+      _ => { return n; }
+    }
+  }
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [n, b, kt]), b], owned, "materialized_view_return")
 }
 
 // The leaves of a branch tail that are locals viewing only parameters; -1 where a leaf is
@@ -988,10 +1030,12 @@ fn branch_view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
       }
       if len(el_types::deps(el_vars::tp(vars, v))) > 0 { 1 } else { -1 }
     },
-    NdCall { def_nr } => {
+    NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
-      if starts_with(nm, "n_") || starts_with(nm, "t_") { 0 } else { -1 }
+      if starts_with(nm, "n_") || starts_with(nm, "t_") || (len(args) == 0 && nm == "OpNullRefSentinel") { 0 } else { -1 }
     },
+    // The first pass's `null` arm, before it answers the sentinel.
+    NdNull => 0,
     _ => -1
   }
 }
