@@ -161,6 +161,18 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     }
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // `@FR-B-OutOfLine`: a whole write to an out-of-line field goes through its child record.
+  if op == "=" && calls(e, el_ir::unspan(p.code), "OpRefFromChildRec") {
+    field = match el_ir::unspan(p.code) { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+    kt = match field { NdCall { args } => match el_ir::unspan(args[2] ?? ir::NdNull) { NdInt { n } => n, _ => -1 }, _ => -1 };
+    sd = struct_ref(e, el_types::base(p.tp));
+    if kt < 0 || sd < 0 || !calls(e, field, "OpGetField") {
+      el::refuse(e, "an out-of-line write whose place is no field");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    w = out_of_line_set(e, vars, field, kt, sd, rhs);
+    return ex(w ?? ir::NdNull, ir::TyVoid);
+  }
   // A field of a record that may be absent (`b = h[k]; b.v += [x]`) is typed `τ?`; its append
   // goes through the place as Rust's does (`OpPush…` into the field), the `?` read past.
   if op == "+=" && e.p.nodes[rhs] is SVecLit && el_types::is_collection(el_types::base(p.tp)) {
@@ -2383,29 +2395,43 @@ fn plain_child_literal(vars: el_vars::Vars, n: ir::Node, w: integer) -> boolean 
   true
 }
 
-// `out_of_line_set` for a literal's field `a` of record `d` at `r` given the value at `fe`
-// (`@FR-B-OutOfLine`): `null` releases the child (`OpSetChildRec` of the null sentinel); a
-// literal of the field's record whose values read no record is built IN the child
-// (`literal_in_child`: `OpChildRecInPlace` where its own store was made, the build spliced);
-// any other such literal is built apart and copied in (`OpSetChildRec`).  A value that is no
-// literal — a local, a call (moved, demoted or written back) — is refused by name.
-fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: integer, fe: integer) -> ir::Node? {
-  fk = child_field(e, d, a, r, 0);
-  field = fk[0]!;
-  kt = fk[1]!;
+// `out_of_line_set` (`@FR-B-OutOfLine`): the value at `fe` written into the out-of-line field
+// at `field` (content row `kt`, record `sd`).  `null` releases the child (`OpSetChildRec` of the
+// null sentinel); a literal of the record whose values read no record is built IN the child
+// (`literal_in_child`: `OpChildRecInPlace` where its own store was made, the build spliced), any
+// other such literal apart and copied in (`OpSetChildRec`); a local is copied in; a call that
+// gives its store away is copied in and that store freed (the type's 32768 bit).  A read of
+// another child (the move), a call answering a view of its argument (the write-back) and any
+// other value are refused by name.
+pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: integer, sd: integer, fe: integer) -> ir::Node? {
+  k = ir::NdInt { n: kt };
   if e.p.nodes[fe] is SNull {
-    return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), kt]);
+    return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), k]);
   }
-  sd = match el_types::base(el::def(e, d).attributes[a]!.typedef[0]) { TyReference { n } => n, _ => -1 };
-  if struct_literal_def(e, fe) != sd {
-    el::refuse(e, "an out-of-line field given a value that is no literal of its record");
-    return null;
-  }
+  literal = struct_literal_def(e, fe) == sd;
   x = el_ex_assign::expression(e, vars, fe);
   if e.first_pass {
     return ir::NdInsert { items: [] };
   }
-  bl = match el_ir::unspan(x.code) { NdBlock { block } => block[0], _ => { el::refuse(e, "an out-of-line field given a value that is no literal of its record"); return null; } };
+  if !literal {
+    xc = el_ir::unspan(x.code);
+    same = struct_ref(e, el_types::base(x.tp)) == sd;
+    // The record the field lies in, handed to its own child, is demoted into it
+    // (`place_demote`, `OpDemoteRec`): not carried.
+    if same && xc is NdVar && xc == ir::NdVar { n: place_root(e, field) } {
+      el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
+      return null;
+    }
+    if same && xc is NdVar {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
+    if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") && el_ex_match::gives_away_its_store(e, x.code) {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + 32768 }]);
+    }
+    el::refuse(e, "an out-of-line field given a value that is no literal, local or fresh call of its record");
+    return null;
+  }
+  bl = match el_ir::unspan(x.code) { NdBlock { block } => block[0], _ => { el::refuse(e, "an out-of-line field given a value that is no literal, local or fresh call of its record"); return null; } };
   w = match el_ir::unspan(el_ir::last(bl.operators)) { NdVar { n } => n, _ => -1 };
   made = -1;
   for op in bl.operators {
@@ -2425,18 +2451,26 @@ fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: 
     }
   }
   if !plain {
-    return el_ir::cl(e, "OpSetChildRec", [field, x.code, kt]);
+    return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
   }
   ops: vector<ir::Node> = [];
   for op in bl.operators {
     if op#index == made {
-      ops += [el_ir::v_set(w, el_ir::cl(e, "OpChildRecInPlace", [field, kt]))];
+      ops += [el_ir::v_set(w, el_ir::cl(e, "OpChildRecInPlace", [field, k]))];
     } else if op#index + 1 < len(bl.operators) {
       ops += [op];
     }
   }
   vars.vars[w].skip_free = true;
   ir::NdInsert { items: ops }
+}
+
+// A literal's out-of-line field `a` of record `d` at `r`, given the value at `fe`.
+fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: integer, fe: integer) -> ir::Node? {
+  fk = child_field(e, d, a, r, 0);
+  sd = match el_types::base(el::def(e, d).attributes[a]!.typedef[0]) { TyReference { n } => n, _ => -1 };
+  kt = match fk[1]! { NdInt { n } => n, _ => 65535 };
+  out_of_line_set(e, vars, fk[0]!, kt, sd, fe)
 }
 
 // `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
