@@ -23,15 +23,16 @@
  fn e_picture(v: FixedView, px: const vector<i32>) {
 --- a/main.loft
 +++ b/main.loft
-@@ -279,6 +279,7 @@
-   // The fixed camera from the south (fixedview.loft): F5, or TW_VIEW=fixed to start in it.
-   fv = fixedview::view();
-   if (env_variable("TW_VIEW") ?? "") == "fixed" { fv.on = true; }
-+  if (env_variable("TW_VIEW") ?? "") == "first" { _ = render3d::start(v3, gpu, game); }
+@@ -269,6 +269,8 @@
+   // work).  It starts in this view; the flat picture is left only where no 3D draws yet: the
+   // editor, and the hero out on a field's ground.  TW_VIEW=flat starts without it, while those last.
+   if (env_variable("TW_VIEW") ?? "") != "flat" { fv.on = true; }
++  // TW_VIEW=first: the first-person view from the start, in place of the fixed one
++  if (env_variable("TW_VIEW") ?? "") == "first" && render3d::start(v3, gpu, game) { fv.on = false; }
    // Drawn on the GPU in the device's own window where it opens (scene3d), on the CPU through
    // screen where it does not; TW_GPU=0 keeps the CPU, the Tanmatsu's view (SCENE_CONTRACT.md).
    if (env_variable("TW_GPU") ?? "") != "0" { fixedview::use_gpu(fv, gpu_gl::table()); }
-@@ -338,7 +339,7 @@
+@@ -328,7 +330,7 @@
        timing.frames += 1;
        timing.show += ticks() - shown_at;
        report(timing, size);
@@ -184,7 +185,7 @@
    }
 --- a/game.loft
 +++ b/game.loft
-@@ -261,6 +261,11 @@
+@@ -262,6 +262,11 @@
    /// rooms on it).  The game itself turns it on (main.loft); off, a town plays on its square map
    /// as before, which the checks of the square rules use.
    pub town_rules: boolean = false,
@@ -193,10 +194,10 @@
 +  pub field_steer: boolean = false,
 +  pub steer_x: float = 0.0,
 +  pub steer_y: float = 0.0,
-   pub field_exits: vector<FieldExit> = [],
-   field_q: integer = 0,
-   field_r: integer = 0,
-@@ -922,6 +927,7 @@
+   /// How much water the town's river is given at its head (water.loft's rate).  0: none — its bed
+   /// dry but for the pools that stand in it, stale: the town as it starts.
+   pub river: integer = 0,
+@@ -987,6 +992,7 @@
  
  // The keys on the field: the arrows walk, north up.
  fn update_field(g: Game, ms: integer) -> boolean {
