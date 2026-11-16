@@ -28,6 +28,7 @@ use cgen_deferred;
 use opt_apart_vector;
 use opt_apart_records;
 use opt_apart_value;
+use cgen_transient;
 use opt_split_table;
 use opt_lazy_split;
 
@@ -420,6 +421,11 @@ struct W {
   av: opt_apart_value::ApRoles,
   av_twin: boolean,
   av_rb: integer,
+  // `@FR-R-Transient`: the body's transient facts — a twin's or a site's (`any` false: none).
+  tr: cgen_transient::TrFn,
+  // `@FR-R-Transient`'s work clause: the callee of the lifted bind being written (-1 none, -2
+  // taken by its call, which has not written it yet).
+  wr_call: integer,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -529,6 +535,8 @@ pub struct Written {
   pub storage: text,
   // `(R-CSplit)`: the body is over its budget — written whole, its MSVC parts not carried.
   pub split: boolean,
+  // `@FR-R-Transient`: the body without its frame wrapper, which a transient twin is.
+  pub inner: text,
   // A generator (`write_gen`): `text` is its creator's body; the frame struct and the
   // prototypes, written before the unit's functions, and the resume and release, after them.
   pub generator: boolean,
@@ -697,6 +705,10 @@ fn held(shape: text) -> text {
     "uint32_t"
   } else if shape == "text" {
     "loft_text"
+  } else if shape == "trvec" {
+    "loft_ta_vec *"
+  } else if shape.starts_with("tr") {
+    "lt_{shape[2..shape.size()]} *"
   } else if shape == "ref" {
     "loft_ref"
   } else if shape == "fn" {
@@ -712,7 +724,7 @@ fn held(shape: text) -> text {
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
 // what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_TRANSIENT"];
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD"];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {

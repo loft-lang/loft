@@ -10,6 +10,7 @@
 // it: a table the bodies name (the copy table, the defaults, the keys …), a define a reached
 // library needs.
 
+use cgen_transient;
 use ir;
 use cgen::(Cx, new_cx);
 use cgen_w::*;
@@ -438,12 +439,14 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
   }
   // The closure release only where something calls it.
   drops = "";
-  if fr_bodies.find("loft_drop_closure(") != null || bodies.find("loft_drop_closure(") != null || dispatch.code.find("loft_drop_closure(") != null {
+  if fr_bodies.find("loft_drop_closure(") != null || bodies.find("loft_drop_closure(") != null || dispatch.code.find("loft_drop_closure(") != null || x.tr.bodies.find("loft_drop_closure(") != null {
     drops = cgen_fnval::drop_code(x, opt_names::written_functions_from(b, root, drivers));
   }
   // The dispatchers name their signatures' shapes: a tuple among them is numbered there.
   dispatch.code = resolve_tuples(x, dispatch.code);
-  typedefs = cgen_tables::typedefs(x, names);
+  // `@FR-R-Transient`'s structs before the unit's types (a tuple may point at one), its twins'
+  // prototypes after them.
+  typedefs = cgen_transient::typedefs(x) + cgen_tables::typedefs(x, names) + x.tr.protos;
   // The parse table after the type tables it names (`parse_table`, `main_vector_test`).
   if cgen_parse::parses(x) || reaches(b, reached, "n_parse_errors_of") {
     typedefs += cgen_parse::parse_table(x) + cgen_parse::main_vector_test(x);
@@ -455,7 +458,7 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     typedefs += b.reflect + reflect_entry();
   }
   hot = hot_helpers(x, candidates);
-  written = "{head}{typedefs}{resolve_hot(decls, candidates, hot)}{resolve_hot(protos, candidates, hot)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates, hot)}{resolve_hot(bodies, candidates, hot)}";
+  written = "{head}{typedefs}{resolve_hot(decls, candidates, hot)}{resolve_hot(protos, candidates, hot)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates, hot)}{resolve_hot(bodies, candidates, hot)}{x.tr.bodies}";
   if reaches(b, reached, "n_store_bind_lazy") {
     table = lazy_driver_table(x, why);
     if why != "" {

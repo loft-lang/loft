@@ -1,0 +1,46 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Transient`'s unit state (`TrState`), apart from the writer
+// (`cgen_transient`) so the unit's context (`cgen::Cx`) can hold it.
+
+// A struct member's kind (`Member`), in the order the Rust writer sorts them.
+pub const M_INT = 0;
+pub const M_BOOL = 1;
+pub const M_ENUM = 2;
+pub const M_TEXT = 3;
+pub const M_VECTOR = 4;
+pub const M_RECORD = 5;
+
+// One member of a group's struct: its byte offset in the store record, its kind, and — for a
+// record held by value — that record's group.
+pub struct TrMember {
+  pub g: integer,
+  pub off: integer,
+  pub m: integer,
+  pub r: integer,
+}
+
+// The unit's transient twins and the structs they use (`TrState`).
+pub struct TrState {
+  // Per type: its enum parent (`tr_group`), asked once; the groups named.
+  pub parents: vector<integer>,
+  pub groups: vector<boolean>,
+  pub members: vector<TrMember>,
+  // The narrow fields a twin zeroes (`LT_ZERO_<g>_<off>`), as `[g, off, …]`; the groups a record
+  // copy seals.
+  pub zeros: vector<integer>,
+  pub seals: vector<boolean>,
+  // The twins asked, by key (`"<d>:<params>:<r>"`): the name, "" where declined; in asking order.
+  pub keys: vector<text>,
+  pub names: vector<text>,
+  pub order: vector<text>,
+  pub protos: text,
+  pub bodies: text,
+}
+
+pub fn no_state() -> TrState {
+  TrState { parents: [], groups: [], members: [], zeros: [], seals: [], keys: [], names: [], order: [], protos: "", bodies: "" }
+}
+
