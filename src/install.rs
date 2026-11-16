@@ -1109,27 +1109,28 @@ fn resolve_declared(
     let version = resolved
         .best
         .ok_or_else(|| {
-            // A yanked version stays LISTED in `versions` (PKG_REGISTRY.md § Yanking keeps
-            // it so a `loft.lock` pin still resolves), so listing the keys bare tells the
-            // reader "0.1.0 is available" in the same breath as refusing a constraint
-            // 0.1.0 plainly satisfies.  Marking them is the difference between a message
-            // that reads as a resolver bug and one that names the cause — and when the
-            // yank IS the cause, saying so outright, because that reader's next move is
-            // to raise their floor rather than to re-read the constraint.
+            // The refusal offers the newest release only: an older one is HELD — an exact pin
+            // or a lock still resolves it — but not offered (the soft freeze's registry rule,
+            // scripts/registry_matrix_versions.py § contract).  A yanked version stays in
+            // `versions` too (PKG_REGISTRY.md § Yanking), and when the yank IS the cause the
+            // refusal says so outright, because that reader's next move is to raise their
+            // floor rather than to re-read the constraint.
             let yanked: std::collections::HashSet<&str> =
                 pkg.yanked.iter().map(String::as_str).collect();
-            let listed = pkg
+            let newest = registry_index::find_best_version(pkg, "*", false);
+            let held = pkg
                 .versions
                 .keys()
-                .map(|v| {
-                    if yanked.contains(v.as_str()) {
-                        format!("{v} (yanked)")
-                    } else {
-                        v.clone()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
+                .filter(|v| newest.is_none_or(|n| n.semver != **v))
+                .count();
+            let listed = match newest {
+                Some(n) if held > 0 => format!(
+                    "the newest is {}; older releases are held — ask for one by exact version",
+                    n.semver
+                ),
+                Some(n) => format!("the newest is {}", n.semver),
+                None => "no stable release".to_string(),
+            };
             let blocked: Vec<&str> = pkg
                 .versions
                 .keys()
@@ -1148,7 +1149,7 @@ fn resolve_declared(
             };
             format!(
                 "no version of `{name}` satisfies constraint `{constraint_str}` \
-                 (available: {listed}){because}"
+                 ({listed}){because}"
             )
         })?
         .clone();
@@ -1786,17 +1787,12 @@ mod tests {
             &mut graph,
         )
         .expect_err("the only matching version is yanked");
-        assert!(err.contains("0.1.0 (yanked)"), "msg: {err}");
         assert!(
-            err.contains("every version that matches is yanked"),
+            err.contains("every version that matches is yanked (0.1.0)"),
             "msg: {err}"
         );
-        // The unyanked sibling is listed plainly — the marker is per version, not a
-        // banner over the whole package.
-        assert!(
-            err.contains("0.3.0") && !err.contains("0.3.0 (yanked)"),
-            "msg: {err}"
-        );
+        // The newest release is the one offered, and it is not the yanked one.
+        assert!(err.contains("the newest is 0.3.0"), "msg: {err}");
     }
 
     /// The clause is about the CAUSE, so a failure the yank did not cause must not carry
@@ -1816,7 +1812,11 @@ mod tests {
             &mut graph,
         )
         .expect_err("no version reaches 0.9");
-        assert!(err.contains("0.1.0 (yanked)"), "msg: {err}");
+        // An older release is held, not offered: the refusal names the newest only.
+        assert!(
+            err.contains("the newest is 0.3.0; older releases are held") && !err.contains("0.1.0"),
+            "msg: {err}"
+        );
         assert!(
             !err.contains("every version that matches is yanked"),
             "msg: {err}"

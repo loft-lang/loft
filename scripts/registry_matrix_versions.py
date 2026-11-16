@@ -8,7 +8,7 @@ nothing (121 of 164 when this was written).  That is the gate hole behind loft#1
 the 0.2 API, and nothing ever noticed, because by then the newest stable was 0.3.2 and 0.3.2
 builds fine.
 
-Two scopes, because the two questions have different urgencies (loft#1462):
+Three scopes, because the questions have different urgencies (loft#1462):
 
 ``tip``   the newest stable of each package — what a `loft install` gets today, so a rot here
           is somebody's build breaking tonight.  This is the nightly, and it emits BARE package
@@ -17,10 +17,17 @@ Two scopes, because the two questions have different urgencies (loft#1462):
           version here instead would make this file a SECOND resolver, and the nightly would
           silently change target the day the two disagreed.  The scope that needs explicit
           versions is the one that cannot ask — `full`.
-``full``  every non-yanked, non-prerelease version.  A rotted OLD version breaks nobody until
-          somebody pins it, so a week's latency is proportionate — and it is the only scope
-          under which "checked by nothing" is false for every published version, which is the
-          whole of loft#1462.
+``contract``  the weekly sweep: from the contract boundary on (a release whose `loft` floor is
+          at or past ``CONTRACT_FLOOR``), the newest release of each API line — the releases that
+          declare one `api_compatible_with` share an API, so the newest of them stands for the
+          line.  Under the contract loft does not break a release that works, so this sweep is
+          the check that it kept that promise, one release per API rather than every one.
+          A release published before the boundary is HELD — an exact pin or a lock still
+          resolves it — but it is neither tested nor offered (`.github/LABELS.md` §
+          `contract:broken`; the owner's soft-freeze ruling).
+``full``  every non-yanked, non-prerelease version, by hand only (`workflow_dispatch`).  Most
+          releases from before the boundary fail it: the language changed under them, which the
+          contract now forbids, not loft breaking them since.
 
 **Why not the cheaper middles.**  Validating only versions some published `loft.toml` depends
 on is cheapest and would have MISSED loft#1448 outright: nothing depended on imaging 0.1, and
@@ -30,13 +37,13 @@ versions unchecked — it narrows the hole rather than closing it, and the repor
 is the count.  A cadence split closes it and keeps the nightly's cost and signal intact;
 `repro-build` is the existing precedent for a weekly gate in this repo.
 
-Usage:  registry_matrix_versions.py <index.json> <tip|full> [packages.json]
+Usage:  registry_matrix_versions.py <index.json> <tip|contract|full> [packages.json]
         registry_matrix_versions.py --self-test
 
 `packages.json` is the workflow's already-computed package list (a JSON array of names); when
 omitted every package in the index is considered.  Output is a JSON array of entries
 `scripts/registry_validate.sh` takes directly: a bare `pkg` under `tip`, and `pkg@version`
-under `full`.
+under `contract` and `full`.
 """
 
 import json
@@ -57,9 +64,31 @@ def _yanked(pkg: dict) -> set:
     return set(y) if isinstance(y, list) else set()
 
 
+# The contract boundary: the `loft` floor from which a release is under the contract.  Releases
+# whose floor is older are held but not tested.  It moves once, to the contract=1 release.
+CONTRACT_FLOOR = "2026.11"
+
+
 def _key(version: str) -> tuple:
     """Sort key: the numeric components, so `0.10.0` sorts above `0.9.0` (a string sort does not)."""
     return tuple(int(n) for n in re.findall(r"\d+", version))
+
+
+def _floor(entry: dict) -> tuple:
+    """The `loft` floor a release declares (`>=2026.11.20261114`), as a sort key; `()` when it
+    names none or one that is not a plain `>=`, which is older than any boundary."""
+    m = re.match(r"\s*>=\s*([\d.]+)\s*$", entry.get("loft") or "")
+    return _key(m.group(1)) if m else ()
+
+
+def _api_line_tips(pkg: dict, usable: list) -> list:
+    """The newest release of each API line among `usable` (oldest first), the line being the
+    `api_compatible_with` a release declares — or the release itself when it declares none."""
+    tips = {}
+    for v in usable:
+        line = pkg["versions"][v].get("api_compatible_with") or v
+        tips[line] = v
+    return sorted(tips.values(), key=_key)
 
 
 def versions_for(pkg: dict, scope: str) -> list:
@@ -76,6 +105,10 @@ def versions_for(pkg: dict, scope: str) -> list:
     )
     if not usable:
         return []
+    if scope == "contract":
+        boundary = _key(CONTRACT_FLOOR)
+        return [v for v in _api_line_tips(pkg, usable)
+                if _floor(pkg["versions"][v])[:len(boundary)] >= boundary]
     return usable if scope == "full" else [None]
 
 
@@ -105,6 +138,31 @@ _CASES = [
     # a user gets nor what a `^` pin lands on.
     ("a prerelease is excluded from both scopes",
      {"versions": {"0.1.0": {}, "0.2.0-rc1": {}}}, "full", ["0.1.0"]),
+    # The contract scope: one release per API line, from the boundary on.
+    ("contract takes the newest release of each API line",
+     {"versions": {"0.3.1": {"loft": ">=2026.11.1"},
+                   "0.3.2": {"loft": ">=2026.11.1", "api_compatible_with": "0.3.1"},
+                   "0.3.3": {"loft": ">=2026.11.2", "api_compatible_with": "0.3.1"},
+                   "0.4.0": {"loft": ">=2026.11.2", "api_compatible_with": "0.4.0"}}},
+     "contract", ["0.3.3", "0.4.0"]),
+    # A patch release may declare a break inside its minor line (cbor 0.1.3 is compatible back
+    # to 0.1.1, not 0.1.0), so the line is the API line, not the minor number.
+    ("a break inside a minor line is its own API line",
+     {"versions": {"0.1.0": {"loft": ">=2026.11.1"},
+                   "0.1.1": {"loft": ">=2026.11.1", "api_compatible_with": "0.1.1"},
+                   "0.1.2": {"loft": ">=2026.11.1", "api_compatible_with": "0.1.1"}}},
+     "contract", ["0.1.0", "0.1.2"]),
+    ("a release from before the boundary is held, not tested",
+     {"versions": {"0.1.0": {"loft": ">=0.8"},
+                   "0.2.0": {"loft": ">=2026.10.0"},
+                   "0.3.0": {"loft": ">=2026.11.20261114"}}},
+     "contract", ["0.3.0"]),
+    ("a release with no floor is from before the boundary",
+     {"versions": {"0.1.0": {}}}, "contract", []),
+    # The boundary reads the floor as a version, so 2026.12 is past 2026.11 and 2026.9 is not.
+    ("the floor compares as a version, not a string",
+     {"versions": {"0.1.0": {"loft": ">=2026.9.0"}, "0.2.0": {"loft": ">=2026.12.0"}}},
+     "contract", ["0.2.0"]),
 ]
 
 
@@ -127,8 +185,8 @@ def main(argv: list) -> int:
         return 2
     index = json.load(open(argv[1], encoding="utf-8"))
     scope = argv[2]
-    if scope not in ("tip", "full"):
-        sys.stderr.write(f"unknown scope {scope!r} — expected 'tip' or 'full'\n")
+    if scope not in ("tip", "contract", "full"):
+        sys.stderr.write(f"unknown scope {scope!r} — expected 'tip', 'contract' or 'full'\n")
         return 2
     wanted = None
     if len(argv) > 3:

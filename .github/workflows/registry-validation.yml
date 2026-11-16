@@ -21,26 +21,29 @@
 # required `loft-ffi-build = "0.1"` for a build.rs calling the 0.2 API, and by
 # the time anyone looked the tip was 0.3.2 and 0.3.2 builds fine).
 #
-# So Sundays 05:30 run scope=full — every non-yanked, non-prerelease version.  A
-# rotted OLD release breaks nobody until somebody pins it, so a week's latency is
-# proportionate, and `full` is the only scope under which "checked by nothing" is
-# false for every published version.  `repro-build` (Mondays) is the existing
-# precedent for a weekly gate here.  Cheaper middles were considered and rejected
-# in `scripts/registry_matrix_versions.py`, which is where the population lives.
+# So Sundays 05:30 run scope=contract: from the contract boundary on, the newest
+# release of each API line.  In the soft freeze loft does not break a release that
+# works, so one release per API line checks that promise; a release published before
+# the boundary is held (a pin or a lock still resolves it) but neither tested nor
+# offered.  `full` — every published version — is by hand only: most releases from
+# before the boundary fail it, because the language changed under them.  The
+# population lives in `scripts/registry_matrix_versions.py`.
 name: registry-validation
 
 on:
   schedule:
     # Nightly: the tip of every package.
     - cron: '30 4 * * *'
-    # Weekly: every published version, so none is validated by nothing (loft#1462).
+    # Weekly: from the contract boundary on, the newest release of each API line — the check
+    # that loft keeps the contract's promise.  Older releases are held, not tested
+    # (scripts/registry_matrix_versions.py § contract).
     - cron: '30 5 * * 0'
   workflow_dispatch:
     inputs:
       scope:
-        description: 'tip = newest stable per package; full = every published version'
+        description: 'tip = newest stable per package; contract = newest of each API line since the contract boundary; full = every published version'
         type: choice
-        options: [tip, full]
+        options: [tip, contract, full]
         default: tip
   # Called by `release-gate.yml`: one deliberate run of every nightly against ONE
   # commit, ending in one verdict (the release evidence — RELEASE.md § The nightlies).
@@ -117,10 +120,10 @@ jobs:
       - name: List registry packages
         id: list
         env:
-          # The weekly cron asks for the whole tail; everything else takes the tip, including a
+          # The weekly cron asks for the contract scope; everything else takes the tip, including a
           # `workflow_call` that names no scope.  A scheduled run carries no inputs, which is
-          # why the cron string is what selects here.
-          SCOPE: ${{ github.event.schedule == '30 5 * * 0' && 'full' || inputs.scope || 'tip' }}
+          # why the cron string is what selects here.  `full` is by hand only.
+          SCOPE: ${{ github.event.schedule == '30 5 * * 0' && 'contract' || inputs.scope || 'tip' }}
         run: |
           set -uo pipefail
           curl -sSfL https://raw.githubusercontent.com/loft-lang/registry/main/index.json -o index.json
