@@ -270,6 +270,43 @@ fn main_index(b: ir::Bundle) -> integer {
   found
 }
 
+// `test_functions`: the program's tests, the way `loft --tests` picks them — its own
+// zero-parameter functions (`MAIN_SOURCE`, not compiler-written, no iterator result), only the
+// `test_*` ones when it names any.
+pub fn test_functions(b: ir::Bundle) -> vector<integer> {
+  fns: vector<integer> = [];
+  named = false;
+  for d in b.data.definitions {
+    if d.def_type != 1 || d.source != 1 || !d.name.starts_with("n_") || d.name.starts_with("n___lambda_") || d.name.starts_with("n___dflt_") || len(d.attributes) != 0 {
+      continue;
+    }
+    iterates = len(d.returned) > 0 && (match cgen_types::base(d.returned[0]!) { TyIterator { step: _, inner: _ } => true, _ => false });
+    if iterates {
+      continue;
+    }
+    fns += [d#index];
+    if d.name.starts_with("n_test_") {
+      named = true;
+    }
+  }
+  if !named {
+    return fns;
+  }
+  tests: vector<integer> = [];
+  for f in fns {
+    if b.data.definitions[f]!.name.starts_with("n_test_") {
+      tests += [f];
+    }
+  }
+  tests
+}
+
+// The roots of the program's unit: its `main`, or — a program without one — its tests.
+pub fn unit_roots(b: ir::Bundle) -> vector<integer> {
+  mi = main_index(b);
+  if mi >= 0 { [mi] } else { test_functions(b) }
+}
+
 fn def_index(b: ir::Bundle, name: text) -> integer {
   for d in b.data.definitions {
     if d.name == name {
@@ -364,34 +401,31 @@ fn body_line(cx: Cx, t: cgen_names::Twin) -> text {
 // `#index` of every `for e in v` loop its own bound keeps from overflowing.  `bodies`
 // (`LOFT_TRACE_BODIES`): the C definition of each function body the function writer carries.
 pub fn layer(b: ir::Bundle, name: text) -> text? {
+  roots = unit_roots(b);
   if name == "reach" || name == "functions" {
-    for d in b.data.definitions {
-      if d#index == main_index(b) {
-        if name == "reach" {
-          return "{opt_names::reach_line(b, d#index)}\n";
-        }
-        return "{opt_names::functions_line(b, d#index)}\n";
-      }
+    if len(roots) == 0 {
+      return "";
     }
-    return "";
+    if name == "reach" {
+      return "{opt_names::reach_line_of(b, roots)}\n";
+    }
+    return "{opt_names::functions_line_of(b, roots)}\n";
   }
   if name == "bodies" {
     // `LOFT_TRACE_BODIES`: every function of the unit the function writer carries, as the C
     // definition of its body; one it does not carry is a `[refused]` line naming why.
     out = "";
-    for d in b.data.definitions {
-      if d#index == main_index(b) {
-        cx = new_cx(b);
-        for f in opt_names::written_functions(b, d#index) {
-          out += body_line(cx, cgen_names::plain(f));
-        }
-        // The twins the bodies asked for; a twin's body can ask for more (`write_twins`).
-        written = 0;
-        while written < len(cx.twins) {
-          asked = cgen_names::copy_twin(cx.twins[written]!);
-          out += body_line(cx, asked);
-          written += 1;
-        }
+    if len(roots) > 0 {
+      cx = new_cx(b);
+      for f in opt_names::written_functions_of(b, roots, []) {
+        out += body_line(cx, cgen_names::plain(f));
+      }
+      // The twins the bodies asked for; a twin's body can ask for more (`write_twins`).
+      written = 0;
+      while written < len(cx.twins) {
+        asked = cgen_names::copy_twin(cx.twins[written]!);
+        out += body_line(cx, asked);
+        written += 1;
       }
     }
     return out;

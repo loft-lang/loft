@@ -1,0 +1,591 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/lower/hand_over.rs`: `@FR-R-HandOver`'s rotate clause, an append to
+// a full vector beside the drop of its oldest element as one step on the elements already
+// there; and `Stores::plain_vectors_of`, the per-type plan the rotate copies by.
+//
+// `<append of a copy to h.F>; S; if K < len(h.F) { g(h, len(h.F) - K) }`, `g` a SUFFIX keep:
+// when the vector is full the copy goes into the oldest element and the slots rotate, S runs,
+// then `g`'s body without its keep (`g__nk`).  `g`'s early returns are PROVED false for `n = 1`
+// and `len = K >= 1`; a condition this cannot prove declines the site.
+
+use ir;
+use loop_shape;
+use opt_non_sentinel;
+use types;
+
+// `LOFT_NO_HAND_OVER=1` keeps the statements as written.
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_HAND_OVER") ?? "0") == "0"
+}
+
+// An admitted rotate site; `g` -1 where `ops[at]` opens none.
+pub struct Site {
+  // The depth: the length at which the append drops the oldest element.
+  pub k: integer,
+  // The index of the `if` statement, the last of the range.
+  pub last: integer,
+  // The suffix-keep callee.
+  pub g: integer,
+  // The vector, as the caller names it: `OpGetField(h, pos, tp)`.
+  pub vector: ir::Node,
+  pub elem_tp: integer,
+  // The record copied, and the vector's owner `h`.
+  pub src: ir::Node,
+  pub owner: ir::Node,
+  // The statements between the append and the `if` (S), and every statement of the range.
+  pub between: vector<ir::Node>,
+  pub range: vector<ir::Node>,
+}
+
+fn no_site() -> Site {
+  Site { k: 0, last: -1, g: -1, vector: ir::NdNull, elem_tp: 0, src: ir::NdNull, owner: ir::NdNull, between: [], range: [] }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn int_of(v: ir::Node) -> integer? {
+  match loop_shape::unspan(v) {
+    NdInt { n } => n,
+    NdLong { n } => n,
+    _ => null,
+  }
+}
+
+// The operands of `v` when it is a call of `op`; `found` false for any other node.
+fn call(b: ir::Bundle, v: ir::Node, op: text, found: &boolean) -> vector<ir::Node> {
+  found = false;
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == op {
+        found = true;
+        return args;
+      }
+      []
+    },
+    _ => [],
+  }
+}
+
+fn is_var(v: ir::Node, x: integer) -> boolean {
+  loop_shape::var_of(loop_shape::unspan(v)) == x
+}
+
+// The statements of a list with `Insert`s flattened and line markers dropped.
+fn flat(ops: vector<ir::Node>, out: vector<ir::Node>) {
+  for o in ops {
+    match loop_shape::unspan(o) {
+      NdInsert { items } => flat(items, out),
+      NdLine { n: _ } => {},
+      _ => { out += [o]; },
+    }
+  }
+}
+
+fn flattened(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  flat(ops, out);
+  out
+}
+
+// `OpGetField(Var(p), pos, tp)` → `[pos, tp]`; empty for any other node.
+fn field_of(b: ir::Bundle, v: ir::Node, p: integer) -> vector<integer> {
+  found = false;
+  a = call(b, v, "OpGetField", found);
+  if !found || len(a) != 3 || !is_var(a[0], p) {
+    return [];
+  }
+  pos = int_of(a[1]!);
+  tp = int_of(a[2]!);
+  if pos == null || tp == null {
+    return [];
+  }
+  [pos!, tp!]
+}
+
+// A length of the field `(pos, tp)` of `Var(p)`: `len(…)` or `OpLengthVector(…)`.
+fn is_len(b: ir::Bundle, v: ir::Node, p: integer, field: vector<integer>) -> boolean {
+  found = false;
+  a = call(b, v, "t_6vector_len", found);
+  if !found {
+    a = call(b, v, "OpLengthVector", found);
+  }
+  found && len(a) == 1 && field_of(b, a[0]!, p) == field
+}
+
+// A term of an early-return condition: `n` (kind 0), the length (1) or a constant (2).
+struct Term {
+  kind: integer,
+  k: integer,
+}
+
+// Is `a > b` (strict) or `a >= b` certain when the callee runs with `n = 1` and `len = K >= 1`?
+fn proves(a: Term, b: Term, strict: boolean) -> boolean {
+  if a.kind == 2 && b.kind == 2 {
+    return if strict { a.k > b.k } else { a.k >= b.k };
+  }
+  if (a.kind == 0 || a.kind == 1) && b.kind == 2 {
+    return if strict { 1 > b.k } else { 1 >= b.k };
+  }
+  if a.kind == 1 && b.kind == 0 {
+    return !strict;
+  }
+  if a.kind == 2 && b.kind == 0 {
+    return if strict { a.k > 1 } else { a.k >= 1 };
+  }
+  false
+}
+
+// The term `v` reads; kind -1 for none.
+fn term(b: ir::Bundle, v: ir::Node, field: vector<integer>) -> Term {
+  k = int_of(v);
+  if k != null {
+    return Term { kind: 2, k: k! };
+  }
+  if is_var(v, 1) {
+    return Term { kind: 0, k: 0 };
+  }
+  if is_len(b, v, 0, field) { Term { kind: 1, k: 0 } } else { Term { kind: -1, k: 0 } }
+}
+
+// Is condition `c` certainly false at a rotate's call?  An `or` (`if a true else b`) when both
+// sides are; an atom `a <= b` when `a > b` is certain, `a < b` when `a >= b` is.
+fn certainly_false(b: ir::Bundle, c: ir::Node, field: vector<integer>) -> boolean {
+  match loop_shape::unspan(c) {
+    NdIf { cond, t, f } => {
+      match loop_shape::unspan(t) {
+        NdBoolean { b: on } => {
+          if on {
+            // Both sides asked, then answered: a tree recursion, not a tail call (@C155).
+            both = certainly_false(b, cond, field) && certainly_false(b, f, field);
+            return both;
+          }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  for op in ["OpLeInt", "OpLtInt"] {
+    found = false;
+    a = call(b, c, op, found);
+    if found && len(a) == 2 {
+      ta = term(b, a[0]!, field);
+      tb = term(b, a[1]!, field);
+      if ta.kind < 0 || tb.kind < 0 {
+        return false;
+      }
+      return proves(ta, tb, op == "OpLeInt");
+    }
+  }
+  false
+}
+
+// Does `stmt` mention `Var(owner)`'s field at `pos`, call a user function, or leave the list?
+fn touches_field_or_calls(b: ir::Bundle, stmt: ir::Node, owner: integer, pos: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(stmt, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        nm = def_name(b, def_nr);
+        if !nm.starts_with("Op") && !nm.starts_with("t_") {
+          hit[0] = true;
+        } else if nm == "OpGetField" && len(args) > 1 && is_var(args[0], owner) && int_of(args[1]!) == pos {
+          hit[0] = true;
+        }
+      },
+      NdCallRef { var: _, args: _ } => { hit[0] = true; },
+      NdReturn { inner: _ } => { hit[0] = true; },
+      NdBreak { n: _ } => { hit[0] = true; },
+      NdContinue { n: _ } => { hit[0] = true; },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn has_return(v: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner: _ } => { hit[0] = true; },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn calls_keep(b: ir::Bundle, v: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => { if def_name(b, def_nr) == "OpKeepVectorRange" { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// The top-level statements of `f`'s body, flattened; empty where the body is no block.
+fn body_ops(b: ir::Bundle, f: integer) -> vector<ir::Node> {
+  def = b.data.definitions[f]!;
+  if len(def.code) == 0 {
+    return [];
+  }
+  match def.code[0]! {
+    NdBlock { block } => flattened(block[0].operators),
+    _ => [],
+  }
+}
+
+// The keep `[n, len)` an `if`'s arm makes of the first parameter's field: `[pos, field tp,
+// element tp]`, empty for none.
+fn keep_in(b: ir::Bundle, then: ir::Node) -> vector<integer> {
+  calls: vector<ir::Node> = [];
+  opt_non_sentinel::walk(then, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => { if def_name(b, def_nr) == "OpKeepVectorRange" { calls += [n]; } },
+      _ => {},
+    }
+  });
+  found: vector<integer> = [];
+  for c in calls {
+    match c {
+      NdCall { def_nr: _, args } => {
+        if len(args) == 4 {
+          field = field_of(b, args[0]!, 0);
+          etp = int_of(args[1]!);
+          if len(field) == 2 && etp != null && etp! >= 0 && etp! <= 65535 && is_var(args[2], 1) && is_len(b, args[3]!, 0, field) {
+            found = [field[0]!, field[1]!, etp!];
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  found
+}
+
+// `keep_of`: the suffix keep callee `f` makes of its first parameter's vector field, as
+// `[pos, field tp, element tp]`; empty unless the body is null inits of locals, early returns
+// proved false at a rotate's call, ONE keep, and statements that read neither the field nor
+// anything a call could reach.
+fn keep_of(b: ir::Bundle, f: integer) -> vector<integer> {
+  vars = b.data.definitions[f]!.variables.variables;
+  if len(vars) < 2 || !vars[0]!.argument || !vars[1]!.argument {
+    return [];
+  }
+  for v in vars {
+    if v#index >= 2 && v.argument {
+      return [];
+    }
+  }
+  ops = body_ops(b, f);
+  ki = -1;
+  keep: vector<integer> = [];
+  for o in ops {
+    match loop_shape::unspan(o) {
+      NdIf { cond: _, t, f: _ } => {
+        found = keep_in(b, t);
+        if len(found) > 0 {
+          if ki >= 0 {
+            return [];
+          }
+          ki = o#index;
+          keep = found;
+        }
+      },
+      _ => {},
+    }
+  }
+  if ki < 0 {
+    return [];
+  }
+  field = [keep[0]!, keep[1]!];
+  for o in ops {
+    i = o#index;
+    if i == ki {
+      continue;
+    }
+    ok = false;
+    match loop_shape::unspan(o) {
+      NdSet { var, inner } => {
+        ok = !vars[var]!.argument && loop_shape::unspan(inner) == ir::Node.NdNull;
+      },
+      NdIf { cond, t, f: other } => {
+        if i < ki && loop_shape::unspan(other) == ir::Node.NdNull && has_return(t) {
+          if !certainly_false(b, cond, field) {
+            return [];
+          }
+          ok = true;
+        }
+      },
+      NdCall { def_nr, args: _ } => {
+        ok = def_name(b, def_nr) == "OpFreeRef";
+      },
+      _ => {},
+    }
+    if !ok && !(i > ki && !touches_field_or_calls(b, o, 0, field[0]!)) {
+      return [];
+    }
+  }
+  keep
+}
+
+// `keep_statement`: the keep statement of suffix-keep callee `g`, which its `__nk` twin skips;
+// empty for none.
+pub fn keep_statement(b: ir::Bundle, g: integer) -> vector<ir::Node> {
+  found: vector<ir::Node> = [];
+  for o in body_ops(b, g) {
+    match loop_shape::unspan(o) {
+      NdIf { cond: _, t, f: _ } => {
+        if calls_keep(b, t) {
+          found = [loop_shape::unspan(o)];
+        }
+      },
+      _ => {},
+    }
+  }
+  found
+}
+
+// Is the vector type `vtp` a plain `vector` — the one kind whose slots a rotate may move?
+fn plain_vector(b: ir::Bundle, vtp: integer) -> boolean {
+  if vtp < 0 || vtp >= len(b.types) {
+    return false;
+  }
+  match b.types[vtp].parts[0] {
+    PtVector { content: _ } => true,
+    _ => false,
+  }
+}
+
+// `Stores::plain_vectors_of`: the plan of a record whose heap is plain vectors alone — each
+// vector field's position and element size, in pairs; empty for any other type.
+pub fn plain_vectors_of(b: ir::Bundle, tp: integer) -> vector<integer> {
+  if (env_variable("LOFT_NO_PLAIN_VECTOR_RECORDS") ?? "0") != "0" || tp < 0 || tp >= len(b.types) {
+    return [];
+  }
+  fields = match b.types[tp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    _ => return [],
+  };
+  out: vector<integer> = [];
+  for f in fields {
+    if !types::owns_heap(b.types, f.content) {
+      continue;
+    }
+    if len(f.other_indexes) != 0 || f.content < 0 || f.content >= len(b.types) {
+      return [];
+    }
+    elem = match b.types[f.content].parts[0] {
+      PtVector { content } => content,
+      _ => return [],
+    };
+    if elem < 0 || elem >= len(b.types) || types::owns_heap(b.types, elem) || b.types[elem].linked || b.types[elem].size <= 0 {
+      return [];
+    }
+    out += [f.position, b.types[elem].size];
+  }
+  if len(out) == 0 || len(out) > 16 { [] } else { out }
+}
+
+// The field position of field `fld` of struct `tp` (`Stores::field_position`); 65535 for none.
+fn field_position(b: ir::Bundle, tp: integer, fld: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return 65535;
+  }
+  fields = match b.types[tp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    PtEnumValue { value: _, fields: fs } => fs,
+    _ => return 65535,
+  };
+  if fld < 0 || fld >= len(fields) { 65535 } else { fields[fld]!.position }
+}
+
+// `if K < len(h.F) { g(h, len(h.F) - K) }` with `g` a suffix keep of the same field and
+// element type: `[K, g, the vector type]`; empty for none.
+fn drop_if(b: ir::Bundle, stmt: ir::Node, owner: ir::Node, owner_var: integer, pos: integer, tp: integer) -> vector<integer> {
+  cond = ir::NdNull;
+  then = ir::NdNull;
+  match loop_shape::unspan(stmt) {
+    NdIf { cond: c, t, f } => {
+      if loop_shape::unspan(f) != ir::Node.NdNull {
+        return [];
+      }
+      cond = c;
+      then = t;
+    },
+    _ => return [],
+  }
+  found = false;
+  lt = call(b, cond, "OpLtInt", found);
+  if !found || len(lt) != 2 {
+    return [];
+  }
+  k = int_of(lt[0]!);
+  if k == null {
+    return [];
+  }
+  lens = call(b, lt[1]!, "t_6vector_len", found);
+  if !found {
+    lens = call(b, lt[1]!, "OpLengthVector", found);
+  }
+  if !found || len(lens) == 0 {
+    return [];
+  }
+  fv = field_of(b, lens[0]!, owner_var);
+  if len(fv) != 2 || fv[0]! != pos || k! < 1 || !plain_vector(b, fv[1]!) {
+    return [];
+  }
+  inner = match loop_shape::unspan(then) {
+    NdBlock { block } => flattened(block[0].operators),
+    _ => return [],
+  };
+  if len(inner) != 1 {
+    return [];
+  }
+  match loop_shape::unspan(inner[0]) {
+    NdCall { def_nr: callee, args: cargs } => {
+      if len(cargs) != 2 || loop_shape::unspan(cargs[0]) != loop_shape::unspan(owner) {
+        return [];
+      }
+      m = call(b, cargs[1]!, "OpMinInt", found);
+      if !found || len(m) != 2 || int_of(m[1]!) != k || !is_len(b, m[0]!, owner_var, fv) {
+        return [];
+      }
+      if callee < 0 || callee >= len(b.data.definitions) {
+        return [];
+      }
+      g = keep_of(b, callee);
+      if len(g) == 3 && g[0]! == pos && g[2]! == tp {
+        return [k!, callee, fv[1]!];
+      }
+      []
+    },
+    _ => [],
+  }
+}
+
+fn mentions(v: ir::Node, x: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdVar { n: y } => { if y == x { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn sets_any(v: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdSet { var: _, inner: _ } => { hit[0] = true; },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `site`: the rotate site starting at `ops[at]` of a statement list.  The append group:
+// `elm = OpNewRecord(h, ptp, fld)`, a FRESH copy into `elm` that keeps its source, the finish;
+// then S; then the drop.
+pub fn site(b: ir::Bundle, ops: vector<ir::Node>, at: integer) -> Site {
+  if !enabled() || at + 2 >= len(ops) {
+    return no_site();
+  }
+  elm = -1;
+  mint = ir::NdNull;
+  match loop_shape::unspan(ops[at]!) {
+    NdSet { var, inner } => {
+      elm = var;
+      mint = inner;
+    },
+    _ => return no_site(),
+  }
+  found = false;
+  nr = call(b, mint, "OpNewRecord", found);
+  if !found || len(nr) != 3 {
+    return no_site();
+  }
+  owner = nr[0]!;
+  ptp = int_of(nr[1]!);
+  fld = int_of(nr[2]!);
+  if ptp == null || fld == null || ptp! < 0 || ptp! > 65535 || fld! < 0 || fld! > 65535 {
+    return no_site();
+  }
+  pos = field_position(b, ptp!, fld!);
+  copy = ops[at + 1]!;
+  ca = call(b, copy, "OpCopyRecord", found);
+  if !found || len(ca) != 3 || !is_var(ca[1], elm) {
+    return no_site();
+  }
+  raw = int_of(ca[2]!);
+  if raw == null || raw! < 0 || raw! > 65535 || raw! & 16384 == 0 || raw! & 32768 != 0 {
+    return no_site();
+  }
+  tp = raw! & 16383;
+  fin = call(b, ops[at + 2]!, "OpFinishRecord", found);
+  if !found || len(fin) == 0 || loop_shape::unspan(fin[0]) != loop_shape::unspan(owner) {
+    return no_site();
+  }
+  owner_var = loop_shape::var_of(loop_shape::unspan(owner));
+  if owner_var < 0 {
+    return no_site();
+  }
+  between: vector<ir::Node> = [];
+  next = at + 3;
+  while next < len(ops) {
+    st = ops[next]!;
+    match loop_shape::unspan(st) {
+      NdLine { n: _ } => { next += 1; continue; },
+      NdIf { cond: _, t: _, f: _ } => {
+        dropped = drop_if(b, st, owner, owner_var, pos, tp);
+        if len(dropped) == 0 {
+          return no_site();
+        }
+        // The temporary the append names is the range's own: nothing after it reads it.
+        for later in ops[next + 1..len(ops)] {
+          if mentions(later, elm) {
+            return no_site();
+          }
+        }
+        get_field = -1;
+        for def in b.data.definitions {
+          if def.name == "OpGetField" && get_field < 0 {
+            get_field = def#index;
+          }
+        }
+        if get_field < 0 {
+          return no_site();
+        }
+        return Site {
+          k: dropped[0]!,
+          last: next,
+          g: dropped[1]!,
+          vector: ir::NdCall { def_nr: get_field, args: [owner, ir::NdInt { n: pos }, ir::NdInt { n: dropped[2]! }] },
+          elem_tp: tp,
+          src: ca[0]!,
+          owner: owner,
+          between: between,
+          range: ops[at..next + 1],
+        };
+      },
+      _ => {},
+    }
+    // S: run in both branches, so it declares nothing a later statement could read, and
+    // touches neither the vector nor a call.
+    if touches_field_or_calls(b, st, owner_var, pos) || sets_any(st) {
+      return no_site();
+    }
+    between += [st];
+    next += 1;
+  }
+  no_site()
+}

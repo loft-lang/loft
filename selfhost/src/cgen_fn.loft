@@ -52,6 +52,8 @@ use loop_shape;
 use opt_non_sentinel;
 use opt_range;
 use cgen_value;
+use cgen_rotate;
+use opt_hand_over;
 
 // Is `code` one identifier: letters, digits and underscores only?
 fn identifier(code: text) -> boolean {
@@ -1098,6 +1100,10 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     return none();
   }
   t.places = places;
+  if w.nk_call == d {
+    w.nk_call = -1;
+    t.nk = true;
+  }
   if native == "" {
     if len(args) <= 23 {
       t.nn = nn_twin_bits(x, w, d, args);
@@ -2338,6 +2344,13 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
       continue;
     }
     if plain_rules() {
+      last = cgen_rotate::rotate_site(x, w, ops, o#index, ind);
+      if last >= 0 {
+        skip_to = last + 1;
+        continue;
+      }
+    }
+    if plain_rules() {
       match loop_shape::unspan(o) {
         NdSet { var: bound_var, inner: bound_to } => cgen_hoist::grid_bind(x, w, bound_var, bound_to),
         _ => {},
@@ -2437,6 +2450,10 @@ fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
 
 // Write `v` for its effect (`stmt`, `stmt_inner`, `stmt_kind`).
 fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
+  // A `__nk` twin: the body without its keep statement.
+  if len(w.nk_skip) > 0 && loop_shape::unspan(v) == w.nk_skip[0] {
+    return;
+  }
   if w.why != "" {
     return;
   }
@@ -3131,7 +3148,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  if twin.inv || twin.nk || twin.apr || twin.apv || twin.kh || twin.ap || twin.ds || twin.vf {
+  if twin.inv || twin.apr || twin.apv || twin.kh || twin.ap || twin.ds || twin.vf {
     return Written { text: "", refused: "a twin of a rule that is not carried" };
   }
   // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
@@ -3243,6 +3260,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     in_range: [],
     in_range_lens: [],
     raw_exprs: [],
+    nk_skip: if twin.nk { opt_hand_over::keep_statement(x.b, index) } else { [] },
+    nk_call: -1,
     text_windows: [],
     raw_shapes: [],
   };
@@ -3383,10 +3402,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     }
   }
   // `@FR-R-Inline`: a small function's body is always inlined into its frame wrapper; a
-  // larger one up to the helper size is decided once the twins are written.
+  // larger one up to the helper size is decided once the twins are written.  // (`hot_helper_size`: only a function written plain, or as its `__rg` twin, is a candidate.)
   storage = if statements <= 12 {
     "LOFT_HOT_INLINE"
-  } else if statements <= 80 && twin.nn == 0 {
+  } else if statements <= 80 && plain_but_rg(twin) {
     "static /*loft_hot_body:{index}*/"
   } else {
     "static"
@@ -3403,4 +3422,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // marker resolved once the twins are written, or out of line.
   outer = if statements <= 12 { "static inline" } else if statements <= 80 && twin.nn == 0 { "static /*loft_hot:{index}*/" } else { "static" };
   Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer }
+}
+
+// `hot_helper_size`'s mask test: no twin bit but `__rg`'s.
+fn plain_but_rg(t: cgen_names::Twin) -> boolean {
+  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf
 }

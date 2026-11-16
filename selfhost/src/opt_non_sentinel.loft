@@ -13,6 +13,7 @@
 use ir;
 use loop_shape;
 use opt_iteration;
+use opt_names;
 
 // `Definition.def_type` ordinal of a function.
 FUNCTION = 1;
@@ -560,24 +561,6 @@ fn scan_sets(b: ir::Bundle, p: Proof, code: ir::Node, vars: vector<boolean>, acc
   });
 }
 
-// `Data::def_nr`: the definition named `name` in the program's own source, else the standard
-// library's; -1 for none.
-fn def_nr(b: ir::Bundle, name: text) -> integer {
-  std = -1;
-  for d in b.data.definitions {
-    if d.name != name {
-      continue;
-    }
-    if d.source == b.data.source {
-      return d#index;
-    }
-    if d.source == 0 {
-      std = d#index;
-    }
-  }
-  std
-}
-
 // `non_sentinel_vars`: the facts of function `d` — a local holds no sentinel iff it has an
 // assignment, EVERY `Set` to it assigns a non-sentinel expression, and nothing else can write
 // it.  A parameter is never proven by shape; the program-wide fact seeds the ones every call
@@ -606,10 +589,10 @@ pub fn non_sentinel_vars_seeded(b: ir::Bundle, p: Proof, d: integer, extra: vect
     }
   }
   // `@FR-R-NonSentinelParam`: the parameters every call proves — for a function its own name
-  // finds (`Data::def_nr`), as the Rust proof asks: an instance or a twin a name lookup of
-  // the program's source does not reach is seeded nothing.
+  // finds (`Data::def_nr`, through the program's imports too), as the Rust proof asks: an
+  // instance or a twin a name lookup of the program's source does not reach is seeded nothing.
   proven_params(b, p);
-  if def_nr(b, def.variables.name) == d {
+  if opt_names::image_def_nr(b, def.variables.name) == d {
     for f in p.params[d]!.flags {
       if f && f#index < count {
         vars[f#index] = true;

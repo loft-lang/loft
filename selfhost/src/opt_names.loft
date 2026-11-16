@@ -412,20 +412,36 @@ pub fn is_stdlib(d: ir::Definition) -> boolean {
 // no operator and no native the C runtime implements, the root first, the others in
 // definition order.
 pub fn written_functions(b: ir::Bundle, root: integer) -> vector<integer> {
-  written_functions_from(b, root, [])
+  written_functions_of(b, [root], [])
 }
 
 // `written_functions` with `extra` roots beside `root` — a lazy unit's drivers, which a miss
 // calls through the unit's table (@PLN133 S9).
 pub fn written_functions_from(b: ir::Bundle, root: integer, extra: vector<integer>) -> vector<integer> {
-  out: vector<integer> = [root];
-  roots: vector<integer> = [root];
-  for e in extra {
-    roots += [e];
+  written_functions_of(b, [root], extra)
+}
+
+// The functions a unit of `roots` writes (`emit_unit_for`'s `fns`): the roots first, then every
+// function they and `extra` reach, in definition order — no operator, no native the runtime
+// implements.
+pub fn written_functions_of(b: ir::Bundle, roots: vector<integer>, extra: vector<integer>) -> vector<integer> {
+  all: vector<integer> = [];
+  for r in roots {
+    all += [r];
   }
-  for r in reachable_functions(b, roots) {
+  for e in extra {
+    all += [e];
+  }
+  reach = reachable_functions(b, all);
+  out: vector<integer> = [];
+  for r in reach {
+    if r && roots.contains(r#index) {
+      out += [r#index];
+    }
+  }
+  for r in reach {
     d = b.data.definitions[r#index]!;
-    if !r || r#index == root || d.def_type != FUNCTION || d.name.starts_with("Op") {
+    if !r || roots.contains(r#index) || d.def_type != FUNCTION || d.name.starts_with("Op") {
       continue;
     }
     if is_stdlib(d) && cgen_natives::native_c(d.name) != null {
@@ -445,6 +461,23 @@ pub fn functions_line(b: ir::Bundle, root: integer) -> text {
   "[functions]\t{b.data.definitions[root]!.name}\t{names.join(" ")}"
 }
 
+// The trace lines of a unit of `roots` (`trace_reach`), named by its first root.
+pub fn functions_line_of(b: ir::Bundle, roots: vector<integer>) -> text {
+  names: vector<text> = [for d in written_functions_of(b, roots, []) { b.data.definitions[d]!.name }];
+  "[functions]\t{b.data.definitions[roots[0]!]!.name}\t{names.join(" ")}"
+}
+
+pub fn reach_line_of(b: ir::Bundle, roots: vector<integer>) -> text {
+  names: vector<text> = [];
+  for r in reachable_functions(b, roots) {
+    if r {
+      names += [b.data.definitions[r#index]!.name];
+    }
+  }
+  names.sort();
+  "[reach]\t{b.data.definitions[roots[0]!]!.name}\t{names.join(" ")}"
+}
+
 // The trace line of what `root` reaches (`LOFT_TRACE_REACH`): `[reach]<TAB>root<TAB>names…`,
 // sorted by name.
 pub fn reach_line(b: ir::Bundle, root: integer) -> text {
@@ -456,4 +489,65 @@ pub fn reach_line(b: ir::Bundle, root: integer) -> text {
   }
   names.sort();
   "[reach]\t{b.data.definitions[root]!.name}\t{names.join(" ")}"
+}
+
+// ── the program's name table as `Data::def_nr` reads it (`def_names`, `replay_imports`) ──────
+
+// `Data::passes_on`: a `pub` item, or a forward-reference stub (a name-only type, which only a
+// type asks about, is not read here).
+fn passes_on(d: ir::Definition) -> boolean {
+  d.pub_visible || d.def_type == 0
+}
+
+// The definition `key` is bound to in `source` (`def_names.get(key, source)`): the source's
+// own definition, else what a `use` into it bound — a wildcard, every name the library passes
+// on; a selective import, its name under its local bind (a function under the `n_` prefix).
+// `public`: only what `source` passes on to an importer — its `pub` items and its `pub use`s.
+fn bound_in(b: ir::Bundle, key: text, source: integer, public: boolean, depth: integer) -> integer {
+  for d in b.data.definitions {
+    if d.name == key && d.source == source {
+      return if !public || passes_on(d) { d#index } else { -1 };
+    }
+  }
+  if depth > 16 {
+    return -1;
+  }
+  for imp in b.data.imports {
+    if imp.into_source != source || (public && !imp.public) {
+      continue;
+    }
+    lib_key = "";
+    if imp.name == "" {
+      lib_key = key;
+    } else if key == imp.bind {
+      lib_key = imp.name;
+    } else if key == "n_{imp.bind}" {
+      lib_key = "n_{imp.name}";
+    }
+    if lib_key == "" {
+      continue;
+    }
+    d = bound_in(b, lib_key, imp.lib_source, true, depth + 1);
+    if d >= 0 {
+      return d;
+    }
+  }
+  -1
+}
+
+// `Data::def_nr` over the image: the definition `name` is bound to in the program's own source
+// — its own, or one a `use` brought in — else in the standard library; -1 for none.  A library
+// file's items shared with a `#package` mate (`shared_with`) are not in the image and are not
+// found.
+pub fn image_def_nr(b: ir::Bundle, name: text) -> integer {
+  d = bound_in(b, name, b.data.source, false, 0);
+  if d >= 0 || b.data.source == 0 {
+    return d;
+  }
+  for x in b.data.definitions {
+    if x.name == name && x.source == 0 {
+      return x#index;
+    }
+  }
+  -1
 }
