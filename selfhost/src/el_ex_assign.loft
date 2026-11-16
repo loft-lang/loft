@@ -634,8 +634,12 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           continue;
         }
         // A record or a vector is shared through a pointer field of the record (`@FR-L-CapHeap`).
-        heap = !(ct is TyOptional) && (record_type(e, ct) || ct is TyVector);
-        if !heap && (!(el_convert::plain_scalar(ct) || el_types::base(ct) is TyText) || ct is TyOptional || el_convert::plain_enum(ct)) {
+        // A nullable record or vector is shared the same way: the pointer may be the null one.
+        heap = record_type(e, ct) || el_types::base(ct) is TyVector;
+        // A nullable plain scalar and a plain enum are captured as the value itself, as a dense
+        // scalar is (`closure_attr_type`).
+        scalar_cap = el_convert::plain_scalar(el_types::base(ct)) || el_convert::plain_enum(el_types::base(ct)) || (el_types::base(ct) is TyText && !(ct is TyOptional));
+        if !heap && !scalar_cap {
           el::refuse(e, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
@@ -647,7 +651,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       // (`Deps::callee_frame1`): neither carried.
       shares = false;
       for c in caps {
-        if (record_type(e, c.tp) || c.tp is TyVector) && !written.contains(c.name) {
+        if (record_type(e, c.tp) || el_types::base(c.tp) is TyVector) && !written.contains(c.name) {
           shares = true;
         }
       }
@@ -750,7 +754,7 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
     if cv >= 0 && !vars.captured.contains(cv) {
       vars.captured += [cv];
     }
-    if record_type(e, c.tp) || c.tp is TyVector {
+    if record_type(e, c.tp) || el_types::base(c.tp) is TyVector {
       el_vars::in_use(vars, cv, true);
       ops += [el_ir::cl(e, "OpSetDbRef", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }, ir::NdVar { n: cv }])];
       continue;
@@ -1551,8 +1555,12 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
         if cc >= 0 {
           return el_cell::read(e, got!, cc);
         }
-        // A shared record or vector reads as the captured value's own type.
-        if record_type(e, c.tp) || c.tp is TyVector {
+        // A shared record or vector reads as the captured value's own type; a NULLABLE one as
+        // its closure-record field, the dense pointer borrowing `__closure` (`closure_capture_read`).
+        if record_type(e, c.tp) || el_types::base(c.tp) is TyVector {
+          if c.tp is TyOptional {
+            return ex(got!, el_types::with_deps(el_types::without_deps(el_types::base(c.tp)), [e.closure_var]));
+          }
           return ex(got!, c.tp);
         }
         return ex(got!, el::def(e, e.closure_rec).attributes[a]!.typedef[0]);

@@ -17,7 +17,7 @@ full loft interpreter, the in-between data of the two implementations compared a
   runner surveys, one heavy job at a time.
 - Gate E at the new pin, before the uncommitted ports below: 733 of 2125 agree, 12 differ.  The
   differs were new Rust behaviour from main plus programs a cleared refusal newly exposed.
-- With the ports below: **745 of 2125 agree, 1377 refused, 3 differ** (verdict files diffed run
+- With the ports below: **747 of 2125 agree, 1374 refused, 4 differ** (verdict files diffed run
   against run: every moved program is one a port named).
 
 ## Ported this session (Rust function → loft)
@@ -52,12 +52,16 @@ full loft interpreter, the in-between data of the two implementations compared a
 - A vector literal written through a `&vector` link clears and appends (`@FR-B-Ref-Write`);
   a vector local the buffer is renamed onto, bound from ONE call, hands that call the buffer
   (`nrvo_collapse_defining_call`'s core case).
+- Captures: a nullable record or vector is shared by pointer like a dense one, read as its
+  closure-record field (a dense pointer borrowing `__closure`); a nullable plain scalar or a
+  plain enum is captured as the value.
 - `branch_yields_null` as Rust's: a bare `null` counts on the second pass only, a forward call's
   block and a value behind a halt answer nothing.
 
 ## Open, in order
 
-1. The three differs: `139-drop-cascade`, now at `c14` — Rust parses a vector field's items
+1. The four differs: O-Latest 2132 (`x = base.inner` after `x = mk(1)`: Rust's `x` keeps
+   `["base"]` on every bind, the port's none); `139-drop-cascade`, now at `c14` — Rust parses a vector field's items
    before it builds each element, so the items' call buffers (`__ref_3`, `__ref_4`) number before
    the copies' `__ref_p2_4`/`_5`; the port interleaves; F-ParamRebind (an artifact of Rust's abandoned in-place attempt,
    `__vdb_1`); `a-lifted-call-result-adopts-
