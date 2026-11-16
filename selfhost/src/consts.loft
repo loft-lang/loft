@@ -263,7 +263,11 @@ pub fn literal(b: ir::Bundle, d: integer) -> Literal? {
 // type's defaults and its writes (each mirrors the runtime setter of its field), counted, then
 // the store pinned and read-only (`Store::lock_constant`).
 fn build_one(b: ir::Bundle, lit: Literal) -> integer {
-  elem = types::root_vector_element(b.types, lit.wrapper);
+  // A linked element type makes the wrapper's field an `array<T>` (`Stores::finish_type`):
+  // each element is then a record of its own whose id the array holds (`record_new`'s and
+  // `record_finish`'s array arms), not a slot of the vector.
+  array = root_array_element(b.types, lit.wrapper);
+  elem = array ?? types::root_vector_element(b.types, lit.wrapper);
   if elem == null {
     return NULL_STORE;
   }
@@ -275,7 +279,11 @@ fn build_one(b: ir::Bundle, lit: Literal) -> integer {
   image = types::default_image(b.types, elem!);
   rec: vector<integer> = [NULL_STORE, 0, 0];
   for e in lit.elements {
-    crt::vec_append(rec, store, 1, 8, size);
+    if array != null {
+      crt::entry_new(rec, store, 1, 8, size);
+    } else {
+      crt::vec_append(rec, store, 1, 8, size);
+    }
     s = rec[0] ?? NULL_STORE;
     r = rec[1] ?? 0;
     p = rec[2] ?? 0;
@@ -291,10 +299,26 @@ fn build_one(b: ir::Bundle, lit: Literal) -> integer {
         FNarrow { width, min, v } => crt::set_w(width, s, r, p, w.at, min, v),
       }
     }
-    crt::vec_finish(store, 1, 8);
+    if array != null {
+      crt::array_append(store, 1, 8, s, r, p);
+    } else {
+      crt::vec_finish(store, 1, 8);
+    }
   }
   crt::lock_constant(store);
   store
+}
+
+// The element type of the one `array<T>` field of struct `kt`, or null for any other type.
+fn root_array_element(ts: vector<ir::DbType>, kt: integer) -> integer? {
+  fields = types::record_fields(ts, kt);
+  if len(fields) != 1 {
+    return null;
+  }
+  match ts[fields[0]!.content]?.parts[0] {
+    PtArray { content } => content,
+    _ => null,
+  }
 }
 
 // Definition `d`'s constant store built, NULL_STORE where it is no constant or its body is no

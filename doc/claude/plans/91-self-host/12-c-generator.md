@@ -296,8 +296,18 @@ The helpers of a port, beside the survey: `selfhost/bench/cgen_cycle.sh` compile
 generator, builds it with `--ship` and runs the plain and the default `bodies` layer (it prints
 `N of 1077 units agree`, so a generator that dies on some units cannot pass as "0 different");
 `selfhost/bench/cgen_one.sh FILE FUNCTION` prints the unified diff of one body, the Rust
-writer's against the loft writer's, under the plain switches.  Both keep their output in
-`$LOFT_CGEN_OUT` (default `$TMPDIR/loft-cgen`).
+writer's against the loft writer's, under the plain switches.  For running units (U-0/U-1):
+`cgen_run.sh [--gen EXE|live] FILE` runs one program through the loft unit the way
+`cgen_survey.py --run --plain` does and diffs its output against the interpreter's;
+`cgen_live.sh` is the generator run from the LIVE sources on the interpreter (~20 s a program,
+no 6-minute build), usable wherever a generator is (`LOFT_CGEN`, `--generator`, `--gen live`),
+and `cgen_live.sh --diff FILE` compares its unit with the Rust one;
+`cgen_build_survey.sh [N] [--check]` snapshots the sources, builds them and surveys the corpus
+(against the suite at `tests/loft-suite.pin`) and every bench (`cgen_survey.py --run --bench`
+with no `--files` takes `bench/NN_*` and the library benches under `$LOFT_PERF_LIBS`);
+`cgen_msvc_diff.py WANT GOT` diffs two units with the `_MSC_VER` split copy left out.  All keep
+their output in `$LOFT_CGEN_OUT` (default `$TMPDIR/loft-cgen`); the shared setup is
+`cgen_env.sh`.
 
 ### An open design question: a rule keyed on node identity
 

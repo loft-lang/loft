@@ -203,11 +203,14 @@ pub fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, hi: vector<integer>, inclusive: boolean) -> Ex {
   elem = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   sv = match el_ir::unspan(x.code) { NdVar { n } => n, _ => -1 };
-  if sv < 0 || x.tp is TyOptional || !is_scalar(elem) {
+  // A field of a local (`b.xs[1..3]`) is a place read again where the walk needs it, as Rust
+  // reads it (`OpGetField(b, …)` in the preamble and per element).
+  place = sv < 0 && el_ex_match::getter_place(e, x.code);
+  if (sv < 0 && !place) || x.tp is TyOptional || !is_scalar(elem) {
     el::refuse(e, "a slice of a vector that is no local of plain scalars");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  subj = ir::NdVar { n: sv };
+  subj = if sv >= 0 { ir::NdVar { n: sv } } else { el_ir::unspan(x.code) };
   int_t = ir::TyInteger { spec: i32_spec() };
   bounds: vector<ir::Node> = [];
   for b in [lo, hi] {

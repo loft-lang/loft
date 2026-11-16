@@ -143,3 +143,4 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C153](DESIGN_DECISIONS_PLATFORM.md#c153--what-the-interpreter-can-use-lives-in-opt-a-compiled-targets-decisions-in-lower-a-backend-only-spells) — What the interpreter can use lives in `opt`, a compiled target's decisions in `lower`; a backend only spells
 - [C158](DESIGN_DECISIONS_PLATFORM.md#c158--a-library-declares-no-c-compile-or-link-flags-its-c-reaches-the-system-by-dlopen) — A library declares no C compile or link flags; its C reaches the system by `dlopen`
 - [C164](DESIGN_DECISIONS_PLATFORM.md#c164--an-app-carries-the-files-its-program-names-by-one-rule-on-every-target) — An app carries the files its program names, by one rule on every target
+- [C165](DESIGN_DECISIONS_PLATFORM.md#c165--a-shim-includes-a-declared-dependencys-header-by-the-dependencys-name) — A shim includes a declared dependency's header by the dependency's name

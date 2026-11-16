@@ -876,7 +876,18 @@ pub fn owned_ref(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, v: i
 fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer? {
   match value {
     NdSpan { pos: _, inner } => projection_container_var(b, inner),
-    NdIf { cond: _, t, f } => own::variant_check_subject(b, t, f),
+    NdIf { cond, t, f } => {
+      vc = own::variant_check_subject(b, t, f);
+      if vc != null {
+        return vc;
+      }
+      // A tagged `__nullable<S>` slot's read is the slot's payload when present
+      // (`@FR-L-Null-Tag`): the walk goes on into it.
+      if tag_read_payload(b, cond, t, f) {
+        return projection_container_var(b, t);
+      }
+      null
+    },
     NdCall { def_nr, args } => {
       if !own::is_projection_op(b, def_nr) || len(args) == 0 {
         return null;
@@ -885,6 +896,83 @@ fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer? {
       own::var_of(args[0]!) ?? own::discharged_variable(args[0]!) ?? projection_container_var(b, args[0])
     }
     _ => null,
+  }
+}
+
+// src/use_analysis.rs fn tag_read_payload — `if tag(slot) != 0 { slot.payload } else
+// { OpNullRefSentinel() }`, recognised by what the builder builds: the absent arm the sentinel,
+// the present arm a field read of a slot, the condition the discriminant test of that SAME slot
+// (`OpNot(OpEqInt(OpConvIntFromEnum(OpGetEnum(slot, 0)), 0))`).  True when `cond`, `t` and `f`
+// are that read; the payload is `t`.
+fn tag_read_payload(b: ir::Bundle, cond: ir::Node, t: ir::Node, f: ir::Node) -> boolean {
+  e = call_args(b, f, "OpNullRefSentinel");
+  if e == null || len(e!) != 0 {
+    return false;
+  }
+  fa = call_args(b, t, "OpGetField");
+  if fa == null || len(fa!) == 0 {
+    return false;
+  }
+  slot = unspan_node(fa![0]!);
+  n = call_args(b, cond, "OpNot");
+  if n == null || len(n!) != 1 {
+    return false;
+  }
+  q = call_args(b, n![0]!, "OpEqInt");
+  if q == null || len(q!) != 2 || !is_zero(q![1]!) {
+    return false;
+  }
+  c = call_args(b, q![0]!, "OpConvIntFromEnum");
+  if c == null || len(c!) != 1 {
+    return false;
+  }
+  g = call_args(b, c![0]!, "OpGetEnum");
+  if g == null || len(g!) != 2 || !is_zero(g![1]!) {
+    return false;
+  }
+  same_slot(unspan_node(g![0]!), slot)
+}
+
+// `Value ==` for the nodes a slot is made of: variables, calls and integer constants, spans
+// ignored.  Any other node answers false — the walk then stops at the `if`, as it did before.
+fn same_slot(x: ir::Node, y: ir::Node) -> boolean {
+  match unspan_node(x) {
+    NdVar { n: a } => match unspan_node(y) { NdVar { n: c } => a == c, _ => false },
+    NdInt { n: a } => match unspan_node(y) { NdInt { n: c } => a == c, _ => false },
+    NdLong { n: a } => match unspan_node(y) { NdLong { n: c } => a == c, _ => false },
+    NdCall { def_nr: d1, args: a1 } => match unspan_node(y) {
+      NdCall { def_nr: d2, args: a2 } => {
+        if d1 != d2 || len(a1) != len(a2) {
+          return false;
+        }
+        for a in a1 {
+          if !same_slot(a, a2[a#index]!) {
+            return false;
+          }
+        }
+        true
+      },
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// The arguments of `n` when it is a call to the operator named `op`, else null.
+fn call_args(b: ir::Bundle, n: ir::Node, op: text) -> vector<ir::Node>? {
+  match unspan_node(n) {
+    NdCall { def_nr, args } => {
+      x = b.data.definitions[def_nr];
+      if x != null && x.name == op { args } else { null }
+    },
+    _ => null
+  }
+}
+
+fn is_zero(n: ir::Node) -> boolean {
+  match unspan_node(n) {
+    NdInt { n: k } => k == 0,
+    _ => false
   }
 }
 
@@ -1050,13 +1138,17 @@ pub fn choice_var_arm(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function,
     return null;
   }
   arms: vector<ir::Node> = [];
-  choice_leaves(value, arms);
+  choice_leaves(b, value, arms);
   var: integer? = null;
   for arm in arms {
     a = own::bare(arm);
     w = match a { NdVar { n } => n, _ => -1 };
     if w >= 0 && w != v && w < len(f.variables) && !own::is_argument(f, w)
-        && own::heap_def_nr(tp(f, w)) != null && !own::var_name(f, w).starts_with("__") {
+        && own::heap_def_nr(tp(f, w)) != null
+        // A `??`'s temp (`__ncc_N`) owns the store its subject answered, freed where the `??`
+        // runs again and at the exit: a whole variable here too.
+        && (!own::var_name(f, w).starts_with("__")
+          || (own::var_name(f, w).starts_with("__ncc_") && !ncc_choice_join_off())) {
       if var != null && var! != w {
         return null;
       }
@@ -1078,20 +1170,57 @@ pub fn choice_var_arm(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function,
   var
 }
 
-// The leaves of a choice: each arm's value, a block's its tail.
-fn choice_leaves(n: ir::Node, out: vector<ir::Node>) {
+// The leaves of a choice (`choice_var_arm`'s `leaves`): each arm's value, a block's its tail.  A
+// `??` block (`ncc`) is the choice its `if` makes, followed by the frees of its lifted operands,
+// which answer nothing; a tail that is itself a block or a choice is walked the same way.
+fn choice_leaves(b: ir::Bundle, n: ir::Node, out: vector<ir::Node>) {
   match n {
-    NdSpan { pos: _, inner } => choice_leaves(inner, out),
+    NdSpan { pos: _, inner } => choice_leaves(b, inner, out),
     NdIf { cond: _, t, f } => {
-      choice_leaves(t, out);
-      choice_leaves(f, out);
+      choice_leaves(b, t, out);
+      choice_leaves(b, f, out);
     },
     NdBlock { block } => {
-      ops = block[0]!.operators;
-      out += [if len(ops) > 0 { ops[len(ops) - 1]! } else { n }];
+      bl = block[0]!;
+      ops = bl.operators;
+      if len(ops) == 0 {
+        out += [n];
+        return;
+      }
+      at = len(ops) - 1;
+      if bl.name == "ncc" && !ncc_choice_join_off() {
+        while at >= 0 && is_free_call(b, ops[at]!) {
+          at -= 1;
+        }
+        if at < 0 {
+          return;
+        }
+      }
+      tail = ops[at]!;
+      match own::bare(tail) {
+        NdIf { cond: _, t: _, f: _ } => choice_leaves(b, tail, out),
+        NdBlock { block: _ } => choice_leaves(b, tail, out),
+        _ => { out += [tail]; }
+      }
     },
     _ => { out += [n]; }
   }
+}
+
+// `OpFreeRef` or `OpFreeRefIfDistinct`: a free that answers nothing.
+fn is_free_call(b: ir::Bundle, op: ir::Node) -> boolean {
+  match own::bare(op) {
+    NdCall { def_nr, args: _ } => {
+      x = b.data.definitions[def_nr];
+      x != null && (x.name == "OpFreeRef" || x.name == "OpFreeRefIfDistinct")
+    },
+    _ => false
+  }
+}
+
+// src/keys.rs fn ncc_choice_join_off — `LOFT_NO_NCC_CHOICE_JOIN`.
+fn ncc_choice_join_off() -> boolean {
+  env_variable("LOFT_NO_NCC_CHOICE_JOIN") != null
 }
 
 // src/use_analysis.rs fn tuple_member_roots — the slots naming every heap member of a tuple

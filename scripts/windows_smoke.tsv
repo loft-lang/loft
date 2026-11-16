@@ -117,9 +117,14 @@ scripts/worst.py	--help
 selfhost/bench/baseline.py	--help
 selfhost/bench/bench_speed.py	--help
 selfhost/bench/bgen_survey.py	--help
+selfhost/bench/cgen_build_survey.sh	--help
 selfhost/bench/cgen_cycle.sh	--help
+selfhost/bench/cgen_env.sh	--help
+selfhost/bench/cgen_live.sh	--help
+selfhost/bench/cgen_msvc_diff.py	--help
 selfhost/bench/cgen_natives_gen.py	--help
 selfhost/bench/cgen_one.sh	--help
+selfhost/bench/cgen_run.sh	--help
 selfhost/bench/cgen_survey.py	--help
 selfhost/bench/fill_speed.sh	--help
 selfhost/bench/measure.py	--help

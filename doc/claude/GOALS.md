@@ -538,8 +538,8 @@ Goal C's fraction measures *useful*, not *stable*: a consumer exercises only the
 
 **Definition.** loft behaves identically on **ubuntu / macOS-ARM / windows**, on
 **64-bit and 32-bit processors**, and across its backends: the **interpreter**, the
-**C backend** (`--native-c`, the compiled standard — every CI test's `--native` runs
-it), the **Rust writer** (`--native` without `LOFT_NATIVE_BACKEND=c`) and **wasm**
+**C backend** (`--native`, the compiled standard — every CI test's `--native` runs
+it), the **Rust writer** (`--native-rust`, kept for the attic) and **wasm**
 (`--native-wasm`, `--html`). No result depends on the platform, the width or the
 backend. macOS-ARM matters most here: it requires aligned memory reads, so an
 unaligned read is a real fault there. A `#width 32` program answers the same on

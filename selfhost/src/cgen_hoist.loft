@@ -74,7 +74,8 @@ pub fn held_vector(x: Cx, w: W, v: ir::Node) -> text {
 // reads, then the push headers of the paths it pushes to.  The loop's caller closes them
 // with `release`, by the two lengths it saved.
 pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::LoopHoist {
-  if !enabled() {
+  // Not in a generator, whose locals live in its frame between resumes (`verdict`).
+  if !enabled() || w.gen_elem != "" {
     return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true };
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
@@ -253,7 +254,7 @@ fn push_bits(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, put:
 // pushes onto a path a push header is held for is one call — one room test for the run.
 // Answers the statement after the run, -1 where statement `at` starts none.
 pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer) -> integer {
-  if (env_variable("LOFT_NO_HELD_PUSH_RUN") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_HELD_PUSH_RUN") ?? "0") != "0" {
     return -1;
   }
   shown: vector<ir::Node> = ops[0..end];
@@ -388,7 +389,7 @@ pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
 // the block indexes and never rebinds, hold its header — a copy of the header its source is
 // held under, or one taken from the view itself.  The frame closes with the block.
 pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer) {
-  if !enabled() || (env_variable("LOFT_NO_VIEW_HOIST") ?? "0") != "0" {
+  if w.gen_elem != "" || !enabled() || (env_variable("LOFT_NO_VIEW_HOIST") ?? "0") != "0" {
     return;
   }
   d = opt_hoist::view_def_header(x.b, x.writes, w.index, ops, at, (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0");

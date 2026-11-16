@@ -260,6 +260,23 @@ static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
         return 0;
     }
 #endif
+#if defined(LOFT_ANDROID)
+    /* An app carries the library in its own `lib/<abi>/`, as `lib<stem>.so` whatever the build
+     * machine calls it (`c_driver::android_components`), and the system's loader finds it there
+     * by that name alone: `path` is the build machine's. */
+    {
+        char own[256];
+        const char *dot = strchr(file, '.');
+        size_t k = dot ? (size_t) (dot - file) : strlen(file);
+        if (k + 4 <= sizeof own) {
+            memcpy(own, file, k);
+            memcpy(own + k, ".so", 4);
+            void *ha = loft_dl_open(own, LOFT_DL_LOCAL);
+            void *pa = ha ? loft_ffi_lookup(ha, sym) : 0;
+            if (pa) return pa;
+        }
+    }
+#endif
     (void) file;
     void *h = loft_dl_open(path, LOFT_DL_LOCAL);
     void *p = h ? loft_ffi_lookup(h, sym) : 0;

@@ -22,6 +22,8 @@ use opt_non_sentinel;
 use binds;
 use types;
 use cgen_tables;
+use cgen_parse;
+use cgen_store;
 use cgen_fnval;
 use cgen_unicode;
 
@@ -111,8 +113,6 @@ fn resolve_hot(code: text, candidates: vector<integer>) -> text {
   out
 }
 
-// The tables a written body names that this file does not write yet, by their C prefix.
-UNIT_TABLES = ["loft_sc_", "loft_ptypes", "loft_uc_"];
 
 // `Stores::position`: the byte offset of field `name` of record type `tp`.
 fn field_at(b: ir::Bundle, tp: integer, name: text) -> integer {
@@ -124,15 +124,14 @@ fn field_at(b: ir::Bundle, tp: integer, name: text) -> integer {
   0
 }
 
-// Does this body run a `par` loop (`Cx::threads`)?
-fn runs_parallel(code: ir::Node) -> boolean {
-  hit = [false];
-  opt_non_sentinel::walk(code, fn(n: ir::Node) {
-    if n is NdParallel {
-      hit[0] = true;
+// Does the unit reach the function called `name`?
+fn reaches(b: ir::Bundle, reached: vector<boolean>, name: text) -> boolean {
+  for d in b.data.definitions {
+    if (reached[d#index] ?? false) && d.name == name {
+      return true;
     }
-  });
-  hit[0]!
+  }
+  false
 }
 
 // `unit_defines` for a unit that reaches no library needing a define of its own: no locked
@@ -140,14 +139,28 @@ fn runs_parallel(code: ir::Node) -> boolean {
 // the unit, naming it.
 fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, refused: &text) -> text {
   fold = false;
+  json_tree = false;
+  parse_errors = false;
   frames = false;
   foreign = false;
   locked = false;
+  reflects = false;
+  fetches = false;
+  lazy = false;
   for d in b.data.definitions {
     if !(reached[d#index] ?? false) {
       continue;
     }
     n = d.name;
+    // Asked apart from the chain below: these live in `02_files.loft`, whose branch takes
+    // every function of that file.
+    if (cgen_natives::native_c(cgen_names::runtime_name(b, d#index)) ?? "") == "loft_pg_load_keys" || n == "n_store_load_url" || n == "n_store_load_url_trusted" {
+      fetches = true;
+    }
+    if n == "n_store_bind_lazy" {
+      lazy = true;
+      fetches = true;
+    }
     if n == "n_file_map" {
       // `file_map` is the one producer of a foreign store, and a mapped file is read-only.
       foreign = true;
@@ -160,20 +173,21 @@ fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, r
       // `@FR-Path-Case`: a name is compared with its directory's entries through the full
       // lowercase mapping, the table `to_lowercase` registers.
       fold = true;
-    } else if n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue" || n == "n_parse_errors_of" {
-      refused = "the unit's define for JSON ({n})";
+    } else if n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue" {
+      json_tree = true;
+    } else if n == "n_parse_errors_of" {
+      parse_errors = true;
     } else if n == "n_reflect_type" || n == "n_type_named" || n == "n_reflect_field" || n == "n_reflect_field_path" {
-      refused = "the unit's define for reflection ({n})";
-    } else if n == "n_store_bind_lazy" {
-      refused = "the unit's define for a lazy store";
+      // The table is the interpreter's answer for every type (`reflect::table_of`), which
+      // the host writes into the image.
+      if b.reflect == "" {
+        refused = "the unit's define for reflection: no table in the image ({n})";
+      }
+      reflects = true;
     } else if n == "n_stack_trace" {
       frames = true;
-    } else if n == "n_store_load_url" || n == "n_store_load_url_trusted" || d.native.starts_with("loft_kernel_") || d.native.starts_with("loft_swap_") || d.native.starts_with("loft_rebuild_") || d.native == "loft_live_flip" || d.native == "loft_process_run" || d.native == "loft_git_query" {
+    } else if d.native.starts_with("loft_kernel_") || d.native.starts_with("loft_swap_") || d.native.starts_with("loft_rebuild_") || d.native == "loft_live_flip" || d.native == "loft_process_run" || d.native == "loft_git_query" {
       refused = "the unit's define for a runtime ({n})";
-    } else if d.width32 {
-      refused = "a function under the 32-bit regime ({n})";
-    } else if len(d.code) > 0 && runs_parallel(d.code[0]!) {
-      refused = "the unit's define for threads (par)";
     }
     if refused != "" {
       return "";
@@ -204,7 +218,80 @@ fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, r
   }
   // `@FR-R-NoThreads`: a unit whose `par` sites all run in order keeps its tables plain.
   no_threads = if x.threads { "" } else { "#define LOFT_NO_THREADS 1\n" };
-  "{head}{no_locks}{no_threads}{frame_defs}#define LOFT_MAX_CALL_DEPTH {max_depth}\n"
+  // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
+  // tree with its layout read from this program's type table for one that reaches a JSON
+  // native, the typed walk (`loft_parse.h`) for one that parses a type.
+  parses = cgen_parse::parses(x) || parse_errors;
+  json = if json_tree || parses { "#define LOFT_JSON 1\n" } else { "" };
+  if json_tree {
+    json += cgen_parse::json_layout(b);
+  }
+  if parses {
+    json += "#define LOFT_PARSE 1\n";
+  }
+  // A unit that converts a store of another layout on load carries the converter; it builds
+  // records through the parse writer, which `upgrade_of` made this unit hold.
+  if parses && cgen_store::upgrades(x) {
+    json += "#define LOFT_UPGRADE 1\n";
+  }
+  if reflects {
+    json += "#define LOFT_REFLECT 1\n";
+  }
+  // A driver's fault is contained and the program goes on, so its frames' texts are released
+  // at the jump (`LOFT_HOLD`, loft#2198) — or every failed fetch leaks them.
+  if lazy {
+    json += "#define LOFT_LAZY 1\n#ifndef LOFT_HALT_RELEASE\n#define LOFT_HALT_RELEASE 1\n#endif\n";
+  }
+  // `fetch_defines`: a unit that fetches over a URL — a whole-image load or a paged loader,
+  // whose image may be an `http(s)://` one — carries `LOFT_NET` and the TLS client's lines,
+  // which the host resolved into the image (`tls::unit_lines`).
+  if fetches {
+    if b.tls_lines == "" {
+      refused = "the unit's define for a fetch over a URL: no TLS lines in the image";
+      return "";
+    }
+    json += "#define LOFT_NET 1\n{b.tls_lines}";
+  }
+  "{head}{no_locks}{no_threads}{json}{frame_defs}#define LOFT_MAX_CALL_DEPTH {max_depth}\n"
+}
+
+// `reflects`: does the unit reach a reflection native (`unit_defines`' third answer)?
+fn reflects(b: ir::Bundle, reached: vector<boolean>) -> boolean {
+  for n in ["n_reflect_type", "n_type_named", "n_reflect_field", "n_reflect_field_path"] {
+    if reaches(b, reached, n) {
+      return true;
+    }
+  }
+  false
+}
+
+// `REFLECT_ENTRY`: `reflect_type` and `type_named` over the emitted table (`loft_reflect.h`).
+fn reflect_entry() -> text {
+  lines = [
+    "static loft_ref loft_reflect_type(int64_t kt) {{",
+    "    uint16_t k = (uint16_t) kt;",
+    "    if (k < loft_nrtypes) return loft_reflect_build(&loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);",
+    "    char b[16];",
+    "    snprintf(b, sizeof b, \"#%u\", (unsigned) k);",
+    "    return loft_reflect_build(&loft_rlay, &loft_rnone, b);",
+    "}}",
+    "",
+    "static loft_ref loft_reflect_field(loft_ref value, int64_t position, int64_t kt) {{",
+    "    return loft_reflect_field_at(&loft_rlay, loft_rtypes, loft_nrtypes, value, value.pos, (uint16_t) kt, position);",
+    "}}",
+    "",
+    "static loft_ref loft_reflect_field_path(loft_ref value, loft_ref path, int64_t kt) {{",
+    "    return loft_reflect_field_path_at(&loft_rlay, loft_rtypes, loft_nrtypes, value, path, (uint16_t) kt);",
+    "}}",
+    "",
+    "static loft_ref loft_type_named(loft_str name) {{",
+    "    for (uint32_t k = 0; k < loft_nrtypes; k++)",
+    "        if (strlen(loft_rtypes[k].lookup) == name.len && memcmp(loft_rtypes[k].lookup, name.p, name.len) == 0)",
+    "            return loft_reflect_build(&loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);",
+    "    return loft_ref_null();",
+    "}}",
+  ];
+  "\n{lines.join("\n")}\n"
 }
 
 // What `emit_unit_for` gathers: the bodies' declarations (`gen_decls`), the wrappers'
@@ -237,6 +324,15 @@ fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>)
   if wr.refused != "" {
     return "{x.b.data.definitions[t.d]!.name}: {wr.refused}";
   }
+  // A generator is its creator, with no frame of its own (`write_gen`): the frame struct and
+  // its prototypes among the bodies' declarations, the resume and the release among them.
+  if wr.generator {
+    x.gen_decls += wr.gen_decls;
+    x.gen_bodies += wr.gen_bodies;
+    p.protos += "static loft_ref {wr.name}({wr.list});\n";
+    p.bodies += "\nstatic loft_ref {wr.name}({wr.list}) {{\n{wr.text}}}\n";
+    return "";
+  }
   if wr.storage.starts_with("static /*loft_hot:") {
     candidates += [t.d];
   }
@@ -252,10 +348,22 @@ fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>)
 pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth: integer) -> Assembled {
   x = new_cx(b);
   why = "";
-  reached = opt_names::reachable_functions(b, [root]);
+  // Every lazy driver is a root (@PLN133 S9): a miss calls it through the table the unit
+  // writes, and a driver left out would be a pointer to a body never written.
+  drivers: vector<integer> = [];
+  if opt_names::reachable_functions(b, [root])[def_named(b, "n_store_bind_lazy")] ?? false {
+    for dr in b.lazy_drivers {
+      drivers += [dr.d];
+    }
+  }
+  roots: vector<integer> = [root];
+  for dr in drivers {
+    roots += [dr];
+  }
+  reached = opt_names::reachable_functions(b, roots);
   candidates: vector<integer> = [];
   pieces = Pieces { decls: "", protos: "", fr_bodies: "", bodies: "" };
-  for f in opt_names::written_functions(b, root) {
+  for f in opt_names::written_functions_from(b, root, drivers) {
     why = write_one(x, cgen_names::plain(f), pieces, candidates);
     if why != "" {
       return not_carried(why);
@@ -280,23 +388,71 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     return not_carried(why);
   }
   // The dispatchers of the function values, after the prototypes (`dispatch_code`).
-  dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions(b, root));
+  dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions_from(b, root, drivers));
   if dispatch.refused != "" {
     return not_carried(dispatch.refused);
   }
   // The closure release only where something calls it.
   drops = "";
   if fr_bodies.find("loft_drop_closure(") != null || bodies.find("loft_drop_closure(") != null || dispatch.code.find("loft_drop_closure(") != null {
-    drops = cgen_fnval::drop_code(x, opt_names::written_functions(b, root));
+    drops = cgen_fnval::drop_code(x, opt_names::written_functions_from(b, root, drivers));
   }
   // The dispatchers name their signatures' shapes: a tuple among them is numbered there.
   dispatch.code = resolve_tuples(x, dispatch.code);
-  for t in UNIT_TABLES {
-    if fr_bodies.find(t) != null || bodies.find(t) != null {
-      return not_carried("the unit's table {t}");
-    }
-  }
   typedefs = cgen_tables::typedefs(x, names);
+  // The parse table after the type tables it names (`parse_table`, `main_vector_test`).
+  if cgen_parse::parses(x) || reaches(b, reached, "n_parse_errors_of") {
+    typedefs += cgen_parse::parse_table(x) + cgen_parse::main_vector_test(x);
+  }
+  if cgen_store::upgrades(x) {
+    typedefs += "static const loft_ptype *loft_up_ptypes(void) {{ return loft_ptypes; }}\n";
+  }
+  if reflects(b, reached) {
+    typedefs += b.reflect + reflect_entry();
+  }
   written = "{head}{typedefs}{resolve_hot(decls, candidates)}{resolve_hot(protos, candidates)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates)}{resolve_hot(bodies, candidates)}";
+  if reaches(b, reached, "n_store_bind_lazy") {
+    table = lazy_driver_table(x, why);
+    if why != "" {
+      return not_carried(why);
+    }
+    written += table;
+  }
   Assembled { defines: defs, written: written, refused: "", tables: cgen_tables::tables_line(x) }
 }
+
+// `def_named`: the definition named `name`, or -1.
+fn def_named(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// `lazy_driver_table`: the program's lazy drivers as the runtime calls them (`loft_lazy_miss`)
+// — an adapter per driver with the fixed shape `(coll, source, key_int, key_text) -> integer`,
+// the table of them by the element type each serves (`Bundle.lazy_drivers`, the host's
+// `Data::lazy_fetch_drivers`), or — when the drivers were refused — the reason, which every
+// miss reports.
+fn lazy_driver_table(x: Cx, why: &text) -> text {
+  out = "";
+  rows: vector<text> = [];
+  for dr in x.b.lazy_drivers {
+    def = x.b.data.definitions[dr.d]!;
+    for a in def.attributes {
+      if a.hidden {
+        why = "{def.name}: a lazy driver with a hidden parameter";
+        return "";
+      }
+    }
+    i = dr#index;
+    out += "static int64_t loft_lazydrv{i}(loft_ref c, loft_str s, int64_t ki, loft_str kt) {{ return {cgen_names::c_name(x.b, x.dups, dr.d)}(c, s, ki, kt); }}\n";
+    rows += ["{{ {c_string(dr.element)}, loft_lazydrv{i} }}"];
+  }
+  table = if len(rows) == 0 { "{{ 0, 0 }}" } else { rows.join(", ") };
+  refusal = if x.b.lazy_refusal == "" { "0" } else { c_string(x.b.lazy_refusal) };
+  out + "static const loft_lazy_driver loft_lazy_driver_table[] = {{ {table} }};\nstatic const uint32_t loft_nlazy_driver_table = {len(rows)};\nstatic const char *const loft_lazy_driver_refusal_text = {refusal};\n"
+}
+

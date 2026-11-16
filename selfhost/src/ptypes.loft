@@ -177,7 +177,7 @@ fn has_default(f: ir::DbField) -> boolean {
 // `Stores::zero_default` (`derive_facts`): is `tp`'s default all zero bytes — no nullable
 // field, no declared default, no text, no `type` tag, recursively; an enum's is its zero tag,
 // except a `JsonValue`'s, whose default is `JNull`.
-fn zero_default(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
+pub fn zero_default(ts: vector<ir::DbType>, tp: integer, seen: vector<integer>) -> boolean {
   t = ts[tp];
   if t == null {
     return false;

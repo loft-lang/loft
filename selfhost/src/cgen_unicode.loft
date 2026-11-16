@@ -7,7 +7,8 @@
 // is not itself, written once per unit that asks for it: a `to_lowercase` / `to_uppercase` call,
 // or the file library's name folding (`LOFT_PATH_FOLD`).  The mapping is the language's own,
 // a character's `to_lowercase()` — what `str::to_lowercase` answers, through whichever backend
-// runs the generator.  The character classes (`loft_uc_*`) are not carried yet.
+// runs the generator.  A character class (`loft_uc_*`) is a sorted list of code-point ranges, from the language's
+// own `c.is_numeric()` and its siblings.
 
 use ir;
 use cgen::(Cx);
@@ -17,12 +18,39 @@ use cgen_w::*;
 // reads it.
 pub fn unicode_case(x: Cx, upper: boolean) -> text {
   name = if upper { "upper" } else { "lower" };
-  for n in x.unicode {
-    if n == name {
-      return "loft_text_{name}";
+  register(x, name);
+  "loft_text_{name}"
+}
+
+// The character classes the stdlib asks about, by the C suffix of their test (`CLASSES`).
+CLASSES = ["lowercase", "uppercase", "numeric", "alphanumeric", "alphabetic", "whitespace", "control"];
+
+fn is_class(name: text) -> boolean {
+  for c in CLASSES {
+    if c == name {
+      return true;
     }
   }
-  // Kept in name order, as the Rust writer's set is iterated.
+  false
+}
+
+// `unicode_class`: the C test for class `name` (`loft_uc_{name}`), its table registered; ""
+// for a name that is no class.
+pub fn unicode_class(x: Cx, name: text) -> text {
+  if !is_class(name) {
+    return "";
+  }
+  register(x, name);
+  "loft_uc_{name}"
+}
+
+// Table `name` registered once, kept in name order as the Rust writer's set is iterated.
+fn register(x: Cx, name: text) {
+  for n in x.unicode {
+    if n == name {
+      return;
+    }
+  }
   at = len(x.unicode);
   for n in x.unicode {
     if n > name && at == len(x.unicode) {
@@ -30,7 +58,40 @@ pub fn unicode_case(x: Cx, upper: boolean) -> text {
     }
   }
   x.unicode.insert(at, name);
-  "loft_text_{name}"
+}
+
+// Does character `c` belong to class `name` — the language's own test, which is Rust's `char`
+// test through whichever backend runs the generator?
+fn in_class(c: character, name: text) -> boolean {
+  if name == "lowercase" { c.is_lowercase() } else if name == "uppercase" { c.is_uppercase() } else if name == "numeric" { c.is_numeric() } else if name == "alphanumeric" { c.is_alphanumeric() } else if name == "alphabetic" { c.is_alphabetic() } else if name == "whitespace" { c.is_whitespace() } else { c.is_control() }
+}
+
+// `class_code`: class `name` as a sorted list of code-point ranges, and its test.
+fn class_code(name: text) -> text {
+  rows: vector<text> = [];
+  lo = -1;
+  hi = -1;
+  for u in 0..1114112 {
+    if u >= 55296 && u <= 57343 {
+      continue;
+    }
+    if !in_class(u as character, name) {
+      continue;
+    }
+    if lo >= 0 && hi + 1 == u {
+      hi = u;
+    } else {
+      if lo >= 0 {
+        rows += ["{{ {lo}u, {hi}u }}"];
+      }
+      lo = u;
+      hi = u;
+    }
+  }
+  if lo >= 0 {
+    rows += ["{{ {lo}u, {hi}u }}"];
+  }
+  "static const uint32_t loft_ur_{name}[][2] = {{ {rows.join(", ")} }};\nstatic uint8_t loft_uc_{name}(uint32_t c) {{ return loft_in_ranges(c, loft_ur_{name}, {len(rows)}); }}\n"
 }
 
 // `case_code`: the table of every code point whose mapping is not itself, and its reader.
@@ -57,7 +118,7 @@ fn case_code(upper: boolean) -> text {
 pub fn unicode_code(x: Cx) -> text {
   out = "";
   for name in x.unicode {
-    out += case_code(name == "upper");
+    out += if is_class(name) { class_code(name) } else { case_code(name == "upper") };
   }
   out
 }

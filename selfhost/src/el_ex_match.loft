@@ -1287,6 +1287,12 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     TyRefVar { inner } => { st = inner; },
     _ => {}
   }
+  // `@PLN25`: a `τ?` scalar subject matches as its base (`peel_link` starts at `base()`), its
+  // null reaching the `_` arm.
+  match st {
+    TyOptional { inner } => if el_convert::plain_scalar(inner) || inner is TyText || el_convert::plain_enum(inner) { st = inner; },
+    _ => {}
+  }
   scalar_subject = el_convert::plain_scalar(st) || st is TyText;
   enum_subject = el_convert::plain_enum(st);
   // A struct enum, or one of its variants, is matched on its record: the ordinal its `enum`
@@ -1358,6 +1364,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   named_true = false;
   named_false = false;
   any_wild = false;
+  hoisted_caps: vector<ir::Node> = [];
+  // `match_void_arm`: an arm that finishes without a value.
+  void_arm = false;
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
@@ -1367,16 +1376,46 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         aliases: vector<el_vars::VarName> = [];
         binding_arm = false;
         alts: vector<el_ex_pattern::VAlt> = [];
+        cap_proof: vector<el_vars::Proven> = [];
+        // A variant pattern's field sub-patterns' test, folded as a guard is.
+        fcond: ir::Node? = null;
         if sd >= 0 {
-          va = el_ex_pattern::variant_arm(e, vars, pats, sd, x.code);
+          // `root_capture` (`@FR-P-Cap`): `w: V { … }` at the arm's root binds the matched subject
+          // as `w#N`, a view of the subject's own place (`OpGetField(subject, 0, T)`, borrowing
+          // its source, never freed), hoisted ahead of the arm chain; the variant the arm tests
+          // is proven for its body, so a field read through `w` reads that variant's own field
+          // (`capture_variant`).  The inner pattern is the arm's.
+          vpats = pats;
+          cap_names: vector<el_vars::VarName> = [];
+          if len(pats) == 1 {
+            match e.p.nodes[pats[0]!] {
+              PCap { name: cn, pat: cp, at_sign } => {
+                if !at_sign && cp != null {
+                  bt = el_types::base(st);
+                  src = match el_ir::unspan(x.code) { NdVar { n } => [n], _ => [] };
+                  cv = pattern_bind(vars, cn, el_types::with_deps(el_types::without_deps(bt), src), cap_names);
+                  vars.vars[cv].skip_free = true;
+                  hoisted_caps += [el_ir::v_set(cv, el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sd).known_type }]))];
+                  vd = match e.p.nodes[cp!] { PName { name: vn, member } => if member == "" { el::variant_of(e, sd, vn) } else { -1 }, _ => -1 };
+                  if vd >= 0 {
+                    cap_proof = [el_vars::Proven { place: ir::NdVar { n: cv }, disc: el_ex_object::variant_ord(e, vd) }];
+                  }
+                  vpats = [cp!];
+                }
+              },
+              _ => {}
+            }
+          }
+          va = el_ex_pattern::variant_arm(e, vars, vpats, sd, x.code);
           if va == null {
             return ex(ir::NdNull, ir::TyUnknown { n: 0 });
           }
           cond = va!.cond;
           wild = cond == null;
           binds = va!.binds;
-          aliases = va!.aliases;
+          aliases = cap_names + va!.aliases;
           alts = va!.alts;
+          fcond = va!.fcond;
         } else if scalar_subject && len(pats) == 1 && el_ex_pattern::binding_name(e, pats[0]!) != "" {
           // A bare name that names nothing (`n => n * 2`) binds the subject and matches anything
           // (`binding_arm`: `n#N = _match_subj_N`, then the body).
@@ -1404,6 +1443,10 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         if wild {
           cond = null;
         }
+        if fcond != null && guard == null {
+          gc = if len(binds) > 0 { el_ir::v_block(binds + [fcond!], ir::TyBoolean, "match_guard") } else { fcond! };
+          cond = if cond == null { gc } else { el_ir::v_if(cond!, gc, ir::NdBoolean { b: false }) };
+        }
         // `if <pattern> <guard> else false`; a guarded arm covers nothing, a guarded `_` is its
         // guard alone.
         ug: ir::Node? = null;
@@ -1414,9 +1457,11 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
             return ex(ir::NdNull, ir::TyUnknown { n: 0 });
           }
           ug = g.code;
+          // A pattern's field tests come first: `if <field test> <guard> else false`.
+          gt = if fcond != null { el_ir::v_if(fcond!, g.code, ir::NdBoolean { b: false }) } else { g.code };
           // An arm with bindings binds them in the guard's own block (`binding_guard`, a
           // variant's `match_guard`); a variant arm's body then reads them as they stand.
-          gc = if len(binds) > 0 { el_ir::v_block(binds + [g.code], ir::TyBoolean, if binding_arm { "binding_guard" } else { "match_guard" }) } else { g.code };
+          gc = if len(binds) > 0 { el_ir::v_block(binds + [gt], ir::TyBoolean, if binding_arm { "binding_guard" } else { "match_guard" }) } else { gt };
           cond = if cond == null { gc } else { el_ir::v_if(cond!, gc, ir::NdBoolean { b: false }) };
           wild = false;
         }
@@ -1438,8 +1483,12 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         facts = el_ex_call::assume_guard(e, vars, ug);
+        vars.proven += cap_proof;
         b = el_ex_pattern::arm_body(e, vars, body, expected);
         forget_facts(vars, facts);
+        if el_types::base(b.tp) is TyVoid {
+          void_arm = true;
+        }
         if sd >= 0 {
           owned = el_ex_assign::jo_arm_copy(e, vars, b);
           if owned != null {
@@ -1455,7 +1504,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         for al in rev(aliases) {
           el_vars::restore_name(vars, al.name, al.nr);
         }
-        if len(binds) > 0 && (guard == null || binding_arm) {
+        if len(binds) > 0 && (guard == null || binding_arm) && !(fcond != null && guard == null) {
           b.code = el_ir::v_block(binds + [b.code], b.tp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
@@ -1524,8 +1573,10 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
           // One arm per listed pattern, each binding its own fields ahead of the body (or of the
           // guard, which is asked of each pattern).
           for al in alts {
-            if ug != null {
-              out += [MArm { cond: el_ir::v_if(al.cond, el_ir::v_block(al.binds + [ug!], ir::TyBoolean, "match_guard"), ir::NdBoolean { b: false }), code: ac, tp: b.tp }];
+            if ug != null || al.fcond != null {
+              ag = if ug != null && al.fcond != null { el_ir::v_if(al.fcond!, ug!, ir::NdBoolean { b: false }) } else if ug != null { ug! } else { al.fcond! };
+              gb = if ug != null || len(al.binds) > 0 { el_ir::v_block(al.binds + [ag], ir::TyBoolean, "match_guard") } else { ag };
+              out += [MArm { cond: el_ir::v_if(al.cond, gb, ir::NdBoolean { b: false }), code: ac, tp: b.tp }];
             } else {
               ai = el_ir::v_block(al.binds + [b.code], b.tp, "match_arm");
               if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
@@ -1650,6 +1701,11 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
       chain = el_ir::v_if(a.cond!, a.code, chain);
     }
   }
+  // `@FR-C-Never` (loft#2499): a match never finishes only when EVERY arm does not — beside an
+  // arm that finishes without a value it is a statement that finishes.
+  if result is TyNever && void_arm {
+    result = ir::TyVoid;
+  }
   if scalar_subject {
     // `dn1_widen_branch_null`: a non-null scalar result that a branch answers as null is `τ?`;
     // the block keeps the type the arms settled on.
@@ -1665,7 +1721,10 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   // A struct enum read in place needs no `match` block; a held subject is set inside one.
   if sd >= 0 {
     if held_set != null {
-      return own_match_arms(e, vars, ex(el_ir::v_block([held_set!, chain], result, "match"), result));
+      return own_match_arms(e, vars, ex(el_ir::v_block([held_set!] + hoisted_caps + [chain], result, "match"), result));
+    }
+    if len(hoisted_caps) > 0 {
+      return own_match_arms(e, vars, ex(el_ir::v_block(hoisted_caps + [chain], result, "match"), result));
     }
     return own_match_arms(e, vars, ex(chain, result));
   }

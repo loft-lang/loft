@@ -140,9 +140,9 @@ mod spawns_sh {
         );
         let mut cmd = loft::platform::process::harness_command("bash");
         // @PLN203 C-gap: a twin port uses library versions whose natives are a Rust crate,
-        // which the C does not load — the twins run without LOFT_NATIVE_BACKEND until then.
+        // which the C does not load — the twins run with LOFT_NATIVE_BACKEND=rust until then.
         cmd.arg(root.join("scripts/script_twins.sh"))
-            .env_remove("LOFT_NATIVE_BACKEND")
+            .env("LOFT_NATIVE_BACKEND", "rust")
             .current_dir(&root)
             .env("PATH", path)
             .env("LOFT_TIMEOUT", "300");

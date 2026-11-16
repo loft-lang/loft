@@ -239,6 +239,9 @@ struct W {
   // whether it is a `&` link, and whether a statement written so far has bound it.
   raw: vector<text>,
   links: vector<boolean>,
+  // `store_links`: the `&` locals (and place-twin parameters) that link a store place — a
+  // `loft_ref` read and written through the place's own get and set (`link_access`).
+  store_links: vector<boolean>,
   bound: vector<boolean>,
   // `@FR-R-BufferReturn`'s bind clause: the work buffers a `__wr` call of the current
   // statement filled that were made for that call alone.
@@ -256,6 +259,14 @@ struct W {
   // the place is one (-1 for a plain vector).
   elem: integer,
   keyed: integer,
+  // Where the last `vector_place` was a member of a linked group (`@FR-Col-Group`): the
+  // temporary the parent was read into ("" outside a group) and each member's byte position
+  // and type, in pairs, the place's own member first.
+  group: text,
+  group_members: vector<integer>,
+  // A generator's element shape ("" outside one, `gen_elem`), and the yields written so far.
+  gen_elem: text,
+  yields: integer,
   // `@FR-R-SameRead`'s filed clause: the hash type the previous statement filed a record
   // into (-1 for none), and the one a lookup's binding may read it from.
   filed: integer,
@@ -414,6 +425,11 @@ pub struct Written {
   pub storage: text,
   // `(R-CSplit)`: the body is over its budget — written whole, its MSVC parts not carried.
   pub split: boolean,
+  // A generator (`write_gen`): `text` is its creator's body; the frame struct and the
+  // prototypes, written before the unit's functions, and the resume and release, after them.
+  pub generator: boolean,
+  pub gen_decls: text,
+  pub gen_bodies: text,
 }
 
 fn refuse(w: W, why: text) {
@@ -563,6 +579,8 @@ fn held(shape: text) -> text {
   }
   if shape == "int" {
     "int64_t"
+  } else if shape == "int32" {
+    "int32_t"
   } else if shape == "bool" {
     "uint8_t"
   } else if shape == "enum" {
@@ -621,6 +639,8 @@ fn initial(shape: text) -> text {
   }
   if shape == "int" {
     "LOFT_NULL"
+  } else if shape == "int32" {
+    "LOFT_NULL32"
   } else if shape == "bool" {
     "LOFT_BOOL_NULL"
   } else if shape == "enum" {
@@ -646,6 +666,8 @@ fn kind_of(shape: text) -> integer {
   }
   if shape == "int" {
     K_INT
+  } else if shape == "int32" {
+    K_INT32
   } else if shape == "bool" {
     K_BOOL
   } else if shape == "enum" {
@@ -672,6 +694,8 @@ fn kind_of(shape: text) -> integer {
 fn shape_of_kind(k: integer) -> text {
   if k == K_INT {
     "int"
+  } else if k == K_INT32 {
+    "int32"
   } else if k == K_ENUM {
     "enum"
   } else if k == K_FLOAT {
@@ -811,6 +835,12 @@ fn as_int(w: W, e: E) -> text {
   }
 }
 
+// @PLN204 — a value as a 32-bit integer: a 32-bit one as it is, any other narrowed
+// (`loft_n32`, a value that does not fit reading null).
+fn as_int32(w: W, e: E) -> text {
+  if e.kind == K_INT32 { e.code } else { "loft_n32({as_int(w, e)})" }
+}
+
 fn as_enum(w: W, e: E) -> text {
   if e.kind == K_ENUM {
     return e.code;
@@ -897,6 +927,8 @@ fn as_fn(w: W, e: E) -> text {
 fn as_shape(w: W, e: E, shape: text) -> text {
   if shape == "int" {
     as_int(w, e)
+  } else if shape == "int32" {
+    as_int32(w, e)
   } else if shape == "bool" {
     as_bool(w, e)
   } else if shape == "enum" {

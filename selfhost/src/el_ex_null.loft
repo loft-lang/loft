@@ -28,9 +28,16 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_pattern;
 use el_ex_vector;
+use el_compare;
 
 pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
+    // `build_null_coalesce_default` holds a subject that is no local in a `__ncc_N` whatever
+    // its type, so a call to a function declared below mints it on the first pass too: it
+    // numbers before the second pass's buffers, as the Rust's does.
+    if e.first_pass && !(x.code is NdVar) && !(x.tp is TyNull) {
+      el_vars::create_unique(vars, "_ncc", el_types::base(x.tp));
+    }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   lhs = el_types::base(x.tp);
@@ -658,7 +665,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
-    return ex(ir::NdNull, b);
+    return ex(ir::NdNull, ncr_type(e, x.code, b));
   }
   // A vector is tested with `OpVectorIsNull` (`handle_present`'s collection arm), held as read.
   vec = b is TyVector;
@@ -689,7 +696,29 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     ops += [el_ir::v_set(held, code)];
   }
   ops += [test, subject];
-  ex(el_ir::v_block(ops, b, "ncr"), b)
+  bt = ncr_type(e, x.code, b);
+  ex(el_ir::v_block(ops, bt, "ncr"), bt)
+}
+
+// `kept` with every user-named local of `all` put back, in `all`'s order.
+fn keep_user_locals(vars: el_vars::Vars, kept: vector<integer>, all: vector<integer>) -> vector<integer> {
+  [for d in all if kept.contains(d) || (d >= 0 && d < len(vars.vars) && !starts_with(el_vars::name_of(vars, d), "_")) { d }]
+}
+
+// `null_coalesce_exit`'s block type (loft#2481): a record a loft function answers is a fresh one
+// the block hands over — its call's borrows dropped (`LOFT_NO_NCR_CALL_OWNS` unset) — any other
+// subject keeps them.
+pub fn ncr_type(e: el::El, subject: ir::Node, b: ir::TypeT) -> ir::TypeT {
+  heap = struct_ref(e, b) >= 0 || el_convert::struct_enum(b);
+  match el_ir::unspan(subject) {
+    NdCall { def_nr } => if heap && !starts_with(el::def(e, def_nr).name, "Op") && loft_defined(el::def(e, def_nr)) { el_types::without_deps(b) } else { b },
+    _ => b
+  }
+}
+
+// `Definition::is_loft_defined`: a function with a body the program or a library wrote.
+pub fn loft_defined(d: ir::Definition) -> boolean {
+  (starts_with(d.name, "n_") || starts_with(d.name, "t_") || starts_with(d.name, "f_") || d.instance_of >= 0) && len(d.code) > 0 && d.code[0]! is NdBlock
 }
 
 // The line a token starts on.
@@ -913,7 +942,23 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
   // A float compared with `null` is its null test (`null_test`): its truth, `!` of it for `==`.
   if (op == "==" || op == "!=") && (a.tp is TyNull || b.tp is TyNull) {
     v = if a.tp is TyNull { b } else { a };
+    // @FR-B-Ref-Uniform — a `&τ?` asks the null question its `τ?` asks (`null_test` peels the
+    // link): the link is the route, never the shape.
+    while v.tp is TyRefVar {
+      v = ex(v.code, match v.tp { TyRefVar { inner } => inner, _ => v.tp });
+    }
     vb = el_types::base(v.tp);
+    // `@FR-T-Absent` — a tuple a program writes down EXISTS, whatever its members hold: its
+    // null test is constantly false.  Only an out-of-range read's `(τ…)?` can be absent, which
+    // `coalesce_not_null` answers — not carried yet.
+    if tuple_shape(e, v.tp) {
+      if v.tp is TyOptional {
+        el::refuse(e, "a null test of a tuple that may be absent");
+        return ex(ir::NdNull, ir::TyBoolean);
+      }
+      f = ir::NdBoolean { b: false };
+      return ex(if op == "==" { f } else { el_ir::cl(e, "OpNot", [f]) }, ir::TyBoolean);
+    }
     if vb is TyFloat || vb is TySingle {
       t = el_convert::convert_admitting(e, vars, v.code, v.tp, ir::TyBoolean);
       if t != null {
@@ -946,6 +991,12 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     // negation.
     sd = struct_ref(e, vb);
     if v.tp is TyOptional && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") {
+      is_null = el_ir::cl(e, "OpRefIsNull", [v.code]);
+      return ex(if op == "==" { is_null } else { el_ir::cl(e, "OpNot", [is_null]) }, ir::TyBoolean);
+    }
+    // `null_test`'s last arm: any other `τ?` over a reference (a struct-enum variant's record,
+    // a stored tuple) holds the store sentinel too.
+    if v.tp is TyOptional && vb is TyReference {
       is_null = el_ir::cl(e, "OpRefIsNull", [v.code]);
       return ex(if op == "==" { is_null } else { el_ir::cl(e, "OpNot", [is_null]) }, ir::TyBoolean);
     }
@@ -1021,12 +1072,34 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     }
   }
   if op == ">" {
-    return call_op(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
+    return compare_or_call(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
   }
   if op == ">=" {
-    return call_op(e, vars, "<=", [b.code, a.code], [b.tp, a.tp]);
+    return compare_or_call(e, vars, "<=", [b.code, a.code], [b.tp, a.tp]);
   }
-  call_op(e, vars, op, [a.code, b.code], [a.tp, b.tp])
+  compare_or_call(e, vars, op, [a.code, b.code], [a.tp, b.tp])
+}
+
+// `call_op_as`'s first question: two tuples compare element by element (`tuple_compare`),
+// BEFORE the candidates — which would match `OpEqRef` for two stored tuples and answer whether
+// they are one record.  Then the builtin candidates (`call_op`).
+fn compare_or_call(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  for t in types {
+    if el_types::is_unknown(t) {
+      return call_op(e, vars, op, list, types);
+    }
+  }
+  tc = el_compare::tuple_compare(e, vars, op, list, types);
+  tc ?? call_op(e, vars, op, list, types)
+}
+
+// `Parser::is_tuple_shape`: a stack tuple, or a stored `__tuple<…>` record.
+fn tuple_shape(e: el::El, t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyTuple { elems: _ } => true,
+    TyReference { n, dep: _ } => n >= 0 && starts_with(el::def(e, n).name, "__tuple<"),
+    _ => false
+  }
 }
 
 // `Parser::order_through_compare`: an order form through `operator compare` — the call, its
@@ -1170,18 +1243,21 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // `@FR-C-Never`: a then arm that never finishes answers nothing, so it takes the else's type
   // (`true_type = false_type`, its block re-typed).
-  if t.tp is TyNever && !(f.tp is TyNever) && !(f.tp is TyNull) {
-    hv = if ends_in_halt(e, t.code) { halt_null(e, f.tp) } else { null };
+  // Both arms never finishing is no exception: the null still goes behind the then arm's.
+  if t.tp is TyNever && !(f.tp is TyNull) {
+    // The halt — or the construct of its own that never finishes, a `match` whose every arm
+    // leaves (`then_never`) — stays, and the sibling's null goes behind it.
+    hv = if f.tp is TyNever { ir::NdNull } else { halt_null(e, f.tp) ?? ir::NdNull };
     tc = t.code;
-    if hv != null {
-      match tc {
-        NdBlock { block } => {
+    match tc {
+      NdBlock { block } => {
+        if len(block[0].operators) > 0 {
           hb = block[0];
-          hb.operators += [hv!];
+          hb.operators += [hv];
           tc = ir::NdBlock { block: [hb] };
-        },
-        _ => {}
-      }
+        }
+      },
+      _ => {}
     }
     t = ex(block_typed(tc, f.tp), f.tp);
   }
@@ -1349,10 +1425,11 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // `arm_join_type` with `joined_deps` (loft#978): a record arm's dep on a store the arm itself
   // mints (a literal's `__ref_p2_N`) is its ownership marker, not a borrow — the arm block is
-  // typed without it, and the `if` borrows what either arm still names.
+  // typed without it, and the `if` borrows what either arm still names.  A local the program
+  // declares in the arm (`{ a: W = …; a }`) is a binding, not a marker: its dep is kept.
   if (el_types::base(t.tp) is TyReference || el_types::struct_enum_def(t.tp) >= 0) && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
-    td = outside_deps(t.code, el_types::deps(t.tp));
-    fd = outside_deps(f.code, el_types::deps(f.tp));
+    td = keep_user_locals(vars, outside_deps(t.code, el_types::deps(t.tp)), el_types::deps(t.tp));
+    fd = keep_user_locals(vars, outside_deps(f.code, el_types::deps(f.tp)), el_types::deps(f.tp));
     deps = td;
     for x in fd {
       if !deps.contains(x) {
@@ -1405,6 +1482,11 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       }
     }
     return ex(el_ir::v_if(c.code, t.code, f.code), el_types::with_deps(t.tp, ds));
+  }
+  // `@PLN25` DN1: an arm whose code ends in a null — the sibling's null behind a then arm that
+  // never finishes, a null literal call — beside a non-null scalar arm makes the join `τ?`.
+  if !(t.tp is TyOptional) && el_convert::plain_scalar(t.tp) && el_ex_pattern::branch_yields_null(e, t.code) != el_ex_pattern::branch_yields_null(e, f.code) {
+    return ex(el_ir::v_if(c.code, t.code, f.code), ir::TyOptional { inner: t.tp });
   }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
 }
@@ -1904,12 +1986,10 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
   }
-  if !e.first_pass && unrenamed {
-    // Staged after the tail's delivery (`stage_exits`), as Rust redirects a mid-body exit.
-    built = el_expressions::object_into_buffer(e, vars, x, rb, result, stage: false);
-    if built != null {
-      return ex(ir::NdReturn { inner: built! }, ir::TyNever);
-    }
+  // A fresh literal keeps its own work ref here: whether the exits build into the buffer is
+  // decided once the tail's delivery is, over EVERY exit (`literal_exits_into_buffer`).
+  if !e.first_pass && unrenamed && el_expressions::fresh_literal_ref(x) >= 0 {
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
   // A buffer a chain renamed onto its work ref (`chain_return_buffer_var`) is still the
   // caller's: a literal is built into it as into `__retbuf`.
@@ -2124,6 +2204,12 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
   // `MaterializeView` (#306) for a local viewing a store of this frame (a `for` variable over a
   // field): copied into a work ref the first pass renames the buffer onto.
   if lv >= 0 && el_expressions::views_local(vars, lv) {
+    // A struct ENUM keeps `__retbuf` in Rust where a struct renames it onto the copy's work ref
+    // — the clause of `classify_ret_promotion_inner` that decides it is not ported: refused.
+    if el_convert::struct_enum(el_types::base(result)) {
+      el::refuse(e, "a returned view of a local, answered as a struct enum");
+      return null;
+    }
     if e.first_pass {
       if unrenamed && !el_expressions::buffer_bound(e) {
         mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));

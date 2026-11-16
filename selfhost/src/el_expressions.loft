@@ -216,6 +216,20 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if lambda && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
     code = lambda_vector_copy(e, code, rb, result);
   }
+  // `MaterializeView` for a lambda's tail that reads a capture (`return_views_a_capture`): the
+  // record belongs to the frame that built the closure, so it is copied into the late buffer
+  // behind its null test, the result borrowing the buffer.
+  if lambda && !e.first_pass && rb >= 0 && e.closure_var >= 0 && el_types::base(result) is TyReference {
+    cc = capture_tail_copy(e, vars, code, rb);
+    if cc != null {
+      code = cc!;
+    } else if ncc_over_capture(e, code) {
+      // Rust materialises each arm into a work ref the late buffer is renamed onto, the body
+      // borrowing the lambda's placeholder for the capture — a variable this port's lambdas do
+      // not keep: refused by name.
+      el::refuse(e, "a lambda answering a `??` over its capture");
+    }
+  }
   // A lambda's late buffer is delivered nothing else: its body builds the record it answers as
   // a value (`ref_return` renamed nothing on the first pass, when the lambda had no buffer).
   if lambda {
@@ -286,6 +300,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // delivery is asked of it.
       ncc_tail = match body_tail(code) { NdBlock { block } => block[0].name == "ncc", _ => false };
       built = if ncc_tail { el_ex_null::merge_view_call(e, vars, code) } else { null };
+
       view_answer = built != null;
       if built == null {
         built = build_into_buffer(e, vars, code, rb, result);
@@ -317,6 +332,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // A tail already refused is no second refusal.
       if built != null {
         code = built!;
+        code = literal_exits_into_buffer(e, vars, code, rb, result);
         if el_types::base(result) is TyReference {
           code = stage_exits(e, vars, code, rb);
         }
@@ -1463,9 +1479,15 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     // the buffer itself) is refused by name.
     renamed = match tail { NdVar { n } => if vars.vars[n].argument && attr_nr(el::def(e, d), el_vars::name_of(vars, n)) >= 0 && el::def(e, d).attributes[attr_nr(el::def(e, d), el_vars::name_of(vars, n))].hidden { n } else { -1 }, _ => -1 };
     if renamed >= 0 {
+      // `nrvo_collapse_defining_call`: the local's one defining call, a statement of the body,
+      // is handed the buffer as its own (`v = make(n, v)`); any other call bind is refused.
       if bound_from_call(code, renamed) {
-        el::refuse(e, "a vector local that takes the return buffer, bound from a call");
-        return code;
+        collapsed = collapse_defining_call(vars, bl, renamed);
+        if collapsed == null {
+          el::refuse(e, "a vector local that takes the return buffer, bound from a call");
+          return code;
+        }
+        bl = collapsed!;
       }
       bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
       bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: renamed }]), bl.operators[0]] };
@@ -2224,6 +2246,241 @@ pub fn literal_arms_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb:
     },
     _ => null
   }
+}
+
+// `nrvo_collapse_defining_call` over the body `bl`: the one top-level `v = f(…, w)` whose last
+// argument is the call's hidden buffer `w` becomes `v = f(…, v)`; null where `v` is bound from a
+// call anywhere else, or by two calls.
+fn collapse_defining_call(vars: el_vars::Vars, bl: ir::Block, v: integer) -> ir::Block? {
+  at = -1;
+  for o in bl.operators {
+    match el_ir::unspan(o) {
+      NdSet { var, inner } => if var == v && el_ir::unspan(inner) is NdCall {
+        if at >= 0 {
+          return null;
+        }
+        at = o#index;
+      },
+      _ => {}
+    }
+  }
+  if at < 0 {
+    return null;
+  }
+  rest = bl;
+  rest.operators[at] = ir::NdNull;
+  if bound_from_call(ir::NdBlock { block: [rest] }, v) {
+    return null;
+  }
+  out = bl;
+  match el_ir::unspan(bl.operators[at]!) {
+    NdSet { var, inner } => match el_ir::unspan(inner) {
+      NdCall { def_nr, args } => {
+        if len(args) == 0 || hidden_ref_arg(vars, args) < 0 {
+          return null;
+        }
+        a2 = args;
+        a2[len(a2) - 1] = ir::NdVar { n: v };
+        out.operators[at] = respan(bl.operators[at]!, ir::NdSet { var: var, inner: ir::NdCall { def_nr: def_nr, args: a2 } });
+      },
+      _ => return null
+    },
+    _ => return null
+  }
+  out
+}
+
+// `n` with its innermost node replaced by `inner`, its position spans kept.
+fn respan(n: ir::Node, inner: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner: i } => ir::NdSpan { pos: pos, inner: respan(i, inner) },
+    _ => inner
+  }
+}
+
+// Is the body's tail an `ncc` block holding a read rooted at the closure record?
+fn ncc_over_capture(e: el::El, code: ir::Node) -> boolean {
+  match body_tail(code) {
+    NdBlock { block } => block[0].name == "ncc" && len(block[0].operators) > 0 && match el_ir::unspan(block[0].operators[0]!) {
+      NdSet { var: _, inner } => el_ir::reads_var(inner, e.closure_var),
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// A lambda body whose tail is a read of its closure record's field: the tail copied into the
+// buffer `rb` (`{ rb = null; OpDatabase(rb, kt); OpCopyRecord(cap, rb, kt); rb }`) where the
+// capture is present, the null sentinel where not; null for any other tail.
+fn capture_tail_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  tail = el_ir::unspan(bl.operators[-1]!);
+  rooted = match tail { NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetDbRef" && len(args) > 0 && el_ir::unspan(args[0]!) == ir::NdVar { n: e.closure_var }, _ => false };
+  td = heap_def(el_vars::tp(vars, rb));
+  if !rooted || td < 0 {
+    return null;
+  }
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  owned = el_types::with_deps(el_types::without_deps(el_vars::tp(vars, rb)), [rb]);
+  copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return");
+  bl.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [tail]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
+  d = e.context;
+  ba = attr_nr(el::def(e, d), "__retbuf");
+  ret = el::def(e, d).returned[0];
+  if ba >= 0 && !el_types::deps(ret).contains(ba) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+  }
+  ir::NdBlock { block: [bl] }
+}
+
+// The work ref of a FRESH record literal — an `Object` (or a unit variant's `EnumUnitLit`) block
+// that opens by nulling its own buffer and answers it — or -1 (`tail_fresh_object_workref`).
+pub fn fresh_literal_ref(x: ir::Node) -> integer {
+  match el_ir::unspan(x) {
+    NdReturn { inner } => fresh_literal_ref(inner),
+    NdBlock { block } => {
+      b = block[0];
+      if !(b.name == "Object" || b.name == "EnumUnitLit") || len(b.operators) == 0 {
+        return -1;
+      }
+      opens = match el_ir::unspan(b.operators[0]!) { NdSet { var, inner } => if inner is NdNull { var } else { -1 }, _ => -1 };
+      answers = match el_ir::unspan(b.operators[-1]!) { NdVar { n } => n, _ => -1 };
+      if opens >= 0 && opens == answers { opens } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// `exit_literal_workrefs`: the work refs of an exit whose value is a fresh literal, or a branch
+// every arm of which ends in one; false when some arm ends in anything else.
+fn exit_literal_refs(x: ir::Node, out: vector<integer>) -> boolean {
+  w = fresh_literal_ref(x);
+  if w >= 0 {
+    out += [w];
+    return true;
+  }
+  match el_ir::unspan(x) {
+    NdIf { cond: _, t, f } => exit_literal_refs(t, out) && exit_literal_refs(f, out),
+    NdBlock { block } => len(block[0].operators) > 0 && exit_literal_refs(block[0].operators[-1]!, out),
+    _ => false
+  }
+}
+
+// `returns_through_chain`: a chain exit answers what its callee wrote into the buffer `v`.
+fn returns_through_chain(x: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(x) {
+    NdBlock { block } => block[0].name == "one_buffer_chain" && len(block[0].operators) > 0 && match el_ir::unspan(block[0].operators[-1]!) { NdVar { n } => n == v, _ => false },
+    NdInsert { items } => len(items) > 0 && returns_through_chain(items[-1]!, v),
+    _ => false
+  }
+}
+
+// Every `return` value of `n`, in source order.
+fn returns_of(n: ir::Node, out: vector<ir::Node>) {
+  match n {
+    NdReturn { inner } => { out += [inner]; },
+    NdSpan { pos: _, inner } => returns_of(inner, out),
+    NdIf { cond, t, f } => { returns_of(cond, out); returns_of(t, out); returns_of(f, out); },
+    NdBlock { block } => { for o in block[0].operators { returns_of(o, out); } },
+    NdLoop { block } => { for o in block[0].operators { returns_of(o, out); } },
+    NdInsert { items } => { for o in items { returns_of(o, out); } },
+    NdSet { var: _, inner } => returns_of(inner, out),
+    NdCall { def_nr: _, args } => { for o in args { returns_of(o, out); } },
+    _ => {}
+  }
+}
+
+// Each fresh-literal `return` of `n` rebuilt into the return buffer `rb` (`build_exit_arms`).
+fn build_literal_exits(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+  match n {
+    NdReturn { inner } => {
+      if fresh_literal_ref(inner) >= 0 {
+        built = object_into_buffer(e, vars, inner, rb, result, stage: false);
+        if built != null {
+          return ir::NdReturn { inner: built! };
+        }
+      } else if exit_literal_refs(inner, []) {
+        el::refuse(e, "a mid-body `return` of a branch of literals built into the return buffer");
+      }
+      n
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: build_literal_exits(e, vars, inner, rb, result) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: build_literal_exits(e, vars, t, rb, result), f: build_literal_exits(e, vars, f, rb, result) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { build_literal_exits(e, vars, x, rb, result) }] },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { build_literal_exits(e, vars, x, rb, result) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { build_literal_exits(e, vars, x, rb, result) }];
+      ir::NdLoop { block: [b] }
+    },
+    _ => n
+  }
+}
+
+// `Parser::literal_exits_into_buffer` (@PLN164 B2, `@FR-R-Place`) for the unpromoted `__retbuf`:
+// when EVERY mid-body exit is a fresh literal of the buffer's type, a chain over the buffer or a
+// by-value parameter of its type (`@FR-R-Rebind`), each `return S { … }` builds into the buffer,
+// so the callee answers one store whichever exit it takes; any other exit keeps every per-exit
+// store.  (The chain-renamed buffer's half, `chain_return_buffer_var`, is not carried here.)
+pub fn literal_exits_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+  // A `null` tail is no record: Rust's delivery arms, which run this pass, are never reached.
+  if e.first_pass || attr_nr(el::def(e, e.context), "__retbuf") < 0 || el::def(e, e.context).name.contains("__lambda") || null_sentinel_tail(e, code) || el_ir::unspan(body_tail(code)) is NdNull {
+    return code;
+  }
+  td = heap_def(el_vars::tp(vars, rb));
+  if td < 0 || td != heap_def(el::def(e, e.context).returned[0] ?? ir::TyVoid) || !el_ex_match::fully_written_by_literal(e, td) {
+    return code;
+  }
+  params: vector<integer> = [];
+  for a in el::def(e, e.context).attributes {
+    if !a.hidden && heap_def(a.typedef[0] ?? ir::TyVoid) == td {
+      pv = el_vars::var(vars, a.name);
+      if pv >= 0 && vars.vars[pv].argument {
+        params += [pv];
+      }
+    }
+  }
+  exits: vector<ir::Node> = [];
+  returns_of(code, exits);
+  refs: vector<integer> = [];
+  for x in exits {
+    arms: vector<integer> = [];
+    if exit_literal_refs(x, arms) {
+      for w in arms {
+        if w == rb {
+          continue;
+        }
+        if el_vars::is_compiler_generated(vars, w) && heap_def(el_vars::tp(vars, w)) == td {
+          if !refs.contains(w) {
+            refs += [w];
+          }
+        } else {
+          return code;
+        }
+      }
+      continue;
+    }
+    if returns_through_chain(x, rb) {
+      continue;
+    }
+    pv = match el_ir::unspan(x) { NdVar { n } => n, _ => -1 };
+    if pv >= 0 && params.contains(pv) {
+      continue;
+    }
+    return code;
+  }
+  if len(refs) == 0 {
+    return code;
+  }
+  build_literal_exits(e, vars, code, rb, result)
 }
 
 // A record literal built in its own `__ref_p2_N` (an `Object` block opening with that buffer's

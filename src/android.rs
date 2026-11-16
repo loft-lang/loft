@@ -37,13 +37,28 @@ pub(crate) const NDK_MIN: &str = "r26";
 
 /// How an activity library is packaged: where the APK is staged, where the debug keystore
 /// lives (it stays, so every later build of the app signs with the same key), whether the
-/// app is debuggable (a build that is not `--ship`), and the program's files it carries
-/// ([`app_assets`]: each path relative to the program, and the file on this machine).
+/// app is debuggable (a build that is not `--ship`), the program's files it carries
+/// ([`app_assets`]: each path relative to the program, and the file on this machine), the
+/// libraries it ships beside its own (the components the C binds, `c_driver::build_android`),
+/// and whether it asks for the network ([`needs_internet`]).
 pub(crate) struct Package<'a> {
     pub(crate) staging: &'a Path,
     pub(crate) keystore_dir: &'a Path,
     pub(crate) debuggable: bool,
     pub(crate) assets: &'a [(String, std::path::PathBuf)],
+    pub(crate) libs: &'a [std::path::PathBuf],
+    pub(crate) internet: bool,
+}
+
+/// Does the program's C `c` reach the network — a URL fetch of the runtime (`LOFT_NET`), the
+/// engine host's (`LOFT_ENGINE`), or a component's natives (the web, server and ssh libraries)?
+/// An app opens no socket without the `INTERNET` permission, and asks for none it does not use.
+pub(crate) fn needs_internet(c: &str) -> bool {
+    c.contains("#define LOFT_NET 1")
+        || c.contains("#define LOFT_ENGINE 1")
+        || loft::c::component::NAMES
+            .iter()
+            .any(|n| c.contains(&format!("\"{}\"", loft::components::file_name(n))))
 }
 
 /// The list the entry extracts the packed files by (`src/c/android/loft_android_main.c`): it
@@ -353,6 +368,8 @@ impl AndroidTarget {
             keystore_dir: &crate_dir,
             debuggable: false,
             assets: &[],
+            libs: &[],
+            internet: false,
         };
         self.finish(&built, &package, out_path)
     }
@@ -424,10 +441,15 @@ impl AndroidTarget {
             crate::file_access::copy(&libcxx, lib_dir.join("libc++_shared.so"))
                 .map_err(|e| format!("loft: stage libc++_shared.so: {e}"))?;
         }
+        for lib in package.libs {
+            let name = crate::file_access::file_name(lib).unwrap_or_default();
+            crate::file_access::copy(lib, lib_dir.join(&name))
+                .map_err(|e| format!("loft: stage {name}: {e}"))?;
+        }
         let manifest = work.join("AndroidManifest.xml");
         crate::file_access::write(
             &manifest,
-            android_manifest(&app, LIB_NAME, package.debuggable),
+            android_manifest(&app, LIB_NAME, package.debuggable, package.internet),
         )
         .map_err(|e| format!("loft: write manifest {e}"))?;
 
@@ -652,7 +674,7 @@ fn app_ident(out_apk: &Path) -> String {
 /// The generated `AndroidManifest.xml` for a code-less `NativeActivity` APK
 /// (`hasCode="false"`, no dex). `min`/`target` sdk come from `aapt2` flags, so no
 /// `<uses-sdk>` here (aapt2 rejects the duplicate).
-fn android_manifest(app: &str, lib_name: &str, debuggable: bool) -> String {
+fn android_manifest(app: &str, lib_name: &str, debuggable: bool, internet: bool) -> String {
     // A debuggable app lets `adb shell run-as` read its private files: a build that is not
     // `--ship` keeps a copy of its stdout there (c-backend.md, A1).
     let debuggable = if debuggable {
@@ -660,9 +682,14 @@ fn android_manifest(app: &str, lib_name: &str, debuggable: bool) -> String {
     } else {
         ""
     };
+    let internet = if internet {
+        "\n    <uses-permission android:name=\"android.permission.INTERNET\"/>"
+    } else {
+        ""
+    };
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.loft.{app}">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.loft.{app}">{internet}
     <application android:label="{app}" android:hasCode="false" android:extractNativeLibs="true"{debuggable}>
         <activity android:name="android.app.NativeActivity" android:exported="true" android:label="{app}">
             <meta-data android:name="android.app.lib_name" android:value="{lib_name}"/>
@@ -945,7 +972,20 @@ fn host_tag() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::app_assets;
+    use super::{app_assets, needs_internet};
+
+    /// An app asks for the network exactly when its C reaches it: a URL fetch of the runtime, the
+    /// engine host's, or a component's natives; a program that does none of these asks for none.
+    #[test]
+    fn an_app_asks_for_the_network_only_when_its_c_uses_it() {
+        let net = loft::components::file_name("net");
+        assert!(needs_internet("#define LOFT_NET 1\n"));
+        assert!(needs_internet("#define LOFT_ENGINE 1\n"));
+        assert!(needs_internet(&format!(
+            "loft_ffi_sym(\"/x/{net}\", \"{net}\", \"n_http_do\")"
+        )));
+        assert!(!needs_internet("int main(void) { return 0; }"));
+    }
 
     /// The files an app carries keep their paths below the program (@C164): with no list, the
     /// ones the program names; with `--assets`, the ones listed.  A path that would leave the

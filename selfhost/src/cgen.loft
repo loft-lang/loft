@@ -153,6 +153,18 @@ pub struct Cx {
   // (`Cx::par_sites`, each its context and body)?
   pub threads: boolean,
   pub par_sites: integer,
+  // The types the unit writes to or reads from a file (`Cx::ser_types`), per type number.
+  pub sers: vector<boolean>,
+  // The roots whose sidecar a persist or load names (`Cx::sidecars`), and those of them a load
+  // converts from another layout (`Cx::upgrades`), per type number.
+  pub sidecars: vector<boolean>,
+  pub upgrades: vector<boolean>,
+  // `@PLN129`'s lazy bindings: the fetch adapters written so far (`Cx::lazy_fetchers`) and the
+  // collection types whose SQL plan the unit declares (`Cx::sql_plans`).
+  pub lazy_fetchers: integer,
+  pub sql_plans: vector<boolean>,
+  // The types a `deliver` walks (`Cx::deliver_types`), per type number: one `loft_dlv{tp}`.
+  pub delivers: vector<boolean>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -181,6 +193,12 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     eqs: [for _ in 0..len(b.types) { false }],
     threads: false,
     par_sites: 0,
+    sers: [for _ in 0..len(b.types) { false }],
+    sidecars: [for _ in 0..len(b.types) { false }],
+    upgrades: [for _ in 0..len(b.types) { false }],
+    lazy_fetchers: 0,
+    sql_plans: [for _ in 0..len(b.types) { false }],
+    delivers: [for _ in 0..len(b.types) { false }],
   }
 }
 
@@ -238,6 +256,20 @@ fn empty_function(d: ir::Definition, decls: &text, bodies: &text) {
 }
 
 // The number of the definition named `name`, -1 for none.
+// `Data::def_nr("n_main")` (`get_or_std`): the program's own `main` — the definition of that
+// name in the program's source — before one of the same name elsewhere (a library's).
+fn main_index(b: ir::Bundle) -> integer {
+  found = -1;
+  for d in b.data.definitions {
+    if d.name == "n_main" && (found < 0 || d.source == b.data.source) {
+      if found < 0 || b.data.definitions[found]!.source != b.data.source {
+        found = d#index;
+      }
+    }
+  }
+  found
+}
+
 fn def_index(b: ir::Bundle, name: text) -> integer {
   for d in b.data.definitions {
     if d.name == name {
@@ -253,13 +285,17 @@ fn def_index(b: ir::Bundle, name: text) -> integer {
 // statement has none, so what is carried today is the same text in both forms, and the form
 // becomes a parameter with the first statement written.
 pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
-  main = load::definition(b, "n_main");
+  mi = main_index(b);
+  main = if mi < 0 { null } else { b.data.definitions[mi] };
   if main == null {
     return refuse("no main: the tests' unit");
   }
   // `program_main`: a `main` that takes nothing, or the program's arguments as a
   // `vector<text>` (`loft_arguments`, the ones after its name), freed when `main` returns.
-  call = "{main.name}();";
+  // The program's `main` by its C name: a name two definitions share is spelt apart
+  // (`c_name`'s `_m<hash>`).
+  main_c = cgen_names::c_name(b, cgen_names::duplicate_fn_names(b), mi);
+  call = "{main_c}();";
   if len(main.attributes) > 0 {
     a = main.attributes[0]!;
     takes_texts = match binds::base(a.typedef[0] ?? ir::TyVoid) {
@@ -269,17 +305,21 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
     if len(main.attributes) != 1 || a.hidden || !takes_texts {
       return refuse("main: a main that takes arguments other than `vector<text>`");
     }
-    call = "{{ loft_ref loft_main_args = loft_arguments(); {main.name}(loft_main_args); loft_free_ref(loft_main_args); }}";
+    call = "{{ loft_ref loft_main_args = loft_arguments(); {main_c}(loft_main_args); loft_free_ref(loft_main_args); }}";
   }
   if !empty_body(main.code) {
     // U-1: the unit of every function `main` reaches (`emit_unit_for`).
-    a = cgen_unit::assemble(b, def_index(b, "n_main"), cgen_clibs::tables(b), type_name_table(b.types), MAX_CALL_DEPTH);
+    a = cgen_unit::assemble(b, mi, cgen_clibs::tables(b), type_name_table(b.types), MAX_CALL_DEPTH);
     if a.refused != "" {
       return refuse(a.refused);
     }
     bind = bind_tables();
     if a.written.find("static const uint32_t loft_ntypes =") != null {
       bind = bind.replace("    loft_warn_logger = loft_log_warn;\n", "    loft_warn_logger = loft_log_warn;\n    loft_T = loft_types;\n    loft_T_n = loft_ntypes;\n");
+    }
+    // A unit that binds a lazy store hands the runtime its drivers.
+    if a.written.find("static const loft_lazy_driver loft_lazy_driver_table[]") != null {
+      bind = bind.replace("}}\n", "    loft_lazy_drivers = loft_lazy_driver_table;\n    loft_nlazy_drivers = loft_nlazy_driver_table;\n    loft_lazy_driver_refusal = loft_lazy_driver_refusal_text;\n}}\n");
     }
     unit = "{a.defines}{RUNTIME_START}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit("{a.written}{bind}")}";
     anchor = if load::program_relative(b) { 1 } else { 0 };
@@ -292,7 +332,7 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
   written = "{cgen_clibs::tables(b)}{type_name_table(b.types)}static void loft_init(void) {{\n}}\n{decls}{bodies}{bind_tables()}";
   out = "{unit_defines()}{RUNTIME_START}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit(written)}";
   anchor = if load::program_relative(b) { 1 } else { 0 };
-  out += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {main.name}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
+  out += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {main_c}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
   // The finished program names what it uses: what nothing names is not written.
   Unit { code: cgen_tidy::drop_unnamed(out, RUNTIME_END), refused: "" }
 }
@@ -306,6 +346,10 @@ fn body_line(cx: Cx, t: cgen_names::Twin) -> text {
   }
   if wr.split {
     return "[refused]\t{name}\ta body the writer splits\n";
+  }
+  // A generator has no frame wrapper, so no body the Rust writer traces.
+  if wr.generator {
+    return "";
   }
   "[bodies]\t{name}\t{wr.text.replace("\\", "\\\\").replace("\n", "\\n")}\n"
 }
@@ -322,7 +366,7 @@ fn body_line(cx: Cx, t: cgen_names::Twin) -> text {
 pub fn layer(b: ir::Bundle, name: text) -> text? {
   if name == "reach" || name == "functions" {
     for d in b.data.definitions {
-      if d.name == "n_main" {
+      if d#index == main_index(b) {
         if name == "reach" {
           return "{opt_names::reach_line(b, d#index)}\n";
         }
@@ -336,7 +380,7 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
     // definition of its body; one it does not carry is a `[refused]` line naming why.
     out = "";
     for d in b.data.definitions {
-      if d.name == "n_main" {
+      if d#index == main_index(b) {
         cx = new_cx(b);
         for f in opt_names::written_functions(b, d#index) {
           out += body_line(cx, cgen_names::plain(f));
@@ -355,7 +399,7 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
   if name == "tables" {
     // `LOFT_TRACE_TABLES`: the unit's type tables as its bodies registered them — for a unit
     // this generator writes whole.
-    root = def_index(b, "n_main");
+    root = main_index(b);
     if root < 0 {
       return "";
     }

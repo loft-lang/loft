@@ -1875,38 +1875,155 @@ impl Parser {
         m.native_crate.is_some() && crate::platform::native_cabi_link()
     }
 
+    /// @C165 — the headers of `wanted` (dependencies the shim of the package at `pkg_dir`
+    /// includes a header of), declared to the shim builder from the copies this parse
+    /// registered.  False while one of them is not registered yet.
+    fn declare_shim_headers(&self, pkg_dir: &str, wanted: &[String]) -> bool {
+        let mut deps = Vec::new();
+        for dep in wanted {
+            let Some((_, _, dirs)) = self.c_header_dirs.iter().find(|(name, _, _)| name == dep)
+            else {
+                return false;
+            };
+            deps.push((dep.clone(), dirs.clone()));
+        }
+        crate::c_shim::declare_dep_headers(pkg_dir, deps);
+        true
+    }
+
+    /// Build the shim of the package at `pkg_dir` and answer its `[c]` library entry: the
+    /// built library, with the sources it was built from.
+    fn built_shim(&mut self, pkg_dir: &str, sources: &[String]) -> Option<(String, Vec<String>)> {
+        match crate::c_shim::build(pkg_dir, sources) {
+            // The built library, with the sources it was built from: the C backend
+            // compiles those into the unit it writes instead of linking the library.
+            // Recorded ABSOLUTE: every reader resolves a library's name against its
+            // package (`pkg_dir.join(name)`), and the built path already starts with
+            // `pkg_dir`, so a relative one doubled it — the loader then found the shim
+            // only by a fallback relative to the cwd, which a test run moves (loft#2234).
+            Ok(so) => Some((
+                crate::file_access::plain_canonical(&so)
+                    .to_string_lossy()
+                    .into_owned(),
+                sources
+                    .iter()
+                    .map(|s| {
+                        std::path::Path::new(pkg_dir)
+                            .join(s)
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect(),
+            )),
+            // Reported, not swallowed: without the shim its symbols are
+            // absent, and the failure the author would otherwise meet is
+            // "`#c` symbol not found" at the call — which names neither the
+            // shim nor the compiler that could not build it.
+            Err(why) => {
+                self.lexer
+                    .diagnostic(Level::Error, &format!("`[c] shim` for `{pkg_dir}`: {why}"));
+                None
+            }
+        }
+    }
+
+    /// Record a package's C library, once.
+    fn push_c_library(&mut self, lib: String, pkg_dir: &str, shim: Vec<String>, optional: bool) {
+        if !self
+            .data
+            .c_libraries
+            .iter()
+            .any(|c| c.name == lib && crate::file_access::same_path(&c.pkg_dir, pkg_dir))
+        {
+            self.data.c_libraries.push(crate::data::CLibrary {
+                name: lib,
+                pkg_dir: pkg_dir.to_string(),
+                optional,
+                shim,
+            });
+        }
+    }
+
+    /// @C165 — build the shims that waited for a dependency's headers.  With `every` false,
+    /// those whose dependencies are all registered now: called as each package registers.
+    /// With `every` true, also one whose package owns the file being read, whatever is still
+    /// missing: called on the second pass, when every package that loads has registered, so
+    /// a dependency that never loaded leaves its header absent and the compiler says which
+    /// include found nothing.
+    pub(super) fn build_pending_shims(&mut self, every: bool) {
+        let here = self.lexer.pos().file.to_string();
+        let mut i = 0;
+        while i < self.pending_shims.len() {
+            let (pkg_dir, _, wanted) = &self.pending_shims[i];
+            let ready = wanted
+                .iter()
+                .all(|dep| self.c_header_dirs.iter().any(|(name, _, _)| name == dep));
+            let forced = every && crate::file_access::is_under(&here, pkg_dir);
+            if !ready && !forced {
+                i += 1;
+                continue;
+            }
+            let (pkg_dir, sources, wanted) = self.pending_shims.remove(i);
+            if !self.declare_shim_headers(&pkg_dir, &wanted) {
+                let missing: Vec<String> = wanted
+                    .iter()
+                    .filter(|dep| !self.c_header_dirs.iter().any(|(name, _, _)| name == *dep))
+                    .map(|dep| format!("`{dep}`"))
+                    .collect();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`[c] shim` for `{pkg_dir}`: it includes a header of {}, a dependency this \
+                     program did not load",
+                    missing.join(" and ")
+                );
+                continue;
+            }
+            if let Some((lib, shim)) = self.built_shim(&pkg_dir, &sources) {
+                self.push_c_library(lib, &pkg_dir, shim, false);
+            }
+        }
+    }
+
     pub(super) fn register_c_libraries(&mut self, m: &manifest::Manifest, pkg_dir: &str) {
         let mut entries: Vec<(String, Vec<String>)> =
             m.c_libs.iter().map(|l| (l.clone(), Vec::new())).collect();
+        // @C165 — where a dependant's shim finds this package's headers: beside its own shim
+        // sources.
+        let name = m.name.clone().unwrap_or_else(|| {
+            crate::file_access::file_name(pkg_dir).unwrap_or_else(|| pkg_dir.to_string())
+        });
+        if !self.c_header_dirs.iter().any(|(n, _, _)| *n == name) {
+            let mut dirs: Vec<String> = Vec::new();
+            for s in &m.c_shim {
+                let dir = std::path::Path::new(pkg_dir).join(s);
+                let dir = dir
+                    .parent()
+                    .map_or_else(|| pkg_dir.to_string(), |d| d.to_string_lossy().into_owned());
+                if !dirs.contains(&dir) {
+                    dirs.push(dir);
+                }
+            }
+            self.c_header_dirs.push((name, pkg_dir.to_string(), dirs));
+        }
+        // A shim that waited for this package's headers can be built now.
+        self.build_pending_shims(false);
         if !m.c_shim.is_empty() {
-            match crate::c_shim::build(pkg_dir, &m.c_shim) {
-                // The built library, with the sources it was built from: the C backend
-                // compiles those into the unit it writes instead of linking the library.
-                // Recorded ABSOLUTE: every reader resolves a library's name against its
-                // package (`pkg_dir.join(name)`), and the built path already starts with
-                // `pkg_dir`, so a relative one doubled it — the loader then found the shim
-                // only by a fallback relative to the cwd, which a test run moves (loft#2234).
-                Ok(so) => entries.push((
-                    crate::file_access::plain_canonical(&so)
-                        .to_string_lossy()
-                        .into_owned(),
-                    m.c_shim
-                        .iter()
-                        .map(|s| {
-                            std::path::Path::new(pkg_dir)
-                                .join(s)
-                                .to_string_lossy()
-                                .into_owned()
-                        })
-                        .collect(),
-                )),
-                // Reported, not swallowed: without the shim its symbols are
-                // absent, and the failure the author would otherwise meet is
-                // "`#c` symbol not found" at the call — which names neither the
-                // shim nor the compiler that could not build it.
-                Err(why) => self
-                    .lexer
-                    .diagnostic(Level::Error, &format!("`[c] shim` for `{pkg_dir}`: {why}")),
+            let deps: Vec<String> = m.dependencies.iter().map(|(d, _)| d.clone()).collect();
+            let wanted = crate::c_shim::wanted_deps(pkg_dir, &m.c_shim, &deps);
+            if !wanted.is_empty() && !self.declare_shim_headers(pkg_dir, &wanted) {
+                // A dependency it includes a header of is not registered yet: the shim is
+                // built when this package's own file has resolved its `use`s.
+                if !self
+                    .pending_shims
+                    .iter()
+                    .any(|(dir, _, _)| crate::file_access::same_path(dir, pkg_dir))
+                {
+                    self.pending_shims
+                        .push((pkg_dir.to_string(), m.c_shim.clone(), wanted));
+                }
+            } else if let Some(entry) = self.built_shim(pkg_dir, &m.c_shim) {
+                entries.push(entry);
             }
         }
         // @PLN24 arc G — the optional list joins here, flagged. A shim is never
@@ -1919,19 +2036,7 @@ impl Parser {
                 .map(|l| (l.clone(), Vec::new(), true)),
         );
         for (lib, shim, optional) in entries {
-            if !self
-                .data
-                .c_libraries
-                .iter()
-                .any(|c| c.name == lib && crate::file_access::same_path(&c.pkg_dir, pkg_dir))
-            {
-                self.data.c_libraries.push(crate::data::CLibrary {
-                    name: lib,
-                    pkg_dir: pkg_dir.to_string(),
-                    optional,
-                    shim,
-                });
-            }
+            self.push_c_library(lib, pkg_dir, shim, optional);
         }
     }
 

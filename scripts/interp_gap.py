@@ -202,7 +202,7 @@ def native_store(census_loft, prog, n, timeout):
         return None, "a library package's native build needs its dependencies — interpreter column only"
     with tempfile.TemporaryDirectory() as tmp:
         rs, exe, store = Path(tmp) / "p.rs", Path(tmp) / "p", Path(tmp) / "store.tsv"
-        p = run([census_loft, "--native-emit", str(rs), "--lean", *argv], cwd, {}, timeout)
+        p = run([census_loft, "--native-rust", "--native-emit", str(rs), "--lean", *argv], cwd, {}, timeout)
         if p.returncode != 0 or not rs.exists():
             return None, "native emit failed: " + ((p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"])[0]
         p = run(["rustc", *RELEASE_ARGS, "--edition=2024",

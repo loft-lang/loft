@@ -10,14 +10,18 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 
 ## Status
 
-P1, P2, P3, L0, L1 and M0 are done (2026-11-15), and none changed § The shape.  Next: L2, from
-[API_GPU.md § What L2 builds from this](API_GPU.md#what-l2-builds-from-this).  V0 waits for a
-Linux machine.
+P1, P2, P3, L0, L1, L2, L2b and M0 are done (2026-11-15).  L2b amended § The shape's reach:
+a backend names the layer's header by the layer's name (@C165).
+Next: the host and the one `Scene` (§ The CPU tier and `gpu` side by side, what is left), then
+M1 (the first Metal triangle); L3's and L4's X11 runs wait for the Linux machine.  L5 (stage) changes a published library that would then depend on `gpu`, so it waits
+for `gpu` to be published (§ Open questions 2).
+Publishing waits for the name (open question 2) and for @C165 in a released loft.  V0
+waits for a Linux machine.
 
 | Track | Steps | State |
 |---|---|---|
 | P — the game on a Mac, on the GL that is there | P1–P5 | P1–P3 done; P4 stood in for until L3; P5 measured standing still |
-| L — the neutral layer | L0–L8 | L0, L1 done; L2–L8 open |
+| L — the neutral layer | L0–L8 | L0–L3 and L4's painter and sprites done on a Mac and in a page (X11 not run); L5–L8 open |
 | M — the Metal backend | M0–M4 | M0 done; M1–M4 open |
 | V — the Vulkan backend | V0–V4 | Open |
 | H — one shader source | H1–H4 | Open |
@@ -28,8 +32,10 @@ Linux machine.
 1. The latest tile-world-game plays on a Mac as a native, fully optimised (`--ship`) program,
    in its 3D presentation.
 2. A game, and `stage`, build against one GPU library that names no graphics stack and depends
-   on none.  Each stack — OpenGL and WebGL2, Metal, a CPU renderer for a machine with no GPU
-   (the Tanmatsu), Vulkan, later a Nintendo and a Sony backend — is a library of its own beneath it.
+   on none.  Each stack — OpenGL and WebGL2, Metal, Vulkan, later a Nintendo and a Sony
+   backend — is a library of its own beneath it.
+3. A game that runs on `gpu` and on a machine with no GPU (the Tanmatsu) is as simple to write
+   as it can be made: one view, written once, drawn by either (open question 1).
 
 ## The owner's rulings (2026-11-15)
 
@@ -64,7 +70,7 @@ Linux machine.
 ```
 game, stage ──► gpu (neutral: the loft API, the backend table's C header, no stack named)
                  ▲            ▲             ▲              ▲
-          gpu_gl   gpu_metal   gpu_vulkan   gpu_frame   a console's (private repo)
+          gpu_gl   gpu_metal   gpu_vulkan   a console's (private repo)
 ```
 
 - **`gpu`** holds the whole loft API: pipelines (shader, vertex layout, blend, depth, cull
@@ -205,14 +211,97 @@ Nothing here waits for the neutral layer or for Metal.
   writes down every call it receives.  It needs no display, so it runs in every CI job.
   Goes red when: a scripted frame's record differs from the hand-written one; a buffer, texture
   or pipeline is still held after its owner died.
+  **Done (2026-11-15): loft-libs-graphics#83, merged** (`gpu` 0.1.0, `gpu_record` 0.1.0).
+  `gpu`'s 3 tests and `gpu_record`'s 9 pass on the interpreter, `--native-c` and `--native`
+  with warnings denied; one frame's log is byte-equal on the interpreter, `--native-c`,
+  `--native-c --ship`, wasm under wasmtime and both writers' pages.  Six planted breaks each
+  turn a guard red (a pair aligned on 1, the no-vertices check off, `bind` keeping the block,
+  the target kind unchecked, a buffer never released, `F3` allowed in a block).  Two things
+  it met: a wasm build's `printf` formats no float, so the recorder writes thousandths as
+  whole numbers; and a backtick text drops the indentation of its first content line from
+  every line, not the common one, so an expected log is built from a list of lines.
+  **Open:** `gpu_record` is not in the library CI's package list — CI resolves `gpu` from the
+  registry, and `gpu` is not published while its name is a working name (open question 2).
+  C1's mode is `gpu_record::refuse_source`.
+- **L2b — a backend finds the layer's header once both are installed (M, in loft).**  L0
+  measured the table with the packages side by side under their plain names.  Installed from
+  the registry a package's directory is `<name>-<version>`, and a backend's
+  `#include "../../gpu/c/gpu_backend.h"` then names no file.  A shim compiles with fixed flags
+  and includes only by a path relative to its source (@C158), so nothing a package writes
+  cures it.
+  Goes red when: `lctab_a`, installed as `lctab_a-0.1.0` beside `lctab-0.1.0`, does not
+  compile in any build mode.
+  **Done (2026-11-15, owner's choice): @C165.**  A shim writes
+  `#include "<dependency>/<header>.h"` for a package its `loft.toml` declares, and loft puts
+  that dependency's headers (the `*.h` beside its own shim sources, from the copy the program
+  resolved) where every shim compile searches.  They join the shim's cache key and the startup
+  cache.  Measured with `gpu` and `gpu_record` under a scratch registry: the same frame log
+  on the interpreter, `--native-c`, `--native-c --ship`, `--native`, both writers' wasm and
+  both writers' pages, with the backend named before or after the layer and with only the
+  backend named.  The guard is
+  `a_backend_finds_the_layers_header_wherever_the_two_are_installed` (tests/c_emit.rs): the
+  `lctab` fixtures under versioned directory names, each mode cold and from the startup
+  cache.  It fails with header staging off, and its warm `--native-c` run fails with the
+  cache's `chdr` lines left out.  Three things it met:
+  - a backend's loft file need not `use` the layer (only its C includes the header), so its
+    shim waits for the layer to register, not for its own file's `use`s;
+  - a warm start skips the parse that declared the headers, and a C build compiles a shim
+    after it: the first form failed on every second `--native-c` run;
+  - the C writer's wasm build compiles shim sources with the unit and had no directory of
+    loft's on its search path, so it is a seventh site.
+  **Open:** `gpu_record` on the libraries' `main` keeps the relative include, which loft's
+  `main` can build side by side.  `gpu_record` moves to `"gpu/gpu_backend.h"` and raises its `loft` floor in
+  the change that follows @C165 reaching loft's `main`.
 - **L3 — `gpu_gl` (M).**  Today's GL code behind the table; graphics 0.12's own API untouched
   beside it.  Shaders arrive as a set: one declaration (inputs, the uniform block, the texture
   slots) with a source per shading language, until track H replaces the sources.
   Goes red when: a scene through `gpu` + `gpu_gl` differs by a byte from the same scene through
   graphics 0.12, on X11, on a Mac and in a page.
+  **Built (2026-11-15), loft-libs-graphics#84 merged** (`gpu_gl` 0.1.0) — on a Mac and in
+  a page; **X11 is not done** (rule 5: it needs the Linux machine).
+  `tests/same_as_graphics.loft` draws each scene both ways and compares the captures byte
+  for byte: depth and blend, cull / scissor / viewport, a texture put and sampled nearest, a
+  texture sampled between its pixels, copies read from an offset with an index list, lines,
+  and a colour and depth target shown over the window.  The eight tests pass on the
+  interpreter, `--native-c`, `--native` and a `--native-c --ship` program on a Mac, and in
+  both writers' pages (headless Chrome).  Seven planted breaks each turn one red; two of them
+  (a texture not clamped, the block's size unchecked) passed the first version of the tests
+  and got a case each.
+  How it is built: `gpu_gl/c/gl_base.h` is graphics' `graphics_gl.c` with its names under
+  another prefix, derived by a script whose `--check` fails on drift, so the window hosts and
+  the texture and framebuffer code are the proven ones and both libraries link into one
+  program.  Two copies exist until L4 makes graphics' `Window` a device.
+  A source tagged `"glsl-330"` follows three rules a later source for another stack mirrors:
+  inputs by location in the program's order, one `std140` block, samplers named `tex<n>`.
+  What it met:
+  - the page bridge had no uniform-block calls: four were added to `doc/loft-gl-wasm.js`, and
+    `glGetProgramiv` there now answers a count as the number;
+  - WebGL2 reports a block's size unrounded (20 bytes for a vector and a float), OpenGL
+    rounded (32): the backend's check compares whole vectors;
+  - in a page graphics and `gpu` draw in the page's one context and graphics takes the state
+    it finds — the reason L4 makes graphics' window the device, not a second one beside it.
+  **Open:** the table's host part has no key state, pointer or typed text yet; L4 needs them
+  when graphics' `Window` reads its events through the device.
 - **L4 — graphics' own drawing moves, one part a step (S each).**  `Painter`, `Sprites`,
   `GroupMeshes`, text textures, `quad`: each onto `gpu`, each compared with its 0.12 pixels.
   Goes red when: that part's tests draw another byte.
+  **How it is done (2026-11-15): the new one beside the old, as rule 2 says.**  graphics'
+  `Painter` draws at once into whatever its window was last told (`render_to`, `viewport`)
+  and blends where the window had blending on.  On `gpu` nothing is left set from an earlier
+  call, so a painter there cannot mean the same thing; and a 0.12 `Shader` is any GLSL with
+  uniforms set by name, which no pipeline can stand in for.  So each part is built as a
+  library on `gpu`, compared with graphics' pixels, and graphics keeps its own until L7.
+  **Painter and Sprites: done, loft-libs-graphics#85 merged** (`gpu_paint` 0.1.0):
+  `painter(dev, into)` with `rect`, `image`, `sprite`, `resize`, and `sprites(…)` with `draw`
+  for a sprite in a scene with depth; graphics' three programs with their uniforms as one
+  block each.  Five tests compare it byte for byte with graphics 0.12 on a Mac (interpreter,
+  `--native-c`, `--native`, a shipped program) and in both writers' pages; two read what it
+  asks of a backend from `gpu_record`, with no display; seven planted breaks each turn a
+  comparison red.  X11 not run.
+  **Left of L4, each taken up with its first caller:** `quad` (a full-target quad of two
+  pairs: stage's light pass, L5), text textures (they need graphics' `Font`: L7, when
+  graphics itself builds on `gpu`), `GroupMeshes` (buffers by group with bounds: the games'
+  views, L8).
 - **L5 — `stage` moves (M).**  Its four programs and its batching onto `gpu`.
   Goes red when: stage's suite draws other pixels than before the step.
 - **L6 — `gpu_host`, and the gate (S).**  The host package of § The shape; F8's lint gains a
@@ -307,7 +396,7 @@ H4 is kept either way: it is what gives a shader a pixel test on a machine with 
   Goes red when: a program differs from its GLSL build beyond the tolerance; the blob fails the
   driver's own validation layer.
 - **H4 — the C emitter (M).**  A program run on the CPU: pixel tests for shaders with no GPU,
-  and what `gpu_frame` draws with.
+  on a machine with no GPU.
   Goes red when: the CPU picture differs from the GPU's beyond the tolerance.
 
 ## Track C — what a console backend needs kept free
@@ -328,19 +417,145 @@ header.  Two things are kept true in public so that it can be:
 
 1. P1, L0 and M0 — a measurement and the two probes; none needs another.
 2. P2 → P3 → P4 → P5: the game plays on the Mac.
-3. L1 → L2 → L3 → L4 → L5 → L6 → L7 → L8, with C1 beside L2.
+3. L1 → L2 → L2b → L3 → L4 → L5 → L6 → L7 → L8, with C1 beside L2.
 4. M1 → M2 → M3 → M4, from L3 on, on a Mac.
 5. V0 at any time; V1 → V2 → V3 → V4, from L3 on, on a Linux machine.
 6. H1 at any time; H2 → H3 → H3b → H4 after L3; C2 after H2.
 
 ## Open questions
 
-1. **`gpu_frame`** — whether the Tanmatsu's renderer sits under `gpu` (through H4), or stays
-   the frame tier's own (`tiles`, [@PLN218](https://github.com/loft-lang/plans/issues/218)).
-   Recommended: the second.  Pipelines and passes cost a small machine with no GPU, and the
-   frame tier is already the floor every game is held to; H4 then earns its place as the
-   shader test path.  The owner's "like the Tanmatsu" may mean the first: the owner's call.
-2. **The name** — `gpu` here is a working name; the catalogue's naming rules decide it.
+1. **`gpu_frame`** — settled (owner, 2026-11-15): the Tanmatsu's renderer does not run under
+   `gpu`.  What is asked instead: **writing a game that runs on `gpu` and on the Tanmatsu is
+   as simple as it can be made.**  A game writes its view once, against a scene (§ The CPU
+   tier and `gpu` side by side); a CPU implementation and a `gpu` one draw it; the host picks,
+   and shows the frame and hands over the input either way, so the game's loop has no branch
+   for the machine.  H4 (the C emitter) stays as the shader test path.
+2. **The name** — settled (owner, 2026-11-15): the layer is `gpu`, a backend `gpu_<stack>`.
+   `gpu` 0.1.0 and `gpu_paint` 0.1.0 are in the registry.  `gpu_record` and `gpu_gl` were
+   refused by the publish gate, rightly: their `../../gpu/c/gpu_backend.h` names no file in a
+   package built on its own, as it names none once installed.  What gets them published:
+   - loft's `main` carries @C165 (this branch, through the next gather);
+   - loft-libs-graphics#87 (a draft, stacked on #86) switches both to `"gpu/gpu_backend.h"`;
+     its `loft` floors are raised to the build that carries @C165, then it merges;
+   - the publish gate builds a shim with its dependencies' headers staged
+     (`scripts/thirdparty.py`, on this branch), so it can build them then.
+
+## The CPU tier and `gpu` side by side (read from tile-world-game at `f1b5bf1`, 2026-11-15)
+
+Bears on open question 1.  The game already has both tiers over one scene, and shows where
+the seam is:
+
+- **One builder, two renderers.**  `render3d`'s `faces_box`, `cards_box`, `cells` and
+  `light_box` build the place as `Face` records (a picture on 3 or 4 corners, with the cell
+  its light comes from).  `fixedview` gives them to `raster3d` (C, the CPU, the fixed
+  parallel camera) and shows its 800 x 480 frame through `screen::show`; `render3d`'s own
+  draw flattens them to 8 floats a vertex for graphics 0.12 (the free, perspective camera).
+- **The seam is above both, at the scene.**  `raster3d` is fast because it keeps the
+  landscape as a picture and shifts it, which only a fixed parallel camera allows; a
+  pipeline and a pass cannot say that, and it cannot offer a free camera.  So neither sits
+  under the other: the recommendation on open question 1 stands, now with a caller behind it.
+- **The CPU side has the better contract.**  `raster3d` takes tiles by key (`set_tile`,
+  `drop_tile`), the light as cell data (`set_light`: a torch builds no tile), actors each
+  frame, groups hidden for the cut-away, an overlay.  The GPU side rebuilds the whole place
+  on any change and bakes the light into the vertices.  The owner's ruling there (one scene
+  contract, each implementation saying what it offers) is best cut from `raster3d`'s API.
+
+What a `gpu` implementation of that contract needs, against what exists:
+
+| Scene call | On `gpu` | State |
+|---|---|---|
+| a picture by number | a slot of an atlas texture, `put` in place | there |
+| `set_tile(key, faces)`, `drop_tile` | a buffer a tile, with its bounds | L4's `GroupMeshes` part: build it here |
+| `set_light(cells)` | a texture of one texel a cell, sampled nearest by a per-vertex cell reference | expressible (two texture slots); not built |
+| actors | copies of one card (`draw_copies`), a record a copy | there |
+| the cut-away | per camera; a free camera may offer none | the implementation's to say |
+| the overlay | `gpu_paint`'s `image` over the pass | there |
+| the camera | a matrix in the block | there |
+
+What stands between the two on one machine is the window, not the drawing:
+
+- **One window for every view.**  On a desktop the CPU frame is shown by `screen` and the GPU
+  view opens a second window.  With the device as the window, a CPU frame is one texture put
+  and one `gpu_paint` image, as a page does it today: the game then has one window whether
+  the frame came from the CPU or the GPU.  This is what P4 asked for.
+- **It needs two things the layer lacks:** the device's keys, pointer and typed text reaching
+  `screen` and `input` (the table's host part has events and size only), and a texture taken
+  from RGB565 (`raster3d` and `screen` speak it; `gpu` takes `0xAARRGGBB`, and turning
+  384,000 pixels a frame in loft is not measured and unlikely to be free).
+- **On the Tanmatsu nothing changes:** no device opens, `screen` shows the frame.
+
+**Three of the four are built (2026-11-15): loft-libs-graphics#86** (`gpu` 0.2.0, the table at
+version 2): `dev.key_down`, `pointer_x` / `pointer_y` / `buttons`, `typed`, `events`;
+`texture.put_rgb565`; `dev.capture_of(target)`.  `gpu_gl` shows an RGB565 frame in colours
+computed by hand and reads a target back, on a Mac on four build modes and in both writers'
+pages; injected keys are not tested.  Left: a host that picks the scene's implementation.
+
+**The game's agent wrote the contract down the same day** (`SCENE_CONTRACT.md` in
+tile-world-game, at `8d9e40f`; working name `scene3d`): the same seam, the same mapping onto
+`gpu`, and two questions it leaves to this stream — the library's name and home, and the GPU
+implementation, which is not started.  Read against `gpu` as it is, the contract asks four
+things the layer does not have yet:
+
+| The contract says | What `gpu` lacks |
+|---|---|
+| The GPU's picture is compared with the CPU's at 800 x 480 | `capture` reads the window only: a target's pixels cannot be read back |
+| The frame is shown by the host; a desktop has the fixed and the free camera in one program | The device's keys, pointer and typed text (above) |
+| The overlay is the 2D game's pixels, and the CPU frame is RGB565 | A texture taken from RGB565 (above) |
+| The host asks each implementation in turn | `gpu_host` (L6) picks a backend, not yet a scene implementation |
+
+Nothing in it needs the boundary changed: tiles are buffers, the light and the hidden groups
+are textures or draw ranges, actors are copies, the camera is a matrix in the block.
+
+**The GPU implementation is built (2026-11-15): loft-libs-graphics#88, `scene3d` 0.1.0**, in
+review.  It takes the arrays `raster3d` takes (the same faces, light boxes and eleven-number
+actors), so the game's `fixedview` can feed either by changing the callee.
+
+- **How:** a buffer a tile; the cells' light in a texture (16 bits a cell, with a bit that
+  says it was given) the vertex stage reads by a face's light cell; the cut-away by
+  `raster3d`'s own rule, ported — wall groups whose triangles cover the hero's card and reach
+  nearer — re-uploading only the tiles that hold a group that changed; actors as vertices
+  built each frame; the fixed camera as a parallel matrix, the free one in perspective.
+- **Measured against `raster3d`** (the contract's check), one scene through both at 800 x 480
+  on a Mac: of 384,000 pixels, 21 differ by more than 16 of 255 a channel; 147,741 differ
+  within that, which is the CPU reducing a lit colour to RGB565; the same block is cut away.
+  With the cut-away off 3,847 pixels are out, with the camera a pixel off 11,564: the
+  comparison tells.  The rasterisers agree on which pixel a triangle covers almost
+  everywhere, so the tolerance the contract asks for can be stated: two steps of five bits a
+  channel, and a few tens of pixels.
+- **Not yet:** pictures of any size, models, the free camera's cut-away and cards turned to
+  it, a light map wider than 256 x 256 cells on 8 layers.
+- **After the game's answer** (FOR_THE_GAME.md): `scene3d` 0.2.0 takes `vector<single>`, as
+  the single-precision `raster3d` does (loft-libs-graphics#89; 23 of 384,000 pixels against
+  it); and a table and a colour are `i64` across `gpu`, `gpu_record`, `gpu_gl` and `scene3d`,
+  so a `#width 32` view can call them (#90: from a 32-bit file both were narrowed to null and
+  `gpu::open` crashed).
+
+**The game's fixed view draws through `scene3d`** (its agent, 2026-11-15), and found what the
+comparison at the origin could not: the fixed camera measured depth from the world's origin, so
+a town 60 rows south was clipped away.  Its fix (the depth's zero at the ground under the
+screen's middle) is loft-libs-graphics#91; the light written a box at a time, which it also
+asked for, is #92.  With the fix the game's own comparison in its town is 3,291 of 384,000
+pixels, 27 by more than one RGB565 step.
+
+**Torches** (the owner's wish: smooth torchlight on a GPU, more than one torch).  The game's
+contract gained § Torches; `scene3d` 0.3.0 draws it (loft-libs-graphics#93): each torch's
+reach in an atlas, the four torches strongest at a cell in a map laid out as the light's, the
+reach read between the cells' middles in the fragment stage, a flicker as the block's numbers
+alone.  Checked against values worked out by hand in every build mode and both pages.
+
+**Which window on a desktop** (answered to the game's agent, FOR_THE_GAME.md): the view draws
+in the device's own window and reads its keys from the device (`dev.keys()`, in
+`screen::keys()`'s form and codes).  `screen` does not present through a device: the 2D
+version goes (owner), and then a machine with a GPU has the device's window alone.
+
+**What is left for "written once":**
+
+1. `raster3d` as a library beside `scene3d`, reshaped to the contract (the game's agent is
+   still changing it: take it when its API has settled, with its `bench/` checks).
+2. One `Scene` a view holds whichever draws it, and a host that picks, shows the frame (a
+   CPU frame through `put_rgb565` and one image, or the GPU's own pass) and hands over the
+   input — so the game's loop has no branch for the machine.
+3. The comparison above as a test, once both are libraries.
 
 ## Review
 

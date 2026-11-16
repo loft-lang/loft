@@ -126,6 +126,177 @@ pub fn put_bodies(dir: &std::path::Path, paths: &[std::path::PathBuf]) -> Result
         .map_err(|e| format!("cannot write {BODIES}: {e}"))
 }
 
+/// One package's dependency headers: (the dependency's name, the directories holding its
+/// `[c] shim` sources) for each dependency the package's shim includes a header of.
+type DepHeaders = Vec<(String, Vec<String>)>;
+
+/// The dependency headers of each package whose shim includes one, by package directory
+/// (@C165).  Declared by the parse — or by a warm load, from the parse it replays — before a
+/// shim is compiled, so every compile of one package reads the headers of the copies this
+/// program resolved, whichever site compiles it.
+static DEP_HEADERS: std::sync::Mutex<Vec<(String, DepHeaders)>> = std::sync::Mutex::new(Vec::new());
+
+/// Declare that the shim of the package at `pkg_dir` includes headers of `deps`: each a
+/// dependency's name and the directories of that dependency's own shim sources.  A second
+/// declaration for one package replaces the first.
+pub fn declare_dep_headers(pkg_dir: &str, deps: DepHeaders) {
+    let mut all = DEP_HEADERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    all.retain(|(dir, _)| !crate::file_access::same_path(dir, pkg_dir));
+    if !deps.is_empty() {
+        all.push((pkg_dir.to_string(), deps));
+    }
+}
+
+/// What [`declare_dep_headers`] holds for the package at `pkg_dir`.
+#[must_use]
+pub fn dep_headers(pkg_dir: &str) -> DepHeaders {
+    DEP_HEADERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .find(|(dir, _)| crate::file_access::same_path(dir, pkg_dir))
+        .map(|(_, deps)| deps.clone())
+        .unwrap_or_default()
+}
+
+/// Every declaration, for the startup cache to write.
+#[must_use]
+pub fn all_dep_headers() -> Vec<(String, DepHeaders)> {
+    DEP_HEADERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// The header files (`*.h`, by name) of dependency directories `dirs`, sorted, each once: a
+/// name two directories hold is the first one's.
+fn dep_header_files(dirs: &[String]) -> Vec<(String, crate::file_access::PathText)> {
+    let mut out: Vec<(String, crate::file_access::PathText)> = Vec::new();
+    for dir in dirs {
+        for entry in crate::file_access::read_dir(dir.as_str()).unwrap_or_default() {
+            let Some(name) = crate::file_access::file_name(&entry) else {
+                continue;
+            };
+            if crate::file_access::has_extension(&entry, "h")
+                && !out.iter().any(|(n, _)| *n == name)
+            {
+                out.push((name, entry));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Put the headers of the dependencies the package at `pkg_dir` declared
+/// ([`declare_dep_headers`]) into `dir`, each dependency's under its own name: a shim then
+/// includes one as `"<dependency>/<header>.h"` (@C165).  `dir` is the directory a shim compile
+/// already searches (`loft_width.h`'s).
+///
+/// # Errors
+/// When a header cannot be copied.
+pub fn put_dep_headers(dir: &std::path::Path, pkg_dir: &str) -> Result<(), String> {
+    for (dep, dirs) in dep_headers(pkg_dir) {
+        let files = dep_header_files(&dirs);
+        if files.is_empty() {
+            continue;
+        }
+        let into = dir.join(&dep);
+        crate::file_access::create_dir_all(&into).map_err(|e| format!("cannot create {e}"))?;
+        for (name, from) in files {
+            let text = crate::file_access::read(&from)
+                .map_err(|e| format!("cannot read `{dep}/{name}`: {e}"))?;
+            crate::file_access::write(into.join(&name), text)
+                .map_err(|e| format!("cannot write `{dep}/{name}`: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// [`put_dep_headers`] for every declared package that owns one of `sources`: what a compile
+/// of several packages' shims in one command searches.
+///
+/// # Errors
+/// As [`put_dep_headers`].
+pub fn put_dep_headers_of(
+    dir: &std::path::Path,
+    sources: &[std::path::PathBuf],
+) -> Result<(), String> {
+    for (pkg_dir, _) in all_dep_headers() {
+        if sources
+            .iter()
+            .any(|s| crate::file_access::is_under(&s.to_string_lossy(), &pkg_dir))
+        {
+            put_dep_headers(dir, &pkg_dir)?;
+        }
+    }
+    Ok(())
+}
+
+/// The quoted includes of `bytes`, as written.
+fn quoted_includes(bytes: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in String::from_utf8_lossy(bytes).lines() {
+        let Some(rest) = line.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix("include") else {
+            continue;
+        };
+        if let Some(name) = rest
+            .trim_start()
+            .strip_prefix('"')
+            .and_then(|r| r.split('"').next())
+        {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+/// Which of `deps` (the dependencies a package's `loft.toml` declares) the shim `sources` of
+/// the package at `pkg_dir` include a header of: an include spelled `"<dependency>/<file>"`
+/// that names no file beside its includer.  Read from the sources and the package's own
+/// headers they include; nothing is compiled.  Empty for a shim that includes only its own
+/// files, which then builds exactly as it did before a dependency's header could be named.
+#[must_use]
+pub fn wanted_deps(pkg_dir: &str, sources: &[String], deps: &[String]) -> Vec<String> {
+    let mut wanted: Vec<String> = Vec::new();
+    let mut todo: Vec<std::path::PathBuf> = sources
+        .iter()
+        .map(|s| std::path::Path::new(pkg_dir).join(s))
+        .collect();
+    let mut seen: Vec<crate::file_access::PathText> = Vec::new();
+    while let Some(file) = todo.pop() {
+        let Some(resolved) = crate::file_access::canonical(&file) else {
+            continue;
+        };
+        if seen.contains(&resolved) {
+            continue;
+        }
+        seen.push(resolved);
+        let Ok(bytes) = crate::file_access::read(&file) else {
+            continue;
+        };
+        let dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+        for name in quoted_includes(&bytes) {
+            let local = dir.join(&name);
+            if crate::file_access::exists(&local) {
+                todo.push(local);
+            } else if let Some((dep, _)) = name.split_once('/')
+                && deps.iter().any(|d| d == dep)
+                && !wanted.iter().any(|w| w == dep)
+            {
+                wanted.push(dep.to_string());
+            }
+        }
+    }
+    wanted.sort();
+    wanted
+}
+
 /// What the bodies depend on beyond the shim's sources: this binary, which writes them.
 fn bodies_identity() -> String {
     std::env::current_exe()
@@ -187,6 +358,7 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     cmd.push_arg("-O2").push_arg("-fPIC").push_arg("-shared");
     put_width_header(&stage)?;
     put_bodies(&stage, &paths)?;
+    put_dep_headers(&stage, pkg_dir)?;
     cmd.push_arg("-I").push_arg(&stage);
     if crate::keys::width32_all() {
         cmd.push_arg("-DLOFT_WIDTH32");
@@ -374,6 +546,15 @@ fn identity(
     if wants_bodies(&paths) {
         hasher.update(bodies_identity().as_bytes());
     }
+    // A dependency's headers are part of what the shim compiles to (@C165): another copy of
+    // the dependency, or a changed header in it, is another artefact.
+    for (dep, dirs) in dep_headers(pkg_dir) {
+        hasher.update(dep.as_bytes());
+        for (name, file) in dep_header_files(&dirs) {
+            hasher.update(name.as_bytes());
+            hasher.update(crate::file_access::read(&file).unwrap_or_default());
+        }
+    }
     let digest = hasher.finalize();
     let key = u64::from_le_bytes(digest[..8].try_into().unwrap_or([0; 8]));
     Ok((
@@ -432,6 +613,7 @@ fn archive_with(
     crate::file_access::create_dir_all(&stage).map_err(|e| format!("cannot create {e}"))?;
     put_width_header(&stage)?;
     put_bodies(&stage, &paths)?;
+    put_dep_headers(&stage, pkg_dir)?;
     let fail = |msg: String| {
         let _ = crate::file_access::remove_dir_all(&stage);
         Err(msg)
@@ -661,6 +843,23 @@ fn stem_of(pkg_dir: &str) -> String {
     }
 }
 
+/// What a wasm32 compile of the shim of the package at `pkg_dir` searches, written into
+/// `include`: loft's small C library and its headers, `loft_width.h`, and the headers of the
+/// dependencies the shim includes one of (@C165).
+fn put_wasm_headers(include: &std::path::Path, pkg_dir: &str) -> Result<(), String> {
+    for (name, text) in [
+        ("string.h", WASM_STRING_H),
+        ("stdlib.h", WASM_STDLIB_H),
+        ("stdio.h", WASM_STDIO_H),
+        ("loft_wasm_libc.c", WASM_LIBC),
+        ("loft_width.h", LOFT_WIDTH_H),
+    ] {
+        crate::file_access::write(include.join(name), text)
+            .map_err(|e| format!("cannot write {name}: {e}"))?;
+    }
+    put_dep_headers(include, pkg_dir)
+}
+
 /// The shim route — the shim as wasm32 OBJECTS for a wasm target
 /// (`--native-wasm`, `--html`): each source compiled by a C cross-compiler
 /// (`LOFT_WASM_CC`, else `clang`) freestanding against the headers of `src/c/wasm/`, plus
@@ -713,16 +912,8 @@ pub fn wasm_objects(
         let _ = crate::file_access::remove_dir_all(&stage);
         Err(msg)
     };
-    for (name, text) in [
-        ("string.h", WASM_STRING_H),
-        ("stdlib.h", WASM_STDLIB_H),
-        ("stdio.h", WASM_STDIO_H),
-        ("loft_wasm_libc.c", WASM_LIBC),
-        ("loft_width.h", LOFT_WIDTH_H),
-    ] {
-        if let Err(e) = crate::file_access::write(include.join(name), text) {
-            return fail(format!("cannot write {name}: {e}"));
-        }
+    if let Err(why) = put_wasm_headers(&include, pkg_dir) {
+        return fail(why);
     }
     let mut sources_to_build: Vec<(std::path::PathBuf, std::path::PathBuf)> = paths
         .iter()

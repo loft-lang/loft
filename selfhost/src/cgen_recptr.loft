@@ -215,7 +215,7 @@ pub fn bind_param_ptrs(x: Cx, w: W, code: ir::Node) {
 // `bind_record_ptr`: after statement `at` of `ops` binds a plain record view, take its
 // address where the statements up to its last field use allow it.
 pub fn bind_record_ptr(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer) {
-  if !enabled() {
+  if w.gen_elem != "" || !enabled() {
     return;
   }
   r = match loop_shape::unspan(ops[at]!) {

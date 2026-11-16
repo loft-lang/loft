@@ -14,7 +14,12 @@ functions are in every image, so a function is counted once, by name.  Then, per
 the image's.
 
     python3 selfhost/bench/bgen_survey.py [--scripts-only] [--jobs N] [--top 20]
-    python3 selfhost/bench/bgen_survey.py --check BASELINE | --write-baseline BASELINE
+    python3 selfhost/bench/bgen_survey.py [--functions] --check BASELINE | --write-baseline BASELINE
+
+`--functions` surveys the corpus's test files instead (`fn test_*()` and no `main`): each test
+function as a program of its own, as `run_image_survey.py --functions` runs it (the file with a
+`main` calling that one test, `tests/lib` on `--lib`, emitted from the file's own directory),
+under the layers `functions-tests` and `streams-tests`.
 
 The position is gated by a committed baseline (`bgen_survey.baseline.tsv` beside this file, in
 `baseline.py`'s format), two layers: `functions` (each function not identical yet, by name) and
@@ -23,18 +28,41 @@ or a stream that DIFFERS, or a program with another operator, shared-body or ent
 whether or not it is listed: those are wrong bytes.  `unwritten` and `natives` (a natives table
 loft's does not hold yet) are listed until they agree.
 """
-import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, hashlib, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baseline  # noqa: E402  one baseline format for every survey
+import run_image_survey  # noqa: E402  the test functions are the runner survey's
 
 
-def one(f, loft, checker, tmp, env):
-    stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
+def stem_of(tmp, name):
+    """A scratch path for `name`; a long one keeps its end and a hash (255-byte file names)."""
+    stem = re.sub(r"[^A-Za-z0-9]", "_", name)
+    if len(stem) > 150:
+        stem = stem[-120:] + "_" + hashlib.sha1(stem.encode()).hexdigest()[:12]
+    return os.path.join(tmp, stem)
+
+
+def one(f, loft, checker, tmp, env, test=None, libargs=()):
+    stem = stem_of(tmp, f + (f"::{test}" if test else ""))
+    prog, cwd = f, None
+    if test:
+        # A short name: the program's path is a text constant of it (an `assert`'s file), and
+        # one of 256 bytes or more takes another constant layout than a plain program's.
+        stem = os.path.join(tmp, "t" + hashlib.sha1(f"{f}::{test}".encode()).hexdigest()[:16])
+        # The test file with a `main` calling the one test (run_image_survey.py's form), emitted
+        # from the file's own directory, where its relative paths resolve.
+        prog, cwd = stem + ".loft", os.path.dirname(f)
+        with open(prog, "w", encoding="utf-8") as fh:
+            fh.write(open(f, encoding="utf-8", errors="replace").read() + f"\n\nfn main() {{\n  {test}();\n}}\n")
     for flag, ext in (("--emit-image", ".store"), ("--emit-run-image", ".run")):
-        p = subprocess.run([loft, flag, stem + ext, f], capture_output=True, text=True, env=env, timeout=120)
+        try:
+            p = subprocess.run([loft, *libargs, flag, stem + ext, prog], capture_output=True, text=True,
+                               env=env, timeout=120, cwd=cwd)
+        except subprocess.TimeoutExpired:
+            return f, None
         if p.returncode != 0:
             return f, None
     try:
@@ -54,6 +82,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--scripts-only", action="store_true")
+    ap.add_argument("--functions", action="store_true",
+                    help="the test functions of the test files, each as a program, instead of the plain programs")
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--examples", type=int, default=0, help="name this many functions, with their program, per reason")
     ap.add_argument("--check", metavar="BASELINE", help="exit 1 on a drop against BASELINE or any wrong bytes")
@@ -81,8 +111,15 @@ def main():
         checker = os.path.join(out, "bgen_check")
         if not os.path.exists(checker):
             sys.exit(f"the checker did not build:\n{p.stderr[-2000:]}")
-        files = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
-                                                           [], o.scripts_only) if census.plain(f)]
+        corpus = [os.path.abspath(f) for f in census.corpus(root, suite if os.path.isdir(suite) else None,
+                                                            [], o.scripts_only) if os.path.isfile(f)]
+        if o.functions:
+            jobs = run_image_survey.test_functions([f for f in corpus if not census.plain(f)])
+            libargs = ("--lib", os.path.join(root, "tests", "lib"))
+        else:
+            jobs = [(f, None) for f in corpus if census.plain(f)]
+            libargs = ()
+        files = [f for f, _ in jobs]
         # The compiler keeps a warm cache that does not know `LOFT_NO_TEXT_BORROW`: the first
         # emission after the switch changed reads what the other setting left.  One emission
         # of each kind first, so every program's two images come from one setting.
@@ -99,17 +136,19 @@ def main():
         stream_differs = []
         stream_of = {}        # program -> its stream verdict
         with cf.ThreadPoolExecutor(o.jobs) as ex:
-            for f, text in ex.map(lambda f: one(f, loft, checker, tmp, env), files):
+            for (src, test), (f, text) in zip(jobs, ex.map(
+                    lambda j: one(j[0], loft, checker, tmp, env, j[1], libargs), jobs)):
                 if text is None:
                     continue
                 programs += 1
+                pname = baseline.name_of(src, root, suite) + (f"::{test}" if test else "")
                 for line in text.splitlines():
                     if line.startswith("stream\t"):
                         verdict = line.split("\t")[1]
                         streams[verdict] += 1
-                        stream_of[baseline.name_of(f, root, suite)] = verdict
+                        stream_of[pname] = verdict
                         if verdict in ("differs", "natives", "tables"):
-                            stream_differs.append(f"{os.path.relpath(f, root)}\t{line.split(chr(9), 2)[2]}")
+                            stream_differs.append(f"{pname}\t{line.split(chr(9), 2)[2]}")
                         continue
                     m = re.match(r"(same|differs|unwritten)\t([^\t]+)(?:\t(.*))?$", line)
                     if not m:
@@ -119,13 +158,13 @@ def main():
                     # name written in one program and refused in another is not written.
                     if m.group(1) == "differs" and state.get(m.group(2)) != "differs":
                         state[m.group(2)] = "differs"
-                        differ.append(f"{m.group(2)}\t{os.path.relpath(f, root)}")
+                        differ.append(f"{m.group(2)}\t{pname}")
                         continue
                     if m.group(1) == "unwritten" and state.get(m.group(2)) == "same":
                         state[m.group(2)] = "unwritten"
                         reasons[m.group(3) or ""] += 1
                         if len(examples[m.group(3) or ""]) < o.examples:
-                            examples[m.group(3) or ""].append(f"{m.group(2)}  {baseline.name_of(f, root, suite)}")
+                            examples[m.group(3) or ""].append(f"{m.group(2)}  {pname}")
                         continue
                     if m.group(2) in state:
                         continue
@@ -133,7 +172,7 @@ def main():
                     if m.group(1) == "unwritten":
                         reasons[m.group(3) or ""] += 1
                         if len(examples[m.group(3) or ""]) < o.examples:
-                            examples[m.group(3) or ""].append(f"{m.group(2)}  {baseline.name_of(f, root, suite)}")
+                            examples[m.group(3) or ""].append(f"{m.group(2)}  {pname}")
         n = collections.Counter(state.values())
         print(f"{programs} programs, {len(state)} functions: {n['same']} identical, "
               f"{n['differs']} differ, {n['unwritten']} not written")
@@ -151,7 +190,8 @@ def main():
                 print(f"           {e}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    layers = {"functions": (state, ("differs",)), "streams": (stream_of, ("differs", "tables"))}
+    sfx = "-tests" if o.functions else ""
+    layers = {"functions" + sfx: (state, ("differs",)), "streams" + sfx: (stream_of, ("differs", "tables"))}
     if o.write_baseline:
         for layer, (results, _) in layers.items():
             good = sum(v == "same" for v in results.values())

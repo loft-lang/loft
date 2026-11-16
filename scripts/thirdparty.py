@@ -60,6 +60,7 @@ Usage:
 """
 import argparse
 import fnmatch
+import glob
 import hashlib
 import json
 import os
@@ -619,21 +620,78 @@ def shim_closure(root, d, shim):
     return done
 
 
-def shim_artifact(root, d, shim):
+def dep_package_dir(root, d, dep):
+    """Where the declared dependency `dep` of the package at `root/d` is: beside it in the same
+    tree (a family repo, a checkout of one package among its siblings), else the newest copy
+    `loft install` extracted.  None when it is in neither place."""
+    here = os.path.join(root, d)
+    for cand in (os.path.join(here, "..", dep), os.path.join(root, dep)):
+        if os.path.isfile(os.path.join(cand, "loft.toml")):
+            return os.path.normpath(cand)
+    cache = os.path.expanduser("~/.loft/registry")
+    found = sorted(glob.glob(os.path.join(cache, dep + "-[0-9]*")),
+                   key=lambda p: [int(x) if x.isdigit() else 0 for x in re.split(r"[.-]", os.path.basename(p)[len(dep) + 1:])])
+    return found[-1] if found else None
+
+
+def stage_dep_headers(root, d, deps, stage):
+    """Put each declared dependency's headers under its name in `stage`, as loft does before it
+    compiles a shim (@C165): a shim includes one as `"<dependency>/<header>.h"`.  The headers
+    are the `*.h` beside the dependency's own `[c] shim` sources.  Answers the dependencies
+    whose package was not found."""
+    missing = []
+    for dep in deps:
+        at = dep_package_dir(root, d, dep)
+        if not at:
+            missing.append(dep)
+            continue
+        try:
+            with open(os.path.join(at, "loft.toml"), "rb") as fh:
+                m = tomllib.load(fh)
+        except (OSError, tomllib.TOMLDecodeError):
+            m = {}
+        dirs = {os.path.dirname(os.path.join(at, x)) for x in split_list((m.get("c") or {}).get("shim"))}
+        for src in sorted(dirs):
+            for h in sorted(glob.glob(os.path.join(src, "*.h"))):
+                os.makedirs(os.path.join(stage, dep), exist_ok=True)
+                shutil.copyfile(h, os.path.join(stage, dep, os.path.basename(h)))
+    return missing
+
+
+def shim_artifact(root, d, shim, deps=()):
     """[(library, how)] — build the shim as a shared object and read what it links (`NEEDED`)
-    and the library names its strings hold.  Empty when no C compiler is here."""
+    and the library names its strings hold.  Empty when no C compiler is here.  `deps` are the
+    package's declared dependencies, whose headers the shim may include by the dependency's
+    name (@C165)."""
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if not cc or os.name == "nt":
         return []
     out_dir = os.path.join(CACHE, "shim-build")
     os.makedirs(out_dir, exist_ok=True)
-    so = os.path.join(out_dir, re.sub(r"[^A-Za-z0-9]+", "_", os.path.join(root, d)) + ".so")
+    stem = re.sub(r"[^A-Za-z0-9]+", "_", os.path.join(root, d))
+    so = os.path.join(out_dir, stem + ".so")
+    stage = os.path.join(out_dir, stem + ".inc")
+    shutil.rmtree(stage, ignore_errors=True)
+    os.makedirs(stage, exist_ok=True)
+    missing = stage_dep_headers(root, d, deps, stage)
     srcs = [os.path.join(root, f) for f in shim if f.endswith((".c", ".cc", ".cpp"))]
     r = run([cc, "-shared", "-fPIC", "-O0", "-w", "-o", so, *srcs, "-I" + os.path.join(root, d, "c"),
-             "-I" + os.path.join(root, d), "-lm"])
+             "-I" + os.path.join(root, d), "-I" + stage, "-lm"])
     if r.returncode != 0:
-        return [("?", f"could not be built to read what it links ({(r.stderr.strip().splitlines() or ['?'])[0][:120]}); it")]
-    found = [(lib, "is linked against") for lib in binary_needed(so)]
+        said = r.stderr.strip().splitlines() or ["?"]
+        # The compiler's own words, without the path they start with: that is ours, and long.
+        first = next((ln for ln in said if "error" in ln), said[0])
+        first = first.split("error:", 1)[-1].strip()[:120]
+        hint = ""
+        if "../" in first:
+            hint = ("; a path out of the package names no file once it is installed — include a "
+                    "dependency's header as \"<dependency>/<header>.h\"")
+        elif missing:
+            hint = f"; its dependency {', '.join(missing)} is not beside it and not installed"
+        return [("?", f"could not be built to read what it links ({first}){hint}; it")]
+    # A shared object names itself too (its install name on macOS): that is no library it links.
+    found = [(lib, "is linked against") for lib in binary_needed(so)
+             if os.path.basename(lib) != os.path.basename(so)]
     strings = run(["strings", "-n", "5", so]).stdout if shutil.which("strings") else ""
     for rx in (r"lib[A-Za-z0-9_+-]+\.so(?:\.\d+)*", r"[A-Za-z0-9_]+\.dll", r"lib[A-Za-z0-9_+-]+(?:\.[A-Z])?\.dylib",
                r"/System/Library/Frameworks/[A-Za-z0-9]+\.framework/[A-Za-z0-9]+"):
@@ -769,7 +827,7 @@ def audit_tree(tree, a, offline):
             # library name from the source scan, never from the object.
             seen_src = set(links.get(d, {}))
             missed = {}
-            for lib, why in shim_artifact(tree.root, d, shim):
+            for lib, why in shim_artifact(tree.root, d, shim, sorted((m.get("dependencies") or {}).keys())):
                 if lib == "?":
                     a.need(where, f"its [c] shim {why}")
                 elif lib_base(lib) not in named and lib_base(lib) not in seen_src:

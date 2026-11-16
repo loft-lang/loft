@@ -9,5 +9,50 @@ layer	functions	agree	8997	of	8999
 functions	unwritten	n_main
 functions	unwritten	n_report
 
+layer	functions-tests	agree	5559	of	5559
+
 layer	streams	agree	1305	of	1306
 streams	unwritten	tests/scripts/store_handoff_residency.loft
+
+layer	streams-tests	agree	2562	of	2603
+streams-tests	natives	loft-suite/rules/formatting/F-Desugar/every-kind-renders-through-one-sink.loft::test_a_character_an_enum_a_struct_and_a_vector
+streams-tests	natives	loft-suite/rules/formatting/F-Desugar/every-kind-renders-through-one-sink.loft::test_a_null_of_each_kind
+streams-tests	natives	loft-suite/rules/formatting/F-Desugar/every-kind-renders-through-one-sink.loft::test_floats_render_the_shortest_round_trip
+streams-tests	natives	loft-suite/rules/formatting/F-Desugar/every-kind-renders-through-one-sink.loft::test_narrow_integers_render_their_value
+streams-tests	natives	loft-suite/rules/iteration/I-Index/an-index-is-the-cursor-position-in-the-walked-source.loft::test_a_filtered_walk_and_records
+streams-tests	natives	loft-suite/rules/iteration/I-Index/an-index-is-the-cursor-position-in-the-walked-source.loft::test_a_text_cursor_is_a_byte_offset
+streams-tests	natives	loft-suite/rules/iteration/I-Index/an-index-is-the-cursor-position-in-the-walked-source.loft::test_a_vector_and_its_slices
+streams-tests	natives	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft::test_a_present_text_counts_characters
+streams-tests	natives	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft::test_every_spelling_of_absence_counts_zero
+streams-tests	natives	tests/scripts/a-call-text-moves-into-its-local.loft::test_a_callers_text
+streams-tests	natives	tests/scripts/a-call-text-moves-into-its-local.loft::test_a_local_reused_across_passes
+streams-tests	natives	tests/scripts/a-call-text-moves-into-its-local.loft::test_a_null_and_an_empty_result
+streams-tests	natives	tests/scripts/a-call-text-moves-into-its-local.loft::test_a_tuple_member
+streams-tests	natives	tests/scripts/a-call-text-moves-into-its-local.loft::test_the_target_read_by_its_call
+streams-tests	natives	tests/scripts/a-call-text-moves-into-its-local.loft::test_two_arguments_from_calls
+streams-tests	natives	tests/scripts/a-call-text-moves-into-its-local.loft::test_two_fields_from_calls
+streams-tests	natives	tests/scripts/a-call-text-moves-into-its-local.loft::test_two_results_in_one_expression
+streams-tests	natives	tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft::test_a_copy_outlives_the_refill
+streams-tests	natives	tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft::test_compared_and_measured
+streams-tests	natives	tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft::test_read_after_the_loop
+streams-tests	natives	tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft::test_the_per_character_path
+streams-tests	natives	tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft::test_through_a_second_local
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_a_four_byte_character
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_a_null_destination
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_a_null_text_appended
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_a_piece_of_the_buffer_itself
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_a_slice_inside_a_character_widens
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_an_ascii_byte_before_a_lead_byte
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_appends_across_growth
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_characters_appended_by_format
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_every_index_of_an_ascii_table
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_indexes_at_and_before_the_ends
+streams-tests	natives	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::test_short_multi_byte_pieces
+streams-tests	natives	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::test_a_kept_copy
+streams-tests	natives	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::test_a_plain_parameter
+streams-tests	natives	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::test_a_user_callee
+streams-tests	natives	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::test_eight_byte_elements
+streams-tests	natives	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::test_empty_and_clamped_bounds
+streams-tests	natives	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::test_nested_past_the_pool
+streams-tests	natives	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::test_one_site_run_again_and_again
+streams-tests	natives	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::test_two_slices_in_one_call

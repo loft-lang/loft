@@ -265,20 +265,28 @@ impl Cx<'_> {
     /// `loft_rtypes`: the reflection of every type the program has, the layout of the
     /// reflection records, and the answer for a type number it has not (`#kt`).
     pub(crate) fn reflect_table(&self) -> String {
+        table_of(self.stores)
+    }
+}
+
+/// [`Cx::reflect_table`] for the program laid out in `stores` — also the image's `reflect`
+/// fact for the loft-written C writer (@PLN91 strand 12, `ir_store::bundle_facts`).
+pub(crate) fn table_of(stores: &Stores) -> String {
+    {
         // The clone keeps the schema and no stores (as `default_image`'s scratch); the answers
         // are left in it and dropped with it.
-        let mut scratch = self.stores.clone();
+        let mut scratch = stores.clone();
         scratch.max = 0;
-        let count = self.stores.types.len();
+        let count = stores.types.len();
         let rows: Vec<Row> = (0..=count)
             .map(|kt| read_row(&mut scratch, kt as u16))
             .collect();
         let mut out = String::new();
         let mut entries = Vec::with_capacity(count);
         for (kt, row) in rows.iter().enumerate().take(count) {
-            let data = data_rows(self.stores, kt as u16);
+            let data = data_rows(stores, kt as u16);
             row_arrays(&mut out, kt, row, &data);
-            let lookup = c_string(&self.stores.types[kt].name);
+            let lookup = c_string(&stores.types[kt].name);
             entries.push(row_entry(kt, row, &lookup, data.len()));
         }
         let _ = writeln!(
@@ -292,7 +300,7 @@ impl Cx<'_> {
             "static const loft_rtype loft_rnone = {};",
             row_entry(count, &rows[count], "\"\"", 0)
         );
-        out.push_str(&layout_line(self.stores));
+        out.push_str(&layout_line(stores));
         out
     }
 }

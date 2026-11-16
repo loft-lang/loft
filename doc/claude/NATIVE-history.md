@@ -1135,3 +1135,38 @@ drawing pass consumer lane: the lean tier alone took `hash` 4.7M → 1.2M ns/op,
 nothing.  The runtime rlib rebuilt with one codegen unit moved neither `lock` nor `hash` (its hot
 accessors are `#[inline]` already), so the cost to `make ci`'s build was not paid for a gain that
 did not appear.
+
+## Android through the rustc writer
+
+The `--native-android` path before the C backend became its default (Android A5), kept as
+`--native-rust --native-android`:
+
+**@PLN106 — SHIPPED 2026-07-15.** `loft --native-android [out.apk|out.so] prog.loft` cross-compiles the **same** target-agnostic
+generated core to Android — a build target is a **descriptor over one core**, not a codegen
+fork. All Android knowledge lives in `src/android.rs` (the `AndroidTarget` descriptor +
+`AndroidSdk`): it wraps the unchanged `output_native_reachable` emit in a generated cargo crate
+(program as crate root + a fixed `android_main` via the `android-activity` NativeActivity
+feature), cross-builds a lean `loft` rlib (fingerprint-keyed, isolated `target/loft/android/`),
+then packages a signed APK (aapt2 → `jar` → zipalign → apksigner, per-tree debug keystore) or
+emits the bare `.so`. Env: `ANDROID_NDK_HOME`, `ANDROID_HOME`, `JAVA_HOME`;
+`LOFT_ANDROID_TARGET` (default `aarch64-linux-android`; use `x86_64-linux-android` for the KVM
+emulator), `LOFT_ANDROID_API` (default 24). Needs a `fn main`.
+
+⚠ **That backend is FIXTURE-ONLY.** Graphics/input/audio run through the cfg-gated Android
+backend at `tests/fixtures/libs/graphics/native/src/android_gl.rs`, which exists on **no branch**
+of the canonical `loft-libs-graphics` — so an **installed** `graphics` cannot target Android,
+and @PLN106's goldens prove the fixture rather than the published package. Flow-back filed as
+[loft-libs-graphics#32](https://github.com/loft-lang/loft-libs-graphics/issues/32); the fixture
+is pinned at `graphics-v0.1.1` against a `main` at v0.5.5, so it needs a rebase forward, not a
+copy. What that backend does
+(`native/src/android_gl.rs`): raw EGL/GLES-3.0 on `app.native_window()` (GLES 3.0 = WebGL2, so
+website GL programs run unchanged) + android-activity's event pump. An UNCHANGED loft program
+gets: rendering (clear/shapes/shaders/text), **touch** (feeds `gl_mouse_*` from `MotionEvent`s),
+**keyboard/IME** (`gl_show_keyboard()` + `gl_key_pressed` from `KeyEvent`s), and **audio**
+(oboe/AAudio via `audio_play_raw`). Two Android-specific runtime seams: `__run` runs INLINE on
+the `android_main` ALooper thread (the graphics poll must own it — see `generation/mod.rs`), and
+a `.init_array` constructor sets `RUST_MIN_STACK` to `NATIVE_MAIN_STACK` (512 MiB) so the
+call-depth guard's stack assumption holds (that thread is a default-stack `std::thread::spawn`).
+Vector-arg native fns (`gl_set_mat4`, `audio_play_raw`, …) export their store-aware `n_*` under
+the raw C-ABI symbol on Android (the `--native` C-ABI marshals `(LoftStore, LoftRef)`, not
+`(ptr, count)`). Full history + on-device goldens: [plans/106-android-build-target/](plans/106-android-build-target/README.md).

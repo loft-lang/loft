@@ -412,8 +412,18 @@ pub fn is_stdlib(d: ir::Definition) -> boolean {
 // no operator and no native the C runtime implements, the root first, the others in
 // definition order.
 pub fn written_functions(b: ir::Bundle, root: integer) -> vector<integer> {
+  written_functions_from(b, root, [])
+}
+
+// `written_functions` with `extra` roots beside `root` — a lazy unit's drivers, which a miss
+// calls through the unit's table (@PLN133 S9).
+pub fn written_functions_from(b: ir::Bundle, root: integer, extra: vector<integer>) -> vector<integer> {
   out: vector<integer> = [root];
-  for r in reachable_functions(b, [root]) {
+  roots: vector<integer> = [root];
+  for e in extra {
+    roots += [e];
+  }
+  for r in reachable_functions(b, roots) {
     d = b.data.definitions[r#index]!;
     if !r || r#index == root || d.def_type != FUNCTION || d.name.starts_with("Op") {
       continue;

@@ -77,7 +77,7 @@ def census(loft, prog):
     with tempfile.TemporaryDirectory() as tmp:
         adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out.rs"))
         proc = subprocess.run(
-            [loft, "--native-emit", str(out), "--lean", *argv],
+            [loft, "--native-rust", "--native-emit", str(out), "--lean", *argv],
             cwd=cwd, capture_output=True, text=True, timeout=300,
             # `--native-emit` must write Rust whatever `LOFT_NATIVE_BACKEND` says (`make ci`
             # exports it as `c`): the same environment as the rewrite census's runs.

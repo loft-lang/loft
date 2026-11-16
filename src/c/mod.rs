@@ -1681,6 +1681,17 @@ impl Cx<'_> {
     }
 }
 
+/// The TLS client's sources when `link` (a unit's `link:` input) names its archive, for a build
+/// that compiles the client for another machine (`--native-android`) and so cannot link the
+/// host's archive; `None` for any other input.
+///
+/// # Errors
+/// The sources cannot be written.
+pub fn tls_sources_for(link: &str) -> Option<Result<Vec<std::path::PathBuf>, String>> {
+    let archive = tls::archive().ok()?;
+    (std::path::Path::new(link) == archive).then(tls::sources)
+}
+
 pub fn c_name(data: &Data, d: u32) -> String {
     let dups = crate::opt::names::duplicate_fn_names(data);
     crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
@@ -2509,6 +2520,80 @@ fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, Strin
 /// writer, one entry per `data.c_libraries` — the answers [`c_libraries`] and [`bound_by`] take
 /// from the file system and the toolchain while they write (a `[c] shim`'s archive is built
 /// here, as `c_libraries` builds it), carried in the program image (`ImageCLib`).
+/// What the Rust writer asks the interpreter and the toolchain while it writes a unit, answered
+/// for the loft-written C writer and carried in the program image (@PLN91 strand 12,
+/// `ir_store::bundle_facts`), each only for a program whose code calls what needs it: the
+/// reflection table (`reflect::table_of`), the TLS lines of a unit that fetches over a URL
+/// (`fetch_defines`, `tls::unit_lines`), and for a lazy binding every keyed collection's SQL plan
+/// (`FnWriter::sql_plan`'s `derive_select` answers) and the lazy drivers
+/// (`Data::lazy_fetch_drivers`).
+#[must_use]
+pub fn host_facts(data: &Data, stores: &Stores) -> crate::ir_store::HostFacts {
+    use crate::database::sql_query::{Mapping, QueryShape, derive_select};
+    let (mut reflects, mut fetches, mut lazy) = (false, false, false);
+    let mut seen = std::collections::HashSet::new();
+    for d in 0..data.definitions() {
+        data.def(d).code.walk(&mut |v| {
+            let Value::Call(c, _) = v else {
+                return;
+            };
+            if !seen.insert(*c) {
+                return;
+            }
+            let name = runtime_name(data, *c);
+            reflects |= matches!(
+                data.def(*c).name(),
+                "n_reflect_type" | "n_type_named" | "n_reflect_field" | "n_reflect_field_path"
+            );
+            lazy |= data.def(*c).name() == "n_store_bind_lazy";
+            fetches |= matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
+                || native_c(name) == Some("loft_pg_load_keys")
+                || in_binary_native(data.def(*c).native()) == Some("loft_kernel_http_fetch");
+        });
+    }
+    let mut facts = crate::ir_store::HostFacts::default();
+    if reflects {
+        facts.reflect = reflect::table_of(stores);
+    }
+    if fetches || lazy {
+        facts.tls_lines = tls::unit_lines();
+    }
+    if lazy {
+        for tp in 0..stores.types.len() {
+            let tp = tp as u16;
+            let desc = stores.layout_descriptor(&[tp]);
+            let Some(sql) = derive_select(&desc, tp, &QueryShape::Equality, &Mapping::default())
+            else {
+                continue;
+            };
+            let filter = derive_select(
+                &desc,
+                tp,
+                &QueryShape::Filter(String::new()),
+                &Mapping::default(),
+            );
+            let range = derive_select(&desc, tp, &QueryShape::Range, &Mapping::default());
+            facts.sql_plans.push(crate::ir_store::SqlPlanShape {
+                tp,
+                text: sql.text.clone(),
+                params: sql.params.len(),
+                columns: sql
+                    .columns
+                    .iter()
+                    .map(|c| (c.column.clone(), c.field))
+                    .collect(),
+                filter: filter.map(|f| f.text),
+                range: range.as_ref().map(|r| (r.text.clone(), r.params.len())),
+            });
+        }
+        match data.lazy_fetch_drivers() {
+            Ok(found) => facts.lazy_drivers = found,
+            Err(why) => facts.lazy_refusal = why,
+        }
+    }
+    facts
+}
+
 #[must_use]
 #[cfg(feature = "mmap")]
 pub fn c_library_facts(data: &Data) -> Vec<crate::ir_store::CLibFacts> {

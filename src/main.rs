@@ -261,7 +261,8 @@ fn print_help() {
     println!(
         "  --dump                        compile to bytecode, dump to stderr, and exit (no execution)"
     );
-    println!("  --native                      compile to native Rust via rustc and run (default)");
+    println!("  --native                      compile through C and the host's C compiler and run");
+    println!("                                (default); --native-rust takes the rustc writer");
     println!("  --ship                        build the program as it ships: only reachable");
     println!("                                functions, fully optimised, no live/debug tier,");
     println!("                                native libraries linked in (unless --dynamic or");
@@ -311,16 +312,17 @@ fn print_help() {
     println!("  --native-c                    like --native but through C and the host's C");
     println!("                                compiler (LOFT_CC, CC, else cc); combines with");
     println!("                                --ship, --native-debug, --native-emit");
-    println!("                                [out.c]; LOFT_NATIVE_BACKEND=c selects it too");
+    println!("                                [out.c]; it is what --native means");
     println!("  --native-rust                 like --native but through the Rust writer and");
-    println!("                                rustc whatever LOFT_NATIVE_BACKEND says; with");
+    println!("                                rustc (LOFT_NATIVE_BACKEND=rust too); with");
     println!("                                --native-emit it writes the Rust");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
     println!("                                (default: .loft/<script>.wasm beside the script)");
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
     println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
-    println!("                                ANDROID_NDK_HOME + ANDROID_HOME); a *.so output");
-    println!("                                builds just the library");
+    println!("                                ANDROID_NDK_HOME + ANDROID_HOME) through the C");
+    println!("                                backend; a *.so output builds just the library;");
+    println!("                                with --native-rust, through the rustc writer");
     println!("  --assets a,b                  the files an app carries (--native-esp, --html,");
     println!("                                --native-android), beside the program: files,");
     println!("                                directories, `*` in a name, `!` to drop a match;");
@@ -7667,8 +7669,8 @@ fn main() {
     // and preserve the generated `.rs` on disk so DWARF's `.debug_line`
     // table points at a real file the debugger can show.
     let mut native_debug = false;
-    // @PLN203 C1 — `--native-c` (or `LOFT_NATIVE_BACKEND=c`): `--native` compiles through
-    // the C backend and the host's C compiler instead of rustc.
+    // @PLN203 C9 — `--native` compiles through the C backend and the host's C compiler by
+    // default; `--native-rust` or `LOFT_NATIVE_BACKEND=rust` takes the rustc writer instead.
     let mut native_c = c_driver::c_backend_selected();
     // @PLN203 C9 — `--native-rust`: the Rust writer and rustc for this run, whatever
     // `LOFT_NATIVE_BACKEND` selects.  Kept one release past the flip; until then it is how a
@@ -9432,6 +9434,12 @@ fn main() {
             .unwrap_or("out.wasm")
             .to_string();
     }
+    // `--native-android` builds through the C backend unless the rustc writer is asked for
+    // (`--native-rust`, `LOFT_NATIVE_BACKEND=rust`), which stays beside it as the bisect path
+    // (doc/claude/plans/106-android-build-target/c-backend.md, A5).
+    if native_android.is_some() && !native_rust && !c_driver::rust_backend_selected() {
+        native_c = true;
+    }
     // `--native-rust` chooses the writer; alone it is `--native` through it, beside
     // `--native-emit`, `--html`, `--native-wasm` or `--native-android` it only chooses which
     // writer builds that.
@@ -9461,8 +9469,8 @@ fn main() {
         {
             eprintln!(
                 "loft: rustc is off for this run (LOFT_NO_RUSTC=1), and this build goes \
-                 through it — build through the C backend instead (`--native-c`, or \
-                 LOFT_NATIVE_BACKEND=c)"
+                 through it — build through the C backend instead (drop `--native-rust` and \
+                 LOFT_NATIVE_BACKEND=rust)"
             );
             std::process::exit(2);
         }
@@ -9901,7 +9909,7 @@ fn main() {
     }
     // A C build with no fallback skips every host cdylib.  A default run that the C backend
     // refuses falls back to the interpreter (`native_fallback_reason`), which needs them, so
-    // `LOFT_NATIVE_BACKEND=c` alone does not set it.
+    // the C default alone does not set it.
     if emit_c.is_some()
         || emit_c_bodies.is_some()
         || (native_c && native_requested)
@@ -10799,12 +10807,6 @@ fn main() {
                     eprintln!("loft: {e}");
                     std::process::exit(1);
                 });
-            let package = android::Package {
-                staging: &staging,
-                keystore_dir: &work,
-                debuggable: !ship_build,
-                assets: &assets,
-            };
             let result = c_driver::build_android(
                 &c,
                 &built,
@@ -10812,7 +10814,17 @@ fn main() {
                 &target.glue_dir(),
                 ship_build,
             )
-            .and_then(|()| target.finish(&built, &package, std::path::Path::new(&android_out)));
+            .and_then(|libs| {
+                let package = android::Package {
+                    staging: &staging,
+                    keystore_dir: &work,
+                    debuggable: !ship_build,
+                    assets: &assets,
+                    libs: &libs,
+                    internet: android::needs_internet(&c),
+                };
+                target.finish(&built, &package, std::path::Path::new(&android_out))
+            });
             if let Err(e) = result {
                 eprintln!("loft: {e}");
                 std::process::exit(1);

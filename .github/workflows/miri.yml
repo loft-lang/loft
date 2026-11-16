@@ -994,6 +994,7 @@ jobs:
             guards=0;
             if [ "${{ matrix.shard }}" = 0 ]; then
             { target/release/loft install graphics && target/release/loft install audio
+            && target/release/loft install web
             && python3 scripts/android_guards.py; } || guards=1; fi;
             python3 scripts/c_sweep.py --android --verbose --shard ${{ matrix.shard }}/8
             --baseline scripts/c_sweep_android.baseline && exit $guards

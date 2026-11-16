@@ -1,0 +1,602 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN91 strand 12 — the C generator written in loft: the natives over a whole store (its
+// image written and loaded, its verify — `store_native` in `src/c/body/keyed.rs`) and the
+// sidecars and converters those name (`Cx::sidecar_of`, `Cx::upgrade_of`, `sidecar_table`,
+// `upgrade_table` in `src/c/mod.rs`).
+//
+// What `schema_sidecar` derives for the Rust writer — a root's layout identity, whether its
+// load walks the type, whether its key order moved — and the converter's layout description
+// the host resolved into the image (`Bundle.sidecars`, `Bundle.upgrades`): the generator
+// formats them.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_ref;
+use cgen_tables;
+use cgen_parse;
+use loop_shape;
+use types;
+
+// `placement::KEY_ORDER`: a layout dump that holds it has a collection whose key order moved.
+KEY_ORDER = ",order=1";
+
+// The image's layout facts of root type `tp`, null when the host wrote none for it.
+fn row_of(x: Cx, tp: integer) -> ir::RunSidecar? {
+  for s in x.b.sidecars {
+    if s.tp == tp {
+      return s;
+    }
+  }
+  null
+}
+
+// `store_value_type`: the static type of the value whose store `v` names — a variable's, and
+// for a field of a record (`OpGetField`) the record's, whose store's root a whole-store native
+// reads; empty for any other value.
+fn store_value_type(x: Cx, w: W, v: ir::Node) -> vector<ir::TypeT> {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if x.b.data.definitions[def_nr]!.name == "OpGetField" && len(args) > 0 {
+        return store_value_type(x, w, args[0]!);
+      }
+      []
+    },
+    NdVar { n } => x.b.data.definitions[w.index]!.variables.variables[n]!.type_def,
+    _ => [],
+  }
+}
+
+// The root type of the store `v` names, or -1 with `why` refused.
+fn root_of(x: Cx, w: W, v: ir::Node, why: text) -> integer {
+  ts = store_value_type(x, w, v);
+  tp = if len(ts) == 0 { -1 } else { cgen_ref::root_type(x.b, ts) };
+  if tp < 0 || tp >= len(x.b.types) {
+    refuse(w, why);
+    return -1;
+  }
+  tp
+}
+
+// `Cx::sidecar_of`: the C name of the sidecar a persist of a store minted as `tp` writes, the
+// root registered for the unit's `sidecar_table`.  A layout with a moved key order is converted
+// by a whole load, whose walk reads every type of the tree off the table.
+fn sidecar_of(x: Cx, w: W, tp: integer) -> text {
+  row = row_of(x, tp);
+  if row == null {
+    refuse(w, "a persisted root the image has no layout facts for");
+    return "";
+  }
+  x.sidecars[tp] = true;
+  if row!.rekey {
+    cgen_tables::copy_type(x, tp);
+  }
+  "&loft_sidecar{tp}"
+}
+
+// `Cx::upgrade_of`: a whole-image load of a store minted as `tp` converts an image of another
+// layout — its closure and each `upgrade` routine's types in the parse and the type tables.
+// A closure the parse table cannot describe keeps the load refusing such an image.
+fn upgrade_of(x: Cx, w: W, tp: integer) {
+  if x.upgrades[tp]! {
+    return;
+  }
+  types: vector<integer> = [tp];
+  for t in x.b.upgrade_types {
+    types += [t];
+  }
+  saved = w.why;
+  w.why = "";
+  ok = true;
+  for t in types {
+    cgen_parse::parse_type(x, w, t);
+    if w.why != "" {
+      ok = false;
+      break;
+    }
+    cgen_tables::copy_type(x, t);
+  }
+  w.why = saved;
+  if ok {
+    x.upgrades[tp] = true;
+    cgen_tables::name_types(x);
+  }
+}
+
+// `store_native`: the natives over a whole store, `done` false for any other call.
+pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  if route == "n_store_persist_copy" && len(args) == 2 {
+    // The image's sidecar is the store's root type's; the image is a deep copy of its root.
+    tp = root_of(x, w, args[0]!, "a persisted value whose store type is not known here");
+    if tp < 0 {
+      return none();
+    }
+    cgen_tables::copy_type(x, tp);
+    cgen_tables::name_types(x);
+    // A store holding a stored reference is written through the converter, which re-points
+    // each reference at the copy.
+    if row_of(x, tp)?.refs ?? false {
+      upgrade_of(x, w, tp);
+    }
+    sc = sidecar_of(x, w, tp);
+    if w.why != "" {
+      return none();
+    }
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    return E { code: "(uint8_t) loft_image_write(loft_types, loft_ntypes, {r}, {path}, {sc})", kind: K_BOOL };
+  }
+  if (route == "n_store_load" || route == "n_store_load_untrusted") && len(args) == 2 {
+    // The gate reads the layout of the store's root type, the value's static type.
+    tp = root_of(x, w, args[0]!, "a loaded value whose store type is not known here");
+    if tp < 0 {
+      return none();
+    }
+    // A store holding references or a trie is loaded by a walk of its type.
+    if row_of(x, tp)?.walks ?? false {
+      cgen_tables::copy_type(x, tp);
+      cgen_tables::name_types(x);
+    }
+    // An image of another layout is converted.
+    upgrade_of(x, w, tp);
+    sc = sidecar_of(x, w, tp);
+    if w.why != "" {
+      return none();
+    }
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    return E { code: "(uint8_t) loft_image_load({r}, {path}, {sc}, {if route == "n_store_load_untrusted" { 1 } else { 0 }})", kind: K_BOOL };
+  }
+  // `load_url`: a whole image over `http(s)://` — the gate as `store_load`'s, and the
+  // expected digest of a load that checks one before the sidecar.
+  if (route == "n_store_load_url" && len(args) == 3) || (route == "n_store_load_url_trusted" && len(args) == 2) {
+    tp = root_of(x, w, args[0]!, "a loaded value whose store type is not known here");
+    if tp < 0 {
+      return none();
+    }
+    if row_of(x, tp)?.walks ?? false {
+      cgen_tables::copy_type(x, tp);
+      cgen_tables::name_types(x);
+    }
+    upgrade_of(x, w, tp);
+    sc = sidecar_of(x, w, tp);
+    if w.why != "" {
+      return none();
+    }
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    url = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    sha = if len(args) == 3 { "{as_view(w, cgen_fn::arg(x, w, args, 2, ind))}, " } else { "" };
+    return E { code: "{if route == "n_store_load_url" { "loft_store_load_url" } else { "loft_store_load_url_trusted" }}({r}, {url}, {sha}{sc})", kind: K_BOOL };
+  }
+  if route == "n_store_verify" && len(args) == 1 {
+    // The walk reads the store's own type: every type the value reaches is described.
+    tp = root_of(x, w, args[0]!, "a verified value whose store type is not known here");
+    if tp < 0 {
+      return none();
+    }
+    cgen_tables::name_types(x);
+    cgen_tables::describe_type(x, tp);
+    r = as_ref(w, cgen_fn::expr(x, w, args[0]!, ind));
+    return E { code: "loft_store_verify(loft_types, loft_ntypes, {r})", kind: K_BOOL };
+  }
+  // `rx[lo..hi, …]` on a spatial index: the slice of the records inside the box.
+  if route == "n_spatial_range" && len(args) == 10 {
+    tp = cgen_fn::literal(w, args[1]!, "type") ?? return none();
+    keys = cgen_tables::keys_name(x, tp);
+    nk = len(x.b.types[tp]!.keys);
+    all: vector<ir::Node> = [args[0]!];
+    for k in 2..10 {
+      all += [args[k]!];
+    }
+    r = as_ref(w, cgen_fn::arg(x, w, all, 0, ind));
+    ints: vector<text> = [];
+    for k in 1..9 {
+      ints += [as_int(w, cgen_fn::arg(x, w, all, k, ind))];
+    }
+    return E { code: "loft_spatial_range({r}, {keys}, {nk}, {ints.join(", ")})", kind: K_REF };
+  }
+  // `t[prefix]` on a trie: the slice of the records whose key starts with the prefix.
+  if route == "n_trie_prefix" && len(args) == 4 {
+    tp = cgen_fn::literal(w, args[1]!, "type") ?? return none();
+    keys = cgen_tables::keys_name(x, tp);
+    three = [args[0]!, args[2]!, args[3]!];
+    r = as_ref(w, cgen_fn::arg(x, w, three, 0, ind));
+    pre = as_view(w, cgen_fn::arg(x, w, three, 1, ind));
+    limit = as_int(w, cgen_fn::arg(x, w, three, 2, ind));
+    return E { code: "loft_trie_prefix({r}, {keys}, {pre}, {limit})", kind: K_REF };
+  }
+  lazy = lazy_native(x, w, route, args, ind, done);
+  if done {
+    return lazy;
+  }
+  done = true;
+  if route == "n_store_load_key" || route == "n_store_load_key_text" || route == "n_store_load_keys" || route == "n_store_load_keys_text" || route == "n_store_load_prefix" || route == "n_store_load_box" || route == "n_store_load_range" {
+    return paged_load(x, w, route, args, ind);
+  }
+  done = false;
+  none()
+}
+
+// `paged_plan`: what a working-set loader serves, as the host read it off the image's root
+// (`Bundle.sidecars`'s plan): the collection, its element type, the refusal it answers with
+// and its key parts — with the root's sidecar registered.
+struct Plan {
+  sc: text,
+  refusal: text,
+  content: integer,
+  keys: text,
+  nk: integer,
+  kind: text,
+  coll_name: text,
+}
+
+fn paged_plan(x: Cx, w: W, route: text, local: ir::Node) -> Plan? {
+  root = root_of(x, w, local, "a loaded value whose store type is not known here");
+  if root < 0 {
+    return null;
+  }
+  row = row_of(x, root);
+  if row == null {
+    refuse(w, "a persisted root the image has no layout facts for");
+    return null;
+  }
+  range = route == "n_store_load_range";
+  coll = if range { root } else { row!.pcoll };
+  // The loaders a hash and a trie both serve share the image's refusal; a prefix load wants a
+  // trie, a box load a spatial index (`pboxrefusal`), a range load a sorted root.
+  why = if range { row!.prangerefusal } else if route == "n_store_load_box" { row!.pboxrefusal } else { row!.prefusal };
+  if route == "n_store_load_prefix" && row!.pkind != 1 {
+    refuse(w, "a prefix load of a store that holds no trie");
+    return null;
+  }
+  content = if range { row!.prangecontent } else { row!.pcontent };
+  cgen_tables::name_types(x);
+  sc = sidecar_of(x, w, root);
+  if w.why != "" {
+    return null;
+  }
+  keys = "0";
+  nk = 0;
+  if why == "" && content >= 0 {
+    cgen_tables::describe_type(x, content);
+    keys = cgen_tables::keys_name(x, coll);
+    nk = len(x.b.types[coll]!.keys);
+  } else {
+    content = 0;
+  }
+  kind = if !range && row!.pkind == 1 { "LOFT_PG_TRIE" } else if !range && row!.pkind == 2 { "LOFT_PG_RADIX" } else { "LOFT_PG_HASH" };
+  name = if coll >= 0 && coll < len(x.b.types) { x.b.types[coll]!.name } else { "" };
+  Plan { sc: sc, refusal: if why == "" { "0" } else { c_string(why) }, content: content, keys: keys, nk: nk, kind: kind, coll_name: c_string(name) }
+}
+
+// `paged_load`: a working-set loader (`store_load_key` and its siblings, `loft_paged_load.h`),
+// its operands evaluated in order.
+fn paged_load(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer) -> E {
+  if len(args) < 2 {
+    refuse(w, "{route} without its operands");
+    return none();
+  }
+  plan = paged_plan(x, w, route, args[0]!) ?? return none();
+  local = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+  path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+  head = "loft_types, {local}, {path}, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {plan.nk}";
+  if route == "n_store_load_key" && len(args) >= 3 {
+    return E { code: "(uint8_t) (loft_pg_load_keys({head}, {plan.kind}, (loft_kv[]) {{ loft_kv_int({as_int(w, cgen_fn::arg(x, w, args, 2, ind))}) }}, 1) > 0)", kind: K_BOOL };
+  }
+  if route == "n_store_load_key_text" && len(args) >= 3 {
+    return E { code: "(uint8_t) (loft_pg_load_keys({head}, {plan.kind}, (loft_kv[]) {{ loft_kv_text({as_view(w, cgen_fn::arg(x, w, args, 2, ind))}) }}, 1) > 0)", kind: K_BOOL };
+  }
+  if (route == "n_store_load_keys" || route == "n_store_load_keys_text") && len(args) >= 3 {
+    return E { code: "loft_pg_load_key_list({head}, {plan.kind}, {as_ref(w, cgen_fn::arg(x, w, args, 2, ind))}, {if route == "n_store_load_keys_text" { 1 } else { 0 }})", kind: K_INT };
+  }
+  if route == "n_store_load_prefix" && len(args) >= 4 {
+    pre = as_view(w, cgen_fn::arg(x, w, args, 2, ind));
+    return E { code: "loft_pg_load_prefix({head}, {pre}, {as_int(w, cgen_fn::arg(x, w, args, 3, ind))})", kind: K_INT };
+  }
+  if route == "n_store_load_box" && len(args) >= 5 {
+    from = as_ref(w, cgen_fn::arg(x, w, args, 2, ind));
+    till = as_ref(w, cgen_fn::arg(x, w, args, 3, ind));
+    return E { code: "loft_pg_load_box({head}, {from}, {till}, {as_int(w, cgen_fn::arg(x, w, args, 4, ind))}, {plan.coll_name})", kind: K_INT };
+  }
+  if route == "n_store_load_range" && len(args) >= 4 {
+    lo = as_int(w, cgen_fn::arg(x, w, args, 2, ind));
+    return E { code: "loft_pg_load_range(loft_types, {local}, {path}, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {lo}, {as_int(w, cgen_fn::arg(x, w, args, 3, ind))})", kind: K_INT };
+  }
+  refuse(w, "{route} without its operands");
+  none()
+}
+
+// A text as a C byte array initializer, its terminating zero included: a layout dump passes
+// the 4095 characters a C99 literal is guaranteed.
+fn bytes(t: text) -> text {
+  out: vector<text> = [];
+  for i in 0..t.size() {
+    out += ["{t.byte_at(i)}"];
+  }
+  out += ["0"];
+  "{{ {out.join(", ")} }}"
+}
+
+// `v`, the bits of a 64-bit unsigned integer the image holds as a signed one, in decimal.
+fn u64_dec(v: integer) -> text {
+  if v >= 0 {
+    return "{v}";
+  }
+  hi = (v >> 32) & 4294967295;
+  lo = v & 4294967295;
+  // hi * 2^32 + lo, with 2^32 = 4 * 10^9 + 294967296: the billions and the rest apart.
+  low = hi * 294967296 + lo;
+  billions = hi * 4 + low / 1000000000;
+  rest = low % 1000000000;
+  "{billions}{rest:09}"
+}
+
+// `table_rows`: one past the highest type the copy table describes.
+fn table_rows(x: Cx) -> integer {
+  rows = 0;
+  for c in x.tables.copy {
+    if c || x.tables.described[c#index]! {
+      rows = c#index + 1;
+    }
+  }
+  rows
+}
+
+// `upgrade_table`: root `tp`'s description for a converting load (`loft_upgrade`).
+fn upgrade_table(x: Cx, tp: integer) -> text {
+  for u in x.b.upgrades {
+    if u.tp != tp {
+      continue;
+    }
+    names = [for n in u.names { c_string(n) }].join(", ");
+    ids = [for i in u.ids { "{i}" }].join(", ");
+    return "static const char loft_upd{tp}[] = {bytes(u.desc)};\nstatic const char *const loft_upn{tp}[] = {{ {names} }};\nstatic const uint16_t loft_upt{tp}[] = {{ {ids} }};\nstatic const loft_upgrade loft_up{tp} = {{ loft_upd{tp}, loft_upn{tp}, loft_upt{tp}, {len(u.names)}, {c_string(x.b.version)} }};\n";
+  }
+  ""
+}
+
+// `sidecar_table`: each root's `.dschema` text split where its slot line goes, and the layout
+// the loader gates on.
+pub fn sidecar_table(x: Cx) -> text {
+  out = "";
+  for on in x.sidecars {
+    if !on {
+      continue;
+    }
+    tp = on#index;
+    row = row_of(x, tp) ?? continue;
+    out += "static const char loft_scb{tp}[] = {bytes(row.before)};\n";
+    out += "static const char loft_sca{tp}[] = {bytes(row.after)};\n";
+    out += "static const char loft_scd{tp}[] = {bytes(row.dump)};\n";
+    up = "0";
+    if x.upgrades[tp]! {
+      out += upgrade_table(x, tp);
+      up = "&loft_up{tp}";
+    }
+    walks = if row.walks { "loft_types" } else { "0" };
+    rekey = if row.dump.find(KEY_ORDER) != null { "loft_types, {table_rows(x)}" } else { "0, 0" };
+    out += "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({u64_dec(row.hash)}), loft_scd{tp}, {c_string(x.b.oldest)}, {c_string(x.b.bridge)}, {walks}, {rekey}, {up} }};\n";
+  }
+  out
+}
+
+// Does the unit convert a store of another layout on load?
+pub fn upgrades(x: Cx) -> boolean {
+  for u in x.upgrades {
+    if u {
+      return true;
+    }
+  }
+  false
+}
+
+// ── @PLN129 lazily bound collections (`loft_lazy.h`, keyed.rs `lazy_native`) ──
+
+// The natives of a lazily bound collection, with `done` set; `done` false for any other.
+fn lazy_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = true;
+  if route == "n_store_bind_lazy" && len(args) == 2 {
+    return bind_lazy(x, w, args, ind);
+  }
+  if route == "n_store_lazy_error" && len(args) == 1 {
+    return E { code: "loft_lazy_error({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_VIEW };
+  }
+  if route == "n_store_lazy_faults" && len(args) == 1 {
+    return E { code: "loft_lazy_faults({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_INT };
+  }
+  if route == "n_store_lazy_clear" && len(args) == 1 {
+    return E { code: "loft_lazy_clear({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_BOOL };
+  }
+  if route == "n_store_lazy_fail" && len(args) == 2 {
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    why = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    return E { code: "loft_lazy_fail({r}, {why})", kind: K_VOID };
+  }
+  // A database's explicit fetches (`lazy_query`, `lazy_range`), run by the runtime's sqlite
+  // source.
+  if route == "n_store_lazy_query" && len(args) == 2 {
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    c = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+    return E { code: "loft_lazy_query({r}, {c})", kind: K_INT };
+  }
+  if route == "n_store_lazy_range" && len(args) == 3 {
+    r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+    lo = as_int(w, cgen_fn::arg(x, w, args, 1, ind));
+    hi = as_int(w, cgen_fn::arg(x, w, args, 2, ind));
+    return E { code: "loft_lazy_range({r}, {lo}, {hi})", kind: K_INT };
+  }
+  done = false;
+  none()
+}
+
+// `Stores::collection_type_of_store`: the keyed collection a store minted as `tp` roots — the
+// type itself, or a wrapper struct's one keyed-collection field — or -1.
+fn collection_type_of_store(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return -1;
+  }
+  if is_keyed_type(b, tp) {
+    return tp;
+  }
+  fields = match b.types[tp].parts[0] {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => return -1,
+  };
+  found = -1;
+  count = 0;
+  for f in fields {
+    if is_keyed_type(b, f.content) {
+      found = f.content;
+      count += 1;
+    }
+  }
+  if count == 1 { found } else { -1 }
+}
+
+fn is_keyed_type(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  match b.types[tp].parts[0] {
+    PtHash { content: _, fields: _ } => true,
+    PtSorted { content: _, keys: _ } => true,
+    PtOrdered { content: _, keys: _ } => true,
+    PtIndex { content: _, keys: _ } => true,
+    PtTrie { content: _, key: _ } => true,
+    PtRadix { content: _, fields: _ } => true,
+    _ => false,
+  }
+}
+
+// `Stores::element_type_name`: the name of collection `tp`'s element type, "" for none.
+fn element_type_name(b: ir::Bundle, tp: integer) -> text {
+  if tp < 0 || tp >= len(b.types) {
+    return "";
+  }
+  c = types::content_of(b.types, tp) ?? -1;
+  if c < 0 || c >= len(b.types) { "" } else { b.types[c]!.name }
+}
+
+// `store_bind_lazy(local, source)` (`Stores::bind_lazy`): a kind an image cannot page — any
+// but a hash, a trie or a spatial — is refused at the bind; else the binding carries a fetch
+// for one key written from the collection's paged plan (`loft_lazy_fetch{k}`).
+fn bind_lazy(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
+  local = args[0]!;
+  root = root_of(x, w, local, "a lazily bound value whose store type is not known here");
+  if root < 0 {
+    return none();
+  }
+  coll = collection_type_of_store(x.b, root);
+  // The element a miss is fetched for is the BOUND collection's own: a field read names the
+  // field's type as its third operand.
+  field_type = -1;
+  match loop_shape::unspan(local) {
+    NdCall { def_nr, args: fa } => {
+      if x.b.data.definitions[def_nr]!.name == "OpGetField" && len(fa) == 3 {
+        field_type = match loop_shape::unspan(fa[2]!) { NdInt { n } => n, _ => -1 };
+      }
+    },
+    _ => {},
+  }
+  own = coll;
+  if field_type >= 0 && field_type < len(x.b.types) {
+    fc = collection_type_of_store(x.b, field_type);
+    if fc >= 0 {
+      own = fc;
+    }
+  }
+  element = c_string(if own < 0 { "" } else { element_type_name(x.b, own) });
+  kind = if coll >= 0 { cgen_ref::keyed_kind(x.b, coll) } else { "" };
+  unservable = "0";
+  fetch = "0";
+  if kind == "hash" || kind == "trie" || kind == "spatial" {
+    radix = kind == "spatial";
+    name = if radix { "n_store_load_box" } else if kind == "trie" { "n_store_load_key_text" } else { "n_store_load_key" };
+    plan = paged_plan(x, w, name, local) ?? return none();
+    k = x.lazy_fetchers;
+    x.lazy_fetchers = k + 1;
+    head = "loft_types, coll, path, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {plan.nk}";
+    load = if radix {
+      "n > 0 ? loft_pg_load_box_kv({head}, key, n, key, n, -1, {plan.coll_name}) : 0"
+    } else {
+      "n == 1 ? loft_pg_load_keys({head}, {plan.kind}, key, 1) : 0"
+    };
+    f = "loft_lazy_fetch{k}";
+    sig = "static int64_t {f}(loft_ref coll, loft_str path, const loft_kv *key, int n)";
+    x.gen_decls += "{sig};\n";
+    x.gen_bodies += "\n{sig} {{\n    return {load};\n}}\n";
+    fetch = f;
+  } else {
+    unservable = c_string("a lazily-bound `.store` image is read a page at a time, which only a `hash`, a `trie` or a `spatial` supports, and `{x.b.types[root]!.name}` is none of them — read it whole with `store_load` (or `store_load_url_trusted` for a URL), which carries every kind");
+  }
+  plan_ref = sql_plan(x, w, own);
+  if w.why != "" {
+    return none();
+  }
+  r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
+  source = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
+  E { code: "loft_lazy_bind_coll({r}, {source}, {fetch}, {element}, {unservable}, {plan_ref})", kind: K_BOOL }
+}
+
+// `sql_plan`: a `sqlite:` source's plan for keyed collection type `tp` (`loft_sql_plan`) — the
+// equality query the host derived from the layout (`Bundle.sql_plans`), its table, each
+// column's field, and the collection's own insert; "0" where no query was derived.
+fn sql_plan(x: Cx, w: W, tp: integer) -> text {
+  if tp < 0 || tp >= len(x.b.types) {
+    return "0";
+  }
+  at = -1;
+  for p in x.b.sql_plans {
+    if p.tp == tp {
+      at = p#index;
+    }
+  }
+  if at < 0 {
+    return "0";
+  }
+  plan = x.b.sql_plans[at]!;
+  kk = cgen_ref::keyed_kind(x.b, tp);
+  kind = if kk == "hash" || kk == "sorted" || kk == "index" || kk == "ordered" || kk == "spatial" || kk == "trie" { "LOFT_KEYED_{kk.to_uppercase()}" } else { "" };
+  if kind == "" {
+    return "0";
+  }
+  elem = types::content_of(x.b.types, tp) ?? -1;
+  if elem < 0 || elem >= len(x.b.types) {
+    return "0";
+  }
+  fields = match x.b.types[elem]!.parts[0] {
+    PtStruct { fields } => fields,
+    _ => return "0",
+  };
+  size = x.b.types[elem]!.size;
+  cgen_tables::copy_type(x, elem);
+  keys = cgen_tables::keys_of(x, tp);
+  after = plan.text.find(" FROM ");
+  table = "";
+  if after != null {
+    rest = plan.text[after! + 6..plan.text.size()];
+    space = rest.find(" ");
+    table = if space == null { rest } else { rest[0..space!] };
+  }
+  cols: vector<text> = [];
+  for c in plan.columns {
+    if c.field >= 0 && c.field < len(fields) {
+      f = fields[c.field]!;
+      cols += ["{{ {c_string(c.column)}, {f.position}, {f.content}, {c_string(x.b.types[f.content]!.name)} }}"];
+    }
+  }
+  name = "loft_sqlplan{tp}";
+  if !x.sql_plans[tp]! {
+    x.sql_plans[tp] = true;
+    col_list = if len(cols) == 0 { "{{ 0, 0, 0, 0 }}" } else { cols.join(", ") };
+    filter = if plan.filter == "" { "0" } else { c_string(plan.filter) };
+    range = if plan.range == "" { "0" } else { c_string(plan.range) };
+    x.gen_decls += "static const loft_sql_col loft_sqlcols{tp}[] = {{ {col_list} }};\nstatic const loft_sql_plan {name} = {{ {c_string(plan.text)}, {c_string(table)}, {c_string(element_type_name(x.b, tp))}, loft_types, loft_sqlcols{tp}, {len(cols)}, {plan.params}, {elem}, {size}, {kind}, {keys}, {filter}, {range}, {plan.range_params} }};\n";
+  }
+  "&{name}"
+}
+

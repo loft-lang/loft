@@ -1707,7 +1707,7 @@ fn a_missing_rustc_falls_back_quietly_except_where_asked() {
     fa::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
     let run = |bin: &std::path::Path, native: bool, require: bool| {
         let mut c = loft::platform::process::harness_command(bin);
-        c.env_remove("LOFT_NATIVE_BACKEND");
+        c.env("LOFT_NATIVE_BACKEND", "rust");
         if native {
             c.arg("--native-rust");
         }

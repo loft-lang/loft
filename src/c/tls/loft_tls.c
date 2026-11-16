@@ -4,11 +4,12 @@
  * certificate chain and key (`loft_tls_server_new`, `loft_tls_accept`; at the end of the file).
  * It is not part of the unit's translation unit: `src/c/tls.rs` builds it with the BearSSL
  * sources into one cached archive, linked only into a unit that fetches over a URL or serves
- * TLS (`LOFT_HTTPS`).
+ * TLS (`LOFT_HTTPS`); an Android build compiles the same sources for the device instead.
  *
  * What the client promises, as `src/tls.rs` promises it for the Rust build:
  *   - the certificates the machine trusts are trusted: `SSL_CERT_FILE` / `SSL_CERT_DIR` when set,
- *     else the system bundle at the first of the paths curl and OpenSSL probe;
+ *     else the system bundle at the first of the paths curl and OpenSSL probe (on Android, the
+ *     system's directory of CA files, which the Android build compiles these sources for);
  *   - the server's chain is always validated and its name always checked — a DNS name by
  *     BearSSL, an IP address against the certificate's iPAddress names here (BearSSL matches
  *     DNS names only); nothing turns either off;
@@ -275,6 +276,14 @@ static void loft_tls_load(void) {
 #if defined(_WIN32)
     snprintf(loft_tls_where, sizeof loft_tls_where, "the Windows certificate store (ROOT; SSL_CERT_FILE names a bundle)");
     loft_tls_add_system_store();
+#elif defined(__ANDROID__)
+    /* Android keeps no bundle: its store is a directory of PEM files, one CA each (`<hash>.0`,
+     * the certificate's text dump after it).  Since Android 14 the store the system trusts is
+     * the updatable Conscrypt copy; the system image's is the one before it, and the fallback. */
+    snprintf(loft_tls_where, sizeof loft_tls_where, "Android's CA store (/apex/com.android.conscrypt/cacerts, else "
+             "/system/etc/security/cacerts; SSL_CERT_DIR names another)");
+    loft_tls_add_dir("/apex/com.android.conscrypt/cacerts");
+    if (!loft_tls_ta.n) loft_tls_add_dir("/system/etc/security/cacerts");
 #else
     static const char *const bundles[] = {
         "/etc/ssl/certs/ca-certificates.crt",                /* Debian, Ubuntu, Arch, Gentoo */

@@ -4073,7 +4073,7 @@ fn an_image_in_the_old_key_order_is_converted() {
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &dir)
-            .env_remove("LOFT_NATIVE_BACKEND")
+            .env("LOFT_NATIVE_BACKEND", "rust")
             .current_dir(workspace_root())
             .output()
             .expect("run the reader");
@@ -4091,7 +4091,7 @@ fn an_image_in_the_old_key_order_is_converted() {
             .arg(backend)
             .arg(&nest)
             .env("LOFT_PERSIST_TEST_PATH", &dir)
-            .env_remove("LOFT_NATIVE_BACKEND")
+            .env("LOFT_NATIVE_BACKEND", "rust")
             .current_dir(workspace_root())
             .output()
             .expect("run the nested reader");

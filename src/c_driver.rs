@@ -22,10 +22,17 @@ pub(crate) enum Tier {
     Debug,
 }
 
-/// Is the C backend the one `--native` drives?  `LOFT_NATIVE_BACKEND=c` (or `--native-c`,
-/// which the caller folds in).  Any other value of the variable is the rustc writer.
+/// Is the C backend the one `--native` drives?  It is the default (@PLN203 C9); only
+/// `LOFT_NATIVE_BACKEND=rust` (or `--native-rust`, which the caller folds in) takes the rustc
+/// writer, which stays as the bisect path until it moves to the attic.
 pub(crate) fn c_backend_selected() -> bool {
-    std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("c"))
+    !rust_backend_selected()
+}
+
+/// `LOFT_NATIVE_BACKEND=rust`: the rustc writer is asked for instead of the C backend, as
+/// `--native-rust` asks for it.
+pub(crate) fn rust_backend_selected() -> bool {
+    std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("rust"))
 }
 
 /// The C compiler: `LOFT_CC`, else `CC`, else the host's own (`platform::host_c_compiler`:
@@ -254,6 +261,7 @@ fn release_shim_lto(
         if fa::create_dir_all(&inc).is_ok()
             && loft::c_shim::put_width_header(&inc).is_ok()
             && loft::c_shim::put_bodies(&inc, &paths).is_ok()
+            && loft::c_shim::put_dep_headers_of(&inc, &paths).is_ok()
         {
             flags.push("-I".to_string());
             flags.push(inc.to_string_lossy().into_owned());
@@ -459,6 +467,24 @@ fn wasm_toolchain() -> &'static WasmToolchain {
     })
 }
 
+/// The dependency headers `shim_sources` include (@C165), under each dependency's name in a
+/// directory of this process under `scratch`; `None` when no shim of this program includes
+/// one, or the directory cannot be written (the compile then names the header it misses).
+fn staged_dep_headers(
+    scratch: &std::path::Path,
+    shim_sources: &[String],
+) -> Option<std::path::PathBuf> {
+    if loft::c_shim::all_dep_headers().is_empty() {
+        return None;
+    }
+    let dir = scratch.join(format!("loft_wasm_inc_{}", std::process::id()));
+    let paths: Vec<std::path::PathBuf> =
+        shim_sources.iter().map(std::path::PathBuf::from).collect();
+    fa::create_dir_all(&dir).ok()?;
+    loft::c_shim::put_dep_headers_of(&dir, &paths).ok()?;
+    Some(dir)
+}
+
 /// `--native-wasm` through the C (@PLN203 C6): the unit built for WASI by clang into
 /// `out`, as `scripts/c_sweep.py --wasm` builds and validates it.  setjmp is wasm's
 /// exception-handling proposal in its standard encoding (a host runs it with exceptions on —
@@ -539,6 +565,11 @@ pub(crate) fn build_wasm(
     if let Some(ld) = &tc.ld {
         cmd.push_arg(format!("--ld-path={ld}"));
     }
+    // @C165 — the dependency headers the shims include, under each dependency's name.
+    let dep_inc = staged_dep_headers(&scratch, shim_sources);
+    if let Some(dir) = &dep_inc {
+        cmd.push_arg("-I").push_arg(dir);
+    }
     cmd.push_arg(&src);
     cmd.push_args(shim_sources);
     cmd.push_arg("-o").push_arg(out);
@@ -553,6 +584,9 @@ pub(crate) fn build_wasm(
     let ran = cmd.run(b"");
     if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
         let _ = fa::remove_file(&src);
+    }
+    if let Some(dir) = &dep_inc {
+        let _ = fa::remove_dir_all(dir);
     }
     let ran = ran.map_err(|e| {
         format!(
@@ -605,10 +639,13 @@ const ANDROID_MAIN_C: &str = include_str!("c/android/loft_android_main.c");
 ///   entry's `loft_android_glue_thread` (`-D`, that one object only), which gives its app
 ///   thread the desktop's 8 MiB stack;
 /// - each `[c] shim` the unit links, compiled from its sources for the target, as the wasm
-///   build compiles them.
+///   build compiles them, and the TLS client's sources in place of its host archive.
 ///
 /// Linked `-shared` against the platform's `android`, `log`, `m` and `dl`, with
-/// `ANativeActivity_onCreate` (the glue's) kept as the library's entry.
+/// `ANativeActivity_onCreate` (the glue's) kept as the library's entry.  Each component the unit
+/// binds (`libloft_net`: the web, server and ssh libraries' natives) is a library of its own on
+/// the device too, built beside `out` as `lib<stem>.so` from its sources and the TLS client's,
+/// as the host ships it beside loft; the answer is their paths, for the APK's `lib/<abi>/`.
 ///
 /// # Errors
 /// A link input that is a host archive and not a shim's sources (A0 builds none for Android),
@@ -619,9 +656,18 @@ pub(crate) fn build_android(
     cc: &std::path::Path,
     glue_dir: &std::path::Path,
     ship: bool,
-) -> Result<(), String> {
+) -> Result<Vec<std::path::PathBuf>, String> {
     let links = link_inputs(c);
     let (links, sources) = shims_as_sources(c, &links, &marked(c, "shim-archive"));
+    // The TLS client's host archive is its sources here, compiled for the device like a shim's.
+    let mut device_links = Vec::new();
+    for l in links {
+        match loft::c::tls_sources_for(&l) {
+            Some(tls) => device_links.extend(tls?.iter().map(|p| p.to_string_lossy().into_owned())),
+            None => device_links.push(l),
+        }
+    }
+    let links = device_links;
     if let Some(host) = links.iter().find(|l| !is_c_source(l)) {
         return Err(format!(
             "--native-android: this program links `{host}`, a library built for this machine; \
@@ -710,10 +756,60 @@ pub(crate) fn build_android(
             .map(|a| (*a).to_string()),
     );
     run(link, "linking the activity library")?;
+    let components = android_components(c, out, &dir, &run)?;
     if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
         let _ = fa::remove_dir_all(&dir);
     }
-    Ok(())
+    Ok(components)
+}
+
+/// The components the unit `c` binds (it names each by its library file, `loft_ffi_sym`), each
+/// built for the device beside `out` as `lib<stem>.so` — the name an APK's `lib/<abi>/` takes and
+/// the unit's Android lookup asks for (`loft_ffi_sym`).  Every symbol is hidden but the ones the
+/// component's C marks for export, as the host build hides them.
+fn android_components(
+    c: &str,
+    out: &std::path::Path,
+    dir: &std::path::Path,
+    run: &dyn Fn(Vec<String>, &str) -> Result<(), String>,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let beside = out.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let mut libs = Vec::new();
+    for name in loft::c::component::NAMES {
+        if !c.contains(&format!("\"{}\"", loft::components::file_name(name))) {
+            continue;
+        }
+        let src = dir.join(format!("component_{name}"));
+        fa::create_dir_all(&src).map_err(|e| format!("cannot create {}: {e}", src.display()))?;
+        let sources = loft::c::component::sources_for_device(name, &src)?;
+        let lib = beside.join(format!("lib{}.so", loft::components::stem(name)));
+        let mut args: Vec<String> = [
+            "-shared",
+            "-fPIC",
+            "-O2",
+            "-w",
+            "-fvisibility=hidden",
+            "-DLOFT_ANDROID",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        args.extend(["-I".to_string(), src.to_string_lossy().into_owned()]);
+        args.extend(["-o".to_string(), lib.to_string_lossy().into_owned()]);
+        args.extend(sources.iter().map(|p| p.to_string_lossy().into_owned()));
+        args.extend(["-lm", "-llog", "-ldl"].iter().map(|s| (*s).to_string()));
+        args.extend(
+            loft::platform::c_thread_link_args()
+                .iter()
+                .map(|a| (*a).to_string()),
+        );
+        run(
+            args,
+            &format!("building the `{name}` component for the device"),
+        )?;
+        libs.push(lib);
+    }
+    Ok(libs)
 }
 
 /// Run the NDK clang `cc` with `args`; a failure names `what` and keeps nothing hidden: the
@@ -1072,8 +1168,18 @@ pub(crate) fn loft_written_unit(
     let image = format!("{}.store", stem.display());
     let unit = format!("{}.c", stem.display());
     let written = (|| {
-        loft::ir_store::save_bundle_with(data, stores, &image, &loft::c::c_library_facts(data))
-            .map_err(|e| format!("the program image could not be written: {e}"))?;
+        loft::ir_store::save_bundle_with(
+            data,
+            stores,
+            &image,
+            &loft::ir_store::bundle_facts(
+                data,
+                stores,
+                loft::c::c_library_facts(data),
+                loft::c::host_facts(data, stores),
+            ),
+        )
+        .map_err(|e| format!("the program image could not be written: {e}"))?;
         let out = Spawn::new(Program::os(&generator))
             .args([&image, &unit, &runtime])
             .run(&[])

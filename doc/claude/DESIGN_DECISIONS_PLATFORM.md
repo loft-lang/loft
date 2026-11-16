@@ -414,3 +414,31 @@ against the working directory, which an app does not have; its files are not pac
 **Holds at:** `@C164` — `src/app_files.rs` (`carried_files`), `src/esp_app.rs`,
 `src/main.rs` (the page), `src/android.rs` (`app_assets`, and its test);
 `tests/android/b3_text/` (an app that lists nothing and opens its font and image).
+## C165 — A shim includes a declared dependency's header by the dependency's name
+
+**Decision.** A package's shim may write `#include "<dependency>/<header>.h"` for a package
+its `loft.toml` declares as a dependency.  loft puts that dependency's headers — the `*.h`
+files beside the dependency's own `[c] shim` sources — under the dependency's name in the
+directory every shim compile already searches (`loft_width.h`'s).  The headers are those of the
+copy the program resolved, they join the shim's cache key, and the startup cache carries them
+for a compile after a warm start.  A package still declares no flags (@C158): the dependency
+list is the declaration.
+**Why.** A library that exposes a C interface to its dependants — a table of functions a
+backend fills in, a struct both sides lay out — needs both sides to compile against one header.
+A path relative to the including source reaches it only while the two packages sit side by
+side under their plain names; installed, a package's directory is `<name>-<version>`, and the
+version is not known when the C is written.  The alternative, a copy of the header in each
+dependant, is one rule in N places, and a stale copy calls through a table of another shape
+without a word.
+**Bounds.** Only a declared dependency's headers, only the directory of its shim sources (not
+below it), only `.h` files.  A shim that names none builds as before, to the same artefact.  A
+dependency that did not load is an error naming it.  At install time such a shim is not
+pre-built: which copy of the dependency a program loads is that program's resolution.
+**Revisit when.** A dependency's public headers need a directory apart from its sources, or a
+header must reach a dependant of a dependant.  Decided 2026-11-15.
+**Holds at:** `@C165` — `src/c_shim.rs` (`declare_dep_headers`, `put_dep_headers`, the cache
+key), `src/parser/packages.rs` (which dependencies a shim waits for), `src/startup_cache.rs`
+(the `chdr` lines), `src/esp_app.rs`, `scripts/thirdparty.py` (the publish gate builds a shim
+with its dependencies' headers staged the same way, and names the cure for a path out of the
+package); guard `a_backend_finds_the_layers_header_wherever_the_two_are_installed`
+(`tests/c_emit.rs`).

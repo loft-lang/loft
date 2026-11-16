@@ -1,0 +1,174 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 U-1 — `src/c/files.rs`: the binary form of a value in C, what `f += v`
+// writes and `f#read(n) as T` reads (`Stores::read_data` / `Stores::write_data`).  The unit
+// writes one `loft_ser{tp}` / `loft_de{tp}` pair per type a program writes or reads; the
+// builtin types' pairs are in `loft_io.h`.
+
+use ir;
+use cgen::(Cx);
+use cgen_ref;
+
+// A field that is part of a record's binary form: not a variant's tag, and placed.
+fn serialised(f: ir::DbField) -> boolean {
+  f.name != "enum" && f.position != 65535
+}
+
+// `ser_type`: type `tp` and every type its binary form reaches registered, or why not (a keyed
+// collection, a stored reference: store-internal).
+pub fn ser_type(x: Cx, tp: integer) -> text {
+  if tp <= 6 || x.sers[tp]! {
+    return "";
+  }
+  if tp >= len(x.b.types) {
+    return "a binary form of an unknown type";
+  }
+  x.sers[tp] = true;
+  why = match x.b.types[tp]!.parts[0]! {
+    PtStruct { fields } => fields_reach(x, fields),
+    PtEnumValue { value: _, fields } => fields_reach(x, fields),
+    PtVector { content } => ser_type(x, content),
+    PtEnum { values: _ } => "",
+    PtByte { start: _, nullable: _ } => "",
+    PtShort { start: _, nullable: _ } => "",
+    PtShortRaw { start: _, nullable: _ } => "",
+    PtInt { start: _, nullable: _ } => "",
+    PtIntRaw { start: _, nullable: _ } => "",
+    PtBase => "a binary form of a base",
+    PtArray { content: _ } => "a binary form of a array",
+    PtSorted { content: _, keys: _ } => "a binary form of a sorted",
+    PtOrdered { content: _, keys: _ } => "a binary form of a ordered",
+    PtHash { content: _, fields: _ } => "a binary form of a hash",
+    PtIndex { content: _, keys: _ } => "a binary form of a index",
+    PtRadix { content: _, fields: _ } => "a binary form of a spatial",
+    PtDbRef => "a binary form of a dbref",
+    PtChildRec { content: _ } => "a binary form of a childrec",
+    PtTrie { content: _, key: _ } => "a binary form of a trie",
+  };
+  if why != "" {
+    x.sers[tp] = false;
+  }
+  why
+}
+
+fn fields_reach(x: Cx, fields: vector<ir::DbField>) -> text {
+  for f in fields {
+    if serialised(f) {
+      w = ser_type(x, f.content);
+      if w != "" {
+        return w;
+      }
+    }
+  }
+  ""
+}
+
+// `raw_width`: the width of a value whose written bytes are its stored bytes in the host's
+// order, 0 for none.
+fn raw_width(b: ir::Bundle, tp: integer) -> integer {
+  match b.types[tp]!.parts[0]! {
+    PtBase => if tp == 0 || tp == 1 || tp == 3 { 8 } else if tp == 2 || tp == 6 { 4 } else if tp == 4 { 1 } else { 0 },
+    PtInt { start: _, nullable: _ } => 4,
+    PtIntRaw { start: _, nullable: _ } => 4,
+    PtByte { start: _, nullable: _ } => 1,
+    PtEnum { values: _ } => 1,
+    _ => 0,
+  }
+}
+
+// `ser_code`: every registered type's writer and reader.
+pub fn ser_code(x: Cx) -> text {
+  out = "";
+  for on in x.sers {
+    if on {
+      tp = on#index;
+      out += "static void loft_ser{tp}(loft_text *b, loft_ref r, int le);\nstatic void loft_de{tp}(loft_ref r, int le, const uint8_t *d, size_t n);\n";
+    }
+  }
+  for on in x.sers {
+    if on {
+      tp = on#index;
+      out += "static void loft_ser{tp}(loft_text *b, loft_ref r, int le) {{\n" + ser_body(x.b, tp) + "}}\n";
+      out += "static void loft_de{tp}(loft_ref r, int le, const uint8_t *d, size_t n) {{\n" + de_body(x.b, tp) + "}}\n";
+    }
+  }
+  out
+}
+
+fn ser_fields(fields: vector<ir::DbField>) -> text {
+  out = "";
+  for f in fields {
+    if serialised(f) {
+      out += "    loft_ser{f.content}(b, loft_field(r, {f.position}), le);\n";
+    }
+  }
+  out
+}
+
+// `read_data`: the value at `r` appended to `b`.
+fn ser_body(b: ir::Bundle, tp: integer) -> text {
+  out = "    loft_store_t *s = loft_store_of(r);\n    (void) s; (void) le;\n";
+  out += match b.types[tp]!.parts[0]! {
+    PtStruct { fields } => ser_fields(fields),
+    PtEnumValue { value: _, fields } => ser_fields(fields),
+    PtShort { start: _, nullable: _ } => "    uint16_t raw;\n    memcpy(&raw, loft_at(s, r.rec, r.pos), 2);\n    loft_put(b, raw ? (uint16_t) (raw - 1) : 0, 2, le);\n",
+    PtShortRaw { start, nullable: _ } => "    uint16_t raw;\n    memcpy(&raw, loft_at(s, r.rec, r.pos), 2);\n    loft_put(b, (uint16_t) (uint32_t) ((int64_t) raw + ({start})), 2, le);\n",
+    PtInt { start: _, nullable: _ } => "    loft_put(b, loft_u32(s, r.rec, r.pos), 4, le);\n",
+    PtIntRaw { start: _, nullable: _ } => "    loft_put(b, loft_u32(s, r.rec, r.pos), 4, le);\n",
+    PtVector { content } => vector_ser(b, content),
+    _ => "    loft_push_char(b, (char) *loft_at(s, r.rec, r.pos));\n",
+  };
+  out
+}
+
+fn vector_ser(b: ir::Bundle, elem: integer) -> text {
+  size = b.types[elem]!.size;
+  out = "    uint32_t v = loft_collection_rec(s, r.rec, r.pos);\n    uint32_t n = v == 0 ? 0 : loft_u32(s, v, 4);\n";
+  // Elements whose stored bytes ARE their written bytes, in the host's order, are one block.
+  w = raw_width(b, elem);
+  if w > 0 && w == size {
+    order = if w == 1 { "1" } else { "le == loft_host_le()" };
+    out += "    if (n && {order}) {{ loft_push(b, (const char *) loft_at(s, v, 8), (size_t) n * {w}); return; }}\n";
+  }
+  out + "    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref e = {{ r.store_nr, v, 8 + i * {size}, 0 }};\n        loft_ser{elem}(b, e, le);\n    }}\n"
+}
+
+fn de_fields(b: ir::Bundle, fields: vector<ir::DbField>) -> text {
+  out = "";
+  off = 0;
+  for f in fields {
+    if serialised(f) {
+      out += "    loft_de{f.content}(loft_field(r, {f.position}), le, d + {off}, n > {off} ? n - {off} : 0);\n";
+      off += cgen_ref::binary_size(b, f.content);
+    }
+  }
+  out
+}
+
+// `write_data`: the value at `r` from the `n` bytes at `d`.
+fn de_body(b: ir::Bundle, tp: integer) -> text {
+  out = "    loft_store_t *s = loft_store_of(r);\n    (void) s; (void) le; (void) n;\n";
+  out += match b.types[tp]!.parts[0]! {
+    PtStruct { fields } => de_fields(b, fields),
+    PtEnumValue { value: _, fields } => de_fields(b, fields),
+    PtShort { start: _, nullable: _ } => "    uint16_t u = (uint16_t) loft_take(d, 2, le);\n    loft_set_short(r, 0, 0, u >= 0x8000 ? (int64_t) u - 0x10000 : (int64_t) u);\n",
+    PtShortRaw { start, nullable: _ } => "    uint16_t u = (uint16_t) loft_take(d, 2, le);\n    loft_set_short_raw(r, 0, {start}, u >= 0x8000 ? (int64_t) u - 0x10000 : (int64_t) u);\n",
+    PtInt { start: _, nullable: _ } => "    uint32_t u = (uint32_t) loft_take(d, 4, le);\n    memcpy(loft_at(s, r.rec, r.pos), &u, 4);\n",
+    PtIntRaw { start: _, nullable: _ } => "    uint32_t u = (uint32_t) loft_take(d, 4, le);\n    memcpy(loft_at(s, r.rec, r.pos), &u, 4);\n",
+    PtVector { content } => vector_de(b, content),
+    _ => "    *loft_at(s, r.rec, r.pos) = d[0];\n",
+  };
+  out
+}
+
+fn vector_de(b: ir::Bundle, elem: integer) -> text {
+  size = b.types[elem]!.size;
+  if size == 0 {
+    return "";
+  }
+  bs = cgen_ref::binary_size(b, elem);
+  wire = if bs == 0 { size } else { bs };
+  "    for (size_t i = 0; i < n / {wire}; i++) {{\n        loft_ref e = loft_vec_append(r, {size});\n        loft_de{elem}(e, le, d + i * {wire}, {wire});\n        loft_vec_finish(r);\n    }}\n"
+}

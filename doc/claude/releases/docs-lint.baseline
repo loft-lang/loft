@@ -509,7 +509,7 @@ src/typedef.rs	narration	3
 src/typedef.rs	stamp	8
 src/use_analysis.rs	narration	11
 src/use_analysis.rs	stamp	39
-src/value_record.rs	narration	2
+src/value_record.rs	narration	3
 src/variables/intervals.rs	stamp	3
 src/variables/mod.rs	narration	16
 src/variables/mod.rs	stamp	27

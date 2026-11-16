@@ -113,6 +113,17 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))];
       out += [el_ex_pattern::elem_write(e, inner, at, x.code)];
       out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
+    } else if ird >= 0 && el::def(e, ird).def_type == el::DT_STRUCT {
+      // `new_record` for a record item that is no literal: the element made in the field's
+      // vector, filled as a vector literal's record item is (`record_item_copy`), finished.
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: ird, dep: el_types::deps(el_vars::tp(vars, elm)) });
+      at = ir::NdVar { n: elm };
+      fill = el_ex_match::record_item_copy(e, vars, elm, ird, x);
+      if fill == null {
+        return null;
+      }
+      out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + fill!;
+      out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
     } else {
       el::refuse(e, "a vector field of records written from a literal: an item that is no literal");
       return null;

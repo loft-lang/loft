@@ -21,16 +21,11 @@ image-functions	fault	tests/scripts/1044-par-element-view-borrows-its-vector.lof
 image-functions	fault	tests/scripts/945-stdlib-worked-examples.loft::test_json_builders_compose_and_serialise
 image-functions	stores	tests/scripts/store_iter_scratch.loft
 
-layer	written	agree	1305	of	1307
+layer	written	agree	1306	of	1308
 written	unwritten	tests/scripts/store_handoff_residency.loft
 written	stores	tests/scripts/store_iter_scratch.loft
 
-layer	written-functions	agree	3883	of	3911
-written-functions	fault	loft-suite/rules/binding/B-Copy/a-first-bind-from-a-choice-over-a-coalesce-copies-its-temporary.loft::test_the_coalesce_arm_rebound_twice
-written-functions	fault	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft::test_a_view_across_a_null_write_is_copied_out
-written-functions	fault	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft::test_a_view_inside_the_slot_survives_an_overwrite
-written-functions	fault	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft::test_an_element_slot_and_a_callee_frame
-written-functions	fault	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter-links-a-text-field-or-element.loft::test_through_a_function_value
+layer	written-functions	agree	3900	of	3912
 written-functions	noimage	loft-suite/rules/calls/F-Package/f_package_relay_lib.loft::test_the_relay_reads_the_package
 written-functions	stopped	loft-suite/rules/closures/L-FnRef/1658-a-native-called-through-a-function-value-runs.loft::test_many_calls_keep_the_stack
 written-functions	stopped	loft-suite/rules/closures/L-FnRef/1658-a-native-called-through-a-function-value-runs.loft::test_one_call_each
@@ -39,17 +34,6 @@ written-functions	stopped	loft-suite/rules/formatting/F-Render-Ref/2268-a-refere
 written-functions	stopped	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::test_read_back
 written-functions	stopped	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::test_read_misfits
 written-functions	stopped	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::test_shapes
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_a_four_byte_member
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_a_nullable_member
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_a_parameter_tuple_assigned_through_a_link
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_a_struct_field_after_a_narrow_member
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_a_tuple_field_assigned_before_a_field
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_a_vector_built_from_a_tuple_variable
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_a_vector_built_from_calls
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_a_wide_member_before_a_narrow_one
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_an_element_assigned_in_the_middle
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_an_element_field_assigned_in_place
-written-functions	unwritten	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft::test_elements_assigned_in_a_loop
 written-functions	fault	tests/scripts/1044-par-element-view-borrows-its-vector.loft::test_a_pass_through_worker_leaves_the_source_intact
 written-functions	fault	tests/scripts/945-stdlib-worked-examples.loft::test_json_builders_compose_and_serialise
 written-functions	unwritten	tests/scripts/store_handoff_residency.loft

@@ -6,7 +6,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # 209 — the GPU boundary: `gpu`'s loft API and the backend table
 
 Step L1 of [GPU_LAYER.md](GPU_LAYER.md): the boundary on paper, tried on every caller there is.
-Nothing here is built; L2 builds it against a recording backend.
+L2 built it as written here, with one name changed: `use` is a loft keyword, so a pipeline
+is bound with `bind`.
 
 ## The rule it rests on
 
@@ -41,7 +42,7 @@ pass on one stack and fail on another.
 | `Device` | One window (or page canvas) and its GPU | `gpu::open(table, width, height, title)`; a game calls `gpu_host::open(width, height, title)` | `close()`, or with its owner; everything it made is freed with it |
 | `Buffer` | Floats for vertices or instances, or an index list | `dev.buffer(data)`, `dev.index_buffer(list)` | with its owner |
 | `Texture` | A colour image (RGBA, 8 bits a channel) or a depth image | `dev.texture(w, h)`, `dev.depth_texture(w, h)`, `dev.texture_from(pixels, w, h)` | with its owner |
-| `Target` | What a pass draws into, other than the window: a colour texture, a depth texture, or both | `dev.target(colour, depth)` | with its owner; its textures live on |
+| `Target` | What a pass draws into, other than the window: a colour texture, a depth texture, or both | `dev.target(colour, depth)`, `dev.colour_target(colour)`, `dev.depth_target(depth)` | with its owner; its textures live on |
 | `Program` | A shader set: one declaration, a source per shading language | a struct literal (below) | a value |
 | `Pipeline` | A program, its vertex layout and its render state, built for one target shape | `dev.pipeline(program, state)`, null when no source fits the backend or it does not compile | with its owner |
 | `Block` | The values of a program's uniform block | `pipeline.block()` | a value (`vector<single>` inside) |
@@ -70,10 +71,10 @@ u     = solid.block();
 while dev.poll() {
   u.mat4(0, mvp);  u.f4(1, ex, ey, ez, 0.0);  u.f1(2, fog);  u.f4(3, fr, fg, fb, 0.0);
   dev.begin_window(gpu::CLEAR, sky);           // a pass: the target, and what it starts from
-  dev.use(solid);  dev.uniforms(u);  dev.sample(0, atlas);
-  dev.vertices(place);  dev.draw(0, place.count());
-  dev.use(hand);  dev.uniforms(u);  dev.sample(0, atlas);
-  dev.vertices(hand_mesh);  dev.draw(0, hand_mesh.count());
+  dev.bind(solid);  dev.uniforms(u);  dev.sample(0, atlas);
+  dev.vertices(place);  dev.draw(0, place.floats() / 8);
+  dev.bind(hand);  dev.uniforms(u);  dev.sample(0, atlas);
+  dev.vertices(hand_mesh);  dev.draw(0, hand_mesh.floats() / 8);
   dev.end();
   dev.present();                               // waits for the display's next frame
 }
@@ -81,10 +82,10 @@ while dev.poll() {
 
 | Group | Calls |
 |---|---|
-| Device | `open`, `poll`, `events`, `width`, `height`, `close`, `present`, `capture() -> vector<u32>` |
+| Device | `open`, `poll`, `events` (from L3), `width`, `height`, `close`, `present`, `capture() -> vector<u32>` |
 | Pass | `begin_window(load, colour)`, `begin(target, load, colour)`, `end()`; `load` is `CLEAR` or `KEEP` |
-| In a pass | `use(pipeline)`, `uniforms(block)`, `sample(slot, texture)`, `vertices(buffer)`, `instances(buffer, first_float)`, `indices(buffer)`, `viewport(x, y, w, h)`, `scissor(x, y, w, h)`, `no_scissor()`, `draw(first, count)`, `draw_indexed(count)`, `draw_copies(count, copies)` |
-| Buffer | `update(data)`, `count()` |
+| In a pass | `bind(pipeline)`, `uniforms(block)`, `sample(slot, texture)`, `vertices(buffer)`, `instances(buffer, first_float)`, `indices(buffer)`, `viewport(x, y, w, h)`, `scissor(x, y, w, h)`, `no_scissor()`, `draw(first, count)`, `draw_indexed(count)`, `draw_copies(count, copies)` |
+| Buffer | `update(data)`, `floats()`, `count()` (an index buffer's) |
 | Texture | `put(x, y, pixels, w, h)`, `nearest(on)`, `mipmaps()`, `width()`, `height()` |
 | Block | `f1(field, x)`, `f2`, `f4`, `mat4(field, m)`, `f4_at(field, index, x, y, z, w)` |
 
@@ -183,7 +184,7 @@ draws it with.
 
 | Caller | Vertex / instance | Block | Tex | Pipelines | What changes for it |
 |---|---|---|---|---|---|
-| graphics `Painter` flat | `F3` | `MAT4`, `F4` colour with alpha | 0 | 2: blend off, blend on; depth off | The colour and the alpha become one `F4`.  It blends today "where the window has `GL_BLEND` on": the window's switch becomes which of its two pipelines the painter uses (§ graphics 0.12 on top) |
+| graphics `Painter` flat | `F3` | `MAT4`, `F4` colour with alpha | 0 | 2: blend off, blend on; depth off | The colour and the alpha become one `F4`.  It blends today "where the window has `GL_BLEND` on": that becomes the painter's own setting, which picks one of its two pipelines |
 | graphics `Painter` textured | `F3` | `MAT4` | 1 | 2, as flat | The discard under 0.01 stays in its source |
 | graphics `Sprites` | `F3` | `MAT4`, `F4` (the cell's corners) | 1 | 3: the painter's two, and depth test for `Sprites.draw` | Four floats become one `F4` |
 | stage sprites | `F3` / `F4`, `F2`, `F4`, `F4`, `F2` | `F2` screen, `F2` camera, `F1` time | 1 | 1: blend (one, one minus source alpha), depth off | `instance_attrib` per run becomes `instances(buffer, first_float)`: the layout is the pipeline's, the offset the draw's.  Scissor per run stays a call in the pass |
@@ -199,15 +200,20 @@ No row needed a stack named.  Three rows changed the API while it was written: t
 ambient blend (below), the light arrays (`f4_at`, and no `vec3` in a block) and stage's
 per-run instance offset (`instances(buffer, first_float)`).
 
-## graphics 0.12 on top, while both exist (L3, L4)
+## graphics 0.12 beside it, while both exist (L3–L6)
 
-graphics keeps its 0.12 calls until L7, with `gpu` beneath them from L4 on.  What makes that
-possible is one small table inside graphics: its `Window` remembers the switches a caller
-set (`enable`, `blend`, `cull`, `depth_write`), and a `Shader` builds a pipeline for each
-combination it is first drawn with.  So `w.enabled(cap)` still answers, a painter still
-blends where the caller turned blending on, and the same picture comes out.
+graphics keeps its 0.12 calls on its own GL code until L7; what it draws itself is built
+again on `gpu` as a library beside it and compared with its pixels (GPU_LAYER.md L4).
 
-This table is the only place the old model survives, and it goes with L7.
+A first form of this section had graphics' 0.12 calls run on top of `gpu`, its `Window`
+remembering the state switches and a `Shader` building a pipeline for each combination.  It
+does not hold: a 0.12 `Shader` is any GLSL with uniforms set by name, and a painter there
+draws into whatever target and viewport the window was last given.  Neither can be said in a
+pass that names everything it depends on, which is the rule this boundary rests on.
+
+In a page the two do share one thing, the page's GL context: a program that mixes them sets
+the state its graphics drawing relies on (measured at L3 and L4: a depth write left off by a
+pipeline changed what graphics drew next).
 
 ## What no other stack has
 

@@ -55,7 +55,8 @@ fn so_names_symbol(path: &std::path::Path, sym: &str) -> bool {
     fa::read(path).is_ok_and(|bytes| bytes.windows(sym.len()).any(|w| w == sym.as_bytes()))
 }
 
-/// `--native-android` on a non-trivial program (struct + fn + for-loop + string
+/// `--native-rust --native-android` (the rustc writer, kept beside the C default as the bisect
+/// path) on a non-trivial program (struct + fn + for-loop + string
 /// interpolation) produces a real AArch64 `NativeActivity` shared object — a valid
 /// AArch64 ELF that exports the `android_main` + `ANativeActivity_onCreate` entry
 /// (B2). Skipped unless `LOFT_ANDROID_BUILD_TEST` is set, so a normal `cargo test`
@@ -94,6 +95,7 @@ fn main() {
         .join("prog.so");
     let _ = fa::remove_file(&out_so);
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--native-rust")
         .arg("--native-android")
         .arg(&out_so)
         .arg(&probe)
@@ -123,8 +125,8 @@ fn main() {
     }
 }
 
-/// The same program through the C backend (`--native-c --native-android`,
-/// doc/claude/plans/106-android-build-target/c-backend.md A0): the C unit, the Android entry and
+/// The same program through the C backend, `--native-android`'s default
+/// (doc/claude/plans/106-android-build-target/c-backend.md A0, A5): the C unit, the Android entry and
 /// the NDK's app glue, built by the NDK's clang with no rustc and no cargo.  An AArch64 ELF that
 /// exports the activity entry, the glue's `android_main` caller and the renamed program `main`,
 /// and that names no C++ runtime (nothing C++ is linked, so the APK carries no
@@ -161,7 +163,6 @@ fn main() {
         .join("prog_c.so");
     let _ = fa::remove_file(&out_so);
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .arg("--native-c")
         .arg("--native-android")
         .arg(&out_so)
         .arg(&probe)

@@ -1,0 +1,269 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — a scalar a closure writes lives in a cell (`@FR-L-CapWrite`): the port of the boxed
+// scalar capture — `cell_struct_name`, `cell_value_type`, `synthesize_cell_structs` (pass 1, at
+// the lambda), `flip_scalars_to_box_types` (pass 2, at the enclosing function's start),
+// `auto_deref_boxed_scalar` (reads) and `maybe_prepend_cell_alloc` (the first write).  The local
+// becomes a `__cell_<T> { value }` record from its first bind, every read `OpGet<T>(v, 0)` and
+// every write `OpSet<T>(v, 0, …)`; the closure record shares the cell, so the lambda reads and
+// writes `OpGet<T>(OpGetDbRef(__closure, pos), 0)`.
+
+use el_ex_base::*;
+use ir;
+use syntax::*;
+use el;
+use el_ir;
+use el_vars;
+use el_types;
+use el_convert;
+use el_ex_assign;
+
+// `cell_value_type`: what the cell's `value` field holds — a canonical 8-byte integer without its
+// bounds (`integer` and `integer not null` share one cell), a text without its borrows, a plain
+// enum as itself; a narrow integer keeps its whole spec.
+pub fn value_type(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => ir::TyOptional { inner: value_type(inner) },
+    TyInteger { spec } => if spec.forced_size == 0 && byte_width(spec, true) == 8 { ir::TyInteger { spec: if spec.max == 4294967295 { wide_spec() } else { i32_spec() } } } else { t },
+    TyText { dep: _ } => ir::TyText { dep: [] },
+    TyEnum { n, is_ref: _, dep: _ } => ir::TyEnum { n: n, is_ref: false, dep: [] },
+    _ => t
+  }
+}
+
+// `int_cell_stem`: the canonical widths keep the plain names; a narrow one carries its width,
+// bounds and null flag (`m` for a negative bound: a definition name holds no `-`).
+fn int_stem(spec: ir::IntegerSpec) -> text {
+  if spec.forced_size == 0 && byte_width(spec, true) == 8 {
+    return if spec.max == 4294967295 { "long" } else { "integer" };
+  }
+  lo = if spec.min < 0 { "m{0 - spec.min}" } else { "{spec.min}" };
+  nn = if spec.not_null { "_nn" } else { "" };
+  "int{byte_width(spec, true)}_{lo}_{spec.max}{nn}"
+}
+
+// `cell_struct_name`: `__cell_<stem>`, `__cell_opt_<stem>` for a nullable capture; "" for a type
+// that takes no cell (a record, a collection, a function, a link).
+pub fn cell_name(e: el::El, t: ir::TypeT) -> text {
+  nullable = t is TyOptional;
+  b = match t { TyOptional { inner } => inner, _ => t };
+  stem = match value_type(b) {
+    TyInteger { spec } => int_stem(spec),
+    TyFloat => "float",
+    TySingle => "single",
+    TyBoolean => "boolean",
+    TyCharacter => "character",
+    TyText { dep: _ } => "text",
+    TyEnum { n, is_ref, dep: _ } => if is_ref { "" } else { "enum_{el::def(e, n).name}" },
+    _ => ""
+  };
+  if stem == "" { "" } else if nullable { "__cell_opt_{stem}" } else { "__cell_{stem}" }
+}
+
+// `boxed_cell_def`: the cell a type points at, or -1 — the one home for "is this a boxed scalar?".
+pub fn cell_of(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n, dep: _ } => if n >= 0 && starts_with(el::def(e, n).name, "__cell_") { n } else { -1 },
+    _ => -1
+  }
+}
+
+// `synthesize_cell_structs` (pass 1): the cell of `t`, made once for the whole program — one
+// `value` field whose nullable flag says what its type says (loft#739).  -1 for no cell.
+pub fn ensure_cell(e: el::El, t: ir::TypeT, pos: ir::Position) -> integer {
+  nm = cell_name(e, t);
+  if nm == "" {
+    return -1;
+  }
+  d = el::def_nr(e, nm);
+  if d >= 0 {
+    return d;
+  }
+  d = el::add_def(e, nm, pos, el::DT_STRUCT);
+  e.b.data.definitions[d].returned = [ir::TyReference { n: d, dep: [] }];
+  vt = value_type(t);
+  a = el::attribute("value", vt);
+  a.nullable = vt is TyOptional;
+  e.b.data.definitions[d].attributes += [a];
+  d
+}
+
+// `accumulate_scalars_to_box`: the enclosing function boxes `name` on its second pass.
+pub fn box_in(e: el::El, owner: integer, name: text) {
+  for n in el::def(e, owner).scalars_to_box {
+    if n.name == name {
+      return;
+    }
+  }
+  e.b.data.definitions[owner].scalars_to_box += [ir::NameRef { name: name }];
+}
+
+// `flip_scalars_to_box_types` (pass 2, before the body): each boxed local takes its cell's type.
+// A parameter cannot change its slot's type (the call's layout): it is promoted to a shadow
+// local `__bx_<name>` the spelling names from here on, seeded from the parameter where the body
+// opens (`promote_boxed_scalar_arg`, #685) — the seeds are answered for `seed_cells`.
+pub fn flip(e: el::El, vars: el_vars::Vars) -> vector<ir::Node> {
+  seeds: vector<ir::Node> = [];
+  for n in el::def(e, e.context).scalars_to_box {
+    v = el_vars::var(vars, n.name);
+    if v < 0 || cell_of(e, el_vars::tp(vars, v)) >= 0 {
+      continue;
+    }
+    cd = el::def_nr(e, cell_name(e, el_vars::tp(vars, v)));
+    if cd < 0 {
+      continue;
+    }
+    if vars.vars[v].argument {
+      sh = el_vars::add_variable(vars, "__bx_{n.name}", el_vars::tp(vars, v));
+      el_vars::set_var_type(vars, sh, ir::TyReference { n: cd, dep: [] });
+      el_vars::set_defined(vars, sh);
+      el_vars::in_use(vars, v, true);
+      el_vars::set_name(vars, n.name, sh);
+      vt = value_of(e, cd);
+      // One `Insert` per parameter, each put at the body's start (`boxed_cell_alloc_and_set`).
+      seeds = [ir::NdInsert { items: [el_ir::v_set(sh, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: sh }, ir::NdInt { n: el::def(e, cd).known_type }]), el_ir::cl(e, "OpSet{op_suffix(vt)}", [ir::NdVar { n: sh }, ir::NdInt { n: 0 }, ir::NdVar { n: v }])] }] + seeds;
+      continue;
+    }
+    el_vars::set_var_type(vars, v, ir::TyReference { n: cd, dep: [] });
+  }
+  seeds
+}
+
+// `finish_body`: the parameters' cell seeds open the body.
+pub fn seed_cells(code: ir::Node, seeds: vector<ir::Node>) -> ir::Node {
+  if len(seeds) == 0 {
+    return code;
+  }
+  // After the head's work-ref nulls, before its work texts (`finish_body`'s prologue order).
+  match code {
+    NdBlock { block } => {
+      b = block[0];
+      at = 0;
+      while at < len(b.operators) && match el_ir::unspan(b.operators[at]!) { NdSet { var: _, inner } => inner is NdNull, _ => false } {
+        at += 1;
+      }
+      b.operators = b.operators[0..at] + seeds + b.operators[at..];
+      ir::NdBlock { block: [b] }
+    },
+    _ => code
+  }
+}
+
+fn value_of(e: el::El, cd: integer) -> ir::TypeT {
+  el::def(e, cd).attributes[0]!.typedef[0] ?? ir::TyVoid
+}
+
+fn op_suffix(t: ir::TypeT) -> text {
+  match el_types::base(t) {
+    TyInteger { spec: _ } => "Int",
+    TyFloat => "Float",
+    TySingle => "Single",
+    TyText { dep: _ } => "Text",
+    TyCharacter => "Character",
+    TyEnum { n: _ } => "Enum",
+    TyBoolean => "Boolean",
+    _ => ""
+  }
+}
+
+// `auto_deref_boxed_scalar`: the cell's value read at `place`, typed as the value (its `?` kept).
+pub fn read(e: el::El, place: ir::Node, cd: integer) -> Ex {
+  vt = value_of(e, cd);
+  ex(el_ir::cl(e, "OpGet{op_suffix(vt)}", [place, ir::NdInt { n: 0 }]), vt)
+}
+
+// The cell a plain-name assignment target writes: the boxed local's own slot, or — in the lambda
+// that writes it — the captured cell its closure record shares.
+pub struct Place {
+  pub place: ir::Node,
+  pub cd: integer,
+  pub v: integer
+}
+
+fn target_cell(e: el::El, vars: el_vars::Vars, target: integer) -> Place? {
+  name = match e.p.nodes[target] { SName { name: n, member } => if member == "" { n } else { "" }, _ => "" };
+  if name == "" {
+    return null;
+  }
+  v = el_vars::var(vars, name);
+  if v >= 0 {
+    cd = cell_of(e, el_vars::tp(vars, v));
+    return if cd < 0 { null } else { Place { place: ir::NdVar { n: v }, cd: cd, v: v } };
+  }
+  for c in e.captures {
+    if c.name == name {
+      // The first pass reads the lambda before its record exists: a write of a capture there.
+      if e.closure_var < 0 || e.closure_rec < 0 {
+        return if e.first_pass { Place { place: ir::NdNull, cd: -2, v: -1 } } else { null };
+      }
+      a = attr_nr(el::def(e, e.closure_rec), name);
+      if a < 0 {
+        return null;
+      }
+      cd = cell_of(e, el::def(e, e.closure_rec).attributes[a]!.typedef[0] ?? ir::TyVoid);
+      got = field_get(e, e.closure_rec, a, ir::NdVar { n: e.closure_var });
+      if cd < 0 || got == null {
+        return null;
+      }
+      el_vars::in_use(vars, e.closure_var, true);
+      return Place { place: got!, cd: cd, v: -1 };
+    }
+  }
+  null
+}
+
+// `parse_assign_op_inner` over a cell: `x = v` is `OpSet<T>(x, 0, v)`, `x op= v` the same of
+// `OpGet<T>(x, 0) op v`; the local's first write allocates its cell first
+// (`maybe_prepend_cell_alloc`).  A text `+=` builds the whole text in a work text (outside) or a
+// `_field_N` (in the lambda) and sets it back.  Null when the target is no cell.
+pub fn assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
+  found = target_cell(e, vars, target);
+  if found == null {
+    return null;
+  }
+  c = found!;
+  x = el_ex_assign::expression(e, vars, rhs);
+  if c.cd == -2 {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  vt = value_of(e, c.cd);
+  cur = read(e, c.place, c.cd);
+  // In the lambda the field is written with the read's own setter (a text: `OpSetTextReplace`).
+  setter = if c.v < 0 && el_types::base(vt) is TyText { "OpSetTextReplace" } else { "OpSet{op_suffix(vt)}" };
+  val = x.code;
+  if op != "=" {
+    bin = op[..-1];
+    if el_types::base(vt) is TyText {
+      if bin != "+" || !(el_types::base(x.tp) is TyText) {
+        el::refuse(e, "a text compound assignment to a cell other than `+=` of a text");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if c.v >= 0 {
+        w = el_vars::work_text(vars);
+        return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearText", [ir::NdVar { n: w }]), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, cur.code]), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, x.code]), el_ir::cl(e, setter, [c.place, ir::NdInt { n: 0 }, ir::NdVar { n: w }])] }, ir::TyVoid);
+      }
+      f = el_vars::create_unique(vars, "field", ir::TyText { dep: [] });
+      fv = ir::NdVar { n: f };
+      return ex(ir::NdInsert { items: [el_ir::v_set(f, cur.code), el_ir::cl(e, "OpAppendText", [fv, x.code]), el_ir::cl(e, setter, [c.place, ir::NdInt { n: 0 }, fv])] }, ir::TyVoid);
+    }
+    r = call_op(e, vars, bin, [cur.code, x.code], [vt, x.tp]);
+    if el_types::is_unknown(r.tp) {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    val = r.code;
+    x = ex(r.code, r.tp);
+  }
+  // A text is set as it is (`OpSetText` copies it into the cell's own field).
+  conv = if (el_types::base(vt) is TyText && el_types::base(x.tp) is TyText) { val } else { el_convert::convert(e, vars, val, x.tp, vt, false) };
+  if conv == null {
+    refuse_known(e, x.tp, "a value of another type written to a cell: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  write = el_ir::cl(e, setter, [c.place, ir::NdInt { n: 0 }, conv!]);
+  if c.v >= 0 && !el_vars::was_defined(vars, c.v) {
+    el_vars::set_defined(vars, c.v);
+    return ex(ir::NdInsert { items: [el_ir::v_set(c.v, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: c.v }, ir::NdInt { n: el::def(e, c.cd).known_type }]), write] }, ir::TyVoid);
+  }
+  ex(write, ir::TyVoid)
+}

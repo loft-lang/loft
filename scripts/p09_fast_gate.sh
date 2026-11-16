@@ -69,7 +69,7 @@ emit() {
         local name
         name=$(basename "$t" .loft)
         cargo run --bin loft --release --quiet -- \
-            --native-emit "$out_dir/$name.rs" "$t" 2>/dev/null
+            --native-rust --native-emit "$out_dir/$name.rs" "$t" 2>/dev/null
     done
 }
 

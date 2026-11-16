@@ -21,8 +21,10 @@ use cgen_fn;
 use cgen_bind;
 use cgen_hoist;
 use cgen_table;
+use cgen_ser;
 use cgen_file;
 use ptypes;
+use cgen_parse;
 use opt_push;
 use binds;
 use opt_non_sentinel;
@@ -454,6 +456,17 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     if w.why != "" {
       return none();
     }
+    if w.group != "" {
+      // `group_finish`: the record enters every member of the linked group.
+      parent = w.group;
+      members = w.group_members;
+      rec = as_ref(w, cgen_fn::expr(x, w, args[1], ind));
+      rows = member_rows(x, w, members);
+      if w.why != "" {
+        return none();
+      }
+      return E { code: "loft_group_finish(loft_types, {release_args(x, members)}, {parent}, {rec}, {rows})", kind: K_VOID };
+    }
     if w.keyed >= 0 {
       // `keyed_finish`: the filled record entered by its keys.
       tp = w.keyed;
@@ -750,6 +763,118 @@ fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     free = if raw & 32768 != 0 { 1 } else { 0 };
     return E { code: "loft_set_keyed(loft_types, {elem}, {coll}, {value}, {kc}, {kname}, {len(kparts)}, {kv}, {len(values)}, {free}, 0)", kind: K_VOID };
   }
+  // `OpLinkRecord(data, rec, ptp, fld)` (`group_operator`, `@FR-Col-Group`): a record the
+  // vector member holds handed to the other members after an element write.
+  if name == "OpLinkRecord" && count == 4 {
+    ptp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    fld = cgen_fn::literal(w, args[3], "field") ?? return none();
+    if ptp < 0 || ptp >= len(x.b.types) {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    if !group_parent_plain(x, w, ptp) {
+      return none();
+    }
+    siblings = group_siblings(x, ptp, fld);
+    pair = [args[0], args[1]];
+    data = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
+    rec = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
+    if len(siblings) == 0 {
+      return E { code: "(void) 0", kind: K_VOID };
+    }
+    rows = member_rows(x, w, siblings);
+    if w.why != "" {
+      return none();
+    }
+    every: vector<integer> = [];
+    for m in siblings {
+      every += [m];
+    }
+    for m in field_member(x, ptp, fld) {
+      every += [m];
+    }
+    return E { code: "loft_group_finish(loft_types, {release_args(x, every)}, {data}, {rec}, {rows})", kind: K_VOID };
+  }
+  // `OpIndexGroup(primary, view, tp, ptp, fld)`: a whole vector indexed into one view member.
+  if name == "OpIndexGroup" && count == 5 {
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    ptp = cgen_fn::literal(w, args[3], "type") ?? return none();
+    fld = cgen_fn::literal(w, args[4], "field") ?? return none();
+    if ptp < 0 || ptp >= len(x.b.types) {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    if !group_parent_plain(x, w, ptp) {
+      return none();
+    }
+    prim = field_member(x, ptp, fld)[0]!;
+    members = group_siblings(x, ptp, fld);
+    vpos = -1;
+    keyed: vector<integer> = [];
+    k = 0;
+    while k + 1 < len(members) {
+      if vpos < 0 && members[k + 1]! == tp {
+        vpos = members[k]!;
+      }
+      if keyed_kind(x.b, members[k + 1]!) != "array" {
+        keyed += [members[k]!, members[k + 1]!];
+      }
+      k += 2;
+    }
+    if vpos < 0 {
+      refuse(w, "a group view that is no member of the group");
+      return none();
+    }
+    view = member_row(x, w, vpos, tp);
+    rows = member_rows(x, w, keyed);
+    if w.why != "" {
+      return none();
+    }
+    gnull = group_release(x, members)[2]!;
+    primary = as_ref(w, cgen_fn::expr(x, w, args[0], ind));
+    return E { code: "loft_index_group({primary}, {prim}, {gnull}, (const loft_member[]){{ {view} }}, {rows})", kind: K_VOID };
+  }
+  // `OpFillKeyed(parent, src, tp, ptp, fld)` (`fill_keyed`): `coll += vector`, each element
+  // filed into the keyed collection at the parent's field as a deep copy under its own key; in
+  // a member of a linked group the copy enters every member.
+  if name == "OpFillKeyed" && count == 5 {
+    raw = cgen_fn::literal(w, args[2], "type") ?? return none();
+    tp = raw & 32767;
+    kind = keyed_kind(x.b, tp);
+    if kind == "" {
+      refuse(w, "a keyed operation on another kind of type");
+      return none();
+    }
+    elem = content_of(x.b, tp);
+    place = vector_place(x, w, args[0], args[3], args[4], ind);
+    if w.why != "" {
+      return none();
+    }
+    group = "0";
+    if w.group != "" {
+      parent = w.group;
+      members = w.group_members;
+      rows = member_rows(x, w, members);
+      if w.why != "" {
+        return none();
+      }
+      rel = group_release(x, members);
+      group = "&(const loft_group){{ {parent}, {rows}, {rel[1]!}, {rel[2]!} }}";
+    } else if w.keyed < 0 {
+      refuse(w, "a fill of a vector");
+      return none();
+    }
+    if kind == "array" {
+      refuse(w, "a fill of an array");
+      return none();
+    }
+    cgen_tables::copy_type(x, elem);
+    src = as_ref(w, cgen_fn::expr(x, w, args[1], ind));
+    kname = cgen_tables::keys_name(x, tp);
+    kc = if kind == "hash" { "LOFT_KEYED_HASH" } else if kind == "sorted" { "LOFT_KEYED_SORTED" } else if kind == "index" { "LOFT_KEYED_INDEX" } else if kind == "ordered" { "LOFT_KEYED_ORDERED" } else if kind == "spatial" { "LOFT_KEYED_SPATIAL" } else { "LOFT_KEYED_TRIE" };
+    flinked = if x.b.types[elem]!.linked { 1 } else { 0 };
+    return E { code: "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kc}, {kname}, {len(x.b.types[tp]!.keys)}, {flinked}, {if raw & 32768 != 0 { 1 } else { 0 }}, {group})", kind: K_VOID };
+  }
   // `OpRemove(state, data, on, tp)` (`e#remove` in a walk, `walk_remove`): the element the
   // walk visited last leaves the collection, and the walk goes on with the one after it.
   if name == "OpRemove" && count == 4 {
@@ -812,6 +937,20 @@ fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     names = cgen_tables::enum_name(x, tp);
     v = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_enum_of_text({names}, sizeof {names} / sizeof *{names}, {as_view(w, v)})", kind: K_ENUM };
+  }
+  // `Stores::record_from_text`: a new store holding the type the text describes.
+  if name == "OpCastVectorFromText" && count == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    if tp < 0 || tp > 65535 {
+      refuse(w, "a type out of range");
+      return none();
+    }
+    cgen_parse::parse_type(x, w, tp);
+    if w.why != "" {
+      return none();
+    }
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_record_from_text(loft_ptypes, {as_view(w, v)}, {tp})", kind: K_REF };
   }
   // The out-of-line child records (`misc.rs`) and a buffer's own store.
   if name == "OpStoreBufOnly" && count == 1 {
@@ -965,6 +1104,17 @@ fn ref_ops_5(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     b = cgen_fn::arg(x, w, args, 1, ind);
     return E { code: "loft_get_dir({as_view(w, a)}, {as_ref(w, b)}, {size})", kind: K_BOOL };
   }
+  // `deliver(tag, value)` (`Stores::deliver_loopback`): the value's bytes through its layout,
+  // by the walker the unit writes for its type (`deliver.rs`).
+  if name == "OpDeliver" && count == 3 {
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    tname = if tp >= 0 && tp < len(x.b.types) { x.b.types[tp]!.name } else { "#{tp}" };
+    f = cgen_tables::deliver_type(x, tp);
+    pair = [args[0], args[1]];
+    a = cgen_fn::arg(x, w, pair, 0, ind);
+    b = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "loft_deliver({as_int(w, a)}, {c_string(tname)}, {f}, {as_ref(w, b)})", kind: K_VOID };
+  }
   if (name == "OpExpose" || name == "OpRelease") && count == 3 {
     pair = [args[0], args[1]];
     a = cgen_fn::arg(x, w, pair, 0, ind);
@@ -1067,6 +1217,10 @@ fn ref_ops_6(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     }
     return E { code: "loft_vec_keep_range({vec_c}, {lo_c}, {hi_c}, {x.b.types[tp].size})", kind: K_VOID };
   }
+  if name == "OpSlotTag" && count == 1 {
+    r = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "loft_slot_tag({as_ref(w, r)})", kind: K_REF };
+  }
   if name == "OpRefFromChildRec" && count == 1 {
     r = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_ref_from_child_rec({as_ref(w, r)})", kind: K_REF };
@@ -1074,6 +1228,31 @@ fn ref_ops_6(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
   if name == "OpStoreBuf" && count == 1 {
     r = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_store_buf({as_ref(w, r)})", kind: K_REF };
+  }
+  // `OpCopyClosure(src, tp)`: a fn-ref's closure copied out of a field — its owned capture
+  // slots (`Stores::owned_capture_slots`, the fields of the owned-reference shape) shared with
+  // the copy (`loft_copy_closure`).
+  if name == "OpCopyClosure" && count == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "a type out of range");
+      return none();
+    }
+    cgen_tables::name_types(x);
+    cgen_tables::describe_type(x, tp);
+    owned_shape = types::named(x.b.types, "dbref") ?? -1;
+    owned: vector<text> = [];
+    if owned_shape >= 0 {
+      match x.b.types[tp]!.parts[0] {
+        PtStruct { fields } => for f in fields { if f.content == owned_shape { owned += ["{f.position}"]; } },
+        _ => {},
+      }
+    }
+    list = if len(owned) == 0 { "0" } else { "(const uint16_t[]){{ {owned.join(", ")} }}" };
+    src = cgen_fn::expr(x, w, args[0], ind);
+    t = temp(w, "ref");
+    line(w, ind, "{t} = loft_copy_closure(loft_types, {tp}, {as_ref(w, src)}, {list}, {len(owned)});");
+    return E { code: t, kind: K_REF };
   }
   if name == "OpChildRec" && count == 2 {
     tp = cgen_fn::literal(w, args[1], "type") ?? return none();
@@ -1589,8 +1768,11 @@ fn write_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   } else if plain_enum {
     "loft_push_char(&loft_b, (char) {as_enum(w, value)});"
   } else {
-    refuse(w, "a file write of a record");
-    ""
+    why = cgen_ser::ser_type(x, tp);
+    if why != "" {
+      refuse(w, why);
+    }
+    "loft_ser{tp}(&loft_b, {as_ref(w, value)}, loft_le);"
   };
   if w.why != "" {
     return none();
@@ -1708,8 +1890,12 @@ fn read_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   } else if plain_enum {
     set = "{name} = loft_d[0];";
   } else {
-    refuse(w, "a file read of a record");
-    return none();
+    why = cgen_ser::ser_type(x, tp);
+    if why != "" {
+      refuse(w, why);
+      return none();
+    }
+    set = "loft_de{tp}({name}, loft_le, loft_d, (size_t) loft_n);";
   }
   line(w, ind, "{{");
   // A read of up to 15 bytes lands in a stack buffer: no allocation per value.
@@ -1749,7 +1935,7 @@ pub fn keyed_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     if w.why != "" {
       return none();
     }
-    if w.keyed < 0 {
+    if w.keyed < 0 || w.group != "" {
       refuse(w, "a keyed entry outside a hash");
       return none();
     }
@@ -1981,17 +2167,13 @@ fn iterate(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   none()
 }
 
-// `get_record`: the record a keyed collection holds under the given key values.  Under the
-// plain rules: no table handle; a unit that binds a lazy store is refused by name.
+// `get_record`: the record a keyed collection holds under the given key values.  In a unit
+// that binds a lazy store a miss fetches the key and looks again (`@PLN129`).
 fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   tp = cgen_fn::literal(w, args[1], "type") ?? return none();
   kind = keyed_kind(x.b, tp);
   if kind == "" {
     refuse(w, "a keyed operation on another kind of type");
-    return none();
-  }
-  if lazy_unit(x) {
-    refuse(w, "a lookup in a unit that binds a lazy store");
     return none();
   }
   keys = x.b.types[tp].keys;
@@ -2055,6 +2237,14 @@ fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   } else {
     "loft_rx_find({data}, {key_table}, {nk}, {if kind == "trie" { 1 } else { 0 }}, {kv}, {given})"
   };
+  // `@PLN129` — a miss on a collection bound to a source fetches the key and looks again
+  // (`State::get_record`); only a unit that binds one asks.
+  if lazy_unit(x) && w.why == "" {
+    missed = temp(w, "ref");
+    line(w, ind, "{missed} = {find};");
+    line(w, ind, "if ({missed}.rec == 0 && loft_lazy_bound({data}) && loft_lazy_miss({data}, {kv}, {given})) {missed} = {find};");
+    return E { code: missed, kind: K_REF };
+  }
   E { code: find, kind: K_REF }
 }
 
@@ -2137,7 +2327,7 @@ pub fn clear_before_mint(b: ir::Bundle, ops: vector<ir::Node>, i: integer, end: 
 // held header) is the vector hoist's, which is not carried.
 pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer, head: &boolean) -> integer {
   head = false;
-  if (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
     return -1;
   }
   shown: vector<ir::Node> = ops[0..end];
@@ -2196,7 +2386,7 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
 // `hash_reserve` (`@FR-R-PushFill`'s hash clause): a counted loop that files records into one
 // hash reserves the table's room for its trips before it runs.
 pub fn hash_reserve(x: Cx, w: W, lp: ir::Block, ind: integer) {
-  if (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_HASH_RESERVE") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_HASH_RESERVE") ?? "0") != "0" {
     return;
   }
   hf = opt_push::hash_fill_loop(x.b, lp) ?? return;
@@ -2237,6 +2427,8 @@ fn vector_place(x: Cx, w: W, data: ir::Node, ptp_node: ir::Node, fld_node: ir::N
   }
   base = as_ref(w, cgen_fn::expr(x, w, data, ind));
   w.keyed = -1;
+  w.group = "";
+  w.group_members = [];
   if fld == 65535 {
     match x.b.types[ptp].parts[0] {
       PtVector { content } => {
@@ -2266,13 +2458,28 @@ fn vector_place(x: Cx, w: W, data: ir::Node, ptp_node: ir::Node, fld_node: ir::N
     refuse(w, "a field out of range");
     return "";
   }
+  vtp = fields[fld]!.content;
+  members = [fields[fld]!.position, vtp];
   for o in fields[fld]!.other_indexes {
-    if o != 65535 {
-      refuse(w, "a new record in a linked group");
-      return "";
+    if o != 65535 && o >= 0 && o < len(fields) {
+      members += [fields[o]!.position, fields[o]!.content];
     }
   }
-  vtp = fields[fld]!.content;
+  if len(members) > 2 {
+    // A member of a linked group (`@FR-Col-Group`): the parent is named twice — the
+    // primary's place and every sibling's — so it is read once.
+    if keyed_kind(x.b, vtp) == "" {
+      refuse(w, "a new record in a linked group member that is not a collection");
+      return "";
+    }
+    parent = temp(w, "ref");
+    line(w, ind, "{parent} = {base};");
+    w.group = parent;
+    w.group_members = members;
+    w.elem = content_of(x.b, vtp);
+    w.keyed = vtp;
+    return "loft_field({parent}, {fields[fld]!.position})";
+  }
   if vtp >= 0 && vtp < len(x.b.types) {
     match x.b.types[vtp].parts[0] {
       PtVector { content } => {
@@ -2306,6 +2513,122 @@ fn keyed_kind(b: ir::Bundle, tp: integer) -> text {
     PtTrie { content: _, key: _ } => "trie",
     _ => "",
   }
+}
+
+// `Cx::member_row`: one member of a linked group as a `loft_member` row — its byte position,
+// kind and keys; "" with a refusal for a member no keyed collection is, or a sorted one.
+pub fn member_row(x: Cx, w: W, pos: integer, tp: integer) -> text {
+  kind = keyed_kind(x.b, tp);
+  if kind == "sorted" {
+    refuse(w, "a sorted member of a linked group");
+    return "";
+  }
+  if kind == "" {
+    refuse(w, "a linked group member that is not a collection");
+    return "";
+  }
+  member_text(x, pos, tp)
+}
+
+// `member_row` without a writer: the row, or "" for a member a group does not carry.
+pub fn member_text(x: Cx, pos: integer, tp: integer) -> text {
+  kind = keyed_kind(x.b, tp);
+  m = if kind == "array" { "LOFT_M_ARRAY" } else if kind == "hash" { "LOFT_M_HASH" } else if kind == "index" { "LOFT_M_INDEX" } else if kind == "ordered" { "LOFT_M_ORDERED" } else if kind == "spatial" { "LOFT_M_SPATIAL" } else if kind == "trie" { "LOFT_M_TRIE" } else { "" };
+  if m == "" {
+    return "";
+  }
+  "{{ {pos}, {m}, {cgen_tables::keys_name(x, tp)}, {len(x.b.types[tp]!.keys)} }}"
+}
+
+// `Cx::member_rows`: the members of a linked group, (position, type) pairs, as a
+// `loft_member` array literal and its length.
+fn member_rows(x: Cx, w: W, members: vector<integer>) -> text {
+  rows: vector<text> = [];
+  k = 0;
+  while k + 1 < len(members) {
+    row = member_row(x, w, members[k]!, members[k + 1]!);
+    if w.why != "" {
+      return "";
+    }
+    rows += [row];
+    k += 2;
+  }
+  "(const loft_member[]){{ {rows.join(", ")} }}, {len(rows)}"
+}
+
+// `Cx::group_siblings`: the members of field `fld` of struct `ptp`'s linked group beside the
+// field itself, as (position, type) pairs.
+pub fn group_siblings(x: Cx, ptp: integer, fld: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if ptp < 0 || ptp >= len(x.b.types) {
+    return out;
+  }
+  fields = match x.b.types[ptp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    PtEnumValue { value: _, fields: fs } => fs,
+    _ => [],
+  };
+  if fld < 0 || fld >= len(fields) {
+    return out;
+  }
+  for o in fields[fld]!.other_indexes {
+    if o != 65535 && o >= 0 && o < len(fields) {
+      out += [fields[o]!.position, fields[o]!.content];
+    }
+  }
+  out
+}
+
+// `group_parent_plain`: a group whose parent is a `__nullable<S>` payload reads its members
+// through the variant, which the C does not carry yet.
+fn group_parent_plain(x: Cx, w: W, ptp: integer) -> boolean {
+  if ptp >= 0 && ptp < len(x.b.types) && x.b.types[ptp].name.starts_with("__nullable<") {
+    refuse(w, "a linked group inside a nullable record");
+    return false;
+  }
+  true
+}
+
+// The field's (position, type) of field `fld` of struct `ptp`, -1s outside one.
+fn field_member(x: Cx, ptp: integer, fld: integer) -> vector<integer> {
+  fields = match x.b.types[ptp].parts[0] {
+    PtStruct { fields: fs } => fs,
+    PtEnumValue { value: _, fields: fs } => fs,
+    _ => [],
+  };
+  if fld < 0 || fld >= len(fields) {
+    return [-1, -1];
+  }
+  [fields[fld]!.position, fields[fld]!.content]
+}
+
+// `Cx::group_release`: the record type of a group's members, whether a vector (array) member
+// holds its records, and whether they are `vector<S?>` elements — [elem, held, nullable].
+pub fn group_release(x: Cx, members: vector<integer>) -> vector<integer> {
+  held = 0;
+  nullable = 0;
+  elem = 65535;
+  k = 0;
+  while k + 1 < len(members) {
+    tp = members[k + 1]!;
+    elem = content_of(x.b, tp);
+    if keyed_kind(x.b, tp) == "array" {
+      held = 1;
+    }
+    if types::nullable_element(x.b.types, tp) {
+      nullable = 1;
+    }
+    k += 2;
+  }
+  cgen_tables::name_types(x);
+  cgen_tables::describe_type(x, elem);
+  [elem, held, nullable]
+}
+
+// `group_release` as the `elem, held, nullable` arguments of `loft_group_finish`.
+fn release_args(x: Cx, members: vector<integer>) -> text {
+  r = group_release(x, members);
+  "{r[0]!}, {r[1]!}, {r[2]!}"
 }
 
 // `adopted_init` (`@FR-R-RetAdopt`): a caller that offered no buffer gets one minted exactly

@@ -20,7 +20,8 @@ plan page, and 111 of those cite a rule — cells by the suite's own definition.
     scripts/scripts_named.py bless             rewrite tests/scripts_unpinned.baseline from `list`
 
 What counts as NAMING: an occurrence of the file's basename in a tracked file of the kinds that
-can pin it (below).  A receipt in `tests/falsified/`, a dump, a plan page and prose do not pin:
+can pin it (below).  A receipt in `tests/falsified/`, a survey's `*.baseline.tsv`, a dump, a plan
+page and prose do not pin:
 they are written FROM the script, not reasons for it to live here.  The function `unpinned(ref)`
 is what `scripts/stability_read.py` reads for its weekly column.
 """
@@ -38,6 +39,9 @@ PINNERS = ["tests/*.rs", "tests/common", "tests/golden", "tests/fixtures", "test
            "tests/docs", "tests/comparisons", "tests/c_split", "scripts", "Makefile", ".github",
            "examples-index.tsv", "src", "bench", "selfhost", "default", "lib", "tools",
            "Cargo.toml", "loft.toml"]
+# A survey baseline lists every corpus program the survey measured — written FROM the scripts,
+# as a receipt is, so it pins none of them.
+NOT_PINNERS = [":(exclude,glob)**/*.baseline.tsv"]
 NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]*\.loft"
 SELF_PIN = re.compile(r"^//\s*@ARGS\b.*--(lib|project)\b", re.M)
 
@@ -59,7 +63,7 @@ def named(ref):
     args = ["grep", "-ohIE"] + ([] if ref else ["--untracked"]) + [NAME]  # a pinning file
     if ref:                                                              # written a minute ago
         args.append(ref)                                                 # counts too
-    out = git(*args, "--", *PINNERS)
+    out = git(*args, "--", *PINNERS, *NOT_PINNERS)
     return set(out.split())
 
 

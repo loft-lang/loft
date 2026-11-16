@@ -241,7 +241,8 @@ fn silent_chain(b: ir::Bundle, v: ir::Node) -> boolean {
 // here when the chain is silent, else at its first use.  Always opens the loop's frame.
 fn hold_invariants(x: Cx, w: W, lp: ir::Block, ind: integer) {
   frame = MemoFrame { memos: [] };
-  if (env_variable("LOFT_NO_INVARIANT_HOIST") ?? "0") == "0" {
+  // Not in a generator (`gen_elem`): a hoisted value would not survive a yield.
+  if (env_variable("LOFT_NO_INVARIANT_HOIST") ?? "0") == "0" && w.gen_elem == "" {
     for ch in invariant_chains(x, w, lp) {
       name = "ia{len(w.decls) + 1}";
       // One entry, two lines: the memo and its flag each stand alone.
@@ -562,7 +563,7 @@ fn sum_ranged(x: Cx, w: W, lp: ir::Block, v: integer) -> boolean {
 // Answers how many entries of `w.sticky` are this loop's.
 fn open_sticky_sums(x: Cx, w: W, lp: ir::Block, ind: integer) -> vector<Sum> {
   out: vector<Sum> = [];
-  if (env_variable("LOFT_NO_STICKY_SUM") ?? "0") != "0" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_STICKY_SUM") ?? "0") != "0" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" {
     return out;
   }
   if any_leaves(lp.operators, 0) {
@@ -854,7 +855,7 @@ fn chain_admitted(x: Cx, w: W, v: ir::Node) -> boolean {
 // all proven plain, inside a loop — the processor's operators, every event the checked chain
 // would answer null for gathered in one flag.  Answers whether it wrote it.
 pub fn spec_chain(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) -> boolean {
-  if (env_variable("LOFT_NO_SPEC_CHAIN") ?? "0") != "0" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" || len(w.loops) == 0 {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_SPEC_CHAIN") ?? "0") != "0" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" || len(w.loops) == 0 {
     return false;
   }
   if chain_call(x.b, value) == "" {
@@ -1228,7 +1229,7 @@ struct Guard {
 // `chain_guard`: the guard of counted loop `lp`, written before it — or null: no chain, one
 // admitted operator, a nested loop whose seed or end is not a leaf, or the release-pass probe.
 fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
-  if (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" || (env_variable("LOFT_NO_GUARDED_CHAIN") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_RELEASE_PASS_PROBE") ?? "0") != "0" || (env_variable("LOFT_NO_GUARDED_CHAIN") ?? "0") != "0" {
     return null;
   }
   rc = loop_shape::range_counters(lp, x.b.data.definitions) ?? return null;
@@ -1479,7 +1480,7 @@ pub fn peel_seeds(ops: vector<ir::Node>, i: integer) -> vector<Seed> {
 
 // `peel_plan`: a counted loop of a few trips with constant bounds, written once per trip.
 fn peel_plan(x: Cx, w: W, lp: ir::Block) -> Peel? {
-  if (env_variable("LOFT_NO_PEEL") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_PEEL") ?? "0") != "0" {
     return null;
   }
   rc = loop_shape::range_counters(lp, x.b.data.definitions) ?? return null;
@@ -1682,7 +1683,7 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
 // (`|x| <= G` for each leaf, spelled so that a null fails it) and the facts the copy runs
 // under; "" where the plan declines.
 pub fn range_guard(x: Cx, w: W, node: ir::Node, ops: vector<ir::Node>, facts: vector<opt_range::Ranges>) -> text {
-  if (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
     return "";
   }
   has_loop = false;

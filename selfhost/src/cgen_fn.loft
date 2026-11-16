@@ -35,6 +35,8 @@ use cgen_win;
 use cgen_table;
 use cgen_clibs;
 use cgen_par;
+use cgen_store;
+use cgen_gen;
 use lower;
 use cgen_file;
 use cgen_texts;
@@ -211,10 +213,6 @@ fn arg_with(x: Cx, w: W, operand: ir::Node, later_writes: boolean, ind: integer)
     return value;
   }
   shape = shape_of_kind(value.kind);
-  if value.kind == K_INT32 {
-    refuse(w, "a 32-bit operand");
-    return value;
-  }
   if value.kind == K_TUP {
     held_tuple = temp(w, value.tup);
     line(w, ind, "{held_tuple} = {value.code};");
@@ -341,7 +339,49 @@ fn typed_nulls(b: ir::Bundle, d: integer, args: vector<ir::Node>) -> vector<ir::
 
 // An operator call (`operator`): the plain form where the range proof holds, else the checked
 // helper; a comparison; the boolean operators.
+// @PLN204 — `OpNarrow32(x)`, the 32-bit regime's arithmetic (`narrow32`): `x` computed and
+// narrowed to `int32_t`, a value that does not fit reading null.  An add, subtract, multiply,
+// divide or remainder of two 32-bit operands is written in 32 bits (`loft_add32` …), which
+// answers the same: the 64-bit operation of two `int32_t` values cannot overflow, so
+// narrowing its result is exactly the 32-bit operation's overflow check.
+fn narrow32(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
+  node = loop_shape::unspan(v);
+  match node {
+    NdInt { n } => if n != -2147483648 { return E { code: "INT32_C({n})", kind: K_INT32 }; },
+    NdCall { def_nr, args } => {
+      name = def_name(x.b, def_nr);
+      op32 = if name == "OpAddInt" || name == "OpAddIntNullable" { "loft_add32" } else if name == "OpMinInt" || name == "OpMinIntNullable" { "loft_sub32" } else if name == "OpMulInt" || name == "OpMulIntNullable" { "loft_mul32" } else if name == "OpDivInt" || name == "OpDivIntNullable" { "loft_div32" } else if name == "OpRemInt" || name == "OpRemIntNullable" { "loft_rem32" } else { "" };
+      if op32 != "" && len(args) == 2 {
+        first = literal32(args[0]!, arg(x, w, args, 0, ind));
+        second = literal32(args[1]!, arg(x, w, args, 1, ind));
+        // `@FR-E-Report` — the unguarded division reports a zero divisor.
+        guarded = name == "OpDivInt" || name == "OpRemInt";
+        at = if guarded { "_at" } else { "" };
+        where = if guarded { ", {site(w)}" } else { "" };
+        if first.kind == K_INT32 && second.kind == K_INT32 {
+          return E { code: "{op32}{at}({first.code}, {second.code}{where})", kind: K_INT32 };
+        }
+        wide = op32[0..op32.size() - 2];
+        return E { code: "loft_n32({wide}{at}({as_int(w, first)}, {as_int(w, second)}{where}))", kind: K_INT32 };
+      }
+    },
+    _ => {},
+  }
+  e = expr(x, w, v, ind);
+  E { code: as_int32(w, e), kind: K_INT32 }
+}
+
 fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  if name == "OpNarrow32" && len(args) == 1 {
+    return narrow32(x, w, args[0]!, ind);
+  }
+  // A store link's place (`OpVarRef(v)`): the `loft_ref` it holds.
+  if name == "OpVarRef" && len(args) == 1 {
+    lv = loop_shape::var_of(loop_shape::unspan(args[0]));
+    if lv >= 0 && (w.store_links[lv] ?? false) {
+      return E { code: w.raw[lv]!, kind: K_REF };
+    }
+  }
   for a in args {
     if loop_shape::unspan(a) == NdNull {
       refuse(w, "a null operand of {name}");
@@ -711,6 +751,13 @@ fn float_conversion(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
 // The character operators that touch no text and no store (`char_operator`).
 fn char_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   count = len(args);
+  if name.starts_with("OpCoroutine") {
+    is_gen_op = false;
+    stepped = cgen_gen::gen_operator(x, w, name, args, ind, is_gen_op);
+    if is_gen_op {
+      return stepped;
+    }
+  }
   if name == "OpConvCharacterFromInt" && count == 1 {
     v = expr(x, w, args[0], ind);
     return E { code: "loft_char_of_at({as_int(w, v)}, {site(w)})", kind: K_CHAR };
@@ -833,7 +880,7 @@ fn nn_twin_bits(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> integer {
 // function whose ranged variant gains, and every integer argument is proven within `[-L, L]`
 // under this body's facts.
 fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
-  if (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
     return false;
   }
   if !cgen_names::is_loft_defined(x.b, d) || !opt_ranged_call::variant_gains(x.b, x.p, x.c, x.gains, d, 0) {
@@ -899,6 +946,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     line(w, ind, "{shown};");
     return held_value(w, json, "text");
   }
+  // `T.parse(JsonValue)`: the struct walk over the tree (`loft_parse.h`), over the parse
+  // table's rows for the type.
+  if route == "n_struct_from_jsonvalue" && len(args) == 2 {
+    tp = literal(w, args[1], "type") ?? return none();
+    cgen_parse::parse_type(x, w, tp);
+    val = expr(x, w, args[0], ind);
+    return E { code: "loft_struct_from_jsonvalue(loft_ptypes, {as_ref(w, val)}, {tp})", kind: K_REF };
+  }
   if route.starts_with("n_parallel_") {
     pe = cgen_par::par_native(x, w, route, args, ind);
     if pe != null {
@@ -911,12 +966,29 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     h = as_ref(w, expr(x, w, args[0], ind));
     return E { code: if hh != "" { "loft_hh_len(&{hh}, {h})" } else { "loft_hash_len({h})" }, kind: K_INT };
   }
-  if (route.starts_with("n_store_") && route != "n_store_upgrade_owed_next") || route == "n_spatial_range" || route == "n_trie_prefix" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
+  // A character class (`c.is_numeric()` …): the unit's range table of the class.
+  if route.starts_with("t_9character_is_") && len(args) == 1 {
+    class_fn = cgen_unicode::unicode_class(x, route[16..route.size()]);
+    if class_fn != "" {
+      ch = expr(x, w, args[0], ind);
+      return E { code: "{class_fn}({as_char(w, ch)})", kind: K_BOOL };
+    }
+  }
+  if route.starts_with("n_store_") || route == "n_spatial_range" || route == "n_trie_prefix" {
+    is_store_native = false;
+    stored = cgen_store::store_native(x, w, route, args, ind, is_store_native);
+    if is_store_native {
+      return stored;
+    }
+  }
+  if (route.starts_with("n_store_") && !route.starts_with("n_store_upgrade_owed_") && route != "n_store_reclaim") || route == "n_spatial_range" || route == "n_trie_prefix" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
     refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
     return none();
   }
   native = if route == "" { "" } else { cgen_natives::native_c(route) ?? "" };
-  if native == "" && def.c_sig == "" && !binds::is_loft_defined(def) && !cgen_clibs::is_forwarded(x.b, d) {
+  // A synthesized function (`__frames_<collection>`, loft#1601) has a body without an `n_`
+  // name: it is called as any written function.
+  if native == "" && def.c_sig == "" && !binds::is_loft_defined(def) && !binds::has_code(def) && !cgen_clibs::is_forwarded(x.b, d) {
     refuse(w, "a call of a function without a loft body");
     return none();
   }
@@ -944,11 +1016,40 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     shapes += [shape];
     linked += [link];
   }
-  // A link argument is the address of the caller's variable, written before the values.
+  // A link argument is the address of the caller's variable, written before the values; a
+  // store place handed to a `&` parameter of a kind a store link carries is the place's
+  // `loft_ref`, and the call goes to the callee's place twin (`places`, by parameter).
   xs: vector<text> = [for _ in 0..len(args) { "" }];
+  places = 0;
+  callee_args: vector<integer> = [];
+  for cv in def.variables.variables {
+    if cv.argument {
+      callee_args += [cv#index];
+    }
+  }
   for a in args {
     i = a#index;
     if linked[i]! {
+      ptype = def.attributes[i]!.typedef[0]!;
+      pa = place_arg(x, w, a, ptype, ind);
+      if w.why != "" {
+        return none();
+      }
+      if pa != "" {
+        // A store instance takes the place as it is; a text place reaches no other function
+        // (the IR retargets each such call to its instance).
+        cav = callee_args[i] ?? -1;
+        if cav < 0 || !def.variables.variables[cav]!.store_text_link {
+          is_text = match cgen_types::base(opt_names::peel_link(ptype)) { TyText { dep: _ } => true, _ => false };
+          if is_text {
+            refuse(w, "a text place handed to {def.name}");
+            return none();
+          }
+          places = places | (1 << i);
+        }
+        xs[i] = pa;
+        continue;
+      }
       xs[i] = link_arg(x, w, a, shapes[i]!, true, ind);
       if w.why != "" {
         return none();
@@ -975,8 +1076,9 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
         later_writes = true;
       }
     }
-    // A text field handed to a callee that writes no store is read in place.
-    reads = !opt_writes::call_writes_store(x.b, x.writes, d);
+    // A text field handed to a callee that writes no store is read in place — unless a
+    // store place goes to a `&` parameter, which its twin writes.
+    reads = places == 0 && !opt_writes::call_writes_store(x.b, x.writes, d);
     value = if reads { cgen_text::text_read(x, w, a, later_writes, ind) } else { arg_with(x, w, a, later_writes, ind) };
     xs[i] = as_shape(w, value, shapes[i]!);
     if w.why != "" {
@@ -984,6 +1086,11 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     }
   }
   t = cgen_names::plain(d);
+  if places != 0 && (native != "" || len(args) > 63) {
+    refuse(w, "a store place handed to a & parameter of {def.name}");
+    return none();
+  }
+  t.places = places;
   if native == "" {
     if len(args) <= 23 {
       t.nn = nn_twin_bits(x, w, d, args);
@@ -1024,6 +1131,29 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   E { code: code, kind: kind_of(ret), tup: if is_tuple(ret) { ret } else { "" } }
 }
 
+// `place_arg`: a `&` argument that names a store place — a field (`OpGetField`), an element
+// (`OpGetVector`), a store link the caller holds — as the `loft_ref` of the place, for a
+// parameter of a kind a store link carries; "" for a variable.
+fn place_arg(x: Cx, w: W, a: ir::Node, param: ir::TypeT, ind: integer) -> text {
+  if !link_kind(param) {
+    return "";
+  }
+  match loop_shape::unspan(a) {
+    NdVar { n } => if w.store_links[n] ?? false { return w.raw[n]!; },
+    NdCall { def_nr, args: _ } => {
+      name = def_name(x.b, def_nr);
+      if name == "OpGetField" || name == "OpGetVector" || name == "OpVarRef" {
+        e = expr(x, w, a, ind);
+        t = temp(w, "ref");
+        line(w, ind, "{t} = {as_ref(w, e)};");
+        return t;
+      }
+    },
+    _ => {},
+  }
+  ""
+}
+
 // The variable a link argument names (`link_arg`), as its address.  `first`: the outermost
 // call, which also refuses a store place (`place_arg`).
 fn link_arg(x: Cx, w: W, a: ir::Node, shape: text, first: boolean, ind: integer) -> text {
@@ -1058,6 +1188,28 @@ fn link_arg(x: Cx, w: W, a: ir::Node, shape: text, first: boolean, ind: integer)
         return "";
       }
       if len(args) == 1 {
+        // A tuple member is a place a link names (`@FR-B-Ref-Lvalue`): its address, when the
+        // member has the parameter's shape.
+        match loop_shape::unspan(args[0]) {
+          NdTupleGet { var: tv, idx } => {
+            tshape = w.shapes[tv] ?? "";
+            if !is_tuple(tshape) {
+              refuse(w, "a link to a member of no tuple");
+              return "";
+            }
+            members = tuple_members(tshape);
+            if idx >= len(members) || members[idx]! != shape {
+              refuse(w, "a link to a member of another shape");
+              return "";
+            }
+            target = stack_target(x.b, w, a);
+            if target == "" {
+              refuse(w, "a link to a tuple member it cannot name");
+            }
+            return target;
+          },
+          _ => {},
+        }
         v = loop_shape::var_of(loop_shape::unspan(args[0]));
       }
       if v < 0 {
@@ -1578,7 +1730,9 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     NdEnum { ord, tp: _ } => E { code: "(uint8_t) {ord}", kind: K_ENUM },
     NdFloat { f } => E { code: "loft_f64(UINT64_C(0x{float_bits(f)}))", kind: K_FLOAT },
     NdSingle { f } => E { code: "loft_f32(UINT32_C({if f == null { "0x7fc00000" } else { "{f.bits():#x}" }}))", kind: K_SINGLE },
-    NdText { s: literal } => E { code: "loft_lit({c_string(literal)}, {literal.size()})", kind: K_VIEW },
+    // The text `"\0"` is the null text's sentinel: the image reads it back as null, and the
+    // unit spells it as the Rust writer does, one NUL byte.
+    NdText { s: literal } => if literal == null { E { code: "loft_lit(\"\\000\", 1)", kind: K_VIEW } } else { E { code: "loft_lit({c_string(literal)}, {literal.size()})", kind: K_VIEW } },
     // The definition number a function value names, as an integer.
     NdFnRefDnr { n } => E { code: "{w.names[n]!}.d", kind: K_INT },
     NdFnRef { def_nr, var, t: _ } => {
@@ -1594,6 +1748,14 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
         return none();
+      }
+      // A link to a field or element reads that place at each use (`@FR-B-Ref-Read`).
+      if w.store_links[n] ?? false {
+        read = link_access(x, w, n, null);
+        if read == null {
+          return none();
+        }
+        return expr(x, w, read, ind);
       }
       if text_held(w, n) {
         return E { code: "loft_view(&{w.names[n]!})", kind: K_VIEW };
@@ -1792,6 +1954,8 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
   }
   if shape == "int" {
     line(w, ind, "{target} = LOFT_NULL;");
+  } else if shape == "int32" {
+    line(w, ind, "{target} = LOFT_NULL32;");
   } else if shape == "bool" {
     line(w, ind, "{target} = LOFT_BOOL_NULL;");
   } else if shape == "enum" {
@@ -1896,6 +2060,16 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
       };
       if tail_loop {
         stmt(x, w, node, ind);
+        return;
+      }
+      // @PLN204 — a value stored into a 32-bit local is narrowed, so an operation of two
+      // 32-bit operands it stores is the 32-bit operation (`narrow32`): a loop's `i = i + 1`
+      // runs in `int32_t`.
+      if shape == "int32" && (node is NdCall || node is NdInt) {
+        n32 = narrow32(x, w, node, ind);
+        if w.why == "" {
+          line(w, ind, "{target} = {as_int32(w, n32)};");
+        }
         return;
       }
       e = expr(x, w, node, ind);
@@ -2347,16 +2521,32 @@ fn stack_target(b: ir::Bundle, w: W, value: ir::Node) -> text {
       if len(args) != 1 {
         return "";
       }
+      name = def_name(b, def_nr);
+      // A member of a tuple local is a place a link names (`@FR-B-Ref-Lvalue`); a text member
+      // of a tuple parameter is the caller's: no link writes it.
+      match args[0] {
+        NdTupleGet { var: tv, idx } => {
+          if name != "OpCreateStack" {
+            return "";
+          }
+          members = tuple_members(w.shapes[tv] ?? "");
+          text_member = idx < len(members) && members[idx]! == "text";
+          if !w.params[tv]! || w.links[tv]! || !text_member {
+            return "&{w.names[tv]!}.f{idx}";
+          }
+          return "";
+        },
+        _ => {},
+      }
       t = match args[0] {
         NdVar { n } => n,
         _ => return "",
       };
-      name = def_name(b, def_nr);
       // A plain text parameter is the caller's view: no link writes it.
       if name == "OpCreateStack" && !(w.params[t]! && !w.links[t]! && w.shapes[t]! == "text") {
         return var_addr(w, t);
       }
-      if name == "OpVarRef" && w.links[t]! {
+      if name == "OpVarRef" && w.links[t]! && !(w.store_links[t] ?? false) {
         return w.raw[t]!;
       }
       ""
@@ -2466,6 +2656,22 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
         refuse(w, "a variable of shape {shape}");
         return;
       }
+      // A store link (`store_link_set`): a re-pointing bind names the new place, any other
+      // write goes through the place's own set.
+      if w.store_links[var] ?? false {
+        if link_set_repoints(x.b, w, var, inner) {
+          w.bound[var] = true;
+          e = expr(x, w, inner, ind);
+          line(w, ind, "{w.raw[var]!} = {as_ref(w, e)};");
+          flush(w, ind);
+          return;
+        }
+        write = link_access(x, w, var, inner);
+        if write != null {
+          stmt(x, w, write, ind);
+        }
+        return;
+      }
       // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
       // every later read and write of it goes through.
       if w.links[var]! && (!w.params[var]! || link_set_repoints(x.b, w, var, inner)) {
@@ -2551,7 +2757,23 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       line(w, ind, "}}");
       flush(w, ind);
     },
-    NdReturn { inner } => ret_value(x, w, inner, ind),
+    // A generator's `return` ends it: what it returns is done for its effect.
+    NdReturn { inner } => {
+      if w.gen_elem != "" {
+        stmt(x, w, inner, ind);
+        line(w, ind, "goto loft_gen_end;");
+      } else {
+        ret_value(x, w, inner, ind);
+      }
+    },
+    NdYield { inner } => cgen_gen::gen_yield(x, w, inner, ind),
+    // `parallel { … }`: the arms run one after another — each arm's effect is the one its
+    // thread has.
+    NdParallel { arms } => {
+      for a in arms {
+        stmt(x, w, a, ind);
+      }
+    },
     NdDrop { inner } => {
       whole = match loop_shape::unspan(inner) {
         NdIf { cond: _, t: _, f: _ } => true,
@@ -2610,36 +2832,216 @@ fn statement_count(body: text) -> integer {
 // The C definition of `d`'s body, `<name>__fr` (`function`, `FnWriter::write` and the whole
 // form of `framed`), or the first construct that is not carried.  `index` is `d`'s definition
 // number; `p` and `c` are the program's proof and call memo.
-// Does a `&` local of `d` link a store place (`store_links`): a bind of it that re-points
-// names neither a variable nor another link?
-fn store_linked(b: ir::Bundle, d: ir::Definition, links: vector<boolean>) -> boolean {
-  hit = [false];
-  opt_non_sentinel::walk(d.code[0]!, fn(n: ir::Node) {
-    match n {
+// `store_links`: the `&` locals of `d` that link a store place — every bind that re-points
+// (`link_set_repoints`) names an element or a field, or another store link (`OpVarRef`), none a
+// variable (`OpCreateStack`), and the kind has a field operator.  A link to a link follows it,
+// so the answer is the fixpoint over the binds; `seed` holds the place-twin parameters.
+fn store_links_of(b: ir::Bundle, w: W, d: ir::Definition, seed: vector<integer>) -> vector<boolean> {
+  n = len(d.variables.variables);
+  binds: vector<vector<ir::Node>> = [for _ in 0..n { [] }];
+  opt_non_sentinel::walk(d.code[0]!, fn(node: ir::Node) {
+    match node {
       NdSet { var, inner } => {
-        if links[var]! && !d.variables.variables[var]!.argument {
-          match loop_shape::unspan(inner) {
-            NdCall { def_nr, args: _ } => {
-              callee = b.data.definitions[def_nr]!;
-              answers_ref = len(callee.returned) > 0 && (match cgen_types::base(callee.returned[0]!) { TyReference { n: _, dep: _ } => true, _ => false });
-              if callee.name != "OpCreateStack" && callee.name != "OpVarRef" && answers_ref {
-                hit[0] = true;
-              }
-            },
-            _ => {},
-          }
+        vd = d.variables.variables[var]!;
+        refvar = match cgen_types::base(vd.type_def[0] ?? ir::TyVoid) { TyRefVar { inner: _ } => true, _ => false };
+        if !vd.argument && refvar && link_set_repoints(b, w, var, inner) {
+          binds[var] += [inner];
         }
       },
       _ => {},
     }
   });
-  hit[0]!
+  store: vector<boolean> = [for _ in 0..n { false }];
+  for a in seed {
+    store[a] = true;
+  }
+  changed = true;
+  while changed {
+    changed = false;
+    for v in 0..n {
+      if store[v]! || len(binds[v]) == 0 || !link_kind(d.variables.variables[v]!.type_def[0] ?? ir::TyVoid) {
+        continue;
+      }
+      all_places = true;
+      for bx in binds[v] {
+        match loop_shape::unspan(bx) {
+          NdCall { def_nr, args } => {
+            cn = def_name(b, def_nr);
+            if cn == "OpCreateStack" {
+              all_places = false;
+            } else if cn == "OpVarRef" {
+              lv = if len(args) == 1 { loop_shape::var_of(loop_shape::unspan(args[0])) } else { -1 };
+              if lv < 0 || !store[lv]! {
+                all_places = false;
+              }
+            }
+          },
+          _ => {},
+        }
+      }
+      if all_places {
+        store[v] = true;
+        changed = true;
+      }
+    }
+  }
+  store
+}
+
+// `NarrowSlot::of_type`'s link ops: `get,set,min` for a narrow integer place of type `t`
+// (`NarrowIntKind::get_op`/`set_op`, the `min` its ops take), "" for the wide `integer`.
+fn narrow_link_ops(t: ir::TypeT) -> text {
+  nullable = t is TyOptional;
+  spec = match cgen_types::base(t) {
+    TyInteger { spec } => spec,
+    _ => return "",
+  };
+  codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+  width = if spec.forced_size > 0 { spec.forced_size } else if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 };
+  if width >= 8 {
+    return "";
+  }
+  unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
+  ops = if width == 1 {
+    if nullable { "OpGetByteNullable,OpSetByteNullable" } else { "OpGetByte,OpSetByte" }
+  } else if width == 2 {
+    if nullable { "OpGetShort,OpSetShort" } else { "OpGetShortFull,OpSetShortRaw" }
+  } else if width == 4 {
+    if unsigned_wide && nullable { "OpGetInt4Raw,OpSetInt4Raw" } else if unsigned_wide { "OpGetInt4Full,OpSetInt4Raw" } else { "OpGetInt4,OpSetInt4" }
+  } else {
+    "OpGetInt,OpSetInt"
+  };
+  // `takes_min`: the byte and short kinds; `usable_min` drops the bottom code of a signed
+  // range that fills its fixed width when the kind reserves one for null.
+  min = 0;
+  if width <= 2 {
+    reserves = nullable && ((spec.forced_size == 1 && spec.max - spec.min + 1 == 256) || (spec.forced_size == 2 && spec.max - spec.min + 1 == 65536));
+    min = if reserves && spec.min < 0 { spec.min + 1 } else { spec.min };
+  }
+  "{ops},{min}"
+}
+
+// `link_access`: the read (`value` null) or the write of store link `v`, as the operator the
+// bytecode uses through the link's `DbRef` — the place's own get or set, a narrow integer's
+// with its `min`, on `OpVarRef(v)`, the place itself.
+fn link_access(x: Cx, w: W, v: integer, value: ir::Node?) -> ir::Node? {
+  d = x.b.data.definitions[w.index]!;
+  tp = match cgen_types::base(d.variables.variables[v]!.type_def[0]!) {
+    TyRefVar { inner } => inner,
+    _ => {
+      refuse(w, "a store link that is not a link");
+      return null;
+    },
+  };
+  get = "";
+  set = "";
+  min = 0;
+  narrow = false;
+  match cgen_types::base(tp) {
+    TyInteger { spec } => {
+      nw = narrow_link_ops(tp);
+      if nw != "" {
+        parts = nw.split(',');
+        narrow = true;
+        get = parts[0]!;
+        set = parts[1]!;
+        min = parts[2]! as integer ?? 0;
+      } else {
+        get = "OpGetInt";
+        set = "OpSetInt";
+      }
+    },
+    TyCharacter => { get = "OpGetCharacter"; set = "OpSetCharacter"; },
+    TySingle => { get = "OpGetSingle"; set = "OpSetSingle"; },
+    TyFloat => { get = "OpGetFloat"; set = "OpSetFloat"; },
+    TyBoolean => { get = "OpGetBoolean"; set = "OpSetBoolean"; },
+    TyEnum { n: _, is_ref, dep: _ } => if !is_ref { get = "OpGetEnum"; set = "OpSetEnum"; },
+    TyText { dep: _ } => { get = "OpGetText"; set = "OpSetText"; },
+    _ => {},
+  }
+  if get == "" {
+    refuse(w, "a store link of this kind");
+    return null;
+  }
+  op = own::def_nr(x.b, if value != null { set } else { get });
+  vref = own::def_nr(x.b, "OpVarRef");
+  if op >= len(x.b.data.definitions) || vref >= len(x.b.data.definitions) {
+    refuse(w, "a store link without its operators");
+    return null;
+  }
+  args: vector<ir::Node> = [ir::NdCall { def_nr: vref, args: [ir::NdVar { n: v }] }, ir::NdInt { n: 0 }];
+  // A narrow kind's ops take the `min` after the field (`OpGetByte(r, fld, min)`).
+  if len(x.b.data.definitions[op]!.attributes) == if value != null { 4 } else { 3 } {
+    args += [ir::NdInt { n: if narrow { min } else { 0 } }];
+  }
+  if value != null {
+    args += [value];
+  }
+  ir::NdCall { def_nr: op, args: args }
+}
+
+// `empty_stub_default` (loft#1254): the value a stub with an empty body answers — its type's
+// default (`Data::to_default`), a handle-carried result's (a record, a collection, a
+// reference enum) the null reference — or null for any other body or type.
+fn empty_stub_default(b: ir::Bundle, d: ir::Definition, code: ir::Node) -> ir::Node? {
+  empty = match code {
+    NdBlock { block } => len(block[0]!.operators) == 0,
+    _ => false,
+  };
+  if !empty || len(d.returned) == 0 {
+    return null;
+  }
+  match d.returned[0]! {
+    TyInteger { spec } => ir::NdInt { n: if spec.min <= 0 && spec.max >= 0 { 0 } else if spec.min > 0 { spec.min } else { spec.max } },
+    TyFloat => ir::NdFloat { f: 0.0 },
+    TySingle => ir::NdSingle { f: 0.0f },
+    TyBoolean => ir::NdBoolean { b: false },
+    TyCharacter => ir::NdInt { n: 0 },
+    TyText { dep: _ } => ir::NdText { s: "" },
+    TyEnum { n, is_ref, dep: _ } => if is_ref { null_ref_sentinel(b) } else { ir::NdEnum { ord: 0, tp: b.data.definitions[n]!.known_type } },
+    TyReference { n: _, dep: _ } => null_ref_sentinel(b),
+    TyVector { inner: _, dep: _ } => null_ref_sentinel(b),
+    TyHash { n: _, names: _, dep: _ } => null_ref_sentinel(b),
+    TySorted { n: _, keys: _, dep: _ } => null_ref_sentinel(b),
+    TyIndex { n: _, keys: _, dep: _ } => null_ref_sentinel(b),
+    TyRadix { n: _, names: _, dep: _ } => null_ref_sentinel(b),
+    TyTrie { n: _, key: _, dep: _ } => null_ref_sentinel(b),
+    _ => null,
+  }
+}
+
+fn null_ref_sentinel(b: ir::Bundle) -> ir::Node? {
+  for def in b.data.definitions {
+    if def.name == "OpNullRefSentinel" {
+      return ir::NdCall { def_nr: def#index, args: [] };
+    }
+  }
+  null
+}
+
+// `link_kind`: a kind a store link carries — the place's own get and set read and write it
+// (an integer, a character, a single, a float, a boolean, a plain enum, a text); a link to a
+// record or a collection is a link of another kind.
+fn link_kind(tp: ir::TypeT) -> boolean {
+  match cgen_types::base(tp) {
+    TyRefVar { inner } => match cgen_types::base(inner) {
+      TyInteger { spec: _ } => true,
+      TyCharacter => true,
+      TySingle => true,
+      TyFloat => true,
+      TyBoolean => true,
+      TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+      TyText { dep: _ } => true,
+      _ => false,
+    },
+    _ => false,
+  }
 }
 
 pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   // `@FR-R-Cold`'s loft clause: the ordinary body only, and written again in place where
   // the body did not keep to the plan.
-  if cgen_names::is_plain(twin) && plain_rules() {
+  if cgen_names::is_plain(twin) && plain_rules() && cgen_gen::gen_elem(x.b.data.definitions[twin.d]!) == "" {
     tried = write_body(x, twin, -1, true, []);
     if tried.refused != cgen_cold::COLD_ESCAPED {
       return tried;
@@ -2658,7 +3060,15 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
-  ret = if work_ret >= 0 || len(helper) > 0 { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  // A generator (`write_gen`): its body is the resume function's, written for its effect.
+  gen_elem = if work_ret >= 0 || len(helper) > 0 { "" } else { cgen_gen::gen_elem(d) };
+  if gen_elem == "void" {
+    return Written { text: "", refused: "a generator of nothing" };
+  }
+  if gen_elem != "" && !cgen_names::is_plain(twin) {
+    return Written { text: "", refused: "a generator handed a store place for a & parameter" };
+  }
+  ret = if work_ret >= 0 || len(helper) > 0 || gen_elem != "" { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
   if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
@@ -2676,9 +3086,6 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       TyRefVar { inner: _ } => true,
       _ => false,
     };
-    if v.store_text_link {
-      return Written { text: "", refused: "a link to a text in a store" };
-    }
     if is_tuple(shape) && !plain_rules() {
       return Written { text: "", refused: "a variable of shape {shape}" };
     }
@@ -2690,21 +3097,19 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     }
     own = var_name(v.name, v#index);
     raw += [own];
-    names += [if link { "(*{own})" } else { own }];
+    // @PLN219 — a `&S` whose `S` is held out of line points at a slot cell, which may name a
+    // field: read through the test.
+    names += [if link && binds::slot_link_def(x.b, v.type_def[0]!) != null { "loft_slot_read(*{own})" } else if link { "(*{own})" } else { own }];
     links += [link];
     is_param += [v.argument];
     if v.argument {
       params += [if link { "{held(shape)} *{own}" } else { "{passed(shape)} {own}" }];
     }
   }
-  // A `&` local every bind of which names a field or an element links a store place.
-  if store_linked(x.b, d, links) {
-    return Written { text: "", refused: "a link to a store place" };
-  }
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  if twin.places != 0 || twin.inv || twin.nk || twin.apr || twin.apv || twin.kh || twin.ap || twin.ds || twin.vf {
+  if twin.inv || twin.nk || twin.apr || twin.apv || twin.kh || twin.ap || twin.ds || twin.vf {
     return Written { text: "", refused: "a twin of a rule that is not carried" };
   }
   // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
@@ -2768,6 +3173,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     work_dest: "",
     raw: raw,
     links: links,
+    store_links: [for _ in links { false }],
     bound: is_param,
     pending_work: [],
     work_ret: work_ret,
@@ -2776,6 +3182,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     room_minted: [for _ in 0..len(d.variables.variables) { -1 }],
     elem: -1,
     keyed: -1,
+    group: "",
+    group_members: [],
+    gen_elem: gen_elem,
+    yields: 0,
     filed: -1,
     filed_next: -1,
     filed_path: "",
@@ -2794,7 +3204,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     grid_binds: [],
     range_ends: [],
     set_many: [],
-    table_places: if plain_rules() { cgen_table::places(x.b, index) } else { [] },
+    // A generator's locals live in its frame between resumes: it holds no table handle.
+    table_places: if plain_rules() && gen_elem == "" { cgen_table::places(x.b, index) } else { [] },
     table_paths: [],
     table_names: [],
     adopt_v: -1,
@@ -2810,6 +3221,32 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     in_range: [],
     in_range_lens: [],
   };
+  // `store_links`: a place twin's `&` parameters (`twin.places`, by parameter) and a store
+  // instance's text parameters (`n_app@st1`, `parser/store_text.rs`) are store links, and so is every `&` local each bind of which names a field or an element — each a
+  // `loft_ref` to the place, read and written through it (`link_access`).
+  seed: vector<integer> = [];
+  ordinal = 0;
+  for v in d.variables.variables {
+    if v.argument {
+      if twin.places & (1 << ordinal) != 0 || v.store_text_link {
+        seed += [v#index];
+      }
+      ordinal += 1;
+    }
+  }
+  w.store_links = store_links_of(x.b, w, d, seed);
+  ordinal = 0;
+  for v in d.variables.variables {
+    if w.store_links[v#index]! {
+      w.names[v#index] = w.raw[v#index]!;
+    }
+    if v.argument {
+      if w.store_links[v#index]! {
+        params[ordinal] = "loft_ref {w.raw[v#index]!}";
+      }
+      ordinal += 1;
+    }
+  }
   // `@FR-R-RetAdopt`: the result local that is built in the return buffer.
   if plain_rules() && (env_variable("LOFT_NO_RETBUF_ADOPT") ?? "0") == "0" {
     adopted = opt_adopt::ret_adopt(x.b, index);
@@ -2836,6 +3273,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       w.undeclared[v#index] = !v.argument && !owned;
     }
   }
+  if gen_elem != "" {
+    stmt(x, w, code, 1);
+    return cgen_gen::write_gen(x, w, cgen_names::twin_name(x.b, x.dups, twin), if len(params) == 0 { "void" } else { params.join(", ") });
+  }
   if cold_on {
     planned = cgen_cold::cold_plan(x, w);
     if planned != "" {
@@ -2849,7 +3290,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     stmt(x, w, code, 1);
     epilogue(w, 1);
   } else {
-    ret_value(x, w, code, 1);
+    // loft#1254 — a stub with an empty body answers its type's default.
+    ret_value(x, w, empty_stub_default(x.b, d, code) ?? code, 1);
   }
   if w.why != "" {
     return Written { text: "", refused: w.why };
@@ -2858,7 +3300,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   for v in d.variables.variables {
     if !v.argument && !w.undeclared[v#index]! {
       shape = shapes[v#index]!;
-      if w.links[v#index]! {
+      if w.store_links[v#index]! {
+        out += "    loft_ref {w.raw[v#index]!} = {{ 0xFFFF, 0, 0, 0 }};\n";
+      } else if w.links[v#index]! {
         out += "    {held(shape)} *{w.raw[v#index]!} = 0;\n";
       } else if shape == "text" && w.borrowed[v#index]! {
         out += "    loft_str {var_name(v.name, v#index)} = {{ 0, 0 }};\n";

@@ -75,9 +75,10 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
         # The test file with a `main` that calls the one test, beside the other programs; it runs
         # from the test file's own directory, where its relative paths resolve.
         # A file name past the file system's 255 bytes is no file: a long one keeps its end and a hash.
-        stem = re.sub(r"[^A-Za-z0-9]", "_", f"{f}::{test}")
-        if len(stem) > 150:
-            stem = stem[-120:] + "_" + hashlib.sha1(stem.encode()).hexdigest()[:12]
+        # A short name: the program's path is a text constant of it (an `assert`'s file), and
+        # one of 256 bytes or more takes another constant layout — under a long TMPDIR every
+        # test would measure that, not itself.
+        stem = "t" + hashlib.sha1(f"{f}::{test}".encode()).hexdigest()[:16]
         prog = os.path.join(tmp, stem + ".loft")
         with open(prog, "w", encoding="utf-8") as fh:
             fh.write(open(f, encoding="utf-8", errors="replace").read() + f"\n\nfn main() {{\n  {test}();\n}}\n")

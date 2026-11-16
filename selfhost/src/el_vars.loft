@@ -65,10 +65,30 @@ pub struct LoopCounter {
   pub count: integer
 }
 
+// `@FR-B-Scope` (loft#1700): where a variable's binding was last recorded — the innermost open
+// block's ordinal (0: the function's own scope) — on this pass.
+pub struct BoundAt {
+  pub nr: integer,
+  pub block: integer,
+  // The loop the binding was made in (its loop variable on this pass), -1 outside every loop.
+  pub in_loop: integer
+}
+
+// The spellings a block's split bindings took over, restored when it ends.
+pub struct RebindFrame {
+  pub names: vector<VarName>
+}
+
 pub struct Vars {
   pub name: text,
   pub file: text,
   pub vars: vector<ir::Variable>,
+  // `@FR-B-Scope`: the open blocks' ordinals, the last one given, the bindings' blocks and the
+  // split bindings each open block restores.
+  pub block_path: vector<integer>,
+  pub block_ord: integer,
+  pub bound_in: vector<BoundAt>,
+  pub rebind_frames: vector<RebindFrame>,
   // `Function::names`: the variable a spelling names now
   pub names: hash<VarName[name]>,
   // `Variable::defined`, per variable
@@ -1097,4 +1117,78 @@ pub fn loop_count(v: Vars, lv: integer) -> integer {
   set_defined(v, c);
   v.loop_counts += [LoopCounter { lv: lv, count: c }];
   c
+}
+
+// `Parser::record_binding`: `nr` is bound here, in the innermost open block.
+pub fn record_binding(v: Vars, nr: integer) {
+  b = if len(v.block_path) > 0 { v.block_path[-1]! } else { 0 };
+  l = current_loop(v);
+  for x in v.bound_in {
+    if x.nr == nr {
+      v.bound_in[x#index].block = b;
+      v.bound_in[x#index].in_loop = l;
+      return;
+    }
+  }
+  v.bound_in += [BoundAt { nr: nr, block: b, in_loop: l }];
+}
+
+// The innermost open loop (its loop variable), or -1.
+pub fn current_loop(v: Vars) -> integer {
+  if len(v.active_loops) > 0 { v.active_loops[-1]! } else { -1 }
+}
+
+// `Parser::binding_loop`: the loop `nr`'s binding was last recorded in, or -1.
+pub fn binding_loop(v: Vars, nr: integer) -> integer {
+  for x in v.bound_in {
+    if x.nr == nr {
+      return x.in_loop;
+    }
+  }
+  -1
+}
+
+// `Parser::binding_ended`: did the binding `nr` last received end with a block this point is no
+// longer inside?  Parameters and the compiler's own locals are bound for the whole function.
+pub fn binding_ended(v: Vars, nr: integer) -> boolean {
+  if nr < 0 || v.vars[nr].argument || starts_with(name_of(v, nr), "__") {
+    return false;
+  }
+  for x in v.bound_in {
+    if x.nr == nr {
+      return x.block != 0 && !v.block_path.contains(x.block);
+    }
+  }
+  false
+}
+
+// `parse_block`'s `@FR-B-Scope` frame: a block opens.
+pub fn open_block(v: Vars) {
+  v.block_ord += 1;
+  v.block_path += [v.block_ord];
+  v.rebind_frames += [RebindFrame { names: [] }];
+}
+
+// …and ends: each binding split inside it gives its spelling back, latest first.
+pub fn close_block(v: Vars) {
+  if len(v.block_path) > 0 {
+    v.block_path = v.block_path[0..len(v.block_path) - 1];
+  }
+  if len(v.rebind_frames) > 0 {
+    f = v.rebind_frames[-1]!;
+    v.rebind_frames = v.rebind_frames[0..len(v.rebind_frames) - 1];
+    for n in rev(f.names) {
+      set_name(v, n.name, n.nr);
+    }
+  }
+}
+
+// Has `nr` a recorded binding on this pass?
+pub fn binding_recorded(v: Vars, nr: integer) -> boolean {
+  for x in v.bound_in {
+    if x.nr == nr {
+      return true;
+    }
+  }
+  false
 }

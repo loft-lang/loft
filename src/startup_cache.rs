@@ -147,6 +147,12 @@ struct ManifestState {
     /// Without the replay a C-binding program runs on its first launch and fails on its
     /// second, with "symbol not found" or an undefined symbol at link time.
     c_libraries: Vec<crate::data::CLibrary>,
+    /// @C165 — the dependency headers each shim includes (`c_shim::declare_dep_headers`): a
+    /// package's directory, a dependency's name and the directories of that dependency's shim
+    /// sources.  A C build compiles a shim after the parse, and a warm load never ran the
+    /// parse that declared them; without the replay the second C build of a program finds no
+    /// header.
+    dep_headers: Vec<(String, String, Vec<String>)>,
     /// loft#1684 — the auto-native cdylib each `use`d library was built into (N3), by
     /// path.  The bundle already carries the functions' native MARKS (it is written after
     /// `probe_and_mark_exports`), so a warm load needs only the artifacts to dlopen; each
@@ -295,6 +301,20 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         });
         next = lines.next();
     }
+    // Optional `chdr <pkg_dir>\t<dependency>\t<dir>…` headers: one per dependency a
+    // package's shim includes a header of.
+    let mut dep_headers = Vec::new();
+    while let Some(rest) = next.and_then(|l| l.strip_prefix("chdr ")) {
+        let mut fields = rest.split('\t');
+        let pkg_dir = fields.next()?;
+        let dep = fields.next()?;
+        dep_headers.push((
+            pkg_dir.to_string(),
+            dep.to_string(),
+            fields.map(str::to_string).collect(),
+        ));
+        next = lines.next();
+    }
     // `actx <context>`: required — a bundle that cannot say which native-library context
     // marked it cannot be matched against this run's.  Then optional `alib <path>` lines, one
     // per auto-native cdylib; a path may contain spaces, so the whole remainder is the path.
@@ -372,6 +392,7 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         native_crate_regs,
         placed_libs,
         c_libraries,
+        dep_headers,
         auto_native_libs,
         native_ctx,
         diagnostics,
@@ -428,6 +449,21 @@ pub fn native_lib_context(html: bool, open_world: bool) -> String {
         u8::from(crate::native_build::c_target()),
         u8::from(open_world)
     )
+}
+
+/// Hand the shim builder the dependency headers a cached parse declared (@C165), grouped by
+/// package.
+fn declare_dep_headers(lines: Vec<(String, String, Vec<String>)>) {
+    let mut by_pkg: Vec<(String, Vec<(String, Vec<String>)>)> = Vec::new();
+    for (pkg_dir, dep, dirs) in lines {
+        match by_pkg.iter_mut().find(|(dir, _)| *dir == pkg_dir) {
+            Some((_, deps)) => deps.push((dep, dirs)),
+            None => by_pkg.push((pkg_dir, vec![(dep, dirs)])),
+        }
+    }
+    for (pkg_dir, deps) in by_pkg {
+        crate::c_shim::declare_dep_headers(&pkg_dir, deps);
+    }
 }
 
 /// Whole-program warm load: if a valid bundle exists for `script_abspath` and
@@ -569,6 +605,8 @@ pub fn warm_load_program(
     }
     // The `[c]` declarations: both backends read them from `Data` after the parse.
     p.data.c_libraries = state.c_libraries;
+    // @C165 — and the dependency headers their shims include, for a compile after this load.
+    declare_dep_headers(state.dep_headers);
     // Replay what the cold parse said.  The parser did not run, so these are the only
     // diagnostics this run will have; `main` renders them through the same path a cold run
     // uses, so `LOFT_ERRORS`, colour and the warnings-off filter all still apply.
@@ -746,6 +784,19 @@ pub fn save_program(
             let _ = write!(lines, "\t{src}");
         }
         lines.push('\n');
+    }
+    // @C165 — the dependency headers of the packages this program loaded.
+    for (pkg_dir, deps) in crate::c_shim::all_dep_headers() {
+        if !p.data.c_libraries.iter().any(|c| c.pkg_dir == pkg_dir) {
+            continue;
+        }
+        for (dep, dirs) in deps {
+            let _ = write!(lines, "chdr {pkg_dir}\t{dep}");
+            for dir in dirs {
+                let _ = write!(lines, "\t{dir}");
+            }
+            lines.push('\n');
+        }
     }
     // loft#1684 — the native-library context, then each auto-native cdylib (see
     // `ManifestState::auto_native_libs`).
@@ -990,7 +1041,7 @@ mod ncrate_manifest_tests {
         let hash = crate::cache::file_hash(&src_str).expect("hash source");
         let manifest = dir.join("m.manifest");
         let content = format!(
-            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nclib 0 libpq.so.5\t/pkgs/my db\nclib 1 lib/own.so\t/pkgs/foo\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
+            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nclib 0 libpq.so.5\t/pkgs/my db\nclib 1 lib/own.so\t/pkgs/foo\nchdr /pkgs/my db\tlayer\t/pkgs/layer one/c\t/pkgs/layer one/inc\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
             crate::cache::build_signature(),
             hex32(&hash),
             src_str,
@@ -1025,6 +1076,18 @@ mod ncrate_manifest_tests {
                 },
             ],
             "each clib header round-trips, a package dir keeping its space"
+        );
+        assert_eq!(
+            state.dep_headers,
+            vec![(
+                "/pkgs/my db".to_string(),
+                "layer".to_string(),
+                vec![
+                    "/pkgs/layer one/c".to_string(),
+                    "/pkgs/layer one/inc".to_string()
+                ],
+            )],
+            "a chdr header round-trips, each directory keeping its space (@C165)"
         );
         assert_eq!(state.native_ctx, "c", "the actx header round-trips");
         assert_eq!(
