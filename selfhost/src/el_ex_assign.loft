@@ -1200,7 +1200,9 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     nullable_scalar = match x.tp { TyOptional { inner } => is_scalar(inner), _ => false };
     // A vector LITERAL member is its value block (`Vector`), the tuple holding the vector.
     vec_lit = x.tp is TyVector && e.p.nodes[n] is SVecLit && (e.first_pass || match el_ir::unspan(x.code) { NdBlock { block: vb } => vb[0].name == "Vector", _ => false });
-    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar || vec_lit || boxed_rec) {
+    // A tuple of plain values as a member (`((1, 2), 3)`) is held as the tuple it is.
+    plain_inner = match x.tp { TyTuple { elems: ie } => len([for it in ie if !is_scalar(it) { it }]) == 0 && len(ie) > 0, _ => false };
+    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar || vec_lit || boxed_rec || plain_inner) {
       el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -1333,6 +1335,24 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       td = el_types::tuple_def_of(e, ee);
       elem_read = match el_ir::unspan(x.code) { NdCall { def_nr: xd } => el::def(e, xd).name == "OpGetVector", _ => false };
       mt = ee[index] ?? ir::TyVoid;
+      // A member of a tuple that is itself a tuple's member (`n.0.1`): the inner tuple held in
+      // a work ref first (`tuple_tmp`).
+      if el_ir::unspan(x.code) is NdTupleGet && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt)) {
+        tw = el_vars::work_ref(vars, el_types::with_deps(x.tp, []));
+        return ex(el_ir::v_block([el_ir::v_set(tw, x.code), ir::NdTupleGet { var: tw, idx: index }], mt, "tuple_tmp"), mt);
+      }
+      // A record member of an element is read where it lies, a view of the vector's local.
+      rsd = struct_ref(e, mt);
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && rsd >= 0 && !(mt is TyOptional) && el_ex_object::literal_def(e, rsd) {
+        uw2 = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
+        vars.vars[uw2].skip_free = true;
+        el_vars::unregister_work_ref(vars, uw2);
+        if e.first_pass {
+          return ex(ir::NdNull, mt);
+        }
+        rroot = place_root(e, x.code);
+        return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: el::def(e, rsd).known_type }]), el_types::with_deps(mt, if rroot >= 0 { [rroot] } else { [] }));
+      }
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && (mt is TyText || (el_convert::plain_scalar(mt) && read_op(mt) != "" && match mt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true })) {
         // Rust holds the element in a work ref here (the unbox it then drops): the name is
         // taken on both passes, so later buffers number past it.

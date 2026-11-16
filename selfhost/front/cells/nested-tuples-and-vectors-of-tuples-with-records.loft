@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a member of a tuple's tuple member is read through a work ref (`tuple_tmp`); a vector of tuples with a record member names its rows by the struct, copies the record into its slot of each element, and its loop variable and its elements read the record where it lies.
+// Prints: 5 18 8
+
+struct P { x: integer }
+fn nest() -> integer {
+  n = ((1, 2), 3);
+  n.0.1 + n.1
+}
+fn main() {
+  v: vector<(integer, P)> = [(1, P { x: 7 })];
+  v += [(2, P { x: 8 })];
+  s = 0;
+  for e in v { s += e.0 + e.1.x; }
+  println("{nest()} {s} {v[1].1.x}");
+}

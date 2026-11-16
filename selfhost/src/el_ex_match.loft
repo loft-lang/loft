@@ -874,8 +874,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // The destination's element temp, minted on both passes as the literal path mints it.
   el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
-  if len(binds) != 1 || body == null || binds[0] == "_" || e.p.nodes[source] is SVecLit {
-    el::refuse(e, "a comprehension over a literal, or with destructuring or `_`");
+  // (A literal source is its value block, walked as a local's vector is.)
+  if len(binds) != 1 || body == null || binds[0] == "_" {
+    el::refuse(e, "a comprehension with destructuring or `_`");
     return ex(ir::NdNull, ir::TyVoid);
   }
   src_id = binds[0];

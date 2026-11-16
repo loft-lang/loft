@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a text `+=` of an `if` whose arm answers a variable appends the `if` as one operand, the local borrowing that variable — in a function that answers no text.
+// Prints: a b|z, z
+
+fn main() {
+  out = "";
+  for t in ["a", "b"] { out += if out == "" { t } else { " " + t }; }
+  k = "z";
+  r = "";
+  for i in 0..2 { r += if i > 0 { ", {k}" } else { k }; }
+  println("{out}|{r}");
+}

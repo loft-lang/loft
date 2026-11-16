@@ -2372,7 +2372,12 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
       for m in parts {
-        ls += [el_ir::cl(e, el_ex_object::tuple_set_op(elems[m#index] ?? ir::TyVoid), [at, ir::NdInt { n: fs[m#index]!.position }, m])];
+        // A record member is copied into its slot of the element (`set_field`).
+        if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 {
+          ls += [el_ex_object::set_field(e, td, m#index, at, m)];
+        } else {
+          ls += [el_ir::cl(e, el_ex_object::tuple_set_op(elems[m#index] ?? ir::TyVoid), [at, ir::NdInt { n: fs[m#index]!.position }, m])];
+        }
       }
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }

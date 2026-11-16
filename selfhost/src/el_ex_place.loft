@@ -1387,7 +1387,8 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     el_vars::drop_use(vars, v);
     // An appended text `if` whose arms answer a variable (bare or sliced) makes the local borrow
     // it, and what the function's tail then answers follows rules not carried yet.
-    if !e.first_pass && el_ir::unspan(x.code) is NdIf && len(el_ex_null::text_arm_deps(e, vars, x.code)) > 0 {
+    // (Carried where the function answers no text: its tail cannot hand the borrowing local up.)
+    if !e.first_pass && el_ir::unspan(x.code) is NdIf && len(el_ex_null::text_arm_deps(e, vars, x.code)) > 0 && el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) is TyText {
       el::refuse(e, "an append of a text `if` whose arm answers a variable");
       return ex(ir::NdNull, ir::TyVoid);
     }

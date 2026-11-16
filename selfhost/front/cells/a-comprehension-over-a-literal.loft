@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a comprehension over a literal vector walks the literal's value block as it walks a local's vector.
+// Prints: [8,10] [3,6]
+
+fn main() {
+  w = [4, 5];
+  a = [for x in w { x * 2 }];
+  d = [for x in [1, 2] { x * 3 }];
+  println("{a} {d}");
+}
