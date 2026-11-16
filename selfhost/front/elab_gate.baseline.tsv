@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	801	of	2143
+layer	elab	agree	806	of	2145
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -343,7 +343,6 @@ elab	refused	loft-suite/rules/coroutines/G-Yield/a-yield-widens-like-a-return.lo
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-yielded-value-converts-into-its-element-type.loft
 elab	refused	loft-suite/rules/dispatch/Disp-Dynamic/a-runtime-selection-is-the-exhaustive-match-it-stands-for.loft
 elab	refused	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft
-elab	refused	loft-suite/rules/formatting/F-Desugar/every-kind-renders-through-one-sink.loft
 elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft
 elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-null-hole-never-calls-the-users-to-text.loft
 elab	refused	loft-suite/rules/formatting/F-FaultSafe/an-uncomputable-operand-renders-null-and-the-template-continues.loft
@@ -1136,8 +1135,6 @@ elab	refused	tests/scripts/2210-a-closure-keeps-the-record-a-coalesce-bound.loft
 elab	refused	tests/scripts/2213-a-never-returning-default-tests-a-struct-enum-by-its-discriminant.loft
 elab	refused	tests/scripts/2219-a-record-unwrapped-by-a-diverging-coalesce-in-a-loop-keeps-its-buffer.loft
 elab	refused	tests/scripts/2225-a-text-if-is-one-value-wherever-it-goes.loft
-elab	refused	tests/scripts/2237-a-key-order-image-converts-on-every-backend.loft
-elab	refused	tests/scripts/2241-a-token-1-trie-image-reads-as-written-by-page-and-converted-whole.loft
 elab	refused	tests/scripts/2245-a-captured-element-view-is-copied-when-its-container-moves.loft
 elab	refused	tests/scripts/2252-a-text-match-on-a-projected-subject-compiles-natively.loft
 elab	refused	tests/scripts/2255-a-text-tail-arm-that-ends-the-program-stays-a-statement.loft
