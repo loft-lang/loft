@@ -528,3 +528,43 @@ expression is `a + b` with `a` a local vector answered only `b`'s elements (inte
 backend, no message).  `return a + b;` and `c = a + b; c` are right.  It is cured on this
 branch (`src/parser/vectors.rs`); until a loft with the cure is the one in use, write one of
 those two.
+
+## This stream's note: the game through the engine, and the whole screen (2026-11-16, the game at cecc5b9)
+
+**The owner, today:** no 2D game on the desktop — only the 3D version, of both the demo world
+and the town; and it should play over the whole screen, showing no more than it shows now.
+
+**What was validated**, the game at `cecc5b9` with the libraries' `main`, on a Mac:
+
+| What draws | Through the engine? |
+|---|---|
+| The fixed view (`fixedview.loft`) | Yes: `scene3d` on `gpu` and `gpu_gl`, or `raster3d` |
+| The first-person view (`render3d.loft`) | No: `graphics` 0.12 directly, its own shader and meshes |
+| The 2D game | `tiles` and `screen`; it is still the program's host — `main` opens its window first, reads its keys and runs the loop on `screen::poll`, and the 3D view is a second window |
+
+- `tools/fixedshot.loft orbury OUT "s d d" change night gpu`: the CPU's and the GPU's picture
+  differed in 7,209 pixels by more than one step, where the contract records 27 from Linux.
+  The cause was `scene3d`'s, on a Mac's GPU: a pixel on a texel's edge took the texel after
+  it.  Cured in `scene3d` 0.4.1 (loft-libs-graphics#95, merged): **24**.
+- Not validated: the town on the new rules (`on_field`) in the fixed view — the tool plays the
+  square map — and anything of `render3d`'s.
+
+**The whole screen** (loft-libs-graphics#96, `gpu` 0.3.0 and `scene3d` 0.5.0):
+
+- `gpu::open_fullscreen(table, title)` opens a window over the whole screen.
+- `scene.resize(800, 480)` stays the screen's size; `draw` then shows it as large as fits, in
+  the middle, black beside it.  Before, a `resize` to another size than the window stretched.
+- In `fixedview.loft` that is two changes, tried here in a scratch copy and played for a few
+  seconds: `new_scene` opens with `gpu::open_fullscreen` (a window of the view's size where
+  that does not open), and `screen_size` answers the view's own 800 x 480 on a GPU too.
+- A pointer's place on the screen: `scene.screen_point(dev.width(), dev.height(), x, y)`.
+
+**What "only 3D" asks of the game**, and of this stream:
+
+- The game's: `main` without the 2D window — the loop, the keys and the frame on the device
+  (`dev.poll()`, `dev.keys()`), the credits and the editor drawn in 3D or left out.
+- This stream's: the host package (one value: where keys are read, what draws, how the frame
+  is shown), so `main` names neither `screen` nor `gpu_gl`; and, when the hex town's meshes
+  are to go through the engine, what `scene3d` must take beyond tiles of faces.  Say which
+  comes first.
+
