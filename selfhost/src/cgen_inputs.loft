@@ -16,6 +16,7 @@ use loop_shape;
 use opt_inputs;
 use opt_version;
 use opt_lease;
+use opt_apart_vector;
 use opt_push;
 use opt_range;
 use opt_ranged_call;

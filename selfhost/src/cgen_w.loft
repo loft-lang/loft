@@ -25,6 +25,7 @@ use opt_destination;
 use char_walk;
 use opt_store_text_borrow;
 use cgen_deferred;
+use opt_apart_vector;
 use opt_split_table;
 use opt_lazy_split;
 
@@ -407,6 +408,8 @@ struct W {
   dc_null_only: vector<boolean>,
   dc_pending: integer,
   dc_ctx: vector<integer>,
+  // `@FR-R-Apart` instance 3: the body's apart vectors and their companions.
+  apv: opt_apart_vector::VecRoles,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line

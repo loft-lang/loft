@@ -18,6 +18,7 @@ use opt_below_len;
 use opt_version;
 use cgen_version;
 use cgen_deferred;
+use cgen_apart;
 use opt_length;
 use opt_facts;
 use opt_push;
@@ -85,6 +86,40 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
     return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true };
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
+  opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
+  pending_grown = opt_hoist::with_grown(x.b, x.writes, w.facts, w.index, lp, verdict);
+  // `@FR-R-Apart`: a path rooted at a value held apart names no record, so it takes no header,
+  // base, push header or held scalar.
+  if cgen_apart::any(w) {
+    av: vector<opt_hoist::Held> = [];
+    for h in verdict.vectors {
+      if !cgen_apart::holds(w, h.root) {
+        av += [h];
+      }
+    }
+    verdict.vectors = av;
+    ap: vector<opt_hoist::Held> = [];
+    for h in verdict.pushes {
+      if !cgen_apart::holds(w, h.root) {
+        ap += [h];
+      }
+    }
+    verdict.pushes = ap;
+    am: vector<opt_hoist::Held> = [];
+    for h in verdict.mint_pushes {
+      if !cgen_apart::holds(w, h.root) {
+        am += [h];
+      }
+    }
+    verdict.mint_pushes = am;
+    asc: vector<opt_hoist::Scalar> = [];
+    for sc in verdict.scalars {
+      if !cgen_apart::holds(w, sc.root) {
+        asc += [sc];
+      }
+    }
+    verdict.scalars = asc;
+  }
   // `@FR-R-DeferredCopy`: a deferred local, and a view derived from one, moves to its copy at a
   // copy point, so no header is held for a path rooted at either.
   if len(w.dc) > 0 {
@@ -110,8 +145,6 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
     }
     verdict.mint_pushes = kept_m;
   }
-  opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
-  pending_grown = opt_hoist::with_grown(x.b, x.writes, w.facts, w.index, lp, verdict);
   // `@FR-R-Scalar`: each record scalar the verdict admits is read once, into a local.
   for sc in verdict.scalars {
     known = false;
@@ -302,7 +335,7 @@ pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integ
     return -1;
   }
   head = push_head(x, w, first.vector);
-  if head < 0 || w.push_heads[head].size != first.size || windowed_path(w, first.path) || cgen_deferred::root(w, first.root) {
+  if head < 0 || w.push_heads[head].size != first.size || windowed_path(w, first.path) || cgen_apart::holds(w, first.root) || cgen_deferred::root(w, first.root) {
     return -1;
   }
   run: vector<opt_push::Push> = [first];

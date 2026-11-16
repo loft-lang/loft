@@ -11,6 +11,7 @@
 
 use ir;
 use cgen_deferred;
+use cgen_apart;
 use lower;
 use cgen_tables;
 use cgen_show;
@@ -2379,7 +2380,7 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
     next = p.next;
     run_end = next;
   }
-  if count < 2 || !opt_push::known_empty(x.b, shown, at, first.vector) || cgen_deferred::root(w, first.root) || cgen_hoist::push_head(x, w, first.vector) >= 0 || cgen_hoist::windowed_path(w, first.path) {
+  if count < 2 || !opt_push::known_empty(x.b, shown, at, first.vector) || cgen_apart::holds(w, first.root) || cgen_deferred::root(w, first.root) || cgen_hoist::push_head(x, w, first.vector) >= 0 || cgen_hoist::windowed_path(w, first.path) {
     return -1;
   }
   v = as_ref(w, cgen_fn::expr(x, w, first.vector, ind));
