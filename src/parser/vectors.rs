@@ -1649,11 +1649,21 @@ impl Parser {
         // 'integer' and 'integer'"* — the ELEMENT's type, for an append to the collection
         // (loft#1276, the same shape loft#1209 had through `?`).
         // A variable whose first binding is the statement creating this lambda holds nothing
-        // yet, so it is not offered as a capture (`first_bind_targets`).
+        // yet, so it is not offered as a capture (`first_bind_targets`).  Nor is one whose
+        // binding has ENDED (`@FR-B-Scope`): bound inside a block that closed before this
+        // lambda, it does not exist here, so the lambda cannot reach it — a read in the body is
+        // refused as it is outside, and a write binds a local of the lambda's own.  Offered, a
+        // loop body's local was shared with the closure after the loop (loft#2523).
         let mut ctx: Vec<(String, Type)> = outer_vars
             .all_names_and_types()
             .into_iter()
             .filter(|(n, _)| !self.first_bind_targets.contains(n))
+            .filter(|(n, _)| {
+                let v = outer_vars.var(n);
+                v == u16::MAX
+                    || crate::keys::ended_capture_scope_off()
+                    || !self.binding_ended_in(outer_vars, outer_context, v)
+            })
             .map(|(n, t)| match t {
                 Type::RefVar(inner) => (n, *inner),
                 other => (n, other),

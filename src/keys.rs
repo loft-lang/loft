@@ -3594,6 +3594,15 @@ pub fn buffer_fresh_copy_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
 }
 
+/// `LOFT_NO_ENDED_CAPTURE_SCOPE=1` — a lambda's capture context offers a local whose binding
+/// ended in a block that closed before the lambda (`@FR-B-Scope`, loft#2523): the closure
+/// then shares the block's dead local.  The first bisect step for a capture of a block local.
+#[must_use]
+pub fn ended_capture_scope_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_ENDED_CAPTURE_SCOPE"))
+}
+
 /// `LOFT_NO_FRESH_COPY_OF_VIEW=1` — a reassignment from a call that reads the local and may
 /// answer a borrowed view keeps the plain pass-through even where the copy would land in a
 /// fresh store (`bind_lowering::re_arm`): the local then aliases what the call answered.

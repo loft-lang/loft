@@ -541,11 +541,22 @@ impl Parser {
     /// that bound it sits in a block this point is no longer inside.  Parameters and the
     /// compiler's own locals are bound for the whole function.
     pub(crate) fn binding_ended(&self, var: u16) -> bool {
-        if self.vars.is_argument(var) || self.vars.name(var).starts_with("__") {
+        self.binding_ended_in(&self.vars, self.context, var)
+    }
+
+    /// [`Self::binding_ended`] asked of another function's table — the enclosing function's,
+    /// where a lambda is about to be parsed and `self.vars` is already the lambda's own.
+    pub(crate) fn binding_ended_in(
+        &self,
+        vars: &crate::variables::Function,
+        context: u32,
+        var: u16,
+    ) -> bool {
+        if vars.is_argument(var) || vars.name(var).starts_with("__") {
             return false;
         }
         self.bound_in_block
-            .get(&(self.first_pass, self.context, var))
+            .get(&(self.first_pass, context, var))
             .is_some_and(|(b, _)| !self.block_open(*b))
     }
 
