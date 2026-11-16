@@ -1617,12 +1617,6 @@ fn loop_core(x: Cx, w: W, lp: ir::Block, ind: integer) {
 // it (`loop_copy`).  The holds of a vector, a record scalar, a push or a file are not asked: a
 // body with one is not carried.
 pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
-  // `@FR-R-PushFill`'s text clause opens a push window for a text the loop pushes into: not
-  // carried.
-  if cgen_text::pushes_text(x, lp.operators) {
-    refuse(w, "a text push window");
-    return;
-  }
   pushed = false;
   if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") == "0" {
     narrowed = if len(w.over) > 0 { opt_range::body_facts(w.over[len(w.over) - 1]!, lp.scope) } else { opt_range::body_facts(w.rv, lp.scope) };
@@ -1651,6 +1645,7 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   if plain_rules() {
     cgen_hoist::hold_pushes(x, w, lp, verdict, ind);
   }
+  text_windows = cgen_win::open_text_windows(x, w, lp, ind);
   // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
   // so both copies are its fallback.
   fill = if plain_rules() { cgen_win::fill_head(x, w, lp, ind) } else { "" };
@@ -1661,6 +1656,7 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   } else {
     guarded_copies(x, w, lp, ind);
   }
+  cgen_win::close_text_windows(w, text_windows, ind);
   w.in_range = w.in_range[0..ranged_counters];
   w.in_range_lens = w.in_range_lens[0..ranged_lens];
   cgen_hoist::release(w, held_headers, held_pushes);

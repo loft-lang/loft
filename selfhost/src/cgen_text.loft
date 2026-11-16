@@ -14,6 +14,7 @@
 use ir;
 use cgen::(Cx);
 use loop_shape;
+use cgen_win;
 use opt_non_sentinel;
 use cgen_fn;
 use cgen_w::*;
@@ -351,6 +352,12 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
     return E { code: "loft_text_char({as_view(w, t)}, {as_int(w, i)})", kind: K_CHAR };
   }
   if (name == "OpAppendCharacter" || name == "OpAppendStackCharacter") && count == 2 {
+    // `@FR-R-PushFill`'s text clause: a push into a text a loop holds a window for.
+    held = cgen_win::text_window(w, loop_shape::var_of(loop_shape::unspan(args[0])));
+    if held.name != "" {
+      pushed = cgen_fn::expr(x, w, args[1], ind);
+      return E { code: "loft_tw_push(&{held.name}, &{held.place}, {as_char(w, pushed)})", kind: K_VOID };
+    }
     dest = text_dest(w, args[0]);
     c = cgen_fn::expr(x, w, args[1], ind);
     return E { code: "loft_push_code(&{dest}, {as_char(w, c)})", kind: K_VOID };
@@ -702,35 +709,3 @@ fn builds_text(d: ir::Definition, arm: ir::Node) -> boolean {
   hit[0]!
 }
 
-// Does a statement of `ops`, at any depth outside a nested loop's own count, push a character
-// into a text — what a loop's text push window is opened for?
-pub fn pushes_text(x: Cx, ops: vector<ir::Node>) -> boolean {
-  // `LOFT_NO_TEXT_WINDOW=1`: the Rust writer opens no window, and pushes as written.
-  if (env_variable("LOFT_NO_TEXT_WINDOW") ?? "0") != "0" {
-    return false;
-  }
-  hit = [false];
-  for op in ops {
-    if hit[0]! {
-      break;
-    }
-    hit[0] = pushes(x, op);
-  }
-  hit[0]!
-}
-
-fn pushes(x: Cx, node: ir::Node) -> boolean {
-  hit = [false];
-  opt_non_sentinel::walk(node, fn(n: ir::Node) {
-    match n {
-      NdCall { def_nr, args: _ } => {
-        name = cgen_fn::def_name(x.b, def_nr);
-        if name == "OpAppendCharacter" || name == "OpAppendStackCharacter" {
-          hit[0] = true;
-        }
-      },
-      _ => {},
-    }
-  });
-  hit[0]!
-}

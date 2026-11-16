@@ -281,8 +281,10 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (24): `VALUE_RECORD`, `DISTINCT_VERSION`, `REBOUND_MOVER`, `APART_MINT`, `CALLEE_INPUTS`, `GROWN_HEADER`, `GUARD_BOUND`, `VERSION`, `TRANSIENT`, `DEFERRED_COPY`, `LOOP_RECORD`, `APART`, `APPEND_LOOP_WINDOW`, `APPEND_TWIN`, `HAND_OVER`, `VR_PTR`, `FNREF_PARK`, `FNREF_BUFFER`, `CHAR_WALK`, `LAZY_SPLIT`, `SPLIT_TABLE`, `TESTED_BORROW`, `TEXT_WINDOW`, `DESTINATION`.
-Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`).
+`cgen_w::PLAIN_SWITCHES` names them (22): `VALUE_RECORD`, `DISTINCT_VERSION`, `APART_MINT`, `CALLEE_INPUTS`, `GROWN_HEADER`, `GUARD_BOUND`, `VERSION`, `TRANSIENT`, `DEFERRED_COPY`, `LOOP_RECORD`, `APART`, `APPEND_LOOP_WINDOW`, `APPEND_TWIN`, `HAND_OVER`, `VR_PTR`, `FNREF_PARK`, `FNREF_BUFFER`, `CHAR_WALK`, `LAZY_SPLIT`, `SPLIT_TABLE`, `TESTED_BORROW`, `DESTINATION`.
+Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`), `TEXT_WINDOW`
+(`cgen_win::open_text_windows`), `REBOUND_MOVER` (no port needed: the C writer's `verdict` hands
+`hoistable` no owned buffers, so `rebinds_alias_free` declines every rebind on either side).
 A rule leaves the list when both sides agree on the whole corpus with it on.  Where a coarse
 switch covers several clauses, its finer switches take its place first and each clause is
 ported on its own.

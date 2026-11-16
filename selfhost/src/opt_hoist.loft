@@ -371,8 +371,10 @@ fn hoist_paths(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd
   if len(pushes) == 0 && len(mints) == 0 {
     return out;
   }
-  // A pushed path the body rebinds declines the loop (the rebound-mover clause is not
-  // carried).
+  // A pushed path the body rebinds declines the loop.  This is the rebound-mover clause
+  // (`LOFT_NO_REBOUND_MOVER`) as the C writer runs it: `FnWriter::verdict` hands `hoistable`
+  // no emitter-owned buffers, so `rebinds_alias_free` admits no rebind and the tier's other
+  // allowances (`blocks_header_hoist`) have nothing to name.
   rebound = rebound_vars(b, d, lp);
   for p in pushes {
     if rebound[p.root]! {
