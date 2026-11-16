@@ -894,7 +894,11 @@ pub fn materialize_bundle(
         r.set_field_int(stores, ds::IMAGESQLPLAN_TP, i64::from(p.tp));
         r.set_field_str(stores, ds::IMAGESQLPLAN_TEXT, &p.text);
         r.set_field_int(stores, ds::IMAGESQLPLAN_PARAMS, p.params as i64);
-        r.set_field_str(stores, ds::IMAGESQLPLAN_FILTER, p.filter.as_deref().unwrap_or(""));
+        r.set_field_str(
+            stores,
+            ds::IMAGESQLPLAN_FILTER,
+            p.filter.as_deref().unwrap_or(""),
+        );
         let (range, range_params) = p.range.as_ref().map_or(("", 0), |(t, n)| (t.as_str(), *n));
         r.set_field_str(stores, ds::IMAGESQLPLAN_RANGE, range);
         r.set_field_int(stores, ds::IMAGESQLPLAN_RANGE_PARAMS, range_params as i64);

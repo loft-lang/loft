@@ -2577,7 +2577,11 @@ pub fn host_facts(data: &Data, stores: &Stores) -> crate::ir_store::HostFacts {
                 tp,
                 text: sql.text.clone(),
                 params: sql.params.len(),
-                columns: sql.columns.iter().map(|c| (c.column.clone(), c.field)).collect(),
+                columns: sql
+                    .columns
+                    .iter()
+                    .map(|c| (c.column.clone(), c.field))
+                    .collect(),
                 filter: filter.map(|f| f.text),
                 range: range.as_ref().map(|r| (r.text.clone(), r.params.len())),
             });

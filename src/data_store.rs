@@ -1913,21 +1913,39 @@ mod tests {
         assert_eq!(pos(ids.bundle, "sql_plans"), BUNDLE_SQL_PLANS);
         assert_eq!(pos(ids.bundle, "lazy_drivers"), BUNDLE_LAZY_DRIVERS);
         assert_eq!(pos(ids.bundle, "lazy_refusal"), BUNDLE_LAZY_REFUSAL);
-        assert_eq!(u32::from(stores.size(ids.image_sql_plan)), IMAGESQLPLAN_STRIDE);
+        assert_eq!(
+            u32::from(stores.size(ids.image_sql_plan)),
+            IMAGESQLPLAN_STRIDE
+        );
         assert_eq!(pos(ids.image_sql_plan, "tp"), IMAGESQLPLAN_TP);
         assert_eq!(pos(ids.image_sql_plan, "params"), IMAGESQLPLAN_PARAMS);
-        assert_eq!(pos(ids.image_sql_plan, "range_params"), IMAGESQLPLAN_RANGE_PARAMS);
+        assert_eq!(
+            pos(ids.image_sql_plan, "range_params"),
+            IMAGESQLPLAN_RANGE_PARAMS
+        );
         assert_eq!(pos(ids.image_sql_plan, "text"), IMAGESQLPLAN_TEXT);
         assert_eq!(pos(ids.image_sql_plan, "columns"), IMAGESQLPLAN_COLUMNS);
         assert_eq!(pos(ids.image_sql_plan, "filter"), IMAGESQLPLAN_FILTER);
         assert_eq!(pos(ids.image_sql_plan, "range"), IMAGESQLPLAN_RANGE);
-        assert_eq!(u32::from(stores.size(ids.image_sql_col)), IMAGESQLCOL_STRIDE);
+        assert_eq!(
+            u32::from(stores.size(ids.image_sql_col)),
+            IMAGESQLCOL_STRIDE
+        );
         assert_eq!(pos(ids.image_sql_col, "field"), IMAGESQLCOL_FIELD);
         assert_eq!(pos(ids.image_sql_col, "column"), IMAGESQLCOL_COLUMN);
-        assert_eq!(u32::from(stores.size(ids.image_lazy_driver)), IMAGELAZYDRIVER_STRIDE);
+        assert_eq!(
+            u32::from(stores.size(ids.image_lazy_driver)),
+            IMAGELAZYDRIVER_STRIDE
+        );
         assert_eq!(pos(ids.image_lazy_driver, "d"), IMAGELAZYDRIVER_D);
-        assert_eq!(pos(ids.image_lazy_driver, "element"), IMAGELAZYDRIVER_ELEMENT);
-        assert_eq!(u32::from(stores.size(ids.image_upgrade)), IMAGEUPGRADE_STRIDE);
+        assert_eq!(
+            pos(ids.image_lazy_driver, "element"),
+            IMAGELAZYDRIVER_ELEMENT
+        );
+        assert_eq!(
+            u32::from(stores.size(ids.image_upgrade)),
+            IMAGEUPGRADE_STRIDE
+        );
         assert_eq!(pos(ids.image_upgrade, "tp"), IMAGEUPGRADE_TP);
         assert_eq!(pos(ids.image_upgrade, "desc"), IMAGEUPGRADE_DESC);
         assert_eq!(pos(ids.image_upgrade, "names"), IMAGEUPGRADE_NAMES);

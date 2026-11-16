@@ -1174,7 +1174,7 @@ pub(crate) fn loft_written_unit(
             &image,
             &loft::ir_store::bundle_facts(data, stores, loft::c::c_library_facts(data)),
         )
-            .map_err(|e| format!("the program image could not be written: {e}"))?;
+        .map_err(|e| format!("the program image could not be written: {e}"))?;
         let out = Spawn::new(Program::os(&generator))
             .args([&image, &unit, &runtime])
             .run(&[])
