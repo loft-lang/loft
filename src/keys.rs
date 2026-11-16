@@ -3594,6 +3594,16 @@ pub fn buffer_fresh_copy_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
 }
 
+/// `LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES=1` — a scalar capture, or a loop body's own local, that
+/// a loop assigns keeps a closure built as that loop's argument from being pass-confined
+/// (`closure_keep::capture_set_in`): the record then adopts the function-scope stores it
+/// captures beside it.
+#[must_use]
+pub fn loop_local_capture_unconfines() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES"))
+}
+
 /// `LOFT_NO_ENDED_CAPTURE_SCOPE=1` — a lambda's capture context offers a local whose binding
 /// ended in a block that closed before the lambda (`@FR-B-Scope`, loft#2523): the closure
 /// then shares the block's dead local.  The first bisect step for a capture of a block local.

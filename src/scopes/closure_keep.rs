@@ -1210,7 +1210,17 @@ impl ConfinementWalk {
         out
     }
 
-    /// Does loop `loop_id` assign a capture of record type `record`?
+    /// Does loop `loop_id` REBIND a capture of record type `record` — a capture that holds a
+    /// store and lives across the loop's passes?
+    ///
+    /// Only such a capture is "another store every pass", whose holder the record cannot know
+    /// statically.  Two kinds are not (loft#2524): a scalar, captured by value
+    /// (`@FR-L-CapScalar`), holds no store — `capture_attr_is_cascade_relevant` is the one
+    /// answer to "does this slot hold a store the cascade releases"; and a local the loop BODY
+    /// binds is a new binding every pass, set nowhere outside the loop, which dies with the
+    /// pass as the record does.  Read as rebound, either left the record unconfined: it
+    /// adopted a function-scope store captured beside it, and each pass's release freed that
+    /// store under the frame.  `LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES=1` reads both as rebound.
     fn capture_set_in(
         &self,
         data: &Data,
@@ -1218,9 +1228,16 @@ impl ConfinementWalk {
         record: u32,
         loop_id: usize,
     ) -> bool {
+        let old = crate::keys::loop_local_capture_unconfines();
         (0..data.attributes(record)).any(|a| {
+            if !old && !super::capture_adoption::capture_attr_is_cascade_relevant(data, record, a) {
+                return false;
+            }
             let c = function.var(&super::capture_builds::capture_name(data, record, a));
-            c != u16::MAX && self.sets.get(&c).is_some_and(|ids| ids.contains(&loop_id))
+            c != u16::MAX
+                && self.sets.get(&c).is_some_and(|ids| {
+                    ids.contains(&loop_id) && (old || ids.iter().any(|&i| i != loop_id))
+                })
         })
     }
 }

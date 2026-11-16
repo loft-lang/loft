@@ -71,6 +71,12 @@ the locals whose block ended before it, so a closure written after a loop shares
 local — with it off (`Parser::enter_capture_scope`), such a name does not exist in the lambda:
 an assignment there binds a local of the lambda's own and a read is refused.  The bisect step
 for a closure after a block that reads or writes that block's local.
+**`LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES=1`** (`@FR-L-CapOwn`, the scope pass, BOTH backends) reads a
+scalar capture, or a local the loop body binds, as a capture the loop REBINDS, so a closure
+built as an argument in that loop is not confined to the pass — with it off
+(`closure_keep::capture_set_in`), only a store-holding capture set both in the loop and outside
+it unconfines the record, and a confined record borrows the function-scope stores it captures.
+The bisect step for a closure built in a loop that frees an outer collection it captured.
 **`LOFT_NO_REBOUND_CAPTURES=1`** (`@FR-L-CapKeep`, after the scope pass, BOTH backends) leaves
 a closure built in a loop over a local the loop re-assigns with the releases the scope pass
 placed alone — with it off (`scopes/rebound_captures.rs`), the re-mint of a backing a record
