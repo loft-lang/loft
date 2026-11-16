@@ -52,6 +52,15 @@ pub struct VSite {
   pub rec: integer,
 }
 
+// @PLN164 C5 — one view leaf of an admitted function `d`: the exit `Object` block (its node
+// number), the field's byte offset, and the source (0 the null view).
+pub struct VView {
+  pub d: integer,
+  pub exit: integer,
+  pub off: integer,
+  pub kind: integer,
+}
+
 // The program's value-record answer (`ValueRecords`).  Per definition: the layout key of an
 // admitted function's result (-1 not admitted), and whether its tuple is surely present.
 pub struct ValueRecords {
@@ -62,10 +71,11 @@ pub struct ValueRecords {
   pub params: vector<VParam>,
   pub sites: vector<VSite>,
   pub sp: vector<boolean>,
+  pub views: vector<VView>,
 }
 
 pub fn no_records() -> ValueRecords {
-  ValueRecords { asked: false, fns: [], index: [], types: [], params: [], sites: [], sp: [] }
+  ValueRecords { asked: false, fns: [], index: [], types: [], params: [], sites: [], sp: [], views: [] }
 }
 
 pub const NULLABLE_LAYOUT = 32768;
