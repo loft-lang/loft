@@ -7672,6 +7672,8 @@ fn main() {
     // @PLN203 C9 — `--native` compiles through the C backend and the host's C compiler by
     // default; `--native-rust` or `LOFT_NATIVE_BACKEND=rust` takes the rustc writer instead.
     let mut native_c = c_driver::c_backend_selected();
+    // The C asked for by name (`--native-c`, `LOFT_NATIVE_BACKEND=c`), not only by default.
+    let mut native_c_named = c_driver::c_backend_named();
     // @PLN203 C9 — `--native-rust`: the Rust writer and rustc for this run, whatever
     // `LOFT_NATIVE_BACKEND` selects.  Kept one release past the flip; until then it is how a
     // test of the Rust writer itself (its emission, its rewrites, the `[native] crate` layer)
@@ -8005,6 +8007,7 @@ fn main() {
             native_mode = true;
             native_requested = true;
             native_c = true;
+            native_c_named = true;
             native_rust = false;
         } else if a == "--native-rust" {
             native_rust = true;
@@ -8123,6 +8126,7 @@ fn main() {
                 },
             );
             native_c = true;
+            native_c_named = true;
             native_rust = false;
         } else if a == "--native-android" {
             // @PLN-android B1 — cross-compile to an Android cdylib `.so` via the
@@ -9439,6 +9443,17 @@ fn main() {
     // (doc/claude/plans/106-android-build-target/c-backend.md, A5).
     if native_android.is_some() && !native_rust && !c_driver::rust_backend_selected() {
         native_c = true;
+    }
+    // A page or a wasm module builds through the C by default, which needs a WASI clang; where
+    // none links and the C was not asked for by name, it takes the rustc writer, as it did
+    // before the C became the default — the C default never refuses what built before it
+    // (`contract:broken`, PR #2516).
+    if native_c
+        && !native_c_named
+        && (html_out.is_some() || native_wasm.is_some())
+        && !c_driver::wasm_toolchain_links()
+    {
+        native_c = false;
     }
     // `--native-rust` chooses the writer; alone it is `--native` through it, beside
     // `--native-emit`, `--html`, `--native-wasm` or `--native-android` it only chooses which
