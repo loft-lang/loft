@@ -261,7 +261,12 @@ own find is `hit-by:loft`, never blank; lineage goes in the body as `Found-via: 
 `silent-wrong` whenever the program answers WRONG and nothing says so** (no diagnostic, refusal or
 crash), or a type-system promise does not hold — it is the FREEZE axis and outranks `sev:` and
 `wa:`; not for a crash, refusal, ICE, wrong message or leak
-([.github/LABELS.md](.github/LABELS.md) § silent-wrong, § hit-by).
+([.github/LABELS.md](.github/LABELS.md) § silent-wrong, § hit-by).  **Soft freeze: every break of the contract is recorded** —
+a program, a published library release or a documented surface (an API, a flag or default, a
+format) that stops working or changes meaning.  `contract:broken` when we broke it by accident,
+`freeze:broken` when the freeze was broken on purpose to let the change through; set at once on
+the issue or PR, RETROSPECTIVELY on a closed one when a break is found later, and never removed
+([.github/LABELS.md § `contract:broken` and `freeze:broken`](.github/LABELS.md)).
 
 **Fixing an issue:** push the fix with `Fixes #NNN` and keep the issue open (`fixed-pending-merge`
 is automated off the trailer), plus a **`Contract: settled|strained — <why>`** trailer: settled =
