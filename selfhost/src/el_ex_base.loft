@@ -835,6 +835,8 @@ pub fn leftmost(e: el::El, n: integer) -> integer {
 pub fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
   match el_ir::unspan(code) {
     NdVar { n: _ } => true,
+    // A vector member of a stack tuple (`b = a.0`).
+    NdTupleGet { var: _ } => true,
     NdCall { def_nr, args } => {
       if el::def(e, def_nr).name != "OpGetField" {
         return false;
@@ -1243,6 +1245,14 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     TyRefVar { inner } => if inner is TyReference { type_def_nr(e, inner) } else { el::source_nr(e, 0, "reference") },
     // A function value is its definition number: named by `i32`.
     TyFunction { args: _ } => el::def_nr(e, "i32"),
+    // A tuple is named by its synthetic `__tuple<…>` record, where the shape has one.
+    TyTuple { elems } => {
+      td = el_types::tuple_def_of(e, elems);
+      if td < 0 {
+        el::refuse(e, "a call whose first argument is a collection, a tuple or a function: {type_kind(t)}");
+      }
+      td
+    },
     _ => {
       el::refuse(e, "a call whose first argument is a collection, a tuple or a function: {type_kind(t)}");
       -1

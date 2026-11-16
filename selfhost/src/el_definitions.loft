@@ -1256,6 +1256,19 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         // body: a `vector<T>` one has `vector<T>` and `main_vector<T>` defined there (the
         // lexer stands after the body's `{`) where nothing in the first pass made them.  A
         // template's are its instances' to make.
+        // A tuple parameter holding a record or a collection is read through a local of its
+        // own (`__tp_<name>`, the heap member witnessed) — not carried: refused by name.
+        match a.typedef {
+          TyTuple { elems: pe } => {
+            for pm in pe {
+              pb = el_types::base(pm);
+              if pb is TyReference || pb is TyVector || (pb is TyEnum && el_types::struct_enum_def(pb) >= 0) {
+                el::refuse(e, "a tuple parameter with a heap member");
+              }
+            }
+          },
+          _ => {}
+        }
         match a.typedef {
           TyVector { inner } => {
             nm = el_types::elem_name(e, inner);

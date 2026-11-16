@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: tuples across calls: a tuple local and an `if` of literals as a boxed return's tail (`rewrite_tail_tuple_with_work_ref`, the branch answered through a `return`), a tuple literal as an argument, a text member read off another tuple, and a member of a vector element (`v[1].0`, whose dropped unbox temp still takes a work-ref name).
+// Prints: 2 a 7 q 7 2 two
+
+fn total(t: (integer, integer)) -> integer { t.0 + t.1 }
+fn swap(t: (integer, text)) -> (text, integer) { a = (t.1, t.0); a }
+fn pick(c: boolean) -> (integer, text) { if c { (1, "one") } else { (2, "two") } }
+fn main() {
+  v = [(1, "a"), (2, "b")];
+  x = v[1].0;
+  y = v[0].1;
+  p = (3, 4);
+  s = swap((7, "q"));
+  k = pick(false);
+  println("{x} {y} {total(p)} {s.0} {s.1} {k.0} {k.1}");
+}

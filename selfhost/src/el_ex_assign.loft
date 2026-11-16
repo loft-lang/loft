@@ -1147,7 +1147,13 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     }
     // `tuple_member_copy` of a record or vector local: the tuple holds a copy in a store of its
     // own, so it borrows nothing of the local.
-    if !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && el_ir::unspan(x.code) is NdVar {
+    // (A boxed return's tail writes each member into its record: no copy of its own.)
+    // Rust still mints the copy's `__ref_p2_N` there and then writes the local itself.
+    boxed_rec = in_boxed_tail && !(x.tp is TyOptional) && x.tp is TyReference && el_ir::unspan(x.code) is NdVar;
+    if boxed_rec && !e.first_pass {
+      el_vars::work_ref_p2(vars, el_types::with_deps(x.tp, []));
+    }
+    if !in_boxed_tail && !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && el_ir::unspan(x.code) is NdVar {
       c = tuple_member_copy(e, vars, x);
       if c == null {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1192,7 +1198,9 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     }
     // A nullable plain scalar is held as it is: its null is the scalar's own sentinel.
     nullable_scalar = match x.tp { TyOptional { inner } => is_scalar(inner), _ => false };
-    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar) {
+    // A vector LITERAL member is its value block (`Vector`), the tuple holding the vector.
+    vec_lit = x.tp is TyVector && e.p.nodes[n] is SVecLit && (e.first_pass || match el_ir::unspan(x.code) { NdBlock { block: vb } => vb[0].name == "Vector", _ => false });
+    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar || vec_lit || boxed_rec) {
       el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -1202,8 +1210,10 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     if x.tp is TyText {
       match el_ir::unspan(x.code) {
         NdText { s: _ } => {},
+        // A text member of another tuple (`(t.1, t.0)`) is held as that read, a view of it.
+        NdTupleGet { var: _ } => {},
         NdVar { n: tv } => {
-          if !vars.vars[tv].argument && !e.first_pass {
+          if !vars.vars[tv].argument && !e.first_pass && !in_boxed_tail {
             w = el_vars::work_text_p2(vars);
             owned = ir::TyText { dep: [w] };
             x = ex(el_ir::v_block([el_ir::v_set(w, x.code), ir::NdVar { n: w }], owned, "tuple_member_copy"), owned);
@@ -1288,24 +1298,53 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
           if t is TyText {
             t = ir::TyText { dep: [tv] };
           }
+          // A vector member is read as the vector it is, a view of the tuple's local.
+          if t is TyVector {
+            t = el_types::with_deps(t, [tv]);
+          }
           return ex(ir::NdTupleGet { var: tv, idx: index }, t);
         },
         // A boxed tuple a call answered is its `__tuple<…>` record: member `i` its field `_i`.
         TyReference { n: bd } => {
           if starts_with(el::def(e, bd).name, "__tuple<") && index >= 0 && index < len(el::def(e, bd).attributes) {
             mt = el::def(e, bd).attributes[index]!.typedef[0] ?? ir::TyVoid;
-            if !(mt is TyText || el_convert::plain_scalar(mt)) {
-              el::refuse(e, "a member of a boxed tuple that is no plain scalar or text");
+            // (A record member is read where it lies: a view of the tuple's local.)
+            rec = struct_ref(e, mt) >= 0 && el_ex_object::literal_def(e, struct_ref(e, mt)) && !(mt is TyOptional);
+            if !(mt is TyText || el_convert::plain_scalar(mt) || rec) {
+              el::refuse(e, "a member of a boxed tuple that is no plain scalar, text or record");
               return ex(ir::NdNull, ir::TyUnknown { n: 0 });
             }
             got = field_get(e, bd, index, x.code);
             if got == null {
               return ex(ir::NdNull, ir::TyUnknown { n: 0 });
             }
-            return ex(got!, if mt is TyText { ir::TyText { dep: [tv] } } else { mt });
+            return ex(got!, if mt is TyText { ir::TyText { dep: [tv] } } else if rec { el_types::with_deps(mt, [tv]) } else { mt });
           }
         },
         _ => {}
+      }
+    },
+    _ => {}
+  }
+  // A member of an ELEMENT of a vector of tuples (`v[1].0`): the element is its `__tuple<…>`
+  // record, the member read at its field's position — a text a view of the vector's local.
+  match x.tp {
+    TyTuple { elems: ee } => {
+      td = el_types::tuple_def_of(e, ee);
+      elem_read = match el_ir::unspan(x.code) { NdCall { def_nr: xd } => el::def(e, xd).name == "OpGetVector", _ => false };
+      mt = ee[index] ?? ir::TyVoid;
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && (mt is TyText || (el_convert::plain_scalar(mt) && read_op(mt) != "" && match mt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true })) {
+        // Rust holds the element in a work ref here (the unbox it then drops): the name is
+        // taken on both passes, so later buffers number past it.
+        uw = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
+        vars.vars[uw].skip_free = true;
+        el_vars::unregister_work_ref(vars, uw);
+        if e.first_pass {
+          return ex(ir::NdNull, mt);
+        }
+        pos = field_position(e, td, "_{index}");
+        root = place_root(e, x.code);
+        return ex(el_ir::cl(e, read_op(mt), [x.code, ir::NdInt { n: pos }]), if mt is TyText && root >= 0 { ir::TyText { dep: [root] } } else { mt });
       }
     },
     _ => {}

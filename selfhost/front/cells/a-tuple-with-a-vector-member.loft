@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a stack tuple with a vector literal member holds the vector's value block; the member is read as the vector it is — measured, indexed, formatted — and a bind of it copies (`OpAppendVector`).
+// Prints: 9 2 [1,2]
+
+fn main() {
+  a = ([1, 2], 5);
+  b = a.0;
+  n = len(a.0) + a.1 + a.0[1];
+  println("{n} {len(b)} {a.0}");
+}

@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record member of a boxed tuple is read where it lies in the tuple's record (`OpGetField`), a view of the tuple's local: bound to a local, and read through to its own fields.
+// Prints: 4 8 t 8
+
+struct P { id: integer, tag: text }
+fn one(k: integer) -> (integer, P) { (k, P { id: k * 2, tag: "t" }) }
+fn main() {
+  b = one(4);
+  q = b.1;
+  println("{b.0} {b.1.id} {b.1.tag} {q.id}");
+}
