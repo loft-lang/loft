@@ -12607,6 +12607,29 @@ use a separate collection or add after the loop"
         true
     }
 
+    /// Is a `&` write-through's right-hand side a PLACE — a view of another record, which the
+    /// caller's binding must receive as a COPY (`@FR-B-Copy`)?  Every projection spelling: a
+    /// field or element read (`use_analysis::is_projection_op`), a tuple element (a `TupleGet`,
+    /// which is no call), and the `!` unwrap of one, whose `ncr` block binds the projection
+    /// before its null check.  A construction or a call's result is no place: it is a store of
+    /// its own, installed as it is.
+    fn amp_rhs_is_place(&self, code: &Value) -> bool {
+        match code.unspan() {
+            // `v[i]` read as nullable (`OpGetVectorNullable`, the `!` unwrap's element read) lies
+            // in `v`'s store as `OpGetVector`'s does; the shared predicate leaves it to callers.
+            Value::Call(d, _) => {
+                crate::use_analysis::is_projection_op(&self.data, *d)
+                    || self.data.def(*d).name() == "OpGetVectorNullable"
+            }
+            Value::TupleGet(..) => true,
+            Value::Block(bl) if bl.name == "ncr" => match bl.operators.first().map(Value::unspan) {
+                Some(Value::Set(_, subject)) => self.amp_rhs_is_place(subject),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Handle `out = <struct field>` where `out: &T` and `T` is a struct; returns true
     /// if handled.
     ///
@@ -12680,7 +12703,16 @@ use a separate collection or add after the loop"
         // (`formal/binding.md` D-bind-42).  The field arm above materialises a VIEW, which is right
         // for both (loft#775).
         let bare_var_rhs = matches!(code.unspan(), Value::Var(rv) if *rv != var_nr);
-        if op != "=" || !(self.is_field(code) || bare_var_rhs) {
+        // loft#2528 — a PLACE is copied whatever its spelling: an element read
+        // (`out = args[1]!`, `out = h.items[1]!`) is the same view of another record a field
+        // read is, and installed as it was, the caller's local named that record — it aliased
+        // it, and its release freed the record's store under its owner.
+        let place_rhs = if crate::keys::amp_field_only() {
+            self.is_field(code)
+        } else {
+            self.amp_rhs_is_place(code)
+        };
+        if op != "=" || !(place_rhs || bare_var_rhs) {
             return false;
         }
         // Keyed on the IR SHAPE, not on the right-hand side's deps: deps accumulate

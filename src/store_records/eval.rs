@@ -814,6 +814,30 @@ impl Run<'_> {
             let Some((mut s, value)) = self.eval(val, st) else {
                 return Ok(None);
             };
+            // `@FR-B-Copy`, `@FR-O-Owner` (loft#2528) — a RECORD written whole through a `&` is
+            // the caller's binding from here, so it must be a store no other owner holds.  A
+            // value that is ANOTHER argument's store (`out = args[1]!`, a view of `x`) leaves
+            // the caller's local naming that argument's record: it aliases it, and its release
+            // frees the store under its owner.  The generator copies such a place
+            // (`Parser::amp_rhs_is_place`); a value still naming a parameter here is the defect.
+            if matches!(function.tp(x).base(), crate::data::Type::RefVar(inner)
+                    if inner.heap_def_nr().is_some())
+                && let Some(Pt::Param(p)) = value
+                    .pts
+                    .iter()
+                    .find(|pt| matches!(pt, Pt::Param(p) if *p != x))
+                && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_AMP_PARAM_STORE").is_some())
+            {
+                let (name, owner) = (self.var_name(x), self.var_name(*p));
+                self.find(
+                    "wrong-end",
+                    u32::MAX,
+                    format!(
+                        "`{name}` is written a store of the argument `{owner}`: the caller's \
+                         local then names a record it does not own, and its release frees it"
+                    ),
+                );
+            }
             // `@FR-L-CapOwn` — a closure this frame wrote through the same `&fn` link before
             // never reached the caller: the write displaces it, and it is this frame's again,
             // held by whatever still names it (its `___clos_N`, which the frame releases).
