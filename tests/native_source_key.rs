@@ -75,7 +75,10 @@ fn run_with(root: &Path, script: &Path, args: &[&str], env: &[(&str, &str)]) -> 
             cmd.env_remove(&k);
         }
     }
+    // The source key is the rustc writer's fast path (`--native` builds through the C by
+    // default, @PLN203 C9), so the cells ask for that writer by name.
     cmd.env_remove("LOFT_NO_CACHE")
+        .env("LOFT_NATIVE_BACKEND", "rust")
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("LOFT_TIMING", "1")
         .env("LOFT_TIMEOUT", "300");

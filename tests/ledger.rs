@@ -23,7 +23,7 @@ fn scratch(tag: &str) -> PathBuf {
 /// Run `prog` on `mode`, recording into `ledger` when given; answers stdout and stderr.
 fn run(mode: &[&str], prog: &Path, ledger: Option<&Path>) -> (String, String) {
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env_remove("LOFT_NATIVE_BACKEND");
+    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.args(mode)
         .arg(prog)
         .current_dir(env!("CARGO_MANIFEST_DIR"))

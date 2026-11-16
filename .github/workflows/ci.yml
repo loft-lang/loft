@@ -428,7 +428,7 @@ jobs:
     # @PLN203 — `--native` in every test compiles through the C backend (`LOFT_NATIVE_BACKEND=c`):
     # the C is what `--native` becomes at C9, so the PR gate reads it now — on every leg, Windows
     # too, whose C runtime has its host layer since C8 (Winsock, processes, the loader layer).
-    # A test of the Rust writer itself (a `[native] crate`, the cdylib layer) unsets it.
+    # A test of the Rust writer itself (a `[native] crate`, the cdylib layer) sets it to `rust`.
     env:
       LOFT_NATIVE_BACKEND: c
     steps:
