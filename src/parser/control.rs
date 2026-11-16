@@ -21934,11 +21934,22 @@ impl Parser {
         // holds only for the copy, not for the re-mint in front of it).  The work ref then
         // keeps its own store and is handed back, the callee-minted delivery `(O-Buffer)`
         // admits.
+        // Asked of the tail's DELIVERED leaves — what `materialize_return_into` copies — not of
+        // the whole last statement: a match arm that assigns the buffer local and returns it
+        // early (`deeper = f(…); if deeper != null { return deeper; }`) before a tail that
+        // never reads it was declined here, and the tail's view was answered raw (loft#2525).
         let tail_reads_buffer = matches!(
             ctx.ret.ret_promo_base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
         ) && self.return_buffer().is_some_and(|(_, buf_var)| {
-            buf_var != v && body.last().is_some_and(|t| t.reads_var(buf_var))
+            buf_var != v
+                && body.last().is_some_and(|t| {
+                    if crate::keys::tail_reads_whole_statement() {
+                        t.reads_var(buf_var)
+                    } else {
+                        Self::delivered_leaf_reads(t, buf_var)
+                    }
+                })
         });
         if tail_reads_buffer {
             return RetPromotion::SkipJoinArm;
@@ -21967,6 +21978,28 @@ impl Parser {
             return RetPromotion::AwaitReservedBuffer;
         }
         RetPromotion::Grow
+    }
+
+    /// Does a value `materialize_return_into` would copy out of `tail` read `var`?  It descends
+    /// as that function does — the arms of an `if` (not its condition), a block's or an
+    /// insert's last operator, a span's value — and asks each leaf; the statements before a
+    /// leaf run before the buffer is re-minted, so they are not the copy's source.  A leaf
+    /// that leaves the function (`return`) is asked whole: its value is delivered elsewhere,
+    /// and reading `var` there still reads the buffer.
+    fn delivered_leaf_reads(tail: &Value, var: u16) -> bool {
+        match tail.unspan() {
+            Value::If(_, t, f) => {
+                Self::delivered_leaf_reads(t, var) || Self::delivered_leaf_reads(f, var)
+            }
+            Value::Block(bl) if bl.name != "Object" => bl
+                .operators
+                .last()
+                .is_some_and(|l| Self::delivered_leaf_reads(l, var)),
+            Value::Insert(ops) => ops
+                .last()
+                .is_some_and(|l| Self::delivered_leaf_reads(l, var)),
+            other => other.reads_var(var),
+        }
     }
 
     /// Does any `return` in `body` READ `var` — directly, OR through a LOCAL

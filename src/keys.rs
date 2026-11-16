@@ -3594,6 +3594,16 @@ pub fn buffer_fresh_copy_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
 }
 
+/// `LOFT_TAIL_READS_WHOLE_STATEMENT=1` — a return-buffer delivery is declined when the function's
+/// whole last STATEMENT reads the buffer local, not only the value it delivers
+/// (`Parser::delivered_leaf_reads`, loft#2525): a tail after an early `return` of that local
+/// is then answered as a raw view.
+#[must_use]
+pub fn tail_reads_whole_statement() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TAIL_READS_WHOLE_STATEMENT"))
+}
+
 /// `LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES=1` — a scalar capture, or a loop body's own local, that
 /// a loop assigns keeps a closure built as that loop's argument from being pass-confined
 /// (`closure_keep::capture_set_in`): the record then adopts the function-scope stores it

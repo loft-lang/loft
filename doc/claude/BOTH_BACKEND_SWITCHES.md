@@ -71,6 +71,11 @@ the locals whose block ended before it, so a closure written after a loop shares
 local — with it off (`Parser::enter_capture_scope`), such a name does not exist in the lambda:
 an assignment there binds a local of the lambda's own and a read is refused.  The bisect step
 for a closure after a block that reads or writes that block's local.
+**`LOFT_TAIL_READS_WHOLE_STATEMENT=1`** (`@FR-F-Ret`, parse time, BOTH backends) declines a
+record tail's copy into the return buffer whenever the function's whole last STATEMENT reads
+the buffer local — with it off (`Parser::delivered_leaf_reads`), only a delivered leaf that
+reads it declines, so a tail after an early `return` of that local is copied into the buffer.
+The bisect step for a nullable-record function that answers an empty record from its tail.
 **`LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES=1`** (`@FR-L-CapOwn`, the scope pass, BOTH backends) reads a
 scalar capture, or a local the loop body binds, as a capture the loop REBINDS, so a closure
 built as an argument in that loop is not confined to the pass — with it off
