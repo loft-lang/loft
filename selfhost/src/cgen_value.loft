@@ -13,6 +13,9 @@ use cgen_w::*;
 use cgen_types;
 use loop_shape;
 use opt_non_sentinel;
+use cgen_fn;
+use cgen_ref;
+use cgen_tables;
 
 const SCALAR_GETTERS = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
 
@@ -153,4 +156,98 @@ fn tuple_arg_address(w: W, args: vector<ir::Node>, i: integer, code: text, shape
   t = temp(w, shape);
   line(w, ind, "{t} = {code};");
   "&{t}"
+}
+
+// `slice_carrier` (`@FR-R-SliceArg`): the wrapper variable of a slice VALUE — the block a
+// slice used as a value is lowered to, `{ OpDatabase(w, tp); it = OpGetField(w, 0, …); …;
+// OpSliceView(it, src, lo, hi, row); it }` — when `arg` is exactly that; -1 for any other.
+pub fn slice_carrier(b: ir::Bundle, arg: ir::Node) -> integer {
+  ops: vector<ir::Node> = [];
+  match loop_shape::unspan(arg) {
+    NdBlock { block } => {
+      for o in block[0].operators {
+        match loop_shape::unspan(o) {
+          NdLine { n: _ } => {},
+          _ => { ops += [o]; },
+        }
+      }
+    },
+    _ => return -1,
+  }
+  if len(ops) == 0 {
+    return -1;
+  }
+  wrapper = -1;
+  match loop_shape::unspan(ops[0]!) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == "OpDatabase" && len(args) == 2 {
+        match args[0] {
+          NdVar { n } => { wrapper = n; },
+          _ => {},
+        }
+      }
+    },
+    _ => {},
+  }
+  if wrapper < 0 {
+    return -1;
+  }
+  iter = match loop_shape::unspan(ops[len(ops) - 1]!) {
+    NdVar { n } => n,
+    _ => return -1,
+  };
+  bound = false;
+  sliced = false;
+  for op in ops[1..len(ops) - 1] {
+    match loop_shape::unspan(op) {
+      NdSet { var, inner } => {
+        if var == iter {
+          bound = match loop_shape::unspan(inner) {
+            NdCall { def_nr, args } => def_name(b, def_nr) == "OpGetField" && len(args) > 0 && loop_shape::var_of(loop_shape::unspan(args[0])) == wrapper,
+            _ => false,
+          };
+        }
+      },
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr) == "OpSliceView" && len(args) > 0 && loop_shape::var_of(loop_shape::unspan(args[0])) == iter {
+          sliced = true;
+        }
+      },
+      _ => {},
+    }
+  }
+  if bound && sliced { wrapper } else { -1 }
+}
+
+// `slice_carrier_operator`: a slice handed to a `const` parameter is copied into a pooled
+// carrier, which keeps its vector record — so the zeroing of the fresh wrapper's field that
+// follows the mint is no part of it.  `done` false: not a carrier's operator.
+pub fn slice_carrier_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, done: &boolean) -> E {
+  done = false;
+  if len(w.slice_carriers) == 0 || len(args) == 0 {
+    return none();
+  }
+  var = match args[0] {
+    NdVar { n } => n,
+    _ => return none(),
+  };
+  if !w.slice_carriers.contains(var) {
+    return none();
+  }
+  if name == "OpDatabase" && len(args) == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    done = true;
+    if tp < 0 || tp > 65535 {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    cgen_tables::describe_type(x, tp);
+    cgen_tables::copy_type(x, tp);
+    return E { code: "loft_slice_take(loft_types, &{w.names[var]!}, {cgen_ref::enum_parent_size(x.b, tp)}, {tp})", kind: K_VOID };
+  }
+  if name == "OpSetInt4" && len(args) == 3 && args[1]! == ir::NdInt { n: 0 } && args[2]! == ir::NdInt { n: 0 } {
+    done = true;
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  none()
 }

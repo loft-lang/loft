@@ -693,6 +693,52 @@ pub fn with_rebound(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Fact
   }
 }
 
+// `@FR-R-Header`'s growth half (`grown_apart_headers`, asked by the C alone): in a loop that
+// holds nothing but apart headers, a bare vector this activation owns alone that the loop grows
+// through statements of its own level is held with its base and derived again after each.
+// Answers the paths it added to `v`, which take a grown header.
+pub fn with_grown(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block, v: LoopHoist) -> vector<text> {
+  pending: vector<text> = [];
+  if len(v.pushes) > 0 || len(v.mint_pushes) > 0 || len(v.scalars) > 0 || (len(v.vectors) > 0 && !v.growth_free) {
+    return pending;
+  }
+  if !opt_facts::enabled() || (env_variable("LOFT_NO_APART_HEADERS") ?? "0") != "0" || (env_variable("LOFT_NO_GROWN_HEADER") ?? "0") != "0" {
+    return pending;
+  }
+  d = b.data.definitions[vd]!;
+  rebound = rebound_vars(b, d, lp);
+  candidates: vector<Held> = [];
+  for c in indexed_vectors(b, d, lp) {
+    if c.path.ends_with(":") && !rebound[c.root]! {
+      candidates += [c];
+    }
+  }
+  if len(candidates) == 0 {
+    return pending;
+  }
+  paths: vector<text> = [for c in candidates { c.path }];
+  roots: vector<integer> = [for c in candidates { c.root }];
+  lent: vector<boolean> = [for x in d.variables.variables { work_buffer_arg(d, x#index) }];
+  keep = opt_apart::grown_headers(b, w, facts, vd, lp, paths, roots, lent);
+  for c in candidates {
+    if !keep[c#index]! {
+      continue;
+    }
+    held = false;
+    for q in v.vectors {
+      if q.path == c.path {
+        held = true;
+      }
+    }
+    if !held {
+      pending += [c.path];
+      v.vectors += [c];
+      v.growth_free = true;
+    }
+  }
+  pending
+}
+
 fn scalar_getter(name: text) -> boolean {
   name == "OpGetInt" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetSingle" || name == "OpGetFloat" || name == "OpGetBoolean" || name == "OpGetCharacter" || name == "OpGetEnum"
 }

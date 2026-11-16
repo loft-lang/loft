@@ -128,6 +128,9 @@ pub struct Cx {
   // The signatures the unit calls function values through, in the order they were first
   // used (`Cx::fn_sigs`): `loft_call{n}`.
   pub sigs: vector<text>,
+  // The signatures a kept binding calls with its store as the target's record buffer
+  // (`Cx::fn_sigs_buf`): each takes a `loft_call{n}b` variant beside its dispatcher.
+  pub sigs_buf: vector<integer>,
   // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
   pub tuples: vector<text>,
   // Does the unit bind a lazy store (`Cx::lazy`)?  -1 not asked yet, else 0 or 1.
@@ -181,6 +184,7 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     writes: opt_writes::new_writes(b),
     ops: own::ops_of(b),
     sigs: [],
+    sigs_buf: [],
     tuples: [],
     lazy: -1,
     gen_decls: "",

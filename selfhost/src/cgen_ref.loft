@@ -27,6 +27,7 @@ use ptypes;
 use cgen_parse;
 use opt_push;
 use cgen_keyed;
+use cgen_value;
 use binds;
 use opt_non_sentinel;
 use types;
@@ -78,6 +79,10 @@ fn wrapper_field_pos(b: ir::Bundle, tp: integer) -> integer {
 
 // The operators over a record or a vector; `done` says whether `name` is one of them.
 pub fn ref_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  carried = cgen_value::slice_carrier_operator(x, w, name, args, done);
+  if done {
+    return carried;
+  }
   if w.adopt_v >= 0 && len(args) > 0 {
     operand = loop_shape::var_of(args[0]);
     // The adopted local's witness is never minted, so neither is its store nor the zero

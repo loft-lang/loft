@@ -1,0 +1,244 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/c/body/loop_record.rs`: `@FR-R-FnRefBuffer` on the C.  A record local
+// bound only by calls through a function value, inside one outermost loop, keeps its store
+// across the passes — its per-pass null-set and free not written, one free after the loop (or,
+// `@FR-R-FnRefBuffer`'s frame clause, the store parked between calls of the function) — and
+// each call hands that store to the target as its record buffer.  `LOFT_NO_FNREF_BUFFER=1`
+// keeps the plain form; `LOFT_NO_FNREF_PARK=1` frees after the loop instead of parking.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use binds;
+use cgen_types;
+use loop_shape;
+use opt_non_sentinel;
+use opt_writes;
+
+const SCALAR_GETTERS = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn is_free(name: text) -> boolean {
+  name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpFreeRefTag"
+}
+
+// A call that can keep nothing of a record argument: a scalar getter, a free, a loft function
+// answering a scalar, or a call through a function value answering one.
+fn scalar_call(b: ir::Bundle, f: ir::Function, n: ir::Node) -> boolean {
+  match loop_shape::unspan(n) {
+    NdCall { def_nr, args: _ } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      name = def_name(b, def_nr);
+      def = b.data.definitions[def_nr]!;
+      SCALAR_GETTERS.contains(name) || is_free(name) || (!name.starts_with("Op") && opt_writes::is_scalar(def.returned[0] ?? ir::TyVoid))
+    },
+    NdCallRef { var, args: _ } => match cgen_types::base(f.variables[var]!.type_def[0] ?? ir::TyVoid) {
+      TyFunction { args: _, result, dep: _, consts: _ } => opt_writes::is_scalar(result),
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+// A bind `v = <call through a function value of a record>` (`opaque_callref_bind`).
+fn opaque_bind(b: ir::Bundle, w: W, f: ir::Function, v: integer, rhs: ir::Node) -> boolean {
+  binds::opaque_callref_bind(b, w.defs, f.variables[v]!.type_def[0] ?? ir::TyVoid, loop_shape::unspan(rhs)) != null
+}
+
+// The candidate's per-pass drop, as `scan_loops`' `block_ops` reads one: `Set(v, null)` or a
+// free of `v`; -1 for any other statement.
+fn drop_of(b: ir::Bundle, op: ir::Node) -> integer {
+  match loop_shape::unspan(op) {
+    NdSet { var, inner } => if loop_shape::unspan(inner) == ir::Node.NdNull { var } else { -1 },
+    NdCall { def_nr, args } => if is_free(def_name(b, def_nr)) && len(args) > 0 { loop_shape::var_of(loop_shape::unspan(args[0])) } else { -1 },
+    _ => -1,
+  }
+}
+
+// `scan_loops`: per candidate, the outermost loop scope of each of its binds (-2 outside every
+// loop), as one list per variable.
+fn scan_loops(b: ir::Bundle, w: W, f: ir::Function, v: ir::Node, cands: vector<boolean>, outer: integer, scopes: vector<integer>) {
+  node = loop_shape::unspan(v);
+  inside = outer;
+  match node {
+    NdLoop { block } => {
+      if outer == -2 {
+        inside = block[0].scope;
+      }
+    },
+    NdSet { var, inner } => {
+      if (cands[var] ?? false) && loop_shape::unspan(inner) != ir::Node.NdNull && opaque_bind(b, w, f, var, inner) {
+        scopes += [var, outer];
+      }
+    },
+    _ => {},
+  }
+  for c in el_children(node) {
+    scan_loops(b, w, f, c, cands, inside, scopes);
+  }
+}
+
+fn el_children(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdSpan { pos: _, inner } => [inner],
+    NdCall { def_nr: _, args } => args,
+    NdCallRef { var: _, args } => args,
+    NdBlock { block } => block[0].operators,
+    NdLoop { block } => block[0].operators,
+    NdInsert { items } => items,
+    NdTuple { items } => items,
+    NdSet { var: _, inner } => [inner],
+    NdReturn { inner } => [inner],
+    NdDrop { inner } => [inner],
+    NdYield { inner } => [inner],
+    NdIf { cond, t, f } => [cond, t, f],
+    NdIter { var: _, create, next, init } => [create, next, init],
+    NdTuplePut { var: _, idx: _, inner } => [inner],
+    NdParallel { arms } => arms,
+    _ => [],
+  }
+}
+
+// `fnref_kept`: per variable of the function `w` writes, the scope of the one outermost loop
+// that holds every bind of a kept record local (-1 for none).  A local bound only by opaque
+// calls through a function value, owned plainly by this frame, every other mention an argument
+// of a call that keeps nothing of it.
+pub fn fnref_kept(x: Cx, w: W) -> vector<integer> {
+  def = x.b.data.definitions[w.index]!;
+  f = def.variables;
+  count = len(f.variables);
+  out: vector<integer> = [for _ in 0..count { -1 }];
+  if (env_variable("LOFT_NO_FNREF_BUFFER") ?? "0") != "0" || len(def.code) == 0 {
+    return out;
+  }
+  code = def.code[0]!;
+  nodes: vector<ir::Node> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) { nodes += [n]; });
+  cands: vector<boolean> = [for _ in 0..count { false }];
+  any = false;
+  for n in nodes {
+    match n {
+      NdSet { var, inner } => {
+        if !f.variables[var]!.argument && binds::owner_witness(f, var) == null && binds::entry_witness(f, var) == null && opaque_bind(x.b, w, f, var, inner) {
+          cands[var] = true;
+          any = true;
+        }
+      },
+      _ => {},
+    }
+  }
+  if !any {
+    return out;
+  }
+  // Every Set is a null declaration or such a call; every read is an admitted argument.
+  bad: vector<boolean> = [for _ in 0..count { false }];
+  seen: vector<integer> = [for _ in 0..count { 0 }];
+  allowed: vector<integer> = [for _ in 0..count { 0 }];
+  for n in nodes {
+    match n {
+      NdSet { var, inner } => {
+        if cands[var]! && loop_shape::unspan(inner) != ir::Node.NdNull && !opaque_bind(x.b, w, f, var, inner) {
+          bad[var] = true;
+        }
+      },
+      NdVar { n: v } => { if cands[v] ?? false { seen[v] = seen[v]! + 1; } },
+      NdCall { def_nr: _, args } => {
+        if scalar_call(x.b, f, n) {
+          for a in args {
+            v = loop_shape::var_of(loop_shape::unspan(a));
+            if v >= 0 && cands[v]! {
+              allowed[v] = allowed[v]! + 1;
+            }
+          }
+        }
+      },
+      NdCallRef { var: _, args } => {
+        if scalar_call(x.b, f, n) {
+          for a in args {
+            v = loop_shape::var_of(loop_shape::unspan(a));
+            if v >= 0 && cands[v]! {
+              allowed[v] = allowed[v]! + 1;
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  scopes: vector<integer> = [];
+  scan_loops(x.b, w, f, code, cands, -2, scopes);
+  for v in 0..count {
+    if !cands[v]! || bad[v]! || seen[v]! != allowed[v]! {
+      continue;
+    }
+    one = -3;
+    for s in scopes {
+      if s#index % 2 == 0 && s == v {
+        loop_scope = scopes[s#index + 1]!;
+        one = if one == -3 || one == loop_scope { loop_scope } else { -4 };
+      }
+    }
+    if one >= 0 {
+      out[v] = one;
+    }
+  }
+  out
+}
+
+// `loop_record_stmt`: a kept record's per-pass null-set or free, standing in a statement list
+// inside a loop, writes nothing.
+pub fn dropped(x: Cx, w: W, v: ir::Node, listed: boolean) -> boolean {
+  if !listed || len(w.loops) == 0 {
+    return false;
+  }
+  lv = drop_of(x.b, v);
+  lv >= 0 && (w.lr_recs[lv] ?? -1) >= 0
+}
+
+// The slot a kept record is parked in between calls of the function.
+fn park(w: W, v: integer) -> text {
+  "loft_park{w.index}_{v}"
+}
+
+// The kept records loop `lp` holds, by variable number.
+fn kept_by(w: W, lp: ir::Block) -> vector<integer> {
+  out: vector<integer> = [];
+  for s in w.lr_recs {
+    if s >= 0 && s == lp.scope {
+      out += [s#index];
+    }
+  }
+  out
+}
+
+// `loop_stmt_facts`' prelude: each kept record of loop `lp` taken from its park slot.
+pub fn take_parked(w: W, lp: ir::Block, ind: integer) {
+  if (env_variable("LOFT_NO_FNREF_PARK") ?? "0") != "0" || w.gen_elem != "" {
+    return;
+  }
+  for v in kept_by(w, lp) {
+    w.decls += ["static LOFT_TLS loft_ref {park(w, v)} = {{ 0xFFFF, 0, 0, 0 }};"];
+    line(w, ind, "loft_park_take(&{park(w, v)}, &{w.names[v]!});");
+  }
+}
+
+// After loop `lp`: each kept record parked again, or — without the frame clause — freed once,
+// after every copy of the loop.
+pub fn release_kept(w: W, lp: ir::Block, ind: integer) {
+  parked = (env_variable("LOFT_NO_FNREF_PARK") ?? "0") == "0" && w.gen_elem == "";
+  for v in kept_by(w, lp) {
+    if parked {
+      line(w, ind, "loft_park_put(&{park(w, v)}, &{w.names[v]!});");
+    } else {
+      line(w, ind, "loft_free_var(&{w.names[v]!});");
+    }
+  }
+}

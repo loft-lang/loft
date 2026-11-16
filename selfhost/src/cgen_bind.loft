@@ -334,8 +334,19 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     since = temp(w, "int");
     line(w, ind, "{dst} = {name};");
     line(w, ind, "{since} = (int64_t) loft_stores_allocated;");
+    // `@FR-R-FnRefBuffer`: a kept binding is handed to the target as its record buffer, and
+    // an answer in that store is the binding already.
+    in_place = (w.lr_recs[var] ?? -1) >= 0;
+    if in_place {
+      w.callref_buf = name;
+    }
     e = cgen_fn::expr(x, w, value, ind);
+    w.callref_buf = "";
     line(w, ind, "{src_held} = {as_ref(w, e)};");
+    if in_place {
+      line(w, ind, "if ({src_held}.store_nr != 0xFFFF && {src_held}.store_nr == {name}.store_nr && {src_held}.rec == {name}.rec && {src_held}.pos == {name}.pos) {{");
+      line(w, ind, "}} else");
+    }
     line(w, ind, "if (loft_fnref_minted({src_held}, (uint64_t) {since}, {w.names[fv]!}.clos)) {{");
     line(w, ind + 1, "loft_fnref_adopt({src_held});");
     entry = binds::entry_witness(f, var);
