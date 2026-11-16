@@ -1,0 +1,718 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Apart`, instance 4, as `src/lower/apart_records.rs` plans it: a record
+// of RECORD VECTORS built in a frame and handed to the functions that copy it into a collection,
+// held as one byte buffer per field in the element's own layout.  The store meets it once, at the
+// boundary: the copy of an append group.
+//
+// - an APART TYPE is a struct whose every field is a `vector` of a struct whose every field is an
+//   `integer`, a `float` or a `boolean`;
+// - a TWIN `n_<f>__apr` is a function with exactly one parameter of such a type, every mention of
+//   which is a field's length, an argument of a twin's call at its apart position, or the copy
+//   `OpCopyRecord(p, elm, FRESH)` of an append group — a greatest fixpoint;
+// - an OWNER is a local of a body whose every mention is its null init, its mint, a field
+//   emptied, a PUSH GROUP, a field's length, an argument of a twin, or its free — and which
+//   reaches at least one twin.
+//
+// A PUSH GROUP is `elm = OpNewRecord(v, tp, fld)`, writes `OpSet*(elm, off, x)` covering every
+// field of the element exactly once, and `OpFinishRecord(v, elm, tp, fld)`.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use bgen_image;
+use binds;
+
+// One record-vector field of an apart type: the vector's slot, the element's size, and the
+// element's fields as `[offset, encoding, …]` (0 integer, 1 float, 2 boolean).
+pub struct RecField {
+  pub off: integer,
+  pub esize: integer,
+  pub elem: vector<integer>,
+}
+
+// The value form of one apart type.
+pub struct Layout {
+  pub rec_tp: integer,
+  pub fields: vector<RecField>,
+}
+
+// The program's plan.  Per definition: its layout's index (-1 none); a twin's apart parameter
+// (-1 none), argument index and record definition.  The owners as `[f, v, rec, …]`.
+pub struct Plan {
+  pub asked: boolean,
+  pub layouts: vector<Layout>,
+  pub layout_of: vector<integer>,
+  pub twin_var: vector<integer>,
+  pub twin_at: vector<integer>,
+  pub twin_rec: vector<integer>,
+  pub owners: vector<integer>,
+}
+
+// The apart variables of one body: per variable its record definition (-1 none), the twin's
+// parameter (-1 none), and per push group's element variable its owner and field index.
+pub struct Roles {
+  pub any: boolean,
+  pub vars: vector<integer>,
+  pub param: integer,
+  pub elem_owner: vector<integer>,
+  pub elem_field: vector<integer>,
+  // Per apart variable, its layout's field count.
+  pub nf: vector<integer>,
+}
+
+pub fn no_plan() -> Plan {
+  Plan { asked: false, layouts: [], layout_of: [], twin_var: [], twin_at: [], twin_rec: [], owners: [] }
+}
+
+pub fn no_roles() -> Roles {
+  Roles { any: false, vars: [], param: -1, elem_owner: [], elem_field: [], nf: [] }
+}
+
+// `LOFT_NO_APART_RECORDS=1` (or `LOFT_NO_APART=1`): every record of record vectors lives in the
+// store.
+pub fn disabled() -> boolean {
+  (env_variable("LOFT_NO_APART") ?? "0") != "0" || (env_variable("LOFT_NO_APART_RECORDS") ?? "0") != "0"
+}
+
+// A name part for a C identifier: every character that is no ASCII letter or digit a `_`.
+pub fn ident_part(s: text) -> text {
+  out = "";
+  for ch in s {
+    code = ch as integer;
+    if (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) {
+      out += "{ch}";
+    } else {
+      out += "_";
+    }
+  }
+  out
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn int_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdInt { n } => n,
+    NdLong { n } => n,
+    _ => null,
+  }
+}
+
+// Is `x` the integer `want`?  (A node that is no integer is not.)
+fn int_is(x: ir::Node, want: integer) -> boolean {
+  v = int_of(x);
+  v != null && v == want
+}
+
+fn var_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) { NdVar { n } => n, _ => -1 }
+}
+
+fn at(v: vector<integer>, i: integer) -> integer {
+  if i < 0 || i >= len(v) { -1 } else { v[i]! }
+}
+
+// The layout of record definition `rec`.
+pub fn layout(p: Plan, rec: integer) -> Layout {
+  p.layouts[at(p.layout_of, rec)]!
+}
+
+// The field whose slot is at byte offset `off`, -1 for none.
+pub fn field_at(l: Layout, off: integer) -> integer {
+  if off == null {
+    return -1;
+  }
+  for f in l.fields {
+    if f.off == off {
+      return f#index;
+    }
+  }
+  -1
+}
+
+fn scalar_size(name: text) -> integer {
+  if name == "integer" || name == "float" { 8 } else if name == "boolean" { 1 } else { -1 }
+}
+
+fn scalar_enc(name: text) -> integer {
+  if name == "integer" { 0 } else if name == "float" { 1 } else { 2 }
+}
+
+// The candidate types: every field a vector of plain scalar records.
+fn candidate_types(b: ir::Bundle, p: Plan) {
+  for d in b.data.definitions {
+    p.layout_of += [-1];
+  }
+  for d in b.data.definitions {
+    if d.def_type != 5 {
+      continue;
+    }
+    kt = d.known_type;
+    if kt < 0 || kt >= len(b.types) || len(b.types[kt].parts) == 0 {
+      continue;
+    }
+    rec_fields = len(fields_of(b.types[kt].parts[0]!));
+    if rec_fields == 0 {
+      continue;
+    }
+    l = Layout { rec_tp: kt, fields: [] };
+    for f in fields_of(b.types[kt].parts[0]!) {
+      e = vector_content(b, f.content);
+      if e < 0 {
+        break;
+      }
+      efields = fields_of(b.types[e].parts[0]!);
+      if len(efields) == 0 || !(b.types[e].parts[0]! is PtStruct) {
+        break;
+      }
+      elem: vector<integer> = [];
+      plain = true;
+      for ef in efields {
+        size = if ef.content >= 0 && ef.content < len(b.types) { scalar_size(b.types[ef.content].name) } else { -1 };
+        if size < 0 || b.types[ef.content].size != size {
+          plain = false;
+          break;
+        }
+        elem += [ef.position, scalar_enc(b.types[ef.content].name)];
+      }
+      if !plain {
+        break;
+      }
+      l.fields += [RecField { off: f.position, esize: b.types[e].size, elem: elem }];
+    }
+    if len(l.fields) == rec_fields {
+      p.layout_of[d#index] = len(p.layouts);
+      p.layouts += [l];
+    }
+  }
+}
+
+// The element type of a vector type, -1 for none.
+fn vector_content(b: ir::Bundle, t: integer) -> integer {
+  if t < 0 || t >= len(b.types) || len(b.types[t].parts) == 0 {
+    return -1;
+  }
+  match b.types[t].parts[0]! {
+    PtVector { content } => if content >= 0 && content < len(b.types) && len(b.types[content].parts) > 0 { content } else { -1 },
+    _ => -1,
+  }
+}
+
+// The fields of a struct's parts, none for any other.
+fn fields_of(parts: ir::DbParts) -> vector<ir::DbField> {
+  match parts {
+    PtStruct { fields } => fields,
+    _ => [],
+  }
+}
+
+// The record definition a variable's type is, when it is an apart type (never `τ?`); -1 none.
+fn record_of(p: Plan, t: ir::TypeT) -> integer {
+  if t is TyOptional {
+    return -1;
+  }
+  match cgen_types::base(t) {
+    TyReference { n, dep: _ } => if at(p.layout_of, n) >= 0 { n } else { -1 },
+    _ => -1,
+  }
+}
+
+fn placeholder_instance(b: ir::Bundle, d: ir::Definition) -> boolean {
+  if binds::split_key_kind(d.name) != 3 {
+    return false;
+  }
+  for a in d.attributes {
+    if bgen_image::mentions_type_var(b, a.typedef[0] ?? ir::TyVoid) {
+      return true;
+    }
+  }
+  false
+}
+
+fn is_body(b: ir::Bundle, d: ir::Definition) -> boolean {
+  d.def_type == 1 && len(d.code) > 0 && !(d.code[0]! is NdNull) && !placeholder_instance(b, d)
+}
+
+// The walk of one body over the variables it tracks.
+struct RWalk {
+  // Per definition: a candidate twin's argument index and record definition (-1 none).
+  cand_at: vector<integer>,
+  cand_rec: vector<integer>,
+  // Per variable: its record definition (-1 untracked), declined, an element's owner and field,
+  // an open group.
+  tracked: vector<integer>,
+  param: boolean,
+  declined: vector<boolean>,
+  elem_owner: vector<integer>,
+  elem_field: vector<integer>,
+  open: vector<boolean>,
+  // The open groups' written offsets, as `[elm, off, …]`; the twins each variable is handed to,
+  // as `[v, d, …]`.
+  written: vector<integer>,
+  calls: vector<integer>,
+}
+
+fn new_walk(nvars: integer, cand_at: vector<integer>, cand_rec: vector<integer>, param: boolean) -> RWalk {
+  w = RWalk { cand_at: cand_at, cand_rec: cand_rec, tracked: [], param: param, declined: [], elem_owner: [], elem_field: [], open: [], written: [], calls: [] };
+  for _ in 0..nvars {
+    w.tracked += [-1];
+    w.declined += [false];
+    w.elem_owner += [-1];
+    w.elem_field += [-1];
+    w.open += [false];
+  }
+  w
+}
+
+fn tracked(w: RWalk, v: integer) -> boolean {
+  at(w.tracked, v) >= 0
+}
+
+fn is_elem(w: RWalk, v: integer) -> boolean {
+  at(w.elem_owner, v) >= 0
+}
+
+fn decline(w: RWalk, v: integer) {
+  if v >= 0 && v < len(w.declined) {
+    w.declined[v] = true;
+  }
+}
+
+fn calls_of(w: RWalk, v: integer) -> integer {
+  c = 0;
+  for x in w.calls {
+    if x#index % 2 == 0 && x == v {
+      c += 1;
+    }
+  }
+  c
+}
+
+// Drop the written offsets of group `elm`; answers how many there were.
+fn take_written(w: RWalk, elm: integer) -> integer {
+  kept: vector<integer> = [];
+  n = 0;
+  for x in w.written {
+    if x#index % 2 == 0 {
+      if x == elm {
+        n += 1;
+      } else {
+        kept += [x, w.written[x#index + 1]!];
+      }
+    }
+  }
+  w.written = kept;
+  n
+}
+
+fn has_written(w: RWalk, elm: integer, off: integer) -> boolean {
+  for x in w.written {
+    if x#index % 2 == 0 && x == elm && w.written[x#index + 1]! == off {
+      return true;
+    }
+  }
+  false
+}
+
+// A field's length `len(OpGetField(v, off, _))`: the tracked variable, -1 for none.
+fn length_of(b: ir::Bundle, p: Plan, w: RWalk, x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if (nm != "t_6vector_len" && nm != "OpLengthVector") || len(args) != 1 {
+        return -1;
+      }
+      field_var(b, p, w, args[0]!)
+    },
+    _ => -1,
+  }
+}
+
+fn field_var(b: ir::Bundle, p: Plan, w: RWalk, g: ir::Node) -> integer {
+  match loop_shape::unspan(g) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) != "OpGetField" || len(args) < 2 {
+        return -1;
+      }
+      fv = var_of(args[0]!);
+      if !tracked(w, fv) || field_at(layout(p, w.tracked[fv]!), int_of(args[1]!)) < 0 {
+        return -1;
+      }
+      fv
+    },
+    _ => -1,
+  }
+}
+
+// Walk one node: an admitted mention takes its tracked variable, and the walk goes on into the
+// operands it does not take; any other `Var` of a tracked or element variable declines it.
+fn node(b: ir::Bundle, p: Plan, w: RWalk, x: ir::Node) {
+  if length_of(b, p, w, x) >= 0 {
+    return;
+  }
+  match loop_shape::unspan(x) {
+    NdVar { n } => {
+      if is_elem(w, n) {
+        decline(w, w.elem_owner[n]!);
+      } else if tracked(w, n) {
+        decline(w, n);
+      }
+    },
+    NdSet { var, inner } => set(b, p, w, var, inner),
+    NdCall { def_nr, args } => call(b, p, w, def_nr, args),
+    _ => {
+      for c in el_ir::children(loop_shape::unspan(x)) {
+        node(b, p, w, c);
+      }
+    },
+  }
+}
+
+fn set(b: ir::Bundle, p: Plan, w: RWalk, sv: integer, rhs: ir::Node) {
+  if tracked(w, sv) {
+    if !(loop_shape::unspan(rhs) is NdNull) || w.param {
+      decline(w, sv);
+    }
+    return;
+  }
+  owner = new_record_owner(b, w, rhs);
+  if owner >= 0 {
+    l = layout(p, w.tracked[owner]!);
+    fld = int_of(arg(rhs, 2));
+    if fld != null && fld >= 0 && fld < len(l.fields) && !w.param && int_is(arg(rhs, 1), l.rec_tp) {
+      w.elem_owner[sv] = owner;
+      w.elem_field[sv] = fld;
+      take_written(w, sv);
+      w.open[sv] = true;
+    } else {
+      decline(w, owner);
+    }
+    return;
+  }
+  if is_elem(w, sv) {
+    decline(w, w.elem_owner[sv]!);
+  }
+  node(b, p, w, rhs);
+}
+
+// `OpNewRecord(v, tp, fld)` of a tracked `v`: `v`, -1 for none.
+fn new_record_owner(b: ir::Bundle, w: RWalk, rhs: ir::Node) -> integer {
+  match loop_shape::unspan(rhs) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) != "OpNewRecord" || len(args) != 3 {
+        return -1;
+      }
+      nv = var_of(args[0]!);
+      if tracked(w, nv) { nv } else { -1 }
+    },
+    _ => -1,
+  }
+}
+
+fn arg(x: ir::Node, i: integer) -> ir::Node {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr: _, args } => if i < len(args) { args[i]! } else { ir::NdNull },
+    _ => ir::NdNull,
+  }
+}
+
+// `OpSet*(elm, off, x)` in an open push group: a field of the element, in the encoding its type
+// has, written once.
+fn element_write(b: ir::Bundle, p: Plan, w: RWalk, nm: text, elm: integer, args: vector<ir::Node>) {
+  owner = w.elem_owner[elm]!;
+  enc = if nm == "OpSetInt" { 0 } else if nm == "OpSetFloat" { 1 } else { 2 };
+  off = if len(args) > 1 { int_of(args[1]!) } else { null };
+  field = layout(p, w.tracked[owner]!).fields[w.elem_field[elm]!]!;
+  fits = false;
+  if off != null && off >= 0 {
+    for e in field.elem {
+      if e#index % 2 == 0 && e == off && field.elem[e#index + 1]! == enc {
+        fits = true;
+      }
+    }
+  }
+  if fits && w.open[elm]! && !has_written(w, elm, off) {
+    w.written += [elm, off];
+  } else {
+    decline(w, owner);
+  }
+  if len(args) > 2 {
+    node(b, p, w, args[2]!);
+  }
+}
+
+fn call(b: ir::Bundle, p: Plan, w: RWalk, d: integer, args: vector<ir::Node>) {
+  nm = def_name(b, d);
+  first = if len(args) > 0 { var_of(args[0]!) } else { -1 };
+  if tracked(w, first) {
+    l = layout(p, w.tracked[first]!);
+    if nm == "OpDatabase" {
+      if w.param || !int_is(arg_at(args, 1), l.rec_tp) {
+        decline(w, first);
+      }
+      return;
+    }
+    if nm == "OpSetInt4" {
+      if w.param || field_at(l, int_of(arg_at(args, 1)) ?? -1) < 0 || !int_is(arg_at(args, 2), 0) {
+        decline(w, first);
+      }
+      return;
+    }
+    if nm == "OpFreeRef" {
+      if w.param {
+        decline(w, first);
+      }
+      return;
+    }
+    if nm == "OpFinishRecord" {
+      closed = var_of(arg_at(args, 1));
+      if closed >= 0 && closed < len(w.open) && w.open[closed]! {
+        w.open[closed] = false;
+        n = take_written(w, closed);
+        if w.elem_owner[closed]! == first {
+          if n * 2 != len(l.fields[w.elem_field[closed]!]!.elem) {
+            decline(w, first);
+          }
+        } else {
+          decline(w, first);
+        }
+      } else {
+        decline(w, first);
+      }
+      return;
+    }
+    if nm == "OpCopyRecord" {
+      // The boundary: a FRESH destination that keeps its source.
+      flags = int_of(arg_at(args, 2));
+      ok = w.param && flags != null && flags >= 0 && flags <= 65535 && flags & 16384 != 0 && flags & 32768 == 0 && flags & 16383 == l.rec_tp && var_of(arg_at(args, 1)) >= 0;
+      if !ok {
+        decline(w, first);
+      }
+      return;
+    }
+  }
+  if (nm == "OpSetInt" || nm == "OpSetFloat" || nm == "OpSetBoolean") && is_elem(w, first) {
+    element_write(b, p, w, nm, first, args);
+    return;
+  }
+  // A user call: a tracked variable as an argument at a candidate twin's apart position.
+  for a in args {
+    av = var_of(a);
+    if tracked(w, av) {
+      if at(w.cand_at, d) == a#index && at(w.cand_rec, d) == w.tracked[av]! {
+        w.calls += [av, d];
+      } else {
+        decline(w, av);
+      }
+    } else {
+      node(b, p, w, a);
+    }
+  }
+}
+
+fn arg_at(args: vector<ir::Node>, i: integer) -> ir::Node {
+  if i < len(args) { args[i]! } else { ir::NdNull }
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+// Walk definition `d`'s body tracking `vars` (per variable its record definition, -1 none).
+fn walk(b: ir::Bundle, p: Plan, cand_at: vector<integer>, cand_rec: vector<integer>, d: integer, vars: vector<integer>, param: boolean) -> RWalk {
+  def = b.data.definitions[d]!;
+  w = new_walk(len(def.variables.variables), cand_at, cand_rec, param);
+  for t in vars {
+    if t >= 0 && t#index < len(w.tracked) {
+      w.tracked[t#index] = t;
+    }
+  }
+  node(b, p, w, def.code[0]!);
+  for o in w.open {
+    if o {
+      decline(w, w.elem_owner[o#index]!);
+    }
+  }
+  w
+}
+
+// The program's plan: the types, the twins (a greatest fixpoint) and each body's owners.
+pub fn plan(b: ir::Bundle) -> Plan {
+  p = no_plan();
+  p.asked = true;
+  n = len(b.data.definitions);
+  for _ in 0..n {
+    p.twin_var += [-1];
+    p.twin_at += [-1];
+    p.twin_rec += [-1];
+  }
+  if disabled() {
+    return p;
+  }
+  candidate_types(b, p);
+  if len(p.layouts) == 0 {
+    return p;
+  }
+  // The candidate twins: functions with exactly one parameter of an apart type.
+  cand_at: vector<integer> = [];
+  cand_rec: vector<integer> = [];
+  for def in b.data.definitions {
+    ci = -1;
+    cr = -1;
+    count = 0;
+    if is_body(b, def) {
+      for a in def.attributes {
+        r = record_of(p, a.typedef[0] ?? ir::TyVoid);
+        if r >= 0 {
+          count += 1;
+          ci = a#index;
+          cr = r;
+        }
+      }
+    }
+    cand_at += [if count == 1 { ci } else { -1 }];
+    cand_rec += [if count == 1 { cr } else { -1 }];
+  }
+  // Each candidate's own verdict, then the fixpoint over the twins it calls.
+  live: vector<boolean> = [];
+  params: vector<integer> = [];
+  needs: vector<integer> = [];
+  for f in 0..n {
+    live += [false];
+    params += [-1];
+  }
+  for f in 0..n {
+    if cand_at[f]! < 0 {
+      continue;
+    }
+    def = b.data.definitions[f]!;
+    v = var_named(def.variables, def.attributes[cand_at[f]!]!.name);
+    if v < 0 || v >= len(def.variables.variables) {
+      continue;
+    }
+    vars: vector<integer> = [];
+    for _ in def.variables.variables {
+      vars += [-1];
+    }
+    vars[v] = cand_rec[f]!;
+    w = walk(b, p, cand_at, cand_rec, f, vars, true);
+    if w.declined[v]! {
+      continue;
+    }
+    live[f] = true;
+    params[f] = v;
+    for c in w.calls {
+      if c#index % 2 == 0 && c == v {
+        needs += [f, w.calls[c#index + 1]!];
+      }
+    }
+  }
+  for _ in 0..n + 1 {
+    dropped = false;
+    for x in needs {
+      if x#index % 2 == 0 && live[x]! && !(live[needs[x#index + 1]!] ?? false) {
+        live[x] = false;
+        dropped = true;
+      }
+    }
+    if !dropped {
+      break;
+    }
+  }
+  for f in 0..n {
+    if live[f]! {
+      p.twin_var[f] = params[f]!;
+      p.twin_at[f] = cand_at[f]!;
+      p.twin_rec[f] = cand_rec[f]!;
+    }
+  }
+  // The owners: locals of an apart type in any body, each reaching a twin.
+  for f in 0..n {
+    owners_of(b, p, f);
+  }
+  if len(p.owners) == 0 {
+    for f in 0..n {
+      p.twin_var[f] = -1;
+      p.twin_at[f] = -1;
+      p.twin_rec[f] = -1;
+    }
+  }
+  p
+}
+
+// The apart owners of `f`'s body, added to the plan: its locals of an apart type whose every
+// mention a clause admits and which reach a twin.
+fn owners_of(b: ir::Bundle, p: Plan, f: integer) {
+  def = b.data.definitions[f]!;
+  if !is_body(b, def) {
+    return;
+  }
+  vars: vector<integer> = [];
+  any_tracked = false;
+  for v in def.variables.variables {
+    r = if v.argument { -1 } else { record_of(p, v.type_def[0] ?? ir::TyVoid) };
+    vars += [r];
+    if r >= 0 {
+      any_tracked = true;
+    }
+  }
+  if !any_tracked {
+    return;
+  }
+  w = walk(b, p, p.twin_at, p.twin_rec, f, vars, false);
+  for r in vars {
+    if r >= 0 && !w.declined[r#index]! && calls_of(w, r#index) > 0 {
+      p.owners += [f, r#index, r];
+    }
+  }
+}
+
+// The roles of `f`'s body: its owners and their push groups' elements, or — for its twin — the
+// apart parameter.
+pub fn roles(b: ir::Bundle, p: Plan, f: integer, twin: boolean) -> Roles {
+  r = no_roles();
+  def = b.data.definitions[f]!;
+  vars: vector<integer> = [];
+  for _ in def.variables.variables {
+    vars += [-1];
+  }
+  if twin {
+    tv = at(p.twin_var, f);
+    if tv < 0 {
+      return r;
+    }
+    r.param = tv;
+    vars[tv] = p.twin_rec[f]!;
+  } else {
+    found = false;
+    for o in p.owners {
+      if o#index % 3 == 0 && o == f {
+        vars[p.owners[o#index + 1]!] = p.owners[o#index + 2]!;
+        found = true;
+      }
+    }
+    if !found {
+      return r;
+    }
+  }
+  w = walk(b, p, p.twin_at, p.twin_rec, f, vars, twin);
+  r.any = true;
+  r.vars = vars;
+  r.elem_owner = w.elem_owner;
+  r.elem_field = w.elem_field;
+  for rv in vars {
+    r.nf += [if rv >= 0 { len(layout(p, rv).fields) } else { 0 }];
+  }
+  r
+}

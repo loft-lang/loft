@@ -19,6 +19,7 @@ use cgen_unicode;
 use consts;
 use crt;
 use cgen_store;
+use cgen_apart;
 
 // What the bodies registered (`Cx::copy_types`, `described`, `names_types`, `defaults`,
 // `enum_names`, `key_types`): per type number whether it is in the set.
@@ -265,6 +266,8 @@ pub fn typedefs(x: Cx, names: text) -> text {
     list = if len(bytes) == 0 { "0" } else { [for v in bytes { "{v as integer}" }].join(", ") };
     out += "static const uint8_t loft_dflt{d#index}[{count}] = {{ {list} }};\n";
   }
+  // `@FR-R-Apart` instance 2: each record of fixed-length float vectors as its value.
+  out += cgen_apart::value_typedefs(x);
   // The render functions (`show_code`), after the tuple structs `typedefs` writes between.
   // The tuple structs, in the order the unit first named them; a member that is a tuple is
   // numbered by its holder's typedef if nothing named it before.

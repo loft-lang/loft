@@ -54,7 +54,7 @@ fn window_loop(x: Cx, w: W, lp: ir::Block) -> opt_window::PushLoop? {
 
 // `open_window`: opens the window of push loop `lp`; answers whether it did.
 pub fn open_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
-  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_PUSH_WINDOW") ?? "0") != "0" {
+  if w.gen_elem != "" || cgen_apart::av_any(w) || (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_PUSH_WINDOW") ?? "0") != "0" {
     return false;
   }
   p = window_loop(x, w, lp) ?? return deep_window(x, w, lp, ind);

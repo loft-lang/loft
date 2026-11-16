@@ -281,13 +281,15 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (3).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
+`cgen_w::PLAIN_SWITCHES` names them (2).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
 
 | switch | corpus | benches | tests |
 |---|---|---|---|
 | `VALUE_RECORD` | 510 | 114 | 175 |
 | `TRANSIENT` | 92 | 14 | 22 |
-| `APART` | 29 | 9 | 10 |
+
+`VALUE_RECORD` also feeds `APART`'s instance 2: its plan leaves the value records' functions
+alone (`value_fns` of `opt_apart_value::plan`), a set that is empty while the rule is off.
 
 Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`), `TEXT_WINDOW`
 (`cgen_win::open_text_windows`), `APART_MINT` (`opt_hoist::apart_mint`), `VR_PTR` (`cgen_value.loft`; its
@@ -306,7 +308,11 @@ helpers an `__inv` twin's loop reaches, the ranged twin's input seeds), `GUARD_B
 (`opt_below_len.loft`, the marked index slots below), `VERSION` (`opt_version.loft`,
 `cgen_version.loft`: the leaf plan, the `__vp` precondition, the loop prelude's `vg<k>` flags, the
 `__vf` fast twin, the guarded loop's version clause), `DEFERRED_COPY` (`cgen_deferred.loft`, and
-`opt_lease.loft` for `lease::Frame::read_after`'s per-path liveness).  A rewrite that writes COPIES of IR nodes (the destination
+`opt_lease.loft` for `lease::Frame::read_after`'s per-path liveness), `APART` (`cgen_apart.loft` for
+all three instances: 3 — `opt_apart_vector.loft`, the `loft_apvec` local; 4 —
+`opt_apart_records.loft`, the per-field buffers, the `__apr` twin, the boundary copy and the
+rotate from parts; 2 — `opt_apart_value.loft`, the `loft_ap_<T>` value, the `__apv` twin, the
+construction runs, the `loft_ap_store` boundary, the typedefs, the hoists off in its bodies).  A rewrite that writes COPIES of IR nodes (the destination
 chain's call and arm statements, an append site's call, the rotate's call, the keyed in-place
 literal) writes them under `no_memo`: the Rust writer keys an invariant's memo and a guarded
 chain's admission by node address, which no copy carries.
@@ -448,7 +454,7 @@ came out 64-bit from the image.
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
 | `selfhost/src/opt_keyed_place.loft`, `cgen_keyed.loft` | `src/opt/keyed_place.rs`; `keyed_in_place`, `stage_literal_writes` of `src/c/body/keyed.rs` | whole: `@FR-R-InPlaceLiteral`'s keyed clause; a rewrite's C operand is an `NdRawExpr` the writer names with `raw_expr` (`FnWriter::raw`) |
 | `selfhost/src/cgen_value.loft` | `Cx::vr_ptr_params`, `vr_param_read_only`, `tuple_arg_address` | `@FR-R-ValueRecord`'s pointer clause for the IR's tuples; the value records' half waits for `VALUE_RECORD` |
-| `selfhost/src/opt_hand_over.loft`, `cgen_rotate.loft` | `src/lower/hand_over.rs`, `Stores::plain_vectors_of`; `rotate_site`, `nokeep` of `src/c/body.rs` | `@FR-R-HandOver`'s rotate clause and its `__nk` twin; an apart source (`apr_rotate`) waits for `APART` |
+| `selfhost/src/opt_hand_over.loft`, `cgen_rotate.loft` | `src/lower/hand_over.rs`, `Stores::plain_vectors_of`; `rotate_site`, `nokeep` of `src/c/body.rs` | `@FR-R-HandOver`'s rotate clause and its `__nk` twin; an apart source rotates in from its parts (`cgen_apart::rotate`) |
 | `selfhost/src/cgen_fnref.loft` | `src/c/body/loop_record.rs`; the kept-buffer half of `opaque_callref_stmt`, `call_ref` and `src/c/fnval.rs` | `@FR-R-FnRefBuffer` and its frame clause (the park slots) |
 | `selfhost/src/opt_append_twin.loft`, `cgen_append.loft` | `src/opt/append_twin.rs`; `append_site`, `append_call`, `append_twin`, `append_twin_buffer_op`, `apw_operator`, `open_loop_windows` of `src/c/body.rs`; `Cx::ap_window` | `@FR-R-AppendTwin` with its window and loop clauses |
 | `selfhost/src/opt_destination.loft`, `cgen_dest.loft` | `src/lower/destination.rs`; `destination_site`, `destination_level`, `destination_names`, `dest_scalar_set`, `dest_return` of `src/c/body.rs` | `@FR-R-Destination` |
@@ -457,6 +463,7 @@ came out 64-bit from the image.
 | `selfhost/src/opt_below_len.loft` | `src/opt/below_len.rs`, `forward_walk::check_body`; `guard_index` of `src/c/body.rs` | `@FR-R-Base`'s guard clause |
 | `selfhost/src/opt_version.loft`, `cgen_version.loft` | `src/opt/version.rs`; `src/c/body/version.rs`; `version_fast`, the `version_raw`/`version_decided` sites and the call's fast form in `src/c/body.rs` | `@FR-R-Version` |
 | `selfhost/src/cgen_deferred.loft`, `opt_lease.loft` | `src/c/body/deferred.rs`; `Frame::read_after`, `read_itself_after`, `readers_of` and `Pass` of `src/lease.rs` | `@FR-R-DeferredCopy` |
+| `selfhost/src/cgen_apart.loft`, `opt_apart_vector.loft`, `opt_apart_records.loft`, `opt_apart_value.loft` | `src/c/body/apart.rs`, `src/c/body/apart_value.rs`; `src/opt/apart_vector.rs`, `src/opt/apart_records.rs`, `src/lower/apart_value.rs` | `@FR-R-Apart`, instances 2, 3 and 4 |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at

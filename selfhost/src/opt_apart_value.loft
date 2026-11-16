@@ -1,0 +1,1090 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Apart`, instance 2, as `src/lower/apart_value.rs` plans it: a record
+// of fixed-length `vector<float>` fields held as a value (`double[N]` per field) while it travels
+// between functions that only build it, read and write its elements, and hand it on.  The store
+// meets it once, at a BOUNDARY: a `return` through the function's buffer.
+//
+// - an APART TYPE is a struct whose every field is a `vector<float>`, and whose every admitted
+//   construction builds each field as a literal of one length;
+// - a TWIN is a function returning such a record through its buffer, written again as
+//   `<f>__apv`: every variable of the type in its body takes a role and every `return` answers
+//   an apart value, or the function has no twin;
+// - a REGION is the variables of the type in an ordinary body that take a role, by connected
+//   component: a violation keeps its whole component in the store.
+//
+// The roles: APART (its construction run, an element read or write, a length, the destination
+// or a record argument of a twin's call, a free, a null init, a `return`) and DEAD (only ever a
+// twin call's buffer argument, an `OpRefAlias` of an apart variable, null-initialised or freed).
+// A record PARAMETER is apart only in a twin, and only if nothing writes it.
+//
+// The value records' functions are left alone (`value_fns`): the plan is ported while
+// `LOFT_NO_VALUE_RECORD` keeps that set empty, and takes it when that rule is carried.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use binds;
+use opt_apart_records;
+use bgen_image;
+
+pub struct ApField {
+  pub off: integer,
+  pub len: integer,
+}
+
+pub struct ApLayout {
+  // The C struct's name part (`loft_ap_<rust>`), by the definition's source and name.
+  pub rust: text,
+  pub rec_tp: integer,
+  pub vec_tps: vector<integer>,
+  pub fields: vector<ApField>,
+}
+
+// The variables of one body and the role each takes: per variable its record definition when
+// apart (-1 otherwise) and whether it is dead.
+pub struct ApRoles {
+  pub any: boolean,
+  pub apart: vector<integer>,
+  pub dead: vector<boolean>,
+  pub profitable: boolean,
+}
+
+// The program's plan.  Per definition: its layout's index (-1 none), the record a twin answers
+// (-1 no twin), and the index in `roles` of its twin's roles and its region's (-1 none).
+pub struct ApPlan {
+  pub asked: boolean,
+  pub layouts: vector<ApLayout>,
+  pub layout_of: vector<integer>,
+  pub twin_rec: vector<integer>,
+  pub roles: vector<ApRoles>,
+  pub twin_role: vector<integer>,
+  pub region_role: vector<integer>,
+}
+
+// A construction run over variable `v`: its elements in the order the run writes them, each with
+// its field — a value (`copies` -1, the value in `vals`) or `copies` copies of the element
+// before it — and the index of the first statement after the run.
+pub struct Construction {
+  pub ok: boolean,
+  pub v: integer,
+  pub fields: vector<integer>,
+  pub copies: vector<integer>,
+  pub vals: vector<ir::Node>,
+  pub end: integer,
+}
+
+pub fn no_plan() -> ApPlan {
+  ApPlan { asked: false, layouts: [], layout_of: [], twin_rec: [], roles: [], twin_role: [], region_role: [] }
+}
+
+pub fn no_roles() -> ApRoles {
+  ApRoles { any: false, apart: [], dead: [], profitable: false }
+}
+
+fn no_construction() -> Construction {
+  Construction { ok: false, v: -1, fields: [], copies: [], vals: [], end: 0 }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn at(v: vector<integer>, i: integer) -> integer {
+  if i < 0 || i >= len(v) { -1 } else { v[i]! }
+}
+
+fn int_node(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) { NdInt { n } => n, _ => null }
+}
+
+fn is_int(x: ir::Node, want: integer) -> boolean {
+  v = int_node(x);
+  v != null && v == want
+}
+
+fn var_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) { NdVar { n } => n, _ => -1 }
+}
+
+fn arg(x: ir::Node, i: integer) -> ir::Node {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr: _, args } => if i < len(args) { args[i]! } else { ir::NdNull },
+    _ => ir::NdNull,
+  }
+}
+
+fn call_of(b: ir::Bundle, x: ir::Node, name: text, n: integer) -> boolean {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args } => len(args) == n && def_name(b, def_nr) == name,
+    _ => false,
+  }
+}
+
+fn is_op(b: ir::Bundle, x: ir::Node, name: text) -> boolean {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args: _ } => def_name(b, def_nr) == name,
+    _ => false,
+  }
+}
+
+// `OpGetField(Var(v), Int(off), _)`: `v`, -1 for none (its offset `fld_off`).
+fn fld_var(b: ir::Bundle, x: ir::Node) -> integer {
+  if !call_of(b, x, "OpGetField", 3) || int_node(arg(x, 1)) == null {
+    return -1;
+  }
+  var_of(arg(x, 0))
+}
+
+fn fld_off(x: ir::Node) -> integer {
+  int_node(arg(x, 1))
+}
+
+// An element ADDRESS of a float field: `OpGetVector[Nullable](OpGetField(v, …), 8, i)` → `v`.
+fn elem_var(b: ir::Bundle, x: ir::Node) -> integer {
+  if !(call_of(b, x, "OpGetVector", 3) || call_of(b, x, "OpGetVectorNullable", 3)) || !is_int(arg(x, 1), 8) {
+    return -1;
+  }
+  fld_var(b, arg(x, 0))
+}
+
+// An element READ `OpGetFloat(<element>, 0)` → `v`; its field offset `elem_off`, index
+// `elem_idx`.
+pub fn read_var(b: ir::Bundle, x: ir::Node) -> integer {
+  if !call_of(b, x, "OpGetFloat", 2) || !is_int(arg(x, 1), 0) {
+    return -1;
+  }
+  elem_var(b, arg(x, 0))
+}
+
+// An element WRITE `OpSetFloat(<element>, 0, val)` → `v`; its value `arg(x, 2)`.
+pub fn write_var(b: ir::Bundle, x: ir::Node) -> integer {
+  if !call_of(b, x, "OpSetFloat", 3) || !is_int(arg(x, 1), 0) {
+    return -1;
+  }
+  elem_var(b, arg(x, 0))
+}
+
+pub fn elem_off(x: ir::Node) -> integer {
+  fld_off(arg(arg(x, 0), 0))
+}
+
+pub fn elem_idx(x: ir::Node) -> ir::Node {
+  arg(arg(x, 0), 2)
+}
+
+pub fn write_val(x: ir::Node) -> ir::Node {
+  arg(x, 2)
+}
+
+// A field's LENGTH `OpLengthVector(OpGetField(v, off, _))` → `v`; its offset `len_off`.
+pub fn len_var(b: ir::Bundle, x: ir::Node) -> integer {
+  if !call_of(b, x, "OpLengthVector", 1) {
+    return -1;
+  }
+  fld_var(b, arg(x, 0))
+}
+
+pub fn len_off(x: ir::Node) -> integer {
+  fld_off(arg(x, 0))
+}
+
+// The field of layout `l` at byte offset `off`, -1 for none.
+pub fn field_at(l: ApLayout, off: integer) -> integer {
+  if off == null {
+    return -1;
+  }
+  for f in l.fields {
+    if f.off == off {
+      return f#index;
+    }
+  }
+  -1
+}
+
+// Does test `n` read only variable `v` (`Value::any_node`, which looks through spans)?
+fn only_reads(b: ir::Bundle, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => return only_reads(b, inner, v),
+    NdVar { n: u } => if u != v { return false; },
+    NdBoolean { b: _ } => {},
+    NdNull => {},
+    NdIf { cond: _, t: _, f: _ } => {},
+    NdCall { def_nr, args: _ } => {
+      nm = def_name(b, def_nr);
+      if nm != "OpRefIsNull" && nm != "OpConvBoolFromRef" {
+        return false;
+      }
+    },
+    _ => return false,
+  }
+  for c in el_ir::children(n) {
+    if !only_reads(b, c, v) {
+      return false;
+    }
+  }
+  true
+}
+
+// The construction guard `if <test of v> null else OpDatabase(v, tp)` → `v`, -1 for none; its
+// type `guard_tp`.
+fn guard_var(b: ir::Bundle, x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdIf { cond, t, f } => {
+      if !(loop_shape::unspan(t) is NdNull) || !call_of(b, f, "OpDatabase", 2) || int_node(arg(f, 1)) == null {
+        return -1;
+      }
+      gv = var_of(arg(f, 0));
+      if gv < 0 || (match loop_shape::unspan(arg(f, 0)) { NdVar { n: _ } => false, _ => true }) {
+        return -1;
+      }
+      if only_reads(b, cond, gv) { gv } else { -1 }
+    },
+    _ => -1,
+  }
+}
+
+fn guard_tp(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdIf { cond: _, t: _, f } => int_node(arg(f, 1)),
+    _ => -1,
+  }
+}
+
+// A construction run being read, statement by statement.
+struct Run {
+  var: integer,
+  started: vector<boolean>,
+  c: Construction,
+}
+
+// The field of the run's variable that `vec` addresses, -1 for none.
+fn run_field(b: ir::Bundle, l: ApLayout, r: Run, vec: ir::Node) -> integer {
+  owner = fld_var(b, vec);
+  if owner != r.var || owner < 0 {
+    return -1;
+  }
+  field_at(l, fld_off(vec))
+}
+
+// An element push of a started field.
+fn run_push(b: ir::Bundle, l: ApLayout, r: Run, x: ir::Node) -> boolean {
+  if !call_of(b, x, "OpPushFloat", 2) {
+    return false;
+  }
+  f = run_field(b, l, r, arg(x, 0));
+  if f < 0 || !r.started[f]! {
+    return false;
+  }
+  r.c.fields += [f];
+  r.c.copies += [-1];
+  r.c.vals += [arg(x, 1)];
+  true
+}
+
+// Takes statement `op` into the run; false ends it before `op`.
+fn run_step(b: ir::Bundle, l: ApLayout, r: Run, op: ir::Node) -> boolean {
+  u = loop_shape::unspan(op);
+  if u is NdNull {
+    return true;
+  }
+  if is_op(b, u, "OpSetInt4") {
+    if !call_of(b, u, "OpSetInt4", 3) {
+      return false;
+    }
+    owner = var_of(arg(u, 0));
+    if (match loop_shape::unspan(arg(u, 0)) { NdVar { n: _ } => false, _ => true }) || int_node(arg(u, 1)) == null || !is_int(arg(u, 2), 0) {
+      return false;
+    }
+    f = field_at(l, int_node(arg(u, 1)));
+    if f >= 0 && owner == r.var && !r.started[f]! {
+      r.started[f] = true;
+      return true;
+    }
+    return false;
+  }
+  if is_op(b, u, "OpAppendCopy") {
+    if !call_of(b, u, "OpAppendCopy", 3) {
+      return false;
+    }
+    f = run_field(b, l, r, arg(u, 0));
+    count = int_node(arg(u, 1));
+    if f < 0 || count == null {
+      return false;
+    }
+    // The copies repeat the element just written, which must be this field's.
+    n = len(r.c.fields);
+    if count < 1 || n == 0 || r.c.fields[n - 1]! != f || r.c.copies[n - 1]! != -1 {
+      return false;
+    }
+    r.c.fields += [f];
+    r.c.copies += [count - 1];
+    r.c.vals += [ir::NdNull];
+    return true;
+  }
+  match u {
+    NdInsert { items } => {
+      any_push = false;
+      for it in items {
+        if is_op(b, it, "OpPreAllocVector") && run_field(b, l, r, arg(it, 0)) < 0 {
+          return false;
+        }
+        if is_op(b, it, "OpPushFloat") {
+          any_push = true;
+        }
+      }
+      if !any_push {
+        return false;
+      }
+      for it in items {
+        if is_op(b, it, "OpPushFloat") && !run_push(b, l, r, it) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => run_push(b, l, r, op),
+  }
+}
+
+// The construction run of layout `l`'s record over `v` starting at `ops[at]`, if it is one: the
+// guard, an `OpSetInt4(v, off, 0)` per field, and each field's pushes, `null` statements between
+// them.
+pub fn construction(b: ir::Bundle, l: ApLayout, ops: vector<ir::Node>, start: integer, v: integer) -> Construction {
+  if start >= len(ops) {
+    return no_construction();
+  }
+  gv = guard_var(b, ops[start]!);
+  if gv < 0 || gv != v || guard_tp(ops[start]!) != l.rec_tp {
+    return no_construction();
+  }
+  r = Run { var: gv, started: [for _ in l.fields { false }], c: no_construction() };
+  r.c.v = gv;
+  pos = start + 1;
+  for _ in pos..len(ops) {
+    if !run_step(b, l, r, ops[pos]!) {
+      break;
+    }
+    pos += 1;
+  }
+  for s in r.started {
+    if !s {
+      return no_construction();
+    }
+  }
+  r.c.ok = true;
+  r.c.end = pos;
+  r.c
+}
+
+// The lengths a construction gives each of `n` fields, as text (`"3,3"`).
+pub fn lengths(c: Construction, n: integer) -> text {
+  out: vector<integer> = [for _ in 0..n { 0 }];
+  for f in c.fields {
+    k = c.copies[f#index]!;
+    out[f] += if k < 0 { 1 } else { k };
+  }
+  parts: vector<text> = [for x in out { "{x}" }];
+  parts.join(",")
+}
+
+// The record definition a variable's type is, when it is a candidate type (never `τ?`); -1 none.
+fn record_of(p: ApPlan, t: ir::TypeT) -> integer {
+  if t is TyOptional {
+    return -1;
+  }
+  match cgen_types::base(t) {
+    TyReference { n, dep: _ } => if at(p.layout_of, n) >= 0 { n } else { -1 },
+    _ => -1,
+  }
+}
+
+// A scalar a twin's call can hand over by value.
+fn scalar_param(t: ir::TypeT) -> boolean {
+  if t is TyOptional {
+    return false;
+  }
+  match t {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    _ => false,
+  }
+}
+
+// `opt::attrs::ret_buffer_attr`: the LAST hidden attribute of a reference or a reference enum.
+fn ret_buffer_attr(d: ir::Definition) -> integer {
+  found = -1;
+  for a in d.attributes {
+    if a.hidden {
+      heap = match cgen_types::base(a.typedef[0] ?? ir::TyVoid) {
+        TyReference { n: _, dep: _ } => true,
+        TyEnum { n: _, is_ref, dep: _ } => is_ref,
+        _ => false,
+      };
+      if heap {
+        found = a#index;
+      }
+    }
+  }
+  found
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+// The walk of one body: which variables each mention admits, and which it declines.
+struct Gate {
+  twin_mode: boolean,
+  rec: vector<integer>,
+  rb: integer,
+  violated: vector<boolean>,
+  union: vector<integer>,
+  used: vector<boolean>,
+  buffer: vector<boolean>,
+  written: vector<boolean>,
+  profit: vector<boolean>,
+  built_rec: vector<integer>,
+  built_len: vector<text>,
+  bad_return: boolean,
+}
+
+fn is_r(g: Gate, v: integer) -> boolean {
+  at(g.rec, v) >= 0
+}
+
+fn violate(g: Gate, v: integer) {
+  if is_r(g, v) {
+    g.violated[v] = true;
+  }
+}
+
+fn mark(m: vector<boolean>, v: integer) {
+  if v >= 0 && v < len(m) {
+    m[v] = true;
+  }
+}
+
+fn layout_of_var(p: ApPlan, g: Gate, v: integer) -> ApLayout {
+  p.layouts[p.layout_of[g.rec[v]!]!]!
+}
+
+fn has_field(p: ApPlan, g: Gate, v: integer, off: integer) -> boolean {
+  field_at(layout_of_var(p, g, v), off) >= 0
+}
+
+// A twin call `dest = g(args…)`, or a `return g(args…)` when `dest` is the buffer.
+fn twin_call(b: ir::Bundle, p: ApPlan, twins: vector<integer>, g: Gate, dest: integer, callee: integer, args: vector<ir::Node>) -> boolean {
+  if at(twins, callee) != at(g.rec, dest) {
+    return false;
+  }
+  gdef = b.data.definitions[callee]!;
+  rbi = ret_buffer_attr(gdef);
+  if rbi < 0 || len(args) != len(gdef.attributes) {
+    return false;
+  }
+  for a in args {
+    i = a#index;
+    atp = gdef.attributes[i]!.typedef[0] ?? ir::TyVoid;
+    if i == rbi {
+      bv = match loop_shape::unspan(a) { NdVar { n } => n, NdNull => -2, _ => -3 };
+      if bv == -3 {
+        return false;
+      }
+      // The FORWARD form `b = g(…, b)` writes into its destination; a call handed no buffer of
+      // its own (`null`) mints nothing either.
+      if bv >= 0 && bv != dest {
+        if is_r(g, bv) {
+          g.union += [dest, bv];
+          mark(g.buffer, bv);
+        } else {
+          return false;
+        }
+      }
+    } else if record_of(p, atp) >= 0 {
+      u = var_of(a);
+      if u >= 0 && is_r(g, u) && g.rec[u]! == record_of(p, atp) {
+        g.union += [dest, u];
+        mark(g.used, u);
+      } else {
+        return false;
+      }
+    } else if !scalar_param(atp) {
+      return false;
+    }
+  }
+  // Only now: the call is a twin call, so its scalar arguments are walked as values.
+  for a in args {
+    if a#index != rbi && record_of(p, gdef.attributes[a#index]!.typedef[0] ?? ir::TyVoid) < 0 {
+      walk(b, p, twins, g, a);
+    }
+  }
+  mark(g.used, dest);
+  mark(g.profit, dest);
+  true
+}
+
+fn walk_ops(b: ir::Bundle, p: ApPlan, twins: vector<integer>, g: Gate, ops: vector<ir::Node>) {
+  i = 0;
+  for _ in 0..len(ops) + 1 {
+    if i >= len(ops) {
+      break;
+    }
+    c = construction_at(b, p, g, ops, i);
+    if c.ok {
+      record_construction(b, p, twins, g, c);
+      i = c.end;
+      continue;
+    }
+    walk(b, p, twins, g, ops[i]!);
+    i += 1;
+  }
+}
+
+fn construction_at(b: ir::Bundle, p: ApPlan, g: Gate, ops: vector<ir::Node>, start: integer) -> Construction {
+  if start >= len(ops) {
+    return no_construction();
+  }
+  gv = guard_var(b, ops[start]!);
+  if !is_r(g, gv) {
+    return no_construction();
+  }
+  construction(b, layout_of_var(p, g, gv), ops, start, gv)
+}
+
+fn record_construction(b: ir::Bundle, p: ApPlan, twins: vector<integer>, g: Gate, c: Construction) {
+  rec = g.rec[c.v]!;
+  g.built_rec += [rec];
+  g.built_len += [lengths(c, len(p.layouts[p.layout_of[rec]!]!.fields))];
+  mark(g.used, c.v);
+  mark(g.written, c.v);
+  for f in c.fields {
+    if c.copies[f#index]! < 0 {
+      walk(b, p, twins, g, c.vals[f#index]!);
+    }
+  }
+}
+
+// An object block `{ <construction of v>; v }`, the value of a `return` or a bind.
+fn construction_block(b: ir::Bundle, p: ApPlan, g: Gate, x: ir::Node) -> Construction {
+  match loop_shape::unspan(x) {
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      c = construction_at(b, p, g, ops, 0);
+      if c.ok && c.end + 1 == len(ops) && var_of(ops[c.end]!) == c.v && (loop_shape::unspan(ops[c.end]!) is NdVar) {
+        return c;
+      }
+      no_construction()
+    },
+    _ => no_construction(),
+  }
+}
+
+fn walk_children(b: ir::Bundle, p: ApPlan, twins: vector<integer>, g: Gate, x: ir::Node) {
+  for c in el_ir::children(loop_shape::unspan(x)) {
+    walk(b, p, twins, g, c);
+  }
+}
+
+fn walk(b: ir::Bundle, p: ApPlan, twins: vector<integer>, g: Gate, x: ir::Node) {
+  rv = read_var(b, x);
+  if is_r(g, rv) {
+    if !has_field(p, g, rv, elem_off(x)) {
+      violate(g, rv);
+    }
+    mark(g.used, rv);
+    walk(b, p, twins, g, elem_idx(x));
+    return;
+  }
+  wv = write_var(b, x);
+  if is_r(g, wv) {
+    if !has_field(p, g, wv, elem_off(x)) {
+      violate(g, wv);
+    }
+    mark(g.used, wv);
+    mark(g.written, wv);
+    walk(b, p, twins, g, elem_idx(x));
+    walk(b, p, twins, g, write_val(x));
+    return;
+  }
+  lv = len_var(b, x);
+  if is_r(g, lv) {
+    if !has_field(p, g, lv, len_off(x)) {
+      violate(g, lv);
+    }
+    mark(g.used, lv);
+    return;
+  }
+  match loop_shape::unspan(x) {
+    NdVar { n } => violate(g, n),
+    NdSet { var, inner } => {
+      if is_r(g, var) {
+        walk_set(b, p, twins, g, var, inner);
+      } else {
+        walk(b, p, twins, g, inner);
+      }
+    },
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if nm == "OpFreeRef" {
+        if len(args) == 1 && is_r(g, var_of(args[0]!)) {
+          return;
+        }
+        for a in args {
+          walk(b, p, twins, g, a);
+        }
+        return;
+      }
+      if nm == "OpFreeRefIfDistinct" {
+        if len(args) == 2 && is_r(g, var_of(args[0]!)) && is_r(g, var_of(args[1]!)) {
+          g.union += [var_of(args[0]!), var_of(args[1]!)];
+          return;
+        }
+        for a in args {
+          walk(b, p, twins, g, a);
+        }
+        return;
+      }
+      for a in args {
+        walk(b, p, twins, g, a);
+      }
+    },
+    NdReturn { inner } => walk_return(b, p, twins, g, inner),
+    NdBlock { block } => walk_ops(b, p, twins, g, block[0]!.operators),
+    NdLoop { block } => walk_ops(b, p, twins, g, block[0]!.operators),
+    NdInsert { items } => walk_ops(b, p, twins, g, items),
+    NdIter { var, create: _, next: _, init: _ } => {
+      violate(g, var);
+      walk_children(b, p, twins, g, x);
+    },
+    NdCallRef { var, args: _ } => {
+      violate(g, var);
+      walk_children(b, p, twins, g, x);
+    },
+    NdFnRef { def_nr: _, var, t: _ } => {
+      violate(g, var);
+    },
+    NdFnRefDnr { n } => {
+      violate(g, n);
+    },
+    NdYield { inner: _ } => {
+      // A value across a `yield` or into a worker is not admitted at all.
+      for r in g.rec {
+        violate(g, r#index);
+      }
+      walk_children(b, p, twins, g, x);
+    },
+    NdParallel { arms: _ } => {
+      for r in g.rec {
+        violate(g, r#index);
+      }
+      walk_children(b, p, twins, g, x);
+    },
+    _ => walk_children(b, p, twins, g, x),
+  }
+}
+
+fn walk_set(b: ir::Bundle, p: ApPlan, twins: vector<integer>, g: Gate, sv: integer, rhs: ir::Node) {
+  u = loop_shape::unspan(rhs);
+  if u is NdNull {
+    return;
+  }
+  if call_of(b, u, "OpRefAlias", 1) && is_r(g, var_of(arg(u, 0))) && (loop_shape::unspan(arg(u, 0)) is NdVar) {
+    g.union += [sv, var_of(arg(u, 0))];
+    mark(g.buffer, sv);
+    return;
+  }
+  callee = match u { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+  if at(twins, callee) >= 0 {
+    if !twin_call(b, p, twins, g, sv, callee, call_args(u)) {
+      violate(g, sv);
+      walk_children(b, p, twins, g, u);
+    }
+    return;
+  }
+  c = construction_block(b, p, g, rhs);
+  if c.ok && c.v == sv {
+    record_construction(b, p, twins, g, c);
+  } else {
+    violate(g, sv);
+    walk(b, p, twins, g, rhs);
+  }
+}
+
+fn call_args(x: ir::Node) -> vector<ir::Node> {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr: _, args } => args,
+    _ => [],
+  }
+}
+
+fn walk_return(b: ir::Bundle, p: ApPlan, twins: vector<integer>, g: Gate, inner: ir::Node) {
+  u = loop_shape::unspan(inner);
+  rv = var_of(u);
+  if (u is NdVar) && is_r(g, rv) {
+    mark(g.used, rv);
+    if !g.twin_mode {
+      if g.rb >= 0 {
+        g.union += [rv, g.rb];
+      } else {
+        violate(g, rv);
+      }
+    }
+    return;
+  }
+  callee = match u { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+  if at(twins, callee) >= 0 && g.rb >= 0 {
+    if !twin_call(b, p, twins, g, g.rb, callee, call_args(u)) {
+      violate(g, g.rb);
+      g.bad_return = true;
+      walk_children(b, p, twins, g, u);
+    }
+    return;
+  }
+  c = construction_block(b, p, g, inner);
+  if c.ok {
+    if g.rb >= 0 {
+      g.union += [c.v, g.rb];
+    }
+    record_construction(b, p, twins, g, c);
+  } else {
+    if g.twin_mode {
+      g.bad_return = true;
+    }
+    walk(b, p, twins, g, inner);
+  }
+}
+
+fn find(parent: vector<integer>, x: integer) -> integer {
+  r = x;
+  for _ in 0..len(parent) + 1 {
+    if parent[r]! == r {
+      break;
+    }
+    r = parent[r]!;
+  }
+  r
+}
+
+// Walk one body in twin or region mode and answer its roles (`any` false: none; in a twin, one
+// declined variable or one `return` that answers no apart value).  The constructions it admits
+// go to `built_rec`/`built_len`.
+fn roles_of(b: ir::Bundle, p: ApPlan, twins: vector<integer>, d: integer, twin_mode: boolean, built_rec: vector<integer>, built_len: vector<text>) -> ApRoles {
+  def = b.data.definitions[d]!;
+  nv = len(def.variables.variables);
+  rec: vector<integer> = [];
+  any_rec = false;
+  for tv in def.variables.variables {
+    r = record_of(p, tv.type_def[0] ?? ir::TyVoid);
+    rec += [r];
+    if r >= 0 {
+      any_rec = true;
+    }
+  }
+  if !any_rec {
+    return no_roles();
+  }
+  rbi = ret_buffer_attr(def);
+  rb = if rbi >= 0 { var_named(def.variables, def.attributes[rbi]!.name) } else { -1 };
+  if at(rec, rb) < 0 {
+    rb = -1;
+  }
+  g = Gate { twin_mode: twin_mode, rec: rec, rb: rb, violated: [for _ in 0..nv { false }], union: [], used: [for _ in 0..nv { false }], buffer: [for _ in 0..nv { false }], written: [for _ in 0..nv { false }], profit: [for _ in 0..nv { false }], built_rec: [], built_len: [], bad_return: false };
+  for cv in def.variables.variables {
+    if cv.captured {
+      violate(g, cv#index);
+    }
+  }
+  walk(b, p, twins, g, def.code[0]!);
+  // A parameter (not the buffer) of the record: apart only in a twin, never written.
+  for pv in def.variables.variables {
+    i = pv#index;
+    if is_r(g, i) && pv.argument && i != rb {
+      if !twin_mode || g.written[i]! {
+        violate(g, i);
+      }
+    }
+  }
+  // A variable both a buffer and a value takes neither role.
+  for i in 0..nv {
+    if g.buffer[i]! && g.used[i]! {
+      violate(g, i);
+    }
+  }
+  // Components: a violation anywhere declines every variable joined to it.
+  parent: vector<integer> = [for i in 0..nv { i }];
+  for u in g.union {
+    if u#index % 2 == 0 {
+      ra = find(parent, u);
+      rb2 = find(parent, g.union[u#index + 1]!);
+      if ra != rb2 {
+        parent[ra] = rb2;
+      }
+    }
+  }
+  bad: vector<boolean> = [for _ in 0..nv { false }];
+  any_violated = false;
+  for x in g.violated {
+    if x {
+      bad[find(parent, x#index)] = true;
+      any_violated = true;
+    }
+  }
+  roles = ApRoles { any: true, apart: [for _ in 0..nv { -1 }], dead: [for _ in 0..nv { false }], profitable: false };
+  for r in rec {
+    vi = r#index;
+    if r < 0 {
+      continue;
+    }
+    if bad[find(parent, vi)]! {
+      continue;
+    }
+    if g.used[vi]! {
+      roles.apart[vi] = r;
+      if g.profit[vi]! {
+        roles.profitable = true;
+      }
+    } else if g.buffer[vi]! || !def.variables.variables[vi]!.argument {
+      roles.dead[vi] = true;
+    }
+  }
+  if twin_mode && (g.bad_return || any_violated) {
+    return no_roles();
+  }
+  // The region's constructions count only for the variables it admitted.
+  built_rec += g.built_rec;
+  built_len += g.built_len;
+  roles
+}
+
+// Does a role set hold any apart variable?
+pub fn has_apart(r: ApRoles) -> boolean {
+  for a in r.apart {
+    if a >= 0 {
+      return true;
+    }
+  }
+  false
+}
+
+fn source_label(b: ir::Bundle, s: integer) -> text {
+  if s == 0 {
+    return "std";
+  }
+  if s == 1 {
+    return "main";
+  }
+  for u in b.data.source_labels {
+    if u.source == s {
+      return u.name;
+    }
+  }
+  "#{s}"
+}
+
+fn placeholder_instance(b: ir::Bundle, d: ir::Definition) -> boolean {
+  if binds::split_key_kind(d.name) != 3 {
+    return false;
+  }
+  for a in d.attributes {
+    if bgen_image::mentions_type_var(b, a.typedef[0] ?? ir::TyVoid) {
+      return true;
+    }
+  }
+  false
+}
+
+// The candidate types: structs whose fields are all `vector<float>`, as `layout_of` (-1 none)
+// over `cands` (the struct's layout without lengths).
+fn candidate_types(b: ir::Bundle, cands: vector<ApLayout>, cand_of: vector<integer>) {
+  float_tp = -1;
+  for t in b.types {
+    if float_tp < 0 && t.name == "float" {
+      float_tp = t#index;
+    }
+  }
+  for d in b.data.definitions {
+    cand_of += [-1];
+    if d.def_type != 5 {
+      continue;
+    }
+    kt = d.known_type;
+    if kt < 0 || kt >= len(b.types) || len(b.types[kt].parts) == 0 {
+      continue;
+    }
+    fields = match b.types[kt].parts[0]! { PtStruct { fields } => fields, _ => [] };
+    if len(fields) == 0 {
+      continue;
+    }
+    l = ApLayout { rust: "Apart_{opt_apart_records::ident_part(source_label(b, d.source))}_{opt_apart_records::ident_part(d.name)}", rec_tp: kt, vec_tps: [], fields: [] };
+    all = true;
+    for f in fields {
+      e = if f.content >= 0 && f.content < len(b.types) && len(b.types[f.content].parts) > 0 { match b.types[f.content].parts[0]! { PtVector { content } => content, _ => -1 } } else { -1 };
+      if e < 0 || e != float_tp {
+        all = false;
+        break;
+      }
+      l.vec_tps += [f.content];
+      l.fields += [ApField { off: f.position, len: 0 }];
+    }
+    if all {
+      cand_of[d#index] = len(cands);
+      cands += [l];
+    }
+  }
+}
+
+fn is_function(b: ir::Bundle, d: ir::Definition) -> boolean {
+  if d.def_type != 1 || len(d.code) == 0 || (d.code[0]! is NdNull) || placeholder_instance(b, d) {
+    return false;
+  }
+  if len(d.returned) > 0 && (cgen_types::base(d.returned[0]!) is TyIterator) {
+    return false;
+  }
+  true
+}
+
+// The program's plan: the types, the twins (a fixpoint — a twin's body may call another twin),
+// the field lengths every admitted construction agrees on, and every region.
+pub fn plan(b: ir::Bundle) -> ApPlan {
+  p = no_plan();
+  p.asked = true;
+  n = len(b.data.definitions);
+  for _ in 0..n {
+    p.twin_rec += [-1];
+    p.twin_role += [-1];
+    p.region_role += [-1];
+  }
+  if (env_variable("LOFT_NO_APART") ?? "0") != "0" {
+    return p;
+  }
+  cands: vector<ApLayout> = [];
+  cand_of: vector<integer> = [];
+  candidate_types(b, cands, cand_of);
+  functions: vector<integer> = [];
+  for d in b.data.definitions {
+    if is_function(b, d) {
+      functions += [d#index];
+    }
+  }
+  // Lengths are learned from the admitted constructions; a type whose constructions disagree
+  // leaves the candidates and the plan is decided again without it.
+  for _ in 0..len(cands) + 1 {
+    p.layouts = [];
+    p.layout_of = [];
+    for c in cand_of {
+      if c >= 0 {
+        p.layout_of += [len(p.layouts)];
+        p.layouts += [cands[c]!];
+      } else {
+        p.layout_of += [-1];
+      }
+    }
+    if len(p.layouts) == 0 {
+      p.layout_of = [];
+      return p;
+    }
+    // The twins: every function answering a candidate record through its buffer, narrowed to
+    // a fixpoint.
+    twins: vector<integer> = [for _ in 0..n { -1 }];
+    for f in functions {
+      def = b.data.definitions[f]!;
+      if ret_buffer_attr(def) >= 0 && len(def.returned) > 0 {
+        twins[f] = record_of(p, def.returned[0]!);
+      }
+    }
+    p.roles = [];
+    built_rec: vector<integer> = [];
+    built_len: vector<text> = [];
+    for _ in 0..n + 1 {
+      out = false;
+      p.roles = [];
+      built_rec = [];
+      built_len = [];
+      twin_role: vector<integer> = [for _ in 0..n { -1 }];
+      gone: vector<integer> = [];
+      for f in functions {
+        if twins[f]! < 0 {
+          continue;
+        }
+        tr = roles_of(b, p, twins, f, true, built_rec, built_len);
+        if tr.any {
+          twin_role[f] = len(p.roles);
+          p.roles += [tr];
+        } else {
+          gone += [f];
+          out = true;
+        }
+      }
+      p.twin_role = twin_role;
+      if !out {
+        break;
+      }
+      for f in gone {
+        twins[f] = -1;
+      }
+    }
+    region_role: vector<integer> = [for _ in 0..n { -1 }];
+    for f in functions {
+      rb_rec: vector<integer> = [];
+      rb_len: vector<text> = [];
+      rr = roles_of(b, p, twins, f, false, rb_rec, rb_len);
+      if rr.any && has_apart(rr) && rr.profitable {
+        built_rec += rb_rec;
+        built_len += rb_len;
+        region_role[f] = len(p.roles);
+        p.roles += [rr];
+      }
+    }
+    // One length per field of every type, from every admitted construction — or the types whose
+    // constructions disagree, and those no admitted code builds.
+    lens: vector<text> = [for _ in p.layouts { "" }];
+    conflict: vector<boolean> = [for _ in p.layouts { false }];
+    for br in built_rec {
+      li = p.layout_of[br]!;
+      if lens[li]! == "" {
+        lens[li] = built_len[br#index]!;
+      } else if lens[li]! != built_len[br#index]! {
+        conflict[li] = true;
+      }
+    }
+    any_conflict = false;
+    for cd in 0..len(cand_of) {
+      if cand_of[cd]! >= 0 {
+        li = p.layout_of[cd]!;
+        if conflict[li]! || lens[li]! == "" {
+          cand_of[cd] = -1;
+          any_conflict = true;
+        }
+      }
+    }
+    if any_conflict {
+      continue;
+    }
+    for li in 0..len(p.layouts) {
+      parts = lens[li]!.split(',');
+      for k in 0..len(parts) {
+        p.layouts[li].fields[k].len = (parts[k]! as integer?) ?? 0;
+      }
+    }
+    p.twin_rec = twins;
+    p.region_role = region_role;
+    return p;
+  }
+  p
+}
+
+// The C struct of instance 2's type `rec` (`Cx::ap2_ctype`), "" for none.
+pub fn ctype(p: ApPlan, rec: integer) -> text {
+  li = at(p.layout_of, rec);
+  if li < 0 { "" } else { "loft_ap_{p.layouts[li]!.rust}" }
+}

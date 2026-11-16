@@ -2352,7 +2352,7 @@ pub fn clear_before_mint(b: ir::Bundle, w: W, ops: vector<ir::Node>, i: integer,
 // held header) is the vector hoist's, which is not carried.
 pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer, head: &boolean) -> integer {
   head = false;
-  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
+  if w.gen_elem != "" || cgen_apart::av_any(w) || (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
     return -1;
   }
   shown: vector<ir::Node> = ops[0..end];
