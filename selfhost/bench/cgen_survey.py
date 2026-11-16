@@ -405,9 +405,9 @@ def main():
                         shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what}")
                     if verdict in ("refused", "nobuild"):
                         why[what.lstrip("=~ ")] += 1
+            others = ", ".join(f"{counts[k]} {k}" for k in ("fail", "nobuild", "refused") if counts[k])
             print(f"{counts['pass']} of {len(files)} programs pass through the loft unit; " +
-                  ", ".join(f"{counts[k]} {k}" for k in ("fail", "nobuild", "refused") if counts[k]) +
-                  f"; {same} units equal the Rust one")
+                  (f"{others}; " if others else "") + f"{same} units equal the Rust one")
             for line in sorted(shown):
                 print(line)
             if why:
