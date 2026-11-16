@@ -197,7 +197,9 @@ pub(super) fn is_scope_exit_cleanup(op: &Value, data: &Data) -> bool {
         }
         // A release spelt as a sequence — the drop hook before the free, the detaches before
         // the guarded free — is cleanup when it ends in one: an `Insert`'s value is its last.
-        Value::Insert(ops) => ops.last().is_some_and(|last| is_scope_exit_cleanup(last, data)),
+        Value::Insert(ops) => ops
+            .last()
+            .is_some_and(|last| is_scope_exit_cleanup(last, data)),
         _ => false,
     }
 }
