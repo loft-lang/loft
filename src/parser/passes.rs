@@ -575,6 +575,9 @@ impl Parser {
         self.promote_late_text_buffers();
         self.reserve_late_return_buffers();
         self.widen_late_call_joins();
+        // Last: every definition pass 1 parsed now exists, and those numbered from here on
+        // first exist on pass 2 (`text_return`'s pass-2 promotion gate reads it).
+        self.pass1_defs = self.data.definitions.len() as u32;
     }
 
     /// `@FR-N-Join` — an inferred local is the join of every value bound to it, optional iff
