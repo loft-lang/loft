@@ -960,6 +960,16 @@ pub fn promote_text_param(v: Vars, p: integer) -> integer {
   sh
 }
 
+// `Function::rebind_orig`: the entry witness of parameter `p` a whole rebind took, or -1.
+pub fn rebind_orig(v: Vars, p: integer) -> integer {
+  for x in v.rebind_params {
+    if x == p {
+      return v.rebind_origs[x#index] ?? -1;
+    }
+  }
+  -1
+}
+
 // `Parser::ensure_rebind_witness`: the work-ref that witnesses parameter `p`'s entry store —
 // never freed and never owning one (skip-free, inline), filled by the function's entry stash.
 pub fn rebind_witness(v: Vars, p: integer) -> integer {

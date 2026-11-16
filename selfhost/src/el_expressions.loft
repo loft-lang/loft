@@ -2643,8 +2643,10 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         bl.operators = ops;
       }
-      // An inline container's buffer is nulled just before the first statement that fills it,
-      // the latest statement first so the earlier places stay where they were found.
+      // An inline container's buffer is nulled just before the first statement that assigns it
+      // (`inline_ref_set_in`: a `Set` of it anywhere inside — a store only `OpDatabase` fills,
+      // a rebound parameter's fresh backing, takes the fallback), the latest statement first so
+      // the earlier places stay where they were found.
       nulls: vector<el_ex_assign::InlineNull> = [];
       for r in vars.inline_refs {
         // Only a ref that borrows nothing: one viewing a local holds no store of its own.
@@ -2653,7 +2655,7 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         at = -1;
         for op in bl.operators {
-          if at < 0 && el_ir::reads_var(op, r) {
+          if at < 0 && el_ir::sets_var(op, r) {
             at = op#index;
           }
         }

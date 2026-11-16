@@ -2330,6 +2330,20 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // @PLN87 P2.4 (`@FR-F-ParamRebind`): a vector literal rebinding a visible vector parameter
+  // rebinds it locally — its entry witness taken before the literal is read, the literal built
+  // in a fresh backing (`vector_build`) — and the caller's vector stays the caller's.  A
+  // `vector<T>?` parameter is rebound alike (`@FR-N-Shape`, loft#1836).
+  if !link && vars.vars[v].argument && el_types::base(el_vars::tp(vars, v)) is TyVector && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && e.p.nodes[rhs!] is SVecLit && el_ex_place::vec_lit_len(e, rhs!) > 0 {
+    if mentions_name(e, rhs!, el_vars::name_of(vars, v)) {
+      el::refuse(e, "a vector parameter rebound by a literal that reads it");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if !e.first_pass {
+      el_vars::rebind_witness(vars, v);
+    }
+    return el_ex_pattern::vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
+  }
   // A text parameter takes its own copy when written (`promote_text_param`, below).
   if !link && vars.vars[v].argument && !el_ex_call::scalar(el_types::base(el_vars::tp(vars, v))) && !(el_types::base(el_vars::tp(vars, v)) is TyText) && !hidden_param(e, vars, v) {
     el::refuse(e, "a rebound parameter of a heap type: `{el_vars::name_of(vars, v)}` from {syn_kind(e, rhs!)}");

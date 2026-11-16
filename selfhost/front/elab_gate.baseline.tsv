@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	762	of	2125
+layer	elab	agree	765	of	2125
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -159,7 +159,6 @@ elab	refused	loft-suite/rules/calls/F-Default/a-match-default-over-records-compi
 elab	refused	loft-suite/rules/calls/F-OneBody/2318-a-library-function-under-a-runtime-natives-name-leaves-the-runtimes-call.loft
 elab	refused	loft-suite/rules/calls/F-Package/a-package-reads-as-pub-in-its-own-directory-and-passes-nothing-on.loft
 elab	refused	loft-suite/rules/calls/F-Package/f_package_relay_lib.loft
-elab	refused	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft
 elab	refused	loft-suite/rules/calls/F-ParamHeap/1415-a-null-arm-source-that-views-a-parameter.loft
 elab	refused	loft-suite/rules/calls/F-ParamHeap/2137-a-coalesce-argument-shares-the-place-it-chose.loft
 elab	refused	loft-suite/rules/calls/F-ParamRebind/a-link-to-a-plain-parameter-walks-without-releasing-the-callers-list.loft
@@ -853,7 +852,6 @@ elab	refused	loft-suite/rules/rewrites/R-ValueRecord/1992-a-record-returned-from
 elab	refused	loft-suite/rules/rewrites/R-ValueRecord/a-small-record-copied-into-a-return-local-is-freed-on-native.loft
 elab	refused	loft-suite/rules/rewrites/R-VecCopy/a-vector-walked-into-another-is-that-vector-appended.loft
 elab	refused	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft
-elab	refused	loft-suite/rules/rewrites/R-WorkBuffer/a-work-buffer-rebound-by-value-stays-the-callers.loft
 elab	refused	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft
 elab	refused	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft
 elab	refused	loft-suite/rules/structures/S-Hash/a-linked-table-finds-by-its-keys-across-chunks-and-walks-in-key-order.loft
@@ -1212,7 +1210,6 @@ elab	refused	tests/scripts/85-yield-resume.loft
 elab	refused	tests/scripts/850-cross-package-method-name-collision.loft
 elab	refused	tests/scripts/850b-collision-import-order.loft
 elab	refused	tests/scripts/850c-two-packages-one-enum-name.loft
-elab	refused	tests/scripts/87-p2-reassign-locality.loft
 elab	refused	tests/scripts/882-keyed-element-read-borrows-its-container.loft
 elab	refused	tests/scripts/885-vector-hoist.loft
 elab	refused	tests/scripts/889-collection-through-a-call-s-field.loft

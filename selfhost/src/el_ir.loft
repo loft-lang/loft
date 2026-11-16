@@ -50,6 +50,24 @@ pub fn reads_var(n: ir::Node, v: integer) -> boolean {
   count(n, v, true, 1) > 0
 }
 
+// `inline_ref_set_in`: does the tree hold a `Set` of `v` anywhere?
+pub fn sets_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSet { var } => {
+      if var == v {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in children(n) {
+    if sets_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
 // `Parser::names_outside_a_chain`: `reads_var`, the inside of a `one_buffer_chain` block left
 // out — a chain names its buffer only to answer through it.
 pub fn names_outside_chain(n: ir::Node, v: integer) -> boolean {
