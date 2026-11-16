@@ -215,9 +215,16 @@ pub fn narrow_width(spec: ir::IntegerSpec) -> integer {
   if s == 1 || s == 2 { s } else { 0 }
 }
 
+// `i32` as an element (@PLN204): four bytes of the plain integer's range.  Its vector is NAMED
+// as the plain integer's (`vector<integer>`, the library's wrapper) and laid out at stride 4,
+// with the `Int4` push, read and write.
+pub fn int4(spec: ir::IntegerSpec) -> boolean {
+  spec.forced_size == 4 && spec.min == -2147483647 && spec.max == 2147483647
+}
+
 pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else if narrow_width(spec) > 0 { "integer({spec.min}, {spec.max})" } else { "" },
+    TyInteger { spec } => if int4(spec) || (spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647) { "integer" } else if narrow_width(spec) > 0 { "integer({spec.min}, {spec.max})" } else { "" },
     TyText { dep: _ } => "text",
     TyBoolean => "boolean",
     TyFloat => "float",

@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `vector<i32>` is named as the plain integer's vector and laid out at stride 4: `OpPushInt4`, `OpGetInt4`, `OpSetInt4`, its own rows (`int<-2147483647,false>` and its vector) made where it is first met and read by a formatted vector — a parameter, a literal, an append, an element write, a loop.
+// Prints: 16 2 1 5 [7,2,3,4]
+
+fn tot(v: vector<i32>) -> integer { s = 0; for x in v { s += x as integer; } s }
+fn main() {
+  a: vector<i32> = [1, 2, 3];
+  a += [4];
+  a[0] = 7;
+  w: vector<i32> = [];
+  w += [5 as i32];
+  println("{tot(a)} {a[1]} {len(w)} {w[0]} {a}");
+}

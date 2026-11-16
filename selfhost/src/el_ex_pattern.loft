@@ -1689,14 +1689,14 @@ pub fn vector_of(e: el::El, t: ir::TypeT) {
 // which keeps its record build.
 pub fn push_op(t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpPushByte" } else if el_types::narrow_width(spec) == 2 { "" } else { "OpPushInt" },
+    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpPushByte" } else if el_types::narrow_width(spec) == 2 { "" } else if el_types::int4(spec) { "OpPushInt4" } else if spec.forced_size != 0 { "" } else { "OpPushInt" },
     TyFloat => "OpPushFloat",
     TySingle => "OpPushSingle",
     TyBoolean => "OpPushBoolean",
     TyCharacter => "OpPushCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpPushEnum" },
     // A nullable plain integer element is pushed as the integer it is stored as.
-    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpPushInt" }, TyFloat => "OpPushFloat", TyBoolean => "OpPushBoolean", _ => "" },
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else if el_types::int4(spec) { "OpPushInt4" } else { "OpPushInt" }, TyFloat => "OpPushFloat", TyBoolean => "OpPushBoolean", _ => "" },
     _ => ""
   }
 }
@@ -2081,6 +2081,15 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // (`convert_store_lenient`: a `null`, or a nullable value of the element's own base, is stored
   // as the slot's null — `@FR-N-Store` warns there); an undeclared literal whose later item is a
   // float where the earlier ones are integers widens them (`widen_literal_items`).
+  // An `i32` element given a `??` is narrowed inside it (`dn4cast` under the `ncc`): not carried.
+  if !e.first_pass && match in_t { TyInteger { spec } => el_types::int4(spec), _ => false } {
+    for x in xs {
+      if match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
+        el::refuse(e, "an `i32` vector item that is a `??`");
+        return refused_build();
+      }
+    }
+  }
   conv: vector<Ex> = [];
   for x in xs {
     if el_types::is_unknown(x.tp) || el_types::is_equal(e, in_t, x.tp) || (el_types::struct_enum_def(in_t) >= 0 && el_expressions::variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
@@ -2146,7 +2155,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return refused_build();
   }
-  if len(xs) > 0 {
+  // A DECLARED literal has its element's `vector<…>` row made where its type was read, items
+  // or none (`g: vector<single> = []`).
+  if len(xs) > 0 || (!el_types::is_unknown(declared) && !append) {
     vector_of(e, in_t);
   }
   rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);

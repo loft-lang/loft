@@ -573,6 +573,9 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if el_types::narrow_width(spec) > 0 {
         return int_part(e, spec, el::NONE, false);
       }
+      if el_types::int4(spec) {
+        return int_part(e, spec, el::NONE, false);
+      }
       if spec.forced_size != 0 {
         return -1;
       }

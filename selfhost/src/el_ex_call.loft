@@ -1308,14 +1308,21 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
       nm = el_types::elem_name(e, inner);
       // The row is made wherever the element has one (`database.vector`), whatever made the
       // definition before — a literal's, a parameter's; the definition only where it is missing.
-      has_def = nm != "" && el::def_nr(e, "vector<{nm}>") >= 0;
+      // A nullable scalar's (`vector<float?>`) is the plain scalar's definition (`vector<float>`).
+      pbn = el_types::nullable_scalar_elem(e, inner);
+      dn = if pbn != "" { pbn } else { nm };
+      has_def = nm != "" && el::def_nr(e, "vector<{dn}>") >= 0;
       if nm == "" {
         return;
       }
       narrow = match inner {
-        TyInteger { spec } => spec.forced_size == 4,
+        TyInteger { spec } => spec.forced_size == 4 && !el_types::int4(spec),
         _ => false
       };
+      // An `i32` element renders through its own rows (`vector<int<-2147483647,false>>`).
+      if match inner { TyInteger { spec } => el_types::int4(spec), _ => false } && !e.first_pass {
+        vk = el_schema::vector_type(e, el_schema::content_type(e, inner));
+      }
       if narrow {
         return;
       }
@@ -1328,8 +1335,8 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
       if vk < 0 || has_def {
         return;
       }
-      vd = el::add_def(e, "vector<{nm}>", el::pos_at(e, at), el::DT_VECTOR);
-      e.b.data.definitions[vd].parent = type_def_nr(e, inner);
+      vd = el::add_def(e, "vector<{dn}>", el::pos_at(e, at), el::DT_VECTOR);
+      e.b.data.definitions[vd].parent = if pbn != "" { el::source_nr(e, 0, pbn) } else { type_def_nr(e, inner) };
       e.b.data.definitions[vd].known_type = vk;
     },
     _ => {}
@@ -1412,9 +1419,20 @@ pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Nod
       vk = if nm == "" { -1 } else { vector_store(e, inner, nm) };
       // A 4-byte element (`vector<i32>`) is not carried; the 1- and 2-byte ones are.
       narrow = match inner {
-        TyInteger { spec } => spec.forced_size == 4,
+        TyInteger { spec } => spec.forced_size == 4 && !el_types::int4(spec),
         _ => false
       };
+      // An `i32` element renders through its own rows (`vector<int<-2147483647,false>>`).
+      if match inner { TyInteger { spec } => el_types::int4(spec), _ => false } && !e.first_pass {
+        vk = el_schema::vector_type(e, el_schema::content_type(e, inner));
+      }
+      // A formatted `vector<float?>` (`integer?`, `boolean?`) makes the plain scalar's
+      // `vector<…>` definition where it is rendered — not carried: refused by name.
+      fbn = el_types::nullable_scalar_elem(e, inner);
+      if !e.first_pass && fbn != "" && el::def_nr(e, "vector<{fbn}>") < 0 {
+        el::refuse(e, "a formatted vector of nullable scalars whose plain vector has no definition yet");
+        return;
+      }
       // The first pass knows no row of a struct this file declares (`format_vector_row` answers
       // 0 there): the second pass's is the one kept.
       if vk < 0 && !narrow && e.first_pass && nm != "" {
