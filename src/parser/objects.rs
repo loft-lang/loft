@@ -6205,7 +6205,14 @@ impl Parser {
                 // 7, inner: e[0]! }` copied the record with `tag` already over `Leaf.v`).  A
                 // projection place declines instead: the literal is built apart and copied in,
                 // every value read from the old record.
-                if out_of_line && sinks.projection_place {
+                // Only an ENUM VARIANT literal declines: a struct literal's displaced child is
+                // MOVED into the new record (`@FR-R-Demote`'s place clause), which reads it before
+                // any write — a list push `h.next = Node { v, next: h.next }` declined copied the
+                // whole chain on every push.
+                if out_of_line
+                    && sinks.projection_place
+                    && self.data.def_type(td_nr) == DefType::EnumValue
+                {
                     sinks.decline_place = true;
                     false
                 } else if xoff == crate::use_analysis::ANY_FIELD {
