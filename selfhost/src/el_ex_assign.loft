@@ -180,6 +180,10 @@ pub fn bind_root(e: el::El, n: ir::Node, w: integer, rt: ir::TypeT) -> ir::Node 
 // split inside it hands its spelling back when it ends.
 pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, result: ir::TypeT) -> Ex {
   el_vars::open_block(vars);
+  // A loop's variable belongs to the loop's BODY: the `for` header binds it, this block is where.
+  if context == "for" && el_vars::current_loop(vars) >= 0 {
+    el_vars::record_binding(vars, el_vars::current_loop(vars));
+  }
   r = block_body(e, vars, n, context, result);
   el_vars::close_block(vars);
   r
@@ -2362,7 +2366,9 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   // `@FR-B-Scope`, loft#1700: a bind after the name's block ended, at a type its old binding
   // refuses or that differs from it only in absence, is a new binding with a variable of its
   // own, named by the statement's position (`rebind_after_block`).
-  if ended_bind >= 0 && ended_bind == v && !el_types::is_unknown(x.tp) && (retype_refused(e, vars, v, x.tp) || differs_in_absence(e, vars, v, x.tp)) {
+  // A loop's variable splits at ANY type, on both passes: it viewed an element of the walked
+  // collection, so a bind that reused it would write through that view.
+  if ended_bind >= 0 && ended_bind == v && (el_vars::was_loop_var(vars, v) || (!el_types::is_unknown(x.tp) && (retype_refused(e, vars, v, x.tp) || differs_in_absence(e, vars, v, x.tp)))) {
     v = rebind_after_block(e, vars, v, x.tp, at);
   }
   if el_ex_place::promotes_text_param(e, vars, v) {
