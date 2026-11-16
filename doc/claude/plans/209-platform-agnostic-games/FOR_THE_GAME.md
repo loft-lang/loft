@@ -596,3 +596,10 @@ game's agent to take, change or replace:
 
 The whole-screen change to `fixedview.loft` from the note above is in the same patch.
 
+**Tried again on the game at `a7d8080`** (no title screen, the game starts in the fixed 3D
+view): the patch beside this file is now against that commit.  `TW_VIEW=first` starts in the
+first-person view in place of the fixed one.  The same three runs give the same answers: the
+demo world drawn, the town's ground drawn, forward for 270 frames from (45, -90) to y = -63.2.
+The 2D window (`screen`) still opens and is still the loop's host; out on a field the fixed
+view still shows the flat picture, the first-person view the ground.
+
