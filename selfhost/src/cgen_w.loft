@@ -24,6 +24,7 @@ use opt_append_twin;
 use opt_destination;
 use char_walk;
 use opt_store_text_borrow;
+use cgen_deferred;
 use opt_split_table;
 use opt_lazy_split;
 
@@ -400,6 +401,12 @@ struct W {
   v_flag: vector<text>,
   v_reads: vector<text>,
   v_hold: vector<text>,
+  // `@FR-R-DeferredCopy`: the deferred locals, the references null at every mention, and the DC
+  // ID of the span `stmt` is unwrapping, for the statement inside it.
+  dc: vector<cgen_deferred::DcVar>,
+  dc_null_only: vector<boolean>,
+  dc_pending: integer,
+  dc_ctx: vector<integer>,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -692,7 +699,7 @@ fn held(shape: text) -> text {
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
 // what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_APART"];
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_TRANSIENT", "LOFT_NO_APART"];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {

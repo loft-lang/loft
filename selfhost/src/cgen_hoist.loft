@@ -17,6 +17,7 @@ use cgen_lazy;
 use opt_below_len;
 use opt_version;
 use cgen_version;
+use cgen_deferred;
 use opt_length;
 use opt_facts;
 use opt_push;
@@ -84,6 +85,31 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
     return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true };
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
+  // `@FR-R-DeferredCopy`: a deferred local, and a view derived from one, moves to its copy at a
+  // copy point, so no header is held for a path rooted at either.
+  if len(w.dc) > 0 {
+    kept_v: vector<opt_hoist::Held> = [];
+    for h in verdict.vectors {
+      if !cgen_deferred::root(w, h.root) {
+        kept_v += [h];
+      }
+    }
+    verdict.vectors = kept_v;
+    kept_p: vector<opt_hoist::Held> = [];
+    for h in verdict.pushes {
+      if !cgen_deferred::root(w, h.root) {
+        kept_p += [h];
+      }
+    }
+    verdict.pushes = kept_p;
+    kept_m: vector<opt_hoist::Held> = [];
+    for h in verdict.mint_pushes {
+      if !cgen_deferred::root(w, h.root) {
+        kept_m += [h];
+      }
+    }
+    verdict.mint_pushes = kept_m;
+  }
   opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
   pending_grown = opt_hoist::with_grown(x.b, x.writes, w.facts, w.index, lp, verdict);
   // `@FR-R-Scalar`: each record scalar the verdict admits is read once, into a local.
@@ -276,7 +302,7 @@ pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integ
     return -1;
   }
   head = push_head(x, w, first.vector);
-  if head < 0 || w.push_heads[head].size != first.size || windowed_path(w, first.path) {
+  if head < 0 || w.push_heads[head].size != first.size || windowed_path(w, first.path) || cgen_deferred::root(w, first.root) {
     return -1;
   }
   run: vector<opt_push::Push> = [first];

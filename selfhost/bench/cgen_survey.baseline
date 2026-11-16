@@ -18,7 +18,6 @@
   "refused": 0,
   "switches": [
    "LOFT_NO_APART",
-   "LOFT_NO_DEFERRED_COPY",
    "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
@@ -33,7 +32,6 @@
   "refused": 0,
   "switches": [
    "LOFT_NO_APART",
-   "LOFT_NO_DEFERRED_COPY",
    "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
@@ -48,7 +46,6 @@
   "refused": 0,
   "switches": [
    "LOFT_NO_APART",
-   "LOFT_NO_DEFERRED_COPY",
    "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
