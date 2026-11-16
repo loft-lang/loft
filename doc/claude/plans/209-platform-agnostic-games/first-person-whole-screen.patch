@@ -23,16 +23,102 @@
  fn e_picture(v: FixedView, px: const vector<i32>) {
 --- a/main.loft
 +++ b/main.loft
-@@ -269,6 +269,8 @@
+@@ -227,16 +227,25 @@
+     picture(game, shot);
+     return;
+   }
+-  if !screen::open(game::W, game::H, 4, "tile_world - the first climb", fill: true) {
++  // The first-person view (render3d.loft) and what the GPU holds for it.
++  v3 = render3d::view();
++  gpu = render3d::gpu();
++  // The game in the first-person view's own window, over the whole screen, and no other
++  // (`solo`): unless TW_VIEW names another view (fixed, flat), or that window does not open.
++  // Then the 2D window is opened, as before.
++  wanted = env_variable("TW_VIEW") ?? "";
++  solo = (wanted == "" || wanted == "first") && render3d::start(v3, gpu, game);
++  if !solo && !screen::open(game::W, game::H, 4, "tile_world - the first climb", fill: true) {
+     println("this machine has no screen loft can open (no display?)");
+     return;
+   }
+   audio::init(44100);
+   _ = audio::start();
+-  window_keys = screen::has_keys();
++  window_keys = solo || screen::has_keys();
+   if !window_keys { _ = input::device_open(); }
+   // No title screen (owner, 2026-11-16: Kenney is thanked in the game itself, a way to be found).
+-  size = fit_display(game);
++  size = (game::W, game::H);
++  if !solo { size = fit_display(game); }
+   timing = Timing { frames: 0, draw: 0, copy: 0, show: 0, since: ticks() };
+   // Which world (WORLD.md): TW_WORLD names one; in a browser the page the play server served
+   // (/orbury, /demo) says which, as `world <start place>` on the host's input before the game
+@@ -260,40 +269,43 @@
+   // The editor's widgets, where the screen has a pointer: drawn over the frame at half the game's
+   // zoom, so their 8-unit letters are as large on any screen as the game's own.
+   widgets = ui::new_ui(game::ui_font(game), ui::plain_style());
+-  // The first-person view (render3d.loft): V in a browser page; what the GPU holds for it.
+-  v3 = render3d::view();
+-  gpu = render3d::gpu();
+   // The fixed camera from the south (fixedview.loft): F5, or TW_VIEW=fixed to start in it.
+   fv = fixedview::view();
+   // The game is seen in 3D (owner, 2026-11-16: the 2D view goes — it does not work with the 3D
    // work).  It starts in this view; the flat picture is left only where no 3D draws yet: the
    // editor, and the hero out on a field's ground.  TW_VIEW=flat starts without it, while those last.
-   if (env_variable("TW_VIEW") ?? "") != "flat" { fv.on = true; }
-+  // TW_VIEW=first: the first-person view from the start, in place of the fixed one
-+  if (env_variable("TW_VIEW") ?? "") == "first" && render3d::start(v3, gpu, game) { fv.on = false; }
+-  if (env_variable("TW_VIEW") ?? "") != "flat" { fv.on = true; }
++  if !solo && wanted != "flat" { fv.on = true; }
    // Drawn on the GPU in the device's own window where it opens (scene3d), on the CPU through
    // screen where it does not; TW_GPU=0 keeps the CPU, the Tanmatsu's view (SCENE_CONTRACT.md).
    if (env_variable("TW_GPU") ?? "") != "0" { fixedview::use_gpu(fv, gpu_gl::table()); }
-@@ -328,7 +330,7 @@
+-  pointing = screen::has_pointer();
++  pointing = !solo && screen::has_pointer();
+   aim(game, view, size);
+   game::draw(game);
+   mask(game);
+-  present(game, size, timing);
++  if !solo { present(game, size, timing); }
+   last = ticks() / 1000;
+   was_at = (-1, -1);
+   was_buttons = 0;
+   panel_changed = false;
+-  while screen::poll(15) {
+-    at_ptr = screen::pointer();
+-    btn = screen::buttons();
+-    typed_now = screen::typed();
++  while if solo { render3d::poll(gpu) } else { screen::poll(15) } {
++    at_ptr = (0, 0);
++    btn = 0;
++    typed_now = "";
++    if !solo {
++      at_ptr = screen::pointer();
++      btn = screen::buttons();
++      typed_now = screen::typed();
++    }
+     if window_keys {
+-      raw = fixedview::keys(fv, screen::keys());
++      raw = if solo { render3d::window_keys(gpu) } else { fixedview::keys(fv, screen::keys()) };
+       if playlog::keys(plog, game.world.now, raw, K_LOG) {
+         plog.console = !plog.console;
+         playlog::write(plog, "clock {game.world.now}  console log {if plog.console { "on" } else { "off" }}");
+       }
+       fixed_was = fv.on;
+-      if fixedview::toggle(fv, raw) != fixed_was && !fv.on { panel_changed = true; }
+-      game.keys.input_tick_from_state(render3d::keys(v3, gpu, game, raw, screen::program_keys()), at_ptr.0 as float, at_ptr.1 as float, btn, screen::wheel());
++      if !solo && fixedview::toggle(fv, raw) != fixed_was && !fv.on { panel_changed = true; }
++      game.keys.input_tick_from_state(render3d::keys(v3, gpu, game, raw, solo || screen::program_keys()), at_ptr.0 as float, at_ptr.1 as float, btn,
++                                      if solo { 0 } else { screen::wheel() });
+     } else {
+       game.keys.input_tick_device();
+     }
+@@ -304,7 +316,7 @@
+     }
+     now = ticks() / 1000;
+     if plog.on && now - last > SLOW_MS { playlog::write(plog, "clock {game.world.now}  slow frame: {now - last} ms"); }
+-    resized = screen::width() != size.0 || screen::height() != size.1;
++    resized = !solo && (screen::width() != size.0 || screen::height() != size.1);
+     if resized {
+       size = fit_display(game);
+       view.fit = fit_of(size);
+@@ -328,10 +340,14 @@
        timing.frames += 1;
        timing.show += ticks() - shown_at;
        report(timing, size);
@@ -40,7 +126,24 @@
 +    } else if v3.on && !game.editing && render3d::shows(v3, game) {
        aim(game, view, size);
        render3d::draw(v3, gpu, game, changed || resized, now);
-       present(game, size, timing);
+-      present(game, size, timing);
++      if !solo { present(game, size, timing); }
++    } else if solo {
++      // nothing of the flat picture is shown without the 2D window (the editor, a field whose
++      // place has no hex version): the game goes on, at the window's pace
++      render3d::idle(gpu);
+     } else if changed || resized || zooming || touched || panel_changed || render3d::went_off(v3) {
+       panel_changed = false;
+       aim(game, view, size);
+@@ -358,7 +374,7 @@
+     }
+     last = now;
+   }
+-  screen::close();
++  if !solo { screen::close(); }
+   audio::stop_output();
+   if !window_keys { input::device_close(); }
+ }
 --- a/render3d.loft
 +++ b/render3d.loft
 @@ -170,6 +170,13 @@
@@ -73,7 +176,7 @@
  /// The keys the 2D game reads, from the keys pressed: forward is the hero's facing, back the way
  /// behind it (the facing put back after the step, `after`), and left or right turn the hero on the
  /// spot.  Every other key passes as it is.
-@@ -298,13 +314,53 @@
+@@ -298,13 +314,78 @@
              program_keys: boolean = false) -> vector<boolean> {
    was_on = v.on;
    if toggle(v, gpu, g, pressed, program_keys) && was_on { v.went_off = true; }
@@ -84,12 +187,37 @@
    track(v, pressed);
    out: vector<boolean> = [];
    for k in pressed { out += [k]; }
-   out
- }
++  out
++}
++
++/// The view's own window as the program's only one: the machine's events handed to it; false
++/// once it was closed.
++pub fn poll(gpu: const Gpu) -> boolean {
++  for gl in gpu.gls { if !gl.win.poll() { return false; } }
++  len(gpu.gls) > 0
++}
++
++/// A frame in which the view draws nothing: the window shown again as it is, which waits for
++/// the screen as a drawn frame does.
++pub fn idle(gpu: const Gpu) {
++  for gl in gpu.gls { gl.win.swap(); }
++}
++
++/// The keys down in the view's window, 256 flags in the codes `screen::keys()` answers — but
++/// never the key that switches the view off: with no other window there is nothing to show then.
++pub fn window_keys(gpu: const Gpu) -> vector<boolean> {
++  out: vector<boolean> = [];
++  for k in 0..256 {
++    held = false;
++    for gl in gpu.gls { if gl.win.key_down(k) { held = true; } }
++    out += [held && k != K_SWITCH];
++  }
++  out
++}
 +
 +/// How fast the view turns on a field, in degrees a millisecond.
 +const FIELD_TURN = 0.15;
- 
++
 +/// On a field the body walks free, so the view steers it itself: left and right turn the view,
 +/// forward walks the way it looks and back the other way, the view kept.  The four ways' keys
 +/// are taken out of what the game reads; what it walks by is `g.steer_x`, `g.steer_y`.
@@ -115,9 +243,9 @@
 +  way = if down(keys, K_W) || down(keys, K_UP) || auto.contains("w") { 1.0 } else if down(keys, K_S) || down(keys, K_DOWN) || auto.contains("s") { -1.0 } else { 0.0 };
 +  g.steer_x = sin(rad) * way;
 +  g.steer_y = cos(rad) * way;
-+  out
-+}
-+
+   out
+ }
+ 
 +/// Does the view draw where the hero is?  Everywhere but on a field whose place has no hex
 +/// version to draw.
 +pub fn shows(v: View3D, g: const game::Game) -> boolean {
@@ -127,7 +255,7 @@
  /// Did the view just go off (the 2D frame must be drawn again)?  Answers once.
  pub fn went_off(v: View3D) -> boolean {
    off = v.went_off;
-@@ -1608,7 +1664,8 @@
+@@ -1608,7 +1689,8 @@
    ey = (w.hero_z as float) + STEP * (w.hero_h as float) + EYE + p.hop / 64.0;
    // The place's hex version, where it has one and the hero is out under the sky or in a house:
    // its ground and houses in place of the square cells, the eye on its ground.
@@ -137,11 +265,10 @@
    if hex != v.hex_mode {
      v.hex_mode = hex;
      v.built = false;
-@@ -1616,6 +1673,16 @@
-   if hex {
+@@ -1617,6 +1699,16 @@
      ey = hex_y(v, w, w.hero_x, w.hero_y, w.hero_z, (w.hero_z as float) + STEP * (w.hero_h as float))
           + EYE_M / TILE_M + p.hop / 64.0;
-+  }
+   }
 +  if field {
 +    // out on the town's ground: the eye where the body is, over the ground there, looking the
 +    // way the keys turned it
@@ -151,10 +278,11 @@
 +    ey = (hexscene::height_at(s, g.fplay.x, g.fplay.y) + EYE_M) / TILE_M;
 +    if !v.field_was { v.fyaw = atan2(g.fplay.face_x, g.fplay.face_y) * 180.0 / PI; }
 +    v.yaw = v.fyaw;
-   }
++  }
    for gl in gpu.gls {
      ww = gl.win.width();
-@@ -1629,9 +1696,12 @@
+     wh = gl.win.height();
+@@ -1629,9 +1721,12 @@
        gl.place.update(v.place);
        v.built = true;
      }
@@ -169,7 +297,7 @@
      fog = if !sky { (0.0, 0.0, 0.0) } else if w.night { NIGHT_SKY } else { SKY };
      gl.win.viewport(0, 0, ww, wh);
      gl.win.clear(graphics::rgba(((fog.0 * 255.0) as integer), ((fog.1 * 255.0) as integer), ((fog.2 * 255.0) as integer), 255));
-@@ -1665,6 +1735,13 @@
+@@ -1665,6 +1760,13 @@
      gl.win.disable(graphics::GL_CULL_FACE);
      gl.win.disable(graphics::GL_BLEND);
      gl.win.viewport(0, 0, ww, wh);

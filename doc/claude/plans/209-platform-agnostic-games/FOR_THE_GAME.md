@@ -603,3 +603,18 @@ demo world drawn, the town's ground drawn, forward for 270 frames from (45, -90)
 The 2D window (`screen`) still opens and is still the loop's host; out on a field the fixed
 view still shows the flat picture, the first-person view the ground.
 
+**Without the 2D window** (the owner: "remove the 2d window"; the patch, against `a7d8080`):
+with `TW_VIEW` unset or `first`, `main` opens the first-person view's window first and, where
+it opens, no other (`solo`).  The loop then runs on that window (`render3d::poll`), the keys
+are its own (`render3d::window_keys`, never the key that switches the view off), and nothing
+of `screen` is called: no pointer, no typed text, no flat frame shown.  `TW_VIEW=fixed` or
+`flat`, or a machine where the view's window does not open, opens the 2D window as before.
+
+- Run scripted on a Mac: the demo world and a walk in the town give the frames and the
+  numbers they gave with the 2D window.
+- **Not tried: a real key.**  The view's window was read through `screen`'s program-wide keys
+  until now; that its own `key_down` answers on a Mac is untested.
+- What has no picture this way: the editor, and a field whose place has no hex version (the
+  game goes on, the window shows its last frame).  The hearts and the note are drawn on the
+  game's surface, which nothing shows: they want drawing in the view.
+
