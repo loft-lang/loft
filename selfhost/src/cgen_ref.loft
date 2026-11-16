@@ -26,6 +26,7 @@ use cgen_file;
 use ptypes;
 use cgen_parse;
 use opt_push;
+use cgen_keyed;
 use binds;
 use opt_non_sentinel;
 use types;
@@ -726,6 +727,11 @@ fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
   // `OpSetKeyed(coll, value, tp, n, key…)` (`c[k…] = v`, `set_keyed`): the record copied into
   // the collection at its keys; the type's high bit says the value is a temporary to free.
   if name == "OpSetKeyed" && count >= 4 {
+    in_place = false;
+    placed = cgen_keyed::keyed_in_place(x, w, args, ind, in_place);
+    if in_place {
+      return placed;
+    }
     raw = cgen_fn::literal(w, args[2], "type") ?? return none();
     tp = raw & 32767;
     kind = keyed_kind(x.b, tp);

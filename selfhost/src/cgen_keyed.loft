@@ -1,0 +1,138 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the keyed writes `src/c/body/keyed.rs` rewrites: `@FR-R-InPlaceLiteral`'s
+// keyed clause (`keyed_in_place`, `stage_literal_writes`).
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_ref;
+use cgen_tables;
+use loop_shape;
+use opt_keyed_place;
+
+// One staged field write of a keyed literal: the setter and its operands, the base left null
+// until the claimed record names it.
+struct Write {
+  name: text,
+  args: vector<ir::Node>,
+}
+
+// `keyed_in_place`: `c[k…] = R { … }` with a full subscript of pure keys is written into the
+// element the collection claims for it — the literal's values and the statements computing
+// them run first, in program order, then the element under the key is removed and a fresh one
+// claimed (`loft_keyed_place_begin`), the literal's default image and staged values are written
+// into it, and the key is written and the element filed (`loft_keyed_place_finish`).  No store
+// is minted for the literal and nothing is copied.  A text key keeps the plain form (a staged
+// view could name memory the claim moves).  `taken` false: the plain form writes it.
+pub fn keyed_in_place(x: Cx, w: W, args: vector<ir::Node>, ind: integer, taken: &boolean) -> E {
+  taken = false;
+  if !opt_keyed_place::enabled() {
+    return none();
+  }
+  site = opt_keyed_place::site(x.b, args, w.index);
+  if site.buf < 0 {
+    return none();
+  }
+  kind = cgen_ref::keyed_kind(x.b, site.tp);
+  if kind == "" {
+    taken = true;
+    refuse(w, "a keyed operation on another kind of type");
+    return none();
+  }
+  elem = cgen_ref::content_of(x.b, site.tp);
+  kparts = x.b.types[site.tp]!.keys;
+  if kind == "array" || len(site.keys) != len(kparts) || len(kparts) > 8 {
+    return none();
+  }
+  for k in kparts {
+    if k.type_nr == 6 || k.type_nr == -6 {
+      return none();
+    }
+  }
+  taken = true;
+  cgen_tables::copy_type(x, elem);
+  writes = stage_literal_writes(x, w, site, ind);
+  if w.why != "" {
+    return none();
+  }
+  flush(w, ind);
+  container = cgen_fn::expr(x, w, site.coll, ind);
+  ct = temp(w, "ref");
+  line(w, ind, "{ct} = {as_ref(w, container)};");
+  kname = cgen_tables::keys_name(x, site.tp);
+  values: vector<text> = [];
+  for k in site.keys {
+    values += [cgen_ref::key_value(w, cgen_fn::expr(x, w, k, ind), kparts[k#index]!.type_nr)];
+  }
+  if w.why != "" {
+    return none();
+  }
+  kv = if len(values) == 0 { "0" } else { "(loft_kv[]){{ {values.join(", ")} }}" };
+  kc = if kind == "hash" { "LOFT_KEYED_HASH" } else if kind == "sorted" { "LOFT_KEYED_SORTED" } else if kind == "index" { "LOFT_KEYED_INDEX" } else if kind == "ordered" { "LOFT_KEYED_ORDERED" } else if kind == "spatial" { "LOFT_KEYED_SPATIAL" } else { "LOFT_KEYED_TRIE" };
+  common = "{kc}, {kname}, {len(kparts)}, {kv}, {len(values)}";
+  e = temp(w, "ref");
+  line(w, ind, "{e} = loft_keyed_place_begin(loft_types, {elem}, {ct}, {common});");
+  line(w, ind, "loft_fill({e}, {cgen_tables::default_name(x, elem)}, {x.b.types[elem].size});");
+  raw_expr(w, e, "ref");
+  for wr in writes {
+    staged = [ir::NdRawExpr { s: e }] + wr.args;
+    written = cgen_fn::op_call(x, w, wr.name, staged, ind);
+    if w.why != "" {
+      return none();
+    }
+    line(w, ind, "{written.code};");
+  }
+  line(w, ind, "loft_keyed_place_finish(loft_types, {elem}, {ct}, {e}, {common});");
+  E { code: "((void) 0)", kind: K_VOID }
+}
+
+// `stage_literal_writes`: each field write's operands, in program order, into temporaries — a
+// statement computing one runs where it stood.  The writes come back without their base.
+fn stage_literal_writes(x: Cx, w: W, site: opt_keyed_place::Site, ind: integer) -> vector<Write> {
+  writes: vector<Write> = [];
+  for op in site.body {
+    staged = false;
+    match loop_shape::unspan(op) {
+      NdCall { def_nr, args } => {
+        name = cgen_fn::def_name(x.b, def_nr);
+        if name.starts_with("OpSet") && len(args) > 0 && loop_shape::var_of(loop_shape::unspan(args[0])) == site.buf {
+          staged = true;
+          operands: vector<ir::Node> = [];
+          for i in 1..len(args) {
+            operand = args[i]!;
+            if opt_keyed_place::constant(operand) {
+              operands += [operand];
+              continue;
+            }
+            value = cgen_fn::expr(x, w, operand, ind);
+            if w.why != "" {
+              return writes;
+            }
+            shape = if value.kind == K_TUP { value.tup } else if value.kind == K_VIEW || value.kind == K_VOID { "" } else { shape_of_kind(value.kind) };
+            if shape == "" {
+              refuse(w, "a keyed literal's field value of no stageable shape");
+              return writes;
+            }
+            t = temp(w, shape);
+            line(w, ind, "{t} = {as_shape(w, value, shape)};");
+            raw_expr(w, t, shape);
+            operands += [ir::NdRawExpr { s: t }];
+          }
+          writes += [Write { name: name, args: operands }];
+        }
+      },
+      _ => {},
+    }
+    if !staged {
+      cgen_fn::stmt(x, w, op, ind);
+    }
+    if w.why != "" {
+      return writes;
+    }
+  }
+  writes
+}

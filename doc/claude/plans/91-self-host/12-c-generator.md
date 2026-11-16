@@ -281,7 +281,8 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (18): `VALUE_RECORD`, `DISTINCT_VERSION`, `REBOUND_MOVER`, `APART_MINT`, `CALLEE_INPUTS`, `GROWN_HEADER`, `GUARD_BOUND`, `VERSION`, `TRANSIENT`, `DEFERRED_COPY`, `LOOP_RECORD`, `APART`, `APPEND_LOOP_WINDOW`, `APPEND_TWIN`, `HAND_OVER`, `VR_PTR`, `FNREF_PARK`, `FNREF_BUFFER`.
+`cgen_w::PLAIN_SWITCHES` names them (24): `VALUE_RECORD`, `DISTINCT_VERSION`, `REBOUND_MOVER`, `APART_MINT`, `CALLEE_INPUTS`, `GROWN_HEADER`, `GUARD_BOUND`, `VERSION`, `TRANSIENT`, `DEFERRED_COPY`, `LOOP_RECORD`, `APART`, `APPEND_LOOP_WINDOW`, `APPEND_TWIN`, `HAND_OVER`, `VR_PTR`, `FNREF_PARK`, `FNREF_BUFFER`, `CHAR_WALK`, `LAZY_SPLIT`, `SPLIT_TABLE`, `TESTED_BORROW`, `TEXT_WINDOW`, `DESTINATION`.
+Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`).
 A rule leaves the list when both sides agree on the whole corpus with it on.  Where a coarse
 switch covers several clauses, its finer switches take its place first and each clause is
 ported on its own.
@@ -396,6 +397,7 @@ came out 64-bit from the image.
 | `selfhost/src/opt_text_borrow.loft`, `opt_store_text_borrow.loft` | `src/opt/text_borrow.rs` (`borrowed_text_walks`, `text_escapes_with`), `opt::hoist::borrowed_discharge_temps`, `src/opt/store_text_borrow.rs` | whole for what the C writer asks (`local_roots`); the walk's re-read (`TextBorrow.read`) is not kept |
 | `selfhost/src/cgen_texts.loft` | `borrowed_texts`, `literal_views`, `view_bind`, `work_view_bind` in `src/c/body.rs` | whole; the writer does not write a text yet |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
+| `selfhost/src/opt_keyed_place.loft`, `cgen_keyed.loft` | `src/opt/keyed_place.rs`; `keyed_in_place`, `stage_literal_writes` of `src/c/body/keyed.rs` | whole: `@FR-R-InPlaceLiteral`'s keyed clause; a rewrite's C operand is an `NdRawExpr` the writer names with `raw_expr` (`FnWriter::raw`) |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at
