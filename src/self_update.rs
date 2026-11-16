@@ -499,6 +499,7 @@ mod tests {
             loft: ">=0".to_string(),
             api_compatible_with: None,
             data_compatible_with: None,
+            deprecated: None,
             deps: BTreeMap::new(),
             conflicts: Vec::new(),
             replaces: Vec::new(),

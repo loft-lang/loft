@@ -1180,14 +1180,30 @@ fn resolve_declared(
                 .filter(|v| registry_index::satisfies(v, constraint_str))
                 .map(String::as_str)
                 .collect();
-            let because = if blocked.is_empty() {
-                String::new()
-            } else {
+            let deprecated: Vec<&registry_index::Version> = pkg
+                .versions
+                .values()
+                .filter(|v| v.deprecated.is_some())
+                .filter(|v| registry_index::satisfies(&v.semver, constraint_str))
+                .collect();
+            let because = if !blocked.is_empty() {
                 format!(
                     " — every version that matches is yanked ({}); \
                      raise the constraint, or ask for one by exact version to take it anyway",
                     blocked.join(", ")
                 )
+            } else if let Some(first) = deprecated.first() {
+                format!(
+                    " — every version that matches is deprecated ({}): {}; raise the constraint",
+                    deprecated
+                        .iter()
+                        .map(|v| v.semver.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    first.deprecated.as_deref().unwrap_or_default()
+                )
+            } else {
+                String::new()
             };
             format!(
                 "no version of `{name}` satisfies constraint `{constraint_str}` \
@@ -1195,6 +1211,16 @@ fn resolve_declared(
             )
         })?
         .clone();
+    // A deprecated release reaches the graph only by an exact pin or a lock: it is held for
+    // the project that names it, and the note says why it will not build and what to take.
+    if let Some(why) = &version.deprecated {
+        let newest = registry_index::find_best_version(pkg, "*", false)
+            .map_or_else(String::new, |n| format!("; the newest is {}", n.semver));
+        eprintln!(
+            "note: `{name}` {} is deprecated: {why}{newest}",
+            version.semver
+        );
+    }
 
     let dep_pairs: Vec<(String, String)> = version
         .deps
@@ -1454,6 +1480,7 @@ mod tests {
             loft: ">=0.8".to_string(),
             api_compatible_with: None,
             data_compatible_with: None,
+            deprecated: None,
             deps: d,
             conflicts: vec![],
             replaces: vec![],
@@ -1822,6 +1849,31 @@ mod tests {
         assert_eq!(resolved_b(&graph), "0.1.5");
     }
 
+    /// A range that only deprecated releases satisfy is refused, naming the deprecation and
+    /// its reason, so the reader raises the constraint rather than re-reading it.
+    #[test]
+    fn a_range_only_deprecated_releases_satisfy_names_the_deprecation() {
+        let mut v09 = ver("0.9.12", &[]);
+        v09.deprecated = Some("its native part is Rust only".to_string());
+        let idx = index(vec![pkg("g", vec![v09, ver("0.12.1", &[])])]);
+        let mut graph = Vec::new();
+        let err = resolve_recursive(
+            &idx,
+            "g",
+            Some("^0.9"),
+            &opts(),
+            &BTreeMap::default(),
+            &mut graph,
+        )
+        .expect_err("nothing buildable in range");
+        assert!(
+            err.contains("every version that matches is deprecated (0.9.12)")
+                && err.contains("its native part is Rust only")
+                && err.contains("the newest is 0.12.1"),
+            "msg: {err}"
+        );
+    }
+
     #[test]
     fn rejects_unsatisfiable_constraint() {
         let idx = index(vec![pkg("a", vec![ver("0.1.0", &[])])]);
@@ -2067,6 +2119,7 @@ mod tests {
             loft: ">=0.8".to_string(),
             api_compatible_with: None,
             data_compatible_with: None,
+            deprecated: None,
             deps: BTreeMap::new(),
             conflicts: vec![],
             replaces: vec![],
@@ -2202,6 +2255,7 @@ mod tests {
                 loft: ">=0".to_string(),
                 api_compatible_with: None,
                 data_compatible_with: None,
+                deprecated: None,
                 deps: std::collections::BTreeMap::new(),
                 conflicts: Vec::new(),
                 replaces: Vec::new(),

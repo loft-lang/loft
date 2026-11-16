@@ -99,8 +99,11 @@ def versions_for(pkg: dict, scope: str) -> list:
     yanked = _yanked(pkg)
     # A PRERELEASE is excluded from both scopes: `loft install` will not resolve one without an
     # exact pin, so it is not what a user gets and not what a pin lands on either.
+    # A DEPRECATED release (this loft cannot build it — scripts/registry_deprecate.py) is held
+    # for a pin, but no scope tests it.
     usable = sorted(
-        (v for v in pkg.get("versions", {}) if v not in yanked and "-" not in v),
+        (v for v, e in pkg.get("versions", {}).items()
+         if v not in yanked and "-" not in v and not (e or {}).get("deprecated")),
         key=_key,
     )
     if not usable:
@@ -160,6 +163,8 @@ _CASES = [
     ("a release with no floor is from before the boundary",
      {"versions": {"0.1.0": {}}}, "contract", []),
     # The boundary reads the floor as a version, so 2026.12 is past 2026.11 and 2026.9 is not.
+    ("a deprecated release is in no scope",
+     {"versions": {"0.1.0": {"deprecated": "Rust only"}, "0.2.0": {}}}, "full", ["0.2.0"]),
     ("the floor compares as a version, not a string",
      {"versions": {"0.1.0": {"loft": ">=2026.9.0"}, "0.2.0": {"loft": ">=2026.12.0"}}},
      "contract", ["0.2.0"]),

@@ -4675,13 +4675,20 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
     let msg = if let Some(why) = unbuildable {
         format!("native function {}: {why}", def.native())
     } else {
-        format!(
-            "native function {} is not in this build: its library ({library}) has only a Rust \
-             native part, which the C backend does not link.  Run it with --native-rust or \
-             --interpret, or give the library a C native part (a `[c] shim`, a prebuilt C \
-             library, or a component).",
-            def.native()
-        )
+        // A Rust-only native part is refused here, at build, rather than compiled into a stub
+        // that panics at the call: such a release is deprecated (its native part is Rust,
+        // which loft does not build), and a newer release of the library has a C part.
+        let package = library
+            .split_whitespace()
+            .next()
+            .unwrap_or(&library)
+            .to_string();
+        return Err(format!(
+            "native {} (its library, {library}, has only a Rust native part, which loft does \
+             not build — that release is deprecated; take a newer {package} with a C part: \
+             loft install {package})",
+            def.original_name()
+        ));
     };
     let mut out = String::new();
     for i in 0..params.len() {

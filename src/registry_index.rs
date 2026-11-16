@@ -111,6 +111,12 @@ pub struct Version {
     /// a data break is not fixed by choosing a different version — the old data
     /// still needs migrating either way.
     pub data_compatible_with: Option<String>,
+    /// Why this release is DEPRECATED — `None` when it is not.  A deprecated release is held
+    /// (an exact pin or a lock still resolves it, and it stays downloadable) but no range
+    /// lands on it, as a yanked one: this loft cannot build it, a native part in Rust being
+    /// the first reason (`scripts/registry_deprecate.py` writes it; PKG_REGISTRY.md §
+    /// Deprecation).
+    pub deprecated: Option<String>,
     pub deps: BTreeMap<String, String>,
     /// Schema slot — resolver-side support deferred.
     pub conflicts: Vec<String>,
@@ -349,6 +355,7 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
     let mut loft: Option<String> = None;
     let mut api_compatible_with: Option<String> = None;
     let mut data_compatible_with: Option<String> = None;
+    let mut deprecated: Option<String> = None;
     let mut deps: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicts: Vec<String> = Vec::new();
     let mut replaces: Vec<String> = Vec::new();
@@ -376,6 +383,7 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
             ("loft", Parsed::Str(s)) => loft = Some(s.clone()),
             ("api_compatible_with", Parsed::Str(s)) => api_compatible_with = Some(s.clone()),
             ("data_compatible_with", Parsed::Str(s)) => data_compatible_with = Some(s.clone()),
+            ("deprecated", Parsed::Str(s)) => deprecated = Some(s.clone()),
             ("deps", Parsed::Object(dmap)) => {
                 for (dname, _, dval) in dmap {
                     if let Parsed::Str(s) = dval {
@@ -468,6 +476,7 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
         loft,
         api_compatible_with,
         data_compatible_with,
+        deprecated,
         deps,
         conflicts,
         replaces,
@@ -601,7 +610,8 @@ fn best_version<'a>(
     let exact_pin = is_exact_pin(constraint);
     let mut best: Option<&Version> = None;
     for ver in pkg.versions.values() {
-        if yanked.contains(ver.semver.as_str()) && !exact_pin {
+        // A deprecated release is held like a yanked one: an exact pin still names it.
+        if (yanked.contains(ver.semver.as_str()) || ver.deprecated.is_some()) && !exact_pin {
             continue;
         }
         if ver.prerelease && !allow_prerelease {
@@ -685,6 +695,7 @@ pub fn find_compatible_version<'a>(
     let mut withheld: Vec<&Version> = Vec::new();
     for ver in pkg.versions.values() {
         if yanked.contains(ver.semver.as_str())
+            || ver.deprecated.is_some()
             || (ver.prerelease && !allow_prerelease)
             || !satisfies(&ver.semver, constraint)
             || !floor_admits(ver)
@@ -2247,6 +2258,44 @@ mod tests {
         assert_eq!(api_line_floor("<0.3"), None);
     }
 
+    /// A DEPRECATED release is held for a pin and skipped by a range, as a yanked one is: `g`
+    /// 0.9.12 (Rust only) is what `0.9.12` names, never what `>=0.9.0` or `*` lands on, and the
+    /// API-line choice falls back past it to the newest that is not deprecated.
+    #[test]
+    fn a_deprecated_release_is_held_for_a_pin_and_skipped_by_a_range() {
+        let parsed = parse_index(
+            r#"{"schema_version": 1, "updated": "x", "packages": {"g": {"yanked": [], "versions": {
+              "0.9.12": {"url": "u", "sha256": "s", "size": 1, "loft": ">=0.8", "published": "p",
+                         "api_compatible_with": "0.4.2", "deprecated": "Rust only"},
+              "0.12.1": {"url": "u", "sha256": "s", "size": 1, "loft": ">=0.8", "published": "p",
+                         "api_compatible_with": "0.12.0"}}}}}"#,
+        )
+        .expect("parses");
+        let g = &parsed.packages["g"];
+        assert_eq!(
+            g.versions["0.9.12"].deprecated.as_deref(),
+            Some("Rust only")
+        );
+        let pick = |c: &str| find_best_version(g, c, false).map(|v| v.semver.clone());
+        assert_eq!(
+            pick("0.9.12").as_deref(),
+            Some("0.9.12"),
+            "an exact pin still resolves it"
+        );
+        assert_eq!(pick(">=0.9.0").as_deref(), Some("0.12.1"));
+        assert_eq!(pick("*").as_deref(), Some("0.12.1"));
+        assert_eq!(
+            pick("^0.9"),
+            None,
+            "a range only it satisfies resolves nothing"
+        );
+        assert_eq!(
+            find_in_api_line(g, ">=0.9.0", false, Some("0.9.0")).map(|v| v.semver.as_str()),
+            Some("0.12.1"),
+            "nothing buildable is left in the line, so the newest"
+        );
+    }
+
     // ── @PLN78 step 1 — one bad entry must not take the registry down ────────────
     //
     // The index is ONE document serving every client, so the blast radius of a
@@ -3305,6 +3354,7 @@ mod tests {
             loft: ">=0.8".to_string(),
             api_compatible_with: None,
             data_compatible_with: None,
+            deprecated: None,
             deps: BTreeMap::new(),
             conflicts: vec![],
             replaces: vec![],

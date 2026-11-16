@@ -763,6 +763,30 @@ Index signing, reproducible-build verification and nightly toolchain validation 
 
 ---
 
+### Deprecation
+
+A release this loft cannot build is **deprecated**: its `versions` entry gains
+`"deprecated": "<reason>"`.  Like a yank it is held, never withdrawn — it stays listed and
+downloadable, and an exact pin or a `loft.lock` still resolves it — and no range lands on it, so
+`>=0.9.0` and a library's API line (@C166) skip it.  Unlike a yank it states WHY, and the
+refusals say so:
+
+- a range only deprecated releases satisfy is refused with the reason and the newest release;
+- installing one by exact pin prints a note naming the reason and the newest release;
+- a C build of a program that calls a native only a Rust part provides is refused at build,
+  naming the library and `loft install <library>` — never compiled into a stub that halts at
+  the call (`tests/c_emit.rs` `a_rust_crate_native_is_named_as_such_on_the_c`).
+
+The reason read from a release itself: **its native part is Rust only** (a `[native] crate`
+with no `[c]` shim, prebuilt library or component), which loft does not build.  `scripts/registry_deprecate.py <index.json>` lists them from each release's
+`loft.toml`; with `--write` it writes the field and prints the bound signing command
+(`scripts/registry-sign.sh --pr <N> --expect <pkg>@<ver> …`: a changed version matches
+`--expect`, and every other version and package must stay byte-identical).  A DEPENDANT of a
+deprecated release is not inferred deprecated: with nothing left in its range's API line it
+resolves to the newest release, and whether it works there is registry validation's to say.
+No scope of `registry-validation` tests a deprecated release.  Deprecating a release a project
+could pin is a deliberate break, recorded with `freeze:broken` (.github/LABELS.md).
+
 ## Migration to a real server (later)
 
 **Hard constraint: the user-visible behaviour must NOT change.** See
