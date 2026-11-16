@@ -21566,7 +21566,7 @@ impl Parser {
         // `work_ref_of_another_record`).  The reference delivery already copies such a tail
         // (`ls_can_be_record_buffer`); this rung keeps the candidate an inner work-ref for every
         // other site that asks.
-        if self.work_ref_of_another_record(v, &ctx.ret) {
+        if self.work_ref_of_another_record(v, ctx.ret) {
             return RetPromotion::SkipInnerRef;
         }
         let n = self.vars.name(v);
