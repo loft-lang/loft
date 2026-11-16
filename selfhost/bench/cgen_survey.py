@@ -293,8 +293,22 @@ def gate(o, key, switches, numbers):
 GATED = ("agree", "equal", "pass", "rows", "same")
 
 
+def bench_files(root):
+    """The benches `--bench` runs without `--files`: this tree's `bench/NN_*/bench.loft`, then
+    every library bench of the checkouts `make perf-libs` keeps (`$LOFT_PERF_LIBS`, by default
+    `loft-bench-libs` beside this repository: `<repo>/<library>/bench/bench.loft`)."""
+    import glob
+    libs = os.environ.get("LOFT_PERF_LIBS", os.path.join(os.path.dirname(root), "loft-bench-libs"))
+    own = sorted(glob.glob(os.path.join(root, "bench", "[0-9]*", "bench.loft")))
+    lib = sorted(glob.glob(os.path.join(libs, "*", "*", "bench", "bench.loft")))
+    if not lib:
+        print(f"no library benches under {libs} (make perf-libs clones them)", file=sys.stderr)
+    return [os.path.abspath(f) for f in own + lib]
+
+
 def config_key(o):
-    scope = ("files:" + os.path.basename(o.files)) if o.files else ("scripts" if o.scripts_only else "corpus")
+    scope = ("files:" + os.path.basename(o.files)) if o.files else (
+        "benches" if o.bench else ("scripts" if o.scripts_only else "corpus"))
     if o.chapter:
         scope += ":" + ",".join(sorted(o.chapter))
     what = "run" if o.run else (o.layer or "unit")
@@ -322,8 +336,8 @@ def main():
                          "and compare its output and exit with the interpreter's")
     ap.add_argument("--bench", action="store_true",
                     help="with --run: the programs are benches (bench/*/bench.loft, a library's "
-                         "bench/bench.loft) — run with --n 2, and compare each routine row's "
-                         "hash, not the timings")
+                         "bench/bench.loft; without --files every one of them, see bench_files) — "
+                         "run with --n 2, and compare each routine row's hash, not the timings")
     ap.add_argument("--files", default=None, metavar="LIST",
                     help="the programs to survey: a file of paths, one per line (the last tab "
                          "field of a line), instead of the census's corpus")
@@ -373,6 +387,8 @@ def main():
         if o.files:
             with open(o.files, encoding="utf-8") as fh:
                 files = [os.path.abspath(l.rstrip("\n").split("\t")[-1]) for l in fh if l.strip()]
+        elif o.bench:
+            files = bench_files(root)
         if o.run:
             if not o.generator:
                 sys.exit("--run builds the generator's units: give --cgen or --generator")
