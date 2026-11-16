@@ -15,6 +15,8 @@ use opt_hoist;
 use opt_apart;
 use cgen_lazy;
 use opt_below_len;
+use opt_version;
+use cgen_version;
 use opt_length;
 use opt_facts;
 use opt_push;
@@ -774,6 +776,8 @@ fn pa_reader(name: text, kind: &integer) -> text {
 pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = false;
   count = len(args);
+  // `@FR-R-Version`: a fast twin's element access its precondition proved (`version_raw`).
+  vf_raw = w.call_kind == opt_version::RAW;
   if (name == "OpGetVector" || name == "OpGetVectorNullable") && count == 3 {
     h = read_header(x, w, args[0]);
     if h == "" {
@@ -819,11 +823,14 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     size = cgen_fn::literal(w, el.size, "element size") ?? return none();
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     k = if name == "OpGetInt" { K_INT } else { K_FLOAT };
-    counted = counter_index(x, w, el.idx, held);
+    counted = if vf_raw { "" } else { counter_index(x, w, el.idx, held) };
     if counted != "" {
       return E { code: "({held_proof(x, w, el.vec, held)}, {if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" }}({held}, {size}, {counted}, {fld}))", kind: k };
     }
     i = as_int(w, cgen_fn::expr(x, w, el.idx, ind));
+    if vf_raw {
+      return E { code: cgen_version::access(name, held, size, fld, i, "", false), kind: k };
+    }
     guard = guard_index(x, w, el.idx);
     if guard == 1 {
       return E { code: "({held_proof(x, w, el.vec, held)}, {if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" }}({held}, {size}, {i}, {fld}))", kind: k };
@@ -868,11 +875,13 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     proof = held_proof(x, w, el.vec, held);
     counted = counter_index(x, w, el.idx, held);
     i = if counted != "" { "" } else { as_int(w, cgen_fn::expr(x, w, el.idx, ind)) };
-    guard = if counted != "" { -1 } else { guard_index(x, w, el.idx) };
+    guard = if counted != "" || vf_raw { -1 } else { guard_index(x, w, el.idx) };
     nn = "_lt";
-    index = if counted != "" { "" } else if guard >= 0 { i } else { index_arg(x, w, el.idx, i, nn) };
+    index = if counted != "" || vf_raw { "" } else if guard >= 0 { i } else { index_arg(x, w, el.idx, i, nn) };
     addr = if counted != "" {
       "loft_vh_at_addr({held}, {size}, {counted})"
+    } else if vf_raw {
+      "loft_vh_at_addr({held}, {size}, {i})"
     } else if guard == 1 {
       "loft_vh_at_addr({held}, {size}, {index})"
     } else if el.report { "loft_vh_addr_at{nn}({held}, {size}, {index}, {cgen_fn::site(w)})" } else { "loft_vh_addr{nn}({held}, {size}, {index})" };
@@ -881,6 +890,25 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
       return E { code: "({proof}, {reader}({addr}, {fld}, {c_long(min)}))", kind: kind };
     }
     return E { code: "({proof}, {reader}({addr}, {fld}))", kind: kind };
+  }
+  // A fast twin writes a boolean element at its proven index; any other boolean write keeps
+  // the store's own path.
+  if name == "OpSetBoolean" && count == 3 && vf_raw {
+    el = elem_of(x, args[0]);
+    if !el.found {
+      return none();
+    }
+    held = held_vector(x, w, el.vec);
+    if held == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, el.size, "element size") ?? return none();
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [el.idx, args[2]];
+    i = as_int(w, cgen_fn::arg(x, w, pair, 0, ind));
+    value = as_bool(w, cgen_fn::arg(x, w, pair, 1, ind));
+    return E { code: "({held_proof(x, w, el.vec, held)}, {cgen_version::access(name, held, size, fld, i, value, true)})", kind: K_VOID };
   }
   if (name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetInt4Raw") && count == 3 {
     el = elem_of(x, args[0]);
@@ -899,6 +927,9 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     value = cgen_fn::arg(x, w, pair, 1, ind);
     f = if name == "OpSetInt" { "loft_vh_set_int" } else if name == "OpSetInt4Raw" { "loft_vh_set_u32" } else { "loft_vh_set_float" };
     code = if name == "OpSetFloat" { as_float(w, value) } else { as_int(w, value) };
+    if vf_raw {
+      return E { code: cgen_version::access(name, held, size, fld, i, code, true), kind: K_VOID };
+    }
     guard = guard_index(x, w, el.idx);
     if guard == 1 {
       put = if name == "OpSetInt" { "loft_vh_put_int" } else if name == "OpSetInt4Raw" { "loft_vh_put_u32" } else { "loft_vh_put_float" };

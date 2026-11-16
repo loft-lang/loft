@@ -73,9 +73,8 @@ pub struct Site {
   pub args: vector<ir::Node>,
 }
 
-// The calls of loft bodies in `node`, in walk order.  The callers ask `of` outside the walk's
-// closure: an `Inputs` answered from the memo and bound inside a closure is released by it
-// (loft#2523).
+// The calls of loft bodies in `node`, in walk order, so a caller asks `of` in its own loop
+// rather than inside the walk's closure.
 pub fn calls_in(b: ir::Bundle, node: ir::Node) -> vector<Site> {
   out: vector<Site> = [];
   opt_non_sentinel::walk(node, fn(n: ir::Node) {

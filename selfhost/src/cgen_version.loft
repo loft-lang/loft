@@ -1,0 +1,986 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Version` in the C as `src/c/body/version.rs` writes it: a held-inputs
+// twin's call in an innermost counted loop takes the leaf's FAST twin (`f__inv__vf`) where the
+// leaf's precondition holds over the whole range of the loop's counter, and the twin as written
+// elsewhere.  The loop's prelude decides a flag `vg<k>` per call site; the call is
+// `vg<k> ? f__inv__vf(…) : f__inv(…)`; the precondition is `f__vp`; the fast twin is the leaf
+// with each decided `if` its arm, each proven element access raw, each tested operation plain.
+//
+// Node identity is carried in the IR (`opt_version`'s markers): a leaf's and its callees' code
+// is marked when its plan holds, and a caller's calls of a leaf are wrapped in a SITE span (a
+// number per caller) before its first body is written, which the prelude and the call key by.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_names;
+use cgen_inputs;
+use cgen_loop;
+use loop_shape;
+use el_ir;
+use opt_hoist;
+use opt_inputs;
+use opt_version;
+use opt_non_sentinel;
+
+pub const SITE_BASE = -500000;
+const SITE_LAST = -900000;
+const MIN_TRIPS = 8;
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn trace() -> boolean {
+  (env_variable("LOFT_TRACE_VERSION") ?? "0") != "0"
+}
+
+// The site number a node's span chain carries, 0 for none.
+pub fn site_of(v: ir::Node) -> integer {
+  match v {
+    NdSpan { pos, inner } => if pos.line == 0 && pos.file == "" && pos.pos <= SITE_BASE && pos.pos > SITE_LAST { SITE_BASE - pos.pos } else { site_of(inner) },
+    _ => 0,
+  }
+}
+
+// ---- the plan (`Cx::version_leaf`) ----------------------------------------------------------
+
+fn ensure(x: Cx) {
+  if len(x.v_state) == 0 {
+    count = len(x.b.data.definitions);
+    x.v_state = [for _ in 0..count { 0 }];
+    x.v_leaves = [for _ in 0..count { opt_version::no_leaf() }];
+    x.v_parts = [for _ in 0..count { opt_version::no_leaf() }];
+    x.v_pres = [for _ in 0..count { false }];
+    x.v_sites = [for _ in 0..count { false }];
+  }
+}
+
+// `version_leaf`: `d`'s leaf plan, as its held-inputs twin's inputs name them; memoised.  A
+// plan that holds marks `d`'s code (and each callee's part, at its registration).
+pub fn leaf_of(x: Cx, d: integer) -> opt_version::Leaf {
+  if !opt_version::enabled() || d < 0 || d >= len(x.b.data.definitions) {
+    return opt_version::no_leaf();
+  }
+  ensure(x);
+  if x.v_state[d]! == 1 {
+    return x.v_leaves[d]!;
+  }
+  if x.v_state[d]! != 0 {
+    return opt_version::no_leaf();
+  }
+  x.v_state[d] = 3;
+  l = compute(x, d);
+  if l.some && !register_callees(x, d, l) {
+    l = opt_version::no_leaf();
+  }
+  if l.some {
+    x.b.data.definitions[d].code = [opt_version::marked(x.b, d, l)];
+    x.v_leaves[d] = l;
+    x.v_state[d] = 1;
+  } else {
+    x.v_state[d] = 2;
+  }
+  l
+}
+
+fn compute(x: Cx, d: integer) -> opt_version::Leaf {
+  fi = opt_inputs::of(x.b, x.writes, d);
+  if !fi.some {
+    return opt_version::no_leaf();
+  }
+  sc_p: vector<integer> = [];
+  sc_f: vector<integer> = [];
+  for s in fi.scalars {
+    if cgen_inputs::scalar_shape(x, s.getter) == "int" {
+      sc_p += [s.p];
+      sc_f += [s.fld];
+    }
+  }
+  hd_p: vector<integer> = [];
+  hd_o: vector<text> = [];
+  for h in fi.headers {
+    hd_p += [h.p];
+    hd_o += [h.offs];
+  }
+  opt_version::leaf(x.b, d, sc_p, sc_f, hd_p, hd_o)
+}
+
+// `version_register_callees`: the part of `caller`'s plan each callee's fast twin is written
+// from, its code marked on the first registration; false where a callee is a leaf of its own or
+// another caller planned it differently.
+fn register_callees(x: Cx, caller: integer, l: opt_version::Leaf) -> boolean {
+  for c in l.callees {
+    if leaf_of(x, c).some {
+      return decline(x, caller, c, "is a leaf of its own");
+    }
+    part = opt_version::part(l, c);
+    known = x.v_parts[c]!;
+    if known.some {
+      if !opt_version::same_part(known, part) {
+        return decline(x, caller, c, "is planned otherwise by another caller");
+      }
+    } else {
+      x.v_parts[c] = part;
+      x.b.data.definitions[c].code = [opt_version::marked(x.b, c, part)];
+    }
+  }
+  true
+}
+
+fn decline(x: Cx, caller: integer, c: integer, why: text) -> boolean {
+  if trace() {
+    println("[version] {def_name(x.b, caller)}: no leaf: its callee {def_name(x.b, c)} {why}");
+  }
+  false
+}
+
+// `version_fast_plan`: `d`'s own plan, or the part of a calling leaf's plan that lies in `d`.
+pub fn fast_plan(x: Cx, d: integer) -> opt_version::Leaf {
+  own = leaf_of(x, d);
+  if own.some {
+    return own;
+  }
+  ensure(x);
+  x.v_parts[d]!
+}
+
+// `version_pre`: the precondition function of leaf `d`, written once into the unit.
+pub fn pre(x: Cx, d: integer) -> text {
+  name = "{cgen_names::c_name(x.b, x.dups, d)}__vp";
+  ensure(x);
+  if x.v_pres[d]! {
+    return name;
+  }
+  x.v_pres[d] = true;
+  l = x.v_leaves[d]!;
+  lv = opt_version::leaves(l);
+  params: vector<text> = [for i in 0..len(lv) { "int64_t a{i}" }];
+  out = "\n/* @FR-R-Version: {cgen_names::original_name(x.b.data.definitions[d]!)}'s precondition. */\nstatic inline int {name}({if len(params) == 0 { "void" } else { params.join(", ") }}) {{\n    int ok = 1;\n";
+  for t in l.tests {
+    op = if t.strict { "<" } else { "<=" };
+    out += "    {{ int64_t l = {pre_expr(t.lo, lv)}, h = {pre_expr(t.hi, lv)}; if (!ok || !(l {op} h)) return 0; }}\n";
+  }
+  out += "    return ok;\n}}\n";
+  x.gen_decls += out;
+  name
+}
+
+fn pre_expr(l: opt_version::Lin, lv: vector<opt_version::Lin>) -> text {
+  match l {
+    LConst { k } => "INT64_C({k})",
+    LAdd { a, b, at: _ } => "loft_vg_add({pre_expr(a, lv)}, {pre_expr(b, lv)}, &ok)",
+    LSub { a, b, at: _ } => "loft_vg_sub({pre_expr(a, lv)}, {pre_expr(b, lv)}, &ok)",
+    LMul { a, b, at: _ } => "loft_vg_mul({pre_expr(a, lv)}, {pre_expr(b, lv)}, &ok)",
+    LNeg { a, at: _ } => "loft_vg_neg({pre_expr(a, lv)}, &ok)",
+    _ => {
+      at = 0;
+      for o in lv {
+        if opt_version::lin_eq(o, l) {
+          at = o#index;
+          break;
+        }
+      }
+      "a{at}"
+    },
+  }
+}
+
+// ---- the caller's sites -------------------------------------------------------------------
+
+// Wrap each call of a leaf in function `vd`'s code in a SITE span, once, before its first body
+// is written: every leaf's plan is asked first (it may mark code of its own), then the code is
+// read again and written with its sites numbered.
+pub fn mark_sites(x: Cx, vd: integer) {
+  if !opt_version::enabled() || vd < 0 || vd >= len(x.b.data.definitions) {
+    return;
+  }
+  ensure(x);
+  if x.v_sites[vd]! {
+    return;
+  }
+  x.v_sites[vd] = true;
+  code = x.b.data.definitions[vd]!.code[0] ?? ir::NdNull;
+  any = [false];
+  callees: vector<integer> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        if !cgen_names::is_operator(x.b, def_nr) {
+          callees += [def_nr];
+        }
+      },
+      _ => {},
+    }
+  });
+  for c in callees {
+    if leaf_of(x, c).some {
+      any[0] = true;
+    }
+  }
+  if !any[0]! {
+    return;
+  }
+  counter = [0];
+  x.b.data.definitions[vd].code = [wrap_sites(x, x.b.data.definitions[vd]!.code[0]!, counter)];
+}
+
+fn wrap_sites(x: Cx, v: ir::Node, counter: vector<integer>) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: wrap_sites(x, inner, counter) },
+    NdCall { def_nr, args } => {
+      out: vector<ir::Node> = [for a in args { wrap_sites(x, a, counter) }];
+      call = ir::NdCall { def_nr: def_nr, args: out };
+      if !cgen_names::is_operator(x.b, def_nr) && x.v_state[def_nr] == 1 {
+        counter[0] = counter[0]! + 1;
+        return ir::NdSpan { pos: ir::Position { file: "", line: 0, pos: SITE_BASE - counter[0]! }, inner: call };
+      }
+      call
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: wrap_sites(x, cond, counter), t: wrap_sites(x, t, counter), f: wrap_sites(x, f, counter) },
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: [for o in bl.operators { wrap_sites(x, o, counter) }], result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: [for o in bl.operators { wrap_sites(x, o, counter) }], result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => {
+      cs = el_ir::children(v);
+      if len(cs) == 0 {
+        return v;
+      }
+      with_children(v, [for ch in cs { wrap_sites(x, ch, counter) }])
+    },
+  }
+}
+
+fn with_children(node: ir::Node, cs: vector<ir::Node>) -> ir::Node {
+  match node {
+    NdCallRef { var, args: _ } => ir::NdCallRef { var: var, args: cs },
+    NdInsert { items: _ } => ir::NdInsert { items: cs },
+    NdTuple { items: _ } => ir::NdTuple { items: cs },
+    NdParallel { arms: _ } => ir::NdParallel { arms: cs },
+    NdSet { var, inner: _ } => ir::NdSet { var: var, inner: cs[0]! },
+    NdReturn { inner: _ } => ir::NdReturn { inner: cs[0]! },
+    NdDrop { inner: _ } => ir::NdDrop { inner: cs[0]! },
+    NdYield { inner: _ } => ir::NdYield { inner: cs[0]! },
+    NdTuplePut { var, idx, inner: _ } => ir::NdTuplePut { var: var, idx: idx, inner: cs[0]! },
+    NdIter { var, create: _, next: _, init: _ } => ir::NdIter { var: var, create: cs[0]!, next: cs[1]!, init: cs[2]! },
+    _ => node,
+  }
+}
+
+// The site calls under `v` in walk order: `[site, def]` pairs, with each call's arguments.
+struct Site {
+  k: integer,
+  d: integer,
+  args: vector<ir::Node>,
+}
+
+fn sites_in(b: ir::Bundle, v: ir::Node, out: vector<Site>) {
+  match v {
+    NdSpan { pos: _, inner } => {
+      k = site_of(v);
+      if k > 0 {
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr, args } => { out += [Site { k: k, d: def_nr, args: args }]; },
+          _ => {},
+        }
+      }
+      sites_in(b, inner, out);
+    },
+    _ => {
+      for c in el_ir::children(v) {
+        sites_in(b, c, out);
+      }
+    },
+  }
+}
+
+// ---- the loop prelude (`hold_versions`) -----------------------------------------------------
+
+// One counted loop of the box a site's precondition is asked over.
+struct Level {
+  counters: vector<integer>,
+  // 0 the index form's counter, 1 the two-counter form's `next`, 2 a seed expression.
+  first_kind: integer,
+  first_var: integer,
+  seed: ir::Node,
+  index_form: boolean,
+  end: text,
+  end_value: ir::Node,
+  has_end_value: boolean,
+  inclusive: boolean,
+}
+
+// What a counter's facts say of one argument.
+struct Shape {
+  has_inv: boolean,
+  inv: ir::Node,
+  coef: integer,
+  lvl: integer,
+}
+
+// `hold_versions`: every loop pushes a frame; only an innermost counted loop with versioned
+// sites fills it.  Answers the frame's start, for `release`.
+pub fn hold(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
+  start = len(w.v_site);
+  version_loop(x, w, lp, ind);
+  start
+}
+
+// The prelude's frame dropped at the loop's end.
+pub fn release(w: W, start: integer) {
+  w.v_site = w.v_site[0..start];
+  w.v_flag = w.v_flag[0..start];
+  w.v_reads = w.v_reads[0..start];
+}
+
+fn has_any(b: ir::Bundle, ops: vector<ir::Node>, kind: integer) -> boolean {
+  found = [false];
+  opt_non_sentinel::walk(ir::NdInsert { items: ops }, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { if kind == 0 { found[0] = true; } },
+      NdParallel { arms: _ } => { if kind == 0 { found[0] = true; } },
+      NdLoop { block: _ } => { if kind == 1 { found[0] = true; } },
+      _ => {},
+    }
+  });
+  found[0]!
+}
+
+// `inner_loop`: the loops directly inside `b` (no loop between) — one that holds no loop itself is
+// the nest's inner loop, none is a plain loop, anything else declines (`nest_state`).
+fn inner_loops(lp: ir::Block) -> vector<ir::Block> {
+  loops: vector<ir::Block> = [];
+  for op in lp.operators {
+    direct(op, loops);
+  }
+  loops
+}
+
+fn nest_state(b: ir::Bundle, loops: vector<ir::Block>) -> integer {
+  if len(loops) == 0 {
+    return 0;
+  }
+  if len(loops) == 1 && !has_any(b, loops[0]!.operators, 1) {
+    return 1;
+  }
+  -1
+}
+
+fn direct(v: ir::Node, out: vector<ir::Block>) {
+  match v {
+    NdLoop { block } => { out += [block[0]]; },
+    _ => {
+      for c in el_ir::children(v) {
+        direct(c, out);
+      }
+    },
+  }
+}
+
+fn counters_of(rc: loop_shape::RangeCounters) -> vector<integer> {
+  out: vector<integer> = [rc.loop_var, rc.index];
+  if rc.next >= 0 {
+    out += [rc.next];
+  }
+  out
+}
+
+fn steps(ops: vector<ir::Node>, counters: vector<integer>) -> integer {
+  n = [0];
+  opt_non_sentinel::walk(ir::NdInsert { items: ops }, fn(m: ir::Node) {
+    match m {
+      NdSet { var, inner: _ } => {
+        for c in counters {
+          if c == var {
+            n[0] = n[0]! + 1;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  n[0]!
+}
+
+fn version_loop(x: Cx, w: W, b: ir::Block, ind: integer) {
+  if !opt_version::enabled() || w.gen_elem != "" || w.vf || has_any(x.b, b.operators, 0) {
+    return;
+  }
+  loops = inner_loops(b);
+  state = nest_state(x.b, loops);
+  if state < 0 {
+    return;
+  }
+  rc = loop_shape::range_counters(b, x.b.data.definitions) ?? return;
+  d = x.b.data.definitions[w.index]!;
+  rebound = opt_hoist::rebound_vars(x.b, d, b);
+  for op in b.operators {
+    opt_non_sentinel::collect_escapes(x.b, op, rebound);
+  }
+  counters = counters_of(rc);
+  if steps(b.operators, counters) > len(counters) {
+    return;
+  }
+  // The name copied: an element's text bound from this `match` read back as garbage (loft#2526).
+  end = match loop_shape::unspan(rc.hi) {
+    NdVar { n } => if n < len(rebound) && !rebound[n]! { "{w.names[n]!}" } else { return },
+    NdInt { n } => "INT64_C({n})",
+    NdLong { n } => if n == null { return } else { "INT64_C({n})" },
+    _ => return,
+  };
+  levels: vector<Level> = [Level { counters: counters, first_kind: if rc.next >= 0 { 1 } else { 0 }, first_var: if rc.next >= 0 { rc.next } else { rc.index }, seed: ir::NdNull, index_form: false, end: end, end_value: ir::NdNull, has_end_value: false, inclusive: rc.inclusive }];
+  body = b.operators;
+  if state == 1 {
+    ok = false;
+    lv = level(x, w, b, loops[0]!, rebound, counters, ok);
+    if !ok {
+      return;
+    }
+    levels += [lv];
+    body = loops[0]!.operators;
+  }
+  sites: vector<Site> = [];
+  for op in body {
+    sites_in(x.b, op, sites);
+  }
+  for s in sites {
+    if !leaf_of(x, s.d).some || site_flag(w, s.k) >= 0 {
+      continue;
+    }
+    site(x, w, levels, rebound, s, ind);
+  }
+}
+
+// `version_level`: the inner level of a nest — loop `lp` inside `b`, counted, stepped only by
+// its iterator, its seed and end set once in `b` from values invariant over `b`.
+fn level(x: Cx, w: W, b: ir::Block, lp: ir::Block, rebound: vector<boolean>, outer: vector<integer>, ok: &boolean) -> Level {
+  ok = false;
+  none_level = Level { counters: [], first_kind: 0, first_var: -1, seed: ir::NdNull, index_form: false, end: "", end_value: ir::NdNull, has_end_value: false, inclusive: false };
+  own = loop_shape::range_counters(lp, x.b.data.definitions) ?? return none_level;
+  for n in cgen_loop::nested_counted_loops(x.b, b) {
+    if n.rc.index != own.index || n.rc.loop_var != own.loop_var {
+      continue;
+    }
+    counters = counters_of(n.rc);
+    all: vector<integer> = [for c in outer { c }];
+    for c in counters {
+      all += [c];
+    }
+    if steps(lp.operators, counters) > len(counters) || !invariant(x, w, rebound, all, n.seed) || !invariant(x, w, rebound, all, n.hi) {
+      return none_level;
+    }
+    ok = true;
+    return Level { counters: counters, first_kind: 2, first_var: -1, seed: n.seed, index_form: n.rc.next < 0, end: "", end_value: n.hi, has_end_value: true, inclusive: n.rc.inclusive };
+  }
+  none_level
+}
+
+// The flag an enclosing loop's prelude decided for site `k`: its place in `w.v_site`, -1 for none.
+fn site_flag(w: W, k: integer) -> integer {
+  for i in rev(0..len(w.v_site)) {
+    if w.v_site[i]! == k {
+      return i;
+    }
+  }
+  -1
+}
+
+fn has_int(v: vector<integer>, x: integer) -> boolean {
+  for y in v {
+    if y == x {
+      return true;
+    }
+  }
+  false
+}
+
+fn held_scalar(w: W, root: integer, fld: integer) -> text {
+  for i in rev(0..len(w.scalars)) {
+    if w.scalars[i]!.root == root && w.scalars[i]!.fld == fld {
+      return w.scalars[i]!.name;
+    }
+  }
+  ""
+}
+
+// `version_invariant`: literals, variables the loop neither assigns nor lets escape, the
+// integer operators over those, and record scalars an enclosing frame holds.
+fn invariant(x: Cx, w: W, rebound: vector<boolean>, counters: vector<integer>, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdVar { n } => !(rebound[n] ?? false) && !has_int(counters, n),
+    NdCall { def_nr, args } => {
+      name = def_name(x.b, def_nr);
+      arith = (len(args) == 2 && (name == "OpAddInt" || name == "OpAddIntNullable" || name == "OpMinInt" || name == "OpMinIntNullable" || name == "OpMulInt" || name == "OpMulIntNullable")) || (len(args) == 1 && name == "OpMinSingleInt");
+      if arith {
+        for a in args {
+          if !invariant(x, w, rebound, counters, a) {
+            return false;
+          }
+        }
+        return true;
+      }
+      fld = 0;
+      r = opt_hoist::scalar_read(name, args, fld);
+      r >= 0 && held_scalar(w, r, fld) != ""
+    },
+    _ => false,
+  }
+}
+
+fn is_counter(v: ir::Node, counters: vector<integer>) -> boolean {
+  match loop_shape::unspan(v) { NdVar { n } => has_int(counters, n), _ => false }
+}
+
+// `version_arg`: argument `v` over the counters — invariant, the counter, `X + i`, `i + X` or
+// `X - i`; `ok` false for any other.
+fn arg_shape(x: Cx, w: W, rebound: vector<boolean>, counters: vector<integer>, v: ir::Node, ok: &boolean) -> Shape {
+  ok = true;
+  if is_counter(v, counters) {
+    return Shape { has_inv: false, inv: ir::NdNull, coef: 1, lvl: 0 };
+  }
+  if invariant(x, w, rebound, counters, v) {
+    return Shape { has_inv: true, inv: v, coef: 0, lvl: 0 };
+  }
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if len(args) == 2 {
+        name = def_name(x.b, def_nr);
+        if name == "OpAddInt" || name == "OpAddIntNullable" {
+          if is_counter(args[1]!, counters) && invariant(x, w, rebound, counters, args[0]!) {
+            return Shape { has_inv: true, inv: args[0]!, coef: 1, lvl: 0 };
+          }
+          if is_counter(args[0]!, counters) && invariant(x, w, rebound, counters, args[1]!) {
+            return Shape { has_inv: true, inv: args[1]!, coef: 1, lvl: 0 };
+          }
+        }
+        if (name == "OpMinInt" || name == "OpMinIntNullable") && is_counter(args[1]!, counters) && invariant(x, w, rebound, counters, args[0]!) {
+          return Shape { has_inv: true, inv: args[0]!, coef: -1, lvl: 0 };
+        }
+      }
+    },
+    _ => {},
+  }
+  ok = false;
+  Shape { has_inv: false, inv: ir::NdNull, coef: 0, lvl: 0 }
+}
+
+// `version_arg_levels`: argument `v` over the box's loops — invariant over all, or `X ± i` over
+// one loop's counters with `X` invariant over all.
+fn arg_levels(x: Cx, w: W, rebound: vector<boolean>, levels: vector<Level>, all: vector<integer>, v: ir::Node, ok: &boolean) -> Shape {
+  ok = true;
+  if invariant(x, w, rebound, all, v) {
+    return Shape { has_inv: true, inv: v, coef: 0, lvl: 0 };
+  }
+  for lv in levels {
+    sok = false;
+    s = arg_shape(x, w, rebound, lv.counters, v, sok);
+    if sok && s.coef != 0 && (!s.has_inv || invariant(x, w, rebound, all, s.inv)) {
+      s.lvl = lv#index;
+      return s;
+    }
+  }
+  ok = false;
+  Shape { has_inv: false, inv: ir::NdNull, coef: 0, lvl: 0 }
+}
+
+fn is_simple(s: text) -> boolean {
+  for c in s {
+    if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+      return false;
+    }
+  }
+  true
+}
+
+fn site_decline(x: Cx, w: W, d: integer, why: text) {
+  if trace() {
+    println("[version] {w.name} call of {def_name(x.b, d)} declined: {why}");
+  }
+}
+
+// `version_site`: one call site, at the loop's prelude — its flag decided and the held inputs
+// its precondition read, recorded in the loop's frame; nothing where it is not versioned.
+fn site(x: Cx, w: W, levels: vector<Level>, rebound: vector<boolean>, s: Site, ind: integer) {
+  d = s.d;
+  args = s.args;
+  l = leaf_of(x, d);
+  fi = opt_inputs::of(x.b, x.writes, d);
+  if !l.some || !fi.some || len(args) >= 64 {
+    return;
+  }
+  def = x.b.data.definitions[d]!;
+  def_args: vector<integer> = [];
+  for v in def.variables.variables {
+    if v.argument {
+      def_args += [v#index];
+    }
+  }
+  if len(def_args) != len(args) {
+    return;
+  }
+  // Every scalar input must be a held scalar here — invariant over the loop.
+  sc_p: vector<integer> = [];
+  sc_f: vector<integer> = [];
+  for sc in fi.scalars {
+    if cgen_inputs::scalar_shape(x, sc.getter) != "" {
+      sc_p += [sc.p];
+      sc_f += [sc.fld];
+    }
+  }
+  for p in sc_p {
+    if p >= len(args) {
+      return;
+    }
+    arg = args[p]!;
+    root = -1;
+    sum = 0;
+    match loop_shape::unspan(arg) {
+      NdVar { n } => { root = n; sum = sc_f[p#index]!; },
+      _ => {
+        evict: vector<integer> = [];
+        root = opt_inputs::path_scalar(x.b, x.b.data.definitions[w.index]!, arg, sc_f[p#index]!, sum, evict);
+        if root < 0 {
+          return;
+        }
+      },
+    }
+    if held_scalar(w, root, sum) == "" {
+      site_decline(x, w, d, "an input read through its record");
+      return;
+    }
+  }
+  taken = false;
+  inputs = cgen_inputs::twin_inputs(x, w, d, args, ind, taken);
+  if !taken || len(inputs) != len(sc_p) + len(fi.headers) {
+    return;
+  }
+  counters: vector<integer> = [];
+  for lv in levels {
+    for c in lv.counters {
+      counters += [c];
+    }
+  }
+  lvs = opt_version::leaves(l);
+  shapes: vector<Shape> = [];
+  varying: vector<boolean> = [for _ in 0..len(def.variables.variables) { false }];
+  any_varying = false;
+  for lf in lvs {
+    match lf {
+      LParam { p } => {
+        i = -1;
+        for a in def_args {
+          if a == p {
+            i = a#index;
+          }
+        }
+        if i < 0 {
+          return;
+        }
+        sok = false;
+        sh = arg_levels(x, w, rebound, levels, counters, args[i]!, sok);
+        if !sok {
+          site_decline(x, w, d, "an argument not linear in the counter");
+          return;
+        }
+        if sh.coef != 0 {
+          varying[p] = true;
+          any_varying = true;
+        }
+        shapes += [sh];
+      },
+      _ => { shapes += [Shape { has_inv: false, inv: ir::NdNull, coef: 0, lvl: 0 }]; },
+    }
+  }
+  if !any_varying {
+    site_decline(x, w, d, "no argument moves with the counter");
+    return;
+  }
+  for t in l.tests {
+    if !opt_version::linear(t.lo, varying) || !opt_version::linear(t.hi, varying) {
+      site_decline(x, w, d, "a product of two terms the counter moves");
+      return;
+    }
+  }
+  flag = "vg{len(w.decls) + 1}";
+  w.decls += ["int {flag} = 0; int64_t {flag}_f = 0, {flag}_l = 0;"];
+  // The leaves' values at the prelude: an argument's invariant part, an input, a length.
+  parts: vector<text> = [];
+  for lf in lvs {
+    k = lf#index;
+    match lf {
+      LParam { p: _ } => {
+        if shapes[k]!.has_inv {
+          e = as_int(w, cgen_fn::expr(x, w, shapes[k]!.inv, ind));
+          if w.why != "" {
+            return;
+          }
+          if is_simple(e) {
+            parts += [e];
+          } else {
+            t = temp(w, "int");
+            line(w, ind, "{t} = {e};");
+            parts += [t];
+          }
+        } else {
+          parts += ["INT64_C(0)"];
+        }
+      },
+      LInput { p, fld } => {
+        which = -1;
+        for q in sc_p {
+          if which < 0 && q == p && sc_f[q#index]! == fld {
+            which = q#index;
+          }
+        }
+        if which < 0 {
+          refuse(w, "a leaf input the twin does not take");
+          return;
+        }
+        parts += [inputs[which]!];
+      },
+      LLen { p, offs } => {
+        which = -1;
+        for h in fi.headers {
+          if which < 0 && h.p == p && h.offs == offs {
+            which = h#index;
+          }
+        }
+        if which < 0 {
+          refuse(w, "a leaf length the twin does not take");
+          return;
+        }
+        parts += ["{inputs[len(sc_p) + which]!}.len"];
+      },
+      _ => {
+        refuse(w, "a precondition leaf that is no parameter, input or length");
+        return;
+      },
+    }
+  }
+  // Each loop's first and last counter values.
+  guard: vector<text> = [];
+  ends_f: vector<text> = [];
+  ends_l: vector<text> = [];
+  for lv in levels {
+    lvl = lv#index;
+    first = if lvl == 0 { "{flag}_f" } else { "{flag}_f{lvl}" };
+    last = if lvl == 0 { "{flag}_l" } else { "{flag}_l{lvl}" };
+    if lvl > 0 {
+      w.decls += ["int64_t {first} = 0, {last} = 0;"];
+    }
+    if lv.first_kind == 0 {
+      guard += ["loft_vg_lin({w.names[lv.first_var]!}, 1, 1, &{first})"];
+    } else if lv.first_kind == 1 {
+      guard += ["(({first} = {w.names[lv.first_var]!}), 1)"];
+    } else {
+      seed = as_int(w, cgen_fn::expr(x, w, lv.seed, ind));
+      guard += [if lv.index_form { "loft_vg_lin({seed}, 1, 1, &{first})" } else { "(({first} = {seed}) != LOFT_NULL)" }];
+    }
+    end = if lv.has_end_value { as_int(w, cgen_fn::expr(x, w, lv.end_value, ind)) } else { lv.end };
+    min = if len(levels) == 1 { MIN_TRIPS } else { 1 };
+    guard += ["loft_vg_span({first}, {end}, {if lv.inclusive { 1 } else { 0 }}, {min}, &{last})"];
+    ends_f += [first];
+    ends_l += [last];
+  }
+  if len(levels) == 2 {
+    guard += ["loft_vg_area({ends_f[0]!}, {ends_l[0]!}, {ends_f[1]!}, {ends_l[1]!}, {MIN_TRIPS})"];
+  }
+  // The corners of the box over the loops some argument moves with.
+  used: vector<integer> = [];
+  for lv in levels {
+    moved = false;
+    for sh in shapes {
+      if sh.coef != 0 && sh.lvl == lv#index {
+        moved = true;
+      }
+    }
+    if moved {
+      used += [lv#index];
+    }
+  }
+  sides: vector<text> = if len(used) == 1 { ["a", "b"] } else { ["a", "b", "c", "d"] };
+  // Per corner, per used slot: the last value (true) or the first.
+  at_last: vector<boolean> = if len(used) == 1 { [false, true] } else { [false, false, true, true, false, true, true, false] };
+  name = pre(x, d);
+  for side in sides {
+    ci = side#index;
+    vals: vector<text> = [];
+    for part in parts {
+      k = part#index;
+      sh = shapes[k]!;
+      if sh.coef == 0 {
+        vals += [part];
+      } else {
+        slot = -1;
+        for u in used {
+          if u == sh.lvl {
+            slot = u#index;
+          }
+        }
+        if slot < 0 {
+          refuse(w, "an unused level");
+          return;
+        }
+        last_side = at_last[ci * len(used) + slot]!;
+        t = if last_side { ends_l[sh.lvl]! } else { ends_f[sh.lvl]! };
+        v = "{flag}_{side}{k}";
+        w.decls += ["int64_t {v} = 0;"];
+        guard += ["loft_vg_lin({part}, INT64_C({sh.coef}), {t}, &{v})"];
+        vals += [v];
+      }
+    }
+    guard += ["{name}({vals.join(", ")})"];
+  }
+  line(w, ind, "{flag} = {guard.join("\n        && ")};");
+  if trace() {
+    println("[version] {w.name} calls {def_name(x.b, d)} versioned");
+  }
+  w.v_site += [s.k];
+  w.v_flag += [flag];
+  w.v_reads += [inputs.join(";;")];
+}
+
+// `version_unswitch`: the flags of loop `lp` when every call of a loft function in it is a site
+// its prelude decided; empty otherwise.
+pub fn unswitch(x: Cx, w: W, lp: ir::Block) -> vector<text> {
+  flags: vector<text> = [];
+  all = [true];
+  for op in lp.operators {
+    unswitch_walk(x, w, op, flags, all);
+  }
+  if !all[0]! {
+    return [];
+  }
+  flags
+}
+
+fn unswitch_walk(x: Cx, w: W, v: ir::Node, flags: vector<text>, all: vector<boolean>) {
+  match v {
+    NdSpan { pos: _, inner } => {
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args: _ } => {
+          if has_body(x.b, def_nr) {
+            k = site_of(v);
+            at = if k > 0 { site_flag(w, k) } else { -1 };
+            if at < 0 {
+              all[0] = false;
+            } else {
+              seen = false;
+              for f in flags {
+                if f == w.v_flag[at]! {
+                  seen = true;
+                }
+              }
+              if !seen {
+                flags += [w.v_flag[at]!];
+              }
+            }
+            for a in call_args(inner) {
+              unswitch_walk(x, w, a, flags, all);
+            }
+            return;
+          }
+        },
+        _ => {},
+      }
+      unswitch_walk(x, w, inner, flags, all);
+    },
+    NdCall { def_nr, args } => {
+      if has_body(x.b, def_nr) {
+        all[0] = false;
+      }
+      for a in args {
+        unswitch_walk(x, w, a, flags, all);
+      }
+    },
+    NdCallRef { var: _, args: _ } => { all[0] = false; },
+    NdYield { inner: _ } => { all[0] = false; },
+    NdParallel { arms: _ } => { all[0] = false; },
+    NdLoop { block: _ } => { all[0] = false; },
+    _ => {
+      for c in el_ir::children(v) {
+        unswitch_walk(x, w, c, flags, all);
+      }
+    },
+  }
+}
+
+fn call_args(v: ir::Node) -> vector<ir::Node> {
+  match loop_shape::unspan(v) { NdCall { def_nr: _, args } => args, _ => [] }
+}
+
+fn has_body(b: ir::Bundle, d: integer) -> boolean {
+  if d < 0 || d >= len(b.data.definitions) {
+    return false;
+  }
+  c = b.data.definitions[d]!.code[0] ?? ir::NdNull;
+  !(c is NdNull)
+}
+
+// `version_flag`: the flag the enclosing loops' prelude decided for site `k`, when its held
+// inputs are the ones the prelude read; "" for none.
+pub fn flag_of(w: W, k: integer, inputs: vector<text>) -> text {
+  if k <= 0 {
+    return "";
+  }
+  at = site_flag(w, k);
+  if at < 0 || w.v_reads[at]! != inputs.join(";;") {
+    return "";
+  }
+  w.v_flag[at]!
+}
+
+// `version_access`: a proven element read or write in a fast twin, through held header `held`.
+pub fn access(name: text, held: text, size: integer, fld: integer, index: text, value: text, has_value: boolean) -> text {
+  if has_value {
+    if name == "OpSetInt" {
+      return "loft_vh_put_int({held}, {size}, {index}, {fld}, {value})";
+    }
+    if name == "OpSetInt4Raw" {
+      return "loft_vh_put_u32({held}, {size}, {index}, {fld}, {value})";
+    }
+    if name == "OpSetFloat" {
+      return "loft_vh_put_float({held}, {size}, {index}, {fld}, {value})";
+    }
+    if name == "OpSetBoolean" {
+      return "loft_vh_put_bool({held}, {size}, {index}, {fld}, {value})";
+    }
+  } else {
+    if name == "OpGetFloat" {
+      return "loft_vh_at_float({held}, {size}, {index}, {fld})";
+    }
+    if name == "OpGetBoolean" {
+      return "loft_pa_bool(loft_vh_at_addr({held}, {size}, {index}), {fld})";
+    }
+  }
+  "loft_vh_at_int({held}, {size}, {index}, {fld})"
+}
+
+// The marker kind of the call `v` (a node as `expr` meets it), for a fast twin's writer.
+pub fn call_kind(w: W, v: ir::Node) -> integer {
+  if !w.vf {
+    return 0;
+  }
+  opt_version::mark_of(v)
+}
+
+// Is condition `cond` decided in the fast twin being written: 1 its then-arm, 0 its else-arm,
+// -1 not decided.
+pub fn decided(w: W, cond: ir::Node) -> integer {
+  if !w.vf {
+    return -1;
+  }
+  m = opt_version::mark_of(cond);
+  if m == opt_version::DECIDED_T { 1 } else if m == opt_version::DECIDED_F { 0 } else { -1 }
+}
