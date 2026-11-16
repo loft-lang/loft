@@ -717,6 +717,61 @@ pub fn find_compatible_version<'a>(
     }
 }
 
+/// The release a library's dependency range was built against: the lower bound of
+/// `constraint` (`>=0.9.0` → `0.9.0`, `^0.9` → `0.9.0`, the same for `~`), `None` for an
+/// exact pin, `*` or a range with no lower bound.  A published library's floor is the API it
+/// compiled against, so [`find_in_api_line`] keeps it there (the soft freeze's registry rule:
+/// a dependant never receives a release that declared a break past its floor).
+#[must_use]
+pub fn api_line_floor(constraint: &str) -> Option<String> {
+    if is_exact_pin(constraint) {
+        return None;
+    }
+    constraint.split(',').map(str::trim).find_map(|part| {
+        let rest = part
+            .strip_prefix(">=")
+            .or_else(|| part.strip_prefix('^'))
+            .or_else(|| part.strip_prefix('~'))?
+            .trim();
+        let parts: Vec<&str> = rest.split('.').collect();
+        (!parts.is_empty() && parts.iter().all(|p| p.parse::<u32>().is_ok())).then(|| {
+            let n = |i: usize| parts.get(i).copied().unwrap_or("0");
+            format!("{}.{}.{}", n(0), n(1), n(2))
+        })
+    })
+}
+
+/// The release a published library's dependency resolves to: the newest that satisfies
+/// `constraint` and stays in the API line of `line` — no release whose `api_compatible_with`
+/// is past it ([`find_compatible_version`] with `line` as the held version).  Where nothing in
+/// the line remains (every such release yanked, or none published), it is the newest that
+/// satisfies `constraint`, as before the rule: the rule moves which release a range lands on,
+/// and never refuses a range that resolved.
+#[must_use]
+pub fn find_in_api_line<'a>(
+    pkg: &'a Package,
+    constraint: &str,
+    allow_prerelease: bool,
+    line: Option<&str>,
+) -> Option<&'a Version> {
+    line.and_then(|l| find_compatible_version(pkg, constraint, allow_prerelease, Some(l)).best)
+        .or_else(|| find_best_version(pkg, constraint, allow_prerelease))
+}
+
+/// Is `dir` a published release — a package extracted in the registry cache — rather than a
+/// project?  Its declared ranges are a library's floors, which [`find_in_api_line`] keeps in
+/// their API line; a project's own declarations are the author's choice and are not.
+#[must_use]
+pub fn is_published_release_dir(dir: &std::path::Path) -> bool {
+    let cache = cache_dir();
+    let canon = |p: &std::path::Path| {
+        crate::file_access::canonical(p).map_or_else(|| p.to_path_buf(), |t| t.os_spelling())
+    };
+    // Raw and canonical both: a cache reached through a symlink, or a directory not yet
+    // created, still compares as the path it is written as.
+    dir.starts_with(&cache) || canon(dir).starts_with(canon(&cache))
+}
+
 /// Check whether `version` satisfies `constraint`.
 #[must_use]
 pub fn satisfies(version: &str, constraint: &str) -> bool {
@@ -1183,6 +1238,29 @@ pub fn newest_cached_loadable_satisfying(
     pkg: &str,
     constraints: &[String],
 ) -> Option<(String, PathBuf)> {
+    newest_cached_loadable_in_line(pkg, constraints, None)
+}
+
+/// [`newest_cached_loadable_satisfying`] for a published library's dependency: a cached copy
+/// in the API line of `line` ([`find_in_api_line`]) when one is cached, else the newest that
+/// satisfies, as before the rule.
+#[must_use]
+pub fn newest_cached_loadable_in_line(
+    pkg: &str,
+    constraints: &[String],
+    line: Option<&str>,
+) -> Option<(String, PathBuf)> {
+    line.and_then(|l| cached_loadable_scan(pkg, constraints, Some(l)))
+        .or_else(|| cached_loadable_scan(pkg, constraints, None))
+}
+
+/// The newest cached, loadable copy of `pkg` that satisfies `constraints`, and with `line`
+/// given, whose `api_compatible_with` is not past it.
+fn cached_loadable_scan(
+    pkg: &str,
+    constraints: &[String],
+    line: Option<&str>,
+) -> Option<(String, PathBuf)> {
     let current = crate::manifest::LOFT_RUNNING_VERSION;
     let mut best: Option<(String, PathBuf)> = None;
     for (name, version, dir) in installed_packages() {
@@ -1199,6 +1277,13 @@ pub fn newest_cached_loadable_satisfying(
         if m.loft_version.as_ref().is_some_and(|req| {
             crate::manifest::check_version(req, current) != crate::manifest::VersionCheck::Satisfied
         }) {
+            continue;
+        }
+        if let Some(l) = line
+            && m.api_compatible_with
+                .as_deref()
+                .is_some_and(|floor| compare_semver(floor, l) == std::cmp::Ordering::Greater)
+        {
             continue;
         }
         if let Some(ref creq) = m.contract {
@@ -2141,6 +2226,26 @@ fn ranked_results(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// @C166 — the floor a library's range names: the lower bound of `>=`, `^` and `~`
+    /// alike, padded to three parts; nothing for a pin, `*`, or a range with no lower bound.
+    #[test]
+    fn a_ranges_api_line_floor_is_its_lower_bound() {
+        assert_eq!(api_line_floor(">=0.9.0").as_deref(), Some("0.9.0"));
+        assert_eq!(api_line_floor(">=0.9").as_deref(), Some("0.9.0"));
+        assert_eq!(api_line_floor("^0.4").as_deref(), Some("0.4.0"));
+        assert_eq!(api_line_floor("~1.2.3").as_deref(), Some("1.2.3"));
+        assert_eq!(api_line_floor(">=0.1, <0.3").as_deref(), Some("0.1.0"));
+        assert_eq!(api_line_floor("<0.3, >=0.2.1").as_deref(), Some("0.2.1"));
+        assert_eq!(
+            api_line_floor("0.9.12"),
+            None,
+            "an exact pin has chosen already"
+        );
+        assert_eq!(api_line_floor("=0.9.12"), None);
+        assert_eq!(api_line_floor("*"), None);
+        assert_eq!(api_line_floor("<0.3"), None);
+    }
 
     // ── @PLN78 step 1 — one bad entry must not take the registry down ────────────
     //

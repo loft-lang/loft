@@ -442,3 +442,37 @@ key), `src/parser/packages.rs` (which dependencies a shim waits for), `src/start
 with its dependencies' headers staged the same way, and names the cure for a path out of the
 package); guard `a_backend_finds_the_layers_header_wherever_the_two_are_installed`
 (`tests/c_emit.rs`).
+
+## C166 — A published library's range stays in the API line of its floor
+
+**Decision.** A version range declared by a published release — a dependency of a package
+from the registry, or the project's own ranges when the project is itself a published release
+(a library tested from the registry cache, as registry validation tests it) — resolves to the
+newest release that satisfies it and does not declare a break past its floor: no release whose
+`api_compatible_with` is above the range's lower bound (`>=0.9.0`, `^0.9` and `~0.9` alike
+name 0.9.0).  A range the project declares for itself, or for a package it pulls in
+transitively, and a lock pin, resolve as before: the newest that satisfies.  Where no release
+is left in the line, the range resolves to the newest that satisfies, so the rule moves which
+release a range lands on and never refuses one that resolved.
+**Why.** A library compiled against its floor; a release that declared a break past it is not
+what it asked for.  381 of the 382 dependency ranges published libraries declare are open
+floors, so without the rule every library release that breaks its API broke every library that
+depended on it: audio_bus 0.1.3, input 0.2.6 and stage 0.18.10 resolved graphics 0.12.1 and
+failed, and on graphics 0.9.12, the newest in their line, they pass.  The contract keeps a
+working library working; a dependant keeps working only if it keeps getting what it was built
+against.
+**Bounds.** The line is read from `api_compatible_with`; a release that declares none is in
+every line, as `find_compatible_version` already treats it.  A release from before the
+contract boundary can sit in a line yet no longer build on this loft (a language change since
+— drawing 0.4.3 gets imaging 0.3.3, which today's field-visibility rule refuses); the contract
+forbids that from the boundary on.
+**Revisit when.** A library needs to follow a dependency across its breaks automatically: it
+then declares a range that names the new line.  Decided 2026-11-16 (owner).
+**Holds at:** `@C166` — `src/registry_index.rs` (`api_line_floor`, `find_in_api_line`,
+`is_published_release_dir`, `newest_cached_loadable_in_line`), `src/install.rs`
+(`resolve_declared`), `src/parser/packages.rs` (`library_api_line`, the cache lookups); guards
+`a_library_dependency_stays_in_its_floors_api_line`, `a_projects_own_range_takes_the_newest`,
+`a_project_declaring_the_dependency_chooses_for_the_tree`,
+`a_floor_with_no_release_in_its_line_takes_the_newest`,
+`the_top_package_keeps_the_line_its_caller_found` (`src/install.rs`) and
+`a_ranges_api_line_floor_is_its_lower_bound` (`src/registry_index.rs`).

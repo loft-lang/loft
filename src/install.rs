@@ -217,6 +217,7 @@ fn resolve_named(
     constraint: Option<&str>,
     opts: &InstallOptions,
     keep_locked: bool,
+    root_line: Option<&str>,
 ) -> Result<Vec<ResolvedPackage>, String> {
     let declared = declared_requirements(opts);
     let constraint = constraint.or_else(|| declared.get(package_name).map(String::as_str));
@@ -229,6 +230,7 @@ fn resolve_named(
         &held_versions(opts),
         keep_locked,
         &declared,
+        root_line,
         &mut graph,
     )?;
     Ok(graph)
@@ -251,7 +253,7 @@ pub fn install_one(
     constraint: Option<&str>,
     opts: &InstallOptions,
 ) -> Result<InstallReport, String> {
-    install_resolved(package_name, constraint, opts, false)
+    install_resolved(package_name, constraint, opts, false, None)
 }
 
 /// What installing a package says about its `[c] shim`, built now so a missing C compiler is
@@ -289,9 +291,17 @@ fn install_resolved(
     constraint: Option<&str>,
     opts: &InstallOptions,
     keep_locked: bool,
+    root_line: Option<&str>,
 ) -> Result<InstallReport, String> {
     let index = load_index(opts)?;
-    let graph = resolve_named(&index, package_name, constraint, opts, keep_locked)?;
+    let graph = resolve_named(
+        &index,
+        package_name,
+        constraint,
+        opts,
+        keep_locked,
+        root_line,
+    )?;
     check_against_lockfile(&graph, opts)?;
 
     let mut report = InstallReport {
@@ -1021,7 +1031,9 @@ fn resolve_recursive(
     graph: &mut Vec<ResolvedPackage>,
 ) -> Result<(), String> {
     let declared = std::collections::BTreeMap::new();
-    resolve_declared(index, name, constraint, opts, held, false, &declared, graph)
+    resolve_declared(
+        index, name, constraint, opts, held, false, &declared, None, graph,
+    )
 }
 
 /// [`resolve_recursive`] under the project's own declarations: what `loft.toml` declares
@@ -1051,6 +1063,7 @@ fn resolve_declared(
     held: &std::collections::BTreeMap<String, String>,
     keep_locked: bool,
     declared: &std::collections::BTreeMap<String, String>,
+    root_line: Option<&str>,
     graph: &mut Vec<ResolvedPackage>,
 ) -> Result<(), String> {
     if graph.iter().any(|r| r.name == name) {
@@ -1091,12 +1104,41 @@ fn resolve_declared(
     // UPGRADE, and an upgrade must not hand it a release that declared it
     // breaks them.  Nothing held → nothing to be a drop-in for, so the fresh
     // install resolves exactly as before.
-    let resolved = registry_index::find_compatible_version(
-        pkg,
-        constraint_str,
-        opts.allow_prerelease,
-        held.get(name).map(String::as_str),
-    );
+    // @C166 — a range a PUBLISHED library declares (a dependency of a package from the
+    // registry, or the project's own ranges when the project is a published release, as a
+    // library's own test run is) stays in the API line of its floor: `graphics >=0.9.0`
+    // takes the newest graphics that is still a drop-in for 0.9, never one that declared a
+    // break past it.  The project's own declarations, and one it makes for a transitive
+    // package, are the author's choice and resolve to the newest as before.
+    // The package named at the top carries the line its caller found (`root_line`: the
+    // parser, for a `use` inside a published library that the project neither pins nor
+    // declares); a dependency of a registry package carries its own range's floor.
+    let line = if held.contains_key(name) {
+        None
+    } else if graph.is_empty() {
+        root_line.map(str::to_string)
+    } else if declared.contains_key(name) {
+        None
+    } else {
+        registry_index::api_line_floor(constraint_str)
+    };
+    let resolved = match &line {
+        Some(l) => registry_index::Resolution {
+            best: registry_index::find_in_api_line(
+                pkg,
+                constraint_str,
+                opts.allow_prerelease,
+                Some(l),
+            ),
+            withheld: Vec::new(),
+        },
+        None => registry_index::find_compatible_version(
+            pkg,
+            constraint_str,
+            opts.allow_prerelease,
+            held.get(name).map(String::as_str),
+        ),
+    };
     for held_back in &resolved.withheld {
         eprintln!(
             "note: `{name}` {} is available but declares a break past the {} you hold \
@@ -1176,6 +1218,7 @@ fn resolve_declared(
             held,
             keep_locked,
             declared,
+            None,
             graph,
         )
         .map_err(|e| match declared.get(&dep_name) {
@@ -1260,10 +1303,15 @@ pub struct AutoInstallFailure {
 /// (e.g. `Some("=0.1.0")`), threaded through so a source-level `use` honours the
 /// consumer's pin instead of always resolving the latest release.  `None` keeps
 /// the historical behaviour (newest satisfying `*`).
+///
+/// `line`: the API line `constraint` must stay in when it is a published library's range
+/// (@C166, [`registry_index::find_in_api_line`]) — the parser's call, which knows who
+/// declared it; `None` for a project's own declaration.
 pub fn auto_install_if_in_catalog(
     name: &str,
     constraint: Option<&str>,
     opts: &InstallOptions,
+    line: Option<&str>,
 ) -> Result<Option<InstallReport>, AutoInstallFailure> {
     // Load the index FIRST so we can check membership without
     // committing to a network fetch for the tarball.  load_index
@@ -1292,7 +1340,7 @@ pub fn auto_install_if_in_catalog(
     // as the fresh cache it now is.
     if from_cache
         && (!index.packages.contains_key(name)
-            || resolve_named(&index, name, constraint, opts, true).is_err())
+            || resolve_named(&index, name, constraint, opts, true, line).is_err())
         && let Ok(fresh) = load_index(&InstallOptions {
             refresh: true,
             ..opts.clone()
@@ -1304,11 +1352,12 @@ pub fn auto_install_if_in_catalog(
     if !index.packages.contains_key(name) {
         return Ok(None);
     }
-    let report =
-        install_resolved(name, constraint, opts, true).map_err(|message| AutoInstallFailure {
+    let report = install_resolved(name, constraint, opts, true, line).map_err(|message| {
+        AutoInstallFailure {
             message,
             registry_answered,
-        })?;
+        }
+    })?;
     for (n, v) in &report.installed {
         eprintln!("[registry] installed {n} {v}");
     }
@@ -1470,6 +1519,7 @@ mod tests {
             &held,
             false,
             &declared,
+            None,
             &mut graph,
         )
         .unwrap();
@@ -1490,6 +1540,7 @@ mod tests {
             &held,
             false,
             &declared,
+            None,
             &mut graph,
         )
         .unwrap();
@@ -1507,6 +1558,7 @@ mod tests {
             &held,
             false,
             &declared,
+            None,
             &mut graph,
         )
         .unwrap_err();
@@ -1547,6 +1599,7 @@ mod tests {
                     held,
                     keep,
                     declared,
+                    None,
                     &mut graph,
                 )
                 .unwrap();
@@ -1587,6 +1640,7 @@ mod tests {
             &held("0.4.5"),
             true,
             &none,
+            None,
             &mut graph,
         )
         .unwrap();
@@ -1656,6 +1710,116 @@ mod tests {
         let err = resolve_recursive(&idx, "a", None, &opts(), &BTreeMap::default(), &mut graph)
             .expect_err("should fail on missing transitive");
         assert!(err.contains("`b` not found"), "msg: {err}");
+    }
+
+    // ── @C166: a published library's range stays in its floor's API line ──
+
+    /// `b` 0.1.0 and 0.1.5 share one API; 0.2.0 declares a break (`api_compatible_with`).
+    fn b_with_a_break() -> Package {
+        let mut v015 = ver("0.1.5", &[]);
+        v015.api_compatible_with = Some("0.1.0".to_string());
+        let mut v020 = ver("0.2.0", &[]);
+        v020.api_compatible_with = Some("0.2.0".to_string());
+        pkg("b", vec![ver("0.1.0", &[]), v015, v020])
+    }
+
+    fn resolved_b(graph: &[ResolvedPackage]) -> &str {
+        graph
+            .iter()
+            .find(|r| r.name == "b")
+            .map_or("none", |r| r.version.semver.as_str())
+    }
+
+    /// A library that declares `b >=0.1.0` was built against b 0.1, so it gets the newest b
+    /// still compatible with 0.1, not the release that declared a break past it.
+    #[test]
+    fn a_library_dependency_stays_in_its_floors_api_line() {
+        let idx = index(vec![
+            pkg("a", vec![ver("1.0.0", &[("b", ">=0.1.0")])]),
+            b_with_a_break(),
+        ]);
+        let mut graph = Vec::new();
+        resolve_recursive(&idx, "a", None, &opts(), &BTreeMap::default(), &mut graph)
+            .expect("resolves");
+        assert_eq!(resolved_b(&graph), "0.1.5");
+    }
+
+    /// The project's own range is the author's choice: the newest that satisfies it.
+    #[test]
+    fn a_projects_own_range_takes_the_newest() {
+        let idx = index(vec![b_with_a_break()]);
+        let mut graph = Vec::new();
+        resolve_recursive(
+            &idx,
+            "b",
+            Some(">=0.1.0"),
+            &opts(),
+            &BTreeMap::default(),
+            &mut graph,
+        )
+        .expect("resolves");
+        assert_eq!(resolved_b(&graph), "0.2.0");
+    }
+
+    /// A project that declares the transitive package itself has chosen for the whole tree.
+    #[test]
+    fn a_project_declaring_the_dependency_chooses_for_the_tree() {
+        let idx = index(vec![
+            pkg("a", vec![ver("1.0.0", &[("b", ">=0.1.0")])]),
+            b_with_a_break(),
+        ]);
+        let declared: BTreeMap<String, String> = [("b".to_string(), ">=0.1.0".to_string())].into();
+        let mut graph = Vec::new();
+        resolve_declared(
+            &idx,
+            "a",
+            None,
+            &opts(),
+            &BTreeMap::default(),
+            false,
+            &declared,
+            None,
+            &mut graph,
+        )
+        .expect("resolves");
+        assert_eq!(resolved_b(&graph), "0.2.0");
+    }
+
+    /// With no release left in the floor's line the range resolves as before the rule: the
+    /// rule moves a range, it never refuses one that resolved.
+    #[test]
+    fn a_floor_with_no_release_in_its_line_takes_the_newest() {
+        let mut v020 = ver("0.2.0", &[]);
+        v020.api_compatible_with = Some("0.2.0".to_string());
+        let idx = index(vec![
+            pkg("a", vec![ver("1.0.0", &[("b", ">=0.1.0")])]),
+            pkg("b", vec![v020]),
+        ]);
+        let mut graph = Vec::new();
+        resolve_recursive(&idx, "a", None, &opts(), &BTreeMap::default(), &mut graph)
+            .expect("resolves");
+        assert_eq!(resolved_b(&graph), "0.2.0");
+    }
+
+    /// The package named at the top keeps the line its caller found for it — the parser's
+    /// `use` inside a published library, or that library tested as its own project.
+    #[test]
+    fn the_top_package_keeps_the_line_its_caller_found() {
+        let idx = index(vec![b_with_a_break()]);
+        let mut graph = Vec::new();
+        resolve_declared(
+            &idx,
+            "b",
+            Some(">=0.1.0"),
+            &opts(),
+            &BTreeMap::default(),
+            false,
+            &BTreeMap::default(),
+            Some("0.1.0"),
+            &mut graph,
+        )
+        .expect("resolves");
+        assert_eq!(resolved_b(&graph), "0.1.5");
     }
 
     #[test]

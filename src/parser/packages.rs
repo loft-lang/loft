@@ -138,7 +138,15 @@ impl Parser {
         let constraints: Vec<String> = crate::manifest::extract_version_req(value)
             .map(|v| vec![v.to_string()])
             .unwrap_or_default();
-        crate::registry_index::newest_cached_loadable_satisfying(dep, &constraints)
+        // @C166 — the range of a published release stays in its floor's API line.
+        let line = crate::registry_index::is_published_release_dir(d)
+            .then(|| {
+                constraints
+                    .first()
+                    .and_then(|c| crate::registry_index::api_line_floor(c))
+            })
+            .flatten();
+        crate::registry_index::newest_cached_loadable_in_line(dep, &constraints, line.as_deref())
             .map(|(_, dir)| dir)
     }
 
@@ -1225,7 +1233,9 @@ impl Parser {
             self.root_dep_constraint(id).as_deref(),
             Self::declaring_range(cur_script, id).as_deref(),
         );
-        match crate::install::auto_install_if_in_catalog(id, pin.as_deref(), &opts) {
+        let line = self.library_api_line(id, cur_script, scope);
+        match crate::install::auto_install_if_in_catalog(id, pin.as_deref(), &opts, line.as_deref())
+        {
             Ok(Some(report)) => {
                 // Resolve `f` straight from the install report's version — no
                 // lockfile round-trip (#634): a cache-internal install writes no
@@ -1399,8 +1409,10 @@ impl Parser {
         {
             constraints.push(own);
         }
+        // @C166 — a published library's range stays in its floor's API line.
+        let line = self.library_api_line(id, cur_script, scope);
         if let Some((version, _)) =
-            crate::registry_index::newest_cached_loadable_satisfying(id, &constraints)
+            crate::registry_index::newest_cached_loadable_in_line(id, &constraints, line.as_deref())
         {
             self.resolve_registry_installed(id, &version, f);
             return;
@@ -1437,6 +1449,39 @@ impl Parser {
         _cur_script: &str,
         _scope: &crate::resolution_scope::ResolutionScope,
     ) {
+    }
+
+    /// @C166 — the API line a `use id` in `cur_script` must stay in: the floor of the range
+    /// the declaring package names for `id`, when that package is a published release (its
+    /// root is in the registry cache, as a library parsed from the cache or tested as its own
+    /// project is) and the project neither pins nor declares `id` itself.  `None` otherwise:
+    /// a project's own choice resolves to the newest as before.  The one decision both the
+    /// auto-install and the cache lookup read.
+    #[cfg(feature = "registry")]
+    pub(super) fn library_api_line(
+        &mut self,
+        id: &str,
+        cur_script: &str,
+        scope: &crate::resolution_scope::ResolutionScope,
+    ) -> Option<String> {
+        let published = crate::resolution_scope::project_root(cur_script)
+            .is_some_and(|dir| crate::registry_index::is_published_release_dir(&dir));
+        if !published {
+            return None;
+        }
+        // A lock pin is always a choice.  A declaration is one unless the project IS a
+        // published release (a library tested as its own project, as registry validation
+        // tests it): then its declarations are the library's floors.
+        let root_is_release = crate::resolution_scope::project_root(&self.database.source_dir)
+            .is_some_and(|dir| crate::registry_index::is_published_release_dir(&dir));
+        let project_chose = *scope != crate::resolution_scope::ResolutionScope::Bare
+            && (self.lock_pin_in_force(id, scope, cur_script).is_some()
+                || (!root_is_release && self.root_dep_constraint(id).is_some()));
+        if project_chose {
+            return None;
+        }
+        Self::declaring_range(cur_script, id)
+            .and_then(|range| crate::registry_index::api_line_floor(&range))
     }
 
     /// The version range the package declaring `cur_script` names for `id` in its own

@@ -144,3 +144,4 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C158](DESIGN_DECISIONS_PLATFORM.md#c158--a-library-declares-no-c-compile-or-link-flags-its-c-reaches-the-system-by-dlopen) — A library declares no C compile or link flags; its C reaches the system by `dlopen`
 - [C164](DESIGN_DECISIONS_PLATFORM.md#c164--an-app-carries-the-files-its-program-names-by-one-rule-on-every-target) — An app carries the files its program names, by one rule on every target
 - [C165](DESIGN_DECISIONS_PLATFORM.md#c165--a-shim-includes-a-declared-dependencys-header-by-the-dependencys-name) — A shim includes a declared dependency's header by the dependency's name
+- [C166](DESIGN_DECISIONS_PLATFORM.md#c166--a-published-librarys-range-stays-in-the-api-line-of-its-floor) — A published library's range stays in the API line of its floor

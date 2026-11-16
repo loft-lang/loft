@@ -270,6 +270,15 @@ it, and it names each release it held back.  To take one, say so in `loft.toml`:
 exact pin, or a floor the held release no longer satisfies (`>=0.1.3` over a held
 0.1.0), is the deliberate step across the break.
 
+**A library's range stays in the API line it was built against** (@C166).  A range a
+*published* library declares — `graphics = ">=0.9.0"` in a package from the registry —
+resolves to the newest release that is still a drop-in for its floor, never one whose
+`api_compatible_with` declares a break past it: that library compiled against graphics
+0.9, so graphics 0.12 is not what it asked for.  Your own project's ranges are your choice
+and resolve to the newest as before, and declaring the package yourself chooses for the
+whole tree (below).  Where no release is left in the line, the range resolves to the newest,
+so the rule never refuses a range that resolved.
+
 The **root project's** declared constraints pin the **whole tree**, including
 packages pulled in *transitively* by a `use` inside a dependency: a source-level
 auto-install honours the root's pin, so `glb = "=0.1.0"` holds even when it's
