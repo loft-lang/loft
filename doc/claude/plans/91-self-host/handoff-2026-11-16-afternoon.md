@@ -104,16 +104,13 @@ a keyed collection bound from a call with scalar arguments, a keyed literal at a
    slice of a vector that is no local of plain scalars (27), an index that is a range, a key
    list or a limit (20), `vector<S?>` / `vector<text?>` / `vector<u8?>` (41, each its own
    layout), a keyed bind from a call with a record argument (`protectable_ref_args`).
-3. **A loft language defect met in the port itself, not yet reduced or filed.**  In
-   `el_ex_place::fields_at` — a `for` over syntax nodes, inside a `match` arm — a nested
-   `match ol! { NdInsert { items: x } => { flag = len(x) == 0 && !e.first_pass; }, _ => {} }` on
-   a `ir::Node?` local, in a branch that did NOT run, changed what the sibling local `at`
-   (a field's type) held afterwards: a `reference<P>` field stopped reading as a pointer and
-   twelve programs faulted or differed.  The same test moved into a function
-   (`el_ir::empty_insert`) is fine.  Both spellings tried (the match as an `if` condition, and
-   as a statement with a renamed binding) failed alike, so it is the nested match's binding,
-   not its name.  Reduce it from that function before trusting a nested `match` over a `T?`
-   unwrap in the port; `git show 38c5ffef6..` has the before/after.
+3. **A loft language defect met in the port itself: loft#2520** (filed, not fixed).  In
+   `el_ex_place::fields_at`, a `match ol! { .. }` over a `ir::Node?` local bound from
+   `out_of_line_init`, in a branch that never runs, corrupts the sibling local `at`: the
+   interpreter faults in three seconds, the C backend answers wrong.  `on = ol!; match on`
+   and a helper function (`el_ir::empty_insert`) are both fine; the issue holds the boundary
+   table and the recipe.  No standalone reduction yet — the elaborator is the repro.  Until
+   it is fixed, do not `match` directly over a `x!` unwrap in the port.
 4. Known differences OUTSIDE the corpus, found by probes and not yet fixed: `R { c: [] }` with
    `c: vector<boolean>` mints the `vector<boolean>` row on the first pass where Rust does not
    (`LOFT_TRACE_MINT` on both sides will name it).
