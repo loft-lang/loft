@@ -7113,6 +7113,20 @@ impl Parser {
                 self.end_pattern_arm();
                 continue;
             }
+            // loft#2522 — a subject from a function declared lower in the file has no type on
+            // pass 1, so this loop, which reads a VARIANT pattern, cannot read a literal, slice
+            // or tuple one (`30 =>`, `[x, ..] =>`).  Pass 1 skips such a pattern to its `=>`
+            // and still parses the body, so what pass 1 registers from it stays in step with
+            // pass 2, which reads the arm by the subject's real type.
+            if subject_unresolved && !matches!(self.lexer.peek().has, LexItem::Identifier(_)) {
+                self.skip_unresolved_pattern();
+                self.expect_match_arm_arrow();
+                let mut arm_body = Value::Null;
+                self.parse_match_arm_body(&Type::Unknown(0), &mut arm_body);
+                self.end_pattern_arm();
+                self.lexer.has_token(",");
+                continue;
+            }
             // `@FR-P-Cap` at the arm root — `whole: Rect { w, h } => …` binds the matched subject
             // beside the pattern's own names; `other: _ => …` is the catch-all that binds it.
             let root_capture =
@@ -9415,6 +9429,43 @@ impl Parser {
     /// token }"*, *"unexpected ')'"*) that aborts the run before the second pass emits the real
     /// reason, so the author is told about a comma instead of about the element type.  Measured
     /// on a repetition over a NON-enum element, which has always landed here.
+    /// Pass 1's reading of a pattern over a subject it cannot type yet (loft#2522): every token
+    /// up to the arm's `=>` at bracket depth 0.  The names the pattern binds are bound at an
+    /// unknown type, as `bind_forward_capture_list` binds a variant's, so the body that reads
+    /// them parses; pass 2 binds them by the real pattern.
+    fn skip_unresolved_pattern(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            match &self.lexer.peek().has.clone() {
+                LexItem::None => break,
+                LexItem::Token(t) if depth == 0 && (*t == "=>" || *t == "->") => break,
+                LexItem::Token(t) if *t == "[" || *t == "(" || *t == "{" => {
+                    depth += 1;
+                    self.lexer.cont();
+                }
+                LexItem::Token(t) if *t == "]" || *t == ")" || *t == "}" => {
+                    depth -= 1;
+                    self.lexer.cont();
+                }
+                LexItem::Identifier(name) if name != "_" && name != "if" => {
+                    let name = name.clone();
+                    self.lexer.cont();
+                    // A name followed by `(` or `{` is a variant or a struct, not a capture.
+                    if !self.lexer.peek_token("(") && !self.lexer.peek_token("{") {
+                        // Not marked defined: pass 2 binds the name to a variable of its own
+                        // pattern, and this one stays unknown and unread.
+                        let v = self.create_var(&name, &Type::Unknown(0));
+                        if v != u16::MAX {
+                            let before = self.name_capture(&name, v);
+                            self.pattern_binds_pending.push((name, before));
+                        }
+                    }
+                }
+                _ => self.lexer.cont(),
+            }
+        }
+    }
+
     fn skip_rest_of_slice(&mut self) {
         while !self.lexer.peek_token("]") && !matches!(self.lexer.peek().has, LexItem::None) {
             self.lexer.cont();
