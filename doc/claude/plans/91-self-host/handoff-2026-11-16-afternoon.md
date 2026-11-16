@@ -3,7 +3,7 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 <!-- size-exempt: a dated handoff record, read once (DOC_QUALITY § Maintainer docs 2) -->
-# Handoff 2026-11-16 (afternoon): gate E at 851 of 2158, a fast loop for the long tail
+# Handoff 2026-11-16 (afternoon, evening): gate E at 866 of 2164, a fast loop for the long tail
 
 Branch `tuxedo-pln204-int32`, pushed; PR #2518 (loft3's gather) carries it up to 77024883f
 (819 of 2151) and re-wrote gate E's baseline at ITS suite pin 898bc05 — after it merges, rebase
@@ -84,6 +84,32 @@ to a declared tuple of other scalar member types (`tuple_convert`); `vector<inte
 `vector<float>` row on the first pass, its definition on the second); a keyed local returned,
 a keyed collection bound from a call with scalar arguments, a keyed literal at a tail
 (`__kvb_N`); `destructure_constant_member`.
+
+## Evening of the same day (commits a2961bce2 … 16caf172d): 866 of 2164, 0 differ
+
+A constant-fill comprehension; `vector<S?>` as a whole area (`e2_nullable_elem`: the tagged
+`__nullable<S>` minted where the type is read — literal items in a local, a struct's field and
+a field append, the bind's `read_through_tag`, the loop element, `heap_null_test`'s tagged arm,
+the element write); a tagged slot as an `S?` argument; a vector literal mixing `S { … }` with
+other items of `S`; a record `if` tail whose arms are an element of a vector parameter, a
+fresh call (`join-arm-owner`) or a call answering a view.
+
+**The owner asked about the pace** (four programs a run): the answer given was to port by
+Rust RULE and not by refusal, batch several ports per build, and run the real gate once per
+several commits.  `vector<S?>` done that way was six builds for five corpus programs — the
+tail is long whichever way it is cut, but the area is whole and its next refusals are other
+element types.
+
+**The interpreter runs the elaborator**: `loft --interpret selfhost/front/elab.loft <img> <f>
+<std>` answers in three seconds once its cache is warm, 4m40 after an edit — no faster than
+the 7-minute development build for a changed tree, but a second probe costs nothing.
+
+**Next, by near-admit rank**: a record (struct enum) answered by a `match` tail of a capture
+or its subject — Rust's `ref_return` copy leg, `materialize_return_into`
+(`materialized_view_return`, control.rs), which the port has only for a lambda's capture
+(`capture_tail_copy`); read the whole function and its five call sites before porting.  Then
+`a vector item of another type than the field's` (17), the other nullable element types
+(`u8?`, `single?`, `text?`: each its own layout), `a field the struct does not declare` (17).
 
 ## Open, in order
 
