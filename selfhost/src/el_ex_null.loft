@@ -2204,6 +2204,12 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
   // `MaterializeView` (#306) for a local viewing a store of this frame (a `for` variable over a
   // field): copied into a work ref the first pass renames the buffer onto.
   if lv >= 0 && el_expressions::views_local(vars, lv) {
+    // A struct ENUM keeps `__retbuf` in Rust where a struct renames it onto the copy's work ref
+    // — the clause of `classify_ret_promotion_inner` that decides it is not ported: refused.
+    if el_convert::struct_enum(el_types::base(result)) {
+      el::refuse(e, "a returned view of a local, answered as a struct enum");
+      return null;
+    }
     if e.first_pass {
       if unrenamed && !el_expressions::buffer_bound(e) {
         mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
