@@ -766,11 +766,12 @@ pub fn sub_pattern_cond(e: el::El, vars: el_vars::Vars, pat: integer, tmp: integ
   }
 }
 
-pub struct VAlt { pub cond: ir::Node, pub binds: vector<ir::Node> }
+// `fcond`: the pattern's field sub-patterns' test (`field_sub`), asked once the variant matched.
+pub struct VAlt { pub cond: ir::Node, pub binds: vector<ir::Node>, pub fcond: ir::Node? }
 
 // `alts`: an alternation whose patterns bind fields, one test and binding list per pattern —
 // the arm is emitted once per pattern, as Rust splits it; empty otherwise.
-pub struct VArm { pub cond: ir::Node?, pub binds: vector<ir::Node>, pub aliases: vector<el_vars::VarName>, pub alts: vector<VAlt> }
+pub struct VArm { pub cond: ir::Node?, pub binds: vector<ir::Node>, pub aliases: vector<el_vars::VarName>, pub alts: vector<VAlt>, pub fcond: ir::Node? }
 
 // `parse_match_inner`'s arm over struct enum `sd`, its subject the local `subj`: each pattern a
 // variant of the enum, the test its ordinal against the record's (`OpGetEnum` at 0); a struct
@@ -779,7 +780,7 @@ pub struct VArm { pub cond: ir::Node?, pub binds: vector<ir::Node>, pub aliases:
 // `_` is no test.  A field pattern with a sub-pattern, a binding in an alternation, a qualified
 // pattern and a binding of a heap field are refused by name.
 pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: integer, subj: ir::Node) -> VArm? {
-  r = VArm { cond: null, binds: [], aliases: [], alts: [] };
+  r = VArm { cond: null, binds: [], aliases: [], alts: [], fcond: null };
   // An alternation whose patterns bind (`Circle { r } | Ring { r }`) is split per pattern, each
   // binding the same `_mv_<field>_N` the first made.
   split = false;
@@ -815,13 +816,47 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
         vd = el::variant_of(e, sd, name);
         ab: vector<ir::Node> = [];
         anames: vector<text> = [];
+        fc: ir::Node? = null;
         for f in fields {
           match e.p.nodes[f] {
             PFieldPat { name: fname, pat } => {
-              if pat != null {
-                el::refuse(e, "a field pattern with a sub-pattern");
-                return null;
+              // `parse_match_enum_field_bindings`' sub-pattern: a test of the field, asked in the
+              // arm's guard block after its bindings.
+              if pat != null && rename_of(e, pat!) == "" {
+                pfa = if vd < 0 { -1 } else { attr_nr(el::def(e, vd), fname) };
+                if pfa < 0 {
+                  el::refuse(e, "a field the variant does not declare");
+                  return null;
+                }
+                pft = el::def(e, vd).attributes[pfa]!.typedef[0];
+                pread = field_get(e, vd, pfa, subj);
+                if pread == null {
+                  return null;
+                }
+                fcx: ir::Node? = null;
+                if plain_variant_ord(e, pat!, pft) >= 0 {
+                  pen = match el_types::base(pft) { TyEnum { n: fen } => fen, _ => -1 };
+                  fcx = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [pread!]), el_ir::cl(e, "OpConvIntFromEnum", [ir::NdEnum { ord: plain_variant_ord(e, pat!, pft), tp: pen }])]);
+                } else if !(e.p.nodes[pat!] is PWild) {
+                  if !el_convert::plain_scalar(el_types::base(pft)) && !(el_types::base(pft) is TyText) {
+                    el::refuse(e, "a field pattern with a sub-pattern of this type: {type_kind(pft)}");
+                    return null;
+                  }
+                  tmp = el_vars::create_unique(vars, "fp_subj", pft);
+                  el_vars::set_defined(vars, tmp);
+                  sc = sub_pattern_cond(e, vars, pat!, tmp, pft);
+                  if sc == null {
+                    return null;
+                  }
+                  fcx = el_ir::v_block([el_ir::v_set(tmp, pread!), sc!], ir::TyBoolean, "field_sub");
+                }
+                if fcx != null {
+                  fc = if fc == null { fcx } else { el_ir::v_if(fc!, fcx!, ir::NdBoolean { b: false }) };
+                }
+                continue;
               }
+              // `field: name` binds the field under `name` (`field_pattern_rename`).
+              bname = if pat != null { rename_of(e, pat!) } else { fname };
               fa = if vd < 0 { -1 } else { attr_nr(el::def(e, vd), fname) };
               if fa < 0 {
                 el::refuse(e, "a field the variant does not declare");
@@ -837,7 +872,7 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
                 ft = el_types::with_deps(ft, if sroot >= 0 { [sroot] } else { [] });
               } else if ft is TyText {
                 ft = el_types::without_deps(ft);
-              } else if !el_convert::plain_scalar(el_types::base(ft)) {
+              } else if !el_convert::plain_scalar(el_types::base(ft)) && !el_convert::plain_enum(el_types::base(ft)) {
                 el::refuse(e, "a variant field binding of this type: {type_kind(ft)}");
                 return null;
               }
@@ -848,24 +883,24 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               mv = -1;
               if split {
                 for al in r.aliases {
-                  if al.name == fname {
-                    mv = el_vars::var(vars, fname);
+                  if al.name == bname {
+                    mv = el_vars::var(vars, bname);
                   }
                 }
               }
               if mv >= 0 && !el_types::is_equal(e, el_vars::tp(vars, mv), ft) {
-                el::refuse(e, "a binding the listed patterns type differently: {fname}");
+                el::refuse(e, "a binding the listed patterns type differently: {bname}");
                 return null;
               }
               if mv < 0 {
-                mv = el_vars::create_unique(vars, "mv_{fname}", ft);
+                mv = el_vars::create_unique(vars, "mv_{bname}", ft);
                 el_vars::set_defined(vars, mv);
                 vars.vars[mv].skip_free = true;
-                r.aliases += [el_vars::VarName { name: fname, nr: el_vars::var(vars, fname) }];
-                el_vars::set_name(vars, fname, mv);
+                r.aliases += [el_vars::VarName { name: bname, nr: el_vars::var(vars, bname) }];
+                el_vars::set_name(vars, bname, mv);
               }
               ab += [el_ir::v_set(mv, read!)];
-              anames += [fname];
+              anames += [bname];
             },
             _ => {}
           }
@@ -877,9 +912,12 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
             el::refuse(e, "a name only some of the listed patterns bind");
             return null;
           }
-          r.alts += [VAlt { cond: c, binds: ab }];
+          r.alts += [VAlt { cond: c, binds: ab, fcond: fc }];
         } else {
           r.binds += ab;
+          if fc != null {
+            r.fcond = if r.fcond == null { fc } else { el_ir::v_if(r.fcond!, fc!, ir::NdBoolean { b: false }) };
+          }
         }
       },
       _ => {

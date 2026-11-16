@@ -17,7 +17,7 @@ full loft interpreter, the in-between data of the two implementations compared a
   runner surveys, one heavy job at a time.
 - Gate E at the new pin, before the uncommitted ports below: 733 of 2125 agree, 12 differ.  The
   differs were new Rust behaviour from main plus programs a cleared refusal newly exposed.
-- With the ports below: **747 of 2125 agree, 1374 refused, 4 differ** (verdict files diffed run
+- With the ports below: **751 of 2125 agree, 1370 refused, 4 differ** (verdict files diffed run
   against run: every moved program is one a port named).
 
 ## Ported this session (Rust function → loft)
@@ -55,6 +55,9 @@ full loft interpreter, the in-between data of the two implementations compared a
 - Captures: a nullable record or vector is shared by pointer like a dense one, read as its
   closure-record field (a dense pointer borrowing `__closure`); a nullable plain scalar or a
   plain enum is captured as the value.
+- A struct-enum arm's field sub-patterns (`A { v: 5 }`, `A { v: 1..=3 }`, `A { i: Sp }`): the
+  test folded as a guard is (`match_guard`: the bindings, then `if <field test> <guard> else
+  false`); a field bound under a new name (`A { v: x }`) and a plain-enum field binding.
 - `branch_yields_null` as Rust's: a bare `null` counts on the second pass only, a forward call's
   block and a value behind a halt answer nothing.
 
