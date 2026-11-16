@@ -3709,13 +3709,55 @@ impl Parser {
     /// A PARAMETER is not a placement question — the return borrows it, and
     /// `classify_ret_promotion`'s `MergeAttr` rung already says so by merging the attr
     /// into the return deps — so an attribute never blocks the rename.
+    ///
+    /// A RECORD of another definition is the same question for a record container: the tail
+    /// projects into it (`def(e, 0).ts[i] ?? TyV` reads an element of the call's `D`), so it is
+    /// copied out and the container freed at exit.  Kept as a candidate, the return's deps named
+    /// the container and nothing freed it once an arm answered another store (loft#2515's `??`
+    /// cell: one `D` per call with the default arm taken).
     fn ls_can_be_record_buffer(&self, ls: &[u16]) -> bool {
         let attr_names = &self.data.def(self.context).attr_names;
+        let ret = self.data.def(self.context).returned().clone();
         ls.iter().all(|&v| {
             v >= self.vars.count()
                 || attr_names.contains_key(self.vars.name(v))
-                || !crate::parser::vectors::is_collection(self.vars.tp(v))
+                || (!crate::parser::vectors::is_collection(self.vars.tp(v))
+                    && (crate::env_once!(std::env::var_os("LOFT_NO_RET_CONTAINER_COPY").is_some())
+                        || !self.work_ref_of_another_record(v, &ret)))
         })
+    }
+
+    /// `@FR-F-Ret` — is local `v` a compiler WORK-REF holding a record of another definition
+    /// than the return type `ret` names?  Such a record is never the return's buffer: the
+    /// container a projection tail reads (`decode(n).items[0]` from a `-> In`, the `Dec` temp of
+    /// the `inline_container`) renamed onto `__retbuf` had a `Dec` built in the caller's `In`
+    /// buffer, and the displaced free released the caller's store.
+    ///
+    /// Asked of a work-ref only: a parameter of another type is the attribute rung's (its dep
+    /// still merges).  A variant is its enum's record, and a record ENUM result is the same heap
+    /// record as a struct one (`heap_def_nr`): spelled for `Reference` alone, `-> T { def(e,
+    /// 0).ts[0]! }` over a record enum `T` bound the call's `D` container as the buffer and
+    /// freed the caller's store twice (loft#2515).  `LOFT_NO_RET_TYPE_MATCH=1` answers false.
+    fn work_ref_of_another_record(&self, v: u16, ret: &Type) -> bool {
+        let record_of = |d: u32| {
+            if self.data.def_type(d) == DefType::EnumValue {
+                self.data.def(d).parent()
+            } else {
+                d
+            }
+        };
+        let is_record = |d: u32| {
+            matches!(
+                self.data.def_type(d),
+                DefType::Struct | DefType::Enum | DefType::EnumValue
+            )
+        };
+        v < self.vars.count()
+            && matches!((self.vars.tp(v).heap_def_nr(), ret.heap_def_nr()),
+                (Some(vd), Some(rd)) if is_record(vd) && is_record(rd) && record_of(vd) != record_of(rd))
+            && self.vars.name(v).starts_with("__ref_")
+            && !self.vars.is_argument(v)
+            && !crate::env_once!(std::env::var_os("LOFT_NO_RET_TYPE_MATCH").is_some())
     }
 
     /// @PLN157 § V — the work-ref a return-position struct LITERAL builds into, or `None`
@@ -21520,38 +21562,11 @@ impl Parser {
         if ctx.jo_arm_skip.contains(&v) {
             return RetPromotion::SkipDelivered;
         }
-        // `@FR-F-Ret` — a record of ANOTHER type is never the return's buffer: the container a
-        // projection tail reads (`decode(n).items[0]` from a `-> In`, the `Dec` temp of the
-        // `inline_container`) was renamed onto `__retbuf`, so a `Dec` was built in the caller's
-        // `In` buffer and the displaced free released the caller's store — the interpreter then
-        // read a corrupt reference.  It stays an inner work-ref; the element is copied out.
-        // `LOFT_NO_RET_TYPE_MATCH=1` lets any record type be promoted.
-        // Asked of a compiler WORK-REF holding a record only: a parameter of another type is the
-        // attribute rung's (its dep still merges), and a variant is its enum's record.  A record
-        // ENUM result is the same heap record as a struct one (`heap_def_nr`): spelled for
-        // `Reference` alone, `-> T { def(e, 0).ts[0]! }` over a record enum `T` bound the
-        // call's `D` container as the buffer and freed the caller's store twice (loft#2515).
-        let record_of = |d: u32| {
-            if self.data.def_type(d) == DefType::EnumValue {
-                self.data.def(d).parent()
-            } else {
-                d
-            }
-        };
-        let is_record = |d: u32| {
-            matches!(
-                self.data.def_type(d),
-                DefType::Struct | DefType::Enum | DefType::EnumValue
-            )
-        };
-        if let (Some(vd), Some(rd)) = (self.vars.tp(v).heap_def_nr(), ctx.ret.heap_def_nr())
-            && is_record(vd)
-            && is_record(rd)
-            && record_of(vd) != record_of(rd)
-            && self.vars.name(v).starts_with("__ref_")
-            && !self.vars.is_argument(v)
-            && !crate::env_once!(std::env::var_os("LOFT_NO_RET_TYPE_MATCH").is_some())
-        {
+        // `@FR-F-Ret` — a record of ANOTHER type is never the return's buffer (see
+        // `work_ref_of_another_record`).  The reference delivery already copies such a tail
+        // (`ls_can_be_record_buffer`); this rung keeps the candidate an inner work-ref for every
+        // other site that asks.
+        if self.work_ref_of_another_record(v, &ctx.ret) {
             return RetPromotion::SkipInnerRef;
         }
         let n = self.vars.name(v);

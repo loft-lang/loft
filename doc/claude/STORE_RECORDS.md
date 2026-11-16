@@ -295,7 +295,11 @@ parameter takes the direct rebind's entry witness (`Parser::rebind_param_through
 `LOFT_NO_LINK_PARAM_REBIND=1` leaves the written record to nobody.  A record of another type
 than the return is never promoted onto the return buffer (`classify_ret_promotion_inner`: the
 container a projection tail reads stays an inner work-ref); `LOFT_NO_RET_TYPE_MATCH=1` promotes
-it, and the caller's buffer is freed under a record of the wrong type.  A vector field replaced from a
+it, and the caller's buffer is freed under a record of the wrong type.  The reference delivery
+asks the same question (`ls_can_be_record_buffer`): such a container is no candidate, so the tail
+is copied into the buffer and the container freed at exit; `LOFT_NO_RET_CONTAINER_COPY=1` keeps it
+a candidate, and a `??` tail answering its default leaks the container (`def(e, 0).ts[i] ?? TyV`).
+A vector field replaced from a
 projection whose type carries no dep (a destructured tuple member, `(s.n, s.t, s.v) = trio(…)`)
 copies it into the staging temp as a typed projection does (`__p154_rhs`);
 `LOFT_NO_UNTYPED_PROJECTION_COPY=1` stages the projection itself, which the temp then frees.
