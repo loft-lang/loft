@@ -3407,8 +3407,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// keeps its place in the signature (callers lower against it on pass 2) under a compiler
     /// name, the author's name becomes an ordinary local again (pass 2 binds only names pass 1
     /// created), and the closures' boxed capture stays boxed: pass 2's flip boxes the local, and
-    /// each `return` delivers into the buffer pass 1 published
-    /// (`text_buffer_published_under_another_name`).  `false` for any other `RefVar` binding —
+    /// each `return` delivers into the buffer pass 1 published (`text_return` promotes nothing on
+    /// pass 2 that pass 1 did not).  `false` for any other `RefVar` binding —
     /// a user's `&` parameter, refused where it is written.
     fn withdraw_written_text_buffer(&mut self, parent_d: u32, v_nr: u16, name: &str) -> bool {
         let Some(a) = self.data.def(parent_d).attr_names.get(name).copied() else {
