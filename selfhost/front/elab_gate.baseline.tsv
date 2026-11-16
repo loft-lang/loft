@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	508580956bfa87977becdb248551009411c6d361
+suite	b2194ff561a30b5890bda8b8d97acdd7d50e275a
 
-layer	elab	agree	886	of	2171
+layer	elab	agree	886	of	2185
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -85,6 +85,7 @@ elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-l
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/an-annotated-link-to-a-struct-place-is-its-view.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Repoint/a-link-re-points-to-any-place-and-keeps-each-alive.loft
+elab	refused	loft-suite/rules/binding/B-Ref-StoredRef/a-reference-field-of-a-struct-enum-is-repointed-by-assignment.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/1445-a-keyed-parameter-appends-through-its-link.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/1445b-a-collection-is-read-through-an-amp-link-at-every-kind.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/1463-a-closure-written-through-a-link-lands-on-a-capturing-slot.loft
@@ -111,6 +112,7 @@ elab	refused	loft-suite/rules/binding/B-Scope/2330-a-comprehension-variable-keep
 elab	refused	loft-suite/rules/binding/B-Scope/2332-a-bind-after-a-loop-is-a-new-binding-at-the-loop-variables-type.loft
 elab	refused	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft
 elab	refused	loft-suite/rules/binding/B-Scope/2411-a-bind-from-a-later-function-after-its-block-ended-is-a-new-binding.loft
+elab	refused	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-loop-name-a-destructure-reuses-compiles.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-name-bound-in-sibling-loops-is-one-binding-per-loop-on-every-backend.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-patterns-names-end-with-its-arm.loft
@@ -182,10 +184,12 @@ elab	refused	loft-suite/rules/calls/F-Ret/2289-a-field-of-a-call-temporary-answe
 elab	refused	loft-suite/rules/calls/F-Ret/2443-a-field-of-a-call-result-returned-is-the-callers-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/2443-a-record-copied-out-of-a-kept-buffer-releases-it.loft
 elab	refused	loft-suite/rules/calls/F-Ret/2511-a-stored-reference-returned-through-or-hands-back-a-copy.loft
+elab	refused	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-a-calls-result-is-returned-fresh.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-function-returning-a-stored-reference-hands-back-a-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-nullable-return-is-as-fresh-as-its-dense-twin.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-recursive-call-after-an-early-fresh-return-may-still-answer-its-argument.loft
+elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-over-types-declared-below-returns-through-every-caller.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-tail-returns-each-arms-value-whatever-its-wrapper.loft
 elab	refused	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft
 elab	refused	loft-suite/rules/calls/F-Return/1347-a-lambda-declared-nullable-heap-accepts-a-non-null-tail.loft
@@ -215,6 +219,7 @@ elab	refused	loft-suite/rules/closures/L-CapKeep/1636-a-closure-kept-from-a-loop
 elab	refused	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/2357-a-capture-re-assigned-in-its-loop-keeps-the-store-its-build-named.loft
+elab	refused	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/a-kept-closure-shares-the-heap-its-run-captured.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/a-pass-scoped-fn-ref-beside-a-kept-one-frees-its-record-once.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/a-staying-record-rebuilt-in-one-pass-frees-its-capture-once.loft
@@ -234,6 +239,8 @@ elab	refused	loft-suite/rules/closures/L-CapOwn/2354-a-displaced-fn-field-record
 elab	refused	loft-suite/rules/closures/L-CapOwn/2487-a-lambda-argument-in-a-loop-borrows-what-it-captured.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2504-a-capture-relayed-by-a-nested-lambda-stays-its-owners.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2505-a-lambda-in-a-loop-handed-on-by-its-callee-borrows-what-it-captured.loft
+elab	refused	loft-suite/rules/closures/L-CapOwn/2514-a-closure-a-callee-hands-back-in-a-loop-is-released-once.loft
+elab	refused	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-leaving-closure-releases-each-kind-of-capture-once.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft
@@ -271,6 +278,7 @@ elab	refused	loft-suite/rules/collections/Col-Concat/2399-a-concatenation-onto-a
 elab	refused	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft
 elab	refused	loft-suite/rules/collections/Col-Concat/a-concat-is-a-value-in-every-expression-position.loft
 elab	refused	loft-suite/rules/collections/Col-Concat/a-concat-led-by-a-slice-of-its-destination-frees-the-slice.loft
+elab	refused	loft-suite/rules/collections/Col-Concat/a-concat-of-a-local-at-a-functions-end-keeps-the-locals-elements.loft
 elab	refused	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft
 elab	refused	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft
 elab	refused	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft
@@ -387,6 +395,7 @@ elab	refused	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-elemen
 elab	refused	loft-suite/rules/heap/H-Free/a-local-bound-in-each-pass-frees-each-copied-answer.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-returned-arm-that-may-leave-early-frees-the-record-it-made.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft
+elab	refused	loft-suite/rules/heap/H-Free/a-tail-match-answer-materialised-into-a-work-ref-is-freed-once.loft
 elab	refused	loft-suite/rules/heap/H-Free/an-early-return-frees-a-local-a-later-bind-makes-an-owner.loft
 elab	refused	loft-suite/rules/heap/H-Free/an-early-return-frees-the-buffer-an-arm-copy-fills-later.loft
 elab	refused	loft-suite/rules/heap/H-FreeNull/2417-a-local-a-later-arm-binds-frees-nothing-on-the-arms-before-it.loft
@@ -536,6 +545,8 @@ elab	refused	loft-suite/rules/layout/L-Tuple/a-record-is-padded-to-its-alignment
 elab	refused	loft-suite/rules/layout/L-Tuple/a-tuple-packed-like-a-struct-keeps-its-written-positions.loft
 elab	refused	loft-suite/rules/layout/L-Tuple/a-tuple-packs-by-descending-alignment-and-pads-to-its-largest.loft
 elab	refused	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft
+elab	refused	loft-suite/rules/matching/M-Match/a-match-over-a-later-function-reads-every-pattern-kind.loft
+elab	differ	loft-suite/rules/matching/M-Match/a-match-subject-from-a-later-function-keeps-its-own-temp.loft
 elab	refused	loft-suite/rules/matching/M-Once/a-guarded-arm-falls-to-the-next-arm-without-a-copy.loft
 elab	refused	loft-suite/rules/matching/M-Variant/1778-a-null-enum-through-a-dispatcher-answers-the-typed-null.loft
 elab	refused	loft-suite/rules/matching/M-Variant/2326-a-capture-named-like-a-function-binds-whatever-the-declaration-order.loft
@@ -1109,6 +1120,8 @@ elab	refused	tests/scripts/25-nullable-sequences.loft
 elab	refused	tests/scripts/25-nullable-vector-scalar-element.loft
 elab	refused	tests/scripts/25-sorted-enum-variant-range.loft
 elab	refused	tests/scripts/2501-a-bare-variant-against-a-field-of-a-record-a-module-cycle-declares.loft
+elab	refused	tests/scripts/2519-a-tail-match-over-a-call-answers-its-arm-past-a-captured-release.loft
+elab	refused	tests/scripts/2521-a-place-assigned-a-variant-that-embeds-its-own-old-value-keeps-that-value.loft
 elab	refused	tests/scripts/30-expressions.loft
 elab	refused	tests/scripts/35b-sequence-capture.loft
 elab	refused	tests/scripts/35f-alternation.loft
@@ -1167,6 +1180,7 @@ elab	refused	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft
 elab	refused	tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft
 elab	refused	tests/scripts/a-call-text-moves-into-its-local.loft
 elab	refused	tests/scripts/a-call-two-wrappers-share-is-made-once.loft
+elab	differ	tests/scripts/a-captured-view-of-a-call-result-is-released-once-past-an-early-exit.loft
 elab	refused	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft
 elab	refused	tests/scripts/a-compound-keyed-insert-writes-the-entry-its-key-names.loft
 elab	refused	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft
