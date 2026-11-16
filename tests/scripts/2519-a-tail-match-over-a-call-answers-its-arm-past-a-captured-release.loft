@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2519 — a function whose tail is a `match` over a CALL's result (a block of its own) answers
+// what its arm computes, also when another arm builds a vector a lambda captures.  The captured
+// vector's release is guarded on the closure record (`@FR-L-CapOwn`, `if <record built> { null }
+// else { OpFreeRef(v) }`) and lands at the end of the match block, after the arms; read as the
+// block's value, every arm answered null (`false`) on the interpreter and the C backend refused
+// the function.  The cleanup set the result is read past (`is_scope_exit_cleanup`) now holds
+// that guarded release and the sequence it comes in.
+//
+// Hand-computed, `bad` = 9: `Var { n }` answers `n != 9`; `Lit { v }` answers `v != 9` (an
+// early `return false` for 9 in the `early` forms); `Pair { a, c }` answers whether neither part
+// is 9 — through a captured vector (`flag`), a captured counter (`count`), or a vector no lambda
+// captures (`plain`, the control the fix must leave alone).  `subject` matches the variable
+// itself: the control on the other side of the boundary.
+//
+// @falsified-at: 0de1794d4 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 2 -> 0
+//   HOLDS: leak, panic and refusals are clean on both trees.
+// CHANNEL: the asserts on the interpreter (silent-wrong there); the C backend refused the
+//   function before the fix (exit 2).
+enum N {
+  Var { n: integer },
+  Pair { a: integer, c: integer },
+  Lit { v: integer },
+}
+
+fn each(v: N, f: fn(integer)) {
+  match v {
+    Pair { a, c } => { f(a); f(c); },
+    Var { n } => f(n),
+    _ => {},
+  }
+}
+
+fn same(v: N) -> N {
+  v
+}
+
+fn flag(v: N, bad: integer) -> boolean {
+  match same(v) {
+    Var { n } => n != bad,
+    Lit { v: k } => k != bad,
+    _ => {
+      ok = [true];
+      each(v, fn(x: integer) {
+        if x == bad { ok[0] = false; }
+      });
+      ok[0]!
+    },
+  }
+}
+
+fn flag_early(v: N, bad: integer) -> boolean {
+  match same(v) {
+    Var { n } => n != bad,
+    Lit { v: k } => {
+      if k == bad {
+        return false;
+      }
+      true
+    },
+    _ => {
+      ok = [true];
+      each(v, fn(x: integer) {
+        if x == bad { ok[0] = false; }
+      });
+      ok[0]!
+    },
+  }
+}
+
+fn count(v: N, bad: integer) -> boolean {
+  match same(v) {
+    Var { n } => n != bad,
+    Lit { v: k } => k != bad,
+    _ => {
+      hits = [0];
+      each(v, fn(x: integer) {
+        if x == bad { hits[0] = hits[0]! + 1; }
+      });
+      hits[0]! == 0
+    },
+  }
+}
+
+fn plain(v: N, bad: integer) -> boolean {
+  match same(v) {
+    Var { n } => n != bad,
+    Lit { v: k } => k != bad,
+    _ => {
+      ok = [true];
+      match v {
+        Pair { a, c } => { if a == bad || c == bad { ok[0] = false; } },
+        _ => {},
+      }
+      ok[0]!
+    },
+  }
+}
+
+fn subject(v: N, bad: integer) -> boolean {
+  match v {
+    Var { n } => n != bad,
+    Lit { v: k } => k != bad,
+    _ => {
+      ok = [true];
+      each(v, fn(x: integer) {
+        if x == bad { ok[0] = false; }
+      });
+      ok[0]!
+    },
+  }
+}
+
+fn row(f: fn(N, integer) -> boolean) -> text {
+  "{f(Var { n: 3 }, 9)} {f(Var { n: 9 }, 9)} {f(Lit { v: 1 }, 9)} {f(Lit { v: 9 }, 9)} {f(Pair { a: 1, c: 2 }, 9)} {f(Pair { a: 1, c: 9 }, 9)}"
+}
+
+fn main() {
+  want = "true false true false true false";
+  assert(row(flag) == want, "flag: {row(flag)}");
+  assert(row(flag_early) == want, "flag_early: {row(flag_early)}");
+  assert(row(count) == want, "count: {row(count)}");
+  assert(row(plain) == want, "plain: {row(plain)}");
+  assert(row(subject) == want, "subject: {row(subject)}");
+  println("ok");
+}
