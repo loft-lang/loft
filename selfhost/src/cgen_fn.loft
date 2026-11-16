@@ -1790,6 +1790,16 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       refuse(w, "a null without a type");
       none()
     },
+    NdRawExpr { s: code } => {
+      for r in w.raw_exprs {
+        if r == code {
+          shape = w.raw_shapes[r#index]!;
+          return E { code: code, kind: kind_of(shape), tup: if is_tuple(shape) { shape } else { "" } };
+        }
+      }
+      refuse(w, "the value {construct(node)}");
+      none()
+    },
     _ => {
       refuse(w, "the value {construct(node)}");
       none()
@@ -3220,6 +3230,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     alias_vec: ir::NdNull,
     in_range: [],
     in_range_lens: [],
+    raw_exprs: [],
+    raw_shapes: [],
   };
   // `store_links`: a place twin's `&` parameters (`twin.places`, by parameter) and a store
   // instance's text parameters (`n_app@st1`, `parser/store_text.rs`) are store links, and so is every `&` local each bind of which names a field or an element — each a
