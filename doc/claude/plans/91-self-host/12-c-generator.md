@@ -281,10 +281,25 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (22): `VALUE_RECORD`, `DISTINCT_VERSION`, `APART_MINT`, `CALLEE_INPUTS`, `GROWN_HEADER`, `GUARD_BOUND`, `VERSION`, `TRANSIENT`, `DEFERRED_COPY`, `LOOP_RECORD`, `APART`, `APPEND_LOOP_WINDOW`, `APPEND_TWIN`, `HAND_OVER`, `VR_PTR`, `FNREF_PARK`, `FNREF_BUFFER`, `CHAR_WALK`, `LAZY_SPLIT`, `SPLIT_TABLE`, `TESTED_BORROW`, `DESTINATION`.
+`cgen_w::PLAIN_SWITCHES` names them (21).  Each one's reach — the corpus bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`, 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
+
+| switch | bodies | switch | bodies |
+|---|---|---|---|
+| `VALUE_RECORD` | 510 | `GUARD_BOUND` | 8 |
+| `CALLEE_INPUTS` | 97 | `HAND_OVER` | 6 |
+| `TRANSIENT` | 92 | `GROWN_HEADER` | 2 |
+| `DISTINCT_VERSION` | 40 | `VR_PTR` | 2 |
+| `APPEND_TWIN` | 32 | `CHAR_WALK` | +109 refused |
+| `APART` | 29 | `LAZY_SPLIT` | +41 refused |
+| `DESTINATION` | 19 | `SPLIT_TABLE` | +34 refused |
+| `FNREF_BUFFER` | 9 | `TESTED_BORROW` | +5 refused |
+
+`VERSION`, `DEFERRED_COPY`, `LOOP_RECORD`, `APPEND_LOOP_WINDOW` and `FNREF_PARK` change no corpus body: each is read for whether the C writer can reach it at all (as `REBOUND_MOVER` could not) before it is ported or dropped.
 Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`), `TEXT_WINDOW`
-(`cgen_win::open_text_windows`), `REBOUND_MOVER` (no port needed: the C writer's `verdict` hands
-`hoistable` no owned buffers, so `rebinds_alias_free` declines every rebind on either side).
+(`cgen_win::open_text_windows`), `APART_MINT` (`opt_hoist::apart_mint`), `REBOUND_MOVER` (no port
+needed: the C writer's `verdict` hands `hoistable` no owned buffers, so `rebinds_alias_free` declines
+every rebind on either side).  A rule is tried before it leaves the list with
+`CGEN_ON=LOFT_NO_X selfhost/bench/cgen_live.sh --diff FILE` (`LOFT_CGEN_ON` tells the generator).
 A rule leaves the list when both sides agree on the whole corpus with it on.  Where a coarse
 switch covers several clauses, its finer switches take its place first and each clause is
 ported on its own.
