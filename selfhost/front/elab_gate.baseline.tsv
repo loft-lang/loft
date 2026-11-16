@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	871	of	2167
+layer	elab	agree	879	of	2168
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -738,7 +738,6 @@ elab	refused	loft-suite/rules/rewrites/R-ElemFirst/a-row-built-in-its-element-fi
 elab	refused	loft-suite/rules/rewrites/R-ElementPath/an-element-read-in-range-answers-what-the-full-path-answers.loft
 elab	refused	loft-suite/rules/rewrites/R-FieldAppend/a-plain-append-beside-a-destination-call-lands-in-its-own-slot.loft
 elab	refused	loft-suite/rules/rewrites/R-FieldAppend/a-straight-line-append-to-a-record-field-is-its-own-slot-for-every-element-shape.loft
-elab	refused	loft-suite/rules/rewrites/R-Fill/a-fill-is-the-in-place-set-at-every-element-width.loft
 elab	refused	loft-suite/rules/rewrites/R-Fill/a-fill-writes-every-element-at-every-length-and-offset.loft
 elab	refused	loft-suite/rules/rewrites/R-Fill/a-fill-writes-through-the-header-its-loop-holds.loft
 elab	refused	loft-suite/rules/rewrites/R-FnRefValue/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft
@@ -790,7 +789,6 @@ elab	refused	loft-suite/rules/rewrites/R-RefillBuffer/a-live-buffer-is-refilled-
 elab	refused	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft
 elab	refused	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-vector-filled-with-one-scalar-is-overwritten-only-at-its-own-length.loft
 elab	refused	loft-suite/rules/rewrites/R-Refresh/1014-keep-range-refresh.loft
-elab	refused	loft-suite/rules/rewrites/R-RepeatRun/a-spelled-out-run-of-one-constant-builds-the-same-vector.loft
 elab	refused	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft
 elab	refused	loft-suite/rules/rewrites/R-SameRead/a-slice-match-reads-its-subject-once.loft
 elab	refused	loft-suite/rules/rewrites/R-SliceArg/a-slice-argument-shares-no-carrier-with-the-slice-in-use-beside-it.loft
@@ -810,7 +808,6 @@ elab	refused	loft-suite/rules/rewrites/R-ValueRecord/158-a-seven-field-record-re
 elab	refused	loft-suite/rules/rewrites/R-ValueRecord/1847-a-lifted-value-record-call-with-a-built-argument-compiles.loft
 elab	refused	loft-suite/rules/rewrites/R-ValueRecord/1992-a-record-returned-from-a-branch-that-holds-a-match-compiles.loft
 elab	refused	loft-suite/rules/rewrites/R-ValueRecord/a-small-record-copied-into-a-return-local-is-freed-on-native.loft
-elab	refused	loft-suite/rules/rewrites/R-VecCopy/a-vector-walked-into-another-is-that-vector-appended.loft
 elab	refused	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft
 elab	refused	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft
 elab	refused	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft
@@ -1218,7 +1215,6 @@ elab	refused	tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-th
 elab	refused	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft
 elab	refused	tests/scripts/a-module-names-its-importers-type-from-a-private-function.loft
 elab	refused	tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft
-elab	refused	tests/scripts/a-narrow-element-of-a-held-vector-is-read-through-its-base.loft
 elab	refused	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft
 elab	refused	tests/scripts/a-narrow-slot-is-checked-wherever-a-value-reaches-it.loft
 elab	refused	tests/scripts/a-narrowing-cure-compiles-where-it-is-offered.loft
@@ -1255,9 +1251,6 @@ elab	refused	tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-c
 elab	refused	tests/scripts/a-type-named-above-its-pub-declaration-is-published.loft
 elab	refused	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft
 elab	refused	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft
-elab	refused	tests/scripts/a-vector-copied-element-by-element-is-one-append.loft
-elab	refused	tests/scripts/a-vector-is-written-to-a-file-as-its-stored-bytes.loft
-elab	refused	tests/scripts/a-vector-of-raw-scalars-is-written-as-one-block.loft
 elab	refused	tests/scripts/a-vector-of-unsigned-four-byte-integers-sorts-by-value.loft
 elab	refused	tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft
 elab	refused	tests/scripts/a-vector-prepended-to-is-rebuilt-in-place.loft
