@@ -199,8 +199,22 @@ def http(url, data=None, headers=None, ttl=DAY):
     req = urllib.request.Request(url, data=data, headers={"User-Agent": "loft-thirdparty-audit",
                                                           **(headers or {})})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            body = r.read()
+        body = None
+        # A register that answers 5xx or not at all is usually down for a moment (NVD answered
+        # 503 on main's 11-16 nightly, with no cached answer to fall back on): three tries,
+        # 5 s and 15 s apart, before it counts as not answering.  A 4xx is an answer.
+        for wait in (5, 15, None):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    body = r.read()
+                break
+            except urllib.error.HTTPError as e:
+                if e.code < 500 or wait is None:
+                    raise
+            except (urllib.error.URLError, OSError):
+                if wait is None:
+                    raise
+            time.sleep(wait)
     except (urllib.error.URLError, OSError) as e:
         # A register that does not answer this time answered before: its last answer, up to
         # STALE_OK old, is what is known, and the report says how old it is.  Older, or never

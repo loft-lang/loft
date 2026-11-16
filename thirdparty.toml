@@ -69,7 +69,11 @@ version    = "r26"
 pinned     = "src/android.rs:NDK_MIN"
 # `--native-c --native-android` compiles the NDK's own sources/android/native_app_glue into the
 # activity library (doc/claude/plans/106-android-build-target/c-backend.md), unchanged.
-advisories = []
+# NVD's CVE search for the NDK: a CVE against the NDK's sources names it.
+advisories = ["nvd:android ndk"]
+
+[thirdparty.android-ndk.reviewed]
+CVE-2018-9491 = "not-reached: AMediaCodecCryptoInfo_new in the platform's media codec (NdkMediaCodec.cpp), which the device ships and a loft app never calls; the build compiles only native_app_glue"
 
 [thirdparty.android]
 kind     = "system"
