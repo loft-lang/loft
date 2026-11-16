@@ -216,6 +216,15 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if lambda && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
     code = lambda_vector_copy(e, code, rb, result);
   }
+  // `MaterializeView` for a lambda's tail that reads a capture (`return_views_a_capture`): the
+  // record belongs to the frame that built the closure, so it is copied into the late buffer
+  // behind its null test, the result borrowing the buffer.
+  if lambda && !e.first_pass && rb >= 0 && e.closure_var >= 0 && el_types::base(result) is TyReference {
+    cc = capture_tail_copy(e, vars, code, rb);
+    if cc != null {
+      code = cc!;
+    }
+  }
   // A lambda's late buffer is delivered nothing else: its body builds the record it answers as
   // a value (`ref_return` renamed nothing on the first pass, when the lambda had no buffer).
   if lambda {
@@ -277,6 +286,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     rename_ret_buffer(e, vars, code, rb);
     renamed_now = attr_nr(el::def(e, e.context), "__retbuf") < 0;
   }
+  // A lambda whose tail names a record capture answers through the buffer: the result borrows
+  // it from the first pass on (`materialize_view_return`'s rename), before the record exists.
+  if e.first_pass && rb >= 0 && len(e.captures) > 0 {
+    ct = tail_syntax(e, vars.body);
+    cn = if ct >= 0 { match e.p.nodes[ct] { SName { name, member } => if member == "" { name } else { "" }, _ => "" } } else { "" };
+    for c in e.captures {
+      if cn != "" && c.name == cn && heap_def(c.tp) >= 0 {
+        ba = attr_nr(el::def(e, e.context), "__retbuf");
+        ret = el::def(e, e.context).returned[0];
+        if ba >= 0 && !el_types::deps(ret).contains(ba) {
+          e.b.data.definitions[e.context].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+        }
+      }
+    }
+  }
   if rb >= 0 && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
     delivered = var_return(e, vars, code, rb);
     if delivered != null {
@@ -286,6 +310,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // delivery is asked of it.
       ncc_tail = match body_tail(code) { NdBlock { block } => block[0].name == "ncc", _ => false };
       built = if ncc_tail { el_ex_null::merge_view_call(e, vars, code) } else { null };
+
       view_answer = built != null;
       if built == null {
         built = build_into_buffer(e, vars, code, rb, result);
@@ -2281,6 +2306,34 @@ fn respan(n: ir::Node, inner: ir::Node) -> ir::Node {
     NdSpan { pos, inner: i } => ir::NdSpan { pos: pos, inner: respan(i, inner) },
     _ => inner
   }
+}
+
+// A lambda body whose tail is a read of its closure record's field: the tail copied into the
+// buffer `rb` (`{ rb = null; OpDatabase(rb, kt); OpCopyRecord(cap, rb, kt); rb }`) where the
+// capture is present, the null sentinel where not; null for any other tail.
+fn capture_tail_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  tail = el_ir::unspan(bl.operators[-1]!);
+  rooted = match tail { NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetDbRef" && len(args) > 0 && el_ir::unspan(args[0]!) == ir::NdVar { n: e.closure_var }, _ => false };
+  td = heap_def(el_vars::tp(vars, rb));
+  if !rooted || td < 0 {
+    return null;
+  }
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  owned = el_types::with_deps(el_types::without_deps(el_vars::tp(vars, rb)), [rb]);
+  copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return");
+  bl.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [tail]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
+  d = e.context;
+  ba = attr_nr(el::def(e, d), "__retbuf");
+  ret = el::def(e, d).returned[0];
+  if ba >= 0 && !el_types::deps(ret).contains(ba) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+  }
+  ir::NdBlock { block: [bl] }
 }
 
 // The work ref of a FRESH record literal — an `Object` (or a unit variant's `EnumUnitLit`) block

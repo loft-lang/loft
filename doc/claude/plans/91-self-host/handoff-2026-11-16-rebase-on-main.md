@@ -17,7 +17,7 @@ full loft interpreter, the in-between data of the two implementations compared a
   runner surveys, one heavy job at a time.
 - Gate E at the new pin, before the uncommitted ports below: 733 of 2125 agree, 12 differ.  The
   differs were new Rust behaviour from main plus programs a cleared refusal newly exposed.
-- With the ports below: **754 of 2125 agree, 1367 refused, 4 differ** (verdict files diffed run
+- With the ports below: **757 of 2125 agree, 1363 refused, 5 differ** (verdict files diffed run
   against run: every moved program is one a port named).
 
 ## Ported this session (Rust function → loft)
@@ -63,7 +63,8 @@ full loft interpreter, the in-between data of the two implementations compared a
 
 ## Open, in order
 
-1. The four differs: O-Latest 2132 (`x = base.inner` after `x = mk(1)`: Rust's `x` keeps
+1. The five differs: `a-function-value-fills-its-callers-record` (a function value's closure
+   dep is variable 38 in Rust, 37 in the port: one variable more before the closure); O-Latest 2132 (`x = base.inner` after `x = mk(1)`: Rust's `x` keeps
    `["base"]` on every bind, the port's none); `139-drop-cascade`, now at `c14` — Rust parses a vector field's items
    before it builds each element, so the items' call buffers (`__ref_3`, `__ref_4`) number before
    the copies' `__ref_p2_4`/`_5`; the port interleaves; F-ParamRebind (an artifact of Rust's abandoned in-place attempt,
@@ -84,8 +85,8 @@ full loft interpreter, the in-between data of the two implementations compared a
    exactly; nullable (10+4), keyed (7+4+4) and tuple (6) captures; the parameter shadow cell
    (#685, `el_cell::flip`) is ported: seeded after the head's work-ref nulls; a text written in
    the lambda uses the read's setter (`OpSetTextReplace`) and no `OpFreeText` (the scope pass
-   adds it).  Next: a lambda answering a record beside a shared capture (17) — Rust gives it a
-   late `__retbuf` and materialises the capture into it behind a null test.
+   adds it).  A lambda answering a record capture copies it into its late `__retbuf` behind a
+   null test (`capture_tail_copy`, asked before the lambda's delivery cut-off).
 3. Re-write the baselines at the new pin once gate E has no differ.
 4. loft#2515 (filed, compiler half fixed in 72a943412, guard cell loft-suite 728fcfd): the
    static checker still MISSES it with `LOFT_NO_RET_TYPE_MATCH=1` (`own_sweep.py`: uaf,re-free).

@@ -2103,7 +2103,7 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   // A record a loft function answers is a fresh one the holder owns: the result views the
   // holder (`owned_record_subject`).
-  owned = match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false };
+  owned = match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), NdCallRef { var: _ } => true, _ => false };
   // A call default answers a record in its own buffer; beside a held subject that arm owns it
   // (`join-arm-owner`: the buffer bound to the call, then answered).
   dbuf = match el_ir::unspan(d.code) { NdCall { args } => hidden_ref_arg(vars, args), _ => -2 };

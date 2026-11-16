@@ -656,7 +656,9 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         }
       }
       answer = if ret != null { el_types::parse_type(e, ret!) } else { match hint { TyFunction { result } => result, _ => ir::TyVoid } };
-      if shares && answer != null && !el_types::is_unknown(answer!) && !el_ex_object::scalar_type(answer!) && !(el_types::base(answer!) is TyText) && !(answer! is TyVoid) {
+      // A record answered beside a shared capture is delivered through the late buffer: a tail
+      // reading the capture is copied in (`capture_tail_copy`), any other tail as a function's.
+      if shares && answer != null && !el_types::is_unknown(answer!) && !el_ex_object::scalar_type(answer!) && !(el_types::base(answer!) is TyText) && !(answer! is TyVoid) && !record_type(e, answer!) {
         el::refuse(e, "a lambda answering a record or a collection beside a shared capture");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
