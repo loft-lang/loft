@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	833	of	2153
+layer	elab	agree	839	of	2154
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -340,7 +340,6 @@ elab	refused	loft-suite/rules/dispatch/Disp-Dynamic/a-runtime-selection-is-the-e
 elab	refused	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft
 elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft
 elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-null-hole-never-calls-the-users-to-text.loft
-elab	refused	loft-suite/rules/formatting/F-FaultSafe/an-uncomputable-operand-renders-null-and-the-template-continues.loft
 elab	refused	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Child/2430-a-chain-of-any-length-takes-no-stack-per-link.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft
@@ -534,8 +533,6 @@ elab	refused	loft-suite/rules/layout/L-Null/a-nullable-tuple-element-owns-like-i
 elab	refused	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft
 elab	refused	loft-suite/rules/layout/L-OutOfLine/a-field-that-would-contain-its-host-is-a-child.loft
 elab	refused	loft-suite/rules/layout/L-OutOfLine/a-par-worker-returns-a-tree.loft
-elab	refused	loft-suite/rules/layout/L-OutOfLine/a-tree-is-an-element-of-every-keyed-collection.loft
-elab	refused	loft-suite/rules/layout/L-OutOfLine/a-tree-survives-a-store-image.loft
 elab	refused	loft-suite/rules/layout/L-OutOfLine/a-worker-returns-a-tree-into-a-fresh-destination.loft
 elab	refused	loft-suite/rules/layout/L-Ref/a-fn-ref-field-holding-a-closure-is-a-function-id-and-its-closure-record.loft
 elab	refused	loft-suite/rules/layout/L-Ref/pointer-fields-of-every-width-sit-aligned-beside-narrow-scalars.loft
@@ -816,8 +813,6 @@ elab	refused	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place
 elab	refused	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-to-any-scalar-vector-in-any-place-reads-its-bounds-first.loft
 elab	refused	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft
 elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft
-elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-keeps-the-shared-parameter-and-every-other-call-recurses.loft
-elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-loops-with-the-callers-stores-borrowed.loft
 elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-warns.loft
 elab	refused	loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-lookup-by-several-integers-or-a-text-finds-the-entry-its-key-names.loft
 elab	refused	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft
