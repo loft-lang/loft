@@ -335,7 +335,12 @@ impl Parser {
             return tp.clone();
         }
         let var_nr = if orig_var == u16::MAX {
-            let vec = self.create_unique("vec", tp);
+            // The fresh vector is typed without the first operand's deps: it is in no store
+            // but its own.  Typed with them, the first pass (which mints no backing, so
+            // nothing re-types it) read a tail `a + b` as a value living in the local `a`,
+            // `a` became the function's return buffer, and the delivery cleared it before
+            // the concat read it: `{ a = [1, 2]; b = [3, 4]; a + b }` answered `[3, 4]`.
+            let vec = self.create_unique("vec", &tp.without_deps());
             let elm_tp = tp.content();
             let db_ops = self.vector_db(&elm_tp, vec);
             // @FR-Col-Concat — a concat in an expression is a value of its own: a fresh
