@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector literal whose item is a 64-bit literal is the plain integer's vector (`IntegerSpec::wide` names no element of its own): inferred, appended, declared, and as a function's tail.
+// Prints: 9223372036854775806 3 5000000003 14 4611686018427387904
+
+fn big() -> vector<integer> { [4611686018427387904, 2] }
+fn main() {
+  c = [9223372036854775806, 1];
+  c += [7];
+  d: vector<integer> = [5000000000, 3];
+  s = 0;
+  for x in c { s += x % 10; }
+  println("{c[0]} {len(c)} {d[0] + d[1]} {s} {big()[0]}");
+}

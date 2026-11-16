@@ -222,9 +222,17 @@ pub fn int4(spec: ir::IntegerSpec) -> boolean {
   spec.forced_size == 4 && spec.min == -2147483647 && spec.max == 2147483647
 }
 
+// `u32` as an element: four raw bytes of an unsigned range past `i32` (`int_raw<min,false>`).
+// Its vector is its own (`vector<integer(0, 4294967295)>`), each element built as a record
+// (`OpSetInt4Raw`) and read whole (`OpGetInt4Full`).
+pub fn uint4(spec: ir::IntegerSpec) -> boolean {
+  spec.forced_size == 4 && spec.min >= 0 && spec.max > 2147483647
+}
+
 pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if int4(spec) || (spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647) { "integer" } else if narrow_width(spec) > 0 { "integer({spec.min}, {spec.max})" } else { "" },
+    // (A 64-bit literal's own type, `IntegerSpec::wide`, is the plain integer's element too.)
+    TyInteger { spec } => if int4(spec) || (spec.forced_size == 0 && spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295)) { "integer" } else if narrow_width(spec) > 0 || uint4(spec) { "integer({spec.min}, {spec.max})" } else { "" },
     TyText { dep: _ } => "text",
     TyBoolean => "boolean",
     TyFloat => "float",

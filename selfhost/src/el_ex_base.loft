@@ -2017,7 +2017,7 @@ pub fn int4_rows(e: el::El, t: ir::TypeT) {
   match t {
     TyInteger { spec } => {
       // A narrow element's `vector<…>` row is made where the type is read too (a parameter's).
-      if el_types::int4(spec) || el_types::narrow_width(spec) > 0 {
+      if el_types::int4(spec) || el_types::uint4(spec) || el_types::narrow_width(spec) > 0 {
         ct = el_schema::content_type(e, t);
         if ct >= 0 {
           el_schema::vector_type(e, ct);
@@ -2044,11 +2044,6 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   nm = el_types::elem_name(e, t);
   if nm == "" {
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
-    return null;
-  }
-  // `vector<i32?>` has a nullable four-byte row of its own (`int<-2147483647,true>`): not carried.
-  if match t { TyOptional { inner } => match inner { TyInteger { spec } => el_types::int4(spec), _ => false }, _ => false } {
-    el::refuse(e, "a vector of nullable `i32`");
     return null;
   }
   int4_rows(e, t);
@@ -2209,7 +2204,7 @@ pub fn elem_size(t: ir::TypeT) -> integer {
   match t {
     TyReference { n: _ } => -2,
     TyTuple { elems: _ } => -2,
-    TyInteger { spec } => if el_types::narrow_width(spec) > 0 { el_types::narrow_width(spec) } else if el_types::int4(spec) { 4 } else { 8 },
+    TyInteger { spec } => if el_types::narrow_width(spec) > 0 { el_types::narrow_width(spec) } else if el_types::int4(spec) || el_types::uint4(spec) { 4 } else { 8 },
     TyFloat => 8,
     TySingle => 4,
     TyText { dep: _ } => 4,
@@ -2225,6 +2220,20 @@ pub fn elem_size(t: ir::TypeT) -> integer {
 // The store type of a `vector<T>` (`vector<…>` of the element's store type): a narrow integer's
 // is named after its width (`vector<byte>`), not its definition (`vector<integer(0, 255)>`).
 pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
+  // A `vector<i32?>` has a nullable four-byte row of its own (`vector<int<-2147483647,true>>`).
+  match t {
+    TyOptional { inner: oi } => {
+      match oi {
+        TyInteger { spec: os } => {
+          if el_types::int4(os) {
+            return el_schema::vector_type(e, el_schema::int_part(e, os, el::NONE, true));
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   // A `vector<integer?>` (`float?`, `boolean?`) is laid out as the `vector<integer>` it is.
   bn = el_types::nullable_scalar_elem(e, t);
   if bn != "" {
@@ -2232,8 +2241,8 @@ pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
   }
   match t {
     TyInteger { spec } => {
-      if el_types::narrow_width(spec) > 0 {
-        c = el_schema::narrow_element(e, spec);
+      if el_types::narrow_width(spec) > 0 || el_types::uint4(spec) {
+        c = if el_types::uint4(spec) { el_schema::content_type(e, t) } else { el_schema::narrow_element(e, spec) };
         return if c < 0 { -1 } else { el_schema::schema_type(e, "vector<{e.b.types[c].name}>") };
       }
     },
@@ -2260,7 +2269,7 @@ pub fn elem_read(e: el::El, t: ir::TypeT, get: ir::Node) -> ir::Node {
 // through, or "".
 pub fn read_op(t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpGetByte" } else if el_types::narrow_width(spec) == 2 { "OpGetShortRaw" } else if spec.forced_size == 0 { "OpGetInt" } else if el_types::int4(spec) { "OpGetInt4" } else { "" },
+    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpGetByte" } else if el_types::narrow_width(spec) == 2 { "OpGetShortRaw" } else if spec.forced_size == 0 { "OpGetInt" } else if el_types::int4(spec) { "OpGetInt4" } else if el_types::uint4(spec) { "OpGetInt4Full" } else { "" },
     TyText { dep: _ } => "OpGetText",
     TyBoolean => "OpGetBoolean",
     TyFloat => "OpGetFloat",

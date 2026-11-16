@@ -295,7 +295,7 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
   // a known element (`??`'s default) has them made when the literal is built, `main_vector` first.
   match t {
     TyInteger { spec } => {
-      if narrow_early && el_types::narrow_width(spec) > 0 {
+      if narrow_early && (el_types::narrow_width(spec) > 0 || el_types::uint4(spec)) {
         vector_type(e, content_type(e, t));
       }
     },
@@ -573,7 +573,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if el_types::narrow_width(spec) > 0 {
         return int_part(e, spec, el::NONE, false);
       }
-      if el_types::int4(spec) {
+      if el_types::int4(spec) || el_types::uint4(spec) {
         return int_part(e, spec, el::NONE, false);
       }
       if spec.forced_size != 0 {
@@ -588,7 +588,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     },
     TyEnum { n } => enum_content(e, n),
     // A nullable struct enum's slot is the enum's record (its null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: _ } => if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: ns } => if el_types::int4(ns) { int_part(e, ns, el::NONE, true) } else if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), _ => -1 },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),

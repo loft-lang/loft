@@ -1709,6 +1709,9 @@ pub fn elem_write(e: el::El, t: ir::TypeT, at: ir::Node, x: ir::Node) -> ir::Nod
       if el_types::narrow_width(spec) == 2 {
         return el_ir::cl(e, "OpSetShortRaw", [at, ir::NdInt { n: 0 }, ir::NdInt { n: spec.min }, x]);
       }
+      if el_types::uint4(spec) {
+        return el_ir::cl(e, "OpSetInt4Raw", [at, ir::NdInt { n: 0 }, x]);
+      }
     },
     _ => {}
   }

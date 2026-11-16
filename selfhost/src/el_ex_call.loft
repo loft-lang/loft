@@ -1316,11 +1316,11 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
         return;
       }
       narrow = match inner {
-        TyInteger { spec } => spec.forced_size == 4 && !el_types::int4(spec),
+        TyInteger { spec } => spec.forced_size == 4 && !el_types::int4(spec) && !el_types::uint4(spec),
         _ => false
       };
       // An `i32` element renders through its own rows (`vector<int<-2147483647,false>>`).
-      if match inner { TyInteger { spec } => el_types::int4(spec), _ => false } && !e.first_pass {
+      if match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec), _ => false } && !e.first_pass {
         vk = el_schema::vector_type(e, el_schema::content_type(e, inner));
       }
       if narrow {
@@ -1419,11 +1419,11 @@ pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Nod
       vk = if nm == "" { -1 } else { vector_store(e, inner, nm) };
       // A 4-byte element (`vector<i32>`) is not carried; the 1- and 2-byte ones are.
       narrow = match inner {
-        TyInteger { spec } => spec.forced_size == 4 && !el_types::int4(spec),
+        TyInteger { spec } => spec.forced_size == 4 && !el_types::int4(spec) && !el_types::uint4(spec),
         _ => false
       };
       // An `i32` element renders through its own rows (`vector<int<-2147483647,false>>`).
-      if match inner { TyInteger { spec } => el_types::int4(spec), _ => false } && !e.first_pass {
+      if match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec), _ => false } && !e.first_pass {
         vk = el_schema::vector_type(e, el_schema::content_type(e, inner));
       }
       // A formatted `vector<float?>` (`integer?`, `boolean?`) makes the plain scalar's
