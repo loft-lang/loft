@@ -30,6 +30,7 @@ use cgen_names;
 use cgen_unit;
 use cgen_clibs;
 use cgen_tables;
+use opt_destination;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -131,6 +132,10 @@ pub struct Cx {
   // The signatures a kept binding calls with its store as the target's record buffer
   // (`Cx::fn_sigs_buf`): each takes a `loft_call{n}b` variant beside its dispatcher.
   pub sigs_buf: vector<integer>,
+  // `Cx::ap_windows`: per definition, its append twin's window size (-1 not asked, 0 none).
+  pub ap_windows: vector<integer>,
+  // `Cx::dest_memo`: the destination shapes asked so far.
+  pub dest_memo: opt_destination::Memo,
   // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
   pub tuples: vector<text>,
   // Does the unit bind a lazy store (`Cx::lazy`)?  -1 not asked yet, else 0 or 1.
@@ -185,6 +190,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     ops: own::ops_of(b),
     sigs: [],
     sigs_buf: [],
+    ap_windows: [for _ in 0..len(b.data.definitions) { -1 }],
+    dest_memo: opt_destination::new_memo(),
     tuples: [],
     lazy: -1,
     gen_decls: "",

@@ -53,6 +53,10 @@ use opt_non_sentinel;
 use opt_range;
 use cgen_value;
 use cgen_fnref;
+use cgen_append;
+use cgen_dest;
+use opt_destination;
+use opt_append_twin;
 use cgen_rotate;
 use opt_hand_over;
 use opt_apart;
@@ -394,6 +398,20 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     }
   }
   count = len(args);
+  if w.apw > 0 {
+    through_apw = false;
+    windowed_ap = cgen_append::window_op(x, w, name, args, ind, through_apw);
+    if through_apw {
+      return windowed_ap;
+    }
+  }
+  if w.ds.rb >= 0 {
+    into_ds = false;
+    dest_set = cgen_dest::scalar_set(x, w, name, args, ind, into_ds);
+    if into_ds {
+      return dest_set;
+    }
+  }
   if len(w.headers) > 0 || len(w.push_heads) > 0 {
     through_header = false;
     held_read = cgen_hoist::held_access(x, w, name, args, ind, through_header);
@@ -900,6 +918,16 @@ fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
 // A call of function `d` (`call`): its arguments evaluated in order, then the function or the
 // twin this site's facts admit.  A callee this writer does not carry is refused by name.
 fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
+  // `@FR-R-AppendTwin`: the statement-level site's own call, taken before its arguments are.
+  ap_here = w.ap_site >= 0 && w.ap_site == d;
+  if ap_here {
+    w.ap_site = -1;
+  }
+  // `@FR-R-Destination`: the caller half's rewritten call, likewise.
+  ds_here = w.ds_site >= 0 && w.ds_site == d;
+  if ds_here {
+    w.ds_site = -1;
+  }
   def = x.b.data.definitions[d]!;
   // Every route below is keyed by the callee's name, and only a standard-library definition
   // is answered by one.
@@ -1129,6 +1157,12 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     w.nk_call = -1;
     t.nk = true;
   }
+  if ap_here || cgen_append::handed(x, w, d, args) {
+    t.ap = true;
+  }
+  if ds_here {
+    t.ds = true;
+  }
   if native == "" {
     if len(args) <= 23 {
       t.nn = nn_twin_bits(x, w, d, args);
@@ -1140,7 +1174,20 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     request_twin(x, t);
     name = cgen_names::twin_name(x.b, x.dups, t);
   }
+  // `@FR-R-AppendTwin`'s window clause: a twin that takes its caller's window gets one.
+  fresh = "";
+  buffer_c = "";
+  window = 0;
+  if t.ap {
+    at_buf = binds::hidden_return_buffer_attr(def) ?? -1;
+    buffer_c = if at_buf >= 0 && at_buf < len(xs) { xs[at_buf]! } else { "" };
+    window = cgen_append::window_arg(x, w, d, args, xs, fresh);
+  }
   code = "{name}({xs.join(", ")})";
+  if fresh != "" {
+    held_r = temp(w, "ref");
+    return E { code: "({fresh} = loft_win_of({buffer_c}, {window}), {held_r} = {code}, loft_win_sync({fresh}), {held_r})", kind: K_REF };
+  }
   // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
   // through its `__wr` twin, and the call's value is a view of that buffer.
   if ret == "text" && cgen_names::is_plain(t) && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
@@ -2378,7 +2425,7 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
       }
     }
     // A clear of a vector the next statement mints anew releases nothing that is kept.
-    if cgen_ref::clear_before_mint(x.b, ops, o#index, end) {
+    if cgen_ref::clear_before_mint(x.b, w, ops, o#index, end) {
       continue;
     }
     if plain_rules() {
@@ -2388,6 +2435,11 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
           cgen_hoist::refresh_grown(x, w, ops[i]!, ind);
         }
         skip_to = last + 1;
+        continue;
+      }
+      dest_last = cgen_dest::destination_site(x, w, ops, o#index, ind);
+      if dest_last >= 0 {
+        skip_to = dest_last + 1;
         continue;
       }
     }
@@ -2532,6 +2584,9 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
         w.room_minted[r#index] = -1;
       }
     }
+  }
+  if !is_line && cgen_append::append_site(x, w, v, ind) {
+    return;
   }
   // An assignment or a `return` of a located value reports a fault in it at that line.
   at = match loop_shape::unspan(v) {
@@ -2852,6 +2907,8 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       if w.gen_elem != "" {
         stmt(x, w, inner, ind);
         line(w, ind, "goto loft_gen_end;");
+      } else if cgen_dest::returns_buffer(w, inner) {
+        cgen_dest::dest_return(w, ind);
       } else {
         ret_value(x, w, inner, ind);
       }
@@ -3159,6 +3216,14 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     return Written { text: "", refused: "a generator handed a store place for a & parameter" };
   }
   ret = if work_ret >= 0 || len(helper) > 0 || gen_elem != "" { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  // `@FR-R-Destination` — a `__d` twin answers its scalar fields as a tuple.
+  if twin.ds {
+    ds_shape = opt_destination::shape(x.b, index, 0, x.dest_memo);
+    if ds_shape.rb < 0 {
+      return Written { text: "", refused: "a __d twin of a function with no destination shape" };
+    }
+    ret = opt_destination::tuple_shape(ds_shape);
+  }
   if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
@@ -3204,7 +3269,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  if twin.inv || twin.apr || twin.apv || twin.ap || twin.ds || twin.vf {
+  if twin.inv || twin.apr || twin.apv || twin.vf {
     return Written { text: "", refused: "a twin of a rule that is not carried" };
   }
   // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
@@ -3324,6 +3389,15 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     lr_recs: [],
     callref_buf: "",
     list_stmt: false,
+    ap_buf: -1,
+    ap_views: [],
+    apw: 0,
+    ap_loop_windows: [],
+    ap_memo: opt_append_twin::new_memo(x.b),
+    ap_site: -1,
+    window_parents: [],
+    ds: opt_destination::Shape { rb: -1, vo: 0, vend: 0, vt: 0, scalars: [] },
+    ds_site: -1,
     text_windows: [],
     raw_shapes: [],
   };
@@ -3354,6 +3428,14 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       ordinal += 1;
     }
   }
+  // An `__ap` twin: the caller's vector is the buffer; with the window clause, the caller's
+  // window too (`loft_win *loft_apw`).
+  if twin.ap {
+    ap_param = cgen_append::twin_body(x, w);
+    if ap_param != "" {
+      params += [ap_param];
+    }
+  }
   // A `__kh` twin: the caller's header for its vector parameter, by pointer — held, with its
   // base, and derived again through the pointer after each growth (`kept_growth`).
   if twin.kh {
@@ -3376,6 +3458,19 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       w.facts.adopted_v = adopted.v;
       w.facts.adopted_vdb = adopted.vdb;
     }
+  }
+  if twin.ds {
+    cgen_dest::twin_body(x, w);
+  }
+  // An `__ap` twin's result never adopts the buffer: it is the caller's vector; a `__d` twin's
+  // is the caller's element.
+  if w.ap_buf >= 0 || twin.ds {
+    w.adopt_v = -1;
+    w.adopt_vdb = -1;
+    w.adopt_buf = -1;
+    w.adopt_tp = -1;
+    w.facts.adopted_v = -1;
+    w.facts.adopted_vdb = -1;
   }
   code = d.code[0]!;
   if len(helper) > 0 {

@@ -57,6 +57,22 @@ pub fn open_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
     return false;
   }
   p = window_loop(x, w, lp) ?? return deep_window(x, w, lp, ind);
+  // `@FR-R-AppendTwin`'s window clause: a twin's buffer is already under its caller's window,
+  // so the loop takes a local copy of THAT window and gives it back at the loop's one exit.
+  // Any other path already windowed keeps its window.
+  at = window_at(w, p.path);
+  if at >= 0 {
+    parent = w.windows[at]!.name;
+    if parent != "(*loft_apw)" {
+      return false;
+    }
+    copy = "pw{len(w.decls) + 1}";
+    w.decls += ["loft_win {copy} = {{ 0, 0, 0, 0, 0xFFFF }};"];
+    line(w, ind, "{copy} = {parent};");
+    w.window_parents += [copy, parent];
+    w.windows += [Window { path: p.path, name: copy, pv: w.windows[at]!.pv, size: p.size }];
+    return true;
+  }
   n = len(w.decls) + 1;
   win = "pw{n}";
   pv = "pv{n}";
@@ -135,7 +151,17 @@ fn deep_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
 pub fn close_window(x: Cx, w: W, ind: integer) {
   last = w.windows[len(w.windows) - 1]!;
   w.windows = w.windows[0..len(w.windows) - 1];
-  line(w, ind, "loft_win_sync({last.name});");
+  parent = "";
+  for c in w.window_parents {
+    if c#index % 2 == 0 && c == last.name {
+      parent = w.window_parents[c#index + 1]!;
+    }
+  }
+  if parent != "" {
+    line(w, ind, "{parent} = {last.name};");
+  } else {
+    line(w, ind, "loft_win_sync({last.name});");
+  }
   for h in w.push_heads {
     if h.path == last.path {
       line(w, ind, "{h.name} = loft_ph_of({h.name}.v, {h.size});");
