@@ -670,7 +670,17 @@ pub fn file_hash(path: &str) -> Option<[u8; 32]> {
 /// its `deps/`, or an installed `<prefix>/share/loft/`).
 fn loft_rlib_path() -> Option<std::path::PathBuf> {
     let exe_dir = crate::cargo_layout::current_runtime_profile_dir()?;
-    let exe_dir = exe_dir.as_path();
+    rlib_path_in(&exe_dir)
+}
+
+/// [`loft_rlib_path`] for a loft binary at `exe_dir`.  The uplifted `libloft.rlib` is made the
+/// newest per-unit rlib FIRST ([`crate::native_lib::refresh_runtime_uplift`], what every build
+/// that links it does), so the fingerprint is of the rlib a build links.  Reading it before a
+/// refresh hashed a stale uplift a restored cache left, and the first build afterwards refreshed
+/// it: two answers in one tree — CI's `cache warm --runtime html` stamped the wasm runtime with
+/// the stale one, and the first `--html` test rebuilt it for seven minutes while another waited.
+fn rlib_path_in(exe_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    crate::native_lib::refresh_runtime_uplift(exe_dir);
     // The same debris rule `toolchain::find_loft_rlib` applies (#304: both name one rlib).
     let debris = crate::cargo_layout::classic_deps_is_debris(exe_dir)
         && !crate::env_once!(std::env::var_os("LOFT_NATIVE_CLASSIC_DEPS_FIRST").is_some());
@@ -1853,6 +1863,31 @@ mod tests {
             40 + RUNTIME_FPS_KEPT as u64 - 1
         ));
         let _ = crate::file_access::remove_dir_all(&dir);
+    }
+
+    /// The rlib a fingerprint reads is the newest per-unit rlib, not a stale uplift a restored
+    /// cache left: one tree, one answer, whether or not a build has refreshed the uplift yet.
+    /// Reading the stale uplift stamped CI's warmed wasm runtime with a fingerprint no test
+    /// computed, and the first `--html` test rebuilt it while another waited 416 s.
+    #[test]
+    fn the_fingerprinted_rlib_is_the_newest_unit_not_a_stale_uplift() {
+        let p = std::env::temp_dir().join(format!("loft_fp_uplift_{}", std::process::id()));
+        let _ = crate::file_access::remove_dir_all(&p);
+        let unit_out = p.join("build").join("loft").join("abcd").join("out");
+        crate::file_access::create_dir_all(&unit_out).unwrap();
+        crate::file_access::write(p.join("libloft.rlib"), b"the stale uplift").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        crate::file_access::set_modified(p.join("libloft.rlib"), old).unwrap();
+        crate::file_access::write(unit_out.join("libloft.rlib"), b"the newest unit").unwrap();
+        let found = super::rlib_path_in(&p).expect("an rlib");
+        let bytes = crate::file_access::read(&found).unwrap();
+        let _ = crate::file_access::remove_dir_all(&p);
+        assert_eq!(
+            bytes,
+            b"the newest unit",
+            "fingerprinted {}",
+            found.display()
+        );
     }
 
     #[test]
