@@ -1,0 +1,221 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Inputs` as `src/c` writes it: the `__inv` twin's inputs as
+// parameters and frames (`inv_inputs`, `twin_scalar_shape`), the arguments a call hands it
+// (`twin_inputs`), and its ranged variant's seeds (`twin_seeds`, `scalar_inputs_ranged`).
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_hoist;
+use cgen_types;
+use loop_shape;
+use opt_inputs;
+use opt_push;
+use opt_range;
+use opt_ranged_call;
+
+// `twin_scalar_shape`: the shape an `__inv` twin takes a scalar input in — the getter's result,
+// for the kinds a loop holds a record scalar in; "" for any other, which the twin reads from its
+// record as before.  Asked by the twin's signature and by its call site alike.
+pub fn scalar_shape(x: Cx, getter: ir::Node) -> text {
+  match loop_shape::unspan(getter) {
+    NdCall { def_nr, args: _ } => {
+      if def_nr < 0 || def_nr >= len(x.b.data.definitions) {
+        return "";
+      }
+      c = cgen_types::ctype(x.b.data.definitions[def_nr]!.returned[0] ?? ir::TyVoid) ?? "";
+      if c == "int" || c == "float" || c == "single" || c == "bool" || c == "enum" || c == "char" { c } else { "" }
+    },
+    _ => "",
+  }
+}
+
+// `inv_inputs`: an `__inv` twin's inputs appended to `params` — first each record scalar it
+// reads (`is<k>`), then each header (`hi<k>`) — and served by its body as a loop's held scalars
+// and held headers.  Answers why not, "" when written.
+pub fn twin_params(x: Cx, w: W, params: vector<text>) -> text {
+  fi = opt_inputs::of(x.b, x.writes, w.index);
+  if !fi.some {
+    return "an __inv twin of a function with no inputs";
+  }
+  any = false;
+  for s in fi.scalars {
+    c = scalar_shape(x, s.getter);
+    if c != "" {
+      k = s#index;
+      params += ["{held(c)} is{k}"];
+      w.scalars += [HeldScalar { root: s.p, fld: s.fld, name: "is{k}", shape: c }];
+      any = true;
+    }
+  }
+  for h in fi.headers {
+    params += ["loft_vh hi{h#index}"];
+    w.headers += [Header { path: "{h.p}:{h.offs}", name: "hi{h#index}", frame: 1 }];
+    any = true;
+  }
+  if !any {
+    return "an __inv twin of a function with no inputs";
+  }
+  ""
+}
+
+// The key a scalar input is held under at the caller: the argument variable and the field, or a
+// sub-record path's root and summed offset (`path_scalar`); -1 where the argument is neither.
+fn input_key(x: Cx, w: W, arg: ir::Node, fld: integer, sum: &integer) -> integer {
+  match loop_shape::unspan(arg) {
+    NdVar { n } => {
+      sum = fld;
+      n
+    },
+    _ => {
+      evict: vector<integer> = [];
+      opt_inputs::path_scalar(x.b, x.b.data.definitions[w.index]!, arg, fld, sum, evict)
+    },
+  }
+}
+
+// `twin_inputs`: the arguments of `d`'s `__inv` twin at this call — each record scalar it reads,
+// then each header — or `ok` false where the plain call stays.  Every header must be one this
+// body holds; a scalar is the local this body holds it in, else its read over the argument where
+// this body holds the record's address.  The twin is taken when at least one input is held.
+pub fn twin_inputs(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer, ok: &boolean) -> vector<text> {
+  ok = false;
+  if w.gen_elem != "" || (len(w.headers) == 0 && len(w.scalars) == 0) {
+    return [];
+  }
+  fi = opt_inputs::of(x.b, x.writes, d);
+  if !fi.some {
+    return [];
+  }
+  held_any = false;
+  out: vector<text> = [];
+  for s in fi.scalars {
+    if scalar_shape(x, s.getter) == "" {
+      continue;
+    }
+    if s.p >= len(args) {
+      return [];
+    }
+    arg = args[s.p]!;
+    sum = 0;
+    root = input_key(x, w, arg, s.fld, sum);
+    if root < 0 {
+      return [];
+    }
+    local = "";
+    for i in rev(0..len(w.scalars)) {
+      if local == "" && w.scalars[i]!.root == root && w.scalars[i]!.fld == sum {
+        local = w.scalars[i]!.name;
+      }
+    }
+    if local != "" {
+      held_any = true;
+      out += [local];
+      continue;
+    }
+    // Not held as a value: read through the record's address where this body holds it.
+    addressed = false;
+    for r in w.rec_ptrs {
+      if r.var == root {
+        addressed = true;
+      }
+    }
+    if !addressed {
+      return [];
+    }
+    held_any = true;
+    over = match loop_shape::unspan(s.getter) {
+      NdCall { def_nr, args: gargs } => {
+        oargs: vector<ir::Node> = [arg];
+        for a in gargs {
+          if a#index > 0 {
+            oargs += [a];
+          }
+        }
+        ir::NdCall { def_nr: def_nr, args: oargs }
+      },
+      _ => return [],
+    };
+    kept = w.pending;
+    w.pending = [];
+    e = cgen_fn::expr(x, w, over, ind);
+    inner = w.pending;
+    w.pending = kept;
+    for t in inner {
+      w.pending += [t];
+    }
+    if w.why != "" {
+      return [];
+    }
+    out += [e.code];
+  }
+  for h in fi.headers {
+    if h.p >= len(args) {
+      return [];
+    }
+    root = -1;
+    path = opt_push::vector_path(x.b, args[h.p]!, root);
+    if path == "" {
+      return [];
+    }
+    held = cgen_hoist::held_path(w, path + h.offs);
+    if held == "" {
+      return [];
+    }
+    held_any = true;
+    out += [held];
+  }
+  if !held_any || len(out) == 0 {
+    return [];
+  }
+  ok = true;
+  out
+}
+
+// `twin_seeds`: an `__inv` twin's ranged variant starts from its parameters' seeds and each
+// scalar input field within `[-L, L]` — what `inputs_ranged` proved at the call.
+pub fn twin_seeds(x: Cx, d: integer) -> opt_range::Ranges {
+  seeds = opt_ranged_call::param_seeds(x.b, d);
+  fi = opt_inputs::of(x.b, x.writes, d);
+  for s in fi.scalars {
+    seeds.fields += [opt_range::FieldRange { root: s.p, off: s.fld, lo: -opt_ranged_call::L, hi: opt_ranged_call::L }];
+  }
+  seeds
+}
+
+// `scalar_inputs_ranged`: is every scalar input of `d`'s `__inv` twin proven within `[-L, L]`
+// under `facts`?
+pub fn inputs_ranged(x: Cx, w: W, d: integer, args: vector<ir::Node>, facts: opt_range::Ranges) -> boolean {
+  fi = opt_inputs::of(x.b, x.writes, d);
+  if !fi.some {
+    return false;
+  }
+  for s in fi.scalars {
+    if s.p >= len(args) {
+      return false;
+    }
+    sum = 0;
+    root = input_key(x, w, args[s.p]!, s.fld, sum);
+    if root < 0 {
+      return false;
+    }
+    found = false;
+    for i in rev(0..len(facts.fields)) {
+      f = facts.fields[i]!;
+      if !found && f.root == root && f.off == sum {
+        found = true;
+        if f.lo < -opt_ranged_call::L || f.hi > opt_ranged_call::L {
+          return false;
+        }
+      }
+    }
+    if !found {
+      return false;
+    }
+  }
+  true
+}

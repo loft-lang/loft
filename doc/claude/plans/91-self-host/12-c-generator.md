@@ -281,17 +281,15 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (7).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
+`cgen_w::PLAIN_SWITCHES` names them (5).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
 
 | switch | corpus | benches | tests |
 |---|---|---|---|
 | `VALUE_RECORD` | 510 | 114 | 175 |
-| `CALLEE_INPUTS` | 97 | 170 | 7 |
 | `TRANSIENT` | 92 | 14 | 22 |
 | `APART` | 29 | 9 | 10 |
-| `GUARD_BOUND` | 8 | 69 | 2 |
 | `DEFERRED_COPY` | 0 | 0 | 29 |
-| `VERSION` | 0 | 0 | 0 — rests on `CALLEE_INPUTS`' `__inv` twins |
+| `VERSION` | to measure: it rests on the `__inv` twins, now written |
 
 Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`), `TEXT_WINDOW`
 (`cgen_win::open_text_windows`), `APART_MINT` (`opt_hoist::apart_mint`), `VR_PTR` (`cgen_value.loft`; its
@@ -304,7 +302,10 @@ its window clause, the loop windows), `DESTINATION` (`opt_destination.loft`, `cg
 `__d` twin and the caller's chain), `CHAR_WALK` (`cgen_loop::char_walk_loop`), `LAZY_SPLIT` and
 `SPLIT_TABLE` (`cgen_lazy.loft`: the `loft_ls` iterator, the `loft_stab` table, its free at every
 exit; a borrowed bind leaves their pieces to their readers), `TESTED_BORROW`
-(`cgen_text::borrowed_assign`, the `loft_own<v>` text).  A rewrite that writes COPIES of IR nodes (the destination
+(`cgen_text::borrowed_assign`, the `loft_own<v>` text), `CALLEE_INPUTS` (`opt_inputs.loft`,
+`cgen_inputs.loft`: the `__inv` twin's inputs, the loop verdict's callee candidates, the hot
+helpers an `__inv` twin's loop reaches, the ranged twin's input seeds), `GUARD_BOUND`
+(`opt_below_len.loft`, the marked index slots below).  A rewrite that writes COPIES of IR nodes (the destination
 chain's call and arm statements, an append site's call, the rotate's call, the keyed in-place
 literal) writes them under `no_memo`: the Rust writer keys an invariant's memo and a guarded
 chain's admission by node address, which no copy carries.
@@ -345,18 +346,20 @@ no drop in `pass` or in units equal to the Rust ones), a printed store report ma
 their output in `$LOFT_CGEN_OUT` (default `$TMPDIR/loft-cgen`); the shared setup is
 `cgen_env.sh`.
 
-### An open design question: a rule keyed on node identity
+### A rule keyed on node identity: the answer marked in the IR
 
-`opt/below_len.rs` (`LOFT_NO_GUARD_BOUND`, `@FR-R-Base`'s guard clause) answers the set of
-index nodes a passed test keeps below their vector's length BY ADDRESS, and the writer asks by
-address.  The loft writer cannot: a node collected into a vector is a copy (`&a == &b` finds no
-match — measured), and two equal `v[i]`, one under the test and one outside it, rule out asking
-by structure.  Three ways to carry it: the writer keeps the analysis' live facts itself, pushed
-at an `if` and killed where `visit` kills them (with save and restore around every loop it
-writes twice); the lowering marks a guarded index in the IR, which both writers then read; a
-path or ordinal key, which the writer has no way to know.  The second is the direction the
-other rules took (@PLN211) and changes the Rust side.  Until it is decided the switch stays in
-`PLAIN_SWITCHES`.
+Several Rust analyses answer a set of IR nodes BY ADDRESS and the writer asks by address:
+`opt/below_len.rs` (`@FR-R-Base`'s guard clause, the index slots a passed test keeps below the
+length), `@FR-R-Version`'s plan (the decided `if`s, the raw accesses, the plain operators),
+`@FR-R-DeferredCopy`'s binds, part of `@FR-R-ValueLocal`.  A loft node handed around is a copy
+(`&a == &b` finds no match — measured), and two equal nodes, one in the set and one outside it,
+rule out asking by structure.  The loft writer carries the answer IN the IR instead: the analysis
+writes the function's code again with each answered node wrapped in a marker span (`line` 0, a
+reserved `pos`), once per function before its first body is written (`opt_below_len::mark`,
+`Cx::guards_marked`).  Every position reader skips a span at line 0 and every `unspan` sees
+through it, so nothing else changes; the writer asks the slot it holds (`opt_below_len::guarded`).
+A copy a rewrite makes keeps the marker, which the Rust address test cannot match: the writer
+asks only outside such copies (`no_memo`).  The Rust side is unchanged.
 
 ## What decides a step is done
 
@@ -435,6 +438,8 @@ came out 64-bit from the image.
 | `selfhost/src/opt_append_twin.loft`, `cgen_append.loft` | `src/opt/append_twin.rs`; `append_site`, `append_call`, `append_twin`, `append_twin_buffer_op`, `apw_operator`, `open_loop_windows` of `src/c/body.rs`; `Cx::ap_window` | `@FR-R-AppendTwin` with its window and loop clauses |
 | `selfhost/src/opt_destination.loft`, `cgen_dest.loft` | `src/lower/destination.rs`; `destination_site`, `destination_level`, `destination_names`, `dest_scalar_set`, `dest_return` of `src/c/body.rs` | `@FR-R-Destination` |
 | `selfhost/src/cgen_lazy.loft` | `lazy_split_bind`, `lazy_split_op`, `split_tab_bind`, `split_tab_op` of `src/c/body.rs`; the `loft_stab` part of `FnWriter::new` and `epilogue` | `@FR-R-LazySplit`, `@FR-R-SplitTable` |
+| `selfhost/src/opt_inputs.loft`, `cgen_inputs.loft` | `callee_inputs`, `path_scalar`, `substitute_path`, `input_header_at` of `src/opt/hoist.rs`; `inv_inputs`, `twin_scalar_shape`, `Cx::hot_helpers` of `src/c/mod.rs`; `twin_inputs` of `src/c/body.rs`; `twin_seeds`, `scalar_inputs_ranged` of `src/opt/ranged_call.rs` | `@FR-R-Inputs` |
+| `selfhost/src/opt_below_len.loft` | `src/opt/below_len.rs`, `forward_walk::check_body`; `guard_index` of `src/c/body.rs` | `@FR-R-Base`'s guard clause |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at

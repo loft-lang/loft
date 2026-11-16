@@ -16,6 +16,7 @@ use types;
 use opt_names;
 use opt_push;
 use opt_wset;
+use opt_inputs;
 use cgen_types;
 
 const STRUCT = 5;
@@ -37,11 +38,14 @@ pub struct Writes {
   // `callee_writes`' memo: per definition 0 unasked, 1 being answered, 2 untyped, 3 its set.
   wstate: vector<integer>,
   wsets: vector<opt_wset::WSet>,
+  // `callee_inputs`' memo (`opt_inputs::of`): per definition 0 unasked, 1 being answered, 2 kept.
+  istate: vector<integer>,
+  inputs: vector<opt_inputs::Inputs>,
 }
 
 pub fn new_writes(b: ir::Bundle) -> Writes {
   count = len(b.data.definitions);
-  Writes { free: [for _ in 0..count { false }], active: [for _ in 0..count { false }], skip_sets: [], skip_bufs: [], in_place: [for _ in 0..count { false }], buffer_guard: [for _ in 0..count { false }], wstate: [], wsets: [] }
+  Writes { free: [for _ in 0..count { false }], active: [for _ in 0..count { false }], skip_sets: [], skip_bufs: [], in_place: [for _ in 0..count { false }], buffer_guard: [for _ in 0..count { false }], wstate: [], wsets: [], istate: [], inputs: [] }
 }
 
 fn env_on(name: text) -> boolean {
@@ -398,7 +402,7 @@ fn writes_beyond_buffer(b: ir::Bundle, w: Writes, d: integer, node: ir::Node, bu
 }
 
 // `retbuf_only_writer`: a body whose only writes land in its own scalar return buffer.
-fn retbuf_only_writer(b: ir::Bundle, w: Writes, d: integer) -> boolean {
+pub fn retbuf_only_writer(b: ir::Bundle, w: Writes, d: integer) -> boolean {
   def = b.data.definitions[d]!;
   for a in def.attributes {
     heap = match a.typedef[0]! {

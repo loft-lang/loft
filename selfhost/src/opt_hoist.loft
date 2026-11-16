@@ -16,6 +16,7 @@ use loop_shape;
 use opt_names;
 use opt_non_sentinel;
 use opt_push;
+use opt_inputs;
 use opt_writes;
 use opt_facts;
 use opt_apart;
@@ -36,7 +37,7 @@ fn def_name(b: ir::Bundle, d: integer) -> text {
 
 // `rebound_vars` with `close_over_links`: the variables the loop rebinds — a `Set`, a tuple
 // write, the re-mint of a hidden pass-2 buffer — and every link that may name one of them.
-fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boolean> {
+pub fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boolean> {
   count = len(d.variables.variables);
   rebound: vector<boolean> = [for _ in 0..count { false }];
   whole = ir::NdInsert { items: lp.operators };
@@ -148,6 +149,9 @@ pub struct Scalar {
   pub fld: integer,
   pub tp: integer,
   pub call: ir::Node,
+  // A sub-record path's `(record type, offset)` pairs a write evicts it by (`path_scalar`);
+  // empty for a bare variable's field, which `(tp, fld)` evicts.
+  pub evict: vector<integer>,
 }
 
 fn nothing() -> LoopHoist {
@@ -286,6 +290,33 @@ fn hoist_paths(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd
     text_grown = true;
   }
   out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false, movers: [], scalars: [], declined: false };
+  // `@FR-R-Inputs` — what an admitted callee indexes off a vector the body passes it joins
+  // the candidates, re-spelled over the argument.
+  if opt_inputs::enabled() {
+    in_rebound = rebound_vars(b, d, lp);
+    for in_site in opt_inputs::calls_in(b, ir::NdInsert { items: lp.operators }) {
+      in_args = in_site.args;
+      in_fi = opt_inputs::of(b, w, in_site.d);
+      for in_h in in_fi.headers {
+        if in_h.p < len(in_args) {
+          in_root = -1;
+          in_apath = opt_push::vector_path(b, in_args[in_h.p]!, in_root);
+          if in_apath != "" && in_root < len(in_rebound) && !in_rebound[in_root]! {
+            in_key = in_apath + in_h.offs;
+            in_seen = false;
+            for in_q in out.vectors {
+              if in_q.path == in_key {
+                in_seen = true;
+              }
+            }
+            if !in_seen {
+              out.vectors += [Held { path: in_key, root: in_root, vector: opt_inputs::substitute_path(in_h.expr, in_h.p, in_args[in_h.p]!) }];
+            }
+          }
+        }
+      }
+    }
+  }
   pushes: vector<Held> = if tier & 4 != 0 { pushed_paths(b, lp) } else { [] };
   // The paths the body mints a record element into, each with whether every mint group on
   // it qualifies for the record push.
@@ -781,13 +812,55 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
             }
           }
           if tp >= 0 && !known {
-            found += [Scalar { root: v, fld: fld, tp: tp, call: n }];
+            found += [Scalar { root: v, fld: fld, tp: tp, call: n, evict: [] }];
           }
         }
       },
       _ => {},
     }
   });
+  // `@FR-R-Inputs` — what an admitted callee reads of a record the body passes it, re-spelled
+  // over that argument: a variable's field, or a sub-record path's summed one.
+  if opt_inputs::enabled() {
+    for cs_site in opt_inputs::calls_in(b, whole) {
+      cs_args = cs_site.args;
+      cs_fi = opt_inputs::of(b, w, cs_site.d);
+      for cs_s in cs_fi.scalars {
+        if cs_s.p >= len(cs_args) {
+          continue;
+        }
+        cs_arg = cs_args[cs_s.p]!;
+        cs_c = match loop_shape::unspan(cs_arg) { NdVar { n: x } => x, _ => -1 };
+        cs_tp = if cs_c >= 0 && cs_c < len(rebound) && !rebound[cs_c]! { opt_wset::plain_tp(b, d.variables.variables[cs_c]!.type_def[0] ?? ir::TyVoid) } else { -1 };
+        if cs_tp >= 0 {
+          cs_known = false;
+          for cs_f in found {
+            if cs_f.root == cs_c && cs_f.fld == cs_s.fld {
+              cs_known = true;
+            }
+          }
+          if !cs_known {
+            found += [Scalar { root: cs_c, fld: cs_s.fld, tp: cs_tp, call: opt_inputs::substitute_path(cs_s.getter, cs_s.p, ir::NdVar { n: cs_c }), evict: [] }];
+          }
+        } else {
+          cs_sum = 0;
+          cs_evict: vector<integer> = [];
+          cs_r = opt_inputs::path_scalar(b, d, cs_arg, cs_s.fld, cs_sum, cs_evict);
+          if cs_r >= 0 && cs_r < len(rebound) && !rebound[cs_r]! {
+            cs_known = false;
+            for cs_f in found {
+              if cs_f.root == cs_r && cs_f.fld == cs_sum {
+                cs_known = true;
+              }
+            }
+            if !cs_known {
+              found += [Scalar { root: cs_r, fld: cs_sum, tp: -1, call: opt_inputs::substitute_path(cs_s.getter, cs_s.p, cs_arg), evict: cs_evict }];
+            }
+          }
+        }
+      }
+    }
+  }
   if len(found) == 0 {
     return out;
   }
@@ -800,7 +873,16 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
     }
   }
   for f in found {
-    if !opt_wset::evicts(written, f.tp, f.fld) {
+    stale = false;
+    if len(f.evict) == 0 {
+      stale = opt_wset::evicts(written, f.tp, f.fld);
+    }
+    for e in f.evict {
+      if e#index % 2 == 0 && opt_wset::evicts(written, e, f.evict[e#index + 1]!) {
+        stale = true;
+      }
+    }
+    if !stale {
       out.scalars += [f];
     }
   }

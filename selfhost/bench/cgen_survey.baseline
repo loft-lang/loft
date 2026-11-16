@@ -1,64 +1,62 @@
 {
  "bodies|default|program|corpus": {
-  "agree": 1077,
+  "agree": 1078,
   "differ": 0,
-  "equal": 2678,
-  "functions": 13560,
+  "equal": 2703,
+  "functions": 13578,
   "refused": 0,
   "switches": [
    "LOFT_NO_WARNINGS"
   ],
-  "units": 1077
+  "units": 1078
  },
  "bodies|plain|program|corpus": {
-  "agree": 1077,
+  "agree": 1078,
   "differ": 0,
-  "equal": 12933,
-  "functions": 13359,
+  "equal": 13064,
+  "functions": 13505,
   "refused": 0,
   "switches": [
    "LOFT_NO_APART",
-   "LOFT_NO_APPEND_LOOP_WINDOW",
-   "LOFT_NO_APPEND_TWIN",
-   "LOFT_NO_CALLEE_INPUTS",
-   "LOFT_NO_CHAR_WALK",
    "LOFT_NO_DEFERRED_COPY",
-   "LOFT_NO_DESTINATION",
-   "LOFT_NO_GUARD_BOUND",
-   "LOFT_NO_LAZY_SPLIT",
-   "LOFT_NO_SPLIT_TABLE",
-   "LOFT_NO_TESTED_BORROW",
    "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_VERSION",
    "LOFT_NO_WARNINGS"
   ],
-  "units": 1077
+  "units": 1078
  },
  "bodies|plain|program|corpus:tests": {
   "agree": 601,
   "differ": 0,
-  "equal": 6525,
-  "functions": 6589,
+  "equal": 6544,
+  "functions": 6608,
   "refused": 0,
   "switches": [
    "LOFT_NO_APART",
-   "LOFT_NO_APPEND_LOOP_WINDOW",
-   "LOFT_NO_APPEND_TWIN",
-   "LOFT_NO_CALLEE_INPUTS",
-   "LOFT_NO_CHAR_WALK",
    "LOFT_NO_DEFERRED_COPY",
-   "LOFT_NO_DESTINATION",
-   "LOFT_NO_GUARD_BOUND",
-   "LOFT_NO_LAZY_SPLIT",
-   "LOFT_NO_SPLIT_TABLE",
-   "LOFT_NO_TESTED_BORROW",
    "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_VERSION",
    "LOFT_NO_WARNINGS"
   ],
   "units": 601
+ },
+ "bodies|plain|program|files:benches.txt": {
+  "agree": 61,
+  "differ": 0,
+  "equal": 2175,
+  "functions": 2206,
+  "refused": 0,
+  "switches": [
+   "LOFT_NO_APART",
+   "LOFT_NO_DEFERRED_COPY",
+   "LOFT_NO_TRANSIENT",
+   "LOFT_NO_VALUE_RECORD",
+   "LOFT_NO_VERSION",
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 61
  },
  "counters|default|program|corpus": {
   "agree": 1077,
