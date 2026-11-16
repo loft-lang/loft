@@ -1,0 +1,206 @@
+--- a/fixedview.loft
++++ b/fixedview.loft
+@@ -218,7 +218,9 @@
+ // the CPU's scene where there is none or it does not open.
+ fn new_scene(v: FixedView) {
+   if v.table != 0l && !v.dev {
+-    v.dev = gpu::open(v.table, raster3d::WIDTH, raster3d::HEIGHT, TITLE);
++    // over the whole screen unless TW_FULL=0; a window of the view's size where that does not open
++    if (env_variable("TW_FULL") ?? "") != "0" { v.dev = gpu::open_fullscreen(v.table, TITLE); }
++    if !v.dev { v.dev = gpu::open(v.table, raster3d::WIDTH, raster3d::HEIGHT, TITLE); }
+     if !v.dev { v.table = 0l; }
+   }
+   if v.dev {
+@@ -238,7 +240,8 @@
+ 
+ // The screen's size: the device's window, or the CPU's frame.
+ fn screen_size(v: const FixedView) -> (integer, integer) {
+-  if v.dev && v.gs { (v.dev!.width(), v.dev!.height()) } else { (raster3d::WIDTH, raster3d::HEIGHT) }
++  // the view's own size on a GPU too: the scene fits it into the window, however large
++  (raster3d::WIDTH, raster3d::HEIGHT)
+ }
+ 
+ fn e_picture(v: FixedView, px: const vector<i32>) {
+--- a/main.loft
++++ b/main.loft
+@@ -279,6 +279,7 @@
+   // The fixed camera from the south (fixedview.loft): F5, or TW_VIEW=fixed to start in it.
+   fv = fixedview::view();
+   if (env_variable("TW_VIEW") ?? "") == "fixed" { fv.on = true; }
++  if (env_variable("TW_VIEW") ?? "") == "first" { _ = render3d::start(v3, gpu, game); }
+   // Drawn on the GPU in the device's own window where it opens (scene3d), on the CPU through
+   // screen where it does not; TW_GPU=0 keeps the CPU, the Tanmatsu's view (SCENE_CONTRACT.md).
+   if (env_variable("TW_GPU") ?? "") != "0" { fixedview::use_gpu(fv, gpu_gl::table()); }
+@@ -338,7 +339,7 @@
+       timing.frames += 1;
+       timing.show += ticks() - shown_at;
+       report(timing, size);
+-    } else if v3.on && !game.editing && !game.on_field {
++    } else if v3.on && !game.editing && render3d::shows(v3, game) {
+       aim(game, view, size);
+       render3d::draw(v3, gpu, game, changed || resized, now);
+       present(game, size, timing);
+--- a/render3d.loft
++++ b/render3d.loft
+@@ -170,6 +170,13 @@
+   hex_fence_ck: vector<integer> = [],
+   hex_canopy_ck: vector<integer> = [],
+   hex_night: boolean = false,
++  frames: integer = 0,
++  /// On a field (the hero out on a town's hex ground): the way the view looks, in degrees from
++  /// north clockwise, turned by the keys; whether the last frame was on the field; and when the
++  /// keys were last read (ms).
++  fyaw: float = 0.0,
++  field_was: boolean = false,
++  steer_at: integer = 0,
+   /// What a cell stands on in the hex version, kept per cell as it is first asked (`hex_y`): the
+   /// place's hex version does not change while it is the place.
+   hex_stand: hash<HexStand[key]> = []
+@@ -255,6 +262,15 @@
+   true
+ }
+ 
++/// The view switched on without a key (TW_VIEW=first): the GPU side opened, the view on.
++pub fn start(v: View3D, gpu: Gpu, g: game::Game) -> boolean {
++  if !v.on && len(gpu.gls) == 0 && !open(v, gpu) { return false; }
++  v.on = true;
++  v.built = false;
++  v.yaw = (motion::facing(g.world.face_x, g.world.face_y)) as float;
++  true
++}
++
+ /// The keys the 2D game reads, from the keys pressed: forward is the hero's facing, back the way
+ /// behind it (the facing put back after the step, `after`), and left or right turn the hero on the
+ /// spot.  Every other key passes as it is.
+@@ -298,13 +314,53 @@
+             program_keys: boolean = false) -> vector<boolean> {
+   was_on = v.on;
+   if toggle(v, gpu, g, pressed, program_keys) && was_on { v.went_off = true; }
++  g.field_steer = v.on && g.on_field;
++  if !g.on_field { v.field_was = false; }
++  if v.on && g.on_field { return steer_field(v, g, pressed); }
+   if v.on { return steer(v, g, pressed); }
+   track(v, pressed);
+   out: vector<boolean> = [];
+   for k in pressed { out += [k]; }
+   out
+ }
++
++/// How fast the view turns on a field, in degrees a millisecond.
++const FIELD_TURN = 0.15;
+ 
++/// On a field the body walks free, so the view steers it itself: left and right turn the view,
++/// forward walks the way it looks and back the other way, the view kept.  The four ways' keys
++/// are taken out of what the game reads; what it walks by is `g.steer_x`, `g.steer_y`.
++fn steer_field(v: View3D, g: game::Game, keys: const vector<boolean>) -> vector<boolean> {
++  out: vector<boolean> = [];
++  for k in keys { out += [k]; }
++  v.was = [];
++  for k in keys { v.was += [k]; }
++  for k in [K_W, K_A, K_S, K_D, K_UP, K_DOWN, K_LEFT, K_RIGHT] { if k < len(out) { out[k] = false; } }
++  now = ticks() / 1000;
++  ms = now - v.steer_at;
++  if ms < 0 || ms > 50 { ms = 16; }
++  v.steer_at = now;
++  if !v.field_was {
++    // as the body faces: (0, 1) is north
++    v.fyaw = atan2(g.fplay.face_x, g.fplay.face_y) * 180.0 / PI + ((env_variable("TW_TURN") ?? "0") as float ?? 0.0);
++    v.field_was = true;
++  }
++  auto = env_variable("TW_AUTO") ?? "";
++  if down(keys, K_A) || down(keys, K_LEFT) || auto.contains("a") { v.fyaw -= FIELD_TURN * (ms as float); }
++  if down(keys, K_D) || down(keys, K_RIGHT) || auto.contains("d") { v.fyaw += FIELD_TURN * (ms as float); }
++  rad = v.fyaw * PI / 180.0;
++  way = if down(keys, K_W) || down(keys, K_UP) || auto.contains("w") { 1.0 } else if down(keys, K_S) || down(keys, K_DOWN) || auto.contains("s") { -1.0 } else { 0.0 };
++  g.steer_x = sin(rad) * way;
++  g.steer_y = cos(rad) * way;
++  out
++}
++
++/// Does the view draw where the hero is?  Everywhere but on a field whose place has no hex
++/// version to draw.
++pub fn shows(v: View3D, g: const game::Game) -> boolean {
++  !g.on_field || hex_loaded(v, g)
++}
++
+ /// Did the view just go off (the 2D frame must be drawn again)?  Answers once.
+ pub fn went_off(v: View3D) -> boolean {
+   off = v.went_off;
+@@ -1608,7 +1664,8 @@
+   ey = (w.hero_z as float) + STEP * (w.hero_h as float) + EYE + p.hop / 64.0;
+   // The place's hex version, where it has one and the hero is out under the sky or in a house:
+   // its ground and houses in place of the square cells, the eye on its ground.
+-  hex = hex_here(v, g);
++  field = g.on_field && hex_loaded(v, g);
++  hex = field || hex_here(v, g);
+   if hex != v.hex_mode {
+     v.hex_mode = hex;
+     v.built = false;
+@@ -1616,6 +1673,16 @@
+   if hex {
+     ey = hex_y(v, w, w.hero_x, w.hero_y, w.hero_z, (w.hero_z as float) + STEP * (w.hero_h as float))
+          + EYE_M / TILE_M + p.hop / 64.0;
++  }
++  if field {
++    // out on the town's ground: the eye where the body is, over the ground there, looking the
++    // way the keys turned it
++    s = v.hex[0]!;
++    ex = g.fplay.x / TILE_M + 0.5;
++    ez = 0.5 - g.fplay.y / TILE_M;
++    ey = (hexscene::height_at(s, g.fplay.x, g.fplay.y) + EYE_M) / TILE_M;
++    if !v.field_was { v.fyaw = atan2(g.fplay.face_x, g.fplay.face_y) * 180.0 / PI; }
++    v.yaw = v.fyaw;
+   }
+   for gl in gpu.gls {
+     ww = gl.win.width();
+@@ -1629,9 +1696,12 @@
+       gl.place.update(v.place);
+       v.built = true;
+     }
+-    cs = vertices(v, gl, cards(v, g, ms));
++    // on a field nobody stands on the ground yet: the town's people are in its square map
++    stand: vector<faces3d::Face> = [];
++    if !field { stand = cards(v, g, ms); }
++    cs = vertices(v, gl, stand);
+     hs = vertices(v, gl, hand(g, aspect));
+-    sky = tile_world::open_sky(w.w, w.hero_x, w.hero_y, w.hero_z);
++    sky = field || tile_world::open_sky(w.w, w.hero_x, w.hero_y, w.hero_z);
+     fog = if !sky { (0.0, 0.0, 0.0) } else if w.night { NIGHT_SKY } else { SKY };
+     gl.win.viewport(0, 0, ww, wh);
+     gl.win.clear(graphics::rgba(((fog.0 * 255.0) as integer), ((fog.1 * 255.0) as integer), ((fog.2 * 255.0) as integer), 255));
+@@ -1665,6 +1735,13 @@
+     gl.win.disable(graphics::GL_CULL_FACE);
+     gl.win.disable(graphics::GL_BLEND);
+     gl.win.viewport(0, 0, ww, wh);
++    // TW_GRAB=<file.png>: the sixtieth frame saved, to look at what the view shows
++    v.frames += 1;
++    grab = env_variable("TW_GRAB") ?? "";
++    if grab != "" && v.frames == ((env_variable("TW_GRAB_AT") ?? "60") as integer ?? 60) {
++      _ = gl.win.capture().save_png(grab);
++      println("grab at frame {v.frames}: body ({g.fplay.x}, {g.fplay.y}) looking {v.fyaw} on_field {g.on_field} hero cell ({g.world.hero_x},{g.world.hero_y},{g.world.hero_z})");
++    }
+     // In its own window, the frame shown; a page's is shown by `screen::poll`.
+     if !tiles::on_display(g.surface) { gl.win.swap(); }
+   }
+--- a/game.loft
++++ b/game.loft
+@@ -261,6 +261,11 @@
+   /// rooms on it).  The game itself turns it on (main.loft); off, a town plays on its square map
+   /// as before, which the checks of the square rules use.
+   pub town_rules: boolean = false,
++  /// On a field, seen in first person (render3d): the way the body walks this frame, x east and
++  /// y north, in place of the four keys' compass ways; (0, 0) stands.
++  pub field_steer: boolean = false,
++  pub steer_x: float = 0.0,
++  pub steer_y: float = 0.0,
+   pub field_exits: vector<FieldExit> = [],
+   field_q: integer = 0,
+   field_r: integer = 0,
+@@ -922,6 +927,7 @@
+ 
+ // The keys on the field: the arrows walk, north up.
+ fn update_field(g: Game, ms: integer) -> boolean {
++  if g.field_steer { return field_walk(g, g.steer_x, g.steer_y, ms); }
+   dx = 0.0;
+   dy = 0.0;
+   if g.keys.is_action_pressed("left") { dx -= 1.0; }
