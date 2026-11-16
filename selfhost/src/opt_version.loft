@@ -1,0 +1,1071 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Version`'s analysis as `src/opt/version.rs` answers it: a LEAF's
+// fast path read off its body — the `if`s decided toward the arm that alone touches an element,
+// the element accesses at a linear index, and the tests that prove them, in order: the
+// precondition.
+//
+// The Rust plan names IR nodes by address (an `if`'s condition, an operator's argument slice),
+// which the fast twin's writer meets as it writes the same definition.  A loft node handed
+// around is a copy, so the identity is carried IN the IR instead (as `opt_below_len` does): the
+// analysis runs on a NUMBERED copy of the code — each call and each `if`'s condition wrapped in
+// an ID span, numbered in one fixed pre-order the markers already in the code do not move —
+// and a plan that holds writes the code again with each planned node's ID span turned into its
+// kind's marker (`DECIDED_T`, `DECIDED_F`, `RAW`, `PLAIN`) and every other ID span dropped.
+// The fast twin's writer asks the markers (`decided`, `call_mark`).
+
+use ir;
+use loop_shape;
+use opt_non_sentinel;
+use el_ir;
+use cgen_types;
+
+pub const ID_BASE = -1000000;
+pub const DECIDED_T = -2900;
+pub const DECIDED_F = -2901;
+pub const RAW = -2902;
+pub const PLAIN = -2903;
+
+// A linear expression over the leaf's parameters and inputs; each operator carries its node's
+// key (`def * KEY + id`).
+pub enum Lin {
+  LConst { k: integer },
+  LParam { p: integer },
+  LInput { p: integer, fld: integer },
+  LLen { p: integer, offs: text },
+  LAdd { a: Lin, b: Lin, at: integer },
+  LSub { a: Lin, b: Lin, at: integer },
+  LMul { a: Lin, b: Lin, at: integer },
+  LNeg { a: Lin, at: integer },
+}
+
+pub const KEY = 1048576;
+
+// One test of the precondition: `lo < hi` (`strict`) or `lo <= hi`.
+pub struct Test {
+  pub lo: Lin,
+  pub hi: Lin,
+  pub strict: boolean,
+}
+
+// A leaf's fast path and its precondition.  The keys are `def * KEY + id`.
+pub struct Leaf {
+  pub some: boolean,
+  pub tests: vector<Test>,
+  pub dec_key: vector<integer>,
+  pub dec_val: vector<boolean>,
+  pub raw: vector<integer>,
+  pub plain: vector<integer>,
+  pub callees: vector<integer>,
+}
+
+pub fn no_leaf() -> Leaf {
+  Leaf { some: false, tests: [], dec_key: [], dec_val: [], raw: [], plain: [], callees: [] }
+}
+
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_VERSION") ?? "0") == "0"
+}
+
+fn trace() -> boolean {
+  (env_variable("LOFT_TRACE_VERSION") ?? "0") != "0"
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// ---- numbering ---------------------------------------------------------------------------
+
+struct Counter {
+  n: integer,
+}
+
+fn id_span(id: integer, inner: ir::Node) -> ir::Node {
+  ir::NdSpan { pos: ir::Position { file: "", line: 0, pos: ID_BASE - id }, inner: inner }
+}
+
+// The ID a node's span chain carries, 0 for none.
+pub fn id_of(v: ir::Node) -> integer {
+  match v {
+    NdSpan { pos, inner } => if pos.line == 0 && pos.file == "" && pos.pos <= ID_BASE { ID_BASE - pos.pos } else { id_of(inner) },
+    _ => 0,
+  }
+}
+
+// The marker kind a node's span chain carries (`DECIDED_T` … `PLAIN`), 0 for none.
+pub fn mark_of(v: ir::Node) -> integer {
+  match v {
+    NdSpan { pos, inner } => {
+      if pos.line == 0 && pos.file == "" && pos.pos <= DECIDED_T && pos.pos >= PLAIN {
+        return pos.pos;
+      }
+      mark_of(inner)
+    },
+    _ => 0,
+  }
+}
+
+fn marker(kind: integer, inner: ir::Node) -> ir::Node {
+  ir::NdSpan { pos: ir::Position { file: "", line: 0, pos: kind }, inner: inner }
+}
+
+// `code` with every call and every `if`'s condition wrapped in an ID span, in pre-order.
+fn number(v: ir::Node, c: Counter) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: number(inner, c) },
+    NdCall { def_nr, args } => {
+      c.n += 1;
+      id = c.n;
+      out: vector<ir::Node> = [];
+      for a in args {
+        out += [number(a, c)];
+      }
+      id_span(id, ir::NdCall { def_nr: def_nr, args: out })
+    },
+    NdIf { cond, t, f } => {
+      c.n += 1;
+      id = c.n;
+      nc = number(cond, c);
+      nt = number(t, c);
+      nf = number(f, c);
+      ir::NdIf { cond: id_span(id, nc), t: nt, f: nf }
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      ops: vector<ir::Node> = [];
+      for o in bl.operators {
+        ops += [number(o, c)];
+      }
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      ops: vector<ir::Node> = [];
+      for o in bl.operators {
+        ops += [number(o, c)];
+      }
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => {
+      cs = el_ir::children(v);
+      if len(cs) == 0 {
+        return v;
+      }
+      out: vector<ir::Node> = [];
+      for ch in cs {
+        out += [number(ch, c)];
+      }
+      with_children(v, out)
+    },
+  }
+}
+
+fn with_children(node: ir::Node, cs: vector<ir::Node>) -> ir::Node {
+  match node {
+    NdCallRef { var, args: _ } => ir::NdCallRef { var: var, args: cs },
+    NdInsert { items: _ } => ir::NdInsert { items: cs },
+    NdTuple { items: _ } => ir::NdTuple { items: cs },
+    NdParallel { arms: _ } => ir::NdParallel { arms: cs },
+    NdSet { var, inner: _ } => ir::NdSet { var: var, inner: cs[0]! },
+    NdReturn { inner: _ } => ir::NdReturn { inner: cs[0]! },
+    NdDrop { inner: _ } => ir::NdDrop { inner: cs[0]! },
+    NdYield { inner: _ } => ir::NdYield { inner: cs[0]! },
+    NdTuplePut { var, idx, inner: _ } => ir::NdTuplePut { var: var, idx: idx, inner: cs[0]! },
+    NdIter { var, create: _, next: _, init: _ } => ir::NdIter { var: var, create: cs[0]!, next: cs[1]!, init: cs[2]! },
+    _ => node,
+  }
+}
+
+// The numbered code written again: each ID span the plan names (`def`'s keys) turned into its
+// kind's marker, every other ID span dropped.
+fn settle(v: ir::Node, d: integer, l: Leaf) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => {
+      if pos.line == 0 && pos.file == "" && pos.pos <= ID_BASE {
+        key = d * KEY + (ID_BASE - pos.pos);
+        rest = settle(inner, d, l);
+        for k in l.dec_key {
+          if k == key {
+            return marker(if l.dec_val[k#index]! { DECIDED_T } else { DECIDED_F }, rest);
+          }
+        }
+        for k in l.raw {
+          if k == key {
+            return marker(RAW, rest);
+          }
+        }
+        for k in l.plain {
+          if k == key {
+            return marker(PLAIN, rest);
+          }
+        }
+        return rest;
+      }
+      ir::NdSpan { pos: pos, inner: settle(inner, d, l) }
+    },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { settle(a, d, l) }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: settle(cond, d, l), t: settle(t, d, l), f: settle(f, d, l) },
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: [for o in bl.operators { settle(o, d, l) }], result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: [for o in bl.operators { settle(o, d, l) }], result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => {
+      cs = el_ir::children(v);
+      if len(cs) == 0 {
+        return v;
+      }
+      with_children(v, [for ch in cs { settle(ch, d, l) }])
+    },
+  }
+}
+
+// `d`'s code with the part of plan `l` that lies in it marked (`settle` over a fresh numbering:
+// the numbering is a function of the tree, so the IDs are the analysis' own).
+pub fn marked(b: ir::Bundle, d: integer, l: Leaf) -> ir::Node {
+  c = Counter { n: 0 };
+  settle(number(b.data.definitions[d]!.code[0]!, c), d, l)
+}
+
+// ---- Lin ----------------------------------------------------------------------------------
+
+pub fn lin_eq(x: Lin, y: Lin) -> boolean {
+  match x {
+    LConst { k } => match y { LConst { k: k2 } => k == k2, _ => false },
+    LParam { p } => match y { LParam { p: p2 } => p == p2, _ => false },
+    LInput { p, fld } => match y { LInput { p: p2, fld: f2 } => p == p2 && fld == f2, _ => false },
+    LLen { p, offs } => match y { LLen { p: p2, offs: o2 } => p == p2 && offs == o2, _ => false },
+    LAdd { a, b, at } => match y { LAdd { a: a2, b: b2, at: t2 } => at == t2 && lin_eq(a, a2) && lin_eq(b, b2), _ => false },
+    LSub { a, b, at } => match y { LSub { a: a2, b: b2, at: t2 } => at == t2 && lin_eq(a, a2) && lin_eq(b, b2), _ => false },
+    LMul { a, b, at } => match y { LMul { a: a2, b: b2, at: t2 } => at == t2 && lin_eq(a, a2) && lin_eq(b, b2), _ => false },
+    LNeg { a, at } => match y { LNeg { a: a2, at: t2 } => at == t2 && lin_eq(a, a2), _ => false },
+  }
+}
+
+fn test_eq(x: Test, y: Test) -> boolean {
+  x.strict == y.strict && lin_eq(x.lo, y.lo) && lin_eq(x.hi, y.hi)
+}
+
+// Does `l` read a parameter in `varying`?
+pub fn varies(l: Lin, varying: vector<boolean>) -> boolean {
+  match l {
+    LParam { p } => varying[p] ?? false,
+    LAdd { a, b, at: _ } => varies(a, varying) || varies(b, varying),
+    LSub { a, b, at: _ } => varies(a, varying) || varies(b, varying),
+    LMul { a, b, at: _ } => varies(a, varying) || varies(b, varying),
+    LNeg { a, at: _ } => varies(a, varying),
+    _ => false,
+  }
+}
+
+// Linear in the counter: no product of two factors that both vary.
+pub fn linear(l: Lin, varying: vector<boolean>) -> boolean {
+  match l {
+    LAdd { a, b, at: _ } => linear(a, varying) && linear(b, varying),
+    LSub { a, b, at: _ } => linear(a, varying) && linear(b, varying),
+    LMul { a, b, at: _ } => !(varies(a, varying) && varies(b, varying)) && linear(a, varying) && linear(b, varying),
+    LNeg { a, at: _ } => linear(a, varying),
+    _ => true,
+  }
+}
+
+fn leaves_in(l: Lin, out: vector<Lin>) {
+  match l {
+    LAdd { a, b, at: _ } => { add_leaf(l, out); leaves_in(a, out); leaves_in(b, out); },
+    LSub { a, b, at: _ } => { add_leaf(l, out); leaves_in(a, out); leaves_in(b, out); },
+    LMul { a, b, at: _ } => { add_leaf(l, out); leaves_in(a, out); leaves_in(b, out); },
+    LNeg { a, at: _ } => { add_leaf(l, out); leaves_in(a, out); },
+    _ => add_leaf(l, out),
+  }
+}
+
+fn add_leaf(l: Lin, out: vector<Lin>) {
+  keep = match l { LParam { p: _ } => true, LInput { p: _, fld: _ } => true, LLen { p: _, offs: _ } => true, _ => false };
+  if !keep {
+    return;
+  }
+  for o in out {
+    if lin_eq(o, l) {
+      return;
+    }
+  }
+  out += [l];
+}
+
+// `Leaf::leaves`: the distinct leaves the tests read, in first-appearance order.
+pub fn leaves(l: Leaf) -> vector<Lin> {
+  out: vector<Lin> = [];
+  for t in l.tests {
+    leaves_in(t.lo, out);
+    leaves_in(t.hi, out);
+  }
+  out
+}
+
+fn plain_of(l: Lin, out: vector<integer>) {
+  match l {
+    LAdd { a, b, at } => { add_key(at, out); plain_of(a, out); plain_of(b, out); },
+    LSub { a, b, at } => { add_key(at, out); plain_of(a, out); plain_of(b, out); },
+    LMul { a, b, at } => { add_key(at, out); plain_of(a, out); plain_of(b, out); },
+    LNeg { a, at } => { add_key(at, out); plain_of(a, out); },
+    _ => {},
+  }
+}
+
+fn add_key(k: integer, out: vector<integer>) {
+  for o in out {
+    if o == k {
+      return;
+    }
+  }
+  out += [k];
+}
+
+// ---- the walk -----------------------------------------------------------------------------
+
+struct VWalk {
+  b: ir::Bundle,
+  // The definition being walked, its variables' kinds in `env_k` (0 unknown, 1 a linear value
+  // `env_l`, 2 a header input `env_hp`/`env_ho`), its plain-integer parameters, and inside a
+  // called leaf the caller's record each record parameter names (`alias`).
+  cur: integer,
+  params: vector<boolean>,
+  env_k: vector<integer>,
+  env_l: vector<Lin>,
+  env_hp: vector<integer>,
+  env_ho: vector<text>,
+  alias: vector<integer>,
+  callee: boolean,
+  follows: boolean,
+  // The twin's inputs: record scalars (`sc_p`, `sc_f`) and headers (`hd_p`, `hd_o`).
+  sc_p: vector<integer>,
+  sc_f: vector<integer>,
+  hd_p: vector<integer>,
+  hd_o: vector<text>,
+  leaf: Leaf,
+  err: text,
+}
+
+fn plain_integer(t: ir::TypeT) -> boolean {
+  if t is TyOptional {
+    return false;
+  }
+  match cgen_types::base(t) {
+    TyInteger { spec } => spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295),
+    _ => false,
+  }
+}
+
+fn assigned(v: ir::Node, out: vector<boolean>) {
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { if var >= 0 && var < len(out) { out[var] = true; } },
+      _ => {},
+    }
+  });
+}
+
+fn exits(v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdReturn { inner: _ } => true,
+    NdBlock { block } => {
+      ops = block[0].operators;
+      for i in rev(0..len(ops)) {
+        if loop_shape::unspan(ops[i]!) is NdLine {
+          continue;
+        }
+        r = exits(ops[i]!);
+        return r;
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
+fn empty_arm(v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdNull => true,
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if !(loop_shape::unspan(o) is NdLine) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+fn has_access(b: ir::Bundle, v: ir::Node) -> boolean {
+  found = [false];
+  opt_non_sentinel::walk(v, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        nm = def_name(b, def_nr);
+        if len(args) == 3 && (nm == "OpGetVector" || nm == "OpGetVectorNullable") {
+          found[0] = true;
+        }
+      },
+      _ => {},
+    }
+  });
+  found[0]!
+}
+
+fn var_of(v: ir::Node) -> integer {
+  match loop_shape::unspan(v) { NdVar { n } => n, _ => -1 }
+}
+
+fn int_of(v: ir::Node, ok: &boolean) -> integer {
+  match loop_shape::unspan(v) {
+    NdInt { n } => { ok = true; n },
+    _ => { ok = false; 0 },
+  }
+}
+
+// The leaf's own record variable `p` names: itself, or inside a called leaf the caller's record
+// its parameter was bound to; -1 for none.
+fn root(w: VWalk, p: integer) -> integer {
+  if w.callee { w.alias[p] ?? -1 } else { p }
+}
+
+fn key_of(w: VWalk, v: ir::Node) -> integer {
+  w.cur * KEY + id_of(v)
+}
+
+// `lin`: `x` as a linear expression on the fast path; `ok` false for none.
+fn lin(w: VWalk, x: ir::Node, ok: &boolean) -> Lin {
+  ok = false;
+  match loop_shape::unspan(x) {
+    NdInt { n } => { ok = true; Lin::LConst { k: n } },
+    NdLong { n } => if n == null { Lin::LConst { k: 0 } } else { ok = true; Lin::LConst { k: n! } },
+    NdVar { n } => {
+      if w.params[n] ?? false {
+        ok = true;
+        return Lin::LParam { p: n };
+      }
+      if (w.env_k[n] ?? 0) == 1 {
+        ok = true;
+        return w.env_l[n]!;
+      }
+      Lin::LConst { k: 0 }
+    },
+    NdCall { def_nr, args } => {
+      at = key_of(w, x);
+      name = def_name(w.b, def_nr);
+      if len(args) == 2 && (name == "OpAddInt" || name == "OpAddIntNullable" || name == "OpMinInt" || name == "OpMinIntNullable" || name == "OpMulInt" || name == "OpMulIntNullable") {
+        ok_a = false;
+        a = lin(w, args[0]!, ok_a);
+        ok_b = false;
+        b2 = lin(w, args[1]!, ok_b);
+        if !ok_a || !ok_b {
+          return Lin::LConst { k: 0 };
+        }
+        ok = true;
+        if name.starts_with("OpAdd") {
+          return Lin::LAdd { a: a, b: b2, at: at };
+        }
+        if name.starts_with("OpMin") {
+          return Lin::LSub { a: a, b: b2, at: at };
+        }
+        return Lin::LMul { a: a, b: b2, at: at };
+      }
+      if len(args) == 1 && name == "OpMinSingleInt" {
+        ok_a = false;
+        a = lin(w, args[0]!, ok_a);
+        if !ok_a {
+          return Lin::LConst { k: 0 };
+        }
+        ok = true;
+        return Lin::LNeg { a: a, at: at };
+      }
+      if len(args) == 2 && name == "OpGetInt" {
+        p = var_of(args[0]!);
+        fok = false;
+        fld = int_of(args[1]!, fok);
+        if p < 0 || !fok {
+          return Lin::LConst { k: 0 };
+        }
+        r = root(w, p);
+        if r < 0 {
+          return Lin::LConst { k: 0 };
+        }
+        for q in w.sc_p {
+          if q == r && w.sc_f[q#index]! == fld {
+            ok = true;
+            return Lin::LInput { p: r, fld: fld };
+          }
+        }
+        return Lin::LConst { k: 0 };
+      }
+      if len(args) == 1 && (name == "OpLengthVector" || name == "t_6vector_len") {
+        hp = -1;
+        ho = header(w, args[0]!, hp);
+        if hp >= 0 {
+          ok = true;
+          return Lin::LLen { p: hp, offs: ho };
+        }
+      }
+      Lin::LConst { k: 0 }
+    },
+    _ => Lin::LConst { k: 0 },
+  }
+}
+
+// `header`: the header input a vector expression is, on the fast path — its parameter in `p`
+// (-1 for none) and its offsets.
+fn header(w: VWalk, x: ir::Node, p: &integer) -> text {
+  p = -1;
+  match loop_shape::unspan(x) {
+    NdVar { n } => {
+      if (w.env_k[n] ?? 0) == 2 {
+        p = w.env_hp[n]!;
+        return w.env_ho[n]!;
+      }
+      ""
+    },
+    NdCall { def_nr, args } => {
+      if len(args) != 3 || def_name(w.b, def_nr) != "OpGetField" {
+        return "";
+      }
+      v = var_of(args[0]!);
+      ok = false;
+      off = int_of(args[1]!, ok);
+      if v < 0 || !ok {
+        return "";
+      }
+      r = root(w, v);
+      if r < 0 {
+        return "";
+      }
+      offs = "{off},";
+      for q in w.hd_p {
+        if q == r && w.hd_o[q#index]! == offs {
+          p = r;
+          return offs;
+        }
+      }
+      ""
+    },
+    _ => "",
+  }
+}
+
+// `tests`: the tests that make condition `cond` answer `want`; `ok` false where it cannot be
+// decided.
+fn tests(w: VWalk, cond: ir::Node, want: boolean, ok: &boolean) -> vector<Test> {
+  ok = false;
+  out: vector<Test> = [];
+  match loop_shape::unspan(cond) {
+    NdCall { def_nr, args } => {
+      name = def_name(w.b, def_nr);
+      if len(args) == 1 && name == "OpNot" {
+        sub = false;
+        r = tests(w, args[0]!, !want, sub);
+        ok = sub;
+        return r;
+      }
+      if len(args) != 2 {
+        return out;
+      }
+      ok_a = false;
+      lo = lin(w, args[0]!, ok_a);
+      ok_b = false;
+      hi = lin(w, args[1]!, ok_b);
+      if !ok_a || !ok_b {
+        return out;
+      }
+      t = if name == "OpLtInt" {
+        if want { Test { lo: lo, hi: hi, strict: true } } else { Test { lo: hi, hi: lo, strict: false } }
+      } else if name == "OpLeInt" {
+        if want { Test { lo: lo, hi: hi, strict: false } } else { Test { lo: hi, hi: lo, strict: true } }
+      } else if name == "OpGtInt" {
+        if want { Test { lo: hi, hi: lo, strict: true } } else { Test { lo: lo, hi: hi, strict: false } }
+      } else if name == "OpGeInt" {
+        if want { Test { lo: hi, hi: lo, strict: false } } else { Test { lo: lo, hi: hi, strict: true } }
+      } else {
+        return out;
+      };
+      ok = true;
+      out += [t];
+      out
+    },
+    NdIf { cond: first, t: yes, f: second } => {
+      // `a or b` decided false: both false; `a and b` decided true: both true.
+      or_form = match loop_shape::unspan(yes) { NdBoolean { b: on } => on, _ => false } && !want;
+      and_form = match loop_shape::unspan(second) { NdBoolean { b: on } => !on, _ => false } && want;
+      if or_form {
+        o1 = false;
+        r1 = tests(w, first, false, o1);
+        if !o1 {
+          return out;
+        }
+        o2 = false;
+        r2 = tests(w, second, false, o2);
+        if !o2 {
+          return out;
+        }
+        for t in r1 { out += [t]; }
+        for t in r2 { out += [t]; }
+        ok = true;
+        return out;
+      }
+      if and_form {
+        o1 = false;
+        r1 = tests(w, first, true, o1);
+        if !o1 {
+          return out;
+        }
+        o2 = false;
+        r2 = tests(w, yes, true, o2);
+        if !o2 {
+          return out;
+        }
+        for t in r1 { out += [t]; }
+        for t in r2 { out += [t]; }
+        ok = true;
+      }
+      out
+    },
+    _ => out,
+  }
+}
+
+// `access`: an element read or write at a linear index of a header input — its tests and its
+// node, by key `at`.
+fn access(w: VWalk, name: text, args: vector<ir::Node>, at: integer) {
+  two = name == "OpGetInt" || name == "OpGetFloat" || name == "OpGetBoolean" || name == "OpGetSingle" || name == "OpGetEnum" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full";
+  three = name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetBoolean" || name == "OpSetInt4Raw";
+  if !((two && len(args) == 2) || (three && len(args) == 3)) {
+    return;
+  }
+  match loop_shape::unspan(args[0]!) {
+    NdCall { def_nr, args: ga } => {
+      gn = def_name(w.b, def_nr);
+      if len(ga) != 3 || (gn != "OpGetVector" && gn != "OpGetVectorNullable") {
+        return;
+      }
+      if !(loop_shape::unspan(ga[1]!) is NdInt) || !(loop_shape::unspan(args[1]!) is NdInt) {
+        return;
+      }
+      hp = -1;
+      ho = header(w, ga[0]!, hp);
+      ok = false;
+      idx = lin(w, ga[2]!, ok);
+      if hp < 0 || !ok {
+        return;
+      }
+      w.leaf.tests += [Test { lo: Lin::LConst { k: 0 }, hi: idx, strict: false }];
+      w.leaf.tests += [Test { lo: idx, hi: Lin::LLen { p: hp, offs: ho }, strict: true }];
+      w.leaf.raw += [at];
+    },
+    _ => {},
+  }
+}
+
+fn set_env(w: VWalk, x: integer, kind: integer, l: Lin, hp: integer, ho: text) {
+  if x < 0 || x >= len(w.env_k) {
+    return;
+  }
+  w.env_k[x] = kind;
+  w.env_l[x] = l;
+  w.env_hp[x] = hp;
+  w.env_ho[x] = ho;
+}
+
+fn fail(w: VWalk, why: text) {
+  if w.err == "" {
+    w.err = why;
+  }
+}
+
+// `call_leaf`: a call of leaf `d` walked inline — its parameters bound to the caller's
+// arguments, its decisions and accesses joining the plan.  The value it answers as a linear
+// expression in `ok`/the result.  One level: a callee calls nothing.
+fn call_leaf(w: VWalk, d: integer, args: vector<ir::Node>, ok: &boolean) -> Lin {
+  ok = false;
+  def = w.b.data.definitions[d]!;
+  if w.callee {
+    fail(w, "calls {def.name} from a called leaf");
+    return Lin::LConst { k: 0 };
+  }
+  code = def.code[0] ?? ir::NdNull;
+  if def.def_type != 1 || code is NdNull {
+    fail(w, "calls {def.name}");
+    return Lin::LConst { k: 0 };
+  }
+  count = len(def.variables.variables);
+  rebound: vector<boolean> = [for _ in 0..count { false }];
+  assigned(code, rebound);
+  env_k: vector<integer> = [for _ in 0..count { 0 }];
+  env_l: vector<Lin> = [for _ in 0..count { Lin::LConst { k: 0 } }];
+  env_hp: vector<integer> = [for _ in 0..count { -1 }];
+  env_ho: vector<text> = [for _ in 0..count { "" }];
+  alias: vector<integer> = [for _ in 0..count { -1 }];
+  at = 0;
+  for v in def.variables.variables {
+    if !v.argument {
+      continue;
+    }
+    p = v#index;
+    if at >= len(args) {
+      break;
+    }
+    arg = args[at]!;
+    at += 1;
+    if rebound[p]! {
+      continue;
+    }
+    lok = false;
+    l = lin(w, arg, lok);
+    if lok {
+      env_k[p] = 1;
+      env_l[p] = l;
+      continue;
+    }
+    hp = -1;
+    ho = header(w, arg, hp);
+    if hp >= 0 {
+      env_k[p] = 2;
+      env_hp[p] = hp;
+      env_ho[p] = ho;
+      continue;
+    }
+    av = var_of(arg);
+    if av >= 0 {
+      r = root(w, av);
+      if r >= 0 {
+        alias[p] = r;
+      }
+    }
+  }
+  s_k = w.env_k;
+  s_l = w.env_l;
+  s_hp = w.env_hp;
+  s_ho = w.env_ho;
+  s_params = w.params;
+  s_alias = w.alias;
+  s_cur = w.cur;
+  w.env_k = env_k;
+  w.env_l = env_l;
+  w.env_hp = env_hp;
+  w.env_ho = env_ho;
+  w.params = [for _ in 0..count { false }];
+  w.alias = alias;
+  w.cur = d;
+  w.callee = true;
+  c = Counter { n: 0 };
+  numbered = number(code, c);
+  walk(w, numbered);
+  value = Lin::LConst { k: 0 };
+  vok = false;
+  if w.err == "" {
+    match loop_shape::unspan(numbered) {
+      NdBlock { block } => {
+        ops = block[0].operators;
+        for i in rev(0..len(ops)) {
+          if loop_shape::unspan(ops[i]!) is NdLine {
+            continue;
+          }
+          last = ops[i]!;
+          value = match loop_shape::unspan(last) { NdReturn { inner } => lin(w, inner, vok), _ => lin(w, last, vok) };
+          break;
+        }
+      },
+      _ => { value = lin(w, numbered, vok); },
+    }
+  }
+  w.callee = false;
+  w.env_k = s_k;
+  w.env_l = s_l;
+  w.env_hp = s_hp;
+  w.env_ho = s_ho;
+  w.params = s_params;
+  w.alias = s_alias;
+  w.cur = s_cur;
+  if w.err != "" {
+    return Lin::LConst { k: 0 };
+  }
+  seen = false;
+  for c2 in w.leaf.callees {
+    if c2 == d {
+      seen = true;
+    }
+  }
+  if !seen {
+    w.leaf.callees += [d];
+  }
+  ok = vok;
+  value
+}
+
+fn walk_list(w: VWalk, ops: vector<ir::Node>) {
+  outer = w.follows;
+  for op in ops {
+    if w.err != "" {
+      return;
+    }
+    after = false;
+    for o in ops {
+      if o#index > op#index && has_access(w.b, o) {
+        after = true;
+      }
+    }
+    w.follows = outer || after;
+    walk(w, op);
+  }
+  w.follows = outer;
+}
+
+fn copy_env(w: VWalk) -> VWalk {
+  VWalk { b: w.b, cur: w.cur, params: w.params, env_k: [for k in w.env_k { k }], env_l: [for l in w.env_l { l }], env_hp: [for p in w.env_hp { p }], env_ho: [for o in w.env_ho { o }], alias: w.alias, callee: w.callee, follows: w.follows, sc_p: w.sc_p, sc_f: w.sc_f, hd_p: w.hd_p, hd_o: w.hd_o, leaf: w.leaf, err: w.err }
+}
+
+fn restore_env(w: VWalk, from: VWalk) {
+  w.env_k = [for k in from.env_k { k }];
+  w.env_l = [for l in from.env_l { l }];
+  w.env_hp = [for p in from.env_hp { p }];
+  w.env_ho = [for o in from.env_ho { o }];
+}
+
+// The walk of a statement's one operand.
+fn walk_part(w: VWalk, v: ir::Node) {
+  walk(w, v);
+}
+
+// `walk`: `v` in evaluation order; `w.err` where the function is no leaf.
+fn walk(w: VWalk, v: ir::Node) {
+  if w.err != "" {
+    return;
+  }
+  match loop_shape::unspan(v) {
+    NdBlock { block } => walk_list(w, block[0].operators),
+    NdInsert { items } => walk_list(w, items),
+    NdSet { var, inner } => {
+      e = loop_shape::unspan(inner);
+      match e {
+        NdCall { def_nr, args } => {
+          name = def_name(w.b, def_nr);
+          if !name.starts_with("Op") && name != "t_6vector_len" {
+            for a in args {
+              walk(w, a);
+            }
+            cok = false;
+            l = call_leaf(w, def_nr, args, cok);
+            if cok {
+              set_env(w, var, 1, l, -1, "");
+            } else {
+              set_env(w, var, 0, Lin::LConst { k: 0 }, -1, "");
+            }
+            return;
+          }
+        },
+        _ => {},
+      }
+      walk(w, inner);
+      lok = false;
+      l = lin(w, inner, lok);
+      if lok {
+        set_env(w, var, 1, l, -1, "");
+        return;
+      }
+      hp = -1;
+      ho = header(w, inner, hp);
+      if hp >= 0 {
+        set_env(w, var, 2, Lin::LConst { k: 0 }, hp, ho);
+      } else {
+        set_env(w, var, 0, Lin::LConst { k: 0 }, -1, "");
+      }
+    },
+    NdReturn { inner } => walk_part(w, inner),
+    NdDrop { inner } => walk_part(w, inner),
+    NdIf { cond, t, f } => {
+      at = has_access(w.b, t);
+      ae = has_access(w.b, f);
+      want = -1;
+      if at && !ae {
+        want = 1;
+      } else if ae && !at {
+        want = 0;
+      } else if !at && !ae && w.follows && exits(t) && empty_arm(f) {
+        want = 0;
+      } else if !at && !ae && w.follows && exits(f) && empty_arm(t) {
+        want = 1;
+      }
+      if want >= 0 {
+        tok = false;
+        ts = tests(w, cond, want == 1, tok);
+        if tok {
+          for t2 in ts {
+            w.leaf.tests += [t2];
+          }
+          w.leaf.dec_key += [key_of(w, cond)];
+          w.leaf.dec_val += [want == 1];
+          walk(w, if want == 1 { t } else { f });
+          return;
+        }
+      }
+      walk(w, cond);
+      saved = copy_env(w);
+      walk(w, t);
+      restore_env(w, saved);
+      walk(w, f);
+      restore_env(w, saved);
+      set: vector<boolean> = [for _ in 0..len(w.env_k) { false }];
+      assigned(t, set);
+      assigned(f, set);
+      for s in set {
+        if s {
+          set_env(w, s#index, 0, Lin::LConst { k: 0 }, -1, "");
+        }
+      }
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(w.b, def_nr);
+      if !name.starts_with("Op") && name != "t_6vector_len" {
+        for a in args {
+          walk(w, a);
+        }
+        cok = false;
+        call_leaf(w, def_nr, args, cok);
+        return;
+      }
+      for a in args {
+        walk(w, a);
+      }
+      access(w, name, args, key_of(w, v));
+    },
+    NdLoop { block: _ } => fail(w, "a loop"),
+    NdIter { var: _, create: _, next: _, init: _ } => fail(w, "a loop"),
+    NdYield { inner: _ } => fail(w, "a loop"),
+    NdParallel { arms: _ } => fail(w, "a loop"),
+    NdCallRef { var: _, args: _ } => fail(w, "a call through a reference"),
+    NdBreak { n: _ } => fail(w, "a call through a reference"),
+    NdContinue { n: _ } => fail(w, "a call through a reference"),
+    _ => {},
+  }
+}
+
+// `leaf`: leaf `d`'s fast path and precondition, given the twin's inputs (`sc_*` the record
+// scalars as `(variable, offset)`, `hd_*` the headers as `(variable, offsets)`); `some` false
+// where `d` is no leaf, or decides nothing and proves no access.
+pub fn leaf(b: ir::Bundle, d: integer, sc_p: vector<integer>, sc_f: vector<integer>, hd_p: vector<integer>, hd_o: vector<text>) -> Leaf {
+  if !enabled() || d < 0 || d >= len(b.data.definitions) {
+    return no_leaf();
+  }
+  def = b.data.definitions[d]!;
+  code = def.code[0] ?? ir::NdNull;
+  count = len(def.variables.variables);
+  rebound: vector<boolean> = [for _ in 0..count { false }];
+  assigned(code, rebound);
+  params: vector<boolean> = [for _ in 0..count { false }];
+  for v in def.variables.variables {
+    p = v#index;
+    if v.argument && !rebound[p]! && plain_integer(v.type_def[0] ?? ir::TyVoid) {
+      params[p] = true;
+    }
+  }
+  w = VWalk { b: b, cur: d, params: params, env_k: [for _ in 0..count { 0 }], env_l: [for _ in 0..count { Lin::LConst { k: 0 } }], env_hp: [for _ in 0..count { -1 }], env_ho: [for _ in 0..count { "" }], alias: [for _ in 0..count { -1 }], callee: false, follows: false, sc_p: sc_p, sc_f: sc_f, hd_p: hd_p, hd_o: hd_o, leaf: no_leaf(), err: "" };
+  c = Counter { n: 0 };
+  walk(w, number(code, c));
+  if w.err != "" {
+    if trace() {
+      println("[version] {def.name}: no leaf: {w.err}");
+    }
+    return no_leaf();
+  }
+  if len(w.leaf.raw) == 0 {
+    if trace() {
+      println("[version] {def.name}: proves no element access");
+    }
+    return no_leaf();
+  }
+  l = w.leaf;
+  // A test met twice is asked once.
+  kept: vector<Test> = [];
+  for t in l.tests {
+    dup = false;
+    for s in kept {
+      if test_eq(s, t) {
+        dup = true;
+      }
+    }
+    if !dup {
+      kept += [t];
+    }
+  }
+  l.tests = kept;
+  plain: vector<integer> = [];
+  for t in l.tests {
+    plain_of(t.lo, plain);
+    plain_of(t.hi, plain);
+  }
+  l.plain = plain;
+  l.some = true;
+  l
+}
+
+// `leaf_part`: the part of `l` that lies in definition `d` (its keys), for `d`'s fast twin.
+pub fn part(l: Leaf, d: integer) -> Leaf {
+  out = no_leaf();
+  out.some = true;
+  for k in l.dec_key {
+    if k / KEY == d {
+      out.dec_key += [k];
+      out.dec_val += [l.dec_val[k#index]!];
+    }
+  }
+  for k in l.raw {
+    if k / KEY == d {
+      out.raw += [k];
+    }
+  }
+  for k in l.plain {
+    if k / KEY == d {
+      out.plain += [k];
+    }
+  }
+  out
+}
+
+fn same_ints(a: vector<integer>, b: vector<integer>) -> boolean {
+  if len(a) != len(b) {
+    return false;
+  }
+  for x in a {
+    found = false;
+    for y in b {
+      if x == y {
+        found = true;
+      }
+    }
+    if !found {
+      return false;
+    }
+  }
+  true
+}
+
+// Two parts are the same plan (the decided `if`s with their values, the accesses, the plain
+// operators).
+pub fn same_part(a: Leaf, b: Leaf) -> boolean {
+  if !same_ints(a.raw, b.raw) || !same_ints(a.plain, b.plain) || !same_ints(a.dec_key, b.dec_key) {
+    return false;
+  }
+  for k in a.dec_key {
+    for k2 in b.dec_key {
+      if k == k2 && a.dec_val[k#index]! != b.dec_val[k2#index]! {
+        return false;
+      }
+    }
+  }
+  true
+}

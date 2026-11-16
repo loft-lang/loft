@@ -31,6 +31,7 @@ use cgen_unit;
 use cgen_clibs;
 use cgen_tables;
 use opt_destination;
+use opt_version;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -140,6 +141,14 @@ pub struct Cx {
   // `@FR-R-Base`'s guard clause: per definition, whether its guarded index slots are marked in
   // its code yet (`opt_below_len::mark`).
   pub guards_marked: vector<boolean>,
+  // `@FR-R-Version`: per definition its plan's state (0 unasked, 1 a leaf, 2 none, 3 being
+  // asked), the plan, the part a calling leaf registered, whether its `__vp` is written and
+  // whether its calls of leaves are numbered (`cgen_version`).
+  pub v_state: vector<integer>,
+  pub v_leaves: vector<opt_version::Leaf>,
+  pub v_parts: vector<opt_version::Leaf>,
+  pub v_pres: vector<boolean>,
+  pub v_sites: vector<boolean>,
   // `Cx::dest_memo`: the destination shapes asked so far.
   pub dest_memo: opt_destination::Memo,
   // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
@@ -199,6 +208,11 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     ap_windows: [for _ in 0..len(b.data.definitions) { -1 }],
     loop_callees: [for _ in 0..len(b.data.definitions) { false }],
     guards_marked: [for _ in 0..len(b.data.definitions) { false }],
+    v_state: [],
+    v_leaves: [],
+    v_parts: [],
+    v_pres: [],
+    v_sites: [],
     dest_memo: opt_destination::new_memo(),
     tuples: [],
     lazy: -1,

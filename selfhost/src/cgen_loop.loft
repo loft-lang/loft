@@ -18,6 +18,9 @@ use ir;
 use cgen::(Cx);
 use binds;
 use loop_shape;
+use el_ir;
+use opt_version;
+use cgen_version;
 use opt_names;
 use opt_non_sentinel;
 use opt_range;
@@ -840,6 +843,9 @@ fn checked_chain(nodes: vector<SpecNode>, at: integer) -> text {
 
 // `chain_admitted`: does `(R-GuardedChain)` own an operator of the chain under `v`?
 fn chain_admitted(x: Cx, w: W, v: ir::Node) -> boolean {
+  if w.vf && has_plain_mark(v) {
+    return true;
+  }
   if len(w.chains) == 0 {
     return false;
   }
@@ -855,6 +861,21 @@ fn chain_admitted(x: Cx, w: W, v: ir::Node) -> boolean {
     }
   });
   hit[0]!
+}
+
+// Does a call under `v` carry `@FR-R-Version`'s plain marker?
+fn has_plain_mark(v: ir::Node) -> boolean {
+  match v {
+    NdSpan { pos: _, inner } => opt_version::mark_of(v) == opt_version::PLAIN || has_plain_mark(inner),
+    _ => {
+      for c in el_ir::children(v) {
+        if has_plain_mark(c) {
+          return true;
+        }
+      }
+      false
+    },
+  }
 }
 
 // `spec_chain`: `var = value` for an integer local and a chain of at least two operators not
@@ -1385,14 +1406,17 @@ fn admitted_at(x: Cx, w: W, name: text, args: vector<ir::Node>) -> integer {
 // copy, or `guard ? plain : checked` in a loop written once.  `done` says whether it wrote it.
 pub fn chain_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = false;
-  if len(w.chains) == 0 || !chain_op(name, len(args)) || range_proves(x, w, name, args) {
+  // `@FR-R-Version`: a fast twin's tested operators are plain (`version_fast` hands them to
+  // `plain_chains` with no guard).
+  vf_plain = w.call_kind == opt_version::PLAIN;
+  if (len(w.chains) == 0 && !vf_plain) || !chain_op(name, len(args)) || range_proves(x, w, name, args) {
     return none();
   }
-  at = admitted_at(x, w, name, args);
-  if at < 0 {
+  at = if vf_plain { -1 } else { admitted_at(x, w, name, args) };
+  if at < 0 && !vf_plain {
     return none();
   }
-  guard = w.chains[at]!.guard;
+  guard = if vf_plain { "" } else { w.chains[at]!.guard };
   done = true;
   plain = "";
   checked = "";
@@ -1440,6 +1464,30 @@ fn guarded_copies(x: Cx, w: W, lp: ir::Block, ind: integer) {
     w.chains = w.chains[0..len(w.chains) - 1];
     line(w, ind, "}} else {{");
     loop_core(x, w, lp, ind + 1);
+    line(w, ind, "}}");
+    return;
+  }
+  // The version clause: written once only for its calls, each a versioned site — the plain
+  // copy under the guard and every flag, calling the fast twins; the written loop otherwise.
+  flags = cgen_version::unswitch(x, w, lp);
+  if len(flags) > 0 {
+    all: vector<text> = [guard.name];
+    for f in flags {
+      all += [f];
+    }
+    line(w, ind, "if ({all.join(" && ")}) {{");
+    w.chains += [framed(guard.frame, "")];
+    held = len(w.v_hold);
+    for f in flags {
+      w.v_hold += [f];
+    }
+    loop_core(x, w, lp, ind + 1);
+    w.v_hold = w.v_hold[0..held];
+    w.chains = w.chains[0..len(w.chains) - 1];
+    line(w, ind, "}} else {{");
+    w.chains += [framed(guard.frame, guard.name)];
+    loop_core(x, w, lp, ind + 1);
+    w.chains = w.chains[0..len(w.chains) - 1];
     line(w, ind, "}}");
     return;
   }
@@ -1725,6 +1773,7 @@ fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
   held_pushes = len(w.push_heads);
   held_scalars = len(w.scalars);
   verdict = if plain_rules() { cgen_hoist::hold_vectors(x, w, lp, ind) } else { opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true } };
+  versions = cgen_version::hold(x, w, lp, ind);
   ranged_counters = len(w.in_range);
   ranged_lens = len(w.in_range_lens);
   grid_known = len(w.grid_facts);
@@ -1766,6 +1815,7 @@ fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
     cgen_file::close_hold(w, ind);
   }
   w.memos = w.memos[0..len(w.memos) - 1];
+  cgen_version::release(w, versions);
   at = w.loop_call_at[len(w.loop_call_at) - 1]!;
   w.loop_calls = w.loop_calls[0..at];
   w.loop_call_at = w.loop_call_at[0..len(w.loop_call_at) - 1];
