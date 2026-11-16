@@ -28,6 +28,7 @@ use cgen_ref;
 use cgen_hoist;
 use cgen_win;
 use cgen_fnref;
+use char_walk;
 use cgen_append;
 use own;
 use opt_view;
@@ -1589,15 +1590,20 @@ fn loop_core(x: Cx, w: W, lp: ir::Block, ind: integer) {
   if w.why != "" {
     return;
   }
-  for s in w.walk_scopes {
-    if s == lp.scope {
-      refuse(w, "a character walk");
-      return;
-    }
-  }
   // The loop's own label is taken before the plan: a peeled loop's copies number after it.
   w.labels += 1;
   l = w.labels;
+  for walk in w.char_walks {
+    if walk.scope == lp.scope {
+      w.loops += [l];
+      char_walk_loop(x, w, lp, walk, ind);
+      line(w, ind, "cont_{l}:;");
+      line(w, ind, "}}");
+      line(w, ind, "brk_{l}:;");
+      w.loops = w.loops[0..len(w.loops) - 1];
+      return;
+    }
+  }
   plan = peel_plan(x, w, lp);
   if plan != null {
     peel_loop(x, w, lp, plan, ind);
@@ -1615,6 +1621,38 @@ fn loop_core(x: Cx, w: W, lp: ir::Block, ind: integer) {
   line(w, ind, "brk_{l}:;");
   close_sticky_sums(w, sums, ind);
   w.loops = w.loops[0..len(w.loops) - 1];
+}
+
+// `char_walk_loop` (`@FR-R-CharWalk`): a `for c in t` walk — its null test once before the loop
+// where the loop never writes `t`, and its step's ASCII arm (a byte below 0x80 at `next` is the
+// character, one byte wide) ahead of the step as the lowering writes it, which every other byte
+// takes.  Opens the loop's `for (;;) {`; the caller closes it.
+fn char_walk_loop(x: Cx, w: W, lp: ir::Block, walk: char_walk::CharWalk, ind: integer) {
+  if walk.hoist_null && walk.null_test < len(lp.operators) {
+    cgen_fn::stmt(x, w, lp.operators[walk.null_test]!, ind);
+  }
+  line(w, ind, "for (;;) {{");
+  for op in lp.operators {
+    i = op#index;
+    if walk.hoist_null && i == walk.null_test {
+      continue;
+    }
+    if i == 0 {
+      src = as_view(w, cgen_fn::expr(x, w, ir::NdVar { n: walk.src }, ind + 1));
+      next = w.names[walk.next]!;
+      index = w.names[walk.index]!;
+      c = w.names[walk.loop_var]!;
+      line(w, ind + 1, "if ({next} >= 0 && {next} < (int64_t) ({src}).len && (unsigned) (unsigned char) ({src}).p[{next}] - 1u < 0x7Fu) {{");
+      line(w, ind + 2, "{index} = {next};");
+      line(w, ind + 2, "{c} = (uint32_t) (unsigned char) ({src}).p[{next}];");
+      line(w, ind + 2, "{next} = {next} + 1;");
+      line(w, ind + 1, "}} else {{");
+      cgen_fn::stmt(x, w, op, ind + 2);
+      line(w, ind + 1, "}}");
+      continue;
+    }
+    cgen_fn::stmt(x, w, op, ind + 1);
+  }
 }
 
 // `loop_stmt`: a loop as a statement.  A range that holds throughout its body narrows the

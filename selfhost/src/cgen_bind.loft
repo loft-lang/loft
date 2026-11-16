@@ -17,6 +17,7 @@ use lower;
 use loop_shape;
 use cgen_fn;
 use cgen_ref;
+use cgen_lazy;
 use cgen_tables;
 use cgen_w::*;
 
@@ -223,7 +224,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     TyVector { inner: _, dep } => len(dep) == 0,
     _ => false,
   };
-  if is_null && vector_dep_free {
+  if is_null && vector_dep_free && !cgen_lazy::table_dead_buf(w, var) {
     mints = if first {
       plain_vector = match tp {
         TyVector { inner: _, dep: _ } => true,
@@ -243,6 +244,10 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       line(w, ind, "loft_database_typed(&{name}, {size}, {known});");
       return;
     }
+  }
+  // The binds a rewrite writes itself: a split table's or a lazy loop's (`rewritten_bind`).
+  if cgen_lazy::rewritten_bind(x, w, var, value, ind) {
+    return;
   }
   match bare_value {
     NdTupleGet { var: _, idx: _ } => {

@@ -13,6 +13,7 @@ use cgen::(Cx);
 use loop_shape;
 use opt_hoist;
 use opt_apart;
+use cgen_lazy;
 use opt_length;
 use opt_facts;
 use opt_push;
@@ -116,6 +117,10 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
   // A loop that grows a store holds its headers without their base (`kept_bases` without the
   // store facts).
   for v in verdict.vectors {
+    // A split table's local, or a walk's alias of one, is never built.
+    if cgen_lazy::is_table(w, v.root) {
+      continue;
+    }
     // `kept_bases`: a loop that grows no store keeps every base; beside a growth, the base
     // of a vector the store facts prove apart from every mover.
     base = if verdict.growth_free { 1 } else { 0 };
@@ -398,7 +403,7 @@ pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: in
     return;
   }
   d = opt_hoist::view_def_header(x.b, x.writes, w.index, ops, at, (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0");
-  if d < 0 || held_path(w, "{d}:") != "" {
+  if d < 0 || held_path(w, "{d}:") != "" || cgen_lazy::is_table(w, d) {
     return;
   }
   // The header the view's source is held under, with whether that one carries its base.

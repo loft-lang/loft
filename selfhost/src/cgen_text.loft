@@ -15,6 +15,8 @@ use ir;
 use cgen::(Cx);
 use loop_shape;
 use cgen_win;
+use cgen_lazy;
+use opt_hoist;
 use opt_non_sentinel;
 use cgen_fn;
 use cgen_w::*;
@@ -302,6 +304,9 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
     // A borrowed walk variable views the element: its release frees nothing.
     v = loop_shape::var_of(loop_shape::unspan(args[0]));
     if v >= 0 && (w.borrowed[v] ?? false) {
+      if tested_roots(w, v) != null {
+        return E { code: "loft_text_free(&loft_own{v})", kind: K_VOID };
+      }
       return E { code: "((void) 0)", kind: K_VOID };
     }
     dest = text_dest(w, args[0]);
@@ -539,7 +544,9 @@ pub fn borrowed_bind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
     NdCall { def_nr, args } => {
       // The element's text field read as the view it is: the analysis proved the loop writes
       // no store, so the bytes stay where they are for as long as the variable is read.
-      if cgen_fn::def_name(x.b, def_nr) == "OpGetText" && len(args) == 2 {
+      // A lazy loop's piece and a split table's are their own readers' (`lazy_split_op`,
+      // `split_tab_op`).
+      if cgen_fn::def_name(x.b, def_nr) == "OpGetText" && len(args) == 2 && !cgen_lazy::piece_read(x, w, args[0]!) {
         fld = cgen_fn::literal(w, args[1], "field") ?? return;
         held_before = len(w.pending);
         r = cgen_fn::expr(x, w, args[0], ind);
@@ -550,7 +557,7 @@ pub fn borrowed_bind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
           refuse(w, "a borrowed text would view a temporary");
           return;
         }
-        line(w, ind, "{w.names[var]!} = loft_get_text({as_ref(w, r)}, {fld});");
+        borrowed_assign(x, w, var, value, "loft_get_text({as_ref(w, r)}, {fld})", ind);
         return;
       }
     },
@@ -565,7 +572,43 @@ pub fn borrowed_bind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
     refuse(w, "a borrowed text would view a temporary");
     return;
   }
-  line(w, ind, "{w.names[var]!} = {as_view(w, e)};");
+  borrowed_assign(x, w, var, value, as_view(w, e), ind);
+}
+
+// The root parameters a tested borrow's bind tests (`FnWriter::tested`); null for any other.
+fn tested_roots(w: W, v: integer) -> vector<integer>? {
+  for t in w.tested {
+    if t.var == v {
+      return t.roots;
+    }
+  }
+  null
+}
+
+// `borrowed_assign`: a borrowed local takes its view — under `@FR-R-TextBorrow`'s tested clause
+// only while each root parameter's store is not the return buffer's, which the bind tests; else
+// the bytes are copied into the local's own text (`loft_own<v>`) and it views that.  A literal,
+// a null or another variable borrows as it stands.
+fn borrowed_assign(x: Cx, w: W, var: integer, value: ir::Node, view: text, ind: integer) {
+  name = w.names[var]!;
+  roots = tested_roots(w, var);
+  rb = opt_hoist::retbuf_var(x.b.data.definitions[w.index]!);
+  plain = match loop_shape::unspan(value) {
+    NdText { s: _ } => true,
+    NdNull => true,
+    NdVar { n: _ } => true,
+    _ => false,
+  };
+  if roots == null || rb < 0 || plain {
+    line(w, ind, "{name} = {view};");
+    return;
+  }
+  b = as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: rb }, ind));
+  tests: vector<text> = [];
+  for p in roots! {
+    tests += ["{as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: p }, ind))}.store_nr != {b}.store_nr"];
+  }
+  line(w, ind, "{{ loft_str lt = {view}; if ({tests.join(" && ")}) {name} = lt; else {{ loft_text_set(&loft_own{var}, lt); {name} = loft_view(&loft_own{var}); }} }}");
 }
 
 // `held_texts`: the texts the function holds, each freed by its epilogue — its text locals,
@@ -589,6 +632,10 @@ fn held_texts(w: W) -> vector<text> {
     if t.shape == "text" {
       texts += [t.name];
     }
+  }
+  // A tested borrow's own text, which its copying path fills.
+  for t in sorted_tested(w) {
+    texts += ["loft_own{t}"];
   }
   for t in w.temps {
     if is_tuple(t.shape) {
@@ -709,3 +756,20 @@ fn builds_text(d: ir::Definition, arm: ir::Node) -> boolean {
   hit[0]!
 }
 
+// The tested borrows' variables, in number order.
+fn sorted_tested(w: W) -> vector<integer> {
+  out: vector<integer> = [];
+  for v in 0..len(w.shapes) {
+    if tested_roots(w, v) != null {
+      out += [v];
+    }
+  }
+  out
+}
+
+// `FnWriter::new`'s tested part: each tested borrow's own text, declared empty.
+pub fn declare_owns(w: W) {
+  for v in sorted_tested(w) {
+    w.decls += ["loft_text loft_own{v} = {{ 0, 0, 0 }};"];
+  }
+}

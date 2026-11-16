@@ -383,7 +383,10 @@ def main():
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
     if o.plain:
-        with open(os.path.join(root, "selfhost", "src", "cgen_w.loft"), encoding="utf-8") as fh:
+        # `LOFT_CGEN_SRC`: the generator source the run was built from (a snapshot), whose list
+        # goes with it; the tree's own otherwise.
+        src = os.environ.get("LOFT_CGEN_SRC", os.path.join(root, "selfhost", "src"))
+        with open(os.path.join(src, "cgen_w.loft"), encoding="utf-8") as fh:
             row = re.search(r"^PLAIN_SWITCHES = \[(.*)\];$", fh.read(), re.M)
         for name in re.findall(r'"(LOFT_NO_[A-Z0-9_]+)"', row.group(1)):
             if name != o.assume:
