@@ -13751,6 +13751,13 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             std::process::exit(1);
         }
     }
+    // The text-buffer twin: `LOFT_TEXT_TIMELINE=fail` makes an orphaned `String` a non-zero
+    // exit, so the leak is a gate a patch receipt can score.
+    let text_leaks = loft::interp::state::text_leak_violations();
+    if text_leaks > 0 {
+        eprintln!("[text-timeline] FAILED: {text_leaks} orphaned text buffer(s)");
+        std::process::exit(1);
+    }
     // @PLN154 phase 5 — the same reason, one lever over: every finding is reported at its
     // own site during the run, and the count becomes a non-zero exit here so the shadow can
     // be a GATE rather than something someone has to read the output of.  A sweep that has
