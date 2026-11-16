@@ -415,6 +415,8 @@ Each was fixed where it was met, with its guard (rule 2 and 3 of the port).
 | loft#2499 | a `match` with a leaving arm, last in an `if` branch that has an `else`, was dropped: the arm that matched did not run (silent) | `tests/scripts/2499-…loft` |
 | loft#2498 | the C backend's transient form of a record registered itself as its own member | `tests/scripts/2498-…loft` |
 | loft#2485 | a bind after its block ended moved the ended binding's type (a false gating warning), and a per-loop binding never ended | `tests/callarg_nstore.rs` |
+| (no issue) | a text function whose tail `match` reads a type declared below, called from above, aborted the compiler on the H5 two-pass contract: pass 2 promoted a work text to a hidden parameter pass 1 never published — fixed in `text_return` (pass 2 follows pass 1 for compiler temps too; 97b9527f3), and `deliver_body` answers its `match` directly again | loft-suite `calls/F-Ret/a-text-match-over-types-declared-below-returns-through-every-caller.loft` |
+| (no issue) | `x = f(…) ?? return null` inside `f` itself (a recursive discharge) left `x` a view and leaked the copy once per call: the call-owns verdict asked `is_loft_defined`, false for the function being parsed — fixed in `null_coalesce_exit` (e0ec9e9e6) | loft-suite `heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft` |
 
 Not fixed, noted: a `hash<T[k]>` local cannot be formatted (`"{h}"`: "Cannot format type"),
 where a record holding one can.  A recursion over a tree that calls itself in tail position
