@@ -31,6 +31,16 @@ use el_ex_vector;
 use el_compare;
 
 pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
+  // `@FR-B-Ref-Uniform`: a link to a scalar place is read as the value it names (`p ?? 0`
+  // on a `p: &integer?`).
+  match x.tp {
+    TyRefVar { inner: li } => {
+      if el_convert::plain_scalar(el_types::base(li)) {
+        return coalesce_with(e, vars, ex(x.code, li), d);
+      }
+    },
+    _ => {}
+  }
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
     // `build_null_coalesce_default` holds a subject that is no local in a `__ncc_N` whatever
     // its type, so a call to a function declared below mints it on the first pass too: it

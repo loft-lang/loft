@@ -2340,7 +2340,24 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     vars.amp_places += [v];
   }
   vb = el_types::base(el_vars::tp(vars, v));
-  if !amp_rhs && vars.amp_places.contains(v) && (struct_ref(e, vb) >= 0 || el_convert::struct_enum(vb)) {
+  // `copy_ref` (loft#1376): a literal or a fresh call's record is copied into the place the
+  // link names (a call's store given away); a bare record local re-points the link, as a view.
+  if !amp_rhs && vars.amp_places.contains(v) && struct_ref(e, vb) >= 0 && op == "=" && !(e.p.nodes[rhs!] is SName) {
+    lit = e.p.nodes[rhs!] is SStructLit && struct_literal_def(e, rhs!) == struct_ref(e, vb);
+    if lit || e.p.nodes[rhs!] is SCall {
+      wx = expression(e, vars, rhs!);
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      kt = el::def(e, struct_ref(e, vb)).known_type;
+      fresh_call = match el_ir::unspan(wx.code) { NdCall { def_nr: wd } => starts_with(el::def(e, wd).name, "n_") && struct_ref(e, el_types::base(wx.tp)) == struct_ref(e, vb) && !(wx.tp is TyOptional), _ => false };
+      built = match el_ir::unspan(wx.code) { NdBlock { block: wb } => wb[0].name == "Object", _ => false };
+      if (lit && built) || (!lit && fresh_call) {
+        return ex(el_ir::cl(e, "OpCopyRecord", [wx.code, ir::NdVar { n: v }, ir::NdInt { n: kt + (if !lit && el_ex_match::gives_away_its_store(e, wx.code) { 32768 } else { 0 }) }]), ir::TyVoid);
+      }
+    }
+  }
+  if !amp_rhs && vars.amp_places.contains(v) && (struct_ref(e, vb) >= 0 || el_convert::struct_enum(vb)) && !(e.p.nodes[rhs!] is SName && struct_ref(e, vb) >= 0) {
     el::refuse(e, "a whole-value write through a `&` link to a record place");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2442,6 +2459,18 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   if link && !el_ex_match::scalar_link(vars, v) && !declaring {
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
+  }
+  // `null` written through a link to a nullable place is the place's own null; a narrow
+  // place's is range-checked (`OpRangeDefault`) — not carried.
+  if link && !declaring && e.p.nodes[rhs!] is SNull {
+    li = match el_vars::tp(vars, v) { TyRefVar { inner } => inner, _ => ir::TyVoid };
+    nl = el_convert::null_of(e, el_types::base(li));
+    narrow = match el_types::base(li) { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
+    if !(li is TyOptional) || nl == null || narrow {
+      el::refuse(e, "a `null` written through a `&` link to a place of this type: {type_kind(li)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(el_ir::v_set(v, if e.first_pass { ir::NdNull } else { nl! }), ir::TyVoid);
   }
   // @PLN87 P2.4 (`@FR-F-ParamRebind`): a vector literal rebinding a visible vector parameter
   // rebinds it locally — its entry witness taken before the literal is read, the literal built

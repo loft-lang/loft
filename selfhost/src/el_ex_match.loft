@@ -177,7 +177,9 @@ pub fn takes_record_buffer(e: el::El, d: integer, rd: integer) -> boolean {
 // Is local `v` a link to a plain scalar (`n: &integer`)?
 pub fn scalar_link(vars: el_vars::Vars, v: integer) -> boolean {
   match el_vars::tp(vars, v) {
-    TyRefVar { inner } => el_convert::plain_scalar(inner),
+    // (A nullable scalar, a plain enum and a nullable text are written whole the same way:
+    // the value converted to the place's type, `null` its null.)
+    TyRefVar { inner } => el_convert::plain_scalar(el_types::base(inner)) || el_convert::plain_enum(el_types::base(inner)) || (inner is TyOptional && el_types::base(inner) is TyText),
     _ => false
   }
 }

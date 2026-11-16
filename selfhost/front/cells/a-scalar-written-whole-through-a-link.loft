@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a whole value written through a `&` link to a nullable scalar, a nullable text or a plain enum is the value converted to the place's type, `null` its null; `p ?? 0` reads the link as the value it names.
+// Prints: 1 was-null Blue
+
+enum Col { Red, Green, Blue }
+fn bump(p: &integer?) { p = (p ?? 0) + 1; }
+fn setn(t: &text?) { if t == null { t = "was-null"; } else { t = null; } }
+fn paint(c: &Col, w: boolean) { if w { c = Blue; } }
+fn main() {
+  a: integer? = null;
+  bump(a);
+  t: text? = null;
+  setn(t);
+  d = Col.Green;
+  paint(d, true);
+  println("{a ?? -1} {t ?? "none"} {d}");
+}

@@ -1197,7 +1197,9 @@ pub fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: inte
   a = el_ex_assign::expression(e, vars, first);
   // `@FR-B-Ref-Uniform`: a `&τ` first operand concatenates as its `τ`.
   match a.tp {
-    TyRefVar { inner } => { a = ex(a.code, inner); },
+    // (A scalar link's read is its place's value with no absence of its own: `c + 1` on a
+    // `c: &integer?` is an `integer`, as every other operator on a link has it.)
+    TyRefVar { inner } => { a = ex(a.code, if el_convert::plain_scalar(el_types::base(inner)) { el_types::base(inner) } else { inner }); },
     _ => {}
   }
   if el_types::base(a.tp) is TyText && !(a.tp is TyOptional) {
