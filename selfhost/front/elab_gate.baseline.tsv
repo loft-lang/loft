@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	866	of	2164
+layer	elab	agree	871	of	2167
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -887,7 +887,6 @@ elab	refused	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-more-non-n
 elab	refused	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft
 elab	refused	loft-suite/rules/types/N-Domain/1471-an-out-of-range-value-struct-read-is-absent-not-a-zero.loft
 elab	refused	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft
-elab	refused	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft
 elab	refused	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft
 elab	refused	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft
 elab	refused	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft
@@ -956,7 +955,6 @@ elab	refused	loft-suite/rules/types/T-Chk-Vec/a-comprehension-body-is-checked-ag
 elab	refused	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft
 elab	refused	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft
 elab	refused	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft
-elab	refused	loft-suite/rules/types/T-Recursive/one-nullable-hop-or-an-enum-ends-the-recursion.loft
 elab	refused	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft
 elab	refused	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft
 elab	refused	loft-suite/rules/types/T-Syn/type-name-of-a-generic-instance-names-its-arguments-as-written.loft
