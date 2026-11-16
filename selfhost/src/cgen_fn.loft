@@ -3650,7 +3650,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   name = cgen_names::twin_name(x.b, x.dups, twin);
   // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
   // marker resolved once the twins are written, or out of line.
-  outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && twin.nn == 0 { "static /*loft_hot:{index}*/" } else { "static" };
+  outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && plain_but_rg(twin) { "static /*loft_hot:{index}*/" } else { "static" };
   Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer }
 }
 
