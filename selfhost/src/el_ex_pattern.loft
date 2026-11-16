@@ -1695,7 +1695,7 @@ pub fn push_op(t: ir::TypeT) -> text {
     TyCharacter => "OpPushCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpPushEnum" },
     // A nullable plain integer element is pushed as the integer it is stored as.
-    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpPushInt" }, _ => "" },
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpPushInt" }, TyFloat => "OpPushFloat", TyBoolean => "OpPushBoolean", _ => "" },
     _ => ""
   }
 }

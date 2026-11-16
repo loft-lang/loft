@@ -2007,6 +2007,19 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
     }
     vector_def(e, t, nm, tok, declared);
   }
+  // The scalar's own `vector<scalar>` definition follows on the second pass (`check_vector`),
+  // at the same place, its row the first pass's.
+  sbn = el_types::nullable_scalar_elem(e, t);
+  if !e.first_pass && sbn != "" && el::def_nr(e, "vector<{sbn}>") < 0 && el_schema::schema_type(e, "vector<{sbn}>") >= 0 {
+    stok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
+    sat = closing_bracket(e, stok);
+    if sat == stok + 1 || declared {
+      sat = stok - 1;
+    }
+    svd = el::add_def(e, "vector<{sbn}>", el::pos_at(e, sat), el::DT_VECTOR);
+    e.b.data.definitions[svd].parent = el::source_nr(e, 0, sbn);
+    e.b.data.definitions[svd].known_type = el_schema::schema_type(e, "vector<{sbn}>");
+  }
   md = el::def_nr(e, "main_vector<{nm}>");
   vk = vector_store(e, t, nm);
   // `Parser::vector_of`, on either pass: an element whose record already has its store type —
@@ -2081,6 +2094,15 @@ pub fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boo
     at = lit - 1;
   }
   el_schema::make_vector_def(e, t, nm, el::pos_at(e, at), true);
+  // A nullable scalar's vector is stored as the scalar's: where the library has no
+  // `vector<scalar>` (`float`, `boolean`) its row is made here (`database.vector`).
+  bn = el_types::nullable_scalar_elem(e, t);
+  if bn != "" && el::def_nr(e, "vector<{bn}>") < 0 {
+    bk = el_schema::schema_type(e, bn);
+    if bk >= 0 {
+      el_schema::vector_type(e, bk);
+    }
+  }
 }
 
 // The token closing the `[` at token `lit`.
@@ -2136,7 +2158,7 @@ pub fn elem_size(t: ir::TypeT) -> integer {
     TyCharacter => 4,
     TyEnum { n: _, is_ref } => if is_ref { -2 } else { 1 },
     // A nullable struct enum is its enum's record (null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { -1 } else { 8 }, _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { -1 } else { 8 }, TyFloat => 8, TyBoolean => 1, _ => -1 },
     _ => -1
   }
 }
@@ -2144,9 +2166,10 @@ pub fn elem_size(t: ir::TypeT) -> integer {
 // The store type of a `vector<T>` (`vector<…>` of the element's store type): a narrow integer's
 // is named after its width (`vector<byte>`), not its definition (`vector<integer(0, 255)>`).
 pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
-  // A `vector<integer?>` is laid out as the `vector<integer>` it is.
-  if el_types::nullable_integer(e, t) {
-    return el_schema::schema_type(e, "vector<integer>");
+  // A `vector<integer?>` (`float?`, `boolean?`) is laid out as the `vector<integer>` it is.
+  bn = el_types::nullable_scalar_elem(e, t);
+  if bn != "" {
+    return el_schema::schema_type(e, "vector<{bn}>");
   }
   match t {
     TyInteger { spec } => {
@@ -2186,7 +2209,7 @@ pub fn read_op(t: ir::TypeT) -> text {
     TyCharacter => "OpGetCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpGetEnum" },
     // A nullable plain integer element is read as the integer it is stored as.
-    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpGetInt" }, _ => "" },
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpGetInt" }, TyFloat => "OpGetFloat", TyBoolean => "OpGetBoolean", _ => "" },
     _ => ""
   }
 }

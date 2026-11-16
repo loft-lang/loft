@@ -271,7 +271,7 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[vd].parent = match t {
       TyReference { n } => n,
       TyEnum { n } => n,
-      TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, TyInteger { spec: _ } => el::source_nr(e, 0, "integer"), _ => -1 },
+      TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, TyInteger { spec: _ } => el::source_nr(e, 0, "integer"), TyFloat => el::source_nr(e, 0, "float"), TyBoolean => el::source_nr(e, 0, "boolean"), _ => -1 },
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
       // `type_def_nr` of any vector is the library's `vector`.
       TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
@@ -578,7 +578,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     },
     TyEnum { n } => enum_content(e, n),
     // A nullable struct enum's slot is the enum's record (its null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: _ } => if el_types::nullable_integer(e, t) { schema_type(e, "integer") } else { -1 }, _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: _ } => if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), _ => -1 },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
