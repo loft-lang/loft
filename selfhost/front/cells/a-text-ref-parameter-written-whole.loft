@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a text reference parameter written whole is a plain set of the link (F-ParamRef).
+// Prints: 3 2 4 a12b
+fn overwrite(s: &text) -> integer {
+  s = "zzz";
+  len(s)
+}
+
+fn from_var(s: &text, o: text) -> integer {
+  s = o;
+  len(s)
+}
+
+fn built(s: &text, n: integer) -> integer {
+  s = "a{n}b";
+  len(s)
+}
+
+fn main() {
+  t = "hello";
+  a = overwrite(t);
+  b = from_var(t, "qq");
+  c = built(t, 12);
+  println("{a} {b} {c} {t}");
+}

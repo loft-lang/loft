@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function ending in 'pts[i]?' publishes on the first pass that it answers a view of its parameter, so a caller returning a local bound to it copies the view into its buffer (materialized_view_return).
+// Prints: 7
+struct Pt { ptx: float, pty: float }
+fn ctrl(pts: vector<Pt>, i: integer) -> Pt { pts[i]? }
+fn pick(v: vector<Pt>) -> Pt { a = ctrl(v, 2); a }
+fn main() {
+  v = [Pt{ptx: 1.0, pty: 2.0}, Pt{ptx: 3.0, pty: 5.0}, Pt{ptx: 7.0, pty: 11.0}];
+  p = pick(v);
+  println("{p.ptx}");
+}

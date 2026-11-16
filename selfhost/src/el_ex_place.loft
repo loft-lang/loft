@@ -87,9 +87,69 @@ pub fn replaces_walked_source(e: el::El, vars: el_vars::Vars, root: integer) -> 
   false
 }
 
+// Does `n` write variable `x` — a `Set` of it, or a `&` argument naming it (`OpCreateStack`)?
+fn writes_var(e: el::El, n: ir::Node, x: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdSet { var } => {
+      if var == x {
+        return true;
+      }
+    },
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpCreateStack" && len(args) > 0 && el_ir::unspan(args[0]) == ir::NdVar { n: x } {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(el_ir::unspan(n)) {
+    if writes_var(e, c, x) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Parser::fix_place_before_value` (`@FR-E-Left`): `place = value` reduces the place first.  An
+// integer or character variable the place reads and the value writes (`v[j] = It { n: bump(j) }`,
+// `bump(i: &integer)`) is read into a `___place_ix_N` before the statement, and the place — where
+// the statement spells it as it was read — reads that; any other assignment is untouched.
+fn fix_place_before_value(e: el::El, vars: el_vars::Vars, code: ir::Node, to: ir::Node) -> ir::Node {
+  if !(to is NdCall) {
+    return code;
+  }
+  fixed = to;
+  prefix: vector<ir::Node> = [];
+  for x in el_ir::vars_read(to, []) {
+    b = el_types::base(el_vars::tp(vars, x));
+    if !(b is TyInteger || b is TyCharacter) || !writes_var(e, code, x) || writes_var(e, to, x) {
+      continue;
+    }
+    t = el_vars::create_unique(vars, "__place_ix", el_vars::tp(vars, x));
+    fixed = el_ir::replace_var(fixed, x, ir::NdVar { n: t });
+    prefix += [el_ir::v_set(t, ir::NdVar { n: x })];
+  }
+  if len(prefix) == 0 {
+    return code;
+  }
+  ir::NdInsert { items: prefix + [el_ir::replace_subtree(code, to, fixed)] }
+}
+
 pub fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
+  vars.last_place = [];
+  x = place_assignment_to(e, vars, op, target, rhs);
+  if e.first_pass || len(vars.last_place) == 0 {
+    return x;
+  }
+  to = vars.last_place[0]!;
+  vars.last_place = [];
+  ex(fix_place_before_value(e, vars, x.code, to), x.tp)
+}
+
+fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
   // The place, read as a value: its code names the record and position the write takes.
   p = el_ex_assign::expression(e, vars, target);
+  vars.last_place = [el_ir::unspan(p.code)];
   note_key_write(e, vars, p.code);
   if op == "=" && replaces_walked_source(e, vars, place_root(e, el_ir::unspan(p.code))) {
     el::refuse(e, "a write that replaces a vector a loop walks (the walk takes a copy)");
@@ -356,6 +416,12 @@ pub fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: intege
       if wt != null {
         return ex(wt!, ir::TyVoid);
       }
+    }
+    // A record into a vector's record element is copied into the element (`copy_ref`), whatever
+    // the index proves: the place is the element read (`OpGetVector`), a record there or a fault.
+    // A literal is written field by field into the element instead: refused below.
+    if op == "=" && !field_place && struct_ref(e, pb) >= 0 && !(x.tp is TyOptional) && struct_ref(e, el_types::base(x.tp)) >= 0 && calls(e, rd_place, "OpGetVector") && !(e.p.nodes[rhs] is SStructLit) {
+      return record_place_write(e, vars, rd_place, pb, x);
     }
     el::refuse(e, "an assignment to a nullable place: {if field_place { "a field" } else { "an element" }} of {type_kind(pb)} given {type_kind(x.tp)}{if op == "=" { "" } else { " by {op}" }}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1336,6 +1402,22 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   if !vars.annotated.contains(v) {
     vars.annotated += [v];
   }
+  // A declared vector filled by a comprehension has its definitions made where the right side
+  // starts, after the `=` (`change_var_type` on the declaration), before the comprehension is read.
+  match e.p.nodes[rhs!] {
+    SComprehension { at: cat } => {
+      match declared! {
+        TyVector { inner } => {
+          nm = el_types::elem_name(e, inner);
+          if nm != "" && cat > 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
+            el_schema::make_vector_def(e, inner, nm, el::pos_at(e, cat - 1), true);
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   // A `vector<T>?` is built in place as its base is.
   if e.p.nodes[rhs!] is SComprehension {
     match el_types::base(declared!) {
@@ -1538,6 +1620,20 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     TyEnum { n: vd, is_ref } => is_ref && el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent == vd,
     _ => false
   };
+  // A local holding one variant given a literal of a sibling is a local of their enum from
+  // there on (`change_var_type` joins two variants in their parent).
+  if !matches {
+    match el_types::base(vt) {
+      TyReference { n: vd } => {
+        if el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, vd).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent == el::def(e, vd).parent {
+          el_vars::set_var_type(vars, v, ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: el_types::deps(vt) });
+          vt = el_vars::tp(vars, v);
+          matches = true;
+        }
+      },
+      _ => {}
+    }
+  }
   // A local built before is built again in place, as its first bind built it (`p = null`,
   // its store, its fields); the scope pass frees the store it held.
   if !matches {

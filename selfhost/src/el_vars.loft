@@ -192,6 +192,8 @@ pub struct Vars {
   // that holds the caller's store (`ensure_rebind_witness`), pairwise
   pub rebind_params: vector<integer>,
   pub rebind_origs: vector<integer>,
+  // the place the place assignment being lowered read, as parsed (`fix_place_before_value`'s `to`)
+  pub last_place: vector<ir::Node>,
   // `Function::promoted_text_args`: each written text PARAMETER and the owned shadow local
   // (`__tp_<name>`) its name reads as from then on, pairwise
   pub promoted_params: vector<integer>,
@@ -702,6 +704,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.rebuilt = [];
   v.rebind_params = [];
   v.rebind_origs = [];
+  v.last_place = [];
   // `parse_function`'s second-pass remap: a parameter the first pass promoted reads as its
   // shadow from the first statement on, the shadow defined (it is seeded at entry).
   v.promoted_params = [];

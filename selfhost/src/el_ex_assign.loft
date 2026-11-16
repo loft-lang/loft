@@ -279,7 +279,11 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       _ => {}
     }
   }
-  close_line(e, n);
+  // `parse_block_inner` leaves its loop at the `}` after a last statement with no `;` before
+  // it reads the line again: only a `;`-ended last statement moves the line on to the `}`.
+  if match e.p.nodes[stmts[-1]] { SStmt { semi } => semi, _ => true } {
+    close_line(e, n);
+  }
   truncate_nonzero(vars, dz);
   vars.present = vars.present[0..dp];
   if len(l) > 0 && el_ir::is_line(l[-1]) {
@@ -1638,13 +1642,13 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
     },
     _ => {}
   }
+  // A text read first into a local bind's destination keeps its own type (`parse_var`'s `into`
+  // arm); any other read — a `text?` local's too — borrows the variable (`depending`).
+  is_text = t is TyText;
   // A local a guard proved present reads as its base (`narrowed_non_null`).
   if vars.present.contains(v) {
     t = el_types::base(t);
   }
-  // A text read first into a local bind's destination keeps its own type (`parse_var`'s `into`
-  // arm); any other read borrows the variable (`depending`).
-  is_text = el_types::base(t) is TyText;
   ex(ir::NdVar { n: v }, if is_text && into { t } else { el_types::with_deps(t, [v]) })
 }
 
@@ -1743,11 +1747,16 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
     el::refuse(e, "a whole-vector rebind of a vector local a `&` links (refilled in place)");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if x.tp is TyOptional || el_vars::tp(vars, v) is TyOptional || vars.vars[v].argument {
-    el::refuse(e, "a whole-vector copy bind of a nullable vector or into a parameter");
+  // A visible parameter is rebound locally (`vec_copy_needs_db`: its first rebind allocates, the
+  // caller's store never refilled); a nullable one keeps its type and takes the whole-value
+  // replace.  A hidden or compiler-made parameter is a buffer filled in place: refused.
+  param = vars.vars[v].argument;
+  opt_param = param && el_vars::tp(vars, v) is TyOptional;
+  if x.tp is TyOptional || (el_vars::tp(vars, v) is TyOptional && !param) || (param && (hidden_param(e, vars, v) || el_vars::is_compiler_generated(vars, v))) {
+    el::refuse(e, "a whole-vector copy bind of a nullable vector or into a buffer parameter");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: elm, dep: [] }) {
+  if !opt_param && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: elm, dep: [] }) {
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1788,7 +1797,7 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
-    el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }])
+    el_ir::cl(e, if opt_param { "OpReplaceVector" } else { "OpAppendVector" }, [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }])
   ] }, ir::TyVoid)
 }
 
@@ -2219,6 +2228,29 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     }
     return ex(ir::NdInsert { items: [free, detach, el_ir::v_set(v, x.code)] }, ir::TyVoid);
   }
+  // `rebind_local_heap_param` for a struct-enum parameter: any value of the enum — a variant
+  // literal is built apart, as it is into an enum local — rebinds locally the same way.
+  if vars.vars[v].argument && el_convert::struct_enum(pt0) && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && !(e.p.nodes[rhs!] is SVecLit) {
+    x = expression(e, vars, rhs!);
+    pd = match pt0 { TyEnum { n } => n, _ => -1 };
+    sd = match el_types::base(x.tp) { TyEnum { n } => n, TyReference { n } => n, _ => -1 };
+    if !e.first_pass && (sd < 0 || !copies_as(e, pd, sd)) {
+      el::refuse(e, "a rebound parameter given another type: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    if e.first_pass {
+      return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+    }
+    orig = el_vars::rebind_witness(vars, v);
+    free = el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: v }, ir::NdVar { n: orig }]);
+    detach = el_ir::cl(e, "OpInitRefSentinel", [ir::NdVar { n: v }]);
+    if el_ir::reads_var(x.code, v) || reads_view_of(vars, x.code, v) {
+      held = el_vars::work_ref(vars, el_vars::tp(vars, v));
+      return ex(ir::NdInsert { items: [el_ir::v_set(held, x.code), free, detach, el_ir::v_set(v, ir::NdVar { n: held })] }, ir::TyVoid);
+    }
+    return ex(ir::NdInsert { items: [free, detach, el_ir::v_set(v, x.code)] }, ir::TyVoid);
+  }
   // A local a `&` bound to a place in a store names that place (`set_amp_link`): for a record,
   // a whole-value write through it copies into the place (`copy_ref`, loft#1376), where a
   // plain view would rebind — not carried yet, so refused by name.  A new `&` re-points it.
@@ -2345,7 +2377,15 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     return el_ex_pattern::vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
   }
   // A text parameter takes its own copy when written (`promote_text_param`, below).
-  if !link && vars.vars[v].argument && !el_ex_call::scalar(el_types::base(el_vars::tp(vars, v))) && !(el_types::base(el_vars::tp(vars, v)) is TyText) && !hidden_param(e, vars, v) {
+  // A vector parameter rebound from another vector variable copies it into a store of the
+  // parameter's own (`vec_copy_needs_db`'s parameter leg; `vec_copy_bind`, below).
+  from_vector = el_types::base(el_vars::tp(vars, v)) is TyVector && !el_vars::is_compiler_generated(vars, v) && match e.p.nodes[rhs!] {
+    SName { name: rn, member: rm } => rm == "" && el_vars::var(vars, rn) >= 0 && el_vars::var(vars, rn) != v && el_vars::tp(vars, el_vars::var(vars, rn)) is TyVector,
+    _ => false
+  };
+  // A `&text` parameter written whole writes the caller's text: a plain `Set` (`F-ParamRef`).
+  ref_text = match el_vars::tp(vars, v) { TyRefVar { inner } => inner is TyText, _ => false } && (e.p.nodes[rhs!] is SString || e.p.nodes[rhs!] is SName);
+  if !link && !from_vector && !ref_text && vars.vars[v].argument && !el_ex_call::scalar(el_types::base(el_vars::tp(vars, v))) && !(el_types::base(el_vars::tp(vars, v)) is TyText) && !hidden_param(e, vars, v) {
     el::refuse(e, "a rebound parameter of a heap type: `{el_vars::name_of(vars, v)}` from {syn_kind(e, rhs!)}");
     return ex(ir::NdNull, ir::TyVoid);
   }

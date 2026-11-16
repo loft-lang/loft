@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a block's closing brace moves the line on only after a ';'-ended last statement, so '} else { null }' after a value arm is marked with its line.
+// Prints: 1 1 0 4
+struct S { x: integer }
+fn a(c: boolean) -> S {
+  if c {
+    S { x: 1 }
+  } else { null }
+}
+fn b(c: boolean) -> S { if c { S { x: 1 } } else { null } }
+fn i(c: boolean) -> integer? {
+  if c {
+    4
+  } else { null }
+}
+fn t(c: boolean) -> integer? {
+  if c {
+    4
+  } else {
+    null
+  }
+}
+fn main() { println("{a(true).x} {b(true).x} {i(false) ?? 0} {t(true) ?? 0}"); }

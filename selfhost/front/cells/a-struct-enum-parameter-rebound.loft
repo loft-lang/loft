@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a struct-enum parameter rebound whole — by a variant literal, a variable, a call — frees an earlier rebind against the entry witness, detaches and binds (rebind_local_heap_param); a local holding one variant given a sibling's literal is its enum's.
+// Prints: 14 6 200 8 10 {x:3} {y:100}
+enum S { P { x: integer }, Q { y: integer } }
+
+fn mk(n: integer) -> S { Q { y: n } }
+
+fn lit(s: S) -> integer {
+  s = Q { y: 7 };
+  match s { P { x } => x, Q { y } => y * 2 }
+}
+
+fn reads(s: S, n: integer) -> integer {
+  s = Q { y: n * 10 };
+  s = P { x: n };
+  match s { P { x } => x, Q { y } => y * 2 }
+}
+
+fn from_var(s: S, o: S) -> integer {
+  s = o;
+  match s { P { x } => x, Q { y } => y * 2 }
+}
+
+fn from_call(s: S) -> integer {
+  s = mk(4);
+  match s { P { x } => x, Q { y } => y * 2 }
+}
+
+fn local() -> integer {
+  l = P { x: 1 };
+  l = Q { y: 5 };
+  match l { P { x } => x, Q { y } => y * 2 }
+}
+
+fn main() {
+  a = P { x: 3 };
+  b = Q { y: 100 };
+  println("{lit(a)} {reads(a, 6)} {from_var(a, b)} {from_call(a)} {local()} {a} {b}");
+}

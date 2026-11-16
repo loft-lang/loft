@@ -100,6 +100,12 @@ fn program(image: text, f: text, std_image: text) {
   for r in e.refused {
     println("refused: {r}");
   }
+  // `LOFT_ELAB_WHERE=1`: the line each refusal was first met on, beside the report.
+  if env_variable("LOFT_ELAB_WHERE") == "1" {
+    for r in e.refused {
+      eprintln("where: line {e.refused_at[r#index] ?? 0}: {r}");
+    }
+  }
 }
 
 fn stdlib(files: vector<text>) {

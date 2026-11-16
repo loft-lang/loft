@@ -1290,7 +1290,10 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
   match el_types::base(tp) {
     TyVector { inner } => {
       nm = el_types::elem_name(e, inner);
-      if nm == "" || el::def_nr(e, "vector<{nm}>") >= 0 {
+      // The row is made wherever the element has one (`database.vector`), whatever made the
+      // definition before — a literal's, a parameter's; the definition only where it is missing.
+      has_def = nm != "" && el::def_nr(e, "vector<{nm}>") >= 0;
+      if nm == "" {
         return;
       }
       narrow = match inner {
@@ -1306,7 +1309,7 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
         el_schema::vector_store_type(e, inner, nm);
         vk = vector_store(e, inner, nm);
       }
-      if vk < 0 {
+      if vk < 0 || has_def {
         return;
       }
       vd = el::add_def(e, "vector<{nm}>", el::pos_at(e, at), el::DT_VECTOR);
@@ -1396,15 +1399,22 @@ pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Nod
         TyInteger { spec } => spec.forced_size == 4,
         _ => false
       };
+      // The first pass knows no row of a struct this file declares (`format_vector_row` answers
+      // 0 there): the second pass's is the one kept.
+      if vk < 0 && !narrow && e.first_pass && nm != "" {
+        list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: 0 }, ir::NdInt { n: db }])];
+        return;
+      }
       if vk < 0 || narrow || el::def_nr(e, "vector<{nm}>") < 0 {
-        el::refuse(e, "a formatted vector with no rows yet");
+        why = if narrow { "a 4-byte element" } else if vk < 0 { "no store type" } else { "no vector definition" };
+        el::refuse(e, "a formatted vector with no rows yet: {why} for `{nm}`");
         return;
       }
       list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: vk }, ir::NdInt { n: db }])];
     },
     TyReference { n } => {
       d = el::def(e, n);
-      if d.def_type != el::DT_STRUCT || el::def_nr(e, "t_{len(d.name)}{d.name}_to_text") >= 0 {
+      if (d.def_type != el::DT_STRUCT && d.def_type != el::DT_ENUM_VALUE) || el::def_nr(e, "t_{len(d.name)}{d.name}_to_text") >= 0 {
         el::refuse(e, "a formatted record of this kind");
         return;
       }
@@ -2129,7 +2139,13 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   vars.vars[held].skip_free = true;
   el_vars::register_work_ref(vars, held);
   if e.first_pass {
-    return ex(ir::NdNull, if owned { el_types::with_deps(el_types::without_deps(lhs), [held]) } else { lhs });
+    // A view of what the subject borrows is answered as the "ncc" block it becomes, so a
+    // function ending in it merges that borrow on this pass (`merge_view_call`) and its
+    // callers read the view.
+    if !owned {
+      return ex(el_ir::v_block([ir::NdNull], lhs, "ncc"), lhs);
+    }
+    return ex(ir::NdNull, el_types::with_deps(el_types::without_deps(lhs), [held]));
   }
   // It borrows what the subject borrows — on this pass, which mints an inline container the
   // first did not; a call's record borrows what its arguments lend it, not its own buffer.

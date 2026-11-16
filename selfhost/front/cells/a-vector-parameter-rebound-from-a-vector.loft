@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: each whole rebind of a vector parameter from a vector — twice, in a branch, in a loop, of records, of texts, a nullable one (OpReplaceVector) — allocates; the callers keep theirs.
+// Prints: 10 33 3 91 [1,2] [30,40,50] / 72 [{x:5,y:6}] 3 bb 30
+struct Pt { x: integer, y: integer }
+
+fn twice(v: vector<integer>, o: vector<integer>, q: vector<integer>) -> integer {
+  v = o;
+  v = q;
+  v[0] + len(v)
+}
+
+fn branch(v: vector<integer>, o: vector<integer>, c: boolean) -> integer {
+  if c { v = o; }
+  v[0] + len(v)
+}
+
+fn looped(v: vector<integer>, w: vector<integer>) -> integer {
+  s = 0;
+  for i in 0..3 { s = s + (v[i] ?? -1); v = w; }
+  s
+}
+
+fn recs(v: vector<Pt>, o: vector<Pt>) -> integer {
+  v = o;
+  v[0].x + len(v)
+}
+
+fn opt(v: vector<integer>?, o: vector<integer>) -> integer {
+  v = o;
+  len(v)
+}
+
+fn texts(v: vector<text>, o: vector<text>) -> text {
+  v = o;
+  v[0]
+}
+
+fn local(o: vector<integer>) -> integer {
+  l = [1];
+  l = o;
+  l[0]
+}
+
+fn main() {
+  a = [1, 2];
+  b = [30, 40, 50];
+  c = [9];
+  println("{twice(a, b, c)} {branch(a, b, true)} {branch(a, b, false)} {looped(a, b)} {a} {b}");
+  p = [Pt { x: 5, y: 6 }];
+  q = [Pt { x: 70, y: 80 }, Pt { x: 1, y: 1 }];
+  println("{recs(p, q)} {p} {opt(a, b)} {texts(["a"], ["bb", "c"])} {local(b)}");
+}

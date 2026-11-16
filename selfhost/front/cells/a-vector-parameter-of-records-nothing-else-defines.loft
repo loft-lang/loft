@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector<Pt> parameter has vector<Pt> and main_vector<Pt> defined where the second pass enters its body, when nothing else made them.
+// Prints: -
+struct Pt { x: integer, y: integer }
+
+fn show(v: vector<Pt>) -> integer { len(v) }
+
+fn main() {
+  println("-");
+}

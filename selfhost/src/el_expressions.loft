@@ -56,6 +56,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // `___tret_N` the tail then answers, which `text_return` below makes the hidden `&text`
   // buffer.  On both passes, so the buffer is in the signature before any caller is read;
   // pass 2 binds only where pass 1 did (the attribute it minted).
+  // The `___tret_N` a `return` at the tail was bound to: what the body then answers.
+  ret_bound = -1;
   if el_types::base(result) is TyText && el::def(e, e.context).def_type != el::DT_GENERIC && (e.first_pass || def_has_tret_attr(el::def(e, e.context))) {
     match b.code {
       NdBlock { block } => {
@@ -67,6 +69,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           ops = bl.operators[0..n - 1];
           if el_ir::unspan(tail) is NdReturn {
             ops += [el_ir::v_set(tv, peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
+            ret_bound = tv;
           } else {
             ops += [el_ir::v_set(tv, tail), ir::NdVar { n: tv }];
           }
@@ -112,8 +115,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if !e.first_pass && keyed_kind(el_types::base(result)) && el_types::base(b.tp) is TyVector {
     el::refuse(e, "a vector literal answered as a keyed collection");
   }
-  // A text local at the tail is what the body answers: the result borrows that local.
-  tt = b.tp;
+  // A text local at the tail is what the body answers: the result borrows that local — a
+  // returned `___tret_N` too (`t = Type::Text(frame1(ret))`).
+  tt = if ret_bound >= 0 { ir::TyText { dep: [ret_bound] } } else { b.tp };
   match b.code {
     NdBlock { block } => {
       nb = len(block[0].operators);
@@ -1836,6 +1840,12 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     }
     return code;
   }
+  // A `null` arm of a vector that is not declared nullable is delivered another way (the
+  // literal's own store renamed onto the buffer, cleared at the head): refused by name.
+  if arms && !(result is TyOptional) && null_arm(e, tail) {
+    el::refuse(e, "a vector `if` tail with a `null` arm in a function whose vector is not nullable");
+    return code;
+  }
   elem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
   rec = element_content(e, elem);
   if rec < 0 {
@@ -1915,6 +1925,17 @@ pub fn literal_arms(e: el::El, n: ir::Node) -> boolean {
         literal_arms(e, ops[-1]!)
       }
     },
+    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    _ => false
+  }
+}
+
+// Does an arm of the `if` answer the null sentinel?
+pub fn null_arm(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => null_arm(e, inner),
+    NdIf { cond: _, t, f } => null_arm(e, t) || null_arm(e, f),
+    NdBlock { block } => len(block[0].operators) > 0 && block[0].name != "Vector" && null_arm(e, block[0].operators[-1]!),
     NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
     _ => false
   }

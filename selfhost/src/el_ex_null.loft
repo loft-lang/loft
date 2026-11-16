@@ -1825,7 +1825,12 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // (`parse_return`'s `text_return(ls)`); one this frame owns is written into the hidden
     // buffer after the pass (`el_tret`).
     vt = match v.tp { TyRefVar { inner } => inner, _ => v.tp };
-    if el_types::base(result) is TyText && (el_types::base(vt) is TyText || e.first_pass && el_types::is_unknown(vt)) {
+    if el_types::base(result) is TyText && (el_types::base(vt) is TyText || vt is TyNull || e.first_pass && el_types::is_unknown(vt)) {
+      // `return null` answers the text's own null (`OpConvTextFromNull`), nullable result or not:
+      // at the tail it is the native answer `do_tret_bind` binds, on both passes.
+      if vt is TyNull {
+        return ex(ir::NdReturn { inner: el_ir::cl(e, "OpConvTextFromNull", []) }, ir::TyNever);
+      }
       el_expressions::text_return(e, vars, v.tp);
       rt = stored(e, vars, v, result);
       return ex(ir::NdReturn { inner: rt ?? v.code }, ir::TyNever);

@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record written into a vector element at an index nothing proves is copied into the element (copy_ref): from a local, a call (its store freed), another element; into a field's element.
+// Prints: 9 9 60 4 50
+struct Pt { x: integer, y: integer }
+struct Box { items: vector<Pt>, one: Pt }
+
+fn mk(n: integer) -> Pt { Pt { x: n, y: n + 1 } }
+
+fn main() {
+  v = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  r = Pt { x: 50, y: 60 };
+  v[0] = r;
+  v[1] = Pt { x: 7, y: 8 };
+  i = 1;
+  v[i - 1] = mk(9);
+  v[1] = v[0];
+  b = Box { items: [Pt { x: 0, y: 0 }], one: Pt { x: 1, y: 1 } };
+  b.items[0] = r;
+  b.one = r;
+  b.one = Pt { x: 4, y: 4 };
+  println("{v[0].x} {v[1].x} {b.items[0].y} {b.one.x} {r.x}");
+}

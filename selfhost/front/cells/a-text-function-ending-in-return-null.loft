@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a tail 'return null' of a text function is bound to its buffer where it is read (do_tret_bind), the body keeping the declared nullable type and an earlier return its own value; any other tail is promoted after the pass.
+// Prints: - v2 lit lit - -
+fn a() -> text? {
+  return null;
+}
+
+fn b(n: integer) -> text? {
+  m = n + 1;
+  return "v{m}";
+}
+
+fn c() -> text? {
+  return "lit";
+}
+
+fn d() -> text {
+  return "lit";
+}
+
+fn e(c: boolean) -> text? {
+  if c { return null; }
+  return "z";
+}
+
+fn f() -> text? {
+  null
+}
+
+fn main() {
+  println("{a() ?? "-"} {b(1) ?? "-"} {c() ?? "-"} {d()} {e(true) ?? "-"} {f() ?? "-"}");
+}
+
+fn g(c: boolean) -> text? {
+  if c { return null; }
+  return null;
+}
+
+fn h() -> text {
+  return null;
+}
+
+fn i(c: boolean) -> text? {
+  if c { return "x"; }
+  return null;
+}
+
+fn j(s: text) -> text? {
+  return s;
+}
+
+fn k(n: integer) -> text? {
+  return "{n}";
+}
