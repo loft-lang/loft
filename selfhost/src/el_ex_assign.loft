@@ -893,6 +893,20 @@ pub fn rebind_after_block(e: el::El, vars: el_vars::Vars, old: integer, t: ir::T
   nv
 }
 
+// Does the syntax at `n` name `name` anywhere?
+fn mentions_name(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: nm, member } => if member == "" && nm == name { return true; },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if mentions_name(e, c, name) {
+      return true;
+    }
+  }
+  false
+}
+
 // `views_of`: does `code` read a local whose borrows name `v` (a view of it)?
 pub fn reads_view_of(vars: el_vars::Vars, code: ir::Node, v: integer) -> boolean {
   for w in 0..len(vars.vars) {
@@ -2189,6 +2203,23 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       ir::NdVar { n: tmp }
     ], el_types::with_deps(rec_tp, [tmp]), "materialized_amp_field");
     return ex(el_ir::v_set(v, copy), ir::TyVoid);
+  }
+  // `@FR-B-Ref-Write` for a vector: a literal written through a `&vector` link replaces the
+  // contents in the vector's own store — cleared, then the literal appended as `+=` appends it.
+  // A literal that reads the link is not carried.
+  linked_vec = match el_vars::tp(vars, v) { TyRefVar { inner } => el_types::base(inner) is TyVector, _ => false };
+  if link && linked_vec && !declaring && e.p.nodes[rhs!] is SVecLit && !mentions_name(e, rhs!, el_vars::name_of(vars, v)) {
+    el_vars::drop_use(vars, v);
+    app = el_ex_pattern::vector_append(e, vars, v, rhs!);
+    if e.first_pass {
+      return app;
+    }
+    items: vector<ir::Node> = [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: v }])];
+    match app.code {
+      NdInsert { items: its } => { items += its; },
+      _ => { items += [app.code]; }
+    }
+    return ex(ir::NdInsert { items: items }, ir::TyVoid);
   }
   if link && !el_ex_match::scalar_link(vars, v) && !declaring {
     el::refuse(e, "a whole value written through a `&` link");

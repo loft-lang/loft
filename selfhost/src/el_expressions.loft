@@ -1464,9 +1464,15 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     // the buffer itself) is refused by name.
     renamed = match tail { NdVar { n } => if vars.vars[n].argument && attr_nr(el::def(e, d), el_vars::name_of(vars, n)) >= 0 && el::def(e, d).attributes[attr_nr(el::def(e, d), el_vars::name_of(vars, n))].hidden { n } else { -1 }, _ => -1 };
     if renamed >= 0 {
+      // `nrvo_collapse_defining_call`: the local's one defining call, a statement of the body,
+      // is handed the buffer as its own (`v = make(n, v)`); any other call bind is refused.
       if bound_from_call(code, renamed) {
-        el::refuse(e, "a vector local that takes the return buffer, bound from a call");
-        return code;
+        collapsed = collapse_defining_call(vars, bl, renamed);
+        if collapsed == null {
+          el::refuse(e, "a vector local that takes the return buffer, bound from a call");
+          return code;
+        }
+        bl = collapsed!;
       }
       bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
       bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: renamed }]), bl.operators[0]] };
@@ -2224,6 +2230,56 @@ pub fn literal_arms_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb:
       ir::NdBlock { block: [bl] }
     },
     _ => null
+  }
+}
+
+// `nrvo_collapse_defining_call` over the body `bl`: the one top-level `v = f(…, w)` whose last
+// argument is the call's hidden buffer `w` becomes `v = f(…, v)`; null where `v` is bound from a
+// call anywhere else, or by two calls.
+fn collapse_defining_call(vars: el_vars::Vars, bl: ir::Block, v: integer) -> ir::Block? {
+  at = -1;
+  for o in bl.operators {
+    match el_ir::unspan(o) {
+      NdSet { var, inner } => if var == v && el_ir::unspan(inner) is NdCall {
+        if at >= 0 {
+          return null;
+        }
+        at = o#index;
+      },
+      _ => {}
+    }
+  }
+  if at < 0 {
+    return null;
+  }
+  rest = bl;
+  rest.operators[at] = ir::NdNull;
+  if bound_from_call(ir::NdBlock { block: [rest] }, v) {
+    return null;
+  }
+  out = bl;
+  match el_ir::unspan(bl.operators[at]!) {
+    NdSet { var, inner } => match el_ir::unspan(inner) {
+      NdCall { def_nr, args } => {
+        if len(args) == 0 || hidden_ref_arg(vars, args) < 0 {
+          return null;
+        }
+        a2 = args;
+        a2[len(a2) - 1] = ir::NdVar { n: v };
+        out.operators[at] = respan(bl.operators[at]!, ir::NdSet { var: var, inner: ir::NdCall { def_nr: def_nr, args: a2 } });
+      },
+      _ => return null
+    },
+    _ => return null
+  }
+  out
+}
+
+// `n` with its innermost node replaced by `inner`, its position spans kept.
+fn respan(n: ir::Node, inner: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner: i } => ir::NdSpan { pos: pos, inner: respan(i, inner) },
+    _ => inner
   }
 }
 
