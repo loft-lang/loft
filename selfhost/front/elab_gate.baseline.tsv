@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	844	of	2156
+layer	elab	agree	847	of	2157
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -730,7 +730,6 @@ elab	refused	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writi
 elab	refused	loft-suite/rules/rewrites/R-Const/a-constant-view-becomes-a-copy-wherever-it-escapes.loft
 elab	refused	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft
 elab	refused	loft-suite/rules/rewrites/R-CopyView/2265-a-loop-variable-copy-made-a-view-is-bound-in-the-loop.loft
-elab	refused	loft-suite/rules/rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view.loft
 elab	refused	loft-suite/rules/rewrites/R-CopyView/a-match-walk-over-an-enum-list-is-a-view.loft
 elab	refused	loft-suite/rules/rewrites/R-CopyView/a-walk-over-a-list-the-demote-grows-reads-the-list-it-was-bound-to.loft
 elab	refused	loft-suite/rules/rewrites/R-DecodeView/a-byte-string-copied-out-of-a-frame-is-the-frames-bytes-at-the-decode.loft
@@ -768,7 +767,6 @@ elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1834-a-user-name-startin
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-keyed-literal-is-written-into-its-slot.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-to-a-reference-field-repoints-it.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft
-elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-local-that-views-another-store-on-one-path-is-not-rebuilt-in-place.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-variant-rebuilt-in-place-reads-its-collection-member-through-a-view.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft
