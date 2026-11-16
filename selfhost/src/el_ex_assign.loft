@@ -610,8 +610,20 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         ct = el_vars::tp(vars, cv);
         if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) {
           boxable = if e.first_pass { el_cell::cell_name(e, ct) != "" } else { el_cell::cell_of(e, ct) >= 0 };
-          if !boxable || vars.vars[cv].argument || starts_with(el::def(e, e.context).name, "n___lambda_") || starts_with(el::def(e, e.context).name, "__lambda_") {
-            el::refuse(e, "a lambda that captures a local of its function: written by it, or around another lambda");
+          if !boxable {
+            el::refuse(e, "a lambda that captures a local of its function: written by it, of this type {type_kind(ct)}");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          // A written parameter takes a shadow cell (`promote_boxed_scalar_arg`, #685) and a
+          // lambda's own local a nested lambda writes is boxed by no flip: not carried.
+          // A written parameter is boxed through a shadow (`el_cell::flip`); a `const` one, a `&`
+          // one and a hidden one are refused, as Rust reports the first two.
+          if vars.vars[cv].argument && (vars.vars[cv].value_const || el_vars::tp(vars, cv) is TyRefVar || hidden_param(e, vars, cv)) {
+            el::refuse(e, "a lambda that captures a local of its function: a parameter written by it");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          if starts_with(el::def(e, e.context).name, "n___lambda_") || starts_with(el::def(e, e.context).name, "__lambda_") {
+            el::refuse(e, "a lambda that captures a local of its function: a lambda's local written by a nested lambda");
             return ex(ir::NdNull, ir::TyUnknown { n: 0 });
           }
           written += [c];
@@ -645,7 +657,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       if len(caps) > 0 && holds_lambda(e, body!) {
-        el::refuse(e, "a lambda that captures a local of its function: written by it, or around another lambda");
+        el::refuse(e, "a lambda that captures a local of its function: around another lambda");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       outer = el::def(e, e.context).name;

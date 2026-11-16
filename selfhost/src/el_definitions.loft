@@ -1265,10 +1265,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.closure_var = cv;
     }
     // `flip_scalars_to_box_types`: a local a closure writes takes its cell's type before the body.
+    seeds: vector<ir::Node> = [];
     if !e.first_pass && !starts_with(name, "__lambda_") {
-      el_cell::flip(e, vars);
+      seeds = el_cell::flip(e, vars);
     }
-    code = el_expressions::parse_code(e, vars, body ?? 0);
+    code = el_cell::seed_cells(el_expressions::parse_code(e, vars, body ?? 0), seeds);
     // A body answering a function value is typed as the declared function type: the closure
     // slot its value names is the result's dep (`callee_frame1`), not the block's.
     if el_types::base(rt) is TyFunction {

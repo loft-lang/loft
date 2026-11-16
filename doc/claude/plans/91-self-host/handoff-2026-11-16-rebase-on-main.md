@@ -71,6 +71,11 @@ full loft interpreter, the in-between data of the two implementations compared a
    step 5 — the refusal also reads `!place` inside `&&` / `||`), and loft#1145's per-loop split
    (`body_local_binding`, `name#bN`; `157-record-ptr`).  `2177-a-malformed-image-…` registers
    `vector<u8>` (known 100) ahead of the program's structs in Rust and after them in the port.
+   Closures (by the split refusal messages, gate 15): a captured VECTOR the lambda writes (10) —
+   Rust appends through `OpGetDbRef(__closure, pos)` with an odd shape (the literal's push goes
+   straight into the capture, then an `OpAppendVector` of the built `_vec_1`), to be reproduced
+   exactly; nullable (10+4), keyed (7+4+4) and tuple (6) captures; the parameter shadow cell
+   (#685, `el_cell::flip`) is ported but admits no program alone yet.
 3. Re-write the baselines at the new pin once gate E has no differ.
 4. loft#2515 (filed, compiler half fixed in 72a943412, guard cell loft-suite 728fcfd): the
    static checker still MISSES it with `LOFT_NO_RET_TYPE_MATCH=1` (`own_sweep.py`: uaf,re-free).

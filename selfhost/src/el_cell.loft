@@ -100,16 +100,48 @@ pub fn box_in(e: el::El, owner: integer, name: text) {
 }
 
 // `flip_scalars_to_box_types` (pass 2, before the body): each boxed local takes its cell's type.
-pub fn flip(e: el::El, vars: el_vars::Vars) {
+// A parameter cannot change its slot's type (the call's layout): it is promoted to a shadow
+// local `__bx_<name>` the spelling names from here on, seeded from the parameter where the body
+// opens (`promote_boxed_scalar_arg`, #685) — the seeds are answered for `seed_cells`.
+pub fn flip(e: el::El, vars: el_vars::Vars) -> vector<ir::Node> {
+  seeds: vector<ir::Node> = [];
   for n in el::def(e, e.context).scalars_to_box {
     v = el_vars::var(vars, n.name);
     if v < 0 || cell_of(e, el_vars::tp(vars, v)) >= 0 {
       continue;
     }
     cd = el::def_nr(e, cell_name(e, el_vars::tp(vars, v)));
-    if cd >= 0 {
-      el_vars::set_var_type(vars, v, ir::TyReference { n: cd, dep: [] });
+    if cd < 0 {
+      continue;
     }
+    if vars.vars[v].argument {
+      sh = el_vars::add_variable(vars, "__bx_{n.name}", el_vars::tp(vars, v));
+      el_vars::set_var_type(vars, sh, ir::TyReference { n: cd, dep: [] });
+      el_vars::set_defined(vars, sh);
+      el_vars::in_use(vars, v, true);
+      el_vars::set_name(vars, n.name, sh);
+      vt = value_of(e, cd);
+      // One `Insert` per parameter, each put at the body's start (`boxed_cell_alloc_and_set`).
+      seeds = [ir::NdInsert { items: [el_ir::v_set(sh, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: sh }, ir::NdInt { n: el::def(e, cd).known_type }]), el_ir::cl(e, "OpSet{op_suffix(vt)}", [ir::NdVar { n: sh }, ir::NdInt { n: 0 }, ir::NdVar { n: v }])] }] + seeds;
+      continue;
+    }
+    el_vars::set_var_type(vars, v, ir::TyReference { n: cd, dep: [] });
+  }
+  seeds
+}
+
+// `finish_body`: the parameters' cell seeds open the body.
+pub fn seed_cells(code: ir::Node, seeds: vector<ir::Node>) -> ir::Node {
+  if len(seeds) == 0 {
+    return code;
+  }
+  match code {
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = seeds + b.operators;
+      ir::NdBlock { block: [b] }
+    },
+    _ => code
   }
 }
 
