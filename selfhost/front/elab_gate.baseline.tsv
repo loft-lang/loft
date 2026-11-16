@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	765	of	2125
+layer	elab	agree	788	of	2139
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -560,7 +560,6 @@ elab	refused	loft-suite/rules/layout/L-Tuple/a-record-is-padded-to-its-alignment
 elab	refused	loft-suite/rules/layout/L-Tuple/a-tuple-packed-like-a-struct-keeps-its-written-positions.loft
 elab	refused	loft-suite/rules/layout/L-Tuple/a-tuple-packs-by-descending-alignment-and-pads-to-its-largest.loft
 elab	refused	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft
-elab	refused	loft-suite/rules/matching/M-Fixed/a-guard-that-only-reads-the-subject-is-admitted.loft
 elab	refused	loft-suite/rules/matching/M-Once/a-guarded-arm-falls-to-the-next-arm-without-a-copy.loft
 elab	refused	loft-suite/rules/matching/M-Variant/1778-a-null-enum-through-a-dispatcher-answers-the-typed-null.loft
 elab	refused	loft-suite/rules/matching/M-Variant/2326-a-capture-named-like-a-function-binds-whatever-the-declaration-order.loft
@@ -805,7 +804,6 @@ elab	refused	loft-suite/rules/rewrites/R-MoveChild/a-link-set-to-its-own-childs-
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2148-a-view-stored-at-its-last-use-is-copied-not-moved.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft
-elab	refused	loft-suite/rules/rewrites/R-MoveLast/a-field-store-lands-in-the-record-bound-at-the-store.loft
 elab	refused	loft-suite/rules/rewrites/R-NoThreads/a-unit-with-a-par-loop-runs-a-demote-and-a-view-walk-as-written.loft
 elab	refused	loft-suite/rules/rewrites/R-NoThreads/a-unit-without-threads-runs-a-demote-and-a-view-walk-as-written.loft
 elab	refused	loft-suite/rules/rewrites/R-Place/164-place-result.loft
@@ -1077,7 +1075,6 @@ elab	refused	tests/scripts/1523-a-displaced-free-asks-the-container-it-came-from
 elab	refused	tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft
 elab	refused	tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft
 elab	refused	tests/scripts/157-a-fresh-element-text-keeps-the-loop-hold.loft
-elab	refused	tests/scripts/157-a-read-only-record-local-keeps-the-view.loft
 elab	refused	tests/scripts/157-a-vector-element-is-built-in-place.loft
 elab	refused	tests/scripts/157-fill-hoist.loft
 elab	refused	tests/scripts/157-group-push.loft
@@ -1167,7 +1164,6 @@ elab	refused	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-
 elab	refused	tests/scripts/2496-a-forward-typed-capture-beside-a-boolean-vector-has-its-storage.loft
 elab	refused	tests/scripts/2497-a-return-naming-a-record-declared-below-is-that-record.loft
 elab	refused	tests/scripts/2498-a-transient-record-is-no-member-of-itself.loft
-elab	refused	tests/scripts/25-nullable-read-consumption.loft
 elab	refused	tests/scripts/25-nullable-sequences.loft
 elab	refused	tests/scripts/25-nullable-vector-scalar-element.loft
 elab	refused	tests/scripts/25-sorted-enum-variant-range.loft
@@ -1211,7 +1207,6 @@ elab	refused	tests/scripts/850-cross-package-method-name-collision.loft
 elab	refused	tests/scripts/850b-collision-import-order.loft
 elab	refused	tests/scripts/850c-two-packages-one-enum-name.loft
 elab	refused	tests/scripts/882-keyed-element-read-borrows-its-container.loft
-elab	refused	tests/scripts/885-vector-hoist.loft
 elab	refused	tests/scripts/889-collection-through-a-call-s-field.loft
 elab	refused	tests/scripts/890-consumed-lift-double-free.loft
 elab	refused	tests/scripts/899-unbound-file-read-only-vector.loft
@@ -1300,7 +1295,6 @@ elab	refused	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft
 elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft
 elab	refused	tests/scripts/a-record-that-owns-no-heap-is-copied-as-its-bytes.loft
-elab	refused	tests/scripts/a-record-written-into-an-element-is-addressed-once.loft
 elab	refused	tests/scripts/a-repeated-element-fills-in-one-block.loft
 elab	refused	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft
 elab	refused	tests/scripts/a-returned-field-of-an-owned-local-hands-its-store-over.loft
@@ -1310,10 +1304,8 @@ elab	refused	tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-s
 elab	refused	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
 elab	refused	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft
 elab	refused	tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft
-elab	refused	tests/scripts/a-text-call-result-is-read-from-its-work-buffer.loft
 elab	refused	tests/scripts/a-text-choice-between-slices-is-a-view.loft
 elab	refused	tests/scripts/a-text-of-a-slice-reads-the-span-in-place.loft
-elab	refused	tests/scripts/a-text-operand-is-read-before-a-later-operand-writes-it.loft
 elab	refused	tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-can-be-written.loft
 elab	refused	tests/scripts/a-type-named-above-its-pub-declaration-is-published.loft
 elab	refused	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft
@@ -1324,7 +1316,6 @@ elab	refused	tests/scripts/a-vector-of-raw-scalars-is-written-as-one-block.loft
 elab	refused	tests/scripts/a-vector-of-unsigned-four-byte-integers-sorts-by-value.loft
 elab	refused	tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft
 elab	refused	tests/scripts/a-vector-prepended-to-is-rebuilt-in-place.loft
-elab	refused	tests/scripts/a-vector-rebuilt-from-a-run-of-its-own-elements-is-compacted-in-place.loft
 elab	refused	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft
 elab	refused	tests/scripts/a-width32-file-keeps-its-arithmetic-in-32-bits.loft
 elab	refused	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft
