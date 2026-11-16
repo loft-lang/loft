@@ -6216,7 +6216,19 @@ impl Parser {
                     sinks.decline_place = true;
                     false
                 } else if xoff == crate::use_analysis::ANY_FIELD {
-                    !primed
+                    // loft#2527 — an element of the root itself (`e[0] = Node { v: 8, next:
+                    // e[0] }`) read by an OUT-OF-LINE field: staged as a view, the literal's
+                    // writes overwrite the element before the field write copies it in.  The
+                    // element is inline, so it is copied either way; the copy is taken first.
+                    if out_of_line
+                        && !crate::keys::struct_element_self_read_view()
+                        && let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists)
+                    {
+                        value = Value::Var(o);
+                        false
+                    } else {
+                        !primed
+                    }
                 } else if primed {
                     sinks.decline_place = true;
                     false

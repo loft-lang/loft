@@ -3594,6 +3594,15 @@ pub fn buffer_fresh_copy_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
 }
 
+/// `LOFT_STRUCT_ELEMENT_SELF_READ_VIEW=1` — a literal written into an element of its root whose
+/// out-of-line field reads that element stages the read as a VIEW again, not a copy taken first
+/// (`Parser::parse_object`'s place staging, loft#2527): the literal's writes overwrite it first.
+#[must_use]
+pub fn struct_element_self_read_view() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_STRUCT_ELEMENT_SELF_READ_VIEW"))
+}
+
 /// `LOFT_NO_TEXT_TAIL_THROUGH_IF=1` — a text value block's tail local is homed at the function
 /// scope only where the block's last operator is that local (through value blocks), not where
 /// it is a leaf of an `if` (`scopes::scan`, loft#2526): its exit free then runs after the value.

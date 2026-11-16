@@ -71,6 +71,11 @@ the locals whose block ended before it, so a closure written after a loop shares
 local — with it off (`Parser::enter_capture_scope`), such a name does not exist in the lambda:
 an assignment there binds a local of the lambda's own and a read is refused.  The bisect step
 for a closure after a block that reads or writes that block's local.
+**`LOFT_STRUCT_ELEMENT_SELF_READ_VIEW=1`** (`@FR-B-Copy`, parse time, BOTH backends) stages the
+read of an element of the literal's own root (`e[0] = Node { v: 8, next: e[0] }`) as a VIEW when
+an out-of-line field of the literal reads it — with it off (`Parser::parse_object`'s staging,
+`staged_heap_copy`), the element is copied before the literal's first write.  The bisect step
+for an element that embeds its own old value and reads the new one.
 **`LOFT_NO_TEXT_TAIL_THROUGH_IF=1`** (`@FR-H-Free`, the scope pass, BOTH backends) homes a text
 value block's tail local at the function scope only where the block's last operator is that
 local — with it off (`scopes::scan`'s `tail_vars_through_arms`), every local an `if` arm of the
