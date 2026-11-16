@@ -13,11 +13,10 @@
  "bodies|plain|program|corpus": {
   "agree": 1080,
   "differ": 0,
-  "equal": 13134,
-  "functions": 13576,
+  "equal": 13132,
+  "functions": 13573,
   "refused": 0,
   "switches": [
-   "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],
@@ -30,7 +29,6 @@
   "functions": 6613,
   "refused": 0,
   "switches": [
-   "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],
@@ -43,7 +41,6 @@
   "functions": 2259,
   "refused": 0,
   "switches": [
-   "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],

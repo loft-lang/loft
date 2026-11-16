@@ -1,0 +1,2224 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Transient` in the C as `src/c/body/transient.rs` writes it: a record
+// or enum value built, read and dropped without being written into a store record is built
+// outside the store — every record a struct in the transient arena (`loft_ta_*`), every vector of
+// records an arena array, every text an arena copy.
+//
+// A TWIN `f__tr<params>[r]` is `f`'s IR written with its transient variables as pointers
+// `lt_<group> *`: the result (`r`: the return buffer becomes a local the twin answers), the
+// parameters the key names (a bit per parameter), and every local of a type those reach.  A ROOT
+// SITE is a call to a producer twin in an ordinary function: its local holds the tree, the arena
+// mark is taken at the frame's entry and given back where a root is bound or freed.
+//
+// The writer is the allow-list: an operation on a transient value no arm here answers refuses
+// the body, so a twin that cannot be written is declined whole (with every twin tried inside it),
+// and a function whose site cannot be written is written again without it.  A twin writes only
+// the records it builds itself (`owned`), and a record copy seals its vectors (`lt_seal_*`).
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use binds;
+use types;
+use cgen::(Cx);
+use opt_transient;
+use cgen_tables;
+use cgen_ref;
+use cgen_names;
+use cgen_fn;
+use cgen_w::*;
+
+// `LOFT_NO_TRANSIENT=1` keeps every value in the store.
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_TRANSIENT") ?? "0") == "0"
+}
+
+// A member's name in its struct (`Member::name`).
+pub fn member_name(m: integer, off: integer, r: integer) -> text {
+  if m == opt_transient::M_RECORD {
+    return "r{off}_{r}";
+  }
+  p = if m == opt_transient::M_INT { "i" } else if m == opt_transient::M_BOOL { "b" } else if m == opt_transient::M_ENUM { "e" } else if m == opt_transient::M_TEXT { "t" } else { "v" };
+  "{p}{off}"
+}
+
+fn ensure_types(x: Cx) {
+  if len(x.tr.parents) == len(x.b.types) {
+    return;
+  }
+  x.tr.parents = [for _ in x.b.types { -1 }];
+  x.tr.groups = [for _ in x.b.types { false }];
+  x.tr.seals = [for _ in x.b.types { false }];
+  for t in x.b.types {
+    if len(t.parts) == 0 {
+      continue;
+    }
+    match t.parts[0]! {
+      PtEnum { values } => {
+        for v in values {
+          if v.nr != 65535 && v.nr >= 0 && v.nr < len(x.b.types) {
+            x.tr.parents[v.nr] = t#index;
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+}
+
+// `tr_group`: the struct group a record type is held in — an enum variant shares its parent's.
+pub fn group(x: Cx, tp: integer) -> integer {
+  ensure_types(x);
+  g = tp;
+  if tp >= 0 && tp < len(x.tr.parents) && x.tr.parents[tp]! >= 0 {
+    g = x.tr.parents[tp]!;
+  }
+  if g >= 0 && g < len(x.tr.groups) {
+    x.tr.groups[g] = true;
+  }
+  g
+}
+
+// `tr_member`: group `g` holds member `m` at `off`.
+pub fn member(x: Cx, g: integer, off: integer, m: integer, r: integer) {
+  for e in x.tr.members {
+    if e.g == g && e.off == off && e.m == m && (m != opt_transient::M_RECORD || e.r == r) {
+      return;
+    }
+  }
+  x.tr.members += [opt_transient::TrMember { g: g, off: off, m: m, r: r }];
+}
+
+pub fn zero(x: Cx, g: integer, off: integer) {
+  for z in x.tr.zeros {
+    if z#index % 2 == 0 && z == g && x.tr.zeros[z#index + 1]! == off {
+      return;
+    }
+  }
+  x.tr.zeros += [g, off];
+}
+
+pub fn seal(x: Cx, g: integer) {
+  ensure_types(x);
+  x.tr.seals[g] = true;
+}
+
+fn parts_of(x: Cx, tp: integer) -> ir::DbParts {
+  if tp < 0 || tp >= len(x.b.types) || len(x.b.types[tp].parts) == 0 { ir::PtBase } else { x.b.types[tp].parts[0]! }
+}
+
+fn is_record_parts(p: ir::DbParts) -> boolean {
+  match p {
+    PtStruct { fields: _ } => true,
+    PtEnumValue { value: _, fields: _ } => true,
+    PtEnum { values: _ } => true,
+    _ => false,
+  }
+}
+
+// The members of group `g`, ordered by offset and kind (`BTreeSet<(i64, Member)>`).
+fn members_of(x: Cx, g: integer) -> vector<opt_transient::TrMember> {
+  out: vector<opt_transient::TrMember> = [];
+  for e in x.tr.members {
+    if e.g != g {
+      continue;
+    }
+    pos = len(out);
+    for o in out {
+      if pos == len(out) && (e.off < o.off || (e.off == o.off && (e.m < o.m || (e.m == o.m && e.r < o.r)))) {
+        pos = o#index;
+      }
+    }
+    out.insert(pos, e);
+  }
+  out
+}
+
+fn member_ctype(e: opt_transient::TrMember) -> text {
+  if e.m == opt_transient::M_INT { "int64_t" } else if e.m == opt_transient::M_BOOL || e.m == opt_transient::M_ENUM { "uint8_t" } else if e.m == opt_transient::M_TEXT { "loft_str" } else if e.m == opt_transient::M_VECTOR { "loft_ta_vec" } else { "lt_{e.r}" }
+}
+
+fn emit_struct(x: Cx, g: integer, done: vector<boolean>, out: &text) {
+  if done[g]! {
+    return;
+  }
+  done[g] = true;
+  ms = members_of(x, g);
+  for e in ms {
+    if e.m == opt_transient::M_RECORD {
+      emit_struct(x, e.r, done, out);
+    }
+  }
+  out += "struct lt_{g} {{\n";
+  if len(ms) == 0 {
+    out += "    char lt_none;\n";
+  }
+  for e in ms {
+    out += "    {member_ctype(e)} {member_name(e.m, e.off, e.r)};\n";
+  }
+  out += "}};\n";
+}
+
+// `tr_typedefs`: the struct of every group a twin names, a group held by value written before
+// the struct that holds it; the narrow-field zeroers; the seals.
+pub fn typedefs(x: Cx) -> text {
+  if x.tr.protos == "" {
+    return "";
+  }
+  ensure_types(x);
+  all: vector<boolean> = [for g in x.tr.groups { g }];
+  for e in x.tr.members {
+    all[e.g] = true;
+  }
+  out = "";
+  for a in all {
+    if a {
+      out += "typedef struct lt_{a#index} lt_{a#index};\n";
+    }
+  }
+  done: vector<boolean> = [for _ in all { false }];
+  for a in all {
+    if a {
+      emit_struct(x, a#index, done, out);
+    }
+  }
+  // The zeroers, ordered by group and offset.
+  zs: vector<integer> = [];
+  for z in x.tr.zeros {
+    if z#index % 2 == 0 {
+      key = z * 1000000 + x.tr.zeros[z#index + 1]!;
+      pos = len(zs);
+      for k in zs {
+        if pos == len(zs) && key < k {
+          pos = k#index;
+        }
+      }
+      zs.insert(pos, key);
+    }
+  }
+  for key in zs {
+    zg = key / 1000000;
+    zoff = key % 1000000;
+    parts: vector<text> = [];
+    for e in members_of(x, zg) {
+      if e.off == zoff {
+        nm = member_name(e.m, e.off, e.r);
+        parts += ["memset(&(s)->{nm}, 0, sizeof((s)->{nm}));"];
+      }
+    }
+    out += "#define LT_ZERO_{zg}_{zoff}(s) do {{ {parts.join(" ")} }} while (0)\n";
+  }
+  // A sealed copy's nested records are sealed with it.
+  sealed: vector<boolean> = [for _ in x.tr.seals { false }];
+  todo: vector<integer> = [];
+  for s in x.tr.seals {
+    if s {
+      todo += [s#index];
+    }
+  }
+  for _ in 0..len(x.b.types) * 4 + 4 {
+    if len(todo) == 0 {
+      break;
+    }
+    sg = todo[len(todo) - 1]!;
+    todo.remove(len(todo) - 1);
+    if !sealed[sg]! {
+      sealed[sg] = true;
+      for e in x.tr.members {
+        if e.g == sg && e.m == opt_transient::M_RECORD {
+          todo += [e.r];
+        }
+      }
+    }
+  }
+  for s in sealed {
+    if s {
+      out += "static inline void lt_seal_{s#index}(lt_{s#index} *s);\n";
+    }
+  }
+  for s in sealed {
+    if s {
+      body: vector<text> = [];
+      for e in members_of(x, s#index) {
+        if e.m == opt_transient::M_VECTOR {
+          nm = member_name(e.m, e.off, e.r);
+          body += ["s->{nm}.cap = s->{nm}.n;"];
+        } else if e.m == opt_transient::M_RECORD {
+          body += ["lt_seal_{e.r}(&s->{member_name(e.m, e.off, e.r)});"];
+        }
+      }
+      out += "static inline void lt_seal_{s#index}(lt_{s#index} *s) {{ (void) s; {body.join(" ")} }}\n";
+    }
+  }
+  out
+}
+
+// `tr_zero_default`: does a new record of `tp` read as the arena's fresh struct?  (Registers its
+// default image for the unit, as `default_image` does.)
+pub fn zero_default(x: Cx, tp: integer) -> boolean {
+  cgen_ref::default_is_zero_registered(x, tp)
+}
+
+// How a variable of type `t` is held transient (`tr_var`): its kind (0 none, 1 a record, 2 a
+// vector of records) in the result, its group in `g`.
+pub fn tr_var(x: Cx, t: ir::TypeT, g: &integer) -> integer {
+  g = -1;
+  match cgen_types::base(t) {
+    TyReference { n, dep: _ } => rec_kind(x, n, g, 1),
+    TyEnum { n, is_ref, dep: _ } => if is_ref { rec_kind(x, n, g, 1) } else { 0 },
+    TyVector { inner, dep: _ } => match cgen_types::base(inner) {
+      TyReference { n: en, dep: _ } => rec_kind(x, en, g, 2),
+      TyEnum { n: en, is_ref: er, dep: _ } => if er { rec_kind(x, en, g, 2) } else { 0 },
+      _ => 0,
+    },
+    _ => 0,
+  }
+}
+
+fn rec_kind(x: Cx, d: integer, g: &integer, kind: integer) -> integer {
+  if d < 0 || d >= len(x.b.data.definitions) {
+    return 0;
+  }
+  kt = x.b.data.definitions[d]!.known_type;
+  if kt == 65535 || kt < 0 {
+    return 0;
+  }
+  g = group(x, kt);
+  kind
+}
+
+// `tr_reach`: the record groups reachable from group `g` through fields, variants and vector
+// elements.
+pub fn reach(x: Cx, g: integer, out: vector<boolean>) {
+  if out[g]! {
+    return;
+  }
+  out[g] = true;
+  next: vector<integer> = [];
+  field_types(x, g, next);
+  i = 0;
+  for _ in 0..len(x.b.types) * 8 + 8 {
+    if i >= len(next) {
+      break;
+    }
+    c = next[i]!;
+    i += 1;
+    cp = parts_of(x, c);
+    if is_record_parts(cp) {
+      cg = group(x, c);
+      reach(x, cg, out);
+      // A variant's own fields belong to its parent's struct.
+      if cg != c {
+        field_types(x, c, next);
+      }
+    } else {
+      match cp {
+        PtVector { content } => {
+          if is_record_parts(parts_of(x, content)) {
+            reach(x, group(x, content), out);
+          }
+        },
+        _ => {},
+      }
+    }
+  }
+}
+
+fn field_types(x: Cx, tp: integer, next: vector<integer>) {
+  match parts_of(x, tp) {
+    PtStruct { fields } => {
+      for f in fields {
+        next += [f.content];
+      }
+    },
+    PtEnumValue { value: _, fields } => {
+      for f in fields {
+        next += [f.content];
+      }
+    },
+    PtEnum { values } => {
+      for v in values {
+        if v.nr != 65535 {
+          next += [v.nr];
+        }
+      }
+    },
+    _ => {},
+  }
+}
+
+// `tr_flat`: a record of scalars and texts alone — the element a vector producer may build in the
+// arena.
+pub fn flat(x: Cx, g: integer) -> boolean {
+  match parts_of(x, g) {
+    PtStruct { fields } => {
+      for f in fields {
+        fp = parts_of(x, f.content);
+        if is_record_parts(fp) || (fp is PtVector) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+// `tr_in_groups`: is a variable of kind `kind`/group `g` one of `groups`, or the holder record of
+// a vector of one (`main_vector<T>`)?
+pub fn in_groups(x: Cx, kind: integer, g: integer, groups: vector<boolean>) -> boolean {
+  if kind == 2 {
+    return groups[g] ?? false;
+  }
+  if kind != 1 {
+    return false;
+  }
+  if groups[g] ?? false {
+    return true;
+  }
+  match parts_of(x, g) {
+    PtStruct { fields } => {
+      if len(fields) != 1 {
+        return false;
+      }
+      match parts_of(x, fields[0]!.content) {
+        PtVector { content } => groups[group(x, content)] ?? false,
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+// --- One function's transient facts (`TrFn`) ---------------------------------------------------
+
+// Per variable: its kind (0 none, 1 a record of group `g`, 2 a vector of records of group `g`), a
+// dead buffer (handed to a producer twin: never minted, never read), a root (its arena mark is the
+// frame's `loft_tmf`), nullable (an element read past the end), owned (a record this twin builds
+// itself), and a text lift (a local served by another text: a copied argument, or a work-buffer
+// call's result).
+pub struct TrFn {
+  pub any: boolean,
+  pub kind: vector<integer>,
+  pub g: vector<integer>,
+  pub dead: vector<boolean>,
+  pub roots: vector<boolean>,
+  pub nullable: vector<boolean>,
+  pub owned: vector<boolean>,
+  // A twin builds its transient values; a site only reads them.
+  pub builds: boolean,
+  // The return buffer a result twin answers instead of taking, -1 none; the twin's result shape.
+  pub phantom: integer,
+  pub ret: text,
+  // Set while a producer call is evaluated for a transient local.
+  pub want_result: boolean,
+  pub lifts_done: boolean,
+  pub lift_has: vector<boolean>,
+  pub lift_src: vector<ir::Node>,
+  pub lift_copy: vector<boolean>,
+}
+
+pub fn no_fn() -> TrFn {
+  TrFn { any: false, kind: [], g: [], dead: [], roots: [], nullable: [], owned: [], builds: false, phantom: -1, ret: "", want_result: false, lifts_done: false, lift_has: [], lift_src: [], lift_copy: [] }
+}
+
+fn new_fn(n: integer) -> TrFn {
+  t = no_fn();
+  t.any = true;
+  for _ in 0..n {
+    t.kind += [0];
+    t.g += [-1];
+    t.dead += [false];
+    t.roots += [false];
+    t.nullable += [false];
+    t.owned += [false];
+    t.lift_has += [false];
+    t.lift_src += [ir::NdNull];
+    t.lift_copy += [false];
+  }
+  t
+}
+
+// The shape a transient variable is declared in (`TrVar::ctype`).
+pub fn shape_of(kind: integer, g: integer) -> text {
+  if kind == 1 { "tr{g}" } else { "trvec" }
+}
+
+// `TrFn::shape`: the shapes of the transient locals.
+pub fn apply_shapes(tf: TrFn, shapes: vector<text>) {
+  for k in tf.kind {
+    if k > 0 && k#index < len(shapes) {
+      shapes[k#index] = shape_of(k, tf.g[k#index]!);
+    }
+  }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn call_name(b: ir::Bundle, x: ir::Node) -> text {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args: _ } => def_name(b, def_nr),
+    _ => "",
+  }
+}
+
+fn var_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) { NdVar { n } => n, _ => -1 }
+}
+
+fn first_arg(x: ir::Node) -> ir::Node {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr: _, args } => if len(args) > 0 { args[0]! } else { ir::NdNull },
+    _ => ir::NdNull,
+  }
+}
+
+fn block_tail(x: ir::Node) -> ir::Node {
+  match loop_shape::unspan(x) {
+    NdBlock { block } => if len(block[0]!.operators) > 0 { block[0]!.operators[len(block[0]!.operators) - 1]! } else { ir::NdNull },
+    _ => ir::NdNull,
+  }
+}
+
+fn is_block(x: ir::Node) -> boolean {
+  loop_shape::unspan(x) is NdBlock
+}
+
+// `is_mint`: does binding `x` make a fresh record — a mint, a placement, a new element, or nothing
+// yet?
+fn is_mint(b: ir::Bundle, x: ir::Node) -> boolean {
+  u = loop_shape::unspan(x);
+  if u is NdNull {
+    return true;
+  }
+  if u is NdCall {
+    nm = call_name(b, u);
+    return nm == "OpNewRecord" || nm == "OpPlaceRecord" || nm == "OpDatabase" || nm == "OpDatabaseNP" || nm == "OpNullRefSentinel";
+  }
+  if is_block(u) {
+    return block_tail_exists(u) && is_mint(b, block_tail(u));
+  }
+  false
+}
+
+fn block_tail_exists(x: ir::Node) -> boolean {
+  match loop_shape::unspan(x) {
+    NdBlock { block } => len(block[0]!.operators) > 0,
+    _ => false,
+  }
+}
+
+fn is_zero_lit(x: ir::Node) -> boolean {
+  match loop_shape::unspan(x) {
+    NdInt { n } => n == 0,
+    NdLong { n } => n == 0,
+    NdBoolean { b } => !b,
+    NdNull => true,
+    NdText { s } => s == "",
+    NdFloat { f } => f == 0.0,
+    _ => false,
+  }
+}
+
+// `default_object`: `x` is the record a `?` builds where its read misses — `{ OpDatabase(r, tp);
+// OpSet…(r, off, zero)…; r }` of a type whose default is all zeros — and answers that type, -1
+// for none.
+pub fn default_object(x: Cx, value: ir::Node) -> integer {
+  ops: vector<ir::Node> = match loop_shape::unspan(value) {
+    NdBlock { block } => block[0]!.operators,
+    _ => return -1,
+  };
+  kept: vector<ir::Node> = [];
+  for o in ops {
+    if !(loop_shape::unspan(o) is NdLine) {
+      kept += [o];
+    }
+  }
+  if len(kept) == 0 {
+    return -1;
+  }
+  rec = var_of(kept[len(kept) - 1]!);
+  if rec < 0 {
+    return -1;
+  }
+  tp = -1;
+  for i in 0..len(kept) - 1 {
+    op = loop_shape::unspan(kept[i]!);
+    oargs: vector<ir::Node> = match op { NdCall { def_nr: _, args } => args, _ => return -1 };
+    fd = match op { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+    if fd < 0 || fd >= len(x.b.data.definitions) {
+      return -1;
+    }
+    nm = def_name(x.b, fd);
+    if (nm == "OpDatabase" || nm == "OpDatabaseNP") && len(oargs) == 2 && var_of(oargs[0]!) == rec && tp < 0 {
+      t = match loop_shape::unspan(oargs[1]!) { NdInt { n } => n, _ => return -1 };
+      if t < 0 || t > 65535 {
+        return -1;
+      }
+      tp = t;
+    } else if (nm == "OpSetInt" || nm == "OpSetText" || nm == "OpSetBoolean" || nm == "OpSetFloat" || nm == "OpSetInt4") && len(oargs) == 3 && var_of(oargs[0]!) == rec && is_zero_lit(oargs[2]!) && tp >= 0 {
+    } else {
+      return -1;
+    }
+  }
+  if tp < 0 {
+    return -1;
+  }
+  if zero_default(x, tp) { tp } else { -1 }
+}
+
+// `field_of`: is `x` a field (at any depth) of one of `owned`?
+fn field_of(b: ir::Bundle, x: ir::Node, owned: vector<boolean>) -> boolean {
+  u = loop_shape::unspan(x);
+  if u is NdCall {
+    if call_name(b, u) != "OpGetField" {
+      return false;
+    }
+    base = first_arg(u);
+    if loop_shape::unspan(base) is NdNull {
+      return false;
+    }
+    bv = var_of(base);
+    if loop_shape::unspan(base) is NdVar {
+      return owned[bv] ?? false;
+    }
+    return field_of(b, base, owned);
+  }
+  if is_block(u) {
+    return block_tail_exists(u) && field_of(b, block_tail(u), owned);
+  }
+  false
+}
+
+// `derives`: does `x` answer a part of a transient value — a field, an element, an alias?
+fn derives(x: Cx, v: ir::Node, tf: TrFn) -> boolean {
+  u = loop_shape::unspan(v);
+  match u {
+    NdVar { n } => (tf.kind[n] ?? 0) > 0,
+    NdBlock { block: _ } => block_tail_exists(u) && derives(x, block_tail(u), tf),
+    NdIf { cond: _, t, f } => (derives(x, t, tf) && default_object(x, f) >= 0) || (derives(x, f, tf) && default_object(x, t) >= 0),
+    NdCall { def_nr, args } => {
+      nm = def_name(x.b, def_nr);
+      (nm == "OpGetField" || nm == "OpGetVectorNullable" || nm == "OpRefAlias") && len(args) > 0 && derives(x, args[0]!, tf)
+    },
+    _ => false,
+  }
+}
+
+// `producer_buffer`: the buffer variable a call to a loft function returning a record hands it,
+// -1 for none.
+fn producer_buffer(b: ir::Bundle, f: integer, args: vector<ir::Node>) -> integer {
+  if f < 0 || f >= len(b.data.definitions) {
+    return -1;
+  }
+  def = b.data.definitions[f]!;
+  if !def.name.starts_with("n_") || len(def.code) == 0 || (def.code[0]! is NdNull) {
+    return -1;
+  }
+  k = binds::hidden_return_buffer_attr(def) ?? -1;
+  if k < 0 || k >= len(args) {
+    return -1;
+  }
+  var_of(args[k]!)
+}
+
+// Every node of `n` in walk order (`Value::walk`, which visits a span's inner node as its child).
+fn walk_nodes(n: ir::Node, out: vector<ir::Node>) {
+  out += [n];
+  for c in el_ir::children(n) {
+    walk_nodes(c, out);
+  }
+}
+
+fn returned(b: ir::Bundle, f: integer) -> ir::TypeT {
+  d = b.data.definitions[f]!;
+  if len(d.returned) == 0 { ir::TyVoid } else { d.returned[0]! }
+}
+
+// `dead_buffers`: the hidden buffers `code` hands to a function answering a record of `groups`.
+fn dead_buffers(x: Cx, nodes: vector<ir::Node>, tf: TrFn, groups: vector<boolean>) {
+  for n in nodes {
+    match n {
+      NdCall { def_nr, args } => {
+        pb = producer_buffer(x.b, def_nr, args);
+        if pb >= 0 {
+          g = -1;
+          if tr_var(x, returned(x.b, def_nr), g) == 1 && (groups[g] ?? false) && pb < len(tf.dead) {
+            tf.dead[pb] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+}
+
+fn mentions_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: w } => if w == v { return true; },
+    _ => {},
+  }
+  for c in el_ir::children(n) {
+    if mentions_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// `site_plan`: the site plan of ordinary function `d` — its root locals, each bound from a call
+// to a function whose producer twin can be written, and the locals derived from them.
+pub fn site_plan(x: Cx, d: integer) -> TrFn {
+  if !enabled() {
+    return no_fn();
+  }
+  def = x.b.data.definitions[d]!;
+  if len(def.code) == 0 {
+    return no_fn();
+  }
+  code = def.code[0]!;
+  nodes: vector<ir::Node> = [];
+  walk_nodes(code, nodes);
+  root_pairs: vector<integer> = [];
+  calls: vector<integer> = [];
+  for n in nodes {
+    match n {
+      NdSet { var, inner } => {
+        rhs = loop_shape::unspan(inner);
+        f = match rhs { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+        cargs: vector<ir::Node> = match rhs { NdCall { def_nr: _, args } => args, _ => [] };
+        pb = if f >= 0 { producer_buffer(x.b, f, cargs) } else { -1 };
+        if pb >= 0 {
+          g = -1;
+          k = tr_var(x, returned(x.b, f), g);
+          if k == 1 || (k == 2 && flat(x, g)) {
+            clean = true;
+            for a in cargs {
+              if mentions_var(a, var) {
+                clean = false;
+              }
+            }
+            if clean {
+              known = false;
+              for r in root_pairs {
+                if r#index % 2 == 0 && r == var && root_pairs[r#index + 1]! == pb {
+                  known = true;
+                }
+              }
+              if !known {
+                root_pairs += [var, pb];
+              }
+              calls += [f];
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  if len(root_pairs) == 0 {
+    return no_fn();
+  }
+  nv = len(def.variables.variables);
+  tf = new_fn(nv);
+  owner: vector<integer> = [for _ in 0..nv { -1 }];
+  root_vars: vector<integer> = [];
+  for r in root_pairs {
+    if r#index % 2 == 0 && !root_vars.contains(r) {
+      root_vars += [r];
+    }
+  }
+  for r in root_pairs {
+    if r#index % 2 == 0 {
+      g = -1;
+      k = tr_var(x, def.variables.variables[r]!.type_def[0] ?? ir::TyVoid, g);
+      if k == 0 {
+        return no_fn();
+      }
+      tf.kind[r] = k;
+      tf.g[r] = g;
+      tf.roots[r] = true;
+      owner[r] = r;
+    } else {
+      tf.dead[r] = true;
+    }
+  }
+  // The locals bound from a projection, an element or an alias of a transient local, each with
+  // the root it reads.
+  for _ in 0..nv + 1 {
+    grew = false;
+    for n in nodes {
+      match n {
+        NdSet { var, inner } => {
+          if tf.kind[var]! == 0 && derives(x, inner, tf) {
+            g = -1;
+            k = tr_var(x, def.variables.variables[var]!.type_def[0] ?? ir::TyVoid, g);
+            if k > 0 {
+              from = -1;
+              sub: vector<ir::Node> = [];
+              walk_nodes(inner, sub);
+              for m in sub {
+                if from < 0 {
+                  mv = match m { NdVar { n: w } => w, _ => -1 };
+                  if mv >= 0 && owner[mv]! >= 0 {
+                    from = owner[mv]!;
+                  }
+                }
+              }
+              tf.kind[var] = k;
+              tf.g[var] = g;
+              if from >= 0 {
+                owner[var] = from;
+              }
+              grew = true;
+            }
+          }
+        },
+        _ => {},
+      }
+    }
+    if !grew {
+      break;
+    }
+  }
+  if lives(x, code, root_vars, owner) != "" {
+    return no_fn();
+  }
+  // The producers' twins only for a site that can hold them.
+  for f in calls {
+    if twin(x, f, 0, true) == "" {
+      return no_fn();
+    }
+  }
+  tf
+}
+
+// The walk `lives` runs: a counter per node, the blocks around it, each root's binds and each
+// read of a root or of a local derived from it.
+struct LWalk {
+  at: integer,
+  blocks: vector<integer>,
+  bind_root: vector<integer>,
+  bind_at: vector<integer>,
+  bind_blk: vector<integer>,
+  read_root: vector<integer>,
+  read_at: vector<integer>,
+  read_blocks: vector<text>,
+}
+
+fn lgo(x: Cx, w: LWalk, roots: vector<integer>, owner: vector<integer>, v: ir::Node) {
+  w.at += 1;
+  u = loop_shape::unspan(v);
+  match u {
+    NdBlock { block } => {
+      w.blocks += [w.at];
+      for op in block[0]!.operators {
+        lgo(x, w, roots, owner, op);
+      }
+      w.blocks.remove(len(w.blocks) - 1);
+      return;
+    },
+    NdSet { var, inner } => {
+      if roots.contains(var) {
+        if !(loop_shape::unspan(inner) is NdNull) {
+          w.bind_root += [var];
+          w.bind_at += [w.at];
+          w.bind_blk += [if len(w.blocks) > 0 { w.blocks[len(w.blocks) - 1]! } else { 0 }];
+        }
+        lgo(x, w, roots, owner, inner);
+        return;
+      }
+    },
+    NdCall { def_nr, args } => {
+      nm = def_name(x.b, def_nr);
+      if nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" || nm == "OpFreeRecordIn" || nm == "OpClear" {
+        for a in args {
+          if a#index == 0 && (loop_shape::unspan(a) is NdVar) {
+            continue;
+          }
+          lgo(x, w, roots, owner, a);
+        }
+        return;
+      }
+    },
+    NdVar { n } => {
+      if (owner[n] ?? -1) >= 0 {
+        w.read_root += [owner[n]!];
+        w.read_at += [w.at];
+        bl: vector<text> = [for b in w.blocks { "{b}" }];
+        w.read_blocks += [",{bl.join(",")},"];
+      }
+    },
+    _ => {},
+  }
+  for c in el_ir::children(v) {
+    lgo(x, w, roots, owner, c);
+  }
+}
+
+// `lives`: the frame's one arena mark is given back at each root's bind and free, which is sound
+// when each root is bound once, every read of it lies inside the block of its bind and after it,
+// and the roots' spans from bind to last read are apart.  "" when sound, else why not.
+fn lives(x: Cx, code: ir::Node, roots: vector<integer>, owner: vector<integer>) -> text {
+  w = LWalk { at: 0, blocks: [], bind_root: [], bind_at: [], bind_blk: [], read_root: [], read_at: [], read_blocks: [] };
+  lgo(x, w, roots, owner, code);
+  span_a: vector<integer> = [];
+  span_b: vector<integer> = [];
+  for r in roots {
+    count = 0;
+    bind = 0;
+    blk = 0;
+    for br in w.bind_root {
+      if br == r {
+        count += 1;
+        bind = w.bind_at[br#index]!;
+        blk = w.bind_blk[br#index]!;
+      }
+    }
+    if count != 1 {
+      return "a root bound more than once";
+    }
+    last = bind;
+    for rr in w.read_root {
+      if rr == r {
+        at = w.read_at[rr#index]!;
+        if at <= bind || w.read_blocks[rr#index]!.find(",{blk},") == null {
+          return "a root read outside its bind's block";
+        }
+        if at > last {
+          last = at;
+        }
+      }
+    }
+    span_a += [bind];
+    span_b += [last];
+  }
+  for i in 0..len(span_a) {
+    for j in i + 1..len(span_a) {
+      if !(span_b[i]! < span_a[j]! || span_b[j]! < span_a[i]!) {
+        return "its roots live together";
+      }
+    }
+  }
+  ""
+}
+
+// `tr_twin`: the twin of `(d, params, result)`, written on first ask; "" when it cannot be.
+pub fn twin(x: Cx, d: integer, params: integer, result: boolean) -> text {
+  key = "{d}:{params}:{if result { 1 } else { 0 }}";
+  for k in x.tr.keys {
+    if k == key {
+      return x.tr.names[k#index]!;
+    }
+  }
+  name = "{cgen_names::c_name(x.b, x.dups, d)}__tr{params:x}{if result { "r" } else { "" }}";
+  x.tr.keys += [key];
+  x.tr.names += [name];
+  x.tr.order += [key];
+  protos = len(x.tr.protos);
+  bodies = len(x.tr.bodies);
+  at = len(x.tr.order) - 1;
+  why = "";
+  written = write_twin(x, d, params, result, name, why);
+  if why == "" {
+    if written.inner != "" {
+      x.tr.protos += "{written.inner};\n";
+    }
+    x.tr.protos += "{written.sig};\n";
+    x.tr.bodies += "\n{written.sig} {{\n{written.body}}}\n";
+    return name;
+  }
+  x.tr.protos = x.tr.protos[0..protos];
+  x.tr.bodies = x.tr.bodies[0..bodies];
+  gone = x.tr.order[at..len(x.tr.order)];
+  x.tr.order = x.tr.order[0..at];
+  for gk in gone {
+    for k in x.tr.keys {
+      if k == gk {
+        x.tr.names[k#index] = "";
+      }
+    }
+  }
+  ""
+}
+
+pub struct TwinText {
+  pub sig: text,
+  pub body: text,
+  pub inner: text,
+}
+
+fn var_type(def: ir::Definition, v: integer) -> ir::TypeT {
+  def.variables.variables[v]!.type_def[0] ?? ir::TyVoid
+}
+
+// `write_twin`: twin `(d, params, result)` as `name` — its signature and body (and, for a twin
+// that holds texts for a halt, its inner function's signature); `why` says why it cannot be.
+fn write_twin(x: Cx, d: integer, params: integer, result: boolean, name: text, why: &text) -> TwinText {
+  out = TwinText { sig: "", body: "", inner: "" };
+  def = x.b.data.definitions[d]!;
+  if len(def.code) == 0 || (def.code[0]! is NdNull) || !def.name.starts_with("n_") {
+    why = "not a loft function";
+    return out;
+  }
+  if cgen_types::base(returned(x.b, d)) is TyIterator {
+    why = "a generator";
+    return out;
+  }
+  args: vector<integer> = [];
+  for v in def.variables.variables {
+    if v.argument {
+      args += [v#index];
+    }
+  }
+  if len(args) != len(def.attributes) || len(args) > 63 {
+    why = "parameters that do not match their arguments";
+    return out;
+  }
+  nv = len(def.variables.variables);
+  tf = new_fn(nv);
+  tf.builds = true;
+  groups: vector<boolean> = [for _ in x.b.types { false }];
+  ret = cgen_types::ctype(returned(x.b, d)) ?? "";
+  if ret == "" {
+    why = "a result the C has no shape for";
+    return out;
+  }
+  if result {
+    ri = binds::hidden_return_buffer_attr(def) ?? -1;
+    if ri < 0 {
+      why = "a transient result with no return buffer";
+      return out;
+    }
+    bv = args[ri]!;
+    g = -1;
+    k = tr_var(x, var_type(def, bv), g);
+    if k == 0 {
+      why = "a transient result that is not a record";
+      return out;
+    }
+    tf.kind[bv] = k;
+    tf.g[bv] = g;
+    tf.phantom = bv;
+    // A vector answered through its own record (`main_vector<T>`): the twin answers the vector
+    // itself, that record's field 0.
+    rg = -1;
+    ret = if tr_var(x, returned(x.b, d), rg) == 2 { "trvec" } else { shape_of(k, g) };
+    reach(x, g, groups);
+  }
+  for a in args {
+    if (params >> a#index) & 1 == 1 {
+      g = -1;
+      k = tr_var(x, var_type(def, a), g);
+      if k == 0 {
+        why = "a transient parameter that is not a record";
+        return out;
+      }
+      reach(x, g, groups);
+      tf.kind[a] = k;
+      tf.g[a] = g;
+    }
+  }
+  nodes: vector<ir::Node> = [];
+  walk_nodes(def.code[0]!, nodes);
+  dead_buffers(x, nodes, tf, groups);
+  for v in def.variables.variables {
+    if v.argument || tf.dead[v#index]! {
+      continue;
+    }
+    g = -1;
+    k = tr_var(x, v.type_def[0] ?? ir::TyVoid, g);
+    if k > 0 && in_groups(x, k, g, groups) {
+      tf.kind[v#index] = k;
+      tf.g[v#index] = g;
+    }
+  }
+  // Owned: every binding a mint, or a field of an owned local — a fixpoint that only removes.
+  for v in def.variables.variables {
+    tf.owned[v#index] = tf.kind[v#index]! > 0 && (!v.argument || tf.phantom == v#index);
+  }
+  for _ in 0..nv + 1 {
+    gone: vector<integer> = [];
+    for n in nodes {
+      match n {
+        NdSet { var, inner } => {
+          if tf.owned[var]! && !is_mint(x.b, inner) && !field_of(x.b, inner, tf.owned) {
+            gone += [var];
+          }
+        },
+        _ => {},
+      }
+    }
+    if len(gone) == 0 {
+      break;
+    }
+    for g2 in gone {
+      tf.owned[g2] = false;
+    }
+  }
+  tf.ret = ret;
+  written = cgen_fn::write_transient_body(x, d, tf);
+  if written.refused != "" {
+    why = written.refused;
+    return out;
+  }
+  rtype = held(ret);
+  out.sig = "static {rtype} {name}({written.list})";
+  body = written.inner;
+  // A twin that holds texts for a halt (`LOFT_HOLD`) gives them back on its way out, as the
+  // ordinary function's wrapper does.
+  if body.find("LOFT_HOLD(") != null {
+    inner_name = "{name}__in";
+    names: vector<text> = [];
+    for a in args {
+      if a != tf.phantom {
+        names += [var_name(def.variables.variables[a]!.name, a)];
+      }
+    }
+    call = "{inner_name}({names.join(", ")})";
+    wrapper = if rtype == "void" { "    LOFT_HOLD_MARK(hm);\n    {call};\n    LOFT_HOLD_BACK(hm);\n" } else { "    LOFT_HOLD_MARK(hm);\n    {rtype} r = {call};\n    LOFT_HOLD_BACK(hm);\n    return r;\n" };
+    out.inner = "static {rtype} {inner_name}({written.list})";
+    out.body = "{wrapper}}}\n\n{out.inner} {{\n{body}";
+    return out;
+  }
+  out.body = body;
+  out
+}
+
+// Does the body hold a root (a site)?
+pub fn has_roots(tf: TrFn) -> boolean {
+  for r in tf.roots {
+    if r {
+      return true;
+    }
+  }
+  false
+}
+
+// `lean`: a twin or a site, which the store-plan rewrites leave alone.
+pub fn lean(w: W) -> boolean {
+  w.tr.any
+}
+
+// Is shape `s` a transient one (`CType::Tr`, `CType::TrVec`)?
+pub fn is_tr_shape(s: text) -> boolean {
+  s == "trvec" || (s.starts_with("tr") && s.size() > 2)
+}
+
+// --- The writer (`FnWriter`'s transient arms) --------------------------------------------------
+
+// Where a transient value lives: a struct (`rec`: its C lvalue and group) or a vector (its C
+// lvalue and element: a record of group `elem`, or — `scalar` — scalars of `elem` bytes).
+pub struct Place {
+  pub ok: boolean,
+  pub rec: boolean,
+  pub lv: text,
+  pub g: integer,
+  pub scalar: boolean,
+  pub elem: integer,
+}
+
+fn no_place() -> Place {
+  Place { ok: false, rec: false, lv: "", g: -1, scalar: false, elem: -1 }
+}
+
+fn rec_place(lv: text, g: integer) -> Place {
+  Place { ok: true, rec: true, lv: lv, g: g, scalar: false, elem: -1 }
+}
+
+fn vec_place(lv: text, scalar: boolean, elem: integer) -> Place {
+  Place { ok: true, rec: false, lv: lv, g: -1, scalar: scalar, elem: elem }
+}
+
+fn fail(w: W, why: text) -> Place {
+  refuse(w, why);
+  no_place()
+}
+
+fn void_e() -> E {
+  E { code: "((void) 0)", kind: K_VOID }
+}
+
+fn vname(x: Cx, w: W, v: integer) -> text {
+  x.b.data.definitions[w.index]!.variables.variables[v]!.name
+}
+
+pub fn tr_is(w: W, v: integer) -> boolean {
+  w.tr.any && v >= 0 && (w.tr.kind[v] ?? 0) > 0
+}
+
+pub fn tr_dead(w: W, v: integer) -> boolean {
+  w.tr.any && v >= 0 && (w.tr.dead[v] ?? false)
+}
+
+fn is_param(w: W, v: integer) -> boolean {
+  v >= 0 && (w.params[v] ?? false)
+}
+
+// `tr_root`: the transient variable `v` is rooted at — a variable, or the base of a field or
+// element read — -1 for none.
+pub fn tr_root(x: Cx, w: W, v: ir::Node) -> integer {
+  u = loop_shape::unspan(v);
+  match u {
+    NdVar { n } => if tr_is(w, n) { n } else { -1 },
+    NdCall { def_nr, args } => {
+      nm = def_name(x.b, def_nr);
+      if (nm == "OpGetField" || nm == "OpGetVectorNullable") && len(args) > 0 { tr_root(x, w, args[0]!) } else { -1 }
+    },
+    NdBlock { block: _ } => if block_tail_exists(u) { tr_root(x, w, block_tail(u)) } else { -1 },
+    NdIf { cond: _, t, f } => {
+      r = tr_root(x, w, t);
+      if r >= 0 { r } else { tr_root(x, w, f) }
+    },
+    _ => -1,
+  }
+}
+
+// `tr_writable`: a write into transient value `dst` — only into a record this twin built itself.
+fn writable(x: Cx, w: W, dst: ir::Node) -> boolean {
+  root = tr_root(x, w, dst);
+  if root >= 0 && (w.tr.owned[root] ?? false) {
+    return true;
+  }
+  refuse(w, "a write into a transient value this body did not build (`{if root >= 0 { vname(x, w, root) } else { "?" }}`)");
+  false
+}
+
+// `tr_choice`: is `v` a choice (`v[i]?`), through a block's tail?
+fn choice(v: ir::Node) -> boolean {
+  u = loop_shape::unspan(v);
+  match u {
+    NdBlock { block: _ } => block_tail_exists(u) && choice(block_tail(u)),
+    NdIf { cond: _, t: _, f: _ } => true,
+    _ => false,
+  }
+}
+
+fn int_lit(v: ir::Node) -> integer {
+  match loop_shape::unspan(v) { NdInt { n } => n, _ => null }
+}
+
+// `tr_place`: where transient value `v` lives.
+pub fn place(x: Cx, w: W, v: ir::Node, ind: integer) -> Place {
+  u = loop_shape::unspan(v);
+  match u {
+    NdVar { n } => {
+      if !tr_is(w, n) {
+        return fail(w, "a store value where a transient one was meant (`{vname(x, w, n)}`)");
+      }
+      nm = w.names[n]!;
+      if w.tr.kind[n]! == 1 { rec_place("(*{nm})", w.tr.g[n]!) } else { vec_place("(*{nm})", false, w.tr.g[n]!) }
+    },
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      if len(ops) == 0 {
+        return fail(w, "an empty block");
+      }
+      for i in 0..len(ops) - 1 {
+        cgen_fn::stmt(x, w, ops[i]!, ind);
+      }
+      place(x, w, ops[len(ops) - 1]!, ind)
+    },
+    // `v[i]?` read in place: the element, or the zero record nothing writes.
+    NdIf { cond, t, f } => {
+      first = true;
+      arm = t;
+      tp = default_object(x, f);
+      if tp < 0 {
+        tp = default_object(x, t);
+        if tp < 0 {
+          return fail(w, "a choice between two transient values");
+        }
+        first = false;
+        arm = f;
+      }
+      g = group(x, tp);
+      tmp = "trp{len(w.decls) + 1}";
+      w.decls += ["lt_{g} *{tmp} = 0;"];
+      zero_line = "{tmp} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));";
+      test = as_cond(w, cgen_fn::expr(x, w, cond, ind));
+      line(w, ind, "if ({bare(test)}) {{");
+      if first {
+        pa = ptr(x, w, arm, ind + 1);
+        line(w, ind + 1, "{tmp} = {pa};");
+        line(w, ind, "}} else {{");
+        line(w, ind + 1, zero_line);
+      } else {
+        line(w, ind + 1, zero_line);
+        line(w, ind, "}} else {{");
+        pa = ptr(x, w, arm, ind + 1);
+        line(w, ind + 1, "{tmp} = {pa};");
+      }
+      line(w, ind, "}}");
+      rec_place("(*{tmp})", g)
+    },
+    NdCall { def_nr, args } => {
+      if def_name(x.b, def_nr) != "OpGetField" {
+        return fail(w, "a transient value of another shape ({def_name(x.b, def_nr)})");
+      }
+      if len(args) != 3 {
+        return fail(w, "a field read of another shape");
+      }
+      off = int_lit(args[1]!);
+      if off == null {
+        return fail(w, "a field at a computed offset");
+      }
+      tp = int_lit(args[2]!);
+      if tp == null || tp < 0 || tp > 65535 {
+        return fail(w, "a field read of no known type");
+      }
+      base = place(x, w, args[0]!, ind);
+      if !base.ok {
+        return base;
+      }
+      tparts = parts_of(x, tp);
+      if !base.rec && off == 0 && (tparts is PtVector) {
+        return base;
+      }
+      if !base.rec {
+        return fail(w, "a field of a vector");
+      }
+      match tparts {
+        PtVector { content } => {
+          ep = parts_of(x, content);
+          member(x, base.g, off, opt_transient::M_VECTOR, -1);
+          if is_record_parts(ep) {
+            vec_place("{base.lv}.{member_name(opt_transient::M_VECTOR, off, -1)}", false, group(x, content))
+          } else {
+            vec_place("{base.lv}.{member_name(opt_transient::M_VECTOR, off, -1)}", true, x.b.types[content].size)
+          }
+        },
+        _ => {
+          if !is_record_parts(tparts) {
+            return fail(w, "a field of a kind the transient form does not hold");
+          }
+          r = group(x, tp);
+          // A record holds no record of its own group by value: a projection at offset 0 that
+          // names the group again is the record itself.
+          if r == base.g && off == 0 {
+            return base;
+          }
+          member(x, base.g, off, opt_transient::M_RECORD, r);
+          rec_place("{base.lv}.{member_name(opt_transient::M_RECORD, off, r)}", r)
+        },
+      }
+    },
+    NdIf { cond: _, t: _, f: _ } => fail(w, "a transient value of another shape (an if)"),
+    NdInsert { items: _ } => fail(w, "a transient value of another shape (an insert)"),
+    _ => fail(w, "a transient value of another shape"),
+  }
+}
+
+// `tr_new_record_vec`: the vector `OpNewRecord(data, parent, field)` appends to — `data` itself
+// (no field), or the vector field `field` of `parent`, the record `data` names.
+fn new_record_vec(x: Cx, w: W, cargs: vector<ir::Node>, ind: integer) -> text {
+  field = if len(cargs) > 2 { int_lit(cargs[2]!) } else { null };
+  if field == null {
+    refuse(w, "an element of an unknown field");
+    return "";
+  }
+  if field < 0 || field == 65535 {
+    p = place(x, w, cargs[0]!, ind);
+    if !p.ok {
+      return "";
+    }
+    if p.rec {
+      refuse(w, "an element of a record");
+      return "";
+    }
+    return p.lv;
+  }
+  // An element appended to a record's vector field: not taken yet.
+  if (env_variable("LOFT_TRANSIENT_FIELD_APPEND") ?? "") == "" {
+    refuse(w, "an element of a record's vector field");
+    return "";
+  }
+  parent = int_lit(cargs[1]!);
+  if parent == null || parent < 0 || parent > 65535 {
+    refuse(w, "an element of a record of no known type");
+    return "";
+  }
+  fs: vector<ir::DbField> = match parts_of(x, parent) { PtStruct { fields } => fields, _ => [] };
+  if !(parts_of(x, parent) is PtStruct) {
+    refuse(w, "an element of a field of no struct");
+    return "";
+  }
+  if field >= len(fs) {
+    refuse(w, "a field index out of range");
+    return "";
+  }
+  fld = fs[field]!;
+  if !(parts_of(x, fld.content) is PtVector) {
+    refuse(w, "an element of a field that is no vector");
+    return "";
+  }
+  p = place(x, w, cargs[0]!, ind);
+  if !p.ok {
+    return "";
+  }
+  if !p.rec {
+    refuse(w, "a field of a vector");
+    return "";
+  }
+  member(x, p.g, fld.position, opt_transient::M_VECTOR, -1);
+  "{p.lv}.{member_name(opt_transient::M_VECTOR, fld.position, -1)}"
+}
+
+// `tr_ptr`: a pointer to the struct transient value `v` names — `&place`, or the variable itself.
+pub fn ptr(x: Cx, w: W, v: ir::Node, ind: integer) -> text {
+  u = loop_shape::unspan(v);
+  vv = var_of(u);
+  if (u is NdVar) && tr_is(w, vv) {
+    return w.names[vv]!;
+  }
+  callee = match u { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+  if callee >= 0 && !cgen_names::is_operator(x.b, callee) {
+    w.tr.want_result = true;
+    e = cgen_fn::expr(x, w, v, ind);
+    w.tr.want_result = false;
+    return e.code;
+  }
+  p = place(x, w, v, ind);
+  if !p.ok {
+    return "";
+  }
+  "&{p.lv}"
+}
+
+fn null_of(m: integer) -> text {
+  if m == opt_transient::M_INT { "LOFT_NULL" } else if m == opt_transient::M_BOOL { "LOFT_BOOL_NULL" } else if m == opt_transient::M_ENUM { "(uint8_t) 255" } else { "" }
+}
+
+fn root_arg(x: Cx, w: W, args: vector<ir::Node>) -> boolean {
+  len(args) > 0 && tr_root(x, w, args[0]!) >= 0
+}
+
+fn dead_or_tr(w: W, v: integer) -> boolean {
+  v >= 0 && (tr_dead(w, v) || tr_is(w, v))
+}
+
+// `tr_operator`: the operators a transient value changes; `done` false for one that names none.
+pub fn tr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if !w.tr.any {
+    return none();
+  }
+  first = if len(args) > 0 && (loop_shape::unspan(args[0]!) is NdVar) { var_of(args[0]!) } else { -1 };
+  if (name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpClear" || name == "OpFreeRecordIn") && dead_or_tr(w, first) {
+    done = true;
+    if name != "OpClear" && (w.tr.roots[first] ?? false) {
+      line(w, ind, "loft_ta_back(loft_tmf);");
+    }
+    return void_e();
+  }
+  if name == "OpFreeText" && first >= 0 && lift(x, w, first) {
+    done = true;
+    return void_e();
+  }
+  // A free guarded against a transient value: the two are always distinct.
+  if name == "OpFreeRefIfDistinct" && len(args) > 1 && dead_or_tr(w, if loop_shape::unspan(args[1]!) is NdVar { var_of(args[1]!) } else { -1 }) {
+    done = true;
+    return cgen_fn::op_call(x, w, "OpFreeRef", [args[0]!], ind);
+  }
+  if name == "OpDistinctStore" {
+    for a in args {
+      if (loop_shape::unspan(a) is NdVar) && dead_or_tr(w, var_of(a)) {
+        done = true;
+        return E { code: "1", kind: K_COND };
+      }
+    }
+  }
+  if (name == "OpRefIsNull" || name == "OpConvBoolFromRef") && len(args) == 1 {
+    if first < 0 {
+      return none();
+    }
+    // A dead buffer parameter is one its caller passed: present, and never minted.
+    if tr_dead(w, first) && is_param(w, first) {
+      done = true;
+      return E { code: if name == "OpRefIsNull" { "0" } else { "1" }, kind: K_COND };
+    }
+    if tr_dead(w, first) {
+      done = true;
+      return E { code: "1", kind: K_COND };
+    }
+    if !tr_is(w, first) {
+      return none();
+    }
+    done = true;
+    return E { code: "({w.names[first]!} {if name == "OpRefIsNull" { "==" } else { "!=" }} 0)", kind: K_COND };
+  }
+  if (name == "OpDatabase" || name == "OpDatabaseNP") && dead_or_tr(w, first) {
+    done = true;
+    if tr_dead(w, first) {
+      return void_e();
+    }
+    if !w.tr.builds {
+      refuse(w, "a site that mints into a transient value");
+      return none();
+    }
+    if !writable(x, w, args[0]!) {
+      return none();
+    }
+    tp = if len(args) > 1 { int_lit(args[1]!) } else { null };
+    if tp == null {
+      refuse(w, "a mint of no known type");
+      return none();
+    }
+    if tp < 0 || tp > 65535 {
+      refuse(w, "a type out of range");
+      return none();
+    }
+    // A vector's own record (`main_vector<T>`, its field 0 the vector): the arena vector itself.
+    if w.tr.kind[first]! == 2 {
+      line(w, ind, "{w.names[first]!} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));");
+      return void_e();
+    }
+    if !zero_default(x, tp) {
+      refuse(w, "a record whose default is not all zeros");
+      return none();
+    }
+    g = group(x, tp);
+    line(w, ind, "{w.names[first]!} = (lt_{g} *) loft_ta_alloc(sizeof(lt_{g}));");
+    return void_e();
+  }
+  if (name == "OpGetInt" || name == "OpGetBoolean" || name == "OpGetEnum" || name == "OpGetText") && root_arg(x, w, args) {
+    done = true;
+    if len(args) != 2 {
+      refuse(w, "a getter of another shape");
+      return none();
+    }
+    off = int_lit(args[1]!);
+    if off == null {
+      refuse(w, "a getter at a computed offset");
+      return none();
+    }
+    m = if name == "OpGetInt" { opt_transient::M_INT } else if name == "OpGetBoolean" { opt_transient::M_BOOL } else if name == "OpGetEnum" { opt_transient::M_ENUM } else { opt_transient::M_TEXT };
+    k = if name == "OpGetInt" { K_INT } else if name == "OpGetBoolean" { K_BOOL } else if name == "OpGetEnum" { K_ENUM } else { K_VIEW };
+    root = tr_root(x, w, args[0]!);
+    p = place(x, w, args[0]!, ind);
+    if !p.ok {
+      return none();
+    }
+    if !p.rec {
+      refuse(w, "a getter of a vector");
+      return none();
+    }
+    member(x, p.g, off, m, -1);
+    read = "{p.lv}.{member_name(m, off, -1)}";
+    nullable = !choice(args[0]!) && (w.tr.nullable[root] ?? false);
+    if nullable {
+      absent = if m == opt_transient::M_TEXT { "((loft_str) {{ 0, 0 }})" } else { null_of(m) };
+      return E { code: "({w.names[root]!} ? {read} : {absent})", kind: k };
+    }
+    return E { code: read, kind: k };
+  }
+  if name == "OpLengthVector" && root_arg(x, w, args) {
+    done = true;
+    p = place(x, w, args[0]!, ind);
+    if !p.ok {
+      return none();
+    }
+    if p.rec {
+      refuse(w, "the length of a record");
+      return none();
+    }
+    return E { code: "((int64_t) ({p.lv}).n)", kind: K_INT };
+  }
+  if (name == "OpSetInt" || name == "OpSetBoolean" || name == "OpSetEnum" || name == "OpSetText" || name == "OpSetInt4") && root_arg(x, w, args) {
+    done = true;
+    if !w.tr.builds {
+      refuse(w, "a site that writes a transient value");
+      return none();
+    }
+    if len(args) != 3 {
+      refuse(w, "a setter of another shape");
+      return none();
+    }
+    if !writable(x, w, args[0]!) {
+      return none();
+    }
+    off = int_lit(args[1]!);
+    if off == null {
+      refuse(w, "a setter at a computed offset");
+      return none();
+    }
+    p = place(x, w, args[0]!, ind);
+    if !p.ok {
+      return none();
+    }
+    val_zero = match loop_shape::unspan(args[2]!) { NdInt { n } => n == 0, _ => false };
+    // The length word of a vector's own record, zeroed at its mint: the arena vector is born
+    // empty.
+    if name == "OpSetInt4" && off == 0 && val_zero && !p.rec {
+      return void_e();
+    }
+    if !p.rec {
+      refuse(w, "a setter of a vector");
+      return none();
+    }
+    if name == "OpSetInt4" {
+      if !val_zero {
+        refuse(w, "a narrow field written");
+        return none();
+      }
+      zero(x, p.g, off);
+      line(w, ind, "LT_ZERO_{p.g}_{off}(&{p.lv});");
+      return void_e();
+    }
+    m = if name == "OpSetInt" { opt_transient::M_INT } else if name == "OpSetBoolean" { opt_transient::M_BOOL } else if name == "OpSetEnum" { opt_transient::M_ENUM } else { opt_transient::M_TEXT };
+    member(x, p.g, off, m, -1);
+    e = cgen_fn::expr(x, w, args[2]!, ind);
+    val = if m == opt_transient::M_INT { as_int(w, e) } else if m == opt_transient::M_BOOL { as_bool(w, e) } else if m == opt_transient::M_ENUM { as_enum(w, e) } else { "loft_ta_str({as_view(w, e)})" };
+    line(w, ind, "{p.lv}.{member_name(m, off, -1)} = {val};");
+    flush(w, ind);
+    return void_e();
+  }
+  if (name == "OpCopyRecord" || name == "OpMoveField") && ((len(args) > 0 && tr_root(x, w, args[0]!) >= 0) || (len(args) > 1 && tr_root(x, w, args[1]!) >= 0)) {
+    done = true;
+    if !w.tr.builds {
+      refuse(w, "a site that copies a transient value");
+      return none();
+    }
+    if len(args) < 2 {
+      refuse(w, "a record copy of another shape");
+      return none();
+    }
+    if tr_root(x, w, args[0]!) < 0 || tr_root(x, w, args[1]!) < 0 {
+      refuse(w, "a record copied between a store and a transient value");
+      return none();
+    }
+    if !writable(x, w, args[1]!) {
+      return none();
+    }
+    s = ptr(x, w, args[0]!, ind);
+    p = place(x, w, args[1]!, ind);
+    if !p.ok {
+      return none();
+    }
+    if !p.rec {
+      refuse(w, "a record copied into a vector");
+      return none();
+    }
+    // The copy shares its vectors' elements with the source: sealed, a push into it moves it.
+    seal(x, p.g);
+    line(w, ind, "{p.lv} = *{s}; lt_seal_{p.g}(&{p.lv});");
+    return void_e();
+  }
+  if name == "OpMoveVector" && root_arg(x, w, args) {
+    done = true;
+    if !w.tr.builds {
+      refuse(w, "a site that writes a transient vector");
+      return none();
+    }
+    if len(args) < 2 {
+      refuse(w, "a vector move of another shape");
+      return none();
+    }
+    if !writable(x, w, args[0]!) {
+      return none();
+    }
+    dp = place(x, w, args[0]!, ind);
+    if !dp.ok {
+      return none();
+    }
+    if dp.rec {
+      refuse(w, "a vector moved into a record");
+      return none();
+    }
+    sp = place(x, w, args[1]!, ind);
+    if !sp.ok {
+      return none();
+    }
+    if sp.rec {
+      refuse(w, "a record moved into a vector");
+      return none();
+    }
+    line(w, ind, "{dp.lv} = {sp.lv};");
+    return void_e();
+  }
+  if name == "OpAppendVector" && root_arg(x, w, args) {
+    done = true;
+    if !w.tr.builds {
+      refuse(w, "a site that appends to a transient vector");
+      return none();
+    }
+    if len(args) < 2 {
+      refuse(w, "an append of another shape");
+      return none();
+    }
+    if !writable(x, w, args[0]!) {
+      return none();
+    }
+    dp = place(x, w, args[0]!, ind);
+    if !dp.ok {
+      return none();
+    }
+    if dp.rec || !dp.scalar {
+      refuse(w, "an append of records");
+      return none();
+    }
+    if tr_root(x, w, args[1]!) >= 0 {
+      refuse(w, "a transient vector appended");
+      return none();
+    }
+    s = as_ref(w, cgen_fn::expr(x, w, args[1]!, ind));
+    line(w, ind, "loft_ta_vec_copy(&{dp.lv}, {s}, {dp.elem});");
+    flush(w, ind);
+    return void_e();
+  }
+  // `@FR-R-SliceInto`'s transient clause: the clamped span copied into the field's own buffer.
+  if name == "OpSliceVector" && root_arg(x, w, args) {
+    done = true;
+    if !w.tr.builds {
+      refuse(w, "a site that appends to a transient vector");
+      return none();
+    }
+    if len(args) != 5 {
+      refuse(w, "a slice of another shape");
+      return none();
+    }
+    if !writable(x, w, args[0]!) {
+      return none();
+    }
+    dp = place(x, w, args[0]!, ind);
+    if !dp.ok {
+      return none();
+    }
+    if dp.rec || !dp.scalar {
+      refuse(w, "a slice into records");
+      return none();
+    }
+    if tr_root(x, w, args[1]!) >= 0 {
+      refuse(w, "a transient vector sliced");
+      return none();
+    }
+    tp = cgen_fn::literal(w, args[4]!, "element type");
+    if tp == null {
+      return none();
+    }
+    if tp < 0 || tp > 65535 {
+      refuse(w, "an element type out of range");
+      return none();
+    }
+    if x.b.types[tp].size != dp.elem {
+      refuse(w, "a slice of another element size");
+      return none();
+    }
+    trio = [args[1]!, args[2]!, args[3]!];
+    fe = as_ref(w, cgen_fn::arg(x, w, trio, 0, ind));
+    le = as_int(w, cgen_fn::arg(x, w, trio, 1, ind));
+    he = as_int(w, cgen_fn::arg(x, w, trio, 2, ind));
+    line(w, ind, "loft_ta_vec_copy_range(&{dp.lv}, {fe}, {le}, {he}, {dp.elem});");
+    flush(w, ind);
+    return void_e();
+  }
+  if (name == "OpPreAllocVector" || name == "OpFinishRecord") && root_arg(x, w, args) {
+    done = true;
+    return void_e();
+  }
+  if name == "OpClearVector" && root_arg(x, w, args) {
+    done = true;
+    if !w.tr.builds {
+      refuse(w, "a site that clears a transient vector");
+      return none();
+    }
+    if !writable(x, w, args[0]!) {
+      return none();
+    }
+    // The result buffer before its mint: a twin starts from nothing.
+    if first >= 0 && w.tr.phantom == first {
+      return void_e();
+    }
+    p = place(x, w, args[0]!, ind);
+    if !p.ok {
+      return none();
+    }
+    if p.rec {
+      refuse(w, "a clear of a record");
+      return none();
+    }
+    // A vector local before its mint is no vector yet: nothing to clear.
+    if p.lv.starts_with("(*") && p.lv.ends_with(")") && plain_ident(p.lv[2..p.lv.size() - 1]) {
+      line(w, ind, "if ({p.lv[2..p.lv.size() - 1]}) {p.lv}.n = 0;");
+    } else {
+      line(w, ind, "{p.lv}.n = 0;");
+    }
+    return void_e();
+  }
+  // Any other operator handed a transient value would read it as a store reference.
+  for a in args {
+    av = if loop_shape::unspan(a) is NdVar { var_of(a) } else { -1 };
+    if tr_root(x, w, a) >= 0 || (av >= 0 && tr_dead(w, av) && !is_param(w, av)) {
+      done = true;
+      refuse(w, "{name} of a transient value");
+      return none();
+    }
+  }
+  none()
+}
+
+fn plain_ident(s: text) -> boolean {
+  for ch in s {
+    c = ch as integer;
+    if !((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95) {
+      return false;
+    }
+  }
+  true
+}
+
+// `tr_set`: `var = v` for a transient or dead `var`; false for any other.
+pub fn set(x: Cx, w: W, var: integer, v: ir::Node, ind: integer) -> boolean {
+  if !w.tr.any {
+    return false;
+  }
+  u = loop_shape::unspan(v);
+  if tr_dead(w, var) {
+    if u is NdNull {
+      return true;
+    }
+    nm = call_name(x.b, u);
+    if nm == "OpPlaceRecord" || nm == "OpDatabase" || nm == "OpNullRefSentinel" {
+      return true;
+    }
+    // A buffer parameter's own mint when its caller passed none.
+    if is_param(w, var) && nm == "OpGetField" && (loop_shape::unspan(first_arg(u)) is NdVar) {
+      return true;
+    }
+    refuse(w, "a dead buffer bound to a value");
+    return true;
+  }
+  if !tr_is(w, var) {
+    return false;
+  }
+  kind = w.tr.kind[var]!;
+  g = w.tr.g[var]!;
+  lhs = w.names[var]!;
+  if u is NdNull {
+    line(w, ind, "{lhs} = 0;");
+    return true;
+  }
+  src = var_of(u);
+  if (u is NdVar) && tr_is(w, src) {
+    line(w, ind, "{lhs} = {w.names[src]!};");
+    return true;
+  }
+  callee = match u { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+  cargs: vector<ir::Node> = match u { NdCall { def_nr: _, args } => args, _ => [] };
+  if callee >= 0 && cgen_names::is_operator(x.b, callee) {
+    opn = def_name(x.b, callee);
+    if opn == "OpGetField" {
+      pv = ptr(x, w, v, ind);
+      line(w, ind, "{lhs} = {pv};");
+    } else if opn == "OpRefAlias" {
+      pv = ptr(x, w, cargs[0]!, ind);
+      line(w, ind, "{lhs} = {pv};");
+    } else if (opn == "OpGetVectorNullable" || opn == "OpGetVector") && kind == 1 {
+      p = place(x, w, cargs[0]!, ind);
+      if !p.ok {
+        return true;
+      }
+      if p.rec {
+        refuse(w, "an element of a record");
+        return true;
+      }
+      idx = as_int(w, cgen_fn::expr(x, w, cargs[2]!, ind));
+      line(w, ind, "{lhs} = (lt_{g} *) loft_ta_vec_at(&{p.lv}, {idx}, sizeof(lt_{g}));");
+      w.tr.nullable[var] = true;
+    } else if opn == "OpNewRecord" && kind == 1 {
+      if !w.tr.builds {
+        refuse(w, "a site that adds to a transient vector");
+        return true;
+      }
+      if !writable(x, w, cargs[0]!) {
+        return true;
+      }
+      lv = new_record_vec(x, w, cargs, ind);
+      if w.why != "" {
+        return true;
+      }
+      line(w, ind, "{lhs} = (lt_{g} *) loft_ta_vec_push(&{lv}, sizeof(lt_{g}));");
+    } else if opn == "OpPlaceRecord" && kind == 1 {
+      if !w.tr.builds {
+        refuse(w, "a site that places into a transient value");
+        return true;
+      }
+      line(w, ind, "{lhs} = (lt_{g} *) loft_ta_alloc(sizeof(lt_{g}));");
+    } else {
+      refuse(w, "a transient local bound from {opn}");
+    }
+    return true;
+  }
+  if callee >= 0 {
+    // The frame's arena back to its entry: nothing transient is left to read.
+    if w.tr.roots[var]! {
+      line(w, ind, "loft_ta_back(loft_tmf);");
+    }
+    pv = ptr(x, w, v, ind);
+    line(w, ind, "{lhs} = {pv};");
+    flush(w, ind);
+    return true;
+  }
+  match u {
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      if len(ops) == 0 {
+        refuse(w, "an empty block");
+        return true;
+      }
+      for i in 0..len(ops) - 1 {
+        cgen_fn::stmt(x, w, ops[i]!, ind);
+      }
+      if !set(x, w, var, ops[len(ops) - 1]!, ind) {
+        refuse(w, "a block of another shape");
+      }
+      true
+    },
+    NdIf { cond, t, f } => {
+      c = as_cond(w, cgen_fn::expr(x, w, cond, ind));
+      line(w, ind, "if ({bare(c)}) {{");
+      set_arm(x, w, var, t, ind + 1);
+      line(w, ind, "}} else {{");
+      set_arm(x, w, var, f, ind + 1);
+      line(w, ind, "}}");
+      true
+    },
+    _ => {
+      refuse(w, "a transient local bound from a value of another shape");
+      true
+    },
+  }
+}
+
+// `tr_set_arm`: one arm of `var = if c { a } else { b }` — the record a `?` builds where its read
+// misses is the zero record nothing writes.
+fn set_arm(x: Cx, w: W, var: integer, arm: ir::Node, ind: integer) {
+  tp = default_object(x, arm);
+  if tp >= 0 {
+    g = group(x, tp);
+    line(w, ind, "{w.names[var]!} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));");
+    return;
+  }
+  if !set(x, w, var, arm, ind) {
+    refuse(w, "a choice arm of another shape");
+  }
+}
+
+// `tr_text_copy`: a `text argument copy` block — `{ w = ""; w += t; w }` — of a transient
+// record's text `t`: that text, `NdNull` for none.
+pub fn text_copy(x: Cx, w: W, v: ir::Node) -> ir::Node {
+  if !w.tr.any {
+    return ir::NdNull;
+  }
+  b: ir::Block = match loop_shape::unspan(v) {
+    NdBlock { block } => block[0]!,
+    _ => return ir::NdNull,
+  };
+  if b.name != "text argument copy" {
+    return ir::NdNull;
+  }
+  ops: vector<ir::Node> = [];
+  for o in b.operators {
+    if !(loop_shape::unspan(o) is NdLine) {
+      ops += [o];
+    }
+  }
+  if len(ops) != 3 {
+    return ir::NdNull;
+  }
+  wv = match loop_shape::unspan(ops[0]!) {
+    NdSet { var, inner } => if (match loop_shape::unspan(inner) { NdText { s } => s == "", _ => false }) { var } else { -1 },
+    _ => -1,
+  };
+  if wv < 0 || var_of(ops[2]!) != wv || !(loop_shape::unspan(ops[2]!) is NdVar) {
+    return ir::NdNull;
+  }
+  app = loop_shape::unspan(ops[1]!);
+  if call_name(x.b, app) != "OpAppendText" || var_of(first_arg(app)) != wv || !(loop_shape::unspan(first_arg(app)) is NdVar) {
+    return ir::NdNull;
+  }
+  src: ir::Node = match app { NdCall { def_nr: _, args } => if len(args) > 1 { args[1]! } else { ir::NdNull }, _ => ir::NdNull };
+  sc = loop_shape::unspan(src);
+  if call_name(x.b, sc) == "OpGetText" && tr_root(x, w, first_arg(sc)) >= 0 {
+    return src;
+  }
+  ir::NdNull
+}
+
+// `tr_text_lift`: is text local `v` served by another text (`lift_src`)?
+pub fn lift(x: Cx, w: W, v: integer) -> boolean {
+  if !w.tr.any || v < 0 {
+    return false;
+  }
+  if !w.tr.lifts_done {
+    find_lifts(x, w);
+    w.tr.lifts_done = true;
+  }
+  w.tr.lift_has[v] ?? false
+}
+
+// `writes_var`: may evaluating `v` write variable `t` — an assignment of it, a call through a
+// function value, or `t` handed to a parameter that does not take a `text` by value?
+fn writes_var(b: ir::Bundle, v: ir::Node, t: integer) -> boolean {
+  match v {
+    NdSpan { pos: _, inner } => return writes_var(b, inner, t),
+    NdSet { var, inner: _ } => if var == t { return true; },
+    NdCallRef { var: _, args: _ } => return true,
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        def = b.data.definitions[def_nr]!;
+        for a in args {
+          if (loop_shape::unspan(a) is NdVar) && var_of(a) == t {
+            k = a#index;
+            text_param = k < len(def.attributes) && (cgen_types::base(def.attributes[k]!.typedef[0] ?? ir::TyVoid) is TyText);
+            if !text_param {
+              return true;
+            }
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  for c in el_ir::children(v) {
+    if writes_var(b, c, t) {
+      return true;
+    }
+  }
+  false
+}
+
+// The work text an argument hands a callee: the variable, or the `{ w = ""; OpCreateStack(w) }`
+// block a work argument is lowered to; -1 for none.
+fn work_buffer(v: ir::Node) -> integer {
+  u = loop_shape::unspan(v);
+  match u {
+    NdVar { n } => n,
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      if len(ops) == 0 {
+        return -1;
+      }
+      match loop_shape::unspan(ops[len(ops) - 1]!) {
+        NdCall { def_nr: _, args } => if len(args) == 1 && (loop_shape::unspan(args[0]!) is NdVar) { var_of(args[0]!) } else { -1 },
+        _ => -1,
+      }
+    },
+    _ => -1,
+  }
+}
+
+fn count_var(n: ir::Node, v: integer) -> integer {
+  c = match n { NdVar { n: m } => if m == v { 1 } else { 0 }, _ => 0 };
+  for ch in el_ir::children(n) {
+    c += count_var(ch, v);
+  }
+  c
+}
+
+fn touches_root(x: Cx, n: ir::Node, roots: vector<boolean>, buffer: integer) -> boolean {
+  hit = match n {
+    NdSet { var, inner: _ } => roots[var] ?? false,
+    NdVar { n: m } => buffer >= 0 && m == buffer,
+    NdCall { def_nr, args } => {
+      nm = def_name(x.b, def_nr);
+      (nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct") && len(args) > 0 && (loop_shape::unspan(args[0]!) is NdVar) && (roots[var_of(args[0]!)] ?? false)
+    },
+    _ => false,
+  };
+  if hit {
+    return true;
+  }
+  for ch in el_ir::children(n) {
+    if touches_root(x, ch, roots, buffer) {
+      return true;
+    }
+  }
+  false
+}
+
+fn find_lifts(x: Cx, w: W) {
+  def = x.b.data.definitions[w.index]!;
+  code = def.code[0]!;
+  nv = len(def.variables.variables);
+  sets: vector<integer> = [for _ in 0..nv { 0 }];
+  uses: vector<integer> = [for _ in 0..nv { 0 }];
+  nodes: vector<ir::Node> = [];
+  walk_nodes(code, nodes);
+  for n in nodes {
+    match n {
+      NdSet { var, inner: _ } => sets[var] += 1,
+      NdVar { n: m } => uses[m] += 1,
+      _ => {},
+    }
+  }
+  for n in nodes {
+    ops: vector<ir::Node> = match n { NdBlock { block } => block[0]!.operators, _ => continue };
+    for op in ops {
+      sv = -1;
+      bound = ir::NdNull;
+      match loop_shape::unspan(op) {
+        NdSet { var, inner } => {
+          sv = var;
+          bound = inner;
+        },
+        _ => {},
+      }
+      if sv < 0 || is_param(w, sv) || sets[sv]! != 1 {
+        continue;
+      }
+      bu = loop_shape::unspan(bound);
+      src = ir::NdNull;
+      copy = false;
+      buffer = -1;
+      if bu is NdBlock {
+        tc = text_copy(x, w, bu);
+        if tc is NdNull {
+          continue;
+        }
+        src = tc;
+        copy = true;
+      } else if bu is NdCall {
+        callee = match bu { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+        bargs: vector<ir::Node> = match bu { NdCall { def_nr: _, args } => args, _ => [] };
+        pos = cgen_fn::answers_work(x.b, callee, false);
+        if pos < 0 || pos >= len(bargs) {
+          continue;
+        }
+        wb = work_buffer(bargs[pos]!);
+        if wb < 0 || is_param(w, wb) {
+          continue;
+        }
+        src = ir::NdVar { n: wb };
+        buffer = wb;
+      } else {
+        continue;
+      }
+      // Every later mention in this block, none of a root's bind or free between, and none a
+      // write: the lifted local is the source, read where it lies.
+      seen = 0;
+      clean = true;
+      for later in ops[op#index + 1..len(ops)] {
+        if writes_var(x.b, later, sv) {
+          clean = false;
+        }
+        here = count_var(later, sv);
+        if seen < uses[sv]! && touches_root(x, later, w.tr.roots, buffer) {
+          clean = false;
+        }
+        seen += here;
+      }
+      if clean && seen == uses[sv]! {
+        w.tr.lift_has[sv] = true;
+        w.tr.lift_src[sv] = src;
+        w.tr.lift_copy[sv] = copy;
+      }
+    }
+  }
+}
+
+// `tr_length`: `len(v)` of a transient vector — its count; `done` false for any other.
+pub fn length(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if !w.tr.any || (route != "t_6vector_len" && route != "OpLengthVector") || len(args) != 1 || tr_root(x, w, args[0]!) < 0 {
+    return none();
+  }
+  done = true;
+  p = place(x, w, args[0]!, ind);
+  if !p.ok {
+    return none();
+  }
+  if p.rec {
+    refuse(w, "the length of a record");
+    return none();
+  }
+  E { code: "((int64_t) ({p.lv}).n)", kind: K_INT }
+}
+
+// `tr_args`' plan: the twin a call goes to (`name`, "" none), the parameters it takes transient,
+// and the return buffer it takes no more (-1 none).
+pub struct TrCall {
+  pub name: text,
+  pub params: integer,
+  pub dropped: integer,
+}
+
+// `tr_args`: the arguments a call hands transient values — each a pointer into `xs`, the call
+// going to the callee's twin.
+pub fn call_args(x: Cx, w: W, d: integer, args: vector<ir::Node>, xs: vector<text>, ind: integer) -> TrCall {
+  out = TrCall { name: "", params: 0, dropped: -1 };
+  if !w.tr.any {
+    return out;
+  }
+  result = w.tr.want_result;
+  w.tr.want_result = false;
+  params = 0;
+  for a in args {
+    if tr_root(x, w, a) >= 0 {
+      params = params | (1 << a#index);
+    }
+  }
+  if params == 0 && !result {
+    return out;
+  }
+  name = twin(x, d, params, result);
+  if name == "" {
+    refuse(w, "no transient twin of {def_name(x.b, d)}");
+    return out;
+  }
+  for a in args {
+    if (params >> a#index) & 1 == 1 {
+      xs[a#index] = ptr(x, w, a, ind);
+    }
+  }
+  out.name = name;
+  out.params = params;
+  out.dropped = if result { binds::hidden_return_buffer_attr(x.b.data.definitions[d]!) ?? -1 } else { -1 };
+  out
+}
+
+// `tr_return`: `return v` from a twin answering its result transient.
+pub fn ret(x: Cx, w: W, v: ir::Node, ind: integer) {
+  u = loop_shape::unspan(v);
+  match u {
+    NdReturn { inner } => {
+      ret(x, w, inner, ind);
+      return;
+    },
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      if len(ops) > 0 {
+        for i in 0..len(ops) - 1 {
+          cgen_fn::stmt(x, w, ops[i]!, ind);
+        }
+        ret(x, w, ops[len(ops) - 1]!, ind);
+        return;
+      }
+    },
+    _ => {},
+  }
+  pv = "";
+  if w.ret == "trvec" {
+    p = place(x, w, v, ind);
+    if !p.ok {
+      return;
+    }
+    if p.rec {
+      member(x, p.g, 0, opt_transient::M_VECTOR, -1);
+      pv = "&{p.lv}.{member_name(opt_transient::M_VECTOR, 0, -1)}";
+    } else {
+      pv = "&{p.lv}";
+    }
+  } else {
+    pv = ptr(x, w, v, ind);
+  }
+  r = temp(w, w.ret);
+  line(w, ind, "{r} = {pv};");
+  cgen_fn::ret_held(w, r, ind);
+}

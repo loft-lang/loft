@@ -14,6 +14,7 @@
 // the loop whose body the node stands in (`W.memos`' top frame, `ChainFrame.depth`).  A nested
 // loop is walked by neither analysis, so that loop is the only one whose answer a node has.
 
+use cgen_transient;
 use ir;
 use cgen::(Cx);
 use binds;
@@ -251,7 +252,7 @@ fn silent_chain(b: ir::Bundle, v: ir::Node) -> boolean {
 fn hold_invariants(x: Cx, w: W, lp: ir::Block, ind: integer) {
   frame = MemoFrame { memos: [] };
   // Not in a generator (`gen_elem`): a hoisted value would not survive a yield.
-  if (env_variable("LOFT_NO_INVARIANT_HOIST") ?? "0") == "0" && w.gen_elem == "" {
+  if (env_variable("LOFT_NO_INVARIANT_HOIST") ?? "0") == "0" && w.gen_elem == "" && !cgen_transient::lean(w) {
     for ch in invariant_chains(x, w, lp) {
       name = "ia{len(w.decls) + 1}";
       // One entry, two lines: the memo and its flag each stand alone.
@@ -1827,7 +1828,7 @@ fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
 // tested copy may assume apart (`pairs`).  False for a loop that gains nothing, cannot be copied
 // (a `yield`, a `par`, a function-value call), or under `LOFT_NO_DISTINCT_VERSION=1`.
 fn distinct_version(x: Cx, w: W, lp: ir::Block, tests: &vector<integer>, pairs: &vector<integer>) -> boolean {
-  if (env_variable("LOFT_NO_DISTINCT_VERSION") ?? "0") != "0" || !opt_facts::enabled() || len(w.facts.assumed) > 0 {
+  if cgen_transient::lean(w) || (env_variable("LOFT_NO_DISTINCT_VERSION") ?? "0") != "0" || !opt_facts::enabled() || len(w.facts.assumed) > 0 {
     return false;
   }
   opaque = [false];

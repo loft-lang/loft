@@ -7,6 +7,7 @@
 // (`append_twin`, `append_twin_buffer_op`), the window clause (`apw_operator`, the window an
 // append-twin call is handed) and the loop clause (`open_loop_windows`).
 
+use cgen_transient;
 use ir;
 use cgen::(Cx);
 use cgen_w::*;
@@ -105,7 +106,7 @@ pub fn twin_body(x: Cx, w: W) -> text {
 // `append_site`: `X += f(args)` where f has an append twin, written as the call of `f__ap` with
 // X as its buffer, so f's appends land after X's elements.  Answers whether it wrote it.
 pub fn append_site(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
-  if !enabled() || w.gen_elem != "" {
+  if !enabled() || w.gen_elem != "" || cgen_transient::lean(w) {
     return false;
   }
   site = opt_append_twin::call_site(x.b, v, w.index, w.ap_memo);
@@ -249,7 +250,7 @@ pub fn window_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
 // `close_loop_windows` syncs them after the loop's end.  The loop may leave only by its own end.
 // `LOFT_NO_APPEND_LOOP_WINDOW=1`.
 pub fn open_loop_windows(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
-  if !enabled() || w.gen_elem != "" || (env_variable("LOFT_NO_APPEND_LOOP_WINDOW") ?? "0") != "0" {
+  if !enabled() || w.gen_elem != "" || cgen_transient::lean(w) || (env_variable("LOFT_NO_APPEND_LOOP_WINDOW") ?? "0") != "0" {
     return 0;
   }
   f = x.b.data.definitions[w.index]!.variables;

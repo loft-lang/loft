@@ -17,6 +17,7 @@ use ir;
 use cgen::(Cx, request_twin);
 use binds;
 use opt_apart_value;
+use cgen_transient;
 use cgen_names;
 use cgen_types;
 use cgen_w::*;
@@ -395,6 +396,14 @@ fn narrow32(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
 }
 
 fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  // `@FR-R-Transient`: the operators a transient value changes.
+  if w.tr.any {
+    tr_done = false;
+    tr_e = cgen_transient::tr_op(x, w, name, args, ind, tr_done);
+    if tr_done {
+      return tr_e;
+    }
+  }
   if name == "OpNarrow32" && len(args) == 1 {
     return narrow32(x, w, args[0]!, ind);
   }
@@ -958,10 +967,25 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   if ds_here {
     w.ds_site = -1;
   }
+  // `@FR-R-Transient`'s work clause: the lifted bind's own call, likewise.
+  wr_here = w.wr_call >= 0 && w.wr_call == d;
+  if wr_here {
+    w.wr_call = -2;
+  }
   def = x.b.data.definitions[d]!;
   // Every route below is keyed by the callee's name, and only a standard-library definition
   // is answered by one.
   route = cgen_names::runtime_name(x.b, d);
+  if w.tr.any {
+    tr_len_done = false;
+    tr_len = cgen_transient::length(x, w, route, args, ind, tr_len_done);
+    if tr_len_done {
+      if wr_here {
+        w.wr_call = d;
+      }
+      return tr_len;
+    }
+  }
   // The store's memory report names each type by the unit's type-name table.
   if route == "n_store_memory" && len(args) == 0 {
     report = temp(w, "text");
@@ -1131,9 +1155,15 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       }
     }
   }
+  // `@FR-R-Transient`: the arguments handed transient values, each a pointer, the call going to
+  // the callee's twin; a result twin takes no return buffer.
+  trc = cgen_transient::call_args(x, w, d, args, xs, ind);
+  if w.why != "" {
+    return none();
+  }
   for a in args {
     i = a#index;
-    if linked[i]! {
+    if linked[i]! || (trc.params >> i) & 1 == 1 || i == trc.dropped {
       continue;
     }
     if loop_shape::unspan(a) == NdNull {
@@ -1163,9 +1193,12 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   w.slice_carriers = w.slice_carriers[0..carriers];
   // An IR tuple the callee takes by pointer (`Cx::vr_ptr_params`): its address.
   for i in cgen_value::vr_ptr_params(x, d) {
-    if i < len(xs) {
+    if i < len(xs) && i != trc.dropped {
       xs[i] = cgen_value::tuple_arg_address(w, args, i, xs[i]!, shapes[i]!, ind);
     }
+  }
+  if trc.dropped >= 0 {
+    xs.remove(trc.dropped);
   }
   t = cgen_names::plain(d);
   if places != 0 && (native != "" || len(args) > 63) {
@@ -1175,7 +1208,8 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   t.places = places;
   // `@FR-R-Header`'s kept-twin clause: a callee handed a vector this body holds a grown
   // header for takes that header by pointer and keeps it current; no refresh follows.
-  if places == 0 && native == "" && len(args) < 64 {
+  tr_named = trc.name != "";
+  if places == 0 && native == "" && len(args) < 64 && !tr_named {
     kh = cgen_hoist::kept_header_arg(x, w, d, args);
     if kh != "" {
       xs += ["&{kh}"];
@@ -1187,8 +1221,8 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
   // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin, which
   // takes it as its buffers (`expr` answered them at that argument).
-  apr_call = cgen_apart::twin_call(x, w, d, args);
-  if !t.kh && native == "" && len(args) < 64 && !apr_call {
+  apr_call = !tr_named && cgen_apart::twin_call(x, w, d, args);
+  if !t.kh && native == "" && len(args) < 64 && !apr_call && !tr_named {
     taken = false;
     inputs = cgen_inputs::twin_inputs(x, w, d, args, ind, taken);
     if w.why != "" {
@@ -1209,17 +1243,17 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       }
     }
   }
-  if w.nk_call == d {
+  if w.nk_call == d && !tr_named {
     w.nk_call = -1;
     t.nk = true;
   }
-  if ap_here || cgen_append::handed(x, w, d, args) {
+  if !tr_named && (ap_here || cgen_append::handed(x, w, d, args)) {
     t.ap = true;
   }
-  if ds_here {
+  if ds_here && !tr_named {
     t.ds = true;
   }
-  if native == "" {
+  if native == "" && !tr_named {
     if len(args) <= 23 && !apr_call {
       t.nn = nn_twin_bits(x, w, d, args);
     }
@@ -1229,9 +1263,23 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     t.apr = true;
   }
   name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
-  if !cgen_names::is_plain(t) {
+  if tr_named {
+    name = trc.name;
+  } else if !cgen_names::is_plain(t) {
     request_twin(x, t);
     name = cgen_names::twin_name(x.b, x.dups, t);
+  }
+  // `@FR-R-Transient`'s work clause: the result is read from the caller's buffer.
+  wr = wr_here && cgen_names::is_plain(t) && !tr_named;
+  if wr {
+    w.wr_call = -1;
+    name = work_twin(x, d);
+    if name == "" {
+      refuse(w, "no work twin");
+      return none();
+    }
+  } else if wr_here {
+    w.wr_call = d;
   }
   // `@FR-R-AppendTwin`'s window clause: a twin that takes its caller's window gets one.
   fresh = "";
@@ -1262,9 +1310,12 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     held_r = temp(w, "ref");
     return E { code: "({fresh} = loft_win_of({buffer_c}, {window}), {held_r} = {code}, loft_win_sync({fresh}), {held_r})", kind: K_REF };
   }
+  if wr {
+    return E { code: code, kind: K_VOID };
+  }
   // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
   // through its `__wr` twin, and the call's value is a view of that buffer.
-  if ret == "text" && cgen_names::is_plain(t) && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
+  if ret == "text" && cgen_names::is_plain(t) && !tr_named && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
     at = answers_work(x.b, d, true);
     if at >= 0 && at < len(xs) && plain_place(xs[at]!) {
       twin = work_twin(x, d);
@@ -1564,7 +1615,7 @@ fn work_twin(x: Cx, d: integer) -> text {
     x.work_twins[d] = 1;
     return "";
   }
-  written = write_body(x, cgen_names::plain(d), param, false, []);
+  written = write_body(x, cgen_names::plain(d), param, false, [], cgen_transient::no_fn());
   if written.refused != "" {
     x.work_twins[d] = 3;
     x.why_work = written.refused;
@@ -1938,6 +1989,15 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       if av_v != "" {
         return E { code: av_v, kind: K_REF };
       }
+      // `@FR-R-Transient`: a lifted text reads the text it copies; a transient value read where
+      // a store value is meant refuses the body.
+      if w.tr.any && cgen_transient::lift(x, w, n) {
+        return expr(x, w, w.tr.lift_src[n]!, ind);
+      }
+      if cgen_transient::tr_is(w, n) || (cgen_transient::tr_dead(w, n) && !(w.params[n] ?? false)) {
+        refuse(w, "a transient value read as a store value (`{x.b.data.definitions[w.index]!.variables.variables[n]!.name}`)");
+        return none();
+      }
       shape = w.shapes[n] ?? "";
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
@@ -2005,7 +2065,16 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       w.call_site = saved_site;
       out
     },
-    NdBlock { block: _ } => compound(x, w, node, ind),
+    NdBlock { block: _ } => {
+      // `@FR-R-Transient`: a text argument copy of a transient text reads that text.
+      if w.tr.any {
+        copied = cgen_transient::text_copy(x, w, node);
+        if !(copied is NdNull) {
+          return expr(x, w, copied, ind);
+        }
+      }
+      compound(x, w, node, ind)
+    },
     NdInsert { items: _ } => compound(x, w, node, ind),
     NdIf { cond: _, t: _, f: _ } => compound(x, w, node, ind),
     NdTuple { items: _ } => compound(x, w, node, ind),
@@ -2205,6 +2274,8 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
     line(w, ind, "{target} = loft_ref_null();");
   } else if shape == "fn" {
     line(w, ind, "{target} = loft_fn_of(LOFT_NULL);");
+  } else if cgen_transient::is_tr_shape(shape) {
+    line(w, ind, "{target} = 0;");
   } else if shape != "void" {
     refuse(w, "a null of shape {shape}");
   }
@@ -2666,6 +2737,14 @@ fn label(w: W, depth: integer) -> integer {
 // Return `v`'s value, or nothing (`ret_value`).
 fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
   absent = loop_shape::unspan(v) == NdNull;
+  if cgen_transient::is_tr_shape(w.ret) {
+    if absent {
+      refuse(w, "a transient result answered by nothing");
+      return;
+    }
+    cgen_transient::ret(x, w, v, ind);
+    return;
+  }
   if w.ret == "void" {
     // A `__wr` twin answers its caller's buffer: nothing to hand back; a null answer is the
     // null text in that buffer.
@@ -2986,6 +3065,27 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdSet { var, inner } => {
       // `@FR-R-Cold`: an outlined arm's own variable is initialised there.
       if w.undeclared[var]! {
+        return;
+      }
+      // `@FR-R-Transient`: a lifted text argument served by the transient text it copies is not
+      // bound at all; a work-buffer result's call fills the buffer, through its `__wr` twin.
+      if w.tr.any && cgen_transient::lift(x, w, var) {
+        w.bound[var] = true;
+        if (loop_shape::unspan(inner) is NdCall) && !w.tr.lift_copy[var]! {
+          w.wr_call = match loop_shape::unspan(inner) { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+          e = expr(x, w, inner, ind);
+          if w.wr_call != -1 {
+            w.wr_call = -1;
+            refuse(w, "a work-buffer call written without its twin");
+            return;
+          }
+          line(w, ind, "{e.code};");
+          flush(w, ind);
+        }
+        return;
+      }
+      if w.tr.any && cgen_transient::set(x, w, var, inner, ind) {
+        w.bound[var] = true;
         return;
       }
       if cgen_apart::stmt(x, w, v, ind) {
@@ -3398,17 +3498,32 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   // `@FR-R-Cold`'s loft clause: the ordinary body only, and written again in place where
   // the body did not keep to the plan.
   if cgen_names::is_plain(twin) && plain_rules() && cgen_gen::gen_elem(x.b.data.definitions[twin.d]!) == "" {
-    tried = write_body(x, twin, -1, true, []);
+    // `@FR-R-Transient`: a plain function with a root site is written with it first, and again
+    // without it when the writer declines it.
+    site = cgen_transient::site_plan(x, twin.d);
+    if site.any {
+      with_site = write_body(x, twin, -1, false, [], site);
+      if with_site.refused == "" {
+        return with_site;
+      }
+    }
+    tried = write_body(x, twin, -1, true, [], cgen_transient::no_fn());
     if tried.refused != cgen_cold::COLD_ESCAPED {
       return tried;
     }
   }
-  write_body(x, twin, -1, false, [])
+  write_body(x, twin, -1, false, [], cgen_transient::no_fn())
+}
+
+// `@FR-R-Transient`: the body of definition `d` written with transient facts `tf` — a twin's
+// (its inner body, no frame wrapper) or a site's.
+pub fn write_transient_body(x: Cx, d: integer, tf: cgen_transient::TrFn) -> Written {
+  write_body(x, cgen_names::plain(d), -1, false, [], tf)
 }
 
 // The body of twin `twin` (`FnWriter::write`); with `work_ret` a `__wr` twin's — the body
 // alone, answering nothing, its result the caller's buffer `work_ret`.
-fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>) -> Written {
+fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>, tf: cgen_transient::TrFn) -> Written {
   index = twin.d;
   // `@FR-R-Base`'s guard clause: the guarded index slots marked in the code every body of the
   // function is written from (`opt_below_len::mark`).
@@ -3434,6 +3549,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
+  // `@FR-R-Transient`: the transient locals are pointers into the arena.
+  if tf.any {
+    cgen_transient::apply_shapes(tf, shapes);
+  }
   // A generator (`write_gen`): its body is the resume function's, written for its effect.
   gen_elem = if work_ret >= 0 || len(helper) > 0 { "" } else { cgen_gen::gen_elem(d) };
   if gen_elem == "void" {
@@ -3454,6 +3573,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       return Written { text: "", refused: "a __d twin of a function with no destination shape" };
     }
     ret = opt_destination::tuple_shape(ds_shape);
+  }
+  // A transient twin answers its result as the arena pointer it built.
+  if tf.any && tf.builds {
+    ret = tf.ret;
   }
   if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
@@ -3636,8 +3759,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     dc_null_only: [],
     dc_pending: 0,
     dc_ctx: [],
-    apv: if plain_rules() { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
-    apr: if plain_rules() { cgen_apart::record_roles(x, index, twin.apr) } else { opt_apart_records::no_roles() },
+    apv: if plain_rules() && !tf.any { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
+    apr: if plain_rules() && !tf.any { cgen_apart::record_roles(x, index, twin.apr) } else { opt_apart_records::no_roles() },
+    tr: tf,
+    wr_call: -1,
     av: opt_apart_value::no_roles(),
     av_twin: false,
     av_rb: -1,
@@ -3654,6 +3779,20 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     text_windows: [],
     raw_shapes: [],
   };
+  // `@FR-R-Transient` (`FnWriter::transient`): a result twin's buffer is a local of its own — a
+  // vector result the IR never mints is the twin's from its entry — and a site takes the
+  // frame's arena mark at its entry.
+  if tf.any {
+    if tf.phantom >= 0 {
+      w.params[tf.phantom] = false;
+      if tf.kind[tf.phantom]! == 2 {
+        w.decls += ["{w.names[tf.phantom]!} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));"];
+      }
+    }
+    if cgen_transient::has_roots(tf) {
+      w.decls += ["loft_ta_mark_t loft_tmf = loft_ta_mark();"];
+    }
+  }
   // `store_links`: a place twin's `&` parameters (`twin.places`, by parameter) and a store
   // instance's text parameters (`n_app@st1`, `parser/store_text.rs`) are store links, and so is every `&` local each bind of which names a field or an element — each a
   // `loft_ref` to the place, read and written through it (`link_access`).
@@ -3714,7 +3853,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     w.grown_headers += ["(*khp)"];
   }
   // `@FR-R-RetAdopt`: the result local that is built in the return buffer.
-  if plain_rules() && (env_variable("LOFT_NO_RETBUF_ADOPT") ?? "0") == "0" {
+  if plain_rules() && !tf.any && (env_variable("LOFT_NO_RETBUF_ADOPT") ?? "0") == "0" {
     adopted = opt_adopt::ret_adopt(x.b, index);
     if adopted != null {
       w.adopt_v = adopted.v;
@@ -3730,8 +3869,18 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   // `@FR-R-Apart` instance 2: the body's roles; an `__apv` twin takes no return buffer and
   // answers through `loft_apo`.
-  if plain_rules() {
+  if plain_rules() && !tf.any {
     cgen_apart::value_setup(x, w, index, twin.apv);
+  }
+  // A result twin takes no return buffer: it answers what it built.
+  if tf.any && tf.phantom >= 0 {
+    pord = 0;
+    for pv in d.variables.variables {
+      if pv.argument && pv#index < tf.phantom {
+        pord += 1;
+      }
+    }
+    params.remove(pord);
   }
   if twin.apv {
     rbi = binds::hidden_return_buffer_attr(d) ?? -1;
@@ -3801,7 +3950,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   out = "";
   for v in d.variables.variables {
     // An apart vector and its companions are no records (`@FR-R-Apart`).
-    if !v.argument && !w.undeclared[v#index]! && !cgen_apart::holds(w, v#index) {
+    if (!v.argument || v#index == w.tr.phantom) && !w.undeclared[v#index]! && !cgen_apart::holds(w, v#index) {
       shape = shapes[v#index]!;
       if w.store_links[v#index]! {
         out += "    loft_ref {w.raw[v#index]!} = {{ 0xFFFF, 0, 0, 0 }};\n";
@@ -3819,7 +3968,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     if t.verify {
       out += "#ifdef LOFT_VERIFY\n";
     }
-    if t.shape == "text" || t.shape == "fn" || is_tuple(t.shape) {
+    plain_temp = t.shape == "int" || t.shape == "int32" || t.shape == "bool" || t.shape == "ref" || t.shape == "enum" || t.shape == "float" || t.shape == "single" || t.shape == "char";
+    if !plain_temp {
       out += "    {held(t.shape)} {t.name} = {initial(t.shape)};\n";
     } else {
       out += "    {held(t.shape)} {t.name};\n";
@@ -3840,7 +3990,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       return Written { text: "", refused: cgen_cold::COLD_ESCAPED };
     }
     for a in w.cold {
-      part = write_body(x, twin, -1, false, [a]);
+      part = write_body(x, twin, -1, false, [a], tf);
       if part.refused != "" {
         return Written { text: "", refused: part.refused };
       }
@@ -3849,7 +3999,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   out = cgen_text::park_work_texts(w, d, out);
   // `@FR-R-Tabulate`: a classifier of a byte reads its answer from the table the compiler
   // evaluated when its one parameter is in the table's range, and runs its body otherwise.
-  if len(params) == 1 && params[0].starts_with("int64_t ") && ret == "int" {
+  if len(params) == 1 && params[0].starts_with("int64_t ") && ret == "int" && !tf.builds {
     tab = opt_tabulate::table(x.b, index);
     if len(tab) > 0 {
       entries: vector<text> = [];
@@ -3883,7 +4033,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
   // marker resolved once the twins are written, or out of line.
   outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && plain_but_rg(twin) { "static /*loft_hot:{index}*/" } else { "static" };
-  Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer }
+  Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer, inner: resolve_tuples(x, out) }
 }
 
 // `hot_helper_size`'s mask test: no twin bit but `__rg`'s.

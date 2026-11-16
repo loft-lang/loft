@@ -13,6 +13,7 @@
 // is marked when its plan holds, and a caller's calls of a leaf are wrapped in a SITE span (a
 // number per caller) before its first body is written, which the prelude and the call key by.
 
+use cgen_transient;
 use ir;
 use cgen::(Cx);
 use cgen_w::*;
@@ -412,7 +413,7 @@ fn steps(ops: vector<ir::Node>, counters: vector<integer>) -> integer {
 }
 
 fn version_loop(x: Cx, w: W, b: ir::Block, ind: integer) {
-  if !opt_version::enabled() || w.gen_elem != "" || w.vf || has_any(x.b, b.operators, 0) {
+  if !opt_version::enabled() || w.gen_elem != "" || cgen_transient::lean(w) || w.vf || has_any(x.b, b.operators, 0) {
     return;
   }
   loops = inner_loops(b);

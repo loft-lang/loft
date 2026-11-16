@@ -281,12 +281,11 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (2).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
+`cgen_w::PLAIN_SWITCHES` names it (1).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
 
 | switch | corpus | benches | tests |
 |---|---|---|---|
 | `VALUE_RECORD` | 510 | 114 | 175 |
-| `TRANSIENT` | 92 | 14 | 22 |
 
 `VALUE_RECORD` also feeds `APART`'s instance 2: its plan leaves the value records' functions
 alone (`value_fns` of `opt_apart_value::plan`), a set that is empty while the rule is off.
@@ -312,7 +311,12 @@ helpers an `__inv` twin's loop reaches, the ranged twin's input seeds), `GUARD_B
 all three instances: 3 — `opt_apart_vector.loft`, the `loft_apvec` local; 4 —
 `opt_apart_records.loft`, the per-field buffers, the `__apr` twin, the boundary copy and the
 rotate from parts; 2 — `opt_apart_value.loft`, the `loft_ap_<T>` value, the `__apv` twin, the
-construction runs, the `loft_ap_store` boundary, the typedefs, the hoists off in its bodies).  A rewrite that writes COPIES of IR nodes (the destination
+construction runs, the `loft_ap_store` boundary, the typedefs, the hoists off in its bodies),
+`TRANSIENT` (`cgen_transient.loft`, its unit state `opt_transient.loft` apart so `cgen::Cx` can
+hold it without an import cycle: the site plan and `lives`, the `__tr<params>[r]` twins written
+on first ask with their rollback, the `lt_<g>` structs, zeroers and seals, the operator
+allow-list, the text lifts and the work clause's `wr_call`, the store-plan rewrites off in a
+transient body).  A rewrite that writes COPIES of IR nodes (the destination
 chain's call and arm statements, an append site's call, the rotate's call, the keyed in-place
 literal) writes them under `no_memo`: the Rust writer keys an invariant's memo and a guarded
 chain's admission by node address, which no copy carries.

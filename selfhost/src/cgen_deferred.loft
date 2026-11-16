@@ -12,6 +12,7 @@
 // span each, `opt_lease::dc_id`), and the plan and the writer key by those IDs: `stmt` hands the
 // ID of the span it unwraps to the statement inside it (`W.dc_pending`).
 
+use cgen_transient;
 use ir;
 use cgen::(Cx);
 use cgen_w::*;
@@ -206,7 +207,7 @@ fn why(x: Cx, w: W, v: integer, what: text) {
 
 // The deferred locals of this function and the null-only references, set on `w`.
 pub fn plan(x: Cx, w: W) {
-  if !enabled() || w.gen_elem != "" || !opt_facts::enabled() {
+  if !enabled() || w.gen_elem != "" || cgen_transient::lean(w) || !opt_facts::enabled() {
     return;
   }
   d = x.b.data.definitions[w.index]!;
