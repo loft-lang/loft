@@ -71,6 +71,11 @@ the locals whose block ended before it, so a closure written after a loop shares
 local — with it off (`Parser::enter_capture_scope`), such a name does not exist in the lambda:
 an assignment there binds a local of the lambda's own and a read is refused.  The bisect step
 for a closure after a block that reads or writes that block's local.
+**`LOFT_NO_TEXT_TAIL_THROUGH_IF=1`** (`@FR-H-Free`, the scope pass, BOTH backends) homes a text
+value block's tail local at the function scope only where the block's last operator is that
+local — with it off (`scopes::scan`'s `tail_vars_through_arms`), every local an `if` arm of the
+tail hands out is homed too, so its free runs at the function's end rather than right after
+the block's value.  The bisect step for an interpreter text that reads back as garbage.
 **`LOFT_TAIL_READS_WHOLE_STATEMENT=1`** (`@FR-F-Ret`, parse time, BOTH backends) declines a
 record tail's copy into the return buffer whenever the function's whole last STATEMENT reads
 the buffer local — with it off (`Parser::delivered_leaf_reads`), only a delivered leaf that

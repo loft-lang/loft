@@ -477,22 +477,35 @@ impl Scopes<'_> {
                 // `struct_match` block inside it, so the match block's last operator is that
                 // block, not the capture — `x = match n { N { nm } => nm }; x` leaked `nm`
                 // once per call (the loft#2353 cell under valgrind).
+                // …and through the arms of an `if`: a value `match` whose arm leaves by `return`
+                // keeps its value form, an `if` chain whose leaves are the `_ncr_N` an element
+                // read binds, a literal and the leaving arm.  Read through only the last
+                // operator, that temp stayed the match block's, and its exit free ran after the
+                // block's value — the interpreter read a released text (loft#2526).
                 if hoisted_ref.is_none()
                     && self.scope >= 1
                     && matches!(bl.result.base(), Type::Text(_))
-                    && let Some(orig_ret) = bl.operators.last().and_then(tail_var_through_blocks)
                 {
-                    let orig_ret = &orig_ret;
-                    let ret_v = *self.var_mapping.get(orig_ret).unwrap_or(orig_ret);
-                    if !self.var_scope.contains_key(&ret_v)
-                        && !function.is_argument(ret_v)
-                        && !function.is_skip_free(ret_v)
-                        && matches!(function.tp(ret_v).base(), Type::Text(_))
-                        && !self.lift_texts.contains(&ret_v)
-                    {
-                        self.var_scope.insert(ret_v, 1);
-                        self.var_order.push(ret_v);
-                        self.lift_texts.push(ret_v);
+                    let mut tails = Vec::new();
+                    if let Some(last) = bl.operators.last() {
+                        if crate::keys::text_tail_through_if_off() {
+                            tails.extend(tail_var_through_blocks(last));
+                        } else {
+                            tail_vars_through_arms(last, &mut tails);
+                        }
+                    }
+                    for orig_ret in tails {
+                        let ret_v = *self.var_mapping.get(&orig_ret).unwrap_or(&orig_ret);
+                        if !self.var_scope.contains_key(&ret_v)
+                            && !function.is_argument(ret_v)
+                            && !function.is_skip_free(ret_v)
+                            && matches!(function.tp(ret_v).base(), Type::Text(_))
+                            && !self.lift_texts.contains(&ret_v)
+                        {
+                            self.var_scope.insert(ret_v, 1);
+                            self.var_order.push(ret_v);
+                            self.lift_texts.push(ret_v);
+                        }
                     }
                 }
                 // The function body block (scope 0 → 1) with a non-void
@@ -1411,6 +1424,29 @@ fn drop_tail_frees(ops: &mut Vec<Value>, hoisted: &[u16], data: &Data) {
 /// The local a value expression ends in, looked for through trailing value blocks: `v`, or the
 /// last operator of a non-void block, recursively.  `None` for any other tail — a call, a
 /// literal, a branch — whose value is no local the block could leave unreleased.
+/// Every local a value tail hands out: [`tail_var_through_blocks`] through both arms of an
+/// `if` as well.  An arm that is not a local — a literal, a leaving `return`, a call — adds
+/// nothing: what it delivers is not a local this block owns.
+fn tail_vars_through_arms(v: &Value, out: &mut Vec<u16>) {
+    match v.unspan() {
+        Value::Var(x) => {
+            if !out.contains(x) {
+                out.push(*x);
+            }
+        }
+        Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Never) => {
+            if let Some(last) = bl.operators.last() {
+                tail_vars_through_arms(last, out);
+            }
+        }
+        Value::If(_, t, f) => {
+            tail_vars_through_arms(t, out);
+            tail_vars_through_arms(f, out);
+        }
+        _ => {}
+    }
+}
+
 fn tail_var_through_blocks(v: &Value) -> Option<u16> {
     match v.unspan() {
         Value::Var(x) => Some(*x),

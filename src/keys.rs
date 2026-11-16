@@ -3594,6 +3594,15 @@ pub fn buffer_fresh_copy_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
 }
 
+/// `LOFT_NO_TEXT_TAIL_THROUGH_IF=1` — a text value block's tail local is homed at the function
+/// scope only where the block's last operator is that local (through value blocks), not where
+/// it is a leaf of an `if` (`scopes::scan`, loft#2526): its exit free then runs after the value.
+#[must_use]
+pub fn text_tail_through_if_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_TEXT_TAIL_THROUGH_IF"))
+}
+
 /// `LOFT_TAIL_READS_WHOLE_STATEMENT=1` — a return-buffer delivery is declined when the function's
 /// whole last STATEMENT reads the buffer local, not only the value it delivers
 /// (`Parser::delivered_leaf_reads`, loft#2525): a tail after an early `return` of that local
