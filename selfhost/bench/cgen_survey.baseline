@@ -13,11 +13,10 @@
  "bodies|plain|program|corpus": {
   "agree": 1080,
   "differ": 0,
-  "equal": 13122,
-  "functions": 13564,
+  "equal": 13134,
+  "functions": 13576,
   "refused": 0,
   "switches": [
-   "LOFT_NO_APART",
    "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
@@ -27,11 +26,10 @@
  "bodies|plain|program|corpus:tests": {
   "agree": 601,
   "differ": 0,
-  "equal": 6545,
-  "functions": 6609,
+  "equal": 6550,
+  "functions": 6613,
   "refused": 0,
   "switches": [
-   "LOFT_NO_APART",
    "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
@@ -41,11 +39,10 @@
  "bodies|plain|program|files:benches.txt": {
   "agree": 61,
   "differ": 0,
-  "equal": 2222,
-  "functions": 2253,
+  "equal": 2229,
+  "functions": 2259,
   "refused": 0,
   "switches": [
-   "LOFT_NO_APART",
    "LOFT_NO_TRANSIENT",
    "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"

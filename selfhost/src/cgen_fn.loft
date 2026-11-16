@@ -16,6 +16,7 @@
 use ir;
 use cgen::(Cx, request_twin);
 use binds;
+use opt_apart_value;
 use cgen_names;
 use cgen_types;
 use cgen_w::*;
@@ -1184,7 +1185,10 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   }
   vflag = "";
   // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
-  if !t.kh && native == "" && len(args) < 64 {
+  // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin, which
+  // takes it as its buffers (`expr` answered them at that argument).
+  apr_call = cgen_apart::twin_call(x, w, d, args);
+  if !t.kh && native == "" && len(args) < 64 && !apr_call {
     taken = false;
     inputs = cgen_inputs::twin_inputs(x, w, d, args, ind, taken);
     if w.why != "" {
@@ -1216,10 +1220,13 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     t.ds = true;
   }
   if native == "" {
-    if len(args) <= 23 {
+    if len(args) <= 23 && !apr_call {
       t.nn = nn_twin_bits(x, w, d, args);
     }
-    t.rg = ranged_call(x, w, d, args, t.inv);
+    t.rg = !apr_call && ranged_call(x, w, d, args, t.inv);
+  }
+  if apr_call {
+    t.apr = true;
   }
   name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
   if !cgen_names::is_plain(t) {
@@ -1916,9 +1923,20 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     },
     NdCallRef { var, args } => call_ref(x, w, var, args, ind),
     NdVar { n } => {
+      // `@FR-R-Apart` instance 4: an apart value is its buffers — what a twin call takes, and a
+      // C type error anywhere a record was meant.
+      apr_buf = cgen_apart::buf(w, n);
+      if apr_buf != "" {
+        return E { code: apr_buf, kind: K_REF };
+      }
       // `@FR-R-Apart` instance 3: an apart vector is its inline buffer.
       if cgen_apart::is_vec(w, n) {
         return E { code: "loft_apv{n}", kind: K_REF };
+      }
+      // Instance 2: an apart record is its value.
+      av_v = cgen_apart::av_val(w, n);
+      if av_v != "" {
+        return E { code: av_v, kind: K_REF };
       }
       shape = w.shapes[n] ?? "";
       if held(shape) == "" || shape == "void" {
@@ -1958,11 +1976,26 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       saved_kind = w.call_kind;
       saved_site = w.call_site;
       // `@FR-R-Apart` instance 3: an apart vector's element, push, length or clear.
-      if cgen_apart::any(w) {
+      if w.apr.any {
+        apr_done = false;
+        apr_e = cgen_apart::rec_op(x, w, name, args, ind, apr_done);
+        if apr_done {
+          return apr_e;
+        }
+      }
+      if w.apv.any {
         apart_done = false;
         apart_e = cgen_apart::vec_op(x, w, name, v, args, ind, apart_done);
         if apart_done {
           return apart_e;
+        }
+      }
+      // Instance 2: an element of a record held as a value, its length, its free.
+      if w.av.any {
+        av_done = false;
+        av_e = cgen_apart::av_op(x, w, v, ind, av_done);
+        if av_done {
+          return av_e;
         }
       }
       w.call_kind = cgen_version::call_kind(w, v);
@@ -2529,6 +2562,17 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
     if cgen_ref::clear_before_mint(x.b, w, ops, o#index, end) {
       continue;
     }
+    // `@FR-R-Apart` instance 2: a construction run builds its value as a whole.
+    if cgen_apart::av_any(w) {
+      av_next = cgen_apart::av_construction(x, w, ops, o#index, end, ind);
+      if av_next >= 0 {
+        for i in o#index..av_next {
+          cgen_hoist::refresh_grown(x, w, ops[i]!, ind);
+        }
+        skip_to = av_next;
+        continue;
+      }
+    }
     if plain_rules() {
       last = cgen_rotate::rotate_site(x, w, ops, o#index, ind);
       if last >= 0 {
@@ -3065,6 +3109,10 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     },
     // A generator's `return` ends it: what it returns is done for its effect.
     NdReturn { inner } => {
+      // `@FR-R-Apart` instance 2: a `return` of an apart value.
+      if cgen_apart::av_any(w) && cgen_apart::av_return(x, w, inner, ind) {
+        return;
+      }
       if w.gen_elem != "" {
         stmt(x, w, inner, ind);
         line(w, ind, "goto loft_gen_end;");
@@ -3395,6 +3443,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     return Written { text: "", refused: "a generator handed a store place for a & parameter" };
   }
   ret = if work_ret >= 0 || len(helper) > 0 || gen_elem != "" { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  // `@FR-R-Apart` instance 2: an `__apv` twin answers its value through `loft_apo`.
+  if twin.apv {
+    ret = "void";
+  }
   // `@FR-R-Destination` — a `__d` twin answers its scalar fields as a tuple.
   if twin.ds {
     ds_shape = opt_destination::shape(x.b, index, 0, x.dest_memo);
@@ -3413,6 +3465,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   is_param: vector<boolean> = [];
   // `@FR-R-ValueRecord`'s pointer clause: the parameters that arrive as `const loft_tupN *`.
   by_ptr = cgen_value::vr_ptr_params(x, index);
+  // `@FR-R-Apart` instance 2: an `__apv` twin's record parameters arrive as values.
+  apv_roles = if twin.apv { cgen_apart::twin_value_roles(x, index) } else { opt_apart_value::no_roles() };
   ordinal = 0;
   for v in d.variables.variables {
     shape = shapes[v#index]!;
@@ -3441,14 +3495,17 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     links += [link];
     is_param += [v.argument];
     if v.argument {
-      params += [if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" }];
+      // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
+      apr_param = twin.apr && cgen_apart::twin_at(x, index) == ordinal;
+      apv_t = if twin.apv && apv_roles.any && (apv_roles.apart[v#index] ?? -1) >= 0 { opt_apart_value::ctype(cgen_apart::value_plan(x), apv_roles.apart[v#index]!) } else { "" };
+      params += [if apv_t != "" { "const {apv_t} *loft_avp{v#index}" } else if apr_param { "loft_text *loft_aprp" } else if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" }];
       ordinal += 1;
     }
   }
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  if twin.apr || twin.apv {
+  if (twin.apv || twin.apr) && !plain_rules() {
     return Written { text: "", refused: "a twin of a rule that is not carried" };
   }
   // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
@@ -3580,6 +3637,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     dc_pending: 0,
     dc_ctx: [],
     apv: if plain_rules() { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
+    apr: if plain_rules() { cgen_apart::record_roles(x, index, twin.apr) } else { opt_apart_records::no_roles() },
+    av: opt_apart_value::no_roles(),
+    av_twin: false,
+    av_rb: -1,
     loop_call_at: [],
     ap_buf: -1,
     ap_views: [],
@@ -3667,8 +3728,25 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if twin.ds {
     cgen_dest::twin_body(x, w);
   }
+  // `@FR-R-Apart` instance 2: the body's roles; an `__apv` twin takes no return buffer and
+  // answers through `loft_apo`.
+  if plain_rules() {
+    cgen_apart::value_setup(x, w, index, twin.apv);
+  }
+  if twin.apv {
+    rbi = binds::hidden_return_buffer_attr(d) ?? -1;
+    if rbi >= 0 {
+      params.remove(rbi);
+    }
+    apo_t = cgen_apart::twin_value_ctype(x, index);
+    if apo_t == "" {
+      return Written { text: "", refused: "an __apv twin of no apart type" };
+    }
+    params += ["{apo_t} *loft_apo"];
+  }
   cgen_text::declare_owns(w);
   cgen_apart::decls(w);
+  cgen_apart::av_decls(x, w);
   // An `__ap` twin's result never adopts the buffer: it is the caller's vector; a `__d` twin's
   // is the caller's element.
   if w.ap_buf >= 0 || twin.ds {
