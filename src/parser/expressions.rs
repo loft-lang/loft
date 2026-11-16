@@ -4487,6 +4487,18 @@ use a separate collection or add after the loop"
         var_nr: u16,
         skip_validate: bool,
     ) -> Type {
+        // `@FR-B-Ref-StoredRef` — a stored `reference<E>` field is WRITTEN as the field it is:
+        // its read answers `E` for a struct-enum (`Data::stored_ref_read`, `@FR-E-Eq`), but the
+        // assignment's target is the pointer, so it is typed as the field's `Reference(E)`
+        // again.  Typed by the read, `h.s = c` and `h.s = &c` copied `c` into whatever the field
+        // pointed at — a null field stored nothing — instead of repointing it, and `h.s = &c`
+        // was refused as a bare `&`.
+        let place_tp = if self.is_stored_ref_read(to) {
+            self.data.stored_ref_place(f_type.clone())
+        } else {
+            f_type.clone()
+        };
+        let f_type = &place_tp;
         // `x = ;` and `x += ;` — an assignment with no value.  The right side parsed as
         // nothing, so `x = ;` silently bound null and `x += ;` compiled to a program whose
         // later output vanished (loft#1800's library parser met it: the compiler accepted
