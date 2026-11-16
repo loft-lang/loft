@@ -1946,6 +1946,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // A struct literal item is built into the element itself (`parse_item` with `elm`): typed here,
   // its fields written where the element is made, below.
   recs: vector<integer> = [];
+  // The syntax node of each item that is a struct literal, -1 for any other: a literal mixing
+  // the two builds each in its own way, in order (`parse_item` per item).
+  rec_at: vector<integer> = [];
   nested: vector<integer> = [];
   // The element a nested literal is: what the destination declares, else what the first pass
   // left the local holding.
@@ -1974,6 +1977,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
           return refused_build();
         }
         xs += [ex(if e.first_pass { ir::NdInsert { items: [] } } else { el_ir::cl(e, "OpCopyRecord", [nb!, ir::NdVar { n: elm }, ir::NdInt { n: el::def(e, tsyn).known_type + 16384 }]) }, declared)];
+        rec_at += [-1];
         continue;
       }
       tx = el_ex_assign::expression(e, vars, it);
@@ -1987,12 +1991,14 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         }
         return refused_build();
       }
+      rec_at += [-1];
       continue;
     }
     sd = struct_literal_def(e, it);
     if sd < 0 {
       sd = variant_literal_def(e, it);
     }
+    rec_at += [if sd >= 0 { it } else { -1 }];
     if sd >= 0 {
       recs += [it];
       if e.first_pass {
@@ -2007,9 +2013,20 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       xs += [el_ex_assign::expression(e, vars, it)];
     }
   }
-  if len(recs) > 0 && len(recs) != len(xs) {
-    el::refuse(e, "a vector literal mixing struct literals and other items");
-    return refused_build();
+  mixed = len(recs) > 0 && len(recs) != len(xs);
+  // Mixed with items that are no literal, each element is made in order: carried for a plain
+  // struct's literals beside items of that struct (variants and nested literals are not).
+  if mixed {
+    for it in recs {
+      if struct_literal_def(e, it) < 0 || struct_literal_def(e, it) != struct_literal_def(e, recs[0]!) {
+        el::refuse(e, "a vector literal mixing struct literals and other items");
+        return refused_build();
+      }
+    }
+    if len(nested) > 0 {
+      el::refuse(e, "a vector literal mixing struct literals and other items");
+      return refused_build();
+    }
   }
   reads_dest = false;
   if append && !e.first_pass {
@@ -2242,7 +2259,26 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       }
     }
     at = ir::NdVar { n: elm };
-    for it in recs {
+    if mixed && (struct_ref(e, in_t) != rd || len(rec_at) != len(xs)) {
+      el::refuse(e, "a vector literal mixing struct literals and other items");
+      return refused_build();
+    }
+    if mixed {
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    }
+    order: vector<integer> = if mixed { rec_at } else { recs };
+    for it in order {
+      // An item that is no literal (`build_vector_list`'s record arm): copied into its element.
+      if it < 0 {
+        ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+        copy = el_ex_match::record_item_copy(e, vars, elm, rd, xs[it#index]!);
+        if copy == null {
+          return refused_build();
+        }
+        ls += copy!;
+        ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+        continue;
+      }
       fields: vector<integer> = [];
       match e.p.nodes[it] {
         SStructLit { fields: fs } => { fields = fs; },

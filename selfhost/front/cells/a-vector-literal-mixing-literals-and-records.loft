@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector literal mixing `S { … }` literals with other items of `S` (a call, a local) makes each element in order: a literal built into its element, any other item copied in (`build_vector_list`'s record arm) — inferred, declared and appended.
+// Prints: 1274 5687
+
+struct S { a: integer }
+fn mk(n: integer) -> S { S { a: n } }
+fn main() {
+  p = S { a: 7 };
+  v = [S { a: 1 }, mk(2), p, S { a: 4 }];
+  w: vector<S> = [mk(5), S { a: 6 }];
+  w += [S { a: 8 }, p];
+  println("{v[0].a}{v[1].a}{v[2].a}{v[3].a} {w[0].a}{w[1].a}{w[2].a}{w[3].a}");
+}

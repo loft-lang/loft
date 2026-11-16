@@ -888,6 +888,20 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       conv += [arg];
       continue;
     }
+    // `convert`'s tagged arm (`@FR-L-Null-Tag`, loft#1138): a `__nullable<S>` slot handed to an
+    // `S?` parameter is read through its tag, so absence arrives as the reference null.
+    if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(at)) {
+      if e.first_pass {
+        conv += [arg];
+        continue;
+      }
+      rx = el_ex_place::read_through_tag(e, vars, ex(arg, at));
+      if rx == null {
+        return null;
+      }
+      conv += [rx!.code];
+      continue;
+    }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
       conv += [c!];
