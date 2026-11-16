@@ -21947,7 +21947,7 @@ impl Parser {
                     if crate::keys::tail_reads_whole_statement() {
                         t.reads_var(buf_var)
                     } else {
-                        Self::delivered_leaf_reads(t, buf_var)
+                        Self::delivered_leaf_reads(t, buf_var, self.data.def_nr("OpDatabase"))
                     }
                 })
         });
@@ -21981,23 +21981,34 @@ impl Parser {
     }
 
     /// Does a value `materialize_return_into` would copy out of `tail` read `var`?  It descends
-    /// as that function does — the arms of an `if` (not its condition), a block's or an
-    /// insert's last operator, a span's value — and asks each leaf; the statements before a
-    /// leaf run before the buffer is re-minted, so they are not the copy's source.  A leaf
-    /// that leaves the function (`return`) is asked whole: its value is delivered elsewhere,
-    /// and reading `var` there still reads the buffer.
-    fn delivered_leaf_reads(tail: &Value, var: u16) -> bool {
+    /// through CONTROL — the arms of an `if` (not its condition), a block's or an insert's last
+    /// operator, a span's value — and asks each leaf; a control statement before a leaf runs
+    /// before the buffer is re-minted, so it is not the copy's source.  A block that RE-MINTS a
+    /// record (an `OpDatabase` among its operators: a literal, a delivery already materialised
+    /// into a work ref) is a delivery itself and is asked whole — under `Bind { substitute }`
+    /// its re-mint becomes the buffer's own, and a read after it reads the wiped buffer
+    /// (loft#2292: `OpDatabase(class); OpCopyRecord(class, class)`).  Any other leaf, a
+    /// `return` included, is asked whole.
+    fn delivered_leaf_reads(tail: &Value, var: u16, remint: u32) -> bool {
         match tail.unspan() {
             Value::If(_, t, f) => {
-                Self::delivered_leaf_reads(t, var) || Self::delivered_leaf_reads(f, var)
+                Self::delivered_leaf_reads(t, var, remint)
+                    || Self::delivered_leaf_reads(f, var, remint)
             }
-            Value::Block(bl) if bl.name != "Object" => bl
-                .operators
-                .last()
-                .is_some_and(|l| Self::delivered_leaf_reads(l, var)),
+            Value::Block(bl)
+                if bl.name != "Object"
+                    && !bl
+                        .operators
+                        .iter()
+                        .any(|o| matches!(o.unspan(), Value::Call(d, _) if *d == remint)) =>
+            {
+                bl.operators
+                    .last()
+                    .is_some_and(|l| Self::delivered_leaf_reads(l, var, remint))
+            }
             Value::Insert(ops) => ops
                 .last()
-                .is_some_and(|l| Self::delivered_leaf_reads(l, var)),
+                .is_some_and(|l| Self::delivered_leaf_reads(l, var, remint)),
             other => other.reads_var(var),
         }
     }
