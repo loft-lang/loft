@@ -1,0 +1,673 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-ValueRecord`'s VALUE LOCALS and BODY gate, as
+// `src/opt/value_records/mod.rs` decides them: which locals hold a value-returned record
+// (`value_locals_in`, every use one a tuple serves, `local_uses_ok`), whether an admitted body's
+// every result position is a value leaf (`value_body`, `retbuf_uses_ok`), and which dense
+// tuples must carry their presence (`promote_presence`).
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use own;
+use opt_vr_layout;
+use opt_vr_shape;
+use opt_vr_leaves;
+use binds;
+
+fn kids(n: ir::Node) -> vector<ir::Node> {
+  opt_vr_shape::kids(n)
+}
+
+fn is_v(a: ir::Node, v: integer) -> boolean {
+  opt_vr_shape::is_var(a) && opt_vr_shape::var_of(a) == v
+}
+
+fn arg_is(args: vector<ir::Node>, i: integer, v: integer) -> boolean {
+  i >= 0 && i < len(args) && is_v(args[i]!, v)
+}
+
+fn has_yield(n: ir::Node) -> boolean {
+  if loop_shape::unspan(n) is NdYield {
+    return true;
+  }
+  for k in kids(n) {
+    if has_yield(k) {
+      return true;
+    }
+  }
+  false
+}
+
+// The view-leaf offsets of layout `key`.
+pub fn view_offs(vr: opt_vr_layout::ValueRecords, key: integer) -> vector<integer> {
+  at = opt_vr_layout::type_at(vr, key);
+  out: vector<integer> = [];
+  if at < 0 {
+    return out;
+  }
+  t = vr.types[at]!;
+  for rt in t.rts {
+    if opt_vr_layout::is_view_part(rt) {
+      out += [t.offs[rt#index]!];
+    }
+  }
+  out
+}
+
+// `local_uses_ok`: is every use of local `v` in the body one a TUPLE can serve?  `phantom`: the
+// body's converted `Object` leaves when `v` is the phantom return buffer (empty otherwise).
+pub fn local_uses_ok(c: opt_vr_shape::Ctx, vr: opt_vr_layout::ValueRecords, body: ir::Node, sz: vector<integer>, v: integer, served: vector<boolean>, offs: vector<integer>, phantom: boolean, phantom_objects: vector<boolean>, value_objects: vector<boolean>) -> boolean {
+  b = c.b;
+  key = opt_vr_shape::at(c.locals, v);
+  nullable = opt_vr_layout::is_nullable_layout(key);
+  def = b.data.definitions[c.d]!;
+  temp_unserved = !nullable && binds::is_compiler_generated(def.variables, v) && opt_vr_shape::own_retbuf(b, c.own) != v;
+  present_state = 0;
+  view_reads = opt_vr_leaves::view_field_reads(b, body, sz, v, offs);
+  edges: vector<integer> = [];
+  edges_done = false;
+  // Every node inside a converted `Object` (the phantom's), per number.
+  inside_obj: vector<boolean> = [for _ in sz { false }];
+  if phantom {
+    for o in phantom_objects {
+      if o {
+        for k in o#index..o#index + sz[o#index]! {
+          inside_obj[k] = true;
+        }
+      }
+    }
+  }
+  // `moot` per variable: no droppable, and a value local or a converted build's work-ref.
+  nv = len(def.variables.variables);
+  built = opt_vr_leaves::converted_build_refs(body, sz, value_objects, nv);
+  moot: vector<boolean> = [];
+  for x in def.variables.variables {
+    w = x#index;
+    moot += [!opt_vr_leaves::owns_droppable(b, x.type_def[0] ?? ir::TyVoid) && (opt_vr_shape::at(c.locals, w) >= 0 || built[w]!)];
+  }
+  mentions = 0;
+  accounted = 0;
+  nodes: vector<integer> = [];
+  lu_walk(c, vr, loop_shape::unspan(body), 0, sz, v, served, offs, phantom, inside_obj, moot, view_reads, key, nullable, temp_unserved, present_state, edges, edges_done, body, mentions, accounted);
+  mentions == accounted
+}
+
+fn lu_walk(c: opt_vr_shape::Ctx, vr: opt_vr_layout::ValueRecords, n: ir::Node, num: integer, sz: vector<integer>, v: integer, served: vector<boolean>, offs: vector<integer>, phantom: boolean, inside_obj: vector<boolean>, moot: vector<boolean>, view_reads: vector<boolean>, key: integer, nullable: boolean, temp_unserved: boolean, present_state: &integer, edges: vector<integer>, edges_done: &boolean, body: ir::Node, mentions: &integer, accounted: &integer) {
+  b = c.b;
+  inside = inside_obj[num]!;
+  match n {
+    NdVar { n: w } => {
+      if w == v {
+        mentions += 1;
+        if inside || served[num]! {
+          accounted += 1;
+        }
+      }
+    },
+    NdCallRef { var: f, args } => {
+      if !inside && !nullable {
+        accounted += opt_vr_leaves::fnref_handoffs(c, v, f, args);
+      }
+    },
+    NdCall { def_nr, args } => {
+      if !inside && def_nr >= 0 && def_nr < len(b.data.definitions) {
+        cdef = b.data.definitions[def_nr]!;
+        name = cdef.name;
+        if opt_vr_shape::at(c.admitted, def_nr) >= 0 {
+          a = opt_vr_shape::ret_buffer_attr(cdef);
+          if a >= 0 && arg_is(args, a, v) {
+            accounted += 1;
+          }
+        }
+        if !(temp_unserved && opt_vr_leaves::is_presence_test(name, args, v)) {
+          accounted += opt_vr_leaves::handoffs_and_presence(b, c.params, def_nr, name, args, v, key, present(c, v, present_state));
+        }
+        if opt_vr_leaves::GETTERS.contains(name) && opt_vr_leaves::field_on(b, args, v) != null {
+          accounted += 1;
+        }
+        if opt_vr_leaves::SETTERS.contains(name) {
+          off = opt_vr_leaves::field_on(b, args, v);
+          if off != null && !offs.contains(off) {
+            accounted += 1;
+          }
+        }
+        if name == "OpGetField" && arg_is(args, 0, v) && view_reads[num]! {
+          accounted += 1;
+        }
+        copies = name == "OpCopyRecord" && (len(offs) > 0 || (!nullable && arg_is(args, 0, v) && !present(c, v, present_state)));
+        src_served = name == "OpCopyRecord" && len(args) > 0 && served[num + 1]!;
+        if (name == "OpFreeRefIfDistinct" || name == "OpDistinctStore") && !edges_done {
+          for e in opt_vr_leaves::hold_graph(body) {
+            edges += [e];
+          }
+          edges_done = true;
+        }
+        accounted += opt_vr_leaves::release_uses(edges, name, args, v, copies || src_served, moot);
+        if name == "OpCopyRecord" && !copies && len(args) > 2 {
+          sr = opt_vr_leaves::sub_record_of(b, args[0]!, v);
+          if sr >= 0 && opt_vr_leaves::copy_type(args[2]!) == sr {
+            accounted += 1;
+          }
+        }
+        if phantom && arg_is(args, 0, v) && name == "OpRefAlias" {
+          accounted += 1;
+        }
+      }
+    },
+    _ => {},
+  }
+  cn = num + 1;
+  for k in kids(n) {
+    lu_walk(c, vr, k, cn, sz, v, served, offs, phantom, inside_obj, moot, view_reads, key, nullable, temp_unserved, present_state, edges, edges_done, body, mentions, accounted);
+    cn += sz[cn]!;
+  }
+}
+
+// `local_surely_present`, asked once per walk (0 unasked, 1 no, 2 yes).
+fn present(c: opt_vr_shape::Ctx, v: integer, state: &integer) -> boolean {
+  if state == 0 {
+    state = if opt_vr_shape::local_surely_present(c, v, []) { 2 } else { 1 };
+  }
+  state == 2
+}
+
+fn ctx(b: ir::Bundle, ops: own::Ops, d: integer, vr: opt_vr_layout::ValueRecords, admitted: vector<integer>, sp: vector<boolean>, locals: vector<integer>, own_d: integer) -> opt_vr_shape::Ctx {
+  opt_vr_shape::Ctx { b: b, ops: ops, d: d, admitted: admitted, params: vr.params, locals: locals, own: own_d, sites: vr.sites, sp: sp }
+}
+
+// `value_locals_in`: which locals of `d` hold a value-returned record, per variable its layout
+// key (-1 none).  A fixpoint: grow optimistically, prune to a consistent set, repeat.
+pub fn value_locals_in(b: ir::Bundle, ops: own::Ops, d: integer, vr: opt_vr_layout::ValueRecords, admitted: vector<integer>, sp: vector<boolean>) -> vector<integer> {
+  def = b.data.definitions[d]!;
+  nv = len(def.variables.variables);
+  own_d = if opt_vr_shape::at(admitted, d) >= 0 { d } else { -1 };
+  locals = opt_vr_layout::param_vars(b, vr, d);
+  if len(def.code) == 0 {
+    return locals;
+  }
+  body = def.code[0]!;
+  if has_yield(body) {
+    return locals;
+  }
+  rb = opt_vr_shape::own_retbuf(b, own_d);
+  sz = opt_vr_shape::sizes(body);
+  dropped = opt_vr_leaves::dropped_reads(body, sz);
+  for _ in 0..nv + 1 {
+    // GROW.
+    cands: vector<integer> = [for _ in 0..nv { -1 }];
+    count = 0;
+    for _ in 0..nv + 1 {
+      with = joined(locals, cands);
+      shapes = opt_vr_shape::bind_shapes(ctx(b, ops, d, vr, admitted, sp, with, own_d));
+      grown = [for x in cands { x }];
+      gcount = 0;
+      for s in shapes {
+        vi = s#index;
+        if s >= 0 && locals[vi]! < 0 && (!def.variables.variables[vi]!.argument || vi == rb) {
+          grown[vi] = s;
+        }
+      }
+      for g in grown {
+        if g >= 0 {
+          gcount += 1;
+        }
+      }
+      if gcount == count {
+        break;
+      }
+      cands = grown;
+      count = gcount;
+    }
+    // PRUNE.
+    for _ in 0..nv + 1 {
+      with = joined(locals, cands);
+      cx = ctx(b, ops, d, vr, admitted, sp, with, own_d);
+      shapes = opt_vr_shape::bind_shapes(cx);
+      leaves = opt_vr_leaves::collect_leaves(b, body, sz, with, own_d >= 0);
+      served = [for r in leaves.reads { r || dropped[r#index]! }];
+      kept: vector<integer> = [for _ in 0..nv { -1 }];
+      kcount = 0;
+      ccount = 0;
+      for cv in cands {
+        if cv < 0 {
+          continue;
+        }
+        ccount += 1;
+        vi = cv#index;
+        dk = shapes[vi]!;
+        if dk < 0 {
+          continue;
+        }
+        if local_uses_ok(cx, vr, body, sz, vi, served, view_offs(vr, dk), vi == rb, leaves.objects, leaves.objects) {
+          kept[vi] = dk;
+          kcount += 1;
+        }
+      }
+      cands = kept;
+      if kcount == ccount {
+        break;
+      }
+    }
+    any = false;
+    for cv in cands {
+      if cv >= 0 {
+        any = true;
+        locals[cv#index] = cv;
+      }
+    }
+    if !any {
+      return locals;
+    }
+  }
+  locals
+}
+
+fn joined(locals: vector<integer>, cands: vector<integer>) -> vector<integer> {
+  [for l in locals { if (cands[l#index] ?? -1) >= 0 { cands[l#index]! } else { l } }]
+}
+
+// `value_body`: does every result position of `d`'s body carry a value leaf, and is its return
+// buffer mentioned only where the value form can drop the mention?  "" admits; else why not.
+pub fn value_body(b: ir::Bundle, ops: own::Ops, d: integer, vr: opt_vr_layout::ValueRecords, admitted: vector<integer>, sp: vector<boolean>) -> text {
+  def = b.data.definitions[d]!;
+  locals = value_locals_in(b, ops, d, vr, admitted, sp);
+  c = ctx(b, ops, d, vr, admitted, sp, locals, d);
+  body = def.code[0]!;
+  key = opt_vr_shape::at(admitted, d);
+  if !(key >= 0 && (opt_vr_shape::frame_loop_tail(body) || opt_vr_shape::fits(c, body, key))) {
+    return "the tail is not a value leaf";
+  }
+  sz = opt_vr_shape::sizes(body);
+  own_returns: vector<boolean> = [for _ in sz { false }];
+  if !vb_objects(c, loop_shape::unspan(body), 0, sz, key, own_returns) {
+    return "an object's return is not a value leaf";
+  }
+  if !vb_returns(c, loop_shape::unspan(body), 0, sz, key, own_returns) {
+    return "a return is not a value leaf";
+  }
+  rb = opt_vr_shape::own_retbuf(b, d);
+  if rb < 0 || locals[rb]! >= 0 {
+    return "";
+  }
+  leaves = opt_vr_leaves::collect_leaves(b, body, sz, locals, true);
+  if !retbuf_uses_ok(c, loop_shape::unspan(body), 0, sz, rb, leaves.objects) {
+    return "the return buffer is used";
+  }
+  ""
+}
+
+fn vb_objects(c: opt_vr_shape::Ctx, n: ir::Node, num: integer, sz: vector<integer>, key: integer, own_returns: vector<boolean>) -> boolean {
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if opt_vr_shape::object_own_return(bl) >= 0 || opt_vr_shape::has_mv(c.b, bl) {
+        if opt_vr_shape::value_shape(c, n) != key {
+          return false;
+        }
+        if len(bl.operators) > 0 {
+          own_returns[opt_vr_shape::child_num(sz, num, len(bl.operators) - 1)] = true;
+        }
+      }
+    },
+    _ => {},
+  }
+  cn = num + 1;
+  for k in kids(n) {
+    if !vb_objects(c, k, cn, sz, key, own_returns) {
+      return false;
+    }
+    cn += sz[cn]!;
+  }
+  true
+}
+
+fn vb_returns(c: opt_vr_shape::Ctx, n: ir::Node, num: integer, sz: vector<integer>, key: integer, own_returns: vector<boolean>) -> boolean {
+  match n {
+    NdReturn { inner } => {
+      if !own_returns[num]! && !opt_vr_shape::fits(c, inner, key) {
+        return false;
+      }
+    },
+    _ => {},
+  }
+  cn = num + 1;
+  for k in kids(n) {
+    if !vb_returns(c, k, cn, sz, key, own_returns) {
+      return false;
+    }
+    cn += sz[cn]!;
+  }
+  true
+}
+
+// `retbuf_uses_ok`: every mention of the return buffer `rb` under node `n` (number `num`) is one
+// the value form drops.
+pub fn retbuf_uses_ok(c: opt_vr_shape::Ctx, n: ir::Node, num: integer, sz: vector<integer>, rb: integer, objects: vector<boolean>) -> boolean {
+  b = c.b;
+  match n {
+    NdVar { n: w } => return w != rb,
+    NdSet { var, inner: _ } => if var == rb { return false; },
+    NdBlock { block } => {
+      if objects[num]! {
+        return true;
+      }
+      bl = block[0]!;
+      if opt_vr_shape::has_mv(b, bl) {
+        cn = num + 1;
+        for op in bl.operators {
+          u = loop_shape::unspan(op);
+          ok = match u {
+            NdCall { def_nr, args } => {
+              nm = opt_vr_shape::def_name(b, def_nr);
+              if nm == "OpCopyRecord" {
+                retbuf_uses_ok(c, loop_shape::unspan(args[0]!), cn + 1, sz, rb, objects)
+              } else if nm == "OpDatabase" && arg_is(args, 0, rb) {
+                true
+              } else {
+                retbuf_uses_ok(c, u, cn, sz, rb, objects)
+              }
+            },
+            NdReturn { inner } => is_v(inner, rb) || retbuf_uses_ok(c, u, cn, sz, rb, objects),
+            NdVar { n: w } => w == rb || retbuf_uses_ok(c, u, cn, sz, rb, objects),
+            _ => retbuf_uses_ok(c, u, cn, sz, rb, objects),
+          };
+          if !ok {
+            return false;
+          }
+          cn += sz[cn]!;
+        }
+        return true;
+      }
+    },
+    NdCall { def_nr, args } => {
+      callee = b.data.definitions[def_nr]!;
+      nm = callee.name;
+      is_free = nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct";
+      witnessed = nm == "OpFreeRefIfDistinct" || nm == "OpDistinctStore";
+      snapshot = nm == "OpRefAlias" || nm == "OpDistinctStore";
+      dropped = if opt_vr_shape::at(c.admitted, def_nr) >= 0 { opt_vr_shape::ret_buffer_attr(callee) } else { -1 };
+      cn = num + 1;
+      for a in args {
+        i = a#index;
+        if is_v(a, rb) {
+          if !((is_free && i == 0) || (witnessed && i == 1) || (snapshot && i == 0) || dropped == i) {
+            return false;
+          }
+        } else if !retbuf_uses_ok(c, loop_shape::unspan(a), cn, sz, rb, objects) {
+          return false;
+        }
+        cn += sz[cn]!;
+      }
+      return true;
+    },
+    _ => {},
+  }
+  cn2 = num + 1;
+  for k in kids(n) {
+    if !retbuf_uses_ok(c, k, cn2, sz, rb, objects) {
+      return false;
+    }
+    cn2 += sz[cn2]!;
+  }
+  true
+}
+
+// --- `@FR-N-Store`: carry the presence ---------------------------------------------------------
+
+// What one function's scan asks for: the dense tuple parameters `[d, idx, …]` and the dense
+// functions that must carry their presence.
+struct Want {
+  params: vector<integer>,
+  fns: vector<boolean>,
+}
+
+// `PresenceWalk::param_of`: the tuple-parameter `(idx, key)` of variable `v` of `d` — idx -1 none.
+fn param_of(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, d: integer, v: integer, key: &integer) -> integer {
+  key = -1;
+  def = b.data.definitions[d]!;
+  if !def.variables.variables[v]!.argument {
+    return -1;
+  }
+  for p in vr.params {
+    if p.d == d && p.idx < len(def.attributes) && var_named(def.variables, def.attributes[p.idx]!.name) == v {
+      key = p.key;
+      return p.idx;
+    }
+  }
+  -1
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+fn binds_of(n: ir::Node, v: integer, out: vector<ir::Node>) {
+  u = loop_shape::unspan(n);
+  match u {
+    NdSet { var, inner } => if var == v && !(loop_shape::unspan(inner) is NdNull) { out += [inner]; },
+    _ => {},
+  }
+  for k in kids(u) {
+    binds_of(k, v, out);
+  }
+}
+
+fn demand(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, cand: vector<integer>, sp: vector<boolean>, d: integer, node: ir::Node, seen: vector<integer>, want: Want, fns_too: boolean) {
+  u = loop_shape::unspan(node);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" {
+        return;
+      }
+      if opt_vr_shape::has_mv(b, bl) {
+        demand(b, vr, cand, sp, d, opt_vr_shape::mv_return_source(b, bl), seen, want, fns_too);
+        return;
+      }
+      if !opt_vr_shape::result_void(bl) && len(bl.operators) > 0 {
+        demand(b, vr, cand, sp, d, opt_vr_shape::last_op(bl.operators), seen, want, fns_too);
+      }
+    },
+    NdInsert { items } => if len(items) > 0 { demand(b, vr, cand, sp, d, opt_vr_shape::last_op(items), seen, want, fns_too); },
+    NdReturn { inner } => demand(b, vr, cand, sp, d, inner, seen, want, fns_too),
+    NdIf { cond: _, t, f } => {
+      demand(b, vr, cand, sp, d, t, seen, want, fns_too);
+      demand(b, vr, cand, sp, d, f, seen, want, fns_too);
+    },
+    NdVar { n: v } => {
+      if seen.contains(v) {
+        return;
+      }
+      seen += [v];
+      key = -1;
+      idx = param_of(b, vr, d, v, key);
+      if idx >= 0 {
+        if !opt_vr_layout::is_nullable_layout(key) {
+          want.params += [d, idx];
+        }
+        return;
+      }
+      bs: vector<ir::Node> = [];
+      binds_of(b.data.definitions[d]!.code[0]!, v, bs);
+      for rhs in bs {
+        demand(b, vr, cand, sp, d, rhs, seen, want, fns_too);
+      }
+    },
+    NdCall { def_nr, args: _ } => {
+      k = opt_vr_shape::at(cand, def_nr);
+      if fns_too && k >= 0 && !opt_vr_layout::is_nullable_layout(k) && !(sp[def_nr] ?? false) {
+        want.fns[def_nr] = true;
+      }
+    },
+    _ => {},
+  }
+}
+
+fn carries(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, cand: vector<integer>, d: integer, node: ir::Node, seen: vector<integer>) -> boolean {
+  u = loop_shape::unspan(node);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" {
+        return false;
+      }
+      if opt_vr_shape::has_mv(b, bl) {
+        return carries(b, vr, cand, d, opt_vr_shape::mv_return_source(b, bl), seen);
+      }
+      if !opt_vr_shape::result_void(bl) {
+        return len(bl.operators) > 0 && carries(b, vr, cand, d, opt_vr_shape::last_op(bl.operators), seen);
+      }
+      false
+    },
+    NdInsert { items } => len(items) > 0 && carries(b, vr, cand, d, opt_vr_shape::last_op(items), seen),
+    NdReturn { inner } => carries(b, vr, cand, d, inner, seen),
+    NdIf { cond: _, t, f } => carries(b, vr, cand, d, t, seen) || carries(b, vr, cand, d, f, seen),
+    NdVar { n: v } => {
+      if seen.contains(v) {
+        return false;
+      }
+      seen += [v];
+      key = -1;
+      if param_of(b, vr, d, v, key) >= 0 {
+        return opt_vr_layout::is_nullable_layout(key);
+      }
+      bs: vector<ir::Node> = [];
+      binds_of(b.data.definitions[d]!.code[0]!, v, bs);
+      for rhs in bs {
+        if carries(b, vr, cand, d, rhs, seen) {
+          return true;
+        }
+      }
+      false
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 0 && opt_vr_shape::is_null_record(b, def_nr) {
+        return true;
+      }
+      opt_vr_layout::is_nullable_layout(opt_vr_shape::at(cand, def_nr))
+    },
+    _ => false,
+  }
+}
+
+fn scan(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, cand: vector<integer>, sp: vector<boolean>, d: integer, want: Want) {
+  def = b.data.definitions[d]!;
+  body = def.code[0]!;
+  own_k = opt_vr_shape::at(cand, d);
+  own_nullable = opt_vr_layout::is_nullable_layout(own_k);
+  if own_nullable {
+    demand(b, vr, cand, sp, d, body, [], want, true);
+  } else if own_k >= 0 && carries(b, vr, cand, d, body, []) {
+    want.fns[d] = true;
+  }
+  scan_walk(b, vr, cand, sp, d, loop_shape::unspan(body), want, own_k, own_nullable);
+}
+
+fn scan_walk(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, cand: vector<integer>, sp: vector<boolean>, d: integer, n: ir::Node, want: Want, own_k: integer, own_nullable: boolean) {
+  def = b.data.definitions[d]!;
+  match n {
+    NdReturn { inner } => {
+      if own_nullable {
+        demand(b, vr, cand, sp, d, inner, [], want, true);
+      } else if own_k >= 0 && carries(b, vr, cand, d, inner, []) {
+        want.fns[d] = true;
+      }
+    },
+    NdSet { var, inner } => {
+      if var < len(def.variables.variables) {
+        t = def.variables.variables[var]!.type_def[0] ?? ir::TyVoid;
+        tinner = match t { TyOptional { inner: i2 } => i2, _ => t };
+        if (t is TyOptional) && opt_vr_layout::plain_record_type(b, tinner) >= 0 {
+          demand(b, vr, cand, sp, d, inner, [], want, false);
+        }
+      }
+    },
+    NdCall { def_nr, args } => {
+      if opt_vr_shape::def_name(b, def_nr) == "OpCopyRecord" {
+        if len(args) > 0 {
+          demand(b, vr, cand, sp, d, args[0]!, [], want, true);
+        }
+      } else {
+        for p in vr.params {
+          if p.d == def_nr && p.idx < len(args) {
+            if opt_vr_layout::is_nullable_layout(p.key) {
+              demand(b, vr, cand, sp, d, args[p.idx]!, [], want, true);
+            } else if carries(b, vr, cand, d, args[p.idx]!, []) {
+              want.params += [def_nr, p.idx];
+            }
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  for k in kids(n) {
+    scan_walk(b, vr, cand, sp, d, k, want, own_k, own_nullable);
+  }
+}
+
+// `promote_presence`: carry the presence where a dense tuple would otherwise be widened without
+// it; answers whether it turned any dense key into a nullable one.  `frozen` per definition: an
+// arm of a fn-ref dispatch, which keeps its ABI.
+pub fn promote_presence(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, cand: vector<integer>, frozen: vector<boolean>, sp: vector<boolean>) -> boolean {
+  want = Want { params: [], fns: [for _ in cand { false }] };
+  for def in b.data.definitions {
+    if len(def.code) == 0 || (def.code[0]! is NdNull) {
+      continue;
+    }
+    scan(b, vr, cand, sp, def#index, want);
+  }
+  changed = false;
+  for wp in want.params {
+    if wp#index % 2 != 0 {
+      continue;
+    }
+    d = wp;
+    idx = want.params[wp#index + 1]!;
+    if frozen[d]! {
+      continue;
+    }
+    pat = -1;
+    for p in vr.params {
+      if pat < 0 && p.d == d && p.idx == idx {
+        pat = p#index;
+      }
+    }
+    if pat >= 0 && !opt_vr_layout::is_nullable_layout(vr.params[pat]!.key) {
+      nkey = opt_vr_layout::nullable_presence_layout(vr, vr.params[pat]!.key);
+      if nkey >= 0 {
+        vr.params[pat].key = nkey;
+        changed = true;
+      }
+    }
+  }
+  for wf in want.fns {
+    if !wf {
+      continue;
+    }
+    d = wf#index;
+    if frozen[d]! {
+      continue;
+    }
+    k = cand[d]!;
+    if k < 0 || opt_vr_layout::is_nullable_layout(k) {
+      continue;
+    }
+    nkey = opt_vr_layout::nullable_presence_layout(vr, k);
+    if nkey < 0 {
+      continue;
+    }
+    cand[d] = nkey;
+    changed = true;
+  }
+  changed
+}

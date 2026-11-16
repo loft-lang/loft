@@ -1,0 +1,900 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-ValueRecord`'s answer and layouts, as
+// `src/opt/value_records/layout.rs` decides them: which record types a tuple can carry, field
+// by field, and with which presence word when the record is nullable; and `(R-ValueLocal)`'s
+// parameter candidates.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use binds;
+use types;
+use own;
+use opt_writes;
+use opt_wset;
+use opt_push;
+use opt_hoist;
+
+// The register layout of one record type: the fields in order, `(byte offset, part)` — a
+// part is "f64", "f32", "i64", "bool" or the view leaf "DbRef" — and whether it is the
+// nullable layout (one more element, the presence word, after the fields).
+pub struct VTuple {
+  pub key: integer,
+  pub offs: vector<integer>,
+  pub rts: vector<text>,
+  pub nullable: boolean,
+}
+
+// `(layout key, byte offset)` → tuple index.
+pub struct VIdx {
+  pub key: integer,
+  pub off: integer,
+  pub at: integer,
+}
+
+// A tuple parameter: function, attribute index, layout key.
+pub struct VParam {
+  pub d: integer,
+  pub idx: integer,
+  pub key: integer,
+}
+
+// `(R-FnRefValue)`: a fn-ref call site `(caller, variable)`, every arm its dispatch reaches and
+// the plain record its signature returns (-1 none).
+pub struct VSite {
+  pub caller: integer,
+  pub v: integer,
+  pub arms: vector<integer>,
+  pub rec: integer,
+}
+
+// The program's value-record answer (`ValueRecords`).  Per definition: the layout key of an
+// admitted function's result (-1 not admitted), and whether its tuple is surely present.
+pub struct ValueRecords {
+  pub asked: boolean,
+  pub fns: vector<integer>,
+  pub index: vector<VIdx>,
+  pub types: vector<VTuple>,
+  pub params: vector<VParam>,
+  pub sites: vector<VSite>,
+  pub sp: vector<boolean>,
+}
+
+pub fn no_records() -> ValueRecords {
+  ValueRecords { asked: false, fns: [], index: [], types: [], params: [], sites: [], sp: [] }
+}
+
+pub const NULLABLE_LAYOUT = 32768;
+pub const VALUE_RECORD_MAX_FIELDS = 8;
+pub const VIEW_LEAF_PART = "DbRef";
+
+pub fn value_record_disabled() -> boolean {
+  (env_variable("LOFT_NO_VALUE_RECORD") ?? "0") != "0"
+}
+
+pub fn nullable_value_record_disabled() -> boolean {
+  (env_variable("LOFT_NO_NULLABLE_VALUE_RECORD") ?? "0") != "0"
+}
+
+pub fn value_local_disabled() -> boolean {
+  (env_variable("LOFT_NO_VALUE_LOCAL") ?? "0") != "0"
+}
+
+pub fn fnref_value_on() -> boolean {
+  (env_variable("LOFT_NO_FNREF_VALUE") ?? "0") == "0"
+}
+
+// The key of record type `tp`'s nullable layout, -1 when the type number already uses the bit.
+pub fn nullable_layout(tp: integer) -> integer {
+  if tp & NULLABLE_LAYOUT == 0 { tp | NULLABLE_LAYOUT } else { -1 }
+}
+
+pub fn layout_record(key: integer) -> integer {
+  key & (NULLABLE_LAYOUT - 1)
+}
+
+pub fn is_nullable_layout(key: integer) -> boolean {
+  key >= 0 && key & NULLABLE_LAYOUT != 0
+}
+
+pub fn is_view_part(rt: text) -> boolean {
+  rt == VIEW_LEAF_PART
+}
+
+// The tuple index of a layout's presence word, -1 for a dense layout.
+pub fn presence(t: VTuple) -> integer {
+  if t.nullable { len(t.offs) } else { -1 }
+}
+
+// The layout registered under `key`, its position in `vr.types`; -1 none.
+pub fn type_at(vr: ValueRecords, key: integer) -> integer {
+  for t in vr.types {
+    if t.key == key {
+      return t#index;
+    }
+  }
+  -1
+}
+
+pub fn has_type(vr: ValueRecords, key: integer) -> boolean {
+  type_at(vr, key) >= 0
+}
+
+// The tuple index of the field at byte `off` of layout `key`, -1 none.
+pub fn index_of(vr: ValueRecords, key: integer, off: integer) -> integer {
+  for e in vr.index {
+    if e.key == key && e.off == off {
+      return e.at;
+    }
+  }
+  -1
+}
+
+fn add_index(vr: ValueRecords, key: integer, off: integer, at: integer) {
+  for e in vr.index {
+    if e.key == key && e.off == off {
+      return;
+    }
+  }
+  vr.index += [VIdx { key: key, off: off, at: at }];
+}
+
+// The layout key admitted function `d` answers, -1 none.
+pub fn fn_key(vr: ValueRecords, d: integer) -> integer {
+  if d < 0 || d >= len(vr.fns) { -1 } else { vr.fns[d]! }
+}
+
+// The layout key parameter `idx` of `d` is received as, -1 when it is no tuple.
+pub fn param_type(vr: ValueRecords, d: integer, idx: integer) -> integer {
+  for p in vr.params {
+    if p.d == d && p.idx == idx {
+      return p.key;
+    }
+  }
+  -1
+}
+
+pub fn has_params(vr: ValueRecords, d: integer) -> boolean {
+  for p in vr.params {
+    if p.d == d {
+      return true;
+    }
+  }
+  false
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+// `tuple_param_vars`: the tuple parameters of `d` by variable — per variable its layout key,
+// -1 none.
+pub fn param_vars(b: ir::Bundle, vr: ValueRecords, d: integer) -> vector<integer> {
+  def = b.data.definitions[d]!;
+  out: vector<integer> = [for _ in def.variables.variables { -1 }];
+  for p in vr.params {
+    if p.d == d && p.idx < len(def.attributes) {
+      pv = var_named(def.variables, def.attributes[p.idx]!.name);
+      if pv >= 0 {
+        out[pv] = p.key;
+      }
+    }
+  }
+  out
+}
+
+// `fnref_value`: the record whose tuple a call through fn-ref variable `v` of `d` answers, when
+// every arm of its dispatch is admitted with that record; -1 for the buffer road.
+pub fn fnref_value(vr: ValueRecords, fns: vector<integer>, d: integer, v: integer) -> integer {
+  for s in vr.sites {
+    if s.caller == d && s.v == v {
+      if s.rec < 0 || len(s.arms) == 0 {
+        return -1;
+      }
+      for a in s.arms {
+        if (fns[a] ?? -1) != s.rec {
+          return -1;
+        }
+      }
+      return s.rec;
+    }
+  }
+  -1
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `Type::peel_link`: the type's shape — through the `?`, every `&` link and every rewrite.
+pub fn peel_link(t: ir::TypeT) -> ir::TypeT {
+  b = cgen_types::base(t);
+  match b {
+    TyRefVar { inner } => peel_link(inner),
+    TyRewritten { inner } => peel_link(inner),
+    _ => b,
+  }
+}
+
+// `plain_record_type`: the schema type of a plain struct record — a `Reference` to a struct,
+// through any `&` links, not through an `Optional`; -1 none.
+pub fn plain_record_type(b: ir::Bundle, t: ir::TypeT) -> integer {
+  if t is TyOptional {
+    return -1;
+  }
+  match peel_link(t) {
+    TyReference { n, dep: _ } => {
+      if n < 0 || n >= len(b.data.definitions) || b.data.definitions[n]!.def_type != 5 {
+        return -1;
+      }
+      k = b.data.definitions[n]!.known_type;
+      if k == 65535 { -1 } else { k }
+    },
+    _ => -1,
+  }
+}
+
+// `value_field_type`: the scalar part a tuple carries for a field of type `t`, "" none.
+pub fn value_field_type(t: ir::TypeT) -> text {
+  match cgen_types::base(t) {
+    TyFloat => "f64",
+    TySingle => "f32",
+    TyInteger { spec: _ } => "i64",
+    TyBoolean => "bool",
+    _ => "",
+  }
+}
+
+// `view_leaf_type`: a plain `vector<T>` field, which a view leaf may deliver.
+pub fn view_leaf_type(t: ir::TypeT) -> boolean {
+  cgen_types::base(t) is TyVector
+}
+
+fn struct_fields(b: ir::Bundle, tp: integer) -> vector<ir::DbField> {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp].parts) == 0 {
+    return [];
+  }
+  match b.types[tp].parts[0]! {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => [],
+  }
+}
+
+fn is_struct_tp(b: ir::Bundle, tp: integer) -> boolean {
+  tp >= 0 && tp < len(b.types) && len(b.types[tp].parts) > 0 && (b.types[tp].parts[0]! is PtStruct)
+}
+
+// The layout of a record being laid out: its parts, their offsets, and its index entries
+// (`(top, off) → at`, as `[off, at, …]`).
+struct Lay {
+  rts: vector<text>,
+  offs: vector<integer>,
+  idx: vector<integer>,
+}
+
+// `layout_into`: the fields of `tp` (declared by `rd`) laid `base` bytes into the top record,
+// an inline sub-record recursing with its own base.  False where some part cannot ride a tuple.
+fn layout_into(b: ir::Bundle, rd: integer, tp: integer, base: integer, views_ok: boolean, l: Lay) -> boolean {
+  fields = struct_fields(b, tp);
+  if len(fields) == 0 {
+    return false;
+  }
+  rdef = b.data.definitions[rd]!;
+  for f in fields {
+    a_nr = -1;
+    for a in rdef.attributes {
+      if a_nr < 0 && a.name == f.name {
+        a_nr = a#index;
+      }
+    }
+    if a_nr < 0 {
+      return false;
+    }
+    ftp = rdef.attributes[a_nr]!.typedef[0] ?? ir::TyVoid;
+    off = base + f.position;
+    if (cgen_types::base(ftp) is TyInteger) && b.types[f.content].size != 8 {
+      return false;
+    }
+    rt = value_field_type(ftp);
+    if rt != "" {
+      l.rts += [rt];
+      l.offs += [off];
+    } else if views_ok && base == 0 && view_leaf_type(ftp) {
+      l.rts += [VIEW_LEAF_PART];
+      l.offs += [off];
+    } else {
+      sub = plain_record_type(b, ftp);
+      sub_rd = match peel_link(ftp) { TyReference { n, dep: _ } => n, _ => -1 };
+      if sub >= 0 && sub == f.content && is_struct_tp(b, sub) && sub_rd >= 0 {
+        if !layout_into(b, sub_rd, sub, off, false, l) {
+          return false;
+        }
+        continue;
+      }
+      return false;
+    }
+    l.idx += [off, len(l.rts) - 1];
+  }
+  true
+}
+
+// `type_layout`: the register layout of record type `tp` (declared by `rd`), registered in `vr`
+// with its index entries; false where some part cannot ride a tuple.
+pub fn type_layout(b: ir::Bundle, rd: integer, tp: integer, views_ok: boolean, vr: ValueRecords) -> boolean {
+  l = Lay { rts: [], offs: [], idx: [] };
+  if !layout_into(b, rd, tp, 0, views_ok, l) {
+    return false;
+  }
+  if len(l.rts) == 0 || len(l.rts) > VALUE_RECORD_MAX_FIELDS {
+    return false;
+  }
+  for e in l.idx {
+    if e#index % 2 == 0 {
+      add_index(vr, tp, e, l.idx[e#index + 1]!);
+    }
+  }
+  if !has_type(vr, tp) {
+    vr.types += [VTuple { key: tp, offs: l.offs, rts: l.rts, nullable: false }];
+  }
+  true
+}
+
+// `nullable_layout_of`: the layout of `τ?` beside the dense layout of `τ`, under `nkey`.
+pub fn add_nullable_layout(vr: ValueRecords, tp: integer, nkey: integer) {
+  copied: vector<VIdx> = [];
+  for e in vr.index {
+    if e.key == tp {
+      copied += [VIdx { key: nkey, off: e.off, at: e.at }];
+    }
+  }
+  for c in copied {
+    add_index(vr, c.key, c.off, c.at);
+  }
+  dense = vr.types[type_at(vr, tp)]!;
+  if !has_type(vr, nkey) {
+    vr.types += [VTuple { key: nkey, offs: dense.offs, rts: dense.rts, nullable: true }];
+  }
+}
+
+// `nullable_presence_layout`: the key of `tp`'s nullable layout, registered beside its dense
+// one when it is not yet; -1 none.
+pub fn nullable_presence_layout(vr: ValueRecords, tp: integer) -> integer {
+  nkey = nullable_layout(tp);
+  if nkey < 0 {
+    return -1;
+  }
+  if has_type(vr, nkey) {
+    return nkey;
+  }
+  at = type_at(vr, tp);
+  if at < 0 {
+    return -1;
+  }
+  for rt in vr.types[at]!.rts {
+    if is_view_part(rt) {
+      return -1;
+    }
+  }
+  add_nullable_layout(vr, tp, nkey);
+  nkey
+}
+
+// --- `(R-ValueLocal)`'s parameter gate ---------------------------------------------------------
+
+const IN_PLACE_SET_OPS = ["OpSetBoolean", "OpSetInt", "OpSetInt4", "OpSetInt4Raw", "OpSetCharacter", "OpSetSingle", "OpSetFloat", "OpSetByte", "OpSetByteNullable", "OpSetShort", "OpSetShortRaw", "OpSetEnum"];
+const FUSABLE_PUSHES = ["OpPushByte", "OpPushBoolean", "OpPushEnum", "OpPushInt4", "OpPushCharacter", "OpPushInt", "OpPushSingle", "OpPushFloat"];
+
+// `owning_local`: does `v` own the store it names?
+fn owning_local(f: ir::Function, v: integer) -> boolean {
+  if v < 0 || v >= len(f.variables) {
+    return false;
+  }
+  x = f.variables[v]!;
+  if x.argument || x.captured || binds::is_inline_ref(f, v) || own::is_skip_free(f, v) {
+    return false;
+  }
+  t = x.type_def[0] ?? ir::TyVoid;
+  if cgen_types::base(t) is TyRefVar {
+    return false;
+  }
+  for dv in own::depend_of(t) {
+    if dv != v && !(dv >= 0 && dv < len(f.variables) && f.variables[dv]!.name.starts_with("__vdb")) {
+      return false;
+    }
+  }
+  true
+}
+
+// `own_return_buffer`: a function's hidden return-buffer variable, -1 none.
+pub fn own_return_buffer(d: ir::Definition) -> integer {
+  a = binds::hidden_return_buffer_attr(d) ?? -1;
+  if a < 0 {
+    return -1;
+  }
+  var_named(d.variables, d.attributes[a]!.name)
+}
+
+// `schema_reaches`: does type `k`'s layout hold a record of type `tp`?
+fn schema_reaches(b: ir::Bundle, k: integer, tp: integer) -> boolean {
+  seen: vector<boolean> = [for _ in b.types { false }];
+  todo: vector<integer> = [k];
+  for _ in 0..len(b.types) * 8 + 8 {
+    if len(todo) == 0 {
+      return false;
+    }
+    cur = todo[len(todo) - 1]!;
+    todo.remove(len(todo) - 1);
+    if cur == tp {
+      return true;
+    }
+    if cur < 0 || cur >= len(b.types) {
+      return true;
+    }
+    if seen[cur]! {
+      continue;
+    }
+    seen[cur] = true;
+    if len(b.types[cur].parts) == 0 {
+      return true;
+    }
+    match b.types[cur].parts[0]! {
+      PtStruct { fields } => { for f in fields { todo += [f.content]; } },
+      PtEnumValue { value: _, fields } => { for f in fields { todo += [f.content]; } },
+      PtEnum { values } => { for e in values { todo += [e.nr]; } },
+      PtVector { content } => { todo += [content]; },
+      PtArray { content } => { todo += [content]; },
+      PtSorted { content, keys: _ } => { todo += [content]; },
+      PtOrdered { content, keys: _ } => { todo += [content]; },
+      PtHash { content, fields: _ } => { todo += [content]; },
+      PtIndex { content, keys: _ } => { todo += [content]; },
+      PtRadix { content, fields: _ } => { todo += [content]; },
+      PtBase => {},
+      PtByte { start: _, nullable: _ } => {},
+      PtShort { start: _, nullable: _ } => {},
+      PtInt { start: _, nullable: _ } => {},
+      PtShortRaw { start: _, nullable: _ } => {},
+      PtIntRaw { start: _, nullable: _ } => {},
+      _ => return true,
+    }
+  }
+  true
+}
+
+// `holds_schema_type`: can a value of type `t` hold a record of schema type `tp`?
+fn holds_schema_type(b: ir::Bundle, t: ir::TypeT, tp: integer) -> boolean {
+  pl = peel_link(t);
+  match pl {
+    TyOptional { inner } => return holds_schema_type(b, inner, tp),
+    _ => {},
+  }
+  if opt_writes::is_scalar(pl) || (pl is TyText) || (pl is TyBoolean) {
+    return false;
+  }
+  match pl {
+    TyVector { inner, dep: _ } => holds_schema_type(b, inner, tp),
+    TyReference { n, dep: _ } => schema_holds(b, n, tp),
+    TyEnum { n, is_ref, dep: _ } => if is_ref { schema_holds(b, n, tp) } else { true },
+    TySorted { n, keys: _, dep: _ } => schema_holds(b, n, tp),
+    TyIndex { n, keys: _, dep: _ } => schema_holds(b, n, tp),
+    TyRadix { n, names: _, dep: _ } => schema_holds(b, n, tp),
+    TyTrie { n, key: _, dep: _ } => schema_holds(b, n, tp),
+    TyHash { n, names: _, dep: _ } => schema_holds(b, n, tp),
+    _ => true,
+  }
+}
+
+fn schema_holds(b: ir::Bundle, d: integer, tp: integer) -> boolean {
+  if d < 0 || d >= len(b.data.definitions) {
+    return true;
+  }
+  dt = b.data.definitions[d]!.def_type;
+  // DefType Struct = 5, Enum = 3.
+  if dt != 5 && dt != 3 {
+    return true;
+  }
+  k = b.data.definitions[d]!.known_type;
+  if k == 65535 {
+    return true;
+  }
+  schema_reaches(b, k, tp)
+}
+
+fn fresh_rooted(b: ir::Bundle, place: ir::Node, fresh: vector<boolean>) -> boolean {
+  opt_wset::fresh_rooted(b, place, fresh)
+}
+
+fn var_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) { NdVar { n } => n, _ => -1 }
+}
+
+fn int_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) { NdInt { n } => n, _ => null }
+}
+
+// `native_writes_existing`: one native call's verdict — may it write an existing record of
+// type `tp`?
+fn native_writes_existing(b: ir::Bundle, d: ir::Definition, def: ir::Definition, args: vector<ir::Node>, tp: integer, fresh: vector<boolean>) -> boolean {
+  name = def.name;
+  if IN_PLACE_SET_OPS.contains(name) {
+    if len(args) > 0 && fresh_rooted(b, args[0]!, fresh) {
+      return false;
+    }
+    if len(args) == 0 {
+      return true;
+    }
+    chain: vector<integer> = [];
+    target = opt_wset::setter_target(b, d, args[0]!, chain);
+    // `opt_wset`'s codes: 2 a record chain, 1 no record, 0 unknown.
+    if target == 2 {
+      for c in chain {
+        if c#index % 2 == 0 && c == tp {
+          return true;
+        }
+      }
+      return false;
+    }
+    return target != 1;
+  }
+  if (name == "OpSetText" || name == "OpSetTextReplace") && !types::owns_heap(b.types, tp) {
+    return false;
+  }
+  if name == "OpPutRef" {
+    return false;
+  }
+  if name == "OpCopyRecord" {
+    if len(args) != 3 {
+      return true;
+    }
+    if fresh_rooted(b, args[1]!, fresh) {
+      return false;
+    }
+    k = int_of(args[2]!);
+    if k != null && (k & 16383) != tp {
+      return false;
+    }
+    return true;
+  }
+  if name == "OpNewRecord" || name == "OpFinishRecord" || name == "OpPreAllocVector" || name == "OpAppendVector" || name == "OpDatabase" || name == "OpDatabaseNP" || name == "OpPlaceRecord" || name == "OpMoveRecord" || name == "OpMoveField" || name == "OpMoveVector" || name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpFreeRecordIn" || name == "OpDistinctStore" || name == "OpRefAlias" || name == "OpRefIsNull" || name == "OpConvBoolFromRef" || FUSABLE_PUSHES.contains(name) || name.starts_with("OpGet") || opt_writes::native_op_is_store_free(def) {
+    return false;
+  }
+  for a in def.attributes {
+    at = a.typedef[0] ?? ir::TyVoid;
+    value = opt_writes::is_scalar(at) || (cgen_types::base(at) is TyText);
+    if a.value_const || value {
+      continue;
+    }
+    if a#index < len(args) && typed_apart(b, d, args[a#index]!, tp) {
+      continue;
+    }
+    return true;
+  }
+  false
+}
+
+fn typed_apart(b: ir::Bundle, d: ir::Definition, arg: ir::Node, tp: integer) -> boolean {
+  u = loop_shape::unspan(arg);
+  match u {
+    NdVar { n } => n < len(d.variables.variables) && !holds_schema_type(b, d.variables.variables[n]!.type_def[0] ?? ir::TyVoid, tp),
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) != "OpGetField" || len(args) != 3 {
+        return false;
+      }
+      c = int_of(args[2]!);
+      c != null && c >= 0 && c <= 65535 && !schema_reaches(b, c, tp)
+    },
+    _ => false,
+  }
+}
+
+// The state of one `may_write_existing` walk: the memo per callee (0 unasked, 1 no, 2 yes), the
+// callees being walked, and those a walk assumed.
+pub struct Existing {
+  memo: vector<integer>,
+  active: vector<boolean>,
+  assumed: vector<boolean>,
+}
+
+pub fn new_existing(b: ir::Bundle) -> Existing {
+  n = len(b.data.definitions);
+  Existing { memo: [for _ in 0..n { 0 }], active: [for _ in 0..n { false }], assumed: [for _ in 0..n { false }] }
+}
+
+fn any_assumed(e: Existing) -> boolean {
+  for a in e.assumed {
+    if a {
+      return true;
+    }
+  }
+  false
+}
+
+// `may_write_existing`: may `node` — or any loft callee it reaches — write a record of type `tp`
+// that exists before the call?  `fresh` carries the mint variables across one list's
+// statements.
+pub fn may_write_existing(b: ir::Bundle, d: ir::Definition, node: ir::Node, tp: integer, fresh: vector<boolean>, buffer: integer, e: Existing) -> boolean {
+  match node {
+    NdSpan { pos: _, inner } => return may_write_existing(b, d, inner, tp, fresh, buffer, e),
+    NdSet { var, inner } => {
+      minted = false;
+      match loop_shape::unspan(inner) {
+        NdCall { def_nr, args } => {
+          if def_name(b, def_nr) == "OpNewRecord" {
+            p = "";
+            r = -1;
+            vt = -1;
+            minted = !(opt_push::mint_target(b, d, "OpNewRecord", args, p, r, vt) is NdNull);
+          }
+        },
+        _ => {},
+      }
+      if minted {
+        if var < len(fresh) {
+          fresh[var] = true;
+        }
+      } else if var != buffer && var < len(fresh) {
+        fresh[var] = false;
+      }
+    },
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return true;
+      }
+      def = b.data.definitions[def_nr]!;
+      if len(def.code) > 0 && !(def.code[0]! is NdNull) {
+        if callee_writes_existing(b, def_nr, tp, e) {
+          return true;
+        }
+      } else {
+      name = def.name;
+      if name == "OpFinishRecord" && len(args) > 1 && (loop_shape::unspan(args[1]!) is NdVar) {
+        fv = var_of(args[1]!);
+        if fv < len(fresh) {
+          fresh[fv] = false;
+        }
+      }
+      if (name == "OpDatabase" || name == "OpDatabaseNP") && len(args) > 0 && (loop_shape::unspan(args[0]!) is NdVar) && owning_local(d.variables, var_of(args[0]!)) {
+        fresh[var_of(args[0]!)] = true;
+      }
+      if native_writes_existing(b, d, def, args, tp, fresh) {
+        return true;
+      }
+      }
+    },
+    NdCallRef { var: _, args: _ } => return true,
+    NdParallel { arms: _ } => return true,
+    NdYield { inner: _ } => return true,
+    _ => {},
+  }
+  for c in el_ir::children(node) {
+    if may_write_existing(b, d, c, tp, fresh, buffer, e) {
+      return true;
+    }
+  }
+  false
+}
+
+fn callee_writes_existing(b: ir::Bundle, cd: integer, tp: integer, e: Existing) -> boolean {
+  if e.memo[cd]! != 0 {
+    return e.memo[cd]! == 2;
+  }
+  if e.active[cd]! {
+    e.assumed[cd] = true;
+    return false;
+  }
+  e.active[cd] = true;
+  def = b.data.definitions[cd]!;
+  own_buf = own_return_buffer(def);
+  inner_fresh: vector<boolean> = [for v in def.variables.variables { v#index == own_buf }];
+  k = may_write_existing(b, def, def.code[0]!, tp, inner_fresh, own_buf, e);
+  e.active[cd] = false;
+  e.assumed[cd] = false;
+  if !any_assumed(e) {
+    e.memo[cd] = if k { 2 } else { 1 };
+  }
+  k
+}
+
+// `without_terminal_copies`: `ops` with every terminal whole-record copy — an `OpCopyRecord`
+// statement whose next statement past line markers is a bare `return` — replaced by `Null`,
+// recursively through every statement list.
+pub fn without_terminal_copies(b: ir::Bundle, ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for op in ops {
+    terminal = false;
+    if def_name(b, match loop_shape::unspan(op) { NdCall { def_nr, args: _ } => def_nr, _ => -1 }) == "OpCopyRecord" {
+      for n in ops[op#index + 1..len(ops)] {
+        if !(loop_shape::unspan(n) is NdLine) {
+          terminal = match loop_shape::unspan(n) { NdReturn { inner } => loop_shape::unspan(inner) is NdNull, _ => false };
+          break;
+        }
+      }
+    }
+    out += [if terminal { ir::NdNull } else { strip_terminal(b, op) }];
+  }
+  out
+}
+
+fn strip_terminal(b: ir::Bundle, v: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: strip_terminal(b, inner) },
+    NdBlock { block } => {
+      nb = block[0]!;
+      ir::NdBlock { block: [ir::Block { name: nb.name, operators: without_terminal_copies(b, nb.operators), result: nb.result, scope: nb.scope, var_size: nb.var_size }] }
+    },
+    NdLoop { block } => {
+      nb = block[0]!;
+      ir::NdLoop { block: [ir::Block { name: nb.name, operators: without_terminal_copies(b, nb.operators), result: nb.result, scope: nb.scope, var_size: nb.var_size }] }
+    },
+    NdInsert { items } => ir::NdInsert { items: without_terminal_copies(b, items) },
+    NdIf { cond, t, f } => ir::NdIf { cond: strip_terminal(b, cond), t: strip_terminal(b, t), f: strip_terminal(b, f) },
+    _ => v,
+  }
+}
+
+// `copy_hook_nr`: the `OpCopy` hook of type definition `td`, -1 none.
+fn copy_hook_nr(b: ir::Bundle, td: integer) -> integer {
+  if td < 0 || td >= len(b.data.definitions) {
+    return -1;
+  }
+  tdef = b.data.definitions[td]!;
+  key = "t_{tdef.name.size()}{tdef.name}_OpCopy";
+  for d in b.data.definitions {
+    if d.name == key && d.source == tdef.source {
+      return d#index;
+    }
+  }
+  for d in b.data.definitions {
+    if d.name == key {
+      return d#index;
+    }
+  }
+  -1
+}
+
+fn is_drop_function(d: ir::Definition) -> boolean {
+  d.def_type == 1 && (d.name.ends_with("_OpDrop") || d.name.ends_with("_OpDropAll") || d.name.ends_with("_OpDropAllExcept"))
+}
+
+fn has_yield(n: ir::Node) -> boolean {
+  if n is NdYield {
+    return true;
+  }
+  for c in el_ir::children(n) {
+    if has_yield(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// `tuple_param_candidates`: the by-value parameters that MAY be received as tuples, by the facts
+// that do not depend on what else is admitted.
+pub fn tuple_param_candidates(b: ir::Bundle, w: opt_writes::Writes, vr: ValueRecords) {
+  if value_local_disabled() {
+    return;
+  }
+  ex = new_existing(b);
+  for def in b.data.definitions {
+    d_nr = def#index;
+    if def.def_type != 1 || def.rust != "" || (len(def.returned) > 0 && (cgen_types::base(def.returned[0]!) is TyIterator)) {
+      continue;
+    }
+    if len(def.code) == 0 {
+      continue;
+    }
+    body_ops: vector<ir::Node> = match loop_shape::unspan(def.code[0]!) { NdBlock { block } => block[0]!.operators, _ => continue };
+    if has_yield(def.code[0]!) || is_drop_function(def) {
+      continue;
+    }
+    rebound_done = false;
+    rebound: vector<boolean> = [];
+    written_state = 0;
+    wset = opt_wset::empty();
+    for a in def.attributes {
+      at = a.typedef[0] ?? ir::TyVoid;
+      if a.hidden || (cgen_types::base(at) is TyRefVar) {
+        continue;
+      }
+      optional = at is TyOptional;
+      inner = match at { TyOptional { inner } => inner, _ => at };
+      if optional && nullable_value_record_disabled() {
+        continue;
+      }
+      rd = match cgen_types::base(at) { TyReference { n, dep: _ } => n, _ => -1 };
+      if rd < 0 {
+        continue;
+      }
+      tp = plain_record_type(b, inner);
+      if tp < 0 {
+        continue;
+      }
+      if types::owns_heap(b.types, tp) || copy_hook_nr(b, rd) == d_nr {
+        continue;
+      }
+      if !has_type(vr, tp) && !type_layout(b, rd, tp, false, vr) {
+        continue;
+      }
+      view = false;
+      for rt in vr.types[type_at(vr, tp)]!.rts {
+        if is_view_part(rt) {
+          view = true;
+        }
+      }
+      if view {
+        continue;
+      }
+      pv = var_named(def.variables, a.name);
+      if pv < 0 {
+        continue;
+      }
+      if !rebound_done {
+        rebound_done = true;
+        rebound = opt_hoist::rebound_vars(b, def, block_of(def.code[0]!));
+      }
+      if rebound[pv]! {
+        continue;
+      }
+      // 1: the write set; 2: a body the write set cannot type.
+      if written_state == 0 {
+        if !opt_writes::call_writes_store(b, w, d_nr) || opt_writes::retbuf_only_writer(b, w, d_nr) {
+          written_state = 1;
+        } else {
+          own_buf = own_return_buffer(def);
+          fresh: vector<boolean> = [for v in def.variables.variables { v#index == own_buf }];
+          typed = true;
+          for op in without_terminal_copies(b, body_ops) {
+            if typed && !opt_wset::body_writes(b, w, d_nr, op, fresh, wset) {
+              typed = false;
+            }
+          }
+          written_state = if typed { 1 } else { 2 };
+        }
+      }
+      sound = true;
+      if written_state == 1 {
+        sound = !reaches_record(wset, tp);
+      } else {
+        own_buf = own_return_buffer(def);
+        fresh2: vector<boolean> = [for v in def.variables.variables { v#index == own_buf }];
+        for op in without_terminal_copies(b, body_ops) {
+          if sound && may_write_existing(b, def, op, tp, fresh2, own_buf, ex) {
+            sound = false;
+          }
+        }
+      }
+      if !sound {
+        continue;
+      }
+      key = tp;
+      if optional {
+        key = nullable_presence_layout(vr, tp);
+        if key < 0 {
+          continue;
+        }
+      }
+      vr.params += [VParam { d: d_nr, idx: a#index, key: key }];
+    }
+  }
+}
+
+fn block_of(n: ir::Node) -> ir::Block {
+  match loop_shape::unspan(n) {
+    NdBlock { block } => block[0]!,
+    _ => ir::Block { name: "", operators: [n], result: [], scope: 0, var_size: 0 },
+  }
+}
+
+// `WriteSet::reaches_record`.
+fn reaches_record(s: opt_wset::WSet, tp: integer) -> boolean {
+  s.whole.contains(tp) || s.off_tp.contains(tp)
+}
