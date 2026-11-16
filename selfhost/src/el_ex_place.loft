@@ -155,6 +155,22 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     el::refuse(e, "a write that replaces a vector a loop walks (the walk takes a copy)");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // A function-valued field given a named function (`o.f = inc`, `fn_number_write`).
+  fr = match el_ir::unspan(p.code) { NdBlock { block: fb } => if fb[0].name == "fn_ref_field_read" { fb[0].operators[0] ?? ir::NdNull } else { ir::NdNull }, _ => ir::NdNull };
+  if !(fr is NdNull) {
+    fx = el_ex_assign::expression(e, vars, rhs);
+    fargs = match el_ir::unspan(fr) { NdCall { args: ga } => ga, _ => [] };
+    if op != "=" || len(fargs) != 2 {
+      el::refuse(e, "a compound write to a function-valued field");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    fw = el_ex_object::fn_number_write(e, vars, fargs[0]!, fargs[1]!, if e.first_pass { ir::NdInt { n: 0 } } else { fx.code }, p.tp);
+    if fw == null {
+      el::refuse(e, "a function-valued field given something other than a named function");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(fw!, ir::TyVoid);
+  }
   if el_types::is_unknown(p.tp) {
     if e.first_pass {
       el_ex_assign::expression(e, vars, rhs);
@@ -2299,6 +2315,21 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
               return null;
             }
           }
+        } else if el_types::base(at) is TyFunction {
+          // A function-valued field given a named function (`fn_number_write`).
+          if e.first_pass {
+            el_ex_object::fn_number_write(e, vars, r, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }, at);
+            found += [fname];
+            continue;
+          }
+          fw = el_ex_object::fn_number_write(e, vars, r, ir::NdInt { n: field_position(e, d, fname) }, x.code, at);
+          if fw == null {
+            el::refuse(e, "a function-valued field given something other than a named function");
+            return null;
+          }
+          list += [fw!];
+          found += [fname];
+          continue;
         } else {
           fc = stored(e, vars, x, at);
         }

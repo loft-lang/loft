@@ -372,6 +372,19 @@ pub fn to_default(e: el::El, t: ir::TypeT) -> ir::Node {
   }
 }
 
+// `fn_number_write` (@PLN199 G0b-2): a named function stored at `pos` of `r` — bound to a
+// `__fn_ref_tmp` first, so the write is that variable's projection (`FnRefDnr`).  Null for a
+// value that is no bare function name (a local, a lambda, a call: not carried).
+pub fn fn_number_write(e: el::El, vars: el_vars::Vars, r: ir::Node, pos: ir::Node, val: ir::Node, ft: ir::TypeT) -> ir::Node? {
+  if !(el_ir::unspan(val) is NdInt) {
+    return null;
+  }
+  tmp = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(ft), []));
+  el_vars::set_defined(vars, tmp);
+  vars.vars[tmp].skip_free = true;
+  el_ir::v_block([el_ir::v_set(tmp, val), el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdFnRefDnr { n: tmp }])], ir::TyVoid, "fn_number_write")
+}
+
 // `Parser::set_field_check` for a field of a plain type: the write op its type stores through.
 pub fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> ir::Node {
   def = el::def(e, d);
@@ -469,6 +482,28 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
       return type_parse(e, vars, pd, args);
     }
   }
+  // A call through a function-valued FIELD of a record local (`o.f(4)`, `try_fn_ref_call`):
+  // the field read into a `__fn_ref_tmp`, then called through it (`fn_call_tmp`).
+  if call {
+    fv = match e.p.nodes[re!] { SName { name: rn, member: rm } => if rm == "" { el_vars::var(vars, rn) } else { -1 }, _ => -1 };
+    fd = if fv >= 0 { struct_ref(e, el_types::base(el_vars::tp(vars, fv))) } else { -1 };
+    fa = if fd >= 0 && literal_def(e, fd) { attr_nr(el::def(e, fd), name) } else { -1 };
+    if fa >= 0 && el_types::base(el::def(e, fd).attributes[fa]!.typedef[0] ?? ir::TyVoid) is TyFunction {
+      read = member(e, vars, at, re, name, [], false);
+      if el_types::is_unknown(read.tp) {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      fw = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(read.tp, []));
+      el_vars::set_defined(vars, fw);
+      cr = call_ref(e, vars, fw, args);
+      if e.first_pass || el_types::is_unknown(cr.tp) {
+        return cr;
+      }
+      vars.vars[fw].skip_free = true;
+      // (The read bound for the call borrows nothing: the temporary lives for the call alone.)
+      return ex(el_ir::v_block([el_ir::v_set(fw, el_ex_null::block_typed(read.code, el_types::with_deps(read.tp, []))), cr.code], cr.tp, "fn_call_tmp"), cr.tp);
+    }
+  }
   if call || len(args) > 0 {
     return method_call(e, vars, at, re!, name, args);
   }
@@ -541,6 +576,12 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
   match x.code {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
     _ => {}
+  }
+  // A function-valued field reads its function's number, its closure half the null sentinel
+  // (`fn_ref_field_read`, the legacy layout; a split field is not carried).
+  if el_types::base(t) is TyFunction {
+    fpos = if e.first_pass { 0 } else { field_position(e, d, name) };
+    return ex(el_ir::v_block([el_ir::cl(e, "OpGetInt4", [x.code, ir::NdInt { n: fpos }]), el_ir::cl(e, "OpNullRefSentinel", [])], el_types::with_deps(t, []), "fn_ref_field_read"), t);
   }
   got = field_get(e, d, a, x.code);
   if got == null {

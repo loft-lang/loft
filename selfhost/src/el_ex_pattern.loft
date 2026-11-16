@@ -1895,6 +1895,12 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
         if el_types::is_collection(at) && e.p.nodes[fe!] is SVecLit {
           match e.p.nodes[fe!] {
             SVecLit { items } => {
+              // The field literal's element temp is minted on this pass too (`unique_elm_var`),
+              // so the variables number as Rust's do — a call through a function value names
+              // its temporary by that number.
+              if len(items) > 0 {
+                el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+              }
               for it in items {
                 if struct_literal_def(e, it) >= 0 {
                   literal_field_exprs(e, vars, it);
@@ -1907,6 +1913,11 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
           }
         } else {
           el_ex_assign::expression(e, vars, fe!);
+          // A function-valued field's `__fn_ref_tmp` is minted on this pass too
+          // (`fn_ref_slot_dnr`), so the variables number alike.
+          if el_types::base(at) is TyFunction {
+            el_ex_object::fn_number_write(e, vars, ir::NdNull, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }, at);
+          }
         }
       },
       _ => {}

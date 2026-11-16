@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function-valued struct field is its function's number in four bytes (`int<0,false>`): a named function written through a `__fn_ref_tmp` (`fn_number_write`, `FnRefDnr`), read as the number beside a null closure (`fn_ref_field_read`), called through a temporary (`fn_call_tmp`), and bound to a local.
+// Prints: 8 5 11 d
+
+struct Op { name: text, f: fn(integer) -> integer }
+
+fn dbl(x: integer) -> integer { x * 2 }
+fn inc(x: integer) -> integer { x + 1 }
+
+fn main() {
+  o = Op { name: "d", f: dbl };
+  a = o.f(4);
+  o.f = inc;
+  b = o.f(4);
+  g = o.f;
+  println("{a} {b} {g(10)} {o.name}");
+}
