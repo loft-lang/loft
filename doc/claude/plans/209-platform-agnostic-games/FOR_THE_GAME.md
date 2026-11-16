@@ -499,3 +499,32 @@ cannot, since the number arrives already rounded.
 **What the game does next**, as its proposal said: the fixed view sends the cells' light
 without the torches (`light_box(.., false)`), each reach as it changes, and the torches each
 frame, where `scene.offers_torches()`.
+
+## This stream's note: the free camera in `scene3d` (2026-11-16, the game at 33e7ab0)
+
+Read first: the game's work since `0b60376` is the hex routines moving into the hex libraries
+(HEX_LIBRARIES.md).  It leaves SCENE_CONTRACT.md as it was, so nothing here changed for it.
+
+`scene3d` 0.4.0 (loft-libs-graphics#94) builds the two things the free camera lacked:
+
+- **A card faces the free camera** (contract § What a scene holds 4): upright, turned about
+  its foot so its width lies across the view, every card the same way, the picture's left on
+  the left.  The eleven numbers of an actor are unchanged; for the fixed camera a card stands
+  as it stood, to the bit.
+- **The hero is never hidden from it** (rule 2): a wall group that a line from the eye to the
+  hero's card goes through is cut away, and shown again when none does.  Five lines are tried:
+  to the card's middle and to the point halfway from the middle to each corner.  So a wall
+  that only meets the card's outer quarter stays.  If the game wants the whole card clear,
+  say so: it is more lines, not another design.
+- **Either order.**  The cards and the cut-away follow the camera and the actors as they are
+  now, so `free_camera` before or after `set_actors` gives the same frame (rule 3).
+
+Not measured against anything of the game's: no view of the game gives `scene3d` a free
+camera yet (`fixedview.loft` uses the fixed one; `render3d.loft` draws its own meshes).  What
+a hex chunk's mesh asks of `scene3d` beyond tiles of faces is not known here until one is given.
+
+**A loft defect met on the way, for whoever writes loft meanwhile:** a function whose last
+expression is `a + b` with `a` a local vector answered only `b`'s elements (interpreter and C
+backend, no message).  `return a + b;` and `c = a + b; c` are right.  It is cured on this
+branch (`src/parser/vectors.rs`); until a loft with the cure is the one in use, write one of
+those two.
