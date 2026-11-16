@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	808	of	2147
+layer	elab	agree	817	of	2150
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -338,7 +338,6 @@ elab	refused	loft-suite/rules/coroutines/G-Own/a-link-in-a-generator-names-its-p
 elab	refused	loft-suite/rules/coroutines/G-Own/a-yielded-lambda-keeps-its-copy-of-a-captured-vector.loft
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-generator-keeps-its-links-tuples-and-text-copies-across-a-yield.loft
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-generator-yields-a-calls-tuple-result.loft
-elab	refused	loft-suite/rules/coroutines/G-Yield/a-nullable-yielded-into-a-dense-iterator-is-a-store.loft
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-yield-widens-like-a-return.loft
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-yielded-value-converts-into-its-element-type.loft
 elab	refused	loft-suite/rules/dispatch/Disp-Dynamic/a-runtime-selection-is-the-exhaustive-match-it-stands-for.loft
@@ -616,10 +615,8 @@ elab	refused	loft-suite/rules/operational/E-Eq/c91-an-identity-compare-names-one
 elab	refused	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft
 elab	refused	loft-suite/rules/operational/E-Left/2451-a-record-assigned-into-an-element-lands-where-the-place-was-when-it-ran.loft
 elab	refused	loft-suite/rules/operational/E-Left/each-operand-of-a-literal-a-format-and-a-compound-is-reduced-left-to-right.loft
-elab	refused	loft-suite/rules/operational/E-Null/the-null-pattern-is-a-reserved-value-per-width.loft
 elab	refused	loft-suite/rules/operational/E-NullArg/1924-a-null-text-orders-first-and-concatenates-to-null.loft
 elab	refused	loft-suite/rules/operational/E-NullArg/1945-a-concatenation-with-any-null-operand-is-null.loft
-elab	refused	loft-suite/rules/operational/E-Op-IntDivMod/a-zero-divisor-is-null-wherever-the-quotient-lands.loft
 elab	refused	loft-suite/rules/operational/E-Report/a-guarded-locked-write-runs-its-arm-and-reports-nothing.loft
 elab	refused	loft-suite/rules/operational/E-Seq/a-block-at-statement-start-before-an-operator.loft
 elab	refused	loft-suite/rules/operational/E-Truthy-1/1922-a-vector-slice-is-a-condition.loft
@@ -866,7 +863,6 @@ elab	refused	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struc
 elab	refused	loft-suite/rules/tuples/T-Cons/2253-a-compound-member-copies-the-local-it-answers.loft
 elab	refused	loft-suite/rules/tuples/T-Cons/2256-a-text-member-branch-is-copied-per-arm.loft
 elab	refused	loft-suite/rules/tuples/T-Destr/a-returned-tuple-is-destructured-once-into-any-place.loft
-elab	refused	loft-suite/rules/tuples/T-Destr/each-destructured-member-is-its-own-store-and-a-suffix-default-binds-first.loft
 elab	refused	loft-suite/rules/tuples/T-Proj/1698b-a-stored-tuples-text-and-scalar-members-are-written-in-place.loft
 elab	refused	loft-suite/rules/tuples/T-Record/a-link-to-a-narrow-tuple-member-writes-the-member.loft
 elab	refused	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft
@@ -918,13 +914,11 @@ elab	refused	loft-suite/rules/types/N-Decl/a-destructured-float-name-widens-an-i
 elab	refused	loft-suite/rules/types/N-Decl/a-destructured-name-keeps-its-declared-type.loft
 elab	refused	loft-suite/rules/types/N-Decl/a-null-test-on-an-inline-nullable-struct-narrows-it.loft
 elab	refused	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft
-elab	refused	loft-suite/rules/types/N-Dense/a-vectors-elements-are-what-its-type-says.loft
 elab	refused	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-more-non-null-than-its-receiver.loft
 elab	refused	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft
 elab	refused	loft-suite/rules/types/N-Domain/1471-an-out-of-range-value-struct-read-is-absent-not-a-zero.loft
 elab	refused	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft
 elab	refused	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft
-elab	refused	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft
 elab	refused	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft
 elab	refused	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft
 elab	refused	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft
