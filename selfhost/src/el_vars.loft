@@ -202,6 +202,8 @@ pub struct Vars {
   pub promoted_shadows: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
   pub dn4_coalesce: boolean = false,
+  // A destructure's right-hand call may answer a BOXED tuple (`boxed_tuple_return`): its record.
+  pub boxed_tuple_call: boolean = false,
   // The assignment seam's conversion is in flight (`Parser::parse_assign`, which reaches the
   // checked narrowing without `convert`'s entry guard): `el_convert::implicit_checked_narrow` reads it.
   pub assign_seam: boolean = false,

@@ -174,7 +174,49 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  rb = el_vars::var(vars, "__retbuf");
+  // `rewrite_tail_tuple_with_work_ref`: a function answering a boxed tuple builds its tail's
+  // tuple literal into a work ref of the `__tuple<…>` record (`synthetic_tuple_return`): a
+  // record member copied into its slot, a scalar set.  Any other tail is refused by name.
+  btd = match el_types::base(result) { TyReference { n: bn } => if starts_with(el::def(e, bn).name, "__tuple<") { bn } else { -1 }, _ => -1 };
+  boxed_bad = false;
+  if btd >= 0 {
+    // (Minted on the second pass alone, after the body's own work refs.)
+    bw = if e.first_pass { -1 } else { el_vars::work_ref(vars, ir::TyReference { n: btd, dep: [] }) };
+    match code {
+      NdBlock { block } => {
+        bl = block[0];
+        items = match el_ir::unspan(el_ir::last(bl.operators)) { NdTuple { items: ti } => ti, _ => [] };
+        bdef = el::def(e, btd);
+        if len(bl.operators) == 0 || len(items) != len(bdef.attributes) {
+          if !e.first_pass {
+            el::refuse(e, "a boxed tuple answered by something other than a tuple literal");
+          }
+          boxed_bad = true;
+        }
+        if !e.first_pass && !boxed_bad {
+        ops: vector<ir::Node> = [el_ir::v_set(bw, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: bw }, ir::NdInt { n: bdef.known_type }])];
+        for it in items {
+          mt = el_types::base(bdef.attributes[it#index]!.typedef[0] ?? ir::TyVoid);
+          if !(el_convert::plain_scalar(mt) || struct_ref(e, mt) >= 0) || (bdef.attributes[it#index]!.typedef[0] ?? ir::TyVoid) is TyOptional {
+            el::refuse(e, "a boxed tuple with a member that is no plain scalar or record");
+            boxed_bad = true;
+          }
+          ops += [el_ex_object::set_field(e, btd, it#index, ir::NdVar { n: bw }, it)];
+        }
+        ops += [ir::NdVar { n: bw }];
+        owned = ir::TyReference { n: btd, dep: [bw] };
+        if !boxed_bad {
+          bl.operators[len(bl.operators) - 1] = el_ir::v_block(ops, owned, "synthetic_tuple_return");
+          bl.result = [ir::TyReference { n: btd, dep: [] }];
+          code = ir::NdBlock { block: [bl] };
+        }
+        }
+      },
+      _ => {}
+    }
+  }
+  // (A boxed tuple's body is delivered above: none of the record delivery below applies.)
+  rb = if btd >= 0 { -1 } else { el_vars::var(vars, "__retbuf") };
   // A lambda answering a record has no buffer on the first pass (it is reserved between the
   // passes): a parameter at its tail is what the result borrows, by attribute number.
   lambda = starts_with(el::def(e, e.context).name, "n___lambda_");

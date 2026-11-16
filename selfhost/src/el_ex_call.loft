@@ -941,6 +941,11 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       el::refuse(e, "a call returning a heap value other than a record");
       return null;
     }
+    // A boxed tuple (`boxed_tuple_return`) is carried where a destructure takes it apart.
+    if match rp { TyReference { n: btn } => starts_with(el::def(e, btn).name, "__tuple<"), _ => false } && !vars.boxed_tuple_call {
+      el::refuse(e, "a call answering a boxed tuple outside a destructure");
+      return null;
+    }
     buf = el_vars::work_ref(vars, el_types::without_deps(rp));
     vars.vars[buf].caller_hidden_buf = true;
     args = list + [ir::NdVar { n: buf }];
@@ -1012,6 +1017,15 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
   // A tuple of plain scalars travels as a value; one holding a text or a heap member is boxed
   // (`boxed_tuple_return`) — not carried.
   plain_tuple = match ret { TyTuple { elems } => len([for t in elems if !el_convert::plain_scalar(t) { t }]) == 0, _ => false };
+  // `boxed_tuple_return`: a tuple holding a heap member is answered in a `__tuple<…>` record
+  // the caller hands in (a fresh `__ref_N`) — carried where a destructure takes it apart.
+  if vars.boxed_tuple_call && !plain_tuple && !retbuf {
+    btd = match ret { TyTuple { elems: bes } => el_types::tuple_def_of(e, bes), _ => -1 };
+    if btd >= 0 {
+      bbuf = el_vars::work_ref(vars, ir::TyReference { n: btd, dep: [] });
+      return ex(ir::NdCall { def_nr: d, args: list + [ir::NdVar { n: bbuf }] }, ir::TyReference { n: btd, dep: [] });
+    }
+  }
   if !scalar(el_types::base(ret)) && !(ret is TyIterator) && !plain_fn && !plain_tuple {
     el::refuse(e, "a call returning a heap value: {type_kind(el_types::base(ret))}");
     return null;

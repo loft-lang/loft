@@ -811,9 +811,54 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
   if rhs == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  outer_boxed = vars.boxed_tuple_call;
+  vars.boxed_tuple_call = e.p.nodes[rhs!] is SCall;
   x = el_ex_assign::expression(e, vars, rhs!);
+  vars.boxed_tuple_call = outer_boxed;
   if el_types::is_unknown(x.tp) {
     return ex(ir::NdNull, ir::TyVoid);
+  }
+  // A boxed tuple a call answered (`__tuple<…>`'s record): held in a `__ref_N`, a scalar member
+  // read from it, a record member copied into a work ref of its own that the place then names.
+  btd = match x.tp { TyReference { n: bn } => if starts_with(el::def(e, bn).name, "__tuple<") { bn } else { -1 }, _ => -1 };
+  if btd >= 0 {
+    bdef = el::def(e, btd);
+    if len(bdef.attributes) != len(places) {
+      refuse_known(e, x.tp, "a destructure of this value: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    btmp = el_vars::work_ref(vars, x.tp);
+    bsteps: vector<ir::Node> = [el_ir::v_set(btmp, x.code)];
+    for pl in places {
+      ba = bdef.attributes[pl#index]!;
+      bt = ba.typedef[0] ?? ir::TyVoid;
+      bnm = match e.p.nodes[pl] { SName { name, member } => if member == "" { name } else { "" }, _ => "" };
+      bsd = struct_ref(e, bt);
+      plain = el_convert::plain_scalar(bt) && read_op(bt) != "" && match bt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true };
+      if bnm == "" || bnm == "_" || !(plain || (bsd >= 0 && literal_def(e, bsd) && !(bt is TyOptional))) {
+        el::refuse(e, "a destructure of a boxed tuple into a place that is not a name, or of a member that is no plain scalar or record");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      bv = binding_var(e, vars, bnm);
+      if bv < 0 {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if vars.annotated.contains(bv) || !el_vars::change_var_type(e, vars, bv, el_types::with_deps(bt, [])) {
+        el::refuse(e, "a destructure that changes a local's type");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      el_vars::drop_use(vars, bv);
+      el_vars::set_defined(vars, bv);
+      bpos = ir::NdInt { n: if e.first_pass { 0 } else { field_position(e, btd, ba.name) } };
+      if plain {
+        bsteps += [el_ir::v_set(bv, el_ir::cl(e, read_op(bt), [ir::NdVar { n: btmp }, bpos]))];
+      } else {
+        bw = el_vars::work_ref(vars, ir::TyReference { n: bsd, dep: [] });
+        bk = ir::NdInt { n: el::def(e, bsd).known_type };
+        bsteps += [el_ir::v_set(bw, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: bw }, bk]), el_ir::cl(e, "OpCopyRecord", [el_ir::cl(e, "OpGetField", [ir::NdVar { n: btmp }, bpos, bk]), ir::NdVar { n: bw }, bk]), el_ir::v_set(bv, ir::NdVar { n: bw })];
+      }
+    }
+    return ex(ir::NdInsert { items: bsteps }, ir::TyVoid);
   }
   elems: vector<ir::TypeT> = match x.tp { TyTuple { elems: es } => es, _ => [] };
   if len(elems) == 0 || len(elems) != len(places) {
