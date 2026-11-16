@@ -303,6 +303,29 @@ fn install_resolved(
         root_line,
     )?;
     check_against_lockfile(&graph, opts)?;
+    // @C167 — the advisories, before anything is fetched or written: the feed refreshed when
+    // its cache is stale (so the load, which only reads the cache, sees it), and each package
+    // assessed by the same verdict the load reads.  A feed that cannot be had or does not
+    // verify is no feed here; `loft audit` reports why.
+    if let Ok(Some(feed)) =
+        crate::registry_advisories::load_or_fetch(&crate::registry_advisories::LoadOptions {
+            allow_unsigned: opts.allow_unsigned,
+            offline: opts.offline,
+            refresh: false,
+        })
+    {
+        let mut refused = Vec::new();
+        for r in &graph {
+            let verdict = crate::registry_advisories::assess(&r.name, &r.version.semver, &feed);
+            for line in &verdict.lines {
+                eprintln!("{line}");
+            }
+            refused.extend(verdict.refusal);
+        }
+        if !refused.is_empty() {
+            return Err(refused.join("\n"));
+        }
+    }
 
     let mut report = InstallReport {
         installed: Vec::new(),

@@ -905,119 +905,29 @@ impl Parser {
         }
     }
 
-    /// @PLAN12 Phase 6.7 — per-invocation advisory classifier.
-    ///
-    /// Called by each lockfile-based probe (sidecar / project /
-    /// registry-installed) after resolving a `(name, version)`
-    /// tuple.  Loads the cached advisory feed (lazily, once per
-    /// process), classifies the tuple, and emits severity-tiered
-    /// output:
-    ///
-    /// - `security_critical` → loud `error:` block; **continue
-    ///   running** (the user may be running their code precisely to
-    ///   test the upgrade, and security fixes can introduce
-    ///   breaking changes; refusing here is worse than warning).
-    ///   Opt-in refusal: `LOFT_STRICT_SECURITY=1` (env var) OR
-    ///   `--strict-security` (CLI flag, intended for CI gates) — in
-    ///   either, critical aborts with `process::exit(3)` UNLESS
-    ///   `LOFT_SECURITY_OVERRIDE=<advisory-id>` is set (comma-
-    ///   separated for multiple).
-    /// - `security_high` → loud `warning:` block; continue.
-    /// - `security_low` / `bug` → one-line warning.
-    /// - `deprecated` → one-line note.
-    ///
-    /// The Cargo / npm precedent: `cargo audit` defaults to warn,
-    /// `--deny warnings` is opt-in for CI.  Pure refusal blocks the
-    /// user precisely when they're trying to ship a fix or assess
-    /// the upgrade — the wrong default.
-    ///
-    /// Dedupes via `self.advisory_checked` so a package surfaced by
-    /// multiple `use` paths (sidecar + auto-install re-probe) only
-    /// reports once.  Feed loading is best-effort offline + cache-
-    /// only: no network fetch fires during script execution, only
-    /// during explicit `loft audit` / install commands.
+    /// @C167 — what the advisory feed says about a registry package this program loads, from
+    /// [`crate::registry_advisories::assess`] (the one verdict the install reads too): a
+    /// `security_critical` advisory refuses the build with a compile error naming the advisory
+    /// and the fixed release, unless `LOFT_SECURITY_OVERRIDE` lists it; `security_high` warns
+    /// (and refuses under `LOFT_STRICT_SECURITY=1`); `security_low`, `bug` and `deprecated`
+    /// print one line.  Only a VERIFIED cached feed counts, read once per process and never
+    /// fetched mid-parse (the install refreshes it).  Once per (package, release), however
+    /// many `use` paths reach it.
     #[cfg(feature = "registry")]
     pub(super) fn check_advisory(&mut self, name: &str, version: &str) {
         let key = (name.to_string(), version.to_string());
         if !self.advisory_checked.insert(key) {
             return;
         }
-        let Some(feed) = Self::advisory_feed() else {
+        let Some(feed) = crate::registry_advisories::verified_cached_feed() else {
             return;
         };
-        let hits = crate::registry_advisories::classify(name, version, feed);
-        if hits.is_empty() {
-            return;
+        let verdict = crate::registry_advisories::assess(name, version, feed);
+        for line in &verdict.lines {
+            eprintln!("{line}");
         }
-        let strict = std::env::var("LOFT_STRICT_SECURITY").is_ok();
-        let overrides: std::collections::HashSet<String> = std::env::var("LOFT_SECURITY_OVERRIDE")
-            .unwrap_or_default()
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
-        for hit in &hits {
-            use crate::registry_advisories::Severity;
-            let overridden = overrides.contains(&hit.advisory_id);
-            match hit.severity {
-                Severity::SecurityCritical => {
-                    // Loud error block — same in strict and non-strict
-                    // mode.  The DIFFERENCE is only whether we then
-                    // refuse to proceed.
-                    eprintln!(
-                        "error: {} {} was yanked for a security vulnerability",
-                        hit.package, hit.version
-                    );
-                    eprintln!("  advisory: {}", hit.advisory_id);
-                    eprintln!("  summary:  {}", hit.summary);
-                    if let Some(fix) = &hit.fixed_in {
-                        eprintln!(
-                            "  fix:      {} >= {} (run `loft install {}@{}`)",
-                            hit.package, fix, hit.package, fix
-                        );
-                    }
-                    if strict && !overridden {
-                        eprintln!("  refused under LOFT_STRICT_SECURITY=1");
-                        eprintln!(
-                            "  override (audit-trail required): LOFT_SECURITY_OVERRIDE={}",
-                            hit.advisory_id
-                        );
-                        std::process::exit(3);
-                    }
-                    if strict && overridden {
-                        eprintln!(
-                            "[security] override applied: {} ({} {})",
-                            hit.advisory_id, hit.package, hit.version
-                        );
-                    }
-                    // Non-strict mode: error block printed, but we
-                    // proceed.  User retains the right to run their
-                    // code while they investigate / fix.
-                }
-                Severity::SecurityHigh => {
-                    eprintln!(
-                        "warning: {} {} has a known security issue",
-                        hit.package, hit.version
-                    );
-                    eprintln!("  advisory: {}", hit.advisory_id);
-                    eprintln!("  summary:  {}", hit.summary);
-                    if let Some(fix) = &hit.fixed_in {
-                        eprintln!("  fix:      {} >= {}", hit.package, fix);
-                    }
-                }
-                Severity::SecurityLow | Severity::Bug => {
-                    eprintln!(
-                        "warning: {} {} — {} (advisory {})",
-                        hit.package, hit.version, hit.summary, hit.advisory_id
-                    );
-                }
-                Severity::Deprecated => {
-                    eprintln!(
-                        "note: {} {} is deprecated — {} (advisory {})",
-                        hit.package, hit.version, hit.summary, hit.advisory_id
-                    );
-                }
-            }
+        if let Some(why) = verdict.refusal {
+            diagnostic!(self.lexer, Level::Error, "{why}");
         }
     }
 
@@ -1025,29 +935,6 @@ impl Parser {
     #[cfg(not(feature = "registry"))]
     #[allow(clippy::unused_self, dead_code)]
     pub(super) fn check_advisory(&mut self, _name: &str, _version: &str) {}
-
-    /// Lazy process-global advisory feed loader.  Cached for the
-    /// duration of the process; offline-respecting; never refetches
-    /// from network mid-parse (the explicit `loft audit` flow does
-    /// that).  Returns `None` when the registry doesn't yet host an
-    /// advisory feed (current real state — HTTP 404 soft-fails to
-    /// "no advisories").
-    #[cfg(feature = "registry")]
-    fn advisory_feed() -> Option<&'static crate::registry_advisories::AdvisoryFeed> {
-        use std::sync::OnceLock;
-        static FEED: OnceLock<Option<crate::registry_advisories::AdvisoryFeed>> = OnceLock::new();
-        FEED.get_or_init(|| {
-            let opts = crate::registry_advisories::LoadOptions {
-                allow_unsigned: true,
-                // Mid-parse, never hit the network — always cache-only.
-                // `loft audit` does the freshness refresh on demand.
-                offline: true,
-                refresh: false,
-            };
-            crate::registry_advisories::load_or_fetch(&opts).unwrap_or(None)
-        })
-        .as_ref()
-    }
 
     /// The lockfile that governs this program, read once — @PLN143 arc B.
     ///
