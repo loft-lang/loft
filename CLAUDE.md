@@ -8,7 +8,8 @@
 
 **loft** is a tree-walking interpreter (Rust) for the **loft** language: statically typed,
 expression-oriented, struct/enum, store-based heap, stdlib from `default/*.loft`. Two backends:
-the interpreter and `--native` (compiles via `rustc`). It's the **language** layer of a stack:
+the interpreter and `--native` (compiles through C; the rustc writer, `--native-rust`, waits for an
+attic). It's the **language** layer of a stack:
 **lavition** (the engine/brand) → **loft** (this repo) → games **moros**/**dryopea** + consumer
 libs (crawler, `lib/markdown`) that dogfood the language. History: [LAVITION.md](doc/claude/LAVITION.md).
 Developed almost entirely by AI agents (steered; docs + tooling prioritized above code), so
@@ -62,7 +63,7 @@ by name has killed a sibling checkout's run.  Wait on the PID or the output file
 `scripts/wait_for.sh FILE REGEX [--pid N]` always ends; `scripts/pgrep_others.sh` is the `pgrep -f`
 that cannot match its caller ([CODE.md § shell](doc/claude/CODE.md)).
 
-**Bound ad-hoc runs**: `LOFT_TIMEOUT=60 loft --native p.loft` (rustc can hang; tests arm 300 s).  A
+**Bound ad-hoc runs**: `LOFT_TIMEOUT=60 loft --native p.loft` (a native compile can hang; tests arm 300 s).  A
 time bound does not bound MEMORY: test runs carry a 2 GiB store-heap ceiling (`LOFT_MEMORY_LIMIT`),
 and a repeat-run corruption harness caps the process too (`ulimit -v`).  Under debug assertions
 `LOFT_MAX_OPS` names the loop a hang spins in — absent from the ordinary debug build
@@ -224,9 +225,9 @@ signal you haven't earned it:**
 5. Fix at the chokepoint enforcing exactly the violated invariant — no narrower, no wider.
    The invariant is often already NAMED in `doc/claude/formal/` — cite the rule rather than
    re-deriving it, and close its deviation entry if it had one.
-6. Verify the full matrix on **BOTH backends**: the interpreter and the C backend (`--native-c`,
-   which `make`, `find_problems.sh`, `make falsify` and CI's PR gate select).  Add rustc-native
-   (`--native`, `LOFT_NATIVE_BACKEND` unset) only when the change touches what it emits —
+6. Verify the full matrix on **BOTH backends**: the interpreter and the C backend (`--native`,
+   which `make`, `find_problems.sh`, `make falsify` and CI's PR gate run).  Add the rustc writer
+   (`--native-rust`, or `LOFT_NATIVE_BACKEND=rust`) only when the change touches what it emits —
    `src/generation/`, `src/codegen_runtime.rs`, an operator's `#rust` body, a Rust native.
    Graduate guarantee probes to suite cells.
 7. **Propose 3+ cases to check → write them ALL down BEFORE working the first** — the specifics of
@@ -384,7 +385,7 @@ Every `LOFT_*` switch has ONE home doc.
   [RUNNING_TESTS.md § LogConfig](doc/claude/RUNNING_TESTS.md#logconfig--debug-logging-framework);
   `LOFT_VAR_TABLE=<fn>` a function's variable table with its deps resolved
   ([DEBUG_TRACE.md](doc/claude/DEBUG_TRACE.md)); `LOFT_STRICT_SCHEMA_IDS=1` / `LOFT_TRACE_MINT=1` for a
-  `--native` wrong-type fault ([NATIVE.md](doc/claude/NATIVE.md) § Architecture).
+  `--native-rust` wrong-type fault ([NATIVE.md](doc/claude/NATIVE.md) § Architecture).
 - **Two diagnostic tiers:** a diagnostic GATES (`warning`, `LOFT_DENY_WARNINGS=1`) if and only if
   ignoring it can produce a wrong result; everything else is `advice`, which never gates.  And a
   diagnostic REACHES only whoever can act on its cure — enforced once, in
@@ -392,6 +393,6 @@ Every `LOFT_*` switch has ONE home doc.
   ([DIAGNOSTICS.md](doc/claude/DIAGNOSTICS.md) § Diagnostic tiers, § Who a diagnostic is addressed to).
 - **By family:** lint opt-outs and `LOFT_ERRORS` — [DIAGNOSTICS.md § Switching a diagnostic
   off](doc/claude/DIAGNOSTICS.md) · profilers — [PROFILING.md](doc/claude/PROFILING.md) (prefer `make profile`) ·
-  `--native` rewrites, each with a `LOFT_NO_*` switch as the first bisect step —
+  the rustc writer's rewrites, each with a `LOFT_NO_*` switch as the first bisect step —
   [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) · both-backend lowering and store policies, where
   the two backends agreeing is no evidence — [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md).
