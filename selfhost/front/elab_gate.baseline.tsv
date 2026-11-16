@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	826	of	2152
+layer	elab	agree	833	of	2153
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -50,7 +50,6 @@ elab	refused	loft-suite/rules/binding/B-Copy/a-vector-local-bound-from-a-value-b
 elab	refused	loft-suite/rules/binding/B-Copy/an-update-copies-a-base-that-views-a-place.loft
 elab	refused	loft-suite/rules/binding/B-Copy/c131-a-cast-to-a-variant-answers-the-variant.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/1373-growing-a-container-ends-the-places-inside-it.loft
-elab	refused	loft-suite/rules/binding/B-Disturb/2037-a-collection-rebound-from-a-call-ends-its-views.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/2161-a-container-named-through-a-field-or-an-element-ends-its-views.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/2161-a-disturbance-ends-only-the-places-inside-its-container.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/2267-a-clear-or-a-method-ends-the-views-into-a-vector.loft
@@ -303,7 +302,6 @@ elab	refused	loft-suite/rules/collections/Col-RemoveDense/a-narrow-vector-elemen
 elab	refused	loft-suite/rules/collections/Col-RemoveDense/a-removal-through-a-reference-parameter-shifts-by-the-element.loft
 elab	refused	loft-suite/rules/collections/Col-Store/1445b-an-amp-keyed-parameter-derefs-at-every-kind.loft
 elab	refused	loft-suite/rules/collections/Col-Trie/2241-a-key-ending-in-nul-bytes-is-its-own-key.loft
-elab	refused	loft-suite/rules/collections/Col-Trie/an-absent-key-is-ordered-and-matched-as-comparisons-say.loft
 elab	refused	loft-suite/rules/collections/Col-Unordered/2453-a-hash-holding-records-walks-unordered-in-key-order.loft
 elab	refused	loft-suite/rules/collections/Col-Unordered/an-unordered-walk-is-slot-order-and-a-linked-table-key-order.loft
 elab	refused	loft-suite/rules/collections/Col-Vec/2278-a-repeat-count-from-a-function-declared-below.loft
@@ -723,11 +721,7 @@ elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-reassigned-af
 elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-rebuilt-in-a-loop-keeps-the-store-it-still-names.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-discharged-projection-rebound-from-a-call-is-witnessed.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-match-of-views-beside-a-call-bind-is-witnessed.loft
-elab	refused	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-hash-element-releases-through-its-witness.loft
-elab	refused	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-sorted-element-releases-through-its-witness.loft
-elab	refused	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-spatial-element-releases-through-its-witness.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft
-elab	refused	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-an-index-element-releases-through-its-witness.loft
 elab	refused	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft
 elab	refused	loft-suite/rules/rewrites/R-AppendTwin/an-append-twin-runs-a-builder-whose-leaves-are-inlined.loft
 elab	refused	loft-suite/rules/rewrites/R-Base/158-a-base-survives-a-growth-of-another-store.loft

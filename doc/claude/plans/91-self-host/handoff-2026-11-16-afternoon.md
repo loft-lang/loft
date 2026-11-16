@@ -3,20 +3,22 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 <!-- size-exempt: a dated handoff record, read once (DOC_QUALITY § Maintainer docs 2) -->
-# Handoff 2026-11-16 (afternoon): gate E at 801 of 2143, a fast loop for the long tail
+# Handoff 2026-11-16 (afternoon): gate E at 833 of 2153, a fast loop for the long tail
 
-Branch `tuxedo-pln204-int32` @ d874c229c, pushed.  Goal (owner, /goal): the full loft
+Branch `tuxedo-pln204-int32`, pushed; PR #2518 (loft3's gather) carries it up to 77024883f
+(819 of 2151) and re-wrote gate E's baseline at ITS suite pin 898bc05 — after it merges, rebase
+and re-write the baseline at the pin main then has.  Goal (owner, /goal): the full loft
 interpreter, the in-between data of the two implementations compared at every layer.
 
 ## Where it stands (suite pin 508580956)
 
 | Layer | Gate | Position |
 |---|---|---|
-| front end (gate E) | `selfhost/front/elab_gate.py` | **801 of 2143 agree, 1342 refused, 0 differ**; baseline committed at 401e789af |
+| front end (gate E) | `selfhost/front/elab_gate.py` | **833 of 2153 agree, 1320 refused, 0 differ**; baseline committed for fc10743c3 |
 | writer / runner | `bgen_survey.py`, `run_image_survey.py` | as `handoff-2026-11-16-day.md`; their re-pinned baselines are still uncommitted in `../loft2-repin` |
 
 The corpus is 2143 because the gate has a part of its own now: `selfhost/front/cells/*.loft`
-(18 cells, all agreeing) — one shape per cell that the corpus does not hold ALONE.
+(28 cells, all agreeing) — one shape per cell that the corpus does not hold ALONE.
 
 ## What gate E's remaining 1342 are
 
@@ -73,17 +75,31 @@ the line to the `}`); `parse_var`'s `into` arm asked of the exact type; a view a
 declared comprehension; format-hole rows on both passes; `c ?? Rec {..}` borrowing what its
 subject's read borrows; a `-> E?` body over a variant tail; a `w!` match subject's borrow.
 
-## In flight (uncommitted in the tree)
+## Later the same session (commits 56f990798 … fc10743c3)
 
-`null` into a declared local of any type (`Parser::null_value`), and prefix `!` on a record
-that is not nullable and on a struct enum.  Probes `dn.loft` / `nt.loft` agree on a
-development build; three corpus programs newly agree; the full corpus run and the cells are
-still to do.
+`null` into a declared local of any type; prefix `!` on a record and a struct enum; `return
+null` and a literal tail for `vector<T>?`, `return null` for a struct-enum `E?`; a tuple bound
+to a declared tuple of other scalar member types (`tuple_convert`); `vector<integer?>`,
+`vector<float?>`, `vector<boolean?>` (stored as the scalar's vector — the base
+`vector<float>` row on the first pass, its definition on the second); a keyed local returned,
+a keyed collection bound from a call with scalar arguments, a keyed literal at a tail
+(`__kvb_N`); `destructure_constant_member`.
 
 ## Open, in order
 
-1. Finish the in-flight batch (corpus run, two cells, commit, real gate).
-2. Known differences OUTSIDE the corpus, found by probes and not yet fixed: `R { c: [] }` with
+1. **Out-of-line children** — `struct Tree { left: Tree? }` — is the largest family left (75
+   programs meet "a type whose fields contain it again", 64 "an omitted field of this type").
+   Rust's shape, from a probe: the field's store type is `child_rec<Tree>` (`ChildRec(100)`,
+   4 bytes); a read is `OpRefFromChildRec(OpGetField(t, pos, type))`; an omitted child is
+   `OpSetChildRec(field, OpNullRefSentinel(), type)`; a literal's FIRST child literal is built
+   in place (`__ref_p2_N = OpChildRecInPlace(field, type)`, then its fields), a later one apart
+   in an "Object" block handed to `OpSetChildRec`.  Read `typedef.rs` / `objects.rs` for which
+   child is built in place before porting.
+2. Next by blocked programs: a vector literal mixing struct literals and other items (33), a
+   slice of a vector that is no local of plain scalars (27), an index that is a range, a key
+   list or a limit (20), `vector<S?>` / `vector<text?>` / `vector<u8?>` (41, each its own
+   layout), a keyed bind from a call with a record argument (`protectable_ref_args`).
+3. Known differences OUTSIDE the corpus, found by probes and not yet fixed: `R { c: [] }` with
    `c: vector<boolean>` mints the `vector<boolean>` row on the first pass where Rust does not
    (`LOFT_TRACE_MINT` on both sides will name it).
 3. Families probed and left: a `text?` field or element as a `&text` argument (Rust calls a
