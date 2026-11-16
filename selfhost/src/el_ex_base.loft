@@ -1043,6 +1043,13 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
   if e.first_pass && el_types::is_unknown(ft) {
     return ir::NdNull;
   }
+  // `out_of_line_read` (`@FR-L-OutOfLine`): the child record the field's number names, a view
+  // in the host's store — the field's `OpGetField` carrying the content's row.
+  if el_schema::out_of_line(e, d, a) {
+    fd = match ft { TyReference { n } => n, _ => -1 };
+    kt = if e.first_pass || fd < 0 { 65535 } else { el::def(e, fd).known_type };
+    return el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: kt }])]);
+  }
   if keyed_kind(ft) {
     return el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]);
   }

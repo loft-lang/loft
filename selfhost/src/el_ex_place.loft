@@ -1987,6 +1987,16 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           }
           return null;
         }
+        // `@FR-B-OutOfLine`: an out-of-line field is written through its child record.
+        if el_schema::out_of_line(e, d, a) {
+          ol = out_of_line_init(e, vars, r, d, a, fe!);
+          if ol == null {
+            return null;
+          }
+          list += [ol!];
+          found += [fname];
+          continue;
+        }
         at = def.attributes[a]!.typedef[0];
         // A `vector<T>?` field is written as its dense twin is; a `null` marks the primed
         // handle absent (`-1`).
@@ -2336,6 +2346,99 @@ pub fn nullable_some_literal(e: el::El, vars: el_vars::Vars, syn: integer, node:
   el_ir::v_block(list, ir::TyEnum { n: syn, is_ref: true, dep: [w] }, "NullableSome")
 }
 
+// The field place of out-of-line attribute `a` of record `d` at `r` and its content's row
+// (`out_of_line_kt`: `u16::MAX` on the first pass, before any layout).
+fn child_field(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) -> vector<ir::Node> {
+  at = el::def(e, d).attributes[a]!;
+  sd = match el_types::base(at.typedef[0]) { TyReference { n } => n, _ => -1 };
+  kt = if e.first_pass || sd < 0 { 65535 } else { el::def(e, sd).known_type };
+  [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: base + field_position(e, d, at.name) }, ir::NdInt { n: kt }]), ir::NdInt { n: kt }]
+}
+
+// `literal_in_child`'s test: every variable the literal's build names but its own record `w`
+// is a scalar or a text, and it builds no record inside it — the child is reset before the
+// field values are read.
+fn plain_child_literal(vars: el_vars::Vars, n: ir::Node, w: integer) -> boolean {
+  match n {
+    NdVar { n: x } => {
+      if x != w {
+        b = el_types::base(el_vars::tp(vars, x));
+        if !(is_scalar(el_vars::tp(vars, x)) || b is TyText) {
+          return false;
+        }
+      }
+    },
+    NdBlock { block } => {
+      if block[0].name == "Object" {
+        return false;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if !plain_child_literal(vars, c, w) {
+      return false;
+    }
+  }
+  true
+}
+
+// `out_of_line_set` for a literal's field `a` of record `d` at `r` given the value at `fe`
+// (`@FR-B-OutOfLine`): `null` releases the child (`OpSetChildRec` of the null sentinel); a
+// literal of the field's record whose values read no record is built IN the child
+// (`literal_in_child`: `OpChildRecInPlace` where its own store was made, the build spliced);
+// any other such literal is built apart and copied in (`OpSetChildRec`).  A value that is no
+// literal — a local, a call (moved, demoted or written back) — is refused by name.
+fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: integer, fe: integer) -> ir::Node? {
+  fk = child_field(e, d, a, r, 0);
+  field = fk[0]!;
+  kt = fk[1]!;
+  if e.p.nodes[fe] is SNull {
+    return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), kt]);
+  }
+  sd = match el_types::base(el::def(e, d).attributes[a]!.typedef[0]) { TyReference { n } => n, _ => -1 };
+  if struct_literal_def(e, fe) != sd {
+    el::refuse(e, "an out-of-line field given a value that is no literal of its record");
+    return null;
+  }
+  x = el_ex_assign::expression(e, vars, fe);
+  if e.first_pass {
+    return ir::NdInsert { items: [] };
+  }
+  bl = match el_ir::unspan(x.code) { NdBlock { block } => block[0], _ => { el::refuse(e, "an out-of-line field given a value that is no literal of its record"); return null; } };
+  w = match el_ir::unspan(el_ir::last(bl.operators)) { NdVar { n } => n, _ => -1 };
+  made = -1;
+  for op in bl.operators {
+    match el_ir::unspan(op) {
+      NdCall { def_nr, args } => {
+        if el::def(e, def_nr).name == "OpDatabase" && el_ir::unspan(args[0] ?? ir::NdNull) == ir::NdVar { n: w } {
+          made = op#index;
+        }
+      },
+      _ => {}
+    }
+  }
+  plain = bl.name == "Object" && w >= 0 && made >= 0;
+  for op in bl.operators {
+    if !plain_child_literal(vars, op, w) {
+      plain = false;
+    }
+  }
+  if !plain {
+    return el_ir::cl(e, "OpSetChildRec", [field, x.code, kt]);
+  }
+  ops: vector<ir::Node> = [];
+  for op in bl.operators {
+    if op#index == made {
+      ops += [el_ir::v_set(w, el_ir::cl(e, "OpChildRecInPlace", [field, kt]))];
+    } else if op#index + 1 < len(bl.operators) {
+      ops += [op];
+    }
+  }
+  vars.vars[w].skip_free = true;
+  ir::NdInsert { items: ops }
+}
+
 // `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
 // type's default; a vector field its handle zeroed (twice: the prime, then the default's own
 // write); a struct field each of ITS fields' defaults, inline at its offset.
@@ -2344,6 +2447,11 @@ pub fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integ
   at = def.attributes[a]!;
   pos = base + field_position(e, d, at.name);
   ft = at.typedef[0];
+  // An omitted out-of-line field holds no child: `OpSetChildRec` of the null sentinel.
+  if el_schema::out_of_line(e, d, a) {
+    fk = child_field(e, d, a, r, base);
+    return [el_ir::cl(e, "OpSetChildRec", [fk[0]!, el_ir::cl(e, "OpNullRefSentinel", []), fk[1]!])];
+  }
   // An omitted `S?` field (`__nullable<S>`, @PLN25 E2a.4) is absent: the record's zero-init is
   // discriminant 0.
   if is_nullable_wrapper(e, ft) {

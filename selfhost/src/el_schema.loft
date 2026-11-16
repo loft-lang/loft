@@ -46,10 +46,10 @@ pub fn fill_all(e: el::El) {
     }
   }
   // A struct whose fields reach it again — `Tree { left: Tree? }`, `A { b: B }` with
-  // `B { a: A? }` — is laid out with that field out of line, a child (`@FR-L-OutOfLine`): not
-  // carried.  Refused before any layout, as `fill_all` stops before laying out a cycle.
+  // `B { a: A? }` — is laid out with that field out of line, a child (`@FR-L-OutOfLine`,
+  // `out_of_line`).  A cycle through a struct ENUM is not carried: refused before any layout.
   for d in 0..len(e.b.data.definitions) {
-    if el::def(e, d).source == e.source && (el::def(e, d).def_type == el::DT_STRUCT || el::def(e, d).def_type == el::DT_ENUM) && reaches(e, d, d, []) {
+    if el::def(e, d).source == e.source && el::def(e, d).def_type == el::DT_ENUM && reaches(e, d, d, []) {
       el::refuse(e, "a type whose fields contain it again (an out-of-line child)");
       return;
     }
@@ -354,8 +354,7 @@ fn synth_nullable_struct_fields(e: el::El) {
       }
       // `@FR-L-OutOfLine`: a `S?` whose `S` holds the host is out of line, record 0 its null.
       if holds_record(e, sd, host#index, []) {
-        el::refuse(e, "an out-of-line nullable record field");
-        return;
+        continue;
       }
       syn = nullable_enum_for(e, sd);
       if el::def(e, syn).known_type == NO_TYPE {
@@ -490,10 +489,21 @@ fn fill_database(e: el::El, d: integer) {
     }
     // `τ?` is stored at `τ`'s own layout (`@FR-L-Null`).
     ft = el_types::base(a.typedef[0]);
-    c = match ft {
-      TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
-      _ => content_type(e, ft)
-    };
+    // `@FR-L-OutOfLine`: a field whose record holds its host is the number of a child record
+    // in the host's store, typed by the content it holds (`child_rec<S>`).
+    c = -1;
+    if out_of_line(e, d, a#index) {
+      sd = match ft { TyReference { n } => n, _ => -1 };
+      if el::def(e, sd).known_type == NO_TYPE {
+        fill_database(e, sd);
+      }
+      c = child_rec(e, el::def(e, sd).known_type);
+    } else {
+      c = match ft {
+        TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
+        _ => content_type(e, ft)
+      };
+    }
     if c < 0 {
       el::refuse(e, "a struct field of this type");
       return;
@@ -503,6 +513,43 @@ fn fill_database(e: el::El, d: integer) {
       set_field_nullable(e, s, f);
     }
   }
+}
+
+// `Data::field_is_out_of_line` (`@FR-L-OutOfLine`, @C159) for a plain struct field: attribute
+// `a` of `d` is a record — `S` or `S?`, no pointer — whose fields reach `d` again inline, so it
+// cannot lie inside its host.  A struct-enum field that does is refused where it is laid out.
+pub fn out_of_line(e: el::El, d: integer, a: integer) -> boolean {
+  at = el::def(e, d).attributes[a];
+  if at == null || at!.constant {
+    return false;
+  }
+  sd = match el_types::base(at!.typedef[0] ?? ir::TyVoid) {
+    TyReference { n, dep } => if dep.contains(el_types::MARKER) { -1 } else { n },
+    _ => -1
+  };
+  sd >= 0 && el::def(e, sd).def_type == el::DT_STRUCT && !starts_with(el::def(e, sd).name, "__") && holds_record(e, sd, d, [])
+}
+
+// `Stores::child_rec`: the store type `child_rec<name of content>` — a four-byte record number
+// in the host's store — made at the end of the table the first time it is asked for.
+pub fn child_rec(e: el::El, content: integer) -> integer {
+  name = "child_rec<{e.b.types[content].name}>";
+  t = schema_type(e, name);
+  if t >= 0 {
+    return t;
+  }
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: name,
+    parts: [ir::PtChildRec { content: content }],
+    keys: [],
+    complex: true,
+    linked: false,
+    size: 4,
+    align: 4,
+    field_groups: []
+  }];
+  num
 }
 
 // An enum field's store type: a variant's ordinal (`enumerate`) a plain byte, any other enum its
