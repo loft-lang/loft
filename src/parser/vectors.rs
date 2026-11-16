@@ -339,7 +339,8 @@ impl Parser {
             // but its own.  Typed with them, the first pass (which mints no backing, so
             // nothing re-types it) read a tail `a + b` as a value living in the local `a`,
             // `a` became the function's return buffer, and the delivery cleared it before
-            // the concat read it: `{ a = [1, 2]; b = [3, 4]; a + b }` answered `[3, 4]`.
+            // the concat read it: `{ a = [1, 2]; b = [3, 4]; a + b }` answered `[3, 4]`
+            // (loft#2517).
             let vec = self.create_unique("vec", &tp.without_deps());
             let elm_tp = tp.content();
             let db_ops = self.vector_db(&elm_tp, vec);
