@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	508580956bfa87977becdb248551009411c6d361
 
-layer	elab	agree	847	of	2157
+layer	elab	agree	851	of	2158
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -63,7 +63,6 @@ elab	refused	loft-suite/rules/binding/B-Disturb/a-view-read-after-a-loop-is-copi
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-link-to-a-child-writes-through.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft
-elab	refused	loft-suite/rules/binding/B-OutOfLine/a-view-of-an-out-of-line-child-across-every-write.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-write-copies-into-the-host.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/an-unlink-moves-and-a-literal-is-built-in-its-child.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Alias/1433-a-keyed-alias-is-a-link-not-a-copy.loft
@@ -340,7 +339,6 @@ elab	refused	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint
 elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft
 elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-null-hole-never-calls-the-users-to-text.loft
 elab	refused	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft
-elab	refused	loft-suite/rules/formatting/F-Render-Child/2430-a-chain-of-any-length-takes-no-stack-per-link.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Fields/57-json.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Fields/a-record-renders-its-null-fields.loft
@@ -759,7 +757,6 @@ elab	refused	loft-suite/rules/rewrites/R-HandOver/a-window-of-scalar-vectors-rot
 elab	refused	loft-suite/rules/rewrites/R-Header/a-vector-the-loop-rebinds-is-read-through-the-header-of-what-it-names-now.loft
 elab	refused	loft-suite/rules/rewrites/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store.loft
 elab	refused	loft-suite/rules/rewrites/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft
-elab	refused	loft-suite/rules/rewrites/R-HostStore/a-recursion-builds-its-result-in-the-field-it-is-written-to.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlace/158-link-rebind.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlace/a-link-to-a-plain-record-blocks-no-hoist.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-record-through-any-view.loft
