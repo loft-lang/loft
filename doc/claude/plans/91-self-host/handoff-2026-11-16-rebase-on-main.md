@@ -17,7 +17,7 @@ full loft interpreter, the in-between data of the two implementations compared a
   runner surveys, one heavy job at a time.
 - Gate E at the new pin, before the uncommitted ports below: 733 of 2125 agree, 12 differ.  The
   differs were new Rust behaviour from main plus programs a cleared refusal newly exposed.
-- With the ports below: **751 of 2125 agree, 1370 refused, 4 differ** (verdict files diffed run
+- With the ports below: **754 of 2125 agree, 1367 refused, 4 differ** (verdict files diffed run
   against run: every moved program is one a port named).
 
 ## Ported this session (Rust function → loft)
@@ -27,7 +27,7 @@ full loft interpreter, the in-between data of the two implementations compared a
 - `coalesce_with` mints `__ncc_N` for a subject of unknown type on pass 1 (committed).
 - Pattern groups `(2 | 3)`, `null` arms, a nullable scalar subject peeled, text struct bindings,
   root captures `w: V { … }` (`root_capture`, with the variant proved for the arm body).
-- Closure cells (`el_cell.loft`: `cell_struct_name`, `synthesize_cell_structs`,
+- Closure cells — the E-Or / E-And cells and 685 agree (`el_cell.loft`: `cell_struct_name`, `synthesize_cell_structs`,
   `flip_scalars_to_box_types`, `auto_deref_boxed_scalar`, `maybe_prepend_cell_alloc`); a map of
   the Rust sites is in the session scratchpad only — re-derive from `vectors.rs` 3019–3200 and
   9481–9600 if needed.
@@ -82,7 +82,10 @@ full loft interpreter, the in-between data of the two implementations compared a
    Rust appends through `OpGetDbRef(__closure, pos)` with an odd shape (the literal's push goes
    straight into the capture, then an `OpAppendVector` of the built `_vec_1`), to be reproduced
    exactly; nullable (10+4), keyed (7+4+4) and tuple (6) captures; the parameter shadow cell
-   (#685, `el_cell::flip`) is ported but admits no program alone yet.
+   (#685, `el_cell::flip`) is ported: seeded after the head's work-ref nulls; a text written in
+   the lambda uses the read's setter (`OpSetTextReplace`) and no `OpFreeText` (the scope pass
+   adds it).  Next: a lambda answering a record beside a shared capture (17) — Rust gives it a
+   late `__retbuf` and materialises the capture into it behind a null test.
 3. Re-write the baselines at the new pin once gate E has no differ.
 4. loft#2515 (filed, compiler half fixed in 72a943412, guard cell loft-suite 728fcfd): the
    static checker still MISSES it with `LOFT_NO_RET_TYPE_MATCH=1` (`own_sweep.py`: uaf,re-free).

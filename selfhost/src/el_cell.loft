@@ -135,10 +135,15 @@ pub fn seed_cells(code: ir::Node, seeds: vector<ir::Node>) -> ir::Node {
   if len(seeds) == 0 {
     return code;
   }
+  // After the head's work-ref nulls, before its work texts (`finish_body`'s prologue order).
   match code {
     NdBlock { block } => {
       b = block[0];
-      b.operators = seeds + b.operators;
+      at = 0;
+      while at < len(b.operators) && match el_ir::unspan(b.operators[at]!) { NdSet { var: _, inner } => inner is NdNull, _ => false } {
+        at += 1;
+      }
+      b.operators = b.operators[0..at] + seeds + b.operators[at..];
       ir::NdBlock { block: [b] }
     },
     _ => code
@@ -224,7 +229,8 @@ pub fn assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: in
   }
   vt = value_of(e, c.cd);
   cur = read(e, c.place, c.cd);
-  setter = "OpSet{op_suffix(vt)}";
+  // In the lambda the field is written with the read's own setter (a text: `OpSetTextReplace`).
+  setter = if c.v < 0 && el_types::base(vt) is TyText { "OpSetTextReplace" } else { "OpSet{op_suffix(vt)}" };
   val = x.code;
   if op != "=" {
     bin = op[..-1];
@@ -239,7 +245,7 @@ pub fn assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: in
       }
       f = el_vars::create_unique(vars, "field", ir::TyText { dep: [] });
       fv = ir::NdVar { n: f };
-      return ex(ir::NdInsert { items: [el_ir::v_set(f, cur.code), el_ir::cl(e, "OpAppendText", [fv, x.code]), el_ir::cl(e, setter, [c.place, ir::NdInt { n: 0 }, fv]), el_ir::cl(e, "OpFreeText", [fv])] }, ir::TyVoid);
+      return ex(ir::NdInsert { items: [el_ir::v_set(f, cur.code), el_ir::cl(e, "OpAppendText", [fv, x.code]), el_ir::cl(e, setter, [c.place, ir::NdInt { n: 0 }, fv])] }, ir::TyVoid);
     }
     r = call_op(e, vars, bin, [cur.code, x.code], [vt, x.tp]);
     if el_types::is_unknown(r.tp) {
@@ -248,7 +254,8 @@ pub fn assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: in
     val = r.code;
     x = ex(r.code, r.tp);
   }
-  conv = el_convert::convert(e, vars, val, x.tp, vt, false);
+  // A text is set as it is (`OpSetText` copies it into the cell's own field).
+  conv = if (el_types::base(vt) is TyText && el_types::base(x.tp) is TyText) { val } else { el_convert::convert(e, vars, val, x.tp, vt, false) };
   if conv == null {
     refuse_known(e, x.tp, "a value of another type written to a cell: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
