@@ -132,6 +132,28 @@ probe `scratchpad/p/cw1.loft`), of a keyed collection (21), of a tuple or a link
 programs whose call through a local is refused only because its lambda was.  loft3 took
 605f3d2f5 as this branch's cut for the next PR and fixed loft#2520 on `tuxedo-pr2518-next`.
 
+**To 6198dab69: 898 of 2175, 0 differ** — a lambda appending to a vector it captures, a whole
+value written through a link (`copy_ref`; nullable scalars, text, enums), a scalar link read
+under `??` and `+`.
+
+**The next rule-sized piece: `boxed_tuple_return`** (35 programs meet "a call returning a heap
+value: TyTuple", 73 "a tuple with a member of this type").  A function answering a tuple with
+a heap member answers a `__tuple<…>` RECORD: its declaration is rewritten (hidden `__retbuf`,
+`-> __tuple<S,integer>`, the definition at the return type's position), its tail is a
+`synthetic_tuple_return` block building into a `__ref_N` (a record member copied into
+`OpGetField(buf, pos, kt)`, a scalar set), and a destructure of the call holds the answer in a
+`__ref_N`, reads a scalar member and COPIES a record member into a work ref the place then
+names.  Rust sites: `Parser::boxed_tuple_return` (definitions.rs 3539, 4751, 8433; vectors.rs
+1896, 2082, 2329; generics.rs 268; control.rs 2415, 5279, 5408; call_args.rs 1220).  The port
+does NOT box the callee today and nothing refuses it — it is hidden only because every caller
+is refused — so port the callee FIRST.  A caller-side draft (the destructure) is kept in
+`scratchpad/boxed-tuple-destructure.patch`; probe `scratchpad/p/tp1.loft`.
+
+**A build reads the sources in its first minutes — every time.**  Twice more this session an
+edit landed while a run's build was under a minute old (a development build at 28 s, the real
+gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
+and edit in the NEXT, never in the same one.
+
 **Owed after the next PR lands (loft3's union on `tuxedo-pr2518-next`, suite pin b2194ff):**
 gate E reads 886 of 2185 there with 2 DIFFER, both variable numbering, committed as `differ`
 rows in that branch's baseline — cure them in the elaborator after rebasing:
