@@ -305,7 +305,11 @@ and `cgen_live.sh --diff FILE` compares its unit with the Rust one;
 `cgen_build_survey.sh [N] [--check]` snapshots the sources, builds them and surveys the corpus
 (against the suite at `tests/loft-suite.pin`) and every bench (`cgen_survey.py --run --bench`
 with no `--files` takes `bench/NN_*` and the library benches under `$LOFT_PERF_LIBS`);
-`cgen_msvc_diff.py WANT GOT` diffs two units with the `_MSC_VER` split copy left out.  All keep
+`cgen_msvc_diff.py WANT GOT` diffs two units with the `_MSC_VER` split copy left out.  The run
+counts are gated: `cgen_build_survey.sh --check` holds the corpus and the benches to
+`cgen_survey.baseline`'s `run|plain|program|corpus` and `…|benches` rows (every program passes;
+no drop in `pass` or in units equal to the Rust ones), a printed store report masked as
+`scripts/c_sweep.py` masks it.  All keep
 their output in `$LOFT_CGEN_OUT` (default `$TMPDIR/loft-cgen`); the shared setup is
 `cgen_env.sh`.
 
