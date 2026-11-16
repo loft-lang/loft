@@ -8129,7 +8129,7 @@ impl Data {
         match t {
             Type::Enum(e, true, deps)
                 if (e as usize) < self.definitions.len()
-                    && matches!(self.def(e).returned, Type::Enum(_, true, _)) =>
+                    && matches!(self.def(e).returned.base(), Type::Enum(_, true, _)) =>
             {
                 Type::Reference(e, deps)
             }
