@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a field or an element handed to a reference parameter: a plain scalar's as its address (scalar_place_ref), a record's or a vector's through a __ref_N viewing what the place views, never freed.
+// Prints: 4 [1,9] 7 n 7 9
+struct In { a: integer }
+struct H { f: integer, els: vector<integer>, inner: In, name: text }
+
+fn dec(n: &integer) { n -= 1; }
+fn grow(v: &vector<integer>, n: integer) { v += [n]; }
+fn put(r: &In) { r.a = 7; }
+fn swap(r: &In) { r = In { a: 44 }; }
+
+fn main() {
+  h = H { f: 5, els: [1], inner: In { a: 2 }, name: "n" };
+  dec(h.f);
+  grow(h.els, 9);
+  put(h.inner);
+  v = [In { a: 1 }, In { a: 3 }];
+  put(v[1]);
+  w = [10, 20];
+  dec(w[0]);
+  println("{h.f} {h.els} {h.inner.a} {h.name} {v[1].a} {w[0]}");
+}

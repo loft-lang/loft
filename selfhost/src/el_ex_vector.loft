@@ -581,7 +581,7 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
   if cw >= 0 {
     t = el_types::with_deps(t, [cw]);
   }
-  if may_miss {
+  if may_miss && !(t is TyOptional) {
     t = ir::TyOptional { inner: t };
   }
   code = if record && !e.first_pass && linked_record(e, inner) { el_ir::cl(e, "OpVectorRef", [x.code, i.code]) } else { el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]) };
@@ -1112,6 +1112,17 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     c = el_convert::convert_admitting(e, vars, x.code, x.tp, ir::TyBoolean);
     if c != null {
       return ex(el_ir::cl(e, "OpNot", [c!]), ir::TyBoolean);
+    }
+  }
+  // A record that is not declared nullable is tested the same way (it may hold the sentinel);
+  // a struct enum, nullable or not, by its own null test (`null_test`'s enum arm).
+  if op == "!" && struct_ref(e, el_types::base(x.tp)) >= 0 && !starts_with(el::def(e, struct_ref(e, el_types::base(x.tp))).name, "__tuple<") {
+    return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [x.code])]), ir::TyBoolean);
+  }
+  if op == "!" && el_convert::struct_enum(el_types::base(x.tp)) {
+    absent = el_ex_null::enum_null_test(e, vars, x.code, el_types::base(x.tp));
+    if absent != null {
+      return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpNot", [absent!])]), ir::TyBoolean);
     }
   }
   // `@FR-Op-Back` for a unary form: `-x` on a program's own type is `x.negate()`

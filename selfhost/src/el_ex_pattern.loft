@@ -1694,6 +1694,8 @@ pub fn push_op(t: ir::TypeT) -> text {
     TyBoolean => "OpPushBoolean",
     TyCharacter => "OpPushCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpPushEnum" },
+    // A nullable plain integer element is pushed as the integer it is stored as.
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpPushInt" }, TyFloat => "OpPushFloat", TyBoolean => "OpPushBoolean", _ => "" },
     _ => ""
   }
 }
@@ -2121,12 +2123,31 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     el::refuse(e, "a vector append to a local with no store yet");
     return refused_build();
   }
-  if !append && has_store && !value && !vars.vars[v].argument {
+  if !append && has_store && !value && !vars.vars[v].argument && !e.first_pass {
+    reads = false;
     for x in xs {
       if el_ir::reads_var(x.code, v) {
+        reads = true;
+      }
+    }
+    // The items that read it are staged as an append's are (`literal_reads_dest` asks the
+    // literal, appended or bound); what that staging does not carry stays refused.
+    if reads {
+      if !el_ex_null::build_vals_carry(e, vars, v, in_t, xs) {
         el::refuse(e, "a vector literal rebinding a local it reads");
         return refused_build();
       }
+      carried: vector<Ex> = [];
+      for x in xs {
+        if el_ir::reads_var(x.code, v) {
+          tmp = el_vars::create_unique(vars, "build_val", in_t);
+          staged += [el_ir::v_set(tmp, x.code)];
+          carried += [ex(ir::NdVar { n: tmp }, x.tp)];
+        } else {
+          carried += [x];
+        }
+      }
+      xs = carried;
     }
   }
   r = rows!;
@@ -2146,7 +2167,14 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   }
   fresh_entry = !e.first_pass && !append && !value && !vars.vars[v].argument && self_only && e.unbacked.contains(e.context * 65536 + v);
   late_store = !append && !vars.vars[v].argument && !value && (has_store || fresh_entry);
-  if !append && vars.vars[v].argument {
+  // `vector_db_init`'s rebind arm (@PLN87 P2.4): a vector parameter rebound whole by a literal
+  // takes a fresh backing of its own — skip-free and nulled where first used, the exit's free of
+  // the parameter releasing it — after any earlier rebind's backing is freed (`OpFreeRefIfDistinct`
+  // against the entry witness; a no-op on the first rebind).
+  orig = if !append && !e.first_pass && vars.vars[v].argument { el_vars::rebind_orig(vars, v) } else { -1 };
+  if orig >= 0 {
+    ls += [el_ir::cl(e, "OpFreeRefIfDistinct", [w, ir::NdVar { n: orig }])] + literal_store(e, vars, v, r, rebind: true);
+  } else if !append && vars.vars[v].argument {
     ls += [el_ir::cl(e, "OpClearVector", [w])];
   } else if !append && !late_store && len(borrows) == 0 {
     ls += literal_store(e, vars, v, r);
@@ -2433,8 +2461,12 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
 }
 
 // `vector_db`: a fresh `__vdb_N` store for vector local `v`, the local borrowing it.
-pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows) -> vector<ir::Node> {
+pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false) -> vector<ir::Node> {
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  if rebind {
+    vars.vars[db].skip_free = true;
+    el_vars::mark_inline(vars, db);
+  }
   el_vars::depend(vars, v, db);
   [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),

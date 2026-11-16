@@ -305,7 +305,11 @@ and `cgen_live.sh --diff FILE` compares its unit with the Rust one;
 `cgen_build_survey.sh [N] [--check]` snapshots the sources, builds them and surveys the corpus
 (against the suite at `tests/loft-suite.pin`) and every bench (`cgen_survey.py --run --bench`
 with no `--files` takes `bench/NN_*` and the library benches under `$LOFT_PERF_LIBS`);
-`cgen_msvc_diff.py WANT GOT` diffs two units with the `_MSC_VER` split copy left out.  All keep
+`cgen_msvc_diff.py WANT GOT` diffs two units with the `_MSC_VER` split copy left out.  The run
+counts are gated: `cgen_build_survey.sh --check` holds the corpus and the benches to
+`cgen_survey.baseline`'s `run|plain|program|corpus` and `…|benches` rows (every program passes;
+no drop in `pass` or in units equal to the Rust ones), a printed store report masked as
+`scripts/c_sweep.py` masks it.  All keep
 their output in `$LOFT_CGEN_OUT` (default `$TMPDIR/loft-cgen`); the shared setup is
 `cgen_env.sh`.
 
@@ -415,6 +419,8 @@ Each was fixed where it was met, with its guard (rule 2 and 3 of the port).
 | loft#2499 | a `match` with a leaving arm, last in an `if` branch that has an `else`, was dropped: the arm that matched did not run (silent) | `tests/scripts/2499-…loft` |
 | loft#2498 | the C backend's transient form of a record registered itself as its own member | `tests/scripts/2498-…loft` |
 | loft#2485 | a bind after its block ended moved the ended binding's type (a false gating warning), and a per-loop binding never ended | `tests/callarg_nstore.rs` |
+| (no issue) | a text function whose tail `match` reads a type declared below, called from above, aborted the compiler on the H5 two-pass contract: pass 2 promoted a work text to a hidden parameter pass 1 never published — fixed in `text_return` (pass 2 follows pass 1 for compiler temps too; 97b9527f3), and `deliver_body` answers its `match` directly again | loft-suite `calls/F-Ret/a-text-match-over-types-declared-below-returns-through-every-caller.loft` |
+| (no issue) | `x = f(…) ?? return null` inside `f` itself (a recursive discharge) left `x` a view and leaked the copy once per call: the call-owns verdict asked `is_loft_defined`, false for the function being parsed — fixed in `null_coalesce_exit` (e0ec9e9e6) | loft-suite `heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft` |
 
 Not fixed, noted: a `hash<T[k]>` local cannot be formatted (`"{h}"`: "Cannot format type"),
 where a record holding one can.  A recursion over a tree that calls itself in tail position

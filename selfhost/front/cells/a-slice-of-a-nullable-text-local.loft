@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a slice of a text? local read first into a bind borrows the local; one of a plain text local does not (parse_var's into arm asks the exact type).
+// Prints: hello hello 3
+fn recv(c: boolean) -> text? { if c { return null; } "MAP:hello" }
+fn plain() -> text { "MAP:hello" }
+
+fn main() {
+  raw = recv(false);
+  body = raw[4..];
+  p = plain();
+  b2 = p[4..];
+  n = len(raw[1..3]) + len(p[1..2]);
+  println("{body} {b2} {n}");
+}

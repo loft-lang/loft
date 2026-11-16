@@ -869,6 +869,187 @@ fn end_to_end_install_with_transitive_dep() {
     let _ = fa::remove_dir_all(&install_cwd);
 }
 
+/// @C166 — a range a published library declares stays in the API line of its floor: `ta`
+/// asks `tb >=0.1.0` and gets tb 0.1.5, the newest still a drop-in for 0.1, not tb 0.2.0,
+/// which declares a break (`api_compatible_with = "0.2.0"`).  The project asking for
+/// `tb >=0.1.0` itself gets 0.2.0: its own range is its choice.  Fails on a build that
+/// resolves a library's range to the newest regardless of the line.
+#[test]
+fn a_librarys_range_stays_in_the_api_line_of_its_floor() {
+    let tmp = tmpdir("a_librarys_range_stays_in_the_api_line");
+    let mut files = HashMap::new();
+    let mut rows = Vec::new();
+    for (name, version, deps, api) in [
+        ("ta", "0.1.0", r#"{"tb": ">=0.1.0"}"#, ""),
+        ("tb", "0.1.0", "{}", ""),
+        ("tb", "0.1.5", "{}", r#""api_compatible_with": "0.1.0","#),
+        ("tb", "0.2.0", "{}", r#""api_compatible_with": "0.2.0","#),
+    ] {
+        let src = tmp.join(format!("{name}-{version}-src"));
+        fa::create_dir_all(&src).unwrap();
+        let dir = make_sample_package(name, version, &src);
+        let out_dir = tmp.join(format!("{name}-{version}-out"));
+        fa::create_dir_all(&out_dir).unwrap();
+        let out = loft::package::package_create(&dir, Some(&out_dir)).expect("package");
+        let path = format!("/{name}-{version}.tar.gz");
+        files.insert(path.clone(), fa::read(&out.tarball).unwrap());
+        rows.push((name, version, deps, api, path, out.sha256, out.size));
+    }
+    let server = FixtureServer::new(files);
+    let entry = |name: &str| {
+        rows.iter()
+            .filter(|r| r.0 == name)
+            .map(|(_, v, deps, api, path, sha, size)| {
+                format!(
+                    r#""{v}": {{"url": "{}", "sha256": "{sha}", "size": {size}, "loft": ">=0.8", {api} "deps": {deps}, "published": "2026-11-16T00:00:00Z"}}"#,
+                    server.url_for(path)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let index_json = format!(
+        r#"{{"schema_version": 1, "updated": "2026-11-16T00:00:00Z", "packages": {{"ta": {{"versions": {{{}}}}}, "tb": {{"versions": {{{}}}}}}}}}"#,
+        entry("ta"),
+        entry("tb")
+    );
+    server
+        .files
+        .lock()
+        .unwrap()
+        .insert("/index.json".to_string(), index_json.into_bytes());
+
+    let home_dir = tmpdir("a_librarys_range_stays_in_the_api_line_home");
+    let (_home, _lh) = HomeGuard::set(&home_dir);
+    let (_reg, _lr) = RegUrlGuard::set(&server.url_for("/index.json"));
+    let opts = loft::install::InstallOptions {
+        allow_unsigned: true,
+        refresh: true,
+        offline: false,
+        allow_prerelease: false,
+        skip_lockfile: false,
+        lock_path: None,
+    };
+    let prev_cwd = env::current_dir().expect("cwd");
+    let locked_tb = |dir: &Path| {
+        loft::lockfile::read_lockfile(&dir.join("loft.lock"))
+            .expect("io")
+            .expect("a lock")
+            .packages
+            .iter()
+            .find(|p| p.name == "tb")
+            .map(|p| p.version.clone())
+    };
+
+    let via_library = tmpdir("a_librarys_range_stays_in_the_api_line_lib");
+    fa::set_current_dir(&via_library).expect("chdir");
+    loft::install::install_one("ta", None, &opts).expect("install ta");
+    let through_ta = locked_tb(&via_library);
+
+    let direct = tmpdir("a_librarys_range_stays_in_the_api_line_direct");
+    fa::set_current_dir(&direct).expect("chdir");
+    loft::install::install_one("tb", Some(">=0.1.0"), &opts).expect("install tb");
+    let asked_directly = locked_tb(&direct);
+
+    fa::set_current_dir(prev_cwd).ok();
+    drop(_reg);
+    drop(_home);
+    for d in [&tmp, &home_dir, &via_library, &direct] {
+        let _ = fa::remove_dir_all(d);
+    }
+    assert_eq!(
+        through_ta.as_deref(),
+        Some("0.1.5"),
+        "ta's range keeps tb in its API line"
+    );
+    assert_eq!(
+        asked_directly.as_deref(),
+        Some("0.2.0"),
+        "the project's own range takes the newest"
+    );
+}
+
+/// @C167 — a `security_critical` advisory refuses the install of the release it names, before
+/// anything is fetched, naming the advisory and the fixed release; the fixed release installs.
+/// Fails on a build that only prints the advisory and installs anyway.
+#[test]
+fn a_security_critical_advisory_refuses_the_install() {
+    let tmp = tmpdir("a_security_critical_advisory_refuses");
+    let mut files = HashMap::new();
+    let mut rows = Vec::new();
+    for version in ["0.1.0", "0.1.1"] {
+        let src = tmp.join(format!("ax-{version}-src"));
+        fa::create_dir_all(&src).unwrap();
+        let dir = make_sample_package("ax", version, &src);
+        let out_dir = tmp.join(format!("ax-{version}-out"));
+        fa::create_dir_all(&out_dir).unwrap();
+        let out = loft::package::package_create(&dir, Some(&out_dir)).expect("package");
+        let path = format!("/ax-{version}.tar.gz");
+        files.insert(path.clone(), fa::read(&out.tarball).unwrap());
+        rows.push((version, path, out.sha256, out.size));
+    }
+    files.insert(
+        "/advisories.json".to_string(),
+        r#"{"schema_version": 1, "updated": "2026-11-16T00:00:00Z", "retention_days": 90,
+            "advisories": [{"id": "LOFT-TEST-0001",
+              "packages": [{"name": "ax", "affected": "<0.1.1", "fixed_in": "0.1.1"}],
+              "severity": "security_critical", "summary": "a test vulnerability",
+              "published": "2026-11-16T00:00:00Z", "references": []}]}"#
+            .as_bytes()
+            .to_vec(),
+    );
+    let server = FixtureServer::new(files);
+    let versions = rows
+        .iter()
+        .map(|(v, path, sha, size)| {
+            format!(
+                r#""{v}": {{"url": "{}", "sha256": "{sha}", "size": {size}, "loft": ">=0.8", "published": "2026-11-16T00:00:00Z"}}"#,
+                server.url_for(path)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let index_json = format!(
+        r#"{{"schema_version": 1, "updated": "2026-11-16T00:00:00Z", "packages": {{"ax": {{"versions": {{{versions}}}}}}}}}"#
+    );
+    server
+        .files
+        .lock()
+        .unwrap()
+        .insert("/index.json".to_string(), index_json.into_bytes());
+
+    let home_dir = tmpdir("a_security_critical_advisory_refuses_home");
+    let (_home, _lh) = HomeGuard::set(&home_dir);
+    let (_reg, _lr) = RegUrlGuard::set(&server.url_for("/index.json"));
+    let opts = loft::install::InstallOptions {
+        allow_unsigned: true,
+        refresh: true,
+        offline: false,
+        allow_prerelease: false,
+        skip_lockfile: true,
+        lock_path: None,
+    };
+    let refused = loft::install::install_one("ax", Some("0.1.0"), &opts);
+    let fixed = loft::install::install_one("ax", Some("0.1.1"), &opts);
+    let extracted = home_dir.join(".loft").join("registry").join("ax-0.1.0");
+    let refused_left_nothing = !fa::exists(&extracted);
+
+    drop(_reg);
+    drop(_home);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+    let why = refused.expect_err("the affected release is refused");
+    assert!(
+        why.contains("LOFT-TEST-0001") && why.contains("loft install ax@0.1.1"),
+        "the refusal names the advisory and the fix: {why}"
+    );
+    assert!(
+        refused_left_nothing,
+        "nothing of the refused release was extracted"
+    );
+    fixed.expect("the fixed release installs");
+}
+
 // ── loft search S4 — offline cache fallback ───────────────────────
 
 /// PKG.REG R8 (search S4): when the registry is unreachable but a cached index
@@ -1160,12 +1341,13 @@ fn a_release_published_since_the_index_was_cached_is_installed() {
         "freshpkg",
         Some(">=0.2"),
         &cached,
+        None,
     ));
     let unlisted = got(loft::install::auto_install_if_in_catalog(
-        "newpkg", None, &cached,
+        "newpkg", None, &cached, None,
     ));
     let online_refusal =
-        loft::install::auto_install_if_in_catalog("freshpkg", Some(">=0.3"), &cached);
+        loft::install::auto_install_if_in_catalog("freshpkg", Some(">=0.3"), &cached, None);
     let offline_refusal = loft::install::auto_install_if_in_catalog(
         "freshpkg",
         Some(">=0.3"),
@@ -1173,6 +1355,7 @@ fn a_release_published_since_the_index_was_cached_is_installed() {
             offline: true,
             ..cached.clone()
         },
+        None,
     );
 
     drop(_reg);

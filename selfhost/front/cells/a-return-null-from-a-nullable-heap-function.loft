@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: 'return null' from a function of a nullable vector, record or struct enum answers the reference null sentinel; a literal tail of a vector<T>? takes the buffer (Rename onto its __vdb_N), not cleared at the head.
+// Prints: true false true true
+struct Node { a: integer }
+enum Sh { Circle { r: integer }, Dot }
+
+fn opt(c: integer) -> vector<integer>? { if c < 0 { return null; } [c, c] }
+fn rec(c: integer) -> Node? { if c < 0 { return null; } Node { a: c } }
+fn en(c: integer) -> Sh? { if c < 0 { return null; } Circle { r: c } }
+fn only(c: integer) -> Node? { return null; }
+
+fn main() {
+  a = opt(-1);
+  b = rec(2);
+  c = en(-1);
+  d = only(1);
+  println("{a == null} {b == null} {c == null} {d == null}");
+}

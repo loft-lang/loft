@@ -50,6 +50,71 @@ pub fn reads_var(n: ir::Node, v: integer) -> boolean {
   count(n, v, true, 1) > 0
 }
 
+// `inline_ref_set_in`: does the tree hold a `Set` of `v` anywhere?
+pub fn sets_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSet { var } => {
+      if var == v {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in children(n) {
+    if sets_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// The variables `n` reads, each once, in the order met (`fix_place_before_value`'s `read`).
+pub fn vars_read(n: ir::Node, out: vector<integer>) -> vector<integer> {
+  r = out;
+  match n {
+    NdVar { n: x } => {
+      if !r.contains(x) {
+        r += [x];
+      }
+    },
+    _ => {}
+  }
+  for c in children(n) {
+    r = vars_read(c, r);
+  }
+  r
+}
+
+// `n` with every subtree equal to `from` (its spans left out) replaced by `to`.
+pub fn replace_subtree(n: ir::Node, from: ir::Node, to: ir::Node) -> ir::Node {
+  if unspan(n) == from {
+    return respan(n, to);
+  }
+  match n {
+    NdSet { var, inner } => ir::NdSet { var: var, inner: replace_subtree(inner, from, to) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { replace_subtree(x, from, to) }] },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { replace_subtree(x, from, to) }] },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { replace_subtree(x, from, to) }] },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { replace_subtree(x, from, to) }] },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { replace_subtree(x, from, to) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { replace_subtree(x, from, to) }];
+      ir::NdLoop { block: [b] }
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: replace_subtree(cond, from, to), t: replace_subtree(t, from, to), f: replace_subtree(f, from, to) },
+    NdReturn { inner } => ir::NdReturn { inner: replace_subtree(inner, from, to) },
+    NdDrop { inner } => ir::NdDrop { inner: replace_subtree(inner, from, to) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_subtree(inner, from, to) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: replace_subtree(inner, from, to) },
+    _ => n
+  }
+}
+
 // `Parser::names_outside_a_chain`: `reads_var`, the inside of a `one_buffer_chain` block left
 // out — a chain names its buffer only to answer through it.
 pub fn names_outside_chain(n: ir::Node, v: integer) -> boolean {

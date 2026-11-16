@@ -7814,11 +7814,11 @@ fn main() {
 ";
 
 /// A library whose native part is only a Rust crate has no implementation in a C build, which
-/// never links one (`native_build::c_target`): its native halts the program when called, as
-/// the interpreter's unloaded native does — and says so, naming the library and the two ways
-/// on, rather than the interpreter's "cdylib missing or stale / a poisoned call index" reading,
-/// which a call the C makes by name cannot be (@PLN203 C6: what `--native-wasm` and a host C
-/// build both meet with a Rust-crate library such as graphics).
+/// never links one (`native_build::c_target`): a program that calls such a native is refused
+/// at BUILD, never compiled into a stub that halts at the call — such a release is deprecated
+/// (its native part is Rust, which loft does not build; PKG_REGISTRY.md § Deprecation).  The
+/// refusal names the library, why, and the cure, not the interpreter's "cdylib missing or
+/// stale / a poisoned call index" reading, which a call the C makes by name cannot be.
 #[test]
 fn a_rust_crate_native_is_named_as_such_on_the_c() {
     if !have_cc() {
@@ -7862,10 +7862,17 @@ fn a_rust_crate_native_is_named_as_such_on_the_c() {
         .output()
         .expect("run loft --native-c");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "the call halts the program\n{err}");
+    let printed = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "the build is refused\n{err}");
     assert!(
-        err.contains("has only a Rust native part") && err.contains("(rustlib)"),
-        "the halt names the library and why\n{err}"
+        !printed.contains("42"),
+        "nothing was compiled and run\n{printed}"
+    );
+    assert!(
+        err.contains("has only a Rust native part")
+            && err.contains("rustlib")
+            && err.contains("loft install rustlib"),
+        "the refusal names the library, why, and the cure\n{err}"
     );
     assert!(
         !err.contains("cargo") && !err.contains("poisoned"),

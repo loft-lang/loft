@@ -100,6 +100,8 @@ pub struct El {
   pub line: integer,
   // what elaboration does not carry yet, by name: the gate counts a program that reaches one
   pub refused: vector<text>,
+  // the source line each refusal was first met on (`LOFT_ELAB_WHERE`), pairwise
+  pub refused_at: vector<integer>,
   // The vector locals whose last first-pass literal bind was `[]` (`function * 65536 + local`):
   // Rust's first pass builds that literal in the local, which then names only itself, so the
   // second pass finds it holding no backing (`vector_needs_db`).
@@ -187,6 +189,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     context: -1,
     line: 0,
     refused: [],
+    refused_at: [],
     unbacked: [],
     declined: [],
     lines: [],
@@ -216,6 +219,7 @@ pub fn refuse(el: El, what: text) {
     }
   }
   el.refused += [what];
+  el.refused_at += [el.line];
 }
 
 // ── positions ─────────────────────────────────────────────────────────────────────────────

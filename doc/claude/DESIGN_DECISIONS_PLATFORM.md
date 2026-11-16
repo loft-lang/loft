@@ -442,3 +442,63 @@ key), `src/parser/packages.rs` (which dependencies a shim waits for), `src/start
 with its dependencies' headers staged the same way, and names the cure for a path out of the
 package); guard `a_backend_finds_the_layers_header_wherever_the_two_are_installed`
 (`tests/c_emit.rs`).
+
+## C166 — A published library's range stays in the API line of its floor
+
+**Decision.** A version range declared by a published release — a dependency of a package
+from the registry, or the project's own ranges when the project is itself a published release
+(a library tested from the registry cache, as registry validation tests it) — resolves to the
+newest release that satisfies it and does not declare a break past its floor: no release whose
+`api_compatible_with` is above the range's lower bound (`>=0.9.0`, `^0.9` and `~0.9` alike
+name 0.9.0).  A range the project declares for itself, or for a package it pulls in
+transitively, and a lock pin, resolve as before: the newest that satisfies.  Where no release
+is left in the line, the range resolves to the newest that satisfies, so the rule moves which
+release a range lands on and never refuses one that resolved.
+**Why.** A library compiled against its floor; a release that declared a break past it is not
+what it asked for.  381 of the 382 dependency ranges published libraries declare are open
+floors, so without the rule every library release that breaks its API broke every library that
+depended on it: audio_bus 0.1.3, input 0.2.6 and stage 0.18.10 resolved graphics 0.12.1 and
+failed, and on graphics 0.9.12, the newest in their line, they pass.  The contract keeps a
+working library working; a dependant keeps working only if it keeps getting what it was built
+against.
+**Bounds.** The line is read from `api_compatible_with`; a release that declares none is in
+every line, as `find_compatible_version` already treats it.  A release from before the
+contract boundary can sit in a line yet no longer build on this loft (a language change since
+— drawing 0.4.3 gets imaging 0.3.3, which today's field-visibility rule refuses); the contract
+forbids that from the boundary on.
+**Revisit when.** A library needs to follow a dependency across its breaks automatically: it
+then declares a range that names the new line.  Decided 2026-11-16 (owner).
+**Holds at:** `@C166` — `src/registry_index.rs` (`api_line_floor`, `find_in_api_line`,
+`is_published_release_dir`, `newest_cached_loadable_in_line`), `src/install.rs`
+(`resolve_declared`), `src/parser/packages.rs` (`library_api_line`, the cache lookups); guards
+`a_library_dependency_stays_in_its_floors_api_line`, `a_projects_own_range_takes_the_newest`,
+`a_project_declaring_the_dependency_chooses_for_the_tree`,
+`a_floor_with_no_release_in_its_line_takes_the_newest`,
+`the_top_package_keeps_the_line_its_caller_found` (`src/install.rs`) and
+`a_ranges_api_line_floor_is_its_lower_bound` (`src/registry_index.rs`).
+
+
+## C167 — A `security_critical` advisory refuses the package release it names
+
+**Decision.** When the signed advisory feed names a package release, installing it and building
+or running a program that loads it follow one verdict (`registry_advisories::assess`):
+`security_critical` refuses — the install stops before fetching, a build is a compile error —
+naming the advisory and the fixed release, unless `LOFT_SECURITY_OVERRIDE` lists the advisory
+id; `security_high` warns, and refuses under `LOFT_STRICT_SECURITY=1`; `security_low`, `bug` and
+`deprecated` print one line.  Only a verified feed counts; the install refreshes the cached feed
+when it is stale, and a build or run reads the cache and never fetches.
+**Why.** A security hole or a hardware failure in a release must stop a project that pins it,
+which the `deprecated` field (held for a pin) does not.  The advisory channel was built for this —
+affected ranges, the fixed release, a severity, its own signature and a 24-hour refresh — and
+refused only for the loft binary itself: a package's critical advisory printed a block and the
+program went on.  Refusing by default with an audited override keeps what the earlier warn-by-
+default was for — running a vulnerable release while porting off it — and writes the choice down
+where it is made.
+**Revisit when.** An advisory needs a tier between warning and refusal (a release that may run
+but not be newly installed), or a project needs a standing exception kept in its manifest
+rather than the environment.  Decided 2026-11-16 (owner).
+**Holds at:** `@C167` — `src/registry_advisories.rs` (`assess`, `assess_with`,
+`verified_cached_feed`), `src/install.rs` (`install_resolved`), `src/parser/packages.rs`
+(`check_advisory`); guards `an_advisory_refuses_or_warns_by_its_severity`,
+`security_high_refuses_only_when_strict` (`src/registry_advisories.rs`) and
+`a_security_critical_advisory_refuses_the_install` (`tests/registry_e2e.rs`).

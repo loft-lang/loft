@@ -56,6 +56,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // `___tret_N` the tail then answers, which `text_return` below makes the hidden `&text`
   // buffer.  On both passes, so the buffer is in the signature before any caller is read;
   // pass 2 binds only where pass 1 did (the attribute it minted).
+  // The `___tret_N` a `return` at the tail was bound to: what the body then answers.
+  ret_bound = -1;
   if el_types::base(result) is TyText && el::def(e, e.context).def_type != el::DT_GENERIC && (e.first_pass || def_has_tret_attr(el::def(e, e.context))) {
     match b.code {
       NdBlock { block } => {
@@ -67,6 +69,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           ops = bl.operators[0..n - 1];
           if el_ir::unspan(tail) is NdReturn {
             ops += [el_ir::v_set(tv, peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
+            ret_bound = tv;
           } else {
             ops += [el_ir::v_set(tv, tail), ir::NdVar { n: tv }];
           }
@@ -112,8 +115,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if !e.first_pass && keyed_kind(el_types::base(result)) && el_types::base(b.tp) is TyVector {
     el::refuse(e, "a vector literal answered as a keyed collection");
   }
-  // A text local at the tail is what the body answers: the result borrows that local.
-  tt = b.tp;
+  // A text local at the tail is what the body answers: the result borrows that local — a
+  // returned `___tret_N` too (`t = Type::Text(frame1(ret))`).
+  tt = if ret_bound >= 0 { ir::TyText { dep: [ret_bound] } } else { b.tp };
   match b.code {
     NdBlock { block } => {
       nb = len(block[0].operators);
@@ -158,7 +162,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // typed plain `text`, which each instance inherits.  A nullable result over the base the tail
   // answers types the body the same way (`-> QEnt?` is `ref(QEnt)?` though no arm is null); a
   // heap result otherwise keeps the type its return path gave the tail.
-  nullable_over_tail = match result { TyOptional { inner } => el_types::is_equal(e, el_types::without_deps(inner), el_types::without_deps(b.tp)) && !(b.tp is TyOptional), _ => false };
+  // (A variant the tail answers is of the enum the result names: `-> Own?` over a `Borrowed`.)
+  nullable_over_tail = match result { TyOptional { inner } => (el_types::is_equal(e, el_types::without_deps(inner), el_types::without_deps(b.tp)) || (variant_parent(e, b.tp) >= 0 && variant_parent(e, b.tp) == el_types::struct_enum_def(inner))) && !(b.tp is TyOptional), _ => false };
   if !e.first_pass && (el_types::base(result) is TyText || nullable_over_tail) {
     match code {
       NdBlock { block } => {
@@ -1363,6 +1368,18 @@ pub fn returns_in(ops: vector<ir::Node>) -> integer {
   r
 }
 
+// `returns_in`, of the `return`s that answer the null sentinel.
+pub fn null_returns_in(e: el::El, ops: vector<ir::Node>) -> integer {
+  r = 0;
+  for op in ops {
+    if el_ir::unspan(op) is NdReturn && calls(e, peel_return(op), "OpNullRefSentinel") {
+      r += 1;
+    }
+    r += null_returns_in(e, el_ir::children(op));
+  }
+  r
+}
+
 // The vector local a trailing `return v` answers, or -1.
 pub fn returned_local(vars: el_vars::Vars, tail: ir::Node) -> integer {
   match tail {
@@ -1410,7 +1427,9 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     // answers the buffer.  Carried where the first pass renamed the buffer onto the tail local;
     // refused by name elsewhere.
     tail_buf = match tail { NdVar { n } => if hidden_param(e, vars, n) { n } else { -1 }, _ => -1 };
-    if len(bl.operators) > 0 && returns_in(bl.operators[0..len(bl.operators) - 1]) > 0 {
+    // (A `τ?` body whose every early exit is `return null` delivers nothing through them.)
+    null_exits = result is TyOptional && len(bl.operators) > 0 && returns_in(bl.operators[0..len(bl.operators) - 1]) == null_returns_in(e, bl.operators[0..len(bl.operators) - 1]);
+    if len(bl.operators) > 0 && !null_exits && returns_in(bl.operators[0..len(bl.operators) - 1]) > 0 {
       row = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
       if tail_buf >= 0 && row >= 0 {
         for op in bl.operators {
@@ -1513,9 +1532,32 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     return delivered!;
   }
   if result is TyOptional {
-    if !e.first_pass {
-      el::refuse(e, "a function returning a nullable vector from this tail: {tail_kind(e, vars, code)}");
+    // A literal tail of a `vector<T>?` takes the buffer as a plain vector's does (`Rename` onto
+    // the literal's own `__vdb_N`) — not cleared at the head — where every early exit is a
+    // `return null`; the body is the bare `vector<T>?`.
+    olit = tail_syntax(e, vars.body);
+    lit_syntax = olit >= 0 && match e.p.nodes[olit] { SVecLit { items } => len(items) > 0, _ => false };
+    if e.first_pass {
+      oret = el::def(e, d).returned[0];
+      if lit_syntax && !el_types::deps(oret).contains(ba) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(oret, el_types::deps(oret) + [ba])];
+      }
+      return code;
     }
+    match code {
+      NdBlock { block } => {
+        ob = block[0];
+        ostore = if len(ob.operators) > 0 { match el_ir::unspan(ob.operators[-1]) { NdBlock { block: tb } => literal_backing_store(tb[0]), _ => -1 } } else { -1 };
+        mids = ob.operators[0..(if len(ob.operators) > 0 { len(ob.operators) - 1 } else { 0 })];
+        if lit_syntax && ostore >= 0 && starts_with(el_vars::name_of(vars, ostore), "__vdb_") && returns_in(mids) == null_returns_in(e, mids) {
+          rename_onto(e, vars, rb, ostore);
+          ob.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
+          return ir::NdBlock { block: [ob] };
+        }
+      },
+      _ => {}
+    }
+    el::refuse(e, "a function returning a nullable vector from this tail: {tail_kind(e, vars, code)}");
     return code;
   }
   lit = tail_syntax(e, vars.body);
@@ -1825,7 +1867,9 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     param = pr >= 0 && vars.vars[pr]!.argument && !hidden_param(e, vars, pr);
   }
   // The first pass's `if` is a placeholder: its arms are read off the syntax.
-  arms = !param && (if e.first_pass { syntax_literal_arms(e, tail_syntax(e, vars.body)) } else { tail is NdIf && literal_arms(e, tail) });
+  // An arm may answer a whole vector parameter too (`materialize_vector_arms_into`): copied
+  // into the buffer where the arm ends, the body borrowing the parameters its arms answer.
+  arms = !param && (if e.first_pass { syntax_deliverable_arms(e, vars, tail_syntax(e, vars.body)) } else { tail is NdIf && deliverable_arms(e, vars, tail) });
   if !param && !arms {
     return null;
   }
@@ -1834,6 +1878,12 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     if !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
     }
+    return code;
+  }
+  // A `null` arm of a vector that is not declared nullable is delivered another way (the
+  // literal's own store renamed onto the buffer, cleared at the head): refused by name.
+  if arms && !(result is TyOptional) && null_arm(e, tail) {
+    el::refuse(e, "a vector `if` tail with a `null` arm in a function whose vector is not nullable");
     return code;
   }
   elem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
@@ -1860,8 +1910,11 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: one }]), bl.operators[0]] };
     return ir::NdBlock { block: [bl] };
   }
+  // Read before the tail is rewritten: `tail` views the statement the delivery replaces.
+  borrowed = arm_params(tail, []);
   bl.operators[-1] = deliver_arms(e, tail, rb, rec);
-  bl.result = [if result is TyOptional { ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) } } else { el_types::without_deps(el_types::base(result)) }];
+  answered = el_types::with_deps(el_types::without_deps(el_types::base(result)), borrowed);
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: answered } } else { answered }];
   ir::NdBlock { block: [bl] }
 }
 
@@ -1920,6 +1973,97 @@ pub fn literal_arms(e: el::El, n: ir::Node) -> boolean {
   }
 }
 
+// `literal_arms`, an arm answering a visible vector parameter admitted beside the literals.
+pub fn deliverable_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => deliverable_arms(e, vars, inner),
+    NdIf { cond: _, t, f } => deliverable_arms(e, vars, t) && deliverable_arms(e, vars, f),
+    NdVar { n: v } => vars.vars[v]!.argument && !hidden_param(e, vars, v) && el_vars::tp(vars, v) is TyVector,
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        false
+      } else if block[0].name == "Vector" {
+        len(el_types::deps(block[0].result[0] ?? ir::TyVoid)) == 1
+      } else {
+        deliverable_arms(e, vars, ops[-1]!)
+      }
+    },
+    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    _ => false
+  }
+}
+
+// The parameters the arms of the `if` answer, each once, the then-arm's first.
+pub fn arm_params(n: ir::Node, out: vector<integer>) -> vector<integer> {
+  r = out;
+  match n {
+    NdSpan { inner } => { r = arm_params(inner, r); },
+    NdIf { cond: _, t, f } => { r = arm_params(f, arm_params(t, r)); },
+    NdVar { n: v } => {
+      if !r.contains(v) {
+        r += [v];
+      }
+    },
+    NdBlock { block } => {
+      if block[0].name != "Vector" && len(block[0].operators) > 0 {
+        r = arm_params(block[0].operators[-1]!, r);
+      }
+    },
+    _ => {}
+  }
+  r
+}
+
+// Is the `if` whose then-arm is `then` the tail of the function being read?
+pub fn tail_if(e: el::El, vars: el_vars::Vars, then: integer) -> boolean {
+  t = tail_syntax(e, vars.body);
+  t >= 0 && match e.p.nodes[t] { SIf { then: tt } => tt == then, _ => false }
+}
+
+// `syntax_literal_arms`, a visible vector parameter's name admitted beside the literals.
+pub fn syntax_deliverable_arms(e: el::El, vars: el_vars::Vars, n: integer) -> boolean {
+  if n < 0 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SIf { cond: _, then, other } => other != null && syntax_deliverable_arm(e, vars, then) && syntax_deliverable_arm(e, vars, other!),
+    _ => false
+  }
+}
+
+fn syntax_deliverable_arm(e: el::El, vars: el_vars::Vars, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SIf { cond: _ } => syntax_deliverable_arms(e, vars, n),
+    SBlock { at: _ } => {
+      t = tail_syntax(e, n);
+      if t < 0 {
+        return false;
+      }
+      named = match e.p.nodes[t] {
+        SName { name, member } => {
+          v = el_vars::var(vars, name);
+          member == "" && v >= 0 && vars.vars[v]!.argument && !hidden_param(e, vars, v) && el_vars::tp(vars, v) is TyVector
+        },
+        _ => false
+      };
+      named || e.p.nodes[t] is SNull || (match e.p.nodes[t] { SVecLit { items } => len(items) > 0, _ => false }) || e.p.nodes[t] is SIf && syntax_deliverable_arms(e, vars, t)
+    },
+    _ => false
+  }
+}
+
+// Does an arm of the `if` answer the null sentinel?
+pub fn null_arm(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => null_arm(e, inner),
+    NdIf { cond: _, t, f } => null_arm(e, t) || null_arm(e, f),
+    NdBlock { block } => len(block[0].operators) > 0 && block[0].name != "Vector" && null_arm(e, block[0].operators[-1]!),
+    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    _ => false
+  }
+}
+
 // The same read off the syntax: an `if` whose every arm ends in a non-empty vector literal or
 // `null`.
 pub fn syntax_literal_arms(e: el::El, n: integer) -> boolean {
@@ -1967,6 +2111,12 @@ pub fn deliver_arms(e: el::El, n: ir::Node, rb: integer, rec: integer) -> ir::No
       bl.operators[-1] = deliver_arms(e, bl.operators[-1]!, rb, rec);
       ir::NdBlock { block: [bl] }
     },
+    // A parameter an arm answers is copied into the buffer; it keeps its own store.
+    NdVar { n: _ } => ir::NdInsert { items: [
+      el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rb }]),
+      el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: rb }, n, ir::NdInt { n: rec }]),
+      ir::NdVar { n: rb }
+    ] },
     _ => n
   }
 }
@@ -2643,8 +2793,10 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         bl.operators = ops;
       }
-      // An inline container's buffer is nulled just before the first statement that fills it,
-      // the latest statement first so the earlier places stay where they were found.
+      // An inline container's buffer is nulled just before the first statement that assigns it
+      // (`inline_ref_set_in`: a `Set` of it anywhere inside — a store only `OpDatabase` fills,
+      // a rebound parameter's fresh backing, takes the fallback), the latest statement first so
+      // the earlier places stay where they were found.
       nulls: vector<el_ex_assign::InlineNull> = [];
       for r in vars.inline_refs {
         // Only a ref that borrows nothing: one viewing a local holds no store of its own.
@@ -2653,7 +2805,7 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         at = -1;
         for op in bl.operators {
-          if at < 0 && el_ir::reads_var(op, r) {
+          if at < 0 && el_ir::sets_var(op, r) {
             at = op#index;
           }
         }

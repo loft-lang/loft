@@ -13,6 +13,14 @@ use std::path::{Path, PathBuf};
 /// Every file under `dir`, as its path relative to `root` with `/` between names, sorted so
 /// the packed table is the same on every run.
 pub(crate) fn files_under(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+    walk_files(root, dir, out);
+    // One sort, after the walk: sorting inside the recursion re-sorted the whole list once per
+    // directory, minutes for a program beside a large tree.
+    out.sort();
+}
+
+/// [`files_under`]'s walk, unsorted.
+fn walk_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
     let Ok(entries) = fa::read_dir(dir) else {
         return;
     };
@@ -23,7 +31,7 @@ pub(crate) fn files_under(root: &Path, dir: &Path, out: &mut Vec<(String, PathBu
             continue;
         }
         if fa::is_dir(&p) {
-            files_under(root, &p, out);
+            walk_files(root, &p, out);
         } else if let Ok(rel) = p.strip_prefix(root) {
             let rel: Vec<String> = rel
                 .components()
@@ -32,7 +40,6 @@ pub(crate) fn files_under(root: &Path, dir: &Path, out: &mut Vec<(String, PathBu
             out.push((rel.join("/"), p));
         }
     }
-    out.sort();
 }
 
 /// `*` in a pattern matches any run of characters inside one name (never a `/`).

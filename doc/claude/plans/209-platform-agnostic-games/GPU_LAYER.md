@@ -522,8 +522,11 @@ actors), so the game's `fixedview` can feed either by changing the callee.
   comparison tells.  The rasterisers agree on which pixel a triangle covers almost
   everywhere, so the tolerance the contract asks for can be stated: two steps of five bits a
   channel, and a few tens of pixels.
-- **Not yet:** pictures of any size, models, the free camera's cut-away and cards turned to
-  it, a light map wider than 256 x 256 cells on 8 layers.
+- **The free camera** (loft-libs-graphics#94, `scene3d` 0.4.0): a card turns about its foot to
+  face it, and a wall group a line from the eye to the hero's card goes through is cut away
+  (five lines: the card's middle, and halfway to each corner).  The cards and the cut-away
+  follow the camera and the actors as they are, whichever was given last.
+- **Not yet:** pictures of any size, models, a light map wider than 256 x 256 cells on 8 layers.
 - **After the game's answer** (FOR_THE_GAME.md): `scene3d` 0.2.0 takes `vector<single>`, as
   the single-precision `raster3d` does (loft-libs-graphics#89; 23 of 384,000 pixels against
   it); and a table and a colour are `i64` across `gpu`, `gpu_record`, `gpu_gl` and `scene3d`,

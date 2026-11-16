@@ -15,6 +15,11 @@
 #                LOFT_SUITE_DIR is already set — the checkout beside this tree can be far
 #                from the pin, and a stale cell there fails on every loft
 
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  # Run, not sourced (`cgen_env.sh --help`): say what it is for.
+  sed -n '4,17p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+fi
 cgen_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cgen_out="${LOFT_CGEN_OUT:-${TMPDIR:-/tmp}/loft-cgen}"
 cgen_loft="$cgen_root/target/release/loft"

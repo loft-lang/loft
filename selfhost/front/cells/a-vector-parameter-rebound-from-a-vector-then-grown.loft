@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector parameter given another vector takes a store of its own (vec_copy_needs_db's parameter leg), and grows there.
+// Prints: 34 [1,2] [30,40,50]
+fn take(v: vector<integer>, o: vector<integer>) -> integer {
+  v = o;
+  v += [7];
+  v[0] + len(v)
+}
+
+fn main() {
+  a = [1, 2];
+  b = [30, 40, 50];
+  println("{take(a, b)} {a} {b}");
+}

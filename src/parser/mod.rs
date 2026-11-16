@@ -1056,6 +1056,10 @@ pub struct Parser {
     /// the file.  Consumed by `promote_late_text_buffers` between the passes, where the
     /// callee exists — the same late-derivation slot `reserve_late_return_buffers` uses.
     late_text_tails: Vec<(u32, u16)>,
+    /// How many definitions pass 1 left: one numbered below it was parsed on pass 1, so pass 2
+    /// may not grow its signature; one at or above it (a generic instance, a lazy wrapper, a
+    /// bound stub) first exists on pass 2, which is its only parse.  `u32::MAX` during pass 1.
+    pub(crate) pass1_defs: u32,
     /// `@FR-N-Join` — pass 1's binds of an INFERRED local from a call whose callee was not yet
     /// declared, `(function, local, callee, line)`: its return type was unknown there, so a `τ?`
     /// answer did not widen the local.  `widen_late_call_joins` widens it between the passes,
@@ -2212,6 +2216,7 @@ impl Parser {
             par_deferred: Vec::new(),
             par_replay_body: None,
             late_text_tails: Vec::new(),
+            pass1_defs: u32::MAX,
             late_call_joins: Vec::new(),
             tuple_param_seeds: Vec::new(),
             last_forward_call: None,

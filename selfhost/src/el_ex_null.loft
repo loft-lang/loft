@@ -660,7 +660,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
   if record {
     // Any record subject — a local, a slot, a call's answer, a field or an element — is tested
     // where it stands or held in an `_ncr_N` first (below), as `handle_present`'s record arm does.
-  } else if !el_convert::plain_scalar(b) && !(b is TyVector) {
+  } else if !el_convert::plain_scalar(b) && !(b is TyVector) && !el_convert::struct_enum(b) {
     el::refuse(e, "a `!` on this type: {type_kind(b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -669,7 +669,9 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
   }
   // A vector is tested with `OpVectorIsNull` (`handle_present`'s collection arm), held as read.
   vec = b is TyVector;
-  code = if record || vec { x.code } else { nullable_arith(e, x.code, true) };
+  // A struct enum is tested by its own null test (`null_test`'s enum arm), held as read.
+  senum = el_convert::struct_enum(b);
+  code = if record || vec || senum { x.code } else { nullable_arith(e, x.code, true) };
   // An element under `!` is read with the nullable getter: the `!` answers its absence.
   if record {
     code = el_ex_call::nullable_getter(e, code);
@@ -684,6 +686,10 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     }
   }
   check = el_ex_call::present_check(e, vars, subject, b, record, vec);
+  if senum {
+    absent = enum_null_test(e, vars, subject, b);
+    check = if absent == null { null } else { el_ir::cl(e, "OpNot", [absent!]) };
+  }
   if check == null {
     el::refuse(e, "a `!` on this type: {type_kind(b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1460,7 +1466,11 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   if el_types::base(t.tp) is TyVector && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
     // An arm answering a vector variable is copied into the bound local per arm at a bind
     // (`sink_vec_bind_into_arms`); anywhere else — not carried yet.
-    if (arm_answers_var(t.code) || arm_answers_var(f.code)) && expected is TyVoid {
+    // At a function's tail an arm answering a visible vector parameter is delivered into the
+    // return buffer (`vector_return`'s `arm_delivery`).
+    fres = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+    delivered = fres is TyVector && el_expressions::tail_if(e, vars, then) && param_or_no_var(e, vars, t.code) && param_or_no_var(e, vars, f.code);
+    if (arm_answers_var(t.code) || arm_answers_var(f.code)) && expected is TyVoid && !delivered {
       el::refuse(e, "a vector `if` an arm of which answers a variable");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -1523,6 +1533,17 @@ pub fn own_join_arm(e: el::El, vars: el_vars::Vars, arm: ir::Node, tp: ir::TypeT
 }
 
 // Does an `if` arm's value (a block's tail, through nested arms) end in a bare variable?
+// An arm that answers no variable, or a visible vector parameter (not through a nested `if`).
+pub fn param_or_no_var(e: el::El, vars: el_vars::Vars, arm: ir::Node) -> boolean {
+  match arm {
+    NdSpan { inner } => param_or_no_var(e, vars, inner),
+    NdVar { n: v } => vars.vars[v]!.argument && !hidden_param(e, vars, v) && el_vars::tp(vars, v) is TyVector,
+    NdBlock { block } => len(block[0].operators) == 0 || !(el_ir::unspan(block[0].operators[-1] ?? ir::NdNull) is NdVar) || block[0].name == "Vector" || param_or_no_var(e, vars, block[0].operators[-1]!),
+    NdIf { cond: _, t: _, f: _ } => !arm_answers_var(arm),
+    _ => true
+  }
+}
+
 pub fn arm_answers_var(arm: ir::Node) -> boolean {
   match arm {
     NdSpan { inner } => arm_answers_var(inner),
@@ -1821,11 +1842,21 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional)) {
       return record_return(e, vars, v, result);
     }
+    // `return null` from a `vector<T>?` or a struct-enum `E?` function answers the reference
+    // null sentinel and delivers nothing into the buffer.
+    if result is TyOptional && (el_types::base(result) is TyVector || el_types::struct_enum_def(result) >= 0) && v.tp is TyNull {
+      return ex(ir::NdReturn { inner: el_ir::cl(e, "OpNullRefSentinel", []) }, ir::TyNever);
+    }
     // A text is returned as it is, the declared result borrowing what the value borrows
     // (`parse_return`'s `text_return(ls)`); one this frame owns is written into the hidden
     // buffer after the pass (`el_tret`).
     vt = match v.tp { TyRefVar { inner } => inner, _ => v.tp };
-    if el_types::base(result) is TyText && (el_types::base(vt) is TyText || e.first_pass && el_types::is_unknown(vt)) {
+    if el_types::base(result) is TyText && (el_types::base(vt) is TyText || vt is TyNull || e.first_pass && el_types::is_unknown(vt)) {
+      // `return null` answers the text's own null (`OpConvTextFromNull`), nullable result or not:
+      // at the tail it is the native answer `do_tret_bind` binds, on both passes.
+      if vt is TyNull {
+        return ex(ir::NdReturn { inner: el_ir::cl(e, "OpConvTextFromNull", []) }, ir::TyNever);
+      }
       el_expressions::text_return(e, vars, v.tp);
       rt = stored(e, vars, v, result);
       return ex(ir::NdReturn { inner: rt ?? v.code }, ir::TyNever);

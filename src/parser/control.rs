@@ -16068,18 +16068,6 @@ impl Parser {
             .filter(|&v| v != u16::MAX)
     }
 
-    /// Did an earlier pass publish a hidden `&text` return buffer for this function under a
-    /// name other than `v`'s?  The signature that pass made is the one callers were built
-    /// against, so a later pass delivers into it instead of growing another (loft#2286).
-    fn text_buffer_published_under_another_name(&self, v: u16) -> bool {
-        let n = self.vars.name(v);
-        self.data.def(self.context).attributes().iter().any(|a| {
-            a.hidden
-                && a.name != n
-                && matches!(&a.typedef, Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
-        })
-    }
-
     fn holds_text_work_buf(&self) -> bool {
         self.data
             .def(self.context)
@@ -16160,10 +16148,21 @@ impl Parser {
                     // buffers are free), so promoting it again grew a second `&text` parameter
                     // pass 1 never published: the attribute and variable orders crossed and the
                     // interpreter wrote the result through a corrupted buffer (loft#2286).
+                    //
+                    // So a compiler temp follows pass 1 too: on pass 2 it is promoted only where
+                    // pass 1 promoted it, which arrives as `Attr`.  Pass 1 can promote nothing at
+                    // all where it could not type the tail — a `match` whose subject's type is
+                    // declared lower in the file or in a later module is left an "unresolved
+                    // match" there — and promoting a `__work_N` of its arms on pass 2 alone grew
+                    // the signature after a caller above had been lowered against it: the H5
+                    // contract's abort, or with the check gone, a call one argument short.  A
+                    // `force_tret` definition is the exception: the targeted promotion after
+                    // pass 2 has DECIDED its buffer and patches every caller (Phase B).  So is a
+                    // definition pass 1 never parsed (a generic instance): pass 2 is its first.
                     TextDep::PromoteHidden
                         if !self.first_pass
-                            && (!self.vars.is_compiler_generated(*v)
-                                || self.text_buffer_published_under_another_name(*v)) => {}
+                            && self.context < self.pass1_defs
+                            && !self.force_tret.contains(&self.context) => {}
                     TextDep::PromoteHidden => {
                         let n = self.vars.name(*v);
                         let a = self.data.add_attribute(

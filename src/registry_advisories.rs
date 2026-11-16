@@ -324,6 +324,109 @@ fn parse_advisory_package(val: &Parsed) -> Result<AdvisoryPackage, String> {
     })
 }
 
+/// What the advisories say about using one package release (@C167): a REFUSAL when one of them
+/// forbids it, and the lines to print for the rest.  The one verdict both the install and the
+/// load read, so the two say the same thing:
+///
+/// - `security_critical` refuses, naming the advisory, its summary and the fixed release —
+///   unless `LOFT_SECURITY_OVERRIDE` lists the advisory id (the audited way to keep running a
+///   release while porting off it), which prints that the override applied;
+/// - `security_high` warns, and refuses too under `LOFT_STRICT_SECURITY=1`;
+/// - `security_low` and `bug` (a known hardware failure is one) print one line;
+/// - `deprecated` prints a note.
+#[must_use]
+pub fn assess(name: &str, version: &str, feed: &AdvisoryFeed) -> Assessment {
+    let strict = std::env::var("LOFT_STRICT_SECURITY").is_ok();
+    let overrides: std::collections::HashSet<String> = std::env::var("LOFT_SECURITY_OVERRIDE")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    assess_with(name, version, feed, strict, &overrides)
+}
+
+/// [`assess`] with its two switches given: `strict` (`LOFT_STRICT_SECURITY`) and the advisory
+/// ids `overrides` lists (`LOFT_SECURITY_OVERRIDE`).
+#[must_use]
+pub fn assess_with(
+    name: &str,
+    version: &str,
+    feed: &AdvisoryFeed,
+    strict: bool,
+    overrides: &std::collections::HashSet<String>,
+) -> Assessment {
+    let mut out = Assessment::default();
+    let mut refusals = Vec::new();
+    for hit in classify(name, version, feed) {
+        let fix = hit.fixed_in.as_ref().map_or_else(String::new, |f| {
+            format!(
+                "; fixed in {} {f} — loft install {}@{f}",
+                hit.package, hit.package
+            )
+        });
+        let overridden = overrides.contains(&hit.advisory_id);
+        let refuses = match hit.severity {
+            Severity::SecurityCritical => true,
+            Severity::SecurityHigh => strict,
+            _ => false,
+        };
+        let said = format!(
+            "{} {} is affected by {} ({}): {}{fix}",
+            hit.package,
+            hit.version,
+            hit.advisory_id,
+            hit.severity.as_str(),
+            hit.summary
+        );
+        if refuses && !overridden {
+            refusals.push(format!(
+                "{said}.  To use it anyway while porting off it: LOFT_SECURITY_OVERRIDE={}",
+                hit.advisory_id
+            ));
+        } else if refuses {
+            out.lines
+                .push(format!("warning: {said} (LOFT_SECURITY_OVERRIDE applied)"));
+        } else {
+            let lead = match hit.severity {
+                Severity::Deprecated => "note",
+                _ => "warning",
+            };
+            out.lines.push(format!("{lead}: {said}"));
+        }
+    }
+    if !refusals.is_empty() {
+        out.refusal = Some(refusals.join("\n"));
+    }
+    out
+}
+
+/// [`assess`]'s answer.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Assessment {
+    /// Why this release may not be used, when an advisory forbids it.
+    pub refusal: Option<String>,
+    /// The lines to print for the advisories that do not forbid it.
+    pub lines: Vec<String>,
+}
+
+/// The advisory feed a load reads: the cached copy, VERIFIED — a feed whose signature does not
+/// verify is no feed (it could otherwise refuse any package, or hide a refusal) — read once per
+/// process and never fetched mid-parse; the install refreshes it ([`load_or_fetch`]).
+#[must_use]
+pub fn verified_cached_feed() -> Option<&'static AdvisoryFeed> {
+    static FEED: std::sync::OnceLock<Option<AdvisoryFeed>> = std::sync::OnceLock::new();
+    FEED.get_or_init(|| {
+        load_or_fetch(&LoadOptions {
+            allow_unsigned: false,
+            offline: true,
+            refresh: false,
+        })
+        .unwrap_or(None)
+    })
+    .as_ref()
+}
+
 /// Classify a single (name, version) tuple against the feed.
 ///
 /// Returns one [`Classification`] per matching advisory — multiple
@@ -563,6 +666,60 @@ mod tests {
     }
   ]
 }"#;
+
+    /// @C167 — the verdict per severity: `security_critical` refuses, naming the advisory, the
+    /// fixed release and the override; the override turns it into a warning; a `bug` (a known
+    /// hardware failure is one) warns; a release outside the range is clean.
+    #[test]
+    fn an_advisory_refuses_or_warns_by_its_severity() {
+        let feed = parse_advisories(FIXTURE).expect("parse");
+        let none = std::collections::HashSet::new();
+        let critical = assess_with("web", "0.1.1", &feed, false, &none);
+        let why = critical.refusal.expect("security_critical refuses");
+        assert!(
+            why.contains("GHSA-test-aaaa-bbbb")
+                && why.contains("loft install web@0.1.2")
+                && why.contains("LOFT_SECURITY_OVERRIDE=GHSA-test-aaaa-bbbb"),
+            "{why}"
+        );
+        let overridden: std::collections::HashSet<String> =
+            ["GHSA-test-aaaa-bbbb".to_string()].into();
+        let kept = assess_with("web", "0.1.1", &feed, false, &overridden);
+        assert_eq!(kept.refusal, None, "the override lets it through");
+        assert!(
+            kept.lines[0].contains("LOFT_SECURITY_OVERRIDE applied"),
+            "{:?}",
+            kept.lines
+        );
+        let bug = assess_with("gridmesh", "0.1.0", &feed, true, &none);
+        assert_eq!(bug.refusal, None, "a bug never refuses, strict or not");
+        assert!(
+            bug.lines[0].starts_with("warning: gridmesh 0.1.0 is affected by"),
+            "{:?}",
+            bug.lines
+        );
+        assert_eq!(
+            assess_with("web", "0.1.2", &feed, false, &none),
+            Assessment::default()
+        );
+    }
+
+    /// `security_high` warns, and refuses only under `LOFT_STRICT_SECURITY`.
+    #[test]
+    fn security_high_refuses_only_when_strict() {
+        let feed =
+            parse_advisories(&FIXTURE.replace("\"bug\"", "\"security_high\"")).expect("parse");
+        let none = std::collections::HashSet::new();
+        assert_eq!(
+            assess_with("gridmesh", "0.1.0", &feed, false, &none).refusal,
+            None
+        );
+        assert!(
+            assess_with("gridmesh", "0.1.0", &feed, true, &none)
+                .refusal
+                .is_some()
+        );
+    }
 
     #[test]
     fn parses_fixture() {

@@ -166,7 +166,7 @@ pub(super) fn scope_free_op_var(op: &Value, data: &Data) -> Option<u16> {
 /// ends `cmp; OpFreeRef(r.0); __ref = OpNullRefSentinel()`, and asked of the last two the
 /// variable-only test made the RESET the block's value: `(p, 1) == (P { … }, 1)` answered
 /// the sentinel (loft#2055).
-fn is_scope_exit_cleanup(op: &Value, data: &Data) -> bool {
+pub(super) fn is_scope_exit_cleanup(op: &Value, data: &Data) -> bool {
     if scope_free_op_var(op, data).is_some() {
         return true;
     }

@@ -938,9 +938,11 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       if i < len(list) {
         match el_ir::unspan(list[i]) {
           NdVar { n: av } => { if !ds.contains(av) { ds += [av]; } },
-          _ => if !(ret is TyOptional) {
+          // (Of such a value's borrows a `τ?` result still keeps the user's own locals — a
+          // `c ?? Rec {..}` argument lends `c` — and drops the compiler's stores.)
+          _ => {
             for x in el_types::deps(types[i] ?? ir::TyVoid) {
-              if !ds.contains(x) {
+              if !ds.contains(x) && (!(ret is TyOptional) || !starts_with(el_vars::name_of(vars, x), "__")) {
                 ds += [x];
               }
             }
@@ -1290,7 +1292,10 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
   match el_types::base(tp) {
     TyVector { inner } => {
       nm = el_types::elem_name(e, inner);
-      if nm == "" || el::def_nr(e, "vector<{nm}>") >= 0 {
+      // The row is made wherever the element has one (`database.vector`), whatever made the
+      // definition before — a literal's, a parameter's; the definition only where it is missing.
+      has_def = nm != "" && el::def_nr(e, "vector<{nm}>") >= 0;
+      if nm == "" {
         return;
       }
       narrow = match inner {
@@ -1306,7 +1311,7 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
         el_schema::vector_store_type(e, inner, nm);
         vk = vector_store(e, inner, nm);
       }
-      if vk < 0 {
+      if vk < 0 || has_def {
         return;
       }
       vd = el::add_def(e, "vector<{nm}>", el::pos_at(e, at), el::DT_VECTOR);
@@ -1396,15 +1401,22 @@ pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Nod
         TyInteger { spec } => spec.forced_size == 4,
         _ => false
       };
+      // The first pass knows no row of a struct this file declares (`format_vector_row` answers
+      // 0 there): the second pass's is the one kept.
+      if vk < 0 && !narrow && e.first_pass && nm != "" {
+        list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: 0 }, ir::NdInt { n: db }])];
+        return;
+      }
       if vk < 0 || narrow || el::def_nr(e, "vector<{nm}>") < 0 {
-        el::refuse(e, "a formatted vector with no rows yet");
+        why = if narrow { "a 4-byte element" } else if vk < 0 { "no store type" } else { "no vector definition" };
+        el::refuse(e, "a formatted vector with no rows yet: {why} for `{nm}`");
         return;
       }
       list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: vk }, ir::NdInt { n: db }])];
     },
     TyReference { n } => {
       d = el::def(e, n);
-      if d.def_type != el::DT_STRUCT || el::def_nr(e, "t_{len(d.name)}{d.name}_to_text") >= 0 {
+      if (d.def_type != el::DT_STRUCT && d.def_type != el::DT_ENUM_VALUE) || el::def_nr(e, "t_{len(d.name)}{d.name}_to_text") >= 0 {
         el::refuse(e, "a formatted record of this kind");
         return;
       }
@@ -2041,6 +2053,11 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   vars.dn4_coalesce = e.p.nodes[l] is SAs;
   x = el_ex_assign::expression(e, vars, l);
   vars.dn4_coalesce = outer;
+  // A record local read first into a bind's destination borrows nothing (`parse_var`'s `into`
+  // arm: the bind copies); any other read of it borrows the local.
+  if l == vars.read_into && x.code is NdVar && struct_ref(e, el_types::base(x.tp)) >= 0 {
+    x.tp = el_types::with_deps(x.tp, []);
+  }
   // An `S?` slot's subject is the `S?` it holds (`read_through_tag`).
   if is_nullable_wrapper(e, x.tp) {
     rx = el_ex_place::read_through_tag(e, vars, x);
@@ -2120,16 +2137,24 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // A local tested where it stands answers a plain `if`, which a bind types by its arms: the
   // literal's arm borrows nothing, so neither does the result.
   // On both passes: a `return` of it renames the buffer onto its first arm on the first.
+  // The `if` borrows what its subject's read borrows: nothing where that read was a bind's
+  // first (`coalesce` strips it there, `parse_var`'s `into` arm), the local where it is an
+  // argument — which lends it to the call's result (`call_dependencies`).
   if x.code is NdVar {
-    vt = el_types::without_deps(lhs);
-    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), vt);
+    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), lhs);
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
   vars.vars[held].skip_free = true;
   el_vars::register_work_ref(vars, held);
   if e.first_pass {
-    return ex(ir::NdNull, if owned { el_types::with_deps(el_types::without_deps(lhs), [held]) } else { lhs });
+    // A view of what the subject borrows is answered as the "ncc" block it becomes, so a
+    // function ending in it merges that borrow on this pass (`merge_view_call`) and its
+    // callers read the view.
+    if !owned {
+      return ex(el_ir::v_block([ir::NdNull], lhs, "ncc"), lhs);
+    }
+    return ex(ir::NdNull, el_types::with_deps(el_types::without_deps(lhs), [held]));
   }
   // It borrows what the subject borrows — on this pass, which mints an inline container the
   // first did not; a call's record borrows what its arguments lend it, not its own buffer.

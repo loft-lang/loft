@@ -248,6 +248,53 @@ old behaviour it keeps, and the guard that proves it still holds.  At the flip, 
 `contract:before-1` items are either finished or relabelled `contract:compat`; the label then
 retires.
 
+## `contract:broken` and `freeze:broken` — the record of every break, in the soft freeze
+
+On **issues and PRs** (`loft-lang/loft`).  loft is in a soft freeze ahead of contract 1: what
+the promise covers ([COMPATIBILITY.md § The promise](../doc/claude/COMPATIBILITY.md)) is held
+already, so every break of it is written down where it happened.  The contract is LANGUAGE
+STABILITY — what a program means and whether it compiles, the standard library, the commands and
+formats — not the absence of bugs.  A break is a change that does any of:
+
+- **(a)** refuses, or fails to build or run, a program that worked before it, including a
+  refusal that a missing tool now causes where the old path needed none;
+- **(b)** changes what existing code means — answers, prints or writes — where the old answer was
+  the one the rules ([formal/](../doc/claude/formal/README.md)) and the docs gave;
+- **(c)** stops a published library release that built and passed its tests on the release
+  before from building or passing on this one;
+- **(d)** changes or removes a documented surface: a standard-library API, a command-line flag
+  or its default, an environment switch, a file or store format the new code no longer reads.
+
+A bug is not a break, and neither is its fix: a wrong answer the rules already forbid is a defect,
+and fixing it makes the code match the rules (`contract:settled`), even though the output changes.
+
+The two labels tell the two ways a break happens apart, and they weigh differently:
+
+- **`contract:broken`** — we broke it by ACCIDENT.  It goes on the issue that reports the break,
+  or on the PR that carries it; the fix undoes the break, and the comment that closes it names
+  the fix.  Accidents happen; one that is fixed does not hamper the project, and it does not
+  count against contract 1.
+- **`freeze:broken`** — we broke the soft freeze ON PURPOSE, to let a change break the contract
+  while that is still allowed (an item of `contract:before-1` landing, or a change the owner lets
+  through).  It goes on the PR that makes the change and on its issue, and the body says what
+  breaks, why it is let through, and what a program or library has to change.  This is the
+  label that decides whether full contract 1 can be declared: each one is a stability change the
+  language still needed, so its count over the coming months is the measure of how ready the
+  language is to promise none.
+
+Both are a RECORD, never a to-do: the label stays after the fix or the release, so each label's
+list is the history of its breaks.  And both are set RETROSPECTIVELY: a break found later — a
+program or a library release that a closed issue's fix or a merged PR broke — gets the label on
+that issue or PR, with a comment naming what it broke and how that was found.  The body names
+what broke, the last version or commit where it worked, and the program, release or command that
+shows it.
+
+Neither is `contract:before-1`, which PLANS a change of these kinds before the freeze;
+`freeze:broken` records that one landed in the soft freeze.  Neither is `regression`: a
+regression is anything that worked before, an internal tool or a test included, and only one that
+reaches what the promise covers is also `contract:broken`.  A `silent-wrong` defect is a break only
+when the wrong answer is new, that is (b); a wrong answer that was always there is not.
+
 ## `libs:migration` — closing it forces the published libraries to change
 
 On issues and plans alike.  Set it when closing the item requires the published `loft-libs-*`

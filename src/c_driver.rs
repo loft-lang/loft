@@ -29,6 +29,18 @@ pub(crate) fn c_backend_selected() -> bool {
     !rust_backend_selected()
 }
 
+/// `LOFT_NATIVE_BACKEND=c`: the C backend asked for by name, not only taken as the default.
+pub(crate) fn c_backend_named() -> bool {
+    std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("c"))
+}
+
+/// Does a WASI program link with this machine's wasm32 C toolchain?  The probe
+/// [`build_wasm`] makes before it builds, asked ahead so a default C build that cannot run
+/// here takes the rustc writer instead.
+pub(crate) fn wasm_toolchain_links() -> bool {
+    wasm_toolchain().links
+}
+
 /// `LOFT_NATIVE_BACKEND=rust`: the rustc writer is asked for instead of the C backend, as
 /// `--native-rust` asks for it.
 pub(crate) fn rust_backend_selected() -> bool {

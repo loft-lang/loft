@@ -268,6 +268,10 @@ pub(crate) use crate::cargo_layout::{
     per_unit_dep_dirs, rlib_from_other_rustc, rlib_meta_header, rmeta_meta_header,
 };
 
+// The uplift and file identity live in `cargo_layout` (the core layer), where the build
+// fingerprint reads them too (`cache::rlib_path_in`).
+pub use crate::cargo_layout::{refresh_runtime_uplift, same_file};
+
 /// Which of loft's runtime rlibs a build links: the `deps/` copy, then the uplifted one —
 /// UNLESS the `deps/` copy was written by another rustc and the uplifted one by this one.
 ///
@@ -334,93 +338,6 @@ pub fn preferred_runtime_rlib(
         return Some(deps.to_path_buf());
     }
     has_uplifted.then(|| uplifted.to_path_buf())
-}
-
-/// Make `<profile>/libloft.rlib` the runtime the last build produced, as a cargo uplift does.
-///
-/// Every lookup links the rlib at `<profile>/libloft.rlib` (and its `.rmeta` beside it), and
-/// derives the search path from that directory.  A cargo on the per-unit layout writes the
-/// rlib only to `<profile>/build/loft/<unit>/out/` and does not uplift it, so that path is
-/// either missing (a fresh tree) or a file an older build left there (a restored cache): a
-/// compile against it fails with `E0514` when another rustc wrote it, or with `E0425` on the
-/// runtime functions it lacks when the same rustc wrote it from older source.  Cargo's own
-/// rule is the one kept: the uplift is the NEWEST unit.  When the uplift is missing, or a
-/// unit newer than it is not the same file, that unit and its `.rmeta` are linked into place
-/// through a temporary name and a rename, so a concurrent reader sees the old file or the new
-/// one.  The rustc is not compared: the shape that builds with nightly (the threaded browser
-/// runtime) is compiled against by nightly while `PATH` answers stable, so "the live rustc"
-/// is not a question this lookup can ask.  A tree cargo still uplifts in has no units, and an
-/// uplift that IS the newest unit (a hard link) is left as it is.
-pub fn refresh_runtime_uplift(profile: &std::path::Path) {
-    let uplifted = profile.join("libloft.rlib");
-    let Ok(units) = crate::file_access::read_dir(profile.join("build").join("loft")) else {
-        return;
-    };
-    let modified = |p: &std::path::Path| {
-        crate::file_access::metadata(p)
-            .and_then(|m| m.modified())
-            .ok()
-    };
-    let newest = units
-        .iter()
-        .map(|u| u.os_spelling().join("out").join("libloft.rlib"))
-        .filter(|r| crate::file_access::exists(r))
-        .max_by_key(|r| modified(r));
-    let Some(unit_rlib) = newest else {
-        return;
-    };
-    if crate::file_access::exists(&uplifted)
-        && (same_file(&unit_rlib, &uplifted) || modified(&unit_rlib) <= modified(&uplifted))
-    {
-        return;
-    }
-    let unit_rmeta = crate::file_access::with_extension(&unit_rlib, "rmeta");
-    let sibling_rmeta = profile.join("libloft.rmeta");
-    if crate::file_access::exists(&unit_rmeta) {
-        let _ = place(&unit_rmeta, &sibling_rmeta);
-    } else {
-        // A leftover `.rmeta` beside a self-contained rlib is a second candidate for one crate.
-        let _ = crate::file_access::remove_file(&sibling_rmeta);
-    }
-    let _ = place(&unit_rlib, &uplifted);
-}
-
-/// `from` at `to`, by hard link where the filesystem allows one and a copy where not, through
-/// a name of this process's own so the rename is the only step a reader can observe.
-fn place(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
-    let ext = crate::file_access::extension(to).unwrap_or_default();
-    let tmp = crate::file_access::with_extension(to, &format!("{ext}.tmp{}", std::process::id()));
-    let _ = crate::file_access::remove_file(&tmp);
-    if crate::file_access::hard_link(from, &tmp).is_err() {
-        crate::file_access::copy(from, &tmp)?;
-    }
-    crate::file_access::rename(&tmp, to)
-}
-
-/// Are these two paths the SAME file?  Hard-link identity first (which is what an uplift
-/// produces, and is free), then content — a copy is as good as a link for this question,
-/// and answering `false` only costs the caller the metadata it was looking for.
-pub fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
-    let (Ok(ma), Ok(mb)) = (
-        crate::file_access::metadata(a),
-        crate::file_access::metadata(b),
-    ) else {
-        return false;
-    };
-    if let (Some(ia), Some(ib)) = (
-        crate::platform::file_identity(&ma),
-        crate::platform::file_identity(&mb),
-    ) && ia == ib
-    {
-        return true;
-    }
-    if ma.len() != mb.len() {
-        return false;
-    }
-    match (crate::file_access::read(a), crate::file_access::read(b)) {
-        (Ok(x), Ok(y)) => x == y,
-        _ => false,
-    }
 }
 
 pub use crate::opt::native_key::{auto_cdylib_stem, library_export_set, platform_cdylib_name};

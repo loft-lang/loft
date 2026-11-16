@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: the same parameter formatted: the row is made at the hole, the definitions at the body's entry.
+// Prints: -
+struct Pt { x: integer, y: integer }
+
+fn show(v: vector<Pt>) -> text {
+  a = 1;
+  "{a}:{v}"
+}
+
+fn main() {
+  println("-");
+}

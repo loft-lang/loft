@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: '!' on a struct enum tests its own null (a null handle or a zero first word); a literal rebinding a local stages the items that read it (_build_val_N) before the fresh store.
+// Prints: 4 12
+enum E { A { n: integer }, B { t: text } }
+
+fn bang(t: E?) -> integer {
+  tp = t!;
+  match tp { A { n } => n, B { t: _ } => 0 }
+}
+
+fn reads() -> integer {
+  v = [1];
+  v = [len(v), 2];
+  v[0] * 10 + v[1]
+}
+
+fn main() {
+  println("{bang(A { n: 4 })} {reads()}");
+}

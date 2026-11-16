@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record, null, a call and a literal written into a nullable record field.
+// Prints: 50 0 3 8 50
+struct Pt { x: integer, y: integer }
+struct Box { one: Pt?, n: integer }
+
+fn mk(n: integer) -> Pt { Pt { x: n, y: n + 1 } }
+
+fn main() {
+  r = Pt { x: 50, y: 60 };
+  b = Box { n: 1 };
+  b.one = r;
+  a = b.one?.x ?? -1;
+  b.one = null;
+  c = b.one?.x ?? -1;
+  b.one = mk(3);
+  d = b.one?.x ?? -1;
+  b.one = Pt { x: 8, y: 9 };
+  println("{a} {c} {d} {b.one?.x ?? -1} {r.x}");
+}

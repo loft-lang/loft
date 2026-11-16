@@ -2,7 +2,7 @@
 name: loft-codegen
 description: >-
   The discipline for ANY loft compiler work on any of the three generators — the
-  interpreter's bytecode, the native Rust emitter and the C backend: fixing a store-lifetime
+  interpreter's bytecode, the C backend and the rustc writer (`--native-rust`): fixing a store-lifetime
   or codegen bug, adding an operator or builtin (default/*.loft and its #rust template),
   changing parser IR or the scope pass, or reshaping any of those without meaning to change
   what they emit. USE THIS the moment you are about to edit src/parser/, src/scopes/,
@@ -22,8 +22,8 @@ user-invocable: true
 
 > **Do NOT edit the compiler until you have the WORKING bytecode/IR for THIS
 > situation, captured beside the current/broken bytecode, and proven correct on
-> BOTH backends (`--interpret` AND the C backend, `--native-c`) — and on rustc-native
-> (`--native`, `LOFT_NATIVE_BACKEND` unset) too when the edit is in what that writer emits.**
+> BOTH backends (`--interpret` AND the C backend, `--native`) — and on the rustc writer
+> (`--native-rust`) too when the edit is in what that writer emits.**
 
 This is the step that, skipped, wrecks codegen work. The proof is cheap (a `/tmp`
 source shape + `loft introspect` + a run on each backend); skipping it is what costs
@@ -113,7 +113,7 @@ byte-identical before/after diff, and an EMPTY diff is the proof.**
    misses a path can't catch a regression in it. Save it under the plan's
    `bytecode-comparisons/`.
 2. **Capture BEFORE.** `loft introspect corpus.loft > before.txt` (it carries the IR
-   + bytecode AND the native Rust — not the C); the C backend's emission is a second
+   + bytecode AND the rustc writer's Rust — not the C); the C backend's emission is a second
    capture, `loft --native-c --native-emit before.c corpus.loft`. Confirm the
    corpus runs clean on `--interpret` and `--native-c` (`LOFT_STORES=warn` /
    `LOFT_NATIVE_LEAK_CHECK`).
@@ -154,17 +154,18 @@ carried one more fact?* Yes → the fact belongs in the type.
 
 ## The both-backends rule
 
-Interp (`src/state/codegen.rs` → bytecode), native (`src/generation/` → Rust) and the C
-backend (`src/c/`, `--native-c` → C99) are **separate generators reading the same IR**.  A
+Interp (`src/state/codegen.rs` → bytecode), the C backend (`src/c/`, `--native` → C99) and the
+rustc writer (`src/generation/`, `--native-rust` → Rust) are **separate generators reading the
+same IR**.  A
 new operator lands in all three: its `#rust` template in `default/*.loft` gives the
-interpreter (`make fill` regenerates `src/fill.rs`) and native, its `#loft` template beside
+interpreter (`make fill` regenerates `src/fill.rs`) and the rustc writer, its `#loft` template beside
 it gives the loft runner (regenerate `selfhost/src/fill.loft`,
 `doc/claude/plans/91-self-host/1b-fill-port.md`), and `make surface-gen` re-derives
 `index/target_surface.json`, while the C backend
 implements it by hand (`src/c/body.rs` or a file under `src/c/body/`, plus its runtime
 header) and lists it in the
 operator shape table that matches its result (`OP_INT`, `OP_REF`, … in `src/c/body.rs`).
-Per change, "both backends" is the interpreter and the C backend; rustc-native runs daily,
+Per change, "both backends" is the interpreter and the C backend; the rustc writer runs daily,
 and is added to a change's own checks only when the change is in `src/generation/`,
 `src/codegen_runtime.rs`, an operator's `#rust` body or a Rust native. A rung is closed ONLY when BOTH emit
 the proven bytecode and pass (correct + clean + no leak). An interp fix that breaks
@@ -263,13 +264,13 @@ lowering change.  The full order is
 the checklist:
 
 1. **The cause named from an artefact, not a guess** — the IR and the emitted Rust or C of
-   the failing function (`loft introspect`, `--native-emit`, `--native-c --native-emit`),
+   the failing function (`loft introspect`, `--native-emit` for the C, `--native-rust --native-emit` for the Rust),
    pointing at the wrong node or line,
    BEFORE any build (step 1 above).  A fix built on a hypothesis the artefact never showed is
    a build that may change nothing.
 2. **Compile questions go to `cargo check --bin loft`**; the loop runs on the dev binary
-   (`cargo build --bin loft`, then `target/debug/loft --interpret | --native-c | introspect |
-   --native-emit …` — its rustc `--native` links the `deps/` rlib the same build wrote; `make iter
+   (`cargo build --bin loft`, then `target/debug/loft --interpret | --native | introspect |
+   --native-emit …` — its `--native-rust` links the `deps/` rlib the same build wrote; `make iter
    TEST=…` for one test).  One release build per fix, at the end, never one per hypothesis:
    it refreshes `target/release/libloft.rlib`, which only the `cargo test --release` native
    suites link, and `make check-rlib` says whether it is due.

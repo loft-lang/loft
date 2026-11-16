@@ -360,18 +360,6 @@ fn held_type(x: Cx, w: W, v: ir::Node) -> ir::TypeT? {
           NdInt { n } => n,
           _ => return null,
         };
-        // A field of a vector element is resolved in this frame, from the vector's own type:
-        // an element handed back across frames as a value of its own was copied shallow —
-        // a stored tuple's member list then freed twice, on both backends
-        // (handoff-2026-11-15c.md).
-        vec_node = vector_operand(x, args[0]!);
-        if vec_node != null {
-          vt2 = held_type(x, w, vec_node!) ?? return null;
-          return match cgen_types::base(vt2) {
-            TyVector { inner, dep: _ } => element_field_type(x, inner, pos),
-            _ => null,
-          };
-        }
         tp = held_type(x, w, args[0]!) ?? return null;
         match cgen_types::base(tp) {
           TyReference { n, dep: _ } => {
@@ -395,39 +383,6 @@ fn held_type(x: Cx, w: W, v: ir::Node) -> ir::TypeT? {
     },
     _ => null,
   }
-}
-
-// `OpGetVector(v, i)`'s vector operand `v`, or null for any other node.
-fn vector_operand(x: Cx, v: ir::Node) -> ir::Node? {
-  match loop_shape::unspan(v) {
-    NdCall { def_nr, args } => if x.b.data.definitions[def_nr]!.name == "OpGetVector" && len(args) > 0 { args[0] } else { null },
-    _ => null,
-  }
-}
-
-// The type of the field at byte `pos` of a vector element of type `elem`: a record's field
-// as its definition declares it, a stored tuple's member (`stored_tuple_offsets`, read off the
-// `__tuple<…>` definition it is stored as), or the element itself at position 0.
-fn element_field_type(x: Cx, elem: ir::TypeT, pos: integer) -> ir::TypeT? {
-  match cgen_types::base(elem) {
-    TyReference { n, dep: _ } => record_field_type(x, n, pos),
-    TyTuple { elems } => tuple_member_type(x, elems, pos),
-    _ => if pos == 0 { elem } else { null },
-  }
-}
-
-// The type of record `n`'s field at byte `pos`, as its definition declares it, or null.
-fn record_field_type(x: Cx, n: integer, pos: integer) -> ir::TypeT? {
-  def = x.b.data.definitions[n]!;
-  at = -1;
-  for a in def.attributes {
-    for fl in types_fields(x, def.known_type) {
-      if at < 0 && fl.name == a.name && fl.position == pos {
-        at = a#index;
-      }
-    }
-  }
-  if at < 0 { null } else { peel(def.attributes[at]!.typedef[0] ?? ir::TyVoid) }
 }
 
 // The type of the member of a stored tuple of `elems` whose field sits at byte `pos`, read off

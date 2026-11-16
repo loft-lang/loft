@@ -264,7 +264,11 @@ limit others** — only guarantee what he himself controls:
   forever** (append-only; a version is never deleted), and let the **runtime** run each artifact
   under the `contract` it declared (the escape valve above). An abandoned contract-1 library stays
   downloadable and runs correctly on any later loft, with *zero* action from its author — and a new
-  program may still depend on it.
+  program may still depend on it.  Hosted is not offered: `loft install`, `loft search`, the
+  catalogue and a resolver refusal name a library's newest release, and an older one is HELD — an
+  exact pin or a lock resolves it.  The weekly `registry-validation` tests, from the contract
+  boundary on, the newest release of each API line (`scripts/registry_matrix_versions.py` §
+  contract); a release from before the boundary is held but not tested.
 
 So never-break rests on three legs, each a thing the owner actually controls — not a request made of
 anyone else:

@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector<integer?> is the vector<integer> it is stored as, under definitions of its own name: built, appended to (null the integer's sentinel), read under ??, walked, formatted.
+// Prints: 3 -1 203 4 1 [null,3,0,null]
+fn main() {
+  v: vector<integer?> = [null, 3];
+  n: vector<integer?> = [1];
+  v += [0];
+  v += [null];
+  a = v[1] ?? -1;
+  b = v[0] ?? -1;
+  s = 0;
+  for x in v { s += x ?? 100; }
+  println("{a} {b} {s} {len(v)} {n[0] ?? -1} {v}");
+}

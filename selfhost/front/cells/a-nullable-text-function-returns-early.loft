@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a text? function's early returns of null, a literal, a parameter, a format and a local beside each tail.
+// Prints: - x early - s n=3 a1 a2z p
+fn nul(c: boolean) -> text? {
+  if c { return null; }
+  "x"
+}
+
+fn lit(c: boolean) -> text? {
+  if c { return "early"; }
+  null
+}
+
+fn par(c: boolean, s: text) -> text? {
+  if c { return s; }
+  "tail"
+}
+
+fn fmt(c: boolean, n: integer) -> text? {
+  if c { return "n={n}"; }
+  null
+}
+
+fn loc(c: boolean, n: integer) -> text? {
+  t = "a{n}";
+  if c { return t; }
+  t + "z"
+}
+
+fn plain(c: boolean) -> text {
+  if c { return "p"; }
+  "q"
+}
+
+fn main() {
+  println("{nul(true) ?? "-"} {nul(false) ?? "-"} {lit(true) ?? "-"} {lit(false) ?? "-"} {par(true, "s") ?? "-"} {fmt(true, 3) ?? "-"} {loc(true, 1) ?? "-"} {loc(false, 2) ?? "-"} {plain(true)}");
+}

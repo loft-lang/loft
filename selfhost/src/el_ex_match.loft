@@ -182,6 +182,17 @@ pub fn scalar_link(vars: el_vars::Vars, v: integer) -> boolean {
   }
 }
 
+// `is_amp_place`'s scalar reads: an `OpGet<scalar>` of a place in a store.
+fn scalar_read(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr } => {
+      nm = el::def(e, def_nr).name;
+      nm == "OpGetInt" || nm == "OpGetFloat" || nm == "OpGetSingle" || nm == "OpGetCharacter" || nm == "OpGetBoolean" || nm == "OpGetEnum"
+    },
+    _ => false
+  }
+}
+
 // `Parser::convert`'s `RefVar` arm for an argument handed to a `&T` parameter: a local holding a
 // `T` is linked (`OpCreateStack`), and a local that is itself a `&T` link is forwarded as it is
 // (a link to the link would point at this frame's slot).  A place — a field, an element, a tuple
@@ -201,6 +212,28 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     _ => -1
   };
   if v < 0 {
+    // `Parser::convert`'s `RefVar` arm for a PLACE — a field or an element read in a store — of
+    // the parameter's own type: a plain scalar's is handed as its address (`scalar_place_ref`);
+    // a record's or a vector's is held in a `__ref_N` viewing what the place views, never
+    // freed, and that is linked.  A text place (the callee's store-text twin), a narrow one, a
+    // tuple member and a value that is no place stay refused by name.
+    place = el_ir::unspan(arg);
+    is_place = calls(e, place, "OpGetField") || calls(e, place, "OpGetVector");
+    same = !el_types::is_unknown(at) && !(at is TyOptional) && el_types::is_equal(e, el_types::base(inner), el_types::base(at));
+    narrow = match el_types::base(at) { TyInteger { spec } => spec.forced_size > 0, _ => false };
+    if same && !narrow && el_convert::plain_scalar(el_types::base(inner)) && !(place is NdTupleGet) {
+      sp = el_ex_vector::scalar_place(e, place);
+      if sp != null && scalar_read(e, place) {
+        return sp;
+      }
+    }
+    if same && is_place && (struct_ref(e, el_types::base(at)) >= 0 || el_types::base(at) is TyVector) {
+      wv = el_vars::work_ref(vars, at);
+      if !e.first_pass {
+        vars.vars[wv].skip_free = true;
+      }
+      return ir::NdInsert { items: [el_ir::v_set(wv, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])] };
+    }
     refuse_known(e, at, "a `&` argument that is not a local");
     return null;
   }
@@ -1308,10 +1341,14 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   pd0 = struct_ref(e, el_types::base(st));
   plain_struct = !scalar_subject && !enum_subject && sd < 0 && pd0 >= 0 && el::def(e, pd0).def_type == el::DT_STRUCT && !(st is TyOptional);
   if (sd >= 0 || plain_struct) && !(el_ir::unspan(x.code) is NdVar) && !getter_place(e, x.code) {
-    held = el_vars::create_unique(vars, "match_subj", el_types::without_deps(st));
+    // Typed as the subject is (`create_unique("match_subj", &subject_type)`): a `w!` block
+    // keeps the borrow of the local it answers; a call's answer is typed here without its buffer.
+    // (Asked of the syntax: the first pass has no block to read.)
+    ht = if match e.p.nodes[subject] { SPostfix { op } => op == "!", _ => false } { st } else { el_types::without_deps(st) };
+    held = el_vars::create_unique(vars, "match_subj", ht);
     el_vars::set_defined(vars, held);
     held_set = el_ir::v_set(held, x.code);
-    x = ex(ir::NdVar { n: held }, el_types::without_deps(st));
+    x = ex(ir::NdVar { n: held }, ht);
   }
   pd = struct_ref(e, el_types::base(st));
   if !scalar_subject && !enum_subject && sd < 0 && pd >= 0 && el::def(e, pd).def_type == el::DT_STRUCT && !(st is TyOptional) {

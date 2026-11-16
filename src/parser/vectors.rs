@@ -335,7 +335,13 @@ impl Parser {
             return tp.clone();
         }
         let var_nr = if orig_var == u16::MAX {
-            let vec = self.create_unique("vec", tp);
+            // The fresh vector is typed without the first operand's deps: it is in no store
+            // but its own.  Typed with them, the first pass (which mints no backing, so
+            // nothing re-types it) read a tail `a + b` as a value living in the local `a`,
+            // `a` became the function's return buffer, and the delivery cleared it before
+            // the concat read it: `{ a = [1, 2]; b = [3, 4]; a + b }` answered `[3, 4]`
+            // (loft#2517).
+            let vec = self.create_unique("vec", &tp.without_deps());
             let elm_tp = tp.content();
             let db_ops = self.vector_db(&elm_tp, vec);
             // @FR-Col-Concat — a concat in an expression is a value of its own: a fresh
@@ -3401,8 +3407,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// keeps its place in the signature (callers lower against it on pass 2) under a compiler
     /// name, the author's name becomes an ordinary local again (pass 2 binds only names pass 1
     /// created), and the closures' boxed capture stays boxed: pass 2's flip boxes the local, and
-    /// each `return` delivers into the buffer pass 1 published
-    /// (`text_buffer_published_under_another_name`).  `false` for any other `RefVar` binding —
+    /// each `return` delivers into the buffer pass 1 published (`text_return` promotes nothing on
+    /// pass 2 that pass 1 did not).  `false` for any other `RefVar` binding —
     /// a user's `&` parameter, refused where it is written.
     fn withdraw_written_text_buffer(&mut self, parent_d: u32, v_nr: u16, name: &str) -> bool {
         let Some(a) = self.data.def(parent_d).attr_names.get(name).copied() else {

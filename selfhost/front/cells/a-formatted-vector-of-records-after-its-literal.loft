@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector of records formatted after the literal that made its definitions: the first pass knows no row.
+// Prints: [{x:5,y:6}]
+struct Pt { x: integer, y: integer }
+
+fn main() {
+  p = [Pt { x: 5, y: 6 }];
+  println("{p}");
+}

@@ -348,6 +348,9 @@ pub fn first_giveup_report(key: &str) -> bool {
     true
 }
 
+/// The lock file [`lock_within_budget`] and [`lock_shared_within_budget`] hold.
+pub type LockFile = std::fs::File;
+
 /// Acquire an advisory file lock, giving up rather than letting the wait consume the run's
 /// budget.  `Err(waited)` means it gave up; the caller reports and fails.
 ///
@@ -370,7 +373,7 @@ pub fn first_giveup_report(key: &str) -> bool {
 ///
 /// `Err(waited)` when a deadline is armed and the lock was still held with too little budget
 /// left to use it — `waited` is how long this process queued before giving up.
-pub fn lock_within_budget(f: &std::fs::File, what: &str) -> Result<(), std::time::Duration> {
+pub fn lock_within_budget(f: &LockFile, what: &str) -> Result<(), std::time::Duration> {
     let started = Instant::now();
     let Some(budget) = remaining() else {
         // Unarmed: the historical behaviour, and the right one — nothing is counting.
@@ -395,6 +398,37 @@ pub fn lock_within_budget(f: &std::fs::File, what: &str) -> Result<(), std::time
         }
         // Coarse on purpose: this is a queue measured in seconds, and a tight spin would burn
         // the CPU the holder needs to finish.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// [`lock_within_budget`] for a SHARED hold: any number of shared holders at once, none beside
+/// an exclusive one.  The wasm runtime builds hold the global native-build lock shared, so two
+/// shapes build side by side while a package build, which holds it exclusive, never runs beside
+/// either.
+///
+/// # Errors
+/// How long it waited, when the run's budget would expire before the lock came free.
+pub fn lock_shared_within_budget(f: &LockFile, what: &str) -> Result<(), std::time::Duration> {
+    let started = Instant::now();
+    let Some(budget) = remaining() else {
+        blocked_on(what);
+        let _ = f.lock_shared();
+        unblocked();
+        return Ok(());
+    };
+    let margin = std::time::Duration::from_millis(1500).min(budget / 2);
+    let deadline = started + budget.saturating_sub(margin);
+    blocked_on(what);
+    loop {
+        if f.try_lock_shared().is_ok() {
+            unblocked();
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            unblocked();
+            return Err(started.elapsed());
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
@@ -639,4 +673,30 @@ pub fn env_grace_secs() -> u64 {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(2)
+}
+
+#[cfg(test)]
+mod tests {
+    /// The two runtime shapes hold the global native-build lock SHARED and a package build
+    /// holds it exclusive: shared holders coexist, an exclusive one waits for all of them.
+    #[test]
+    fn shared_holders_coexist_and_keep_an_exclusive_one_out() {
+        let path = std::env::temp_dir().join(format!("loft_lock_test_{}", std::process::id()));
+        let open = || crate::file_access::open_lock_file(path.as_path()).expect("the lock file");
+        let (html, wasi, package) = (open(), open(), open());
+        super::lock_shared_within_budget(&html, "the html runtime").expect("first shared");
+        assert!(
+            wasi.try_lock_shared().is_ok(),
+            "a second shape builds beside the first"
+        );
+        assert!(
+            package.try_lock().is_err(),
+            "a package build waits for the runtime builds"
+        );
+        let _ = html.unlock();
+        let _ = wasi.unlock();
+        assert!(package.try_lock().is_ok(), "and runs once they are done");
+        let _ = package.unlock();
+        let _ = crate::file_access::remove_file(&path);
+    }
 }

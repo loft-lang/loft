@@ -227,9 +227,25 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TyEnum { n, is_ref } => if is_ref && starts_with(el::def(e, n).name, "__nullable<") { "" } else { el::def(e, n).name },
     // A nullable struct enum is named as its enum with the `?` (`Type::name`): its elements are
     // the enum's records, null the zero tag.
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref && !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, _ => "" },
+    // A nullable plain integer, float or boolean is named the same way (`vector<integer?>`):
+    // stored as the scalar it is, null its sentinel.
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref && !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: _ } => if elem_name(e, inner) == "integer" { "integer?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", _ => "" },
     // A vector of vectors: its element is named as the inner vector's own type.
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
+    _ => ""
+  }
+}
+
+// The nullable scalars a vector's element may be, stored as the scalar itself: a plain
+// `integer?`, a `float?`, a `boolean?` — the scalar's name, or "" for any other type.
+pub fn nullable_scalar_elem(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => match inner {
+      TyInteger { spec: _ } => if elem_name(e, inner) == "integer" { "integer" } else { "" },
+      TyFloat => "float",
+      TyBoolean => "boolean",
+      _ => ""
+    },
     _ => ""
   }
 }

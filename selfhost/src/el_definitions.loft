@@ -1227,8 +1227,24 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         if a.constant {
           el_vars::set_value_const(vars, v);
         }
-      } else if a.constant {
-        el_vars::set_value_const(vars, a#index);
+      } else {
+        if a.constant {
+          el_vars::set_value_const(vars, a#index);
+        }
+        // `Parser::change_var_type` re-types each parameter where the second pass enters the
+        // body: a `vector<T>` one has `vector<T>` and `main_vector<T>` defined there (the
+        // lexer stands after the body's `{`) where nothing in the first pass made them.  A
+        // template's are its instances' to make.
+        match a.typedef {
+          TyVector { inner } => {
+            nm = el_types::elem_name(e, inner);
+            bat = match e.p.nodes[body!] { SBlock { at: ba } => ba, _ => -1 };
+            if bat >= 0 && nm != "" && !el_types::is_unknown(inner) && len(e.type_vars) == 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
+              el_schema::make_vector_def(e, inner, nm, el::pos_at(e, bat), true);
+            }
+          },
+          _ => {}
+        }
       }
     }
     // `Parser::parse_function`'s return buffer (pass 1): a record, struct-enum or vector result

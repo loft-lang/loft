@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector<float?> and a vector<boolean?> are stored as the scalar's vector: its row made on the first pass (database.vector), its own definition on the second (check_vector), after the nullable pair's.
+// Prints: 0.5 true false 13.5 3
+fn main() {
+  f: vector<float?> = [1.5, null];
+  b: vector<boolean?> = [true, null];
+  f += [2.0];
+  s = 0.0;
+  for x in f { s += x ?? 10.0; }
+  f[0] = null;
+  println("{f[0] ?? 0.5} {b[0] ?? false} {b[1] ?? false} {s} {len(f)}");
+}

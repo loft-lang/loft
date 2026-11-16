@@ -72,6 +72,10 @@ permissions:
 env:
   # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
   PYTHONUTF8: '1'
+  # The threaded `--html` bundle these gates read is the rustc writer's (the nightly std with
+  # atomics, `make wasm-mt`); `--html` alone builds through the C since @PLN203 C9, so the
+  # workflow names the writer it tests.
+  LOFT_NATIVE_BACKEND: rust
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_NET_RETRY: "10"

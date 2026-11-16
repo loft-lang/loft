@@ -24,7 +24,7 @@ import argparse, collections, concurrent.futures as cf, glob, os, shutil, subpro
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bench"))
 import baseline  # noqa: E402  one baseline format for every survey
 
-PARTS = ["scripts", "docs", "suite", "lib"]
+PARTS = ["scripts", "docs", "suite", "lib", "cells"]
 
 
 def corpus(root, suite):
@@ -33,6 +33,9 @@ def corpus(root, suite):
         "docs": sorted(glob.glob(os.path.join(root, "tests", "docs", "*.loft"))),
         "suite": sorted(glob.glob(os.path.join(suite, "rules", "**", "*.loft"), recursive=True)),
         "lib": sorted(glob.glob(os.path.join(root, "lib", "**", "*.loft"), recursive=True)),
+        # The gate's own cells: one shape each that the corpus above does not hold alone — a
+        # difference found behind a refusal, kept where the next run compares it.
+        "cells": sorted(glob.glob(os.path.join(root, "selfhost", "front", "cells", "*.loft"))),
     }
 
 
@@ -154,8 +157,14 @@ def main():
                    timeout=180)
     if not os.path.exists(std):
         sys.exit("the empty program wrote no image")
-    defs = build(loft, os.path.join(sh, "compare", "defs.loft"), os.path.join(tmp, "defs"), env)
-    elab = build(loft, os.path.join(sh, "front", "elab.loft"), os.path.join(tmp, "elab"), env)
+    # `LOFT_ELAB_DEFS=<exe>` / `LOFT_ELAB_BIN=<exe>`: tools built before (a development build of
+    # the elaborator is half the optimised one's time), for a run between two edits.  A
+    # baseline is written and checked with the tools this run builds.
+    prebuilt = os.environ.get("LOFT_ELAB_DEFS"), os.environ.get("LOFT_ELAB_BIN")
+    if any(prebuilt) and (o.check or o.write_baseline):
+        sys.exit("--check and --write-baseline build their own tools: unset LOFT_ELAB_DEFS / LOFT_ELAB_BIN")
+    defs = prebuilt[0] or build(loft, os.path.join(sh, "compare", "defs.loft"), os.path.join(tmp, "defs"), env)
+    elab = prebuilt[1] or build(loft, os.path.join(sh, "front", "elab.loft"), os.path.join(tmp, "elab"), env)
     per = collections.defaultdict(collections.Counter)
     reasons = collections.Counter()
     families = collections.Counter()

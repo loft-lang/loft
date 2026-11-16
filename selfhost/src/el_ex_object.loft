@@ -51,6 +51,32 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       el_vars::mark_inline(vars, elm);
     }
   }
+  // `parse_vector`'s own-buffer arm (loft#2397, @FR-E-Asgn-Compound): a record-element literal
+  // whose items read the destination under another name — a local viewing the record — is built
+  // in a vector of its own (`_vec_N` over a `__vdb_N`, the element temp borrowing it) and handed
+  // over once every item is read.  Carried only inside an in-place attempt a rebuild watch
+  // abandons (`object_into`), where its variables are what the attempt leaves declared.
+  if !e.first_pass && !keyed && heap_def(inner) >= 0 && elm >= 0 && el_ex_place::alias_reads(e, vars, place_root(e, r), inner, items) {
+    if !vars.rebuild_attempt {
+      el::refuse(e, "a vector field built in a buffer of its own: its items read the destination by another name");
+      return null;
+    }
+    for it in items {
+      if e.p.nodes[it] is SStructLit || e.p.nodes[it] is SRepeat {
+        el::refuse(e, "a vector field built in a buffer of its own from a struct literal or a repeat");
+        return null;
+      }
+      el_ex_assign::expression(e, vars, it);
+    }
+    own = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
+    el_vars::set_defined(vars, own);
+    el_vars::depend(vars, elm, own);
+    el_ex_pattern::vector_of(e, inner);
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: el::def_nr(e, "main_vector<{el_types::elem_name(e, inner)}>"), dep: [] });
+    el_vars::depend(vars, own, db);
+    vars.own_buffer_hit = true;
+    return [];
+  }
   out: vector<ir::Node> = [];
   kt = def.known_type;
   pos = field_position(e, d, fname);
@@ -65,6 +91,9 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
     el_ex_pattern::vector_of(e, inner);
   }
   ird = struct_ref(e, inner);
+  // `parse_vector`'s items, each read in order (a literal item built into the element temp).
+  xs: vector<Ex> = [];
+  built: vector<boolean> = [];
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
@@ -95,7 +124,8 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       if body == null {
         return null;
       }
-      out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + body! + [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
+      xs += [ex(ir::NdInsert { items: [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + body! + [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])] }, ir::TyVoid)];
+      built += [true];
       continue;
     }
     x = el_ex_assign::expression(e, vars, it);
@@ -103,7 +133,20 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
       return null;
     }
-    if e.first_pass {
+    xs += [x];
+    built += [false];
+  }
+  // `build_vector_list`: each element made once every item is read — a record item's copy minted
+  // here, after the items' own buffers (a call's), as Rust numbers them.
+  if e.first_pass {
+    xs = [];
+  }
+  for x in xs {
+    if built[x#index] {
+      match x.code {
+        NdInsert { items: seg } => { out += seg; },
+        _ => {}
+      }
       continue;
     }
     if push != "" {
@@ -723,7 +766,15 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
       return ex(ir::NdNull, ir::TyVoid);
     }
     el_vars::drop_use(vars, v);
-    steps += [el_ir::v_set(v, ir::NdTupleGet { var: tmp, idx: i })];
+    // `destructure_constant_member`: a constant member of a tuple literal is read as itself
+    // into a scalar local its author declared, so the store sees the literal.
+    declared_scalar = (vars.annotated.contains(v) || (vars.vars[v].argument && !hidden_param(e, vars, v))) && is_scalar(el_vars::tp(vars, v)) && is_scalar(et);
+    constant = match el_ir::unspan(x.code) {
+      NdTuple { items } => match el_ir::unspan(items[i] ?? ir::NdNull) { NdInt { n: _ } => true, NdFloat { f: _ } => true, NdSingle { f: _ } => true, NdBoolean { b: _ } => true, _ => false },
+      _ => false
+    };
+    read = if declared_scalar && constant { match el_ir::unspan(x.code) { NdTuple { items } => items[i]!, _ => ir::NdNull } } else { ir::NdTupleGet { var: tmp, idx: i } };
+    steps += [el_ir::v_set(v, read)];
   }
   ex(ir::NdInsert { items: steps }, ir::TyVoid)
 }
