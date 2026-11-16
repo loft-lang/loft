@@ -270,8 +270,22 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   // A keyed result is delivered into the caller's collection (`OpReplaceKeyed` at the call),
   // its body typed without a borrow — not carried: refused by name.
+  // A keyed local of the body's own at the tail is answered as it is, the body typed as the
+  // collection without a borrow; any other tail is refused by name.
   if !e.first_pass && keyed_kind(el_types::base(result)) {
-    el::refuse(e, "a function returning a keyed collection");
+    kv = match body_tail(code) { NdVar { n } => if !vars.vars[n].argument && keyed_kind(el_types::base(el_vars::tp(vars, n))) && !(result is TyOptional) { n } else { -1 }, _ => -1 };
+    if kv < 0 {
+      el::refuse(e, "a function returning a keyed collection");
+    } else {
+      match code {
+        NdBlock { block } => {
+          kb = block[0];
+          kb.result = [el_types::without_deps(el_types::base(result))];
+          code = ir::NdBlock { block: [kb] };
+        },
+        _ => {}
+      }
+    }
   }
   // A vector result has its own delivery; the record delivery below does not apply to it.
   if rb >= 0 && el_types::base(result) is TyVector {

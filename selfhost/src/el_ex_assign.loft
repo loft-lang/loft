@@ -2602,6 +2602,26 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
         kt = el_schema::keyed_type(e, el_types::base(kcur));
         return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
       },
+      // A call of a loft function answering a collection of its own: replaced into the local
+      // the same way, the call's store freed after (the type's 32768 bit).
+      // (A record or collection argument is bracketed against its store's free while the
+      // call runs — `protectable_ref_args` — which is not carried: refused below.)
+      NdCall { def_nr: cd } => {
+        plain_args = true;
+        for ca in el::def(e, cd).attributes {
+          cb = el_types::base(ca.typedef[0] ?? ir::TyVoid);
+          if !(is_scalar(cb) || cb is TyText) {
+            plain_args = false;
+          }
+        }
+        if plain_args && el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
+          el_vars::drop_use(vars, v);
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
+        }
+        el::refuse(e, "a keyed local bound from something other than a local");
+        return ex(ir::NdNull, ir::TyVoid);
+      },
       _ => {
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);
