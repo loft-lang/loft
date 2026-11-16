@@ -274,7 +274,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // collection without a borrow; any other tail is refused by name.
   if !e.first_pass && keyed_kind(el_types::base(result)) {
     kv = match body_tail(code) { NdVar { n } => if !vars.vars[n].argument && keyed_kind(el_types::base(el_vars::tp(vars, n))) && !(result is TyOptional) { n } else { -1 }, _ => -1 };
-    if kv < 0 {
+    // A literal tail was built as the collection where it was read (`keyed_tail_literal`).
+    klit = match body_tail(code) { NdBlock { block } => block[0].name == "Vector" && keyed_kind(block[0].result[0] ?? ir::TyVoid), _ => false };
+    if klit {
+    } else if kv < 0 {
       el::refuse(e, "a function returning a keyed collection");
     } else {
       match code {

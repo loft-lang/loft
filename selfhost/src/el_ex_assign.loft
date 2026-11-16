@@ -554,7 +554,10 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     },
     // An empty `[]` with no element type yet answers `parse_vector`'s untyped marker
     // (`Insert([Null])`), which the position it is converted to builds (`empty_literal_to`).
-    SVecLit { items } => if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else { el_ex_pattern::vector_value(e, vars, n).x },
+    SVecLit { items } => {
+      kl = if len(items) == 0 { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
+      if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else { el_ex_pattern::vector_value(e, vars, n).x }
+    },
     SYield { from, e: ye } => el_ex_match::yield_expr(e, vars, from, ye),
     SComprehension { at: _ } => el_ex_match::comprehension_value(e, vars, n),
     SAs { at, e: ae, tp: at_tp, checked } => el_ex_match::cast_expr(e, vars, ae, at_tp),
