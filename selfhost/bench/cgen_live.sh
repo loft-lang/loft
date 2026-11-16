@@ -13,11 +13,12 @@
 #                                                                 plain switches: IDENTICAL, or the diff
 #                                                                 beside the _MSC_VER split copy
 #
-# --diff leaves the image and both units in $LOFT_CGEN_OUT/live (cgen_env.sh).
+# --diff leaves the image and both units in $LOFT_CGEN_OUT/live (cgen_env.sh).  CGEN_ON="LOFT_NO_X …"
+# leaves those plain switches unset: a rule being ported, tried before it leaves the list.
 set -u
 . "$(dirname "$0")/cgen_env.sh"
 case "${1:-}" in
-  -h|--help|"") sed -n '5,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help|"") sed -n '5,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 live() {
   env LOFT_NO_WARNINGS=1 LOFT_TIMEOUT="${LOFT_TIMEOUT:-600}" "$cgen_loft" --interpret \
@@ -30,6 +31,10 @@ if [ "$1" != "--diff" ]; then
 fi
 file="$(realpath "${2:?--diff FILE.loft}")"
 cgen_plain
+for on in ${CGEN_ON:-}; do
+  unset "$on"
+done
+export LOFT_CGEN_ON="${CGEN_ON:-}"
 export LOFT_NO_WARNINGS=1 TMPDIR="$cgen_out"
 s="$cgen_out/live"
 mkdir -p "$s"
