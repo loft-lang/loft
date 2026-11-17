@@ -13,8 +13,8 @@ B-Copy	binding	curated	92	2026-11-17	own dir 37 -> 23 cells by clause (record up
 B-Disturb	binding	curated	46	2026-11-17	own dir 15 -> 10: overwrite + its control + whole-record write 3->1, growth + clear/method 2->1, callee-argument + loop liveness 2->1, later-arm + payload match views 2->1; the pending receipt measured; the removal cell gained a middle-element case that can fail (it could not) and a switch receipt; the six cells gate E agrees with stay apart (merging them needs a gate E run on the result)
 B-OutOfLine	binding	curated	13	2026-11-17	8 small cells, one clause each, verdicts mixed: no merge. Switch sweep (194 LOFT_NO_*): only LOFT_NO_OUT_OF_LINE / LOFT_NO_SEVERAL_VARS move them, both by refusing the program, so no clause-specific receipt exists; the null-write view case gained a reallocation so a stale view would fail
 B-Ref-Alias	binding	curated	15	2026-11-17	own dir 7 -> 5: two ref parameters + other call forms + link to a ref vector parameter 3->1 (loft#2136, #2150, #2424); the receipt-less crossing cell is moved only by LOFT_NO_SEVERAL_VARS (a refusal) but its values tell a link from a copy; keyed alias, null-to-collection (patch), 2195 (gate E agrees) stay apart
-B-Ref-AnnotationOnly	binding	todo			
-B-Ref-Intro	binding	todo			
+B-Ref-AnnotationOnly	binding	curated	6	2026-11-17	every listed position refused (G-Amp-Prefix's cell holds the full list and cites this rule); the own cell is the unary-operator defect (!&a -&n ~&n) with its patch receipt over 6 expectations — its 3 positions duplicated in G-Amp-Prefix stay, since removing them changes the receipt's channel for ~9 lines; the reference-field cell is B-Ref-StoredRef's context. No change.
+B-Ref-Intro	binding	curated	6	2026-11-17	own dir 5 -> 3: the &fn(...) family — write through a parameter, local bind, read and call (loft#1443, #1454, #1455) — 3->1, one duplicated control kept once; the nullable-slot cell (loft#1372) and the place-not-a-temporary refusal (gate E agrees) stay apart
 B-Ref-Lvalue	binding	todo			
 B-Ref-NotTarget	binding	todo			
 B-Ref-Read	binding	todo			

@@ -284,6 +284,7 @@ def merge(target, intro_file, cells):
         return top, variants
 
     taken_top, taken_var = set(), set()
+    tests_seen = {}
     heads, codes = [], []
     for k, cell in enumerate(cells):
         lines = open(cell, encoding="utf-8").read().split("\n")
@@ -310,8 +311,18 @@ def merge(target, intro_file, cells):
             tname = "test_" + re.sub(r"[^a-z0-9_]", "_", re.sub(r"^[0-9]+-", "", stem).replace("-", "_"))[:70]
             code = code.replace("fn main()", f"fn {tname}()", 1)
         for t in re.findall(r"^fn (test_[a-z_0-9]+)", code, re.M):
-            if t in taken_top:
-                raise SystemExit(f"two sections declare {t}")
+            if t not in taken_top:
+                continue
+            m = re.search(r"(?ms)^fn " + re.escape(t) + r"\(.*?^\}\n", code)
+            if m and m.group(0) == tests_seen.get(t):
+                # The same test, word for word, in an earlier section: a duplicated control.
+                code = code[:m.start()] + code[m.end():].lstrip("\n")
+                print(f"  {stem}: dropped {t} — identical to an earlier section's")
+            else:
+                code = re.sub(r"(?m)^fn " + re.escape(t) + r"\(", f"fn test_{px}_{t[5:]}(", code, count=1)
+                print(f"  {stem}: renamed {t} -> test_{px}_{t[5:]} (same name, another body)")
+        for m in re.finditer(r"(?ms)^fn (test_[a-z_0-9]+)\(.*?^\}\n", code):
+            tests_seen.setdefault(m.group(1), m.group(0))
         t2, v2 = declared(code)
         taken_top |= t2
         taken_var |= v2
