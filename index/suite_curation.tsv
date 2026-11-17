@@ -174,18 +174,18 @@ F-Spec-Fill	formatting	curated	4	2026-11-17	one cell (loft#2428) plus four suite
 F-Spec-Radix	formatting	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
 F-Spec-Zero	formatting	curated	2	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
 F-Target	formatting	curated	6	2026-11-17	2 cells: a refusal and the per-hole-kind control — distinct
-F-Target-Kind	formatting	todo			
-F-Target-Pos	formatting	todo			
-F-Target-Spec	formatting	todo			
-G-Amp-Disambig	grammar	todo			
-G-Amp-Infix	grammar	todo			
-G-Amp-Prefix	grammar	todo			
-G-Assoc	grammar	todo			
-G-Lex-Coal	grammar	todo			
-G-Pat-Group	grammar	todo			
-G-Pat-Prec	grammar	todo			
-G-Post-Default	grammar	todo			
-G-Prec	grammar	todo			
+F-Target-Kind	formatting	curated	4	2026-11-17	3 cells: the two refusals and the nullable-hole warning — not merged this pass
+F-Target-Pos	formatting	curated	2	2026-11-17	own dir 3 -> 1: every position with an expected type builds the target (loft#2064, binding/field, call in a hole)
+F-Target-Spec	formatting	curated	2	2026-11-17	no own directory; cited by suite cells of its chapter
+G-Amp-Disambig	grammar	curated	3	2026-11-17	2 cells, both gate-E-agreeing (a refusal and the position control)
+G-Amp-Infix	grammar	curated	5	2026-11-17	own dir 4 -> 3: the vector of & results (plain integer vector + compared by value) 2->1; the refusal and the level-six control agree with gate E
+G-Amp-Prefix	grammar	curated	4	2026-11-17	2 cells: gate E splits them
+G-Assoc	grammar	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter
+G-Lex-Coal	grammar	curated	2	2026-11-17	a first suite cell: a coalesce is one token whatever the spacing (spaced/unspaced, integer and float defaults); a third ? is refused (G-Prec cell, loft#2543)
+G-Pat-Group	grammar	curated	2	2026-11-17	2 cells, both patches (one patch per file)
+G-Pat-Prec	grammar	curated	1	2026-11-17	one cell (a patch)
+G-Post-Default	grammar	curated	3	2026-11-17	no own directory; cited by suite cells of its chapter
+G-Prec	grammar	curated	3	2026-11-17	a first own cell: an absent operand is refused once, naming the token before it (loft#2543, patch receipt); other cells of the chapter cite it
 H-Alloc	heap	todo			
 H-Claim	heap	todo			
 H-ClearRelease	heap	todo			
