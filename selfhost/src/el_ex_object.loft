@@ -1900,6 +1900,11 @@ pub fn vector_insert(e: el::El, vars: el_vars::Vars, vec: ir::Node, index: ir::N
   if it is TyVector || it is TyTuple || (root >= 0 && el_ir::reads_var(elem.code, root)) {
     return null;
   }
+  // (An insert through a group member links the record into the group: not carried.)
+  if group_member(e, vec) {
+    el::refuse(e, "an `insert` into a vector member of a linked collection group");
+    return null;
+  }
   val = stored(e, vars, elem, inner);
   stride = elem_stride(e, inner);
   db = el_schema::content_type(e, it);
@@ -1907,8 +1912,7 @@ pub fn vector_insert(e: el::El, vars: el_vars::Vars, vec: ir::Node, index: ir::N
   if val == null || stride < 0 || db < 0 || ed < 0 {
     return null;
   }
-  vv = match el_ir::unspan(vec) { NdVar { n: vn } => vn, _ => -1 };
-  tmp = el_vars::create_unique(vars, "ins", ir::TyReference { n: ed, dep: if vv >= 0 { [vv] } else { [] } });
+  tmp = el_vars::create_unique(vars, "ins", ir::TyReference { n: ed, dep: if root >= 0 { [root] } else { [] } });
   el_vars::set_defined(vars, tmp);
   at = ir::NdVar { n: tmp };
   set = if struct_ref(e, it) >= 0 {
@@ -2573,6 +2577,34 @@ pub fn sort_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) ->
 // `vector_operations`' `remove`: `v.remove(i)` is `OpRemoveVector(v, elem, i)`, answering whether
 // `i` named an element — `elem` the store type the vector's elements are laid out as.  An element
 // holding a generator's frame (released first, `frame_remove`) is refused by name.
+// Whether `n` reads a field (`OpGetField(base, off, k)`) that other collections of its record
+// index too: a member of a linked collection group.
+pub fn group_member(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetField" || len(args) != 3 {
+        return false;
+      }
+      off = match args[1] ?? ir::NdNull { NdInt { n: o } => o, _ => -1 };
+      k = match args[2] ?? ir::NdNull { NdInt { n: kt } => kt, _ => -1 };
+      if off < 0 || k < 0 || k >= len(e.b.types) {
+        return false;
+      }
+      // (The read's third operand is the FIELD's type: the record is any that holds a field
+      // of that type at that offset.)
+      for s in 0..len(e.b.types) {
+        for f in el_schema::struct_fields(e, s) {
+          if f.position == off && f.content == k && len(f.other_indexes) > 0 {
+            return true;
+          }
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
 pub fn vector_remove(e: el::El, at: integer, x: Ex, i: Ex) -> Ex {
   inner = match el_types::base(x.tp) { TyVector { inner: vi } => vi, _ => ir::TyUnknown { n: 0 } };
   if el_types::holds_generator(e, inner, []) {
@@ -2585,6 +2617,12 @@ pub fn vector_remove(e: el::El, at: integer, x: Ex, i: Ex) -> Ex {
   }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyBoolean);
+  }
+  // A vector that is a member of a linked collection group also unlinks the element from the
+  // group's keyed members (`group_elem_remove`): not carried.
+  if group_member(e, x.code) {
+    el::refuse(e, "a `remove` from a vector member of a linked collection group");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   et = el_schema::content_type(e, inner);
   if et < 0 {
