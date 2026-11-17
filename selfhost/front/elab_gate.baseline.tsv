@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	dda01509e54314336954ae736b5c7dc52af99089
+suite	4eaf8f4a81defe74e383f8526c29f276c40145f7
 
-layer	elab	agree	1031	of	2088
+layer	elab	agree	1031	of	2087
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -426,8 +426,7 @@ elab	refused	loft-suite/rules/operational/E-Eq/a-value-struct-with-methods-compa
 elab	refused	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft
 elab	refused	loft-suite/rules/operational/E-Eq/c91-an-identity-compare-names-one-record.loft
 elab	refused	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft
-elab	refused	loft-suite/rules/operational/E-Left/2451-a-record-assigned-into-an-element-lands-where-the-place-was-when-it-ran.loft
-elab	refused	loft-suite/rules/operational/E-Left/each-operand-of-a-literal-a-format-and-a-compound-is-reduced-left-to-right.loft
+elab	refused	loft-suite/rules/operational/E-Left/operands-reduce-left-to-right-and-a-place-before-its-value.loft
 elab	refused	loft-suite/rules/operational/E-NullArg/1924-a-null-text-orders-first-and-concatenates-to-null.loft
 elab	refused	loft-suite/rules/operational/E-NullArg/1945-a-concatenation-with-any-null-operand-is-null.loft
 elab	refused	loft-suite/rules/operational/E-Seq/a-block-at-statement-start-before-an-operator.loft
