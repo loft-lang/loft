@@ -25,7 +25,7 @@ B-Ref-Uniform	binding	curated	24	2026-11-17	own dir 8 -> 7: the collection link 
 B-Ref-Write	binding	curated	20	2026-11-17	own dir 12 -> 10: the whole-value write through a link to a local / place / out-of-line field (loft#1371, #1376, #2433) 3->1; 2455 is the same clause but gate E agrees with it; four patch cells, the both-kinds refusal and three distinct clauses stay
 B-RefType	binding	curated	1	2026-11-17	one control cell (INERT receipt, honest: it pins values that already held); every function writes through its links after binding and reads the places after, so a copying link fails it
 B-RefType-OfVar	binding	curated	3	2026-11-17	no own directory: B-RefType's control cell cites and moves it (a variable or parameter of type &τ is a live link for its whole life)
-B-Scope	binding	todo			
+B-Scope	binding	curated	32	2026-11-17	own dir 27 -> 21: the name-after-its-scope-ended clause (loft#1700, #2411, #2332, #2321, #2330 and the sibling-loop body local) 6->1; pln125-b-drop moved to H-Drop (a drop runs where its free runs) with a conformance receipt; the rest are one patch receipt each, pairs gate E splits (1955/1955b, 1700b/2523) or distinct clauses
 B-View	binding	todo			
 B-View-Base	binding	todo			
 B-View-Depth	binding	todo			
