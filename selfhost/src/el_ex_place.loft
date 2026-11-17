@@ -2323,6 +2323,24 @@ pub fn nested_literal(e: el::El, vars: el_vars::Vars, v: integer, at: ir::TypeT,
   }
 }
 
+// Does a vector literal's item hold an index expression whose subject mentions `name`?
+pub fn indexes_name(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SVecLit { items } => {
+      for it in items {
+        if indexes_name(e, it, name) {
+          return true;
+        }
+      }
+      false
+    },
+    SIndex { e: ie } => ie != null && el_ex_assign::mentions_name(e, ie!, name),
+    SBin { l, r } => indexes_name(e, l, name) || indexes_name(e, r, name),
+    SParen { e: pe } => pe != null && indexes_name(e, pe!, name),
+    _ => false
+  }
+}
+
 // R-KeyedEntry's subscript clause for a value that reads the collection it is written into: a
 // record READ from the collection (`h[5] = h[3]`) is written as it is; a literal whose integer
 // fields read it has each such value staged in a work variable ahead of the record's build.
@@ -2388,6 +2406,18 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           }
         },
         _ => {}
+      }
+    }
+  }
+  // A literal REBUILDING the local `v` whose vector-field literal reads an element of one of
+  // `v`'s own vectors (`s = Bx { v: [s.v[0] + 10] }`) has that literal staged in a store of
+  // its own first — not carried: refused by name.
+  if !e.first_pass && v >= 0 {
+    for fi in fields {
+      own_read = match e.p.nodes[fi] { SFieldInit { e: fe1 } => fe1 != null && e.p.nodes[fe1!] is SVecLit && el_ex_assign::mentions_name(e, fe1!, el_vars::name_of(vars, v)) && indexes_name(e, fe1!, el_vars::name_of(vars, v)), _ => false };
+      if own_read {
+        el::refuse(e, "a literal rebuilding a record whose vector field reads an element of that record's vector");
+        return null;
       }
     }
   }
