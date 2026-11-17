@@ -140,6 +140,11 @@ def one(loft, defs, elab, std, path, tmp, env, i):
     refused = [l[len("refused: "):] for l in lines if l.startswith("refused: ")]
     # `refused-in: <function>\t<line>\t<text>`: each refusal with the function it was met in.
     refused_in = {l[len("refused-in: "):].split("\t")[0] for l in lines if l.startswith("refused-in: ")}
+    # `LOFT_ELAB_WHERE_FILE=<file>`: every refusal with the function and source line it was met
+    # at, `program\tfunction\tline\ttext` — where a family fires, for porting from the corpus.
+    if os.environ.get("LOFT_ELAB_WHERE_FILE"):
+        with open(os.environ["LOFT_ELAB_WHERE_FILE"], "a", encoding="utf-8") as fh:
+            fh.write("".join(f"{path}\t{l[len('refused-in: '):]}\n" for l in lines if l.startswith("refused-in: ")))
     mine = [l for l in lines if not l.startswith("refused: ") and not l.startswith("refused-in: ")]
     if m.returncode != 0 and not refused:
         return "differ", f"elab exited {m.returncode}: {m.stderr.strip()[-300:]}", {}
