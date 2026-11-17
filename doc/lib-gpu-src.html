@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpu source — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The loft source of the gpu library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-gpu-src.html">
+<meta property="og:title" content="gpu source — Loft, a programming language for small browser games">
+<meta property="og:description" content="The loft source of the gpu library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-gpu-src.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="gpu source — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The loft source of the gpu library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>gpu source</h1>
+<article>
+<p><a href="lib-gpu.html">← gpu</a> · <a href="lib-gpu-api.html">API reference</a> · version 0.1.0</p>
+<p class="lib-legend">2 file(s), 799 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>F1</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L98">98</a></td><td>—</td><td><a href="#src-gpu-loft-L194">194</a> <a href="#src-gpu-loft-L199">199</a> <a href="#src-gpu-loft-L518">518</a> <a href="#tests-layout-loft-L11">11</a> <a href="#tests-layout-loft-L25">25</a> <a href="#tests-layout-loft-L27">27</a></td></tr>
+<tr><td><code>F2</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L99">99</a></td><td>—</td><td><a href="#src-gpu-loft-L194">194</a> <a href="#src-gpu-loft-L199">199</a> <a href="#src-gpu-loft-L525">525</a> <a href="#tests-layout-loft-L11">11</a> <a href="#tests-layout-loft-L25">25</a> <a href="#tests-layout-loft-L27">27</a></td></tr>
+<tr><td><code>F3</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L100">100</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>F4</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L101">101</a></td><td>—</td><td><a href="#src-gpu-loft-L199">199</a> <a href="#src-gpu-loft-L533">533</a> <a href="#tests-layout-loft-L11">11</a></td></tr>
+<tr><td><code>MAT4</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L103">103</a></td><td>—</td><td><a href="#src-gpu-loft-L199">199</a> <a href="#src-gpu-loft-L550">550</a> <a href="#tests-layout-loft-L11">11</a></td></tr>
+<tr><td><code>f4s</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L106">106</a></td><td>—</td><td><a href="#tests-layout-loft-L11">11</a></td></tr>
+<tr><td><code>TRIANGLES</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L111">111</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>LINES</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L112">112</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>POINTS</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L113">113</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>DEPTH_OFF</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L116">116</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>DEPTH_TEST</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L117">117</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>DEPTH_TEST_WRITE</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L118">118</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>BLEND_OFF</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L121">121</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>ZERO</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L123">123</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>ONE</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L124">124</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>SRC_ALPHA</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L125">125</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>ONE_MINUS_SRC_ALPHA</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L126">126</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>DST_ALPHA</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L127">127</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>ONE_MINUS_DST_ALPHA</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L128">128</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>blend</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L132">132</a></td><td>—</td><td><a href="#src-gpu-loft-L182">182</a> <a href="#src-gpu-loft-L479">479</a></td></tr>
+<tr><td><code>CULL_NONE</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L137">137</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>CULL_BACK</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L138">138</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>CULL_FRONT</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L139">139</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>INTO_WINDOW</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L143">143</a></td><td>—</td><td><a href="#src-gpu-loft-L575">575</a></td></tr>
+<tr><td><code>INTO_COLOUR</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L144">144</a></td><td>—</td><td><a href="#src-gpu-loft-L422">422</a></td></tr>
+<tr><td><code>INTO_COLOUR_DEPTH</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L145">145</a></td><td>—</td><td><a href="#src-gpu-loft-L427">427</a></td></tr>
+<tr><td><code>INTO_DEPTH</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L146">146</a></td><td>—</td><td><a href="#src-gpu-loft-L432">432</a></td></tr>
+<tr><td><code>CLEAR</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L149">149</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEEP</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-loft-L150">150</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>Source</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L154">154</a></td><td>—</td><td><a href="#src-gpu-loft-L161">161</a> <a href="#src-gpu-loft-L162">162</a> <a href="#src-gpu-loft-L175">175</a></td></tr>
+<tr><td><code>source</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L161">161</a></td><td>—</td><td><a href="#src-gpu-loft-L132">132</a> <a href="#src-gpu-loft-L133">133</a></td></tr>
+<tr><td><code>Program</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L166">166</a></td><td>—</td><td><a href="#src-gpu-loft-L454">454</a></td></tr>
+<tr><td><code>State</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L179">179</a></td><td>—</td><td><a href="#src-gpu-loft-L454">454</a></td></tr>
+<tr><td><code>layout</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L206">206</a></td><td>—</td><td><a href="#src-gpu-loft-L468">468</a> <a href="#tests-layout-loft-L16">16</a> <a href="#tests-layout-loft-L25">25</a> <a href="#tests-layout-loft-L27">27</a> <a href="#tests-layout-loft-L31">31</a></td></tr>
+<tr><td><code>Device</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L222">222</a></td><td>—</td><td><a href="#src-gpu-loft-L239">239</a> <a href="#src-gpu-loft-L247">247</a> <a href="#src-gpu-loft-L251">251</a> <a href="#src-gpu-loft-L273">273</a> <a href="#src-gpu-loft-L278">278</a> <a href="#src-gpu-loft-L283">283</a> … (39 total)</td></tr>
+<tr><td><code>open</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L247">247</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>backend_name</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L268">268</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>poll</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L273">273</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>width</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L278">278</a></td><td>—</td><td><a href="#src-gpu-loft-L32">32</a> <a href="#src-gpu-loft-L46">46</a> <a href="#src-gpu-loft-L52">52</a> <a href="#src-gpu-loft-L81">81</a> <a href="#src-gpu-loft-L83">83</a> <a href="#src-gpu-loft-L247">247</a> … (22 total)</td></tr>
+<tr><td><code>height</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L283">283</a></td><td>—</td><td><a href="#src-gpu-loft-L32">32</a> <a href="#src-gpu-loft-L46">46</a> <a href="#src-gpu-loft-L53">53</a> <a href="#src-gpu-loft-L81">81</a> <a href="#src-gpu-loft-L83">83</a> <a href="#src-gpu-loft-L247">247</a> … (22 total)</td></tr>
+<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L288">288</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>refusals</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L296">296</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>Buffer</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L307">307</a></td><td>—</td><td><a href="#src-gpu-loft-L312">312</a> <a href="#src-gpu-loft-L317">317</a> <a href="#src-gpu-loft-L318">318</a> <a href="#src-gpu-loft-L322">322</a> <a href="#src-gpu-loft-L328">328</a> <a href="#src-gpu-loft-L659">659</a> … (7 total)</td></tr>
+<tr><td><code>buffer</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L317">317</a></td><td>—</td><td><a href="#src-gpu-loft-L659">659</a> <a href="#src-gpu-loft-L662">662</a> <a href="#src-gpu-loft-L666">666</a> <a href="#src-gpu-loft-L673">673</a> <a href="#src-gpu-loft-L677">677</a> <a href="#src-gpu-loft-L680">680</a></td></tr>
+<tr><td><code>update</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L322">322</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>floats</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L328">328</a></td><td>—</td><td><a href="#src-gpu-loft-L567">567</a></td></tr>
+<tr><td><code>IndexBuffer</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L333">333</a></td><td>—</td><td><a href="#src-gpu-loft-L338">338</a> <a href="#src-gpu-loft-L343">343</a> <a href="#src-gpu-loft-L344">344</a> <a href="#src-gpu-loft-L348">348</a> <a href="#src-gpu-loft-L677">677</a></td></tr>
+<tr><td><code>index_buffer</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L343">343</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>count</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L348">348</a></td><td>—</td><td><a href="#src-gpu-loft-L85">85</a> <a href="#src-gpu-loft-L106">106</a> <a href="#src-gpu-loft-L107">107</a> <a href="#src-gpu-loft-L720">720</a> <a href="#src-gpu-loft-L722">722</a> <a href="#src-gpu-loft-L726">726</a> … (9 total)</td></tr>
+<tr><td><code>Texture</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L355">355</a></td><td>—</td><td><a href="#src-gpu-loft-L362">362</a> <a href="#src-gpu-loft-L367">367</a> <a href="#src-gpu-loft-L368">368</a> <a href="#src-gpu-loft-L372">372</a> <a href="#src-gpu-loft-L373">373</a> <a href="#src-gpu-loft-L378">378</a> … (15 total)</td></tr>
+<tr><td><code>texture</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L367">367</a></td><td>—</td><td><a href="#src-gpu-loft-L379">379</a> <a href="#src-gpu-loft-L648">648</a> <a href="#src-gpu-loft-L651">651</a> <a href="#src-gpu-loft-L655">655</a> <a href="#src-gpu-loft-L713">713</a></td></tr>
+<tr><td><code>depth_texture</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L372">372</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>texture_from</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L378">378</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>put</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L385">385</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>nearest</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L390">390</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>mipmaps</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L396">396</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>width</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L401">401</a></td><td>—</td><td><a href="#src-gpu-loft-L32">32</a> <a href="#src-gpu-loft-L46">46</a> <a href="#src-gpu-loft-L52">52</a> <a href="#src-gpu-loft-L81">81</a> <a href="#src-gpu-loft-L83">83</a> <a href="#src-gpu-loft-L247">247</a> … (22 total)</td></tr>
+<tr><td><code>height</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L406">406</a></td><td>—</td><td><a href="#src-gpu-loft-L32">32</a> <a href="#src-gpu-loft-L46">46</a> <a href="#src-gpu-loft-L53">53</a> <a href="#src-gpu-loft-L81">81</a> <a href="#src-gpu-loft-L83">83</a> <a href="#src-gpu-loft-L247">247</a> … (22 total)</td></tr>
+<tr><td><code>Target</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L411">411</a></td><td>—</td><td><a href="#src-gpu-loft-L416">416</a> <a href="#src-gpu-loft-L421">421</a> <a href="#src-gpu-loft-L422">422</a> <a href="#src-gpu-loft-L426">426</a> <a href="#src-gpu-loft-L427">427</a> <a href="#src-gpu-loft-L431">431</a> … (8 total)</td></tr>
+<tr><td><code>colour_target</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L421">421</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>target</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L426">426</a></td><td>—</td><td><a href="#src-gpu-loft-L67">67</a> <a href="#src-gpu-loft-L579">579</a> <a href="#src-gpu-loft-L580">580</a> <a href="#src-gpu-loft-L583">583</a> <a href="#src-gpu-loft-L590">590</a> <a href="#src-gpu-loft-L617">617</a></td></tr>
+<tr><td><code>depth_target</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L431">431</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>Pipeline</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L438">438</a></td><td>—</td><td><a href="#src-gpu-loft-L447">447</a> <a href="#src-gpu-loft-L454">454</a> <a href="#src-gpu-loft-L482">482</a> <a href="#src-gpu-loft-L503">503</a> <a href="#src-gpu-loft-L614">614</a></td></tr>
+<tr><td><code>pipeline</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L454">454</a></td><td>—</td><td><a href="#src-gpu-loft-L69">69</a> <a href="#src-gpu-loft-L606">606</a> <a href="#src-gpu-loft-L614">614</a> <a href="#src-gpu-loft-L616">616</a> <a href="#src-gpu-loft-L617">617</a> <a href="#src-gpu-loft-L620">620</a> … (18 total)</td></tr>
+<tr><td><code>Block</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-loft-L495">495</a></td><td>—</td><td><a href="#src-gpu-loft-L503">503</a> <a href="#src-gpu-loft-L504">504</a> <a href="#src-gpu-loft-L508">508</a> <a href="#src-gpu-loft-L517">517</a> <a href="#src-gpu-loft-L524">524</a> <a href="#src-gpu-loft-L532">532</a> … (11 total)</td></tr>
+<tr><td><code>block</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L503">503</a></td><td>—</td><td><a href="#src-gpu-loft-L71">71</a> <a href="#src-gpu-loft-L172">172</a> <a href="#src-gpu-loft-L206">206</a> <a href="#src-gpu-loft-L209">209</a> <a href="#src-gpu-loft-L467">467</a> <a href="#src-gpu-loft-L468">468</a> … (16 total)</td></tr>
+<tr><td><code>f1</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L517">517</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>f2</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L524">524</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>f4</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L532">532</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>f4_at</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L539">539</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>mat4</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L549">549</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>floats</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L567">567</a></td><td>—</td><td><a href="#src-gpu-loft-L328">328</a></td></tr>
+<tr><td><code>begin_window</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L574">574</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>begin</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L579">579</a></td><td>—</td><td><a href="#src-gpu-loft-L585">585</a></td></tr>
+<tr><td><code>bind</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L614">614</a></td><td>—</td><td><a href="#src-gpu-loft-L615">615</a> <a href="#src-gpu-loft-L617">617</a></td></tr>
+<tr><td><code>uniforms</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L633">633</a></td><td>—</td><td><a href="#src-gpu-loft-L634">634</a> <a href="#src-gpu-loft-L636">636</a> <a href="#src-gpu-loft-L640">640</a></td></tr>
+<tr><td><code>sample</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L648">648</a></td><td>—</td><td><a href="#src-gpu-loft-L649">649</a> <a href="#src-gpu-loft-L651">651</a></td></tr>
+<tr><td><code>vertices</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L659">659</a></td><td>—</td><td><a href="#src-gpu-loft-L660">660</a> <a href="#src-gpu-loft-L705">705</a></td></tr>
+<tr><td><code>instances</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L666">666</a></td><td>—</td><td><a href="#src-gpu-loft-L442">442</a> <a href="#src-gpu-loft-L486">486</a> <a href="#src-gpu-loft-L623">623</a> <a href="#src-gpu-loft-L667">667</a> <a href="#src-gpu-loft-L669">669</a></td></tr>
+<tr><td><code>indices</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L677">677</a></td><td>—</td><td><a href="#src-gpu-loft-L678">678</a> <a href="#src-gpu-loft-L729">729</a></td></tr>
+<tr><td><code>viewport</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L684">684</a></td><td>—</td><td><a href="#src-gpu-loft-L685">685</a></td></tr>
+<tr><td><code>scissor</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L690">690</a></td><td>—</td><td><a href="#src-gpu-loft-L691">691</a></td></tr>
+<tr><td><code>no_scissor</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L696">696</a></td><td>—</td><td><a href="#src-gpu-loft-L697">697</a></td></tr>
+<tr><td><code>draw</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L720">720</a></td><td>—</td><td><a href="#src-gpu-loft-L721">721</a></td></tr>
+<tr><td><code>draw_indexed</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L726">726</a></td><td>—</td><td><a href="#src-gpu-loft-L727">727</a> <a href="#src-gpu-loft-L729">729</a></td></tr>
+<tr><td><code>draw_copies</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L736">736</a></td><td>—</td><td><a href="#src-gpu-loft-L737">737</a> <a href="#src-gpu-loft-L739">739</a></td></tr>
+<tr><td><code>end</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L746">746</a></td><td>—</td><td><a href="#src-gpu-loft-L747">747</a></td></tr>
+<tr><td><code>present</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L754">754</a></td><td>—</td><td><a href="#src-gpu-loft-L756">756</a></td></tr>
+<tr><td><code>capture</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-loft-L763">763</a></td><td>—</td><td>none in this package</td></tr>
+</table>
+<h2 id="src-gpu-loft">src/gpu.loft</h2>
+<pre class="src"><code><span id="src-gpu-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-gpu-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-gpu-loft-L3"><span class="cm">//</span></span>
+<span id="src-gpu-loft-L4"><span class="cm">// Drawing on a GPU with no graphics stack named.</span></span>
+<span id="src-gpu-loft-L5"><span class="cm">//</span></span>
+<span id="src-gpu-loft-L6"><span class="cm">//   dev  = gpu::open(table, 960, 720, "view") ?? return;   // `table` is a backend's</span></span>
+<span id="src-gpu-loft-L7"><span class="cm">//   pipe = dev.pipeline(PROGRAM, gpu::State { depth: gpu::DEPTH_TEST_WRITE }) ?? return;</span></span>
+<span id="src-gpu-loft-L8"><span class="cm">//   mesh = dev.buffer(vertices);</span></span>
+<span id="src-gpu-loft-L9"><span class="cm">//   u    = pipe.block();</span></span>
+<span id="src-gpu-loft-L10"><span class="cm">//   u.mat4(0, mvp);</span></span>
+<span id="src-gpu-loft-L11"><span class="cm">//   dev.begin_window(gpu::CLEAR, sky);</span></span>
+<span id="src-gpu-loft-L12"><span class="cm">//   dev.bind(pipe);  dev.uniforms(u);  dev.vertices(mesh);  dev.draw(0, 36);</span></span>
+<span id="src-gpu-loft-L13"><span class="cm">//   dev.end();</span></span>
+<span id="src-gpu-loft-L14"><span class="cm">//   dev.present();</span></span>
+<span id="src-gpu-loft-L15"><span class="cm">//</span></span>
+<span id="src-gpu-loft-L16"><span class="cm">// The one rule: everything a draw depends on is named in the draw's own pass — a pipeline, its</span></span>
+<span id="src-gpu-loft-L17"><span class="cm">// block of uniforms, its textures by slot, its buffers.  Nothing stays set from an earlier pass,</span></span>
+<span id="src-gpu-loft-L18"><span class="cm">// and `bind` clears what the pipeline before it was given.  A call that breaks the rule is</span></span>
+<span id="src-gpu-loft-L19"><span class="cm">// refused here, before the backend sees it, and `dev.refusals()` says which.</span></span>
+<span id="src-gpu-loft-L20"><span class="cm">//</span></span>
+<span id="src-gpu-loft-L21"><span class="cm">// A backend is a library of its own that depends on this one and answers a table (its</span></span>
+<span id="src-gpu-loft-L22"><span class="cm">// `table()`); this library depends on none.</span></span>
+<span id="src-gpu-loft-L23"></span>
+<span id="src-gpu-loft-L24"><span class="cm">// --- The backend ---</span></span>
+<span id="src-gpu-loft-L25"></span>
+<span id="src-gpu-loft-L26"><span class="kw">fn</span> <span class="fn-call">gp_use</span>(table: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L27">#c <span class="st">"gp_use"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-gpu-loft-L28"><span class="kw">fn</span> <span class="fn-call">gp_name</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-gpu-loft-L29">#c <span class="st">"gp_name"</span> <span class="st">"const char*()"</span></span>
+<span id="src-gpu-loft-L30"><span class="kw">fn</span> <span class="fn-call">gp_shading</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-gpu-loft-L31">#c <span class="st">"gp_shading"</span> <span class="st">"const char*()"</span></span>
+<span id="src-gpu-loft-L32"><span class="kw">fn</span> <span class="fn-call">gp_open</span>(width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, title: <span class="ty"><a href="stdlib-types.html">text</a></span>, fullscreen: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L33">#c <span class="st">"gp_open"</span> <span class="st">"int64_t(int64_t, int64_t, const char*, int64_t)"</span></span>
+<span id="src-gpu-loft-L34"><span class="kw">fn</span> <span class="fn-call">gp_poll</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L35">#c <span class="st">"gp_poll"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-gpu-loft-L36"><span class="kw">fn</span> <span class="fn-call">gp_size</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, which: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L37">#c <span class="st">"gp_size"</span> <span class="st">"int64_t(int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L38"><span class="kw">fn</span> <span class="fn-call">gp_close</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L39">#c <span class="st">"gp_close"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-gpu-loft-L40"><span class="kw">fn</span> <span class="fn-call">gp_buffer</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, data: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L41">#c <span class="st">"gp_buffer"</span> <span class="st">"int64_t(int64_t, const float*, int64_t)"</span></span>
+<span id="src-gpu-loft-L42"><span class="kw">fn</span> <span class="fn-call">gp_index_buffer</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, list: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L43">#c <span class="st">"gp_index_buffer"</span> <span class="st">"int64_t(int64_t, const int64_t*, int64_t)"</span></span>
+<span id="src-gpu-loft-L44"><span class="kw">fn</span> <span class="fn-call">gp_buffer_update</span>(buf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, data: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;);</span>
+<span id="src-gpu-loft-L45">#c <span class="st">"gp_buffer_update"</span> <span class="st">"void(int64_t, const float*, int64_t)"</span></span>
+<span id="src-gpu-loft-L46"><span class="kw">fn</span> <span class="fn-call">gp_texture</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, depth: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L47">#c <span class="st">"gp_texture"</span> <span class="st">"int64_t(int64_t, int64_t, int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L48"><span class="kw">fn</span> <span class="fn-call">gp_texture_put</span>(</span>
+<span id="src-gpu-loft-L49">  tex: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L50">  x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L51">  y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L52">  width: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L53">  height: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L54">  px: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;</span>
+<span id="src-gpu-loft-L55">);</span>
+<span id="src-gpu-loft-L56">#c <span class="st">"gp_texture_put"</span> <span class="st">"void(int64_t, int64_t, int64_t, int64_t, int64_t, const uint32_t*, int64_t)"</span></span>
+<span id="src-gpu-loft-L57"><span class="kw">fn</span> <span class="fn-call">gp_texture_nearest</span>(tex: <span class="ty"><a href="stdlib-types.html">integer</a></span>, on: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L58">#c <span class="st">"gp_texture_nearest"</span> <span class="st">"void(int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L59"><span class="kw">fn</span> <span class="fn-call">gp_texture_mipmaps</span>(tex: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L60">#c <span class="st">"gp_texture_mipmaps"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-gpu-loft-L61"><span class="kw">fn</span> <span class="fn-call">gp_target</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>, depth: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L62">#c <span class="st">"gp_target"</span> <span class="st">"int64_t(int64_t, int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L63"><span class="kw">fn</span> <span class="fn-call">gp_pipeline</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, desc: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, vertex: <span class="ty"><a href="stdlib-types.html">text</a></span>, fragment: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-loft-L64">#c <span class="st">"gp_pipeline"</span> <span class="st">"int64_t(int64_t, const int64_t*, int64_t, const char*, const char*)"</span></span>
+<span id="src-gpu-loft-L65"><span class="kw">fn</span> <span class="fn-call">gp_release</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L66">#c <span class="st">"gp_release"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-gpu-loft-L67"><span class="kw">fn</span> <span class="fn-call">gp_begin</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, target: <span class="ty"><a href="stdlib-types.html">integer</a></span>, load: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L68">#c <span class="st">"gp_begin"</span> <span class="st">"void(int64_t, int64_t, int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L69"><span class="kw">fn</span> <span class="fn-call">gp_bind</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pipeline: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L70">#c <span class="st">"gp_bind"</span> <span class="st">"void(int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L71"><span class="kw">fn</span> <span class="fn-call">gp_uniforms</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, block: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;);</span>
+<span id="src-gpu-loft-L72">#c <span class="st">"gp_uniforms"</span> <span class="st">"void(int64_t, const float*, int64_t)"</span></span>
+<span id="src-gpu-loft-L73"><span class="kw">fn</span> <span class="fn-call">gp_sample</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, slot: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tex: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L74">#c <span class="st">"gp_sample"</span> <span class="st">"void(int64_t, int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L75"><span class="kw">fn</span> <span class="fn-call">gp_vertices</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, buf: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L76">#c <span class="st">"gp_vertices"</span> <span class="st">"void(int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L77"><span class="kw">fn</span> <span class="fn-call">gp_instances</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, buf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, first: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L78">#c <span class="st">"gp_instances"</span> <span class="st">"void(int64_t, int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L79"><span class="kw">fn</span> <span class="fn-call">gp_indices</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, buf: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L80">#c <span class="st">"gp_indices"</span> <span class="st">"void(int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L81"><span class="kw">fn</span> <span class="fn-call">gp_viewport</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L82">#c <span class="st">"gp_viewport"</span> <span class="st">"void(int64_t, int64_t, int64_t, int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L83"><span class="kw">fn</span> <span class="fn-call">gp_scissor</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, on: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L84">#c <span class="st">"gp_scissor"</span> <span class="st">"void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L85"><span class="kw">fn</span> <span class="fn-call">gp_draw</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, first: <span class="ty"><a href="stdlib-types.html">integer</a></span>, count: <span class="ty"><a href="stdlib-types.html">integer</a></span>, indexed: <span class="ty"><a href="stdlib-types.html">integer</a></span>, copies: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L86">#c <span class="st">"gp_draw"</span> <span class="st">"void(int64_t, int64_t, int64_t, int64_t, int64_t)"</span></span>
+<span id="src-gpu-loft-L87"><span class="kw">fn</span> <span class="fn-call">gp_end</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L88">#c <span class="st">"gp_end"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-gpu-loft-L89"><span class="kw">fn</span> <span class="fn-call">gp_present</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-loft-L90">#c <span class="st">"gp_present"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-gpu-loft-L91"><span class="kw">fn</span> <span class="fn-call">gp_capture</span>(dev: <span class="ty"><a href="stdlib-types.html">integer</a></span>, out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;);</span>
+<span id="src-gpu-loft-L92">#c <span class="st">"gp_capture"</span> <span class="st">"void(int64_t, uint32_t*, int64_t)"</span></span>
+<span id="src-gpu-loft-L93"></span>
+<span id="src-gpu-loft-L94"><span class="cm">// --- What a program and a pipeline are made of ---</span></span>
+<span id="src-gpu-loft-L95"></span>
+<span id="src-gpu-loft-L96"><span class="cm">// An input or a block field of 1, 2, 3 or 4 floats.  A block takes no `F3`: the stacks disagree</span></span>
+<span id="src-gpu-loft-L97"><span class="cm">// on where the field after one starts, so declare `F4` and read three.</span></span>
+<span id="src-gpu-loft-L98"><span class="kw">pub</span> const <span class="en">F1</span> = <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L99"><span class="kw">pub</span> const <span class="en">F2</span> = <span class="nm">2</span>;</span>
+<span id="src-gpu-loft-L100"><span class="kw">pub</span> const <span class="en">F3</span> = <span class="nm">3</span>;</span>
+<span id="src-gpu-loft-L101"><span class="kw">pub</span> const <span class="en">F4</span> = <span class="nm">4</span>;</span>
+<span id="src-gpu-loft-L102"><span class="cm">// A block field of 16 floats: a matrix, column-major.</span></span>
+<span id="src-gpu-loft-L103"><span class="kw">pub</span> const <span class="en">MAT4</span> = <span class="nm">16</span>;</span>
+<span id="src-gpu-loft-L104"></span>
+<span id="src-gpu-loft-L105"><span class="cm">// A block field that is an array of `count` `F4`s.</span></span>
+<span id="src-gpu-loft-L106"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f4s</span>(count: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L107">  <span class="nm">1000</span> + count</span>
+<span id="src-gpu-loft-L108">}</span>
+<span id="src-gpu-loft-L109"></span>
+<span id="src-gpu-loft-L110"><span class="cm">// What a pipeline draws.</span></span>
+<span id="src-gpu-loft-L111"><span class="kw">pub</span> const <span class="en">TRIANGLES</span> = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L112"><span class="kw">pub</span> const <span class="en">LINES</span> = <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L113"><span class="kw">pub</span> const <span class="en">POINTS</span> = <span class="nm">2</span>;</span>
+<span id="src-gpu-loft-L114"></span>
+<span id="src-gpu-loft-L115"><span class="cm">// Whether a draw is tested against the depth already drawn, and whether it writes its own.</span></span>
+<span id="src-gpu-loft-L116"><span class="kw">pub</span> const <span class="en">DEPTH_OFF</span> = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L117"><span class="kw">pub</span> const <span class="en">DEPTH_TEST</span> = <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L118"><span class="kw">pub</span> const <span class="en">DEPTH_TEST_WRITE</span> = <span class="nm">2</span>;</span>
+<span id="src-gpu-loft-L119"></span>
+<span id="src-gpu-loft-L120"><span class="cm">// A draw replaces what the target holds.</span></span>
+<span id="src-gpu-loft-L121"><span class="kw">pub</span> const <span class="en">BLEND_OFF</span> = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L122"><span class="cm">// The factors `blend` takes.</span></span>
+<span id="src-gpu-loft-L123"><span class="kw">pub</span> const <span class="en">ZERO</span> = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L124"><span class="kw">pub</span> const <span class="en">ONE</span> = <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L125"><span class="kw">pub</span> const <span class="en">SRC_ALPHA</span> = <span class="nm">2</span>;</span>
+<span id="src-gpu-loft-L126"><span class="kw">pub</span> const <span class="en">ONE_MINUS_SRC_ALPHA</span> = <span class="nm">3</span>;</span>
+<span id="src-gpu-loft-L127"><span class="kw">pub</span> const <span class="en">DST_ALPHA</span> = <span class="nm">4</span>;</span>
+<span id="src-gpu-loft-L128"><span class="kw">pub</span> const <span class="en">ONE_MINUS_DST_ALPHA</span> = <span class="nm">5</span>;</span>
+<span id="src-gpu-loft-L129"></span>
+<span id="src-gpu-loft-L130"><span class="cm">// A draw is combined with what the target holds: its colour times `source`, plus the target's</span></span>
+<span id="src-gpu-loft-L131"><span class="cm">// times `destination`.  `blend(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` is plain transparency.</span></span>
+<span id="src-gpu-loft-L132"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">blend</span>(source: <span class="ty"><a href="stdlib-types.html">integer</a></span>, destination: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L133">  <span class="nm">1</span> + <span class="nm">8</span> * source + destination</span>
+<span id="src-gpu-loft-L134">}</span>
+<span id="src-gpu-loft-L135"></span>
+<span id="src-gpu-loft-L136"><span class="cm">// Which faces are dropped; counter-clockwise is the front.</span></span>
+<span id="src-gpu-loft-L137"><span class="kw">pub</span> const <span class="en">CULL_NONE</span> = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L138"><span class="kw">pub</span> const <span class="en">CULL_BACK</span> = <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L139"><span class="kw">pub</span> const <span class="en">CULL_FRONT</span> = <span class="nm">2</span>;</span>
+<span id="src-gpu-loft-L140"></span>
+<span id="src-gpu-loft-L141"><span class="cm">// What a pipeline is built to draw into: the window (colour and depth), or a target of a colour</span></span>
+<span id="src-gpu-loft-L142"><span class="cm">// texture, of a colour and a depth texture, or of a depth texture alone.</span></span>
+<span id="src-gpu-loft-L143"><span class="kw">pub</span> const <span class="en">INTO_WINDOW</span> = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L144"><span class="kw">pub</span> const <span class="en">INTO_COLOUR</span> = <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L145"><span class="kw">pub</span> const <span class="en">INTO_COLOUR_DEPTH</span> = <span class="nm">2</span>;</span>
+<span id="src-gpu-loft-L146"><span class="kw">pub</span> const <span class="en">INTO_DEPTH</span> = <span class="nm">3</span>;</span>
+<span id="src-gpu-loft-L147"></span>
+<span id="src-gpu-loft-L148"><span class="cm">// How a pass starts: the target cleared to a colour (and its depth to the far end), or kept.</span></span>
+<span id="src-gpu-loft-L149"><span class="kw">pub</span> const <span class="en">CLEAR</span> = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L150"><span class="kw">pub</span> const <span class="en">KEEP</span> = <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L151"></span>
+<span id="src-gpu-loft-L152"><span class="cm">// A shader's text in one shading language.  `tag` names the language as a backend spells it</span></span>
+<span id="src-gpu-loft-L153"><span class="cm">// (its README says which it takes); this library compares the tag and never reads it.</span></span>
+<span id="src-gpu-loft-L154"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Source</span> {</span>
+<span id="src-gpu-loft-L155">  <span class="kw">pub</span> tag: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-gpu-loft-L156">  <span class="kw">pub</span> vertex: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-gpu-loft-L157">  <span class="kw">pub</span> fragment: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-gpu-loft-L158">}</span>
+<span id="src-gpu-loft-L159"></span>
+<span id="src-gpu-loft-L160"><span class="cm">// A source for the backend whose shading language is `tag`.</span></span>
+<span id="src-gpu-loft-L161"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">source</span>(tag: <span class="ty"><a href="stdlib-types.html">text</a></span>, vertex: <span class="ty"><a href="stdlib-types.html">text</a></span>, fragment: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Source</span> {</span>
+<span id="src-gpu-loft-L162">  <span class="en">Source</span> { tag: tag, vertex: vertex, fragment: fragment }</span>
+<span id="src-gpu-loft-L163">}</span>
+<span id="src-gpu-loft-L164"></span>
+<span id="src-gpu-loft-L165"><span class="cm">// A shader set: what the shader reads, and its text for each backend it may meet.</span></span>
+<span id="src-gpu-loft-L166"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Program</span> {</span>
+<span id="src-gpu-loft-L167">  <span class="cm">// The inputs read once per vertex, in order: `F1` to `F4` each.</span></span>
+<span id="src-gpu-loft-L168">  <span class="kw">pub</span> vertex: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gpu-loft-L169">  <span class="cm">// The inputs read once per drawn copy (`draw_copies`), numbered after the vertex's.</span></span>
+<span id="src-gpu-loft-L170">  <span class="kw">pub</span> instance: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gpu-loft-L171">  <span class="cm">// The uniform block's fields, in order: `F1`, `F2`, `F4`, `MAT4` or `f4s(n)` each.</span></span>
+<span id="src-gpu-loft-L172">  <span class="kw">pub</span> block: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gpu-loft-L173">  <span class="cm">// How many textures it samples: slots 0 up to this.</span></span>
+<span id="src-gpu-loft-L174">  <span class="kw">pub</span> textures: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L175">  <span class="kw">pub</span> sources: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Source</span>&gt;,</span>
+<span id="src-gpu-loft-L176">}</span>
+<span id="src-gpu-loft-L177"></span>
+<span id="src-gpu-loft-L178"><span class="cm">// Render state: fixed for a pipeline's life, so two states are two pipelines.</span></span>
+<span id="src-gpu-loft-L179"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">State</span> {</span>
+<span id="src-gpu-loft-L180">  <span class="kw">pub</span> shape: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L181">  <span class="kw">pub</span> depth: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L182">  <span class="kw">pub</span> blend: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L183">  <span class="kw">pub</span> cull: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L184">  <span class="kw">pub</span> into: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L185">}</span>
+<span id="src-gpu-loft-L186"></span>
+<span id="src-gpu-loft-L187"><span class="cm">// How many floats a block field holds.</span></span>
+<span id="src-gpu-loft-L188"><span class="kw">fn</span> <span class="fn-call">field_floats</span>(kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L189">  <span class="kw">if</span> kind &gt; <span class="nm">1000</span> { <span class="nm">4</span> * (kind - <span class="nm">1000</span>) } <span class="kw">else</span> { kind }</span>
+<span id="src-gpu-loft-L190">}</span>
+<span id="src-gpu-loft-L191"></span>
+<span id="src-gpu-loft-L192"><span class="cm">// What a block field starts on a multiple of: its own size up to 4 floats.</span></span>
+<span id="src-gpu-loft-L193"><span class="kw">fn</span> <span class="fn-call">field_align</span>(kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L194">  <span class="kw">if</span> kind == <span class="en">F1</span> { <span class="nm">1</span> } <span class="kw">else</span> <span class="kw">if</span> kind == <span class="en">F2</span> { <span class="nm">2</span> } <span class="kw">else</span> { <span class="nm">4</span> }</span>
+<span id="src-gpu-loft-L195">}</span>
+<span id="src-gpu-loft-L196"></span>
+<span id="src-gpu-loft-L197"><span class="cm">// Whether `kind` may be a block field.</span></span>
+<span id="src-gpu-loft-L198"><span class="kw">fn</span> <span class="fn-call">field_ok</span>(kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-gpu-loft-L199">  kind == <span class="en">F1</span> || kind == <span class="en">F2</span> || kind == <span class="en">F4</span> || kind == <span class="en">MAT4</span> || kind &gt; <span class="nm">1000</span></span>
+<span id="src-gpu-loft-L200">}</span>
+<span id="src-gpu-loft-L201"></span>
+<span id="src-gpu-loft-L202"><span class="cm">// Where each field of a block starts, in floats, with the block's whole size as the last</span></span>
+<span id="src-gpu-loft-L203"><span class="cm">// entry.  Each field starts on the next multiple of its own size (a matrix and an array on 4</span></span>
+<span id="src-gpu-loft-L204"><span class="cm">// floats) and the size is rounded up to 4 — the layout every backend's shading language gives</span></span>
+<span id="src-gpu-loft-L205"><span class="cm">// these field kinds, so a program reads the same bytes on each.</span></span>
+<span id="src-gpu-loft-L206"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout</span>(block: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
+<span id="src-gpu-loft-L207">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-gpu-loft-L208">  at = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L209">  <span class="kw">for</span> kind <span class="kw">in</span> block {</span>
+<span id="src-gpu-loft-L210">    align = <span class="fn-call">field_align</span>(kind);</span>
+<span id="src-gpu-loft-L211">    at = ((at + align - <span class="nm">1</span>) / align)? * align;</span>
+<span id="src-gpu-loft-L212">    out += [at];</span>
+<span id="src-gpu-loft-L213">    at += <span class="fn-call">field_floats</span>(kind);</span>
+<span id="src-gpu-loft-L214">  }</span>
+<span id="src-gpu-loft-L215">  out += [((at + <span class="nm">3</span>) / <span class="nm">4</span>)? * <span class="nm">4</span>];</span>
+<span id="src-gpu-loft-L216">  out</span>
+<span id="src-gpu-loft-L217">}</span>
+<span id="src-gpu-loft-L218"></span>
+<span id="src-gpu-loft-L219"><span class="cm">// --- The device ---</span></span>
+<span id="src-gpu-loft-L220"></span>
+<span id="src-gpu-loft-L221"><span class="cm">// One window (a page's canvas) and its GPU.  Everything made from it is freed when it closes.</span></span>
+<span id="src-gpu-loft-L222"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Device</span> {</span>
+<span id="src-gpu-loft-L223">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L224">  <span class="cm">// What the pass in progress draws into (`INTO_*`), -1 between passes.</span></span>
+<span id="src-gpu-loft-L225">  pass: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L226">  <span class="cm">// The pipeline bound in this pass, and what it still needs before a draw.</span></span>
+<span id="src-gpu-loft-L227">  pipe: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L228">  need_block: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L229">  need_textures: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L230">  sampled: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L231">  has_block: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-gpu-loft-L232">  has_vertices: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-gpu-loft-L233">  has_indices: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-gpu-loft-L234">  has_instances: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-gpu-loft-L235">  pipe_instances: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-gpu-loft-L236">  refused: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;,</span>
+<span id="src-gpu-loft-L237">}</span>
+<span id="src-gpu-loft-L238"></span>
+<span id="src-gpu-loft-L239"><span class="kw">fn</span> <span class="en">OpDrop</span>(self: <span class="en">Device</span>) {</span>
+<span id="src-gpu-loft-L240">  <span class="kw">if</span> self.handle != <span class="nm">0</span> { <span class="fn-call">gp_close</span>(self.handle); }</span>
+<span id="src-gpu-loft-L241">}</span>
+<span id="src-gpu-loft-L242"></span>
+<span id="src-gpu-loft-L243"><span class="cm">// Open a window of `width` x `height` pixels through the backend whose table is `table` (a</span></span>
+<span id="src-gpu-loft-L244"><span class="cm">// backend library's `table()`).  Null when the table is none — its stack is absent on this</span></span>
+<span id="src-gpu-loft-L245"><span class="cm">// machine — or the window does not open.  A game does not call this: its host package asks each</span></span>
+<span id="src-gpu-loft-L246"><span class="cm">// backend in turn.</span></span>
+<span id="src-gpu-loft-L247"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">open</span>(table: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, title: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Device</span>? {</span>
+<span id="src-gpu-loft-L248">  <span class="kw">if</span> <span class="fn-call">gp_use</span>(table) == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-gpu-loft-L249">  h = <span class="fn-call">gp_open</span>(width, height, title, <span class="nm">0</span>);</span>
+<span id="src-gpu-loft-L250">  <span class="kw">if</span> h == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-gpu-loft-L251">  <span class="en">Device</span> {</span>
+<span id="src-gpu-loft-L252">    handle: h,</span>
+<span id="src-gpu-loft-L253">    pass: -<span class="nm">1</span>,</span>
+<span id="src-gpu-loft-L254">    pipe: <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L255">    need_block: <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L256">    need_textures: <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L257">    sampled: <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L258">    has_block: <span class="kw">false</span>,</span>
+<span id="src-gpu-loft-L259">    has_vertices: <span class="kw">false</span>,</span>
+<span id="src-gpu-loft-L260">    has_indices: <span class="kw">false</span>,</span>
+<span id="src-gpu-loft-L261">    has_instances: <span class="kw">false</span>,</span>
+<span id="src-gpu-loft-L262">    pipe_instances: <span class="kw">false</span>,</span>
+<span id="src-gpu-loft-L263">    refused: [],</span>
+<span id="src-gpu-loft-L264">  }</span>
+<span id="src-gpu-loft-L265">}</span>
+<span id="src-gpu-loft-L266"></span>
+<span id="src-gpu-loft-L267"><span class="cm">// The backend's own name, for a message.  Never branch on it: ask what the machine has.</span></span>
+<span id="src-gpu-loft-L268"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">backend_name</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-gpu-loft-L269">  <span class="fn-call">gp_name</span>()</span>
+<span id="src-gpu-loft-L270">}</span>
+<span id="src-gpu-loft-L271"></span>
+<span id="src-gpu-loft-L272"><span class="cm">// Hand the machine's events to the window; false once it was closed.</span></span>
+<span id="src-gpu-loft-L273"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-gpu-loft-L274">  self.handle != <span class="nm">0</span> &amp;&amp; <span class="fn-call">gp_poll</span>(self.handle) != <span class="nm">0</span></span>
+<span id="src-gpu-loft-L275">}</span>
+<span id="src-gpu-loft-L276"></span>
+<span id="src-gpu-loft-L277"><span class="cm">// The window's width in pixels, as it is now.</span></span>
+<span id="src-gpu-loft-L278"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">width</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L279">  <span class="fn-call">gp_size</span>(self.handle, <span class="nm">0</span>)</span>
+<span id="src-gpu-loft-L280">}</span>
+<span id="src-gpu-loft-L281"></span>
+<span id="src-gpu-loft-L282"><span class="cm">// And its height.</span></span>
+<span id="src-gpu-loft-L283"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L284">  <span class="fn-call">gp_size</span>(self.handle, <span class="nm">1</span>)</span>
+<span id="src-gpu-loft-L285">}</span>
+<span id="src-gpu-loft-L286"></span>
+<span id="src-gpu-loft-L287"><span class="cm">// Close the window and free everything made from it.</span></span>
+<span id="src-gpu-loft-L288"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">Device</span>) {</span>
+<span id="src-gpu-loft-L289">  <span class="kw">if</span> self.handle != <span class="nm">0</span> { <span class="fn-call">gp_close</span>(self.handle); }</span>
+<span id="src-gpu-loft-L290">  self.handle = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L291">  self.pass = -<span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L292">}</span>
+<span id="src-gpu-loft-L293"></span>
+<span id="src-gpu-loft-L294"><span class="cm">// What was refused so far, oldest first: one line a call, saying which call and why.  Empty for a</span></span>
+<span id="src-gpu-loft-L295"><span class="cm">// program that keeps the rule.</span></span>
+<span id="src-gpu-loft-L296"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">refusals</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-gpu-loft-L297">  self.refused</span>
+<span id="src-gpu-loft-L298">}</span>
+<span id="src-gpu-loft-L299"></span>
+<span id="src-gpu-loft-L300"><span class="kw">fn</span> <span class="fn-call">refuse</span>(self: <span class="en">Device</span>, why: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-gpu-loft-L301">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self.refused) &lt; <span class="nm">64</span> { self.refused += [why]; }</span>
+<span id="src-gpu-loft-L302">}</span>
+<span id="src-gpu-loft-L303"></span>
+<span id="src-gpu-loft-L304"><span class="cm">// --- Buffers ---</span></span>
+<span id="src-gpu-loft-L305"></span>
+<span id="src-gpu-loft-L306"><span class="cm">// Floats on the GPU: vertices, or the values of drawn copies.</span></span>
+<span id="src-gpu-loft-L307"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Buffer</span> {</span>
+<span id="src-gpu-loft-L308">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L309">  size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L310">}</span>
+<span id="src-gpu-loft-L311"></span>
+<span id="src-gpu-loft-L312"><span class="kw">fn</span> <span class="en">OpDrop</span>(self: <span class="en">Buffer</span>) {</span>
+<span id="src-gpu-loft-L313">  <span class="kw">if</span> self.handle != <span class="nm">0</span> { <span class="fn-call">gp_release</span>(self.handle); }</span>
+<span id="src-gpu-loft-L314">}</span>
+<span id="src-gpu-loft-L315"></span>
+<span id="src-gpu-loft-L316"><span class="cm">// Upload `data` for a pipeline to read as vertices (`vertices`) or per copy (`instances`).</span></span>
+<span id="src-gpu-loft-L317"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">buffer</span>(self: const <span class="en">Device</span>, data: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;) -&gt; <span class="en">Buffer</span> {</span>
+<span id="src-gpu-loft-L318">  <span class="en">Buffer</span> { handle: <span class="fn-call">gp_buffer</span>(self.handle, data), size: <span class="bi"><a href="stdlib-text.html">len</a></span>(data) }</span>
+<span id="src-gpu-loft-L319">}</span>
+<span id="src-gpu-loft-L320"></span>
+<span id="src-gpu-loft-L321"><span class="cm">// Replace the floats; the length may change.  For data that changes every frame.</span></span>
+<span id="src-gpu-loft-L322"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">update</span>(self: <span class="en">Buffer</span>, data: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;) {</span>
+<span id="src-gpu-loft-L323">  <span class="fn-call">gp_buffer_update</span>(self.handle, data);</span>
+<span id="src-gpu-loft-L324">  self.size = <span class="bi"><a href="stdlib-text.html">len</a></span>(data);</span>
+<span id="src-gpu-loft-L325">}</span>
+<span id="src-gpu-loft-L326"></span>
+<span id="src-gpu-loft-L327"><span class="cm">// How many floats it holds.</span></span>
+<span id="src-gpu-loft-L328"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">floats</span>(self: const <span class="en">Buffer</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L329">  self.size</span>
+<span id="src-gpu-loft-L330">}</span>
+<span id="src-gpu-loft-L331"></span>
+<span id="src-gpu-loft-L332"><span class="cm">// Vertex numbers on the GPU, for `draw_indexed`.</span></span>
+<span id="src-gpu-loft-L333"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">IndexBuffer</span> {</span>
+<span id="src-gpu-loft-L334">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L335">  size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L336">}</span>
+<span id="src-gpu-loft-L337"></span>
+<span id="src-gpu-loft-L338"><span class="kw">fn</span> <span class="en">OpDrop</span>(self: <span class="en">IndexBuffer</span>) {</span>
+<span id="src-gpu-loft-L339">  <span class="kw">if</span> self.handle != <span class="nm">0</span> { <span class="fn-call">gp_release</span>(self.handle); }</span>
+<span id="src-gpu-loft-L340">}</span>
+<span id="src-gpu-loft-L341"></span>
+<span id="src-gpu-loft-L342"><span class="cm">// Upload a list of vertex numbers.</span></span>
+<span id="src-gpu-loft-L343"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">index_buffer</span>(self: const <span class="en">Device</span>, list: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="en">IndexBuffer</span> {</span>
+<span id="src-gpu-loft-L344">  <span class="en">IndexBuffer</span> { handle: <span class="fn-call">gp_index_buffer</span>(self.handle, list), size: <span class="bi"><a href="stdlib-text.html">len</a></span>(list) }</span>
+<span id="src-gpu-loft-L345">}</span>
+<span id="src-gpu-loft-L346"></span>
+<span id="src-gpu-loft-L347"><span class="cm">// How many vertex numbers it holds.</span></span>
+<span id="src-gpu-loft-L348"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">count</span>(self: const <span class="en">IndexBuffer</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L349">  self.size</span>
+<span id="src-gpu-loft-L350">}</span>
+<span id="src-gpu-loft-L351"></span>
+<span id="src-gpu-loft-L352"><span class="cm">// --- Textures and targets ---</span></span>
+<span id="src-gpu-loft-L353"></span>
+<span id="src-gpu-loft-L354"><span class="cm">// An image on the GPU: colour (red, green, blue, alpha at 8 bits each) or depth.</span></span>
+<span id="src-gpu-loft-L355"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Texture</span> {</span>
+<span id="src-gpu-loft-L356">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L357">  w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L358">  h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L359">  depth: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-gpu-loft-L360">}</span>
+<span id="src-gpu-loft-L361"></span>
+<span id="src-gpu-loft-L362"><span class="kw">fn</span> <span class="en">OpDrop</span>(self: <span class="en">Texture</span>) {</span>
+<span id="src-gpu-loft-L363">  <span class="kw">if</span> self.handle != <span class="nm">0</span> { <span class="fn-call">gp_release</span>(self.handle); }</span>
+<span id="src-gpu-loft-L364">}</span>
+<span id="src-gpu-loft-L365"></span>
+<span id="src-gpu-loft-L366"><span class="cm">// An empty colour texture, sampled between its pixels and clamped at its edges.</span></span>
+<span id="src-gpu-loft-L367"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">texture</span>(self: const <span class="en">Device</span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Texture</span> {</span>
+<span id="src-gpu-loft-L368">  <span class="en">Texture</span> { handle: <span class="fn-call">gp_texture</span>(self.handle, width, height, <span class="nm">0</span>), w: width, h: height, depth: <span class="kw">false</span> }</span>
+<span id="src-gpu-loft-L369">}</span>
+<span id="src-gpu-loft-L370"></span>
+<span id="src-gpu-loft-L371"><span class="cm">// An empty depth texture: the depth of a target, or a shadow map.</span></span>
+<span id="src-gpu-loft-L372"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">depth_texture</span>(self: const <span class="en">Device</span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Texture</span> {</span>
+<span id="src-gpu-loft-L373">  <span class="en">Texture</span> { handle: <span class="fn-call">gp_texture</span>(self.handle, width, height, <span class="nm">1</span>), w: width, h: height, depth: <span class="kw">true</span> }</span>
+<span id="src-gpu-loft-L374">}</span>
+<span id="src-gpu-loft-L375"></span>
+<span id="src-gpu-loft-L376"><span class="cm">// A colour texture holding `pixels` (0xAARRGGBB each, `width` to a row).  Its first pixel is</span></span>
+<span id="src-gpu-loft-L377"><span class="cm">// texture coordinate (0, 0).</span></span>
+<span id="src-gpu-loft-L378"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">texture_from</span>(self: const <span class="en">Device</span>, pixels: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Texture</span> {</span>
+<span id="src-gpu-loft-L379">  t = self.<span class="fn-call">texture</span>(width, height);</span>
+<span id="src-gpu-loft-L380">  <span class="fn-call">gp_texture_put</span>(t.handle, <span class="nm">0</span>, <span class="nm">0</span>, width, height, pixels);</span>
+<span id="src-gpu-loft-L381">  t</span>
+<span id="src-gpu-loft-L382">}</span>
+<span id="src-gpu-loft-L383"></span>
+<span id="src-gpu-loft-L384"><span class="cm">// Replace the `width` x `height` pixels at (`x`, `y`), counted from the texture's first pixel.</span></span>
+<span id="src-gpu-loft-L385"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">put</span>(self: const <span class="en">Texture</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pixels: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L386">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(pixels) &gt;= width * height { <span class="fn-call">gp_texture_put</span>(self.handle, x, y, width, height, pixels); }</span>
+<span id="src-gpu-loft-L387">}</span>
+<span id="src-gpu-loft-L388"></span>
+<span id="src-gpu-loft-L389"><span class="cm">// Sample the nearest pixel (pixel art), or between pixels (how a texture starts).</span></span>
+<span id="src-gpu-loft-L390"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">nearest</span>(self: const <span class="en">Texture</span>, on: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) {</span>
+<span id="src-gpu-loft-L391">  <span class="fn-call">gp_texture_nearest</span>(self.handle, <span class="kw">if</span> on { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> });</span>
+<span id="src-gpu-loft-L392">}</span>
+<span id="src-gpu-loft-L393"></span>
+<span id="src-gpu-loft-L394"><span class="cm">// Build smaller copies from the pixels it holds now and sample through them when it is drawn</span></span>
+<span id="src-gpu-loft-L395"><span class="cm">// small; call again after `put`.</span></span>
+<span id="src-gpu-loft-L396"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mipmaps</span>(self: const <span class="en">Texture</span>) {</span>
+<span id="src-gpu-loft-L397">  <span class="fn-call">gp_texture_mipmaps</span>(self.handle);</span>
+<span id="src-gpu-loft-L398">}</span>
+<span id="src-gpu-loft-L399"></span>
+<span id="src-gpu-loft-L400"><span class="cm">// Its width in pixels.</span></span>
+<span id="src-gpu-loft-L401"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">width</span>(self: const <span class="en">Texture</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L402">  self.w</span>
+<span id="src-gpu-loft-L403">}</span>
+<span id="src-gpu-loft-L404"></span>
+<span id="src-gpu-loft-L405"><span class="cm">// And its height.</span></span>
+<span id="src-gpu-loft-L406"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>(self: const <span class="en">Texture</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L407">  self.h</span>
+<span id="src-gpu-loft-L408">}</span>
+<span id="src-gpu-loft-L409"></span>
+<span id="src-gpu-loft-L410"><span class="cm">// What a pass draws into other than the window.  Its textures stay usable after it is gone.</span></span>
+<span id="src-gpu-loft-L411"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Target</span> {</span>
+<span id="src-gpu-loft-L412">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L413">  into: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L414">}</span>
+<span id="src-gpu-loft-L415"></span>
+<span id="src-gpu-loft-L416"><span class="kw">fn</span> <span class="en">OpDrop</span>(self: <span class="en">Target</span>) {</span>
+<span id="src-gpu-loft-L417">  <span class="kw">if</span> self.handle != <span class="nm">0</span> { <span class="fn-call">gp_release</span>(self.handle); }</span>
+<span id="src-gpu-loft-L418">}</span>
+<span id="src-gpu-loft-L419"></span>
+<span id="src-gpu-loft-L420"><span class="cm">// A target of one colour texture.</span></span>
+<span id="src-gpu-loft-L421"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">colour_target</span>(self: const <span class="en">Device</span>, colour: const <span class="en">Texture</span>) -&gt; <span class="en">Target</span> {</span>
+<span id="src-gpu-loft-L422">  <span class="en">Target</span> { handle: <span class="fn-call">gp_target</span>(self.handle, colour.handle, <span class="nm">0</span>), into: <span class="en">INTO_COLOUR</span> }</span>
+<span id="src-gpu-loft-L423">}</span>
+<span id="src-gpu-loft-L424"></span>
+<span id="src-gpu-loft-L425"><span class="cm">// A target of a colour and a depth texture of one size.</span></span>
+<span id="src-gpu-loft-L426"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">target</span>(self: const <span class="en">Device</span>, colour: const <span class="en">Texture</span>, depth: const <span class="en">Texture</span>) -&gt; <span class="en">Target</span> {</span>
+<span id="src-gpu-loft-L427">  <span class="en">Target</span> { handle: <span class="fn-call">gp_target</span>(self.handle, colour.handle, depth.handle), into: <span class="en">INTO_COLOUR_DEPTH</span> }</span>
+<span id="src-gpu-loft-L428">}</span>
+<span id="src-gpu-loft-L429"></span>
+<span id="src-gpu-loft-L430"><span class="cm">// A target of a depth texture alone: no colour is drawn.</span></span>
+<span id="src-gpu-loft-L431"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">depth_target</span>(self: const <span class="en">Device</span>, depth: const <span class="en">Texture</span>) -&gt; <span class="en">Target</span> {</span>
+<span id="src-gpu-loft-L432">  <span class="en">Target</span> { handle: <span class="fn-call">gp_target</span>(self.handle, <span class="nm">0</span>, depth.handle), into: <span class="en">INTO_DEPTH</span> }</span>
+<span id="src-gpu-loft-L433">}</span>
+<span id="src-gpu-loft-L434"></span>
+<span id="src-gpu-loft-L435"><span class="cm">// --- Pipelines and blocks ---</span></span>
+<span id="src-gpu-loft-L436"></span>
+<span id="src-gpu-loft-L437"><span class="cm">// A program, its inputs and its render state, built for one kind of target.</span></span>
+<span id="src-gpu-loft-L438"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Pipeline</span> {</span>
+<span id="src-gpu-loft-L439">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L440">  into: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L441">  textures: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L442">  instances: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-gpu-loft-L443">  fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gpu-loft-L444">  starts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gpu-loft-L445">}</span>
+<span id="src-gpu-loft-L446"></span>
+<span id="src-gpu-loft-L447"><span class="kw">fn</span> <span class="en">OpDrop</span>(self: <span class="en">Pipeline</span>) {</span>
+<span id="src-gpu-loft-L448">  <span class="kw">if</span> self.handle != <span class="nm">0</span> { <span class="fn-call">gp_release</span>(self.handle); }</span>
+<span id="src-gpu-loft-L449">}</span>
+<span id="src-gpu-loft-L450"></span>
+<span id="src-gpu-loft-L451"><span class="cm">// Build a pipeline: `program` drawn with `state`.  Null when the program has no source for this</span></span>
+<span id="src-gpu-loft-L452"><span class="cm">// backend, declares what a block cannot hold, or does not compile — the backend says why on</span></span>
+<span id="src-gpu-loft-L453"><span class="cm">// stderr.</span></span>
+<span id="src-gpu-loft-L454"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pipeline</span>(self: const <span class="en">Device</span>, program: const <span class="en">Program</span>, state: const <span class="en">State</span>) -&gt; <span class="en">Pipeline</span>? {</span>
+<span id="src-gpu-loft-L455">  tag = <span class="fn-call">gp_shading</span>();</span>
+<span id="src-gpu-loft-L456">  vertex = <span class="st">""</span>;</span>
+<span id="src-gpu-loft-L457">  fragment = <span class="st">""</span>;</span>
+<span id="src-gpu-loft-L458">  found = <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L459">  <span class="kw">for</span> s <span class="kw">in</span> program.sources {</span>
+<span id="src-gpu-loft-L460">    <span class="kw">if</span> !found &amp;&amp; s.tag == tag {</span>
+<span id="src-gpu-loft-L461">      vertex = s.vertex;</span>
+<span id="src-gpu-loft-L462">      fragment = s.fragment;</span>
+<span id="src-gpu-loft-L463">      found = <span class="kw">true</span>;</span>
+<span id="src-gpu-loft-L464">    }</span>
+<span id="src-gpu-loft-L465">  }</span>
+<span id="src-gpu-loft-L466">  <span class="kw">if</span> !found { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-gpu-loft-L467">  <span class="kw">for</span> kind <span class="kw">in</span> program.block { <span class="kw">if</span> !<span class="fn-call">field_ok</span>(kind) { <span class="kw">return</span> <span class="kw">null</span>; } }</span>
+<span id="src-gpu-loft-L468">  starts = <span class="fn-call">layout</span>(program.block);</span>
+<span id="src-gpu-loft-L469">  desc: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [<span class="bi"><a href="stdlib-text.html">len</a></span>(program.vertex)];</span>
+<span id="src-gpu-loft-L470">  desc += program.vertex;</span>
+<span id="src-gpu-loft-L471">  desc += [<span class="bi"><a href="stdlib-text.html">len</a></span>(program.instance)];</span>
+<span id="src-gpu-loft-L472">  desc += program.instance;</span>
+<span id="src-gpu-loft-L473">  desc += [<span class="bi"><a href="stdlib-text.html">len</a></span>(program.block)];</span>
+<span id="src-gpu-loft-L474">  <span class="kw">for</span> kind <span class="kw">in</span> program.block {</span>
+<span id="src-gpu-loft-L475">    one = <span class="kw">if</span> kind &gt; <span class="nm">1000</span> { <span class="nm">4</span> } <span class="kw">else</span> { kind };</span>
+<span id="src-gpu-loft-L476">    many = <span class="kw">if</span> kind &gt; <span class="nm">1000</span> { kind - <span class="nm">1000</span> } <span class="kw">else</span> { <span class="nm">1</span> };</span>
+<span id="src-gpu-loft-L477">    desc += [one, many, starts[kind#<span class="ty">index</span>] ?? <span class="nm">0</span>];</span>
+<span id="src-gpu-loft-L478">  }</span>
+<span id="src-gpu-loft-L479">  desc += [starts[-<span class="nm">1</span>], program.textures, state.shape, state.depth, state.blend, state.cull, state.into];</span>
+<span id="src-gpu-loft-L480">  h = <span class="fn-call">gp_pipeline</span>(self.handle, desc, vertex, fragment);</span>
+<span id="src-gpu-loft-L481">  <span class="kw">if</span> h == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-gpu-loft-L482">  <span class="en">Pipeline</span> {</span>
+<span id="src-gpu-loft-L483">    handle: h,</span>
+<span id="src-gpu-loft-L484">    into: state.into,</span>
+<span id="src-gpu-loft-L485">    textures: program.textures,</span>
+<span id="src-gpu-loft-L486">    instances: <span class="bi"><a href="stdlib-text.html">len</a></span>(program.instance) &gt; <span class="nm">0</span>,</span>
+<span id="src-gpu-loft-L487">    fields: program.block,</span>
+<span id="src-gpu-loft-L488">    starts: starts,</span>
+<span id="src-gpu-loft-L489">  }</span>
+<span id="src-gpu-loft-L490">}</span>
+<span id="src-gpu-loft-L491"></span>
+<span id="src-gpu-loft-L492"><span class="cm">// The values of a pipeline's uniform block.  A field is named by its position in the program's</span></span>
+<span id="src-gpu-loft-L493"><span class="cm">// `block` list.  Setting a field as another kind than it was declared, or one that is not</span></span>
+<span id="src-gpu-loft-L494"><span class="cm">// there, marks the block, and `uniforms` then refuses it.</span></span>
+<span id="src-gpu-loft-L495"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Block</span> {</span>
+<span id="src-gpu-loft-L496">  data: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;,</span>
+<span id="src-gpu-loft-L497">  fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gpu-loft-L498">  starts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gpu-loft-L499">  wrong: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gpu-loft-L500">}</span>
+<span id="src-gpu-loft-L501"></span>
+<span id="src-gpu-loft-L502"><span class="cm">// A block for this pipeline, every field zero.</span></span>
+<span id="src-gpu-loft-L503"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">block</span>(self: const <span class="en">Pipeline</span>) -&gt; <span class="en">Block</span> {</span>
+<span id="src-gpu-loft-L504">  <span class="en">Block</span> { data: [<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>self.starts[-<span class="nm">1</span>] { <span class="nm">0.0f</span> }], fields: self.fields, starts: self.starts, wrong: <span class="nm">0</span> }</span>
+<span id="src-gpu-loft-L505">}</span>
+<span id="src-gpu-loft-L506"></span>
+<span id="src-gpu-loft-L507"><span class="cm">// Where field `field` starts when it was declared as `kind`; -1, and the block marked, when not.</span></span>
+<span id="src-gpu-loft-L508"><span class="kw">fn</span> <span class="fn-call">start_of</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-loft-L509">  <span class="kw">if</span> field &lt; <span class="nm">0</span> || field &gt;= <span class="bi"><a href="stdlib-text.html">len</a></span>(self.fields) || self.fields[field] != kind {</span>
+<span id="src-gpu-loft-L510">    self.wrong += <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L511">    <span class="kw">return</span> -<span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L512">  }</span>
+<span id="src-gpu-loft-L513">  self.starts[field] ?? -<span class="nm">1</span></span>
+<span id="src-gpu-loft-L514">}</span>
+<span id="src-gpu-loft-L515"></span>
+<span id="src-gpu-loft-L516"><span class="cm">// Set an `F1` field.</span></span>
+<span id="src-gpu-loft-L517"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f1</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-gpu-loft-L518">  at = self.<span class="fn-call">start_of</span>(field, <span class="en">F1</span>);</span>
+<span id="src-gpu-loft-L519">  <span class="kw">if</span> at &lt; <span class="nm">0</span> { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L520">  self.data[at] = x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-gpu-loft-L521">}</span>
+<span id="src-gpu-loft-L522"></span>
+<span id="src-gpu-loft-L523"><span class="cm">// Set an `F2` field.</span></span>
+<span id="src-gpu-loft-L524"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f2</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-gpu-loft-L525">  at = self.<span class="fn-call">start_of</span>(field, <span class="en">F2</span>);</span>
+<span id="src-gpu-loft-L526">  <span class="kw">if</span> at &lt; <span class="nm">0</span> { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L527">  self.data[at] = x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-gpu-loft-L528">  self.data[at + <span class="nm">1</span>] = y <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-gpu-loft-L529">}</span>
+<span id="src-gpu-loft-L530"></span>
+<span id="src-gpu-loft-L531"><span class="cm">// Set an `F4` field.</span></span>
+<span id="src-gpu-loft-L532"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f4</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-gpu-loft-L533">  at = self.<span class="fn-call">start_of</span>(field, <span class="en">F4</span>);</span>
+<span id="src-gpu-loft-L534">  <span class="kw">if</span> at &lt; <span class="nm">0</span> { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L535">  self.<span class="fn-call">put4</span>(at, x, y, z, w);</span>
+<span id="src-gpu-loft-L536">}</span>
+<span id="src-gpu-loft-L537"></span>
+<span id="src-gpu-loft-L538"><span class="cm">// Set element `index` of an `f4s` field; an index past its length marks the block.</span></span>
+<span id="src-gpu-loft-L539"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f4_at</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty">index</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-gpu-loft-L540">  <span class="kw">if</span> field &lt; <span class="nm">0</span> || field &gt;= <span class="bi"><a href="stdlib-text.html">len</a></span>(self.fields) || self.fields[field] &lt;= <span class="nm">1000</span> || <span class="ty">index</span> &lt; <span class="nm">0</span></span>
+<span id="src-gpu-loft-L541">      || <span class="ty">index</span> &gt;= self.fields[field] - <span class="nm">1000</span> {</span>
+<span id="src-gpu-loft-L542">    self.wrong += <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L543">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L544">  }</span>
+<span id="src-gpu-loft-L545">  self.<span class="fn-call">put4</span>((self.starts[field] ?? <span class="nm">0</span>) + <span class="nm">4</span> * <span class="ty">index</span>, x, y, z, w);</span>
+<span id="src-gpu-loft-L546">}</span>
+<span id="src-gpu-loft-L547"></span>
+<span id="src-gpu-loft-L548"><span class="cm">// Set a `MAT4` field from 16 floats, column-major; fewer marks the block.</span></span>
+<span id="src-gpu-loft-L549"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, m: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;) {</span>
+<span id="src-gpu-loft-L550">  at = self.<span class="fn-call">start_of</span>(field, <span class="en">MAT4</span>);</span>
+<span id="src-gpu-loft-L551">  <span class="kw">if</span> at &lt; <span class="nm">0</span> { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L552">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(m) &lt; <span class="nm">16</span> {</span>
+<span id="src-gpu-loft-L553">    self.wrong += <span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L554">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L555">  }</span>
+<span id="src-gpu-loft-L556">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..16</span> { self.data[at + i] = m[i] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; }</span>
+<span id="src-gpu-loft-L557">}</span>
+<span id="src-gpu-loft-L558"></span>
+<span id="src-gpu-loft-L559"><span class="kw">fn</span> <span class="fn-call">put4</span>(self: <span class="en">Block</span>, at: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-gpu-loft-L560">  self.data[at] = x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-gpu-loft-L561">  self.data[at + <span class="nm">1</span>] = y <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-gpu-loft-L562">  self.data[at + <span class="nm">2</span>] = z <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-gpu-loft-L563">  self.data[at + <span class="nm">3</span>] = w <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-gpu-loft-L564">}</span>
+<span id="src-gpu-loft-L565"></span>
+<span id="src-gpu-loft-L566"><span class="cm">// The block's floats as the backend receives them, for a test of a layout.</span></span>
+<span id="src-gpu-loft-L567"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">floats</span>(self: const <span class="en">Block</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt; {</span>
+<span id="src-gpu-loft-L568">  self.data</span>
+<span id="src-gpu-loft-L569">}</span>
+<span id="src-gpu-loft-L570"></span>
+<span id="src-gpu-loft-L571"><span class="cm">// --- A pass ---</span></span>
+<span id="src-gpu-loft-L572"></span>
+<span id="src-gpu-loft-L573"><span class="cm">// Start a pass that draws into the window, cleared to `colour` (0xAARRGGBB) or kept.</span></span>
+<span id="src-gpu-loft-L574"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">begin_window</span>(self: <span class="en">Device</span>, load: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L575">  self.<span class="fn-call">start</span>(<span class="nm">0</span>, <span class="en">INTO_WINDOW</span>, load, colour);</span>
+<span id="src-gpu-loft-L576">}</span>
+<span id="src-gpu-loft-L577"></span>
+<span id="src-gpu-loft-L578"><span class="cm">// Start a pass that draws into `target`.</span></span>
+<span id="src-gpu-loft-L579"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">begin</span>(self: <span class="en">Device</span>, target: const <span class="en">Target</span>, load: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L580">  self.<span class="fn-call">start</span>(target.handle, target.into, load, colour);</span>
+<span id="src-gpu-loft-L581">}</span>
+<span id="src-gpu-loft-L582"></span>
+<span id="src-gpu-loft-L583"><span class="kw">fn</span> <span class="fn-call">start</span>(self: <span class="en">Device</span>, target: <span class="ty"><a href="stdlib-types.html">integer</a></span>, into: <span class="ty"><a href="stdlib-types.html">integer</a></span>, load: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L584">  <span class="kw">if</span> self.pass &gt;= <span class="nm">0</span> {</span>
+<span id="src-gpu-loft-L585">    self.<span class="fn-call">refuse</span>(<span class="st">"begin: the pass before it has not ended"</span>);</span>
+<span id="src-gpu-loft-L586">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L587">  }</span>
+<span id="src-gpu-loft-L588">  self.pass = into;</span>
+<span id="src-gpu-loft-L589">  self.pipe = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L590">  <span class="fn-call">gp_begin</span>(self.handle, target, load, colour);</span>
+<span id="src-gpu-loft-L591">}</span>
+<span id="src-gpu-loft-L592"></span>
+<span id="src-gpu-loft-L593"><span class="cm">// Whether a call that belongs in a pass is in one; refused with `call` named when not.</span></span>
+<span id="src-gpu-loft-L594"><span class="kw">fn</span> <span class="fn-call">in_pass</span>(self: <span class="en">Device</span>, call: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-gpu-loft-L595">  <span class="kw">if</span> self.pass &lt; <span class="nm">0</span> {</span>
+<span id="src-gpu-loft-L596">    self.<span class="fn-call">refuse</span>(<span class="st">"{call}: outside a pass"</span>);</span>
+<span id="src-gpu-loft-L597">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L598">  }</span>
+<span id="src-gpu-loft-L599">  <span class="kw">true</span></span>
+<span id="src-gpu-loft-L600">}</span>
+<span id="src-gpu-loft-L601"></span>
+<span id="src-gpu-loft-L602"><span class="cm">// And whether a pipeline is bound in it.</span></span>
+<span id="src-gpu-loft-L603"><span class="kw">fn</span> <span class="fn-call">bound</span>(self: <span class="en">Device</span>, call: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-gpu-loft-L604">  <span class="kw">if</span> !self.<span class="fn-call">in_pass</span>(call) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-gpu-loft-L605">  <span class="kw">if</span> self.pipe == <span class="nm">0</span> {</span>
+<span id="src-gpu-loft-L606">    self.<span class="fn-call">refuse</span>(<span class="st">"{call}: no pipeline is bound in this pass"</span>);</span>
+<span id="src-gpu-loft-L607">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L608">  }</span>
+<span id="src-gpu-loft-L609">  <span class="kw">true</span></span>
+<span id="src-gpu-loft-L610">}</span>
+<span id="src-gpu-loft-L611"></span>
+<span id="src-gpu-loft-L612"><span class="cm">// Draw with `pipeline` from here on.  It forgets the block, textures and buffers the pipeline</span></span>
+<span id="src-gpu-loft-L613"><span class="cm">// before it was given: name them again.</span></span>
+<span id="src-gpu-loft-L614"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">bind</span>(self: <span class="en">Device</span>, pipeline: const <span class="en">Pipeline</span>) {</span>
+<span id="src-gpu-loft-L615">  <span class="kw">if</span> !self.<span class="fn-call">in_pass</span>(<span class="st">"bind"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L616">  <span class="kw">if</span> pipeline.into != self.pass {</span>
+<span id="src-gpu-loft-L617">    self.<span class="fn-call">refuse</span>(<span class="st">"bind: the pipeline was built for another kind of target than this pass draws into"</span>);</span>
+<span id="src-gpu-loft-L618">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L619">  }</span>
+<span id="src-gpu-loft-L620">  self.pipe = pipeline.handle;</span>
+<span id="src-gpu-loft-L621">  self.need_block = pipeline.starts[-<span class="nm">1</span>];</span>
+<span id="src-gpu-loft-L622">  self.need_textures = pipeline.textures;</span>
+<span id="src-gpu-loft-L623">  self.pipe_instances = pipeline.instances;</span>
+<span id="src-gpu-loft-L624">  self.sampled = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L625">  self.has_block = <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L626">  self.has_vertices = <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L627">  self.has_indices = <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L628">  self.has_instances = <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L629">  <span class="fn-call">gp_bind</span>(self.handle, pipeline.handle);</span>
+<span id="src-gpu-loft-L630">}</span>
+<span id="src-gpu-loft-L631"></span>
+<span id="src-gpu-loft-L632"><span class="cm">// Give the bound pipeline its uniform block.</span></span>
+<span id="src-gpu-loft-L633"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">uniforms</span>(self: <span class="en">Device</span>, block: const <span class="en">Block</span>) {</span>
+<span id="src-gpu-loft-L634">  <span class="kw">if</span> !self.<span class="fn-call">bound</span>(<span class="st">"uniforms"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L635">  <span class="kw">if</span> block.wrong != <span class="nm">0</span> {</span>
+<span id="src-gpu-loft-L636">    self.<span class="fn-call">refuse</span>(<span class="st">"uniforms: a field of the block was set as another kind than it was declared"</span>);</span>
+<span id="src-gpu-loft-L637">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L638">  }</span>
+<span id="src-gpu-loft-L639">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(block.data) != self.need_block {</span>
+<span id="src-gpu-loft-L640">    self.<span class="fn-call">refuse</span>(<span class="st">"uniforms: the block is another pipeline's"</span>);</span>
+<span id="src-gpu-loft-L641">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L642">  }</span>
+<span id="src-gpu-loft-L643">  self.has_block = <span class="kw">true</span>;</span>
+<span id="src-gpu-loft-L644">  <span class="fn-call">gp_uniforms</span>(self.handle, block.data);</span>
+<span id="src-gpu-loft-L645">}</span>
+<span id="src-gpu-loft-L646"></span>
+<span id="src-gpu-loft-L647"><span class="cm">// Give the bound pipeline the texture its slot `slot` samples.</span></span>
+<span id="src-gpu-loft-L648"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sample</span>(self: <span class="en">Device</span>, slot: <span class="ty"><a href="stdlib-types.html">integer</a></span>, texture: const <span class="en">Texture</span>) {</span>
+<span id="src-gpu-loft-L649">  <span class="kw">if</span> !self.<span class="fn-call">bound</span>(<span class="st">"sample"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L650">  <span class="kw">if</span> slot &lt; <span class="nm">0</span> || slot &gt;= self.need_textures {</span>
+<span id="src-gpu-loft-L651">    self.<span class="fn-call">refuse</span>(<span class="st">"sample: the pipeline has no texture slot {slot}"</span>);</span>
+<span id="src-gpu-loft-L652">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L653">  }</span>
+<span id="src-gpu-loft-L654">  self.sampled = self.sampled | (<span class="nm">1</span> &lt;&lt; slot);</span>
+<span id="src-gpu-loft-L655">  <span class="fn-call">gp_sample</span>(self.handle, slot, texture.handle);</span>
+<span id="src-gpu-loft-L656">}</span>
+<span id="src-gpu-loft-L657"></span>
+<span id="src-gpu-loft-L658"><span class="cm">// The vertices the next draws read.</span></span>
+<span id="src-gpu-loft-L659"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vertices</span>(self: <span class="en">Device</span>, buffer: const <span class="en">Buffer</span>) {</span>
+<span id="src-gpu-loft-L660">  <span class="kw">if</span> !self.<span class="fn-call">bound</span>(<span class="st">"vertices"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L661">  self.has_vertices = <span class="kw">true</span>;</span>
+<span id="src-gpu-loft-L662">  <span class="fn-call">gp_vertices</span>(self.handle, buffer.handle);</span>
+<span id="src-gpu-loft-L663">}</span>
+<span id="src-gpu-loft-L664"></span>
+<span id="src-gpu-loft-L665"><span class="cm">// The values the next `draw_copies` reads once per copy, starting at float `first` of `buffer`.</span></span>
+<span id="src-gpu-loft-L666"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">instances</span>(self: <span class="en">Device</span>, buffer: const <span class="en">Buffer</span>, first: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L667">  <span class="kw">if</span> !self.<span class="fn-call">bound</span>(<span class="st">"instances"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L668">  <span class="kw">if</span> !self.pipe_instances {</span>
+<span id="src-gpu-loft-L669">    self.<span class="fn-call">refuse</span>(<span class="st">"instances: the pipeline declares no input per copy"</span>);</span>
+<span id="src-gpu-loft-L670">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L671">  }</span>
+<span id="src-gpu-loft-L672">  self.has_instances = <span class="kw">true</span>;</span>
+<span id="src-gpu-loft-L673">  <span class="fn-call">gp_instances</span>(self.handle, buffer.handle, first);</span>
+<span id="src-gpu-loft-L674">}</span>
+<span id="src-gpu-loft-L675"></span>
+<span id="src-gpu-loft-L676"><span class="cm">// The vertex numbers the next `draw_indexed` reads.</span></span>
+<span id="src-gpu-loft-L677"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">indices</span>(self: <span class="en">Device</span>, buffer: const <span class="en">IndexBuffer</span>) {</span>
+<span id="src-gpu-loft-L678">  <span class="kw">if</span> !self.<span class="fn-call">bound</span>(<span class="st">"indices"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L679">  self.has_indices = <span class="kw">true</span>;</span>
+<span id="src-gpu-loft-L680">  <span class="fn-call">gp_indices</span>(self.handle, buffer.handle);</span>
+<span id="src-gpu-loft-L681">}</span>
+<span id="src-gpu-loft-L682"></span>
+<span id="src-gpu-loft-L683"><span class="cm">// The rectangle draws map onto, origin bottom-left; a pass starts with the whole target.</span></span>
+<span id="src-gpu-loft-L684"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">viewport</span>(self: <span class="en">Device</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L685">  <span class="kw">if</span> !self.<span class="fn-call">in_pass</span>(<span class="st">"viewport"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L686">  <span class="fn-call">gp_viewport</span>(self.handle, x, y, width, height);</span>
+<span id="src-gpu-loft-L687">}</span>
+<span id="src-gpu-loft-L688"></span>
+<span id="src-gpu-loft-L689"><span class="cm">// Draw only inside this rectangle, origin bottom-left, until `no_scissor` or the pass ends.</span></span>
+<span id="src-gpu-loft-L690"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">scissor</span>(self: <span class="en">Device</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L691">  <span class="kw">if</span> !self.<span class="fn-call">in_pass</span>(<span class="st">"scissor"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L692">  <span class="fn-call">gp_scissor</span>(self.handle, x, y, width, height, <span class="nm">1</span>);</span>
+<span id="src-gpu-loft-L693">}</span>
+<span id="src-gpu-loft-L694"></span>
+<span id="src-gpu-loft-L695"><span class="cm">// Draw on the whole target again.</span></span>
+<span id="src-gpu-loft-L696"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">no_scissor</span>(self: <span class="en">Device</span>) {</span>
+<span id="src-gpu-loft-L697">  <span class="kw">if</span> !self.<span class="fn-call">in_pass</span>(<span class="st">"no_scissor"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L698">  <span class="fn-call">gp_scissor</span>(self.handle, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="src-gpu-loft-L699">}</span>
+<span id="src-gpu-loft-L700"></span>
+<span id="src-gpu-loft-L701"><span class="cm">// Whether the bound pipeline has all a draw reads; refused with `call` named when not.</span></span>
+<span id="src-gpu-loft-L702"><span class="kw">fn</span> <span class="fn-call">ready</span>(self: <span class="en">Device</span>, call: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-gpu-loft-L703">  <span class="kw">if</span> !self.<span class="fn-call">bound</span>(call) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-gpu-loft-L704">  <span class="kw">if</span> !self.has_vertices {</span>
+<span id="src-gpu-loft-L705">    self.<span class="fn-call">refuse</span>(<span class="st">"{call}: no vertices were given since the pipeline was bound"</span>);</span>
+<span id="src-gpu-loft-L706">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L707">  }</span>
+<span id="src-gpu-loft-L708">  <span class="kw">if</span> self.need_block &gt; <span class="nm">0</span> &amp;&amp; !self.has_block {</span>
+<span id="src-gpu-loft-L709">    self.<span class="fn-call">refuse</span>(<span class="st">"{call}: the pipeline's block was not given since it was bound"</span>);</span>
+<span id="src-gpu-loft-L710">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L711">  }</span>
+<span id="src-gpu-loft-L712">  <span class="kw">if</span> self.sampled != (<span class="nm">1</span> &lt;&lt; self.need_textures) - <span class="nm">1</span> {</span>
+<span id="src-gpu-loft-L713">    self.<span class="fn-call">refuse</span>(<span class="st">"{call}: a texture slot of the pipeline was not given since it was bound"</span>);</span>
+<span id="src-gpu-loft-L714">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-gpu-loft-L715">  }</span>
+<span id="src-gpu-loft-L716">  <span class="kw">true</span></span>
+<span id="src-gpu-loft-L717">}</span>
+<span id="src-gpu-loft-L718"></span>
+<span id="src-gpu-loft-L719"><span class="cm">// Draw `count` vertices from vertex `first`.</span></span>
+<span id="src-gpu-loft-L720"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw</span>(self: <span class="en">Device</span>, first: <span class="ty"><a href="stdlib-types.html">integer</a></span>, count: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L721">  <span class="kw">if</span> !self.<span class="fn-call">ready</span>(<span class="st">"draw"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L722">  <span class="fn-call">gp_draw</span>(self.handle, first, count, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="src-gpu-loft-L723">}</span>
+<span id="src-gpu-loft-L724"></span>
+<span id="src-gpu-loft-L725"><span class="cm">// Draw the first `count` vertices the index buffer names, in its order.</span></span>
+<span id="src-gpu-loft-L726"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_indexed</span>(self: <span class="en">Device</span>, count: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L727">  <span class="kw">if</span> !self.<span class="fn-call">ready</span>(<span class="st">"draw_indexed"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L728">  <span class="kw">if</span> !self.has_indices {</span>
+<span id="src-gpu-loft-L729">    self.<span class="fn-call">refuse</span>(<span class="st">"draw_indexed: no indices were given since the pipeline was bound"</span>);</span>
+<span id="src-gpu-loft-L730">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L731">  }</span>
+<span id="src-gpu-loft-L732">  <span class="fn-call">gp_draw</span>(self.handle, <span class="nm">0</span>, count, <span class="nm">1</span>, <span class="nm">0</span>);</span>
+<span id="src-gpu-loft-L733">}</span>
+<span id="src-gpu-loft-L734"></span>
+<span id="src-gpu-loft-L735"><span class="cm">// Draw the first `count` vertices `copies` times; the inputs per copy advance once a copy.</span></span>
+<span id="src-gpu-loft-L736"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_copies</span>(self: <span class="en">Device</span>, count: <span class="ty"><a href="stdlib-types.html">integer</a></span>, copies: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gpu-loft-L737">  <span class="kw">if</span> !self.<span class="fn-call">ready</span>(<span class="st">"draw_copies"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L738">  <span class="kw">if</span> self.pipe_instances &amp;&amp; !self.has_instances {</span>
+<span id="src-gpu-loft-L739">    self.<span class="fn-call">refuse</span>(<span class="st">"draw_copies: no values per copy were given since the pipeline was bound"</span>);</span>
+<span id="src-gpu-loft-L740">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L741">  }</span>
+<span id="src-gpu-loft-L742">  <span class="fn-call">gp_draw</span>(self.handle, <span class="nm">0</span>, count, <span class="nm">0</span>, copies);</span>
+<span id="src-gpu-loft-L743">}</span>
+<span id="src-gpu-loft-L744"></span>
+<span id="src-gpu-loft-L745"><span class="cm">// End the pass.</span></span>
+<span id="src-gpu-loft-L746"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">end</span>(self: <span class="en">Device</span>) {</span>
+<span id="src-gpu-loft-L747">  <span class="kw">if</span> !self.<span class="fn-call">in_pass</span>(<span class="st">"end"</span>) { <span class="kw">return</span>; }</span>
+<span id="src-gpu-loft-L748">  self.pass = -<span class="nm">1</span>;</span>
+<span id="src-gpu-loft-L749">  self.pipe = <span class="nm">0</span>;</span>
+<span id="src-gpu-loft-L750">  <span class="fn-call">gp_end</span>(self.handle);</span>
+<span id="src-gpu-loft-L751">}</span>
+<span id="src-gpu-loft-L752"></span>
+<span id="src-gpu-loft-L753"><span class="cm">// Show the frame, waiting for the display's next one where the machine has a frame clock.</span></span>
+<span id="src-gpu-loft-L754"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">present</span>(self: <span class="en">Device</span>) {</span>
+<span id="src-gpu-loft-L755">  <span class="kw">if</span> self.pass &gt;= <span class="nm">0</span> {</span>
+<span id="src-gpu-loft-L756">    self.<span class="fn-call">refuse</span>(<span class="st">"present: a pass has not ended"</span>);</span>
+<span id="src-gpu-loft-L757">    <span class="kw">return</span>;</span>
+<span id="src-gpu-loft-L758">  }</span>
+<span id="src-gpu-loft-L759">  <span class="fn-call">gp_present</span>(self.handle);</span>
+<span id="src-gpu-loft-L760">}</span>
+<span id="src-gpu-loft-L761"></span>
+<span id="src-gpu-loft-L762"><span class="cm">// The window's pixels as they are now, 0xAARRGGBB, top row first, `width()` to a row.</span></span>
+<span id="src-gpu-loft-L763"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">capture</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="src-gpu-loft-L764">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>self.<span class="fn-call">width</span>() * self.<span class="fn-call">height</span>() { <span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span> }];</span>
+<span id="src-gpu-loft-L765">  <span class="fn-call">gp_capture</span>(self.handle, out);</span>
+<span id="src-gpu-loft-L766">  out</span>
+<span id="src-gpu-loft-L767">}</span>
+</code></pre>
+<h2 id="tests-layout-loft">tests/layout.loft</h2>
+<pre class="src"><code><span id="tests-layout-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-layout-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-layout-loft-L3"><span class="cm">//</span></span>
+<span id="tests-layout-loft-L4"><span class="cm">// A uniform block's layout.  The expected numbers are not this library's: they are the byte</span></span>
+<span id="tests-layout-loft-L5"><span class="cm">// offsets a GLSL 3.30 std140 block and a Metal structure of the same eleven fields both report</span></span>
+<span id="tests-layout-loft-L6"><span class="cm">// (measured on an Apple-silicon Mac), divided by four to count floats.</span></span>
+<span id="tests-layout-loft-L7"><span class="kw">use</span> gpu;</span>
+<span id="tests-layout-loft-L8"></span>
+<span id="tests-layout-loft-L9"><span class="cm">// vec4 a; float b; vec2 c; float d; vec4 e; vec2 f; float n; vec4 l[3]; vec4 k[3]; mat4 m; float z</span></span>
+<span id="tests-layout-loft-L10"><span class="kw">fn</span> <span class="fn-call">eleven</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
+<span id="tests-layout-loft-L11">  [gpu::<span class="en">F4</span>, gpu::<span class="en">F1</span>, gpu::<span class="en">F2</span>, gpu::<span class="en">F1</span>, gpu::<span class="en">F4</span>, gpu::<span class="en">F2</span>, gpu::<span class="en">F1</span>, gpu::<span class="fn-call">f4s</span>(<span class="nm">3</span>), gpu::<span class="fn-call">f4s</span>(<span class="nm">3</span>), gpu::<span class="en">MAT4</span>, gpu::<span class="en">F1</span>]</span>
+<span id="tests-layout-loft-L12">}</span>
+<span id="tests-layout-loft-L13"></span>
+<span id="tests-layout-loft-L14"><span class="kw">fn</span> <span class="fn-call">test_a_block_starts_each_field_where_both_stacks_measured_it</span>() {</span>
+<span id="tests-layout-loft-L15">  bytes = [<span class="nm">0</span>, <span class="nm">16</span>, <span class="nm">24</span>, <span class="nm">32</span>, <span class="nm">48</span>, <span class="nm">64</span>, <span class="nm">72</span>, <span class="nm">80</span>, <span class="nm">128</span>, <span class="nm">176</span>, <span class="nm">240</span>, <span class="nm">256</span>];</span>
+<span id="tests-layout-loft-L16">  got = gpu::<span class="fn-call">layout</span>(<span class="fn-call">eleven</span>());</span>
+<span id="tests-layout-loft-L17">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="nm">12</span>, <span class="st">"eleven fields and the size, got {len(got)}"</span>);</span>
+<span id="tests-layout-loft-L18">  <span class="kw">for</span> b <span class="kw">in</span> bytes {</span>
+<span id="tests-layout-loft-L19">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="nm">4</span> * (got[b#<span class="ty">index</span>] ?? -<span class="nm">1</span>) == b, <span class="st">"field {b#index} at byte {4 * (got[b#index] ?? -1)}, measured {b}"</span>);</span>
+<span id="tests-layout-loft-L20">  }</span>
+<span id="tests-layout-loft-L21">}</span>
+<span id="tests-layout-loft-L22"></span>
+<span id="tests-layout-loft-L23"><span class="kw">fn</span> <span class="fn-call">test_a_float_after_a_float_packs_and_a_pair_starts_on_two</span>() {</span>
+<span id="tests-layout-loft-L24">  <span class="cm">// floats at 0 and 1; the pair skips float 3 to start on 2... which is free, so 2; size 4</span></span>
+<span id="tests-layout-loft-L25">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{gpu::layout([gpu::F1, gpu::F1, gpu::F2])}"</span> == <span class="st">"[0,1,2,4]"</span>, <span class="st">"got {gpu::layout([gpu::F1, gpu::F1, gpu::F2])}"</span>);</span>
+<span id="tests-layout-loft-L26">  <span class="cm">// one float, then a pair on the next multiple of two, then a float behind it; size 8</span></span>
+<span id="tests-layout-loft-L27">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{gpu::layout([gpu::F1, gpu::F2, gpu::F1])}"</span> == <span class="st">"[0,2,4,8]"</span>, <span class="st">"got {gpu::layout([gpu::F1, gpu::F2, gpu::F1])}"</span>);</span>
+<span id="tests-layout-loft-L28">}</span>
+<span id="tests-layout-loft-L29"></span>
+<span id="tests-layout-loft-L30"><span class="kw">fn</span> <span class="fn-call">test_an_empty_block_has_no_size</span>() {</span>
+<span id="tests-layout-loft-L31">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{gpu::layout([])}"</span> == <span class="st">"[0]"</span>, <span class="st">"got {gpu::layout([])}"</span>);</span>
+<span id="tests-layout-loft-L32">}</span>
+</code></pre>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

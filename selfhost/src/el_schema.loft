@@ -445,6 +445,13 @@ fn fill_database(e: el::El, d: integer) {
     // `@FR-L-OutOfLine`: a field whose record holds its host is the number of a child record
     // in the host's store, typed by the content it holds (`child_rec<S>`).
     c = -1;
+    // (A split function field's closure record is laid out before the field's own number.)
+    if ft is TyFunction && a.assigned_lambda_d_nr != el::NONE && a.assigned_lambda_d_nr >= 0 {
+      crd0 = el::def(e, a.assigned_lambda_d_nr).closure_record;
+      if crd0 >= 0 && crd0 != el::NONE && el::def(e, crd0).known_type == NO_TYPE {
+        fill_database(e, crd0);
+      }
+    }
     if out_of_line(e, d, a#index) {
       sd = out_of_line_content(e, ft);
       if el::def(e, sd).known_type == NO_TYPE {
@@ -464,6 +471,17 @@ fn fill_database(e: el::El, d: integer) {
     f = field(e, s, a.name, c);
     if a.nullable {
       set_field_nullable(e, s, f);
+    }
+    // A function field a capturing lambda was assigned to is split: its closure half is a
+    // child record of the lambda's closure record, right after the function's number.
+    if ft is TyFunction && a.assigned_lambda_d_nr != el::NONE && a.assigned_lambda_d_nr >= 0 {
+      crd = el::def(e, a.assigned_lambda_d_nr).closure_record;
+      if crd >= 0 && crd != el::NONE {
+        if el::def(e, crd).known_type == NO_TYPE {
+          fill_database(e, crd);
+        }
+        field(e, s, "{a.name}__closure_rec", child_rec(e, el::def(e, crd).known_type));
+      }
     }
   }
 }
@@ -637,6 +655,20 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       // `check_vector` finds the store type by the definition's name, which a narrow element's
       // (`vector<integer(0, 255)>` over `vector<byte>`) does not carry.
       vd = el::def_nr(e, "vector<{nm}>");
+      // (A type variable the PROGRAM mints: `check_vector` names the definition after the
+      // placeholder's own name, `vector<T#n>`, made where missing at the registered one's
+      // place and given the store type; the `vector<__typevar_T#n>` one keeps none.)
+      own_tv = match inner { TyReference { n: pn } => if el_types::type_var(e, inner) >= 0 && el::def(e, pn).source != el::STD_SOURCE { pn } else { -1 }, _ => -1 };
+      if own_tv >= 0 && vd >= 0 {
+        tn = "vector<{el::def(e, own_tv).name}>";
+        td = el::def_nr(e, tn);
+        if td < 0 {
+          td = el::add_def(e, tn, el::def(e, vd).position, el::DT_VECTOR);
+          e.b.data.definitions[td].parent = own_tv;
+        }
+        e.b.data.definitions[td].known_type = vt;
+        return vt;
+      }
       if vd >= 0 && e.b.types[vt].name == "vector<{nm}>" {
         e.b.data.definitions[vd].known_type = vt;
       }
@@ -935,7 +967,9 @@ fn narrow_part(e: el::El, name: text, part: ir::DbParts, size: integer) -> integ
 // `Stores::vector`: the store type `vector<name of content>`, made at the end of the table the
 // first time it is asked for — a 4-byte handle, complex.
 pub fn vector_type(e: el::El, content: integer) -> integer {
-  name = "vector<{e.b.types[content].name}>";
+  // (A content with no store type yet — a tuple's record ahead of its layout — is the bare
+  // `vector` row, as `Stores::vector` names it.)
+  name = if content < 0 || content >= len(e.b.types) { "vector" } else { "vector<{e.b.types[content].name}>" };
   t = schema_type(e, name);
   if t >= 0 {
     return t;

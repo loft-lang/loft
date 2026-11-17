@@ -24,7 +24,7 @@
 <h1>Libraries</h1>
 <article>
 <p>Every library in the loft registry. Each one is written in loft itself, so its source reads like your own code. Install one with <code>loft install &lt;name&gt;</code>, then <code>use &lt;name&gt;;</code> in your program.</p>
-<p class="lib-count">49 packages in 17 categories</p>
+<p class="lib-count">51 packages in 17 categories</p>
 <p>The same catalogue on the command line: <code>loft api --registry</code>. One library's public surface: <code>loft api &lt;name&gt;</code>.</p>
 <h2 id="animation">Animation</h2>
 <table class="lib-table">
@@ -68,6 +68,8 @@
 <tr><td><a href="lib-audio_bus.html"><code>audio_bus</code></a></td><td>0.2.0</td><td>A mixer for game audio — buses that multiply, and a duck that restores exactly</td></tr>
 <tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.4</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
 <tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.7</td><td>The message types a multiplayer game's client and server share — envelopes, kinds and constructors; pure loft, transport-agnostic</td></tr>
+<tr><td><a href="lib-gpu.html"><code>gpu</code></a></td><td>0.1.0</td><td>Drawing on a GPU through pipelines, passes and uniform blocks, with no graphics stack named: a backend library beneath it draws</td></tr>
+<tr><td><a href="lib-gpu_paint.html"><code>gpu_paint</code></a></td><td>0.1.0</td><td>Rectangles, images and sprites at pixel positions, drawn through gpu: a painter and sprite sheets for any backend</td></tr>
 <tr><td><a href="lib-input.html"><code>input</code></a></td><td>0.3.0</td><td>Game input for loft — action/axis bindings resolved to per-tick input state.</td></tr>
 <tr><td><a href="lib-screen.html"><code>screen</code></a></td><td>0.1.1</td><td>A small frame on the machine's screen, scaled up, with the keys of its window — one API on a desktop and a device</td></tr>
 <tr><td><a href="lib-stage.html"><code>stage</code></a></td><td>0.20.0</td><td>A retained 2-D scene for loft: a node tree you mutate, with transforms, clipping, batching, pointer routing and widget states</td></tr>
@@ -99,6 +101,8 @@
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-drawing.html"><code>drawing</code></a></td><td>0.5.0</td><td>Render a .draw scene — a sprite authored as lines of text — pixel-identically to the Python renderer it replaces</td></tr>
 <tr><td><a href="lib-glb.html"><code>glb</code></a></td><td>0.1.8</td><td>glTF 2.0 binary (.glb) writer — exports Mesh / Scene as a glb file readable by Blender, three.js, gltf-validator.  Standalone (pure-loft, no GPU).</td></tr>
+<tr><td><a href="lib-gpu.html"><code>gpu</code></a></td><td>0.1.0</td><td>Drawing on a GPU through pipelines, passes and uniform blocks, with no graphics stack named: a backend library beneath it draws</td></tr>
+<tr><td><a href="lib-gpu_paint.html"><code>gpu_paint</code></a></td><td>0.1.0</td><td>Rectangles, images and sprites at pixel positions, drawn through gpu: a painter and sprite sheets for any backend</td></tr>
 <tr><td><a href="lib-graphics.html"><code>graphics</code></a></td><td>0.12.1</td><td>A 2D canvas, windows, OpenGL and text for loft (meshes and glTF are mesh3d and glb)</td></tr>
 <tr><td><a href="lib-gridmesh.html"><code>gridmesh</code></a></td><td>0.2.7</td><td>Chunk-local mesh-generation primitives for world-building algorithms.</td></tr>
 <tr><td><a href="lib-imaging.html"><code>imaging</code></a></td><td>0.5.3</td><td>PNG load/save and pixel manipulation for loft: one C source on every target, no Rust crate</td></tr>

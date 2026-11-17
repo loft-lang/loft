@@ -1743,7 +1743,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     // `type_null_arms` on this pass too: a written `null` arm answers the text's null, so the
     // tail's per-arm delivery (`if_tail_yields_text`) sees every arm answer a text.
     tnull = el_convert::null_of(e, el_types::base(result));
-    fc = ir::NdNull;
+    // (No arm taken answers the text's null as well — the chain's last `else`, as the second
+    // pass builds it: every arm of the tail then yields a text and takes the accumulator.)
+    fc = if sd >= 0 && tnull != null { tnull! } else { ir::NdNull };
     for a in rev(out) {
       ac = if a.tp is TyNull && el_ir::is_null(a.code) && tnull != null { tnull! } else { a.code };
       fc = if a.cond == null { ac } else { el_ir::v_if(a.cond!, ac, fc) };

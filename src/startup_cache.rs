@@ -121,6 +121,10 @@ fn hex32(key: &[u8; 32]) -> String {
 /// from the manifest on a valid hit.
 #[cfg(feature = "mmap")]
 struct ManifestState {
+    /// `bfid <identity>`: the image this manifest was written with ([`crate::cache::file_identity`]
+    /// of the writer's own temp file).  A warm load takes the bundle only when it is still that
+    /// image (`@FR-S-Pair`, loft#2532); `None` (a manifest without the line) is a miss there.
+    bundle_id: Option<String>,
     /// The `#cwd` directive's resolved path-resolution mode.
     program_relative: bool,
     /// `[library] native` registrations: `(stem, pkg_dir)` per native cdylib
@@ -239,6 +243,13 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
     // bump already invalidates — so the `true` default is never actually read.
     let mut program_relative = true;
     let mut next = lines.next();
+    // `bfid <identity>` (loft#2532): which image this manifest belongs to.  Optional here —
+    // the native fast path reads a manifest without its image — and required by the warm load.
+    let mut bundle_id = None;
+    if let Some(rest) = next.and_then(|l| l.strip_prefix("bfid ")) {
+        bundle_id = Some(rest.to_string());
+        next = lines.next();
+    }
     if let Some(rest) = next.and_then(|l| l.strip_prefix("prel ")) {
         program_relative = rest != "0";
         next = lines.next();
@@ -387,6 +398,7 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
     }
     // An empty source list is not a valid hit.
     any.then_some(ManifestState {
+        bundle_id,
         program_relative,
         native_lib_regs,
         native_crate_regs,
@@ -505,6 +517,15 @@ pub fn warm_load_program(
     // library source, so an existing file is the one the cold run built for these marks.
     if state.native_ctx != native_ctx {
         return warm_miss("the native-library context differs from the run that marked it");
+    }
+    // `@FR-S-Pair` (loft#2532) — the image is the manifest's own.  Two runs writing one slot at
+    // once (a plain and a `--ship` emit of one file share it) each rename their image and then
+    // their manifest, so one's image can end beside the other's manifest; the manifest then
+    // validates, and the image is read under parse state it was not written with.
+    if !crate::keys::bundle_identity_off()
+        && (state.bundle_id.is_none() || state.bundle_id != crate::cache::file_identity(&bundle))
+    {
+        return warm_miss("the image beside the manifest is another writer's");
     }
     if let Some(so) = state
         .auto_native_libs
@@ -744,8 +765,7 @@ pub fn save_program(
     let mut lines = String::new();
     // @PLN11 G2/M6 — pin the build signature first so a binary upgrade
     // invalidates this bundle (see `manifest_matches`).
-    let _ = writeln!(lines, "sig {}", crate::cache::build_signature());
-    let _ = writeln!(lines, "stdk {stdk}");
+    let head = format!("sig {}\nstdk {stdk}\n", crate::cache::build_signature());
     // @PLN11 — persist the parse-time path-resolution mode (the `#cwd` directive's
     // resolved effect) so a warm load (which skips parsing) can restore it.
     let _ = writeln!(lines, "prel {}", u8::from(p.database.program_relative));
@@ -845,9 +865,17 @@ pub fn save_program(
     if let Some(parent) = bundle.parent() {
         let _ = crate::file_access::create_dir_all(parent);
     }
-    if crate::ir_store::save_bundle(&p.data, &p.database, &bundle.to_string_lossy()).is_err() {
+    let Ok(image) = crate::ir_store::save_bundle_identified(
+        &p.data,
+        &p.database,
+        &bundle.to_string_lossy(),
+        &crate::ir_store::BundleFacts::default(),
+    ) else {
         return;
-    }
+    };
+    // `@FR-S-Pair` (loft#2532) — the manifest names the image this process wrote, so it never
+    // validates a sibling's image renamed into the slot after this one.
+    let lines = format!("{head}bfid {image}\n{lines}");
     // Manifest last + atomically, through a tmp name of THIS PROCESS's own — the same shape
     // `ir_store::save_bundle` uses for the bundle beside it, and for the same reason.  A fixed
     // `.manifest.tmp` is shared by every loft writing the same program, so two of them
@@ -857,17 +885,30 @@ pub fn save_program(
     // parity comparison reports a warning the other does not (loft#1129).  Concurrent loft
     // processes over one bundle are not a test artefact: two builds at once is an ordinary
     // thing for a user to do.
-    let tmp = crate::file_access::with_extension(
-        &manifest,
-        &format!("manifest.{}.tmp", std::process::id()),
-    );
-    if crate::file_access::write(&tmp, lines.as_bytes()).is_ok() {
-        let _ = crate::file_access::rename(&tmp, &manifest);
-    }
-    let _ = crate::file_access::remove_file(&tmp);
+    publish_manifest(&manifest, &lines);
     // @PLN11 G2 / track 1 — with the cache default-on, bound the directory size
     // by evicting the oldest bundles after each cold save.
     crate::cache::prune_program_cache();
+}
+
+/// Write a program manifest atomically, through a temp name of THIS process's own, and name the
+/// save under `LOFT_TRACE_WARM`.
+fn publish_manifest(manifest: &std::path::Path, lines: &str) {
+    let tmp = crate::file_access::with_extension(
+        manifest,
+        &format!("manifest.{}.tmp", std::process::id()),
+    );
+    if crate::file_access::write(&tmp, lines.as_bytes()).is_ok() {
+        let _ = crate::file_access::rename(&tmp, manifest);
+        if crate::keys::env_set("LOFT_TRACE_WARM") {
+            eprintln!(
+                "[warm] saved {} (pid {})",
+                manifest.display(),
+                std::process::id()
+            );
+        }
+    }
+    let _ = crate::file_access::remove_file(&tmp);
 }
 
 /// @PLN166 B3 — what a native run needs to exec a cached binary WITHOUT parsing: the

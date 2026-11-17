@@ -1071,10 +1071,6 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   for tv in tvars {
     match e.p.nodes[tv] {
       STVar { at: tat, name: tn, bounds } => {
-        if len(tvars) > 1 {
-          el::refuse(e, "a generic with more than one type variable");
-          return "";
-        }
         h = header_var(e, tn, bounds, el::pos_at(e, el_ex_object::after_paren(e, tat)));
         if h < 0 {
           return "";
@@ -1230,8 +1226,15 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       vars.step_over += [el_vars::RefSite { nr: el_vars::var(vars, so.name), site: so.site }];
     }
   }
+  // A short lambda whose hint names no result answers what its body does: the first pass reads
+  // the body and records that, the second finds it on the definition.
+  infers = hint is TyFunction && el_types::is_unknown(hint_ret) && ret == null && len(short_names) > 0;
+  if infers && !e.first_pass {
+    rt = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+  }
   if e.first_pass {
-    el::set_returned(e, e.context, rt);
+    // (Read against no declared result, so the body's own answer shows.)
+    el::set_returned(e, e.context, if infers { ir::TyUnknown { n: 0 } } else { rt });
   } else if hint is TyFunction && !(rt is TyVoid) && !el_types::is_unknown(rt) {
     // `parse_lambda_short_body`: on the second pass a short lambda's result is reset to the
     // hint's, so its body is parsed against the bare result the first pass met.
@@ -1278,8 +1281,16 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
             if inner is TyFloat || inner is TySingle || inner is TyBoolean || inner is TyCharacter {
               el_ex_pattern::vector_of(e, inner);
             }
-            if bat >= 0 && nm != "" && !el_types::is_unknown(inner) && len(e.type_vars) == 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
+            // (A vector over a type variable the PROGRAM mints has its definitions made here as
+            // well, under the placeholder's registered name; the library's own exist already.)
+            own_var = match inner { TyReference { n: ivn } => el_types::type_var(e, inner) >= 0 && el::def(e, ivn).source != el::STD_SOURCE, _ => false };
+            if bat >= 0 && nm != "" && !el_types::is_unknown(inner) && (len(e.type_vars) == 0 || own_var) && el::def_nr(e, "main_vector<{nm}>") < 0 {
               el_schema::make_vector_def(e, inner, nm, el::pos_at(e, bat), true);
+              // (The placeholder has its row already, so its vector row is made at once — ahead
+              // of the wrapper's.)
+              if own_var {
+                el_schema::vector_store_type(e, inner, nm);
+              }
             }
           },
           _ => {}
@@ -1325,6 +1336,23 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       seeds = el_cell::flip(e, vars);
     }
     code = el_cell::seed_cells(el_expressions::parse_code(e, vars, body ?? 0), seeds);
+    if infers && e.first_pass {
+      it = el_types::without_deps(vars.tail_tp[0] ?? ir::TyVoid);
+      // (A text answer takes the lambda's hidden `&text` buffer, `__work_ret`, which is made
+      // with a DECLARED text result; any answer but a plain scalar is not carried here.)
+      // (A record or a vector answer takes the lambda's late return buffer, reserved between the
+      // passes as any lambda's is; a tuple, a keyed collection or a function is not carried.)
+      ib = el_types::base(it);
+      if !(ib is TyText) && !el_ex_object::scalar_type(it) && !(ib is TyReference) && !(ib is TyVector) && !(it is TyVoid) && !el_types::is_unknown(it) && !(it is TyNull) {
+        el::refuse(e, "a short lambda answering a tuple, a keyed collection or a function its position does not name");
+      }
+      el::set_returned(e, e.context, if !(it is TyVoid) && !el_types::is_unknown(it) && !(it is TyNull) { it } else { ir::TyVoid });
+      // (A text answer: the lambda takes its hidden `&text` buffer now, as a declared text
+      // result takes it at its block's end, P227.)
+      if el_types::base(it) is TyText {
+        el_expressions::text_return(e, vars, vars.tail_tp[0] ?? ir::TyVoid);
+      }
+    }
     // A body answering a function value is typed as the declared function type: the closure
     // slot its value names is the result's dep (`callee_frame1`), not the block's.
     if el_types::base(rt) is TyFunction {
@@ -1450,6 +1478,12 @@ fn add_capture_owner_slots(e: el::El, vars: el_vars::Vars, parent: integer) {
   for k in 0..vars.lambdas {
     rec = el::def_nr(e, "__closure_{bare}_{k}");
     if rec < 0 {
+      continue;
+    }
+    // A fn field's UNION record (loft#1874) is left alone: its captures keep the record's
+    // static adoption, and the lambda's own record is no longer the one it builds.
+    lam = el::def_nr(e, "n___lambda_{bare}_{k}");
+    if lam >= 0 && el::def(e, lam).closure_record >= 0 && el::def(e, lam).closure_record != el::NONE && starts_with(el::def(e, el::def(e, lam).closure_record).name, "__closure_u_") {
       continue;
     }
     slots: vector<el::Capture> = [];

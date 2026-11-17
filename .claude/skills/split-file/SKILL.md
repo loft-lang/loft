@@ -90,11 +90,19 @@ diff <(git diff -U0 <base> | grep '^-[^-]' | cut -c2- | sed 's/^[[:space:]]*//' 
 scripts/ci-run.sh start                         # the full gate, both clippy legs
 make file-sizes ARGS="--all"                    # the source shrank, no part is over the bar
 make docs-lint-baseline                         # moved doc comments shift the baseline: re-pin it
+python3 scripts/decisions.py check              # a decision whose site names a moved fn by file: re-locate it
 ```
 
 A plain `grep -c '^[+-]'` over the diff counts every moved line twice and says nothing.  If
 the non-move count is more than the `mod` lines and part headers account for, something
 changed that should not have; find it and undo it with the inverse edit.
+
+## Then gather and open the PR — at once
+
+A split left on a branch keeps every sibling that edits the file conflicting until it is on
+`main` (owner).  So right after the commit: survey the active branches
+(`scripts/join.py survey`), take each agent's cut, join them over the split, open the PR and arm
+auto-merge — a standing ask after a split (RELEASE.md § File split).
 
 ## The commit
 

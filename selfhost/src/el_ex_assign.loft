@@ -634,6 +634,10 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         } else if vars.expect_node == n {
           hint = el_types::base(vars.expect);
         }
+        // A short lambda a function answers takes that function's declared result as its hint.
+        if !(hint is TyFunction) && e.context >= 0 && el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) is TyFunction {
+          hint = el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid);
+        }
         if !(hint is TyFunction) {
           el::refuse(e, "a short lambda (`|…|`) with no `fn(…)` its position expects");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -733,7 +737,11 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       saved_rec = e.closure_rec;
       saved_var = e.closure_var;
       e.captures = caps;
-      e.closure_rec = if len(caps) > 0 && !e.first_pass { el::def_nr(e, rec_nm) } else { -1 };
+      // (A lambda written into a fn field beside another shares that field's UNION record,
+      // `unite_field_closure_records`: its captures are read at the union's positions.)
+      own_ld = el::def_nr(e, "n_{nm}");
+      united = if own_ld >= 0 && el::def(e, own_ld).closure_record != el::NONE { el::def(e, own_ld).closure_record } else { -1 };
+      e.closure_rec = if len(caps) > 0 && !e.first_pass { if united >= 0 { united } else { el::def_nr(e, rec_nm) } } else { -1 };
       e.closure_var = -1;
       key = el_definitions::parse_function(e, at, nm, params, ret, body, short_names: if short { names } else { [] }, hint: hint);
       e.captures = saved_caps;
@@ -760,6 +768,8 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // (`fn_ref_with_closure`), answering `FnRef(lambda, ___clos_N)` typed as the function borrowing
 // that record.
 pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> Ex {
+  vars.last_closure = d;
+  vars.last_closure_body = body;
   // A closure answering a text is not carried: the borrows of its body's answer (a parameter's
   // view) and of its capture fields are not reproduced yet.
   // A closure answering a text delivers it through its hidden `&text` buffer, as any lambda.  One
@@ -795,6 +805,10 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
     return ex(ir::NdNull, lambda_value_type(e, d));
   }
   rd = el::def_nr(e, rec_nm);
+  // (A fn field's union record stands in for the lambda's own.)
+  if el::def(e, d).closure_record >= 0 && el::def(e, d).closure_record != el::NONE {
+    rd = el::def(e, d).closure_record;
+  }
   kt = if rd < 0 { el_schema::NO_TYPE } else { el::def(e, rd).known_type };
   if kt == el_schema::NO_TYPE {
     el::refuse(e, "a lambda's closure record with no layout");

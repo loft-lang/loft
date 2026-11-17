@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a capturing lambda stored in a struct field: its closure record is built in the field's child slot (`OpChildRec`), the field split into the function's number and `<field>__closure_rec`; a call through the field reads both halves.
+// Prints: 10 22 23
+
+struct H { tag: integer, f: fn() -> integer }
+struct B { k: integer, g: fn(integer) -> integer, w: float }
+fn main() {
+  n = 5;
+  m = 7;
+  h = H { tag: 0, f: fn() -> integer { 1 } };
+  h.f = fn() -> integer { n * 2 };
+  a = h.f();
+  b = B { k: 1, g: fn(x: integer) -> integer { x + n + m }, w: 0.5 };
+  c = b.g(10);
+  println("{a} {c} {h.f() + b.g(1)}");
+}

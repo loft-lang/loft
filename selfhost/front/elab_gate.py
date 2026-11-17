@@ -163,8 +163,12 @@ def main():
     prebuilt = os.environ.get("LOFT_ELAB_DEFS"), os.environ.get("LOFT_ELAB_BIN")
     if any(prebuilt) and (o.check or o.write_baseline):
         sys.exit("--check and --write-baseline build their own tools: unset LOFT_ELAB_DEFS / LOFT_ELAB_BIN")
-    defs = prebuilt[0] or build(loft, os.path.join(sh, "compare", "defs.loft"), os.path.join(tmp, "defs"), env)
-    elab = prebuilt[1] or build(loft, os.path.join(sh, "front", "elab.loft"), os.path.join(tmp, "elab"), env)
+    # The two builds are one C compile each: side by side, the gate waits for the longer only.
+    with cf.ThreadPoolExecutor(2) as ex:
+        fd = None if prebuilt[0] else ex.submit(build, loft, os.path.join(sh, "compare", "defs.loft"), os.path.join(tmp, "defs"), env)
+        fe = None if prebuilt[1] else ex.submit(build, loft, os.path.join(sh, "front", "elab.loft"), os.path.join(tmp, "elab"), env)
+        defs = prebuilt[0] or fd.result()
+        elab = prebuilt[1] or fe.result()
     per = collections.defaultdict(collections.Counter)
     reasons = collections.Counter()
     families = collections.Counter()

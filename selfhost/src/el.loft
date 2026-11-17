@@ -44,8 +44,8 @@ pub struct StepOver {
 pub struct StaleInstance {
   pub d: integer,
   pub g: integer,
-  pub holder: integer,
-  pub bound: ir::TypeT
+  pub holders: vector<integer>,
+  pub bounds: vector<ir::TypeT>
 }
 
 // A `use` short name or alias and the source it names (`Data::use_names`), or a source and the

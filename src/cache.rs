@@ -97,7 +97,10 @@ use sha2::{Digest, Sha256};
 /// 19 — `Variable` carries `value_const` (byte 62, stride unchanged, loft#2034): a warm load
 /// without it read a `const` parameter as writable, and the literal hoist's alias gate
 /// declined what a cold parse of the same program admitted.
-const CACHE_FORMAT_VERSION: u8 = 19;
+///
+/// 20 — a program manifest names the identity of the image it was written with (`bfid`,
+/// loft#2532), and a warm load takes no other: a manifest without the line is a miss.
+const CACHE_FORMAT_VERSION: u8 = 20;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -374,6 +377,12 @@ pub const INERT_ENV: &[&str] = &[
     "LOFT_BUILD_STAMP",
     "LOFT_BUILD_TARGET",
     "LOFT_FFI_FINGERPRINT",
+    // loft#2532 — the cache's own trace.  Counting it keyed a traced run apart from the run it
+    // was meant to watch, so the trace could only ever report on a slot nobody else reads.
+    "LOFT_TRACE_WARM",
+    // The switch of the image-identity check (`keys::bundle_identity_off`): it decides which
+    // cached image a warm load may take, never what a parse produces, so it shares the slot.
+    "LOFT_NO_BUNDLE_IDENTITY",
 ];
 
 /// Whether `name` is an environment variable that may change what a run parses or emits:
@@ -643,6 +652,27 @@ pub fn cache_base_dir() -> std::path::PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
         .join("loft")
+}
+
+/// The identity of the file at `path` as one string: its length, its BIRTH time in nanoseconds
+/// and, on Unix, its device and inode.  Each is fixed for the file's life: a rename keeps all three, and
+/// so does the cache's touch-on-use ([`touch_now`] moves the modification time, which is the
+/// eviction clock and therefore no identity), while a later file that reuses a freed inode is
+/// born at another time.  So the identity a writer reads off its temp file is the published
+/// file's until another writer's rename replaces it — which is what pairs a program-cache
+/// manifest with the image it was written with (`@FR-S-Pair`, loft#2532).  A filesystem that
+/// keeps no birth time leaves the length and the inode.  `None` when the file cannot be read.
+#[must_use]
+pub fn file_identity(path: &std::path::Path) -> Option<String> {
+    let meta = crate::file_access::metadata(path).ok()?;
+    let born = meta
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or_else(|| "-".to_string(), |d| d.as_nanos().to_string());
+    // `(device, inode)` where the platform has one (`platform::file_identity`).
+    let (dev, ino) = crate::platform::file_identity(&meta).unwrap_or((0, 0));
+    Some(format!("{}:{born}:{dev}:{ino}", meta.len()))
 }
 
 /// Lower-case 64-hex of a 32-byte key.

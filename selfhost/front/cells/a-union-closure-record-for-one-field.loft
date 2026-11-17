@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: several capturing lambdas written into one fn field share ONE closure record, the union of their captures (`__closure_u_…`): each build releases the slots it does not write and starts them empty.
+// Prints: 3 40 3
+
+struct V { a: integer }
+struct H { tag: integer, f: fn() -> integer }
+fn main() {
+  v = [1, 2, 3];
+  r = V { a: 4 };
+  s = "abc";
+  h = H { tag: 0, f: fn() -> integer { len(v) } };
+  g = H { tag: 1, f: fn() -> integer { r.a * 10 } };
+  k = H { tag: 2, f: fn() -> integer { len(s) } };
+  println("{h.f()} {g.f()} {k.f()}");
+}

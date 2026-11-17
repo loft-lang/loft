@@ -1,0 +1,63 @@
+name: Gate E (elaborator vs Rust front end)
+
+# @PLN91 gate E on a runner instead of the dev laptop: the loft elaborator
+# (selfhost/front/elab.loft) against the Rust front end over the whole corpus,
+# the real gate's own run (its own optimised build of both tools).  A MEASUREMENT
+# run, never on a PR, blocks nothing: it writes the `elab` baseline the tree
+# would commit and uploads it with every program's verdict, for a stream that
+# commits the baseline once the run reads 0 differ.
+#
+# Trigger:
+#   git push origin <commit>:elab-gate        # push trigger
+#   gh workflow run elab-gate.yml --ref <branch>
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [elab-gate]
+
+permissions:
+  contents: read
+
+# One gate at a time and at most one waiting: a newer push replaces a WAITING run (whose baseline
+# the newer one supersedes) but never cancels the run in progress, so every started run finishes
+# even while commits arrive faster than a run takes.
+concurrency:
+  group: elab-gate
+  cancel-in-progress: false
+
+env:
+  PYTHONUTF8: '1'
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  LOFT_SUITE_DIR: loft-suite
+
+jobs:
+  gate-e:
+    # @windows-exempt: compares two front ends' reports; platform-independent
+    name: gate E — whole corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build loft
+        run: cargo build --release --bin loft
+      - name: Gate E (real gate, writes the baseline)
+        run: |
+          # The elaborator's optimised build needs more than 6 GB of address space in cc1.
+          ulimit -v 9000000
+          LOFT_ELAB_VERDICTS=target/elab-verdicts.tsv \
+            python3 selfhost/front/elab_gate.py --jobs 4 --plan \
+            --write-baseline selfhost/front/elab_gate.baseline.tsv | tee target/elab-gate.txt
+          git diff --stat -- selfhost/front/elab_gate.baseline.tsv
+      - name: Upload the baseline and the verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: elab-gate-${{ github.sha }}
+          path: |
+            selfhost/front/elab_gate.baseline.tsv
+            target/elab-verdicts.tsv
+            target/elab-gate.txt

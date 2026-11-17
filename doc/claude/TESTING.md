@@ -582,7 +582,11 @@ reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell name
 4. **Retire with proof only**: a cell with a `@falsified-by` patch goes once a kept cell
    re-scores `falsified` against that patch (`scripts/falsify.sh <cell> --patch <patch>`); one
    without moves its cases into a kept cell instead.  Cases are never silently lost.  An attic
-   program the new set covers leaves the attic the same way.
+   program the new set covers leaves the attic the same way.  Merging cells into one keeps every
+   case verbatim, each receipt as its own labelled block (a file holds ONE patch receipt, so a
+   patch-receipt cell merges only once a kept cell re-scores against its patch), and every
+   defect the merged headers named: `plan`'s feature count before and after must be equal — a
+   header reworded in the merge drops a `loft#N` silently.
 5. **Verify** the rule's cells on both backends (`make suite ARGS="@FR-<rule> --mode both-c"`),
    falsify every new cell (`make falsify`), and run the whole suite memory-capped before the suite
    commit.  A probe that turns up a defect is fixed (CLAUDE.md § Bug-filing policy) — the pass is

@@ -192,10 +192,41 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "a compound write to a function-valued field");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // A capturing lambda assigned to a field of a local's record (`h.f = fn() { … n … }`).
+    cld = el_ex_object::closure_lambda_at(e, vars, rhs);
+    host_d = match el_ir::unspan(fargs[0]!) { NdVar { n: hv } => struct_ref(e, el_types::base(el_vars::tp(vars, hv))), _ => -1 };
+    if cld >= 0 {
+      fname2 = match e.p.nodes[target] { SMember { name: mn } => mn, SName { member: sm } => sm, _ => "" };
+      cw2 = if host_d >= 0 && fname2 != "" { el_ex_object::closure_field_write(e, vars, host_d, fname2, fargs[0]!, cld, fx.code, p.tp) } else { null };
+      if cw2 == null {
+        el::refuse(e, "a function-valued field given something other than a named function");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(cw2!, ir::TyVoid);
+    }
     fw = el_ex_object::fn_number_write(e, vars, fargs[0]!, fargs[1]!, if e.first_pass && !(el_ir::unspan(fx.code) is NdVar) { ir::NdInt { n: 0 } } else { fx.code }, p.tp);
     if fw == null {
       el::refuse(e, "a function-valued field given something other than a named function");
       return ex(ir::NdNull, ir::TyVoid);
+    }
+    // `fn_ref_field_reset` (`@FR-L-CapOwn`): a value with no closure written into a SPLIT field
+    // displaces the closure record it held — that record is named (`___oldrec_N`, for the scope
+    // pass's release) and its child slot cleared before the number is written.
+    rname = match e.p.nodes[target] { SMember { name: mn2 } => mn2, SName { member: sm2 } => sm2, _ => "" };
+    rpos = match el_ir::unspan(fargs[1]!) { NdInt { n: rp } => rp, _ => -1 };
+    if !e.first_pass && host_d >= 0 && rname != "" && rpos >= 0 && el_ex_object::fn_field_split(e, host_d, rname) {
+      ra = attr_nr(el::def(e, host_d), rname);
+      rrd = el::def(e, el::def(e, host_d).attributes[ra]!.assigned_lambda_d_nr).closure_record;
+      crec = el_schema::child_rec(e, el::def(e, rrd).known_type);
+      rroot = place_root(e, fargs[0]!);
+      old = el_vars::create_unique(vars, "__oldrec", ir::TyReference { n: rrd, dep: if rroot >= 0 { [rroot] } else { [] } });
+      vars.vars[old].skip_free = true;
+      el_vars::set_defined(vars, old);
+      return ex(el_ir::v_block([
+        el_ir::v_set(old, el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [fargs[0]!, ir::NdInt { n: rpos + 4 }, ir::NdInt { n: 0 }])])),
+        el_ir::cl(e, "OpClearKeyed", [el_ir::cl(e, "OpGetField", [fargs[0]!, ir::NdInt { n: rpos + 4 }, ir::NdInt { n: crec }]), ir::NdInt { n: crec }]),
+        fw!
+      ], ir::TyVoid, "fn_ref_field_reset"), ir::TyVoid);
     }
     return ex(fw!, ir::TyVoid);
   }
@@ -2285,7 +2316,11 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       match e.p.nodes[fi] {
         SFieldInit { name: fname, e: fe } => {
           empty = match e.p.nodes[fe ?? 0] { SVecLit { items } => fe != null && len(items) == 0, _ => false };
-          if group.contains(field_position(e, d, fname)) && !empty {
+          // (A VECTOR member is filled as any vector field is — its header is zeroed with the
+          // group's; a keyed member's bulk fill is not carried.)
+          fa_nr = attr_nr(def, fname);
+          vec_member = fa_nr >= 0 && el_types::base(def.attributes[fa_nr]!.typedef[0] ?? ir::TyVoid) is TyVector;
+          if group.contains(field_position(e, d, fname)) && !empty && !vec_member {
             el::refuse(e, "a literal that fills a member of a linked collection group");
             return null;
           }
@@ -2509,6 +2544,11 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
         // `far`'s record), as `parse_object` consumes `amp_pending` at the field: the value is the
         // operand.
         amp_operand = match e.p.nodes[fe!] { SUnary { op, e: ue } => if op == "&" { ue } else { null }, _ => null };
+        // A short lambda given to a function-valued field takes the field's `fn(…)` as its hint.
+        if el_types::base(at) is TyFunction && e.p.nodes[fe!] is SLambda {
+          vars.lambda_node = fe!;
+          vars.lambda_hint = el_types::base(at);
+        }
         x = el_ex_assign::expression(e, vars, if el_types::is_pointer(at) && amp_operand != null { amp_operand! } else { fe! });
         fc: ir::Node? = null;
         if el_types::is_pointer(at) {
@@ -2532,6 +2572,18 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
               return null;
             }
           }
+        } else if el_types::base(at) is TyFunction && el_ex_object::closure_lambda_at(e, vars, fe!) >= 0 {
+          // A capturing lambda: its closure record is built in the field's child slot.
+          cw = el_ex_object::closure_field_write(e, vars, d, fname, r, el_ex_object::closure_lambda_at(e, vars, fe!), x.code, at);
+          if cw == null {
+            el::refuse(e, "a function-valued field given something other than a named function");
+            return null;
+          }
+          if !e.first_pass {
+            list += [cw!];
+          }
+          found += [fname];
+          continue;
         } else if el_types::base(at) is TyFunction {
           // A function-valued field given a named function (`fn_number_write`).
           if e.first_pass {

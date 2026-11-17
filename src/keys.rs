@@ -3603,6 +3603,16 @@ pub fn amp_field_only() -> bool {
     *ON.get_or_init(|| env_set("LOFT_AMP_FIELD_ONLY"))
 }
 
+/// `LOFT_NO_BUNDLE_IDENTITY=1` — a warm load takes a program-cache image beside any manifest
+/// that validates, as before loft#2532, instead of only the image that manifest was written
+/// with (`@FR-S-Pair`): two runs writing one slot at once can leave one's image beside the
+/// other's manifest.  The bisect step for a warm run that answers like another build's.
+#[must_use]
+pub fn bundle_identity_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_BUNDLE_IDENTITY"))
+}
+
 /// `LOFT_STRUCT_ELEMENT_SELF_READ_VIEW=1` — a literal written into an element of its root whose
 /// out-of-line field reads that element stages the read as a VIEW again, not a copy taken first
 /// (`Parser::parse_object`'s place staging, loft#2527): the literal's writes overwrite it first.

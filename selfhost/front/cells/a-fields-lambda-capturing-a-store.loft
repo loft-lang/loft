@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a field's lambda capturing a vector, a record or a text: the captures written into the record in the host's child slot, what the slot held before released where it lives, and the host's drop cascade running the closure record's.
+// Prints: 3 40 3
+
+struct V { a: integer }
+struct H { tag: integer, f: fn() -> integer }
+struct G { tag: integer, f: fn() -> integer }
+struct K { tag: integer, f: fn() -> integer }
+fn main() {
+  v = [1, 2, 3];
+  r = V { a: 4 };
+  s = "abc";
+  h = H { tag: 0, f: fn() -> integer { len(v) } };
+  g = G { tag: 1, f: fn() -> integer { r.a * 10 } };
+  k = K { tag: 2, f: fn() -> integer { len(s) } };
+  println("{h.f()} {g.f()} {k.f()}");
+}

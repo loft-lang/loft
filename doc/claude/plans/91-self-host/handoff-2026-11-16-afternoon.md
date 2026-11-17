@@ -154,6 +154,64 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**State, 2026-11-17 late: the real gate (the tester's GitHub runner) reads 988 of 2229 agree, 0
+differ at b01aa7783** — baseline 754d4f3ad, joined here with the tester's branch `loft30-gate`
+(a parallel C build for the elaborator, `LOFT_NO_PARALLEL_UNIT=1` turns it off; a gate
+workflow, `.github/workflows/elab-gate.yml`).  Above it, pushed for the tester and not yet
+run: generics slice 3 (3484cd930 — several type variables, short lambdas handed to a
+template, a generic's null check / default / format hole, `__work_ret` on every text
+lambda).
+
+GENERICS, what is carried (all in `el_ex_call.loft::instantiate` / `fill_all` /
+`fill_instance` and their passes): a variable bound to a scalar, a text, a record, a plain or
+struct enum, a nullable plain enum, a vector of scalars / texts / records; `T?` beside `T`;
+several variables (one fill step each); rows retargeted (`retarget_rows`, the wrapper's too);
+the bound `==` / `!=` and order forms (`resolve_content_eq`, `resolve_order_stubs`); vector
+writes over the variable (`rewrite_vector_writes`); `tvnullcheck` / `tvdefault` / format
+holes at a scalar or text (`lower_tv_blocks`); a record's branch answer over parameters
+(`___ret_join_N`); a program-declared variable's `vector<__typevar_T#n>` definitions.
+STILL REFUSED, in rough order of programs touched: an instance at a tuple; a one-byte or
+four-byte integer element; `tvinsert` / `tvreverse` / `tvsort` / the other `tv…` blocks
+(Rust: `rewrite_generic_type_defaults`, monomorph.rs ~1551); a short lambda answering a text
+or a record; an instance calling a text-answering function value
+(`push_deferred_fnref_buffers`); `sizeof` of a variable; nested generic calls in a
+several-variable generic are untested.
+
+**Two worktrees (owner, 2026-11-17).**  This checkout, on `tuxedo-pln204-int32`, is the TESTED
+line: it takes only fixes for what the tester reports.  New work lives in a second worktree,
+`../loft2-next` on branch `tuxedo-pln204-next` (stacked on the tested line, pushed), probed
+with its own script; a finished feature is rebased onto the tested line and pushed there for
+the tester.  Never mix the two in one tree.
+
+**Owed after PR #2531 merges** (this branch's cut 0a48655a8 with a peer's 785918351): the
+peer's change to how a `[for _ …]` comprehension binds its own `_` and counters moves two
+programs' numbering (`tests/scripts/85-yield-resume.loft`, `_index_3` for the port's
+`_index_2`; `a-counted-loop-pushing-one-value-is-one-fill.loft`, `_index_16` for
+`_index_15`) — mirror it in the elaborator once this branch is rebased onto that main.
+
+**Working mode since 2026-11-17 (owner): this stream TRANSLATES, a second agent TESTS.**  This
+stream ports whole features from the Rust source, checks each on a few single-program probes
+(`i.sh` / `elab_probe.py one`), and pushes the tip WITHOUT a corpus or gate run.  The tester
+(session `loft-30`, its own machine) runs the development gate on every new tip of
+`origin/tuxedo-pln204-int32` and reports the gate line, every verdict change and the first
+diff lines of each differing program; on a tip with 0 differ it runs the real gate and puts
+the baseline commit on `loft30-gate`.  A gate cell is added only where NO agreeing suite
+program covers the ported construct (owner: a port that makes existing programs agree needs no
+test of its own).
+
+Tips pushed for the tester after the last real-gate baseline (0a48655a8: 966 of 2224, 0 differ):
+3b461da35 capturing lambdas stored in struct fields (write, split layout, read, union record,
+host cascade); de1b8063f a struct-enum match at a text function's tail, and a nullable
+struct-enum field handed to an `E?` parameter; 9bc62b395 a short lambda hinted by a field's
+type or its function's result.
+
+The largest block left is GENERICS (`instantiate` in `el_ex_call.loft` carries one type
+variable bound to a scalar, a text or a plain record; a dozen refusal families, well over a
+hundred programs between them: instances at an enum / tuple / vector, more than one type
+variable, `a generic local over the type variable in another shape`, short lambdas handed to
+`map` / `filter` / `sort_by`).  Rust's side is `src/parser/monomorph.rs` and `generics.rs`
+(about 4,000 lines): a wholesale port, not a batch.
+
 **A split for a second agent (owner's proposal, 2026-11-17).**  The front end is the slow
 layer: 959 of 2220 by the real gate, about 1,340 distinct refusal texts left, most worth one
 or two programs.  What moves tens of programs is a whole FEATURE ported from the Rust source in
