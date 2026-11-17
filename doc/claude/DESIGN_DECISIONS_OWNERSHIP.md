@@ -55,7 +55,7 @@ emitted code).
 2026-10-05 (loft#1867, loft#1877) — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
 **Holds at:** `OpChildRec` (`Parser::emit_fn_ref_field_write`), `Parser::cascade_fn_fields`,
 `capture_adoption::claimed_into_delivered`;
-`loft-suite/rules/closures/L-Escape/1867-a-returned-struct-keeps-its-closure-capture.loft`, `tests/issues.rs::issue_1867_*`.
+`loft-suite/rules/closures/L-Escape/a-closure-escapes-in-a-struct-and-keeps-its-captures.loft`, `tests/issues.rs::issue_1867_*`.
 **Catalogue:** @F22 (closures & lambdas).
 
 ## C77 — Binding ownership: heap aliases by default; `&` binds a live reference

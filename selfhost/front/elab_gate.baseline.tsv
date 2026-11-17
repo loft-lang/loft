@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	815cd1314f0c9c41a806cb0a013b09eb5a229a2c
+suite	1373baadc2ac0f0dd18540f94b1d601060919808
 
-layer	elab	agree	1031	of	2161
+layer	elab	agree	1031	of	2160
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -176,11 +176,10 @@ elab	refused	loft-suite/rules/closures/L-CapRef/a-captured-ref-parameter-shares-
 elab	refused	loft-suite/rules/closures/L-CapScalar/a-captured-scalar-keeps-its-type-and-its-moment.loft
 elab	refused	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft
 elab	refused	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft
-elab	refused	loft-suite/rules/closures/L-Escape/1867-a-returned-struct-keeps-its-closure-capture.loft
 elab	refused	loft-suite/rules/closures/L-Escape/1874-a-fn-field-holds-any-closure.loft
 elab	refused	loft-suite/rules/closures/L-Escape/1877-a-closure-carrying-struct-placed-in-a-field-releases-what-it-displaces.loft
 elab	refused	loft-suite/rules/closures/L-Escape/2492b-a-callee-that-only-calls-takes-a-capturing-closure.loft
-elab	refused	loft-suite/rules/closures/L-Escape/a-closure-escapes-into-a-parameter-or-out-of-a-callee.loft
+elab	refused	loft-suite/rules/closures/L-Escape/a-closure-escapes-in-a-struct-and-keeps-its-captures.loft
 elab	refused	loft-suite/rules/closures/L-Escape/a-function-type-can-name-a-link-parameter.loft
 elab	refused	loft-suite/rules/closures/L-Fn/1869-a-closure-captures-a-fn-ref-holding-a-closure.loft
 elab	refused	loft-suite/rules/closures/L-Fn/a-closure-captures-what-its-body-names.loft
