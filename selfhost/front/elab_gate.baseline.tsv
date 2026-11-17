@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	1e2ed270081cd84244de5d21d455a4bdfdb6fdc9
+suite	c8d27d1be8b1c0c1236cd16628aa2dabbf972d9e
 
-layer	elab	agree	964	of	2193
+layer	elab	agree	964	of	2190
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -87,11 +87,8 @@ elab	refused	loft-suite/rules/binding/B-Scope/a-sub-pattern-capture-leaves-the-o
 elab	refused	loft-suite/rules/binding/B-Scope/a-sub-pattern-name-and-a-variant-typed-element-compile.loft
 elab	refused	loft-suite/rules/binding/B-View-Depth/a-tuple-copies-what-a-plain-bind-would-view.loft
 elab	refused	loft-suite/rules/binding/B-View/1184-a-view-assigned-back-onto-its-own-source.loft
-elab	refused	loft-suite/rules/binding/B-View/1664-a-group-member-payload-binding-materialises-like-any-view.loft
 elab	refused	loft-suite/rules/binding/B-View/1665-a-text-payload-binding-stops-writing-into-a-reassigned-subject.loft
-elab	refused	loft-suite/rules/binding/B-View/2362-a-nullable-view-materialises-like-its-dense-twin.loft
-elab	refused	loft-suite/rules/binding/B-View/2404-a-discharged-element-is-a-view-whatever-the-declaration-order.loft
-elab	refused	loft-suite/rules/binding/B-View/2447-a-view-through-a-discharged-local-materialises-like-a-plain-one.loft
+elab	refused	loft-suite/rules/binding/B-View/a-view-materialises-where-its-container-is-disturbed-whatever-spells-it.loft
 elab	refused	loft-suite/rules/binding/B-View/a-view-written-back-into-its-written-place-restores-nothing.loft
 elab	refused	loft-suite/rules/binding/Const-Foreign/a-mapped-vector-appended-as-an-element-is-copied.loft
 elab	refused	loft-suite/rules/binding/Const-Value/a-copy-out-of-a-const-is-the-copys-own.loft
