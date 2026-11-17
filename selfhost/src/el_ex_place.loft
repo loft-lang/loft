@@ -2316,7 +2316,11 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       match e.p.nodes[fi] {
         SFieldInit { name: fname, e: fe } => {
           empty = match e.p.nodes[fe ?? 0] { SVecLit { items } => fe != null && len(items) == 0, _ => false };
-          if group.contains(field_position(e, d, fname)) && !empty {
+          // (A VECTOR member is filled as any vector field is — its header is zeroed with the
+          // group's; a keyed member's bulk fill is not carried.)
+          fa_nr = attr_nr(def, fname);
+          vec_member = fa_nr >= 0 && el_types::base(def.attributes[fa_nr]!.typedef[0] ?? ir::TyVoid) is TyVector;
+          if group.contains(field_position(e, d, fname)) && !empty && !vec_member {
             el::refuse(e, "a literal that fills a member of a linked collection group");
             return null;
           }
