@@ -213,6 +213,10 @@ pub struct Vars {
   pub comp_place: vector<ir::Node> = [],
   // A keyed write's collection root while its value is read (-1 outside one), and the field
   // values staged ahead of the value's record because they read that collection.
+  // A record literal being written into a place (one node), and what it stages ahead of its
+  // field writes — the place's old record snapshot where a field reads it.
+  pub lit_place: vector<ir::Node> = [],
+  pub lit_stage: vector<ir::Node> = [],
   pub self_read: integer = -1,
   pub self_stage: vector<ir::Node> = [],
   // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.

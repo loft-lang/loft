@@ -745,7 +745,7 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // A vector field is written in place like any other (its handle zeroed, the value appended).
   for a in el::def(e, rd).attributes {
     at = a.typedef[0] ?? ir::TyVoid;
-    if !el_convert::plain_scalar(at) && !(at is TyText) && !(el_types::base(at) is TyVector) && !(el_types::base(at) is TyReference && struct_ref(e, at) >= 0) {
+    if !el_convert::plain_scalar(at) && !(at is TyText) && !(el_types::base(at) is TyVector) && !(el_types::base(at) is TyReference && struct_ref(e, at) >= 0) && !el_schema::out_of_line(e, rd, a#index) {
       el::refuse(e, "a record literal written into a field or an element: a field that is no plain scalar");
       return ex(ir::NdNull, ir::TyVoid);
     }
@@ -779,10 +779,22 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
     el_ex_pattern::first_pass_fields(e, vars, rd, fields);
     return ex(ir::NdNull, ir::TyVoid);
   }
-  ops = fields_at(e, vars, root, place, rd, fields);
-  if ops == null {
+  outer_place = vars.lit_place;
+  outer_lstage = vars.lit_stage;
+  vars.lit_place = [place];
+  vars.lit_stage = [];
+  built = fields_at(e, vars, root, place, rd, fields);
+  lstage = vars.lit_stage;
+  vars.lit_place = outer_place;
+  vars.lit_stage = outer_lstage;
+  if built == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // (The place's old record, where a field reads it, is snapshot ahead of every field write.)
+  if len(lstage) > 0 {
+    return ex(ir::NdInsert { items: lstage + built! }, ir::TyVoid);
+  }
+  ops = built;
   viewers = el_expressions::store_viewers(vars, root) + [root];
   for op in ops! {
     match op {
@@ -3043,6 +3055,14 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
     xc = el_ir::unspan(x.code);
     xd = match el_types::base(x.tp) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
     same = xd >= 0 && (xd == sd || (el::def(e, xd).def_type == el::DT_ENUM_VALUE && el::def(e, xd).parent == sd));
+    // A literal written into a PLACE whose out-of-line field is given that place's own old
+    // record (`o.g = N { v: 5, next: o.g }`): the old record is snapshot by a copy into a work
+    // ref ahead of the field writes (`staged_heap_copy`), and the child set from the copy.
+    if init && same && len(vars.lit_place) == 1 && xc == el_ir::unspan(vars.lit_place[0]!) && kt != el_schema::NO_TYPE && sd >= 0 && el::def(e, sd).def_type == el::DT_STRUCT {
+      pw = el_vars::work_ref_p2(vars, ir::TyReference { n: sd, dep: [] });
+      vars.lit_stage += [el_ir::v_set(pw, ir::NdNull), el_ir::v_block([el_ir::cl(e, "OpDatabase", [ir::NdVar { n: pw }, k]), el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: pw }, k])], ir::TyVoid, "tuple_member_copy_fill")];
+      return el_ir::cl(e, "OpSetChildRec", [field, ir::NdVar { n: pw }, k]);
+    }
     // The record the field lies in, handed to its own child, is demoted into it
     // (`place_demote`, `OpDemoteRec`): not carried.
     if same && xc is NdVar && xc == ir::NdVar { n: place_root(e, field) } {
