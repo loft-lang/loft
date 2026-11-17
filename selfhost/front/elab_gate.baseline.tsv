@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	c79821015c2727754bdca4894c183970b8c4073d
+suite	d565b18c4e8a699ebc07068332332c57caa960e4
 
-layer	elab	agree	964	of	2185
+layer	elab	agree	964	of	2184
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -105,9 +105,8 @@ elab	refused	loft-suite/rules/calls/F-Block/f_block_place_lib.loft
 elab	refused	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft
 elab	refused	loft-suite/rules/calls/F-Default-Field/a-field-default-reads-the-record-it-fills.loft
 elab	refused	loft-suite/rules/calls/F-Default/1758-a-text-tuple-default-answers-what-its-argument-would.loft
-elab	refused	loft-suite/rules/calls/F-Default/2410-a-unit-variant-of-a-struct-enum-is-a-parameter-default.loft
+elab	refused	loft-suite/rules/calls/F-Default/a-default-is-well-formed-wherever-the-same-argument-is.loft
 elab	refused	loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft
-elab	refused	loft-suite/rules/calls/F-Default/a-match-default-over-records-compiles.loft
 elab	refused	loft-suite/rules/calls/F-OneBody/2318-a-library-function-under-a-runtime-natives-name-leaves-the-runtimes-call.loft
 elab	refused	loft-suite/rules/calls/F-Package/a-package-reads-as-pub-in-its-own-directory-and-passes-nothing-on.loft
 elab	refused	loft-suite/rules/calls/F-Package/f_package_relay_lib.loft

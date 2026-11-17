@@ -95,7 +95,7 @@ arguments already in hand.  The compiler either replays the default's expression
 (substituting the call's own arguments for the earlier parameters) or lowers it into a small
 function that takes them — which one is an implementation choice, and neither may change the
 answer.  Guarded by `loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft` (the
-values) and `a-match-default-over-records-compiles.loft` (a lowered default well-formed where its
+values) and `a-default-is-well-formed-wherever-the-same-argument-is.loft` (a lowered default well-formed where its
 argument is), and `1758-a-text-tuple-default-answers-what-its-argument-would.loft` (a lowered default
 returning a lifetime-bearing tuple is boxed like a declared one and unboxed where it becomes the
 argument, `@FR-F-Ret`).
