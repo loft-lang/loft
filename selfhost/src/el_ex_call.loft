@@ -2751,6 +2751,14 @@ pub fn nullable_getter(e: el::El, code: ir::Node) -> ir::Node {
   match el_ir::unspan(code) {
     NdCall { def_nr, args } => {
       gn = el::def(e, def_nr).name;
+      // (A struct enum's element is read through its record field: the getter under it.)
+      if gn == "OpGetField" && len(args) == 3 {
+        under = match el_ir::unspan(args[0]!) { NdCall { def_nr: ud, args: _ } => el::def(e, ud).name, _ => "" };
+        if under == "OpGetVector" || under == "OpVectorRef" {
+          return el_ir::cl(e, "OpGetField", [nullable_getter(e, args[0]!), args[1]!, args[2]!]);
+        }
+        return code;
+      }
       if gn == "OpGetVector" || gn == "OpVectorRef" { el_ir::cl(e, "{gn}Nullable", args) } else { code }
     },
     _ => code

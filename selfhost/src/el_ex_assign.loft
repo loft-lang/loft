@@ -3282,7 +3282,12 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   if !e.first_pass {
     slot = el_vars::tp(vars, v);
     g = el_convert::guard_discharge(e, vars, x.code, slot);
-    x.code = g ?? el_convert::guard_range(e, x.code, slot, el_convert::guard_source(vars, x.code, x.tp), slot is TyOptional);
+    // (`@FR-P-Opt-Ty`: an optional group's capture of a narrow field keeps the field's whole
+    // range beside its null; a local bound to it takes that type, so nothing is guarded.)
+    capture_bind = match el_ir::unspan(x.code) { NdVar { n: cbv } => el_vars::name_of(vars, cbv).starts_with("_mv_") && el_types::is_same(slot, x.tp), _ => false };
+    if !capture_bind {
+      x.code = g ?? el_convert::guard_range(e, x.code, slot, el_convert::guard_source(vars, x.code, x.tp), slot is TyOptional);
+    }
   }
   // A bare `null` written to a `τ?` local is stored as `convert_store` stores it: a record,
   // collection or struct enum's reference sentinel, a scalar's or a text's own null

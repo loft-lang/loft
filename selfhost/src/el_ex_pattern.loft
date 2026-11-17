@@ -2064,7 +2064,21 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   mixed = len(recs) > 0 && len(recs) != len(xs);
   // Mixed with items that are no literal, each element is made in order: carried for a plain
   // struct's literals beside items of that struct (variants and nested literals are not).
+  // (A struct enum's variant literals beside other values of that enum — a unit variant, a
+  // local — are carried the same way, each other value copied into its fresh element.)
+  mixed_enum = -1;
   if mixed {
+    all_variants = len([for it in recs if variant_literal_def(e, it) < 0 { it }]) == 0;
+    if all_variants {
+      mixed_enum = el::def(e, variant_literal_def(e, recs[0]!)).parent;
+      for it in recs {
+        if el::def(e, variant_literal_def(e, it)).parent != mixed_enum {
+          mixed_enum = -1;
+        }
+      }
+    }
+  }
+  if mixed && mixed_enum < 0 {
     for it in recs {
       if struct_literal_def(e, it) < 0 || struct_literal_def(e, it) != struct_literal_def(e, recs[0]!) {
         el::refuse(e, "a vector literal mixing struct literals and other items");
@@ -2333,12 +2347,19 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       }
     }
     at = ir::NdVar { n: elm };
-    if mixed && (struct_ref(e, in_t) != rd || len(rec_at) != len(xs)) {
+    if mixed && mixed_enum >= 0 && (el_types::struct_enum_def(in_t) != mixed_enum || len(rec_at) != len(xs)) {
       el::refuse(e, "a vector literal mixing struct literals and other items");
       return refused_build();
     }
-    if mixed {
+    if mixed && mixed_enum < 0 && (struct_ref(e, in_t) != rd || len(rec_at) != len(xs)) {
+      el::refuse(e, "a vector literal mixing struct literals and other items");
+      return refused_build();
+    }
+    if mixed && mixed_enum < 0 {
       el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    }
+    if mixed && mixed_enum >= 0 {
+      el_vars::set_var_type(vars, elm, ir::TyEnum { n: mixed_enum, is_ref: true, dep: [v] });
     }
     order: vector<integer> = if mixed { rec_at } else { recs };
     pre_ops: vector<ir::Node> = [];
@@ -2374,6 +2395,17 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       // An item that is no literal (`build_vector_list`'s record arm): copied into its element.
       if it < 0 {
         ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+        if mixed_enum >= 0 {
+          // A value of the enum is copied whole into the fresh element.
+          mx = xs[it#index]!;
+          if el_types::struct_enum_def(mx.tp) != mixed_enum || mx.tp is TyOptional {
+            el::refuse(e, "a vector literal mixing variant literals with a value that is no plain value of their enum: {type_kind(mx.tp)}");
+            return refused_build();
+          }
+          ls += [el_ir::cl(e, "OpCopyRecord", [mx.code, at, ir::NdInt { n: el::def(e, mixed_enum).known_type + 16384 }])];
+          ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+          continue;
+        }
         copy = el_ex_match::record_item_copy(e, vars, elm, rd, xs[it#index]!);
         if copy == null {
           return refused_build();

@@ -697,7 +697,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
   senum = el_convert::struct_enum(b);
   code = if record || vec || senum { x.code } else { nullable_arith(e, x.code, true) };
   // An element under `!` is read with the nullable getter: the `!` answers its absence.
-  if record {
+  if record || senum {
     code = el_ex_call::nullable_getter(e, code);
   }
   held = -1;
