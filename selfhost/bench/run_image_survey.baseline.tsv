@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	front	agree	3	of	1291
+layer	front	agree	50	of	1291
 front	refused	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft
 front	unscoped	loft-suite/rules/binding/B-Copy/1353-a-nullable-record-from-a-fn-ref-copies-when-reassigned-or-joined.loft
 front	refused	loft-suite/rules/binding/B-Copy/1472-a-materialised-value-struct-view-keeps-its-absence.loft
@@ -60,7 +60,6 @@ front	unscoped	loft-suite/rules/binding/Const-Foreign/a-view-of-foreign-data-rea
 front	unscoped	loft-suite/rules/binding/Const-Foreign/a-whole-copy-of-a-foreign-record-is-the-readers-own.loft
 front	refused	loft-suite/rules/binding/Const-Value/a-value-const-scalar-local-can-be-declared.loft
 front	refused	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-and-a-rest-is-fresh.loft
-front	unscoped	loft-suite/rules/calls/F-Block/1382-a-statement-if-discards-either-arms-value.loft
 front	unscoped	loft-suite/rules/calls/F-Block/2456-a-statement-match-whose-arm-assigns-its-vector-capture-is-a-statement.loft
 front	unscoped	loft-suite/rules/calls/F-Block/a-block-yields-a-call-on-a-reference-to-any-place.loft
 front	refused	loft-suite/rules/calls/F-Block/a-match-at-a-tail-answers-its-arm-not-a-temporarys-free.loft
@@ -70,7 +69,6 @@ front	refused	loft-suite/rules/calls/F-OneBody/2318-a-library-function-under-a-r
 front	refused	loft-suite/rules/calls/F-Package/a-package-reads-as-pub-in-its-own-directory-and-passes-nothing-on.loft
 front	refused	loft-suite/rules/calls/F-ParamRef/a-slot-parameter-writes-the-field-it-is-handed.loft
 front	refused	loft-suite/rules/calls/F-ParamScalar/a-compound-write-to-a-tuple-parameters-member-is-the-callees-copy.loft
-front	unscoped	loft-suite/rules/calls/F-ParamScalar/a-generic-scalar-parameter-reassigns-like-its-twin.loft
 front	refused	loft-suite/rules/calls/F-ParamScalar/a-generic-text-parameter-reassigns-like-its-twin.loft
 front	refused	loft-suite/rules/calls/F-ParamScalar/a-scalar-parameter-is-a-copy-at-every-call-form.loft
 front	refused	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft
@@ -79,7 +77,6 @@ front	unscoped	loft-suite/rules/calls/F-Rec/a-recursion-over-an-index-arena-runs
 front	refused	loft-suite/rules/calls/F-Rec/a-recursive-call-gets-its-own-frame.loft
 front	unscoped	loft-suite/rules/calls/F-Recv/1780-a-method-call-dispatches-on-every-argument-like-the-call.loft
 front	refused	loft-suite/rules/calls/F-Recv/1826-an-operator-reaches-a-template-member-as-its-call-does.loft
-front	unscoped	loft-suite/rules/calls/F-Recv/a-method-and-its-nullable-twin-are-two-bodies.loft
 front	refused	loft-suite/rules/calls/F-Ret/1345-a-nullable-vector-return-of-a-projection-is-copied.loft
 front	unscoped	loft-suite/rules/calls/F-Ret/1346-a-nullable-record-from-a-call-copies-when-reassigned-or-joined.loft
 front	refused	loft-suite/rules/calls/F-Ret/1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft
@@ -124,7 +121,7 @@ front	refused	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-lo
 front	refused	loft-suite/rules/closures/L-CapOwn/2282-a-frame-answering-text-releases-the-closure-it-holds.loft
 front	unscoped	loft-suite/rules/closures/L-CapOwn/2354-a-displaced-fn-field-record-pre-init-runs-no-cascade.loft
 front	unscoped	loft-suite/rules/closures/L-CapOwn/2487-a-lambda-argument-in-a-loop-borrows-what-it-captured.loft
-front	refused	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft
+front	unscoped	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft
 front	refused	loft-suite/rules/closures/L-CapRebind/a-captured-keyed-local-keeps-its-store-through-every-rebind.loft
 front	refused	loft-suite/rules/closures/L-CapRebind/a-rebound-capture-is-released-once-by-whoever-keeps-it.loft
 front	refused	loft-suite/rules/closures/L-CapRef/a-captured-ref-parameter-shares-its-heap-pointee-and-copies-its-scalar.loft
@@ -198,7 +195,6 @@ front	unscoped	loft-suite/rules/coroutines/G-Yield/a-generator-yields-a-tuple-th
 front	refused	loft-suite/rules/coroutines/G-Yield/a-yielded-value-converts-into-its-element-type.loft
 front	unscoped	loft-suite/rules/dispatch/D-Rank/a-bounded-template-takes-the-call-its-bound-admits.loft
 front	unscoped	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft
-front	unscoped	loft-suite/rules/dispatch/D-Rank/a-nullability-step-on-a-widening-is-no-conversion.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Applicable/a-null-literal-reaches-the-nullable-member.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Applicable/a-nullable-argument-reaches-its-nullable-member-in-a-wider-set.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Applicable/a-set-member-takes-every-argument-its-lone-twin-takes.loft
@@ -210,19 +206,16 @@ front	unscoped	loft-suite/rules/dispatch/Disp-Exhaustive/a-covered-call-is-cover
 front	unscoped	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Hint/a-nullable-receiver-split-keeps-the-hint-of-each-spelling.loft
 front	refused	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft
-front	unscoped	loft-suite/rules/dispatch/Disp-Key/a-consumer-method-of-another-spelling-joins-a-library-method-set.loft
+front	unwritten	loft-suite/rules/dispatch/Disp-Key/a-consumer-method-of-another-spelling-joins-a-library-method-set.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft
-front	unscoped	loft-suite/rules/dispatch/Disp-Key/a-qualified-call-answers-the-same-whatever-the-import-spelling.loft
-front	unscoped	loft-suite/rules/dispatch/Disp-Key/a-qualified-call-reaches-only-the-librarys-own-definitions.loft
+front	unwritten	loft-suite/rules/dispatch/Disp-Key/a-qualified-call-answers-the-same-whatever-the-import-spelling.loft
+front	unwritten	loft-suite/rules/dispatch/Disp-Key/a-qualified-call-reaches-only-the-librarys-own-definitions.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Key/one-consumer-member-of-another-spelling-joins-a-library-set.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Key/three-consumer-members-of-other-spellings-join-a-library-set.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Match-Equiv/a-set-with-a-resolving-member-and-its-match-agree-on-every-tuple.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Return/a-runtime-decided-call-needs-its-members-to-agree.loft
-front	unscoped	loft-suite/rules/dispatch/Disp-Select/the-unique-most-specific-member-is-chosen-in-any-declaration-order.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Specific/a-present-value-widens-into-a-nullable-member-before-a-conversion.loft
-front	unscoped	loft-suite/rules/dispatch/Disp-Specific/a-u32-widens-into-integer-and-integer-does-not-widen-into-i32.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Specific/a-variant-widens-into-its-enum-before-the-nullable-of-it.loft
-front	unscoped	loft-suite/rules/dispatch/Disp-Specific/an-integer-widens-only-into-a-range-that-holds-all-of-it.loft
 front	unscoped	loft-suite/rules/dispatch/Disp-Specific/each-rank-beats-the-next-at-one-position.loft
 front	unscoped	loft-suite/rules/formatting/F-Interp/2262-a-view-of-a-call-result-in-a-hole-compiles.loft
 front	refused	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft
@@ -230,8 +223,6 @@ front	unscoped	loft-suite/rules/formatting/F-Render-Child/2430-a-chain-of-any-le
 front	refused	loft-suite/rules/formatting/F-Spec/1165-a-format-spec-tunes-every-rendering.loft
 front	unscoped	loft-suite/rules/formatting/F-Spec/a-format-pad-reaches-the-float-renderers.loft
 front	unscoped	loft-suite/rules/formatting/F-Spec/a-format-spec-is-honoured-not-dropped.loft
-front	unscoped	loft-suite/rules/formatting/F-Spec/a-json-spec-spelling-is-one-decision.loft
-front	unscoped	loft-suite/rules/formatting/F-Spec/a-width-may-precede-any-base-letter.loft
 front	unscoped	loft-suite/rules/grammar/G-Pat-Group/a-parenthesised-alternation-is-a-pattern-group.loft
 front	unscoped	loft-suite/rules/grammar/G-Pat-Group/a-parenthesised-range-pattern-finishes-parsing.loft
 front	refused	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft
@@ -372,7 +363,6 @@ front	unscoped	loft-suite/rules/layout/L-Total/a-record-the-program-links-is-sto
 front	refused	loft-suite/rules/layout/L-Total/every-type-has-one-layout-whichever-spelling-asks.loft
 front	refused	loft-suite/rules/layout/L-Tuple/a-tuple-packs-by-descending-alignment-and-pads-to-its-largest.loft
 front	refused	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft
-front	unscoped	loft-suite/rules/matching/M-Match/a-long-integer-match-runs-each-arm-as-its-if-chain.loft
 front	unscoped	loft-suite/rules/matching/M-Match/a-match-evaluates-its-subject-once.loft
 front	unscoped	loft-suite/rules/matching/M-Match/a-match-on-a-literal-types-on-both-passes.loft
 front	refused	loft-suite/rules/matching/M-Match/a-match-over-a-later-function-reads-every-pattern-kind.loft
@@ -411,7 +401,6 @@ front	refused	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft
 front	refused	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft
 front	refused	loft-suite/rules/matching/P-Revert/a-reverted-alternative-drops-the-bindings-it-wrote.loft
 front	refused	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft
-front	unscoped	loft-suite/rules/operational/E-And/2259-two-calls-with-one-text-are-two-calls.loft
 front	refused	loft-suite/rules/operational/E-Asgn-Compound/1825-a-compound-place-with-a-side-effecting-index-is-addressed-once.loft
 front	refused	loft-suite/rules/operational/E-Asgn-Compound/1827-a-text-compound-appends-the-rendering-of-any-value.loft
 front	refused	loft-suite/rules/operational/E-Asgn/1574-a-literal-rebuilt-into-a-local-is-computed-from-the-old-record.loft
@@ -422,7 +411,6 @@ front	refused	loft-suite/rules/operational/E-Eq/a-discharged-local-compared-in-a
 front	refused	loft-suite/rules/operational/E-Eq/a-value-struct-with-methods-compares-by-its-fields.loft
 front	refused	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft
 front	refused	loft-suite/rules/operational/E-Left/2451-a-record-assigned-into-an-element-lands-where-the-place-was-when-it-ran.loft
-front	unscoped	loft-suite/rules/operational/E-NullArg/pln102-null-comparison-uniform.loft
 front	unscoped	loft-suite/rules/operational/E-Op-IntDivMod/integer-division-truncates-and-the-remainder-takes-the-dividends-sign.loft
 front	unscoped	loft-suite/rules/operational/E-Report/a-guarded-locked-write-runs-its-arm-and-reports-nothing.loft
 front	refused	loft-suite/rules/operational/E-Truthy/a-boolean-operator-answers-a-definite-boolean.loft
@@ -485,7 +473,7 @@ front	unscoped	loft-suite/rules/ownership/O-Latest/a-discharged-projection-mater
 front	unscoped	loft-suite/rules/ownership/O-Latest/a-shared-destination-releases-the-arm-that-did-not-run.loft
 front	unscoped	loft-suite/rules/ownership/O-Latest/a-tail-call-frees-the-store-its-buffer-var-stops-holding.loft
 front	refused	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft
-front	refused	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft
+front	unscoped	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft
 front	unscoped	loft-suite/rules/ownership/O-LazyBuffer/a-path-that-makes-no-call-frees-only-the-null-sentinel.loft
 front	refused	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft
 front	refused	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft
@@ -571,7 +559,7 @@ front	refused	loft-suite/rules/rewrites/R-ElemFirst/a-row-built-in-its-element-f
 front	refused	loft-suite/rules/rewrites/R-ElementPath/an-element-read-in-range-answers-what-the-full-path-answers.loft
 front	unscoped	loft-suite/rules/rewrites/R-Escape/a-switch-a-b-compares-what-a-program-computes-never-its-representation.loft
 front	unscoped	loft-suite/rules/rewrites/R-ExitVector/a-local-vector-moved-into-the-exit-literal-keeps-every-element.loft
-front	unscoped	loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft
+front	fault	loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft
 front	unscoped	loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft
 front	refused	loft-suite/rules/rewrites/R-FieldAppend/a-plain-append-beside-a-destination-call-lands-in-its-own-slot.loft
 front	refused	loft-suite/rules/rewrites/R-FieldAppend/a-straight-line-append-to-a-record-field-is-its-own-slot-for-every-element-shape.loft
@@ -583,7 +571,6 @@ front	unscoped	loft-suite/rules/rewrites/R-FlatCopy/a-flat-copy-moves-its-bytes-
 front	unscoped	loft-suite/rules/rewrites/R-FlatCopy/a-record-that-owns-no-heap-copies-as-its-bytes.loft
 front	refused	loft-suite/rules/rewrites/R-FnRefValue/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft
 front	unscoped	loft-suite/rules/rewrites/R-FoldCompare/a-text-predicate-over-a-case-fold-builds-no-fold.loft
-front	unscoped	loft-suite/rules/rewrites/R-FormatAppend/a-format-appended-by-rebinding-reads-its-destination-as-it-stood.loft
 front	refused	loft-suite/rules/rewrites/R-FormatAppend/an-appended-format-goes-into-its-destination-unless-a-hole-reads-it.loft
 front	refused	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-built-by-a-call-holds-the-header-and-the-appended-payload.loft
 front	refused	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft
@@ -622,15 +609,13 @@ front	unscoped	loft-suite/rules/rewrites/R-LiteralAppend/a-bound-record-literal-
 front	unscoped	loft-suite/rules/rewrites/R-LiteralWalk/a-walk-of-scalar-literal-items-takes-each-item-once-in-order.loft
 front	unscoped	loft-suite/rules/rewrites/R-LoopBuffer/157-loop-buffer.loft
 front	unscoped	loft-suite/rules/rewrites/R-LoopBuffer/a-kept-loop-buffer-is-a-fresh-vector-and-a-heap-element-one-is-not-kept.loft
-front	unscoped	loft-suite/rules/rewrites/R-MaskRange/a-mask-goes-only-where-the-range-facts-carried-through-the-body-prove-it.loft
-front	unscoped	loft-suite/rules/rewrites/R-MaskRange/a-mask-over-a-shifted-summed-or-merged-range-goes-only-as-far-as-the-range-reaches.loft
 front	refused	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft
 front	unscoped	loft-suite/rules/rewrites/R-MoveChild/a-link-set-to-its-own-childs-child-leaves-the-rest-of-the-chain.loft
 front	refused	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
 front	unscoped	loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft
 front	unscoped	loft-suite/rules/rewrites/R-MoveLast/a-literal-host-keeps-the-copy-where-a-reference-names-into-the-vector.loft
 front	unscoped	loft-suite/rules/rewrites/R-MoveLast/a-vector-given-up-to-another-local-is-exchanged-only-where-exact.loft
-front	refused	loft-suite/rules/rewrites/R-Place/164-place-result.loft
+front	unscoped	loft-suite/rules/rewrites/R-Place/164-place-result.loft
 front	refused	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft
 front	unscoped	loft-suite/rules/rewrites/R-Place/a-place-in-a-store-a-parameter-names-into-is-filled-as-written.loft
 front	unscoped	loft-suite/rules/rewrites/R-Place/a-placed-loop-buffer-is-released-at-every-exit.loft
@@ -653,12 +638,10 @@ front	refused	loft-suite/rules/rewrites/R-PushFill/vectors-built-side-by-side-ea
 front	unscoped	loft-suite/rules/rewrites/R-PushRec/a-record-append-across-a-writing-call-keeps-every-element-it-minted.loft
 front	refused	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft
 front	refused	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft
-front	unscoped	loft-suite/rules/rewrites/R-Range/a-counted-loops-step-is-plain-whatever-its-end.loft
 front	unscoped	loft-suite/rules/rewrites/R-Range/a-counter-stepped-down-once-a-trip-indexes-without-the-wrap.loft
-front	unscoped	loft-suite/rules/rewrites/R-Range/abs-is-ranged-and-a-loop-end-is-above-its-counter-in-the-body.loft
 front	unscoped	loft-suite/rules/rewrites/R-RangedCall/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.loft
 front	unscoped	loft-suite/rules/rewrites/R-RangedCall/a-ranged-variant-runs-plain-only-the-operators-its-intervals-prove.loft
-front	refused	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft
+front	unscoped	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft
 front	unscoped	loft-suite/rules/rewrites/R-Rebind/a-rebind-into-its-own-record-releases-the-field-it-replaces.loft
 front	unscoped	loft-suite/rules/rewrites/R-Rebind/a-rebind-whose-call-is-not-made-mints-nothing.loft
 front	unscoped	loft-suite/rules/rewrites/R-RecPtr/a-callee-twin-holds-its-record-address-like-the-plain-function.loft
@@ -680,39 +663,32 @@ front	unscoped	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back
 front	unscoped	loft-suite/rules/rewrites/R-RepeatRun/a-spelled-out-run-of-one-constant-builds-the-same-vector.loft
 front	refused	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft
 front	unscoped	loft-suite/rules/rewrites/R-ReturnField/a-returned-field-handed-over-on-a-path-that-made-the-call.loft
-front	unscoped	loft-suite/rules/rewrites/R-Rotate/a-rotated-loop-stores-its-variable-unless-it-shares-the-index-slot.loft
 front	unscoped	loft-suite/rules/rewrites/R-SameRead/a-lookup-of-the-key-just-filed-is-the-record.loft
 front	refused	loft-suite/rules/rewrites/R-SameRead/a-slice-match-reads-its-subject-once.loft
 front	unscoped	loft-suite/rules/rewrites/R-SameRead/a-sum-a-leaving-guard-shares-with-the-next-statement-is-computed-once.loft
 front	unscoped	loft-suite/rules/rewrites/R-Scalar/a-hoisted-field-is-evicted-by-every-in-place-write-that-reaches-it.loft
 front	unscoped	loft-suite/rules/rewrites/R-Scalar/a-hoisted-field-is-reread-where-an-admitted-callee-writes-its-type.loft
-front	unscoped	loft-suite/rules/rewrites/R-ScaleFold/a-power-of-two-scale-answers-what-the-two-roundings-answer.loft
 front	unscoped	loft-suite/rules/rewrites/R-SelfReplace/a-vector-built-in-its-return-buffer-is-delivered-whole.loft
 front	unscoped	loft-suite/rules/rewrites/R-SingleUse/a-value-read-once-after-its-store-is-read-in-place.loft
 front	unscoped	loft-suite/rules/rewrites/R-SliceArg/a-slice-argument-shares-no-carrier-with-the-slice-in-use-beside-it.loft
 front	unscoped	loft-suite/rules/rewrites/R-SliceBorrow/a-slice-of-a-borrowed-text-is-read-where-it-lies.loft
 front	refused	loft-suite/rules/rewrites/R-SliceBorrow/a-slice-that-escapes-or-outlives-its-source-keeps-the-bytes-it-was-cut-from.loft
 front	refused	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-to-any-scalar-vector-in-any-place-reads-its-bounds-first.loft
-front	unscoped	loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft
 front	refused	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft
 front	unscoped	loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft
 front	unscoped	loft-suite/rules/rewrites/R-StackBase/a-text-worker-deep-call-keeps-its-work-buffer.loft
 front	unscoped	loft-suite/rules/rewrites/R-StartStep/a-computed-start-steps-one-counter-and-iterates-every-integer-once.loft
-front	unscoped	loft-suite/rules/rewrites/R-StartStep/a-start-stepped-loop-enters-past-its-step-only-when-it-rotates.loft
-front	unscoped	loft-suite/rules/rewrites/R-StartStep/a-start-stepped-loop-reads-its-index-only-through-a-shared-slot.loft
 front	unscoped	loft-suite/rules/rewrites/R-StickySum/a-loop-sum-runs-plain-and-is-null-from-its-first-event.loft
 front	unscoped	loft-suite/rules/rewrites/R-TailSelf/2403-a-tail-call-through-an-unwrapped-part-is-a-jump.loft
 front	unscoped	loft-suite/rules/rewrites/R-TailSelf/a-frame-that-owns-a-store-is-released-before-the-jump.loft
 front	unscoped	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft
 front	refused	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft
-front	unscoped	loft-suite/rules/rewrites/R-TailSelf/a-self-call-in-tail-position-runs-to-any-depth.loft
-front	unscoped	loft-suite/rules/rewrites/R-TailSelf/a-self-call-outside-tail-position-stays-a-call.loft
+front	fault	loft-suite/rules/rewrites/R-TailSelf/a-self-call-in-tail-position-runs-to-any-depth.loft
 front	unscoped	loft-suite/rules/rewrites/R-TextBorrow/a-borrowed-text-rebound-takes-each-bind-whole.loft
 front	unscoped	loft-suite/rules/rewrites/R-TextBorrow/a-compared-field-is-read-where-the-store-holds-it.loft
 front	unscoped	loft-suite/rules/rewrites/R-TextBorrow/a-format-bound-text-borrows-its-work-text.loft
 front	unscoped	loft-suite/rules/rewrites/R-TextBorrow/a-lazy-split-piece-is-borrowed-from-the-text-it-walks.loft
 front	unscoped	loft-suite/rules/rewrites/R-TextBorrow/a-walked-text-borrows-beside-a-split-table.loft
-front	unscoped	loft-suite/rules/rewrites/R-TextLen/a-loop-reads-the-length-of-a-text-as-the-text-stands.loft
 front	unscoped	loft-suite/rules/rewrites/R-TextRun/a-byte-run-read-as-text-answers-what-the-loop-builds-at-every-range.loft
 front	refused	loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-lookup-by-several-integers-or-a-text-finds-the-entry-its-key-names.loft
 front	unscoped	loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-removal-starts-where-the-key-is-found.loft
@@ -768,7 +744,6 @@ front	refused	loft-suite/rules/tuples/T-Record/a-text-tuple-member-holds-its-val
 front	refused	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft
 front	refused	loft-suite/rules/types/C-Never/2388-a-local-bound-to-a-value-that-never-arrives-ends-the-block.loft
 front	refused	loft-suite/rules/types/C-Never/2444-a-diverging-arm-does-not-type-the-match.loft
-front	unscoped	loft-suite/rules/types/C-Never/a-bare-break-or-return-before-a-comma-carries-no-value.loft
 front	refused	loft-suite/rules/types/C-Never/a-diverging-arm-beside-a-text-or-boolean-arm-compiles-natively.loft
 front	refused	loft-suite/rules/types/C-Refl/a-vector-element-of-one-range-meets-every-spelling-of-it.loft
 front	refused	loft-suite/rules/types/C-Var/2315-a-variant-or-null-arm-joins-an-optional-enum-result-over-any-subject.loft
@@ -782,9 +757,7 @@ front	refused	loft-suite/rules/types/C-Var/a-widened-tuple-member-is-a-link-targ
 front	refused	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft
 front	refused	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft
 front	refused	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft
-front	unscoped	loft-suite/rules/types/I-Join/1944-a-compound-step-widens-an-inferred-local.loft
 front	refused	loft-suite/rules/types/I-Join/2066-two-named-widths-join-to-their-union.loft
-front	unscoped	loft-suite/rules/types/N-Arith/1933-arithmetic-over-bounded-integers-is-typed-by-its-range.loft
 front	refused	loft-suite/rules/types/N-Coal/019-a-halting-call-is-a-coalesce-default.loft
 front	refused	loft-suite/rules/types/N-Coal/a-coalesce-proves-the-union-of-its-subject-and-default.loft
 front	refused	loft-suite/rules/types/N-Coal/a-null-can-leave-the-loop-through-a-coalesce.loft
@@ -796,14 +769,12 @@ front	refused	loft-suite/rules/types/N-Decl/a-null-test-on-an-inline-nullable-st
 front	refused	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft
 front	unscoped	loft-suite/rules/types/N-Domain/1450e-the-last-element-idiom-is-a-trusted-index.loft
 front	unscoped	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft
-front	unscoped	loft-suite/rules/types/N-Domain/1450g-the-divisor-guard-is-read-in-every-spelling.loft
 front	refused	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft
 front	refused	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft
 front	unscoped	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft
 front	refused	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft
 front	refused	loft-suite/rules/types/N-Intro/2341-an-arm-that-returns-beside-a-null-arm-still-runs.loft
 front	refused	loft-suite/rules/types/N-Intro/2450-a-nullable-return-of-a-type-declared-below-resolves.loft
-front	unscoped	loft-suite/rules/types/N-Intro/a-null-single-is-null-on-every-backend.loft
 front	refused	loft-suite/rules/types/N-Intro/a-nullable-variant-widens-into-its-enums-nullable-slot.loft
 front	refused	loft-suite/rules/types/N-Join/2305-a-text-match-arm-calling-a-function-declared-below-builds-natively.loft
 front	refused	loft-suite/rules/types/N-Join/2339-a-binding-arm-answering-a-null-block-takes-the-joins-null.loft
@@ -811,8 +782,6 @@ front	refused	loft-suite/rules/types/N-Opt/1471-a-value-struct-is-nullable-throu
 front	refused	loft-suite/rules/types/N-Opt/has-null-is-owed-by-every-rule-that-constructs-an-optional.loft
 front	refused	loft-suite/rules/types/N-Reserve/152-a-store-that-does-not-fit-is-testable-where-it-happened.loft
 front	refused	loft-suite/rules/types/N-Reserve/1692-a-loop-variable-reads-a-nullable-narrow-element-as-null.loft
-front	unscoped	loft-suite/rules/types/N-Reserve/25-nullable-narrow-cast-return.loft
-front	unscoped	loft-suite/rules/types/N-Reserve/25-nullable-narrow-return.loft
 front	refused	loft-suite/rules/types/N-Reserve/a-nullable-narrow-tuple-member-spends-its-top-code-in-every-place.loft
 front	unscoped	loft-suite/rules/types/N-Reserve/a-spare-code-is-the-null-of-a-nullable-and-nothing-of-a-dense-type.loft
 front	refused	loft-suite/rules/types/N-Road/1934-a-nullable-record-return-takes-its-dense-twins-buffer.loft
@@ -846,14 +815,10 @@ front	refused	loft-suite/rules/types/P-Opt-Ty/an-optional-tuple-capture-is-the-i
 front	refused	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-its-expected-return.loft
 front	refused	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft
 front	refused	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft
-front	unscoped	loft-suite/rules/types/T-Sub/1932-a-declared-integer-local-takes-an-enum-tag.loft
 front	refused	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft
 front	refused	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft
 front	refused	loft-suite/rules/types/T-Syn/type-name-of-a-generic-instance-names-its-arguments-as-written.loft
-front	unscoped	tests/scripts/01-integers.loft
-front	unscoped	tests/scripts/02-floats.loft
 front	refused	tests/scripts/03-text.loft
-front	unscoped	tests/scripts/04-booleans.loft
 front	refused	tests/scripts/05-enums.loft
 front	refused	tests/scripts/06-structs.loft
 front	refused	tests/scripts/07-control-flow.loft
@@ -861,24 +826,20 @@ front	refused	tests/scripts/08-functions.loft
 front	refused	tests/scripts/1001-any-all-count-if-closure-predicate.loft
 front	refused	tests/scripts/1004-tuple-text-element-write.loft
 front	unscoped	tests/scripts/1009-width-type-bounds.loft
-front	unscoped	tests/scripts/102-escape-sequences.loft
 front	unscoped	tests/scripts/103-arguments.loft
 front	unscoped	tests/scripts/1062-self-append-reallocation.loft
 front	unscoped	tests/scripts/1064-load-keys-text.loft
-front	unscoped	tests/scripts/108-path-helpers.loft
 front	refused	tests/scripts/11-vectors.loft
 front	refused	tests/scripts/113-fread-inferred-size.loft
 front	refused	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft
 front	unscoped	tests/scripts/114-file-sync.loft
 front	refused	tests/scripts/115-snapshot-roundtrip.loft
 front	unscoped	tests/scripts/116-file-append-log.loft
-front	unscoped	tests/scripts/117-deep-stack.loft
 front	unscoped	tests/scripts/119-keyed-local-reassign.loft
 front	refused	tests/scripts/12-collections.loft
 front	refused	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft
 front	refused	tests/scripts/1235-a-returned-text-outlives-its-store.loft
 front	refused	tests/scripts/124-vector-amortised-growth.loft
-front	unscoped	tests/scripts/125-native-text-arg.loft
 front	unscoped	tests/scripts/127-keyed-indexed-set.loft
 front	unscoped	tests/scripts/129-lazy-bind.loft
 front	unscoped	tests/scripts/129-lazy-graph.loft
@@ -978,7 +939,6 @@ front	unscoped	tests/scripts/177-reclaim-early-return.loft
 front	refused	tests/scripts/1796-a-constant-a-nullable-narrow-slot-cannot-hold-is-refused.loft
 front	refused	tests/scripts/184-nested-narrow-int-vector.loft
 front	unscoped	tests/scripts/19-files.loft
-front	unscoped	tests/scripts/191-source-dir.loft
 front	refused	tests/scripts/192-slice-borrow.loft
 front	unscoped	tests/scripts/1954-a-sibling-rebind-keeps-the-pooled-buffer.loft
 front	refused	tests/scripts/1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft
@@ -987,8 +947,7 @@ front	unscoped	tests/scripts/20-binary.loft
 front	refused	tests/scripts/2001-a-work-buffer-through-a-function-value-is-its-own-store.loft
 front	refused	tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft
 front	unscoped	tests/scripts/2017-a-nullable-local-rebound-from-its-own-field-frees-the-store-it-built.loft
-front	refused	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft
-front	unscoped	tests/scripts/2024-an-integer-power-answers-an-integer.loft
+front	unscoped	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft
 front	refused	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft
 front	refused	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft
 front	unscoped	tests/scripts/2044-a-null-record-copied-into-a-fresh-field-is-its-default.loft
@@ -1005,7 +964,6 @@ front	refused	tests/scripts/22-threading.loft
 front	unscoped	tests/scripts/2207-a-tail-self-call-on-a-part-of-an-enum-parameter-jumps.loft
 front	refused	tests/scripts/2208-a-tail-self-call-inside-a-nested-match-arm-jumps.loft
 front	refused	tests/scripts/2213-a-never-returning-default-tests-a-struct-enum-by-its-discriminant.loft
-front	unscoped	tests/scripts/2217-a-c-call-reads-a-scalar-argument-at-its-own-width.loft
 front	refused	tests/scripts/2225-a-text-if-is-one-value-wherever-it-goes.loft
 front	unscoped	tests/scripts/2237-a-key-order-image-converts-on-every-backend.loft
 front	unscoped	tests/scripts/2241-a-token-1-trie-image-reads-as-written-by-page-and-converted-whole.loft
@@ -1040,7 +998,6 @@ front	refused	tests/scripts/40-const-fields.loft
 front	unscoped	tests/scripts/42-file-result.loft
 front	unscoped	tests/scripts/430-native-file-builtins.loft
 front	unscoped	tests/scripts/433-ijoin-multiply-assigned.loft
-front	unscoped	tests/scripts/44-nested-match.loft
 front	unscoped	tests/scripts/45-field-iter.loft
 front	unscoped	tests/scripts/48-generics.loft
 front	refused	tests/scripts/48b-spatial-slice.loft
@@ -1053,9 +1010,7 @@ front	refused	tests/scripts/507-par-vector-fnref.loft
 front	unscoped	tests/scripts/508-empty-arm-real-empty-vector.loft
 front	unscoped	tests/scripts/51-coroutines.loft
 front	refused	tests/scripts/512-first-grade-format.loft
-front	unscoped	tests/scripts/52-single.loft
 front	unscoped	tests/scripts/53-logging.loft
-front	unscoped	tests/scripts/54-auto-convert.loft
 front	refused	tests/scripts/55-stack-trace.loft
 front	unscoped	tests/scripts/60-sequential-file-lines.loft
 front	refused	tests/scripts/624-nested-narrow-width.loft
@@ -1100,7 +1055,6 @@ front	refused	tests/scripts/981-split-ownership-return.loft
 front	unscoped	tests/scripts/a-bound-result-appended-later-is-appended-where-it-is-made.loft
 front	unscoped	tests/scripts/a-buffered-file-read-moves-the-cursor-it-would-have.loft
 front	refused	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft
-front	unscoped	tests/scripts/a-byte-classifier-reads-its-table.loft
 front	refused	tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft
 front	unscoped	tests/scripts/a-byte-run-read-once-as-text-is-read-in-place.loft
 front	unscoped	tests/scripts/a-byte-wise-text-copy-is-one-append.loft
@@ -1149,7 +1103,7 @@ front	refused	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls
 front	refused	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft
 front	unscoped	tests/scripts/a-keyed-entry-agrees-across-key-widths-and-removals.loft
 front	refused	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
-front	refused	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft
+front	unscoped	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft
 front	unscoped	tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft
 front	unscoped	tests/scripts/a-leaf-call-inlined-answers-what-the-call-answers.loft
 front	refused	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft
@@ -1164,7 +1118,6 @@ front	refused	tests/scripts/a-literal-takes-a-dead-vector-into-its-store.loft
 front	unscoped	tests/scripts/a-local-float-vector-lives-in-an-inline-buffer.loft
 front	refused	tests/scripts/a-lookup-a-get-or-insert-repeats-is-made-once.loft
 front	unscoped	tests/scripts/a-loop-buffer-kept-in-the-ir-reads-as-a-fresh-vector.loft
-front	unscoped	tests/scripts/a-loop-counts-a-text-length-once.loft
 front	refused	tests/scripts/a-loop-holds-its-header-across-a-text-write.loft
 front	unscoped	tests/scripts/a-loop-record-is-kept-across-its-whole-nest.loft
 front	unscoped	tests/scripts/a-loop-record-kept-in-the-ir-reads-as-a-fresh-record.loft
@@ -1191,7 +1144,7 @@ front	unscoped	tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft
 front	refused	tests/scripts/a-read-only-record-copy-is-a-view.loft
 front	unscoped	tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft
 front	refused	tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft
-front	refused	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft
+front	unscoped	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft
 front	unscoped	tests/scripts/a-rebound-literal-local-copies-a-call-answering-an-argument.loft
 front	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 front	unscoped	tests/scripts/a-record-element-its-loop-proves-in-range-reads-plainly.loft
@@ -1254,7 +1207,7 @@ front	unscoped	tests/scripts/an-element-is-built-in-place-by-its-call-and-in-eit
 front	unscoped	tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft
 front	refused	tests/scripts/elem-first-a-paired-temp-lives-in-its-elements-store.loft
 front	refused	tests/scripts/generic-typevar-name-usable.loft
-front	refused	tests/scripts/golden-images-paged.loft
+front	unscoped	tests/scripts/golden-images-paged.loft
 front	refused	tests/scripts/golden-images-whole.loft
 front	unscoped	tests/scripts/h11-file-seek-and-position.loft
 front	unscoped	tests/scripts/link-obs-oracle.loft
