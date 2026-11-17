@@ -372,6 +372,7 @@ elab	refused	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-bound
 elab	refused	loft-suite/rules/layout/L-OutOfLine/a-field-that-would-contain-its-host-is-a-child.loft
 elab	refused	loft-suite/rules/layout/L-OutOfLine/a-par-worker-returns-a-tree.loft
 elab	refused	loft-suite/rules/layout/L-OutOfLine/a-worker-returns-a-tree-into-a-fresh-destination.loft
+elab	refused	loft-suite/rules/layout/L-Sound/2174-an-image-without-its-sidecar-is-refused.loft
 elab	refused	loft-suite/rules/layout/L-Struct/1718-a-virtual-field-has-no-slot-on-native.loft
 elab	refused	loft-suite/rules/layout/L-Total/every-type-has-one-layout-whichever-spelling-asks.loft
 elab	refused	loft-suite/rules/layout/L-Tuple/a-record-is-padded-to-its-alignment.loft
@@ -882,7 +883,6 @@ elab	refused	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-relea
 elab	refused	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft
 elab	refused	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft
 elab	refused	tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft
-elab	refused	tests/scripts/2174-an-image-without-its-sidecar-is-refused.loft
 elab	refused	tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft
 elab	refused	tests/scripts/22-threading.loft
 elab	refused	tests/scripts/2206-a-generic-match-returning-its-parameter-is-lifted-inline.loft
