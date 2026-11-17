@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpu API — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The public API of the loft library gpu — every function, struct and enum it exports, with its documentation.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-gpu-api.html">
+<meta property="og:title" content="gpu API — Loft, a programming language for small browser games">
+<meta property="og:description" content="The public API of the loft library gpu — every function, struct and enum it exports, with its documentation.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-gpu-api.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="gpu API — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The public API of the loft library gpu — every function, struct and enum it exports, with its documentation.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>gpu API</h1>
+<article>
+<p><a href="lib-gpu.html">← gpu</a> · version 0.1.0</p>
+<p class="lib-legend">62 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f4s</span>(count: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>A block field that is an array of <code>count</code> <code>F4</code>s.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">blend</span>(source: <span class="ty"><a href="stdlib-types.html">integer</a></span>, destination: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>A draw is combined with what the target holds: its colour times <code>source</code>, plus the target's times <code>destination</code>.  <code>blend(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)</code> is plain transparency.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Source</span> { tag: <span class="ty"><a href="stdlib-types.html">text</a></span>, vertex: <span class="ty"><a href="stdlib-types.html">text</a></span>, fragment: <span class="ty"><a href="stdlib-types.html">text</a></span> }</code></pre>
+<p>A shader's text in one shading language.  <code>tag</code> names the language as a backend spells it (its README says which it takes); this library compares the tag and never reads it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">source</span>(tag: <span class="ty"><a href="stdlib-types.html">text</a></span>, vertex: <span class="ty"><a href="stdlib-types.html">text</a></span>, fragment: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Source</span></code></pre>
+<p>A source for the backend whose shading language is <code>tag</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Program</span> { vertex: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, instance: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, block: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, textures: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sources: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Source</span>&gt; }</code></pre>
+<p>A shader set: what the shader reads, and its text for each backend it may meet.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">State</span> { shape: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>, depth: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>, blend: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>, cull: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>, into: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span> }</code></pre>
+<p>Render state: fixed for a pipeline's life, so two states are two pipelines.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout</span>(block: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</code></pre>
+<p>Where each field of a block starts, in floats, with the block's whole size as the last entry.  Each field starts on the next multiple of its own size (a matrix and an array on 4 floats) and the size is rounded up to 4 — the layout every backend's shading language gives these field kinds, so a program reads the same bytes on each.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Device</span> { handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pass: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pipe: <span class="ty"><a href="stdlib-types.html">integer</a></span>, need_block: <span class="ty"><a href="stdlib-types.html">integer</a></span>, need_textures: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sampled: <span class="ty"><a href="stdlib-types.html">integer</a></span>, has_block: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_vertices: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_indices: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_instances: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, pipe_instances: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, refused: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; }</code></pre>
+<p>One window (a page's canvas) and its GPU.  Everything made from it is freed when it closes.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">open</span>(table: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, title: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Device</span>?</code></pre>
+<p>Open a window of <code>width</code> x <code>height</code> pixels through the backend whose table is <code>table</code> (a backend library's <code>table()</code>).  Null when the table is none — its stack is absent on this machine — or the window does not open.  A game does not call this: its host package asks each backend in turn.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">backend_name</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>The backend's own name, for a message.  Never branch on it: ask what the machine has.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Hand the machine's events to the window; false once it was closed.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">width</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The window's width in pixels, as it is now.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>And its height.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">Device</span>)</code></pre>
+<p>Close the window and free everything made from it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">refusals</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</code></pre>
+<p>What was refused so far, oldest first: one line a call, saying which call and why.  Empty for a program that keeps the rule.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Buffer</span> { handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, size: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>Floats on the GPU: vertices, or the values of drawn copies.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">buffer</span>(self: const <span class="en">Device</span>, data: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;) -&gt; <span class="en">Buffer</span></code></pre>
+<p>Upload <code>data</code> for a pipeline to read as vertices (<code>vertices</code>) or per copy (<code>instances</code>).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">update</span>(self: <span class="en">Buffer</span>, data: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;)</code></pre>
+<p>Replace the floats; the length may change.  For data that changes every frame.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">floats</span>(self: const <span class="en">Buffer</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>How many floats it holds.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">IndexBuffer</span> { handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, size: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>Vertex numbers on the GPU, for <code>draw_indexed</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">index_buffer</span>(self: const <span class="en">Device</span>, list: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="en">IndexBuffer</span></code></pre>
+<p>Upload a list of vertex numbers.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">count</span>(self: const <span class="en">IndexBuffer</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>How many vertex numbers it holds.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Texture</span> { handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, depth: <span class="ty"><a href="stdlib-types.html">boolean</a></span> }</code></pre>
+<p>An image on the GPU: colour (red, green, blue, alpha at 8 bits each) or depth.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">texture</span>(self: const <span class="en">Device</span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Texture</span></code></pre>
+<p>An empty colour texture, sampled between its pixels and clamped at its edges.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">depth_texture</span>(self: const <span class="en">Device</span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Texture</span></code></pre>
+<p>An empty depth texture: the depth of a target, or a shadow map.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">texture_from</span>(self: const <span class="en">Device</span>, pixels: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Texture</span></code></pre>
+<p>A colour texture holding <code>pixels</code> (0xAARRGGBB each, <code>width</code> to a row).  Its first pixel is texture coordinate (0, 0).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">put</span>(self: const <span class="en">Texture</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pixels: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Replace the <code>width</code> x <code>height</code> pixels at (<code>x</code>, <code>y</code>), counted from the texture's first pixel.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">nearest</span>(self: const <span class="en">Texture</span>, on: <span class="ty"><a href="stdlib-types.html">boolean</a></span>)</code></pre>
+<p>Sample the nearest pixel (pixel art), or between pixels (how a texture starts).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mipmaps</span>(self: const <span class="en">Texture</span>)</code></pre>
+<p>Build smaller copies from the pixels it holds now and sample through them when it is drawn small; call again after <code>put</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">width</span>(self: const <span class="en">Texture</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Its width in pixels.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>(self: const <span class="en">Texture</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>And its height.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Target</span> { handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, into: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>What a pass draws into other than the window.  Its textures stay usable after it is gone.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">colour_target</span>(self: const <span class="en">Device</span>, colour: const <span class="en">Texture</span>) -&gt; <span class="en">Target</span></code></pre>
+<p>A target of one colour texture.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">target</span>(self: const <span class="en">Device</span>, colour: const <span class="en">Texture</span>, depth: const <span class="en">Texture</span>) -&gt; <span class="en">Target</span></code></pre>
+<p>A target of a colour and a depth texture of one size.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">depth_target</span>(self: const <span class="en">Device</span>, depth: const <span class="en">Texture</span>) -&gt; <span class="en">Target</span></code></pre>
+<p>A target of a depth texture alone: no colour is drawn.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Pipeline</span> { handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, into: <span class="ty"><a href="stdlib-types.html">integer</a></span>, textures: <span class="ty"><a href="stdlib-types.html">integer</a></span>, instances: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, starts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</code></pre>
+<p>A program, its inputs and its render state, built for one kind of target.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pipeline</span>(self: const <span class="en">Device</span>, program: const <span class="en">Program</span>, state: const <span class="en">State</span>) -&gt; <span class="en">Pipeline</span>?</code></pre>
+<p>Build a pipeline: <code>program</code> drawn with <code>state</code>.  Null when the program has no source for this backend, declares what a block cannot hold, or does not compile — the backend says why on stderr.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Block</span> { data: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, starts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, wrong: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>The values of a pipeline's uniform block.  A field is named by its position in the program's <code>block</code> list.  Setting a field as another kind than it was declared, or one that is not there, marks the block, and <code>uniforms</code> then refuses it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">block</span>(self: const <span class="en">Pipeline</span>) -&gt; <span class="en">Block</span></code></pre>
+<p>A block for this pipeline, every field zero.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f1</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Set an <code>F1</code> field.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f2</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Set an <code>F2</code> field.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f4</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Set an <code>F4</code> field.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">f4_at</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty">index</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Set element <code>index</code> of an <code>f4s</code> field; an index past its length marks the block.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4</span>(self: <span class="en">Block</span>, field: <span class="ty"><a href="stdlib-types.html">integer</a></span>, m: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;)</code></pre>
+<p>Set a <code>MAT4</code> field from 16 floats, column-major; fewer marks the block.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">floats</span>(self: const <span class="en">Block</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;</code></pre>
+<p>The block's floats as the backend receives them, for a test of a layout.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">begin_window</span>(self: <span class="en">Device</span>, load: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Start a pass that draws into the window, cleared to <code>colour</code> (0xAARRGGBB) or kept.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">begin</span>(self: <span class="en">Device</span>, target: const <span class="en">Target</span>, load: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Start a pass that draws into <code>target</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">bind</span>(self: <span class="en">Device</span>, pipeline: const <span class="en">Pipeline</span>)</code></pre>
+<p>Draw with <code>pipeline</code> from here on.  It forgets the block, textures and buffers the pipeline before it was given: name them again.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">uniforms</span>(self: <span class="en">Device</span>, block: const <span class="en">Block</span>)</code></pre>
+<p>Give the bound pipeline its uniform block.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sample</span>(self: <span class="en">Device</span>, slot: <span class="ty"><a href="stdlib-types.html">integer</a></span>, texture: const <span class="en">Texture</span>)</code></pre>
+<p>Give the bound pipeline the texture its slot <code>slot</code> samples.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vertices</span>(self: <span class="en">Device</span>, buffer: const <span class="en">Buffer</span>)</code></pre>
+<p>The vertices the next draws read.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">instances</span>(self: <span class="en">Device</span>, buffer: const <span class="en">Buffer</span>, first: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>The values the next <code>draw_copies</code> reads once per copy, starting at float <code>first</code> of <code>buffer</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">indices</span>(self: <span class="en">Device</span>, buffer: const <span class="en">IndexBuffer</span>)</code></pre>
+<p>The vertex numbers the next <code>draw_indexed</code> reads.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">viewport</span>(self: <span class="en">Device</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>The rectangle draws map onto, origin bottom-left; a pass starts with the whole target.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">scissor</span>(self: <span class="en">Device</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Draw only inside this rectangle, origin bottom-left, until <code>no_scissor</code> or the pass ends.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">no_scissor</span>(self: <span class="en">Device</span>)</code></pre>
+<p>Draw on the whole target again.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw</span>(self: <span class="en">Device</span>, first: <span class="ty"><a href="stdlib-types.html">integer</a></span>, count: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Draw <code>count</code> vertices from vertex <code>first</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_indexed</span>(self: <span class="en">Device</span>, count: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Draw the first <code>count</code> vertices the index buffer names, in its order.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_copies</span>(self: <span class="en">Device</span>, count: <span class="ty"><a href="stdlib-types.html">integer</a></span>, copies: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Draw the first <code>count</code> vertices <code>copies</code> times; the inputs per copy advance once a copy.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">end</span>(self: <span class="en">Device</span>)</code></pre>
+<p>End the pass.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">present</span>(self: <span class="en">Device</span>)</code></pre>
+<p>Show the frame, waiting for the display's next one where the machine has a frame clock.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">capture</span>(self: const <span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;</code></pre>
+<p>The window's pixels as they are now, 0xAARRGGBB, top row first, <code>width()</code> to a row.</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
