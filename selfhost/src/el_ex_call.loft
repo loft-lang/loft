@@ -299,7 +299,10 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   if textual || record {
     why2 = text_instance_carried(e, g, tmpl, f, code_of(tmpl), h, textual);
     // (`bind_monomorph_join_return` carries a record's branch answer with a bare parameter arm.)
-    if why2 == "a branch answer with a bare parameter arm" && record {
+    // (`is_borrowing_branch`: two or more distinct parameters; `is_borrowed_and_minted_branch`:
+    // a parameter beside a local or a call, no view.  One parameter alone in the arms takes
+    // `copy_returned_params` per arm instead: not carried for a branch, so it stays refused.)
+    if why2 == "a branch answer with a bare parameter arm" && record && join_shape(e, f, code_of(tmpl)) {
       join_bind = true;
       why2 = "";
     }
@@ -1182,6 +1185,30 @@ pub fn branch_join_answer(f: ir::Function, code: ir::Node) -> text {
     return "a branch answer with a bare parameter arm";
   }
   ""
+}
+
+// Does the body's branch tail take `bind_monomorph_join_return`?
+fn join_shape(e: el::El, f: ir::Function, code: ir::Node) -> boolean {
+  ops = match code { NdBlock { block } => block[0].operators, _ => [] };
+  tail = el_ir::unspan(el_ir::last(ops));
+  inner = match tail { NdReturn { inner: i } => el_ir::unspan(i), _ => tail };
+  params: vector<integer> = [];
+  marks: vector<integer> = [0, 0];
+  join_leaves(e, f, inner, params, marks);
+  len(params) > 1 || len(params) == 1 && marks[0] == 1 && marks[1] == 0
+}
+
+// The leaves of a branch: the distinct parameters into `params`; `marks[0]` set by a minted leaf
+// (a local, a call of a function), `marks[1]` by a view (a call of an operator).
+fn join_leaves(e: el::El, f: ir::Function, n: ir::Node, params: vector<integer>, marks: vector<integer>) {
+  match n {
+    NdSpan { inner } => join_leaves(e, f, inner, params, marks),
+    NdIf { t, f: el } => { join_leaves(e, f, t, params, marks); join_leaves(e, f, el, params, marks); },
+    NdBlock { block } => { if len(block[0].operators) > 0 { join_leaves(e, f, block[0].operators[-1]!, params, marks); } },
+    NdVar { n: v } => { if f.variables[v]!.argument { if !params.contains(v) { params += [v]; } } else { marks[0] = 1; } },
+    NdCall { def_nr } => { if starts_with(el::def(e, def_nr).name, "Op") { marks[1] = 1; } else { marks[0] = 1; } },
+    _ => {}
+  }
 }
 
 pub fn bare_param_leaf(f: ir::Function, n: ir::Node) -> boolean {

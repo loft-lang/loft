@@ -817,6 +817,14 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
     el::refuse(e, "a method call: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // `Enum.Variant` (`parse_var`'s type arm): a unit variant qualified by its enum is the
+  // variant itself, where the qualifier is no local and names the enum that holds it.
+  if !call {
+    qn = match e.p.nodes[re!] { SName { name: en, member: em } => if em == "" && el_vars::var(vars, en) < 0 { en } else { "" }, _ => "" };
+    if qn != "" && el_ex_place::qualified_variant(e, qn, name) != "" {
+      return el_ex_assign::global_name(e, vars, -1, name);
+    }
+  }
   // `T.parse(text)` on a struct, a record variant or a struct enum (`parse_var`'s type arm).
   if call && name == "parse" {
     pd = parse_target(e, vars, re!);
