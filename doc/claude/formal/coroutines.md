@@ -308,7 +308,7 @@ The closed entries are in the companion [coroutines-history.md](coroutines-histo
   loop-body yield, copies of a local, a member, a parameter, a text-holding record and a
   vector, and a tuple copied, drained and kept — values, drop traces and a clean store census
   on both backends.
-- **Holding (`G-Hold`)** — `loft-suite/rules/coroutines/G-Hold/1585-a-generator-can-be-held-in-a-field-or-an-element.loft`:
+- **Holding (`G-Hold`)** — `loft-suite/rules/coroutines/G-Hold/a-generator-held-in-a-field-or-an-element-is-released-once-by-its-holder.loft`:
   a vector, a struct field, a nested record, a vector field and a tuple member holding a
   generator; the round-robin scheduler; a field, an element and a local given a new generator;
   a removal by index and by `#remove`, of a handle and of a record holding one; views out of a
