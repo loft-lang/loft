@@ -1809,7 +1809,7 @@ impl Parser {
                  before consuming any input, so this cycle would recurse forever"
             );
         }
-        // @PLN35 PC4 — an invoked sub-rule must be PURE: a cursor `match` hoists its call
+        // @PLN35 PC4, `@FR-WF-Pure` — an invoked sub-rule must be PURE: a cursor `match` hoists its call
         // unconditionally (so it runs even when the arm is not taken) and may backtrack over it, so
         // an observable side effect (I/O, host mutation, prng) would leak.  Skip callees already in
         // a rejected cycle (that error stands).  One report per impure callee.
