@@ -61,13 +61,13 @@ F-Return	calls	curated	1	2026-11-17	own dir 2 -> 1: what a function answers (lof
 F-Surface	calls	curated	19	2026-11-17	own dir 9 -> 8: the non-pub method refusals (qualifier, own record) 2->1; the function refusal stays apart (an earlier pass masks the method refusals); package-share refusal, the pub-either-spelling cell, 2331 and the two fixture libraries stay
 F-Visible	calls	curated	5	2026-11-17	was Rust-only (tests/pub_visibility.rs): a fixture library, a positive cell (name-only named/passed/stored, pub fields, all-pub struct built, pub enum variants), a six-refusal cell (patch receipt) and the invisible-type cell (a pass earlier); writing them found loft#2541 and #2542, fixed
 Cap-Call	capabilities	curated	10	2026-11-17	2 cells, the refusal and the admission (gate E splits them) — nothing to merge
-Cap-Deny	capabilities	todo			
-Cap-Own	capabilities	todo			
-Cap-Read	capabilities	todo			
-Cap-Safe	capabilities	todo			
-Cap-Set	capabilities	todo			
-Cap-Trusted	capabilities	todo			
-Cap-Write	capabilities	todo			
+Cap-Deny	capabilities	curated	10	2026-11-17	3 cells, distinct clauses (an unadmitted construct, an undeclared group, a designated helper) — nothing to merge
+Cap-Own	capabilities	curated	7	2026-11-17	3 cells: two refusals of different clauses (a gated call on own data, a parameter as host data) and the free write — nothing to merge
+Cap-Read	capabilities	curated	2	2026-11-17	own dir 3 -> 2: the private-field refusals, every read and equality, 2->1 (a stale 'equality not refused yet' line corrected); the free-read cell stays
+Cap-Safe	capabilities	curated	2	2026-11-17	2 cells: the gated stdlib refusal and the ungated control (gate E agrees with both, distinct) — nothing to merge
+Cap-Set	capabilities	curated	3	2026-11-17	own dir 4 -> 3: the locked-parameter override refusals 2->1 (host fn spawn kept once, under the policy's name); the admitted twins stay
+Cap-Trusted	capabilities	curated	3	2026-11-17	2 cells: the refusal and the not-descended control — nothing to merge
+Cap-Write	capabilities	curated	6	2026-11-17	2 cells: the refusal and the granted-write control (gate E splits them) — nothing to merge
 L-Apply	closures	todo			
 L-CapBox	closures	todo			
 L-CapHeap	closures	todo			

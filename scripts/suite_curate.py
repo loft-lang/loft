@@ -286,7 +286,31 @@ def merge(target, intro_file, cells):
         return top, variants
 
     taken_top, taken_var = set(), set()
-    tests_seen = {}
+    tests_seen, decls_seen = {}, {}
+
+    def decl_text(code, name):
+        # A top-level declaration's whole text: from its line to its brace-matched end (or the
+        # `;` of a body-less one), with its newline.
+        m = re.search(r"(?m)^(?:pub )?(?:fn|struct|enum|value struct|type) " + re.escape(name) + r"\b", code)
+        if not m:
+            return None
+        i = m.end()
+        while i < len(code) and code[i] not in "{;":
+            i += 1
+        if i >= len(code):
+            return None
+        if code[i] == "{":
+            depth = 0
+            while i < len(code):
+                depth += {"{": 1, "}": -1}.get(code[i], 0)
+                i += 1
+                if depth == 0:
+                    break
+        else:
+            i += 1
+        if i < len(code) and code[i] == "\n":
+            i += 1
+        return code[m.start():i]
     heads, codes = [], []
     for k, cell in enumerate(cells):
         lines = open(cell, encoding="utf-8").read().split("\n")
@@ -318,9 +342,17 @@ def merge(target, intro_file, cells):
         px = "s" + str(k + 1)
         ren = {}
         # Enum variants and type names share one namespace (a struct `A` beside a variant `A` is
-        # refused), so each set clashes with both.
+        # refused), so each set clashes with both.  A clashing declaration identical, word for word,
+        # to an earlier section's is the SAME item (two cells of one directory each declaring the
+        # host function its `[sandbox]` policy names): it is dropped, not renamed — a rename would
+        # move it out of the policy that names it.
         for n in top:
             if (n in taken_top or n in taken_var) and not n.startswith("test_"):
+                mine = decl_text(code, n)
+                if mine is not None and mine == decls_seen.get(n):
+                    code = code.replace(mine, "", 1)
+                    print(f"  {stem}: dropped {n} — identical to an earlier section's")
+                    continue
                 ren[n] = (px.upper() + n) if n[0].isupper() else (px + "_" + n)
         for v in var:
             if v in taken_var or v in taken_top:
@@ -353,6 +385,10 @@ def merge(target, intro_file, cells):
                 print(f"  {stem}: renamed {t} -> test_{px}_{t[5:]} (same name, another body)")
         for m in re.finditer(r"(?ms)^fn (test_[a-z_0-9]+)\(.*?^\}\n", code):
             tests_seen.setdefault(m.group(1), m.group(0))
+        for n in declared(code)[0]:
+            t = decl_text(code, n)
+            if t is not None:
+                decls_seen.setdefault(n, t)
         t2, v2 = declared(code)
         taken_top |= t2
         taken_var |= v2
