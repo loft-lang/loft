@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	31fdf2b37e1a1ab817fe5641a73152bc198f88e0
+suite	1e2ed270081cd84244de5d21d455a4bdfdb6fdc9
 
-layer	elab	agree	964	of	2194
+layer	elab	agree	964	of	2193
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -81,7 +81,6 @@ elab	refused	loft-suite/rules/binding/B-Scope/1802-a-par-loop-variable-ends-with
 elab	refused	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft
 elab	refused	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-loop-name-a-destructure-reuses-compiles.loft
-elab	refused	loft-suite/rules/binding/B-Scope/a-name-bound-in-sibling-loops-is-one-binding-per-loop-on-every-backend.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-patterns-names-end-with-its-arm.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-sub-pattern-capture-leaves-the-outer-name-alone.loft
