@@ -30,6 +30,9 @@ shorter file — and lists every other cell with the route that would retire it:
     proves the defect is still caught, and the cell may go;
   * `fold`  — no patch receipt: its cases are not proven covered, so they MOVE into a core cell
     (its `test_*` functions), never vanish;
+  * `unit`  — a Rust test: the home for what loft cannot observe (a heap layout, an image's
+    bytes); its features are not measured, so it is weighed by reading it and by breaking the
+    cure it guards (a mutation run) — never folded into a cell;
   * `keep`  — it reaches a feature no core cell does (then it IS core; listed for completeness).
 A rule is `done` only after the suite passes on both backends with the curated cells and every
 `patch` route was re-scored; the note says what was retired or folded.
@@ -147,7 +150,15 @@ def plan(tag):
     rest = [c for c in cells if c not in core]
     for c in rest:
         m = PATCH.search(texts[c])
-        route = f"patch  tests/falsified/{m.group(1)}" if m else "fold   (no patch receipt)"
+        if c.endswith(".rs"):
+            # A Rust test (a `#[cfg(test)]` unit test or a tests/*.rs one) is a home of its
+            # own for what loft cannot observe — a layout, an image's bytes: it is weighed by
+            # reading it and by breaking its cure (a mutation run), not folded into a cell.
+            route = "unit   (Rust: read it, break its cure)"
+        elif m:
+            route = f"patch  tests/falsified/{m.group(1)}"
+        else:
+            route = "fold   (no patch receipt)"
         print(f"    {route:<46} {rel(c)}")
     if rest:
         print("\n  Retire a `patch` cell only after a core cell re-scores falsified against its patch;\n"

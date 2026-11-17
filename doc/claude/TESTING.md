@@ -590,6 +590,12 @@ reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell name
 6. **Record**: `done <rule> '<what was kept, written, retired>'` in the loft commit that pins
    the suite commit.
 
+A rule guarded by Rust unit tests instead — a heap layout or an image's bytes, which no loft
+program observes (the allocator chapter) — is weighed the same way, by breaking it: each clause's
+cure is broken in the source, one at a time, its tests run, and the source restored by the
+inverse edit (never git).  A break nothing catches is a missing cell; write it, and break the
+cure again to prove it fails.
+
 A rule no cell names is marked `needs-cell` and gets its first guard from the rule-led walk
 (`rule_tags.py worklist`, [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md)).
 

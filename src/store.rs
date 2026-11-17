@@ -6603,6 +6603,143 @@ mod tests {
         );
     }
 
+    /// `@FR-H-FreeFooter` + `@FR-H-LazyFree` + `@FR-H-Park` — a backward merge takes only a
+    /// predecessor its delete can CONFIRM: the exact delete by the tree, the lazy one by the
+    /// tree or `lazy_free`.  A free predecessor neither knows — a parked block, a lazily freed
+    /// one met by an exact delete, a one-word rest — has a true footer and header, so the
+    /// claims check (@C154) lets it through and only the confirmation stops the merge; a merge
+    /// would leave it on its list or in its record inside a larger block, and the next claim
+    /// would hand out words a free block holds.  Every pair of delete and predecessor kind the
+    /// rules allow, each predecessor and the freed block left apart, each where it was filed.
+    /// (The fake-footer cell above no longer reaches the confirmation: the claims stop it first.)
+    /// The three tests below are its cells, one per predecessor kind.
+    fn merge_store(lazy: bool, park: bool) -> Store {
+        let mut store = Store::new(64);
+        store.free = false;
+        store.lazy = lazy;
+        store.park = park;
+        store
+    }
+
+    /// The predecessor at `a` and the block freed at `b` left apart, each its own size.
+    fn apart(store: &Store, a: u32, aw: i32, b: u32, bw: i32, at: &str) {
+        assert_eq!(
+            store.read::<i32>(a, 0),
+            -aw,
+            "{at}: the predecessor kept its size"
+        );
+        assert_eq!(
+            store.read::<i32>(b, 0),
+            -bw,
+            "{at}: the freed block absorbed nothing"
+        );
+        let blocks = chain(store);
+        assert!(
+            blocks.contains(&(a, -aw)) && blocks.contains(&(b, -bw)),
+            "{at}: {blocks:?}"
+        );
+    }
+
+    /// A parked predecessor, met by the lazy delete (30 words: lazy, not parked) and by the
+    /// exact one.  It stays parked, and the next claim of its size pops it.
+    #[test]
+    fn a_backward_merge_leaves_a_parked_predecessor() {
+        for lazy in [true, false] {
+            let at = if lazy {
+                "parked, lazy delete"
+            } else {
+                "parked, exact delete"
+            };
+            let mut s = merge_store(lazy, true);
+            let a = s.claim(4);
+            let b = s.claim(30);
+            let _c = s.claim(5);
+            s.delete(a);
+            assert!(s.parked.set.contains(a), "{at}: the 4-word block parked");
+            s.delete(b);
+            apart(&s, a, 4, b, 30, at);
+            check_parked(&s);
+            if lazy {
+                assert!(
+                    s.lazy_free.contains(b),
+                    "{at}: the freed block is lazily recorded"
+                );
+            } else {
+                assert!(
+                    s.fl_tree_contains(b),
+                    "{at}: the freed block is in the tree"
+                );
+            }
+            assert_eq!(s.claim(4), a, "{at}: the list pops the parked block");
+            assert_eq!(
+                s.read::<i32>(b, 0),
+                -30,
+                "{at}: and the freed block is still whole"
+            );
+        }
+    }
+
+    /// A lazily freed predecessor met by an EXACT delete — a block above the lazy phase's cap
+    /// (`LAZY_MAX_WORDS`) is tracked at its delete; the tree does not hold the lazy one.
+    #[test]
+    fn an_exact_delete_leaves_a_lazily_freed_predecessor() {
+        {
+            let at = "lazily freed, exact delete";
+            let mut s = merge_store(true, false);
+            let a = s.claim(20);
+            let b = s.claim(super::LAZY_MAX_WORDS as u32 + 16);
+            let _c = s.claim(5);
+            s.delete(a);
+            assert!(
+                s.lazy_free.contains(a),
+                "{at}: the 20-word block freed lazily"
+            );
+            s.delete(b);
+            apart(&s, a, 20, b, super::LAZY_MAX_WORDS + 16, at);
+            assert!(
+                s.lazy_free.contains(a) && !s.fl_tree_contains(a),
+                "{at}: still lazy"
+            );
+            assert!(
+                s.fl_tree_contains(b),
+                "{at}: the large block is in the tree"
+            );
+        }
+    }
+
+    /// A one-word predecessor — the rest an exact claim leaves (`@FR-H-Exact`) — met by both
+    /// deletes: untracked and unconfirmable, it is left, and the sweep stays armed for it.
+    #[test]
+    fn a_backward_merge_leaves_a_one_word_predecessor() {
+        for lazy in [true, false] {
+            let at = if lazy {
+                "one word, lazy delete"
+            } else {
+                "one word, exact delete"
+            };
+            let mut s = merge_store(false, false);
+            let x = s.claim(6);
+            let b = s.claim(30);
+            let _c = s.claim(5);
+            s.delete(x);
+            assert_eq!(s.claim(5), x, "{at}: the best fit leaves a one-word rest");
+            let a = x + 5;
+            assert_eq!(
+                s.read::<i32>(a, 0),
+                -1,
+                "{at}: the rest is a one-word free block"
+            );
+            s.lazy = lazy;
+            s.needs_coalesce = false;
+            s.delete(b);
+            apart(&s, a, 1, b, 30, at);
+            assert!(
+                s.needs_coalesce,
+                "{at}: the sweep is armed for the one-word rest"
+            );
+        }
+    }
+
     /// `@FR-H-LazyFree` — a lazy delete merges BACKWARD into a lazily freed predecessor,
     /// confirmed by `lazy_free`, and the merged block keeps one entry there.
     #[test]

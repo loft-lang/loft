@@ -1,14 +1,14 @@
 # The suite-curation pass over every formal rule (scripts/suite_curate.py; TESTING.md § Curating the suite).
 # rule	chapter	state	cells	date	note
-H-Carve	allocator	todo			
-H-Exact	allocator	todo			
-H-FreeFooter	allocator	todo			
-H-LazyFree	allocator	todo			
-H-Park	allocator	todo			
-H-ReadSurface	allocator	todo			
-H-ScanIndex	allocator	todo			
-H-TailGrow	allocator	todo			
-H-Wilderness	allocator	todo			
+H-Carve	allocator	curated	1	2026-11-17	unit oracle (carve vs delete+insert, 24 seeds x 600 steps, >500 carves counted) is the core; mutation rest>=1 caught. Rust home: layout is not loft-observable
+H-Exact	allocator	curated	2	2026-11-17	bump_tail_claims_are_the_tree_paths_layout + the C allocator cross-check (tests/c_emit.rs); mutation 'one-word rest taken whole' caught
+H-FreeFooter	allocator	curated	2	2026-11-17	fake-footer test no longer reaches the tree confirmation (claims refuse first, @C154); added 3 unit cells (parked / lazily freed / one-word predecessor x exact+lazy delete), each mutation caught by its own cell
+H-LazyFree	allocator	curated	3	2026-11-17	its backward confirmation was unguarded (mutation passed all 78 store tests); now caught by the parked and one-word cells; 6 lazy-phase tests kept
+H-Park	allocator	curated	2	2026-11-17	5 unit tests incl. seeded churn with lazy on/off; mutation 'pop never answers' caught (2 tests); tests/scripts/947 is the published example, kept
+H-ReadSurface	allocator	curated	2	2026-11-17	a_read_surface_open_writes_nothing_to_its_file (+control) and tests/concurrent_warm_start.rs; mutation 'open as ordinary mapped' caught
+H-ScanIndex	allocator	curated	1	2026-11-17	the_indexed_scan_takes_the_block_the_walk_takes (seeded oracle vs the chain walk); mutation 'skip exact fit' caught
+H-TailGrow	allocator	curated	2	2026-11-17	a_tail_record_grows_where_it_is + C churn; LOFT_NO_TAIL_GROW=1 caught; conformance list lacked it (added)
+H-Wilderness	allocator	curated	2	2026-11-17	oracle vs the tree-only allocator + fresh-store test; mutation 'equal size prefers the wilderness' caught
 B-Copy	binding	todo			
 B-Disturb	binding	todo			
 B-OutOfLine	binding	todo			
