@@ -229,6 +229,34 @@ fn env_on(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
+/// A unit this large is compiled by gcc as a link-time-optimised whole whose back end runs on
+/// every core (`-flto=auto`): one `cc1` over one unit is otherwise a single thread, which for
+/// the loft-written elaborator (63 MB of C) is minutes of one core on a many-core box.
+/// Measured on that unit at `-O1`: 382 s → 260 s wall, peak memory 5.1 → 3.4 GB.
+const PARALLEL_UNIT_BYTES: usize = 16 << 20;
+
+/// Does `cc` identify as gcc?  clang takes `-flto` too, but its LTO of a single unit runs on
+/// one thread, so the parallel build is gcc's only.  Asked once per run.
+fn compiler_is_gcc(cc: &str) -> bool {
+    static GCC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GCC.get_or_init(|| {
+        cc_spawn(cc)
+            .push_arg("--version")
+            .run(b"")
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("Free Software Foundation"))
+    })
+}
+
+/// Whether the unit `c` is built with gcc's parallel link-time back end (see
+/// [`PARALLEL_UNIT_BYTES`]).  The result is the same program; `LOFT_NO_PARALLEL_UNIT=1` keeps
+/// the single-threaded compile.
+fn parallel_unit(c: &str, cc: &str) -> bool {
+    c.len() >= PARALLEL_UNIT_BYTES
+        && dialect(cc) == Dialect::Gnu
+        && !env_on("LOFT_NO_PARALLEL_UNIT")
+        && compiler_is_gcc(cc)
+}
+
 /// The files the unit names in its `/* link: <path> */` lines — a `[c] shim` archive, or a
 /// shim's sources where this host has no archiver.  The same lines `scripts/c_sweep.py` and
 /// `tests/c_emit.rs` read.
@@ -1056,6 +1084,9 @@ pub(crate) fn build(
     let dynamic = placement == (Placement::Shipped { dynamic: true });
     let (bound, shims) = (marked(c, "bound"), marked(c, "shim-archive"));
     let (links, shims) = release_shim_lto(c, tier, dynamic, &cc, links, shims, &mut flags);
+    if parallel_unit(c, &cc) {
+        flags.push("-flto=auto".to_string());
+    }
     if binds {
         flags.push("-DLOFT_BIND_LIBS".to_string());
         if dynamic {

@@ -685,7 +685,10 @@ release tier (`--ship`, a GNU-dialect compiler, not `--dynamic`) compiles the sh
 with the unit under `-flto` instead of linking its archive, so a shim's small functions inline
 into their callers (`c_driver::release_shim_lto`; random `rand`, whose `% (hi - lo + 1)` folds
 on constant bounds: −45 %); `bench/stats.py`'s ship lane builds it the same way, and
-`LOFT_NO_SHIM_LTO=1` links the archive.  A
+`LOFT_NO_SHIM_LTO=1` links the archive.  A unit of 16 MB or more built by gcc, in any tier,
+compiles under `-flto=auto`, so the back end of one huge unit runs on every core instead of one
+(`c_driver::parallel_unit`; the loft-written elaborator, 63 MB at `-O1`: 382 s → 260 s);
+`LOFT_NO_PARALLEL_UNIT=1` keeps the single-threaded compile.  A
 call into an opened library finds its symbol once (`loft_c_bound_sym`).  This is how a library
 ships its native part without a Rust crate: ANSI C beside its loft, one source for all three
 backends.  A `#native` function — a Rust cdylib's — is NOT reached: the C answers every call
