@@ -1078,6 +1078,47 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
       }
       el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: el::def(e, fd).known_type }])
     },
+    // A tuple field lies in the record as its `__tuple<…>` struct: read member by member, each
+    // at the field's position plus its own.
+    TyTuple { elems } => {
+      td = el_types::tuple_def_of(e, elems);
+      if td < 0 {
+        el::refuse(e, "a field read of a tuple with no record");
+        return null;
+      }
+      base = field_position(e, d, def.attributes[a]!.name);
+      items: vector<ir::Node> = [];
+      for ta in el::def(e, td).attributes {
+        mpos = ir::NdInt { n: base + field_position(e, td, ta.name) };
+        mt = el_types::base(ta.typedef[0]);
+        mop = match mt {
+          TyText { dep: _ } => "OpGetText",
+          TyBoolean => "OpGetBoolean",
+          TyFloat => "OpGetFloat",
+          TySingle => "OpGetSingle",
+          TyCharacter => "OpGetCharacter",
+          _ => ""
+        };
+        match mt {
+          TyInteger { spec: ms } => {
+            msl = int_slot(e, ms, ta.alias_d_nr, ta.nullable);
+            if slot_takes_min(msl.kind) {
+              items += [el_ir::cl(e, "OpGet{msl.kind}", [r, mpos, ir::NdInt { n: msl.min }])];
+            } else {
+              items += [el_ir::cl(e, "OpGet{msl.kind}", [r, mpos])];
+            }
+          },
+          _ => {
+            if mop == "" {
+              el::refuse(e, "a tuple field with a member that is no plain scalar or text");
+              return null;
+            }
+            items += [el_ir::cl(e, mop, [r, mpos])];
+          }
+        }
+      }
+      ir::NdTuple { items: items }
+    },
     TyInteger { spec } => {
       fa = def.attributes[a]!;
       sl = int_slot(e, spec, fa.alias_d_nr, fa.nullable);

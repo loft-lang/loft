@@ -206,6 +206,8 @@ pub struct Vars {
   pub boxed_tuple_at: integer = -1,
   // The subject node of the `match` being read: its temp is named for this site.
   pub match_site: integer = -1,
+  // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.
+  pub tuple_raw: integer = -1,
   // The slot variable of a `&` link to a child record (`_slot_<name>_N`), per link, in step.
   pub slot_vars: vector<integer> = [],
   pub slot_of: vector<integer> = [],

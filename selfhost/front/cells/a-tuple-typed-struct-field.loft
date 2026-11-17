@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a tuple-typed struct field lies in the record as its `__tuple<…>` struct: a literal's field and a whole assignment write it member by member (`tuple_field_set`, `tuple_field_set_via_assign`), `x.f.1` reads the member where it lies, and `y = x.f` copies a text member into a work text of the tuple's own.
+// Prints: 1 5 five 4 five
+
+struct A { a: integer, f: (integer, text), g: (u16, u8) }
+fn main() {
+  x = A { a: 1, f: (2, "two"), g: (3, 4) };
+  x.f = (5, "five");
+  y = x.f;
+  println("{x.a} {x.f.0} {x.f.1} {x.g.1} {y.1}");
+}

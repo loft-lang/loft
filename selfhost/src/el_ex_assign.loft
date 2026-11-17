@@ -524,6 +524,38 @@ pub fn splice(l: vector<ir::Node>, items: vector<ir::Node>) -> vector<ir::Node> 
   r
 }
 
+// A tuple FIELD read as a value (`y = x.f`): a text member is copied into a work text of the
+// tuple's own on the second pass (`tuple_member_copy`), so the tuple does not borrow the
+// record.  A read taken member by member (`vars.tuple_raw`) stands as it is.
+fn tuple_field_copy(e: el::El, vars: el_vars::Vars, n: integer, r: Ex) -> Ex {
+  if n == vars.tuple_raw || e.first_pass || !(r.tp is TyTuple) {
+    return r;
+  }
+  items = match el_ir::unspan(r.code) { NdTuple { items: ri } => ri, _ => [] };
+  elems = match r.tp { TyTuple { elems: re } => re, _ => [] };
+  if len(items) == 0 || len(items) != len(elems) {
+    return r;
+  }
+  out: vector<ir::Node> = [];
+  tps: vector<ir::TypeT> = [];
+  for it in items {
+    reads = match el_ir::unspan(it) { NdCall { def_nr: rd } => starts_with(el::def(e, rd).name, "OpGet"), _ => false };
+    if !reads {
+      return r;
+    }
+    if el_types::base(elems[it#index]!) is TyText {
+      w = el_vars::work_text_p2(vars);
+      owned = ir::TyText { dep: [w] };
+      out += [el_ir::v_block([el_ir::v_set(w, it), ir::NdVar { n: w }], owned, "tuple_member_copy")];
+      tps += [owned];
+    } else {
+      out += [it];
+      tps += [elems[it#index]!];
+    }
+  }
+  ex(ir::NdTuple { items: out }, ir::TyTuple { elems: tps })
+}
+
 // `Parser::expression`: one expression node.
 pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   vars.site = n;
@@ -537,13 +569,13 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SChar { c } => ex(el_ir::cl(e, "OpConvCharacterFromInt", [ir::NdInt { n: c }]), ir::TyCharacter),
     SBool { b } => ex(ir::NdBoolean { b: b }, ir::TyBoolean),
     SNull => ex(ir::NdNull, ir::TyNull),
-    SName { name, member } => name_expression(e, vars, name, member, n == vars.read_into),
+    SName { name, member } => tuple_field_copy(e, vars, n, name_expression(e, vars, name, member, n == vars.read_into)),
     SAssign { at, fixed, op, target, e: rhs } => noted_bind(e, vars, assignment(e, vars, at, fixed, op, target, rhs)),
     SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
     SString { parts } => el_ex_call::string_expression(e, vars, parts),
     SIntrinsic { at, kind, args } => el_ex_object::intrinsic(e, vars, at, kind, args),
-    SMember { at, e: re, name, args, call } => el_ex_object::member(e, vars, at, re, name, args, call),
+    SMember { at, e: re, name, args, call } => tuple_field_copy(e, vars, n, el_ex_object::member(e, vars, at, re, name, args, call)),
     SBin { at, op, l, r } => el_ex_call::binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => el_ex_vector::unary(e, vars, op, ue),
     SIf { cond, then, other } => el_ex_null::if_expr(e, vars, cond, then, other, if n == vars.expect_node { el_types::without_deps(vars.expect) } else { ir::TyVoid }),
@@ -1291,7 +1323,21 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
     el::refuse(e, "a tuple member with no subject");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  vars.tuple_raw = te!;
   x = expression(e, vars, te!);
+  // A member of a tuple FIELD (`x.f.1`): the member's own read.
+  match el_ir::unspan(x.code) {
+    NdTuple { items: fi } => {
+      fe = match x.tp { TyTuple { elems: xe } => xe, _ => [] };
+      fread = match el_ir::unspan(fi[index] ?? ir::NdNull) { NdCall { def_nr: fd } => starts_with(el::def(e, fd).name, "OpGet"), _ => false };
+      if fread && index >= 0 && index < len(fe) {
+        froot = place_root(e, fi[index]!);
+        fmt = fe[index]!;
+        return ex(fi[index]!, if el_types::base(fmt) is TyText && froot >= 0 { ir::TyText { dep: [froot] } } else { fmt });
+      }
+    },
+    _ => {}
+  }
   match el_ir::unspan(x.code) {
     NdVar { n: tv } => {
       match x.tp {

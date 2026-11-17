@@ -395,6 +395,30 @@ pub fn fn_number_write(e: el::El, vars: el_vars::Vars, r: ir::Node, pos: ir::Nod
   el_ir::v_block([el_ir::v_set(tmp, val), el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdFnRefDnr { n: tmp }])], ir::TyVoid, "fn_number_write")
 }
 
+// `emit_tuple_set_ops`: a tuple field written member by member, each at the field's position
+// plus its own in the `__tuple<…>` struct.  Null where the value is no tuple of the field's
+// shape, or a member is no plain scalar or text.
+pub fn tuple_field_set(e: el::El, elems: vector<ir::TypeT>, r: ir::Node, base: integer, val: ir::Node, vt: ir::TypeT, name: text) -> ir::Node? {
+  td = el_types::tuple_def_of(e, elems);
+  items = match el_ir::unspan(val) { NdTuple { items: vi } => vi, _ => [] };
+  vts = match vt { TyTuple { elems: ve } => ve, _ => [] };
+  if td < 0 || len(items) != len(elems) || len(vts) != len(elems) {
+    return null;
+  }
+  ops: vector<ir::Node> = [];
+  for m in elems {
+    mt = el_types::base(m);
+    ht = el_types::base(vts[m#index]!);
+    fits = (mt is TyInteger && ht is TyInteger) || (mt is TyText && ht is TyText) || (mt is TyBoolean && ht is TyBoolean) || (mt is TyFloat && ht is TyFloat) || (mt is TySingle && ht is TySingle) || (mt is TyCharacter && ht is TyCharacter);
+    if !fits {
+      return null;
+    }
+    ta = el::def(e, td).attributes[m#index]!;
+    ops += [write_at(e, ta, r, ir::NdInt { n: base + field_position(e, td, ta.name) }, items[m#index]!)];
+  }
+  el_ir::v_block(ops, ir::TyVoid, name)
+}
+
 // `Parser::set_field_check` for a field of a plain type: the write op its type stores through.
 pub fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> ir::Node {
   def = el::def(e, d);

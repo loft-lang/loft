@@ -586,6 +586,10 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     TyFunction { args: _ } => if field { int_part(e, ir::IntegerSpec { min: 0, max: 2147483647, not_null: false, forced_size: 4 }, el::NONE, false) } else { -1 },
     TyTuple { elems } => {
       td = el_types::tuple_def_of(e, elems);
+      // A struct field's tuple is filled where the field is met, as a field's struct is.
+      if field && td >= 0 && el::def(e, td).known_type == NO_TYPE {
+        fill_database(e, td);
+      }
       if td < 0 || el::def(e, td).known_type == NO_TYPE { -1 } else { el::def(e, td).known_type }
     },
     TyEnum { n } => enum_content(e, n),
