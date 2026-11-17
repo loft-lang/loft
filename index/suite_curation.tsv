@@ -98,16 +98,16 @@ Col-Insert	collections	curated	11	2026-11-17	5 cells: three patches, the push-sp
 Col-Insert-Absent	collections	curated	4	2026-11-17	2 cells of different clauses (an insert makes an absent collection present; an instantiated collection replaces a repeated key)
 Col-Key	collections	curated	2	2026-11-17	2 cells: a patch and a refusal patch — nothing to merge
 Col-Layouts	collections	curated	2	2026-11-17	was Rust-only (tests/store_persist_loft.rs): the Col-Inline cell cites it and is checked under LOFT_NO_HASH_TAG and LOFT_NO_HASH_INLINE (a value never depends on the layout; switch-ab reruns the suite under both)
-Col-Len	collections	todo			
-Col-Lookup	collections	todo			
-Col-Order	collections	todo			
-Col-Order-Sign	collections	todo			
-Col-Remove	collections	todo			
-Col-RemoveDense	collections	todo			
-Col-RemoveKeyed	collections	todo			
-Col-Sorted	collections	todo			
-Col-Spatial	collections	todo			
-Col-Store	collections	todo			
+Col-Len	collections	curated	7	2026-11-17	3 cells: two patches and the length-member refusal — nothing to merge
+Col-Lookup	collections	curated	5	2026-11-17	own dir 2 -> 1: a keyed lookup is nullable (loft#1450) and a miss discharges and propagates at every kind 2->1
+Col-Order	collections	curated	13	2026-11-17	5 cells: four agree with gate E (merging them would lower its agree count) and one refused — kept
+Col-Order-Sign	collections	curated	1	2026-11-17	no own directory; one suite cell elsewhere cites it
+Col-Remove	collections	curated	4	2026-11-17	one cell (each of the four spellings deletes one element)
+Col-RemoveDense	collections	curated	5	2026-11-17	2 cells: a patch and the reference-parameter removal — distinct
+Col-RemoveKeyed	collections	curated	2	2026-11-17	no own directory; two suite cells elsewhere cite it
+Col-Sorted	collections	curated	1	2026-11-17	no own directory; one suite cell elsewhere cites it
+Col-Spatial	collections	curated	2	2026-11-17	one cell (a spatial axis is an integer, patch)
+Col-Store	collections	curated	2	2026-11-17	one cell (an & keyed parameter derefs at every kind)
 Col-Tag	collections	todo			
 Col-Trie	collections	todo			
 Col-Unordered	collections	todo			
