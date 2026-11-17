@@ -2181,6 +2181,41 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     abandon_work_refs(vars, ref_mark, p2_mark);
+    // A vector-field literal that reads an ELEMENT of the local's own vector made the abandoned
+    // attempt stage it in a store of its own: that `__vdb_N` stays declared (1a-parser.md §
+    // Rust accidents).
+    for fi in fields {
+      match e.p.nodes[fi] {
+        SFieldInit { name: wfn, e: wfe } => {
+          wa = attr_nr(el::def(e, d), wfn);
+          // (A vector of RECORD literals reading the local is built item by item apart, each
+          // copied in and released: not carried.)
+          rec_items = wfe != null && match e.p.nodes[wfe!] { SVecLit { items: wit } => len([for wi in wit if struct_literal_def(e, wi) >= 0 && el_ex_assign::mentions_name(e, wi, el_vars::name_of(vars, v)) { wi }]) > 0, _ => false };
+          if rec_items {
+            el::refuse(e, "a literal rebuilding a record whose vector field holds record literals that read that record");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          // (So is a vector of texts whose items read the local.)
+          text_items = wa >= 0 && wfe != null && e.p.nodes[wfe!] is SVecLit && el_ex_assign::mentions_name(e, wfe!, el_vars::name_of(vars, v)) && match el_types::base(el::def(e, d).attributes[wa]!.typedef[0]) { TyVector { inner: wti } => el_types::base(wti) is TyText, _ => false };
+          if text_items {
+            el::refuse(e, "a literal rebuilding a record whose text vector field reads that record");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          if wa >= 0 && wfe != null && e.p.nodes[wfe!] is SVecLit && indexes_name(e, wfe!, el_vars::name_of(vars, v)) {
+            match el_types::base(el::def(e, d).attributes[wa]!.typedef[0]) {
+              TyVector { inner: wvi } => {
+                wmd = el::def_nr(e, "main_vector<{el_types::elem_name(e, wvi)}>");
+                if wmd >= 0 {
+                  el_vars::work_vec_db(vars, ir::TyReference { n: wmd, dep: [] });
+                }
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    }
     o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
@@ -2492,18 +2527,6 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           }
         },
         _ => {}
-      }
-    }
-  }
-  // A literal REBUILDING the local `v` whose vector-field literal reads an element of one of
-  // `v`'s own vectors (`s = Bx { v: [s.v[0] + 10] }`) has that literal staged in a store of
-  // its own first — not carried: refused by name.
-  if !e.first_pass && v >= 0 {
-    for fi in fields {
-      own_read = match e.p.nodes[fi] { SFieldInit { e: fe1 } => fe1 != null && e.p.nodes[fe1!] is SVecLit && el_ex_assign::mentions_name(e, fe1!, el_vars::name_of(vars, v)) && indexes_name(e, fe1!, el_vars::name_of(vars, v)), _ => false };
-      if own_read {
-        el::refuse(e, "a literal rebuilding a record whose vector field reads an element of that record's vector");
-        return null;
       }
     }
   }
