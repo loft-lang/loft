@@ -423,7 +423,7 @@ either conclusion.
    "define it" — gate 1 is **sealed pending that merge**.
    **⚠ RE-OPENED (2026-07-19): the widened debug-assertions gate did its job and surfaced a NEW
    store-lifetime UAF the older corpus never hit** — `loft-suite/rules/matching/P-Rep/a-repetition-runs-mid-slice-and-over-a-cursor.loft`
-   (`get_vector: use-after-free`) + `35c-rest-capture.loft` (POISON null), one root: **reading an
+   (`get_vector: use-after-free`) + `a-rest-is-a-fresh-capture-wherever-it-stands.loft` (POISON null), one root: **reading an
    element of a match-captured repetition group** (`(x)*`/`(x)+`) frees the group's backing store
    before the arm body dereferences it (the group is a `frame1(__vdb)` view whose dep-liveness
    scopes.rs doesn't extend past the collection). Benign on release, caught only under

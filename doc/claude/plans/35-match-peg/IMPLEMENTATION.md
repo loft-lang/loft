@@ -288,7 +288,7 @@ The old plan built a new `vector::slice_vector` native primitive; instead `..res
 `s = v[lo..hi]` uses. No new opcode, no `slice_vector`, no generics. `rest` is a fresh
 independent `vector<T>`: safe to return, mutate, index, pass on. Bug #1 below (heap slice-view
 returned corrupts the subject) is subsumed — the A/B store-lifetime fixes handle the escaping
-capture into an enum / `&text` return. Guards: `tests/scripts/35c-rest-capture.loft`,
+capture into an enum / `&text` return. Guards: `tests/scripts/a-rest-is-a-fresh-capture-wherever-it-stands.loft`,
 `35d-slice-enum-reuse.loft`.
 
 **Store-lifetime rigor (the payoff of the reuse path).** Reusing `#Slice materialise` exposed
