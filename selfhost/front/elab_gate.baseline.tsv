@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	0e23645aacd4985be500969e31db9676989eef42
+suite	dc33fff41dbf21fdb85a1ca3fce48f90ee6febc1
 
-layer	elab	agree	1031	of	2097
+layer	elab	agree	1031	of	2095
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -374,9 +374,7 @@ elab	refused	loft-suite/rules/layout/L-OutOfLine/a-par-worker-returns-a-tree-who
 elab	refused	loft-suite/rules/layout/L-Sound/2174-an-image-without-its-sidecar-is-refused.loft
 elab	refused	loft-suite/rules/layout/L-Struct/1718-a-virtual-field-has-no-slot-on-native.loft
 elab	refused	loft-suite/rules/layout/L-Total/every-type-has-one-layout-whichever-spelling-asks.loft
-elab	refused	loft-suite/rules/layout/L-Tuple/a-record-is-padded-to-its-alignment.loft
-elab	refused	loft-suite/rules/layout/L-Tuple/a-tuple-packed-like-a-struct-keeps-its-written-positions.loft
-elab	refused	loft-suite/rules/layout/L-Tuple/a-tuple-packs-by-descending-alignment-and-pads-to-its-largest.loft
+elab	refused	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft
 elab	refused	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft
 elab	refused	loft-suite/rules/matching/M-Match/a-match-over-a-later-function-reads-every-pattern-kind.loft
 elab	refused	loft-suite/rules/matching/M-Match/a-match-subject-from-a-later-function-keeps-its-own-temp.loft
