@@ -516,6 +516,20 @@ def land(rule, chapter_dir, new, olds, message):
         _git(["restore", "--staged", "--worktree", "--source=HEAD", "--"] + [o + ".loft" for o in olds], d)
     if any(not os.path.exists(os.path.join(d, o + ".loft")) for o in olds):
         restore()                           # an earlier refused run removed them
+    # Before anything changes: an edit made after its file was staged would miss the commit and
+    # pass every check that reads the working tree (a moved cell committed without the citation
+    # added after the `git mv`), and anything staged that is not this land's would be committed
+    # under its message (another rule's refused land once rode in that way).
+    if subprocess.run(["git", "diff", "--quiet"], cwd=suite).returncode != 0:
+        print("the suite has unstaged changes — stage or drop them first:")
+        print(_git(["diff", "--stat"], suite))
+        return 1
+    mine = {os.path.join("rules", chapter_dir, n + ".loft") for n in [new, *olds]}
+    others = [p for p in _git(["diff", "--cached", "--name-only"], suite).split() if p not in mine]
+    if others:
+        print("the suite has staged changes that are not this land's — commit or unstage them first:")
+        print("  " + "\n  ".join(others))
+        return 1
     before = features()
     _git(["rm", "-q"] + [o + ".loft" for o in olds], d)
     _git(["add", new + ".loft"], d)
@@ -523,12 +537,6 @@ def land(rule, chapter_dir, new, olds, message):
     if before != after:
         restore()
         print(f"the rule's feature count moved {before} -> {after}: a merged header dropped a `loft#N` or an axis value")
-        return 1
-    # An edit made after its file was staged would miss the commit and pass every check that reads
-    # the working tree (a moved cell committed without the citation added after the `git mv`).
-    if subprocess.run(["git", "diff", "--quiet"], cwd=suite).returncode != 0:
-        print("the suite has unstaged changes — stage or drop them first:")
-        print(_git(["diff", "--stat"], suite))
         return 1
     trailer = "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     _git(["commit", "-q", "-m", message + trailer], suite)

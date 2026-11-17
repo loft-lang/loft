@@ -51,13 +51,13 @@ F-ParamGrow	calls	curated	2	2026-11-17	one own cell (loft#1251, a heap parameter
 F-ParamHeap	calls	curated	11	2026-11-17	own dir 2 -> 1: loft#2137 (patch) and loft#1415 — a heap argument shares the caller's store and nothing in the frame releases it — 2->1
 F-ParamRebind	calls	curated	8	2026-11-17	own dir 3 -> 2: the whole write through a link to a plain parameter (the re-pointing walk, the written record) 2->1; the rebind built apart (gate E agrees) stays
 F-ParamRef	calls	curated	9	2026-11-17	2 cells, gate E splits them (the slot parameter, refused; the whole-value write through a ref parameter, agrees)
-F-ParamScalar	calls	todo			
-F-ParamText	calls	todo			
-F-ParamTuple	calls	todo			
-F-Rec	calls	todo			
+F-ParamScalar	calls	curated	5	2026-11-17	4 cells, all patch receipts (one per file) — nothing to merge
+F-ParamText	calls	curated	3	2026-11-17	own dir 3 -> 2: a text parameter is the argument's value and the callee's own (loft#2203, #2422/#2423) 2->1; the conformance cell (gate E agrees) stays
+F-ParamTuple	calls	curated	1	2026-11-17	one cell (a by-value tuple parameter is the callee's own value)
+F-Rec	calls	curated	4	2026-11-17	3 cells: two patches and a gate-E-agreeing conformance cell — nothing to merge
 F-Recv	calls	todo			
 F-Ret	calls	todo			
-F-Return	calls	todo			
+F-Return	calls	curated	1	2026-11-17	own dir 2 -> 1: what a function answers (loft#1347, #2383) 2->1, plus a real discarded-return case where the dropped main's test calls had been the rule's only discarded context
 F-Surface	calls	todo			
 F-Visible	calls	todo			
 Cap-Call	capabilities	todo			

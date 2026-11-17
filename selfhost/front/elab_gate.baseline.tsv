@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	f6514777d5be091dc13473811e3bf26cfb7d368a
 
-layer	elab	agree	1031	of	2191
+layer	elab	agree	1031	of	2190
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -116,8 +116,7 @@ elab	refused	loft-suite/rules/calls/F-ParamRef/a-slot-parameter-writes-the-field
 elab	refused	loft-suite/rules/calls/F-ParamScalar/a-compound-write-to-a-tuple-parameters-member-is-the-callees-copy.loft
 elab	refused	loft-suite/rules/calls/F-ParamScalar/a-generic-text-parameter-reassigns-like-its-twin.loft
 elab	refused	loft-suite/rules/calls/F-ParamScalar/a-scalar-parameter-is-a-copy-at-every-call-form.loft
-elab	refused	loft-suite/rules/calls/F-ParamText/2203-a-text-argument-is-its-value-at-the-call.loft
-elab	refused	loft-suite/rules/calls/F-ParamText/2422-a-link-to-a-text-parameter-names-its-own-copy.loft
+elab	refused	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft
 elab	refused	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft
 elab	refused	loft-suite/rules/calls/F-Rec/a-method-on-an-integer-literal-is-a-call.loft
 elab	refused	loft-suite/rules/calls/F-Rec/a-recursive-call-gets-its-own-frame.loft
