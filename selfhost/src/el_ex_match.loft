@@ -893,6 +893,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     if rw == null {
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // (A `_` comprehension's counters are its own: beside the range's, the comprehension
+    // mints the `_index_N` a named one would call `x#index`, which a range never reads.)
+    if src_id == "_" {
+      el_vars::create_unique(vars, "index", elem);
+    }
   } else {
     outer_slice = vars.slice_node;
     vars.slice_node = el_ex_vector::slice_target(e, source);
@@ -923,17 +928,10 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     elem = match in_type { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
   }
   // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
-  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { el_ex_pattern::loop_index(vars, id, named: true) };
-  // (A `_` over a range is carried only where it fills, and Rust's fill mints no `__N` for
-  // it: the walk's variable here is a nameless stand-in that takes no number of that family.)
-  lv = -1;
-  if src_id == "_" && ranged {
-    lv = el_vars::add_variable(vars, "__fill_binding", elem);
-    el_vars::set_defined(vars, lv);
-    vars.loop_vars += [lv];
-  } else {
-    lv = loop_var(vars, src_id, id, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
-  }
+  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { el_ex_pattern::loop_index(vars, if src_id == "_" { "_" } else { id }) };
+  // (A `_` binds its own fresh `___N` in a comprehension as in a loop, a fill included: the
+  // number is taken although the fill names no walk.)
+  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
   vars.active_loops += [lv];
   vars.active_values += [if sliced { ir::NdNull } else { x.code }];
   fc = el_ex_pattern::loop_filter(e, vars, filter);
@@ -971,10 +969,6 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     }
   }
   // A `_` binding is carried where the comprehension fills; any other walk names its element.
-  if src_id == "_" && fill_count < 0 {
-    el::refuse(e, "a comprehension with destructuring or `_`");
-    return ex(ir::NdNull, ir::TyVoid);
-  }
   if ranged && fill_count < 0 && (constant_body(e, b.code) || (filter != null && rw!.constant)) {
     el::refuse(e, "a range comprehension that fills or unrolls a constant");
     return ex(ir::NdNull, ir::TyVoid);
