@@ -176,7 +176,16 @@ are stable across emits.  With `LOFT_NO_TEXT_LEN=1` on both emits `char_slice` a
 decide differently from Rust's for these library functions in these programs.  Repro: the test
 file with `fn main() { <test>(); }` appended, emitted from the file's own directory with
 `LOFT_NO_WARNINGS=1 LOFT_NO_TEXT_BORROW=1` (`--emit-image`, `--emit-run-image`), then
-`bgen_check <store> <run> --dump t_4File_lines`.  A development build of `bgen_check` needs
+`bgen_check <store> <run> --dump t_4File_lines`.  What is measured so far for `File.lines` (the rewrite's own trace: `discharge-into:
+t_4File_lines — 1 read(s) straight into their local`, i.e. `c = self.content() ?? ""` loses
+its `__ncc_1`): the program image holds `__ncc_1` at no slot (65535) and the locals after it
+24 bytes lower (`p` 120, where the rewrite switched off gives `__ncc_1` 120 and `p` 144) — so
+the image IS the rewritten function, and the writer still lays the frame out 16 bytes deeper
+(every stack distance in the first operators reads 176 where the image has 160).  Not yet
+read: where `bgen.loft` takes a function's starting depth from, which is the next step; a
+scratch tool that prints an image's stack positions is a ten-line loft program over
+`load::load` (the fields are private to `ir`, so it runs in a scratch copy of the package).
+A development build of `bgen_check` needs
 `LD_PRELOAD=libm.so.6`: its `crt` shim is linked without the maths library there
 (`undefined symbol: trunc`) — a build defect of its own, not filed.
 
