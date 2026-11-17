@@ -884,7 +884,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     _ => {}
   }
   // The destination's element temp, minted on both passes as the literal path mints it.
-  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if v >= 0 { [v] } else { [] } });
+  celm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if v >= 0 { [v] } else { [] } });
   // A field's comprehension pushes into the field's place: no store of its own, no local.
   place = vars.comp_place;
   vars.comp_place = [];
@@ -989,11 +989,18 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     return ex(ir::NdNull, ir::TyVoid);
   }
   push = el_ex_pattern::push_op(in_t);
-  if push == "" || in_t is TyOptional {
+  // A text or a plain record element is made through the vector (`OpNewRecord`), written, and
+  // finished — each pass of the walk its own element.
+  made_d = match in_t { TyReference { n: mdn, dep: _ } => if el::def(e, mdn).def_type == el::DT_STRUCT && !el::def(e, mdn).name.starts_with("__") { mdn } else { -1 }, _ => -1 };
+  made = (in_t is TyText || made_d >= 0) && !(b.tp is TyOptional);
+  // (A record element keeps what its body VIEWS — a local it hands back — and not the work
+  // ref a literal was built in; a text keeps its body's type as it is.)
+  rec_t = if made_d >= 0 { el_types::with_deps(in_t, [for dp in el_types::deps(b.tp) if !el_vars::name_of(vars, dp).starts_with("__ref") { dp }]) } else { in_t };
+  if !made && (push == "" || in_t is TyOptional) {
     el::refuse(e, "a comprehension of this element type: {type_kind(in_t)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if v >= 0 && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
+  if v >= 0 && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: if in_t is TyText { b.tp } else { rec_t }, dep: [] }) {
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1018,7 +1025,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     return ex(ir::NdNull, ir::TyVoid);
   }
   // (A fill runs no loop and mints no `_comp_N`.)
-  comp = if fill_count >= 0 { -1 } else { el_vars::create_unique(vars, "comp", in_t) };
+  comp = if fill_count >= 0 { -1 } else { el_vars::create_unique(vars, "comp", if in_t is TyText { b.tp } else { rec_t }) };
   steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
   if !ranged && !sliced {
     steps += [vector_past_end(e, vec, idx)];
@@ -1026,12 +1033,51 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   if fc != null {
     steps += [fc!];
   }
-  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, dest, ir::NdVar { n: comp }))];
   r = rows!;
+  if made {
+    if fill_count >= 0 {
+      el::refuse(e, "a range comprehension that fills or unrolls a constant");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    ek = ir::NdInt { n: r.vec_known };
+    wr = if in_t is TyText {
+      el_ir::cl(e, "OpSetText", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdVar { n: comp }])
+    } else {
+      mk = el::def(e, made_d).known_type;
+      el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdInt { n: mk }]), ir::NdInt { n: mk + 16384 }])
+    };
+    // (A record body answers its record: the body's block is typed without the work ref.)
+    body_code = b.code;
+    if made_d >= 0 {
+      match b.code {
+        NdBlock { block } => {
+          bb = block[0]!;
+          bb.result = [rec_t];
+          body_code = ir::NdBlock { block: [bb] };
+          // (A body that is one call answers that call: no block of its own.)
+          only: vector<ir::Node> = [for bo in bb.operators if !el_ir::is_line(bo) { bo }];
+          if len(only) == 1 && el_ir::unspan(only[0]!) is NdCall {
+            body_code = el_ir::unspan(only[0]!);
+          }
+        },
+        _ => {}
+      }
+    }
+    steps += [el_ir::v_set(comp, body_code), el_ir::v_set(celm, el_ir::cl(e, "OpNewRecord", [dest, ek, ir::NdInt { n: 65535 }])), wr, el_ir::cl(e, "OpFinishRecord", [dest, ir::NdVar { n: celm }, ek, ir::NdInt { n: 65535 }])];
+  } else {
+    steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, dest, ir::NdVar { n: comp }))];
+  }
   items: vector<ir::Node> = [];
+  if made && v < 0 {
+    // (A field's element borrows the record the field lies in.)
+    el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [el_ex_base::place_root(e, dest)] });
+  }
   if v >= 0 {
     db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
     el_vars::depend(vars, v, db);
+    if made {
+      el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [db] });
+    }
     items = [
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
       el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
