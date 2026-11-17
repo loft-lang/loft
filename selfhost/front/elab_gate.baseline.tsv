@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	1df3306b062b6bbfb2139187fe2a456ebb8d7d99
+suite	3de0e93b297d4fab46a967690ef16a572960ccf2
 
-layer	elab	agree	1031	of	2145
+layer	elab	agree	1031	of	2144
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -223,8 +223,7 @@ elab	refused	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector
 elab	refused	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft
 elab	refused	loft-suite/rules/concurrency/C-Order/a-par-loop-keeps-its-sources-order.loft
 elab	refused	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft
-elab	refused	loft-suite/rules/coroutines/G-Call/2059-a-lambda-generator-in-every-position.loft
-elab	refused	loft-suite/rules/coroutines/G-Call/a-lambda-returning-an-iterator-is-a-generator.loft
+elab	refused	loft-suite/rules/coroutines/G-Call/a-lambda-that-yields-or-returns-an-iterator-is-a-generator-in-every-position.loft
 elab	refused	loft-suite/rules/coroutines/G-For/a-generator-drives-a-for-loop-with-owned-heap-values.loft
 elab	refused	loft-suite/rules/coroutines/G-Hold/1585-a-generator-can-be-held-in-a-field-or-an-element.loft
 elab	refused	loft-suite/rules/coroutines/G-Hold/1601-a-generator-held-in-a-keyed-collection-is-released.loft
