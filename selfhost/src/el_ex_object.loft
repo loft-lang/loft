@@ -2769,7 +2769,9 @@ pub fn scalar_stored_size(e: el::El, t: ir::TypeT) -> integer {
 pub fn stubs_resolve(e: el::El, n: ir::Node, h: integer, bound: ir::TypeT) -> boolean {
   match n {
     NdCall { def_nr } => {
-      if stub_call(e, def_nr, h) && re_resolve_stub(e, def_nr, h, bound) < 0 {
+      // (An order form the bound type answers through its `operator compare` is lowered in the
+      // instance, `order_through_compare`: no method of the form's own name is needed.)
+      if stub_call(e, def_nr, h) && re_resolve_stub(e, def_nr, h, bound) < 0 && !(el_ex_call::order_form(el::def(e, def_nr).name) != "" && el_ex_null::operator_member(e, "compare", bound, bound) >= 0) {
         return false;
       }
     },
