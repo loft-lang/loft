@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
 
-layer	elab	agree	938	of	2211
+layer	elab	agree	945	of	2213
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -56,7 +56,6 @@ elab	refused	loft-suite/rules/binding/B-Disturb/2161-a-disturbance-ends-only-the
 elab	refused	loft-suite/rules/binding/B-Disturb/2267-a-clear-or-a-method-ends-the-views-into-a-vector.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/2349-a-view-read-only-into-a-callees-argument-is-not-live-across-the-callee.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/2391-a-whole-record-written-into-a-place-ends-the-views-into-what-it-owned.loft
-elab	refused	loft-suite/rules/binding/B-Disturb/2433-a-write-through-a-view-or-link-ends-the-views-below-it.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-match-payload-view-read-after-its-subject-is-rebound-is-a-copy.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-bound-in-a-later-match-arm-materialises-across-a-rebind.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-read-after-a-loop-is-copied-only-where-a-path-disturbed-it.loft
@@ -434,7 +433,6 @@ elab	refused	loft-suite/rules/heap/H-TextReplace/2310-a-text-parameter-read-befo
 elab	refused	loft-suite/rules/heap/H-View/1985-a-parsed-vector-is-owned-by-what-binds-it.loft
 elab	refused	loft-suite/rules/heap/H-View/a-projection-into-a-local-is-not-the-callers-store-to-free.loft
 elab	refused	loft-suite/rules/heap/H-Write-Else/178-store-else.loft
-elab	refused	loft-suite/rules/heap/H-WriteLocked/a-write-that-names-nothing-in-a-locked-store-is-no-lock-fault.loft
 elab	refused	loft-suite/rules/heap/H-WriteOOB/a-record-copied-into-no-place-gives-its-source-back.loft
 elab	refused	loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands-nowhere.loft
 elab	refused	loft-suite/rules/interfaces/G-Check/an-unused-bound-constrains-nothing.loft
@@ -604,7 +602,6 @@ elab	refused	loft-suite/rules/operational/E-Left/2451-a-record-assigned-into-an-
 elab	refused	loft-suite/rules/operational/E-Left/each-operand-of-a-literal-a-format-and-a-compound-is-reduced-left-to-right.loft
 elab	refused	loft-suite/rules/operational/E-NullArg/1924-a-null-text-orders-first-and-concatenates-to-null.loft
 elab	refused	loft-suite/rules/operational/E-NullArg/1945-a-concatenation-with-any-null-operand-is-null.loft
-elab	refused	loft-suite/rules/operational/E-Report/a-guarded-locked-write-runs-its-arm-and-reports-nothing.loft
 elab	refused	loft-suite/rules/operational/E-Seq/a-block-at-statement-start-before-an-operator.loft
 elab	refused	loft-suite/rules/operational/E-Truthy-1/1922-a-vector-slice-is-a-condition.loft
 elab	refused	loft-suite/rules/operational/E-Truthy/1919-a-vector-in-a-truthiness-position-is-true.loft
@@ -765,7 +762,6 @@ elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-en
 elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-subscript-literal-is-staged-then-written-into-the-entry-one-probe-finds.loft
 elab	refused	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft
 elab	refused	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft
-elab	refused	loft-suite/rules/rewrites/R-MoveChild/a-link-set-to-its-own-childs-child-leaves-the-rest-of-the-chain.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2148-a-view-stored-at-its-last-use-is-copied-not-moved.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft
@@ -1219,7 +1215,6 @@ elab	refused	tests/scripts/a-pure-call-made-twice-is-computed-once.loft
 elab	refused	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft
 elab	refused	tests/scripts/a-read-only-record-copy-is-a-view.loft
 elab	refused	tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft
-elab	refused	tests/scripts/a-rebind-from-a-fresh-result-moves-on-both-backends.loft
 elab	refused	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft
 elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft
