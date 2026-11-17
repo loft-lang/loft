@@ -474,7 +474,7 @@ Each is one rule; the measured incident behind it is in
   - *Quantum*: a fixture smaller than the unit being measured (a page, a block, a tick) reports
     the fixture's size, not the code's behaviour (@PLN146 F2: a 19 KB pack in a 64 KiB page).
   - *Count vs identity*: two entries and two entries naming ONE record have the same length.
-    Assert a key sum or a real lookup as well (`901-linked-group-fill.loft`, `1159-…`).
+    Assert a key sum or a real lookup as well (`a-write-through-any-member-of-a-linked-group-reaches-every-member.loft`, `1159-…`).
 - **A CONSTANT index is trusted by contract**, so `v[9]`, `v[k]` under `for k in …` or behind
   `if i < len(v)` read NON-NULL and never produce the `τ?` a nullability cell means to test.
   Index through a variable the compiler cannot prove in range; the receipt is the cell compiling.

@@ -1346,7 +1346,7 @@ impl Parser {
     /// [`Self::group_elem_write`] wraps the copy with.  Measured — the in-place write left
     /// `by_k` holding the record under the hash of its OLD key (`by_k[11]` null with
     /// `len(by_k)` still 2), which is loft#900's defect returning by another road and is what
-    /// `a-group-element-written-through-the-vector-member-reaches-every-member` catches.
+    /// `a-write-through-any-member-of-a-linked-group-reaches-every-member` catches.
     ///
     /// Asked over BOTH element spellings, unlike [`Self::vector_group_elem_site`], which serves
     /// a site that only ever sees `OpVectorRef`: an admission test that recognised one spelling

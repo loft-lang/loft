@@ -355,7 +355,7 @@ under a `vector<R?>`) resolve through `holder_type`, which reads the field type 
 h: hash<E[k]> }`) is open — loft#1375: each vector links to the hash and never to the other,
 so `h` holds the union and each vector only its own entries.
 
-Guard: `a-group-element-written-through-the-vector-member-reaches-every-member.loft` (19
+Guard: `a-write-through-any-member-of-a-linked-group-reaches-every-member.loft` (19
 rows: replace by literal / by local / by a sibling element, null write, a record into a null
 slot, `remove` at the first and last index and out of range, in a loop, through a parameter,
 one nesting level down and under a `vector<R?>`, a variant holder, four keyed members

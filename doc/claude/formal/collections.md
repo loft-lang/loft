@@ -728,16 +728,16 @@ insert) and `Stores::link_record_siblings` (its sibling half alone, `OpLinkRecor
 record leaving, and the element-level writes through the vector member);
 `Stores::insert_keyed_copy` (`src/database/search.rs`, the one keyed insert both the
 point write and the bulk fill take); DATABASE.md § Clearing one member of a linked group;
-loft-suite/rules/collections/Col-Group/a-group-element-written-through-the-vector-member-reaches-every-member.loft;
+loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft;
 loft-suite/attic/scripts/a-keyed-view-joins-a-nullable-element-vector.loft;
 loft-suite/attic/scripts/a-collection-group-does-not-depend-on-declaration-order.loft;
 loft-suite/rules/collections/Col-Group/1158-a-group-forms-whichever-member-is-declared-first.loft;
-loft-suite/rules/collections/Col-Group/1152-a-vector-value-into-a-group-reaches-every-member.loft;
+loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft;
 loft-suite/rules/collections/Col-Insert/1159-a-keyed-collection-filled-from-a-vector-value.loft;
 loft-suite/rules/collections/Col-Group/a-nullable-keyed-member-joins-its-group.loft;
 loft-suite/rules/collections/Col-Group/1160-a-variant-binding-write-means-the-field-write.loft;
 tests/scripts/927-trie-spatial-linked-group.loft;
-loft-suite/rules/collections/Col-Group/901-linked-group-fill.loft.
+loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft.
 
 ---
 
