@@ -55,7 +55,7 @@ F-ParamScalar	calls	curated	5	2026-11-17	4 cells, all patch receipts (one per fi
 F-ParamText	calls	curated	3	2026-11-17	own dir 3 -> 2: a text parameter is the argument's value and the callee's own (loft#2203, #2422/#2423) 2->1; the conformance cell (gate E agrees) stays
 F-ParamTuple	calls	curated	1	2026-11-17	one cell (a by-value tuple parameter is the callee's own value)
 F-Rec	calls	curated	4	2026-11-17	3 cells: two patches and a gate-E-agreeing conformance cell — nothing to merge
-F-Recv	calls	todo			
+F-Recv	calls	curated	12	2026-11-17	own dir 10 -> 8: a call reaches the method spelled for its receiver's nullability (loft#1427, #1432, the narrow/wide crossing) 3->1, all seven warning expectations proven alone; the rest are patches or gate-E-agreeing
 F-Ret	calls	todo			
 F-Return	calls	curated	1	2026-11-17	own dir 2 -> 1: what a function answers (loft#1347, #2383) 2->1, plus a real discarded-return case where the dropped main's test calls had been the rule's only discarded context
 F-Surface	calls	todo			

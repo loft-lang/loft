@@ -563,10 +563,13 @@ scripts/suite_curate.py related <rule> '<regex>'   # every test home's programs 
                                           #   cited or not, and the code sites that enforce it
 scripts/suite_curate.py merge <new> <intro> <cell>…  # one clause's cells into one (gate E must agree)
 scripts/suite_curate.py verify <cell>…    # interpreter + C, leak-checked and strict + poison
-scripts/suite_curate.py vacuity <cell>…   # break one expectation per test: exactly that one fails?
+scripts/suite_curate.py vacuity <cell>…   # break one expectation per test, and corrupt each
+                                          #   @EXPECT_ERROR / @EXPECT_WARNING alone: each must fail
 scripts/suite_curate.py switches <cell>…  # which LOFT_NO_* cure switches move each cell (receipts)
-scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file> <old>…  # retire merged cells:
-                                          #   references, feature count, gate E rows, pin
+scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file | msg text> <old>…
+                                          # retire merged cells: refuses on unstaged or foreign
+                                          #   staged changes and on a lost feature (named); then
+                                          #   repoints every reference, commits, gate E rows, pin
 scripts/suite_curate.py done <rule> '<note>'       # record it, after the commit
 ```
 

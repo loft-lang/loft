@@ -14,8 +14,9 @@ still covers the rule totally — and record which rules are done.
     scripts/suite_curate.py verify <cell>…       # interpreter + C, leak-checked and strict + poison
     scripts/suite_curate.py vacuity <cell>…      # break one expectation per test: exactly it fails?
     scripts/suite_curate.py switches <cell>…     # which LOFT_NO_* cure switches move each cell
-    scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file> <old>…   # retire merged
-                                              # cells: refs, features, suite commit, gate E, pin
+    scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file|text> <old>…  # retire merged
+                                              # cells: checks (a lost feature named), repoints every
+                                              # reference, suite commit, gate E rows, pin
     scripts/suite_curate.py done <rule> [note]   # record the rule as curated (after the commit)
     scripts/suite_curate.py init              # (re)write the ledger's rows for every defined rule
 
@@ -125,6 +126,7 @@ def features(path, axes):
     return out, text
 
 
+features_of = features  # land() names its own `features`
 def plan(tag):
     chapters = defined()
     if tag not in chapters:
@@ -325,6 +327,9 @@ def merge(target, intro_file, cells):
                 ren[v] = px.upper() + v
         for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
             code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
+            # An expectation in the header quotes the diagnostic, which names the renamed thing.
+            head = [re.sub(r"\b" + re.escape(o) + r"\b", nw, l) if re.match(r"^// @EXPECT_", l) else l
+                    for l in head]
         mm = re.search(r"(?ms)^fn main\(\) \{\n(.*?)^\}\n", code)
         if mm and all(re.fullmatch(r'\s*(test_[a-z_0-9]+\(\);|println\("[^"{}]*"\);)?\s*', l)
                       for l in mm.group(1).split("\n")):
@@ -423,7 +428,7 @@ def vacuity(cells):
         text = open(c, encoding="utf-8").read()
         # A refusal cell: corrupt each expectation in turn — the file must then fail, or that
         # expectation is credited by nothing it names.
-        for k, m in enumerate(re.finditer(r"(?m)^// @EXPECT_ERROR: ", text)):
+        for k, m in enumerate(re.finditer(r"(?m)^// @EXPECT_(?:ERROR|WARNING): ", text)):
             probe = os.path.join(os.path.dirname(c), ".curate-vacuity.loft")
             open(probe, "w", encoding="utf-8").write(text[:m.end()] + "XQZ-never-said " + text[m.end():])
             try:
@@ -489,27 +494,38 @@ def land(rule, chapter_dir, new, olds, message):
     d = os.path.join(suite, "rules", chapter_dir)
     skip = re.compile(r"/\.loft/|history|CHANGELOG|census-data|handoff|/" + re.escape(new) + r"\.loft$|" +
                       "|".join("/" + re.escape(o) + r"\.loft$" for o in olds))
-    refs = []
-    for o in olds:
-        for base in (os.path.join(suite, "rules"), os.path.join(ROOT, "doc"), os.path.join(ROOT, "tests"),
-                     os.path.join(ROOT, "scripts"), os.path.join(ROOT, "src")):
-            # A patch receipt's file keeps the retired cell's name (`tests/falsified/<stem>.patch`)
-            # and the merged cell's receipt names it by that path, so a `.patch` name is no
-            # reference to the cell.
-            r = subprocess.run(["grep", "-rlF", o, base], capture_output=True, text=True)
-            named = re.compile(re.escape(o) + r"(?!\.patch)")
-            refs += [f"{o} <- {x}" for x in r.stdout.split() if not skip.search(x)
-                     and named.search(open(x, encoding="utf-8", errors="replace").read())]
-    if refs:
-        print("references to the retired cells — repoint them first:")
-        for x in refs:
-            print("  " + x)
-        return 1
+    def repoint():
+        # Every reference to a retired cell names the merged cell instead.  A merge keeps its
+        # cells in one rule directory, so the repoint is the stem alone, matched as a whole name;
+        # a patch receipt's file keeps the retired cell's name (`tests/falsified/<stem>.patch`,
+        # which the merged cell's receipt names by that path), so a `.patch` name is no
+        # reference.  It runs only once nothing can refuse any more — a refused land must leave no
+        # staged edit behind for another commit to carry.  Each rewritten file is staged in its
+        # own repository and listed: read the list, a sentence may want rewording.
+        for o in olds:
+            named = re.compile(r"(?<![A-Za-z0-9_-])" + re.escape(o) + r"(?![A-Za-z0-9_-]|\.patch)")
+            for base in (os.path.join(suite, "rules"), os.path.join(ROOT, "doc"), os.path.join(ROOT, "tests"),
+                         os.path.join(ROOT, "scripts"), os.path.join(ROOT, "src")):
+                r = subprocess.run(["grep", "-rlF", o, base], capture_output=True, text=True)
+                for x in r.stdout.split():
+                    if skip.search(x):
+                        continue
+                    text = open(x, encoding="utf-8", errors="replace").read()
+                    if not named.search(text):
+                        continue
+                    open(x, "w", encoding="utf-8").write(named.sub(new, text))
+                    repo = suite if os.path.abspath(x).startswith(os.path.abspath(suite) + os.sep) else ROOT
+                    _git(["add", os.path.relpath(x, repo)], repo)
+                    print(f"  repointed  {o} -> {new}  in {os.path.relpath(x, repo)}")
 
     def features():
-        out = subprocess.run([sys.executable, os.path.abspath(__file__), "plan", rule], capture_output=True, text=True).stdout
-        m = re.search(r"features the cells reach today: (\d+)", out)
-        return m.group(1) if m else "?"
+        # The SET of what the rule's cells reach (the union `plan` counts), so a refusal can name
+        # what a merge lost instead of only that the count moved.
+        axes = rule_depth.chapter_axes().get(defined().get(rule, ""), [])
+        got = set()
+        for c in cells_of(rule):
+            got |= features_of(c, axes)[0]
+        return got
     def restore():
         # Put the retired cells back exactly as committed (they were removed by this run, so the
         # committed text is all there is), so a refused land can simply be run again.
@@ -524,8 +540,18 @@ def land(rule, chapter_dir, new, olds, message):
         print("the suite has unstaged changes — stage or drop them first:")
         print(_git(["diff", "--stat"], suite))
         return 1
+    def only_repoints(path):
+        # A file an EARLIER, refused run of this land repointed is staged with nothing but
+        # retired-name → merged-name swaps: every removed line, so rewritten, is its added twin.
+        diff = _git(["diff", "--cached", "-U0", "--", path], suite).split("\n")
+        minus = [l[1:] for l in diff if l.startswith("-") and not l.startswith("---")]
+        plus = [l[1:] for l in diff if l.startswith("+") and not l.startswith("+++")]
+        swap = lambda l: re.sub(r"(?<![A-Za-z0-9_-])(" + "|".join(map(re.escape, olds)) +
+                                r")(?![A-Za-z0-9_-]|\.patch)", new, l)
+        return bool(minus) and [swap(l) for l in minus] == plus
     mine = {os.path.join("rules", chapter_dir, n + ".loft") for n in [new, *olds]}
-    others = [p for p in _git(["diff", "--cached", "--name-only"], suite).split() if p not in mine]
+    others = [p for p in _git(["diff", "--cached", "--name-only"], suite).split()
+              if p not in mine and not only_repoints(p)]
     if others:
         print("the suite has staged changes that are not this land's — commit or unstage them first:")
         print("  " + "\n  ".join(others))
@@ -536,8 +562,12 @@ def land(rule, chapter_dir, new, olds, message):
     after = features()
     if before != after:
         restore()
-        print(f"the rule's feature count moved {before} -> {after}: a merged header dropped a `loft#N` or an axis value")
+        print(f"the rule's features moved {len(before)} -> {len(after)}: "
+              f"lost {sorted(before - after) or 'nothing'}, gained {sorted(after - before) or 'nothing'}\n"
+              "  a `defect#N` is a `loft#N` the merged header (its first 40 lines) no longer names; an "
+              "axis value is a case the merged cell no longer reaches")
         return 1
+    repoint()
     trailer = "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     _git(["commit", "-q", "-m", message + trailer], suite)
     _git(["push", "-q", "origin", "HEAD:main"], suite)
@@ -575,7 +605,7 @@ def land(rule, chapter_dir, new, olds, message):
     open(os.path.join(ROOT, "tests", "loft-suite.pin"), "w", encoding="utf-8").write(head + "\n")
     _git(["add", "tests/loft-suite.pin", "selfhost/front/elab_gate.baseline.tsv"], ROOT)
     _git(["commit", "-q", "-m", f"Suite pin {head[:7]}: {message.splitlines()[0]}" + trailer], ROOT)
-    print(f"landed: suite {head[:7]}, features {after}, gate E {m.group(0).replace(chr(9), ' ')} -> agree {agree}")
+    print(f"landed: suite {head[:7]}, features {len(after)}, gate E {m.group(0).replace(chr(9), ' ')} -> agree {agree}")
     return 0
 
 
@@ -674,8 +704,9 @@ def main():
     if cmd == "switches" and len(a) > 1:
         return switches(a[1:])
     if cmd == "land" and len(a) > 5:
-        # land <rule> <chapter/rule-dir> <new-stem> <message-file> <old-stem>…
-        return land(a[1].removeprefix("@FR-"), a[2], a[3], a[5:], open(a[4], encoding="utf-8").read().strip())
+        # land <rule> <chapter/rule-dir> <new-stem> <message-file | message text> <old-stem>…
+        msg = open(a[4], encoding="utf-8").read() if os.path.isfile(a[4]) else a[4]
+        return land(a[1].removeprefix("@FR-"), a[2], a[3], a[5:], msg.strip())
     if cmd == "merge" and len(a) > 4:
         return merge(a[1], a[2], a[3:])
     if cmd == "related" and tag and len(a) > 2:
