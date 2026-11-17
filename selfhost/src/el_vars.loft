@@ -269,6 +269,8 @@ pub struct Vars {
   pub read_into: integer = -1,
   // Parsing the value of a plain local's `=` (`Parser::in_bind_rhs`).
   pub bind_rhs: boolean = false,
+  // Set while `rename_ret_buffer` judges a pass-1 match tail's arms (`arms_rename_candidate`).
+  pub match_tail: boolean = false,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
   pub rebuilt: vector<integer>,
   // The element type the context gives the vector literal at node `lit_hint_node` (an

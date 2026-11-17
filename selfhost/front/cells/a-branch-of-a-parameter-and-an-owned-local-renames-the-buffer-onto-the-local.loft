@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record `if` tail answering a parameter or an owned local takes the return
+// buffer onto the local on the first pass (the parameter is `MergeAttr` beside it); the second
+// binds the branch to a `___ret_join_N` and copies it into that local, and the parameter's
+// borrow is dropped from the result once the tail is copied (`D-own-2`).
+// Prints: 1 9 9
+
+struct V3 { x: float, y: float, z: float }
+struct Vert { pos: V3, nrm: V3 }
+fn v3(x: float, y: float, z: float) -> V3 { V3 { x: x, y: y, z: z } }
+fn pick(w: Vert, c: boolean) -> Vert {
+  fresh = Vert { pos: v3(9.0, 9.0, 9.0), nrm: v3(0.0, 0.0, 0.0) };
+  if c { w } else { fresh }
+}
+fn main() {
+  a = Vert { pos: v3(1.0, 2.0, 3.0), nrm: v3(0.0, 0.0, 1.0) };
+  b = pick(a, true);
+  c = pick(a, false);
+  println("{b.pos.x} {c.pos.x} {c.pos.z}");
+}

@@ -557,6 +557,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
                   el::refuse(e, "a record tail other than the local the return buffer was renamed onto");
                 } else {
                   bl.operators[-1] = copy!;
+                  prune_copied_tail_params(e, bl.operators);
                 }
               }
             },
@@ -941,6 +942,22 @@ pub fn default_text_ref(e: el::El, vars: el_vars::Vars) -> ir::Node {
   el_ir::v_block([el_ir::v_set(wv, ir::NdText { s: "" }), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])], ir::TyReference { n: el::def_nr(e, "reference"), dep: [wv] }, "default ref")
 }
 
+// `@PLN85 D-own-2`'s prune once the tail was copied whole into the buffer (`tail_copied`): a
+// visible parameter among the result's deps justifies nothing then — the answer is the copy —
+// and is dropped, unless a mid-body `return` may borrow it (`body_return_borrows`; any `return`
+// in the body keeps every one, a coarser test than Rust's).
+fn prune_copied_tail_params(e: el::El, ops: vector<ir::Node>) {
+  for op in ops[..-1] {
+    if el_ex_call::has_return(op) {
+      return;
+    }
+  }
+  d = e.context;
+  ret = el::def(e, d).returned[0];
+  kept = [for a in el_types::deps(ret) if el::def(e, d).attributes[a].hidden { a }];
+  e.b.data.definitions[d].returned = [el_types::with_deps(ret, kept)];
+}
+
 // `RetPromotion::Rename`: the `__retbuf` attribute takes the returned variable's name, the
 // placeholder `__retbuf` stops being an argument, the variable becomes one, and the result's deps
 // name the attribute.  Taken for a tail that is a plain local struct record bound once by a
@@ -951,8 +968,35 @@ pub fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
     return;
   }
   tail = body_tail(code);
+  // The first pass keeps a record match's arms in a `scalar_match` block around the chain.
+  was_match = false;
+  if e.first_pass {
+    match tail {
+      NdBlock { block: mb } => if mb[0].name == "scalar_match" && len(mb[0].operators) == 1 { tail = el_ir::unspan(mb[0].operators[0]!); was_match = true; },
+      _ => {}
+    }
+  }
+  vars.match_tail = was_match;
   v = if tail is NdIf { arms_rename_candidate(e, vars, code, tail) } else { rename_candidate(e, vars, code, tail) };
+  vars.match_tail = false;
   if v >= 0 {
+    // Each parameter an arm hands back beside the renamed local is `MergeAttr`: the result
+    // borrows it too.
+    if tail is NdIf {
+      ps: vector<integer> = [];
+      if el_ex_place::branch_params(vars, tail, ps) || len(ps) > 0 {
+        d = e.context;
+        ret = el::def(e, d).returned[0];
+        dep = el_types::deps(ret);
+        for p in ps {
+          a = attr_nr(el::def(e, d), el_vars::name_of(vars, p));
+          if a >= 0 && !el::def(e, d).attributes[a].hidden && !dep.contains(a) {
+            dep += [a];
+          }
+        }
+        e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep)];
+      }
+    }
     rename_onto(e, vars, rb, v);
   }
 }
@@ -968,13 +1012,54 @@ pub fn arms_rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, n: 
     NdIf { cond: _, t, f } => {
       a = arms_rename_candidate(e, vars, code, t);
       b = arms_rename_candidate(e, vars, code, f);
-      if a == -2 { b } else if b == -2 || a == b || a >= 0 && b >= 0 && work_ref(vars, a) && work_ref(vars, b) { a } else { -1 }
+      // A parameter (-3) stands aside for a plain local of another arm, which `ls` names beside
+      // it (`if c { w } else { fresh }`); a call's work ref is the arm's own mint, no borrow of
+      // the join, and `ls` does not name it (`if c { a } else { mk(7) }` renames nothing).
+      if a == -3 && b == -3 { -3 } else if a == -3 { if b >= 0 && !work_ref(vars, b) || b == -2 { b } else { -1 } } else if b == -3 { if a >= 0 && !work_ref(vars, a) || a == -2 { a } else { -1 } } else if a == -2 { b } else if b == -2 || a == b || a >= 0 && b >= 0 && work_ref(vars, a) && work_ref(vars, b) { a } else { -1 }
     },
     NdBlock { block } => if len(block[0].operators) == 0 { -1 } else { arms_rename_candidate(e, vars, code, block[0].operators[-1]) },
     NdNull => -2,
-    NdCall { def_nr, args } => if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" { -2 } else { rename_candidate(e, vars, code, n) },
+    NdCall { def_nr, args } => if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" { -2 } else if e.first_pass && vars.match_tail && def_nr == e.context { -2 } else if returns_argument_view(el::def(e, def_nr)) { view_arg_candidate(e, vars, code, def_nr, args, n) } else { rename_candidate(e, vars, code, n) },
+    // (A call answering a view of its argument (`id(t)`) is typed by what it borrows: `ls` names
+    // that argument, not the call's buffer.)
+    // (A call of this function itself in a MATCH's arm offers no candidate on the first pass:
+    // `ref_return`'s `ls` names none for it there — a match takes its first settling arm's type
+    // and joins only what the others borrow — while an `if`'s, typed by its else arm, names the
+    // call's buffer (measured: `proof` in O-Buffer against `fresh_or_param` in R-TailSelf).)
+    // A parameter handed back is `MergeAttr`, classified apart from the other arms' candidates:
+    // it takes no buffer and leaves the rename to them (`if c { w } else { fresh }`).
+    NdVar { n: pv } => if vars.vars[pv].argument && attr_nr(el::def(e, e.context), el_vars::name_of(vars, pv)) >= 0 { -3 } else { rename_candidate(e, vars, code, n) },
     _ => rename_candidate(e, vars, code, n)
   }
+}
+
+// The candidate of a call arm whose callee answers a view of its arguments: the one argument
+// local its result borrows, judged as an arm answering that local; the call's own buffer where
+// that argument is no local; -1 for several.
+fn view_arg_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, def_nr: integer, args: vector<ir::Node>, call: ir::Node) -> integer {
+  d = el::def(e, def_nr);
+  found = -1;
+  for x in el_types::deps(d.returned[0]) {
+    at = d.attributes[x];
+    if at == null || at!.hidden {
+      continue;
+    }
+    a = el_ir::unspan(args[x] ?? ir::NdNull);
+    match a {
+      NdVar { n: av } => {
+        if found >= 0 && found != av {
+          return -1;
+        }
+        found = av;
+      },
+      // A borrowed argument that is no local (`id(g(3))`): the call's own buffer, as any call.
+      _ => { return rename_candidate(e, vars, code, call); }
+    }
+  }
+  if found < 0 {
+    return rename_candidate(e, vars, code, call);
+  }
+  arms_rename_candidate(e, vars, code, ir::NdVar { n: found })
 }
 
 // `bound_already`: an earlier exit delivered into the unrenamed `__retbuf` (the result's deps
