@@ -2293,6 +2293,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   result = ir::TyVoid;
   out: vector<SMArm> = [];
   shapes: vector<SliceShape> = [];
+  prechain: vector<ir::Node> = [];
   total = false;
   for an in arms {
     match e.p.nodes[an] {
@@ -2315,6 +2316,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
             binds = sa!.binds;
             cond = sa!.cond;
             shapes += [sa!.shape];
+            prechain += sa!.pre;
           },
           _ => {
             bn = el_ex_pattern::rename_of(e, pn);
@@ -2400,7 +2402,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     chain = if a.guard == null { a.code } else { el_ir::v_if(a.guard!, a.code, chain) };
   }
   head: vector<ir::Node> = if subject_var >= 0 { [] } else { [el_ir::v_set(sv, x.code)] };
-  own_match_arms(e, vars, ex(el_ir::v_block(head + [chain], result, "vector_match"), result))
+  own_match_arms(e, vars, ex(el_ir::v_block(head + prechain + [chain], result, "vector_match"), result))
 }
 
 // Does an arm's code answer a variable one of its `binds` set?
@@ -2429,7 +2431,140 @@ pub struct SliceShape {
 pub struct SliceArm {
   pub binds: vector<ir::Node>,
   pub cond: ir::Node?,
-  pub shape: SliceShape
+  pub shape: SliceShape,
+  // What a cursor arm's sub-rules set before the arms are tried (`prechain`).
+  pub pre: vector<ir::Node> = []
+}
+
+// A cursor arm's sub-rule `name: rule`: the function `n_<rule>` a `PCap` names, or -1.
+pub fn subrule_of(e: el::El, el0: integer) -> integer {
+  match e.p.nodes[el0] {
+    PCap { name: _, pat, at_sign } => {
+      if at_sign || pat == null {
+        return -1;
+      }
+      rule = match e.p.nodes[pat!] { PName { name: rn } => rn, _ => "" };
+      if rule == "" {
+        return -1;
+      }
+      d = el::def_nr(e, "n_{rule}");
+      if d < 0 {
+        return -1;
+      }
+      rt = el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid);
+      if rt is TyVoid || rt is TyNever || el_types::is_unknown(rt) { -1 } else { d }
+    },
+    _ => -1
+  }
+}
+
+fn both(c: ir::Node?, x: ir::Node) -> ir::Node {
+  if c == null { x } else { el_ir::v_if(c!, x, ir::NdBoolean { b: false }) }
+}
+
+// `parse_slice_pattern` in a cursor match (`@FR-P-Rule`): the pattern is read in SEGMENTS — the
+// fixed elements up to a sub-rule are tested from the segment's base (the entry position, then
+// each sub-rule's `_cursor_seg_N`); a sub-rule `name: rule` is called with the cursor placed
+// past the segment, its answer bound to `name`, and matches when the answer is present; an arm
+// with a sub-rule that fails puts the cursor back ("sub-rule miss").  The arm that wins
+// advances the cursor past its last segment.  A rest, a group, and a rule answering anything
+// but a record are refused by name.
+pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+  cur = vars.cursor;
+  sed = el_types::struct_enum_def(elm);
+  es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
+  named_t = if sed >= 0 { el_types::with_deps(elm, [src]) } else { elm };
+  ln = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]);
+  base = cur[3]!;
+  cond: ir::Node? = null;
+  binds: vector<ir::Node> = [];
+  pre: vector<ir::Node> = [];
+  seg_names: vector<text> = [];
+  seg_pats: vector<integer> = [];
+  total = 0;
+  ruled = false;
+  for step in 0..len(elems) + 1 {
+    el0 = if step < len(elems) { elems[step]! } else { -1 };
+    rule = if el0 >= 0 { subrule_of(e, el0) } else { -1 };
+    if el0 >= 0 && rule < 0 {
+      nm = "";
+      pat = -1;
+      match e.p.nodes[el0] {
+        PWild => { nm = "_"; },
+        _ => {
+          nm = el_ex_pattern::rename_of(e, el0);
+          if nm == "" && sed >= 0 && e.p.nodes[el0] is PName {
+            pat = el0;
+          } else if nm == "" {
+            el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: {syn_kind(e, el0)}");
+            return null;
+          }
+        }
+      }
+      seg_names += [nm];
+      seg_pats += [pat];
+      total += 1;
+      continue;
+    }
+    // The segment's end — a sub-rule, or the pattern's `]`: its length gate (the last
+    // segment's always), each element's test, then each named element.
+    k = len(seg_names);
+    if k > 0 || el0 < 0 {
+      cond = both(cond, el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: k }]), ln]));
+    }
+    for sn in seg_names {
+      at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: sn#index }])]);
+      sp = seg_pats[sn#index] ?? -1;
+      if sp >= 0 {
+        va = el_ex_pattern::slice_variant(e, vars, sp, sed, slice_elem(e, elm, at), names);
+        if va == null {
+          return null;
+        }
+        cond = both(cond, va!.cond ?? ir::NdBoolean { b: true });
+        binds += va!.binds;
+      } else if sn != "_" {
+        bv = pattern_bind(vars, sn, named_t, names);
+        binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
+      }
+    }
+    if el0 < 0 {
+      // The arm that wins advances the cursor past its last segment, before its body runs.
+      if ruled {
+        back = el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, ir::NdVar { n: cur[3]! });
+        cond = el_ir::v_if(cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: true }, el_ir::v_block([back, ir::NdBoolean { b: false }], ir::TyBoolean, "sub-rule miss"));
+      }
+      binds += [el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: k }]))];
+      break;
+    }
+    // `parse_subrule_slice_element`.
+    rt = el_types::without_deps(el_types::base(el::def(e, rule).returned[0] ?? ir::TyVoid));
+    if !(rt is TyReference) {
+      el::refuse(e, "a cursor sub-rule answering this type: {type_kind(rt)}");
+      return null;
+    }
+    rn = match e.p.nodes[el0] { PCap { name } => name, _ => "" };
+    nv = pattern_bind(vars, rn, rt, names);
+    el_vars::set_defined(vars, nv);
+    sg = el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
+    el_vars::set_defined(vars, sg);
+    sentinel = el_ir::cl(e, "OpNullRefSentinel", []);
+    pre += [el_ir::v_set(nv, sentinel), el_ir::v_set(sg, ir::NdInt { n: 0 })];
+    set_pos = el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: k }]));
+    call = el_ex_call::call_args(e, vars, rule, [ir::NdVar { n: cur[0]! }], [el_vars::tp(vars, cur[0]!)]);
+    now = el_ex_base::field_get(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! });
+    if call == null || now == null {
+      el::refuse(e, "a cursor sub-rule that is not called with the cursor alone");
+      return null;
+    }
+    matched = el_ir::v_block([el_ir::v_set(sg, now!), ir::NdBoolean { b: true }], ir::TyBoolean, "sub-rule matched");
+    present = el_ir::cl(e, "OpNeRef", [ir::NdVar { n: nv }, sentinel]);
+    cond = both(cond, el_ir::v_block([set_pos, el_ir::v_set(nv, call!.code), el_ir::v_if(present, matched, ir::NdBoolean { b: false })], ir::TyBoolean, "sub-rule"));
+    base = sg;
+    seg_names = [];
+    seg_pats = [];
+    ruled = true;
+  }
+  SliceArm { binds: binds, cond: cond, shape: SliceShape { min: total, exact: false }, pre: pre }
 }
 
 // `slice_arms_cover_every_length`: one arm open from some length (a rest), and an exact arm for
@@ -2464,13 +2599,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // optional group or a multi-element alternation: `parse_multi_element_alternation`.
   cur = vars.cursor;
   if len(cur) > 0 {
-    for el0 in elems {
-      plain = match e.p.nodes[el0] { PWild => true, PName { name: _ } => true, _ => el_ex_pattern::rename_of(e, el0) != "" };
-      if !plain || el_ex_pattern::rep_group(e, el0) >= 0 || alt_group(e, el0) >= 0 {
-        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: {syn_kind(e, el0)}");
-        return null;
-      }
-    }
+    return cursor_arm(e, vars, sv, src, elm, elems, names);
   }
   for el0 in elems {
     if el_ex_pattern::rep_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
