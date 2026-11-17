@@ -1443,6 +1443,11 @@ pub fn range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, re
     return rev_range_for(e, vars, h, source);
   }
   rwo = range_walk(e, vars, h.id, source);
+  // (A `for _` statement over a range also declares the named counter `_#index` it never
+  // reads: one more variable, seen where a variable's number is printed.)
+  if h.id == "_" && rwo != null {
+    el_vars::add_variable(vars, "_#index", ir::TyInteger { spec: i32_spec() });
+  }
   if rwo == null {
     return ex(ir::NdNull, ir::TyVoid);
   }

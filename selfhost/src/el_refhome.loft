@@ -29,7 +29,7 @@ pub fn check_stored_reference_homes(e: el::El) {
       depths += [-1];
     }
     bind_depths(code, 0, depths);
-    if lifted_home(e, code, depths) {
+    if lifted_home(e, d.variables, code, depths) {
       el::refuse(e, "a stored reference to a record whose local is bound in a deeper block than its holder");
       return;
     }
@@ -96,13 +96,16 @@ fn bind_depths(n: ir::Node, depth: integer, depths: vector<integer>) {
 }
 
 // Does `n` hold a stored-reference write whose value's local was bound deeper than the holder?
-fn lifted_home(e: el::El, n: ir::Node, depths: vector<integer>) -> boolean {
+fn lifted_home(e: el::El, vs: ir::Function, n: ir::Node, depths: vector<integer>) -> boolean {
   match el_ir::unspan(n) {
     NdCall { def_nr, args } => {
       if el::def(e, def_nr).name == "OpSetDbRef" && len(args) == 3 {
         h = root(e, args[0]);
         s = root(e, args[2]);
-        if h >= 0 && s >= 0 && h != s && s < len(depths) && h < len(depths) && depths[s] > depths[h] && depths[h] >= 0 {
+        // (A closure's record holding a capture: the captured local's store is a work
+        // variable already declared at the function's head, where the move would put it.)
+        clos = h >= 0 && h < len(vs.variables) && vs.variables[h].name.starts_with("___clos_");
+        if !clos && h >= 0 && s >= 0 && h != s && s < len(depths) && h < len(depths) && depths[s] > depths[h] && depths[h] >= 0 {
           return true;
         }
       }
@@ -110,7 +113,7 @@ fn lifted_home(e: el::El, n: ir::Node, depths: vector<integer>) -> boolean {
     _ => {}
   }
   for c in el_ir::children(n) {
-    if lifted_home(e, c, depths) {
+    if lifted_home(e, vs, c, depths) {
       return true;
     }
   }
