@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	0e8b1f3807ceafe9c9cf9aeac0b9bec904c7aeb8
+suite	3f700f3f420b7f36d7d74de88a1c54b73912f7a4
 
-layer	elab	agree	1031	of	2139
+layer	elab	agree	1031	of	2138
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -237,8 +237,7 @@ elab	refused	loft-suite/rules/coroutines/G-Yield/a-generator-yields-a-calls-tupl
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-yield-widens-like-a-return.loft
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-yielded-value-converts-into-its-element-type.loft
 elab	refused	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft
-elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft
-elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-null-hole-never-calls-the-users-to-text.loft
+elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft
 elab	refused	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Fields/57-json.loft

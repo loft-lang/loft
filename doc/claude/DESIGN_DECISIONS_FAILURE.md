@@ -125,8 +125,8 @@ value is null belongs to the program's own inspection (`??`, a test) or the log.
 **Holds at:** `@C142` — `./scripts/idx tag:@C142`: the hole's nullable rewrite in the parser
 (`src/parser/objects.rs`) and the null test before a type's own `to_text`
 (`src/parser/collections.rs`), `formal/formatting.md` `(F-FaultSafe)`, guards
-`loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft` and
-`loft-suite/rules/formatting/F-FaultSafe/a-null-hole-never-calls-the-users-to-text.loft`.
+`loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft` and
+`loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft`.
 **Catalogue:** @F38 (arithmetic safety) · `formal/formatting.md` `(F-FaultSafe)`, `formal/operational.md` `(E-Uncomp)` · reads @C66, @C80.
 
 ## C148 — A parsed value carries its own parse errors, wherever the whole value goes

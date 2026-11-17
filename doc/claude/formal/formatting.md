@@ -337,9 +337,9 @@ the companion [formatting-history.md](formatting-history.md).
   spells out the expected string, not the agreement of two implementations.
 - **Fault-safety (`F-FaultSafe`)** — `a = 5; b = 0; "{a / b}"` is `null` on both backends, and
   the program continues; so are `"{v[9]}"` on `v = [1, 2]` and `"{5.0 % 0.0}"` — no hole kind
-  shows a fault's cause (`loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft`); a
+  shows a fault's cause (`loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft`); a
   null `T?` whose type has an `operator to_text` renders `null` without calling it
-  (`loft-suite/rules/formatting/F-FaultSafe/a-null-hole-never-calls-the-users-to-text.loft`).
+  (`loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft`).
 - **Target (`F-Target`)** — with `lit` + `hole_text` + `hole_int` on `Query`,
   `q: Query = "SELECT * FROM t WHERE name = {name} AND id = {n}"` leaves `len(q.parts) == 2` and
   `q.values == ["ada", "7"]` — identical on both backends; the same template assigned to `text`

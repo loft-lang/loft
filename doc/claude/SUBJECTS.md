@@ -254,7 +254,7 @@ is read-only and a write to it is a compile error. Under WASM it runs sequential
 [@C143](DESIGN_DECISIONS.md) (a rendered record shows its null fields)
 
 **Verified by.** `tests/docs/30-formatting.loft` · **`tests/comparisons/formatting.loft`** ·
-`loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft` ·
+`loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft` ·
 `loft-suite/rules/formatting/F-Render-Fields/a-record-renders-its-null-fields.loft`
 
 **Seen from.** vs Rust §13 · vs Python §6
