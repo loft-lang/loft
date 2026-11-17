@@ -72,17 +72,24 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     job_tmp = tempfile.mkdtemp(prefix="job-", dir=tmp)
     env = {**env, "TMPDIR": job_tmp}
     if test:
-        # The test file with a `main` that calls the one test, beside the other programs; it runs
-        # from the test file's own directory, where its relative paths resolve.
+        # The test file with a `main` that calls the one test, in the job's own directory, where
+        # it runs.
         # A file name past the file system's 255 bytes is no file: a long one keeps its end and a hash.
         # A short name: the program's path is a text constant of it (an `assert`'s file), and
         # one of 256 bytes or more takes another constant layout — under a long TMPDIR every
         # test would measure that, not itself.
         stem = "t" + hashlib.sha1(f"{f}::{test}".encode()).hexdigest()[:16]
-        prog = os.path.join(tmp, stem + ".loft")
+        # In the JOB's own directory: loft resolves a relative path against the program file's
+        # directory, so a test that keeps a fixed relative file (a hook trace, `"x_trace.tmp"`)
+        # would share it with every other test function run at once from one directory — the
+        # test functions of one file race on it (both the interpreter's run and the runner's).
+        prog = os.path.join(job_tmp, stem + ".loft")
         with open(prog, "w", encoding="utf-8") as fh:
             fh.write(open(f, encoding="utf-8", errors="replace").read() + f"\n\nfn main() {{\n  {test}();\n}}\n")
         f = prog
+        # …and both runs work there: the runner resolves a relative path against its working
+        # directory, the interpreter against the program's — the job directory is both.
+        src_dir = job_tmp
     # A file name past the file system's 255 bytes is no file (a long suite cell under a deep
     # checkout): a long stem keeps its end and a hash, as a test function's program does.
     stem = re.sub(r"[^A-Za-z0-9]", "_", f)
