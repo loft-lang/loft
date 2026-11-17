@@ -138,18 +138,18 @@ D-Rank	dispatch	curated	4	2026-11-17	4 cells, all gate-E-agreeing (one refusal) 
 Disp-Ambiguous	dispatch	curated	6	2026-11-17	own dir 4 -> 1: four ambiguity refusals in one file, each expectation proven alone
 Disp-Applicable	dispatch	curated	6	2026-11-17	3 cells, all gate-E-agreeing — kept
 Disp-Closed	dispatch	curated	1	2026-11-17	one cell (a static call is typed by the member it selects)
-Disp-Dynamic	dispatch	todo			
-Disp-Exhaustive	dispatch	todo			
-Disp-Hint	dispatch	todo			
-Disp-Key	dispatch	todo			
-Disp-Match-Equiv	dispatch	todo			
-Disp-Return	dispatch	todo			
-Disp-Select	dispatch	todo			
-Disp-Specific	dispatch	todo			
-Disp-Trigger	dispatch	todo			
-Disp-World	dispatch	todo			
-Fact-Direction	facts	todo			
-Fact-Engine	facts	todo			
+Disp-Dynamic	dispatch	curated	11	2026-11-17	own dir 7 -> 6: the two missing-variant refusals 2->1; five gate-E-agreeing programs stay
+Disp-Exhaustive	dispatch	curated	3	2026-11-17	own dir 4 -> 2: three refusals (no member takes, nullable enum, uncovered pair) 3->1; the covered-call program agrees with gate E
+Disp-Hint	dispatch	curated	7	2026-11-17	own dir 7 -> 6 (incl. fixture): literal-width + untyped-lambda refusals 2->1; the says-only-the-refusal cell stays apart (one diagnostic alone is its property)
+Disp-Key	dispatch	curated	11	2026-11-17	own dir 9 -> 8 (incl. fixture): the two redefinition refusals 2->1; the gate-E-agreeing programs stay
+Disp-Match-Equiv	dispatch	curated	1	2026-11-17	one cell (a set and its match agree on every tuple)
+Disp-Return	dispatch	curated	4	2026-11-17	own dir 3 -> 2: the two return-type refusals 2->1; the agreeing program stays
+Disp-Select	dispatch	curated	9	2026-11-17	one cell (the unique most specific member in any declaration order)
+Disp-Specific	dispatch	curated	16	2026-11-17	8 cells: six gate-E-agreeing programs and two refusals of different clauses (not applicable / ambiguous) — kept
+Disp-Trigger	dispatch	curated	2	2026-11-17	needs packages in reach (declared deps, --lib, LOFT_LIB, the catalogue): guarded by tests/builder_trigger.rs; the F-Surface suite cell cites it
+Disp-World	dispatch	curated	1	2026-11-17	needs a live world (LOFT_LIVE_RELOAD=1, a set growing between reloads): no single suite program can reach it; guarded by tests/live_world.rs
+Fact-Direction	facts	curated	1	2026-11-17	had no guard: a first suite cell (writes through a function value and a recursion cycle, an effectful call not shared, a null remainder) — the new facts chapter
+Fact-Engine	facts	curated	1	2026-11-17	structural (one routine, one answer per compilation, every writer reads it): not observable by one program beyond the writers agreeing; the Fact-Direction cell exercises its answers; Rust sites in src/opt/facts.rs
 Fact-Kind	facts	todo			
 Fact-One	facts	todo			
 Fact-Oracle	facts	todo			
