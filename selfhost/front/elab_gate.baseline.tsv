@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	4d652141e355f81893e7fae9ad7aa0b2e901acba
+suite	db8cf5cb011273a9b8ce1aa636d2c4e254f73f6e
 
-layer	elab	agree	1031	of	2128
+layer	elab	agree	1031	of	2127
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -272,13 +272,12 @@ elab	refused	loft-suite/rules/heap/H-Drop/a-match-arm-member-beside-a-null-arm-i
 elab	refused	loft-suite/rules/heap/H-Drop/a-record-built-for-an-element-of-a-field-literal-is-released-once.loft
 elab	refused	loft-suite/rules/heap/H-Free/2526-a-text-match-arm-that-may-return-keeps-its-value.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft
-elab	refused	loft-suite/rules/heap/H-Free/a-comprehension-releases-each-call-it-copies-whatever-its-layout.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-element-is-rewritten-is-a-view.loft
-elab	refused	loft-suite/rules/heap/H-Free/a-local-bound-in-each-pass-frees-each-copied-answer.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-tail-match-answer-materialised-into-a-work-ref-is-freed-once.loft
 elab	refused	loft-suite/rules/heap/H-Free/an-early-exit-frees-what-the-frame-owns-whoever-would-fill-it-later.loft
+elab	refused	loft-suite/rules/heap/H-Free/each-pass-frees-the-answer-it-copied.loft
 elab	refused	loft-suite/rules/heap/H-FreeNull/2417-a-local-a-later-arm-binds-frees-nothing-on-the-arms-before-it.loft
 elab	refused	loft-suite/rules/heap/H-FreeNull/a-null-heap-value-frees-nothing.loft
 elab	refused	loft-suite/rules/heap/H-Handle/a-file-field-takes-an-append-as-a-file-local-does.loft
