@@ -154,6 +154,38 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**All layers measured at this tree's suite pin (508580956), 2026-11-17** — into scratch
+baselines, NOT committed: the committed `bgen_survey` / `run_image_survey` baselines are still
+pinned at 38d4877cb and a `--check` refuses to run against them.
+
+| Layer | Reading |
+|---|---|
+| front end (gate E), real gate | 924 of 2187 agree, 0 differ, 1263 refused (b10ad3b02) |
+| writer, plain programs | 9091 of 9093 functions identical, 0 differ; 1316 of 1317 streams |
+| writer, test functions | 5756 of 5758 identical, **2 differ**; 2616 of 2660 streams, 3 differ, 41 natives tables |
+| runner on Rust's code | 1316 of 1317 programs; 3967 of 3978 test functions (7 stopped, 2 fault, 1 noimage) |
+| runner on loft's code | 1315 of 1317 programs; 3966 of 3978 test functions |
+
+**The writer defect to fix before those baselines can be committed.**  `t_4File_lines` and
+`t_4text_char_slice` are written with a frame 16 bytes larger than the image's (first op
+`41 176 0` against `41 160 0`) in three test programs: `E-Left/2503…::test_each_pass_reads_the_
+vector_before_its_write`, `E-Left/an-operand-is-read…::test_every_scalar_type`,
+`E-Null/the-null-pattern…::test_the_float_character_and_boolean_patterns`.  Rust's two images
+are stable across emits.  With `LOFT_NO_TEXT_LEN=1` on both emits `char_slice` agrees; with
+`LOFT_NO_DISCHARGE_INTO=1` `File.lines` agrees — so the writer's mirrors of those two rewrites
+decide differently from Rust's for these library functions in these programs.  Repro: the test
+file with `fn main() { <test>(); }` appended, emitted from the file's own directory with
+`LOFT_NO_WARNINGS=1 LOFT_NO_TEXT_BORROW=1` (`--emit-image`, `--emit-run-image`), then
+`bgen_check <store> <run> --dump t_4File_lines`.  A development build of `bgen_check` needs
+`LD_PRELOAD=libm.so.6`: its `crt` shim is linked without the maths library there
+(`undefined symbol: trunc`) — a build defect of its own, not filed.
+
+**Owner, 2026-11-17: build bigger chunks, test specific things, fewer full runs.**  Several
+ports per batch, each checked by a probe on the interpreter-run elaborator (seconds once
+warm), then ONE development build and corpus run per batch and one real gate per committed
+batch or two.  A batch run shows several differences at once; most are gaps the lifted
+refusal uncovered, not the new ports.
+
 **Owed after the next PR lands (loft3's union on `tuxedo-pr2518-next`, suite pin b2194ff):**
 gate E reads 886 of 2185 there with 2 DIFFER, both variable numbering, committed as `differ`
 rows in that branch's baseline — cure them in the elaborator after rebasing:
