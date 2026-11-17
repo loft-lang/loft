@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	be3d9a8471a9069079350737983b2c146c9ee386
+suite	baee48a1ea5306c16d0c742f7198c0847695b7fa
 
-layer	elab	agree	1031	of	2117
+layer	elab	agree	1031	of	2116
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -303,8 +303,7 @@ elab	refused	loft-suite/rules/heap/H-View/a-projection-into-a-local-is-not-the-c
 elab	refused	loft-suite/rules/heap/H-Write-Else/178-store-else.loft
 elab	refused	loft-suite/rules/heap/H-WriteOOB/a-record-copied-into-no-place-gives-its-source-back.loft
 elab	refused	loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands-nowhere.loft
-elab	refused	loft-suite/rules/interfaces/G-Gen-Scope/a-type-variable-reserves-no-name.loft
-elab	refused	loft-suite/rules/interfaces/G-Gen-Scope/typevar-placeholder-not-visible.loft
+elab	refused	loft-suite/rules/interfaces/G-Gen-Scope/a-type-variable-is-a-name-only-inside-the-definition-it-heads.loft
 elab	refused	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft
 elab	refused	loft-suite/rules/interfaces/G-Key/2435-two-modules-types-of-one-name-key-two-instances.loft
 elab	refused	loft-suite/rules/interfaces/G-Key/g_key_2435_a_lib.loft
