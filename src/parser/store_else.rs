@@ -83,7 +83,7 @@ impl Parser {
                 self.vars.set_type(wt, viewed);
             }
             for &(at, arg) in &writes {
-                if let Value::Call(_, args) = steps[at].unspan_mut() {
+                if let Some(args) = step_call_args(&mut steps[at]) {
                     args[arg] = Value::Var(wt);
                 }
             }
@@ -173,11 +173,32 @@ impl Parser {
     fn store_shape(&self, steps: &[Value]) -> Option<StoreShape> {
         let mut target: Option<Value> = None;
         let mut writes = Vec::new();
+        // loft#2549 — an APPEND (`xs += [v]`, `hs += [E { … }]`) is a store too: its target is
+        // the collection it claims in, argument 0 of the claim, the push or the filing.  The
+        // field writes into the claimed element (`_elm = OpNewRecord(…)`, then `OpSet…(_elm, …)`)
+        // follow from the claim — redirected to a null collection it answers a null element,
+        // whose writes skip (`@FR-H-WriteNull`) — so they are not a second target.
+        let mut elements: Vec<u16> = Vec::new();
         for (at, s) in steps.iter().enumerate() {
-            let Value::Call(op, args) = s.unspan() else {
-                continue;
+            let (op, args) = match s.unspan() {
+                Value::Call(op, args) => (*op, args),
+                Value::Set(v, val) => match val.unspan() {
+                    Value::Call(op, args) if self.is_append_op(*op) => {
+                        elements.push(*v);
+                        (*op, args)
+                    }
+                    _ => continue,
+                },
+                _ => continue,
             };
-            let Some(arg) = self.write_target_arg(*op) else {
+            let arg = if self.is_append_op(op) {
+                0
+            } else if let Some(arg) = self.write_target_arg(op) {
+                if matches!(args.get(arg).map(Value::unspan), Some(Value::Var(v)) if elements.contains(v)) {
+                    continue;
+                }
+                arg
+            } else {
                 continue;
             };
             let t = args.get(arg)?.unspan().clone();
@@ -207,6 +228,26 @@ impl Parser {
             }),
             _ => None,
         }
+    }
+
+    /// Is operator `op` an APPEND's step — a claim in, a push onto or a filing into the
+    /// collection its argument 0 names (loft#2549)?  Every one of them lands nowhere through a
+    /// null collection (`@FR-H-WriteNull`): a push and a vector append test it, a claim answers
+    /// the null element and a filing of it files nothing (`Stores::record_new`, `record_finish`,
+    /// `keyed_entry*`).  Any op not named here is not an append, and a statement made of it is
+    /// judged as before.
+    fn is_append_op(&self, op: u32) -> bool {
+        let name = self.data.def(op).name.as_str();
+        name.starts_with("OpPush")
+            || matches!(
+                name,
+                "OpNewRecord"
+                    | "OpFinishRecord"
+                    | "OpAppendVector"
+                    | "OpAppendCopy"
+                    | "n_keyed_entry_ints"
+                    | "n_keyed_entry_text"
+            )
     }
 
     /// Which argument of operator `op` is the place it writes, when it is a store's write.
@@ -282,4 +323,18 @@ fn take_in(n: &mut Value, to: &Value, taken: &mut Option<Value>) {
         return;
     }
     n.for_each_child_mut(&mut |c| take_in(c, to, taken));
+}
+
+/// The arguments of the call a store's step makes — a bare call (`OpSetInt(t, …)`, a push) or
+/// the call a step binds (`_elm = OpNewRecord(t, …)`, loft#2549) — so the target's argument can
+/// be redirected in either.  `None` for any other step: it holds no write to redirect.
+fn step_call_args(step: &mut Value) -> Option<&mut Vec<Value>> {
+    match step.unspan_mut() {
+        Value::Call(_, args) => Some(args),
+        Value::Set(_, val) => match val.unspan_mut() {
+            Value::Call(_, args) => Some(args),
+            _ => None,
+        },
+        _ => None,
+    }
 }
