@@ -234,20 +234,20 @@ H-View-Drop	heap	curated	4	2026-11-17	own dir 4 -> 3: the two refusals 2->1 (15 
 H-Write	heap	curated	1	2026-11-17	no own directory; cited by suite cells of the heap chapter
 H-Write-Else	heap	curated	6	2026-11-17	one cell (a patch)
 H-WriteLocked	heap	curated	7	2026-11-17	one cell
-H-WriteLocked-Whole	heap	todo			
-H-WriteNull	heap	todo			
-H-WriteOOB	heap	todo			
-G-Check	interfaces	todo			
-G-Gen	interfaces	todo			
-G-Gen-Scope	interfaces	todo			
-G-Iface	interfaces	todo			
-G-Key	interfaces	todo			
-G-Mono	interfaces	todo			
-G-Regular	interfaces	todo			
-G-Sat	interfaces	todo			
-G-Sat-Eq	interfaces	todo			
-G-Scope	interfaces	todo			
-G-Select	interfaces	todo			
+H-WriteLocked-Whole	heap	curated	1	2026-11-17	was cell-less: a first suite cell — a guarded text replace and append on a locked record are discarded whole; the keyed filing halts (loft#2549, filed)
+H-WriteNull	heap	curated	5	2026-11-17	no own directory; cited by suite cells of its chapter
+H-WriteOOB	heap	curated	5	2026-11-17	own dir 2 -> 1: a write to a place that names nothing lands nowhere (absent element incl. loft#1378 + record copied into no place, the patch)
+G-Check	interfaces	curated	7	2026-11-17	2 cells, both gate-E-agreeing
+G-Gen	interfaces	curated	6	2026-11-17	own dir 4 -> 2: three refusals in one file, the guard of loft#2548 (fixed: T#4 in a message) with its patch receipt; the unbounded-moves control stays
+G-Gen-Scope	interfaces	curated	3	2026-11-17	own dir 2 -> 1: a type variable is a name only inside its definition (patch + default-file placeholder)
+G-Iface	interfaces	curated	5	2026-11-17	3 cells: the refusal pair cannot share a file (one is a syntax error that masks the other); the control
+G-Key	interfaces	curated	9	2026-11-17	9 files: loft#2435's cells with their five fixture libraries and the loft#1622 patch — kept
+G-Mono	interfaces	curated	38	2026-11-17	own dir 25 -> 23: loft#1383+#1418 (per width) 2->1; the tuple-callback pair 2->1; patches keep one per file
+G-Regular	interfaces	curated	3	2026-11-17	own dir 4 -> 3: three self-naming template cells 2171/regular-enum/names-itself 3->1 (+loft#2058); merging exposed loft#2546 (fixed, its own patch cell 2546-…); the irregular refusal stays; forward generic enum crash loft#2547 filed
+G-Sat	interfaces	curated	9	2026-11-17	3 cells, all patches (one per file)
+G-Sat-Eq	interfaces	curated	3	2026-11-17	3 cells: a patch, a refused control and an agreeing program — distinct
+G-Scope	interfaces	curated	3	2026-11-17	no own directory; cited by suite cells of its chapter
+G-Select	interfaces	curated	4	2026-11-17	2 cells: the ranking control and the refusal
 G-Type	interfaces	todo			
 I-Comp	iteration	todo			
 I-Done	iteration	todo			
