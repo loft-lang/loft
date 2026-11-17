@@ -1607,6 +1607,9 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   if source < 0 && name == "reverse" && len(list) == 1 {
     return reverse_call(e, list, types);
   }
+  if source < 0 && name == "insert" && len(list) == 3 {
+    return insert_call(e, vars, list, types);
+  }
   if source < 0 && name == "sort" && sorts_itself(types) {
     return sort_call(e, list, types);
   }
@@ -1865,6 +1868,58 @@ pub fn size_call(e: el::El, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
 // elements, `OpReserveVector(v, n, <element size>)`, or a hash's buckets, `OpReserveHash(h, n,
 // <its type>)` — nothing on the first pass.  A malformed call is refused by name (Rust reports
 // it).
+// `Parser::parse_insert`: `insert(v, i, x)` / `v.insert(i, x)` makes room for one element at
+// `i` (`OpInsertVector`, held in `_ins_N`) and writes `x` into it — a primitive by its setter,
+// a record copied into the element.  Over a type variable's element the lowering is each
+// instance's (`tvinsert`).  An element that reads the vector it is inserted into is staged
+// first, a vector of vectors appends, a linked group links the record: not carried.
+pub fn insert_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  coll = match types[0] ?? ir::TyVoid { TyRefVar { inner } => inner, _ => types[0] ?? ir::TyVoid };
+  match el_types::base(coll) {
+    TyVector { inner } => {
+      if el_types::type_var(e, el_types::base(inner)) >= 0 {
+        return ex(el_ir::v_block(list, types[0] ?? ir::TyVoid, "tvinsert"), ir::TyVoid);
+      }
+      w = vector_insert(e, vars, list[0]!, list[1]!, ex(list[2]!, types[2] ?? ir::TyVoid), inner);
+      if w != null {
+        return ex(w!, ir::TyVoid);
+      }
+    },
+    _ => {}
+  }
+  refuse_known(e, coll, "an `insert` into this collection or of this element: {type_kind(coll)}");
+  ex(ir::NdNull, ir::TyVoid)
+}
+
+pub fn vector_insert(e: el::El, vars: el_vars::Vars, vec: ir::Node, index: ir::Node, elem: Ex, inner: ir::TypeT) -> ir::Node? {
+  it = el_types::without_deps(el_types::base(inner));
+  root = place_root(e, el_ir::unspan(vec));
+  if it is TyVector || it is TyTuple || (root >= 0 && el_ir::reads_var(elem.code, root)) {
+    return null;
+  }
+  val = stored(e, vars, elem, inner);
+  stride = elem_stride(e, inner);
+  db = el_schema::content_type(e, it);
+  ed = type_def_nr(e, it);
+  if val == null || stride < 0 || db < 0 || ed < 0 {
+    return null;
+  }
+  vv = match el_ir::unspan(vec) { NdVar { n: vn } => vn, _ => -1 };
+  tmp = el_vars::create_unique(vars, "ins", ir::TyReference { n: ed, dep: if vv >= 0 { [vv] } else { [] } });
+  el_vars::set_defined(vars, tmp);
+  at = ir::NdVar { n: tmp };
+  set = if struct_ref(e, it) >= 0 {
+    k = ir::NdInt { n: el::def(e, struct_ref(e, it)).known_type };
+    el_ir::cl(e, "OpCopyRecord", [val!, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, k]), k])
+  } else {
+    el_ex_call::primitive_setter(e, it, at, val!)
+  };
+  el_ir::v_block([el_ir::v_set(tmp, el_ir::cl(e, "OpInsertVector", [vec, ir::NdInt { n: stride }, index, ir::NdInt { n: db }])), set], ir::TyVoid, "insert")
+}
+
 // `Parser::parse_reverse`: `reverse(v)` / `v.reverse()` reverses the vector in place at its
 // element's store size; over a type variable's element the choice is each instance's
 // (`tvreverse`).
@@ -2431,6 +2486,9 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   }
   if name == "reverse" && len(list) == 1 {
     return reverse_call(e, list, types);
+  }
+  if name == "insert" && len(list) == 3 {
+    return insert_call(e, vars, list, types);
   }
   if name == "sort" && sorts_itself(types) {
     return sort_call(e, list, types);
@@ -3073,7 +3131,7 @@ pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir
     NdBlock { block } => {
       bl = block[0]!;
       // (`lowers`: the instance lowers a null check and a default of the variable itself.)
-      lowered = (lowers && (bl.name == "tvnullcheck" || bl.name == "tvdefault")) || (writes && bl.name == "tvreverse");
+      lowered = (lowers && (bl.name == "tvnullcheck" || bl.name == "tvdefault")) || (writes && (bl.name == "tvreverse" || bl.name == "tvinsert"));
       if !lowered && bl.name.starts_with("tv") || bl.name == "yield_copy" || bl.name == "tuple_member_copy" || bl.name == "tuple_member_move" || bl.name == "materialized_view_return" {
         return "a `{bl.name}` block";
       }

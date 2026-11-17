@@ -775,6 +775,14 @@ pub fn rewrite_vector_writes(e: el::El, vars: el_vars::Vars, n: ir::Node, stale:
           return el_ir::cl(e, "OpReverseVector", [rewrite_vector_writes(e, vars, bl.operators[0]!, stale, bound), ir::NdInt { n: e.b.types[rc]!.size }]);
         }
       }
+      // `parse_insert` at the bound element.
+      if bl.name == "tvinsert" && len(bl.operators) == 3 {
+        io: vector<ir::Node> = [for o in bl.operators { rewrite_vector_writes(e, vars, o, stale, bound) }];
+        iw = el_ex_object::vector_insert(e, vars, io[0]!, io[1]!, ex(io[2]!, bound), el_types::without_deps(el_types::base(bound)));
+        if iw != null {
+          return iw!;
+        }
+      }
       bl.operators = write_triplets(e, vars, [for o in bl.operators { rewrite_vector_writes(e, vars, o, stale, bound) }], stale, bound);
       ir::NdBlock { block: [bl] }
     },
@@ -794,7 +802,7 @@ pub fn rewrite_vector_writes(e: el::El, vars: el_vars::Vars, n: ir::Node, stale:
 }
 
 // `primitive_setter_call`: the write of a primitive element at offset 0 of its record.
-fn primitive_setter(e: el::El, t: ir::TypeT, at: ir::Node, src: ir::Node) -> ir::Node {
+pub fn primitive_setter(e: el::El, t: ir::TypeT, at: ir::Node, src: ir::Node) -> ir::Node {
   zero = ir::NdInt { n: 0 };
   match t {
     TyInteger { spec } => {
