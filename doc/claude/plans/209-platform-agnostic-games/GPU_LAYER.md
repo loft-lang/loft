@@ -12,8 +12,11 @@ their own.  It replaces the arc's G2–G4 wording; G1 and arc F stand as the REA
 
 P1, P2, P3, L0, L1, L2, L2b and M0 are done (2026-11-15).  L2b amended § The shape's reach:
 a backend names the layer's header by the layer's name (@C165).
-Next: the host and the one `Scene` (§ The CPU tier and `gpu` side by side, what is left), then
-M1 (the first Metal triangle); L3's and L4's X11 runs wait for the Linux machine.  L5 (stage) changes a published library that would then depend on `gpu`, so it waits
+M1, M2 and the host of M3 and L6 are built (2026-11-17, loft-libs-graphics#98: `gpu_metal`
+0.1.0, `gpu_host` 0.1.0), measured on what draws through `gpu` today; M4's number is a scene's,
+not the game's.
+Next: the one `Scene` (§ The CPU tier and `gpu` side by side, what is left); L3's and L4's X11
+runs wait for the Linux machine.  L5 (stage) changes a published library that would then depend on `gpu`, so it waits
 for `gpu` to be published (§ Open questions 2).
 Publishing waits for the name (open question 2) and for @C165 in a released loft.  V0
 waits for a Linux machine.
@@ -22,7 +25,7 @@ waits for a Linux machine.
 |---|---|---|
 | P — the game on a Mac, on the GL that is there | P1–P5 | P1–P3 done; P4 stood in for until L3; P5 measured standing still |
 | L — the neutral layer | L0–L8 | L0–L3 and L4's painter and sprites done on a Mac and in a page (X11 not run); L5–L8 open |
-| M — the Metal backend | M0–M4 | M0 done; M1–M4 open |
+| M — the Metal backend | M0–M4 | M0–M2 done; M3 done for `gpu_paint` and `scene3d` (graphics and stage are not on `gpu` yet); M4 measured on a scene, the game's run open |
 | V — the Vulkan backend | V0–V4 | Open |
 | H — one shader source | H1–H4 | Open |
 | C — what a console backend needs kept free | C1–C2 | Open |
@@ -308,6 +311,7 @@ Nothing here waits for the neutral layer or for Metal.
   rule: a package other than a host that depends on a backend fails.
   Goes red when: a fixture game that depends on `gpu_gl` passes the gate; a machine with two
   stacks opens other than the first that answers.
+  **The host is built (2026-11-17, with M3); the gate's lint rule is open.**
 - **L7 — graphics' GL-shaped calls go (S; a declared break).**  `Window.shader(text, text)`, the
   state switches, `Texture.bind` and the `GL_*` constants leave graphics; its examples, guide
   and loft's gallery (41 programs) move to `gpu`.
@@ -338,16 +342,63 @@ M0 can run at once; M1 onwards need L3, so every Metal step has a GL picture to 
   asks for, written beside the guard with what causes it (filtering, sample count, colour
   space, derivative precision), so a later surprise is read against a cause.
   Goes red when: the triangle is absent, or the difference is larger than a rounding step.
+  **Done (2026-11-17, an M3 Max): the tolerance is in two parts.**  A scene whose edges lie on
+  pixel borders is the same byte for byte: the slanted triangle with a colour a corner, and
+  every scene of M2.  A scene in perspective differs in single pixels a face's edge (or the
+  border of two texels) passes through the middle of — 20 to 80 of 691,200 a view — which is as
+  many as OpenGL or Metal differs from itself when the same view is drawn into a texture
+  instead of the window (358 and 371 over twelve views, against 336 between the two).  So the
+  cause is the rasteriser's rounding at an edge; Metal's fast-math compilation is not it (the
+  count is the same with it off).  The guard, with these numbers beside it, is
+  `scene3d/tests/backends.loft`: a count of pixels (1 in 5,000), no channel step, since a pixel
+  on the wrong side of an edge shows another face's colour whole.
 - **M2 — `gpu_metal`, one capability a step (S each).**  In L2's order of use: buffers and
   indexed drawing; instancing; textures, `put` and mipmaps; depth; blend, cull and scissor;
   render to a texture; capture.
   Goes red when: that capability's scene differs from `gpu_gl`'s beyond the tolerance.
+  **Done (2026-11-17): `gpu_metal` 0.1.0, loft-libs-graphics#98.**  One C file through the
+  Objective-C runtime; `tests/same_as_gl.loft` runs each capability's scene as one loft
+  function on both backends and compares the captures, all equal byte for byte, on the
+  interpreter, `--native-c` and `--native`.  A source tagged `"msl"` follows five rules (its
+  README): `vertex_main` / `fragment_main`, attributes in the program's order, the block at
+  buffer 0 (checked against the layer's layout from the pipeline's reflection), texture and
+  sampler n, and the position handed to `gpu_position(...)`.  What it settled:
+  - API_GPU.md's assumed row holds: the layer's clip space and bottom-left origin are turned
+    by the backend — the depth in `gpu_position`, the rows of a viewport and a scissor by
+    counting from the other end, and a target by drawing it upside down with the front face
+    turned, so its first row is the one drawn at clip (−1, −1);
+  - one backend serves a program at a time (`gpu`'s C holds one table), so a comparison
+    closes one device before it opens the other's;
+  - a window capture carries the alpha that was drawn, as `gpu_gl`'s does;
+  - Metal state the layer's promises need work for: mipmaps asked after the texture was made,
+    a scissor that leaves the target, a `put` or new floats while a frame still reads the
+    old ones;
+  - a flat value comes from a face's first corner on Metal and its last on OpenGL: a program
+    gives it one number on all three.
+  25 planted breaks each turn a test red, two of them only under Metal's validation layer
+  (`MTL_DEBUG_LAYER=1`), under which the suite passes.  An Intel Mac is not run.
 - **M3 — the host picks Metal on a Mac (S).**
   Goes red when: graphics' and stage's suites, run on a Mac through the host, differ from their
   GL run beyond the tolerance.
+  **Built (2026-11-17) for what is on `gpu`: `gpu_host` 0.1.0, loft-libs-graphics#98.**
+  `gpu_host::open` asks Metal, then OpenGL; `GPU_HOST=<backend>` and `open_on` name one, for a
+  comparison.  `gpu_paint` 0.1.1 and `scene3d` 0.5.1 carry an `"msl"` source: the painter's four
+  scenes are equal byte for byte on both, and `scene3d`'s fourteen hand-worked tests pass on
+  both.  graphics' and stage's own suites are not on `gpu` (L5, L7), so the step's red condition
+  as written is still open.  The AppKit window is a second copy in `gpu_metal`, written by
+  hand: one home for it waits for graphics' `Window` to be a device (L7).
 - **M4 — the game on Metal, timed (S).**  P5's scripted run through `gpu_metal`.
   Goes red when: a frame takes longer than on GL — a finding to explain before Metal becomes
   the Mac's default, never a number to accept.
+  **Measured on a scene, not the game (2026-11-17, an M3 Max, `--native-c --ship`):**
+  `gpu_host/bench/backends.loft` — a town of 48 x 32 cells, 64 actors moved every frame, the
+  free camera, 960 x 720.  It went red first: 208 to 215 µs a frame on Metal against 190 to 193
+  on OpenGL.  The cause was `Buffer.update` making a new Metal buffer every frame (the actors);
+  floats replaced every frame now move between two buffers, and a frame costs 189 to 193 µs on
+  Metal and 189 to 190 on OpenGL.  A frame shown waits for the display the window is on (8.4 ms
+  on a 120 Hz screen for both).  So Metal is first in the host's order.  The game's scripted run
+  (P5) is still open on both backends: it needs the game to replay keys in a window, and its
+  own programs an `"msl"` source or its view on `scene3d`.
 
 ## Track V — the Vulkan backend
 
