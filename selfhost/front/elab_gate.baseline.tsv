@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	baee48a1ea5306c16d0c742f7198c0847695b7fa
+suite	4cbfe954e3b64009e1ef6b47d56bb4f1dc2733a9
 
-layer	elab	agree	1031	of	2116
+layer	elab	agree	1031	of	2115
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -309,8 +309,6 @@ elab	refused	loft-suite/rules/interfaces/G-Key/2435-two-modules-types-of-one-nam
 elab	refused	loft-suite/rules/interfaces/G-Key/g_key_2435_a_lib.loft
 elab	refused	loft-suite/rules/interfaces/G-Key/g_key_2435_b_lib.loft
 elab	refused	loft-suite/rules/interfaces/G-Key/g_key_2435_gen_lib.loft
-elab	refused	loft-suite/rules/interfaces/G-Mono/1383-a-generic-at-two-integer-widths-is-two-monomorphs.loft
-elab	refused	loft-suite/rules/interfaces/G-Mono/1418-a-generic-instantiates-once-per-width.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/1841-a-generic-called-at-a-variable-is-no-code-of-its-own.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/1872-a-generic-instance-answers-as-its-twin-when-read-inline.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/1881-a-recursive-generic-hands-back-what-its-sites-do.loft
@@ -318,6 +316,7 @@ elab	refused	loft-suite/rules/interfaces/G-Mono/2270-a-generic-writes-a-nullable
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-at-a-keyed-collection-builds-its-empty-and-copies-its-bind.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-format-hole-renders-as-its-instance-type.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-hands-up-its-callbacks-pure-value-tuple.loft
+elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-instantiates-once-per-distinct-type-and-two-widths-are-two.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-over-a-vector-of-tuples-of-its-type-variables.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-reserves-at-its-elements-width.loft
