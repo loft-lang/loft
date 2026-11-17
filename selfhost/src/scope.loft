@@ -81,6 +81,13 @@ fn unsupported(f: ir::Function) -> text {
     t = v.type_def[0] ?? ir::TyVoid;
     if needs_free(t) {
       k = free_kind(t);
+      // A reference the compiler made — an argument's lifted copy, a work ref, an element or
+      // a coalesce temporary — is allocated and released by passes this slice does not carry
+      // (`args.rs`'s argument lift allocates it with `OpDatabase`); only a reference the
+      // program names is laid out.
+      if k == "reference" && !v.user_named {
+        k = "a compiler-made reference";
+      }
       // The exit sweep carries a text and a reference; the other kinds stay refused.
       if k != "text" && k != "reference" && !kinds.contains(k) {
         kinds += [k];
