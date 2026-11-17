@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	6560d4ec01d75144da008009b63ffe21ab83622e
+suite	3fa914378eac2e6d76316243b1da41b19bbaf116
 
-layer	elab	agree	964	of	2200
+layer	elab	agree	964	of	2198
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -68,14 +68,12 @@ elab	refused	loft-suite/rules/binding/B-Ref-Uniform/2144-a-null-test-through-a-l
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/a-default-fallback-through-a-link-discharges-its-referent.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/a-link-to-a-collection-is-used-as-the-collection-is-at-every-kind.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/a-reference-parameter-reaches-the-whole-surface.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Write/1371-a-whole-value-write-through-an-amp-link-reaches-the-source.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Write/1376-a-whole-value-write-through-a-link-to-a-place-reaches-the-place.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Write/1836b-a-keyed-literal-through-a-link-parameter-is-the-callers.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Write/2433-a-whole-write-through-a-link-to-an-out-of-line-field-reaches-the-field.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Write/2528-a-place-written-through-an-amp-parameter-is-copied.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Write/a-formatted-append-through-a-text-link.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Write/a-link-to-a-borrowed-place-releases-nothing-its-owner-holds.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft
+elab	refused	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft
 elab	refused	loft-suite/rules/binding/B-RefType/a-link-variable-reads-and-writes-its-place.loft
 elab	refused	loft-suite/rules/binding/B-Scope/1156-a-loop-body-local-read-after-the-loop-is-not-freed-per-iteration.loft
 elab	refused	loft-suite/rules/binding/B-Scope/1679-a-call-through-a-rebound-name-reaches-the-new-binding.loft
