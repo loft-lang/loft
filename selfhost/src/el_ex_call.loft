@@ -183,7 +183,17 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
       return false;
     }
   }
-  why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, el::def(e, h).known_type, tmpl.variables);
+  // `retarget_parametric_type_rows`: a type row the template baked for the variable (an op's
+  // `tp` / `…_tp` argument) names the bound type's row in the instance — the record's or
+  // enum's own, else the row an append of that element takes.
+  stale_row = el::def(e, h).known_type;
+  fresh_row = match el_types::base(bound) {
+    TyReference { n: frd } => el::def(e, frd).known_type,
+    TyEnum { n: fed } => el::def(e, fed).known_type,
+    _ => el_ex_vector::append_row(e, el_types::base(bound))
+  };
+  rows_known = stale_row != el::NO_TYPE && fresh_row >= 0 && fresh_row != el::NO_TYPE;
+  why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables);
   if why != "" {
     el::refuse(e, "a generic body holding {why}");
     return false;
@@ -221,6 +231,16 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     return false;
   }
   code = substitute_code(e, tmpl.code[0] ?? ir::NdNull, h, bound);
+  // `resolve_content_eq` (`@FR-G-Sat-Eq`): a bound `==` over the variable becomes the concrete
+  // `a == b` for the bound type — `call_op`, the one lowering a concrete site gets.
+  if rows_known && !(el_types::base(bound) is TyReference) && el_types::struct_enum_def(bound) < 0 {
+    iv = el_vars::load(f);
+    code = resolve_content_eq(e, iv, code, stale_row, bound);
+    f = el_vars::stored(iv);
+  }
+  if rows_known && stale_row != fresh_row {
+    code = retarget_rows(e, code, stale_row, fresh_row);
+  }
   // `strip_scalar_instance_rebinds`: a parameter the template rebinds keeps an entry witness of
   // the caller's store; one that became a scalar has no store, so the witness and its stash go.
   for v in f.variables {
@@ -316,6 +336,99 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     promote_monomorph_text_return(e, d);
   }
   true
+}
+
+pub fn resolve_content_eq(e: el::El, vars: el_vars::Vars, n: ir::Node, stale: integer, bound: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: resolve_content_eq(e, vars, inner, stale, bound) },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      a2: vector<ir::Node> = [for a in args { resolve_content_eq(e, vars, a, stale, bound) }];
+      if (nm == "OpEqContent" || nm == "OpNeContent") && len(a2) == 3 && a2[2]! == ir::NdInt { n: stale } {
+        x = call_op(e, vars, if nm == "OpEqContent" { "==" } else { "!=" }, [a2[0]!, a2[1]!], [bound, bound]);
+        if x.tp is TyBoolean && !(x.code is NdNull) {
+          return x.code;
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: a2 }
+    },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { resolve_content_eq(e, vars, a, stale, bound) }] },
+    NdBlock { block } => {
+      bl = block[0]!;
+      bl.operators = [for o in bl.operators { resolve_content_eq(e, vars, o, stale, bound) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      bl.operators = [for o in bl.operators { resolve_content_eq(e, vars, o, stale, bound) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { resolve_content_eq(e, vars, o, stale, bound) }] },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: resolve_content_eq(e, vars, inner, stale, bound) },
+    NdReturn { inner } => ir::NdReturn { inner: resolve_content_eq(e, vars, inner, stale, bound) },
+    NdIf { cond, t, f } => ir::NdIf { cond: resolve_content_eq(e, vars, cond, stale, bound), t: resolve_content_eq(e, vars, t, stale, bound), f: resolve_content_eq(e, vars, f, stale, bound) },
+    NdDrop { inner } => ir::NdDrop { inner: resolve_content_eq(e, vars, inner, stale, bound) },
+    NdTuple { items } => ir::NdTuple { items: [for o in items { resolve_content_eq(e, vars, o, stale, bound) }] },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: resolve_content_eq(e, vars, inner, stale, bound) },
+    NdYield { inner } => ir::NdYield { inner: resolve_content_eq(e, vars, inner, stale, bound) },
+    _ => n
+  }
+}
+
+// `retarget_parametric_type_rows`' rewrite: every `tp` / `…_tp` argument of an operator in `n`
+// that names row `stale` names `fresh` (an `OpCopyRecord` row keeps its flag bits,
+// `COPY_TP_MASK`).
+pub fn retarget_rows(e: el::El, n: ir::Node, stale: integer, fresh: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: retarget_rows(e, inner, stale, fresh) },
+    NdCall { def_nr, args } => {
+      cd = el::def(e, def_nr);
+      out: vector<ir::Node> = [];
+      for a in args {
+        an = if a#index < len(cd.attributes) { cd.attributes[a#index]!.name } else { "" };
+        row_arg = starts_with(cd.name, "Op") && (an == "tp" || ends_with(an, "_tp"));
+        rewritten = false;
+        if row_arg {
+          match a {
+            NdInt { n: r } => {
+              bare = if cd.name == "OpCopyRecord" { r & 16383 } else { r };
+              flags = if cd.name == "OpCopyRecord" { r - bare } else { 0 };
+              if bare == stale {
+                out += [ir::NdInt { n: fresh + flags }];
+                rewritten = true;
+              }
+            },
+            _ => {}
+          }
+        }
+        if !rewritten {
+          out += [retarget_rows(e, a, stale, fresh)];
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: out }
+    },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { retarget_rows(e, a, stale, fresh) }] },
+    NdBlock { block } => {
+      bl = block[0]!;
+      bl.operators = [for o in bl.operators { retarget_rows(e, o, stale, fresh) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      bl.operators = [for o in bl.operators { retarget_rows(e, o, stale, fresh) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { retarget_rows(e, o, stale, fresh) }] },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: retarget_rows(e, inner, stale, fresh) },
+    NdReturn { inner } => ir::NdReturn { inner: retarget_rows(e, inner, stale, fresh) },
+    NdIf { cond, t, f } => ir::NdIf { cond: retarget_rows(e, cond, stale, fresh), t: retarget_rows(e, t, stale, fresh), f: retarget_rows(e, f, stale, fresh) },
+    NdDrop { inner } => ir::NdDrop { inner: retarget_rows(e, inner, stale, fresh) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: retarget_rows(e, create, stale, fresh), next: retarget_rows(e, next, stale, fresh), init: retarget_rows(e, init, stale, fresh) },
+    NdTuple { items } => ir::NdTuple { items: [for o in items { retarget_rows(e, o, stale, fresh) }] },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: retarget_rows(e, inner, stale, fresh) },
+    NdYield { inner } => ir::NdYield { inner: retarget_rows(e, inner, stale, fresh) },
+    _ => n
+  }
 }
 
 // port: control.rs promote_monomorph_text_return
