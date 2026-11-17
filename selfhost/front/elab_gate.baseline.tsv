@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	a17a8e3a9f5a99c0b0e78a3a5612b7d733ec504d
+suite	5bf020792044abedf07e029035144db1e92eb631
 
-layer	elab	agree	1031	of	2095
+layer	elab	agree	1031	of	2094
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -376,8 +376,7 @@ elab	refused	loft-suite/rules/layout/L-Struct/1718-a-virtual-field-has-no-slot-o
 elab	refused	loft-suite/rules/layout/L-Total/every-type-has-one-layout-whichever-spelling-asks.loft
 elab	refused	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft
 elab	refused	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft
-elab	refused	loft-suite/rules/matching/M-Match/a-match-over-a-later-function-reads-every-pattern-kind.loft
-elab	refused	loft-suite/rules/matching/M-Match/a-match-subject-from-a-later-function-keeps-its-own-temp.loft
+elab	refused	loft-suite/rules/matching/M-Match/a-match-over-a-later-functions-value-reads-every-pattern-kind-its-subject-in-its-own-temp.loft
 elab	refused	loft-suite/rules/matching/M-Once/a-guarded-arm-falls-to-the-next-arm-without-a-copy.loft
 elab	refused	loft-suite/rules/matching/M-Variant/1778-a-null-enum-through-a-dispatcher-answers-the-typed-null.loft
 elab	refused	loft-suite/rules/matching/M-Variant/2326-a-capture-named-like-a-function-binds-whatever-the-declaration-order.loft
