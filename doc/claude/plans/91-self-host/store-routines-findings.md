@@ -369,7 +369,7 @@ The real defects the checker found first:
    frame took the record as leaving on every run, so the re-bound run released neither the record
    nor its captures, and skipped their hooks; both backends.  Such a frame is decided by store
    identity (`LOFT_NO_PLAIN_REBIND_KEEP`); suite cell
-   L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.  Found probing
+   L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.  Found probing
    L-CapOne/2281's `lv` with the closure built on one branch only.
 
 **A loop finding is re-run at 0, 1, 2 and 3 passes before it is called false.**  A suite cell's
