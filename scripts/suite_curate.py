@@ -307,7 +307,13 @@ def merge(target, intro_file, cells):
                 ren[v] = px.upper() + v
         for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
             code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
-        if "fn main()" in code:
+        mm = re.search(r"(?ms)^fn main\(\) \{\n(.*?)^\}\n", code)
+        if mm and all(re.fullmatch(r"\s*(test_[a-z_0-9]+\(\);)?\s*", l) for l in mm.group(1).split("\n")):
+            # A `main` that only calls the file's own tests: in a merged file the tests run
+            # themselves, so it would run each twice.
+            code = code[:mm.start()] + code[mm.end():].lstrip("\n")
+            print(f"  {stem}: dropped its main (it only called the tests)")
+        elif "fn main()" in code:
             tname = "test_" + re.sub(r"[^a-z0-9_]", "_", re.sub(r"^[0-9]+-", "", stem).replace("-", "_"))[:70]
             code = code.replace("fn main()", f"fn {tname}()", 1)
         for t in re.findall(r"^fn (test_[a-z_0-9]+)", code, re.M):
@@ -491,15 +497,21 @@ def land(rule, chapter_dir, new, olds, message):
     if rows and len(rows) != len(olds):
         raise SystemExit(f"gate E lists {len(rows)} of {len(olds)} retired cells — the verdicts differed")
     lines = [l for l in lines if l not in rows]
-    if rows:
+    # The merged cell may keep one input's name (a patch receipt is tied to it): then it was a
+    # program of the corpus already, its own row (if any) stays, and every retired cell leaves.
+    existed = subprocess.run(["git", "cat-file", "-e", f"HEAD~1:rules/{chapter_dir}/{new}.loft"],
+                             cwd=suite, capture_output=True).returncode == 0
+    gone = len(olds) if existed else len(olds) - 1
+    own = f"loft-suite/rules/{chapter_dir}/{new}.loft"
+    if rows and not any(l.endswith("\t" + own) for l in lines):
         verdict = rows[0].split("\t")[1]
-        row = f"elab\t{verdict}\tloft-suite/rules/{chapter_dir}/{new}.loft"
+        row = f"elab\t{verdict}\t{own}"
         idx = [i for i, l in enumerate(lines) if l.startswith("elab\t")]
         lines.insert(next((i for i in idx if lines[i].split("\t", 2)[2] > row.split("\t", 2)[2]), idx[-1] + 1), row)
     text = "\n".join(lines)
     m = re.search(r"agree\t(\d+)\tof\t(\d+)", text)
-    agree = int(m.group(1)) - (0 if rows else len(olds) - 1)
-    text = text.replace(m.group(0), f"agree\t{agree}\tof\t{int(m.group(2)) - (len(olds) - 1)}")
+    agree = int(m.group(1)) - (0 if rows else gone)
+    text = text.replace(m.group(0), f"agree\t{agree}\tof\t{int(m.group(2)) - gone}")
     text = re.sub(r"(?m)^suite\t[0-9a-f]{40}$", "suite\t" + head, text)
     open(rows_path, "w", encoding="utf-8").write(text)
     open(os.path.join(ROOT, "tests", "loft-suite.pin"), "w", encoding="utf-8").write(head + "\n")

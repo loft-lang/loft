@@ -15,7 +15,7 @@ B-OutOfLine	binding	curated	13	2026-11-17	8 small cells, one clause each, verdic
 B-Ref-Alias	binding	curated	15	2026-11-17	own dir 7 -> 5: two ref parameters + other call forms + link to a ref vector parameter 3->1 (loft#2136, #2150, #2424); the receipt-less crossing cell is moved only by LOFT_NO_SEVERAL_VARS (a refusal) but its values tell a link from a copy; keyed alias, null-to-collection (patch), 2195 (gate E agrees) stay apart
 B-Ref-AnnotationOnly	binding	curated	6	2026-11-17	every listed position refused (G-Amp-Prefix's cell holds the full list and cites this rule); the own cell is the unary-operator defect (!&a -&n ~&n) with its patch receipt over 6 expectations — its 3 positions duplicated in G-Amp-Prefix stay, since removing them changes the receipt's channel for ~9 lines; the reference-field cell is B-Ref-StoredRef's context. No change.
 B-Ref-Intro	binding	curated	6	2026-11-17	own dir 5 -> 3: the &fn(...) family — write through a parameter, local bind, read and call (loft#1443, #1454, #1455) — 3->1, one duplicated control kept once; the nullable-slot cell (loft#1372) and the place-not-a-temporary refusal (gate E agrees) stay apart
-B-Ref-Lvalue	binding	todo			
+B-Ref-Lvalue	binding	curated	17	2026-11-17	own dir 10 -> 8: the tuple-member family joins its patch cell (heap member loft#2263, member through a &(...) link); the other seven are distinct places each with a patch receipt (text field/element, text into a store, nullable slot, struct-enum place, generator parameter, struct view, stored tuple)
 B-Ref-NotTarget	binding	todo			
 B-Ref-Read	binding	todo			
 B-Ref-Repoint	binding	todo			
