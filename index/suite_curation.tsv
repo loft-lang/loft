@@ -186,18 +186,18 @@ G-Pat-Group	grammar	curated	2	2026-11-17	2 cells, both patches (one patch per fi
 G-Pat-Prec	grammar	curated	1	2026-11-17	one cell (a patch)
 G-Post-Default	grammar	curated	3	2026-11-17	no own directory; cited by suite cells of its chapter
 G-Prec	grammar	curated	3	2026-11-17	a first own cell: an absent operand is refused once, naming the token before it (loft#2543, patch receipt); other cells of the chapter cite it
-H-Alloc	heap	todo			
-H-Claim	heap	todo			
-H-ClearRelease	heap	todo			
-H-Copy	heap	todo			
-H-Copy-Lease	heap	todo			
-H-Copy-Refuse	heap	todo			
-H-CopySelf	heap	todo			
-H-Drop	heap	todo			
-H-Drop-Not	heap	todo			
-H-Elide	heap	todo			
-H-Free	heap	todo			
-H-FreeAll	heap	todo			
+H-Alloc	heap	curated	8	2026-11-17	one cell (an omitted field written to its default in a reused block)
+H-Claim	heap	curated	10	2026-11-17	4 cells: three patches (one per file) and a gate-E-agreeing control
+H-ClearRelease	heap	curated	19	2026-11-17	3 cells: two patches and a refused program of another clause
+H-Copy	heap	curated	7	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Copy-Lease	heap	curated	7	2026-11-17	4 cells, all gate-E-agreeing — merging would lower the agree count
+H-Copy-Refuse	heap	curated	31	2026-11-17	own dir 30 -> 28: three non-patch refusals into one (16 expectations, each proven alone); 25 patch refusals keep one patch per file
+H-CopySelf	heap	curated	2	2026-11-17	own dir 3 -> 1: a value delivered onto or from inside its own place keeps its value (loft#1916, #2391, the rewrites crossing — now with a receipt)
+H-Drop	heap	curated	35	2026-11-17	own dir 22 -> 21: the branch-arm member and field-literal element released once 2->1; patches (one per file), loft#2436 (two definitions of one name, with its fixture) and the agreeing programs stay
+H-Drop-Not	heap	curated	7	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Elide	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Free	heap	curated	16	2026-11-17	own dir 19 -> 14: a call frees what it made for an argument 3->1; an early exit frees what the frame owns 3->1; each pass frees its copied answer 2->1; the gate-E-agreeing programs, the patch and the distinct refused cells stay
+H-FreeAll	heap	curated	5	2026-11-17	no own directory; cited by suite cells of the heap chapter
 H-FreeAny	heap	todo			
 H-FreeNull	heap	todo			
 H-FreeStack	heap	todo			
