@@ -234,7 +234,8 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     // (A wrapper is re-derived below, `instance_vector_wrapper`, where the bound element is
     // one a vector write is rewritten for.)
     if !bare_over(t, h) || (t is TyFunction && !v.argument) || (wrapper && !writes_carried(e, bound)) {
-      el::refuse(e, "a generic local over the type variable in another shape or of a function type");
+      why_local = if wrapper { "a vector store at {type_kind(el_types::base(bound))}" } else if t is TyFunction { "a function-typed local" } else { "{type_kind(t)}" };
+      el::refuse(e, "a generic local over the type variable in another shape or of a function type: {why_local}");
       return false;
     }
   }
