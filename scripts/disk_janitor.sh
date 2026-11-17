@@ -107,7 +107,28 @@ checkouts() {
 # The working directories of every process that is not a shell, an editor or an agent: read
 # once, because one pass over /proc costs a second and there are dozens of checkouts.
 working=()
+# Whether a process named `$1` is one of those.
+idle_command() {
+  case "$1" in
+    bash|sh|zsh|dash|fish|claude|node|git|less|vim|nvim|code|tmux|sleep|flock|disk_janitor.sh) return 0;;
+    rust-analyzer*|find|readlink|cat|grep|sed|awk|cut|sort|uniq|head|tail|tr|wc|du|df|jq|ps|xargs|tee|lsof) return 0;;
+  esac
+  return 1
+}
+if [ ! -d /proc ]; then
+  # No /proc (macOS): the processes by `ps`, their working directories by one `lsof`.
+  pids=
+  while read -r pid comm; do
+    idle_command "${comm##*/}" || pids="${pids:+$pids,}$pid"
+  done < <(ps -axo pid=,ucomm= 2>/dev/null)
+  if [ -n "$pids" ]; then
+    while read -r line; do
+      case "$line" in n/*) working+=("${line#n}/");; esac
+    done < <(lsof -a -d cwd -Fn -p "$pids" 2>/dev/null)
+  fi
+fi
 for p in /proc/[0-9]*; do
+  [ -r "$p/comm" ] || continue
   read -r comm < "$p/comm" 2>/dev/null || continue
   # Shells, agents, editors and their language servers (rust-analyzer lives in the main
   # checkout for good and never links an artefact), and the short-lived text tools a
@@ -122,7 +143,7 @@ done
 # Is a build, a test or a run working inside checkout `$1`?
 busy() {
   local cwd
-  for cwd in "${working[@]}"; do
+  for cwd in ${working[@]+"${working[@]}"}; do
     case "$cwd" in "$1"/*) return 0;; esac
   done
   return 1
@@ -150,9 +171,11 @@ sweep_ignored() { # <checkout> [--keep <file>]
 with_build_locks() {
   local co=$1; shift
   (
+    fd=9 # numbered by hand: macOS's bash (3.2) has no `exec {fd}>`
     for lock in "$co"/target/*/.cargo-lock; do
       [ -e "$lock" ] || continue
-      exec {fd}>>"$lock" || exit 3
+      fd=$((fd + 1))
+      eval "exec $fd>>\"\$lock\"" || exit 3
       flock -n "$fd" || exit 3
     done
     "$@"
