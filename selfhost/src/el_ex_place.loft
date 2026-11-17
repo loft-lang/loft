@@ -1760,7 +1760,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   }
   if e.p.nodes[rhs!] is SVecLit {
     match el_types::base(declared!) {
-      TyVector { inner } => return el_ex_pattern::vector_into(e, vars, v, rhs!, inner, at_close: declared! is TyOptional),
+      TyVector { inner } => return el_ex_pattern::vector_into(e, vars, v, rhs!, inner, at_close: declared! is TyOptional, typed: true),
       _ => {}
     }
     if keyed_kind(declared!) && !(declared! is TyOptional) {

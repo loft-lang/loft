@@ -1229,6 +1229,13 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
 pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir::Node? {
   d = e.context;
   bl = match code { NdBlock { block } => block[0], _ => return null };
+  // The first pass keeps a record match's arms in a `scalar_match` block around the chain.
+  if e.first_pass && len(bl.operators) > 0 {
+    match el_ir::unspan(el_ir::last(bl.operators)) {
+      NdBlock { block: mb } => if mb[0].name == "scalar_match" && len(mb[0].operators) == 1 { bl.operators[-1] = mb[0].operators[0]; },
+      _ => {}
+    }
+  }
   if len(bl.operators) == 0 || !(el_ir::unspan(el_ir::last(bl.operators)) is NdIf) {
     return null;
   }
@@ -1238,12 +1245,16 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
   if td < 0 || ba < 0 {
     return null;
   }
-  views = branch_view_leaves(e, vars, el_ir::last(bl.operators));
-  if views <= 0 {
+  // A branch that can leave the function from inside an arm is copied arm by arm, its
+  // sources bound first (`leaving_branch`, `bind_leaving_source`): not carried.
+  if el_ex_call::has_return(el_ir::last(bl.operators)) {
     return null;
   }
-  // A null arm is the result's absence: only a `τ?` result has one.
-  if branch_yields_null(e, el_ir::last(bl.operators)) && !(ret is TyOptional) {
+  // Pass 2, the buffer already among the result's deps (`bound_already`): every named local
+  // the tail answers is `Bind`, whatever it views now.
+  bound = !e.first_pass && el_types::deps(ret).contains(ba);
+  views = branch_view_leaves(e, vars, el_ir::last(bl.operators), bound);
+  if views <= 0 {
     return null;
   }
   dep = el_types::deps(ret);
@@ -1251,11 +1262,20 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
     dep += [ba];
   }
   e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep)];
+  // The first pass's literal is still a `null`: the arms are judged on the second.
   if e.first_pass {
     return code;
   }
+  // A null arm is the result's absence: only a `τ?` result has one.
+  if branch_yields_null(e, el_ir::last(bl.operators)) && !(ret is TyOptional) {
+    return null;
+  }
   owned = el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb]);
-  bl.operators[-1] = copy_arms(e, vars, el_ir::last(bl.operators), rb, td, owned);
+  copied = copy_arms(e, vars, el_ir::last(bl.operators), rb, td, owned);
+  if copied == null {
+    return null;
+  }
+  bl.operators[-1] = copied!;
   bl.result = [if ret is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
   ir::NdBlock { block: [bl] }
 }
@@ -1271,46 +1291,122 @@ fn branch_yields_null(e: el::El, n: ir::Node) -> boolean {
   }
 }
 
-// `materialize_return_into`: a branch that can answer null is copied ARM BY ARM, a null arm
-// left as it is; any other value is copied whole (`{ w = null; OpDatabase(w, kt);
-// OpCopyRecord(<value>, w, kt); w }`).
-fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node {
-  match n {
-    NdSpan { pos, inner } => { return ir::NdSpan { pos: pos, inner: copy_arms(e, vars, inner, rb, td, owned) }; },
-    _ => {}
-  }
-  if branch_yields_null(e, n) {
+// `materialize_return_into`: a branch that can answer null, or that has a leaf that may be
+// absent (`branch_has_nullable_leaf`), is copied ARM BY ARM, a null arm left as it is; any other
+// value is copied whole (`{ w = null; OpDatabase(w, kt); OpCopyRecord(<value>, w, kt); w }`),
+// behind a null test where the value may be absent and can be read again.  Null where a leaf
+// needs its source bound first (`bind_return_source`): not carried.
+fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node? {
+  if branch_yields_null(e, n) || branch_has_nullable_leaf(e, vars, n) {
     match n {
-      NdIf { cond, t, f } => { return ir::NdIf { cond: cond, t: copy_arms(e, vars, t, rb, td, owned), f: copy_arms(e, vars, f, rb, td, owned) }; },
+      NdSpan { pos, inner } => {
+        ci = copy_arms(e, vars, inner, rb, td, owned);
+        if ci == null {
+          return null;
+        }
+        return ir::NdSpan { pos: pos, inner: ci! };
+      },
+      NdIf { cond, t, f } => {
+        ct = copy_arms(e, vars, t, rb, td, owned);
+        cf = copy_arms(e, vars, f, rb, td, owned);
+        if ct == null || cf == null {
+          return null;
+        }
+        return ir::NdIf { cond: cond, t: ct!, f: cf! };
+      },
       NdBlock { block } => {
         ab = block[0];
-        ab.operators[len(ab.operators) - 1] = copy_arms(e, vars, el_ir::last(ab.operators), rb, td, owned);
+        cl = copy_arms(e, vars, el_ir::last(ab.operators), rb, td, owned);
+        if cl == null {
+          return null;
+        }
+        ab.operators[len(ab.operators) - 1] = cl!;
         // The block now yields the buffer or null, no longer a view of its local.
         if el_types::base(ab.result[0] ?? ir::TyVoid) is TyReference {
           ab.result = [owned];
         }
         return ir::NdBlock { block: [ab] };
       },
-      _ => { return n; }
+      _ => {
+        if branch_yields_null(e, n) {
+          return n;
+        }
+      }
     }
+  }
+  x = el_ir::unspan(n);
+  reads = match x { NdCall { def_nr, args } => len(args) > 0 && starts_with(el::def(e, def_nr).name, "OpGet"), _ => false };
+  user = el_ex_place::any_user_call(e, [x]);
+  if reads && user {
+    return null;
   }
   kt = ir::NdInt { n: el::def(e, td).known_type };
   b = ir::NdVar { n: rb };
-  el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [n, b, kt]), b], owned, "materialized_view_return")
+  copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [n, b, kt]), b], owned, "materialized_view_return");
+  guard = match x {
+    NdVar { n: v } => record_may_be_absent(vars, v, []),
+    NdCall { def_nr: _ } => !user && copy_source_may_be_absent(e, vars, x),
+    _ => false
+  };
+  if guard {
+    copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [if (x is NdVar) { x } else { n }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
+  }
+  copy
+}
+
+// `branch_has_nullable_leaf`: does a branch end, on some path, in a source that may be absent —
+// a record local that may hold nothing, a field path rooted at one, a read, a user call?  A
+// literal ends in the buffer it just built, which is there.
+fn branch_has_nullable_leaf(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => nullable_leaf(e, vars, t) || nullable_leaf(e, vars, f),
+    NdBlock { block } => block[0].name != "Object" && len(block[0].operators) > 0 && nullable_leaf(e, vars, el_ir::last(block[0].operators)),
+    NdInsert { items } => len(items) > 0 && nullable_leaf(e, vars, items[-1]!),
+    _ => false
+  }
+}
+
+fn nullable_leaf(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  x = el_ir::unspan(n);
+  match x {
+    NdVar { n: _ } => copy_source_may_be_absent(e, vars, x),
+    NdCall { def_nr: _ } => copy_source_may_be_absent(e, vars, x),
+    NdBlock { block } => block[0].name != "Object" && len(block[0].operators) > 0 && nullable_leaf(e, vars, el_ir::last(block[0].operators)),
+    NdInsert { items } => len(items) > 0 && nullable_leaf(e, vars, items[-1]!),
+    NdIf { cond: _, t, f } => nullable_leaf(e, vars, t) || nullable_leaf(e, vars, f),
+    _ => false
+  }
+}
+
+// `copy_source_may_be_absent`: a record local that may hold nothing, a field path rooted at
+// one, what a read answers (`OpGet…`), and what a user call answering a record answers.
+pub fn copy_source_may_be_absent(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdVar { n: v } => record_may_be_absent(vars, v, []),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetField" && len(args) == 3 {
+        return copy_source_may_be_absent(e, vars, args[0]!);
+      }
+      starts_with(nm, "OpGet") || !starts_with(nm, "Op") && heap_def(el::def(e, def_nr).returned[0] ?? ir::TyVoid) >= 0
+    },
+    _ => false
+  }
 }
 
 // The leaves of a branch tail that are locals viewing only parameters; -1 where a leaf is
 // anything but a parameter, such a local, or a call of a function the program declares.
-fn branch_view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+fn branch_view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: boolean) -> integer {
   match el_ir::unspan(n) {
     NdIf { cond: _, t, f } => {
-      a = branch_view_leaves(e, vars, t);
-      b = branch_view_leaves(e, vars, f);
+      a = branch_view_leaves(e, vars, t, bound);
+      b = branch_view_leaves(e, vars, f, bound);
       if a < 0 || b < 0 { -1 } else { a + b }
     },
     NdBlock { block } => {
       nm = block[0].name;
-      if nm == "join-arm-owner" {
+      // A record literal: built in a work ref of its own, copied with the rest.
+      if nm == "join-arm-owner" || nm == "Object" {
         return 0;
       }
       if (nm != "block" && nm != "match_arm") || len(block[0].operators) == 0 {
@@ -1322,7 +1418,7 @@ fn branch_view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
           return -1;
         }
       }
-      branch_view_leaves(e, vars, el_ir::last(block[0].operators))
+      branch_view_leaves(e, vars, el_ir::last(block[0].operators), bound)
     },
     NdVar { n: v } => {
       if el_vars::tp(vars, v) is TyOptional || heap_def(el_vars::tp(vars, v)) < 0 {
@@ -1330,6 +1426,14 @@ fn branch_view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
       }
       if vars.vars[v]!.argument {
         return 0;
+      }
+      // A work ref is `Bind` with `substitute` (the buffer takes its place): not this copy.
+      vn = el_vars::name_of(vars, v);
+      if starts_with(vn, "__ref_") || starts_with(vn, "__rref_") {
+        return -1;
+      }
+      if bound {
+        return 1;
       }
       for x in el_types::deps(el_vars::tp(vars, v)) {
         if x == v || !vars.vars[x]!.argument {

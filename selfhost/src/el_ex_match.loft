@@ -415,7 +415,12 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     NdVar { n } => { in_type = el_types::with_deps(in_type, [n]); },
     _ => {}
   }
-  vec = el_vars::create_unique(vars, "vector", in_type);
+  // Only a source typed as a vector is hoisted (`matches!(in_type, Type::Vector)`): one the first
+  // pass cannot type yet — a match capture's field — mints no `_vector_N` there, and the temps
+  // after it are numbered one lower on that pass.
+  // (The port's first pass types a literal of records as unknown where Rust has its vector: a
+  // literal source is hoisted whatever this pass typed it.)
+  vec = if par == null && in_type is TyUnknown && !(e.p.nodes[source] is SVecLit) { -1 } else { el_vars::create_unique(vars, "vector", in_type) };
   if !e.first_pass {
     el_vars::set_var_type(vars, vec, in_type);
   }
@@ -425,7 +430,7 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     _ => {}
   }
   // `for_type`: the element, borrowing the hoisted vector; a tuple element as its record.
-  var_tp = el_types::with_deps(elem, [vec]);
+  var_tp = if vec < 0 { elem } else { el_types::with_deps(elem, [vec]) };
   members: vector<ir::TypeT> = [];
   if destructure {
     members = match elem { TyTuple { elems } => elems, _ => [] };
@@ -1925,6 +1930,10 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
           el_vars::restore_name(vars, al.name, al.nr);
         }
         if len(binds) > 0 && (guard == null || binding_arm) && !(fcond != null && guard == null) {
+          // The body block is typed without the store its own literal mints, as the arm is.
+          if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
+            b.code = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { el_ex_null::arm_typed(b.code, outside_deps(e, b.code, el_types::deps(b.tp))) }, _ => b.code };
+          }
           b.code = el_ir::v_block(binds + [b.code], b.tp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
@@ -2021,7 +2030,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   }
   // A record join keeps its arms on the first pass (as an `if` does): the parameters they hand
   // back are what the result borrows.
-  if e.first_pass && el_types::base(result) is TyReference && len(out) > 0 {
+  if e.first_pass && heap_def(el_types::base(result)) >= 0 && len(out) > 0 {
     // A wildcard arm is the chain's last value, not an `if` beside a `null`.
     fc = ir::NdNull;
     for a in rev(out) {

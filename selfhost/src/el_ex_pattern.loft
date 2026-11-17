@@ -1763,12 +1763,12 @@ pub fn push_args(e: el::El, vars: el_vars::Vars, t: ir::TypeT, w: ir::Node, x: i
 // are refused by name.
 // `at_close`: the definitions are made at the literal's `]` although the element is declared —
 // a `vector<T>?` local, whose declared type is no vector hint to the literal.
-pub fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, at_close: boolean = false) -> Ex {
+pub fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, at_close: boolean = false, typed: boolean = false) -> Ex {
   if el_vars::rebind_must_mint(vars, v) {
     el::refuse(e, "a vector literal rebinding a local a closure shares");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  vector_build(e, vars, v, n, declared, at_close: at_close).x
+  vector_build(e, vars, v, n, declared, at_close: at_close, typed: typed).x
 }
 
 // A literal in value position (`parse_vector_inner` with no destination, `block`): built the
@@ -1968,7 +1968,7 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
 
 // The one build behind the three literal forms: into a local (`vector_into`), in value position
 // (`value`, `vector_value`) and appended to a local that has its store (`append`, `vector_append`).
-pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = []) -> Built {
+pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false) -> Built {
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -1987,14 +1987,14 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       vars.allocs += [v];
     }
   }
-  // The first pass records whether this bind leaves the local without a backing (`unbacked`).
-  if e.first_pass && !append && !value && v >= 0 && !vars.vars[v].argument {
+  // The first pass records whether a bind leaves the local without a backing (`unbacked`): an
+  // untyped `v = []` makes the local depend on itself, a dep the first pass only adds to — a
+  // later literal does not take it back, and a typed `v: vector<T> = []` (its type set by the
+  // declaration) does not leave it.
+  if e.first_pass && !append && !value && !typed && v >= 0 && !vars.vars[v].argument && len(items) == 0 {
     key = e.context * 65536 + v;
-    was = e.unbacked.contains(key);
-    if len(items) == 0 && !was {
+    if !e.unbacked.contains(key) {
       e.unbacked += [key];
-    } else if len(items) > 0 && was {
-      e.unbacked = [for k in e.unbacked if k != key { k }];
     }
   }
   xs: vector<Ex> = [];
