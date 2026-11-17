@@ -23,8 +23,8 @@ B-Ref-Reshape	binding	curated	14	2026-11-17	own dir 18 -> 9: the field/element-c
 B-Ref-StoredRef	binding	curated	8	2026-11-17	own dir 7 -> 6: the inline-field refusal by assignment and in a literal (loft#2166) 2->1; the positive 2166 cell, the temporary's reference field (loft#2369), the prefix-link pair and the struct-enum repoint stay
 B-Ref-Uniform	binding	curated	24	2026-11-17	own dir 8 -> 7: the collection link at every kind — write side (loft#1445) and read side — 2->1; five patch cells stay apart
 B-Ref-Write	binding	curated	20	2026-11-17	own dir 12 -> 10: the whole-value write through a link to a local / place / out-of-line field (loft#1371, #1376, #2433) 3->1; 2455 is the same clause but gate E agrees with it; four patch cells, the both-kinds refusal and three distinct clauses stay
-B-RefType	binding	todo			
-B-RefType-OfVar	binding	todo			
+B-RefType	binding	curated	1	2026-11-17	one control cell (INERT receipt, honest: it pins values that already held); every function writes through its links after binding and reads the places after, so a copying link fails it
+B-RefType-OfVar	binding	curated	3	2026-11-17	no own directory: B-RefType's control cell cites and moves it (a variable or parameter of type &τ is a live link for its whole life)
 B-Scope	binding	todo			
 B-View	binding	todo			
 B-View-Base	binding	todo			
