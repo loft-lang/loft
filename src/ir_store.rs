@@ -1086,6 +1086,27 @@ pub fn save_bundle_with(
     path: &str,
     facts: &BundleFacts,
 ) -> std::io::Result<()> {
+    save_bundle_identified(data, program, path, facts).map(|_| ())
+}
+
+/// [`save_bundle_with`], answering the IDENTITY of the image it published
+/// ([`crate::cache::file_identity`]), read off its own temp file before the rename: a sibling
+/// writer renaming its image into the same path between this rename and a later look would
+/// otherwise lend this writer ITS identity.  The program cache's manifest records it, so it
+/// validates only this image (`@FR-S-Pair`, loft#2532).
+///
+/// # Errors
+/// As [`save_bundle`], and an image whose identity cannot be read.
+///
+/// # Panics
+/// As [`save_bundle`].
+#[cfg(feature = "mmap")]
+pub fn save_bundle_identified(
+    data: &Data,
+    program: &Stores,
+    path: &str,
+    facts: &BundleFacts,
+) -> std::io::Result<String> {
     let tmp = format!("{path}.{}.tmp", std::process::id());
     match crate::file_access::remove_file(&tmp) {
         Ok(()) => {}
@@ -1132,11 +1153,18 @@ pub fn save_bundle_with(
             return Err(e);
         }
     };
+    let Some(identity_of_image) = crate::cache::file_identity(std::path::Path::new(&tmp)) else {
+        let _ = crate::file_access::remove_file(&tmp);
+        return Err(std::io::Error::other(
+            "the written image cannot be read back",
+        ));
+    };
     crate::file_access::rename(&tmp, path)?;
     crate::file_access::rename(
         &staged,
         crate::schema_sidecar::dschema_path(std::path::Path::new(path)),
-    )
+    )?;
+    Ok(identity_of_image)
 }
 
 /// The RUN image (the run-image handoff under doc/claude/plans/91-self-host/): the

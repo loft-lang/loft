@@ -1397,3 +1397,82 @@ fn a_warm_load_emits_the_code_of_the_cold_run() {
     let _ = fa::remove_file(&script);
     let _ = fa::remove_dir_all(&cache_dir);
 }
+
+/// `@FR-S-Pair` (loft#2532) — a program-cache manifest validates only the image it was written
+/// with.  A plain and a `--ship` emit of one file share one cache slot (the tier is not in the
+/// key), and each writer renames its image and then its manifest: two of them at once can leave
+/// one's image beside the other's manifest, which validates (same sources, same build) while
+/// the image holds the other tier's program.  The test builds that pair without a race — the
+/// plain manifest put back over the `--ship` write — and asks the plain warm run for the plain
+/// cold run's emission.  The control: with the check switched off the same pair is taken, and
+/// the emission DIFFERS, so the pair is one a run would misread (`tests/push_window.rs`'s
+/// `n_w10` read one windowed push more).
+#[test]
+fn a_manifest_takes_only_the_image_it_was_written_with() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let cells = workspace_root().join("tests/scripts/158-push-window.loft");
+    let emit = |cache: &std::path::Path, tier: &[&str], tag: &str, env: &[(&str, &str)]| {
+        let out = tmp.join(format!("loft_pair_{pid}_{tag}.rs"));
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.args(tier)
+            .args(["--native-rust", "--native-emit"])
+            .arg(&out)
+            .arg(&cells)
+            .current_dir(workspace_root())
+            .env_remove("LOFT_NO_CACHE")
+            .env_remove("LOFT_STDLIB_CACHE")
+            .env("XDG_CACHE_HOME", cache)
+            .env("LOFT_TRACE_WARM", "1");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let run = cmd.output().expect("spawn loft");
+        assert!(
+            run.status.success(),
+            "{tag}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let rust = fa::read_to_string(&out).expect("the emission");
+        let _ = fa::remove_file(&out);
+        (rust, String::from_utf8_lossy(&run.stderr).into_owned())
+    };
+    // The mixed pair: the plain run's manifest beside the `--ship` run's image.
+    let mixed = |cache: &std::path::Path| {
+        let _ = fa::remove_dir_all(cache);
+        let (plain, _) = emit(cache, &[], "cold", &[]);
+        let dir = cache.join("loft");
+        let manifest = fa::read_dir(&dir)
+            .expect("the cache dir")
+            .into_iter()
+            .find(|e| fa::has_extension(e, "manifest"))
+            .expect("the plain run cached the program");
+        let plain_manifest = fa::read(&manifest).expect("read the manifest");
+        emit(cache, &["--ship"], "ship", &[]);
+        fa::write(&manifest, &plain_manifest).expect("put the plain manifest back");
+        plain
+    };
+
+    let cache = tmp.join(format!("loft_pair_cache_{pid}"));
+    let plain = mixed(&cache);
+    let (warm, trace) = emit(&cache, &[], "warm", &[]);
+    assert!(
+        trace.contains("another writer's"),
+        "the warm run did not refuse the other writer's image:\n{trace}"
+    );
+    assert_eq!(
+        warm, plain,
+        "the warm run emitted another program than the cold one"
+    );
+
+    // The control: the same pair, taken.
+    let control = tmp.join(format!("loft_pair_control_{pid}"));
+    let plain = mixed(&control);
+    let (taken, _) = emit(&control, &[], "taken", &[("LOFT_NO_BUNDLE_IDENTITY", "1")]);
+    assert_ne!(
+        taken, plain,
+        "the control read the mixed pair and emitted the plain program — the pair proves nothing"
+    );
+    let _ = fa::remove_dir_all(&cache);
+    let _ = fa::remove_dir_all(&control);
+}

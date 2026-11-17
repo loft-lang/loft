@@ -60,7 +60,8 @@ per process instead of once per `use` lookup (six times for graphics).
 **`LOFT_TRACE_WARM=1`** names the verdict of every warm load — `[warm] hit: <bundle>`, or the
 gate that missed (no manifest at the computed path, a build signature or stdlib key that
 differs, a changed source, a native-library context that differs, a recorded cdylib that is
-gone) — and at a save, the search path the key used beside the one the parse ended with.
+gone) — and at a save, the search path the key used beside the one the parse ended with, and the
+manifest written with the writer's process id (`[warm] saved …`).
 
 ## Is this run warm or cold?
 
@@ -222,6 +223,18 @@ arguments (loft#916 — the suite form is a DIRECTORY, which only became nameabl
 - The running binary's mtime (`binary_signature_tag()`) so an *uncommitted*
   compiler rebuild invalidates bundles.  `BUILD_ID` (git HEAD) alone does not
   change across uncommitted edits; the mtime addition closes that gap.
+
+**A manifest validates only the image it was written with** (`@FR-S-Pair`, loft#2532).  Its
+`bfid` line is the identity of that image (`cache::file_identity`: length, birth time, inode —
+read off the writer's temp file before the rename; the modification time is the eviction clock
+`touch_now` moves, so it is no identity), and a warm load whose image is another is a miss.
+Several runs write one slot — the key holds no tier or mode, so a plain and a `--ship` emit of
+one file share it — and each renames its image and then its manifest; two at once could leave
+one's image beside the other's manifest, which validated, and the run read the other tier's
+program.  `LOFT_NO_BUNDLE_IDENTITY=1` takes any image beside a valid manifest again: the bisect
+step for a warm run that answers like another build's.  Both it and `LOFT_TRACE_WARM` are inert
+(`cache::INERT_ENV`): they decide which image a load may take, or only report it, so a traced
+run reads the slot the untraced one does.
 
 ## Eviction
 
