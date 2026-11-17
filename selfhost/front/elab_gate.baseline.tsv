@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	0bc4e9f0a8f6ef0b843cc97e4bde39e46a16b28c
+suite	0487e337a4e6b809578f5d37afd4372b281b478b
 
-layer	elab	agree	1031	of	2150
+layer	elab	agree	1031	of	2149
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -214,8 +214,7 @@ elab	refused	loft-suite/rules/collections/Col-RemoveDense/a-narrow-vector-elemen
 elab	refused	loft-suite/rules/collections/Col-RemoveDense/a-removal-through-a-reference-parameter-shifts-by-the-element.loft
 elab	refused	loft-suite/rules/collections/Col-Store/1445b-an-amp-keyed-parameter-derefs-at-every-kind.loft
 elab	refused	loft-suite/rules/collections/Col-Trie/2241-a-key-ending-in-nul-bytes-is-its-own-key.loft
-elab	refused	loft-suite/rules/collections/Col-Unordered/2453-a-hash-holding-records-walks-unordered-in-key-order.loft
-elab	refused	loft-suite/rules/collections/Col-Unordered/an-unordered-walk-is-slot-order-and-a-linked-table-key-order.loft
+elab	refused	loft-suite/rules/collections/Col-Unordered/an-unordered-walk-visits-every-entry-once-a-table-in-slot-order-a-linked-one-in-key-order.loft
 elab	refused	loft-suite/rules/collections/Col-Vec/2278-a-repeat-count-from-a-function-declared-below.loft
 elab	refused	loft-suite/rules/collections/Col-Vec/2340-a-literal-nested-in-a-field-literal-of-a-forward-holder.loft
 elab	refused	loft-suite/rules/collections/Slice-KeyedIter/a-keyed-range-walks-its-key-interval-in-declared-order.loft
