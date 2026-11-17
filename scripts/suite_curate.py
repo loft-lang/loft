@@ -296,6 +296,20 @@ def merge(target, intro_file, cells):
             head.pop(0)
         while head and head[-1].strip() in ("//", ""):
             head.pop()
+        # A receipt label written ABOVE its receipt reads, in a merged file, as a label of the
+        # previous section's receipt (the receipt check attaches a label to the receipt it
+        # follows); move such labels to just after this section's first receipt block.
+        first = next((j for j, l in enumerate(head) if "@falsified-at:" in l or "@falsified-by:" in l), None)
+        if first is not None:
+            early = [j for j in range(first) if re.match(r"^// (CHANNEL|ARMED|WITNESS|HOLDS):", head[j])]
+            if early:
+                moved = ["//   " + head[j][3:] for j in early]
+                end = first + 1
+                while end < len(head) and (head[end].startswith("//   ") or "@falsified-by:" in head[end]):
+                    end += 1
+                keep = [l for j, l in enumerate(head) if j not in early]
+                end -= len(early)
+                head = keep[:end] + moved + keep[end:]
         code = "\n".join(lines[i:]).strip() + "\n"
         stem = os.path.basename(cell)[:-5]
         top, var = declared(code)

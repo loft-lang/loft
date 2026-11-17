@@ -22,7 +22,7 @@ B-Ref-Repoint	binding	curated	7	2026-11-17	4 own cells, distinct clauses: the ba
 B-Ref-Reshape	binding	curated	14	2026-11-17	own dir 18 -> 9: the field/element-container refusals (loft#2161) 5->1, the vector grow/remove/clear/method refusals (loft#2267) 4->1, the overwrite refusals (loft#2391) 2->1; each expectation proven checked (corrupting it fails the file); refusal files are not gate E programs (the Rust front end refuses them), so no count moved. The keyed-link (patch), the 167 pair and the dead-at-the-disturbance / view-would-survive controls stay.
 B-Ref-StoredRef	binding	curated	8	2026-11-17	own dir 7 -> 6: the inline-field refusal by assignment and in a literal (loft#2166) 2->1; the positive 2166 cell, the temporary's reference field (loft#2369), the prefix-link pair and the struct-enum repoint stay
 B-Ref-Uniform	binding	curated	24	2026-11-17	own dir 8 -> 7: the collection link at every kind — write side (loft#1445) and read side — 2->1; five patch cells stay apart
-B-Ref-Write	binding	todo			
+B-Ref-Write	binding	curated	20	2026-11-17	own dir 12 -> 10: the whole-value write through a link to a local / place / out-of-line field (loft#1371, #1376, #2433) 3->1; 2455 is the same clause but gate E agrees with it; four patch cells, the both-kinds refusal and three distinct clauses stay
 B-RefType	binding	todo			
 B-RefType-OfVar	binding	todo			
 B-Scope	binding	todo			
