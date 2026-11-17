@@ -2062,12 +2062,64 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   staged: vector<ir::Node> = [];
   if !e.first_pass && !el_vars::is_compiler_generated(vars, v) {
     viewers = el_expressions::store_viewers(vars, v) + [v];
+    // A literal that hands the old record to its own out-of-line field while ANOTHER field
+    // reads the record does not demote: the first attempt's scalar staging is abandoned (its
+    // `__ref_N` stay declared, 1a-parser.md § Rust accidents) and the build starts again with
+    // the old record held as a view.  Where no other field reads it, the literal is the demote.
+    own_child = -1;
+    other_reads: vector<integer> = [];
+    for op in ops {
+      if op#index < 2 {
+        continue;
+      }
+      match op {
+        NdCall { def_nr: pd, args: pa } => {
+          if el::def(e, pd).name == "OpSetChildRec" && len(pa) == 3 && el_ir::unspan(pa[1]) == ir::NdVar { n: v } && place_root(e, el_ir::unspan(pa[0])) == v {
+            own_child = op#index;
+          } else if starts_with(el::def(e, pd).name, "OpSet") && len(pa) >= 3 && el_ir::unspan(pa[0]) == ir::NdVar { n: v } && el_ir::reads_var(pa[-1], v) {
+            other_reads += [op#index];
+          }
+        },
+        _ => {}
+      }
+    }
+    if own_child >= 0 && len(other_reads) == 0 {
+      el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if own_child >= 0 {
+      am = vars.work_ref;
+      ap = vars.work_ref_p2;
+      for oi in other_reads {
+        match ops[oi]! {
+          NdCall { def_nr: ad, args: aa } => {
+            el_vars::work_ref(vars, match el_ir::unspan(aa[-1]) { NdBlock { block: ab } => ab[0].result[0] ?? el::def(e, ad).attributes[len(aa) - 1]!.typedef[0], _ => el::def(e, ad).attributes[len(aa) - 1]!.typedef[0] });
+          },
+          _ => {}
+        }
+      }
+      abandon_work_refs(vars, am, ap);
+    }
     for op in ops {
       if op#index < 2 {
         continue;
       }
       match op {
         NdCall { def_nr, args } => {
+          // The old record handed to its own out-of-line field: held as a view of the local
+          // (`__ref_N: ref(T)["v"] = v`, bound where it is made), the child set from the view.
+          if el::def(e, def_nr).name == "OpSetChildRec" && len(args) == 3 && el_ir::unspan(args[1]) == ir::NdVar { n: v } && place_root(e, el_ir::unspan(args[0])) == v {
+            // (A plain struct's old record is snapshot by a copy instead: not carried.)
+            if el_types::struct_enum_def(el_vars::tp(vars, v)) < 0 {
+              el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            vt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, v))), [v]);
+            vtmp = el_vars::work_ref(vars, vt);
+            vars.vars[vtmp].skip_free = true;
+            staged += [el_ir::v_set(vtmp, args[1]!)];
+            ops[op#index] = ir::NdCall { def_nr: def_nr, args: [args[0]!, ir::NdVar { n: vtmp }, args[2]!] };
+          }
           if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
             reads = false;
             for w in viewers {
@@ -2081,7 +2133,15 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
                 NdBlock { block } => block[0].result[0] ?? el::def(e, def_nr).attributes[len(args) - 1]!.typedef[0],
                 _ => el::def(e, def_nr).attributes[len(args) - 1]!.typedef[0]
               };
+              // (A text read off the record is a view of it.)
+              text_view = el_types::base(tp) is TyText && match el_ir::unspan(args[-1]) { NdCall { def_nr: tvd, args: _ } => el::def(e, tvd).name == "OpGetText", _ => false };
+              if text_view {
+                tp = ir::TyText { dep: [v] };
+              }
               tmp = el_vars::work_ref(vars, tp);
+              if text_view {
+                vars.vars[tmp].skip_free = true;
+              }
               staged += [el_ir::v_set(tmp, args[-1])];
               ops[op#index] = ir::NdCall { def_nr: def_nr, args: args[..-1] + [ir::NdVar { n: tmp }] };
             }
@@ -2978,10 +3038,8 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
       }
       // (A literal's field is the demote; a plain write `n.next = n` sets the child as any
       // local's record is set.)
-      if init {
-        el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
-        return null;
-      }
+      // (A literal that does not demote — another field reads the record — keeps the old
+      // record as a view the staging binds, and sets the child from it.)
     }
     if same && xc is NdVar {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
@@ -3008,6 +3066,11 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
     }
     if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + (if el_ex_match::gives_away_its_store(e, x.code) { 32768 } else { 0 }) }]);
+    }
+    // A child read from another slot (`t.right = t.left`) is set as it is read: the copy is
+    // the set's own.
+    if same && calls(e, xc, "OpRefFromChildRec") {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
     }
     el::refuse(e, "an out-of-line field given a value that is no literal, local or fresh call of its record");
     return null;
