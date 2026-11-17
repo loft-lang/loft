@@ -2555,7 +2555,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
-        if len(pats) != 1 || guard != null {
+        if len(pats) != 1 || (guard != null && len(vars.cursor) > 0) {
           el::refuse(e, "a vector match arm with alternatives or a guard");
           return void;
         }
@@ -2585,6 +2585,22 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
             binds = [el_ir::v_set(bv, ir::NdVar { n: sv })];
             total = true;
           }
+        }
+        // A guard is tested after the pattern, the arm's bindings made in its own block
+        // (`match_guard`); a guarded arm covers no length, and a guarded `_` is its guard alone.
+        if guard != null {
+          g = el_ex_assign::expression(e, vars, guard!);
+          if !e.first_pass && !(g.tp is TyBoolean) {
+            el::refuse(e, "a match guard that is not a boolean: {type_kind(g.tp)}");
+            return void;
+          }
+          gc = if len(binds) > 0 { el_ir::v_block(binds + [g.code], ir::TyBoolean, "match_guard") } else { g.code };
+          cond = if cond == null { gc } else { el_ir::v_if(cond!, gc, ir::NdBoolean { b: false }) };
+          binds = [];
+          if !total && len(shapes) > 0 && e.p.nodes[pn] is PSlice {
+            shapes = shapes[..len(shapes) - 1];
+          }
+          total = false;
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         arm_cursor = vars.cursor;
