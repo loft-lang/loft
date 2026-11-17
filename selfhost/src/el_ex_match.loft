@@ -1406,6 +1406,10 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   }
   scalar_subject = el_convert::plain_scalar(st) || st is TyText;
   enum_subject = el_convert::plain_enum(st);
+  cs = cursor_shape(e, match st { TyRefVar { inner: cri } => cri, _ => st });
+  if len(cs) == 3 {
+    return cursor_match(e, vars, x, cs, arms);
+  }
   // A struct enum, or one of its variants, is matched on its record: the ordinal its `enum`
   // field holds, read in place where the subject is a local.  A nullable one is matched the
   // same way: its null reaches the wildcard arm.
@@ -1449,6 +1453,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   if st is TyVector {
     return vector_match(e, vars, x, arms);
   }
+
   if st is TyTuple {
     return tuple_match(e, vars, x, arms, at_bind);
   }
@@ -2196,6 +2201,63 @@ pub fn arm_block_deps(n: ir::Node) -> vector<integer> {
 // the chain; arms that cover every length (`[]` and `[x, ..rest]`) do too, the last arm the
 // chain's end.  A guard, alternatives, a literal or any other element pattern, a record result
 // and another element type are refused by name.
+// `Parser::cursor_shape`: a struct with a non-constant vector field (the first is the source)
+// and a non-constant integer field named `pos` is a cursor — [struct, source attribute, `pos`
+// attribute], or empty.
+pub fn cursor_shape(e: el::El, t: ir::TypeT) -> vector<integer> {
+  d = match t { TyReference { n } => n, _ => -1 };
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+    return [];
+  }
+  source = -1;
+  pos = -1;
+  for a in el::def(e, d).attributes {
+    if a.constant {
+      continue;
+    }
+    at = a.typedef[0] ?? ir::TyVoid;
+    if at is TyVector {
+      if source < 0 {
+        source = a#index;
+      }
+    } else if at is TyInteger && a.name == "pos" {
+      pos = a#index;
+    }
+  }
+  if source >= 0 && pos >= 0 { [d, source, pos] } else { [] }
+}
+
+// `Parser::parse_cursor_match`: a match on a cursor reads its source (`_cursor_src_N`, a view
+// of the cursor) and its entry position (`_cursor_pos_N`) once, then matches the source as a
+// vector whose patterns are PREFIXES read from that position; an arm that wins advances the
+// cursor past what it read.  A rest, a repetition, an alternation and a sub-rule are not
+// carried in a cursor pattern.
+pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, arms: vector<integer>) -> Ex {
+  cd = cs[0]!;
+  elm = match el::def(e, cd).attributes[cs[1]!].typedef[0] ?? ir::TyVoid { TyVector { inner } => inner, _ => ir::TyVoid };
+  copy = !(el_ir::unspan(x.code) is NdVar);
+  cv = match el_ir::unspan(x.code) { NdVar { n: xv } => xv, _ => el_vars::create_unique(vars, "cursor", ir::TyReference { n: cd, dep: [] }) };
+  el_vars::set_defined(vars, cv);
+  vt = ir::TyVector { inner: elm, dep: [cv] };
+  srcv = el_vars::create_unique(vars, "cursor_src", vt);
+  el_vars::set_defined(vars, srcv);
+  posv = el_vars::create_unique(vars, "cursor_pos", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, posv);
+  rs = el_ex_base::field_get(e, cd, cs[1]!, ir::NdVar { n: cv });
+  rp = el_ex_base::field_get(e, cd, cs[2]!, ir::NdVar { n: cv });
+  if rs == null || rp == null {
+    el::refuse(e, "a cursor whose source or position is not read as a field");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  setup: vector<ir::Node> = if copy { [el_ir::v_set(cv, x.code)] } else { [] };
+  setup += [el_ir::v_set(srcv, rs!), el_ir::v_set(posv, rp!)];
+  outer = vars.cursor;
+  vars.cursor = [cv, cd, cs[2]!, posv];
+  m = vector_match(e, vars, ex(ir::NdVar { n: srcv }, vt), arms);
+  vars.cursor = outer;
+  ex(el_ir::v_block(setup + [m.code], m.tp, "cursor match"), m.tp)
+}
+
 pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) -> Ex {
   void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
@@ -2256,7 +2318,10 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
           }
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+        arm_cursor = vars.cursor;
+        vars.cursor = [];
         b = el_ex_pattern::arm_body(e, vars, body, expected);
+        vars.cursor = arm_cursor;
         // `@FR-C-Never`'s typed halt in a vector match (`type_null_arms` over the slice arms) is
         // not carried.
         if !e.first_pass && el_ex_null::ends_in_halt(e, b.code) {
@@ -2284,8 +2349,35 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     }
   }
   // Built on the first pass too: what the body answers there decides its text delivery.
-  if !e.first_pass && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
+  if !e.first_pass && len(vars.cursor) == 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
     el::refuse(e, "a vector match answering a record or a vector");
+    return void;
+  }
+  // A cursor match answering a record: each arm answers its own record, a `null` arm the
+  // sentinel, and the match is nullable where an arm is `null` (`type_null_arms`).
+  if len(vars.cursor) > 0 && el_types::base(result) is TyReference {
+    rt = el_types::without_deps(el_types::base(result));
+    nullable = false;
+    fixed_arms: vector<SMArm> = [];
+    for a in out {
+      c = match a.code {
+        NdNull => { nullable = true; el_ir::cl(e, "OpNullRefSentinel", []) },
+        NdBlock { block } => {
+          bl = block[0]!;
+          if bl.name == "slice_binding" {
+            bl.result = [rt];
+          }
+          ir::NdBlock { block: [bl] }
+        },
+        _ => a.code
+      };
+      fixed_arms += [SMArm { guard: a.guard, code: c }];
+    }
+    out = fixed_arms;
+    result = if nullable || result is TyOptional { ir::TyOptional { inner: rt } } else { rt };
+  }
+  if !e.first_pass && !total && len(vars.cursor) > 0 {
+    el::refuse(e, "a cursor match with no `_` arm");
     return void;
   }
   if !e.first_pass && !total && !lengths_covered(shapes) {
@@ -2360,6 +2452,16 @@ pub fn lengths_covered(shapes: vector<SliceShape>) -> boolean {
 pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
   // A repetition group (`( V )*`, `( V )+`) over a struct enum: `parse_slice_repetition`; an
   // optional group or a multi-element alternation: `parse_multi_element_alternation`.
+  cur = vars.cursor;
+  if len(cur) > 0 {
+    for el0 in elems {
+      plain = match e.p.nodes[el0] { PWild => true, PName { name: _ } => true, _ => el_ex_pattern::rename_of(e, el0) != "" };
+      if !plain || el_ex_pattern::rep_group(e, el0) >= 0 || alt_group(e, el0) >= 0 {
+        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: {syn_kind(e, el0)}");
+        return null;
+      }
+    }
+  }
   for el0 in elems {
     if el_ex_pattern::rep_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
       return el_ex_pattern::slice_rep(e, vars, sv, src, elm, elems, names);
@@ -2412,12 +2514,16 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   fixed = len(head) + len(tail);
   ln = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]);
   cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
+  // A cursor pattern is a prefix read from the entry position.
+  if len(cur) > 0 {
+    cond = el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: fixed }]), ln]);
+  }
   es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
   // A record element bound by name views the subject's element: it borrows what the subject does.
   named_t = if sed >= 0 { el_types::with_deps(elm, [src]) } else { elm };
   binds: vector<ir::Node> = [];
   for h in head {
-    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }]);
+    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }]);
     if (head_pat[h#index] ?? -1) >= 0 {
       va = el_ex_pattern::slice_variant(e, vars, head_pat[h#index] ?? -1, sed, slice_elem(e, elm, at), names);
       if va == null {
@@ -2453,6 +2559,10 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       }
       binds += [m!];
     }
+  }
+  // The arm that wins advances the cursor past what it read, before its body runs.
+  if len(cur) > 0 {
+    binds += [el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: fixed }]))];
   }
   SliceArm { binds: binds, cond: cond, shape: SliceShape { min: fixed, exact: !has_rest } }
 }

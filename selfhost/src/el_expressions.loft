@@ -478,6 +478,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         built = code;
         arms_answer = true;
       }
+      // A cursor match whose every arm is a literal built in a work ref of its own, or the
+      // null sentinel, delivers nothing either: a rule's answer.
+      if built == null && cursor_tail(body_tail(code)) && cursor_arms_answer(e, body_tail(code)) {
+        built = code;
+        arms_answer = true;
+      }
       kind = tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
       if built != null {
@@ -994,6 +1000,20 @@ pub fn work_ref(vars: el_vars::Vars, v: integer) -> boolean {
 // An `if` tail whose every arm builds its record into a call's hidden `__ref_N` buffer — the
 // one the first pass renamed onto the return buffer, or a work ref of the arm's own — or answers
 // the null sentinel: the arms are the answer, and nothing more is delivered.
+pub fn cursor_tail(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) { NdBlock { block } => block[0].name == "cursor match", _ => false }
+}
+
+pub fn cursor_arms_answer(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => cursor_arms_answer(e, inner),
+    NdIf { cond: _, t, f } => cursor_arms_answer(e, t) && cursor_arms_answer(e, f),
+    NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) > 0 && cursor_arms_answer(e, block[0].operators[-1])),
+    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    _ => false
+  }
+}
+
 pub fn arms_build_into_refs(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
   match n {
     NdSpan { pos: _, inner } => arms_build_into_refs(e, vars, inner),
