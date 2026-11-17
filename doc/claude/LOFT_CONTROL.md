@@ -607,7 +607,7 @@ A slice arm takes an `if` guard like any other arm.
 
 An element written **after** a `..` takes the same forms as one before it — a name, `_`, a
 literal or a variant pattern (`[Kw { word }, .., End { e }]` binds `e` from the last element;
-guard `loft-suite/rules/matching/P-Rest/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`).
+guard `loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-fixed-elements-after-it.loft`).
 **One limit worth knowing.** A multi-pattern arm (`A { r }, B { r } => …`, § Match
 expressions) does not accept slice patterns (guard for its nullable partial names:
 `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`).
