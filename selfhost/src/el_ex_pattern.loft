@@ -1950,7 +1950,14 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
           // A function-valued field's `__fn_ref_tmp` is minted on this pass too
           // (`fn_ref_slot_dnr`), so the variables number alike.
           if el_types::base(at) is TyFunction {
-            el_ex_object::fn_number_write(e, vars, ir::NdNull, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }, at);
+            // (A capturing lambda is recorded on the field on this pass, as the in-place
+            // build records it: the field's layout splits by it.)
+            fld = el_ex_object::closure_lambda_at(e, vars, fe!);
+            if fld >= 0 && d >= 0 {
+              el_ex_object::closure_field_write(e, vars, d, fname, ir::NdNull, fld, ir::NdNull, at);
+            } else {
+              el_ex_object::fn_number_write(e, vars, ir::NdNull, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }, at);
+            }
           }
         }
       },

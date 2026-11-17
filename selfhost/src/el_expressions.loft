@@ -112,6 +112,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   b = el_ex_assign::parse_block(e, vars, body, "return from block", result);
+  // A function value read off a field and ANSWERED takes a copy of the field's closure record,
+  // as one bound to a local does (`(B-View)`).
+  if !e.first_pass && el_types::base(result) is TyFunction {
+    match b.code {
+      NdBlock { block: fb } => {
+        fbl = fb[0]!;
+        if len(fbl.operators) > 0 {
+          ft = el_ex_object::copied_field_closure(e, vars, ex(fbl.operators[-1]!, b.tp));
+          fbl.operators[-1] = ft.code;
+          b = ex(ir::NdBlock { block: [fbl] }, b.tp);
+        }
+      },
+      _ => {}
+    }
+  }
   // (What the body itself answers, before any delivery: a short lambda with no declared
   // result takes it, loft#945.)
   vars.tail_tp = [b.tp];

@@ -2946,6 +2946,14 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     }
     x = rx!;
   }
+  // A function value read off a field and bound takes a copy of the field's closure record.
+  if op == "=" {
+    x = el_ex_object::copied_field_closure(e, vars, x);
+    // (On the first pass too the bound value borrows nothing: the local is typed by it.)
+    if e.first_pass && el_types::base(x.tp) is TyFunction && e.p.nodes[rhs!] is SMember && match e.p.nodes[rhs!] { SMember { call } => !call, _ => false } {
+      x = ex(x.code, el_types::with_deps(x.tp, []));
+    }
+  }
   // A tuple local holding a heap member, bound whole, is copied member by member
   // (`tuple_whole_bind_copy`).
   if op == "=" {

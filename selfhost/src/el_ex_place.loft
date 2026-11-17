@@ -1466,7 +1466,9 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
             ops += [pushed];
           }
           bl.operators = ops;
-          return ex(el_ir::cl(e, "OpAppendVector", [cap.code, ir::NdBlock { block: [bl] }, ir::NdInt { n: 0 }]), ir::TyVoid);
+          // (An insert of one statement, as `parse_append_vector` answers it: spliced into the
+          // block, its end is a statement boundary a line marker shows.)
+          return ex(ir::NdInsert { items: [el_ir::cl(e, "OpAppendVector", [cap.code, ir::NdBlock { block: [bl] }, ir::NdInt { n: 0 }])] }, ir::TyVoid);
         },
         _ => {}
       }
