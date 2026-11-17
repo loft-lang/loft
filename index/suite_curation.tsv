@@ -85,7 +85,7 @@ L-FnRef	closures	curated	3	2026-11-17	3 cells: a patch, the fn-type conversion (
 Col-Assign	collections	curated	2	2026-11-17	2 cells: loft#2470 (agrees) and the keyed-assignment patch — nothing to merge
 Col-Axis	collections	curated	4	2026-11-17	one cell (a biased narrow key finds every record its iteration yields)
 Col-Bucket	collections	curated	5	2026-11-17	2 cells, gate E splits them (135 reserve-hash refused, pln110 size-hash agrees)
-Col-Capacity	collections	curated	5	2026-11-17	no own directory: its citing cells live under other collection rules
+Col-Capacity	collections	curated	5	2026-11-17	a representation rule a loft program cannot read (no capacity builtin): guarded by src/vector.rs capacity_policy_tests and tests/reset_capacity.rs; no suite cell can observe room
 Col-Concat	collections	curated	5	2026-11-17	own dir 6 -> 2: a concatenation is a new vector and neither operand changes (every position, loft#2387, #2399, a slice of its destination with @catches LOFT_NO_SELF_SLICE_DEPS kept, a function-end local) 5->1; 2406 (a second-pass literal) stays
 Col-Cons	collections	curated	4	2026-11-17	3 cells: 2407 (agrees), 2409 and the nullable keyed collection — distinct clauses
 Col-Copy	collections	curated	2	2026-11-17	one cell (a vector field keeps its absence, patch)
@@ -93,11 +93,11 @@ Col-Group	collections	curated	18	2026-11-17	own dir 10 -> 5: a write through any
 Col-Group-Dup	collections	curated	4	2026-11-17	2 cells, both gate-E-agreeing: merging them would lower the agree count — kept
 Col-Hash	collections	curated	4	2026-11-17	one cell (a keyed collection without a key is refused, patch)
 Col-Index	collections	curated	3	2026-11-17	one cell (an index holds every record past tree depth thirty)
-Col-Inline	collections	needs-cell	0	2026-11-17	no own directory: its citing cells live under other rules
+Col-Inline	collections	curated	1	2026-11-17	was Rust-only: a first suite cell — a removing walk sees every entry once over an admitted and a non-admitted type, and a view reads its entry across removals, alike under every hash layout
 Col-Insert	collections	curated	11	2026-11-17	5 cells: three patches, the push-spelling refusal and 1159 — distinct
 Col-Insert-Absent	collections	curated	4	2026-11-17	2 cells of different clauses (an insert makes an absent collection present; an instantiated collection replaces a repeated key)
 Col-Key	collections	curated	2	2026-11-17	2 cells: a patch and a refusal patch — nothing to merge
-Col-Layouts	collections	curated	1	2026-11-17	no own directory: its citing cells live under other rules
+Col-Layouts	collections	curated	2	2026-11-17	was Rust-only (tests/store_persist_loft.rs): the Col-Inline cell cites it and is checked under LOFT_NO_HASH_TAG and LOFT_NO_HASH_INLINE (a value never depends on the layout; switch-ab reruns the suite under both)
 Col-Len	collections	todo			
 Col-Lookup	collections	todo			
 Col-Order	collections	todo			
