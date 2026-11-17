@@ -27,14 +27,14 @@ B-RefType	binding	curated	1	2026-11-17	one control cell (INERT receipt, honest: 
 B-RefType-OfVar	binding	curated	3	2026-11-17	no own directory: B-RefType's control cell cites and moves it (a variable or parameter of type &τ is a live link for its whole life)
 B-Scope	binding	curated	32	2026-11-17	own dir 27 -> 21: the name-after-its-scope-ended clause (loft#1700, #2411, #2332, #2321, #2330 and the sibling-loop body local) 6->1; pln125-b-drop moved to H-Drop (a drop runs where its free runs) with a conformance receipt; the rest are one patch receipt each, pairs gate E splits (1955/1955b, 1700b/2523) or distinct clauses
 B-View	binding	curated	56	2026-11-17	own dir 8 -> 5: the materialise clause through a payload binding / nullable local / discharged local / discharged element (loft#1664, #2362, #2447, #2404) 4->1; 1184 is that clause too but keeps its name (two compiler comments cite it, three patches carry those lines); 1665 (own patch), 2489 (gate E agrees) and the write-back cell (the only suite guard of its values + warning) stay; 51 citing files live under other rules
-B-View-Base	binding	todo			
-B-View-Depth	binding	todo			
-Const-Bind	binding	todo			
-Const-Compose	binding	todo			
-Const-ConstructExempt	binding	todo			
-Const-Foreign	binding	todo			
-Const-ScalarCollapse	binding	todo			
-Const-Value	binding	todo			
+B-View-Base	binding	curated	6	2026-11-17	no own directory: 6 citing cells under B-View, B-Copy and B-Disturb hold it
+B-View-Depth	binding	curated	7	2026-11-17	2 cells, distinct: the keyed/vector nested projection (patch, gate E agrees) and the tuple-copies control (gate E refuses) — nothing to merge
+Const-Bind	binding	curated	3	2026-11-17	no own directory: Const-Value's copy-out cell cites it; the Rust twin a_binding_const_field_rebind_is_refused holds the rebind refusal
+Const-Compose	binding	curated	2	2026-11-17	was Rust-only (tests/issues.rs a_composed_const_field_refuses_*): a first suite cell refuses a rebind, an append, an element write, a nested field write and a text append, each expectation proven by corrupting it alone
+Const-ConstructExempt	binding	curated	1	2026-11-17	no own directory: Const-Value's scalar-local cell (patch) cites it
+Const-Foreign	binding	curated	5	2026-11-17	own dir 5 -> 4: the link-append and struct-view refusals 2->1 over one producer, with the value field write, value append and link element write added; the mapped-vector cell writes in the temp dir (seven leftovers had piled up; 24 tracked loft_*.tmp files untracked suite-wide)
+Const-ScalarCollapse	binding	curated	2	2026-11-17	no own directory: Const-Value's scalar-local cell (patch) cites it
+Const-Value	binding	curated	7	2026-11-17	own dir 6 -> 4: the refusals through a discharge (loft#1211), a link/view/loop variable/discharge target and every append route 3->1, all 21 expectations proven alone; the read-as-the-value cell, copy-out and the scalar-local patch cell stay
 Const-VirtualReject	binding	todo			
 P-Cap-Fresh	binding	todo			
 P-Cap-View	binding	todo			
