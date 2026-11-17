@@ -616,6 +616,10 @@ cure again to prove it fails.
 
 A rule no cell names is marked `needs-cell` and gets its first guard from the rule-led walk
 (`rule_tags.py worklist`, [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md)).
+A rule guarded only by Rust tests gets its first suite cell when the walk reaches it — in ledger
+order, since a cell-less rule is mostly one that never broke — written from the formal text,
+every clause, not copied from the Rust twins; each expectation is shown met only by its own
+refusal (corrupt it alone).
 
 ---
 
