@@ -404,7 +404,20 @@ def vacuity(cells):
     bad = 0
     for c in cells:
         text = open(c, encoding="utf-8").read()
+        # A refusal cell: corrupt each expectation in turn — the file must then fail, or that
+        # expectation is credited by nothing it names.
+        for k, m in enumerate(re.finditer(r"(?m)^// @EXPECT_ERROR: ", text)):
+            probe = os.path.join(os.path.dirname(c), ".curate-vacuity.loft")
+            open(probe, "w", encoding="utf-8").write(text[:m.end()] + "XQZ-never-said " + text[m.end():])
+            try:
+                code, line = run_cell(probe, "--interpret")
+            finally:
+                os.remove(probe)
+            bad += code == 0
+            print(f"{'ok  ' if code != 0 else 'VAC '} {os.path.basename(c)} expectation {k + 1}  {line[:50]}")
         tests = re.findall(r"(?m)^fn (test_[a-z_0-9]+)", text) or (["main"] if "fn main()" in text else [])
+        if "@EXPECT_ERROR" in text:
+            continue
         for t in tests:
             broken = _break_one(text, t) if t != "main" else None
             if broken is None:
@@ -504,6 +517,12 @@ def land(rule, chapter_dir, new, olds, message):
     existed = subprocess.run(["git", "cat-file", "-e", f"HEAD~1:rules/{chapter_dir}/{new}.loft"],
                              cwd=suite, capture_output=True).returncode == 0
     gone = len(olds) if existed else len(olds) - 1
+    # A refusal file (a file-level `@EXPECT_ERROR`) is a program the Rust front end refuses, and
+    # gate E counts only the programs it accepts ("N the Rust front end refuses" stand apart), so
+    # retiring refusal cells moves none of its counts.
+    new_text = open(os.path.join(d, new + ".loft"), encoding="utf-8").read()
+    if not rows and re.search(r"(?m)^// @EXPECT_ERROR: ", new_text) and "fn main()" not in new_text.split("@EXPECT_ERROR")[0]:
+        gone = 0
     own = f"loft-suite/rules/{chapter_dir}/{new}.loft"
     if rows and not any(l.endswith("\t" + own) for l in lines):
         verdict = rows[0].split("\t")[1]
