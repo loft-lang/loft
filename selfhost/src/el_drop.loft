@@ -403,7 +403,7 @@ fn cascade_fn_fields(e: el::El, t: integer) -> vector<integer> {
       continue;
     }
     rd = el::def(e, a.assigned_lambda_d_nr).closure_record;
-    if rd < 0 || len(cascade_captures(e, rd)) == 0 {
+    if rd < 0 || rd == el::NONE || len(cascade_captures(e, rd)) == 0 {
       continue;
     }
     if el_schema::field_position(e, d.known_type, "{a.name}__closure_rec") != el::NO_TYPE {

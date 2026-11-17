@@ -448,7 +448,7 @@ fn fill_database(e: el::El, d: integer) {
     // (A split function field's closure record is laid out before the field's own number.)
     if ft is TyFunction && a.assigned_lambda_d_nr != el::NONE && a.assigned_lambda_d_nr >= 0 {
       crd0 = el::def(e, a.assigned_lambda_d_nr).closure_record;
-      if crd0 >= 0 && el::def(e, crd0).known_type == NO_TYPE {
+      if crd0 >= 0 && crd0 != el::NONE && el::def(e, crd0).known_type == NO_TYPE {
         fill_database(e, crd0);
       }
     }
@@ -476,7 +476,7 @@ fn fill_database(e: el::El, d: integer) {
     // child record of the lambda's closure record, right after the function's number.
     if ft is TyFunction && a.assigned_lambda_d_nr != el::NONE && a.assigned_lambda_d_nr >= 0 {
       crd = el::def(e, a.assigned_lambda_d_nr).closure_record;
-      if crd >= 0 {
+      if crd >= 0 && crd != el::NONE {
         if el::def(e, crd).known_type == NO_TYPE {
           fill_database(e, crd);
         }

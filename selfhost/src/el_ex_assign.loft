@@ -740,7 +740,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       // (A lambda written into a fn field beside another shares that field's UNION record,
       // `unite_field_closure_records`: its captures are read at the union's positions.)
       own_ld = el::def_nr(e, "n_{nm}");
-      united = if own_ld >= 0 { el::def(e, own_ld).closure_record } else { -1 };
+      united = if own_ld >= 0 && el::def(e, own_ld).closure_record != el::NONE { el::def(e, own_ld).closure_record } else { -1 };
       e.closure_rec = if len(caps) > 0 && !e.first_pass { if united >= 0 { united } else { el::def_nr(e, rec_nm) } } else { -1 };
       e.closure_var = -1;
       key = el_definitions::parse_function(e, at, nm, params, ret, body, short_names: if short { names } else { [] }, hint: hint);
@@ -806,7 +806,7 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
   }
   rd = el::def_nr(e, rec_nm);
   // (A fn field's union record stands in for the lambda's own.)
-  if el::def(e, d).closure_record >= 0 {
+  if el::def(e, d).closure_record >= 0 && el::def(e, d).closure_record != el::NONE {
     rd = el::def(e, d).closure_record;
   }
   kt = if rd < 0 { el_schema::NO_TYPE } else { el::def(e, rd).known_type };

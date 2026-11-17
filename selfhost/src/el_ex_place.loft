@@ -209,6 +209,25 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "a function-valued field given something other than a named function");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // `fn_ref_field_reset` (`@FR-L-CapOwn`): a value with no closure written into a SPLIT field
+    // displaces the closure record it held — that record is named (`___oldrec_N`, for the scope
+    // pass's release) and its child slot cleared before the number is written.
+    rname = match e.p.nodes[target] { SMember { name: mn2 } => mn2, SName { member: sm2 } => sm2, _ => "" };
+    rpos = match el_ir::unspan(fargs[1]!) { NdInt { n: rp } => rp, _ => -1 };
+    if !e.first_pass && host_d >= 0 && rname != "" && rpos >= 0 && el_ex_object::fn_field_split(e, host_d, rname) {
+      ra = attr_nr(el::def(e, host_d), rname);
+      rrd = el::def(e, el::def(e, host_d).attributes[ra]!.assigned_lambda_d_nr).closure_record;
+      crec = el_schema::child_rec(e, el::def(e, rrd).known_type);
+      rroot = place_root(e, fargs[0]!);
+      old = el_vars::create_unique(vars, "__oldrec", ir::TyReference { n: rrd, dep: if rroot >= 0 { [rroot] } else { [] } });
+      vars.vars[old].skip_free = true;
+      el_vars::set_defined(vars, old);
+      return ex(el_ir::v_block([
+        el_ir::v_set(old, el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [fargs[0]!, ir::NdInt { n: rpos + 4 }, ir::NdInt { n: 0 }])])),
+        el_ir::cl(e, "OpClearKeyed", [el_ir::cl(e, "OpGetField", [fargs[0]!, ir::NdInt { n: rpos + 4 }, ir::NdInt { n: crec }]), ir::NdInt { n: crec }]),
+        fw!
+      ], ir::TyVoid, "fn_ref_field_reset"), ir::TyVoid);
+    }
     return ex(fw!, ir::TyVoid);
   }
   if el_types::is_unknown(p.tp) {

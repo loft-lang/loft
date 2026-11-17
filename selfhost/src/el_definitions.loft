@@ -1455,7 +1455,7 @@ fn add_capture_owner_slots(e: el::El, vars: el_vars::Vars, parent: integer) {
     // A fn field's UNION record (loft#1874) is left alone: its captures keep the record's
     // static adoption, and the lambda's own record is no longer the one it builds.
     lam = el::def_nr(e, "n___lambda_{bare}_{k}");
-    if lam >= 0 && el::def(e, lam).closure_record >= 0 && starts_with(el::def(e, el::def(e, lam).closure_record).name, "__closure_u_") {
+    if lam >= 0 && el::def(e, lam).closure_record >= 0 && el::def(e, lam).closure_record != el::NONE && starts_with(el::def(e, el::def(e, lam).closure_record).name, "__closure_u_") {
       continue;
     }
     slots: vector<el::Capture> = [];

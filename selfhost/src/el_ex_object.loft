@@ -464,7 +464,7 @@ pub fn closure_field_write(e: el::El, vars: el_vars::Vars, hd: integer, fname: t
     fn_number_write(e, vars, r, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }, ft);
     return ir::NdNull;
   }
-  rd = el::def(e, ld).closure_record;
+  rd = if el::def(e, ld).closure_record == el::NONE { -1 } else { el::def(e, ld).closure_record };
   bl = match el_ir::unspan(val) { NdBlock { block } => block[0], _ => return null };
   first_ld = el::def(e, hd).attributes[a]!.assigned_lambda_d_nr;
   if bl.name != "fn_ref_with_closure" || rd < 0 || first_ld == el::NONE || first_ld < 0 || el::def(e, first_ld).closure_record != rd {
@@ -563,7 +563,7 @@ pub fn closure_field_write(e: el::El, vars: el_vars::Vars, hd: integer, fname: t
 fn unite_closure_records(e: el::El, a: integer, b: integer) {
   ra = el::def(e, a).closure_record;
   rb = el::def(e, b).closure_record;
-  if ra < 0 || rb < 0 || ra == rb {
+  if ra < 0 || rb < 0 || ra == el::NONE || rb == el::NONE || ra == rb {
     return;
   }
   union = ra;
@@ -596,7 +596,7 @@ pub fn fn_field_split(e: el::El, d: integer, name: text) -> boolean {
     return false;
   }
   ld = el::def(e, d).attributes[a]!.assigned_lambda_d_nr;
-  ld != el::NONE && ld >= 0 && el::def(e, ld).closure_record >= 0
+  ld != el::NONE && ld >= 0 && el::def(e, ld).closure_record >= 0 && el::def(e, ld).closure_record != el::NONE
 }
 
 // `emit_tuple_set_ops`: a tuple field written member by member, each at the field's position
