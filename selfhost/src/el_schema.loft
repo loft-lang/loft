@@ -317,6 +317,26 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
   e.b.data.definitions[md].attributes += [el::attribute("vector", vt)];
 }
 
+// The row of a field's vector that a first-pass construct pushes into (a literal with items,
+// an append): a narrow integer's element and vector rows, else the vector's where its
+// element has a store type already.  Made ahead of the struct that holds the field.
+pub fn pushed_vector_row(e: el::El, t: ir::TypeT) {
+  nm = el_types::elem_name(e, t);
+  if nm == "" || starts_with(nm, "__nullable<") || el_types::struct_enum_def(t) >= 0 {
+    return;
+  }
+  match t {
+    TyInteger { spec } => {
+      if el_types::narrow_width(spec) > 0 || el_types::uint4(spec) {
+        vector_type(e, content_type(e, t));
+        return;
+      }
+    },
+    _ => {}
+  }
+  vector_store_type(e, t, nm);
+}
+
 // The `vector<T>` store type, made at once where `T` has a store type already.
 pub fn vector_store_type(e: el::El, t: ir::TypeT, nm: text) {
   kt = match t {

@@ -325,8 +325,11 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   head_conds: vector<ir::Node> = [];
   binds: vector<ir::Node> = [];
   named_t = el_types::with_deps(elm, [src]);
+  // In a cursor match the run is a prefix read from the entry position: its head, its start
+  // (`_rep_base_N`) and what the arm advances the cursor past are all relative to it.
+  cur = vars.cursor;
   for h in elems[0..gi] {
-    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }]);
+    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }]);
     nm = rename_of(e, h);
     if e.p.nodes[h] is PWild {
       continue;
@@ -422,9 +425,18 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     }
   }
   tail_len = len(tail);
-  forward = has_rest;
+  if len(cur) > 0 && (has_rest || sep_disc >= 0) {
+    el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repetition with a separator or a rest");
+    return null;
+  }
+  forward = has_rest || len(cur) > 0;
   subj = ir::NdVar { n: sv };
   ln = el_ir::cl(e, "OpLengthVector", [subj]);
+  base_v = if len(cur) > 0 { el_vars::create_unique(vars, "rep_base", int_t) } else { -1 };
+  if base_v >= 0 {
+    el_vars::set_defined(vars, base_v);
+  }
+  lo: ir::Node = if base_v >= 0 { ir::NdVar { n: base_v } } else { ir::NdInt { n: head_len } };
   end_v = el_vars::create_unique(vars, "rep_end", int_t);
   el_vars::set_defined(vars, end_v);
   end = ir::NdVar { n: end_v };
@@ -452,7 +464,7 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       return null;
     }
   }
-  run: vector<ir::Node> = [el_ir::v_set(end_v, ir::NdInt { n: head_len })];
+  run: vector<ir::Node> = if base_v >= 0 { [el_ir::v_set(base_v, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: head_len }])), el_ir::v_set(end_v, lo)] } else { [el_ir::v_set(end_v, ir::NdInt { n: head_len })] };
   if sep_disc >= 0 {
     first_v = el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: head_len }, ln]), el_ir::v_if(rep_tag(e, elm, sv, ir::NdInt { n: head_len }, disc), el_ir::v_set(end_v, ir::NdInt { n: head_len + 1 }), ir::NdNull), ir::NdNull);
     next = el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: 1 }]);
@@ -471,12 +483,12 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   }
   base = if forward && tail_len > 0 {
     el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: tail_len }]), ln])
-  } else if has_rest {
-    el_ir::cl(e, "OpLeInt", [ir::NdInt { n: head_len }, ln])
+  } else if has_rest || base_v >= 0 {
+    el_ir::cl(e, "OpLeInt", [lo, ln])
   } else {
     el_ir::cl(e, "OpEqInt", [end, el_ir::cl(e, "OpMinInt", [ln, ir::NdInt { n: tail_len }])])
   };
-  test = if quant == "+" { el_ir::v_if(base, el_ir::cl(e, "OpLtInt", [ir::NdInt { n: head_len }, end]), ir::NdBoolean { b: false }) } else { base };
+  test = if quant == "+" { el_ir::v_if(base, el_ir::cl(e, "OpLtInt", [lo, end]), ir::NdBoolean { b: false }) } else { base };
   for tc in tail_conds {
     test = el_ir::v_if(test, tc, ir::NdBoolean { b: false });
   }
@@ -490,7 +502,7 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   for cn in cap_names {
     cv = pattern_bind(vars, cn, ir::TyVector { inner: elm, dep: [] }, names);
     if !e.first_pass {
-      m = slice_vector(e, vars, sv, elm, cv, ir::NdInt { n: head_len }, end, step, null);
+      m = slice_vector(e, vars, sv, elm, cv, lo, end, step, null);
       if m == null {
         return null;
       }
@@ -512,7 +524,7 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
         ft = el::def(e, vd).attributes[fa]!.typedef[0];
         pv = pattern_bind(vars, fname, ir::TyVector { inner: ft, dep: [] }, names);
         if !e.first_pass {
-          m = slice_vector(e, vars, sv, elm, pv, ir::NdInt { n: head_len }, end, step, SliceProj { vd: vd, fa: fa, ft: ft });
+          m = slice_vector(e, vars, sv, elm, pv, lo, end, step, SliceProj { vd: vd, fa: fa, ft: ft });
           if m == null {
             return null;
           }
@@ -532,6 +544,10 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       }
       binds += [m!];
     }
+  }
+  // The arm that wins advances the cursor past the run and its tail.
+  if len(cur) > 0 {
+    binds += [el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, if tail_len > 0 { el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: tail_len }]) } else { end })];
   }
   el_ex_match::SliceArm { binds: binds, cond: cond, shape: el_ex_match::SliceShape { min: head_len + tail_len, exact: false } }
 }
@@ -1906,6 +1922,12 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
               // its temporary by that number.
               if len(items) > 0 {
                 el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+                // (A literal that fills the field names its vector's row on this pass, ahead
+                // of the struct that holds it; an empty one names nothing.)
+                match at {
+                  TyVector { inner: fvi } => { el_schema::pushed_vector_row(e, fvi); },
+                  _ => {}
+                }
               }
               for it in items {
                 if struct_literal_def(e, it) >= 0 {

@@ -1081,6 +1081,14 @@ pub fn record_def(t: ir::TypeT) -> integer {
 // struct literal item a record made through the owning struct's field (`OpNewRecord(r, struct,
 // field)`, its value or fields, `OpFinishRecord`) — a keyed collection indexes it there.
 pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
+  // (An append that pushes names the field's vector row on the first pass, ahead of the struct
+  // that holds it — as a literal that fills the field does.)
+  if e.first_pass && match e.p.nodes[n] { SVecLit { items: ai } => len(ai) > 0, _ => false } {
+    match el_types::base(p.tp) {
+      TyVector { inner: avi } => { el_schema::pushed_vector_row(e, avi); },
+      _ => {}
+    }
+  }
   place = el_ir::unspan(p.code);
   // The record holding the field — a local, or itself a field or an element of one — and the
   // variable at its root, which the items' record borrows.

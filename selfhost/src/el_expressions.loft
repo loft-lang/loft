@@ -1042,6 +1042,12 @@ pub fn tail_bind_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> integer
       _ => {}
     }
   }
+  // (The handover is for a bind and a tail on ONE line: a line of its own for the tail
+  // leaves the call its work ref.)
+  raw = match code { NdBlock { block } => block[0].operators, _ => [] };
+  if len(raw) < 2 || el_ir::is_line(raw[-2]!) {
+    return 0;
+  }
   match el_ir::unspan(ops[-2]) {
     NdSet { var, inner } => {
       if var != v {

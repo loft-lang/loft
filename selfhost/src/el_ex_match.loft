@@ -2802,6 +2802,12 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // optional group or a multi-element alternation: `parse_multi_element_alternation`.
   cur = vars.cursor;
   if len(cur) > 0 {
+    // (A repetition of plain elements is `parse_slice_repetition`, cursor-aware.)
+    for el0 in elems {
+      if el_ex_pattern::rep_group(e, el0) >= 0 && subrule_group(e, el0) < 0 && el_types::struct_enum_def(elm) >= 0 {
+        return el_ex_pattern::slice_rep(e, vars, sv, src, elm, elems, names);
+      }
+    }
     return cursor_arm(e, vars, sv, src, elm, elems, names);
   }
   for el0 in elems {
