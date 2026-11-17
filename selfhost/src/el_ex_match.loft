@@ -2388,6 +2388,19 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     out = fixed_arms;
     result = if nullable || result is TyOptional { ir::TyOptional { inner: rt } } else { rt };
   }
+  // A cursor match answering a plain scalar beside a `null` arm is nullable, the `null` arm
+  // the scalar's own null.
+  if len(vars.cursor) > 0 && !(result is TyOptional) && el_convert::plain_scalar(result) && len([for a in out if a.code is NdNull { 1 }]) > 0 {
+    typed_null = el_convert::null_of(e, result);
+    if typed_null != null {
+      scalar_arms: vector<SMArm> = [];
+      for a in out {
+        scalar_arms += [SMArm { guard: a.guard, code: if a.code is NdNull { typed_null! } else { a.code } }];
+      }
+      out = scalar_arms;
+      result = ir::TyOptional { inner: result };
+    }
+  }
   if !e.first_pass && !total && len(vars.cursor) > 0 {
     el::refuse(e, "a cursor match with no `_` arm");
     return void;
@@ -2538,7 +2551,9 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
     }
     // `parse_subrule_slice_element`.
     rt = el_types::without_deps(el_types::base(el::def(e, rule).returned[0] ?? ir::TyVoid));
-    if !(rt is TyReference) {
+    // (A record is absent as the null sentinel, a plain integer as its own null.)
+    int_rule = match rt { TyInteger { spec } => el_types::narrow_width(spec) == 0 && spec.forced_size == 0, _ => false };
+    if !(rt is TyReference) && !int_rule {
       el::refuse(e, "a cursor sub-rule answering this type: {type_kind(rt)}");
       return null;
     }
@@ -2547,7 +2562,7 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
     el_vars::set_defined(vars, nv);
     sg = el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
     el_vars::set_defined(vars, sg);
-    sentinel = el_ir::cl(e, "OpNullRefSentinel", []);
+    sentinel = if int_rule { el_ir::cl(e, "OpConvIntFromNull", []) } else { el_ir::cl(e, "OpNullRefSentinel", []) };
     pre += [el_ir::v_set(nv, sentinel), el_ir::v_set(sg, ir::NdInt { n: 0 })];
     set_pos = el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: k }]));
     call = el_ex_call::call_args(e, vars, rule, [ir::NdVar { n: cur[0]! }], [el_vars::tp(vars, cur[0]!)]);
@@ -2557,7 +2572,7 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
       return null;
     }
     matched = el_ir::v_block([el_ir::v_set(sg, now!), ir::NdBoolean { b: true }], ir::TyBoolean, "sub-rule matched");
-    present = el_ir::cl(e, "OpNeRef", [ir::NdVar { n: nv }, sentinel]);
+    present = if int_rule { el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: nv }]) } else { el_ir::cl(e, "OpNeRef", [ir::NdVar { n: nv }, sentinel]) };
     cond = both(cond, el_ir::v_block([set_pos, el_ir::v_set(nv, call!.code), el_ir::v_if(present, matched, ir::NdBoolean { b: false })], ir::TyBoolean, "sub-rule"));
     base = sg;
     seg_names = [];
