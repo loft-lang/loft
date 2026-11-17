@@ -863,7 +863,7 @@ moved out, or a static fact deciding which copy owns, leaves the programmer gues
 structure still works.  Refusing the copy leaves no guess: a program that compiles has one
 structure per lease (DESIGN_DECISIONS.md @C121; the earlier rule is in heap-history.md).
 
-**Conformance.** `loft-suite/rules/binding/B-Copy/139-drop-cascade.loft` (the cascade),
+**Conformance.** `loft-suite/rules/heap/H-Drop/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), identical on both
 backends.  `(H-Copy-Refuse)` and `(H-Spent)` are compile-time errors (`D-heap-8`), `(H-Copy-Lease)`
