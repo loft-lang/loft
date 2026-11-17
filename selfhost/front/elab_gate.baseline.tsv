@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	6b2bd8911adb38c5d599b0368354a19ef4313921
+suite	6e22eb2312745b8d966788b5104c9645a82dacd1
 
-layer	elab	agree	1031	of	2134
+layer	elab	agree	1031	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -260,9 +260,7 @@ elab	refused	loft-suite/rules/heap/H-ClearRelease/a-record-of-texts-is-released-
 elab	refused	loft-suite/rules/heap/H-ClearRelease/a-reused-vector-or-place-releases-what-it-held.loft
 elab	refused	loft-suite/rules/heap/H-Copy-Refuse/a-link-a-view-and-an-argument-make-no-second-structure.loft
 elab	refused	loft-suite/rules/heap/H-Copy-Refuse/a-move-of-an-owned-local-releases-once.loft
-elab	refused	loft-suite/rules/heap/H-CopySelf/1916-a-nested-collection-assigned-onto-itself-keeps-its-elements.loft
-elab	refused	loft-suite/rules/heap/H-CopySelf/2391-a-record-written-from-inside-its-own-place-keeps-its-value.loft
-elab	refused	loft-suite/rules/heap/H-CopySelf/a-value-handed-back-to-its-own-home-is-unchanged.loft
+elab	refused	loft-suite/rules/heap/H-CopySelf/a-value-delivered-onto-or-from-inside-its-own-place-keeps-its-value.loft
 elab	refused	loft-suite/rules/heap/H-Drop/1362-a-rebind-releases-the-droppable-it-displaces.loft
 elab	refused	loft-suite/rules/heap/H-Drop/1564-a-local-releases-every-record-it-held-across-passes-and-returns.loft
 elab	refused	loft-suite/rules/heap/H-Drop/1573-a-rebuilt-local-releases-what-it-displaces-after-the-new-value.loft
