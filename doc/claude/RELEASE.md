@@ -165,6 +165,12 @@ right and globally inconsistent is what that produces.
     with its reason, so a mark is a stated decision that stays visible, never a way to stop
     counting.  A generated file carries the mark in its GENERATOR's header text, or the next
     regeneration drops it.
+  - **A split ships with the branches it moves under, at once (owner).**  A move of thousands
+    of lines conflicts with every branch that touches the file on each rebase until it is on
+    `main`.  So a split is followed straight away by a gather of the active branches into one
+    PR with it (`scripts/join.py survey`, each agent's cut, join, open, auto-merge) — a
+    standing ask, not one to wait for — and is timed right after a merge, when the stack is
+    otherwise empty.
 - **Payoff check**, read in `M-file-sizes`: did last release's split land, and did the
   file it came from stay down?  A split whose parts have regrown had its seam chosen
   wrong.  Re-open that seam; do not add a third part.
