@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	7d2eef83154189543c4978d45550c66aa50c6d83
+suite	073e9f1428383617fe0eedff2d852851189d25ac
 
-layer	elab	agree	1031	of	2114
+layer	elab	agree	1031	of	2113
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -301,8 +301,7 @@ elab	refused	loft-suite/rules/heap/H-TextReplace/a-text-field-written-through-a-
 elab	refused	loft-suite/rules/heap/H-View/1985-a-parsed-vector-is-owned-by-what-binds-it.loft
 elab	refused	loft-suite/rules/heap/H-View/a-projection-into-a-local-is-not-the-callers-store-to-free.loft
 elab	refused	loft-suite/rules/heap/H-Write-Else/178-store-else.loft
-elab	refused	loft-suite/rules/heap/H-WriteOOB/a-record-copied-into-no-place-gives-its-source-back.loft
-elab	refused	loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands-nowhere.loft
+elab	refused	loft-suite/rules/heap/H-WriteOOB/a-write-to-a-place-that-names-nothing-lands-nowhere.loft
 elab	refused	loft-suite/rules/interfaces/G-Gen-Scope/a-type-variable-is-a-name-only-inside-the-definition-it-heads.loft
 elab	refused	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft
 elab	refused	loft-suite/rules/interfaces/G-Key/2435-two-modules-types-of-one-name-key-two-instances.loft
