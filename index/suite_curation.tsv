@@ -118,16 +118,16 @@ Slice-KeyedIter	collections	curated	4	2026-11-17	3 cells: two refusals (spatial,
 Slice-Open	collections	curated	1	2026-11-17	was guarded only by loft's tests/scripts/48b-spatial-slice.loft: moved into the suite as its cell (box, open walk, cap; which records from every origin), conformance receipt
 Slice-Value	collections	curated	14	2026-11-17	own dir 9 -> 7: a slice is a fresh vector at every vector position (every position, a concat operand, a method receiver loft#1728) 3->1; the rest agree with gate E or are distinct (negative bound)
 C-Det	concurrency	curated	3	2026-11-17	2 cells: a patch and the par-worker row — nothing to merge
-C-Impure	concurrency	todo			
-C-Order	concurrency	todo			
-C-Par	concurrency	todo			
-G-Arg-Rebind	coroutines	todo			
-G-Arg-Share	coroutines	todo			
-G-Call	coroutines	todo			
-G-Delegate	coroutines	todo			
-G-Done	coroutines	todo			
-G-For	coroutines	todo			
-G-Hold	coroutines	todo			
+C-Impure	concurrency	curated	2	2026-11-17	2 cells, both patches (the view-write refusal and its copy twin)
+C-Order	concurrency	curated	1	2026-11-17	own dir 2 -> 1: a par loop keeps its source's order (consumed results, every kind's walk) 2->1
+C-Par	concurrency	curated	2	2026-11-17	no own directory; two suite cells elsewhere cite it
+G-Arg-Rebind	coroutines	curated	2	2026-11-17	2 cells, gate E splits them (2067 refused, the re-minted buffer agrees)
+G-Arg-Share	coroutines	curated	2	2026-11-17	one cell (a shared argument's mutation is seen at the next advance)
+G-Call	coroutines	curated	8	2026-11-17	own dir 3 -> 2: a lambda that yields or returns an iterator is a generator in every position (loft#2059 + the iterator lambda) 2->1; the binds-and-runs-nothing control agrees
+G-Delegate	coroutines	curated	6	2026-11-17	2 cells, both agree with gate E (merging them would lower its agree count)
+G-Done	coroutines	curated	5	2026-11-17	no own directory; five suite cells elsewhere cite it
+G-For	coroutines	curated	3	2026-11-17	3 cells: two agree with gate E, one refused (owned heap values) — nothing to merge
+G-Hold	coroutines	curated	6	2026-11-17	own dir 10 -> 5: a moved generator is not read again (loft#2043 x4 refusals) 4->1; a generator held in a field or element is released once by its holder (loft#1585, moved-in, overwritten) 3->1; the keyed patch, the handle cells stay
 G-Next	coroutines	todo			
 G-NoRefParam	coroutines	todo			
 G-Own	coroutines	todo			
