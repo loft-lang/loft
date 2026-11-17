@@ -58,7 +58,16 @@ pub struct VView {
   pub d: integer,
   pub exit: integer,
   pub off: integer,
+  // 0 the null view, 1 `Elem` (field `off` of element temp `elem`), 2 `Last` (field `off` of the
+  // last element of the container `(root_v, root_f)` names, minted as `(ptp, fld)`); `eoff` the
+  // viewed field's offset inside that element.
   pub kind: integer,
+  pub eoff: integer,
+  pub elem: integer,
+  pub root_v: integer,
+  pub root_f: integer,
+  pub ptp: integer,
+  pub fld: integer,
 }
 
 // The program's value-record answer (`ValueRecords`).  Per definition: the layout key of an

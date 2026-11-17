@@ -1,0 +1,827 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-ValueRecord`'s APPENDED-ELEMENT view leaves (@PLN164 E-1,
+// `@FR-O-ViewField`): does a local's copy live in a parameter's container on EVERY path to an
+// exit, and which expression names it there?  `src/opt/value_records/leaves.rs::fresh_leaf` with
+// its walk (`FreshWalk`) and `layout.rs::{leaf_root, elem_mint}`.
+//
+// Nodes are named by their pre-order number over the span-contracted body (`opt_vr_shape::sizes`),
+// where the Rust walk keys them by address.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use own;
+use binds;
+use opt_vr_shape;
+use opt_vr_leaves;
+use opt_vr_fnref;
+use opt_vr_disturb;
+
+const ANY = 4294967295;
+
+fn kids(n: ir::Node) -> vector<ir::Node> {
+  opt_vr_shape::kids(n)
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  opt_vr_shape::def_name(b, d)
+}
+
+fn int_of(n: ir::Node) -> integer? {
+  match loop_shape::unspan(n) { NdInt { n: i } => i, _ => null }
+}
+
+fn names_here(n: ir::Node, v: integer) -> boolean {
+  (binds::var_named_here(loop_shape::unspan(n)) ?? -1) == v
+}
+
+fn reads(n: ir::Node, v: integer) -> boolean {
+  binds::reads_var(n, v)
+}
+
+fn is_arg(def: ir::Definition, v: integer) -> boolean {
+  v >= 0 && v < len(def.variables.variables) && def.variables.variables[v]!.argument
+}
+
+fn type_def_nr(t: ir::TypeT) -> integer {
+  match cgen_types::base(t) {
+    TyReference { n, dep: _ } => n,
+    TyEnum { n, is_ref: _, dep: _ } => n,
+    TySorted { n, keys: _, dep: _ } => n,
+    TyIndex { n, keys: _, dep: _ } => n,
+    TyHash { n, names: _, dep: _ } => n,
+    TyRadix { n, names: _, dep: _ } => n,
+    TyTrie { n, key: _, dep: _ } => n,
+    _ => -1,
+  }
+}
+
+fn field_position(b: ir::Bundle, tp: integer, fld: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp].parts) == 0 {
+    return -1;
+  }
+  fields: vector<ir::DbField> = match b.types[tp].parts[0]! { PtStruct { fields } => fields, PtEnumValue { value: _, fields } => fields, _ => [] };
+  if fld < 0 || fld >= len(fields) { -1 } else { fields[fld]!.position }
+}
+
+// Every non-null assignment of variable `v` in `n`, appended to `out`.
+fn assignments(n: ir::Node, v: integer, out: vector<ir::Node>) {
+  u = loop_shape::unspan(n);
+  match u {
+    NdSet { var, inner } => {
+      if var == v && !(loop_shape::unspan(inner) is NdNull) {
+        out += [inner];
+      }
+    },
+    _ => {},
+  }
+  for k in kids(u) {
+    assignments(k, v, out);
+  }
+}
+
+// A parameter place: the variable (-1 none) and the field offset (`ANY` the whole variable).
+pub struct Root {
+  pub v: integer,
+  pub f: integer,
+}
+
+fn no_root() -> Root {
+  Root { v: -1, f: ANY }
+}
+
+// `leaf_root`: the parameter place a leaf expression roots in.
+pub fn leaf_root(b: ir::Bundle, ops: own::Ops, d: integer, e: ir::Node, depth: integer) -> Root {
+  if depth > 12 {
+    return no_root();
+  }
+  def = b.data.definitions[d]!;
+  u = loop_shape::unspan(e);
+  match u {
+    NdVar { n: v } => {
+      if is_arg(def, v) {
+        return Root { v: v, f: ANY };
+      }
+      if own::ownership_of(b, ops, d, u) is Join {
+        return no_root();
+      }
+      found: vector<ir::Node> = [];
+      assignments(def.code[0]!, v, found);
+      if len(found) != 1 {
+        return no_root();
+      }
+      leaf_root(b, ops, d, found[0]!, depth + 1)
+    },
+    NdBlock { block } => if len(block[0]!.operators) == 0 { no_root() } else { leaf_root(b, ops, d, opt_vr_shape::last_op(block[0]!.operators), depth + 1) },
+    NdIf { cond: _, t, f: _ } => leaf_root(b, ops, d, t, depth + 1),
+    NdInsert { items } => if len(items) == 0 { no_root() } else { leaf_root(b, ops, d, items[len(items) - 1]!, depth + 1) },
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if nm == "OpGetField" || nm == "OpGetDbRef" {
+        if len(args) == 0 {
+          return no_root();
+        }
+        base = loop_shape::unspan(args[0]!);
+        bv = opt_vr_shape::var_of(base);
+        off = if len(args) > 1 { int_of(args[1]!) } else { null };
+        if bv >= 0 && is_arg(def, bv) && off != null && off >= 0 {
+          return Root { v: bv, f: off };
+        }
+        return leaf_root(b, ops, d, base, depth + 1);
+      }
+      if nm == "OpGetVector" || nm == "OpGetVectorNullable" || nm == "OpVectorRef" {
+        return if len(args) == 0 { no_root() } else { leaf_root(b, ops, d, args[0]!, depth + 1) };
+      }
+      if nm == "OpNewRecord" || nm == "OpNewRecordNP" {
+        if len(args) < 3 {
+          return no_root();
+        }
+        v2 = opt_vr_shape::var_of(args[0]!);
+        if !opt_vr_shape::is_var(args[0]!) || !is_arg(def, v2) {
+          return no_root();
+        }
+        fld = int_of(args[2]!);
+        if fld == null {
+          return no_root();
+        }
+        if fld == 65535 {
+          return Root { v: v2, f: ANY };
+        }
+        parent = type_def_nr(def.variables.variables[v2]!.type_def[0] ?? ir::TyVoid);
+        if parent < 0 {
+          return no_root();
+        }
+        p = field_position(b, b.data.definitions[parent]!.known_type, fld);
+        return if p < 0 { no_root() } else { Root { v: v2, f: p } };
+      }
+      no_root()
+    },
+    _ => no_root(),
+  }
+}
+
+// `elem_mint`: the element temp `e` an append builds, as its single mint
+// `e = OpNewRecord(<parameter>, parent_tp, fld)` names it.
+pub struct Mint {
+  pub root: Root,
+  pub ptp: integer,
+  pub fld: integer,
+}
+
+fn no_mint() -> Mint {
+  Mint { root: no_root(), ptp: -1, fld: -1 }
+}
+
+pub fn elem_mint(b: ir::Bundle, ops: own::Ops, d: integer, e: integer) -> Mint {
+  found: vector<ir::Node> = [];
+  assignments(b.data.definitions[d]!.code[0]!, e, found);
+  if len(found) != 1 {
+    return no_mint();
+  }
+  rhs = loop_shape::unspan(found[0]!);
+  match rhs {
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if (nm != "OpNewRecord" && nm != "OpNewRecordNP") || len(args) < 3 {
+        return no_mint();
+      }
+      ptp = int_of(args[1]!);
+      fld = int_of(args[2]!);
+      if ptp == null || fld == null {
+        return no_mint();
+      }
+      r = leaf_root(b, ops, d, rhs, 0);
+      if r.v < 0 {
+        return no_mint();
+      }
+      Mint { root: r, ptp: ptp, fld: fld }
+    },
+    _ => no_mint(),
+  }
+}
+
+// --- The answer --------------------------------------------------------------------------------
+
+// What an exit delivers for a view field: `kind` 0 the null view, 1 `Elem` (the field `off` of
+// element temp `elem`), 2 `Last` (field `off` of the last element of the container `root` names,
+// minted as `(ptp, fld)`); -1 none proven.
+pub struct Leaf {
+  pub kind: integer,
+  pub elem: integer,
+  pub root: Root,
+  pub ptp: integer,
+  pub fld: integer,
+  pub off: integer,
+}
+
+pub fn no_leaf() -> Leaf {
+  Leaf { kind: -1, elem: -1, root: no_root(), ptp: -1, fld: -1, off: 0 }
+}
+
+// --- The path state ----------------------------------------------------------------------------
+
+// `Fresh`: some path reaches here (`live`); on every one the container's last element is one of
+// `last` (`has_last` false: some path cannot say so); `copied` the candidates whose viewed field
+// holds the local's current value on every path.
+struct Fresh {
+  live: boolean,
+  has_last: boolean,
+  last: vector<integer>,
+  copied: vector<integer>,
+}
+
+fn dead() -> Fresh {
+  Fresh { live: false, has_last: false, last: [], copied: [] }
+}
+
+fn copy(s: Fresh) -> Fresh {
+  Fresh { live: s.live, has_last: s.has_last, last: [for x in s.last { x }], copied: [for x in s.copied { x }] }
+}
+
+fn union(a: vector<integer>, b: vector<integer>) -> vector<integer> {
+  out = [for x in a { x }];
+  for y in b {
+    if !out.contains(y) {
+      out += [y];
+    }
+  }
+  out
+}
+
+fn inter(a: vector<integer>, b: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in a {
+    if b.contains(x) {
+      out += [x];
+    }
+  }
+  out
+}
+
+fn without(a: vector<integer>, x: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for y in a {
+    if y != x {
+      out += [y];
+    }
+  }
+  out
+}
+
+fn join(a: Fresh, o: Fresh) -> Fresh {
+  if !a.live {
+    return copy(o);
+  }
+  if !o.live {
+    return copy(a);
+  }
+  hl = a.has_last && o.has_last;
+  Fresh { live: true, has_last: hl, last: if hl { union(a.last, o.last) } else { [] }, copied: inter(a.copied, o.copied) }
+}
+
+fn same_set(a: vector<integer>, b: vector<integer>) -> boolean {
+  if len(a) != len(b) {
+    return false;
+  }
+  for x in a {
+    if !b.contains(x) {
+      return false;
+    }
+  }
+  true
+}
+
+fn fresh_eq(a: Fresh, o: Fresh) -> boolean {
+  a.live == o.live && a.has_last == o.has_last && same_set(a.last, o.last) && same_set(a.copied, o.copied)
+}
+
+// --- The walk ----------------------------------------------------------------------------------
+
+struct FW {
+  b: ir::Bundle,
+  ops: own::Ops,
+  dmap: vector<opt_vr_disturb::DPlace>,
+  d: integer,
+  local: integer,
+  exit: integer,
+  sz: vector<integer>,
+  aliases: vector<integer>,
+  cands: vector<integer>,
+  copies: vector<integer>,
+  place: Root,
+  fld: integer,
+  off: integer,
+  has_exit: boolean,
+  at_exit: Fresh,
+  brk: vector<Fresh>,
+  cont: vector<Fresh>,
+  ok: boolean,
+}
+
+fn is_local(fw: FW, w: integer) -> boolean {
+  w == fw.local || fw.aliases.contains(w)
+}
+
+fn names_local_here(fw: FW, n: ir::Node) -> boolean {
+  v = binds::var_named_here(loop_shape::unspan(n));
+  v != null && is_local(fw, v!)
+}
+
+fn names_local(fw: FW, n: ir::Node) -> boolean {
+  if names_local_here(fw, n) {
+    return true;
+  }
+  for k in kids(n) {
+    if names_local(fw, k) {
+      return true;
+    }
+  }
+  false
+}
+
+fn read_position(fw: FW, d: integer, i: integer, args: vector<ir::Node>) -> boolean {
+  nm = def_name(fw.b, d);
+  if opt_vr_leaves::VIEW_LEAF_READ_OPS.contains(nm) {
+    return i == 0;
+  }
+  if nm == "OpAppendVector" {
+    return i == 1 && !(len(args) > 0 && names_local(fw, args[0]!));
+  }
+  if nm == "" {
+    return false;
+  }
+  def = fw.b.data.definitions[d]!;
+  if i >= len(def.attributes) || !def.attributes[i]!.value_const {
+    return false;
+  }
+  rt = def.returned[0] ?? ir::TyVoid;
+  opt_vr_fnref::is_scalar(rt) || (match cgen_types::base(rt) { TyVoid => true, TyText { dep: _ } => true, _ => false })
+}
+
+fn only_reads(fw: FW, n: ir::Node) -> boolean {
+  u = loop_shape::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      for a in args {
+        au = loop_shape::unspan(a);
+        lv = opt_vr_shape::var_of(au);
+        if opt_vr_shape::is_var(au) && is_local(fw, lv) {
+          if !read_position(fw, def_nr, a#index, args) {
+            return false;
+          }
+        } else if !only_reads(fw, a) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => {
+      if names_local_here(fw, u) {
+        return false;
+      }
+      for k in kids(u) {
+        if !only_reads(fw, k) {
+          return false;
+        }
+      }
+      true
+    },
+  }
+}
+
+fn in_place_or_getter(nm: text) -> boolean {
+  nm == "OpSetBoolean" || nm == "OpSetInt" || nm == "OpSetInt4" || nm == "OpSetInt4Raw" || nm == "OpSetCharacter" || nm == "OpSetSingle" || nm == "OpSetFloat" || nm == "OpSetByte" || nm == "OpSetByteNullable" || nm == "OpSetShort" || nm == "OpSetShortRaw" || nm == "OpSetEnum" || nm == "OpGetInt" || nm == "OpGetInt4" || nm == "OpGetInt4Raw" || nm == "OpGetInt4Full" || nm == "OpGetShort" || nm == "OpGetShortRaw" || nm == "OpGetShortFull" || nm == "OpGetByte" || nm == "OpGetByteNullable" || nm == "OpGetSingle" || nm == "OpGetFloat" || nm == "OpGetBoolean" || nm == "OpGetCharacter" || nm == "OpGetEnum"
+}
+
+// `elem_use_elsewhere`: does `n` touch element `e` only through fields other than the viewed one?
+fn elem_use_elsewhere(fw: FW, n: ir::Node, e: integer) -> boolean {
+  u = loop_shape::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      if len(args) > 0 && opt_vr_shape::is_var(args[0]!) && opt_vr_shape::var_of(args[0]!) == e {
+        nm = def_name(fw.b, def_nr);
+        field_op = nm == "OpGetField" || in_place_or_getter(nm);
+        o = if len(args) > 1 { int_of(args[1]!) } else { null };
+        if !field_op || o == null || o == fw.off {
+          return false;
+        }
+        for a in args {
+          if a#index > 0 && !elem_use_elsewhere(fw, a, e) {
+            return false;
+          }
+        }
+        return true;
+      }
+    },
+    _ => {
+      if names_here(u, e) {
+        return false;
+      }
+    },
+  }
+  for k in kids(u) {
+    if !elem_use_elsewhere(fw, k, e) {
+      return false;
+    }
+  }
+  true
+}
+
+// `finish_of`: `OpFinishRecord(<root>, Var(e), _, fld)` into the viewed container — `e`, or -1.
+fn finish_of(fw: FW, n: ir::Node) -> integer {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_name(fw.b, def_nr) != "OpFinishRecord" || len(args) < 4 {
+        return -1;
+      }
+      r = opt_vr_shape::var_of(args[0]!);
+      el = opt_vr_shape::var_of(args[1]!);
+      f = int_of(args[3]!);
+      if opt_vr_shape::is_var(args[0]!) && opt_vr_shape::is_var(args[1]!) && f != null && r == fw.place.v && f == fw.fld && fw.cands.contains(el) { el } else { -1 }
+    },
+    _ => -1,
+  }
+}
+
+// One atomic statement `v` (number `num`).
+fn event(fw: FW, v: ir::Node, num: integer, st: Fresh) -> Fresh {
+  node = loop_shape::unspan(v);
+  s = copy(st);
+  if fw.copies.contains(num) {
+    match node {
+      NdCall { def_nr: _, args } => {
+        if len(args) > 0 {
+          match loop_shape::unspan(args[0]!) {
+            NdCall { def_nr: _, args: gargs } => {
+              if len(gargs) > 0 && opt_vr_shape::is_var(gargs[0]!) {
+                e = opt_vr_shape::var_of(gargs[0]!);
+                if !s.copied.contains(e) {
+                  s.copied += [e];
+                }
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+    return s;
+  }
+  if names_local(fw, node) && !only_reads(fw, node) {
+    s.has_last = false;
+    s.last = [];
+    s.copied = [];
+  }
+  finished = finish_of(fw, node);
+  for e in fw.cands {
+    if e != finished && reads(node, e) && !elem_use_elsewhere(fw, node, e) {
+      s.copied = without(s.copied, e);
+      if s.has_last && s.last.contains(e) {
+        s.has_last = false;
+        s.last = [];
+      }
+    }
+  }
+  if reads(node, fw.place.v) {
+    if finished >= 0 {
+      if s.copied.contains(finished) {
+        s.has_last = true;
+        s.last = [finished];
+      } else {
+        s.has_last = false;
+        s.last = [];
+      }
+    } else if !opt_vr_disturb::namings_avoid_place(fw.b, fw.dmap, fw.d, node, fw.place.v, fw.place.f) {
+      s.has_last = false;
+      s.last = [];
+    }
+  }
+  s
+}
+
+// `structured`: does the subtree `n` (number `num`) carry a jump, a loop or the exit?
+fn structured(fw: FW, n: ir::Node, num: integer) -> boolean {
+  if fw.exit >= num && fw.exit < num + fw.sz[num]! {
+    return true;
+  }
+  has_jump(loop_shape::unspan(n))
+}
+
+fn has_jump(n: ir::Node) -> boolean {
+  match n {
+    NdReturn { inner: _ } => return true,
+    NdBreak { n: _ } => return true,
+    NdContinue { n: _ } => return true,
+    NdLoop { block: _ } => return true,
+    _ => {},
+  }
+  for k in kids(n) {
+    if has_jump(k) {
+      return true;
+    }
+  }
+  false
+}
+
+fn watches(fw: FW, n: ir::Node) -> boolean {
+  if names_local(fw, n) || reads(n, fw.place.v) {
+    return true;
+  }
+  for e in fw.cands {
+    if reads(n, e) {
+      return true;
+    }
+  }
+  false
+}
+
+// The statements `ops` whose first carries number `first`.
+fn seq(fw: FW, ops: vector<ir::Node>, first: integer, st: Fresh) -> Fresh {
+  s = copy(st);
+  c = first;
+  for op in ops {
+    if !s.live {
+      break;
+    }
+    s = walk(fw, op, c, s);
+    c += fw.sz[c]!;
+  }
+  s
+}
+
+fn kill_var(fw: FW, s: Fresh, w: integer) -> Fresh {
+  r = copy(s);
+  if is_local(fw, w) {
+    r.has_last = false;
+    r.last = [];
+    r.copied = [];
+  }
+  if fw.cands.contains(w) {
+    r.copied = without(r.copied, w);
+    if r.has_last && r.last.contains(w) {
+      r.has_last = false;
+      r.last = [];
+    }
+  }
+  r
+}
+
+fn walk(fw: FW, v: ir::Node, num: integer, st: Fresh) -> Fresh {
+  if !st.live || !fw.ok {
+    return copy(st);
+  }
+  u = loop_shape::unspan(v);
+  match u {
+    NdBlock { block } => {
+      if num == fw.exit {
+        prev = if fw.has_exit { copy(fw.at_exit) } else { dead() };
+        nj = join(prev, st);
+        fw.at_exit = nj;
+        fw.has_exit = true;
+        return dead();
+      }
+      return seq(fw, block[0]!.operators, num + 1, st);
+    },
+    NdInsert { items } => return seq(fw, items, num + 1, st),
+    NdIf { cond, t, f } => {
+      c0 = num + 1;
+      after_cond = walk(fw, cond, c0, st);
+      c1 = c0 + fw.sz[c0]!;
+      then_end = walk(fw, t, c1, copy(after_cond));
+      c2 = c1 + fw.sz[c1]!;
+      else_end = walk(fw, f, c2, after_cond);
+      return join(then_end, else_end);
+    },
+    NdLoop { block } => {
+      head = copy(st);
+      for _ in 0..64 {
+        fw.brk += [dead()];
+        fw.cont += [dead()];
+        end = seq(fw, block[0]!.operators, num + 1, copy(head));
+        brk = copy(fw.brk[len(fw.brk) - 1]!);
+        cont = copy(fw.cont[len(fw.cont) - 1]!);
+        fw.brk = [for x in fw.brk[0..len(fw.brk) - 1] { copy(x) }];
+        fw.cont = [for x in fw.cont[0..len(fw.cont) - 1] { copy(x) }];
+        next = join(join(st, end), cont);
+        if fresh_eq(next, head) {
+          return brk;
+        }
+        head = next;
+      }
+      fw.ok = false;
+      return dead();
+    },
+    NdReturn { inner } => {
+      walk(fw, inner, num + 1, st);
+      return dead();
+    },
+    NdBreak { n: depth } => return jump(fw, depth, true, st),
+    NdContinue { n: depth } => return jump(fw, depth, false, st),
+    NdDrop { inner } => return walk(fw, inner, num + 1, st),
+    NdSet { var, inner } => {
+      iu = loop_shape::unspan(inner);
+      if structured(fw, iu, num + 1) || (iu is NdIf) || (iu is NdBlock) || (iu is NdInsert) {
+        s = walk(fw, iu, num + 1, st);
+        return kill_var(fw, s, var);
+      }
+    },
+    _ => {},
+  }
+  if structured(fw, u, num) {
+    if watches(fw, u) {
+      fw.ok = false;
+      return dead();
+    }
+    s = copy(st);
+    c = num + 1;
+    for k in kids(u) {
+      s = walk(fw, k, c, s);
+      c += fw.sz[c]!;
+    }
+    return s;
+  }
+  event(fw, u, num, st)
+}
+
+fn jump(fw: FW, depth: integer, brk: boolean, st: Fresh) -> Fresh {
+  i = len(fw.brk) - 1 - depth;
+  if i < 0 {
+    fw.ok = false;
+    return dead();
+  }
+  if brk {
+    nj = join(fw.brk[i]!, st);
+    fw.brk[i] = nj;
+  } else {
+    nj = join(fw.cont[i]!, st);
+    fw.cont[i] = nj;
+  }
+  dead()
+}
+
+// --- `fresh_leaf` ------------------------------------------------------------------------------
+
+// The candidate copies: every `OpAppendVector(dst, Var(local), …)` under `n` (number `num`) but the
+// exit's own (`exit_copy`).
+struct Cands {
+  ok: boolean,
+  has_shape: boolean,
+  root: Root,
+  ptp: integer,
+  fld: integer,
+  off: integer,
+  tp: integer,
+  cands: vector<integer>,
+  copies: vector<integer>,
+}
+
+fn cand_walk(b: ir::Bundle, ops: own::Ops, d: integer, n: ir::Node, num: integer, sz: vector<integer>, local: integer, exit_copy: integer, exit_bufs: vector<integer>, c: Cands) {
+  if !c.ok {
+    return;
+  }
+  u = loop_shape::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == "OpAppendVector" && num != exit_copy && len(args) >= 2 && opt_vr_shape::is_var(args[1]!) && opt_vr_shape::var_of(args[1]!) == local {
+        dst = loop_shape::unspan(args[0]!);
+        handled = false;
+        match dst {
+          NdCall { def_nr: g, args: gargs } => {
+            if def_name(b, g) == "OpGetField" && len(gargs) >= 3 && opt_vr_shape::is_var(gargs[0]!) {
+              e = opt_vr_shape::var_of(gargs[0]!);
+              o = int_of(gargs[1]!);
+              t = int_of(gargs[2]!);
+              if o != null && t != null {
+                if exit_bufs.contains(e) {
+                  handled = true;
+                } else {
+                  m = elem_mint(b, ops, d, e);
+                  if m.root.v >= 0 {
+                    if c.has_shape && !(c.root.v == m.root.v && c.root.f == m.root.f && c.ptp == m.ptp && c.fld == m.fld && c.off == o && c.tp == t) {
+                      c.ok = false;
+                      return;
+                    }
+                    c.has_shape = true;
+                    c.root = m.root;
+                    c.ptp = m.ptp;
+                    c.fld = m.fld;
+                    c.off = o;
+                    c.tp = t;
+                    if !c.cands.contains(e) {
+                      c.cands += [e];
+                    }
+                    c.copies += [num];
+                    handled = true;
+                  }
+                }
+              }
+            }
+          },
+          _ => {},
+        }
+        if !handled && leaf_root(b, ops, d, dst, 0).v >= 0 {
+          c.ok = false;
+          return;
+        }
+      }
+    },
+    _ => {},
+  }
+  k_num = num + 1;
+  for k in kids(u) {
+    cand_walk(b, ops, d, k, k_num, sz, local, exit_copy, exit_bufs, c);
+    k_num += sz[k_num]!;
+  }
+}
+
+// `fresh_leaf`: exit `exit` (number; its block `exit_bl`) copies `local` into its view field by
+// the append numbered `exit_copy`.
+pub fn fresh_leaf(b: ir::Bundle, ops: own::Ops, dmap: vector<opt_vr_disturb::DPlace>, d: integer, local: integer, exit: integer, exit_copy: integer, exit_bl: ir::Block, exit_bufs: vector<integer>) -> Leaf {
+  def = b.data.definitions[d]!;
+  vars = def.variables.variables;
+  body = def.code[0]!;
+  sz = opt_vr_shape::sizes(body);
+  base_ok = match own::ownership_of(b, ops, d, ir::NdVar { n: local }) {
+    Owned => true,
+    Borrowed { base } => base == own::MAX || !is_arg(def, base),
+    Join { base } => base == own::MAX || !is_arg(def, base),
+    _ => false,
+  };
+  aliases: vector<integer> = [];
+  stack = [local];
+  for _ in 0..100000 {
+    if len(stack) == 0 {
+      break;
+    }
+    v = stack[len(stack) - 1]!;
+    stack = stack[0..len(stack) - 1];
+    for dep in own::depend_of(vars[v]!.type_def[0] ?? ir::TyVoid) {
+      if dep != local && dep < len(vars) && !aliases.contains(dep) {
+        aliases += [dep];
+        stack += [dep];
+      }
+    }
+  }
+  if is_arg(def, local) || !base_ok {
+    return no_leaf();
+  }
+  for a in aliases {
+    if is_arg(def, a) {
+      return no_leaf();
+    }
+  }
+  for _ in 0..100000 {
+    before = len(aliases);
+    for x in vars {
+      w = x#index;
+      if w == local || aliases.contains(w) {
+        continue;
+      }
+      for dep in own::depend_of(x.type_def[0] ?? ir::TyVoid) {
+        if dep == local || aliases.contains(dep) {
+          aliases += [w];
+          break;
+        }
+      }
+    }
+    if len(aliases) == before {
+      break;
+    }
+  }
+  c = Cands { ok: true, has_shape: false, root: no_root(), ptp: -1, fld: -1, off: 0, tp: 0, cands: [], copies: [] };
+  cand_walk(b, ops, d, body, 0, sz, local, exit_copy, exit_bufs, c);
+  if !c.has_shape || !c.ok {
+    return no_leaf();
+  }
+  fw = FW { b: b, ops: ops, dmap: dmap, d: d, local: local, exit: exit, sz: sz, aliases: aliases, cands: c.cands, copies: c.copies, place: c.root, fld: c.fld, off: c.off, has_exit: false, at_exit: dead(), brk: [], cont: [], ok: true };
+  for op in exit_bl.operators {
+    match loop_shape::unspan(op) {
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr).starts_with("OpSet") && len(args) > 0 && opt_vr_shape::is_var(args[0]!) && exit_bufs.contains(opt_vr_shape::var_of(args[0]!)) {
+          for a in args {
+            if a#index > 0 && !only_reads(fw, a) {
+              return no_leaf();
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  walk(fw, body, 0, Fresh { live: true, has_last: false, last: [], copied: [] });
+  if !fw.has_exit || !fw.ok || !fw.at_exit.live || !fw.at_exit.has_last {
+    return no_leaf();
+  }
+  last = fw.at_exit.last;
+  if len(last) == 0 {
+    return no_leaf();
+  }
+  if len(last) == 1 {
+    return Leaf { kind: 1, elem: last[0]!, root: c.root, ptp: c.ptp, fld: c.fld, off: c.off };
+  }
+  Leaf { kind: 2, elem: -1, root: c.root, ptp: c.ptp, fld: c.fld, off: c.off }
+}

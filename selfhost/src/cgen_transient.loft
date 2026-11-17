@@ -31,6 +31,9 @@ use cgen_ref;
 use cgen_names;
 use cgen_fn;
 use cgen_w::*;
+use cgen_vr;
+use opt_vr_shape;
+use opt_vr_facts;
 
 // `LOFT_NO_TRANSIENT=1` keeps every value in the store.
 pub fn enabled() -> boolean {
@@ -981,6 +984,14 @@ fn write_twin(x: Cx, d: integer, params: integer, result: boolean, name: text, w
     why = "parameters that do not match their arguments";
     return out;
   }
+  // `@FR-R-ValueRecord` holds a record result as a struct already, and the twin's body is the
+  // ordinary writer's: its value-record locals and pointer parameters keep their shapes.
+  vr = cgen_vr::plan(x);
+  if opt_vr_shape::at(vr.fns, d) >= 0 {
+    why = "a value-record result";
+    return out;
+  }
+  vr_locals: vector<integer> = if opt_vr_facts::has_any(vr) { opt_vr_facts::facts(x.b, x.ops, vr, d).locals } else { [] };
   nv = len(def.variables.variables);
   tf = new_fn(nv);
   tf.builds = true;
@@ -1037,6 +1048,12 @@ fn write_twin(x: Cx, d: integer, params: integer, result: boolean, name: text, w
     if k > 0 && in_groups(x, k, g, groups) {
       tf.kind[v#index] = k;
       tf.g[v#index] = g;
+    }
+  }
+  for v in def.variables.variables {
+    if tf.kind[v#index]! > 0 && opt_vr_shape::at(vr_locals, v#index) >= 0 {
+      why = "`{v.name}` a value record";
+      return out;
     }
   }
   // Owned: every binding a mint, or a field of an owned local — a fixpoint that only removes.

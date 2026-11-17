@@ -10,6 +10,7 @@
 use opt_apart_records;
 use opt_apart_value;
 use opt_transient;
+use opt_vr_layout;
 use ir;
 use binds;
 use own;
@@ -160,6 +161,10 @@ pub struct Cx {
   pub ap2: opt_apart_value::ApPlan,
   // `@FR-R-Transient`: the unit's transient twins and the structs they use (`Cx::tr`).
   pub tr: opt_transient::TrState,
+  // `@FR-R-ValueRecord`: the plan the C writes from (`Cx::value_records`), asked once, and per
+  // definition whether its code carries the plan's marks.
+  pub vr: opt_vr_layout::ValueRecords,
+  pub vr_marked: vector<boolean>,
   // `Cx::dest_memo`: the destination shapes asked so far.
   pub dest_memo: opt_destination::Memo,
   // The tuple structs the unit names, in the order they were first used (`Cx::tuples`).
@@ -228,6 +233,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     apr: opt_apart_records::no_plan(),
     ap2: opt_apart_value::no_plan(),
     tr: opt_transient::no_state(),
+    vr: opt_vr_layout::no_records(),
+    vr_marked: [],
     dest_memo: opt_destination::new_memo(),
     tuples: [],
     lazy: -1,

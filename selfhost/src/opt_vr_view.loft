@@ -6,10 +6,9 @@
 // `src/opt/value_records/leaves.rs::view_leaf_plan` decides it: per `Object` exit of an admitted
 // body and per view-leaf (vector) field, what the exit delivers.
 //
-// Carried: the NULL view — an exit that does not fill the field at all, whose every mention of
-// its buffer the value form accounts for.  An exit that fills the field by an append (the
-// `Elem` and `Last` sources, which need `fresh_leaf`'s path walk and the site's disturbance
-// test) declines the function here.
+// An exit that does not fill the field at all delivers the NULL view; one that fills it by an
+// append delivers the appended element's field (`Elem`) or the container's last element's
+// (`Last`), as `opt_vr_fresh::fresh_leaf` proves it on every path.
 
 use ir;
 use loop_shape;
@@ -17,6 +16,8 @@ use own;
 use opt_vr_layout;
 use opt_vr_shape;
 use opt_vr_leaves;
+use opt_vr_disturb;
+use opt_vr_fresh;
 
 fn kids(n: ir::Node) -> vector<ir::Node> {
   opt_vr_shape::kids(n)
@@ -128,12 +129,11 @@ fn buffer_uses_accounted(b: ir::Bundle, bl: ir::Block, num: integer, sz: vector<
   true
 }
 
-// `leaf_source` for exit `bl` (number `num`) and view field `off`: 0 the null view, -1 none
-// (declined — including every exit that fills the field by an append, not carried yet).
-fn leaf_source(b: ir::Bundle, bl: ir::Block, num: integer, sz: vector<integer>, off: integer) -> integer {
+// `leaf_source` for exit `bl` (number `num`) of body `body` and view field `off`.
+fn leaf_source(b: ir::Bundle, ops: own::Ops, dmap: vector<opt_vr_disturb::DPlace>, d: integer, body: ir::Node, bl: ir::Block, num: integer, sz: vector<integer>, off: integer, exit_bufs: vector<integer>) -> opt_vr_fresh::Leaf {
   deps = own::depend_of(bl.result[0] ?? ir::TyVoid);
   if len(deps) == 0 {
-    return -1;
+    return opt_vr_fresh::no_leaf();
   }
   buf = deps[0]!;
   found: vector<integer> = [];
@@ -143,18 +143,27 @@ fn leaf_source(b: ir::Bundle, bl: ir::Block, num: integer, sz: vector<integer>, 
     c += sz[c]!;
   }
   if len(found) > 1 {
-    return -1;
+    return opt_vr_fresh::no_leaf();
   }
   leaf = if len(found) == 1 { found[0]! } else { -1 };
   if !buffer_uses_accounted(b, bl, num, sz, buf, leaf) {
-    return -1;
+    return opt_vr_fresh::no_leaf();
   }
-  if leaf < 0 { 0 } else { -1 }
+  if leaf < 0 {
+    r = opt_vr_fresh::no_leaf();
+    r.kind = 0;
+    return r;
+  }
+  src = match node_at(body, 0, sz, leaf) { NdCall { def_nr: _, args } => if len(args) > 1 { loop_shape::unspan(args[1]!) } else { ir::NdNull }, _ => ir::NdNull };
+  if !opt_vr_shape::is_var(src) {
+    return opt_vr_fresh::no_leaf();
+  }
+  opt_vr_fresh::fresh_leaf(b, ops, dmap, d, opt_vr_shape::var_of(src), num, leaf, bl, exit_bufs)
 }
 
 // `view_leaf_plan`: the view leaves of admitted body `d` whose record `record` has view fields;
 // `ok` false declines the function.
-pub fn view_leaf_plan(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, d: integer, leaves: opt_vr_leaves::Leaves, record: integer, ok: &boolean) -> vector<opt_vr_layout::VView> {
+pub fn view_leaf_plan(b: ir::Bundle, ops: own::Ops, dmap: vector<opt_vr_disturb::DPlace>, vr: opt_vr_layout::ValueRecords, d: integer, leaves: opt_vr_leaves::Leaves, record: integer, ok: &boolean) -> vector<opt_vr_layout::VView> {
   out: vector<opt_vr_layout::VView> = [];
   ok = true;
   at = opt_vr_layout::type_at(vr, record);
@@ -174,17 +183,24 @@ pub fn view_leaf_plan(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, d: integer
   sz = opt_vr_shape::sizes(body);
   exits: vector<integer> = [];
   find_exits(b, loop_shape::unspan(body), 0, sz, leaves, record, exits);
+  exit_bufs: vector<integer> = [];
+  for e in exits {
+    deps = own::depend_of(block_at(loop_shape::unspan(body), 0, sz, e).result[0] ?? ir::TyVoid);
+    if len(deps) > 0 && !exit_bufs.contains(deps[0]!) {
+      exit_bufs += [deps[0]!];
+    }
+  }
   resolved: vector<boolean> = [for _ in views { false }];
   for e in exits {
     bl = block_at(loop_shape::unspan(body), 0, sz, e);
     for off in views {
-      src = leaf_source(b, bl, e, sz, off);
-      if src < 0 {
+      src = leaf_source(b, ops, dmap, d, body, bl, e, sz, off, exit_bufs);
+      if src.kind < 0 || (src.kind > 0 && src.root.v < 0) {
         ok = false;
         return out;
       }
       resolved[off#index] = true;
-      out += [opt_vr_layout::VView { d: d, exit: e, off: off, kind: src }];
+      out += [opt_vr_layout::VView { d: d, exit: e, off: off, kind: src.kind, eoff: src.off, elem: src.elem, root_v: src.root.v, root_f: src.root.f, ptp: src.ptp, fld: src.fld }];
     }
   }
   for r in resolved {
@@ -253,9 +269,9 @@ fn lists_of(n: ir::Node, num: integer, sz: vector<integer>, out: vector<text>) {
 }
 
 // `view_sites_declined`: the functions `caller` declines because a read of the viewed field of a
-// value local bound from one stands before the bind or outside the bind's statement list.  (A
-// plan of null views watches no place, so the disturbance half asks nothing.)
-pub fn view_sites_declined(b: ir::Bundle, caller: integer, views: vector<opt_vr_layout::VView>, admitted: vector<integer>, locals: vector<integer>, vr: opt_vr_layout::ValueRecords, declined: vector<boolean>) {
+// value local bound from one stands before the bind or outside the bind's statement list, or
+// because a statement between the bind and its last read may disturb a place a leaf views.
+pub fn view_sites_declined(b: ir::Bundle, dmap: vector<opt_vr_disturb::DPlace>, caller: integer, views: vector<opt_vr_layout::VView>, admitted: vector<integer>, locals: vector<integer>, vr: opt_vr_layout::ValueRecords, declined: vector<boolean>) {
   def = b.data.definitions[caller]!;
   body = def.code[0]!;
   sz = opt_vr_shape::sizes(body);
@@ -306,6 +322,7 @@ pub fn view_sites_declined(b: ir::Bundle, caller: integer, views: vector<opt_vr_
         }
       }
       placed = 0;
+      last = i;
       for o in stmts {
         hits = 0;
         for k in o..o + sz[o]! {
@@ -319,10 +336,45 @@ pub fn view_sites_declined(b: ir::Bundle, caller: integer, views: vector<opt_vr_
         if o#index < i {
           declined[callee] = true;
         }
+        if o#index > last {
+          last = o#index;
+        }
         placed += hits;
       }
       if placed < total {
         declined[callee] = true;
+      }
+      // The places the leaves view, mapped onto the arguments this site passed.
+      args = match loop_shape::unspan(st) { NdSet { var: _, inner } => match loop_shape::unspan(inner) { NdCall { def_nr: _, args } => args, _ => [] }, _ => [] };
+      watch: vector<integer> = [];
+      for vv in views {
+        if vv.d != callee || vv.kind == 0 {
+          continue;
+        }
+        if vv.root_v >= len(args) {
+          declined[callee] = true;
+          continue;
+        }
+        base = opt_vr_disturb::call_arg_place(b, args[vv.root_v]!);
+        if base.v < 0 {
+          declined[callee] = true;
+          continue;
+        }
+        watch += [base.v, opt_vr_disturb::add_offset(base.f, vv.root_f)];
+      }
+      if len(watch) == 0 {
+        continue;
+      }
+      for o in stmts {
+        if o#index <= i || o#index > last {
+          continue;
+        }
+        so = node_at(body, 0, sz, o);
+        for wv in watch {
+          if wv#index % 2 == 0 && !opt_vr_disturb::namings_avoid_place(b, dmap, caller, so, wv, watch[wv#index + 1]!) {
+            declined[callee] = true;
+          }
+        }
       }
     }
   }

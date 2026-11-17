@@ -51,9 +51,13 @@ These are the interpreter port's rules (strand 1b), unchanged:
 
 ## Input and oracle
 
-- **Input:** the program image `loft --emit-image` writes — the `Data` and the type schema —
-  read as `ir.loft` records (`load.loft`).  The image is the Rust front end's until strand 1a's
-  replaces it, so the generator is checkable from its first line.
+- **Input:** the program image `loft --native-c --emit-image` writes — the `Data` and the type
+  schema — read as `ir.loft` records (`load.loft`).  The image is the Rust front end's until
+  strand 1a's replaces it, so the generator is checkable from its first line.  `--native-c`
+  makes it the C build's image: a C build binds no host library, and without the flag a
+  library's `pub` functions keep their native bindings, so `@FR-R-ValueRecord`'s escape clause
+  (`value_record::split_public`) leaves them unsplit where `--emit-c` splits them into `_in`
+  copies.
 - **The image is enough:** `LOFT_EMIT_FROM_IMAGE=1 loft --emit-c` makes the RUST generator
   write the unit from the round-tripped image instead of from memory.  Where that unit differs
   from the in-memory one, the image lacks something, and the fix is in the image
@@ -279,16 +283,10 @@ The range facts need `opt/char_walk.rs` and `opt/range.rs`
 operation answers).  With both layers equal, the writer's core walk (`body.rs` `write`:
 declarations, temporaries, statements, calls, `if`) starts producing text.
 
-### The rules still switched off in plain mode
+### The rules of the Rust writer, each carried
 
-`cgen_w::PLAIN_SWITCHES` names it (1).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
-
-| switch | corpus | benches | tests |
-|---|---|---|---|
-| `VALUE_RECORD` | 510 | 114 | 175 |
-
-`VALUE_RECORD` also feeds `APART`'s instance 2: its plan leaves the value records' functions
-alone (`value_fns` of `opt_apart_value::plan`), a set that is empty while the rule is off.
+`cgen_w::PLAIN_SWITCHES` names none: every rule of the Rust writer is carried, so plain mode and
+the default switches write the same C.
 
 Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`), `TEXT_WINDOW`
 (`cgen_win::open_text_windows`), `APART_MINT` (`opt_hoist::apart_mint`), `VR_PTR` (`cgen_value.loft`; its
@@ -316,7 +314,11 @@ construction runs, the `loft_ap_store` boundary, the typedefs, the hoists off in
 hold it without an import cycle: the site plan and `lives`, the `__tr<params>[r]` twins written
 on first ask with their rollback, the `lt_<g>` structs, zeroers and seals, the operator
 allow-list, the text lifts and the work clause's `wr_call`, the store-plan rewrites off in a
-transient body).  A rewrite that writes COPIES of IR nodes (the destination
+transient body), `VALUE_RECORD` (the plan in `opt_vr.loft` with its layers `opt_vr_layout`,
+`opt_vr_fnref`, `opt_vr_shape`, `opt_vr_leaves`, `opt_vr_locals`, `opt_vr_sites`, `opt_vr_view`,
+`opt_vr_fresh` — the appended-element view leaves — and `opt_vr_disturb`, the parameter-place
+disturbance summary their site gate reads; the writer `cgen_vr.loft`, reading the plan off marks
+`opt_vr_facts.loft` puts in the IR, because the Rust plan keys its leaves by node address).  A rewrite that writes COPIES of IR nodes (the destination
 chain's call and arm statements, an append site's call, the rotate's call, the keyed in-place
 literal) writes them under `no_memo`: the Rust writer keys an invariant's memo and a guarded
 chain's admission by node address, which no copy carries.
@@ -413,7 +415,7 @@ top-level statement ahead of the first deferred bind is dead.
 | layer `iterations` | 13 263 function rows, all equal | `cgen_survey.py --cgen --layer iterations` |
 | layer `nn` | 6 044 function rows (the functions that ask a fact), all equal | `cgen_survey.py --cgen --layer nn` |
 | layer `bodies` | the whole corpus (1076 units), default rules: of 13 537 function bodies the Rust writer wrote, the loft writer wrote 2 633 equal and none different (a function that holds a record or a vector is refused there) | `cgen_survey.py --generator <built cgen> --layer bodies` |
-| layer `bodies`, plain | the whole corpus with both sides under `cgen_w::PLAIN_SWITCHES` (the rules not carried yet, off): of 13 346 bodies, 12 138 equal and none different, 1 325 refused (the names a unit numbers by first use — `loft_call<n>`, `loft_tup<n>` — renumbered per body) | `cgen_survey.py --plain --generator <built cgen> --layer bodies` |
+| layer `bodies` | the whole corpus, every rule of the Rust writer carried (plain mode and the default switches are now one): of 13 591 bodies, 13 160 equal and none different, 431 refused (356 split, 71 persisted roots without layout facts); benches 2 210 equal, tests-only programs 6 556 equal, none different (the names a unit numbers by first use — `loft_call<n>`, `loft_tup<n>` — renumbered per body) | `cgen_survey.py --plain --generator <built cgen> --layer bodies` |
 | layer `writes` | 13 263 function rows over 1075 units, all equal | `cgen_survey.py --generator <built cgen> --layer writes` |
 | layer `texts` | 13 263 function rows over 1075 units, all six fields equal | `cgen_survey.py --generator <built cgen> --layer texts` |
 | layer `ranges` | tests/scripts: 444 of 444 programs equal (2 939 rows), the character walks read from `char_walk::walks` | `cgen_survey.py --generator <interpreted cgen, LOFT_NO_IR_VALUE_RECORD=1> --layer ranges --scripts-only` |
@@ -457,7 +459,9 @@ came out 64-bit from the image.
 | `selfhost/src/cgen_texts.loft` | `borrowed_texts`, `literal_views`, `view_bind`, `work_view_bind` in `src/c/body.rs` | whole; the writer does not write a text yet |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
 | `selfhost/src/opt_keyed_place.loft`, `cgen_keyed.loft` | `src/opt/keyed_place.rs`; `keyed_in_place`, `stage_literal_writes` of `src/c/body/keyed.rs` | whole: `@FR-R-InPlaceLiteral`'s keyed clause; a rewrite's C operand is an `NdRawExpr` the writer names with `raw_expr` (`FnWriter::raw`) |
-| `selfhost/src/cgen_value.loft` | `Cx::vr_ptr_params`, `vr_param_read_only`, `tuple_arg_address` | `@FR-R-ValueRecord`'s pointer clause for the IR's tuples; the value records' half waits for `VALUE_RECORD` |
+| `selfhost/src/cgen_value.loft` | `Cx::vr_ptr_params`, `vr_param_read_only`, `tuple_arg_address` | `@FR-R-ValueRecord`'s pointer clause, for the IR's tuples and the value records' |
+| `selfhost/src/opt_vr.loft` and its layers `opt_vr_layout`, `opt_vr_fnref`, `opt_vr_shape`, `opt_vr_leaves`, `opt_vr_locals`, `opt_vr_sites`, `opt_vr_view`, `opt_vr_fresh`, `opt_vr_disturb` | `src/opt/value_records/` (`value_records`, `layout.rs`, `fnref.rs`, `shape.rs`, `leaves.rs`, `locals.rs`, `sites.rs`); `scopes::disturbed_params_map` with the place helpers of `src/scopes/places.rs` | the C writer's value-record plan (`@FR-R-ValueRecord`, `@FR-O-ViewField`); a node is its pre-order number over the span-contracted body, where the Rust keys it by address |
+| `selfhost/src/opt_vr_facts.loft`, `cgen_vr.loft` | the `vr_*` routines of `src/c/body/value.rs` and their hooks in `src/c/body.rs` | the value-record writer: the plan's per-node facts as marks in the IR, then the tuples, the value locals, the forwarded buffers and the view leaves |
 | `selfhost/src/opt_hand_over.loft`, `cgen_rotate.loft` | `src/lower/hand_over.rs`, `Stores::plain_vectors_of`; `rotate_site`, `nokeep` of `src/c/body.rs` | `@FR-R-HandOver`'s rotate clause and its `__nk` twin; an apart source rotates in from its parts (`cgen_apart::rotate`) |
 | `selfhost/src/cgen_fnref.loft` | `src/c/body/loop_record.rs`; the kept-buffer half of `opaque_callref_stmt`, `call_ref` and `src/c/fnval.rs` | `@FR-R-FnRefBuffer` and its frame clause (the park slots) |
 | `selfhost/src/opt_append_twin.loft`, `cgen_append.loft` | `src/opt/append_twin.rs`; `append_site`, `append_call`, `append_twin`, `append_twin_buffer_op`, `apw_operator`, `open_loop_windows` of `src/c/body.rs`; `Cx::ap_window` | `@FR-R-AppendTwin` with its window and loop clauses |

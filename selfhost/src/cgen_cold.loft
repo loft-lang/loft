@@ -19,6 +19,7 @@ use cgen_fn;
 use cgen_names;
 use cgen_w::*;
 
+use cgen_value;
 // What `cold_finish` answers when the body named a variable the plan gave to an arm: the
 // function is then written again with the clause off.
 COLD_ESCAPED = "a cold exit's variable named outside its arm";
@@ -262,8 +263,14 @@ pub fn cold_plan(x: Cx, w: W) -> text {
       args += 1;
     }
   }
-  if args != len(d.attributes) || binds::hidden_return_buffer_attr(d) != null {
+  vr_drop = -1;
+  if args != len(d.attributes) || binds::hidden_return_buffer_attr(d) != null || len(cgen_value::vr_ptr_params(x, w.index)) > 0 || cgen_vr::callee(x, w.index, vr_drop) >= 0 {
     return "";
+  }
+  for v in d.variables.variables {
+    if v.argument && v.store_text_link {
+      return "";
+    }
   }
   // An arm equal to an admitted one that is not it would be read as it.
   for arm in arms {

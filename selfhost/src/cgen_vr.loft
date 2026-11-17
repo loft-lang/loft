@@ -1,0 +1,1042 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-ValueRecord` and `@FR-R-ValueLocal` in the C as
+// `src/c/body/value.rs` writes them, from the plan (`opt_vr::c_plan`): an admitted function
+// returns its record's fields as a `loft_tup` struct and takes no return buffer; a value local and
+// a tuple parameter are struct locals whose field reads and writes are members; a copy from one
+// materialises it into the destination record field by field; a dead buffer is never minted or
+// freed; and each exit of an admitted function is a leaf — a build, a view's getters, the absent
+// struct, a dense struct widened with its presence word, the source of a materialised view.
+// The plan's node-keyed facts reach the writer as marks (`opt_vr_facts`).
+
+use ir;
+use loop_shape;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_types;
+use cgen_tables;
+use cgen_ref;
+use types;
+use opt_push;
+use opt_view;
+use opt_vr_layout;
+use opt_vr_shape;
+use opt_vr_leaves;
+use opt_vr_sites;
+use opt_vr_facts;
+use opt_vr;
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  opt_vr_shape::def_name(b, d)
+}
+
+// `Cx::value_records`: the plan the C writes from, asked once.
+pub fn plan(x: Cx) -> opt_vr_layout::ValueRecords {
+  if !x.vr.asked {
+    x.vr = opt_vr::c_plan(x.b, x.writes, x.ops);
+    x.vr_marked = [for _ in x.b.data.definitions { false }];
+  }
+  x.vr
+}
+
+// `Cx::vr_ctype`: the C shape of layout `key` — a tuple of its fields, the presence after them.
+pub fn ctype(x: Cx, key: integer) -> text {
+  vr = plan(x);
+  at = opt_vr_layout::type_at(vr, key);
+  if at < 0 {
+    return "";
+  }
+  t = vr.types[at]!;
+  members: vector<text> = [];
+  for rt in t.rts {
+    members += [if rt == "f64" { "float" } else if rt == "f32" { "single" } else if rt == "bool" { "bool" } else if opt_vr_layout::is_view_part(rt) { "ref" } else { "int" }];
+  }
+  if t.nullable {
+    members += ["bool"];
+  }
+  "tuple({members.join(",")})"
+}
+
+fn layout(x: Cx, key: integer) -> opt_vr_layout::VTuple {
+  vr = plan(x);
+  vr.types[opt_vr_layout::type_at(vr, key)]!
+}
+
+// `d`'s code marked with the plan's node-keyed facts, once, before any body of it is written.
+pub fn mark(x: Cx, d: integer) {
+  vr = plan(x);
+  if !opt_vr_facts::has_any(vr) || x.vr_marked[d]! || len(x.b.data.definitions[d]!.code) == 0 {
+    return;
+  }
+  x.vr_marked[d] = true;
+  f = opt_vr_facts::facts(x.b, x.ops, vr, d);
+  x.b.data.definitions[d].code = [opt_vr_facts::marked_code(x.b, x.ops, vr, d, f)];
+}
+
+// `FnWriter::new`'s `VrFn::of`: the facts of `d` for its writer.
+pub fn setup(x: Cx, w: W, d: integer) {
+  vr = plan(x);
+  if !opt_vr_facts::has_any(vr) {
+    return;
+  }
+  w.vr = opt_vr_facts::facts(x.b, x.ops, vr, d);
+}
+
+// `value_local_shapes`: the struct shapes of `d`'s value locals and tuple parameters.
+pub fn local_shapes(x: Cx, d: integer, shapes: vector<text>) {
+  vr = plan(x);
+  if !opt_vr_facts::has_any(vr) {
+    return;
+  }
+  f = opt_vr_facts::facts(x.b, x.ops, vr, d);
+  for k in f.locals {
+    if k >= 0 && k#index < len(shapes) {
+      c = ctype(x, k);
+      if c != "" {
+        shapes[k#index] = c;
+      }
+    }
+  }
+}
+
+// The result layout of admitted `d` (-1 none) and, in `dropped`, the return buffer its signature
+// drops (-1 none).
+pub fn callee(x: Cx, d: integer, dropped: &integer) -> integer {
+  dropped = -1;
+  vr = plan(x);
+  key = opt_vr_shape::at(vr.fns, d);
+  if key >= 0 {
+    dropped = opt_vr_shape::ret_buffer_attr(x.b.data.definitions[d]!);
+  }
+  key
+}
+
+// The tuple parameters of `d` in argument order, as `[idx, key, …]`.
+pub fn tuple_params(x: Cx, d: integer) -> vector<integer> {
+  vr = plan(x);
+  idxs: vector<integer> = [];
+  for p in vr.params {
+    if p.d == d {
+      idxs += [p.idx];
+    }
+  }
+  idxs.sort();
+  out: vector<integer> = [];
+  for i in idxs {
+    out += [i, opt_vr_leaves::param_key(vr.params, d, i)];
+  }
+  out
+}
+
+pub fn vr_local(w: W, v: integer) -> integer {
+  if !w.vr.any { -1 } else { opt_vr_shape::at(w.vr.locals, v) }
+}
+
+fn storeless(w: W, v: integer) -> boolean {
+  w.vr.any && v >= 0 && (opt_vr_shape::at(w.vr.locals, v) >= 0 || w.vr.phantom == v)
+}
+
+pub fn vr_dead(w: W, v: integer) -> boolean {
+  w.vr.any && v >= 0 && (w.vr.dead[v] ?? false)
+}
+
+// The struct member a field read of value local `v` at byte `off` names, with its shape in
+// `shape` and its layout in `key`; "" none.
+fn member(x: Cx, w: W, v: integer, off: integer, shape: &text, key: &integer) -> text {
+  key = vr_local(w, v);
+  shape = "";
+  if key < 0 {
+    return "";
+  }
+  idx = opt_vr_layout::index_of(plan(x), key, off);
+  if idx < 0 {
+    return "";
+  }
+  members = tuple_members(ctype(x, key));
+  if idx >= len(members) {
+    return "";
+  }
+  shape = members[idx]!;
+  "{w.names[v]!}.f{idx}"
+}
+
+// The presence member of a nullable layout's struct `s`, "" for a dense one.
+fn presence(x: Cx, key: integer, s: text) -> text {
+  at = opt_vr_layout::presence(layout(x, key));
+  if at < 0 { "" } else { "{s}.f{at}" }
+}
+
+fn void_e() -> E {
+  E { code: "((void) 0)", kind: K_VOID }
+}
+
+fn var_arg(args: vector<ir::Node>, i: integer) -> integer {
+  if i < len(args) && opt_vr_shape::is_var(args[i]!) { opt_vr_shape::var_of(args[i]!) } else { -1 }
+}
+
+const SCALAR_GETTERS = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
+
+// `vr_operator`: the operators a value local, a phantom buffer or a dead buffer changes; `done`
+// false for any other.
+pub fn vr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if !w.vr.any {
+    return none();
+  }
+  first = var_arg(args, 0);
+  if (name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpClear") && first >= 0 && (storeless(w, first) || vr_dead(w, first)) {
+    done = true;
+    return void_e();
+  }
+  if name == "OpFreeRefIfDistinct" && storeless(w, var_arg(args, 1)) {
+    done = true;
+    return cgen_fn::op_call(x, w, "OpFreeRef", [args[0]!], ind);
+  }
+  if (name == "OpDatabase" || name == "OpDatabaseNP") && vr_dead(w, first) {
+    done = true;
+    return void_e();
+  }
+  if name == "OpDistinctStore" {
+    for a in args {
+      if storeless(w, var_arg([a], 0)) {
+        done = true;
+        return E { code: "1", kind: K_COND };
+      }
+    }
+  }
+  if name == "OpRefAlias" && storeless(w, first) {
+    done = true;
+    return E { code: "loft_ref_null()", kind: K_REF };
+  }
+  if (name == "OpConvBoolFromRef" || name == "OpRefIsNull") && len(args) == 1 {
+    if first < 0 {
+      return none();
+    }
+    key = vr_local(w, first);
+    if key < 0 {
+      return none();
+    }
+    done = true;
+    absent = name == "OpRefIsNull";
+    p = presence(x, key, w.names[first]!);
+    if p != "" {
+      return E { code: "({p} {if absent { "!=" } else { "==" }} 1)", kind: K_COND };
+    }
+    return E { code: if absent { "0" } else { "1" }, kind: K_COND };
+  }
+  if name == "OpCopyRecord" {
+    e = copy(x, w, args, ind, done);
+    return e;
+  }
+  if name == "OpGetField" {
+    if len(args) < 2 || !opt_vr_shape::is_var(args[0]!) {
+      return none();
+    }
+    v = opt_vr_shape::var_of(args[0]!);
+    off = match loop_shape::unspan(args[1]!) { NdInt { n } => n, _ => return none() };
+    key = vr_local(w, v);
+    if key < 0 || !opt_vr_layout_view_off(x, key, off) {
+      return none();
+    }
+    sh = "";
+    k2 = -1;
+    m = member(x, w, v, off, sh, k2);
+    if m == "" {
+      return none();
+    }
+    done = true;
+    return E { code: m, kind: K_REF };
+  }
+  if SCALAR_GETTERS.contains(name) {
+    if len(args) < 2 {
+      return none();
+    }
+    off = 0;
+    v = opt_view::view_field(x.b, args[0]!, args[1]!, off);
+    if v < 0 {
+      return none();
+    }
+    sh = "";
+    k2 = -1;
+    m = member(x, w, v, off, sh, k2);
+    if m == "" {
+      return none();
+    }
+    done = true;
+    return E { code: m, kind: kind_of(sh) };
+  }
+  if name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetSingle" || name == "OpSetBoolean" {
+    if len(args) != 3 {
+      return none();
+    }
+    off = 0;
+    v = opt_view::view_field(x.b, args[0]!, args[1]!, off);
+    if v < 0 {
+      return none();
+    }
+    sh = "";
+    key = -1;
+    m = member(x, w, v, off, sh, key);
+    if m == "" {
+      return none();
+    }
+    done = true;
+    val = as_shape(w, cgen_fn::expr(x, w, args[2]!, ind), sh);
+    dropped = "loft_write_dropped(loft_ref_null(), {cgen_fn::site(w)})";
+    p = presence(x, key, w.names[v]!);
+    if p != "" {
+      return E { code: "(({p} == 1) ? (void) ({m} = {val}) : {dropped})", kind: K_VOID };
+    }
+    return E { code: "((void) ({m} = {val}))", kind: K_VOID };
+  }
+  none()
+}
+
+fn opt_vr_layout_view_off(x: Cx, key: integer, off: integer) -> boolean {
+  t = layout(x, key);
+  for rt in t.rts {
+    if opt_vr_layout::is_view_part(rt) && t.offs[rt#index]! == off {
+      return true;
+    }
+  }
+  false
+}
+
+// `vr_copy`: a copy FROM a value local — or from an inline sub-record of one — is the struct
+// materialised into the destination, one typed write per field.
+fn copy(x: Cx, w: W, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if len(args) != 3 {
+    return none();
+  }
+  src = args[0]!;
+  root = -1;
+  base = 0;
+  end = 9223372036854775807;
+  sv = opt_vr_shape::var_of(src);
+  if opt_vr_shape::is_var(src) && vr_local(w, sv) >= 0 {
+    root = sv;
+  } else {
+    sub = -1;
+    r = opt_vr_leaves::sub_record(x.b, src, sub);
+    if r >= 0 && vr_local(w, r) >= 0 {
+      root = r;
+      off = 0;
+      match loop_shape::unspan(src) {
+        NdCall { def_nr: _, args: sargs } => { opt_view::view_field(x.b, sargs[0]!, sargs[1]!, off); },
+        _ => {},
+      }
+      base = off;
+      end = base + x.b.types[sub]!.size;
+    }
+  }
+  if root < 0 {
+    return none();
+  }
+  done = true;
+  key = vr_local(w, root);
+  held_at = held_ptr(x, w, args[1]!);
+  dst = as_ref(w, cgen_fn::expr(x, w, args[1]!, ind));
+  d = temp(w, "ref");
+  line(w, ind, "{d} = {dst};");
+  s = w.names[root]!;
+  p = presence(x, key, s);
+  pre = if p == "" { "" } else { "{p} == 1 && " };
+  line(w, ind, "if (LOFT_UNLIKELY({pre}{d}.store_nr == 0xFFFF)) loft_write_dropped({d}, {cgen_fn::site(w)});");
+  if p != "" {
+    raw = match loop_shape::unspan(args[2]!) { NdInt { n } => n, _ => -1 };
+    if raw < 0 || raw > 65535 {
+      refuse(w, "a type number out of range");
+      return none();
+    }
+    tp = raw & 16383;
+    cgen_tables::copy_type(x, tp);
+    flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(x.b.types, tp) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 });
+    line(w, ind, "if ({p} == 1) {{");
+    write_fields(x, w, key, d, s, base, end, held_at, ind + 1);
+    line(w, ind, "}} else {{");
+    null_arm = fresh_null_arm(x, args, d);
+    if null_arm == "" {
+      null_arm = "loft_copy_record(loft_types, {tp}, loft_ref_null(), {d}, {flags});";
+    }
+    line(w, ind + 1, null_arm);
+    line(w, ind, "}}");
+  } else {
+    write_fields(x, w, key, d, s, base, end, held_at, ind);
+  }
+  void_e()
+}
+
+// `fresh_null_arm`: a copy flagged fresh into a struct whose default is not all zero bytes
+// writes that default; "" otherwise.
+fn fresh_null_arm(x: Cx, args: vector<ir::Node>, dst: text) -> text {
+  raw = match loop_shape::unspan(args[2]!) { NdInt { n } => n, _ => -1 };
+  if raw < 0 || raw > 65535 || raw & 16384 == 0 {
+    return "";
+  }
+  tp = raw & 16383;
+  is_struct = len(x.b.types[tp].parts) > 0 && (x.b.types[tp].parts[0]! is PtStruct);
+  if !is_struct || cgen_ref::default_is_zero_registered(x, tp) {
+    return "";
+  }
+  "loft_fill({dst}, {cgen_tables::default_name(x, tp)}, {x.b.types[tp].size});"
+}
+
+// The address, lock flag and offset of the destination where a bound view's address serves it
+// (`@FR-R-RecPtr`), as `"pa|pl|off"`; "" none.
+fn held_ptr(x: Cx, w: W, dst: ir::Node) -> text {
+  sub = -1;
+  r = opt_vr_leaves::sub_record(x.b, dst, sub);
+  if r < 0 {
+    return "";
+  }
+  off = 0;
+  match loop_shape::unspan(dst) {
+    NdCall { def_nr: _, args } => { opt_view::view_field(x.b, args[0]!, args[1]!, off); },
+    _ => {},
+  }
+  for i in rev(0..len(w.rec_ptrs)) {
+    rp = w.rec_ptrs[i]!;
+    if rp.var == r {
+      return "{rp.pa}|{rp.pl}|{off}";
+    }
+  }
+  ""
+}
+
+// `vr_write_fields`: struct `s` of layout `key` written into record `d`, each field at its offset
+// less `base`, the fields from `base` up to `end`.
+fn write_fields(x: Cx, w: W, key: integer, d: text, s: text, base: integer, end: integer, held_at: text, ind: integer) {
+  t = layout(x, key);
+  sel: vector<integer> = [];
+  any_view = false;
+  for o in t.offs {
+    if o >= base && o < end {
+      sel += [o#index];
+      if opt_vr_layout::is_view_part(t.rts[o#index]!) {
+        any_view = true;
+      }
+    }
+  }
+  if len(sel) >= 2 && !any_view {
+    at = "loft_rec_w({d})";
+    if held_at != "" {
+      parts = held_at.split('|');
+      at = "({parts[0]!} && !(LOFT_UNLIKELY({parts[1]!}) && loft_locked_write())) ? {parts[0]!} + {parts[2]!} : (uint8_t *) 0";
+    }
+    line(w, ind, "{{ uint8_t *loft_w = {at}; if (loft_w) {{");
+    for i in sel {
+      a = t.offs[i]! - base;
+      rt = t.rts[i]!;
+      line(w, ind + 1, if rt == "f32" { "memcpy(loft_w + {a}, &{s}.f{i}, 4);" } else if rt == "bool" { "loft_w[{a}] = (uint8_t) {s}.f{i};" } else { "memcpy(loft_w + {a}, &{s}.f{i}, 8);" });
+    }
+    line(w, ind, "}} }}");
+    return;
+  }
+  for o in t.offs {
+    i = o#index;
+    if o < base || o >= end {
+      continue;
+    }
+    a = o - base;
+    rt = t.rts[i]!;
+    if opt_vr_layout::is_view_part(rt) {
+      if base != 0 {
+        refuse(w, "a view part inside a copied sub-record");
+        return;
+      }
+      vt = view_field_vector(x, opt_vr_layout::layout_record(key), o);
+      elem = if vt >= 0 { types::content_of(x.b.types, vt) ?? -1 } else { -1 };
+      if elem < 0 {
+        refuse(w, "a view part with no vector type");
+        return;
+      }
+      cgen_tables::copy_type(x, elem);
+      add = if x.b.types[elem].linked { "loft_vec_add_array" } else { "loft_vec_add" };
+      line(w, ind, "loft_set_int4({d}, {a}, INT64_C(0));");
+      line(w, ind, "{add}(loft_types, {elem}, loft_field({d}, {a}), {s}.f{i});");
+      continue;
+    }
+    line(w, ind, if rt == "f64" { "loft_set_float({d}, {a}, {s}.f{i});" } else if rt == "f32" { "loft_set_single({d}, {a}, {s}.f{i});" } else if rt == "bool" { "loft_set_byte({d}, {a}, {s}.f{i});" } else { "loft_set_int({d}, {a}, {s}.f{i});" });
+  }
+}
+
+// `view_field_types`' vector type: the type of the field at byte `off` of struct `tp`, -1 none.
+fn view_field_vector(x: Cx, tp: integer, off: integer) -> integer {
+  if tp < 0 || tp >= len(x.b.types) || len(x.b.types[tp].parts) == 0 {
+    return -1;
+  }
+  match x.b.types[tp].parts[0]! {
+    PtStruct { fields } => {
+      for f in fields {
+        if f.position == off {
+          return f.content;
+        }
+      }
+      -1
+    },
+    _ => -1,
+  }
+}
+
+// `vr_set`: a value local's bind — a null the absent struct, anything else assigned as a struct;
+// a dead buffer's bind is nothing.  False for any other variable.
+pub fn set(x: Cx, w: W, var: integer, v: ir::Node, ind: integer) -> boolean {
+  if !w.vr.any {
+    return false;
+  }
+  if vr_dead(w, var) {
+    return true;
+  }
+  key = vr_local(w, var);
+  if key < 0 {
+    return false;
+  }
+  c = ctype(x, key);
+  target = w.names[var]!;
+  if (loop_shape::unspan(v) is NdNull) || opt_vr_shape::is_null_sentinel(x.b, v) {
+    line(w, ind, "{target} = ({held(c)}) {initial(c)};");
+    return true;
+  }
+  cgen_fn::assign(x, w, v, target, c, ind);
+  flush(w, ind);
+  true
+}
+
+// Strip the widen mark from `v` — the leaf written as its dense self inside its widening.
+fn without_widen(v: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => {
+      if pos.file == opt_vr_facts::MARK_FILE && pos.line == 0 && pos.pos % 8 == opt_vr_facts::MK_WIDEN {
+        return without_widen(inner);
+      }
+      ir::NdSpan { pos: pos, inner: without_widen(inner) }
+    },
+    _ => v,
+  }
+}
+
+// `vr_assign`: a value LEAF at a struct position — the widened dense leaf, the absent struct, a
+// build, a materialised view's source, a view's getters.  False for any other value.
+pub fn assign(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) -> boolean {
+  if !w.vr.any || !is_tuple(shape) {
+    return false;
+  }
+  wk = opt_vr_facts::mark(v, opt_vr_facts::MK_WIDEN);
+  if wk >= 0 {
+    dense = opt_vr_layout::layout_record(wk);
+    ds = ctype(x, dense);
+    inner = temp(w, ds);
+    cgen_fn::assign(x, w, without_widen(v), inner, ds, ind);
+    n = len(layout(x, dense).offs);
+    parts: vector<text> = [for i in 0..n { "{inner}.f{i}" }];
+    line(w, ind, "{target} = ({held(shape)}) {{ {parts.join(", ")}, 1 }};");
+    return true;
+  }
+  if opt_vr_facts::mark(v, opt_vr_facts::MK_NULL) >= 0 {
+    line(w, ind, "{target} = ({held(shape)}) {initial(shape)};");
+    return true;
+  }
+  u = loop_shape::unspan(v);
+  match u {
+    NdBlock { block } => {
+      exit = opt_vr_facts::mark(v, opt_vr_facts::MK_OBJECT);
+      if exit >= 0 {
+        return object(x, w, block[0]!, exit, target, shape, ind);
+      }
+      if opt_vr_facts::mark(v, opt_vr_facts::MK_MV) >= 0 {
+        mv_return(x, w, block[0]!, target, shape, ind);
+        return true;
+      }
+      false
+    },
+    NdVar { n } => {
+      if opt_vr_facts::mark(v, opt_vr_facts::MK_VIEW) < 0 {
+        return false;
+      }
+      key = w.vr.key;
+      if key < 0 {
+        refuse(w, "a view leaf outside an admitted function");
+        return true;
+      }
+      if ctype(x, key) != shape {
+        key = opt_vr_layout::layout_record(key);
+      }
+      getters(x, w, key, ir::NdVar { n: n }, target, shape, ind);
+      true
+    },
+    _ => false,
+  }
+}
+
+fn getter_def(b: ir::Bundle, rt: text) -> integer {
+  name = if rt == "f64" { "OpGetFloat" } else if rt == "f32" { "OpGetSingle" } else if rt == "bool" { "OpGetBoolean" } else { "OpGetInt" };
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// `vr_getters`: the struct of layout `key` read off the record `src` evaluates to, one read per
+// field, and for a nullable layout whether the record is there.
+fn getters(x: Cx, w: W, key: integer, src: ir::Node, target: text, c: text, ind: integer) {
+  t = layout(x, key);
+  sub = -1;
+  root = opt_vr_leaves::sub_record(x.b, src, sub);
+  if root >= 0 && vr_local(w, root) >= 0 {
+    root_key = vr_local(w, root);
+    parts: vector<text> = [];
+    for o in t.offs {
+      rt = t.rts[o#index]!;
+      if opt_vr_layout::is_view_part(rt) {
+        refuse(w, "a view part read off a value local's sub-record");
+        return;
+      }
+      e = cgen_fn::expr(x, w, ir::NdCall { def_nr: getter_def(x.b, rt), args: [src, ir::NdInt { n: o }] }, ind);
+      parts += [as_shape(w, e, if rt == "f64" { "float" } else if rt == "f32" { "single" } else if rt == "bool" { "bool" } else { "int" })];
+    }
+    if t.nullable {
+      p = presence(x, root_key, w.names[root]!);
+      parts += [if p == "" { "1" } else { "(uint8_t) ({p} == 1)" }];
+    }
+    line(w, ind, "{target} = ({held(c)}) {{ {parts.join(", ")} }};");
+    return;
+  }
+  r = cgen_fn::expr(x, w, src, ind);
+  rt2 = temp(w, "ref");
+  line(w, ind, "{rt2} = {as_ref(w, r)};");
+  parts2: vector<text> = [];
+  for o in t.offs {
+    k = t.rts[o#index]!;
+    parts2 += [if opt_vr_layout::is_view_part(k) { "loft_field({rt2}, {o})" } else if k == "f64" { "loft_pa_f64(loft_vp, {o})" } else if k == "f32" { "loft_pa_f32(loft_vp, {o})" } else if k == "bool" { "loft_pa_bool(loft_vp, {o})" } else { "loft_pa_i64(loft_vp, {o})" }];
+  }
+  if t.nullable {
+    parts2 += ["(uint8_t) ({rt2}.rec != 0)"];
+  }
+  line(w, ind, "{{ const uint8_t *loft_vp = loft_rec_ptr({rt2}); {target} = ({held(c)}) {{ {parts2.join(", ")} }}; }}");
+}
+
+// `vr_object`: an `Object` leaf — the struct of the block's field writes, each value evaluated in
+// the order the program wrote it; one that returns what it builds returns the struct after the
+// releases its return owes.  False for a build whose fields the block does not all write.
+fn object(x: Cx, w: W, bl: ir::Block, exit: integer, target: text, c: text, ind: integer) -> boolean {
+  key = w.vr.key;
+  if key < 0 {
+    refuse(w, "an Object leaf outside an admitted function");
+    return true;
+  }
+  t = layout(x, key);
+  n = len(t.offs);
+  slots: vector<ir::Node> = [for _ in 0..n { ir::NdNull }];
+  filled: vector<boolean> = [for _ in 0..n { false }];
+  fill: vector<integer> = [];
+  if !object_slots(x, w, bl, key, t, slots, filled, fill) {
+    return true;
+  }
+  for i in 0..n {
+    if !filled[i]! && !opt_vr_layout::is_view_part(t.rts[i]!) {
+      return false;
+    }
+  }
+  for op in bl.operators {
+    if loop_shape::unspan(op) is NdSet {
+      cgen_fn::stmt(x, w, op, ind);
+    }
+  }
+  members = tuple_members(c);
+  parts: vector<text> = [for _ in 0..n { "" }];
+  for i in fill {
+    e = cgen_fn::expr(x, w, slots[i]!, ind);
+    tv = temp(w, members[i]!);
+    line(w, ind, "{tv} = {as_shape(w, e, members[i]!)};");
+    parts[i] = tv;
+  }
+  vr = plan(x);
+  for i in 0..n {
+    if !opt_vr_layout::is_view_part(t.rts[i]!) {
+      continue;
+    }
+    at_v = -1;
+    for vv in vr.views {
+      if vv.d == w.index && vv.exit == exit && vv.off == t.offs[i]! {
+        at_v = vv#index;
+      }
+    }
+    if at_v < 0 {
+      refuse(w, "a view leaf with no proven source");
+      return true;
+    }
+    parts[i] = view_place(x, w, vr.views[at_v]!, ind);
+  }
+  for p in parts {
+    if p == "" {
+      refuse(w, "a value record field left unwritten");
+      return true;
+    }
+  }
+  if len(members) > n {
+    parts += ["1"];
+  }
+  line(w, ind, "{target} = ({held(c)}) {{ {parts.join(", ")} }};");
+  own_p = opt_vr_shape::object_own_return(bl);
+  if own_p >= 0 {
+    object_releases(x, w, bl, own_p, ind);
+    cgen_fn::ret_held(w, target, ind);
+  }
+  true
+}
+
+// `vr_view_place`: the reference a view leaf delivers — none, the appended element's field, or
+// the field of the container's last element.
+fn view_place(x: Cx, w: W, vv: opt_vr_layout::VView, ind: integer) -> text {
+  if vv.kind == 0 {
+    return "loft_ref_null()";
+  }
+  if vv.kind == 1 {
+    e = as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: vv.elem }, ind));
+    return "loft_field({e}, {vv.eoff})";
+  }
+  r = as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: vv.root_v }, ind));
+  container = if vv.root_f == 4294967295 { r } else { "loft_field({r}, {vv.root_f})" };
+  "loft_field(loft_vec_get({container}, {element_stride(x.b, vv.ptp, vv.fld)}, INT64_C(-1)), {vv.eoff})"
+}
+
+// `hoist::element_stride`: the size of an element of the container a mint `(parent_tp, fld)` names.
+fn element_stride(b: ir::Bundle, ptp: integer, fld: integer) -> integer {
+  ct = if fld == 65535 { ptp } else { field_type(b, ptp, fld) };
+  elem = content(b, ct);
+  if elem < 0 || elem >= len(b.types) { 0 } else { b.types[elem]!.size }
+}
+
+fn field_type(b: ir::Bundle, tp: integer, fld: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp]!.parts) == 0 {
+    return -1;
+  }
+  fields: vector<ir::DbField> = match b.types[tp]!.parts[0]! { PtStruct { fields } => fields, PtEnumValue { value: _, fields } => fields, _ => [] };
+  if fld < 0 || fld >= len(fields) { -1 } else { fields[fld]!.content }
+}
+
+// `Stores::content`: the element type of a collection type, -1 for any other.
+fn content(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp]!.parts) == 0 {
+    return -1;
+  }
+  match b.types[tp]!.parts[0]! {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtOrdered { content, keys: _ } => content,
+    PtSorted { content, keys: _ } => content,
+    PtIndex { content, keys: _ } => content,
+    PtHash { content, fields: _ } => content,
+    PtRadix { content, fields: _ } => content,
+    PtTrie { content, key: _ } => content,
+    _ => -1,
+  }
+}
+
+// `vr_object_slots`: the value each field of an `Object` leaf of layout `key` is written, and the
+// order the block writes them in.  False after a refusal.
+fn object_slots(x: Cx, w: W, bl: ir::Block, key: integer, t: opt_vr_layout::VTuple, slots: vector<ir::Node>, filled: vector<boolean>, fill: vector<integer>) -> boolean {
+  vr = plan(x);
+  for op in bl.operators {
+    u = loop_shape::unspan(op);
+    d = match u { NdCall { def_nr, args: _ } => def_nr, _ => continue };
+    args: vector<ir::Node> = match u { NdCall { def_nr: _, args } => args, _ => [] };
+    name = def_name(x.b, d);
+    if name == "OpCopyRecord" && len(args) == 3 {
+      dst = loop_shape::unspan(args[1]!);
+      gok = match dst { NdCall { def_nr: g, args: gargs } => def_name(x.b, g) == "OpGetField" && len(gargs) == 3, _ => false };
+      if gok {
+        gargs: vector<ir::Node> = match dst { NdCall { def_nr: _, args } => args, _ => [] };
+        so = match loop_shape::unspan(gargs[1]!) { NdInt { n } => n, _ => -1 };
+        st = match loop_shape::unspan(gargs[2]!) { NdInt { n } => n, _ => -1 };
+        if so >= 0 && st >= 0 && st < len(x.b.types) && len(x.b.types[st].parts) > 0 && (x.b.types[st].parts[0]! is PtStruct) {
+          base = so;
+          end = base + x.b.types[st].size;
+          for o in t.offs {
+            if o < base || o >= end {
+              continue;
+            }
+            idx = opt_vr_layout::index_of(vr, key, o);
+            if idx < 0 {
+              refuse(w, "a sub-record field with no slot");
+              return false;
+            }
+            if filled[idx]! {
+              refuse(w, "a value record field written twice");
+              return false;
+            }
+            slots[idx] = ir::NdCall { def_nr: getter_def(x.b, t.rts[o#index]!), args: [args[0]!, ir::NdInt { n: o - base }] };
+            filled[idx] = true;
+            fill += [idx];
+          }
+          continue;
+        }
+      }
+    }
+    if !name.starts_with("OpSet") {
+      continue;
+    }
+    if len(args) < 2 {
+      refuse(w, "a field write without its place");
+      return false;
+    }
+    off = 0;
+    root = opt_view::view_field(x.b, args[0]!, args[1]!, off);
+    if root < 0 {
+      refuse(w, "a field write the value record cannot place");
+      return false;
+    }
+    if opt_vr_layout_view_off(x, key, off) {
+      continue;
+    }
+    idx = opt_vr_layout::index_of(vr, key, off);
+    if idx < 0 {
+      refuse(w, "a field write with no slot");
+      return false;
+    }
+    if filled[idx]! {
+      refuse(w, "a value record field written twice");
+      return false;
+    }
+    slots[idx] = if len(args) > 2 { args[2]! } else { ir::NdNull };
+    filled[idx] = true;
+    fill += [idx];
+  }
+  true
+}
+
+fn at_buffer(b: ir::Bundle, place: ir::Node, p: integer) -> boolean {
+  r = -1;
+  path = opt_push::vector_path(b, place, r);
+  path != "" && r == p
+}
+
+fn builds(b: ir::Bundle, n: ir::Node, p: integer) -> boolean {
+  u = loop_shape::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        nm = b.data.definitions[def_nr]!.name;
+        hit = (nm.starts_with("OpSet") || nm.starts_with("OpDatabase") || (nm == "OpCopyRecord" && len(args) > 1 && at_buffer(b, args[1]!, p)) || nm == "OpAppendVector") && (nm == "OpCopyRecord" || (len(args) > 0 && at_buffer(b, args[0]!, p)));
+        if hit {
+          return true;
+        }
+      }
+    },
+    _ => {},
+  }
+  for k in opt_vr_shape::kids(u) {
+    if builds(b, k, p) {
+      return true;
+    }
+  }
+  false
+}
+
+// `vr_object_releases`: the statements of an `Object` that returns what it builds which are no
+// part of the build, the yield or the return — the releases its return owes.
+fn object_releases(x: Cx, w: W, bl: ir::Block, p: integer, ind: integer) {
+  for op in bl.operators {
+    u = loop_shape::unspan(op);
+    skip = (u is NdReturn) || (u is NdVar) || (u is NdLine) || (u is NdSet) || builds(x.b, u, p);
+    if !skip {
+      cgen_fn::stmt(x, w, op, ind);
+    }
+  }
+}
+
+// `vr_mv_return`: a materialised view return at a struct position — the copy's source is the
+// struct; the block's other statements run; the mint, the copy and the delivery go.
+fn mv_return(x: Cx, w: W, bl: ir::Block, target: text, c: text, ind: integer) {
+  src = opt_vr_shape::mv_return_source(x.b, bl);
+  cgen_fn::assign(x, w, src, target, c, ind);
+  if len(bl.operators) == 0 {
+    return;
+  }
+  for op in bl.operators[0..len(bl.operators) - 1] {
+    nm = match loop_shape::unspan(op) { NdCall { def_nr, args: _ } => def_name(x.b, def_nr), _ => "" };
+    if nm == "OpCopyRecord" || nm == "OpDatabase" {
+      continue;
+    }
+    cgen_fn::stmt(x, w, op, ind);
+  }
+  if loop_shape::unspan(bl.operators[len(bl.operators) - 1]!) is NdReturn {
+    cgen_fn::ret_held(w, target, ind);
+  }
+}
+
+// `vr_stmt_leaf`: does block `v` stand as a statement where it is a value leaf?
+pub fn stmt_leaf(w: W, v: ir::Node) -> boolean {
+  w.vr.any && (opt_vr_facts::mark(v, opt_vr_facts::MK_MV) >= 0 || opt_vr_facts::mark(v, opt_vr_facts::MK_OBJECT) >= 0)
+}
+
+// `vr_stmt`: such a leaf as a statement returns its struct; false where the block is to be written
+// as it stands.
+pub fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
+  t = temp(w, w.ret);
+  assign(x, w, v, t, w.ret, ind)
+}
+
+// `lent_carrier`: the carrier tuple variable of a `vr_lend` block (-1 none), and in `order` the
+// carrier element written at each of `offsets`.
+fn lent_carrier(arg: ir::Node, offsets: vector<integer>, order: vector<integer>) -> integer {
+  bl = match loop_shape::unspan(arg) { NdBlock { block } => block[0]!, _ => return -1 };
+  if bl.name != "vr_lend" {
+    return -1;
+  }
+  carrier = -1;
+  at_off: vector<integer> = [];
+  at_i: vector<integer> = [];
+  for op in bl.operators {
+    match loop_shape::unspan(op) {
+      NdCall { def_nr: _, args } => {
+        if len(args) == 3 {
+          off = match loop_shape::unspan(args[1]!) { NdInt { n } => n, _ => -1 };
+          match loop_shape::unspan(args[2]!) {
+            NdTupleGet { var, idx } => {
+              if off >= 0 {
+                if carrier >= 0 && carrier != var {
+                  return -1;
+                }
+                carrier = var;
+                at_off += [off];
+                at_i += [idx];
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  if len(at_off) != len(offsets) || carrier < 0 {
+    return -1;
+  }
+  for o in offsets {
+    found = -1;
+    for a in at_off {
+      if found < 0 && a == o {
+        found = at_i[a#index]!;
+      }
+    }
+    if found < 0 {
+      return -1;
+    }
+    order += [found];
+  }
+  carrier
+}
+
+// `vr_arg`: the argument a tuple parameter of layout `key` takes for `arg`.
+pub fn arg(x: Cx, w: W, a: ir::Node, key: integer, ind: integer) -> text {
+  c = ctype(x, key);
+  if (loop_shape::unspan(a) is NdNull) || opt_vr_shape::is_null_sentinel(x.b, a) {
+    return "(({held(c)}) {initial(c)})";
+  }
+  if !opt_vr_layout::is_nullable_layout(key) && (env_variable("LOFT_NO_LEND_HANDOFF") ?? "0") == "0" {
+    order: vector<integer> = [];
+    carrier = lent_carrier(a, layout(x, key).offs, order);
+    if carrier >= 0 {
+      t = temp(w, c);
+      parts: vector<text> = [];
+      for i in order {
+        parts += [cgen_fn::expr(x, w, ir::NdTupleGet { var: carrier, idx: i }, ind).code];
+      }
+      line(w, ind, "{t} = ({held(c)}) {{ {parts.join(", ")} }};");
+      return t;
+    }
+  }
+  vr = plan(x);
+  sctx = opt_vr_shape::Ctx { b: x.b, ops: x.ops, d: w.index, admitted: vr.fns, params: vr.params, locals: w.vr.locals, own: if opt_vr_shape::at(vr.fns, w.index) >= 0 { w.index } else { -1 }, sites: vr.sites, sp: vr.sp };
+  form = opt_vr_sites::tuple_arg_form(sctx, a, key);
+  t2 = temp(w, c);
+  if form == 0 {
+    cgen_fn::assign(x, w, a, t2, c, ind);
+  } else if form == 1 {
+    dense = opt_vr_layout::layout_record(key);
+    dc = ctype(x, dense);
+    dt = temp(w, dc);
+    cgen_fn::assign(x, w, a, dt, dc, ind);
+    n = len(layout(x, dense).offs);
+    parts2: vector<text> = [for i in 0..n { "{dt}.f{i}" }];
+    line(w, ind, "{t2} = ({held(c)}) {{ {parts2.join(", ")}, 1 }};");
+  } else {
+    getters(x, w, key, a, t2, c, ind);
+  }
+  t2
+}
+
+// `vr_arg_address`: the address a pointer-passed value record goes to its callee as.
+pub fn arg_address(x: Cx, w: W, args: vector<ir::Node>, i: integer, code: text, key: integer, ind: integer) -> text {
+  v = opt_vr_shape::var_of(args[i]!);
+  if opt_vr_shape::is_var(args[i]!) && code == w.names[v]! {
+    named = false;
+    for o in args {
+      if o#index != i && mentions(o, v) {
+        named = true;
+      }
+    }
+    if !named {
+      return "&{code}";
+    }
+  }
+  t = temp(w, ctype(x, key));
+  line(w, ind, "{t} = {code};");
+  "&{t}"
+}
+
+fn mentions(n: ir::Node, v: integer) -> boolean {
+  if opt_vr_shape::is_var(n) && opt_vr_shape::var_of(n) == v {
+    return true;
+  }
+  for k in opt_vr_shape::kids(n) {
+    if mentions(k, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// `vr_forward_target`'s first form: the buffer of the forward call `call` (its node, marked),
+// -1 none.
+pub fn forward_mark(w: W, call: ir::Node) -> integer {
+  if !w.vr.any { -1 } else { opt_vr_facts::mark(call, opt_vr_facts::MK_FORWARD) }
+}
+
+// `vr_forward_target`: the call's own mark (`marked`), or the forward's buffer handed as this
+// call's return buffer at `dropped`; -1 none.
+pub fn forward_target(w: W, marked: integer, args: vector<ir::Node>, dropped: integer) -> integer {
+  if !w.vr.any {
+    return -1;
+  }
+  if marked >= 0 {
+    return marked;
+  }
+  if dropped < 0 || dropped >= len(args) || !opt_vr_shape::is_var(args[dropped]!) {
+    return -1;
+  }
+  bv = opt_vr_shape::var_of(args[dropped]!);
+  if w.vr.fwd_bufs.contains(bv) { bv } else { -1 }
+}
+
+// `vr_forward`: the call handed buffer `buf` writes the callee's struct into it — minted where it
+// is absent — and evaluates to it.
+pub fn forward(x: Cx, w: W, call: text, key: integer, buf: integer, ind: integer) -> E {
+  c = ctype(x, key);
+  t = temp(w, c);
+  line(w, ind, "{t} = {call};");
+  b = w.names[buf]!;
+  tp = opt_vr_layout::layout_record(key);
+  size = cgen_ref::enum_parent_size(x.b, tp);
+  cgen_tables::describe_type(x, tp);
+  line(w, ind, "if (!({b}.store_nr != 0xFFFF && {b}.rec != 0)) loft_database_typed(&{b}, {size}, {tp});");
+  write_fields(x, w, key, b, t, 0, 9223372036854775807, "", ind);
+  E { code: b, kind: K_REF }
+}

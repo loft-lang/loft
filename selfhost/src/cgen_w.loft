@@ -29,6 +29,7 @@ use opt_apart_vector;
 use opt_apart_records;
 use opt_apart_value;
 use cgen_transient;
+use opt_vr_facts;
 use opt_split_table;
 use opt_lazy_split;
 
@@ -426,6 +427,10 @@ struct W {
   // `@FR-R-Transient`'s work clause: the callee of the lifted bind being written (-1 none, -2
   // taken by its call, which has not written it yet).
   wr_call: integer,
+  // `@FR-R-ValueRecord`'s facts for this body (`value::VrFn`; `any` false: none).
+  vr: opt_vr_facts::VrFn,
+  // The buffer of the forward call `expr` is writing (`vr_forward_target`), -1 none.
+  vr_fwd: integer,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -723,8 +728,9 @@ fn held(shape: text) -> text {
 // The rules of the Rust writer this one does not carry yet, each by the switch that turns it
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
-// what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD"];
+// what is written is the Rust writer's under the same switches.  Every rule is carried now:
+// the one entry is empty (a constant list needs an element to type it), and names no switch.
+PLAIN_SWITCHES = [""];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {
@@ -735,7 +741,7 @@ pub fn plain_rules() -> boolean {
   // before they leave the list (`cgen_live.sh`'s `CGEN_ON`).
   carried = (env_variable("LOFT_CGEN_ON") ?? "").split(' ');
   for s in PLAIN_SWITCHES {
-    if (env_variable(s) ?? "0") == "0" && s != assumed && !carried.contains(s) {
+    if s != "" && (env_variable(s) ?? "0") == "0" && s != assumed && !carried.contains(s) {
       return false;
     }
   }

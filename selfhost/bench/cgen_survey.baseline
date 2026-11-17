@@ -2,7 +2,7 @@
  "bodies|default|program|corpus": {
   "agree": 1080,
   "differ": 0,
-  "equal": 2706,
+  "equal": 13160,
   "functions": 13598,
   "refused": 0,
   "switches": [
@@ -13,11 +13,10 @@
  "bodies|plain|program|corpus": {
   "agree": 1080,
   "differ": 0,
-  "equal": 13132,
-  "functions": 13573,
+  "equal": 13160,
+  "functions": 13598,
   "refused": 0,
   "switches": [
-   "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],
   "units": 1080
@@ -25,11 +24,10 @@
  "bodies|plain|program|corpus:tests": {
   "agree": 601,
   "differ": 0,
-  "equal": 6550,
-  "functions": 6613,
+  "equal": 6556,
+  "functions": 6620,
   "refused": 0,
   "switches": [
-   "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],
   "units": 601
@@ -37,11 +35,10 @@
  "bodies|plain|program|files:benches.txt": {
   "agree": 61,
   "differ": 0,
-  "equal": 2229,
-  "functions": 2259,
+  "equal": 2210,
+  "functions": 2241,
   "refused": 0,
   "switches": [
-   "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],
   "units": 61
