@@ -411,10 +411,15 @@ def merge(target, intro_file, cells):
         ren.update(tren)
         ren.update(vren)
         for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
-            code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
-            # An expectation in the header quotes the diagnostic, which names the renamed thing.
-            head = [re.sub(r"\b" + re.escape(o) + r"\b", nw, l) if re.match(r"^// @EXPECT_", l) else l
-                    for l in head]
+            # An expectation — in the header or beside its function — quotes the diagnostic, which
+            # names the renamed thing as CODE, against a backtick, a quote or a bracket (`grow(…)`,
+            # (AFire, u8)).  A word with a space on both sides is the sentence's own: `cannot grow
+            # `v`` keeps its verb when a function `grow` is renamed.
+            in_expect = re.compile(r"\b" + re.escape(o) + r"\b(?<! " + re.escape(o) + r"(?= ))")
+            plain = re.compile(r"\b" + re.escape(o) + r"\b")
+            code = "\n".join(in_expect.sub(nw, l) if l.startswith("// @EXPECT_") else plain.sub(nw, l)
+                             for l in code.split("\n"))
+            head = [in_expect.sub(nw, l) if l.startswith("// @EXPECT_") else l for l in head]
         # A method word for word an earlier section's (after the renames) is the same method of a
         # type both declare identically — the type was dropped above, so it goes too, or the type
         # would have two (`fn OpDrop(self: H)` twice is a redefinition).
