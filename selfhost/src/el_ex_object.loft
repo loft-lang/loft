@@ -504,6 +504,36 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
       return ex(el_ir::v_block([el_ir::v_set(fw, el_ex_null::block_typed(read.code, el_types::with_deps(read.tp, []))), cr.code], cr.tp, "fn_call_tmp"), cr.tp);
     }
   }
+  // The same through a CALL's result (`mk(1).f(21)`): the record held in a work ref first
+  // (`fn_ref_field_base`), the field read from it.  The method of that name wins, as a field
+  // call is only what is left when no method answers.
+  if call && e.p.nodes[re!] is SCall {
+    hx = el_ex_assign::expression(e, vars, re!);
+    hd = if hx.tp is TyOptional { -1 } else { struct_ref(e, el_types::base(hx.tp)) };
+    ha = if hd >= 0 && literal_def(e, hd) { attr_nr(el::def(e, hd), name) } else { -1 };
+    hft = if ha >= 0 { el::def(e, hd).attributes[ha]!.typedef[0] ?? ir::TyVoid } else { ir::TyVoid };
+    if ha >= 0 && el_types::base(hft) is TyFunction && match el_ir::unspan(hx.code) { NdCall { def_nr: hc } => starts_with(el::def(e, hc).name, "n_"), _ => false } {
+      host = ir::TyReference { n: hd, dep: [] };
+      hw = el_vars::work_ref(vars, host);
+      ft = el_types::with_deps(hft, []);
+      fw = el_vars::create_unique(vars, "__fn_ref_tmp", ft);
+      el_vars::set_defined(vars, fw);
+      cr = call_ref(e, vars, fw, args);
+      if e.first_pass || el_types::is_unknown(cr.tp) {
+        return cr;
+      }
+      vars.vars[fw].skip_free = true;
+      read = el_ir::v_block([el_ir::cl(e, "OpGetInt4", [ir::NdVar { n: hw }, ir::NdInt { n: field_position(e, hd, name) }]), el_ir::cl(e, "OpNullRefSentinel", [])], ft, "fn_ref_field_read");
+      base = el_ir::v_block([el_ir::v_set(hw, hx.code), read], ft, "fn_ref_field_base");
+      return ex(el_ir::v_block([el_ir::v_set(fw, base), cr.code], cr.tp, "fn_call_tmp"), cr.tp);
+    }
+    if ha >= 0 && el_types::base(hft) is TyFunction {
+      el::refuse(e, "a function field called off a value that is no call of a function");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    // Anything else was read once already: answered as a method call of that receiver is.
+    return method_call_on(e, vars, at, hx, re!, name, args);
+  }
   if call || len(args) > 0 {
     return method_call(e, vars, at, re!, name, args);
   }
@@ -1908,7 +1938,11 @@ pub fn type_parse(e: el::El, vars: el_vars::Vars, d: integer, args: vector<integ
 }
 
 pub fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: text, args: vector<integer>) -> Ex {
-  x = el_ex_assign::expression(e, vars, re);
+  method_call_on(e, vars, at, el_ex_assign::expression(e, vars, re), re, name, args)
+}
+
+// `method_call` over a receiver already read.
+pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: integer, name: text, args: vector<integer>) -> Ex {
   list: vector<ir::Node> = [x.code];
   types: vector<ir::TypeT> = [x.tp];
   // The method call's `hint_nr`: the definition whose parameters type the arguments before the
