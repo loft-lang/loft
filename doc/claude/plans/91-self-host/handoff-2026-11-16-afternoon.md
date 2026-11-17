@@ -154,6 +154,25 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**A split for a second agent (owner's proposal, 2026-11-17).**  The front end is the slow
+layer: 959 of 2220 by the real gate, about 1,340 distinct refusal texts left, most worth one
+or two programs.  What moves tens of programs is a whole FEATURE ported from the Rust source in
+one go.  Offered to a second agent, each on a branch stacked on this branch's tip and joined
+here (the areas are disjoint by function, not by file — `el_ex_vector.loft` and
+`el_ex_pattern.loft` are edited by both):
+
+| Feature | Refusal it lifts (programs touched) | Where it lives |
+|---|---|---|
+| Range and key reads on sorted / index / spatial: `s[1..3]`, `s[3, 4]`, `for e in s[a..b]` | `an index that is a range, a key list or a limit` (20) | `el_ex_vector::index`, `keyed_slice`; the loop side in `el_ex_match::for_expr` |
+| Slice patterns over a cursor struct: `match c { [Num { v }] => …, [(xs: V)*] => … }` | `a struct match pattern of this form: PSlice` (9, seven of them the only refusal) | `el_ex_pattern` (struct match patterns) |
+| Value structs, struct templates, field modifiers and defaults | `a value struct or a struct template` (44), `a struct field with a modifier, a default or a capture` (45) | `el_definitions`, `el_schema` |
+
+This stream keeps links, tuples, struct-enum places, closures stored in fields and the record
+return rules.  The second kind of work that splits cleanly is READ-ONLY: for one refusal
+family, a ten-line probe, Rust's lowering of it (`defs <img> program <std>`) and the Rust
+function that decides it — that research is most of a port's time.  The loop, the tools and
+the two traps (build age, the gate's 9 GB ceiling) are in the sections below.
+
 **State at 4572be7a1 (2026-11-17, the real gate's own figure): 952 of 2218 agree, 0 differ,
 1266 refused**, 75 own cells; the writer's and runner's baselines stand at main's pin with no
 differing row (074413a7a).  Carried since the rebase: a function field from a local or a
