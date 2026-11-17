@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 front layer (front-end-instruments.md item 1): the bundle a program runs from when its
+// definitions are the loft front end's.  `bench/run_front.loft` reaches a bundle only through
+// this module, since `ir::Bundle`'s parts are not public outside the package.
+
+use ir;
+
+// `image` with its definitions and types replaced by the elaborator's `elaborated` (the library's
+// first ones included: the elaborator loaded them from `image`); every other part of `image` —
+// constants, sidecars, the host's facts — stays as the image holds it.
+pub fn graft(image: ir::Bundle, elaborated: ir::Bundle) -> ir::Bundle {
+  image.data.definitions = elaborated.data.definitions;
+  image.types = elaborated.types;
+  image
+}

@@ -64,7 +64,7 @@ def test_functions(files):
     return out
 
 
-def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()):
+def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=(), front_std=None):
     src_dir = os.path.dirname(f)
     # A temporary directory of its own: the test functions of one file run at once here, where
     # `loft test` runs them one after another, and a test that keeps a fixed file under
@@ -103,6 +103,16 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     if rc != 0:
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
     run_env = {**env, "LOFT_NATIVE_LEAK_CHECK": "1"}
+    run_cmd = [runner, img]
+    if front_std:
+        # The front layer: the loft front end elaborates the program over the library of its
+        # post-scope image, the loft scope pass lays out its functions, and the loft writer and
+        # runner run it (`run_front.loft`).
+        store = img[:-4] + ".store"
+        rc, _, err = proc([loft, *libargs, "--emit-image", store, f], env, timeout, cwd=src_dir)
+        if rc != 0:
+            return f, "noimage", err.strip().splitlines()[-1:] or [""]
+        run_cmd = [runner, img, f, store, front_std]
     if written:
         # The code is the bytecode writer in loft's, from the program's stored IR.
         store = img[:-4] + ".store"
@@ -114,7 +124,14 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     # The runner shares one C runtime with the program it runs, so its exit leak check
     # (`LOFT_NATIVE_LEAK_CHECK`) counts the program's stores left at exit, as the interpreter's
     # own report does: the two counts are compared too.
-    rc2, got, err2 = proc([runner, img], run_env, timeout, cwd=src_dir)
+    rc2, got, err2 = proc(run_cmd, run_env, timeout, cwd=src_dir)
+    if front_std and rc2 == 4:
+        # The elaborator refuses the program: gate E's verdict, not this layer's.
+        return f, "refused", [(err2.strip().splitlines() or [""])[0][len("refused: "):][:100]]
+    if front_std and rc2 == 5:
+        # The loft scope pass lays out no frame for one of its functions yet.
+        # By its reason: the function it was met in (`n_main: …`) is the program's own.
+        return f, "unscoped", [(err2.strip().splitlines() or [""])[0][len("unscoped: "):].split(": ", 1)[-1][:100]]
     if "stopped: not carried by the bytecode writer in loft" in err2:
         return f, "unwritten", [""]
     m = re.search(r"stopped: not carried: ([^\n]+)", err2)
@@ -151,14 +168,17 @@ def main():
     ap.add_argument("--timeout", type=int, default=60)
     ap.add_argument("--written", action="store_true",
                     help="run the code the bytecode writer in loft writes (bgen_image.loft), not the image's")
+    ap.add_argument("--front", action="store_true",
+                    help="run from the loft FRONT END's own definitions (run_front.loft): elaborated, "
+                         "scoped by the loft scope pass, written and run in loft")
     ap.add_argument("--show", action="append", default=[],
-                    help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage; repeatable)")
+                    help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage, refused, unscoped; repeatable)")
     ap.add_argument("--check", metavar="BASELINE", help="exit 1 on a drop against BASELINE or any differ")
     ap.add_argument("--write-baseline", metavar="BASELINE", help="write this layer's block of BASELINE")
     o = ap.parse_args()
     if (o.check or o.write_baseline) and (o.chapter or o.scripts_only):
         sys.exit("--check and --write-baseline read the whole corpus: drop --chapter and --scripts-only")
-    layer = ("written" if o.written else "image") + ("-functions" if o.functions else "")
+    layer = ("front" if o.front else "written" if o.written else "image") + ("-functions" if o.functions else "")
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = o.loft or os.path.join(root, "target", "release", "loft")
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
@@ -173,12 +193,16 @@ def main():
     try:
         out = os.path.join(tmp, "runner")
         os.makedirs(out, exist_ok=True)
-        p = subprocess.run([loft, "--native-c", "--ship", "--out", out,
+        # The front runner holds the elaborator beside the writer and the runner: its optimised
+        # build needs more than the 9 GB the C compiler is allowed here (`virtual memory
+        # exhausted`), so it is a development build — a measurement, not what ships.
+        p = subprocess.run([loft, "--native-c", *([] if o.front else ["--ship"]), "--out", out,
                             "--lib", os.path.join(root, "selfhost", "src"),
                             "--lib", os.path.join(root, "selfhost", "crt", "src"),
-                            os.path.join(root, "selfhost", "bench", "run_image_run.loft")],
-                           capture_output=True, text=True, env=env, timeout=900)
-        runner = os.path.join(out, "run_image_run")
+                            os.path.join(root, "selfhost", "bench",
+                                         "run_front.loft" if o.front else "run_image_run.loft")],
+                           capture_output=True, text=True, env=env, timeout=1800)
+        runner = os.path.join(out, "run_front" if o.front else "run_image_run")
         if not os.path.exists(runner):
             sys.exit(f"the runner did not build:\n{p.stderr[-2000:]}")
         # Absolute: each program runs from its own directory, where a path relative to the
@@ -197,22 +221,32 @@ def main():
             for flag in ("--emit-image", "--emit-run-image"):
                 subprocess.run([loft, flag, os.path.join(tmp, "warm"), files[0]], capture_output=True,
                                text=True, env=env, timeout=300)
+        # The front layer's library counts: what an empty program's image holds (as gate E).
+        front_std = None
+        if o.front:
+            empty = os.path.join(tmp, "empty.loft")
+            with open(empty, "w", encoding="utf-8") as fh:
+                fh.write("fn main() {}\n")
+            front_std = os.path.join(tmp, "std.store")
+            subprocess.run([loft, empty], env={**env, "LOFT_EMIT_PARSED": front_std}, capture_output=True,
+                           timeout=300)
         counts = collections.Counter()
         ops = collections.Counter()
         shown = []
         results = {}
         with cf.ThreadPoolExecutor(o.jobs) as ex:
             for (src, test), (f, verdict, what) in zip(jobs, ex.map(
-                    lambda j: one(j[0], loft, runner, tmp, env, o.timeout, o.written, j[1], libargs), jobs)):
+                    lambda j: one(j[0], loft, runner, tmp, env, o.timeout, o.written, j[1], libargs, front_std), jobs)):
                 counts[verdict] += 1
                 name = baseline.name_of(src, root, suite) + (f"::{test}" if test else "")
                 results[name] = verdict
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{name}\t{what[0]}")
-                if verdict == "stopped":
-                    ops[what[0]] += 1
+                if verdict in ("stopped", "unscoped"):
+                    ops[("unscoped: " + what[0]) if verdict == "unscoped" else what[0]] += 1
         print(f"{counts['agree']} of {len(jobs)} programs agree; " +
-              ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "unwritten", "differ", "fault", "noimage") if counts[k]))
+              ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "unwritten", "differ", "fault", "noimage", "refused",
+                                          "unscoped") if counts[k]))
         for line in sorted(shown):
             print(line)
         if ops:
