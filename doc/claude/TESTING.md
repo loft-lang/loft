@@ -561,6 +561,12 @@ scripts/suite_curate.py next 3            # the next rules, in the fixed order (
 scripts/suite_curate.py plan <rule>       # its cells, what they cover, a proposed core
 scripts/suite_curate.py related <rule> '<regex>'   # every test home's programs for the construct,
                                           #   cited or not, and the code sites that enforce it
+scripts/suite_curate.py merge <new> <intro> <cell>…  # one clause's cells into one (gate E must agree)
+scripts/suite_curate.py verify <cell>…    # interpreter + C, leak-checked and strict + poison
+scripts/suite_curate.py vacuity <cell>…   # break one expectation per test: exactly that one fails?
+scripts/suite_curate.py switches <cell>…  # which LOFT_NO_* cure switches move each cell (receipts)
+scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file> <old>…  # retire merged cells:
+                                          #   references, feature count, gate E rows, pin
 scripts/suite_curate.py done <rule> '<note>'       # record it, after the commit
 ```
 

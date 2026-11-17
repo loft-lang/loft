@@ -11,6 +11,11 @@ still covers the rule totally — and record which rules are done.
                                               # construct, and the code sites that enforce it
     scripts/suite_curate.py merge <target> <intro> <cell>…   # one clause's cells into one, every
                                               # case and receipt kept (gate E verdicts must agree)
+    scripts/suite_curate.py verify <cell>…       # interpreter + C, leak-checked and strict + poison
+    scripts/suite_curate.py vacuity <cell>…      # break one expectation per test: exactly it fails?
+    scripts/suite_curate.py switches <cell>…     # which LOFT_NO_* cure switches move each cell
+    scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file> <old>…   # retire merged
+                                              # cells: refs, features, suite commit, gate E, pin
     scripts/suite_curate.py done <rule> [note]   # record the rule as curated (after the commit)
     scripts/suite_curate.py init              # (re)write the ledger's rows for every defined rule
 
@@ -47,6 +52,8 @@ import collections
 import datetime
 import os
 import re
+import shutil
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -318,6 +325,179 @@ def merge(target, intro_file, cells):
     return 0
 
 
+# ---------------------------------------------------------------- the per-cell instruments
+
+def loft_bin():
+    """The loft binary the instruments run: `$LOFT`, else this tree's debug build."""
+    return os.environ.get("LOFT") or os.path.join(ROOT, "target", "debug", "loft")
+
+
+def run_cell(cell, mode, env=None):
+    """`loft --tests <mode> <cell>` — (exit code, the result line).  The program cache is off
+    (a cached image once answered for the wrong build), and the cell's `.loft/` cache beside it
+    is removed afterwards so it never reads as a reference or reaches a commit."""
+    e = dict(os.environ, LOFT_NO_CACHE="1", **(env or {}))
+    r = subprocess.run([loft_bin(), "--tests", mode, cell], env=e, capture_output=True, text=True,
+                       timeout=int(os.environ.get("CURATE_TIMEOUT", "600")))
+    shutil.rmtree(os.path.join(os.path.dirname(cell), ".loft"), ignore_errors=True)
+    line = next((l for l in r.stdout.splitlines() + r.stderr.splitlines() if "test result" in l), "")
+    return r.returncode, line.strip()
+
+
+ARMINGS = {"leak": {"LOFT_LEAK_CHECK": "1"}, "strict": {"LOFT_STRICT_STORES": "1", "LOFT_POISON": "1"}}
+
+
+def verify(cells):
+    """Each cell on the interpreter and C, under the suite's own arming (the leak check) and the
+    one a `@catches` file gets (strict stores + poison)."""
+    bad = 0
+    for c in cells:
+        for arm, env in ARMINGS.items():
+            for mode in ("--interpret", "--native-c"):
+                code, line = run_cell(c, mode, env)
+                bad += code != 0
+                print(f"{'ok  ' if code == 0 else 'FAIL'} {arm:<6} {mode:<12} {os.path.basename(c)}  {line[:60]}")
+    return 1 if bad else 0
+
+
+def _break_one(text, fn):
+    """The cell with ONE expectation of test `fn` broken: the first `== <literal>` in its body, or,
+    when the test has none of its own, in the code of its section (from the end of the previous
+    test function to this one — a helper it calls).  None when there is none to break."""
+    a = text.index("fn " + fn + "(")
+    b = text.index("\n}\n", a)
+    rx = re.compile(r'assert\((.*?)==\s*("[^"]*"|-?\d+)')
+    m, lo = rx.search(text[a:b]), a
+    if not m:
+        prev = [x.start() for x in re.finditer(r"(?m)^fn test_", text) if x.start() < a]
+        lo = text.index("\n}\n", prev[-1]) if prev else next(x.start() for x in re.finditer(r"(?m)^[^/\n]", text))
+        m = rx.search(text[lo:a])
+        if not m:
+            return None
+    v = m.group(2)
+    nv = ('"X' + v[1:]) if v.startswith('"') else str(int(v) + 1)
+    return text[:lo + m.start(2)] + nv + text[lo + m.end(2):]
+
+
+def vacuity(cells):
+    """Can each test fail?  Break one expectation per test and require exactly that one test to
+    fail — a test no broken expectation moves proves nothing (TESTING.md § Curating the suite)."""
+    bad = 0
+    for c in cells:
+        text = open(c, encoding="utf-8").read()
+        tests = re.findall(r"(?m)^fn (test_[a-z_0-9]+)", text) or (["main"] if "fn main()" in text else [])
+        for t in tests:
+            broken = _break_one(text, t) if t != "main" else None
+            if broken is None:
+                print(f"?    {os.path.basename(c)}::{t} — no `==` expectation to break; read it by hand")
+                continue
+            probe = os.path.join(os.path.dirname(c), ".curate-vacuity.loft")
+            open(probe, "w", encoding="utf-8").write(broken)
+            try:
+                code, line = run_cell(probe, "--interpret")
+            finally:
+                os.remove(probe)
+            one = re.search(r"\b1 failed\b", line) is not None
+            bad += not one
+            print(f"{'ok  ' if one else 'VAC '} {os.path.basename(c)}::{t}  {line[:50]}")
+    return 1 if bad else 0
+
+
+def cure_switches():
+    text = open(os.path.join(ROOT, "src", "keys.rs"), encoding="utf-8").read()
+    return sorted(set(re.findall(r'env_set\("(LOFT_NO_[A-Z0-9_]+)"\)', text)))
+
+
+def switches(cells):
+    """Which cure switches make each cell fail: the interpreter over every `LOFT_NO_*` switch, then
+    C for a cell the interpreter sweep left unmoved.  A switch that moves a cell is its receipt;
+    a cell no switch moves is asked whether it CAN fail (TESTING.md § Curating the suite)."""
+    sw = cure_switches()
+    for c in cells:
+        if run_cell(c, "--interpret", ARMINGS["leak"])[0] != 0:
+            print(f"{os.path.basename(c)}: fails with every cure ON — fix it first")
+            continue
+        hit = [s for s in sw if run_cell(c, "--interpret", {**ARMINGS["leak"], s: "1"})[0] != 0]
+        if not hit:
+            hit = ["C:" + s for s in sw if run_cell(c, "--native-c", {**ARMINGS["leak"], s: "1"})[0] != 0]
+        print(f"{os.path.basename(c)}: {' '.join(hit) if hit else 'NONE — no cure switch moves it'}")
+    return 0
+
+
+def _git(args, cwd, check=True):
+    r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+    if check and r.returncode:
+        raise SystemExit(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def land(rule, chapter_dir, new, olds, message):
+    """Retire `olds` (cell stems under rules/<chapter_dir>/) for the merged cell `new`: refuse while
+    anything still names a retired cell; require the rule's feature count unchanged; commit and push
+    the suite; replace gate E's rows (one row for the merged cell, or none when gate E agreed);
+    re-pin loft's suite pin; commit loft.  Every step is the one the curation pass ran by hand."""
+    suite = os.path.normpath(os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite"))
+    d = os.path.join(suite, "rules", chapter_dir)
+    skip = re.compile(r"/\.loft/|history|CHANGELOG|census-data|handoff|/" + re.escape(new) + r"\.loft$|" +
+                      "|".join("/" + re.escape(o) + r"\.loft$" for o in olds))
+    refs = []
+    for o in olds:
+        for base in (os.path.join(suite, "rules"), os.path.join(ROOT, "doc"), os.path.join(ROOT, "tests"),
+                     os.path.join(ROOT, "scripts"), os.path.join(ROOT, "src")):
+            r = subprocess.run(["grep", "-rlF", o, base], capture_output=True, text=True)
+            refs += [f"{o} <- {x}" for x in r.stdout.split() if not skip.search(x)]
+    if refs:
+        print("references to the retired cells — repoint them first:")
+        for x in refs:
+            print("  " + x)
+        return 1
+
+    def features():
+        out = subprocess.run([sys.executable, os.path.abspath(__file__), "plan", rule], capture_output=True, text=True).stdout
+        m = re.search(r"features the cells reach today: (\d+)", out)
+        return m.group(1) if m else "?"
+    before = features()
+    _git(["rm", "-q"] + [o + ".loft" for o in olds], d)
+    _git(["add", new + ".loft"], d)
+    after = features()
+    if before != after:
+        print(f"the rule's feature count moved {before} -> {after}: a merged header dropped a `loft#N` or an axis value")
+        return 1
+    # An edit made after its file was staged would miss the commit and pass every check that reads
+    # the working tree (a moved cell committed without the citation added after the `git mv`).
+    if subprocess.run(["git", "diff", "--quiet"], cwd=suite).returncode != 0:
+        print("the suite has unstaged changes — stage or drop them first:")
+        print(_git(["diff", "--stat"], suite))
+        return 1
+    trailer = "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+    _git(["commit", "-q", "-m", message + trailer], suite)
+    _git(["push", "-q", "origin", "HEAD:main"], suite)
+    head = _git(["rev-parse", "HEAD"], suite).strip()
+    rows_path = GATE_E
+    lines = open(rows_path, encoding="utf-8").read().split("\n")
+    ends = tuple(f"/{chapter_dir}/{o}.loft" for o in olds)
+    rows = [l for l in lines if l.endswith(ends)]
+    if rows and len(rows) != len(olds):
+        raise SystemExit(f"gate E lists {len(rows)} of {len(olds)} retired cells — the verdicts differed")
+    lines = [l for l in lines if l not in rows]
+    if rows:
+        verdict = rows[0].split("\t")[1]
+        row = f"elab\t{verdict}\tloft-suite/rules/{chapter_dir}/{new}.loft"
+        idx = [i for i, l in enumerate(lines) if l.startswith("elab\t")]
+        lines.insert(next((i for i in idx if lines[i].split("\t", 2)[2] > row.split("\t", 2)[2]), idx[-1] + 1), row)
+    text = "\n".join(lines)
+    m = re.search(r"agree\t(\d+)\tof\t(\d+)", text)
+    agree = int(m.group(1)) - (0 if rows else len(olds) - 1)
+    text = text.replace(m.group(0), f"agree\t{agree}\tof\t{int(m.group(2)) - (len(olds) - 1)}")
+    text = re.sub(r"(?m)^suite\t[0-9a-f]{40}$", "suite\t" + head, text)
+    open(rows_path, "w", encoding="utf-8").write(text)
+    open(os.path.join(ROOT, "tests", "loft-suite.pin"), "w", encoding="utf-8").write(head + "\n")
+    _git(["add", "tests/loft-suite.pin", "selfhost/front/elab_gate.baseline.tsv"], ROOT)
+    _git(["commit", "-q", "-m", f"Suite pin {head[:7]}: {message.splitlines()[0]}" + trailer], ROOT)
+    print(f"landed: suite {head[:7]}, features {after}, gate E {m.group(0).replace(chr(9), ' ')} -> agree {agree}")
+    return 0
+
+
 def rel(p):
     """A cell's place: `suite:rules/<chapter>/<rule>/<file>` for the language suite, else the
     path under this tree."""
@@ -406,6 +586,15 @@ def main():
         return nxt(int(a[1]) if len(a) > 1 else 3)
     if cmd == "plan" and tag:
         return plan(tag)
+    if cmd == "verify" and len(a) > 1:
+        return verify(a[1:])
+    if cmd == "vacuity" and len(a) > 1:
+        return vacuity(a[1:])
+    if cmd == "switches" and len(a) > 1:
+        return switches(a[1:])
+    if cmd == "land" and len(a) > 5:
+        # land <rule> <chapter/rule-dir> <new-stem> <message-file> <old-stem>…
+        return land(a[1].removeprefix("@FR-"), a[2], a[3], a[5:], open(a[4], encoding="utf-8").read().strip())
     if cmd == "merge" and len(a) > 4:
         return merge(a[1], a[2], a[3:])
     if cmd == "related" and tag and len(a) > 2:
