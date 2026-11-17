@@ -1340,8 +1340,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       it = el_types::without_deps(vars.tail_tp[0] ?? ir::TyVoid);
       // (A text answer takes the lambda's hidden `&text` buffer, `__work_ret`, which is made
       // with a DECLARED text result; any answer but a plain scalar is not carried here.)
-      if !(el_types::base(it) is TyText) && !el_ex_object::scalar_type(it) && !(it is TyVoid) && !el_types::is_unknown(it) && !(it is TyNull) {
-        el::refuse(e, "a short lambda answering a record or a collection its position does not name");
+      // (A record or a vector answer takes the lambda's late return buffer, reserved between the
+      // passes as any lambda's is; a tuple, a keyed collection or a function is not carried.)
+      ib = el_types::base(it);
+      if !(ib is TyText) && !el_ex_object::scalar_type(it) && !(ib is TyReference) && !(ib is TyVector) && !(it is TyVoid) && !el_types::is_unknown(it) && !(it is TyNull) {
+        el::refuse(e, "a short lambda answering a tuple, a keyed collection or a function its position does not name");
       }
       el::set_returned(e, e.context, if !(it is TyVoid) && !el_types::is_unknown(it) && !(it is TyNull) { it } else { ir::TyVoid });
       // (A text answer: the lambda takes its hidden `&text` buffer now, as a declared text
