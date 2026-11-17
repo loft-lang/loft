@@ -428,6 +428,18 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     rename_ret_buffer(e, vars, code, rb);
     renamed_now = attr_nr(el::def(e, e.context), "__retbuf") < 0;
   }
+  // A body that binds its tail local to a call and answers it at once (`b = f(…); b`), the
+  // return buffer renamed onto that local: the call is handed the local as its buffer.  Where
+  // the callee is declared BELOW, the first pass reads it before its answer is known as a
+  // buffer's — a pass-order window not carried: refused by name.
+  if rb >= 0 && !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") < 0 {
+    fb = tail_bind_call(e, vars, code);
+    if fb == 2 {
+      el::refuse(e, "a record answered from a call of a function declared below it");
+    } else if fb == 1 {
+      code = tail_call_into_local(e, vars, code);
+    }
+  }
   if rb >= 0 && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
     delivered = var_return(e, vars, code, rb);
     if delivered == null {
@@ -1000,6 +1012,86 @@ pub fn work_ref(vars: el_vars::Vars, v: integer) -> boolean {
 // An `if` tail whose every arm builds its record into a call's hidden `__ref_N` buffer — the
 // one the first pass renamed onto the return buffer, or a work ref of the arm's own — or answers
 // the null sentinel: the arms are the answer, and nothing more is delivered.
+// The body's last two statements as `b = n_call(…, <work ref>); b` with `b` the local the return
+// buffer was renamed onto: 1 for a callee declared above, 2 for one declared below, else 0.
+pub fn tail_bind_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> integer {
+  ops = match code { NdBlock { block } => [for o in block[0].operators if !el_ir::is_line(o) { o }], _ => return 0 };
+  if len(ops) < 2 {
+    return 0;
+  }
+  v = match el_ir::unspan(ops[-1]) { NdVar { n } => n, _ => return 0 };
+  if attr_nr(el::def(e, e.context), el_vars::name_of(vars, v)) < 0 {
+    return 0;
+  }
+  // (A callee declared below is the window wherever in the body the local is bound to it.)
+  for o in ops {
+    match el_ir::unspan(o) {
+      NdSet { var: fv, inner: fi } => {
+        if fv == v {
+          match el_ir::unspan(fi) {
+            NdCall { def_nr: fd, args: _ } => {
+              fc = el::def(e, fd);
+              if fd > e.context && fc.name.starts_with("n_") && el_types::base(fc.returned[0] ?? ir::TyVoid) is TyReference {
+                return 2;
+              }
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  match el_ir::unspan(ops[-2]) {
+    NdSet { var, inner } => {
+      if var != v {
+        return 0;
+      }
+      match el_ir::unspan(inner) {
+        NdCall { def_nr, args } => {
+          cd = el::def(e, def_nr);
+          if !cd.name.starts_with("n_") || !(el_types::base(cd.returned[0] ?? ir::TyVoid) is TyReference) || hidden_ref_arg(vars, args) < 0 {
+            return 0;
+          }
+          if def_nr > e.context { 2 } else { 1 }
+        },
+        _ => 0
+      }
+    },
+    _ => 0
+  }
+}
+
+// The tail local handed to its own bind's call as the buffer.
+pub fn tail_call_into_local(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node {
+  bl = match code { NdBlock { block } => block[0]!, _ => return code };
+  v = match el_ir::unspan(bl.operators[-1]) { NdVar { n } => n, _ => return code };
+  at = -1;
+  for o in bl.operators {
+    match el_ir::unspan(o) {
+      NdSet { var, inner: _ } => { if var == v { at = o#index; } },
+      _ => {}
+    }
+  }
+  if at < 0 {
+    return code;
+  }
+  match el_ir::unspan(bl.operators[at]!) {
+    NdSet { var, inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { def_nr, args } => {
+          w = hidden_ref_arg(vars, args);
+          na: vector<ir::Node> = [for a in args { match el_ir::unspan(a) { NdVar { n: an } => if an == w { ir::NdVar { n: v } } else { a }, _ => a } }];
+          bl.operators[at] = el_ir::v_set(var, ir::NdCall { def_nr: def_nr, args: na });
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  ir::NdBlock { block: [bl] }
+}
+
 pub fn cursor_tail(n: ir::Node) -> boolean {
   match el_ir::unspan(n) { NdBlock { block } => block[0].name == "cursor match", _ => false }
 }

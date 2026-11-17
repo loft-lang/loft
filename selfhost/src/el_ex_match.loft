@@ -863,6 +863,17 @@ pub fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 
 // `declared`: the element a declared local gives it (`v: vector<u8> = [for …]`), which the
 // items are stored at, where the body would answer a wider one.
+// The rows of a field's place (`OpGetField(r, pos, row)`): only the vector's row is known.
+fn field_rows(place: ir::Node) -> el_ex_base::VecRows? {
+  match el_ir::unspan(place) {
+    NdCall { def_nr: _, args } => {
+      k = match args[2] ?? ir::NdNull { NdInt { n } => n, _ => -1 };
+      if k < 0 { null } else { el_ex_base::VecRows { main_def: -1, main_known: -1, vec_known: k } }
+    },
+    _ => null
+  }
+}
+
 pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT = ir::TyUnknown { n: 0 }) -> Ex {
   binds: vector<text> = [];
   source = 0;
@@ -988,11 +999,15 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // `vector_def` on both passes; the element's store type (`vector_of`) on the second, in
   // `build_comprehension_code` — the order the schema numbers them in.
-  rows = vector_rows(e, in_t, n, false);
+  // (A field's comprehension names no vector type of its own: the field's row is the one its
+  // place reads.)
+  rows = if v >= 0 { vector_rows(e, in_t, n, false) } else { field_rows(dest) };
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  el_ex_pattern::vector_of(e, in_t);
+  if v >= 0 {
+    el_ex_pattern::vector_of(e, in_t);
+  }
   if v >= 0 && (len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument) {
     el::refuse(e, "a comprehension into a local that has a store");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1048,6 +1063,12 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // `try_const_unroll_comprehension`: a constant empty range builds the empty vector, no loop.
   if ranged && rw!.empty {
+    return ex(ir::NdInsert { items: items }, ir::TyVoid);
+  }
+  // (A field's build keeps a range start of more than one statement as a group of its own,
+  // as the value form does.)
+  if v < 0 && ranged && len(el_ex_pattern::range_init(rw!)) > 1 {
+    items += [ir::NdInsert { items: el_ex_pattern::range_init(rw!) }, el_ir::v_loop(steps, "For comprehension")];
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
   }
   items += if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };

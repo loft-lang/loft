@@ -1917,6 +1917,12 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
             },
             _ => {}
           }
+        } else if at is TyVector && e.p.nodes[fe!] is SComprehension {
+          // A field's comprehension is read as the field form on this pass too: it names no
+          // vector type of its own.
+          vars.comp_place = [ir::NdNull];
+          el_ex_match::comprehension_into(e, vars, -1, fe!, declared: match at { TyVector { inner: fi0 } => fi0, _ => ir::TyUnknown { n: 0 } });
+          vars.comp_place = [];
         } else {
           el_ex_assign::expression(e, vars, fe!);
           // A function-valued field's `__fn_ref_tmp` is minted on this pass too

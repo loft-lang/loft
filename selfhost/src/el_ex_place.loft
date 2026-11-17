@@ -2304,6 +2304,18 @@ pub fn nested_literal(e: el::El, vars: el_vars::Vars, v: integer, at: ir::TypeT,
 pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
   def = el::def(e, d);
   list: vector<ir::Node> = [];
+  // `@FR-B-View` × `@FR-B-Disturb`: a field given a local that VIEWS the record this literal
+  // rebuilds (`w = Outer { inner: a }` after `a = w.inner`) has the value staged in a work
+  // ref before the record is remade — not carried: refused by name.
+  if !e.first_pass && v >= 0 {
+    for fi in fields {
+      fv = match e.p.nodes[fi] { SFieldInit { e: fe0 } => if fe0 == null { -1 } else { match e.p.nodes[fe0!] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 } }, _ => -1 };
+      if fv >= 0 && fv != v && el_types::deps(el_vars::tp(vars, fv)).contains(v) {
+        el::refuse(e, "a literal rebuilding a record that a field's value views (the value is staged first)");
+        return null;
+      }
+    }
+  }
   // loft#924 — a linked collection group's headers are zeroed as one block, in offset order,
   // before any member is filled: an insert through one member indexes the record into all.  A
   // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
@@ -3122,7 +3134,9 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
   // go to the field's place, with no store and no local of its own.
   if e.p.nodes[n] is SComprehension {
     fa = attr_nr(el::def(e, d), fname);
-    fp = if fa >= 0 { el_ex_base::field_get(e, d, fa, r) } else { null };
+    // (The field's place is read on the second pass only: the first has no layout to read it
+    // from, and asking would lay the field's row out ahead of its record.)
+    fp: ir::Node? = if e.first_pass { ir::NdNull } else if fa >= 0 { el_ex_base::field_get(e, d, fa, r) } else { null };
     if fp == null {
       el::refuse(e, "a comprehension into a field that is not read as a place");
       return null;
@@ -3130,7 +3144,8 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
     vars.comp_place = [fp!];
     c = el_ex_match::comprehension_into(e, vars, -1, n, declared: inner);
     vars.comp_place = [];
-    return match c.code { NdInsert { items } => items, _ => [] };
+    // (The build is one inserted group, as the comprehension answers it.)
+    return match c.code { NdInsert { items } => if len(items) == 0 { [] } else { [c.code] }, _ => [] };
   }
   x = el_ex_assign::expression(e, vars, n);
   if e.first_pass {

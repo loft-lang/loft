@@ -100,7 +100,7 @@ pub fn fill_all(e: el::El) {
         TyVector { inner } => {
           nm = el_types::elem_name(e, inner);
           if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
-            make_vector_def(e, inner, nm, eof, false);
+            make_vector_def(e, inner, nm, eof, false, store: false);
           }
         },
         _ => {}
@@ -274,7 +274,7 @@ fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
 // wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
 // the wrapper its record type, as a construct does (the schema's own pass leaves it unknown,
 // and makes the `vector<T>` store type at once instead — `vector_store_type`).
-pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean, narrow_early: boolean = true) {
+pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean, narrow_early: boolean = true, store: boolean = true) {
   vt = ir::TyVector { inner: t, dep: [] };
   if el::def_nr(e, "vector<{nm}>") < 0 {
     vd = el::add_def(e, "vector<{nm}>", pos, el::DT_VECTOR);
@@ -304,7 +304,9 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
   // (A tagged `__nullable<S>` element's row follows its holder's: made where `main_vector` is filled.)
   // (A struct FIELD's vector of a struct enum is made with the struct's layout, after the
   // enum's variants.)
-  if !typed && !starts_with(nm, "__nullable<") && el_types::struct_enum_def(t) < 0 {
+  // (`store: false` — a field's vector no construct built: its row is made with the struct
+  // that holds it, after the struct's own.)
+  if store && !typed && !starts_with(nm, "__nullable<") && el_types::struct_enum_def(t) < 0 {
     vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
