@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	ab200a4bb39b03782e972917c5b65402429e2971
+suite	ad76762df88a83900ec342d028a9469c66dbddfa
 
-layer	elab	agree	1031	of	2105
+layer	elab	agree	1031	of	2104
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -367,12 +367,11 @@ elab	refused	loft-suite/rules/layout/L-Null-Which/2443-a-struct-enum-element-rea
 elab	refused	loft-suite/rules/layout/L-Null-Which/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.loft
 elab	refused	loft-suite/rules/layout/L-Null/1143-a-returned-nullable-keyed-parameter-is-still-the-callers.loft
 elab	refused	loft-suite/rules/layout/L-Null/1150-a-keyed-return-that-can-be-absent-hands-back-what-it-built.loft
-elab	refused	loft-suite/rules/layout/L-Null/1316-a-nullable-reference-field-is-still-a-pointer.loft
-elab	refused	loft-suite/rules/layout/L-Null/1421-a-nullable-handle-tests-its-own-sentinel.loft
 elab	refused	loft-suite/rules/layout/L-Null/1422-a-nullable-return-source-owns-its-store.loft
 elab	refused	loft-suite/rules/layout/L-Null/1782-an-omitted-nullable-struct-enum-field-is-absent.loft
 elab	refused	loft-suite/rules/layout/L-Null/a-nested-block-that-binds-the-buffer-from-a-call-delivers-into-it.loft
 elab	refused	loft-suite/rules/layout/L-Null/a-nullable-collection-lays-out-like-its-dense-twin.loft
+elab	refused	loft-suite/rules/layout/L-Null/a-nullable-pointer-or-handle-keeps-its-representation-and-its-sentinel.loft
 elab	refused	loft-suite/rules/layout/L-Null/a-nullable-struct-enum-payload-field-resolves-like-a-struct-field.loft
 elab	refused	loft-suite/rules/layout/L-Null/a-nullable-tuple-element-owns-like-its-dense-twin.loft
 elab	refused	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft

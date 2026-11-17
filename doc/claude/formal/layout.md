@@ -588,7 +588,7 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   (same size, same offsets); nullability lives in the schema, not the hash.  The golden compares
   a `τ?` with its own dense twin, so it cannot see a `τ?` given the WRONG half's representation —
   `reference<Leaf>?` laid out as a well-formed `__nullable<Leaf>` and every size check passed.
-  `loft-suite/rules/layout/L-Null/1316-a-nullable-reference-field-is-still-a-pointer.loft` scores that on
+  `loft-suite/rules/layout/L-Null/a-nullable-pointer-or-handle-keeps-its-representation-and-its-sentinel.loft` scores that on
   behaviour instead, on both backends: the marked field must SHARE (write through the source, read
   it through the field) and the unmarked one must COPY, which is the pair no layout dump
   distinguishes.  The VALUE spelling — a read that names no record answers `nullref` —
