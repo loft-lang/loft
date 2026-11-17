@@ -267,7 +267,8 @@ cc -dynamiclib -o /tmp/aside.dylib scripts/mac_windows_aside.c
 DYLD_INSERT_LIBRARIES=/tmp/aside.dylib GRAPHICS_TEST_WINDOW=1 loft --tests tests
 ```
 
-A whole-screen window is not moved, and a Mac with one screen shows the windows where it did.
+The screen in use is the one the pointer is on; a whole-screen window opens on the other one
+too.  A Mac with one screen shows the windows where it did.
 
 ## Occasional valgrind pass (Linux)
 
