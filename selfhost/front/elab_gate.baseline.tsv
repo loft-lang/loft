@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
 
-layer	elab	agree	956	of	2218
+layer	elab	agree	958	of	2220
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -410,6 +410,7 @@ elab	refused	loft-suite/rules/heap/H-Move/1591-a-coalesce-chain-that-holds-its-d
 elab	refused	loft-suite/rules/heap/H-Move/1623-a-returned-join-binding-hands-out-its-arms-temps.loft
 elab	refused	loft-suite/rules/heap/H-Move/1645-a-tuple-rebound-or-moved-in-an-arm-releases-each-member-once.loft
 elab	refused	loft-suite/rules/heap/H-Move/a-moved-local-is-spent-only-on-the-path-that-moved-it.loft
+elab	refused	loft-suite/rules/heap/H-NewRec/a-recursive-enum-builds-its-vector-children-in-one-literal.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-call-result-in-a-literal-argument-lives-as-long-as-its-holder.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-generic-recursive-enum-links-its-nodes-through-locals.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft
@@ -759,7 +760,6 @@ elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-en
 elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-subscript-literal-is-staged-then-written-into-the-entry-one-probe-finds.loft
 elab	refused	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft
 elab	refused	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft
-elab	refused	loft-suite/rules/rewrites/R-MoveLast/2148-a-view-stored-at-its-last-use-is-copied-not-moved.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft
 elab	refused	loft-suite/rules/rewrites/R-NoThreads/a-unit-with-a-par-loop-runs-a-demote-and-a-view-walk-as-written.loft
