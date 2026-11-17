@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	5c39d746fbaee4a89f2cd9f992c437a2129cac6a
+suite	9735485fc011908d82d9dba358df0a89c460c92a
 
-layer	elab	agree	1031	of	2094
+layer	elab	agree	1031	of	2093
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -384,9 +384,8 @@ elab	refused	loft-suite/rules/matching/M-Variant/a-variant-pattern-binds-the-pay
 elab	refused	loft-suite/rules/matching/P-Alt/a-field-sub-pattern-lists-alternatives.loft
 elab	refused	loft-suite/rules/matching/P-Alt/a-tuple-element-lists-alternatives.loft
 elab	refused	loft-suite/rules/matching/P-Anchor/a-failed-alternative-over-an-iterator-leaves-its-items-for-the-next.loft
-elab	refused	loft-suite/rules/matching/P-Cap/2325-a-capture-in-an-optional-group-and-a-wildcard-field.loft
 elab	refused	loft-suite/rules/matching/P-Cap/a-capture-and-a-plain-struct-stand-at-every-pattern-position.loft
-elab	refused	loft-suite/rules/matching/P-Cap/a-capture-of-a-group-binds-the-sub-slice-it-matched.loft
+elab	refused	loft-suite/rules/matching/P-Cap/a-capture-in-or-of-a-group-binds-what-the-group-matched.loft
 elab	refused	loft-suite/rules/matching/P-Cap/a-match-arm-captures-its-subject.loft
 elab	refused	loft-suite/rules/matching/P-Guard/a-guard-is-asked-of-each-listed-pattern.loft
 elab	refused	loft-suite/rules/matching/P-IterBound/a-match-over-an-iterator-materialises-its-whole-source.loft

@@ -383,7 +383,7 @@ would then serve both.  Decided 2026-11-06 (owner).
 **Holds at:** `@C161` — `./scripts/idx tag:@C161`: `Parser::bind_alternation_group` and the
 group capture in `Parser::parse_slice_pattern` / `parse_slice_repetition`
 (`src/parser/control.rs`); `formal/matching.md` `(P-Cap)`; guard
-`loft-suite/rules/matching/P-Cap/a-capture-of-a-group-binds-the-sub-slice-it-matched.loft`.
+`loft-suite/rules/matching/P-Cap/a-capture-in-or-of-a-group-binds-what-the-group-matched.loft`.
 **Catalogue:** `formal/matching.md` `(P-Rest)`, `(P-Opt)`, `(P-Rep)`.
 
 ## C162 — a guard on a multi-pattern arm is asked of each listed pattern that matches
