@@ -329,6 +329,19 @@ rows in that branch's baseline — cure them in the elaborator after rebasing:
 2. `tests/scripts/a-captured-view-of-a-call-result-is-released-once-past-an-early-exit.loft`:
    the closure build's function type reads `deps { items: [10] }` in Rust, `[9]` in the port.
 
+## Where the work order comes from
+
+The tester's report ranks the refusals by the programs that are exactly ONE refusal away from
+being compared, and gives for each of the top three: Rust's `defs` section of the function, a
+program shrunk until it is refused for that refusal alone, and the Rust function that emits the
+block.  Port in that order.  A port that turns a refusal into a DIFFER on a construct it does
+not carry is fixed by refusing that construct by name (the linked-collection-group insert and
+remove were), never by leaving the differ for the next slice.
+
+After a rebase onto main: rebuild the release binary, then the probe tools (`defs`, the
+standard image) and move the suite clone to `tests/loft-suite.pin` — a stale tool reads as a
+differ in every program.
+
 ## Open, in order
 
 1. **Out-of-line children** (`@FR-L-OutOfLine`) are carried in their first increments — layout
