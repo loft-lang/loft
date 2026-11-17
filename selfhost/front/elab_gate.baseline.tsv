@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	elab	agree	1049	of	2190
+layer	elab	agree	1053	of	2191
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -542,7 +542,6 @@ elab	refused	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/a-local-renamed-onto-the-buffer-keeps-its-value-when-returned-as-a-view.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/a-null-answer-into-a-promoted-buffer-keeps-the-callers-store.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/a-record-rebound-from-one-buffer-every-pass-frees-it-once.loft
-elab	refused	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/1599-a-returned-vector-rebound-by-a-call-in-a-loop-frees-its-stores.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/2382-an-early-return-releases-a-lifted-argument-of-its-block.loft
@@ -575,7 +574,6 @@ elab	refused	loft-suite/rules/ownership/O-Latest/1447b-a-captured-keyed-local-re
 elab	refused	loft-suite/rules/ownership/O-Latest/a-captured-vector-from-a-call-frees-the-store-its-rebind-leaves.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft
-elab	refused	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft
@@ -948,7 +946,6 @@ elab	refused	tests/scripts/1990-a-nullable-result-that-joins-a-dense-leaf-return
 elab	refused	tests/scripts/1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft
 elab	refused	tests/scripts/2001-a-work-buffer-through-a-function-value-is-its-own-store.loft
 elab	refused	tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft
-elab	refused	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft
 elab	refused	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft
 elab	refused	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft
 elab	refused	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft
@@ -1148,7 +1145,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15717	of	28238
+layer	elab-functions	agree	15662	of	28176
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -8724,18 +8721,6 @@ elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-record-rebound-from-o
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-record-rebound-from-one-buffer-every-pass-frees-it-once.loft::n_test_an_early_return
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-record-rebound-from-one-buffer-every-pass-frees-it-once.loft::n_test_every_pass_runs
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-record-rebound-from-one-buffer-every-pass-frees-it-once.loft::n_v_if
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::(schema)
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::DivProof
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::NBool
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::NIf
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::NSpan
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::NVar
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::Nd
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::n_is_true
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::n_test_a_jump_then_a_fresh_answer
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::n_test_jumps_into_the_buffer_answer
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::n_test_the_buffer_itself_answered
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft::n_test_two_jumps
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft::JnH
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft::JnI
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft::JnP
@@ -8931,11 +8916,13 @@ elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-free
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::BkT
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::BkVoid
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::main_vector<BkT>
+elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::n_bk_capture
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::n_bk_ex
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::n_bk_if
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::n_bk_label
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::n_bk_listing
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::n_bk_lo
+elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::n_bk_no_capture
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::n_main
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft::vector<BkT>
 elab-functions	agree	loft-suite/rules/ownership/O-Detach/2397-a-literal-reads-its-field-under-another-name.loft::F
@@ -9104,36 +9091,6 @@ elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft::t_3DcW_OpDropAll
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft::t_9DcW::DcWH_OpDropAll
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft::vector<DcS>
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::(schema)
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::Hold
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::Kv
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::Mesh
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::Table
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::V3
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::Vert
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::main_vector<Vert>
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_kv
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m1
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m10
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m11
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m12
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m13
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m14
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m2
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m3
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m4
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m5
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m6
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m7
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m8
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_m9
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_main
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_same
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_show
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_stair
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_v3
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::n_vert
-elab-functions	agree	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft::vector<Vert>
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::Bag1101
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::Inner1101
@@ -14447,21 +14404,6 @@ elab-functions	agree	tests/scripts/2016-a-chain-site-whose-callee-returns-its-pa
 elab-functions	agree	tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft::n_id2
 elab-functions	agree	tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft::n_j
 elab-functions	agree	tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft::n_mk
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::(schema)
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::S
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_both_arms
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_bound
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_control_build
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_control_join_build
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_dense
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_depth2
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_g
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_id
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_if_null
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_jn
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_join_param
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_main
-elab-functions	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_nested
 elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::N
 elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::S
 elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::U
