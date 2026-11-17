@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	35b205d4e891d4ad4ee36a650a58c05b3b5694b1
+suite	815cd1314f0c9c41a806cb0a013b09eb5a229a2c
 
-layer	elab	agree	1031	of	2163
+layer	elab	agree	1031	of	2161
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -174,9 +174,7 @@ elab	refused	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-ca
 elab	refused	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft
 elab	refused	loft-suite/rules/closures/L-CapRef/a-captured-ref-parameter-shares-its-heap-pointee-and-copies-its-scalar-in-every-spelling.loft
 elab	refused	loft-suite/rules/closures/L-CapScalar/a-captured-scalar-keeps-its-type-and-its-moment.loft
-elab	refused	loft-suite/rules/closures/L-CapWrite/2286-a-frame-and-its-closure-both-write-a-captured-text.loft
-elab	refused	loft-suite/rules/closures/L-CapWrite/2297-a-captured-text-the-closure-writes-is-the-functions-result.loft
-elab	refused	loft-suite/rules/closures/L-CapWrite/2350-a-text-a-closure-writes-is-returned-with-the-write-whatever-returns-it-first.loft
+elab	refused	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft
 elab	refused	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft
 elab	refused	loft-suite/rules/closures/L-Escape/1867-a-returned-struct-keeps-its-closure-capture.loft
 elab	refused	loft-suite/rules/closures/L-Escape/1874-a-fn-field-holds-any-closure.loft
