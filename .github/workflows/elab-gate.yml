@@ -19,11 +19,12 @@ on:
 permissions:
   contents: read
 
-# One gate at a time and at most one waiting: a newer push replaces a WAITING run (whose baseline
-# the newer one supersedes) but never cancels the run in progress, so every started run finishes
-# even while commits arrive faster than a run takes.
+# One gate at a time and at most one waiting PER BRANCH: a newer push replaces a WAITING run of
+# the same branch (whose baseline the newer one supersedes) but never cancels the run in progress.
+# The group is per branch: one stream's push must never replace another stream's waiting run (a
+# PR's measurement of its joined tree, dispatched on its own branch, was replaced this way).
 concurrency:
-  group: elab-gate
+  group: elab-gate-${{ github.ref }}
   cancel-in-progress: false
 
 env:
