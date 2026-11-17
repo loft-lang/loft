@@ -101,6 +101,7 @@ scripts/smoke-components.sh	--help
 scripts/stability_read.py	--help
 scripts/steering_rate.py	--help
 scripts/store_why.py	--help
+scripts/suite_curate.py	--help
 scripts/sweep_ignored.sh	--help
 scripts/sweep_scratch.sh	--help
 scripts/tanmatsu_log.py	--help
