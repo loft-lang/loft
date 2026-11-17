@@ -128,16 +128,16 @@ G-Delegate	coroutines	curated	6	2026-11-17	2 cells, both agree with gate E (merg
 G-Done	coroutines	curated	5	2026-11-17	no own directory; five suite cells elsewhere cite it
 G-For	coroutines	curated	3	2026-11-17	3 cells: two agree with gate E, one refused (owned heap values) — nothing to merge
 G-Hold	coroutines	curated	6	2026-11-17	own dir 10 -> 5: a moved generator is not read again (loft#2043 x4 refusals) 4->1; a generator held in a field or element is released once by its holder (loft#1585, moved-in, overwritten) 3->1; the keyed patch, the handle cells stay
-G-Next	coroutines	todo			
-G-NoRefParam	coroutines	todo			
-G-Own	coroutines	todo			
-G-Return	coroutines	todo			
-G-Yield	coroutines	todo			
-G-YieldDepth	coroutines	todo			
-D-Rank	dispatch	todo			
-Disp-Ambiguous	dispatch	todo			
-Disp-Applicable	dispatch	todo			
-Disp-Closed	dispatch	todo			
+G-Next	coroutines	curated	12	2026-11-17	4 cells: a patch, a gate-E-agreeing delegation prefix, and two refused cells of different clauses (resume point, lazy handover)
+G-NoRefParam	coroutines	curated	2	2026-11-17	2 cells: the cursor control and the reference-parameter refusal (both agree with gate E)
+G-Own	coroutines	curated	5	2026-11-17	own dir 7 -> 4: what an advance produces is the consumer's (loft#1589 + handover + lambda copy) 3->1; a link in a generator yields its value (loft#2420/#2421 + the parameter link) 2->1; the droppable pair stays
+G-Return	coroutines	curated	2	2026-11-17	2 cells: the tail-value refusal and the break control
+G-Yield	coroutines	curated	13	2026-11-17	7 cells: five patches and two of different clauses
+G-YieldDepth	coroutines	curated	2	2026-11-17	2 cells: the delegated-frame control and the yield-outside refusal
+D-Rank	dispatch	curated	4	2026-11-17	4 cells, all gate-E-agreeing (one refusal) — merging would lower the agree count
+Disp-Ambiguous	dispatch	curated	6	2026-11-17	own dir 4 -> 1: four ambiguity refusals in one file, each expectation proven alone
+Disp-Applicable	dispatch	curated	6	2026-11-17	3 cells, all gate-E-agreeing — kept
+Disp-Closed	dispatch	curated	1	2026-11-17	one cell (a static call is typed by the member it selects)
 Disp-Dynamic	dispatch	todo			
 Disp-Exhaustive	dispatch	todo			
 Disp-Hint	dispatch	todo			
