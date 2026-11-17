@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	bc56603d3ef39662ce8a4c1f348db11265426c06
+suite	1df3306b062b6bbfb2139187fe2a456ebb8d7d99
 
-layer	elab	agree	1031	of	2146
+layer	elab	agree	1031	of	2145
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -221,8 +221,7 @@ elab	refused	loft-suite/rules/collections/Slice-Value/a-negative-slice-bound-cou
 elab	refused	loft-suite/rules/collections/Slice-Value/a-slice-is-a-fresh-vector-at-every-vector-position.loft
 elab	refused	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft
 elab	refused	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft
-elab	refused	loft-suite/rules/concurrency/C-Order/a-par-loop-consumes-results-in-its-sources-order.loft
-elab	refused	loft-suite/rules/concurrency/C-Order/a-par-walk-keeps-every-kinds-order-but-a-hashs.loft
+elab	refused	loft-suite/rules/concurrency/C-Order/a-par-loop-keeps-its-sources-order.loft
 elab	refused	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft
 elab	refused	loft-suite/rules/coroutines/G-Call/2059-a-lambda-generator-in-every-position.loft
 elab	refused	loft-suite/rules/coroutines/G-Call/a-lambda-returning-an-iterator-is-a-generator.loft
