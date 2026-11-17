@@ -1,0 +1,30 @@
+diff --git b/src/parser/match_captures.rs a/src/parser/match_captures.rs
+index efed5a893..0efd0999a 100644
+--- b/src/parser/match_captures.rs
++++ a/src/parser/match_captures.rs
+@@ -454,10 +454,6 @@ impl Parser {
+                     depth += 1;
+                     self.lexer.cont();
+                 }
+-                // A closing bracket at depth 0 is the enclosing match's own: the arm has no
+-                // `=>` (a malformed body), and skipping past it ran the skip to the end of the
+-                // file, where the arm loop never met its `}` again and spun.
+-                LexItem::Token(t) if depth == 0 && (*t == "]" || *t == ")" || *t == "}") => break,
+                 LexItem::Token(t) if *t == "]" || *t == ")" || *t == "}" => {
+                     depth -= 1;
+                     self.lexer.cont();
+diff --git b/src/parser/match_expr.rs a/src/parser/match_expr.rs
+index af5c66986..e115f6c2c 100644
+--- b/src/parser/match_expr.rs
++++ a/src/parser/match_expr.rs
+@@ -350,9 +350,7 @@ impl Parser {
+         let mut hoisted_bindings: Vec<Value> = Vec::new();
+ 
+         loop {
+-            // The end of the file ends the arms too: an arm that consumed nothing there would
+-            // be read again for ever.
+-            if self.lexer.peek_token("}") || matches!(self.lexer.peek().has, LexItem::None) {
++            if self.lexer.peek_token("}") {
+                 break;
+             }
+             // @PLN25 — a `null` pattern arm on a nullable inline enum element

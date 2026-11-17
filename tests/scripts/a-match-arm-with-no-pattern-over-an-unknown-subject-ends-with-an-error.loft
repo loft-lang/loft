@@ -5,6 +5,8 @@
 // `match` — must end at the match's own `}`: the skip used to step past that brace and run to
 // the end of the file, where the arm loop never met a `}` again and the parser spun for ever.
 // The program is rejected with its real error instead.
+// @falsified-at: 568dfe04c — interpret exit 134 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 134 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-match-arm-with-no-pattern-over-an-unknown-subject-ends-with-an-error.patch — interpret exit 134 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 134 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
 // @EXPECT_ERROR: Unknown variable 'code'
 // @EXPECT_ERROR: match requires an enum, struct, or scalar type
 // @EXPECT_ERROR: expect variant name or '_' in match arm

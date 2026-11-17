@@ -4,6 +4,8 @@
 // a-match-arm-with-no-pattern-over-an-unknown-subject-ends-with-an-error.loft): a `match` whose
 // subject has no type, written again where its first arm goes.  The skip stops at the inner
 // match's `}`, and the outer one is reported unclosed instead of the parser spinning.
+// @falsified-at: 568dfe04c — interpret exit 134 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 134 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-second-match-where-a-match-arm-goes-ends-with-an-error.patch — interpret exit 134 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 134 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
 // @EXPECT_ERROR: Expect token ;
 // @EXPECT_ERROR: Expect token }
 
