@@ -566,7 +566,12 @@ def land(rule, chapter_dir, new, olds, message):
         # which the merged cell's receipt names by that path), so a `.patch` name is no
         # reference.  It runs only once nothing can refuse any more — a refused land must leave no
         # staged edit behind for another commit to carry.  Each rewritten file is staged in its
-        # own repository and listed: read the list, a sentence may want rewording.
+        # own repository and listed: read the list, a sentence may want rewording.  Two retired
+        # cells cited side by side (`A and B`) become the merged cell named twice in a row; that
+        # is reported, not rewritten — the sentence around it decides the rewording.
+        touched = set()
+        twice = re.compile(re.escape(new) + r"(?:\.loft)?`?\s*(?:and|or|,|·|/)?\s*`?[\w./-]*?"
+                           + re.escape(new))
         for o in olds:
             named = re.compile(r"(?<![A-Za-z0-9_-])" + re.escape(o) + r"(?![A-Za-z0-9_-]|\.patch)")
             for base in (os.path.join(suite, "rules"), os.path.join(ROOT, "doc"), os.path.join(ROOT, "tests"),
@@ -586,7 +591,13 @@ def land(rule, chapter_dir, new, olds, message):
                         continue
                     open(x, "w", encoding="utf-8").write(named.sub(new, text))
                     _git(["add", os.path.relpath(x, repo)], repo)
+                    touched.add(x)
                     print(f"  repointed  {o} -> {new}  in {os.path.relpath(x, repo)}")
+        for x in sorted(touched):
+            text = open(x, encoding="utf-8", errors="replace").read()
+            for m in twice.finditer(text):
+                line = text.count("\n", 0, m.start()) + 1
+                print(f"  twice      {os.path.relpath(x, ROOT)}:{line} names {new} twice in a row — reword it")
 
     def features():
         # The SET of what the rule's cells reach (the union `plan` counts), so a refusal can name

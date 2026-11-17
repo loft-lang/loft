@@ -157,11 +157,11 @@ Fact-Reach	facts	structural	0	2026-11-17	the depth and cycle parameters of a que
 Fact-ReachMin	facts	structural	0	2026-11-17	a rewrite asks the smallest reach, a widening measured by make rewrite-census: a process rule, not a program's answer
 Fact-Relational	facts	curated	1	2026-11-17	a first suite cell: an accessor's bound answers by its own test inside, outside and below zero (negative counts from the end); the accessor inlining clause is PROPOSED
 Fact-Twin	facts	curated	1	2026-11-17	a first suite cell: a twin chain from proving and non-proving sites (C: __rg twins vs general bodies), values alike with NN twins on and off; tests/twin_base.rs + tests/scripts/157-twin-base.loft (read by path) guard R-Base's twin
-F-Desugar	formatting	todo			
-F-Escape	formatting	todo			
-F-FaultSafe	formatting	todo			
-F-Float-Text	formatting	todo			
-F-Interp	formatting	todo			
+F-Desugar	formatting	curated	3	2026-11-17	2 cells, both agree with gate E
+F-Escape	formatting	curated	1	2026-11-17	one cell (a patch: a brace escaped by doubling in every position)
+F-FaultSafe	formatting	curated	5	2026-11-17	own dir 3 -> 2: a hole whose value faults or is null renders plain null (fault in any hole + null never reaches to_text, @C142) 2->1; the uncomputable-operand program agrees with gate E
+F-Float-Text	formatting	curated	1	2026-11-17	no own directory; one suite cell elsewhere cites it
+F-Interp	formatting	curated	9	2026-11-17	4 cells: the two refusals cannot share a file (the empty hole is a parse refusal that masks the unknown-name one); a patch and a gate-E-agreeing program
 F-Read-Ref	formatting	todo			
 F-Render	formatting	todo			
 F-Render-Child	formatting	todo			
