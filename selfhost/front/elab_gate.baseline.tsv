@@ -1130,7 +1130,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15477	of	27913
+layer	elab-functions	agree	15481	of	27913
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -9066,6 +9066,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Move/1202-a-captured-record-en
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft::n_se_make
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_branch1327
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_dense1327
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_named1327
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_plain1327
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_branch_over_the_same_opaque_target
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_closure_through_a_parameter_does_not_free_the_callers_vector
@@ -9189,6 +9190,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argu
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::Rk1318
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::main_vector<vector<integer>>
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n_copy1318
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n_dflt1318
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n_mint1318
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n_test_a_field_read_argument_is_the_control_for_the_spelling_axis
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n_test_a_minting_argument_is_still_adopted
@@ -9245,7 +9247,9 @@ elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_inplace
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_main
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft::n_mk
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_g1257
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_main
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_named1257
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_test_an_inline_closure_vector_return_in_a_loop_leaves_its_source_intact
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_test_the_mint_arm_still_answers_and_this_cell_is_the_trade
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::K1320
