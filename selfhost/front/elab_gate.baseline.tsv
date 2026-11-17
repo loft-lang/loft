@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	3fa914378eac2e6d76316243b1da41b19bbaf116
+suite	31fdf2b37e1a1ab817fe5641a73152bc198f88e0
 
-layer	elab	agree	964	of	2198
+layer	elab	agree	964	of	2194
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -77,16 +77,12 @@ elab	refused	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-
 elab	refused	loft-suite/rules/binding/B-RefType/a-link-variable-reads-and-writes-its-place.loft
 elab	refused	loft-suite/rules/binding/B-Scope/1156-a-loop-body-local-read-after-the-loop-is-not-freed-per-iteration.loft
 elab	refused	loft-suite/rules/binding/B-Scope/1679-a-call-through-a-rebound-name-reaches-the-new-binding.loft
-elab	refused	loft-suite/rules/binding/B-Scope/1700-a-bind-after-its-block-ended-is-a-new-binding-at-any-type.loft
 elab	refused	loft-suite/rules/binding/B-Scope/1802-a-par-loop-variable-ends-with-its-loop.loft
-elab	refused	loft-suite/rules/binding/B-Scope/2321-a-loop-variable-over-an-ended-blocks-name-is-a-new-binding.loft
-elab	refused	loft-suite/rules/binding/B-Scope/2330-a-comprehension-variable-keeps-its-type-beside-a-later-local-of-its-name.loft
-elab	refused	loft-suite/rules/binding/B-Scope/2332-a-bind-after-a-loop-is-a-new-binding-at-the-loop-variables-type.loft
 elab	refused	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft
-elab	refused	loft-suite/rules/binding/B-Scope/2411-a-bind-from-a-later-function-after-its-block-ended-is-a-new-binding.loft
 elab	refused	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-loop-name-a-destructure-reuses-compiles.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-name-bound-in-sibling-loops-is-one-binding-per-loop-on-every-backend.loft
+elab	refused	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-patterns-names-end-with-its-arm.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-sub-pattern-capture-leaves-the-outer-name-alone.loft
 elab	refused	loft-suite/rules/binding/B-Scope/a-sub-pattern-name-and-a-variant-typed-element-compile.loft
