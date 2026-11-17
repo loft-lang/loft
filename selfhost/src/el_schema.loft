@@ -302,7 +302,9 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     _ => {}
   }
   // (A tagged `__nullable<S>` element's row follows its holder's: made where `main_vector` is filled.)
-  if !typed && !starts_with(nm, "__nullable<") {
+  // (A struct FIELD's vector of a struct enum is made with the struct's layout, after the
+  // enum's variants.)
+  if !typed && !starts_with(nm, "__nullable<") && el_types::struct_enum_def(t) < 0 {
     vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);

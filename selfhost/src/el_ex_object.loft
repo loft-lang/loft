@@ -164,6 +164,30 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       built += [true];
       continue;
     }
+    // A variant literal of a struct-enum element (`PRaw { start: 7 }`) is built in the element
+    // as a struct literal is, its `enum` field taking the variant's ordinal.
+    sen = el_types::struct_enum_def(inner);
+    if sen >= 0 && elm >= 0 && el_ex_pattern::variant_literal(e, it) {
+      vfs: vector<integer> = [];
+      vd = -1;
+      match e.p.nodes[it] {
+        SStructLit { name: vn, fields: vf } => { vfs = vf; vd = el::def_nr(e, vn); },
+        _ => {}
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: sen, dep: el_types::deps(el_vars::tp(vars, elm)) });
+      if e.first_pass {
+        el_ex_pattern::first_pass_fields(e, vars, vd, vfs);
+        continue;
+      }
+      vat = ir::NdVar { n: elm };
+      vbody = el_ex_place::fields_at(e, vars, elm, vat, vd, vfs);
+      if vbody == null {
+        return null;
+      }
+      xs += [ex(ir::NdInsert { items: [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + vbody! + [el_ir::cl(e, "OpFinishRecord", [r, vat, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])] }, ir::TyVoid)];
+      built += [true];
+      continue;
+    }
     x = el_ex_assign::expression(e, vars, it);
     if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
       el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
@@ -202,6 +226,14 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
         return null;
       }
       out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + fill!;
+      out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
+    } else if el_types::struct_enum_def(inner) >= 0 && match el_ir::unspan(x.code) { NdBlock { block: ub } => ub[0].name == "EnumUnitLit", _ => false } {
+      // A unit variant of a struct-enum element is copied into the element made for it.
+      sd = el_types::struct_enum_def(inner);
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: sd, dep: el_types::deps(el_vars::tp(vars, elm)) });
+      at = ir::NdVar { n: elm };
+      out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))];
+      out += [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: el::def(e, sd).known_type + 16384 }])];
       out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
     } else {
       el::refuse(e, "a vector field of records written from a literal: an item that is no literal");

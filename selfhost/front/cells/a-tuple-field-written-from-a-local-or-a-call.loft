@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a tuple field written from a tuple local takes its members (`x.0`), from a call's tuple through a work ref held first, and an integer member widens into a float one (`OpConvFloatFromInt`).
+// Prints: eight 3 10
+
+struct H { k: integer, t: (integer, text), q: (float, integer) }
+fn mk(n: integer) -> (integer, integer) { (n, n + 1) }
+struct G { g: (integer, integer) }
+fn put(h: H) { h.q = (3, 4); }
+fn main() {
+  x = (7, "seven");
+  h = H { k: 1, t: x, q: (1, 2) };
+  y = (8, "eight");
+  h.t = y;
+  g = G { g: mk(5) };
+  g.g = mk(9);
+  put(h);
+  println("{h.t.1} {h.q.0} {g.g.1}");
+}

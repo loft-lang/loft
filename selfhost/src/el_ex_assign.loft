@@ -2624,6 +2624,11 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     x = expression(e, vars, rhs!);
     view = el_ir::unspan(x.code);
     bare_var = match view { NdVar { n: rv } => rv != v, _ => false };
+    // (A `!` read is a view as well, copied with its check inside — not carried.)
+    if !e.first_pass && match view { NdBlock { block: nb } => nb[0].name == "ncr", _ => false } {
+      el::refuse(e, "a `!` read written whole through a `&` link to a record");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
     if !bare_var && !calls(e, view, "OpGetField") {
       return ex(if e.first_pass { ir::NdNull } else { el_ir::v_set(v, x.code) }, ir::TyVoid);
     }
