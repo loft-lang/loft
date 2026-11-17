@@ -41,8 +41,8 @@ P-Cap-View	binding	curated	3	2026-11-17	own dir 5 -> 2: the capture-is-a-view cl
 F-Args	calls	curated	3	2026-11-17	one cell (insert takes its arguments before the vector grows, patch); two citing cells elsewhere
 F-Arity	calls	curated	3	2026-11-17	was Rust-only: two suite cells, split on the compile pass a refusal is met in (past the parameters / short of a required one or a generic past its); writing them found loft#2537 (a refused call typed null to the code after it), fixed; patch receipts
 F-Block	calls	curated	12	2026-11-17	8 files, no merge: the two block-yields-a-call-on-a-reference cells are one clause but gate E splits them (refused / agree); 1722 (patch, the null path) and the tail-match cell with its fixture library (frees across a package boundary) are distinct clauses; 1382/2456 statement-position cells agree; 1386 the value-position refusal
-F-Call	calls	todo			
-F-Default	calls	todo			
+F-Call	calls	curated	5	2026-11-17	own dir 2 -> 1: the frame frees exactly what it owns — loft#1935 (patch) and the conformance cell — 2->1
+F-Default	calls	curated	3	2026-11-17	own dir 4 -> 3: D-call-26's well-formed default (the match default over records, patch; the unit variant, loft#2410) 2->1; 1758 and the earlier-arguments cell (both patches) stay
 F-Default-Field	calls	todo			
 F-Drop	calls	todo			
 F-OneBody	calls	todo			
