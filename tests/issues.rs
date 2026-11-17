@@ -19364,6 +19364,56 @@ a_function_returning_foreign_data_must_say_const:2:33",
     .warning("Variable w is never read at a_function_returning_foreign_data_must_say_const:3:16");
 }
 
+/// `@FR-Const-Foreign` — asking whether a body's tail is foreign data follows each local's
+/// assignments once.  Locals assigned from each other form a cycle (`y = n; x = y; y = x; y`),
+/// and following it again and again overflowed the compiler's stack: a crash on a valid program.
+#[test]
+fn locals_assigned_from_each_other_are_followed_once() {
+    code!(
+        "fn two(n: integer) -> integer { y = n; x = y; y = x; y }
+fn three(n: integer) -> integer { y = n; x = y; z = x; y = z; y }
+fn run() -> integer { two(3) * 10 + three(7) }"
+    )
+    .expr("run()")
+    .result(Value::Int(37));
+}
+
+/// `@FR-Const-Foreign` — followed once, a local still brings every assignment it has: foreign
+/// data reaching the tail only through the OTHER local of a cycle is still refused.
+#[test]
+fn foreign_data_through_a_cycle_of_locals_is_still_refused() {
+    code!(
+        "fn h(n: const integer) -> const integer { n }
+fn g(n: integer) -> integer { y = n; x = h(n); y = x; x = y; y }"
+    )
+    .warning(
+        "Parameter 'n' is const but is never modified; 'const' has no effect on an unmodified \
+primitive parameter at foreign_data_through_a_cycle_of_locals_is_still_refused:1:9",
+    )
+    .warning("Dead assignment — 'y' is overwritten before being read at foreign_data_through_a_cycle_of_locals_is_still_refused:2:37")
+    .error(
+        "Cannot modify 'x': it holds read-only data the program does not own (a mapped file or a \
+library's buffer) — copy it first (`w = x`, a bind copies) and write the copy at foreign_data_through_a_cycle_of_locals_is_still_refused:2:43",
+    )
+    .error(
+        "Cannot modify 'x': it holds read-only data the program does not own (a mapped file or a \
+library's buffer) — copy it first (`w = x`, a bind copies) and write the copy at foreign_data_through_a_cycle_of_locals_is_still_refused:2:60",
+    )
+    // the tail `y` reaches `h(n)` only through `x`, across the cycle
+    .error(
+        "'g' returns read-only data the program does not own (a mapped file or a library's \
+buffer) as a writable `integer` — declare it `-> const integer`, or return a copy at foreign_data_through_a_cycle_of_locals_is_still_refused:2:65",
+    );
+}
+
+/// A failed call leaves the destination's own name as the value (`y = y`), the shape of a
+/// cycle: an unknown function whose answer is the tail is reported, not a crash.
+#[test]
+fn an_unknown_function_bound_and_answered_is_reported() {
+    code!("fn pp() -> integer { y = swap(pr(3.0)); y }")
+        .error("Unknown function pr at an_unknown_function_bound_and_answered_is_reported:1:31");
+}
+
 /// `@FR-Const-Foreign` — the cure: a bind copies (`w = v`) into a writable value, and a `const`
 /// parameter reads the original; the original is untouched.
 #[test]
