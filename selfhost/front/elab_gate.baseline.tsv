@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	ddefd5ebffd860f387fa5a08baad9732f397dff9
+suite	dda01509e54314336954ae736b5c7dc52af99089
 
-layer	elab	agree	1031	of	2089
+layer	elab	agree	1031	of	2088
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -414,8 +414,7 @@ elab	refused	loft-suite/rules/operational/E-Asgn-Compound/2426-a-tuple-member-of
 elab	refused	loft-suite/rules/operational/E-Asgn-Discharge/a-compound-write-through-a-discharge-reads-the-default-and-writes-the-place.loft
 elab	refused	loft-suite/rules/operational/E-Asgn/1574-a-literal-rebuilt-into-a-local-is-computed-from-the-old-record.loft
 elab	refused	loft-suite/rules/operational/E-Asgn/1575-a-literal-handed-to-a-call-that-returns-it-is-computed-from-the-old-record.loft
-elab	refused	loft-suite/rules/operational/E-Coalesce/a-call-default-of-a-nested-container-is-owned-by-its-binding.loft
-elab	refused	loft-suite/rules/operational/E-Coalesce/a-discharged-local-consumed-in-place-leaks-no-copy.loft
+elab	refused	loft-suite/rules/operational/E-Coalesce/a-discharged-value-is-owned-by-its-binding.loft
 elab	refused	loft-suite/rules/operational/E-Concat/2046-a-character-joins-with-text-and-adds-with-an-integer.loft
 elab	refused	loft-suite/rules/operational/E-Default/the-types-default-discharges-each-kind.loft
 elab	refused	loft-suite/rules/operational/E-Eq/1580-a-value-struct-compares-by-content.loft
