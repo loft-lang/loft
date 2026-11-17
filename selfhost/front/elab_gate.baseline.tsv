@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	a887f0b491fc0ad782e41774d5ad75459ac7ac85
+suite	0bc4e9f0a8f6ef0b843cc97e4bde39e46a16b28c
 
-layer	elab	agree	1031	of	2151
+layer	elab	agree	1031	of	2150
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -207,8 +207,7 @@ elab	refused	loft-suite/rules/collections/Col-Insert/1914-a-trie-key-names-one-r
 elab	refused	loft-suite/rules/collections/Col-Key/a-key-field-is-an-immutable-value.loft
 elab	refused	loft-suite/rules/collections/Col-Len/1915-an-index-answers-len-in-both-spellings.loft
 elab	refused	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft
-elab	refused	loft-suite/rules/collections/Col-Lookup/1450b-a-keyed-point-lookup-is-nullable-on-a-dense-receiver.loft
-elab	refused	loft-suite/rules/collections/Col-Lookup/a-missed-lookup-discharges-and-propagates-at-every-kind.loft
+elab	refused	loft-suite/rules/collections/Col-Lookup/a-keyed-lookup-is-nullable-and-a-miss-discharges-and-propagates-at-every-kind.loft
 elab	refused	loft-suite/rules/collections/Col-Order/a-keyed-walk-is-in-key-order-and-an-absent-collection-counts-zero.loft
 elab	refused	loft-suite/rules/collections/Col-Remove/each-of-the-four-spellings-deletes-one-element.loft
 elab	refused	loft-suite/rules/collections/Col-RemoveDense/a-narrow-vector-element-slides-by-its-declared-width.loft
