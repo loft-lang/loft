@@ -1,0 +1,172 @@
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index 7e8f82fe7..6fe4b5cc1 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -405,13 +405,6 @@ impl Stores {
+     /// `@C145`, `@FR-H-LongRef` — a linked element claims a record of its own here, so a
+     /// reference to it keeps its place while the collection around it grows or re-sorts.
+     pub fn record_new(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
+-        // `@FR-H-WriteNull` — an append through a record that names nothing claims nothing: it
+-        // answers the null it was given, so the element's field writes and `record_finish` skip.
+-        // A plain vector already did (`vector_append` tests it); a keyed one reached the hash
+-        // and indexed `stores[u16::MAX]` on the interpreter (`ds[9].hs += [E { … }]`).
+-        if data.is_null() {
+-            return *data;
+-        }
+         // @PLN101 Slice 0 — count every heap record allocation (the cost value structs remove).
+         self.records_created += 1;
+         // @PLN157 § V-k — the commonest shape, `v += [x]` on a plain vector: `field` is
+@@ -611,12 +604,6 @@ impl Stores {
+         key_pos: u32,
+         key: i64,
+     ) -> DbRef {
+-        // `@FR-H-WriteNull` — a filing through a record that names nothing lands nowhere: the
+-        // null record, which the field writes after it skip (`ds[9].hs += [E { … }]`).  The null
+-        // passed in is answered as it came, so a REPORTED one (a guard's arm owns it) stays so.
+-        if data.is_null() {
+-            return *data;
+-        }
+         if key_pos != u32::MAX && self.live_scratches.is_empty() && !keys::keyed_verify() {
+             let d = DbRef {
+                 store_nr: data.store_nr,
+@@ -683,12 +670,6 @@ impl Stores {
+         field: u16,
+         key: &[i64; 4],
+     ) -> DbRef {
+-        // `@FR-H-WriteNull` — through a record that names nothing, the null record (loft#2549's
+-        // guarded filing redirects a locked collection to it too).  Without this the interpreter
+-        // indexed `stores[u16::MAX]`; the C backend already answered null.
+-        if data.is_null() {
+-            return *data;
+-        }
+         let n = self.types[self.sub_record_type(parent_tp, field) as usize]
+             .keys
+             .len()
+@@ -730,10 +711,6 @@ impl Stores {
+         field: u16,
+         key: &str,
+     ) -> DbRef {
+-        // `@FR-H-WriteNull` — through a record that names nothing, the null record.
+-        if data.is_null() {
+-            return *data;
+-        }
+         let tp = self.sub_record_type(parent_tp, field);
+         let d = self.field_ref(data, parent_tp, field);
+         if !self.live_scratches.iter().any(|(source, _)| *source == d)
+@@ -769,10 +746,6 @@ impl Stores {
+     When the implementation is not yet written
+     */
+     pub fn record_finish(&mut self, data: &DbRef, rec: &DbRef, parent_tp: u16, field: u16) {
+-        // `@FR-H-WriteNull` — the twin of `record_new`'s: nothing was claimed, nothing is filed.
+-        if data.is_null() {
+-            return;
+-        }
+         // @PLN157 § V-k — the twin of `record_new`'s short path: a plain vector's finish is
+         // the length bump and nothing else (no siblings to link, no key to place).
+         if field == u16::MAX && matches!(self.types[parent_tp as usize].parts, Parts::Vector(_)) {
+@@ -2749,11 +2722,6 @@ impl Stores {
+     /// When the source's byte length does not fit a store claim.
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+     pub fn vector_add(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
+-        // `@FR-H-WriteNull` — an append onto a vector that names nothing lands nowhere
+-        // (`ds[9].xs += ys`, or a guarded append whose store is locked, loft#2549).
+-        if db.is_null() {
+-            return;
+-        }
+         // `LOFT_TRACE_VADD=1` prints one line per vector concat/append-copy
+         // with the resolved stride — the instrument that settled the nested
+         // `a += b` stride bug (rows strode by the 4-byte field-slot size
+diff --git b/src/parser/store_else.rs a/src/parser/store_else.rs
+index 079764361..5a374cda3 100644
+--- b/src/parser/store_else.rs
++++ a/src/parser/store_else.rs
+@@ -83,7 +83,7 @@ impl Parser {
+                 self.vars.set_type(wt, viewed);
+             }
+             for &(at, arg) in &writes {
+-                if let Some(args) = step_call_args(&mut steps[at]) {
++                if let Value::Call(_, args) = steps[at].unspan_mut() {
+                     args[arg] = Value::Var(wt);
+                 }
+             }
+@@ -173,32 +173,11 @@ impl Parser {
+     fn store_shape(&self, steps: &[Value]) -> Option<StoreShape> {
+         let mut target: Option<Value> = None;
+         let mut writes = Vec::new();
+-        // loft#2549 — an APPEND (`xs += [v]`, `hs += [E { … }]`) is a store too: its target is
+-        // the collection it claims in, argument 0 of the claim, the push or the filing.  The
+-        // field writes into the claimed element (`_elm = OpNewRecord(…)`, then `OpSet…(_elm, …)`)
+-        // follow from the claim — redirected to a null collection it answers a null element,
+-        // whose writes skip (`@FR-H-WriteNull`) — so they are not a second target.
+-        let mut elements: Vec<u16> = Vec::new();
+         for (at, s) in steps.iter().enumerate() {
+-            let (op, args) = match s.unspan() {
+-                Value::Call(op, args) => (*op, args),
+-                Value::Set(v, val) => match val.unspan() {
+-                    Value::Call(op, args) if self.is_append_op(*op) => {
+-                        elements.push(*v);
+-                        (*op, args)
+-                    }
+-                    _ => continue,
+-                },
+-                _ => continue,
++            let Value::Call(op, args) = s.unspan() else {
++                continue;
+             };
+-            let arg = if self.is_append_op(op) {
+-                0
+-            } else if let Some(arg) = self.write_target_arg(op) {
+-                if matches!(args.get(arg).map(Value::unspan), Some(Value::Var(v)) if elements.contains(v)) {
+-                    continue;
+-                }
+-                arg
+-            } else {
++            let Some(arg) = self.write_target_arg(*op) else {
+                 continue;
+             };
+             let t = args.get(arg)?.unspan().clone();
+@@ -230,26 +209,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// Is operator `op` an APPEND's step — a claim in, a push onto or a filing into the
+-    /// collection its argument 0 names (loft#2549)?  Every one of them lands nowhere through a
+-    /// null collection (`@FR-H-WriteNull`): a push and a vector append test it, a claim answers
+-    /// the null element and a filing of it files nothing (`Stores::record_new`, `record_finish`,
+-    /// `keyed_entry*`).  Any op not named here is not an append, and a statement made of it is
+-    /// judged as before.
+-    fn is_append_op(&self, op: u32) -> bool {
+-        let name = self.data.def(op).name.as_str();
+-        name.starts_with("OpPush")
+-            || matches!(
+-                name,
+-                "OpNewRecord"
+-                    | "OpFinishRecord"
+-                    | "OpAppendVector"
+-                    | "OpAppendCopy"
+-                    | "n_keyed_entry_ints"
+-                    | "n_keyed_entry_text"
+-            )
+-    }
+-
+     /// Which argument of operator `op` is the place it writes, when it is a store's write.
+     fn write_target_arg(&self, op: u32) -> Option<usize> {
+         let name = self.data.def(op).name.as_str();
+@@ -324,17 +283,3 @@ fn take_in(n: &mut Value, to: &Value, taken: &mut Option<Value>) {
+     }
+     n.for_each_child_mut(&mut |c| take_in(c, to, taken));
+ }
+-
+-/// The arguments of the call a store's step makes — a bare call (`OpSetInt(t, …)`, a push) or
+-/// the call a step binds (`_elm = OpNewRecord(t, …)`, loft#2549) — so the target's argument can
+-/// be redirected in either.  `None` for any other step: it holds no write to redirect.
+-fn step_call_args(step: &mut Value) -> Option<&mut Vec<Value>> {
+-    match step.unspan_mut() {
+-        Value::Call(_, args) => Some(args),
+-        Value::Set(_, val) => match val.unspan_mut() {
+-            Value::Call(_, args) => Some(args),
+-            _ => None,
+-        },
+-        _ => None,
+-    }
+-}
