@@ -265,7 +265,11 @@ def merge(target, intro_file, cells):
     intro = open(intro_file, encoding="utf-8").read().rstrip("\n").split("\n")
 
     def declared(code):
-        top = set(re.findall(r"^(?:pub )?(?:fn|struct|enum|value struct|type) ([A-Za-z_0-9]+)", code, re.M))
+        # A method (`fn OpDrop(self: T)`, `fn len(self: T)`) is keyed by its `self` type, so two
+        # sections' methods of one name on two types never clash, and renaming one (`S2OpDrop`)
+        # breaks it; if its type clashes, the type's rename carries it.  Only free names count.
+        top = set(re.findall(r"^(?:pub )?(?:struct|enum|value struct|type) ([A-Za-z_0-9]+)", code, re.M))
+        top |= set(re.findall(r"^(?:pub )?fn ([A-Za-z_0-9]+)\s*(?:<[^>]*>)?\(\s*(?!self\b)", code, re.M))
         variants = set()
         for m in re.finditer(r"^enum [A-Za-z_0-9]+(?:<[^>]*>)?\s*\{", code, re.M):
             # The enum's body, brace-matched: a variant may carry a braced payload.
@@ -290,7 +294,28 @@ def merge(target, intro_file, cells):
         return top, variants
 
     taken_top, taken_var = set(), set()
-    tests_seen, decls_seen = {}, {}
+    tests_seen, decls_seen, methods_seen = {}, {}, set()
+
+    def method_texts(code):
+        # Each top-level method's whole text (`fn name(self: T …) { … }`), brace-matched.
+        out = []
+        for m in re.finditer(r"(?m)^(?:pub )?fn [A-Za-z_0-9]+\s*(?:<[^>]*>)?\(\s*self\b", code):
+            i = m.end()
+            while i < len(code) and code[i] not in "{;":
+                i += 1
+            if i < len(code) and code[i] == "{":
+                depth = 0
+                while i < len(code):
+                    depth += {"{": 1, "}": -1}.get(code[i], 0)
+                    i += 1
+                    if depth == 0:
+                        break
+            else:
+                i += 1
+            if i < len(code) and code[i] == "\n":
+                i += 1
+            out.append(code[m.start():i])
+        return out
 
     def decl_text(code, name):
         # A top-level declaration's whole text: from its line to its brace-matched end (or the
@@ -350,24 +375,54 @@ def merge(target, intro_file, cells):
         # to an earlier section's is the SAME item (two cells of one directory each declaring the
         # host function its `[sandbox]` policy names): it is dropped, not renamed — a rename would
         # move it out of the policy that names it.
-        shared_vars = set()               # the variants of an enum dropped as identical
-        for n in top:
-            if (n in taken_top or n in taken_var) and not n.startswith("test_"):
+        # "Identical" is judged AFTER this section's other renames: `fn mk() -> Node { NdInt … }`
+        # reads the same in two sections, yet in the second `Node` and `NdInt` are renamed, so it
+        # is another function — dropped as a duplicate, its callers reached the first section's
+        # and were refused.  Dropping one declaration un-renames its names (and its variants), so
+        # another may become identical: decided to a fixpoint.
+        def rename_of(n):
+            return (px.upper() + n) if n[0].isupper() else (px + "_" + n)
+
+        def apply(text, rmap):
+            for o, nw in sorted(rmap.items(), key=lambda x: -len(x[0])):
+                text = re.sub(r"\b" + re.escape(o) + r"\b", nw, text)
+            return text
+        clash = {n for n in top if (n in taken_top or n in taken_var) and not n.startswith("test_")}
+        dropped, shared_vars = set(), set()   # identical items, and the variants of a dropped enum
+        while True:
+            vren = {v: px.upper() + v for v in var - shared_vars if v in taken_var or v in taken_top}
+            tren = {n: rename_of(n) for n in clash - dropped}
+            more = False
+            for n in sorted(clash - dropped):
                 mine = decl_text(code, n)
-                if mine is not None and mine == decls_seen.get(n):
-                    shared_vars |= declared(mine)[1]
-                    code = code.replace(mine, "", 1)
-                    print(f"  {stem}: dropped {n} — identical to an earlier section's")
+                if mine is None or n not in decls_seen:
                     continue
-                ren[n] = (px.upper() + n) if n[0].isupper() else (px + "_" + n)
-        for v in var - shared_vars:
-            if v in taken_var or v in taken_top:
-                ren[v] = px.upper() + v
+                own = declared(mine)[1] | {n}
+                others = {k: v for k, v in {**tren, **vren}.items() if k not in own}
+                if apply(mine, others) == decls_seen[n]:
+                    dropped.add(n)
+                    shared_vars |= declared(mine)[1]
+                    more = True
+            if not more:
+                break
+        for n in sorted(dropped):
+            code = code.replace(decl_text(code, n), "", 1)
+            print(f"  {stem}: dropped {n} — identical to an earlier section's")
+        ren.update(tren)
+        ren.update(vren)
         for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
             code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
             # An expectation in the header quotes the diagnostic, which names the renamed thing.
             head = [re.sub(r"\b" + re.escape(o) + r"\b", nw, l) if re.match(r"^// @EXPECT_", l) else l
                     for l in head]
+        # A method word for word an earlier section's (after the renames) is the same method of a
+        # type both declare identically — the type was dropped above, so it goes too, or the type
+        # would have two (`fn OpDrop(self: H)` twice is a redefinition).
+        for mt in method_texts(code):
+            if mt in methods_seen:
+                code = code.replace(mt, "", 1)
+                print(f"  {stem}: dropped {mt.split('(')[0].split()[-1]}({mt.split('(')[1].split(')')[0]}) — identical to an earlier section's")
+        methods_seen.update(method_texts(code))
         mm = re.search(r"(?ms)^fn main\(\) \{\n(.*?)^\}\n", code)
         if mm and all(re.fullmatch(r'\s*(test_[a-z_0-9]+\(\);|print(ln)?\("[^"{}]*"\);)?\s*', l)
                       for l in mm.group(1).split("\n")):
