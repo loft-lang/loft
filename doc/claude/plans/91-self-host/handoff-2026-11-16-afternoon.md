@@ -185,7 +185,16 @@ the image IS the rewritten function, and the writer still lays the frame out 16 
 `reserve_frame`: 160 in the image, 176 written.  Frame start is 40 (the two arguments and
 the return slot), so Rust reserves to 200 — the end of `e` (192 + 8) — and the writer to 216,
 the stepped end of `_elm_3` (200 + 12), the true extent.  With the rewrite off both reserve
-alike.  So the question is which variables Rust's entry reserve covers once the rewrite has
+alike.  Both sides compute the same thing — the largest slot end over the
+placed locals (`Function::frame_hwm`, `bgen.loft` 2879) — so Rust's 200 means `_elm_3` had
+NO slot yet when its entry reserve was written, and took one during code generation; the
+image, dumped afterwards, shows it at 200.  Nothing in the image tells a slot placed up
+front from one placed late, so the writer cannot follow.  Likely a compiler defect (the
+`discharge-into` and `text-len` rewrites leave a local unplaced at entry, against "one
+function-entry reserve covers every local's slot"), harmless at run time if the first set
+reserves for it — confirm in `src/state/codegen.rs` (the first-`Set` helpers) and either fix
+the placement or carry a flag in the image.  The question that was open:
+which variables Rust's entry reserve covers once the rewrite has
 moved the slots down — read the entry reserve in `src/state/codegen.rs` against
 `bgen.loft`'s before changing either; Rust under-reserving there is one possible answer, and
 then it is a compiler defect to file, not a writer one.  A
