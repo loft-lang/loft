@@ -332,20 +332,20 @@ E-IfT	operational	curated	1	2026-11-18	one cell
 E-Left	operational	curated	11	2026-11-18	own dir 5 -> 4: loft#2451 + the literal/format/compound operands 2->1; the patch and two agreeing programs stay
 E-Null	operational	curated	3	2026-11-18	one cell
 E-NullArg	operational	curated	11	2026-11-18	3 cells: two patches and the uniform-comparison program
-E-Op	operational	todo			
-E-Op-IntDivMod	operational	todo			
-E-Or	operational	todo			
-E-Report	operational	todo			
-E-Seq	operational	todo			
-E-Truthy	operational	todo			
-E-Truthy-1	operational	todo			
-E-Uncomp	operational	todo			
-E-Uncomp-NN	operational	todo			
-E-Uncomp-Seen	operational	todo			
-E-Val	operational	todo			
-E-Var	operational	todo			
-Op-Back	operators	todo			
-Op-Bound	operators	todo			
+E-Op	operational	curated	5	2026-11-18	one cell
+E-Op-IntDivMod	operational	curated	3	2026-11-18	2 cells, both gate-E-agreeing
+E-Or	operational	curated	2	2026-11-18	one cell
+E-Report	operational	curated	7	2026-11-18	one cell
+E-Seq	operational	curated	3	2026-11-18	2 cells: gate E splits them
+E-Truthy	operational	curated	5	2026-11-18	2 cells: the loft#1919 patch and the definite-boolean program — distinct clauses
+E-Truthy-1	operational	curated	3	2026-11-18	one cell (a patch)
+E-Uncomp	operational	curated	9	2026-11-18	one cell (loft#1246)
+E-Uncomp-NN	operational	curated	7	2026-11-18	3 cells, all gate-E-agreeing
+E-Uncomp-Seen	operational	curated	1	2026-11-18	one cell
+E-Val	operational	curated	1	2026-11-18	no own directory; cited by suite cells of its chapter
+E-Var	operational	curated	1	2026-11-18	one cell
+Op-Back	operators	curated	7	2026-11-18	own dir 3 -> 2: the table rows + the operator methods 2->1; the patch stays
+Op-Bound	operators	curated	6	2026-11-18	no own directory; cited by suite cells of its chapter
 Op-Compound	operators	todo			
 Op-Conv	operators	todo			
 Op-Def	operators	todo			
