@@ -156,6 +156,12 @@ fi
 rm -f "$LOFT_TEST_SCRATCH/.wtest" 2>/dev/null
 export TMPDIR="$LOFT_TEST_SCRATCH"
 export LOFT_TMPDIR="$LOFT_TEST_SCRATCH"
+# The suite-backed checks (index hygiene's decision guards, the receipts) read the suite at
+# this tree's pin, not whatever ../loft-suite has checked out (scripts/suite_pin.py keeps an
+# explicit LOFT_SUITE_DIR; without network it answers nothing and the default stands).
+if _suite_dir=$(python3 "$(dirname "$0")/suite_pin.py" 2>/dev/null); then
+	export LOFT_SUITE_DIR="$_suite_dir"
+fi
 LOG_DEFAULT=/tmp/loft_test.$REPO_TAG.log
 OUT_DEFAULT=/tmp/loft_problems.$REPO_TAG.txt
 OUT_STABLE=/tmp/loft_problems.txt
