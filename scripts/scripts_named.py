@@ -102,6 +102,9 @@ def read_baseline():
 
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "check"
+    if cmd in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
     ref = argv[argv.index("--at") + 1] if "--at" in argv else None
     if cmd == "list":
         print("\n".join(unpinned(ref)))
