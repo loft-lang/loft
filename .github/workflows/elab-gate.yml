@@ -19,6 +19,13 @@ on:
 permissions:
   contents: read
 
+# One gate at a time and at most one waiting: a newer push replaces a WAITING run (whose baseline
+# the newer one supersedes) but never cancels the run in progress, so every started run finishes
+# even while commits arrive faster than a run takes.
+concurrency:
+  group: elab-gate
+  cancel-in-progress: false
+
 env:
   PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
