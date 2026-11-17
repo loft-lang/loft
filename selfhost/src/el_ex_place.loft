@@ -2792,6 +2792,9 @@ pub fn nullable_some_literal(e: el::El, vars: el_vars::Vars, syn: integer, node:
   sd = nullable_payload(e, syn);
   fields = match e.p.nodes[node] { SStructLit { fields: lf } => lf, _ => [] };
   if e.first_pass {
+    // (The literal's fields are read on the first pass as any literal's are: a format's work
+    // text is minted there, ahead of the second pass's own temporaries.)
+    el_ex_pattern::first_pass_fields(e, vars, sd, fields);
     return ir::NdInsert { items: [] };
   }
   some_kt = el::def(e, some_d).known_type;
