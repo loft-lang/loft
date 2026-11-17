@@ -6784,7 +6784,7 @@ impl Parser {
                     // capture list is still in the stream, and left there it was read as the
                     // body and reported as `Expect token ;` (loft#1790).  Step over it by its
                     // shape; pass 2 knows the enum and binds it for real.
-                    if let Some(mut aliases) = self.bind_forward_capture_list() {
+                    if let Some(mut aliases) = self.bind_forward_capture_list(true) {
                         self.is_capture_aliases.append(&mut aliases);
                     }
                 }

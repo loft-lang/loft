@@ -694,7 +694,7 @@ impl Parser {
                 // anything else (`=>`, `:`, a literal), and hung the parser.  A subject whose
                 // enum pass 1 cannot see yet still binds its captures for the body.
                 let forward = if self.first_pass && e_nr == u32::MAX {
-                    self.bind_forward_capture_list()
+                    self.bind_forward_capture_list(false)
                 } else {
                     None
                 };

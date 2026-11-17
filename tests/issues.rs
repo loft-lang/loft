@@ -19391,6 +19391,31 @@ fn run() -> integer { sig(one(1)) * 10000 + sig(two(1)) }"
     .result(Value::Long(54_145_414));
 }
 
+/// loft#2544 — an `is` test of a unit variant whose enum is declared further down, followed by
+/// a one-name body and `else`, is the body, not a capture list: only a body stands before an
+/// `else`.  Pass 1 cannot see the enum, read `{ b }` as a capture list by its shape and
+/// refused the program with `Expect token {`.
+#[test]
+fn a_forward_unit_variant_test_reads_a_one_name_body_before_else() {
+    code!(
+        "fn pick(a: Later, b: integer, c: integer) -> integer {
+  v = if a.k is KA { b } else { c };
+  v
+}
+fn chain(a: Later, b: integer, c: integer) -> integer {
+  if a.k is KA { b } else if a.k is KB { c } else { 9 }
+}
+enum K { KA, KB, KC }
+struct Later { k: K }
+fn run() -> integer {
+  pick(Later { k: KA }, 1, 2) * 10000 + pick(Later { k: KB }, 1, 2) * 1000
+    + chain(Later { k: KA }, 3, 4) * 100 + chain(Later { k: KB }, 3, 4) * 10 + chain(Later { k: KC }, 3, 4)
+}"
+    )
+    .expr("run()")
+    .result(Value::Long(12_349));
+}
+
 /// `@FR-Const-Foreign` — asking whether a body's tail is foreign data follows each local's
 /// assignments once.  Locals assigned from each other form a cycle (`y = n; x = y; y = x; y`),
 /// and following it again and again overflowed the compiler's stack: a crash on a valid program.
