@@ -262,20 +262,20 @@ I-Range	iteration	curated	9	2026-11-17	no own directory; cited by suite cells of
 I-RangeFrom	iteration	curated	2	2026-11-17	2 cells: a patch and loft#2275 — distinct clauses
 I-RangeIncl	iteration	curated	1	2026-11-17	one cell (a patch)
 I-RangeNull	iteration	curated	3	2026-11-17	own dir 3 -> 2: loft#2036 + the null bound in every form 2->1; the written-null refusal stays
-I-Reduce	iteration	todo			
-I-Text	iteration	todo			
-L-Align	layout	todo			
-L-Enum	layout	todo			
-L-Narrow	layout	todo			
-L-Narrow-Alias	layout	todo			
-L-Narrow-Decode	layout	todo			
-L-Narrow-Enc	layout	todo			
-L-Narrow-Linked	layout	todo			
-L-Narrow-Spare	layout	todo			
-L-Null	layout	todo			
-L-Null-Tag	layout	todo			
-L-Null-Text	layout	todo			
-L-Null-Which	layout	todo			
+I-Reduce	iteration	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter
+I-Text	iteration	curated	5	2026-11-17	one cell (a patch)
+L-Align	layout	curated	12	2026-11-17	2 cells, both patches
+L-Enum	layout	curated	2	2026-11-17	own dir 3 -> 2: one byte / tag word + 254 variants 2->1; the 255th refusal stays
+L-Narrow	layout	curated	3	2026-11-17	3 cells: an agreeing program, loft#1437 and a patch — distinct
+L-Narrow-Alias	layout	curated	2	2026-11-17	one cell (a patch refusal)
+L-Narrow-Decode	layout	curated	7	2026-11-17	one cell (a patch)
+L-Narrow-Enc	layout	curated	4	2026-11-17	no own directory; cited by suite cells of its chapter
+L-Narrow-Linked	layout	curated	1	2026-11-17	own dir 2 -> 1: link + stack-trace reflection (loft#2072, #2073)
+L-Narrow-Spare	layout	curated	5	2026-11-17	2 cells: gate E splits them
+L-Null	layout	curated	33	2026-11-17	own dir 14 -> 10: dense-twin trio (incl. loft#1004) 3->1; keyed crossing loft#1143+#1150 (+#1142) 2->1; pointer/handle sentinel loft#1316+#1421 2->1; the patch, agreeing programs and distinct clauses stay
+L-Null-Tag	layout	curated	10	2026-11-17	own dir 4 -> 2: loft#1138+#1139+#1198 3->1; the pattern patch stays
+L-Null-Text	layout	curated	4	2026-11-17	one cell (a patch)
+L-Null-Which	layout	curated	7	2026-11-17	4 cells: a patch, an agreeing program, loft#1367 (@catches) and loft#2443 — distinct clauses
 L-OutOfLine	layout	todo			
 L-Ref	layout	todo			
 L-Ref-Slot	layout	todo			
