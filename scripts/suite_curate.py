@@ -297,9 +297,10 @@ def merge(target, intro_file, cells):
     tests_seen, decls_seen, methods_seen = {}, {}, set()
 
     def method_texts(code):
-        # Each top-level method's whole text (`fn name(self: T …) { … }`), brace-matched.
+        # Each top-level method's whole text (`fn name(self: T …) { … }`, and an operator written
+        # as one: `pub operator next(self: T) …`), brace-matched.
         out = []
-        for m in re.finditer(r"(?m)^(?:pub )?fn [A-Za-z_0-9]+\s*(?:<[^>]*>)?\(\s*self\b", code):
+        for m in re.finditer(r"(?m)^(?:pub )?(?:fn|operator) [A-Za-z_0-9]+\s*(?:<[^>]*>)?\(\s*self\b", code):
             i = m.end()
             while i < len(code) and code[i] not in "{;":
                 i += 1
