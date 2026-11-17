@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	b476b7a4c949050fd35a6a88933662f7286fc5fd
 
-layer	elab	agree	964	of	2182
+layer	elab	agree	1031	of	2192
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -218,7 +218,6 @@ elab	refused	loft-suite/rules/closures/L-Fn/a-closure-captures-what-its-body-nam
 elab	refused	loft-suite/rules/closures/L-Fn/a-closure-is-judged-by-its-own-function.loft
 elab	refused	loft-suite/rules/closures/L-FnAbsent/1642-calling-an-absent-function-answers-null.loft
 elab	refused	loft-suite/rules/closures/L-FnRef/2190-a-function-of-exactly-a-fn-type-converts-to-it.loft
-elab	refused	loft-suite/rules/collections/Col-Assign/2470-a-null-value-removes-the-key.loft
 elab	refused	loft-suite/rules/collections/Col-Assign/a-keyed-assignment-places-its-record-under-the-subscript.loft
 elab	refused	loft-suite/rules/collections/Col-Axis/a-biased-narrow-key-finds-every-record-its-iteration-yields.loft
 elab	refused	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft
@@ -260,7 +259,6 @@ elab	refused	loft-suite/rules/collections/Col-Unordered/2453-a-hash-holding-reco
 elab	refused	loft-suite/rules/collections/Col-Unordered/an-unordered-walk-is-slot-order-and-a-linked-table-key-order.loft
 elab	refused	loft-suite/rules/collections/Col-Vec/2278-a-repeat-count-from-a-function-declared-below.loft
 elab	refused	loft-suite/rules/collections/Col-Vec/2340-a-literal-nested-in-a-field-literal-of-a-forward-holder.loft
-elab	refused	loft-suite/rules/collections/Col-Vec/a-vector-is-ordered-and-alone-slices-into-a-value.loft
 elab	refused	loft-suite/rules/collections/Slice-KeyedIter/a-keyed-range-walks-its-key-interval-in-declared-order.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/1728-a-slice-is-a-vector-as-a-methods-receiver.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/a-negative-slice-bound-counts-from-the-end.loft
@@ -413,7 +411,6 @@ elab	refused	loft-suite/rules/interfaces/G-Type/a-compound-on-a-generic-structs-
 elab	refused	loft-suite/rules/interfaces/G-Type/a-qualified-variant-of-a-generic-enum-belongs-to-the-targets-instance.loft
 elab	refused	loft-suite/rules/interfaces/G-Type/a-template-instance-is-its-hand-written-twin-in-every-use.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/2335-a-literal-whose-item-reads-its-destination-through-a-call-reads-what-it-held.loft
-elab	refused	loft-suite/rules/iteration/I-Comp/2344-a-comprehension-over-a-slice-reads-its-bounds-as-positions.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/2345-a-comprehension-over-rev-stops-at-the-first-element.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/2446-a-concatenation-reading-its-destination-in-a-loop-reads-what-it-held.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/a-comprehension-builds-fresh-records.loft
@@ -631,7 +628,6 @@ elab	refused	loft-suite/rules/ownership/O-Witness/1466-a-call-result-takes-the-c
 elab	refused	loft-suite/rules/ownership/O-Witness/2290-a-rebound-local-releases-a-branch-joined-call-result.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/2333-a-witnessed-local-reassigned-from-a-call-returning-its-argument-copies.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/2372-a-witnessed-local-bound-from-an-unwrapped-block-local-optional-copies-it.loft
-elab	refused	loft-suite/rules/ownership/O-Witness/2443-a-witnessed-locals-view-keeps-its-base-alive.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/2476-a-view-bound-from-a-choice-of-calls-releases-what-a-call-made.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-reassigned-after-the-build-frees-its-own-store.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-rebuilt-in-a-loop-keeps-the-store-it-still-names.loft
@@ -675,7 +671,6 @@ elab	refused	loft-suite/rules/rewrites/R-InPlace/158-link-rebind.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlace/a-link-to-a-plain-record-blocks-no-hoist.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-record-through-any-view.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1834-a-user-name-starting-with-an-underscore-is-the-users.loft
-elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-keyed-literal-is-written-into-its-slot.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-to-a-reference-field-repoints-it.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-variant-rebuilt-in-place-reads-its-collection-member-through-a-view.loft
@@ -683,11 +678,9 @@ elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft
 elab	refused	loft-suite/rules/rewrites/R-Inputs/a-field-path-twin-input-is-stale-after-every-write-that-reaches-it.loft
 elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft
-elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-subscript-literal-is-staged-then-written-into-the-entry-one-probe-finds.loft
 elab	refused	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft
 elab	refused	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
-elab	refused	loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft
 elab	refused	loft-suite/rules/rewrites/R-NoThreads/a-unit-with-a-par-loop-runs-a-demote-and-a-view-walk-as-written.loft
 elab	refused	loft-suite/rules/rewrites/R-NoThreads/a-unit-without-threads-runs-a-demote-and-a-view-walk-as-written.loft
 elab	refused	loft-suite/rules/rewrites/R-Place/164-place-result.loft
@@ -946,7 +939,6 @@ elab	refused	tests/scripts/158-bounded-sum.loft
 elab	refused	tests/scripts/158-copy-in-place.loft
 elab	refused	tests/scripts/158-field-mint.loft
 elab	refused	tests/scripts/158-guard-free.loft
-elab	refused	tests/scripts/158-heap-discharge-buffer.loft
 elab	refused	tests/scripts/158-iteration-base.loft
 elab	refused	tests/scripts/158-keyed-fast-paths.loft
 elab	refused	tests/scripts/158-mint-window.loft
@@ -1008,7 +1000,6 @@ elab	refused	tests/scripts/2493-a-block-arm-ending-in-a-local-joins-an-optional-
 elab	refused	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft
 elab	refused	tests/scripts/2496-a-forward-typed-capture-beside-a-boolean-vector-has-its-storage.loft
 elab	refused	tests/scripts/2497-a-return-naming-a-record-declared-below-is-that-record.loft
-elab	refused	tests/scripts/2498-a-transient-record-is-no-member-of-itself.loft
 elab	refused	tests/scripts/25-nullable-sequences.loft
 elab	refused	tests/scripts/25-nullable-vector-scalar-element.loft
 elab	refused	tests/scripts/25-sorted-enum-variant-range.loft
@@ -1054,7 +1045,6 @@ elab	refused	tests/scripts/889-collection-through-a-call-s-field.loft
 elab	refused	tests/scripts/890-consumed-lift-double-free.loft
 elab	refused	tests/scripts/899-unbound-file-read-only-vector.loft
 elab	refused	tests/scripts/899-unbound-file-read-temp.loft
-elab	refused	tests/scripts/915-loop-variable-per-loop.loft
 elab	refused	tests/scripts/923-nullable-vector-element-schema.loft
 elab	refused	tests/scripts/947-feature-worked-examples.loft
 elab	refused	tests/scripts/953-call-result-into-nested-vector.loft
@@ -1084,7 +1074,6 @@ elab	refused	tests/scripts/a-generic-body-writes-a-narrow-element-as-its-vector-
 elab	refused	tests/scripts/a-guarded-row-fill-writes-what-its-guard-admits.loft
 elab	refused	tests/scripts/a-hash-walked-in-a-format-string-is-in-key-order.loft
 elab	refused	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft
-elab	refused	tests/scripts/a-hash-written-by-a-compound-subscript-keeps-every-entry.loft
 elab	refused	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft
 elab	refused	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft
 elab	refused	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
