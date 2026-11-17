@@ -26,6 +26,8 @@ flagged: nobody reads them and splitting them would be undone by the next build.
     scripts/file-sizes.py --all          # every file over the bar, not just the top
     scripts/file-sizes.py --doc-bar 600  # move a bar
     scripts/file-sizes.py --pick 2       # this release's split picks, with a first seam grouping
+    scripts/file-sizes.py --pick 1 --ceiling 5000   # the WEEKLY split: the top file over the
+                                         # owner's hard ceiling (RELEASE.md § File split)
 """
 
 from __future__ import annotations
@@ -280,6 +282,12 @@ def main() -> int:
         metavar="N",
         help="the N code files this release splits, by split value, with a first seam grouping",
     )
+    ap.add_argument(
+        "--ceiling",
+        type=int,
+        metavar="LINES",
+        help="with --pick: only files past LINES, generated ones excluded (the weekly split)",
+    )
     args = ap.parse_args()
 
     rows: dict[str, list] = {"doc": [], "code": []}
@@ -307,7 +315,14 @@ def main() -> int:
         rows[kind].append((n, rel, what, why, split_value(secs) if not gen else 0, lines))
 
     if args.pick:
-        return pick(rows["code"], args.pick)
+        code = rows["code"]
+        if args.ceiling:
+            code = [r for r in code if r[0] > args.ceiling and r[2] != "generated"]
+            if not code:
+                print(f"no code file is past {args.ceiling} lines")
+                return 0
+            print(f"{len(code)} code file(s) past {args.ceiling} lines\n")
+        return pick(code, args.pick, ceiling=args.ceiling)
 
     print("file sizes — which files are too long to use, and which want SPLITTING")
     print("(a REPORT, never a gate.  Length is the candidate; the split signal decides.)\n")
@@ -338,15 +353,17 @@ def main() -> int:
     return 0
 
 
-def pick(code: list, n: int) -> int:
+def pick(code: list, n: int, ceiling: int | None = None) -> int:
     """`M-file-split`'s input: the files this release splits, most movable lines first.
 
     Only SPLIT and `look` files are candidates — a KEEP file is one long subject, and a
     generated one is rewritten by its generator.  Writes nothing; the checklist tick
     records the pick's commit.
     """
+    # Past the ceiling every file is a candidate, a KEEP one too: the ceiling is the owner's
+    # hard rule, so a file of one long subject is carved by its items all the same.
     cands = sorted(
-        (r for r in code if r[2] in ("SPLIT", "look")), key=lambda r: (-r[4], r[1])
+        (r for r in code if ceiling or r[2] in ("SPLIT", "look")), key=lambda r: (-r[4], r[1])
     )
     print(f"the split pick — {min(n, len(cands))} of {len(cands)} candidate files, by split value")
     print("(split value = lines a split can move: the file minus its largest item)\n")
