@@ -888,6 +888,17 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       conv += [arg];
       continue;
     }
+    // loft#1071: a nullable struct-enum FIELD handed to an `E?` parameter is an inline slot —
+    // a record pointer that cannot hold the handle's null — so absence (pointer word 0)
+    // arrives as the reference null.
+    if !e.first_pass && at is TyOptional && pt is TyOptional && el_types::struct_enum_def(at) >= 0 && !is_nullable_wrapper(e, el_types::base(at)) && el_types::struct_enum_def(at) == el_types::struct_enum_def(pt) && calls(e, el_ir::unspan(arg), "OpGetField") {
+      fa = match el_ir::unspan(arg) { NdCall { args: ga } => ga, _ => [] };
+      if len(fa) == 3 {
+        word = el_ir::cl(e, "OpGetInt4", [fa[0]!, fa[1]!]);
+        conv += [el_ir::v_if(el_ir::cl(e, "OpEqInt", [word, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), arg)];
+        continue;
+      }
+    }
     // `convert`'s tagged arm (`@FR-L-Null-Tag`, loft#1138): a `__nullable<S>` slot handed to an
     // `S?` parameter is read through its tag, so absence arrives as the reference null.
     if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(at)) {
