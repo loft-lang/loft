@@ -303,7 +303,7 @@ The closed entries are in the companion [coroutines-history.md](coroutines-histo
   backends.
 - **Exhaustion (`G-Done`)** — a finite generator produces its sequence then reports done; further
   advances stay done (no restart, no fault).
-- **Ownership (`G-Own`)** — `loft-suite/rules/coroutines/G-Own/1589-a-yielded-record-is-the-consumers.loft`: a
+- **Ownership (`G-Own`)** — `loft-suite/rules/coroutines/G-Own/what-an-advance-produces-is-the-consumers.loft`: a
   record returned past its generator, a drained and a broken `for`, a `match`, `yield from`, a
   loop-body yield, copies of a local, a member, a parameter, a text-holding record and a
   vector, and a tuple copied, drained and kept — values, drop traces and a clean store census
