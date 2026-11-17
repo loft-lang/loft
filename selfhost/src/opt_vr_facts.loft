@@ -1,0 +1,467 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — one function's `@FR-R-ValueRecord` facts for the C writer (`VrFn`,
+// `src/c/body/value.rs`): its result layout, value locals, dead buffers, the return buffer its
+// signature dropped, and — keyed by node in the Rust writer — its forward sites
+// (`forward_sites`), value leaves (`hoist::value_leaves`) and widened leaves (`widened_leaves`).
+// The node-keyed facts are written into the code as MARKER spans (`file: "vr"`, line 0), which
+// every other marker reader (they all ask `file == ""`) passes over.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use own;
+use opt_vr_layout;
+use opt_vr_shape;
+use opt_vr_leaves;
+use opt_vr_locals;
+use opt_vr_sites;
+use opt_vr_fnref;
+
+// The kinds of mark (`pos = kind + 8 * payload`).
+pub const MK_VIEW = 1;
+pub const MK_OBJECT = 2;
+pub const MK_MV = 3;
+pub const MK_NULL = 4;
+pub const MK_FORWARD = 5;
+pub const MK_WIDEN = 6;
+pub const MARK_FILE = "vr";
+
+pub struct VrFn {
+  pub any: boolean,
+  pub key: integer,
+  pub locals: vector<integer>,
+  pub dead: vector<boolean>,
+  pub phantom: integer,
+  // The buffers the forward sites write.
+  pub fwd_bufs: vector<integer>,
+}
+
+pub fn no_fn() -> VrFn {
+  VrFn { any: false, key: -1, locals: [], dead: [], phantom: -1, fwd_bufs: [] }
+}
+
+fn kids(n: ir::Node) -> vector<ir::Node> {
+  opt_vr_shape::kids(n)
+}
+
+fn is_v(a: ir::Node, v: integer) -> boolean {
+  opt_vr_shape::is_var(a) && opt_vr_shape::var_of(a) == v
+}
+
+fn arg_var(args: vector<ir::Node>, i: integer) -> integer {
+  if i < len(args) && opt_vr_shape::is_var(args[i]!) { opt_vr_shape::var_of(args[i]!) } else { -1 }
+}
+
+// `VrFn::of`: the facts of `d` under plan `vr` (`any` false when the plan is empty).
+pub fn facts(b: ir::Bundle, ops: own::Ops, vr: opt_vr_layout::ValueRecords, d: integer) -> VrFn {
+  if !has_any(vr) {
+    return no_fn();
+  }
+  out = no_fn();
+  out.any = true;
+  out.key = opt_vr_shape::at(vr.fns, d);
+  out.locals = opt_vr_locals::value_locals_in(b, ops, d, vr, vr.fns, vr.sp);
+  out.dead = dead_buffers(b, vr, d, out.locals);
+  def = b.data.definitions[d]!;
+  if len(def.code) > 0 {
+    fbody = def.code[0]!;
+    for fb in forward_sites(b, vr, d, out.locals, fbody, opt_vr_shape::sizes(fbody)) {
+      if fb >= 0 && !out.fwd_bufs.contains(fb) {
+        out.fwd_bufs += [fb];
+      }
+    }
+  }
+  if out.key >= 0 {
+    a = opt_vr_shape::ret_buffer_attr(def);
+    if a >= 0 {
+      out.phantom = var_named(def.variables, def.attributes[a]!.name);
+    }
+  }
+  out
+}
+
+pub fn has_any(vr: opt_vr_layout::ValueRecords) -> boolean {
+  if len(vr.params) > 0 {
+    return true;
+  }
+  for k in vr.fns {
+    if k >= 0 {
+      return true;
+    }
+  }
+  false
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+fn ctx(b: ir::Bundle, ops: own::Ops, vr: opt_vr_layout::ValueRecords, d: integer, locals: vector<integer>) -> opt_vr_shape::Ctx {
+  opt_vr_shape::Ctx { b: b, ops: ops, d: d, admitted: vr.fns, params: vr.params, locals: locals, own: if opt_vr_shape::at(vr.fns, d) >= 0 { d } else { -1 }, sites: vr.sites, sp: vr.sp }
+}
+
+// `forward_sites`: per node number, the buffer a forward call writes (-1 none).
+pub fn forward_sites(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, d: integer, locals: vector<integer>, body: ir::Node, sz: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [for _ in sz { -1 }];
+  if !opt_vr_sites::forward_tuple_on() {
+    return out;
+  }
+  fw_walk(b, vr, d, locals, loop_shape::unspan(body), 0, sz, out);
+  out
+}
+
+fn fw_walk(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, d: integer, locals: vector<integer>, n: ir::Node, num: integer, sz: vector<integer>, out: vector<integer>) {
+  match n {
+    NdSet { var, inner } => {
+      if opt_vr_sites::forward_site(b, d, var, inner, vr.fns, locals) >= 0 && (loop_shape::unspan(inner) is NdCall) {
+        out[num + 1] = var;
+      }
+    },
+    _ => {},
+  }
+  c = num + 1;
+  for k in kids(n) {
+    fw_walk(b, vr, d, locals, k, c, sz, out);
+    c += sz[c]!;
+  }
+}
+
+// `dead_buffers`: the buffers of `d` whose every mention the value form drops.
+pub fn dead_buffers(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, d: integer, locals: vector<integer>) -> vector<boolean> {
+  def = b.data.definitions[d]!;
+  nv = len(def.variables.variables);
+  out: vector<boolean> = [for _ in 0..nv { false }];
+  any_fn = false;
+  for k in vr.fns {
+    if k >= 0 {
+      any_fn = true;
+    }
+  }
+  if !any_fn || len(def.code) == 0 {
+    return out;
+  }
+  body = def.code[0]!;
+  sz = opt_vr_shape::sizes(body);
+  forwards = forward_sites(b, vr, d, locals, body, sz);
+  minted: vector<boolean> = [for _ in 0..nv { false }];
+  mentions: vector<integer> = [for _ in 0..nv { 0 }];
+  dropped: vector<integer> = [for _ in 0..nv { 0 }];
+  seen: vector<boolean> = [for _ in 0..nv { false }];
+  assigned: vector<boolean> = [for _ in 0..nv { false }];
+  db_walk(b, vr, def, locals, forwards, loop_shape::unspan(body), 0, sz, minted, mentions, dropped, seen, assigned);
+  for x in def.variables.variables {
+    w = x#index;
+    if !(minted[w]! || seen[w]!) || x.argument || opt_vr_shape::at(locals, w) >= 0 || assigned[w]! {
+      continue;
+    }
+    if is_dbref(cgen_types::base(x.type_def[0] ?? ir::TyVoid)) && mentions[w]! == dropped[w]! {
+      out[w] = true;
+    }
+  }
+  out
+}
+
+fn is_dbref(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _, dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+fn drop1(w: integer, dropped: vector<integer>, seen: vector<boolean>) {
+  if w >= 0 {
+    dropped[w] += 1;
+    seen[w] = true;
+  }
+}
+
+fn db_walk(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, def: ir::Definition, locals: vector<integer>, forwards: vector<integer>, n: ir::Node, num: integer, sz: vector<integer>, minted: vector<boolean>, mentions: vector<integer>, dropped: vector<integer>, seen: vector<boolean>, assigned: vector<boolean>) {
+  match n {
+    NdVar { n: w } => mentions[w] += 1,
+    NdSet { var, inner } => if !(loop_shape::unspan(inner) is NdNull) { assigned[var] = true; },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        callee = b.data.definitions[def_nr]!;
+        nm = callee.name;
+        a0 = arg_var(args, 0);
+        if nm == "OpDatabase" || nm == "OpDatabaseNP" {
+          if a0 >= 0 {
+            minted[a0] = true;
+            drop1(a0, dropped, seen);
+          }
+        } else if nm == "OpClear" {
+          drop1(a0, dropped, seen);
+        } else if nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" {
+          drop1(a0, dropped, seen);
+          if nm == "OpFreeRefIfDistinct" && a0 >= 0 && opt_vr_shape::at(locals, a0) >= 0 {
+            drop1(arg_var(args, 1), dropped, seen);
+          }
+        } else if nm == "OpRefIsNull" {
+          if a0 >= 0 && def.variables.variables[a0]!.lazy_buffer {
+            drop1(a0, dropped, seen);
+          }
+        } else if nm == "OpDistinctStore" {
+          a1 = arg_var(args, 1);
+          if a0 >= 0 && a1 >= 0 && opt_vr_shape::at(locals, a1) >= 0 {
+            drop1(a0, dropped, seen);
+          }
+          if a1 >= 0 && a0 >= 0 && opt_vr_shape::at(locals, a0) >= 0 {
+            drop1(a1, dropped, seen);
+          }
+        } else if opt_vr_shape::at(vr.fns, def_nr) >= 0 && forwards[num]! < 0 {
+          idx = opt_vr_shape::ret_buffer_attr(callee);
+          if idx >= 0 {
+            drop1(arg_var(args, idx), dropped, seen);
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  c = num + 1;
+  for k in kids(n) {
+    db_walk(b, vr, def, locals, forwards, k, c, sz, minted, mentions, dropped, seen, assigned);
+    c += sz[c]!;
+  }
+}
+
+// --- The marks -------------------------------------------------------------------------------
+
+// The node-keyed facts of `d`, per node number, as `[kind + 8 * payload, …]` lists flattened:
+// `nodes` the numbers, `codes` the codes.
+struct Marks {
+  nodes: vector<integer>,
+  codes: vector<integer>,
+}
+
+fn add_mark(m: Marks, num: integer, kind: integer, payload: integer) {
+  code = kind + 8 * payload;
+  for x in m.nodes {
+    if x == num && m.codes[x#index]! == code {
+      return;
+    }
+  }
+  m.nodes += [num];
+  m.codes += [code];
+}
+
+// `widen_marks`: the widened leaves under `node` (number `num`), which stands where nullable
+// layout `key` is expected.
+fn widen_marks(c: opt_vr_shape::Ctx, node: ir::Node, num: integer, sz: vector<integer>, key: integer, m: Marks) {
+  u = loop_shape::unspan(node);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      // A build: the Rust plan keys it by the `Block`'s own address, which the C writer never
+      // asks (`vr_assign` reads a node's), so a dense build at a nullable position is written by
+      // the build itself, its presence word appended — no mark.
+      if bl.name == "Object" {
+        return;
+      }
+      ca = opt_vr_shape::mv_copy_at(c.b, bl);
+      if ca >= 0 {
+        copy_num = opt_vr_shape::child_num(sz, num, ca);
+        src = match loop_shape::unspan(bl.operators[ca]!) { NdCall { def_nr: _, args } => args[0]!, _ => ir::NdNull };
+        widen_marks(c, src, opt_vr_shape::child_num(sz, copy_num, 0), sz, key, m);
+        return;
+      }
+      if !opt_vr_shape::result_void(bl) && len(bl.operators) > 0 {
+        k2 = len(bl.operators) - 1;
+        widen_marks(c, bl.operators[k2]!, opt_vr_shape::child_num(sz, num, k2), sz, key, m);
+      }
+    },
+    NdInsert { items } => {
+      if len(items) > 0 {
+        k3 = len(items) - 1;
+        widen_marks(c, items[k3]!, opt_vr_shape::child_num(sz, num, k3), sz, key, m);
+      }
+    },
+    NdReturn { inner } => widen_marks(c, inner, num + 1, sz, key, m),
+    NdIf { cond: _, t, f } => {
+      widen_marks(c, t, opt_vr_shape::child_num(sz, num, 1), sz, key, m);
+      widen_marks(c, f, opt_vr_shape::child_num(sz, num, 2), sz, key, m);
+    },
+    NdVar { n: v } => {
+      lk = opt_vr_shape::at(c.locals, v);
+      if (lk < 0 || !opt_vr_layout::is_nullable_layout(lk)) && opt_vr_shape::fits(c, u, key) {
+        add_mark(m, num, MK_WIDEN, key);
+      }
+    },
+    NdCall { def_nr: _, args: _ } => if opt_vr_shape::value_shape(c, u) == opt_vr_layout::layout_record(key) { add_mark(m, num, MK_WIDEN, key); },
+    NdCallRef { var: _, args: _ } => if opt_vr_shape::value_shape(c, u) == opt_vr_layout::layout_record(key) { add_mark(m, num, MK_WIDEN, key); },
+    _ => {},
+  }
+}
+
+fn wl_walk(c: opt_vr_shape::Ctx, n: ir::Node, num: integer, sz: vector<integer>, key: integer, m: Marks, skip: vector<boolean>) {
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if c.own >= 0 && (opt_vr_shape::object_own_return(bl) >= 0 || opt_vr_shape::has_mv(c.b, bl)) {
+        if key >= 0 {
+          widen_marks(c, n, num, sz, key, m);
+        }
+        if len(bl.operators) > 0 {
+          skip[opt_vr_shape::child_num(sz, num, len(bl.operators) - 1)] = true;
+        }
+      }
+    },
+    NdReturn { inner } => {
+      if !skip[num]! && key >= 0 {
+        widen_marks(c, inner, num + 1, sz, key, m);
+      }
+    },
+    NdSet { var, inner } => {
+      lk = opt_vr_shape::at(c.locals, var);
+      if opt_vr_layout::is_nullable_layout(lk) {
+        widen_marks(c, inner, num + 1, sz, lk, m);
+      }
+    },
+    _ => {},
+  }
+  cn = num + 1;
+  for k in kids(n) {
+    wl_walk(c, k, cn, sz, key, m, skip);
+    cn += sz[cn]!;
+  }
+}
+
+// The marked code of `d` under facts `f`: every node-keyed fact of the Rust writer a marker span
+// around its node.
+pub fn marked_code(b: ir::Bundle, ops: own::Ops, vr: opt_vr_layout::ValueRecords, d: integer, f: VrFn) -> ir::Node {
+  def = b.data.definitions[d]!;
+  body = def.code[0]!;
+  sz = opt_vr_shape::sizes(body);
+  m = Marks { nodes: [], codes: [] };
+  if f.key >= 0 {
+    lv = opt_vr_leaves::collect_leaves(b, body, sz, f.locals, true);
+    for x in lv.views {
+      if x { add_mark(m, x#index, MK_VIEW, 0); }
+    }
+    for x in lv.objects {
+      if x { add_mark(m, x#index, MK_OBJECT, x#index); }
+    }
+    for x in lv.mv_returns {
+      if x { add_mark(m, x#index, MK_MV, 0); }
+    }
+    for x in lv.nulls {
+      if x { add_mark(m, x#index, MK_NULL, 0); }
+    }
+  }
+  c = ctx(b, ops, vr, d, f.locals);
+  key = if opt_vr_layout::is_nullable_layout(f.key) { f.key } else { -1 };
+  skip: vector<boolean> = [for _ in sz { false }];
+  wl_walk(c, loop_shape::unspan(body), 0, sz, key, m, skip);
+  if key >= 0 {
+    widen_marks(c, body, 0, sz, key, m);
+  }
+  fw = forward_sites(b, vr, d, f.locals, body, sz);
+  for x in fw {
+    if x >= 0 { add_mark(m, x#index, MK_FORWARD, x); }
+  }
+  if len(m.nodes) == 0 {
+    return body;
+  }
+  mark_walk(body, 0, sz, m)
+}
+
+fn wrap(n: ir::Node, num: integer, m: Marks) -> ir::Node {
+  out = n;
+  for x in m.nodes {
+    if x == num {
+      out = ir::NdSpan { pos: ir::Position { file: MARK_FILE, line: 0, pos: m.codes[x#index]! }, inner: out };
+    }
+  }
+  out
+}
+
+fn mark_walk(n: ir::Node, num: integer, sz: vector<integer>, m: Marks) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: mark_walk(inner, num, sz, m) },
+    _ => {},
+  }
+  cs: vector<ir::Node> = [];
+  c = num + 1;
+  for k in el_ir_children(n) {
+    cs += [mark_walk(k, c, sz, m)];
+    c += sz[c]!;
+  }
+  wrap(rebuild(n, cs), num, m)
+}
+
+fn el_ir_children(n: ir::Node) -> vector<ir::Node> {
+  opt_vr_shape::raw_kids(n)
+}
+
+// `n` with its children replaced by `cs`, in `kids`' order.
+fn rebuild(n: ir::Node, cs: vector<ir::Node>) -> ir::Node {
+  if len(cs) == 0 {
+    return n;
+  }
+  match n {
+    NdCall { def_nr, args: _ } => ir::NdCall { def_nr: def_nr, args: cs },
+    NdCallRef { var, args: _ } => ir::NdCallRef { var: var, args: cs },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: cs, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: cs, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items: _ } => ir::NdInsert { items: cs },
+    NdTuple { items: _ } => ir::NdTuple { items: cs },
+    NdParallel { arms: _ } => ir::NdParallel { arms: cs },
+    NdSet { var, inner: _ } => ir::NdSet { var: var, inner: cs[0]! },
+    NdReturn { inner: _ } => ir::NdReturn { inner: cs[0]! },
+    NdDrop { inner: _ } => ir::NdDrop { inner: cs[0]! },
+    NdYield { inner: _ } => ir::NdYield { inner: cs[0]! },
+    NdTuplePut { var, idx, inner: _ } => ir::NdTuplePut { var: var, idx: idx, inner: cs[0]! },
+    NdIf { cond: _, t: _, f: _ } => ir::NdIf { cond: cs[0]!, t: cs[1]!, f: cs[2]! },
+    NdIter { var, create: _, next: _, init: _ } => ir::NdIter { var: var, create: cs[0]!, next: cs[1]!, init: cs[2]! },
+    _ => n,
+  }
+}
+
+// The marks on node `v` (its outer spans), as codes.
+pub fn marks_of(v: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  cur = v;
+  for _ in 0..64 {
+    match cur {
+      NdSpan { pos, inner } => {
+        if pos.file == MARK_FILE && pos.line == 0 {
+          out += [pos.pos];
+        }
+        cur = inner;
+      },
+      _ => return out,
+    }
+  }
+  out
+}
+
+// The payload of mark `kind` on `v`, -1 none.
+pub fn mark(v: ir::Node, kind: integer) -> integer {
+  for c in marks_of(v) {
+    if c % 8 == kind {
+      return c / 8;
+    }
+  }
+  -1
+}

@@ -1,0 +1,583 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the PARAMETER-PLACE disturbance summary `@FR-R-ValueRecord`'s view leaves
+// read (@PLN164 C5): per function, the places of its parameters its body (or any loft callee it
+// hands them to) grows, reshapes, clears or overwrites — `src/scopes/disturbance.rs`'s
+// `disturbed_params_map` with the place helpers of `src/scopes/places.rs` and
+// `use_analysis::projection_walk` — and `namings_avoid_place` (`sites.rs`), the site question
+// asked of it.  Only what reaches a place is kept: the place and its depth (the composition of a
+// caller's place reads the depth); the cause, the element index and the span decide nothing a
+// view leaf asks.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use own;
+use binds;
+use opt_length;
+use opt_vr_shape;
+use opt_vr_leaves;
+
+pub const ANY = 4294967295;
+
+pub fn add_offset(base: integer, inner: integer) -> integer {
+  if base == ANY { inner } else if inner == ANY { base } else { base + inner }
+}
+
+// `same_place`: a view of `(v, f)` and a disturbance of `(w, g)` meet.
+pub fn same_place(av: integer, af: integer, bv: integer, bf: integer) -> boolean {
+  av == bv && (af == bf || af == ANY || bf == ANY)
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  opt_vr_shape::def_name(b, d)
+}
+
+fn int_of(n: ir::Node) -> integer? {
+  match loop_shape::unspan(n) { NdInt { n: i } => i, _ => null }
+}
+
+// `discharged_variable`: an `ncr` block `{ if … else null; v }` as `v`; `NdNull` none.
+fn discharged_variable(v: ir::Node) -> ir::Node {
+  match loop_shape::unspan(v) {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "ncr" && len(bl.operators) == 2 {
+        ok_test = match loop_shape::unspan(bl.operators[0]!) { NdIf { cond: _, t: _, f } => loop_shape::unspan(f) is NdNull, _ => false };
+        if ok_test && (loop_shape::unspan(bl.operators[1]!) is NdVar) {
+          return loop_shape::unspan(bl.operators[1]!);
+        }
+      }
+      ir::NdNull
+    },
+    _ => ir::NdNull,
+  }
+}
+
+// A place: the root variable (-1 none), the field (`ANY` the whole variable) and how many
+// element reads the chain crosses.
+pub struct Place {
+  pub v: integer,
+  pub f: integer,
+  pub depth: integer,
+}
+
+fn no_place() -> Place {
+  Place { v: -1, f: ANY, depth: 0 }
+}
+
+// `projection_walk` (no nullable reads): the place a projection chain names.
+fn projection_place(b: ir::Bundle, value: ir::Node) -> Place {
+  cur = value;
+  field = ANY;
+  elems = 0;
+  in_run = false;
+  for _ in 0..10000 {
+    u = loop_shape::unspan(cur);
+    match u {
+      NdIf { cond, t, f } => {
+        sv = own::variant_check_subject(b, t, f);
+        if sv != null {
+          return Place { v: sv!, f: field, depth: elems };
+        }
+        if binds::tag_read_payload(b, cond, t, f) {
+          cur = t;
+          continue;
+        }
+        return no_place();
+      },
+      NdCall { def_nr, args } => {
+        if !own::is_projection_op(b, def_nr) {
+          return no_place();
+        }
+        if def_name(b, def_nr) == "OpGetField" {
+          off = if len(args) > 1 { int_of(args[1]!) } else { null };
+          if off != null {
+            field = if in_run && field != ANY { field + off } else { off };
+          }
+          in_run = true;
+        } else {
+          elems = if elems < 255 { elems + 1 } else { 255 };
+          in_run = false;
+        }
+        if len(args) == 0 {
+          return no_place();
+        }
+        first = args[0]!;
+        dv = discharged_variable(first);
+        next = if dv is NdNull { loop_shape::unspan(first) } else { dv };
+        match next {
+          NdVar { n } => return Place { v: n, f: field, depth: elems },
+          _ => { cur = next; },
+        }
+      },
+      _ => return no_place(),
+    }
+  }
+  no_place()
+}
+
+// `named_place_depth`.
+pub fn named_place(b: ir::Bundle, arg: ir::Node) -> Place {
+  match loop_shape::unspan(arg) {
+    NdVar { n } => Place { v: n, f: ANY, depth: 0 },
+    _ => projection_place(b, arg),
+  }
+}
+
+fn peel_stack_ref(b: ir::Bundle, arg: ir::Node) -> ir::Node {
+  u = loop_shape::unspan(arg);
+  match u {
+    NdCall { def_nr, args } => if def_name(b, def_nr) == "OpCreateStack" && len(args) > 0 { loop_shape::unspan(args[0]!) } else { u },
+    _ => u,
+  }
+}
+
+// `call_arg_at`: the place an argument hands a callee.
+pub fn call_arg_place(b: ir::Bundle, arg: ir::Node) -> Place {
+  u = loop_shape::unspan(arg);
+  match u {
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return no_place();
+      }
+      found = call_arg_place(b, items[len(items) - 1]!);
+      if found.v < 0 || found.f != ANY {
+        return found;
+      }
+      for op in items {
+        match loop_shape::unspan(op) {
+          NdSet { var, inner } => {
+            if var == found.v {
+              return projection_place(b, inner);
+            }
+          },
+          _ => {},
+        }
+      }
+      found
+    },
+    _ => named_place(b, peel_stack_ref(b, arg)),
+  }
+}
+
+// `compose_param_at`'s place and depth.
+fn compose(base: Place, inner_f: integer, inner_depth: integer) -> Place {
+  field = if inner_depth == 0 || base.f == ANY || inner_f == ANY { add_offset(base.f, inner_f) } else { ANY };
+  d = base.depth + inner_depth;
+  Place { v: base.v, f: field, depth: if d > 255 { 255 } else { d } }
+}
+
+// One disturbed place of a function: its parameter slot, field and depth.
+pub struct DPlace {
+  pub d: integer,
+  pub slot: integer,
+  pub f: integer,
+  pub depth: integer,
+}
+
+// Record `(slot, f)` at `depth` for `d` in `out`; true when it is new or its depth fell.
+fn record(out: vector<DPlace>, d: integer, slot: integer, f: integer, depth: integer) -> boolean {
+  for e in out {
+    if e.d == d && e.slot == slot && e.f == f {
+      if depth < e.depth {
+        out[e#index].depth = depth;
+        return true;
+      }
+      return false;
+    }
+  }
+  out += [DPlace { d: d, slot: slot, f: f, depth: depth }];
+  true
+}
+
+fn is_keyed_type(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    _ => false,
+  }
+}
+
+fn field_position(b: ir::Bundle, tp: integer, fld: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp].parts) == 0 {
+    return -1;
+  }
+  fields: vector<ir::DbField> = match b.types[tp].parts[0]! { PtStruct { fields } => fields, PtEnumValue { value: _, fields } => fields, _ => [] };
+  if fld < 0 || fld >= len(fields) { -1 } else { fields[fld]!.position }
+}
+
+fn type_def_nr(t: ir::TypeT) -> integer {
+  match cgen_types::base(t) {
+    TyReference { n, dep: _ } => n,
+    TyEnum { n, is_ref: _, dep: _ } => n,
+    TySorted { n, keys: _, dep: _ } => n,
+    TyIndex { n, keys: _, dep: _ } => n,
+    TyHash { n, names: _, dep: _ } => n,
+    TyRadix { n, names: _, dep: _ } => n,
+    TyTrie { n, key: _, dep: _ } => n,
+    _ => -1,
+  }
+}
+
+// The producers of one body (`disturbed_param_places`), into `out` as `[v, f, depth, …]`.
+fn producers(b: ir::Bundle, def: ir::Definition, n: ir::Node, out: vector<integer>) {
+  u = loop_shape::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      // A clear of a field: a reshape of its elements.
+      if nm == "OpClearVector" && len(args) > 0 {
+        add(out, named_place(b, args[0]!));
+      }
+      // Growth.
+      if (nm.starts_with("OpPush") || nm == "OpNewRecord" || nm == "OpPreAllocVector" || nm == "OpAppendVector" || nm == "OpInsertVector" || nm == "OpHashAdd") && len(args) > 0 {
+        parent = named_place(b, args[0]!);
+        if parent.v >= 0 {
+          if nm.starts_with("OpPush") || nm != "OpNewRecord" {
+            add(out, parent);
+          } else {
+            fld = if len(args) > 2 { int_of(args[2]!) } else { null };
+            if fld != null {
+              if fld == 65535 {
+                add(out, parent);
+              } else {
+                tp = -1;
+                if loop_shape::unspan(args[0]!) is NdVar {
+                  td = type_def_nr(def.variables.variables[opt_vr_shape::var_of(args[0]!)]!.type_def[0] ?? ir::TyVoid);
+                  tp = if td >= 0 { b.data.definitions[td]!.known_type } else { -1 };
+                } else if len(args) > 1 {
+                  tp = int_of(args[1]!) ?? -1;
+                }
+                off = field_position(b, tp, fld);
+                if tp >= 0 && off >= 0 {
+                  add(out, Place { v: parent.v, f: add_offset(parent.f, off), depth: parent.depth });
+                }
+              }
+            }
+          }
+        }
+      }
+      // Reshapes.
+      if nm == "OpRemove" && len(args) > 1 {
+        add(out, named_place(b, args[1]!));
+      }
+      if (nm == "OpRemoveVector" || nm == "OpKeepVectorRange" || nm == "OpPrependVector") && len(args) > 0 {
+        add(out, named_place(b, args[0]!));
+      }
+      if nm == "OpHashRemove" && len(args) > 0 {
+        p = named_place(b, args[0]!);
+        if p.v >= 0 && p.f == ANY && p.depth == 0 && is_keyed_type(def.variables.variables[p.v]!.type_def[0] ?? ir::TyVoid) {
+          add(out, p);
+        }
+      }
+      // Released children.
+      if (nm == "OpMoveChildRec" && len(args) > 0) {
+        add(out, named_place(b, args[0]!));
+      }
+      if nm == "OpSetChildRec" && len(args) == 3 {
+        vb = loop_shape::unspan(args[1]!);
+        if (vb is NdBlock) || (vb is NdInsert) {
+          p2 = named_place(b, args[0]!);
+          if p2.v >= 0 {
+            add(out, Place { v: p2.v, f: p2.f, depth: if p2.depth < 255 { p2.depth + 1 } else { 255 } });
+          }
+        } else {
+          add(out, named_place(b, args[0]!));
+        }
+      }
+      // Overwrites.
+      if nm == "OpCopyRecord" && len(args) == 3 {
+        raw = int_of(args[2]!);
+        if raw != null && raw >= 0 && raw <= 65535 && raw & 16384 == 0 {
+          add(out, named_place(b, args[1]!));
+        }
+      }
+      if nm == "OpChildRecInPlace" && len(args) == 2 {
+        p3 = named_place(b, args[0]!);
+        if p3.v >= 0 {
+          add(out, Place { v: p3.v, f: p3.f, depth: if p3.depth < 255 { p3.depth + 1 } else { 255 } });
+        }
+      }
+    },
+    NdInsert { items } => {
+      // A slot tag's release (`released_children`): `{ t = OpSlotTag(field); OpCreateStack(t) }`.
+      if len(items) == 2 {
+        tag_arg = match loop_shape::unspan(items[0]!) {
+          NdSet { var: _, inner } => match loop_shape::unspan(inner) {
+            NdCall { def_nr, args } => if def_name(b, def_nr) == "OpSlotTag" && len(args) > 0 { args[0]! } else { ir::NdNull },
+            _ => ir::NdNull,
+          },
+          _ => ir::NdNull,
+        };
+        is_stack = match loop_shape::unspan(items[1]!) { NdCall { def_nr, args: _ } => def_name(b, def_nr) == "OpCreateStack", _ => false };
+        if is_stack && !(tag_arg is NdNull) {
+          add(out, named_place(b, tag_arg));
+        }
+      }
+    },
+    _ => {},
+  }
+  for k in el_kids(u) {
+    producers(b, def, k, out);
+  }
+}
+
+fn el_kids(n: ir::Node) -> vector<ir::Node> {
+  opt_vr_shape::raw_kids(n)
+}
+
+fn add(out: vector<integer>, p: Place) {
+  if p.v >= 0 {
+    out += [p.v, p.f, p.depth];
+  }
+}
+
+fn visible(def: ir::Definition, v: integer) -> boolean {
+  x = def.variables.variables[v]!;
+  if !x.argument || binds::is_compiler_generated(def.variables, v) {
+    return false;
+  }
+  for a in def.attributes {
+    if a.hidden && a.name == x.name {
+      return false;
+    }
+  }
+  true
+}
+
+// `disturbed_params_map`: per loft function, the parameter places it disturbs, closed over the
+// call graph.
+pub fn params_map(b: ir::Bundle) -> vector<DPlace> {
+  out: vector<DPlace> = [];
+  work: vector<integer> = [];
+  // The forward edges `[callee, slot, caller, base_v, base_f, base_depth, …]`.
+  fwd: vector<integer> = [];
+  for def in b.data.definitions {
+    d = def#index;
+    if !binds::is_loft_defined(def) {
+      continue;
+    }
+    if len(def.attributes) > 0 && len(def.code) > 0 && !(def.code[0]! is NdNull) {
+      raw: vector<integer> = [];
+      producers(b, def, def.code[0]!, raw);
+      for r in raw {
+        if r#index % 3 == 0 && visible(def, r) {
+          if record(out, d, r, raw[r#index + 1]!, raw[r#index + 2]!) {
+            work += [d, r, raw[r#index + 1]!];
+          }
+        }
+      }
+      fw_walk(b, def, d, def.code[0]!, fwd);
+    }
+  }
+  for _ in 0..1000000 {
+    if len(work) == 0 {
+      break;
+    }
+    callee = work[len(work) - 3]!;
+    slot = work[len(work) - 2]!;
+    inner = work[len(work) - 1]!;
+    work = work[0..len(work) - 3];
+    depth = -1;
+    for e in out {
+      if e.d == callee && e.slot == slot && e.f == inner {
+        depth = e.depth;
+      }
+    }
+    if depth < 0 {
+      continue;
+    }
+    for x in fwd {
+      if x#index % 6 == 0 && x == callee && fwd[x#index + 1]! == slot {
+        caller = fwd[x#index + 2]!;
+        base = Place { v: fwd[x#index + 3]!, f: fwd[x#index + 4]!, depth: fwd[x#index + 5]! };
+        p = compose(base, inner, depth);
+        if record(out, caller, p.v, p.f, p.depth) {
+          work += [caller, p.v, p.f];
+        }
+      }
+    }
+  }
+  out
+}
+
+fn fw_walk(b: ir::Bundle, def: ir::Definition, d: integer, n: ir::Node, fwd: vector<integer>) {
+  u = loop_shape::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && binds::is_loft_defined(b.data.definitions[def_nr]!) {
+        for a in args {
+          p = call_arg_place(b, a);
+          if p.v >= 0 && p.v < len(def.variables.variables) && def.variables.variables[p.v]!.argument {
+            fwd += [def_nr, a#index, d, p.v, p.f, p.depth];
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  for k in el_kids(u) {
+    fw_walk(b, def, d, k, fwd);
+  }
+}
+
+// `Stores::top_field_containing`: the top-level field of struct `tp` holding byte `off`, -1 none.
+fn top_field_containing(b: ir::Bundle, tp: integer, off: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp].parts) == 0 {
+    return -1;
+  }
+  fields: vector<ir::DbField> = match b.types[tp].parts[0]! { PtStruct { fields } => fields, PtEnumValue { value: _, fields } => fields, _ => return -1 };
+  for f in fields {
+    if f.position == off {
+      return f.position;
+    }
+    embedded = f.content >= 0 && f.content < len(b.types) && len(b.types[f.content]!.parts) > 0 && (b.types[f.content]!.parts[0]! is PtStruct);
+    if embedded && f.position < off && off < f.position + b.types[f.content]!.size {
+      return f.position;
+    }
+  }
+  -1
+}
+
+fn in_place_or_getter(nm: text) -> boolean {
+  nm == "OpSetBoolean" || nm == "OpSetInt" || nm == "OpSetInt4" || nm == "OpSetInt4Raw" || nm == "OpSetCharacter" || nm == "OpSetSingle" || nm == "OpSetFloat" || nm == "OpSetByte" || nm == "OpSetByteNullable" || nm == "OpSetShort" || nm == "OpSetShortRaw" || nm == "OpSetEnum" || nm == "OpGetInt" || nm == "OpGetInt4" || nm == "OpGetInt4Raw" || nm == "OpGetInt4Full" || nm == "OpGetShort" || nm == "OpGetShortRaw" || nm == "OpGetShortFull" || nm == "OpGetByte" || nm == "OpGetByteNullable" || nm == "OpGetSingle" || nm == "OpGetFloat" || nm == "OpGetBoolean" || nm == "OpGetCharacter" || nm == "OpGetEnum"
+}
+
+// `namings_avoid_place`: does every naming of the watched root in `stmt` leave place
+// `(root, watch_off)` alone?
+pub fn namings_avoid_place(b: ir::Bundle, dmap: vector<DPlace>, d: integer, stmt: ir::Node, root: integer, watch_off: integer) -> boolean {
+  def = b.data.definitions[d]!;
+  parent = type_def_nr(def.variables.variables[root]!.type_def[0] ?? ir::TyVoid);
+  ptp = if parent >= 0 { b.data.definitions[parent]!.known_type } else { -1 };
+  top_w = top_of(b, ptp, parent, watch_off);
+  ok = [true];
+  na_walk(b, dmap, def, stmt, root, watch_off, top_w, parent, ptp, ok);
+  ok[0]!
+}
+
+fn top_of(b: ir::Bundle, ptp: integer, parent: integer, off: integer) -> integer {
+  if off == ANY || parent < 0 {
+    return off;
+  }
+  t = top_field_containing(b, ptp, off);
+  if t < 0 { ANY } else { t }
+}
+
+fn is_root(n: ir::Node, root: integer) -> boolean {
+  opt_vr_shape::is_var(n) && opt_vr_shape::var_of(n) == root
+}
+
+fn na_walk(b: ir::Bundle, dmap: vector<DPlace>, def: ir::Definition, n: ir::Node, root: integer, watch_raw: integer, watch: integer, parent: integer, ptp: integer, ok: vector<boolean>) {
+  if !ok[0]! {
+    return;
+  }
+  u = loop_shape::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        cdef = b.data.definitions[def_nr]!;
+        nm = cdef.name;
+        first_is_root = len(args) > 0 && is_root(args[0]!, root);
+        if nm.starts_with("n_") && len(cdef.code) > 0 && !(cdef.code[0]! is NdNull) {
+          for a in args {
+            if is_root(a, root) {
+              reaches = false;
+              for e in dmap {
+                if e.d == def_nr && e.slot == a#index && same_place(root, watch_raw, root, top_of(b, ptp, parent, e.f)) {
+                  reaches = true;
+                }
+              }
+              if reaches || (opt_length::param_writes(b, def_nr, opt_length::new_cache(b))[a#index] ?? true) {
+                ok[0] = false;
+                return;
+              }
+            } else {
+              na_walk(b, dmap, def, a, root, watch_raw, watch, parent, ptp, ok);
+            }
+          }
+          return;
+        }
+        read_args: vector<integer> = [];
+        for a in args {
+          if opt_vr_leaves::read_context(b, def_nr, a#index) {
+            match loop_shape::unspan(a) {
+              NdCall { def_nr: g, args: gargs } => {
+                gn = def_name(b, g);
+                if (gn == "OpGetField" || gn == "OpGetDbRef") && len(gargs) > 0 && is_root(gargs[0]!, root) {
+                  read_args += [a#index];
+                }
+              },
+              _ => {},
+            }
+          }
+        }
+        if len(read_args) > 0 {
+          for a in args {
+            if !read_args.contains(a#index) {
+              na_walk(b, dmap, def, a, root, watch_raw, watch, parent, ptp, ok);
+            }
+          }
+          return;
+        }
+        if first_is_root {
+          // -2: no reach (nothing moves); -1: unknown; else the field reached.
+          reach = -1;
+          if nm == "OpPlaceRecord" {
+            reach = -2;
+          } else if nm == "OpNewRecord" || nm == "OpNewRecordNP" {
+            fld = if len(args) > 2 { int_of(args[2]!) } else { null };
+            reach = if fld == null { -1 } else { field_off(b, ptp, parent, fld) };
+          } else if nm == "OpFinishRecord" {
+            fld = if len(args) > 3 { int_of(args[3]!) } else { null };
+            reach = if fld == null { -1 } else { field_off(b, ptp, parent, fld) };
+          } else if nm == "OpGetField" || nm == "OpGetDbRef" || in_place_or_getter(nm) {
+            off = if len(args) > 1 { int_of(args[1]!) } else { null };
+            reach = if off == null { -1 } else { off };
+          }
+          if reach == -2 {
+            for a in args {
+              if a#index > 0 {
+                na_walk(b, dmap, def, a, root, watch_raw, watch, parent, ptp, ok);
+              }
+            }
+            return;
+          }
+          if reach >= 0 && reach != ANY && reach != watch && watch != ANY {
+            for a in args {
+              if a#index > 0 {
+                na_walk(b, dmap, def, a, root, watch_raw, watch, parent, ptp, ok);
+              }
+            }
+            return;
+          }
+        }
+      }
+    },
+    NdVar { n: vv } => {
+      if vv == root {
+        ok[0] = false;
+        return;
+      }
+    },
+    _ => {},
+  }
+  for k in el_kids(u) {
+    na_walk(b, dmap, def, k, root, watch_raw, watch, parent, ptp, ok);
+  }
+}
+
+// A field number of the root's record as a byte offset (`u32::MAX`, i.e. `ANY` + 0, where it
+// names none).
+fn field_off(b: ir::Bundle, ptp: integer, parent: integer, fld: integer) -> integer {
+  if fld == 65535 || parent < 0 {
+    return ANY;
+  }
+  off = field_position(b, ptp, fld);
+  if off < 0 { ANY } else { off }
+}

@@ -40,7 +40,7 @@ s="$cgen_out/live"
 mkdir -p "$s"
 rm -f "$s/got.c" "$s/want.c"
 cd "$(cgen_cwd "$file")" || exit 2
-"$cgen_loft" --emit-image "$s/p.store" "$file" || exit 1
+"$cgen_loft" --native-c --emit-image "$s/p.store" "$file" || exit 1
 "$cgen_loft" --native-c --native-emit "$s/want.c" "$file" || exit 1
 time live "$s/p.store" "$s/got.c" "$cgen_root/src/c"
 echo "generator rc=$?"

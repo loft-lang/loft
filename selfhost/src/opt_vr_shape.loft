@@ -665,3 +665,8 @@ fn bs_walk(c: Ctx, n: ir::Node, shapes: vector<integer>, null_bound: vector<bool
     bs_walk(c, k, shapes, null_bound, unwidened);
   }
 }
+
+// The direct children of non-span node `n` as they stand (spans kept), in `kids`' order.
+pub fn raw_kids(n: ir::Node) -> vector<ir::Node> {
+  el_ir::children(n)
+}

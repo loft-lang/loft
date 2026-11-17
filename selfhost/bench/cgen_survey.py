@@ -94,7 +94,9 @@ def layer_one(f, loft, generator, tmp, env, timeout, layer):
         for line in err.splitlines():
             if line.startswith(f"[{layer}]\t"):
                 rust[line.split("\t")[1]] = numbered(line) if layer == "bodies" else line
-        rc, err = proc([loft, "--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
+        # The C build's image: `--native-c` drops the host libraries' native bindings as `--emit-c`
+        # does, so a library's `pub` function is split for `@FR-R-ValueRecord` (R-Escape) here too.
+        rc, err = proc([loft, "--native-c", "--emit-image", img, f], env, timeout, cwd=os.path.dirname(f))
         if rc == 0:
             rc, err = proc([generator, img, got, "--layer", layer], env, timeout, cwd=os.path.dirname(f))
         if rc != 0 or not os.path.exists(got):
@@ -159,7 +161,7 @@ def one(f, loft, generator, tmp, env, timeout, debug=False):
     stem = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", f))
     want, got, img = stem + ".want.c", stem + ".got.c", stem + ".store"
     try:
-        tier = ["--native-debug"] if debug else []
+        tier = ["--native-c", "--native-debug"] if debug else ["--native-c"]
         oracle = [loft, "--native-c", "--native-debug", "--native-emit", want, f] if debug else [loft, "--emit-c", want, f]
         rc, err = proc(oracle, env, timeout, cwd=os.path.dirname(f))
         if rc != 0 or not os.path.exists(want):

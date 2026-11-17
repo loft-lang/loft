@@ -25,6 +25,7 @@ use opt_vr_leaves;
 use opt_vr_locals;
 use opt_vr_sites;
 use opt_vr_view;
+use opt_vr_disturb;
 
 fn view_field_on() -> boolean {
   (env_variable("LOFT_NO_VIEW_FIELD") ?? "0") == "0"
@@ -219,6 +220,9 @@ pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layou
     return vr;
   }
   views_ok = view_field_on();
+  // The callee half of `(B-Disturb)` the view leaves read, built once on first need.
+  dmap: vector<opt_vr_disturb::DPlace> = [];
+  dmap_built = false;
   cand: vector<integer> = [for _ in 0..n { -1 }];
   for def in b.data.definitions {
     if def.def_type != 1 || len(def.code) == 0 || (def.code[0]! is NdNull) {
@@ -312,7 +316,11 @@ pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layou
           vsz = opt_vr_shape::sizes(vbody);
           vleaves = opt_vr_leaves::collect_leaves(b, vbody, vsz, vlocals, true);
           vok = false;
-          plan_d = opt_vr_view::view_leaf_plan(b, vr, d, vleaves, k, vok);
+          if !dmap_built {
+            dmap = opt_vr_disturb::params_map(b);
+            dmap_built = true;
+          }
+          plan_d = opt_vr_view::view_leaf_plan(b, ops, dmap, vr, d, vleaves, k, vok);
           if vok {
             kept_v: vector<opt_vr_layout::VView> = [];
             for x in vr.views {
@@ -348,7 +356,7 @@ pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layou
       c = opt_vr_shape::Ctx { b: b, ops: ops, d: caller, admitted: admitted2, params: vr.params, locals: locals, own: own_d, sites: vr.sites, sp: sp2 };
       opt_vr_sites::site_walk(c, cdef.code[0]!, if own_d >= 0 { opt_vr_sites::POS_TAIL } else { opt_vr_sites::POS_OPERAND }, declined);
       if len(vr.views) > 0 {
-        opt_vr_view::view_sites_declined(b, caller, vr.views, admitted2, locals, vr, declined);
+        opt_vr_view::view_sites_declined(b, dmap, caller, vr.views, admitted2, locals, vr, declined);
       }
       if has_p {
         body = cdef.code[0]!;
