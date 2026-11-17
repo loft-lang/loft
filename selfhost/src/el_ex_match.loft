@@ -2580,14 +2580,67 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
     // end; the group matches either way, and the cursor moves only when the answer is present.
     if grp >= 0 {
       quant = match e.p.nodes[el0] { PGroup { quant: gq } => gq, _ => "" };
-      if quant != "?" {
-        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule");
+      gsep = match e.p.nodes[el0] { PGroup { sep: gs } => gs != null, _ => false };
+      if quant != "?" && (!int_rule || gsep) {
+        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule with a separator or answering a record");
         return null;
       }
       osg = el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
       el_vars::set_defined(vars, osg);
       pre += [el_ir::v_set(osg, ir::NdInt { n: 0 })];
       ocall = el_ex_call::call_args(e, vars, rule, [ir::NdVar { n: cur[0]! }], [el_vars::tp(vars, cur[0]!)]);
+      // `subrule_run` for `( xs: rule )*` / `+` over an integer rule: the answers gathered in
+      // a vector of their own (`xs`), the rule called from where the last answer left the
+      // cursor until it answers nothing or does not move.
+      if quant != "?" {
+        xs = pattern_bind(vars, rn, ir::TyVector { inner: rt, dep: [] }, names);
+        el_vars::set_defined(vars, xs);
+        rows = el_ex_base::vector_rows(e, rt, el0, false);
+        if e.first_pass {
+          base = osg;
+          seg_names = [];
+          seg_pats = [];
+          ruled = true;
+          continue;
+        }
+        el_ex_pattern::vector_of(e, rt);
+        rnow = el_ex_base::field_get(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! });
+        if rows == null || ocall == null || rnow == null {
+          el::refuse(e, "a cursor sub-rule that is not called with the cursor alone");
+          return null;
+        }
+        vr = rows!;
+        db = el_vars::work_vec_db(vars, ir::TyReference { n: vr.main_def, dep: [] });
+        el_vars::depend(vars, xs, db);
+        rx = el_vars::create_unique(vars, "rule_x", rt);
+        el_vars::set_defined(vars, rx);
+        relm = el_vars::create_unique(vars, "rule_elm", ir::TyReference { n: el_ex_base::type_def_nr(e, rt), dep: [] });
+        el_vars::set_defined(vars, relm);
+        pre += [
+          el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: vr.main_known }]),
+          el_ir::v_set(xs, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: vr.vec_known }])),
+          el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+          el_ir::v_set(rx, el_ir::cl(e, "OpConvIntFromNull", []))
+        ];
+        taken = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: rx }]), el_ir::cl(e, "OpLtInt", [ir::NdVar { n: osg }, rnow!]), ir::NdBoolean { b: false });
+        vk = ir::NdInt { n: vr.vec_known };
+        run = el_ir::v_loop([
+          el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, ir::NdVar { n: osg }),
+          el_ir::v_set(rx, ocall!.code),
+          el_ir::v_if(taken, ir::NdNull, ir::NdBreak { n: 0 }),
+          el_ir::v_set(relm, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: xs }, vk, ir::NdInt { n: 65535 }])),
+          el_ir::cl(e, "OpSetInt", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdVar { n: rx }]),
+          el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: xs }, ir::NdVar { n: relm }, vk, ir::NdInt { n: 65535 }]),
+          el_ir::v_set(osg, rnow!)
+        ], "sub-rule run");
+        some = if quant == "+" { el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: xs }])]) } else { ir::NdBoolean { b: true } };
+        cond = both(cond, el_ir::v_block([el_ir::v_set(osg, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: k }])), run, some], ir::TyBoolean, "sub-rule group"));
+        base = osg;
+        seg_names = [];
+        seg_pats = [];
+        ruled = true;
+        continue;
+      }
       ox = pattern_bind(vars, rn, ir::TyOptional { inner: rt }, names);
       el_vars::set_defined(vars, ox);
       onone = if int_rule { el_ir::cl(e, "OpConvIntFromNull", []) } else { el_ir::cl(e, "OpNullRefSentinel", []) };
