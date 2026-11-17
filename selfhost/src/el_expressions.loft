@@ -387,17 +387,6 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  if rb >= 0 && len(vars.mid_params) == 1 && el_types::base(result) is TyReference {
-    match code {
-      NdBlock { block } => {
-        t = if len(block[0].operators) > 0 { el_ir::unspan(block[0].operators[-1]) } else { ir::NdNull };
-        if t is NdCall && !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") < 0 {
-          el::refuse(e, "a mid-body `return` of a parameter beside a tail call the return buffer was renamed onto");
-        }
-      },
-      _ => {}
-    }
-  }
   // A keyed result is delivered into the caller's collection (`OpReplaceKeyed` at the call),
   // its body typed without a borrow — not carried: refused by name.
   // A keyed local of the body's own at the tail is answered as it is, the body typed as the
