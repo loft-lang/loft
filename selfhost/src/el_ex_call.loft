@@ -563,6 +563,24 @@ pub fn lower_tv_blocks(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: ir::T
           return ir::NdInsert { items: list };
         }
       }
+      // A liveness test of the variable's value is the bound type's truth (`conv_bool_call`).
+      if nm == "OpConvBoolFromRef" && len(a2) == 1 {
+        cb = el_types::base(bound);
+        conv = match cb {
+          TyInteger { spec: _ } => "OpConvBoolFromInt",
+          TyText { dep: _ } => "OpConvBoolFromText",
+          TyFloat => "OpConvBoolFromFloat",
+          TySingle => "OpConvBoolFromSingle",
+          TyCharacter => "OpConvBoolFromCharacter",
+          _ => ""
+        };
+        if conv != "" {
+          return el_ir::cl(e, conv, [a2[0]!]);
+        }
+        if cb is TyBoolean {
+          return el_ir::cl(e, "OpNeBool", [a2[0]!, el_ir::cl(e, "OpConvBoolFromNull", [])]);
+        }
+      }
       ir::NdCall { def_nr: def_nr, args: a2 }
     },
     NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { lower_tv_blocks(e, vars, a, bound, stale) }] },
