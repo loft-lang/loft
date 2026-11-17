@@ -315,11 +315,13 @@ def merge(target, intro_file, cells):
         top, var = declared(code)
         px = "s" + str(k + 1)
         ren = {}
+        # Enum variants and type names share one namespace (a struct `A` beside a variant `A` is
+        # refused), so each set clashes with both.
         for n in top:
-            if n in taken_top and not n.startswith("test_"):
+            if (n in taken_top or n in taken_var) and not n.startswith("test_"):
                 ren[n] = (px.upper() + n) if n[0].isupper() else (px + "_" + n)
         for v in var:
-            if v in taken_var:
+            if v in taken_var or v in taken_top:
                 ren[v] = px.upper() + v
         for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
             code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
@@ -490,8 +492,13 @@ def land(rule, chapter_dir, new, olds, message):
     for o in olds:
         for base in (os.path.join(suite, "rules"), os.path.join(ROOT, "doc"), os.path.join(ROOT, "tests"),
                      os.path.join(ROOT, "scripts"), os.path.join(ROOT, "src")):
+            # A patch receipt's file keeps the retired cell's name (`tests/falsified/<stem>.patch`)
+            # and the merged cell's receipt names it by that path, so a `.patch` name is no
+            # reference to the cell.
             r = subprocess.run(["grep", "-rlF", o, base], capture_output=True, text=True)
-            refs += [f"{o} <- {x}" for x in r.stdout.split() if not skip.search(x)]
+            named = re.compile(re.escape(o) + r"(?!\.patch)")
+            refs += [f"{o} <- {x}" for x in r.stdout.split() if not skip.search(x)
+                     and named.search(open(x, encoding="utf-8", errors="replace").read())]
     if refs:
         print("references to the retired cells — repoint them first:")
         for x in refs:
@@ -502,11 +509,18 @@ def land(rule, chapter_dir, new, olds, message):
         out = subprocess.run([sys.executable, os.path.abspath(__file__), "plan", rule], capture_output=True, text=True).stdout
         m = re.search(r"features the cells reach today: (\d+)", out)
         return m.group(1) if m else "?"
+    def restore():
+        # Put the retired cells back exactly as committed (they were removed by this run, so the
+        # committed text is all there is), so a refused land can simply be run again.
+        _git(["restore", "--staged", "--worktree", "--source=HEAD", "--"] + [o + ".loft" for o in olds], d)
+    if any(not os.path.exists(os.path.join(d, o + ".loft")) for o in olds):
+        restore()                           # an earlier refused run removed them
     before = features()
     _git(["rm", "-q"] + [o + ".loft" for o in olds], d)
     _git(["add", new + ".loft"], d)
     after = features()
     if before != after:
+        restore()
         print(f"the rule's feature count moved {before} -> {after}: a merged header dropped a `loft#N` or an axis value")
         return 1
     # An edit made after its file was staged would miss the commit and pass every check that reads
