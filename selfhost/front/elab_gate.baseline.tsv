@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	b555d9650d25f0a2d6eb9516efb439d86495e952
+suite	4e8b96fdd712d4e1f00624c58aa7a2cc6db3be08
 
-layer	elab	agree	964	of	2208
+layer	elab	agree	964	of	2207
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -38,9 +38,8 @@ elab	refused	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-the
 elab	refused	loft-suite/rules/binding/B-Copy/a-struct-enum-value-copies-like-a-struct-at-every-bind-and-widening.loft
 elab	refused	loft-suite/rules/binding/B-Copy/c131-a-cast-to-a-variant-answers-the-variant.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-disturbance-ends-the-places-inside-its-container-and-only-those.loft
-elab	refused	loft-suite/rules/binding/B-Disturb/a-match-payload-view-read-after-its-subject-is-rebound-is-a-copy.loft
-elab	refused	loft-suite/rules/binding/B-Disturb/a-view-bound-in-a-later-match-arm-materialises-across-a-rebind.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-is-copied-only-where-it-is-live-across-a-disturbance.loft
+elab	refused	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/growing-or-emptying-a-vector-ends-the-places-inside-it.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft
