@@ -2471,6 +2471,20 @@ pub fn subrule_of(e: el::El, el0: integer) -> integer {
   }
 }
 
+// A cursor arm's sub-rule GROUP `( name: rule )?` / `( name: rule )*`: the `PCap` inside, or -1.
+pub fn subrule_group(e: el::El, el0: integer) -> integer {
+  match e.p.nodes[el0] {
+    PGroup { seqs, quant } => {
+      if quant == "" || len(seqs) != 1 {
+        return -1;
+      }
+      items = match e.p.nodes[seqs[0]!] { PSeq { items: si } => si, _ => [seqs[0]!] };
+      if len(items) == 1 && subrule_of(e, items[0]!) >= 0 { items[0]! } else { -1 }
+    },
+    _ => -1
+  }
+}
+
 fn both(c: ir::Node?, x: ir::Node) -> ir::Node {
   if c == null { x } else { el_ir::v_if(c!, x, ir::NdBoolean { b: false }) }
 }
@@ -2499,6 +2513,10 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
   for step in 0..len(elems) + 1 {
     el0 = if step < len(elems) { elems[step]! } else { -1 };
     rule = if el0 >= 0 { subrule_of(e, el0) } else { -1 };
+    grp = if el0 >= 0 && rule < 0 { subrule_group(e, el0) } else { -1 };
+    if grp >= 0 {
+      rule = subrule_of(e, grp);
+    }
     if el0 >= 0 && rule < 0 {
       nm = "";
       pat = -1;
@@ -2557,7 +2575,42 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
       el::refuse(e, "a cursor sub-rule answering this type: {type_kind(rt)}");
       return null;
     }
-    rn = match e.p.nodes[el0] { PCap { name } => name, _ => "" };
+    rn = match e.p.nodes[if grp >= 0 { grp } else { el0 }] { PCap { name } => name, _ => "" };
+    // `parse_subrule_group` for `( name: rule )?`: the rule is tried once from the segment's
+    // end; the group matches either way, and the cursor moves only when the answer is present.
+    if grp >= 0 {
+      quant = match e.p.nodes[el0] { PGroup { quant: gq } => gq, _ => "" };
+      if quant != "?" {
+        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule");
+        return null;
+      }
+      osg = el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
+      el_vars::set_defined(vars, osg);
+      pre += [el_ir::v_set(osg, ir::NdInt { n: 0 })];
+      ocall = el_ex_call::call_args(e, vars, rule, [ir::NdVar { n: cur[0]! }], [el_vars::tp(vars, cur[0]!)]);
+      ox = pattern_bind(vars, rn, ir::TyOptional { inner: rt }, names);
+      el_vars::set_defined(vars, ox);
+      onone = if int_rule { el_ir::cl(e, "OpConvIntFromNull", []) } else { el_ir::cl(e, "OpNullRefSentinel", []) };
+      pre += [el_ir::v_set(ox, onone)];
+      onow = el_ex_base::field_get(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! });
+      if ocall == null || onow == null {
+        el::refuse(e, "a cursor sub-rule that is not called with the cursor alone");
+        return null;
+      }
+      opresent = if int_rule { el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: ox }]) } else { el_ir::cl(e, "OpNeRef", [ir::NdVar { n: ox }, onone]) };
+      cond = both(cond, el_ir::v_block([
+        el_ir::v_set(osg, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: k }])),
+        el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, ir::NdVar { n: osg }),
+        el_ir::v_set(ox, ocall!.code),
+        el_ir::v_if(opresent, el_ir::v_set(osg, onow!), ir::NdNull),
+        ir::NdBoolean { b: true }
+      ], ir::TyBoolean, "sub-rule group"));
+      base = osg;
+      seg_names = [];
+      seg_pats = [];
+      ruled = true;
+      continue;
+    }
     nv = pattern_bind(vars, rn, rt, names);
     el_vars::set_defined(vars, nv);
     sg = el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
