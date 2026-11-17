@@ -2730,14 +2730,18 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
   b = el_types::base(x.tp);
   record = struct_ref(e, b) >= 0 && !starts_with(el::def(e, struct_ref(e, b)).name, "__tuple<");
   vec = b is TyVector;
-  if !record && !vec && !el_convert::plain_scalar(b) {
+  // A text is tested by its own truth (`OpConvBoolFromText`), held as read.
+  txt = b is TyText;
+  // A struct enum is tested by its own null test (`null_test`'s enum arm), as `!` tests it.
+  senum = el_convert::struct_enum(b);
+  if !record && !vec && !txt && !senum && !el_convert::plain_scalar(b) {
     el::refuse(e, "a `??` that returns, breaks or continues, over this type: {display_type_name(e, b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
     return ex(ir::NdNull, el_ex_null::ncr_type(e, x.code, b));
   }
-  code = if record { nullable_getter(e, x.code) } else if vec { x.code } else { nullable_arith(e, x.code, true) };
+  code = if record || senum { nullable_getter(e, x.code) } else if vec || txt { x.code } else { nullable_arith(e, x.code, true) };
   held = -1;
   subject = code;
   match code {
@@ -2748,6 +2752,10 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
     }
   }
   check = present_check(e, vars, subject, b, record, vec);
+  if senum {
+    absent = el_ex_null::enum_null_test(e, vars, subject, b);
+    check = if absent == null { null } else { el_ir::cl(e, "OpNot", [absent!]) };
+  }
   if check == null {
     el::refuse(e, "a `??` that returns, breaks or continues, over this type: {display_type_name(e, b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2794,6 +2802,9 @@ pub fn present_check(e: el::El, vars: el_vars::Vars, subject: ir::Node, b: ir::T
   if vec {
     return el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [subject])]);
   }
+  if b is TyText {
+    return el_ir::cl(e, "OpConvBoolFromText", [subject]);
+  }
   el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean)
 }
 
@@ -2824,6 +2835,11 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     x = rx!;
   }
   if e.p.nodes[r] is SJump {
+    // (A struct-enum local read first into a bind's destination borrows nothing either, as a
+    // plain struct's above.)
+    if l == vars.read_into && x.code is NdVar && el_convert::struct_enum(el_types::base(x.tp)) {
+      x.tp = el_types::with_deps(x.tp, []);
+    }
     return coalesce_jump(e, vars, x, el_ex_assign::expression(e, vars, r));
   }
   // A field's view as the subject: its literal default is built against the subject's type,
@@ -2856,6 +2872,10 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   }
   // A default that halts (`?? panic("…")`) runs where the subject is absent, as a jump does.
   if (d.tp is TyVoid || d.tp is TyNever) && (e.first_pass || el_ex_null::ends_in_halt(e, d.code)) && !(x.tp is TyVoid) {
+    // (A struct-enum local read first into a bind's destination borrows nothing, as at a jump.)
+    if l == vars.read_into && x.code is NdVar && el_convert::struct_enum(el_types::base(x.tp)) {
+      x.tp = el_types::with_deps(x.tp, []);
+    }
     return coalesce_jump(e, vars, x, d);
   }
   el_ex_null::coalesce_with(e, vars, x, d)

@@ -247,11 +247,6 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   text_return(e, vars, tt);
   code = b.code;
-  // A tail local bound to a record local's text field (`s = r.name; s`) answers the record's
-  // borrow — not carried: refused by name.
-  if !e.first_pass && tt != b.tp && len(el_types::deps(tt)) == 1 && el_ex_vector::field_view_bind(e, vars, code, el_types::deps(tt)[0]) {
-    el::refuse(e, "a text function answering a local bound to a record's text field");
-  }
   // `block_result` converts the tail to `result`, the declared return as this pass met it —
   // on the second pass the borrows the first gathered, by number (a promoted local's by its
   // attribute), so a text body is typed by every return pass 1 saw, not by its tail alone.  A

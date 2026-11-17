@@ -1728,7 +1728,13 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     // (Asked of the syntax: the first pass has no block to read.)
     // A call answering a view of its arguments keeps what it borrows of them the same way.
     view_call = match el_ir::unspan(x.code) { NdCall { def_nr } => returns_argument_view(el::def(e, def_nr)), _ => false };
-    ht = if view_call || match e.p.nodes[subject] { SPostfix { op } => op == "!", _ => false } { st } else { el_types::without_deps(st) };
+    // (So does a `?? return` / `?? panic(…)` / `?? break` subject: the same `ncr` block.)
+    ht = if view_call || match e.p.nodes[subject] { SPostfix { op } => op == "!", SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } { st } else { el_types::without_deps(st) };
+    // (In a text function Rust names the `??`'s own `_ncr_N` as what the answer borrows, not
+    // the held subject — not carried: refused by name.)
+    if match e.p.nodes[subject] { SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } && el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) is TyText {
+      el::refuse(e, "a match in a text function over a `??` subject that halts or jumps");
+    }
     held = match_subject(e, vars, ht);
     el_vars::set_defined(vars, held);
     held_set = el_ir::v_set(held, x.code);
@@ -3339,3 +3345,12 @@ pub struct AltCap { pub name: text, pub pos: integer, pub vd: integer, pub fa: i
 
 // One branch of an alternation: its variants' ordinals, position by position, and its captures.
 pub struct AltBranch { pub discs: vector<integer>, pub caps: vector<AltCap> }
+
+// A `??` default spelled as a call of `panic` — the halting default that answers like a jump.
+fn halting_call_syntax(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SIntrinsic { kind } => kind == "panic",
+    SCall { f } => if f == null { false } else { match e.p.nodes[f!] { SName { name, member } => name == "panic" && member == "", _ => false } },
+    _ => false
+  }
+}
