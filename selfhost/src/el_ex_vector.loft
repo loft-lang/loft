@@ -678,6 +678,11 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
 // fields, `OpFinishRecord`, which indexes it).  Any other item is refused by name.
 pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> vector<ir::Node>? {
   ct = el_types::base(el_vars::tp(vars, v));
+  // (Through a link — `c: &hash<Row[id]>` — the collection the link names.)
+  match ct {
+    TyRefVar { inner: li } => { ct = el_types::base(li); },
+    _ => {}
+  }
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },

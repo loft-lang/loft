@@ -1451,7 +1451,9 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     el_vars::drop_use(vars, v);
     return el_ex_pattern::vector_append(e, vars, v, rhs);
   }
-  if keyed_kind(vt) && !(vt is TyOptional) && bin == "+" && (e.p.nodes[rhs] is SVecLit || e.p.nodes[rhs] is SStructLit) {
+  // (A link to a keyed collection appends through the link as the collection would.)
+  linked_keyed = match vt { TyRefVar { inner: lki } => keyed_kind(lki) && !(lki is TyOptional), _ => false };
+  if (linked_keyed || keyed_kind(vt) && !(vt is TyOptional)) && bin == "+" && (e.p.nodes[rhs] is SVecLit || e.p.nodes[rhs] is SStructLit) {
     ops = el_ex_vector::keyed_items(e, vars, v, rhs);
     if ops == null {
       return ex(ir::NdNull, ir::TyVoid);

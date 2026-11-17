@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a hash local is handed to a `&` parameter as any local is, and an append through the link builds the record in the collection the link names.
+// Prints: 3 seven
+
+struct Row { id: integer, tag: text }
+fn hash_append(c: &hash<Row[id]>) { c += [Row { id: 7, tag: "seven" }]; }
+fn main() {
+  h: hash<Row[id]> = [Row { id: 1, tag: "one" }];
+  hash_append(h);
+  h += [Row { id: 3, tag: "three" }];
+  println("{len(h)} {h[7].tag}");
+}

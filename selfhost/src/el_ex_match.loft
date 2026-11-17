@@ -262,7 +262,7 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
   }
   // A vector local is linked as any local is; a keyed collection's link (its appends and
   // lookups through `&`) is not carried yet.
-  if el_types::is_collection(vt) && !(el_types::base(vt) is TyVector) {
+  if el_types::is_collection(vt) && !(el_types::base(vt) is TyVector) && !(el_types::base(vt) is TyHash) && !(el_types::base(vt) is TySorted) && !(el_types::base(vt) is TyIndex) {
     el::refuse(e, "a keyed collection local handed to a `&` parameter");
     return null;
   }
