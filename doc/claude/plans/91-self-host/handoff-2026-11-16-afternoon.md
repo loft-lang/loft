@@ -154,6 +154,29 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**Working mode since 2026-11-17 (owner): this stream TRANSLATES, a second agent TESTS.**  This
+stream ports whole features from the Rust source, checks each on a few single-program probes
+(`i.sh` / `elab_probe.py one`), and pushes the tip WITHOUT a corpus or gate run.  The tester
+(session `loft-30`, its own machine) runs the development gate on every new tip of
+`origin/tuxedo-pln204-int32` and reports the gate line, every verdict change and the first
+diff lines of each differing program; on a tip with 0 differ it runs the real gate and puts
+the baseline commit on `loft30-gate`.  A gate cell is added only where NO agreeing suite
+program covers the ported construct (owner: a port that makes existing programs agree needs no
+test of its own).
+
+Tips pushed for the tester after the last real-gate baseline (0a48655a8: 966 of 2224, 0 differ):
+3b461da35 capturing lambdas stored in struct fields (write, split layout, read, union record,
+host cascade); de1b8063f a struct-enum match at a text function's tail, and a nullable
+struct-enum field handed to an `E?` parameter; 9bc62b395 a short lambda hinted by a field's
+type or its function's result.
+
+The largest block left is GENERICS (`instantiate` in `el_ex_call.loft` carries one type
+variable bound to a scalar, a text or a plain record; a dozen refusal families, well over a
+hundred programs between them: instances at an enum / tuple / vector, more than one type
+variable, `a generic local over the type variable in another shape`, short lambdas handed to
+`map` / `filter` / `sort_by`).  Rust's side is `src/parser/monomorph.rs` and `generics.rs`
+(about 4,000 lines): a wholesale port, not a batch.
+
 **A split for a second agent (owner's proposal, 2026-11-17).**  The front end is the slow
 layer: 959 of 2220 by the real gate, about 1,340 distinct refusal texts left, most worth one
 or two programs.  What moves tens of programs is a whole FEATURE ported from the Rust source in
