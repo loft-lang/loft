@@ -17,6 +17,9 @@ use opt_push;
 use opt_non_sentinel;
 use opt_window;
 use opt_fill;
+use el_ir;
+use loop_shape;
+use own;
 
 // The window held for the vector at `path`, -1 for none.
 pub fn window_at(w: W, path: text) -> integer {
@@ -54,6 +57,22 @@ pub fn open_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
     return false;
   }
   p = window_loop(x, w, lp) ?? return deep_window(x, w, lp, ind);
+  // `@FR-R-AppendTwin`'s window clause: a twin's buffer is already under its caller's window,
+  // so the loop takes a local copy of THAT window and gives it back at the loop's one exit.
+  // Any other path already windowed keeps its window.
+  at = window_at(w, p.path);
+  if at >= 0 {
+    parent = w.windows[at]!.name;
+    if parent != "(*loft_apw)" {
+      return false;
+    }
+    copy = "pw{len(w.decls) + 1}";
+    w.decls += ["loft_win {copy} = {{ 0, 0, 0, 0, 0xFFFF }};"];
+    line(w, ind, "{copy} = {parent};");
+    w.window_parents += [copy, parent];
+    w.windows += [Window { path: p.path, name: copy, pv: w.windows[at]!.pv, size: p.size }];
+    return true;
+  }
   n = len(w.decls) + 1;
   win = "pw{n}";
   pv = "pv{n}";
@@ -132,7 +151,17 @@ fn deep_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
 pub fn close_window(x: Cx, w: W, ind: integer) {
   last = w.windows[len(w.windows) - 1]!;
   w.windows = w.windows[0..len(w.windows) - 1];
-  line(w, ind, "loft_win_sync({last.name});");
+  parent = "";
+  for c in w.window_parents {
+    if c#index % 2 == 0 && c == last.name {
+      parent = w.window_parents[c#index + 1]!;
+    }
+  }
+  if parent != "" {
+    line(w, ind, "{parent} = {last.name};");
+  } else {
+    line(w, ind, "loft_win_sync({last.name});");
+  }
   for h in w.push_heads {
     if h.path == last.path {
       line(w, ind, "{h.name} = loft_ph_of({h.name}.v, {h.size});");
@@ -284,4 +313,195 @@ pub fn fill_tail(x: Cx, w: W, lp: ir::Block, ind: integer) {
   stepped = if f.next_var >= 0 { w.names[f.next_var]! } else { idx };
   line(w, ind + 1, "{stepped} = {past};");
   line(w, ind, "}}");
+}
+
+// `loop_statements`: every node of the loop's body, in pre-order; `leaves` turns true where
+// one leaves the loop by a `return`, or by a `break` or `continue` past it.
+fn loop_statements(v: ir::Node, depth: integer, out: vector<ir::Node>, leaves: &boolean) {
+  out += [v];
+  match v {
+    NdReturn { inner: _ } => { leaves = true; },
+    NdBreak { n } => { if n > depth { leaves = true; } },
+    NdContinue { n } => { if n > depth { leaves = true; } },
+    NdLoop { block } => {
+      for o in block[0].operators {
+        loop_statements(o, depth + 1, out, leaves);
+      }
+    },
+    _ => {
+      for c in el_ir::children(v) {
+        loop_statements(c, depth, out, leaves);
+      }
+    },
+  }
+}
+
+// A character push of a text local (`OpAppendCharacter(dest, c)` with a variable `dest`): the
+// statement a text window serves.  -1 for any other node.
+fn char_push_var(b: ir::Bundle, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      name = cgen_fn::def_name(b, def_nr);
+      if (name == "OpAppendCharacter" || name == "OpAppendStackCharacter") && len(args) == 2 {
+        return loop_shape::var_of(loop_shape::unspan(args[0]));
+      }
+      -1
+    },
+    _ => -1,
+  }
+}
+
+// `body_writes::views`: variable `x` and every variable whose type depends on one of these.
+fn views(f: ir::Function, x: integer) -> vector<boolean> {
+  set: vector<boolean> = [for _ in 0..len(f.variables) { false }];
+  set[x] = true;
+  grew = true;
+  while grew {
+    grew = false;
+    for v in 0..len(f.variables) {
+      if set[v] ?? false {
+        continue;
+      }
+      for dep in own::tp_depend(f, v) {
+        if set[dep] ?? false {
+          set[v] = true;
+          grew = true;
+          break;
+        }
+      }
+    }
+  }
+  set
+}
+
+// `mentions_outside`: does `v` name a variable of `reach` outside the character pushes
+// (`skip_sites`)?  Every spelling that names a variable counts: a read, a rebind, a tuple's
+// part, a fn-ref call through it, an iteration over it.
+fn mentions_outside(b: ir::Bundle, v: ir::Node, reach: vector<boolean>, skip_sites: boolean) -> boolean {
+  if skip_sites && char_push_var(b, v) >= 0 {
+    return false;
+  }
+  named = match v {
+    NdVar { n } => n,
+    NdSet { var, inner: _ } => var,
+    NdTupleGet { var, idx: _ } => var,
+    NdTuplePut { var, idx: _, inner: _ } => var,
+    NdCallRef { var, args: _ } => var,
+    NdIter { var, create: _, next: _, init: _ } => var,
+    _ => -1,
+  };
+  if named >= 0 && (reach[named] ?? false) {
+    return true;
+  }
+  for c in el_ir::children(v) {
+    if mentions_outside(b, c, reach, skip_sites) {
+      return true;
+    }
+  }
+  false
+}
+
+// `open_text_windows` (`@FR-R-PushFill`'s text clause): open ONE push window, before loop
+// `lp`, for each text the loop names only as the destination of character pushes whose
+// characters do not read it, and answer how many it opened; `close_text_windows` syncs them
+// after the loop's end.  The loop may leave only by its own end.  A text an enclosing loop
+// holds a window for keeps that one.  `LOFT_NO_TEXT_WINDOW=1`.
+pub fn open_text_windows(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
+  if w.gen_elem != "" || (env_variable("LOFT_NO_TEXT_WINDOW") ?? "0") != "0" {
+    return 0;
+  }
+  leaves = false;
+  stmts: vector<ir::Node> = [];
+  for op in lp.operators {
+    loop_statements(op, 0, stmts, leaves);
+  }
+  if leaves {
+    return 0;
+  }
+  // The pushes: their text variable and character, in walk order.
+  site_vars: vector<integer> = [];
+  site_chars: vector<ir::Node> = [];
+  for st in stmts {
+    match st {
+      NdSpan { pos: _, inner: _ } => continue,
+      _ => {},
+    }
+    t = char_push_var(x.b, st);
+    if t >= 0 {
+      site_vars += [t];
+      match st {
+        NdCall { def_nr: _, args } => { site_chars += [args[1]!]; },
+        _ => {},
+      }
+    }
+  }
+  f = x.b.data.definitions[w.index]!.variables;
+  opened = 0;
+  seen: vector<integer> = [];
+  for t in site_vars {
+    taken = false;
+    for s in seen {
+      if s == t {
+        taken = true;
+      }
+    }
+    for tw in w.text_windows {
+      if tw.var == t {
+        taken = true;
+      }
+    }
+    if taken {
+      continue;
+    }
+    seen += [t];
+    reach = views(f, t);
+    elsewhere = false;
+    for op in lp.operators {
+      if !elsewhere && mentions_outside(x.b, op, reach, true) {
+        elsewhere = true;
+      }
+    }
+    for c in site_chars {
+      if !elsewhere && site_vars[c#index]! == t && mentions_outside(x.b, c, reach, false) {
+        elsewhere = true;
+      }
+    }
+    if elsewhere {
+      continue;
+    }
+    if !text_place(w, t) {
+      continue;
+    }
+    place = text_dest(w, ir::NdVar { n: t });
+    name = "loft_tw{len(w.decls)}";
+    w.decls += ["loft_tw {name};"];
+    line(w, ind, "{name} = loft_tw_of(&{place});");
+    w.text_windows += [TextWindow { var: t, place: place, name: name }];
+    opened += 1;
+  }
+  opened
+}
+
+// Is text local `t` a place `text_dest` names without a refusal?
+fn text_place(w: W, t: integer) -> boolean {
+  t == w.work_alias || text_held(w, t)
+}
+
+// `close_text_windows`: sync the last `n` text windows, the innermost first.
+pub fn close_text_windows(w: W, n: integer, ind: integer) {
+  for _ in 0..n {
+    last = w.text_windows[len(w.text_windows) - 1]!;
+    line(w, ind, "loft_tw_sync(&{last.name}, &{last.place});");
+    w.text_windows = w.text_windows[0..len(w.text_windows) - 1];
+  }
+}
+
+// The text window loop-held for text local `t`; `name` "" for none.
+pub fn text_window(w: W, t: integer) -> TextWindow {
+  for tw in w.text_windows {
+    if tw.var == t {
+      return tw;
+    }
+  }
+  TextWindow { var: -1, place: "", name: "" }
 }

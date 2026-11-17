@@ -20,6 +20,12 @@ use own;
 use opt_facts;
 use opt_adopt;
 use opt_ranged_call;
+use opt_append_twin;
+use opt_destination;
+use char_walk;
+use opt_store_text_borrow;
+use opt_split_table;
+use opt_lazy_split;
 
 // The shape of a C expression's value (`K`).
 K_INT = 0;
@@ -114,6 +120,20 @@ struct Window {
   name: text,
   pv: text,
   size: integer,
+}
+
+// `@FR-R-PushFill`'s text clause: a text a loop pushes characters into through a window —
+// the text variable, its C place and the window's name.
+struct TextWindow {
+  var: integer,
+  place: text,
+  name: text,
+}
+
+// `@FR-R-AppendTwin`'s loop clause: a window a loop opened over an append site's buffer.
+struct LoopWindow {
+  var: integer,
+  name: text,
 }
 
 // A record scalar a loop holds in a local: the record variable, the field, the local, its
@@ -225,6 +245,8 @@ struct W {
   peel_seeds: vector<Seed>,
   // The scopes of this function's character walks.
   walk_scopes: vector<integer>,
+  // `@FR-R-CharWalk`: the function's character walks (`char_walks`), by loop scope.
+  char_walks: vector<char_walk::CharWalk>,
   // `@FR-R-TextBorrow`: the text locals held as a `loft_str` view, and the ones every bind of
   // which is a literal.
   borrowed: vector<boolean>,
@@ -288,6 +310,7 @@ struct W {
   // `@FR-R-Push`: the push headers the enclosing loops hold, innermost last.
   push_heads: vector<PushHead>,
   windows: vector<Window>,
+  text_windows: vector<TextWindow>,
   file_holds: vector<FileHold>,
   // The function's length locals, `[n0, v0, …]`, and whether they were asked yet.
   length_locals: vector<integer>,
@@ -319,6 +342,64 @@ struct W {
   alias_vec: ir::Node,
   in_range: vector<InRange>,
   in_range_lens: vector<InRange>,
+  // The C expressions a rewrite names as `NdRawExpr` operands, and each one's shape (`raw`).
+  raw_exprs: vector<text>,
+  raw_shapes: vector<text>,
+  // `@FR-R-HandOver`: a `__nk` twin's keep statement, which the body skips (empty for none),
+  // and the callee whose next call takes its `__nk` twin (-1 for none).
+  nk_skip: vector<ir::Node>,
+  nk_call: integer,
+  // `@FR-R-SliceArg`: the wrappers of the slice values the call being written hands to `const`
+  // parameters — their `OpDatabase` takes a pooled carrier (`loft_slice_take`).
+  slice_carriers: vector<integer>,
+  // `@FR-R-Header`'s growth half: the held headers derived again after each growth statement
+  // (`grown_headers`), and the ones the statement being written handed a callee's `__kh` twin,
+  // which keeps them current itself (`kh_passed`).
+  grown_headers: vector<text>,
+  kh_passed: vector<text>,
+  // `@FR-R-FnRefBuffer`: per variable, the scope of the loop a kept record is held across (-1
+  // for none); the kept binding the next call through a function value hands its target as
+  // its record buffer ("" for none); the statement being written stands in a statement list.
+  lr_recs: vector<integer>,
+  callref_buf: text,
+  list_stmt: boolean,
+  // `@FR-R-AppendTwin`: an `__ap` twin's buffer (-1 for none) and its views; the element size
+  // of the caller's window it writes through (`apw`, 0 for none); the windows the enclosing
+  // loops opened over an append site's buffer; the eligibility memo; the callee whose next
+  // call is the statement-level site's own (-1 for none); and per local window copy, the window
+  // it was taken from (`window_parents`, `[copy, parent, …]`).
+  ap_buf: integer,
+  ap_views: vector<boolean>,
+  apw: integer,
+  ap_loop_windows: vector<LoopWindow>,
+  ap_memo: opt_append_twin::Memo,
+  ap_site: integer,
+  window_parents: vector<text>,
+  // `@FR-R-Destination`: a `__d` twin's shape (`rb` -1 elsewhere), and the callee whose next
+  // call is the caller half's rewritten call (-1 for none).
+  ds: opt_destination::Shape,
+  ds_site: integer,
+  // `@FR-R-LazySplit` and `@FR-R-SplitTable`: the function's lazy loops and bound split
+  // tables, and per walk alias of a table, the table's local (`[alias, table, …]`).
+  lazy: vector<opt_lazy_split::LazySplit>,
+  split_tabs: vector<opt_split_table::SplitTable>,
+  tab_alias: vector<integer>,
+  // `@FR-R-TextBorrow`'s tested clause: the borrows a bind tests, with their root parameters.
+  tested: vector<opt_store_text_borrow::Tested>,
+  // Per open loop, the functions its body calls (`loop_calls`), flattened: each loop's start in
+  // `loop_call_at`, innermost last.
+  loop_calls: vector<integer>,
+  loop_call_at: vector<integer>,
+  // `@FR-R-Version`: a fast twin is being written (`vf`); the marker kind and site number of
+  // the call `expr` is writing; the sites the enclosing loops' preludes decided (`v_site`),
+  // each one's flag and the held inputs it read; the flags a plain copy holds true.
+  vf: boolean,
+  call_kind: integer,
+  call_site: integer,
+  v_site: vector<integer>,
+  v_flag: vector<text>,
+  v_reads: vector<text>,
+  v_hold: vector<text>,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -362,6 +443,9 @@ fn epilogue(w: W, ind: integer) {
   // A `return` from inside a held loop: the cursors go back before the frame does.
   for i in rev(0..len(w.file_holds)) {
     line(w, ind, "loft_fcur_release(&{w.file_holds[i]!.name}, {w.file_holds[i]!.name}p);");
+  }
+  for t in w.split_tabs {
+    line(w, ind, "loft_stab_free(&st{t.var});");
   }
   line(w, ind, EPILOGUE_MARK);
 }
@@ -608,15 +692,18 @@ fn held(shape: text) -> text {
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
 // what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_DISTINCT_VERSION", "LOFT_NO_REBOUND_MOVER", "LOFT_NO_APART_MINT", "LOFT_NO_CALLEE_INPUTS", "LOFT_NO_GROWN_HEADER", "LOFT_NO_GUARD_BOUND", "LOFT_NO_VERSION", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_LOOP_RECORD", "LOFT_NO_APART", "LOFT_NO_APPEND_LOOP_WINDOW", "LOFT_NO_APPEND_TWIN", "LOFT_NO_HAND_OVER", "LOFT_NO_VR_PTR", "LOFT_NO_FNREF_PARK", "LOFT_NO_FNREF_BUFFER", "LOFT_NO_CHAR_WALK", "LOFT_NO_LAZY_SPLIT", "LOFT_NO_SPLIT_TABLE", "LOFT_NO_TESTED_BORROW", "LOFT_NO_TEXT_WINDOW", "LOFT_NO_DESTINATION", "LOFT_NO_KEYED_IN_PLACE"];
+PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_APART"];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {
   // `LOFT_CGEN_ASSUME=<switch>`: a measurement — write as if that rule were off although the
   // oracle runs with it on, so the survey counts the bodies the rule changes.
   assumed = env_variable("LOFT_CGEN_ASSUME") ?? "";
+  // `LOFT_CGEN_ON="LOFT_NO_X …"`: rules being ported, written as the writer now carries them
+  // before they leave the list (`cgen_live.sh`'s `CGEN_ON`).
+  carried = (env_variable("LOFT_CGEN_ON") ?? "").split(' ');
   for s in PLAIN_SWITCHES {
-    if (env_variable(s) ?? "0") == "0" && s != assumed {
+    if (env_variable(s) ?? "0") == "0" && s != assumed && !carried.contains(s) {
       return false;
     }
   }
@@ -754,6 +841,12 @@ fn line(w: W, ind: integer, s: text) {
     w.body += "    ";
   }
   w.body += "{s}\n";
+}
+
+// Name C expression `code` of `shape` as an operand a rewrite hands the operators (`raw`).
+fn raw_expr(w: W, code: text, shape: text) {
+  w.raw_exprs += [code];
+  w.raw_shapes += [shape];
 }
 
 fn temp(w: W, shape: text) -> text {

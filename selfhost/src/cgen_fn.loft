@@ -51,6 +51,20 @@ use opt_tabulate;
 use loop_shape;
 use opt_non_sentinel;
 use opt_range;
+use cgen_value;
+use cgen_fnref;
+use cgen_append;
+use cgen_dest;
+use cgen_lazy;
+use cgen_inputs;
+use opt_version;
+use cgen_version;
+use opt_below_len;
+use opt_destination;
+use opt_append_twin;
+use cgen_rotate;
+use opt_hand_over;
+use opt_apart;
 
 // Is `code` one identifier: letters, digits and underscores only?
 fn identifier(code: text) -> boolean {
@@ -77,11 +91,16 @@ fn compared(a: text, op: text, b: text) -> E {
 fn innermost_span(v: ir::Node) -> ir::Position? {
   match v {
     NdSpan { pos, inner } => {
+      // Explicit returns: a tail `if line { pos } else { null }` after the early return answered
+      // an empty position (loft#2525), and a marker span sits at line 0.
       deeper = innermost_span(inner);
-      if deeper != null {
+      if deeper != null && deeper!.line != 0 {
         return deeper;
       }
-      if pos.line != 0 { pos } else { null }
+      if pos.line != 0 {
+        return pos;
+      }
+      null
     },
     _ => null,
   }
@@ -389,6 +408,20 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     }
   }
   count = len(args);
+  if w.apw > 0 {
+    through_apw = false;
+    windowed_ap = cgen_append::window_op(x, w, name, args, ind, through_apw);
+    if through_apw {
+      return windowed_ap;
+    }
+  }
+  if w.ds.rb >= 0 {
+    into_ds = false;
+    dest_set = cgen_dest::scalar_set(x, w, name, args, ind, into_ds);
+    if into_ds {
+      return dest_set;
+    }
+  }
   if len(w.headers) > 0 || len(w.push_heads) > 0 {
     through_header = false;
     held_read = cgen_hoist::held_access(x, w, name, args, ind, through_header);
@@ -428,7 +461,21 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
       return held_access;
     }
   }
-  if len(w.chains) > 0 {
+  if len(w.lazy) > 0 {
+    through_lazy = false;
+    lazy_read = cgen_lazy::lazy_op(x, w, name, args, through_lazy);
+    if through_lazy {
+      return lazy_read;
+    }
+  }
+  if len(w.split_tabs) > 0 {
+    through_tab = false;
+    tab_read = cgen_lazy::table_op(x, w, name, args, ind, through_tab);
+    if through_tab {
+      return tab_read;
+    }
+  }
+  if len(w.chains) > 0 || w.call_kind == opt_version::PLAIN {
     done = false;
     guarded = cgen_loop::chain_operator(x, w, name, args, ind, done);
     if done {
@@ -879,22 +926,34 @@ fn nn_twin_bits(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> integer {
 // `ranged_call`: may this call of `d` take its `__rg` twin — the rule is on, `d` is a loft
 // function whose ranged variant gains, and every integer argument is proven within `[-L, L]`
 // under this body's facts.
-fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
+fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>, inv: boolean) -> boolean {
   if w.gen_elem != "" || (env_variable("LOFT_NO_RANGED_CALLS") ?? "0") != "0" || (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
     return false;
   }
   if !cgen_names::is_loft_defined(x.b, d) || !opt_ranged_call::variant_gains(x.b, x.p, x.c, x.gains, d, 0) {
     return false;
   }
-  if len(w.over) > 0 {
-    return opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, w.over[len(w.over) - 1]!, d, args);
+  facts = if len(w.over) > 0 { w.over[len(w.over) - 1]! } else { w.rv };
+  if !opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, facts, d, args) {
+    return false;
   }
-  opt_ranged_call::args_ranged(x.b, x.p, x.c, w.nn, w.rv, d, args)
+  // An `__inv` twin's scalar inputs are seeded too, so each must be proven here.
+  !inv || cgen_inputs::inputs_ranged(x, w, d, args, facts)
 }
 
 // A call of function `d` (`call`): its arguments evaluated in order, then the function or the
 // twin this site's facts admit.  A callee this writer does not carry is refused by name.
 fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
+  // `@FR-R-AppendTwin`: the statement-level site's own call, taken before its arguments are.
+  ap_here = w.ap_site >= 0 && w.ap_site == d;
+  if ap_here {
+    w.ap_site = -1;
+  }
+  // `@FR-R-Destination`: the caller half's rewritten call, likewise.
+  ds_here = w.ds_site >= 0 && w.ds_site == d;
+  if ds_here {
+    w.ds_site = -1;
+  }
   def = x.b.data.definitions[d]!;
   // Every route below is keyed by the callee's name, and only a standard-library definition
   // is answered by one.
@@ -1027,6 +1086,18 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       callee_args += [cv#index];
     }
   }
+  // `@FR-R-SliceArg`: a slice value handed to a `const` parameter is built in a pooled carrier.
+  carriers = len(w.slice_carriers);
+  if (env_variable("LOFT_NO_SLICE_ARG_POOL") ?? "0") == "0" {
+    for at in def.attributes {
+      if at.value_const && at#index < len(args) {
+        carrier = cgen_value::slice_carrier(x.b, args[at#index]!);
+        if carrier >= 0 {
+          w.slice_carriers += [carrier];
+        }
+      }
+    }
+  }
   for a in args {
     i = a#index;
     if linked[i]! {
@@ -1085,24 +1156,102 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       return none();
     }
   }
+  w.slice_carriers = w.slice_carriers[0..carriers];
+  // An IR tuple the callee takes by pointer (`Cx::vr_ptr_params`): its address.
+  for i in cgen_value::vr_ptr_params(x, d) {
+    if i < len(xs) {
+      xs[i] = cgen_value::tuple_arg_address(w, args, i, xs[i]!, shapes[i]!, ind);
+    }
+  }
   t = cgen_names::plain(d);
   if places != 0 && (native != "" || len(args) > 63) {
     refuse(w, "a store place handed to a & parameter of {def.name}");
     return none();
   }
   t.places = places;
+  // `@FR-R-Header`'s kept-twin clause: a callee handed a vector this body holds a grown
+  // header for takes that header by pointer and keeps it current; no refresh follows.
+  if places == 0 && native == "" && len(args) < 64 {
+    kh = cgen_hoist::kept_header_arg(x, w, d, args);
+    if kh != "" {
+      xs += ["&{kh}"];
+      w.kh_passed += [kh];
+      t.kh = true;
+    }
+  }
+  vflag = "";
+  // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
+  if !t.kh && native == "" && len(args) < 64 {
+    taken = false;
+    inputs = cgen_inputs::twin_inputs(x, w, d, args, ind, taken);
+    if w.why != "" {
+      return none();
+    }
+    if taken {
+      // `@FR-R-Version`: the call in an innermost counted loop may take the fast twin.
+      if len(xs) == len(args) {
+        vflag = cgen_version::flag_of(w, w.call_site, inputs);
+      }
+      xs += inputs;
+      t.inv = true;
+      // The loop is what is hot: the functions its body calls are roots of the hot helpers.
+      if len(w.loop_call_at) > 0 {
+        for c in w.loop_calls[w.loop_call_at[len(w.loop_call_at) - 1]!..len(w.loop_calls)] {
+          x.loop_callees[c] = true;
+        }
+      }
+    }
+  }
+  if w.nk_call == d {
+    w.nk_call = -1;
+    t.nk = true;
+  }
+  if ap_here || cgen_append::handed(x, w, d, args) {
+    t.ap = true;
+  }
+  if ds_here {
+    t.ds = true;
+  }
   if native == "" {
     if len(args) <= 23 {
       t.nn = nn_twin_bits(x, w, d, args);
     }
-    t.rg = ranged_call(x, w, d, args);
+    t.rg = ranged_call(x, w, d, args, t.inv);
   }
   name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
   if !cgen_names::is_plain(t) {
     request_twin(x, t);
     name = cgen_names::twin_name(x.b, x.dups, t);
   }
+  // `@FR-R-AppendTwin`'s window clause: a twin that takes its caller's window gets one.
+  fresh = "";
+  buffer_c = "";
+  window = 0;
+  if t.ap {
+    at_buf = binds::hidden_return_buffer_attr(def) ?? -1;
+    buffer_c = if at_buf >= 0 && at_buf < len(xs) { xs[at_buf]! } else { "" };
+    window = cgen_append::window_arg(x, w, d, args, xs, fresh);
+  }
   code = "{name}({xs.join(", ")})";
+  // `@FR-R-Version`'s callee clause: inside a fast twin, a leaf it walked calls that leaf's own
+  // fast twin; at a versioned site, the fast twin where the flag holds.
+  if t.inv && (w.vf && version_callee(x, w, d) || vflag != "" && !t.ap && fresh == "") {
+    ft = cgen_names::copy_twin(t);
+    ft.vf = true;
+    request_twin(x, ft);
+    fast = "{cgen_names::twin_name(x.b, x.dups, ft)}({xs.join(", ")})";
+    held_flag = false;
+    for f in w.v_hold {
+      if f == vflag {
+        held_flag = true;
+      }
+    }
+    code = if w.vf && version_callee(x, w, d) || held_flag { fast } else { "({vflag} ? {fast} : {code})" };
+  }
+  if fresh != "" {
+    held_r = temp(w, "ref");
+    return E { code: "({fresh} = loft_win_of({buffer_c}, {window}), {held_r} = {code}, loft_win_sync({fresh}), {held_r})", kind: K_REF };
+  }
   // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
   // through its `__wr` twin, and the call's value is a view of that buffer.
   if ret == "text" && cgen_names::is_plain(t) && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
@@ -1129,6 +1278,16 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     return held_value(w, held, "text");
   }
   E { code: code, kind: kind_of(ret), tup: if is_tuple(ret) { ret } else { "" } }
+}
+
+// Is `d` a leaf the fast twin being written walked inline (its plan's callees)?
+fn version_callee(x: Cx, w: W, d: integer) -> boolean {
+  for c in cgen_version::fast_plan(x, w.index).callees {
+    if c == d {
+      return true;
+    }
+  }
+  false
 }
 
 // `place_arg`: a `&` argument that names a store place — a field (`OpGetField`), an element
@@ -1557,7 +1716,17 @@ fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E 
   for a in xs {
     list += [a];
   }
-  code = "loft_call{sig}({list.join(", ")})";
+  // `@FR-R-FnRefBuffer`: a kept binding hands its own store to the target.
+  buf = if ret == "ref" { w.callref_buf } else { "" };
+  w.callref_buf = "";
+  code = if buf == "" { "loft_call{sig}({list.join(", ")})" } else { "" };
+  if buf != "" {
+    if !x.sigs_buf.contains(sig) {
+      x.sigs_buf += [sig];
+    }
+    list += [buf];
+    code = "loft_call{sig}b({list.join(", ")})";
+  }
   if ret == "text" {
     held_t = temp(w, "text");
     line(w, ind, "loft_text_free(&{held_t});");
@@ -1777,10 +1946,16 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     },
     NdCall { def_nr, args } => {
       name = def_name(x.b, def_nr);
-      if !name.starts_with("Op") {
-        return call(x, w, def_nr, args, ind);
-      }
-      op_call(x, w, name, typed_nulls(x.b, def_nr, args), ind)
+      // `@FR-R-Version`'s markers of this call (a fast twin's raw access or plain operator, a
+      // caller's site), for the writer of this call alone.
+      saved_kind = w.call_kind;
+      saved_site = w.call_site;
+      w.call_kind = cgen_version::call_kind(w, v);
+      w.call_site = cgen_version::site_of(v);
+      out = if !name.starts_with("Op") { call(x, w, def_nr, args, ind) } else { op_call(x, w, name, typed_nulls(x.b, def_nr, args), ind) };
+      w.call_kind = saved_kind;
+      w.call_site = saved_site;
+      out
     },
     NdBlock { block: _ } => compound(x, w, node, ind),
     NdInsert { items: _ } => compound(x, w, node, ind),
@@ -1788,6 +1963,16 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     NdTuple { items: _ } => compound(x, w, node, ind),
     NdNull => {
       refuse(w, "a null without a type");
+      none()
+    },
+    NdRawExpr { s: code } => {
+      for r in w.raw_exprs {
+        if r == code {
+          shape = w.raw_shapes[r#index]!;
+          return E { code: code, kind: kind_of(shape), tup: if is_tuple(shape) { shape } else { "" } };
+        }
+      }
+      refuse(w, "the value {construct(node)}");
       none()
     },
     _ => {
@@ -2038,6 +2223,11 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
     },
     NdInsert { items } => assign_seq(x, w, items, target, shape, ind),
     NdIf { cond, t, f } => {
+      decided = cgen_version::decided(w, cond);
+      if decided >= 0 {
+        assign(x, w, if decided == 1 { t } else { f }, target, shape, ind);
+        return;
+      }
       cold = null_test(x.b, cond) && !int_literal_fallback_value(x.b, cond, f);
       test = as_cond(w, expr(x, w, cond, ind));
       line(w, ind, "if ({bare(test)}) {{");
@@ -2072,7 +2262,8 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
         }
         return;
       }
-      e = expr(x, w, node, ind);
+      // A call `@FR-R-Version` marks keeps its marker in view (`expr_value` reads it).
+      e = expr(x, w, if cgen_version::call_kind(w, v) != 0 || cgen_version::site_of(v) > 0 { v } else { node }, ind);
       if w.why != "" {
         return;
       }
@@ -2304,6 +2495,9 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
     if o#index >= run_end && plain_rules() && len(w.push_heads) > 0 {
       past = cgen_hoist::held_push_run(x, w, ops, o#index, end, ind);
       if past >= 0 {
+        for i in o#index..past {
+          cgen_hoist::refresh_grown(x, w, ops[i]!, ind);
+        }
         skip_to = past;
         continue;
       }
@@ -2317,8 +2511,23 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
       }
     }
     // A clear of a vector the next statement mints anew releases nothing that is kept.
-    if cgen_ref::clear_before_mint(x.b, ops, o#index, end) {
+    if cgen_ref::clear_before_mint(x.b, w, ops, o#index, end) {
       continue;
+    }
+    if plain_rules() {
+      last = cgen_rotate::rotate_site(x, w, ops, o#index, ind);
+      if last >= 0 {
+        for i in o#index..last + 1 {
+          cgen_hoist::refresh_grown(x, w, ops[i]!, ind);
+        }
+        skip_to = last + 1;
+        continue;
+      }
+      dest_last = cgen_dest::destination_site(x, w, ops, o#index, ind);
+      if dest_last >= 0 {
+        skip_to = dest_last + 1;
+        continue;
+      }
     }
     if plain_rules() {
       match loop_shape::unspan(o) {
@@ -2335,9 +2544,11 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
     if o#index == 0 && w.iter_pending {
       w.iter_pending = false;
       w.in_iter += 1;
+      w.list_stmt = true;
       stmt(x, w, o, ind);
       w.in_iter -= 1;
     } else {
+      w.list_stmt = true;
       stmt(x, w, o, ind);
     }
     if plain_rules() && w.why == "" {
@@ -2420,17 +2631,15 @@ fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
 
 // Write `v` for its effect (`stmt`, `stmt_inner`, `stmt_kind`).
 fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
-  if w.why != "" {
+  // A `__nk` twin: the body without its keep statement.
+  if len(w.nk_skip) > 0 && loop_shape::unspan(v) == w.nk_skip[0] {
     return;
   }
-  // A minted room is forgotten by any statement but the bind of its vector and the write of
-  // the vector's empty handle (`room_keeps`).
-  if !room_keeps(x.b, w, v) {
-    for r in w.room_minted {
-      if r >= 0 {
-        w.room_minted[r#index] = -1;
-      }
-    }
+  // Written as a statement of a list (`stmts_upto`), not as a part of another statement.
+  listed = w.list_stmt;
+  w.list_stmt = false;
+  if w.why != "" {
+    return;
   }
   // What the previous statement filed reaches this one only when it is a lookup's binding;
   // every other statement forgets it (a line marker is no statement).
@@ -2446,6 +2655,24 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
     lookup = cgen_ref::binds_lookup(x.b, v);
     w.filed_next = if lookup { filed } else { -1 };
     w.filed_next_path = if lookup { filed_path } else { "" };
+  }
+  // `@FR-R-FnRefBuffer`: a kept record's per-pass declaration or free writes nothing.
+  if !is_line && cgen_fnref::dropped(x, w, v, listed) {
+    w.filed_next = -1;
+    w.filed_next_path = "";
+    return;
+  }
+  // A minted room is forgotten by any statement but the bind of its vector and the write of
+  // the vector's empty handle (`room_keeps`).
+  if !room_keeps(x.b, w, v) {
+    for r in w.room_minted {
+      if r >= 0 {
+        w.room_minted[r#index] = -1;
+      }
+    }
+  }
+  if !is_line && cgen_append::append_site(x, w, v, ind) {
+    return;
   }
   // An assignment or a `return` of a located value reports a fault in it at that line.
   at = match loop_shape::unspan(v) {
@@ -2469,6 +2696,10 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
       NdSet { var: set_var, inner: _ } => cgen_hoist::refresh_rebound(w, set_var, ind),
       _ => {},
     }
+  }
+  // A span is written as the statement it wraps, which refreshes for itself.
+  if w.why == "" && !(v is NdSpan) {
+    cgen_hoist::refresh_grown(x, w, v, ind);
   }
   if !is_line {
     w.filed_next = -1;
@@ -2592,7 +2823,12 @@ fn note_site(x: Cx, w: W, v: ir::Node, ind: integer) {
 }
 
 fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
-  note_site(x, w, v, ind);
+  // A marker span (line 0: `opt_below_len`, `opt_version`) locates nothing: the statement it
+  // wraps notes its own site.
+  marker_span = match v { NdSpan { pos, inner: _ } => pos.line == 0, _ => false };
+  if !marker_span {
+    note_site(x, w, v, ind);
+  }
   // `@FR-R-Cold`: a variable only an outlined arm uses is the arm's own — its frees go with it.
   match v {
     NdCall { def_nr: _, args: _ } => {
@@ -2615,6 +2851,12 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdEnum { ord: _, tp: _ } => {},
     NdText { s: _ } => {},
     NdSpan { pos, inner } => {
+      // A call a marker names (`@FR-R-Version`) is written with its marker in view.
+      if pos.line == 0 && (cgen_version::call_kind(w, v) != 0 || cgen_version::site_of(v) > 0) && (loop_shape::unspan(inner) is NdCall) {
+        note_site(x, w, inner, ind);
+        dropped(x, w, v, ind);
+        return;
+      }
       saved_file = w.span_file;
       saved_line = w.span_line;
       if pos.line != 0 {
@@ -2733,6 +2975,13 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       flush(w, ind);
     },
     NdIf { cond, t, f } => {
+      // A fast twin's decided `if`: the arm it takes.
+      decided = cgen_version::decided(w, cond);
+      if decided >= 0 {
+        stmt(x, w, if decided == 1 { t } else { f }, ind);
+        flush(w, ind);
+        return;
+      }
       outlined = if len(w.cold) == 0 { -1 } else { cgen_cold::cold_index(w, t) };
       if outlined >= 0 {
         cgen_cold::cold_if(x, w, outlined, cond, f, ind);
@@ -2762,6 +3011,8 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       if w.gen_elem != "" {
         stmt(x, w, inner, ind);
         line(w, ind, "goto loft_gen_end;");
+      } else if cgen_dest::returns_buffer(w, inner) {
+        cgen_dest::dest_return(w, ind);
       } else {
         ret_value(x, w, inner, ind);
       }
@@ -3054,6 +3305,20 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
 // alone, answering nothing, its result the caller's buffer `work_ret`.
 fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>) -> Written {
   index = twin.d;
+  // `@FR-R-Base`'s guard clause: the guarded index slots marked in the code every body of the
+  // function is written from (`opt_below_len::mark`).
+  if opt_below_len::enabled() && !x.guards_marked[index]! && len(x.b.data.definitions[index]!.code) > 0 {
+    x.guards_marked[index] = true;
+    marked = 0;
+    code = opt_below_len::mark(x.b, index, marked);
+    if marked > 0 {
+      x.b.data.definitions[index].code = [code];
+    }
+  }
+  // `@FR-R-Version`: the calls of leaves numbered as sites (`cgen_version::mark_sites`).
+  if plain_rules() && len(x.b.data.definitions[index]!.code) > 0 {
+    cgen_version::mark_sites(x, index);
+  }
   d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
     return Written { text: "", refused: "a function without a loft body" };
@@ -3069,6 +3334,14 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     return Written { text: "", refused: "a generator handed a store place for a & parameter" };
   }
   ret = if work_ret >= 0 || len(helper) > 0 || gen_elem != "" { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  // `@FR-R-Destination` — a `__d` twin answers its scalar fields as a tuple.
+  if twin.ds {
+    ds_shape = opt_destination::shape(x.b, index, 0, x.dest_memo);
+    if ds_shape.rb < 0 {
+      return Written { text: "", refused: "a __d twin of a function with no destination shape" };
+    }
+    ret = opt_destination::tuple_shape(ds_shape);
+  }
   if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
@@ -3077,6 +3350,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   raw: vector<text> = [];
   links: vector<boolean> = [];
   is_param: vector<boolean> = [];
+  // `@FR-R-ValueRecord`'s pointer clause: the parameters that arrive as `const loft_tupN *`.
+  by_ptr = cgen_value::vr_ptr_params(x, index);
+  ordinal = 0;
   for v in d.variables.variables {
     shape = shapes[v#index]!;
     if held(shape) == "" || shape == "void" {
@@ -3099,17 +3375,19 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     raw += [own];
     // @PLN219 — a `&S` whose `S` is held out of line points at a slot cell, which may name a
     // field: read through the test.
-    names += [if link && binds::slot_link_def(x.b, v.type_def[0]!) != null { "loft_slot_read(*{own})" } else if link { "(*{own})" } else { own }];
+    pointed = v.argument && by_ptr.contains(ordinal);
+    names += [if link && binds::slot_link_def(x.b, v.type_def[0]!) != null { "loft_slot_read(*{own})" } else if link || pointed { "(*{own})" } else { own }];
     links += [link];
     is_param += [v.argument];
     if v.argument {
-      params += [if link { "{held(shape)} *{own}" } else { "{passed(shape)} {own}" }];
+      params += [if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" }];
+      ordinal += 1;
     }
   }
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  if twin.inv || twin.nk || twin.apr || twin.apv || twin.kh || twin.ap || twin.ds || twin.vf {
+  if twin.apr || twin.apv {
     return Written { text: "", refused: "a twin of a rule that is not carried" };
   }
   // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
@@ -3122,18 +3400,12 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   // The text facts the body is set up with (`FnWriter::new`).
   texts = cgen_texts::borrowed_texts(x.b, index);
-  if len(texts.lazy) > 0 || len(texts.tables) > 0 {
-    return Written { text: "", refused: "a lazy split or a split table" };
-  }
-  if len(texts.tested) > 0 {
-    return Written { text: "", refused: "a tested text borrow" };
-  }
   // `@FR-R-Cold`'s loft clause outlines an early exit that builds a text: not carried.
   if !plain_rules() && cgen_names::is_plain(twin) && (env_variable("LOFT_NO_COLD_EXIT") ?? "0") == "0" && cgen_text::may_outline(d, d.code[0]!) {
     return Written { text: "", refused: "a cold exit that builds a text" };
   }
   nn = opt_non_sentinel::non_sentinel_vars_seeded(x.b, x.p, index, seeded);
-  seeds = if twin.rg { opt_ranged_call::param_seeds(x.b, index) } else { opt_range::empty_ranges(len(d.variables.variables)) };
+  seeds = if twin.rg && twin.inv { cgen_inputs::twin_seeds(x, index) } else if twin.rg { opt_ranged_call::param_seeds(x.b, index) } else { opt_range::empty_ranges(len(d.variables.variables)) };
   w = W {
     index: index,
     name: d.name,
@@ -3166,6 +3438,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     in_range_copy: false,
     peel_seeds: [],
     walk_scopes: if (env_variable("LOFT_NO_CHAR_WALK") ?? "0") != "0" { [] } else { [for cw in char_walk::walks(x.b, index) { cw.scope }] },
+    char_walks: if (env_variable("LOFT_NO_CHAR_WALK") ?? "0") != "0" { [] } else { char_walk::walks(x.b, index) },
     borrowed: texts.borrowed,
     literal_views: cgen_texts::literal_views(x.b, index, texts.borrowed),
     pending: [],
@@ -3220,6 +3493,39 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     alias_vec: ir::NdNull,
     in_range: [],
     in_range_lens: [],
+    raw_exprs: [],
+    nk_skip: if twin.nk { opt_hand_over::keep_statement(x.b, index) } else { [] },
+    nk_call: -1,
+    slice_carriers: [],
+    grown_headers: [],
+    kh_passed: [],
+    lr_recs: [],
+    callref_buf: "",
+    list_stmt: false,
+    lazy: if (env_variable("LOFT_NO_LAZY_SPLIT") ?? "0") != "0" { [] } else { texts.lazy },
+    split_tabs: if (env_variable("LOFT_NO_SPLIT_TABLE") ?? "0") != "0" { [] } else { texts.tables },
+    tab_alias: [],
+    tested: texts.tested,
+    loop_calls: [],
+    vf: twin.vf,
+    call_kind: 0,
+    call_site: 0,
+    v_site: [],
+    v_flag: [],
+    v_reads: [],
+    v_hold: [],
+    loop_call_at: [],
+    ap_buf: -1,
+    ap_views: [],
+    apw: 0,
+    ap_loop_windows: [],
+    ap_memo: opt_append_twin::new_memo(x.b),
+    ap_site: -1,
+    window_parents: [],
+    ds: opt_destination::Shape { rb: -1, vo: 0, vend: 0, vt: 0, scalars: [] },
+    ds_site: -1,
+    text_windows: [],
+    raw_shapes: [],
   };
   // `store_links`: a place twin's `&` parameters (`twin.places`, by parameter) and a store
   // instance's text parameters (`n_app@st1`, `parser/store_text.rs`) are store links, and so is every `&` local each bind of which names a field or an element — each a
@@ -3234,7 +3540,9 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       ordinal += 1;
     }
   }
+  cgen_lazy::declare_tables(w);
   w.store_links = store_links_of(x.b, w, d, seed);
+  w.lr_recs = cgen_fnref::fnref_kept(x, w);
   ordinal = 0;
   for v in d.variables.variables {
     if w.store_links[v#index]! {
@@ -3247,6 +3555,37 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       ordinal += 1;
     }
   }
+  // An `__ap` twin: the caller's vector is the buffer; with the window clause, the caller's
+  // window too (`loft_win *loft_apw`).
+  if twin.ap {
+    ap_param = cgen_append::twin_body(x, w);
+    if ap_param != "" {
+      params += [ap_param];
+    }
+  }
+  // An `__inv` twin takes the header of each vector it indexes and each record scalar it reads
+  // from its caller, which holds them; its body serves them as a loop's held ones.
+  // A fast twin (`version_fast`): its plan, the leaf's own or a calling leaf's part.
+  if twin.vf && !cgen_version::fast_plan(x, index).some {
+    return Written { text: "", refused: "a fast twin of a function that is no leaf" };
+  }
+  if twin.inv {
+    why_not = cgen_inputs::twin_params(x, w, params);
+    if why_not != "" {
+      return Written { text: "", refused: why_not };
+    }
+  }
+  // A `__kh` twin: the caller's header for its vector parameter, by pointer — held, with its
+  // base, and derived again through the pointer after each growth (`kept_growth`).
+  if twin.kh {
+    k = opt_apart::kept_growth_param(x.b, x.writes, index);
+    if k < 0 {
+      return Written { text: "", refused: "a __kh twin of a function that keeps no header" };
+    }
+    params += ["loft_vh *khp"];
+    w.headers += [Header { path: "{k}:", name: "(*khp)", frame: 1 }];
+    w.grown_headers += ["(*khp)"];
+  }
   // `@FR-R-RetAdopt`: the result local that is built in the return buffer.
   if plain_rules() && (env_variable("LOFT_NO_RETBUF_ADOPT") ?? "0") == "0" {
     adopted = opt_adopt::ret_adopt(x.b, index);
@@ -3258,6 +3597,20 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       w.facts.adopted_v = adopted.v;
       w.facts.adopted_vdb = adopted.vdb;
     }
+  }
+  if twin.ds {
+    cgen_dest::twin_body(x, w);
+  }
+  cgen_text::declare_owns(w);
+  // An `__ap` twin's result never adopts the buffer: it is the caller's vector; a `__d` twin's
+  // is the caller's element.
+  if w.ap_buf >= 0 || twin.ds {
+    w.adopt_v = -1;
+    w.adopt_vdb = -1;
+    w.adopt_buf = -1;
+    w.adopt_tp = -1;
+    w.facts.adopted_v = -1;
+    w.facts.adopted_vdb = -1;
   }
   code = d.code[0]!;
   if len(helper) > 0 {
@@ -3358,10 +3711,13 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     }
   }
   // `@FR-R-Inline`: a small function's body is always inlined into its frame wrapper; a
-  // larger one up to the helper size is decided once the twins are written.
-  storage = if statements <= 12 {
+  // larger one up to the helper size is decided once the twins are written.  // (`hot_helper_size`: only a function written plain, or as its `__rg` twin, is a candidate.)
+  // `@FR-R-Inline`'s twin clause (`hot_twin`): an `__inv` twin exists only because a loop holds
+  // its inputs for the call, so up to 64 statements it is hinted inline.
+  hot_twin = twin.inv && statements <= 64 && (env_variable("LOFT_NO_INLINE_TWIN") ?? "0") == "0" && (env_variable("LOFT_NO_INLINE_HINT") ?? "0") == "0";
+  storage = if statements <= 12 || hot_twin {
     "LOFT_HOT_INLINE"
-  } else if statements <= 80 && twin.nn == 0 {
+  } else if statements <= 80 && plain_but_rg(twin) {
     "static /*loft_hot_body:{index}*/"
   } else {
     "static"
@@ -3376,6 +3732,11 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   name = cgen_names::twin_name(x.b, x.dups, twin);
   // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
   // marker resolved once the twins are written, or out of line.
-  outer = if statements <= 12 { "static inline" } else if statements <= 80 && twin.nn == 0 { "static /*loft_hot:{index}*/" } else { "static" };
+  outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && plain_but_rg(twin) { "static /*loft_hot:{index}*/" } else { "static" };
   Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer }
+}
+
+// `hot_helper_size`'s mask test: no twin bit but `__rg`'s.
+fn plain_but_rg(t: cgen_names::Twin) -> boolean {
+  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf
 }

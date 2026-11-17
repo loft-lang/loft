@@ -1043,6 +1043,13 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
   if e.first_pass && el_types::is_unknown(ft) {
     return ir::NdNull;
   }
+  // `out_of_line_read` (`@FR-L-OutOfLine`): the child record the field's number names, a view
+  // in the host's store — the field's `OpGetField` carrying the content's row.
+  if el_schema::out_of_line(e, d, a) {
+    fd = el_schema::out_of_line_content(e, ft);
+    kt = if e.first_pass || fd < 0 { 65535 } else { el::def(e, fd).known_type };
+    return el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: kt }])]);
+  }
   if keyed_kind(ft) {
     return el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]);
   }
@@ -1852,15 +1859,39 @@ pub fn nullable_arith(e: el::El, code: ir::Node, outer: boolean) -> ir::Node {
   }
 }
 
-// The deps of an arm that it does not mint itself (`use_analysis::minted_vars`: set inside it).
-pub fn outside_deps(arm: ir::Node, deps: vector<integer>) -> vector<integer> {
+// The deps of an arm that it does not mint itself (`use_analysis::minted_vars`: the destination
+// of an `OpDatabase` inside it).  A local the arm merely binds — a match capture viewing the
+// subject — is no mint: the join borrows it.
+pub fn outside_deps(e: el::El, arm: ir::Node, deps: vector<integer>) -> vector<integer> {
+  db = el::def_nr(e, "OpDatabase");
   kept: vector<integer> = [];
   for d in deps {
-    if !sets_var(arm, d) {
+    if !mints_var(arm, d, db) {
       kept += [d];
     }
   }
   kept
+}
+
+// Is `v` the destination of an `OpDatabase` (definition `db`) anywhere in `n`?
+pub fn mints_var(n: ir::Node, v: integer, db: integer) -> boolean {
+  match n {
+    NdSet { var: _, inner } => mints_var(inner, v, db),
+    NdSpan { inner } => mints_var(inner, v, db),
+    NdReturn { inner } => mints_var(inner, v, db),
+    NdBlock { block } => { for o in block[0].operators { if mints_var(o, v, db) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if mints_var(o, v, db) { return true; } } false },
+    NdInsert { items } => { for o in items { if mints_var(o, v, db) { return true; } } false },
+    NdIf { cond, t, f } => mints_var(cond, v, db) || mints_var(t, v, db) || mints_var(f, v, db),
+    NdCall { def_nr, args } => {
+      if def_nr == db && len(args) > 0 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
+        return true;
+      }
+      for a in args { if mints_var(a, v, db) { return true; } }
+      false
+    },
+    _ => false
+  }
 }
 
 // Is `v` set anywhere in `n`?
@@ -1980,6 +2011,23 @@ pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> in
   lv
 }
 
+// An `i32` element's own store types (`int<-2147483647,false>` and its vector), made where a
+// `vector<i32>` is first met: the rows a formatted vector reads.
+pub fn int4_rows(e: el::El, t: ir::TypeT) {
+  match t {
+    TyInteger { spec } => {
+      // A narrow element's `vector<…>` row is made where the type is read too (a parameter's).
+      if el_types::int4(spec) || el_types::uint4(spec) || el_types::narrow_width(spec) > 0 {
+        ct = el_schema::content_type(e, t);
+        if ct >= 0 {
+          el_schema::vector_type(e, ct);
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
 // What `Data::vector_def` answers for element type `t`, looked up where the standard library
 // registered it: the `main_vector<T>` wrapper (its definition and store type) and the `vector<T>`
 // store type.  An element type the library has no rows for yet is refused by name.
@@ -1998,6 +2046,7 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
   }
+  int4_rows(e, t);
   if el::def_nr(e, "main_vector<{nm}>") < 0 {
     tok = 0;
     match e.p.nodes[lit] {
@@ -2010,6 +2059,11 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   // The scalar's own `vector<scalar>` definition follows on the second pass (`check_vector`),
   // at the same place, its row the first pass's.
   sbn = el_types::nullable_scalar_elem(e, t);
+  // So does a plain `single`'s, for a literal with items (`v: vector<single> = [0.5f]`): the
+  // library declares its wrapper and no `vector<single>`.
+  if sbn == "" && t is TySingle && match e.p.nodes[lit] { SVecLit { items: li } => len(li) > 0, _ => false } {
+    sbn = "single";
+  }
   if !e.first_pass && sbn != "" && el::def_nr(e, "vector<{sbn}>") < 0 && el_schema::schema_type(e, "vector<{sbn}>") >= 0 {
     stok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
     sat = closing_bracket(e, stok);
@@ -2150,7 +2204,7 @@ pub fn elem_size(t: ir::TypeT) -> integer {
   match t {
     TyReference { n: _ } => -2,
     TyTuple { elems: _ } => -2,
-    TyInteger { spec } => if el_types::narrow_width(spec) > 0 { el_types::narrow_width(spec) } else { 8 },
+    TyInteger { spec } => if el_types::narrow_width(spec) > 0 { el_types::narrow_width(spec) } else if el_types::int4(spec) || el_types::uint4(spec) { 4 } else { 8 },
     TyFloat => 8,
     TySingle => 4,
     TyText { dep: _ } => 4,
@@ -2158,7 +2212,7 @@ pub fn elem_size(t: ir::TypeT) -> integer {
     TyCharacter => 4,
     TyEnum { n: _, is_ref } => if is_ref { -2 } else { 1 },
     // A nullable struct enum is its enum's record (null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { -1 } else { 8 }, TyFloat => 8, TyBoolean => 1, _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { -1 } else if el_types::int4(spec) { 4 } else { 8 }, TyFloat => 8, TyBoolean => 1, _ => -1 },
     _ => -1
   }
 }
@@ -2166,6 +2220,20 @@ pub fn elem_size(t: ir::TypeT) -> integer {
 // The store type of a `vector<T>` (`vector<…>` of the element's store type): a narrow integer's
 // is named after its width (`vector<byte>`), not its definition (`vector<integer(0, 255)>`).
 pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
+  // A `vector<i32?>` has a nullable four-byte row of its own (`vector<int<-2147483647,true>>`).
+  match t {
+    TyOptional { inner: oi } => {
+      match oi {
+        TyInteger { spec: os } => {
+          if el_types::int4(os) {
+            return el_schema::vector_type(e, el_schema::int_part(e, os, el::NONE, true));
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   // A `vector<integer?>` (`float?`, `boolean?`) is laid out as the `vector<integer>` it is.
   bn = el_types::nullable_scalar_elem(e, t);
   if bn != "" {
@@ -2173,8 +2241,8 @@ pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
   }
   match t {
     TyInteger { spec } => {
-      if el_types::narrow_width(spec) > 0 {
-        c = el_schema::narrow_element(e, spec);
+      if el_types::narrow_width(spec) > 0 || el_types::uint4(spec) {
+        c = if el_types::uint4(spec) { el_schema::content_type(e, t) } else { el_schema::narrow_element(e, spec) };
         return if c < 0 { -1 } else { el_schema::schema_type(e, "vector<{e.b.types[c].name}>") };
       }
     },
@@ -2201,7 +2269,7 @@ pub fn elem_read(e: el::El, t: ir::TypeT, get: ir::Node) -> ir::Node {
 // through, or "".
 pub fn read_op(t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpGetByte" } else if el_types::narrow_width(spec) == 2 { "OpGetShortRaw" } else if spec.forced_size == 0 { "OpGetInt" } else { "" },
+    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpGetByte" } else if el_types::narrow_width(spec) == 2 { "OpGetShortRaw" } else if spec.forced_size == 0 { "OpGetInt" } else if el_types::int4(spec) { "OpGetInt4" } else if el_types::uint4(spec) { "OpGetInt4Full" } else { "" },
     TyText { dep: _ } => "OpGetText",
     TyBoolean => "OpGetBoolean",
     TyFloat => "OpGetFloat",
@@ -2209,7 +2277,7 @@ pub fn read_op(t: ir::TypeT) -> text {
     TyCharacter => "OpGetCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpGetEnum" },
     // A nullable plain integer element is read as the integer it is stored as.
-    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpGetInt" }, TyFloat => "OpGetFloat", TyBoolean => "OpGetBoolean", _ => "" },
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else if el_types::int4(spec) { "OpGetInt4" } else { "OpGetInt" }, TyFloat => "OpGetFloat", TyBoolean => "OpGetBoolean", _ => "" },
     _ => ""
   }
 }

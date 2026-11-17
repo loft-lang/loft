@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a struct field whose record holds its host is laid out of line (child_rec<S>): read through OpRefFromChildRec; in a literal an omitted child is the null sentinel, a child literal whose values read no record is built in the child (OpChildRecInPlace), any other apart and copied in (OpSetChildRec).
+// Prints: 15 2 8
+struct Tree { key: integer, left: Tree?, right: Tree? }
+
+fn total(t: Tree?) -> integer {
+  if t == null { return 0; }
+  t.key + total(t.left) + total(t.right)
+}
+
+fn main() {
+  t = Tree { key: 1, left: Tree { key: 2 }, right: Tree { key: 4, left: Tree { key: 8 } } };
+  println("{total(t)} {t.left.key} {t.right.left.key}");
+}

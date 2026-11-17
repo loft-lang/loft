@@ -1,0 +1,219 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `src/opt/keyed_place.rs`: `@FR-R-InPlaceLiteral`'s KEYED clause,
+// `h[k] = R { … }` written into the record the collection claims for it.
+//
+// The plain form builds the literal in a store of its own and `OpSetKeyed` copies it in; here
+// the literal's field values are staged first (a value may read the old record under that key,
+// which the removal is about to release), then the collection removes and claims, the staged
+// values are written straight into the claimed record, and the key is written and linked.
+
+use ir;
+use loop_shape;
+use opt_non_sentinel;
+use opt_push;
+
+// `LOFT_NO_KEYED_IN_PLACE=1` — every keyed literal assignment builds its temporary again.
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_KEYED_IN_PLACE") ?? "0") == "0"
+}
+
+// An admitted `OpSetKeyed(coll, { B = mint; set B.f…; B }, tp, n, keys…)`; `buf` -1 when the
+// statement is no such site.
+pub struct Site {
+  pub coll: ir::Node,
+  // The collection type, the free-source flag masked off.
+  pub tp: integer,
+  pub keys: vector<ir::Node>,
+  pub buf: integer,
+  // The literal's statements after its mint, in program order: its field writes (the buffer
+  // as their base) and the statements that compute a value for one of them.
+  pub body: vector<ir::Node>,
+}
+
+fn no_site() -> Site {
+  Site { coll: ir::Node.NdNull, tp: 0, keys: [], buf: -1, body: [] }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn is_var(v: ir::Node, x: integer) -> boolean {
+  match loop_shape::unspan(v) {
+    NdVar { n } => n == x,
+    _ => false,
+  }
+}
+
+// How often the tree reads variable `x` as a `Var`.
+fn mentions(v: ir::Node, x: integer) -> integer {
+  c = [0];
+  opt_non_sentinel::walk(v, fn(m: ir::Node) {
+    match m {
+      NdVar { n } => { if n == x { c[0] = c[0]! + 1; } },
+      _ => {},
+    }
+  });
+  c[0]!
+}
+
+// A key the caller's subscript can be written twice for (begin and finish) with no effect.
+fn pure_key(v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdVar { n: _ } => true,
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    _ => false,
+  }
+}
+
+// Is `v` a constant operand of a setter (an offset, a bias), which needs no staging?
+pub fn constant(v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    _ => false,
+  }
+}
+
+// The frees a function may name the literal's buffer in beside the statement itself.
+fn buffer_frees(b: ir::Bundle, code: ir::Node, buf: integer) -> integer {
+  c = [0];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpFreeRefTag" {
+          for a in args {
+            if is_var(a, buf) {
+              c[0] = c[0]! + 1;
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  c[0]!
+}
+
+// `site`: the `OpSetKeyed` call of function `d` with operands `args`, when it is a keyed
+// literal assignment the clause admits.
+pub fn site(b: ir::Bundle, args: vector<ir::Node>, d: integer) -> Site {
+  if len(args) < 4 {
+    return no_site();
+  }
+  coll = args[0]!;
+  // The type and the key count as the Rust match reads them: literal integers, no span.
+  tp = match args[2] {
+    NdInt { n } => n,
+    _ => return no_site(),
+  };
+  match args[3] {
+    NdInt { n: _ } => {},
+    _ => return no_site(),
+  }
+  keys: vector<ir::Node> = [];
+  for k in 4..len(args) {
+    keys += [args[k]!];
+  }
+  // The collection is re-derived for the finish: a pure path, the same place both times.
+  root = -1;
+  if opt_push::vector_path(b, coll, root) == "" {
+    return no_site();
+  }
+  for k in keys {
+    if !pure_key(k) {
+      return no_site();
+    }
+  }
+  ops: vector<ir::Node> = [];
+  match loop_shape::unspan(args[1]) {
+    NdBlock { block } => {
+      for o in block[0].operators {
+        match o {
+          NdLine { n: _ } => {},
+          _ => { ops += [o]; },
+        }
+      }
+    },
+    _ => return no_site(),
+  }
+  if len(ops) == 0 {
+    return no_site();
+  }
+  buf = match loop_shape::unspan(ops[len(ops) - 1]) {
+    NdVar { n } => n,
+    _ => return no_site(),
+  };
+  body: vector<ir::Node> = [];
+  sets = 0;
+  minted = false;
+  for at in 0..len(ops) - 1 {
+    op = ops[at]!;
+    taken = false;
+    match loop_shape::unspan(op) {
+      NdSet { var, inner } => {
+        if var == buf && loop_shape::unspan(inner) == ir::Node.NdNull {
+          taken = true;
+        }
+      },
+      NdCall { def_nr, args: a } => {
+        name = def_name(b, def_nr);
+        if (name == "OpDatabase" || name == "OpDatabaseNP") && len(a) > 0 && is_var(a[0], buf) {
+          minted = true;
+          taken = true;
+        } else if name.starts_with("OpSet") && name != "OpSetText" && len(a) > 0 && is_var(a[0], buf) {
+          // A field write of the literal: the buffer as its base, nowhere in its values.  A
+          // text field declines — its staged value can borrow the store the claim mutates.
+          clean = true;
+          for i in 1..len(a) {
+            if mentions(a[i], buf) != 0 {
+              clean = false;
+            }
+          }
+          if clean {
+            sets += 1;
+            body += [op];
+            taken = true;
+          }
+        }
+      },
+      _ => {},
+    }
+    if !taken {
+      // A statement computing a value for a later write: it runs where it stood, before the
+      // claim, as every staged value does.
+      if mentions(op, buf) != 0 {
+        return no_site();
+      }
+      body += [op];
+    }
+  }
+  if !minted || sets == 0 {
+    return no_site();
+  }
+  // The buffer is the literal's alone: outside this statement only its null declaration and
+  // its frees name it, and a buffer never minted is the null those frees skip.
+  inside = 0;
+  for a in args {
+    inside += mentions(a, buf);
+  }
+  def = b.data.definitions[d]!;
+  if len(def.code) == 0 {
+    return no_site();
+  }
+  code = def.code[0]!;
+  if mentions(code, buf) != inside + buffer_frees(b, code, buf) {
+    return no_site();
+  }
+  Site { coll: coll, tp: tp & 32767, keys: keys, buf: buf, body: body }
+}

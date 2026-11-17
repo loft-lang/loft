@@ -8118,6 +8118,26 @@ impl Data {
         }
     }
 
+    /// The type an ASSIGNMENT to a stored `reference<E>` field is written as: the inverse of
+    /// [`Data::stored_ref_read`].  A read of the field answers `E` for a struct-enum, but the
+    /// place a write fills is the pointer, so its target is `Reference(E)` again — the type
+    /// the `OpSetDbRef` arm keys on (`@FR-B-Ref-StoredRef`).  The caller has already read the
+    /// place as a stored reference (`OpGetDbRef`), so the deps are not asked for the pointer
+    /// marker: a read hands on the deps of the record it reads through, not the field's.
+    #[must_use]
+    pub fn stored_ref_place(&self, t: Type) -> Type {
+        match t {
+            Type::Enum(e, true, deps)
+                if (e as usize) < self.definitions.len()
+                    && matches!(self.def(e).returned.base(), Type::Enum(_, true, _)) =>
+            {
+                Type::Reference(e, deps)
+            }
+            Type::Optional(inner) => Type::Optional(Box::new(self.stored_ref_place(*inner))),
+            other => other,
+        }
+    }
+
     /// Is this definition one the AUTHOR wrote, rather than one loft generated for them?
     ///
     /// The generated ones carry a leading `__` — `__tuple<integer,Node>`, `__nullable<S>`,

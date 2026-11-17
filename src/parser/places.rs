@@ -24,6 +24,20 @@ impl Parser {
         self.vars.unique(name, var_type, &mut self.lexer)
     }
 
+    /// The temp a `match` evaluates its subject into, named for the match's site so both
+    /// passes name it alike ([`crate::variables::Function::match_subject`], loft#2520).  Called
+    /// right after the subject is parsed, where the lexer stands at the same token on both
+    /// passes.
+    pub(crate) fn create_match_subject(&mut self, var_type: &Type) -> u16 {
+        let pos = *self.lexer.pos();
+        self.vars.match_subject(
+            (pos.line, pos.pos),
+            self.first_pass,
+            var_type,
+            &mut self.lexer,
+        )
+    }
+
     /// Create the variable a `for` loop binds — keyed by the LOOP, not by the name, so a
     /// second loop over one name is a second variable (loft#915).  `name` comes from
     /// [`crate::variables::Function::loop_binding`].

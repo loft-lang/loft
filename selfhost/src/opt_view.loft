@@ -79,6 +79,33 @@ fn fusable_access(name: text) -> boolean {
   name == "OpGetEnum" && (env_variable("LOFT_NO_ENUM_RECORD") ?? "0") == "0"
 }
 
+// `scalar_field_uses` as a twin's inputs count it: the uses of record `r` in `stmts`, beside
+// those at an offset in `served` — which the twin reads from a parameter, not the record.
+pub fn scalar_field_uses_served(b: ir::Bundle, stmts: vector<ir::Node>, r: integer, served: vector<integer>) -> integer {
+  count = [0];
+  whole = ir::NdInsert { items: stmts };
+  opt_non_sentinel::walk(whole, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        off = 0;
+        if len(args) >= 2 && fusable_access(def_name(b, def_nr)) && view_field(b, args[0], args[1], off) == r {
+          hit = false;
+          for s in served {
+            if s == off {
+              hit = true;
+            }
+          }
+          if !hit {
+            count[0] = count[0]! + 1;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  count[0]!
+}
+
 // `scalar_field_uses`: how many fusable scalar reads and writes in `stmts` reach a field of
 // view `r`.
 pub fn scalar_field_uses(b: ir::Bundle, stmts: vector<ir::Node>, from: integer, r: integer) -> integer {

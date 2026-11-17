@@ -1,0 +1,347 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Inputs` as `src/opt/hoist.rs` (`callee_inputs`, `path_scalar`,
+// `substitute_path`, `input_header_at`) answers it: the invariant inputs of a function — the
+// record scalars it reads off a parameter and the vectors it indexes off one — that a caller
+// holding them may hand its `__inv` twin.
+
+use ir;
+use binds;
+use loop_shape;
+use opt_writes;
+use opt_wset;
+use opt_push;
+use opt_hoist;
+use opt_view;
+use opt_names;
+use opt_non_sentinel;
+use cgen_types;
+
+// A scalar input: the callee's parameter, the field's offset and the getter that reads it.
+pub struct InScalar {
+  pub p: integer,
+  pub fld: integer,
+  pub getter: ir::Node,
+}
+
+// A header input: the callee's parameter, the offsets of its path after the parameter (as
+// `opt_push::vector_path` spells them, `o,o,`) and the path expression.
+pub struct InHeader {
+  pub p: integer,
+  pub offs: text,
+  pub expr: ir::Node,
+}
+
+// `CalleeInputs`; `some` false is `None`.
+pub struct Inputs {
+  pub some: boolean,
+  pub scalars: vector<InScalar>,
+  pub headers: vector<InHeader>,
+  // The plain-record parameters whose address crosses the call (`@FR-R-RecPtr`'s twin clause).
+  pub records: vector<integer>,
+}
+
+pub fn none() -> Inputs {
+  Inputs { some: false, scalars: [], headers: [], records: [] }
+}
+
+// `Cx::callee_inputs`' switches: `LOFT_NO_CALLEE_INPUTS` and `LOFT_NO_VECTOR_HOIST`.
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_CALLEE_INPUTS") ?? "0") == "0" && (env_variable("LOFT_NO_VECTOR_HOIST") ?? "0") == "0"
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// Is `d` a loft body (`matches!(def.code(), Value::Block(_))`)?
+pub fn is_body(b: ir::Bundle, d: integer) -> boolean {
+  if d < 0 || d >= len(b.data.definitions) {
+    return false;
+  }
+  match b.data.definitions[d]!.code[0] ?? ir::NdNull {
+    NdBlock { block: _ } => true,
+    _ => false,
+  }
+}
+
+// A call of a loft body, as `calls_in` collects it.
+pub struct Site {
+  pub d: integer,
+  pub args: vector<ir::Node>,
+}
+
+// The calls of loft bodies in `node`, in walk order, so a caller asks `of` in its own loop
+// rather than inside the walk's closure.
+pub fn calls_in(b: ir::Bundle, node: ir::Node) -> vector<Site> {
+  out: vector<Site> = [];
+  opt_non_sentinel::walk(node, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if is_body(b, def_nr) {
+          out += [Site { d: def_nr, args: args }];
+        }
+      },
+      _ => {},
+    }
+  });
+  out
+}
+
+// `callee_inputs`: `d`'s invariant inputs, memoised in `w` (`Facts`' `Inputs` kind): a native, an
+// unknown number and a function on a cycle have none; every answer is kept, the cycle's `none`
+// until the walk that met it answers.
+pub fn of(b: ir::Bundle, w: opt_writes::Writes, d: integer) -> Inputs {
+  if !enabled() || d < 0 || d >= len(b.data.definitions) {
+    return none();
+  }
+  if len(w.istate) == 0 {
+    count = len(b.data.definitions);
+    w.istate = [for _ in 0..count { 0 }];
+    w.inputs = [for _ in 0..count { none() }];
+  }
+  if w.istate[d]! == 2 {
+    return w.inputs[d]!;
+  }
+  if w.istate[d]! == 1 || !is_body(b, d) {
+    return none();
+  }
+  w.istate[d] = 1;
+  r = compute(b, w, d);
+  w.inputs[d] = r;
+  w.istate[d] = 2;
+  r
+}
+
+fn record_param(b: ir::Bundle, def: ir::Definition, rebound: vector<boolean>, p: integer) -> integer {
+  if p < 0 || p >= len(def.attributes) || p >= len(rebound) || rebound[p]! {
+    return -1;
+  }
+  opt_wset::plain_tp(b, def.variables.variables[p]!.type_def[0] ?? ir::TyVoid)
+}
+
+fn path_root(def: ir::Definition, rebound: vector<boolean>, root: integer, offs: text) -> boolean {
+  if root < 0 || root >= len(def.attributes) || root >= len(rebound) || rebound[root]! {
+    return false;
+  }
+  offs != "" || (match opt_names::peel_link(def.variables.variables[root]!.type_def[0] ?? ir::TyVoid) { TyVector { inner: _, dep: _ } => true, _ => false })
+}
+
+// The offsets part of a `vector_path` (after the root's `:`).
+pub fn offs_of(path: text) -> text {
+  at = path.find(":") ?? return "";
+  path[at + 1..path.size()]
+}
+
+fn has_scalar(out: Inputs, p: integer, fld: integer) -> boolean {
+  for s in out.scalars {
+    if s.p == p && s.fld == fld {
+      return true;
+    }
+  }
+  false
+}
+
+fn has_header(out: Inputs, p: integer, offs: text) -> boolean {
+  for h in out.headers {
+    if h.p == p && h.offs == offs {
+      return true;
+    }
+  }
+  false
+}
+
+fn compute(b: ir::Bundle, w: opt_writes::Writes, d: integer) -> Inputs {
+  def = b.data.definitions[d]!;
+  body = match def.code[0]! {
+    NdBlock { block } => block[0],
+    _ => return none(),
+  };
+  if def.rust != "" {
+    return none();
+  }
+  match cgen_types::base(def.returned[0] ?? ir::TyVoid) {
+    TyIterator { step: _, inner: _ } => return none(),
+    _ => {},
+  }
+  if opt_writes::call_writes_store(b, w, d) && !opt_writes::in_place_only_writer(b, w, d) {
+    return none();
+  }
+  params = len(def.attributes);
+  // What the body writes, as the caller's gate accounts it (`@FR-R-Callee`): a return-buffer
+  // writer reaches its buffer's record type whole; any other admitted body has a typed set of
+  // its own, or no twin.
+  written = opt_wset::empty();
+  rb = binds::hidden_return_buffer_attr(def) ?? -1;
+  if rb >= 0 && opt_writes::retbuf_only_writer(b, w, d) {
+    rb_tp = opt_wset::plain_tp(b, def.attributes[rb]!.typedef[0] ?? ir::TyVoid);
+    if rb_tp < 0 {
+      return none();
+    }
+    written.whole += [rb_tp];
+  } else {
+    fresh: vector<boolean> = [for _ in 0..len(def.variables.variables) { false }];
+    for op in body.operators {
+      if !opt_wset::body_writes(b, w, d, op, fresh, written) {
+        return none();
+      }
+    }
+  }
+  rebound = opt_hoist::rebound_vars(b, def, body);
+  out = none();
+  opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) {
+          name = def_name(b, def_nr);
+          fld = 0;
+          p = opt_hoist::scalar_read(name, args, fld);
+          if p >= 0 {
+            stp = record_param(b, def, rebound, p);
+            if stp >= 0 && !opt_wset::evicts(written, stp, fld) && !has_scalar(out, p, fld) {
+              out.scalars += [InScalar { p: p, fld: fld, getter: n }];
+            }
+          } else if len(args) == 3 && (name == "OpGetVector" || name == "OpGetVectorNullable") {
+            root = -1;
+            path = opt_push::vector_path(b, args[0]!, root);
+            offs = offs_of(path);
+            if path != "" && path_root(def, rebound, root, offs) && !has_header(out, root, offs) {
+              out.headers += [InHeader { p: root, offs: offs, expr: args[0]! }];
+            }
+          }
+        }
+      },
+      NdBlock { block } => {
+        ops = block[0].operators;
+        for o in ops {
+          at = o#index;
+          if opt_hoist::view_def_header(b, w, d, ops, at, true) >= 0 {
+            match loop_shape::unspan(ops[at]!) {
+              NdSet { var: _, inner } => {
+                root = -1;
+                path = opt_push::vector_path(b, inner, root);
+                offs = offs_of(path);
+                if path != "" && path_root(def, rebound, root, offs) && !has_header(out, root, offs) {
+                  out.headers += [InHeader { p: root, offs: offs, expr: inner }];
+                }
+              },
+              _ => {},
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  // What a callee this body passes a parameter on to reads of it.
+  for cs_site in calls_in(b, def.code[0]!) {
+    cs_args = cs_site.args;
+    cs_fi = of(b, w, cs_site.d);
+    if cs_fi.some {
+      for s in cs_fi.scalars {
+        if s.p < len(cs_args) {
+          cs_v = match loop_shape::unspan(cs_args[s.p]!) { NdVar { n: x } => x, _ => -1 };
+          cs_tp = record_param(b, def, rebound, cs_v);
+          if cs_v >= 0 && cs_tp >= 0 && !opt_wset::evicts(written, cs_tp, s.fld) && !has_scalar(out, cs_v, s.fld) {
+            out.scalars += [InScalar { p: cs_v, fld: s.fld, getter: substitute_path(s.getter, s.p, ir::NdVar { n: cs_v }) }];
+          }
+        }
+      }
+      for cs_h in cs_fi.headers {
+        if cs_h.p < len(cs_args) {
+          cs_root = -1;
+          cs_path = opt_push::vector_path(b, cs_args[cs_h.p]!, cs_root);
+          if cs_path != "" {
+            cs_key = offs_of(cs_path) + cs_h.offs;
+            if path_root(def, rebound, cs_root, cs_key) && !has_header(out, cs_root, cs_key) {
+              out.headers += [InHeader { p: cs_root, offs: cs_key, expr: substitute_path(cs_h.expr, cs_h.p, cs_args[cs_h.p]!) }];
+            }
+          }
+        }
+      }
+    }
+  }
+  if (env_variable("LOFT_NO_TWIN_RECORD") ?? "0") == "0" {
+    for cs_p in 0..params {
+      // A hidden return buffer is the callee's own to mint: no caller holds it.
+      if record_param(b, def, rebound, cs_p) < 0 || def.attributes[cs_p]!.hidden {
+        continue;
+      }
+      cs_served: vector<integer> = [];
+      for s in out.scalars {
+        if s.p == cs_p {
+          cs_served += [s.fld];
+        }
+      }
+      if opt_view::scalar_field_uses_served(b, body.operators, cs_p, cs_served) >= 2 {
+        out.records += [cs_p];
+      }
+    }
+  }
+  out.some = len(out.scalars) > 0 || len(out.headers) > 0 || len(out.records) > 0;
+  out
+}
+
+// `substitute_path`: `path` — a callee's pure path over `Var(from)` — re-spelled over the
+// caller's argument `arg`.  A walk of its own: the argument is spelled over the CALLER's
+// variables, whose numbers can coincide with `from`.
+pub fn substitute_path(path: ir::Node, from: integer, arg: ir::Node) -> ir::Node {
+  match path {
+    NdVar { n } => if n == from { arg } else { path },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: substitute_path(inner, from, arg) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { substitute_path(a, from, arg) }] },
+    _ => path,
+  }
+}
+
+// `path_scalar` (`@FR-R-Inputs`' path clause): a callee's scalar input at offset `fld` of its
+// record parameter, when the caller's argument is a SUB-RECORD path — the root variable, the
+// field's SUMMED offset (in `sum`) and every `(record type, offset)` a write could reach the
+// field by, as pairs in `evict`.  -1 for a bare variable or any other argument.
+pub fn path_scalar(b: ir::Bundle, def: ir::Definition, arg: ir::Node, fld: integer, sum: &integer, evict: &vector<integer>) -> integer {
+  chain_off: vector<integer> = [];
+  chain_tp: vector<integer> = [];
+  cur = loop_shape::unspan(arg);
+  root = -1;
+  for _ in 0..1000 {
+    match cur {
+      NdVar { n } => {
+        root = n;
+        break;
+      },
+      NdCall { def_nr, args } => {
+        if len(args) != 3 || def_name(b, def_nr) != "OpGetField" {
+          return -1;
+        }
+        off = match loop_shape::unspan(args[1]!) { NdInt { n } => n, _ => return -1 };
+        tp = match loop_shape::unspan(args[2]!) { NdInt { n } => n, _ => return -1 };
+        if tp < 0 || tp > 65535 {
+          return -1;
+        }
+        chain_off += [off];
+        chain_tp += [tp];
+        cur = loop_shape::unspan(args[0]!);
+      },
+      _ => return -1,
+    }
+  }
+  if root < 0 || len(chain_off) == 0 || root >= len(def.variables.variables) {
+    return -1;
+  }
+  root_tp = opt_wset::plain_tp(b, def.variables.variables[root]!.type_def[0] ?? ir::TyVoid);
+  if root_tp < 0 {
+    return -1;
+  }
+  pairs: vector<integer> = [];
+  within = fld;
+  for o in chain_off {
+    pairs += [chain_tp[o#index]!, within];
+    within += o;
+  }
+  pairs += [root_tp, within];
+  sum = within;
+  evict = pairs;
+  root
+}

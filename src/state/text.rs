@@ -14,7 +14,8 @@ use crate::ops;
 // pointer so an owned-text return orphaned at frame exit (loft#568) is caught RELIABLY — where
 // the ASan `ir_read` suppression is not (its stack-substring match false-pos/negs by depth).
 //
-// Env `LOFT_TEXT_TIMELINE`: any value → exit SUMMARY; `=timeline` → per-op lifeline too.
+// Env `LOFT_TEXT_TIMELINE`: any value → exit SUMMARY; `=timeline` → per-op lifeline too;
+// `=fail` → the summary, and exit 1 when a buffer is orphaned.
 // Realloc-safe: a grow snapshots the buffer's `(ptr, capacity)` BEFORE and AFTER the mutation,
 // so a moved buffer drops its old ptr (freed by the realloc) and records the new; the capacity
 // delta is exact.  `free_text` drops the buffer; any ptr still live at program exit LEAKED.
@@ -141,6 +142,16 @@ fn text_tl_fmt(tl_fn: Option<Option<u32>>, s: &mut String, f: impl FnOnce(&mut S
     }
 }
 
+/// The orphaned text buffers the exit summary counted under `LOFT_TEXT_TIMELINE=fail`.
+static TEXT_LEAKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many text buffers the exit summary found orphaned, under `LOFT_TEXT_TIMELINE=fail`
+/// (0 otherwise): `main` exits 1 when it is not zero.
+#[must_use]
+pub fn text_leak_violations() -> usize {
+    TEXT_LEAKS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// @PLN104 — the exit summary (no-op unless `LOFT_TEXT_TIMELINE`).  Mirrors the store
 /// `timeline_summary`: allocs / frees / peak live bytes, then — the load-bearing line — every
 /// text buffer still live at exit (an orphaned `String`, the loft#568 leak class).  Called from
@@ -154,6 +165,12 @@ pub fn text_timeline_summary() {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let leaked = t.live.len();
+        // `LOFT_TEXT_TIMELINE=fail` — the leak verdict is the exit status too (`main` reads
+        // [`text_leak_violations`]), so a guard's receipt can score an orphaned buffer on the
+        // exit channel instead of a line someone has to read.
+        if std::env::var("LOFT_TEXT_TIMELINE").as_deref() == Ok("fail") {
+            TEXT_LEAKS.store(leaked, std::sync::atomic::Ordering::Relaxed);
+        }
         let verdict = if leaked == 0 {
             "NO text leak (every buffer freed)".to_string()
         } else {

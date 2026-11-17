@@ -18,6 +18,9 @@ use ir;
 use cgen::(Cx);
 use binds;
 use loop_shape;
+use el_ir;
+use opt_version;
+use cgen_version;
 use opt_names;
 use opt_non_sentinel;
 use opt_range;
@@ -27,6 +30,12 @@ use cgen_text;
 use cgen_ref;
 use cgen_hoist;
 use cgen_win;
+use cgen_fnref;
+use char_walk;
+use cgen_append;
+use own;
+use opt_view;
+use opt_facts;
 use cgen_file;
 use opt_hoist;
 use cgen_w::*;
@@ -834,6 +843,9 @@ fn checked_chain(nodes: vector<SpecNode>, at: integer) -> text {
 
 // `chain_admitted`: does `(R-GuardedChain)` own an operator of the chain under `v`?
 fn chain_admitted(x: Cx, w: W, v: ir::Node) -> boolean {
+  if w.vf && has_plain_mark(v) {
+    return true;
+  }
   if len(w.chains) == 0 {
     return false;
   }
@@ -849,6 +861,21 @@ fn chain_admitted(x: Cx, w: W, v: ir::Node) -> boolean {
     }
   });
   hit[0]!
+}
+
+// Does a call under `v` carry `@FR-R-Version`'s plain marker?
+fn has_plain_mark(v: ir::Node) -> boolean {
+  match v {
+    NdSpan { pos: _, inner } => opt_version::mark_of(v) == opt_version::PLAIN || has_plain_mark(inner),
+    _ => {
+      for c in el_ir::children(v) {
+        if has_plain_mark(c) {
+          return true;
+        }
+      }
+      false
+    },
+  }
 }
 
 // `spec_chain`: `var = value` for an integer local and a chain of at least two operators not
@@ -1379,14 +1406,17 @@ fn admitted_at(x: Cx, w: W, name: text, args: vector<ir::Node>) -> integer {
 // copy, or `guard ? plain : checked` in a loop written once.  `done` says whether it wrote it.
 pub fn chain_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = false;
-  if len(w.chains) == 0 || !chain_op(name, len(args)) || range_proves(x, w, name, args) {
+  // `@FR-R-Version`: a fast twin's tested operators are plain (`version_fast` hands them to
+  // `plain_chains` with no guard).
+  vf_plain = w.call_kind == opt_version::PLAIN;
+  if (len(w.chains) == 0 && !vf_plain) || !chain_op(name, len(args)) || range_proves(x, w, name, args) {
     return none();
   }
-  at = admitted_at(x, w, name, args);
-  if at < 0 {
+  at = if vf_plain { -1 } else { admitted_at(x, w, name, args) };
+  if at < 0 && !vf_plain {
     return none();
   }
-  guard = w.chains[at]!.guard;
+  guard = if vf_plain { "" } else { w.chains[at]!.guard };
   done = true;
   plain = "";
   checked = "";
@@ -1434,6 +1464,30 @@ fn guarded_copies(x: Cx, w: W, lp: ir::Block, ind: integer) {
     w.chains = w.chains[0..len(w.chains) - 1];
     line(w, ind, "}} else {{");
     loop_core(x, w, lp, ind + 1);
+    line(w, ind, "}}");
+    return;
+  }
+  // The version clause: written once only for its calls, each a versioned site — the plain
+  // copy under the guard and every flag, calling the fast twins; the written loop otherwise.
+  flags = cgen_version::unswitch(x, w, lp);
+  if len(flags) > 0 {
+    all: vector<text> = [guard.name];
+    for f in flags {
+      all += [f];
+    }
+    line(w, ind, "if ({all.join(" && ")}) {{");
+    w.chains += [framed(guard.frame, "")];
+    held = len(w.v_hold);
+    for f in flags {
+      w.v_hold += [f];
+    }
+    loop_core(x, w, lp, ind + 1);
+    w.v_hold = w.v_hold[0..held];
+    w.chains = w.chains[0..len(w.chains) - 1];
+    line(w, ind, "}} else {{");
+    w.chains += [framed(guard.frame, guard.name)];
+    loop_core(x, w, lp, ind + 1);
+    w.chains = w.chains[0..len(w.chains) - 1];
     line(w, ind, "}}");
     return;
   }
@@ -1584,15 +1638,20 @@ fn loop_core(x: Cx, w: W, lp: ir::Block, ind: integer) {
   if w.why != "" {
     return;
   }
-  for s in w.walk_scopes {
-    if s == lp.scope {
-      refuse(w, "a character walk");
-      return;
-    }
-  }
   // The loop's own label is taken before the plan: a peeled loop's copies number after it.
   w.labels += 1;
   l = w.labels;
+  for walk in w.char_walks {
+    if walk.scope == lp.scope {
+      w.loops += [l];
+      char_walk_loop(x, w, lp, walk, ind);
+      line(w, ind, "cont_{l}:;");
+      line(w, ind, "}}");
+      line(w, ind, "brk_{l}:;");
+      w.loops = w.loops[0..len(w.loops) - 1];
+      return;
+    }
+  }
   plan = peel_plan(x, w, lp);
   if plan != null {
     peel_loop(x, w, lp, plan, ind);
@@ -1612,17 +1671,43 @@ fn loop_core(x: Cx, w: W, lp: ir::Block, ind: integer) {
   w.loops = w.loops[0..len(w.loops) - 1];
 }
 
+// `char_walk_loop` (`@FR-R-CharWalk`): a `for c in t` walk — its null test once before the loop
+// where the loop never writes `t`, and its step's ASCII arm (a byte below 0x80 at `next` is the
+// character, one byte wide) ahead of the step as the lowering writes it, which every other byte
+// takes.  Opens the loop's `for (;;) {`; the caller closes it.
+fn char_walk_loop(x: Cx, w: W, lp: ir::Block, walk: char_walk::CharWalk, ind: integer) {
+  if walk.hoist_null && walk.null_test < len(lp.operators) {
+    cgen_fn::stmt(x, w, lp.operators[walk.null_test]!, ind);
+  }
+  line(w, ind, "for (;;) {{");
+  for op in lp.operators {
+    i = op#index;
+    if walk.hoist_null && i == walk.null_test {
+      continue;
+    }
+    if i == 0 {
+      src = as_view(w, cgen_fn::expr(x, w, ir::NdVar { n: walk.src }, ind + 1));
+      next = w.names[walk.next]!;
+      index = w.names[walk.index]!;
+      c = w.names[walk.loop_var]!;
+      line(w, ind + 1, "if ({next} >= 0 && {next} < (int64_t) ({src}).len && (unsigned) (unsigned char) ({src}).p[{next}] - 1u < 0x7Fu) {{");
+      line(w, ind + 2, "{index} = {next};");
+      line(w, ind + 2, "{c} = (uint32_t) (unsigned char) ({src}).p[{next}];");
+      line(w, ind + 2, "{next} = {next} + 1;");
+      line(w, ind + 1, "}} else {{");
+      cgen_fn::stmt(x, w, op, ind + 2);
+      line(w, ind + 1, "}}");
+      continue;
+    }
+    cgen_fn::stmt(x, w, op, ind + 1);
+  }
+}
+
 // `loop_stmt`: a loop as a statement.  A range that holds throughout its body narrows the
 // facts its statements are written under (`body_facts`); the memos it holds are bound before
 // it (`loop_copy`).  The holds of a vector, a record scalar, a push or a file are not asked: a
 // body with one is not carried.
 pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
-  // `@FR-R-PushFill`'s text clause opens a push window for a text the loop pushes into: not
-  // carried.
-  if cgen_text::pushes_text(x, lp.operators) {
-    refuse(w, "a text push window");
-    return;
-  }
   pushed = false;
   if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") == "0" {
     narrowed = if len(w.over) > 0 { opt_range::body_facts(w.over[len(w.over) - 1]!, lp.scope) } else { opt_range::body_facts(w.rv, lp.scope) };
@@ -1631,12 +1716,64 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
       pushed = true;
     }
   }
+  cgen_fnref::take_parked(w, lp, ind);
+  loop_stmt_inner(x, w, lp, ind);
+  // `@FR-R-FnRefBuffer`: the records this loop keeps are freed once, after every copy of it.
+  cgen_fnref::release_kept(w, lp, ind);
+  if pushed {
+    w.over = w.over[0..len(w.over) - 1];
+  }
+}
+
+
+// `loop_stmt_inner`: `@FR-R-Alias`'s versioned clause (`distinct_version`) — the copy that
+// assumes the parameters apart from the return buffer runs when a test of their store numbers
+// says so at its entry, the plain one otherwise.
+fn loop_stmt_inner(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  tests: vector<integer> = [];
+  pairs: vector<integer> = [];
+  if plain_rules() && distinct_version(x, w, lp, tests, pairs) {
+    parts: vector<text> = [];
+    for t in tests {
+      if t#index % 2 == 0 {
+        parts += ["{w.names[tests[t#index + 1]!]!}.store_nr != {w.names[t]!}.store_nr"];
+      }
+    }
+    flush(w, ind);
+    line(w, ind, "if ({parts.join(" && ")}) {{");
+    w.facts.assumed = pairs;
+    loop_copy(x, w, lp, ind + 1);
+    w.facts.assumed = [];
+    line(w, ind, "}} else {{");
+    loop_copy(x, w, lp, ind + 1);
+    line(w, ind, "}}");
+    return;
+  }
+  loop_copy(x, w, lp, ind);
+}
+
+// `loop_copy`: one copy of loop `lp` with what it holds — the file cursor, the invariants, the
+// vector and push headers, the windows, the fill — and their release after it.
+fn loop_copy(x: Cx, w: W, lp: ir::Block, ind: integer) {
+  // The functions the loop's body calls (`loop_calls`).
+  w.loop_call_at += [len(w.loop_calls)];
+  walk_all(lp.operators, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr, args: _ } => {
+        if def_nr >= 0 {
+          w.loop_calls += [def_nr];
+        }
+      },
+      _ => {},
+    }
+  });
   held_file = plain_rules() && cgen_file::open_hold(x, w, lp, ind);
   hold_invariants(x, w, lp, ind);
   held_headers = len(w.headers);
   held_pushes = len(w.push_heads);
   held_scalars = len(w.scalars);
   verdict = if plain_rules() { cgen_hoist::hold_vectors(x, w, lp, ind) } else { opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true } };
+  versions = cgen_version::hold(x, w, lp, ind);
   ranged_counters = len(w.in_range);
   ranged_lens = len(w.in_range_lens);
   grid_known = len(w.grid_facts);
@@ -1651,6 +1788,8 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   if plain_rules() {
     cgen_hoist::hold_pushes(x, w, lp, verdict, ind);
   }
+  ap_windows = cgen_append::open_loop_windows(x, w, lp, ind);
+  text_windows = cgen_win::open_text_windows(x, w, lp, ind);
   // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
   // so both copies are its fallback.
   fill = if plain_rules() { cgen_win::fill_head(x, w, lp, ind) } else { "" };
@@ -1661,6 +1800,8 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
   } else {
     guarded_copies(x, w, lp, ind);
   }
+  cgen_append::close_loop_windows(w, ap_windows, ind);
+  cgen_win::close_text_windows(w, text_windows, ind);
   w.in_range = w.in_range[0..ranged_counters];
   w.in_range_lens = w.in_range_lens[0..ranged_lens];
   cgen_hoist::release(w, held_headers, held_pushes);
@@ -1674,9 +1815,171 @@ pub fn loop_stmt(x: Cx, w: W, lp: ir::Block, ind: integer) {
     cgen_file::close_hold(w, ind);
   }
   w.memos = w.memos[0..len(w.memos) - 1];
-  if pushed {
-    w.over = w.over[0..len(w.over) - 1];
+  cgen_version::release(w, versions);
+  at = w.loop_call_at[len(w.loop_call_at) - 1]!;
+  w.loop_calls = w.loop_calls[0..at];
+  w.loop_call_at = w.loop_call_at[0..len(w.loop_call_at) - 1];
+}
+
+// `distinct_version` (`@FR-R-Alias`'s versioned clause): when loop `lp` grows this function's
+// return buffer and would hold more headers if each parameter's store were apart from the
+// buffer's, the pairs to test at run time (`tests`, `[param, buffer, …]`) and the pairs the
+// tested copy may assume apart (`pairs`).  False for a loop that gains nothing, cannot be copied
+// (a `yield`, a `par`, a function-value call), or under `LOFT_NO_DISTINCT_VERSION=1`.
+fn distinct_version(x: Cx, w: W, lp: ir::Block, tests: &vector<integer>, pairs: &vector<integer>) -> boolean {
+  if (env_variable("LOFT_NO_DISTINCT_VERSION") ?? "0") != "0" || !opt_facts::enabled() || len(w.facts.assumed) > 0 {
+    return false;
   }
+  opaque = [false];
+  opt_non_sentinel::walk(ir::NdInsert { items: lp.operators }, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { opaque[0] = true; },
+      NdParallel { arms: _ } => { opaque[0] = true; },
+      NdCallRef { var: _, args: _ } => { opaque[0] = true; },
+      _ => {},
+    }
+  });
+  if opaque[0]! {
+    return false;
+  }
+  d = x.b.data.definitions[w.index]!;
+  f = d.variables;
+  rb = opt_hoist::retbuf_var(d);
+  if rb < 0 {
+    return false;
+  }
+  bufs: vector<integer> = [rb];
+  tested = rb;
+  if w.adopt_v >= 0 && w.adopt_buf == rb {
+    bufs += [w.adopt_v, w.adopt_vdb];
+    tested = w.adopt_v;
+  }
+  params: vector<integer> = [];
+  for v in f.variables {
+    if v.argument && v#index != rb && own::is_dbref(binds::base(v.type_def[0] ?? ir::TyVoid)) {
+      params += [v#index];
+    }
+  }
+  if len(params) == 0 {
+    return false;
+  }
+  ok = false;
+  plain = cgen_hoist::verdict(x, w, lp, ok);
+  if !ok {
+    return false;
+  }
+  grows = false;
+  for m in opt_view::mover_roots(x.b, d, lp.operators, 0) {
+    if chain_reaches(f, m, bufs) {
+      grows = true;
+    }
+  }
+  touches = grows;
+  for p in plain.pushes {
+    if bufs.contains(p.root) {
+      touches = true;
+    }
+  }
+  for p in plain.mint_pushes {
+    if bufs.contains(p.root) {
+      touches = true;
+    }
+  }
+  for m in plain.movers {
+    if bufs.contains(m) {
+      touches = true;
+    }
+  }
+  if !touches {
+    return false;
+  }
+  assumed: vector<integer> = [];
+  for p in params {
+    for bf in bufs {
+      assumed += [p, bf];
+    }
+  }
+  w.facts.assumed = assumed;
+  versioned = cgen_hoist::verdict(x, w, lp, ok);
+  w.facts.assumed = [];
+  if !ok {
+    return false;
+  }
+  // A path counts only when no enclosing frame holds it already.
+  gained: vector<integer> = [];
+  for v in versioned.vectors {
+    held = false;
+    for q in plain.vectors {
+      if q.path == v.path {
+        held = true;
+      }
+    }
+    if held || cgen_hoist::held_header(w, v.path) != "" {
+      continue;
+    }
+    r = param_root(f, v.root, params);
+    if r >= 0 && !gained.contains(r) {
+      gained += [r];
+    }
+  }
+  if len(gained) == 0 {
+    return false;
+  }
+  for r in gained {
+    known = false;
+    for t in tests {
+      if t#index % 2 == 0 && t == r && tests[t#index + 1]! == tested {
+        known = true;
+      }
+    }
+    if !known {
+      tests += [r, tested];
+    }
+    for bf in bufs {
+      have = false;
+      for q in pairs {
+        if q#index % 2 == 0 && q == r && pairs[q#index + 1]! == bf {
+          have = true;
+        }
+      }
+      if !have {
+        pairs += [r, bf];
+      }
+    }
+  }
+  true
+}
+
+// `chain_reaches`: does `v`'s single-dependency chain reach one of `bufs`?
+fn chain_reaches(f: ir::Function, v: integer, bufs: vector<integer>) -> boolean {
+  cur = v;
+  for _ in 0..len(f.variables) {
+    if bufs.contains(cur) {
+      return true;
+    }
+    deps = own::tp_depend(f, cur);
+    if len(deps) != 1 || deps[0]! == cur {
+      return false;
+    }
+    cur = deps[0]!;
+  }
+  false
+}
+
+// `param_root`: the parameter of `params` `v`'s single-dependency chain reaches, -1 for none.
+fn param_root(f: ir::Function, v: integer, params: vector<integer>) -> integer {
+  cur = v;
+  for _ in 0..16 {
+    if params.contains(cur) {
+      return cur;
+    }
+    deps = own::tp_depend(f, cur);
+    if len(deps) != 1 {
+      return -1;
+    }
+    cur = deps[0]!;
+  }
+  -1
 }
 
 // `range_guard`: `@FR-R-RangedCall`'s guarded copy for the `For` block `node` — the test

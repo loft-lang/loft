@@ -1,0 +1,59 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-HandOver`'s rotate clause as `src/c/body.rs` writes it
+// (`rotate_site`, native's `Output::output_rotate_site`): when the vector is full
+// (`loft_rotate_into` admits it) the copy goes into the oldest element and the slots rotate,
+// S runs, and the suffix-keep callee's `__nk` twin runs the rest of its body; otherwise every
+// statement of the range as written.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use opt_hand_over;
+
+// `rotate_site`: the index of the range's last statement, or -1 where `ops[at]` opens no site.
+// An apart source (`@FR-R-Apart` instance 4, `apr_rotate`) comes with `LOFT_NO_APART`.
+pub fn rotate_site(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer) -> integer {
+  if w.gen_elem != "" || len(w.nk_skip) > 0 {
+    return -1;
+  }
+  site = opt_hand_over::site(x.b, ops, at);
+  if site.g < 0 {
+    return -1;
+  }
+  plan = opt_hand_over::plain_vectors_of(x.b, site.elem_tp);
+  if len(plan) == 0 || len(opt_hand_over::keep_statement(x.b, site.g)) == 0 {
+    return -1;
+  }
+  pairs: vector<text> = [for p in plan { "{p}u" }];
+  plan_c = "(const uint32_t[]){{ {pairs.join(", ")} }}";
+  // The vector's spelling and the twin's call are new nodes: no node-keyed decision admits them.
+  w.no_memo += 1;
+  vec = as_ref(w, cgen_fn::expr(x, w, site.vector, ind));
+  w.no_memo -= 1;
+  src = as_ref(w, cgen_fn::expr(x, w, site.src, ind));
+  if w.why != "" {
+    return -1;
+  }
+  line(w, ind, "if (loft_rotate_into({vec}, {src}, {x.b.types[site.elem_tp].size}u, INT64_C({site.k}), {plan_c}, {len(plan) / 2})) {{");
+  for s in site.between {
+    cgen_fn::stmt(x, w, s, ind + 1);
+  }
+  w.nk_call = site.g;
+  w.no_memo += 1;
+  cgen_fn::stmt(x, w, ir::NdCall { def_nr: site.g, args: [site.owner, ir::NdInt { n: 1 }] }, ind + 1);
+  w.no_memo -= 1;
+  if w.nk_call >= 0 {
+    refuse(w, "the rotate's call of its suffix keep took no __nk twin");
+    return -1;
+  }
+  line(w, ind, "}} else {{");
+  for s in site.range {
+    cgen_fn::stmt(x, w, s, ind + 1);
+  }
+  line(w, ind, "}}");
+  site.last
+}

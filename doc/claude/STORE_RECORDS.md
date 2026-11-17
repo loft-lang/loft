@@ -136,7 +136,10 @@ neither the destination nor a bracket's protected argument names it: a call that
 argument on some path hands the caller's store to that free (`LOFT_RECORDS_NO_PARAM_SOURCE_FREE=1`
 leaves it unreported).  A plain free of a variable that may name the caller's store beside
 stores of the frame's own is one too: nothing at run time tells the paths apart
-(`LOFT_RECORDS_NO_MAYBE_PARAM_END=1`).  A capture a lambda reads out of its own closure record
+(`LOFT_RECORDS_NO_MAYBE_PARAM_END=1`).  A record written whole through a `&` parameter that is
+another argument's store (`out = args[1]!`, a view of `x`) is a wrong end as well: the caller's
+local then names a record it does not own, and its release frees it
+(`LOFT_RECORDS_NO_AMP_PARAM_STORE=1` leaves it unreported).  A capture a lambda reads out of its own closure record
 (`OpGetDbRef(__closure, off)`) is the caller's store, and a closure record this frame builds
 that holds one in a slot its cascade frees releases the caller's store: a wrong end, the
 record having adopted a capture it only relays (`@FR-L-CapOwn`;

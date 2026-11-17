@@ -865,7 +865,8 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               ft = el::def(e, vd).attributes[fa]!.typedef[0];
               // A vector or record field binds as a view of the subject (`vector<T>["s"]`), a text
               // field as the text it reads.
-              if ft is TyVector || (ft is TyReference && struct_ref(e, ft) >= 0) {
+              // An out-of-line field (a struct enum's child) binds as that view too.
+              if ft is TyVector || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) {
                 // `@FR-P-Cap-View`: the capture borrows the subject's source variable — a place's
                 // root where the subject is read in place (`match_borrow_source`).
                 sroot = el_ex_match::match_borrow_source(e, vars, subj);
@@ -1688,14 +1689,14 @@ pub fn vector_of(e: el::El, t: ir::TypeT) {
 // which keeps its record build.
 pub fn push_op(t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpPushByte" } else if el_types::narrow_width(spec) == 2 { "" } else { "OpPushInt" },
+    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpPushByte" } else if el_types::narrow_width(spec) == 2 { "" } else if el_types::int4(spec) { "OpPushInt4" } else if spec.forced_size != 0 { "" } else { "OpPushInt" },
     TyFloat => "OpPushFloat",
     TySingle => "OpPushSingle",
     TyBoolean => "OpPushBoolean",
     TyCharacter => "OpPushCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpPushEnum" },
     // A nullable plain integer element is pushed as the integer it is stored as.
-    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else { "OpPushInt" }, TyFloat => "OpPushFloat", TyBoolean => "OpPushBoolean", _ => "" },
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else if el_types::int4(spec) { "OpPushInt4" } else { "OpPushInt" }, TyFloat => "OpPushFloat", TyBoolean => "OpPushBoolean", _ => "" },
     _ => ""
   }
 }
@@ -1707,6 +1708,9 @@ pub fn elem_write(e: el::El, t: ir::TypeT, at: ir::Node, x: ir::Node) -> ir::Nod
     TyInteger { spec } => {
       if el_types::narrow_width(spec) == 2 {
         return el_ir::cl(e, "OpSetShortRaw", [at, ir::NdInt { n: 0 }, ir::NdInt { n: spec.min }, x]);
+      }
+      if el_types::uint4(spec) {
+        return el_ir::cl(e, "OpSetInt4Raw", [at, ir::NdInt { n: 0 }, x]);
       }
     },
     _ => {}
@@ -1945,6 +1949,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // A struct literal item is built into the element itself (`parse_item` with `elm`): typed here,
   // its fields written where the element is made, below.
   recs: vector<integer> = [];
+  // The syntax node of each item that is a struct literal, -1 for any other: a literal mixing
+  // the two builds each in its own way, in order (`parse_item` per item).
+  rec_at: vector<integer> = [];
   nested: vector<integer> = [];
   // The element a nested literal is: what the destination declares, else what the first pass
   // left the local holding.
@@ -1955,15 +1962,46 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     _ => ir::TyUnknown { n: 0 }
   };
   nested_want = match declared { TyVector { inner: _ } => declared, _ => held_elem };
+  tsyn = match declared { TyEnum { n: tn } => if is_nullable_wrapper(e, declared) { tn } else { -1 }, _ => -1 };
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
       return refused_build();
     }
+    // An item of a `vector<S?>` (`parse_item`'s tagged arms): a `null` leaves the fresh element's
+    // tag absent, an `S { … }` literal is built as a `Some` and copied in, any other `S` is
+    // written through the fresh form of `emit_nullable_slot_write` — each as it is read, so
+    // its work-refs are numbered with its own buffers.
+    if tsyn >= 0 {
+      pay = el_ex_place::nullable_payload(e, tsyn);
+      if el_ex_place::literal_of(e, it, pay) {
+        nb = el_ex_place::nullable_some_literal(e, vars, tsyn, it);
+        if nb == null {
+          return refused_build();
+        }
+        xs += [ex(if e.first_pass { ir::NdInsert { items: [] } } else { el_ir::cl(e, "OpCopyRecord", [nb!, ir::NdVar { n: elm }, ir::NdInt { n: el::def(e, tsyn).known_type + 16384 }]) }, declared)];
+        rec_at += [-1];
+        continue;
+      }
+      tx = el_ex_assign::expression(e, vars, it);
+      if tx.tp is TyNull {
+        xs += [ex(ir::NdInsert { items: [] }, declared)];
+      } else if struct_ref(e, el_types::base(tx.tp)) == pay {
+        xs += [ex(if e.first_pass { ir::NdInsert { items: [] } } else { ir::NdInsert { items: el_ex_place::nullable_slot_write(e, vars, tsyn, ir::NdVar { n: elm }, tx.code, fresh: true) } }, declared)];
+      } else {
+        if !el_types::is_unknown(tx.tp) {
+          el::refuse(e, "an item of a vector of nullable records that is no record of it: {type_kind(tx.tp)}");
+        }
+        return refused_build();
+      }
+      rec_at += [-1];
+      continue;
+    }
     sd = struct_literal_def(e, it);
     if sd < 0 {
       sd = variant_literal_def(e, it);
     }
+    rec_at += [if sd >= 0 { it } else { -1 }];
     if sd >= 0 {
       recs += [it];
       if e.first_pass {
@@ -1978,9 +2016,20 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       xs += [el_ex_assign::expression(e, vars, it)];
     }
   }
-  if len(recs) > 0 && len(recs) != len(xs) {
-    el::refuse(e, "a vector literal mixing struct literals and other items");
-    return refused_build();
+  mixed = len(recs) > 0 && len(recs) != len(xs);
+  // Mixed with items that are no literal, each element is made in order: carried for a plain
+  // struct's literals beside items of that struct (variants and nested literals are not).
+  if mixed {
+    for it in recs {
+      if struct_literal_def(e, it) < 0 || struct_literal_def(e, it) != struct_literal_def(e, recs[0]!) {
+        el::refuse(e, "a vector literal mixing struct literals and other items");
+        return refused_build();
+      }
+    }
+    if len(nested) > 0 {
+      el::refuse(e, "a vector literal mixing struct literals and other items");
+      return refused_build();
+    }
   }
   reads_dest = false;
   if append && !e.first_pass {
@@ -2035,6 +2084,15 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // (`convert_store_lenient`: a `null`, or a nullable value of the element's own base, is stored
   // as the slot's null — `@FR-N-Store` warns there); an undeclared literal whose later item is a
   // float where the earlier ones are integers widens them (`widen_literal_items`).
+  // An `i32` element given a `??` is narrowed inside it (`dn4cast` under the `ncc`): not carried.
+  if !e.first_pass && match in_t { TyInteger { spec } => el_types::int4(spec), _ => false } {
+    for x in xs {
+      if match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
+        el::refuse(e, "an `i32` vector item that is a `??`");
+        return refused_build();
+      }
+    }
+  }
   conv: vector<Ex> = [];
   for x in xs {
     if el_types::is_unknown(x.tp) || el_types::is_equal(e, in_t, x.tp) || (el_types::struct_enum_def(in_t) >= 0 && el_expressions::variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
@@ -2100,7 +2158,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return refused_build();
   }
-  if len(xs) > 0 {
+  // A DECLARED literal has its element's `vector<…>` row made where its type was read, items
+  // or none (`g: vector<single> = []`).
+  if len(xs) > 0 || (!el_types::is_unknown(declared) && !append) {
     vector_of(e, in_t);
   }
   rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);
@@ -2213,7 +2273,26 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       }
     }
     at = ir::NdVar { n: elm };
-    for it in recs {
+    if mixed && (struct_ref(e, in_t) != rd || len(rec_at) != len(xs)) {
+      el::refuse(e, "a vector literal mixing struct literals and other items");
+      return refused_build();
+    }
+    if mixed {
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    }
+    order: vector<integer> = if mixed { rec_at } else { recs };
+    for it in order {
+      // An item that is no literal (`build_vector_list`'s record arm): copied into its element.
+      if it < 0 {
+        ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+        copy = el_ex_match::record_item_copy(e, vars, elm, rd, xs[it#index]!);
+        if copy == null {
+          return refused_build();
+        }
+        ls += copy!;
+        ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+        continue;
+      }
       fields: vector<integer> = [];
       match e.p.nodes[it] {
         SStructLit { fields: fs } => { fields = fs; },
@@ -2295,6 +2374,20 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // freed after when it gives it away (`call_gives_away_its_store`).  Any other item is copied in.
   // `build_vector_list`'s record arm for a struct enum: the element made through the vector, the
   // item's record copied into it (a call that gives its store away frees it after), finished.
+  // A tagged element (`vector<S?>`): made through the vector, its item's steps written into it.
+  if tsyn >= 0 && len(xs) > 0 {
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: el::variant_of(e, tsyn, "Some"), dep: [v] });
+    at = ir::NdVar { n: elm };
+    for x in xs {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      match x.code {
+        NdInsert { items: steps } => { ls += steps; },
+        _ => { ls += [x.code]; }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
   if len(recs) == 0 && len(xs) > 0 && push == "" && senum >= 0 {
     el_vars::set_var_type(vars, elm, ir::TyEnum { n: senum, is_ref: true, dep: [v] });
     at = ir::NdVar { n: elm };

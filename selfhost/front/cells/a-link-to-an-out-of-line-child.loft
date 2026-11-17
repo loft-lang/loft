@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a link to an out-of-line child is the child's view (OpRefFromChildRec of the field), a write through it a write to the child.
+// Prints: 5
+struct N { v: integer, next: N? }
+
+fn child() -> integer { t = N { v: 1, next: N { v: 2 } }; l = &t.next; l.v = 5; t.next.v ?? -1 }
+
+fn main() {
+  println("{child()}");
+}

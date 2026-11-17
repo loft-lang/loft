@@ -161,6 +161,18 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     }
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // `@FR-B-OutOfLine`: a whole write to an out-of-line field goes through its child record.
+  if op == "=" && calls(e, el_ir::unspan(p.code), "OpRefFromChildRec") {
+    field = match el_ir::unspan(p.code) { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+    kt = match field { NdCall { args } => match el_ir::unspan(args[2] ?? ir::NdNull) { NdInt { n } => n, _ => -1 }, _ => -1 };
+    sd = el_schema::out_of_line_content(e, p.tp);
+    if kt < 0 || sd < 0 || !calls(e, field, "OpGetField") {
+      el::refuse(e, "an out-of-line write whose place is no field");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    w = out_of_line_set(e, vars, field, kt, sd, rhs);
+    return ex(w ?? ir::NdNull, ir::TyVoid);
+  }
   // A field of a record that may be absent (`b = h[k]; b.v += [x]`) is typed `τ?`; its append
   // goes through the place as Rust's does (`OpPush…` into the field), the `?` read past.
   if op == "+=" && e.p.nodes[rhs] is SVecLit && el_types::is_collection(el_types::base(p.tp)) {
@@ -1034,6 +1046,46 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       el::refuse(e, "a repeated vector item");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // An item of a `vector<S?>` field (`parse_item`'s tagged arms, as `vector_build` has them).
+    if is_nullable_wrapper(e, inner) {
+      tsyn = el_types::struct_enum_def(inner);
+      pay = nullable_payload(e, tsyn);
+      steps: vector<ir::Node> = [];
+      if literal_of(e, it, pay) {
+        nb = nullable_some_literal(e, vars, tsyn, it);
+        if nb == null {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        if !e.first_pass {
+          steps = [el_ir::cl(e, "OpCopyRecord", [nb!, at, ir::NdInt { n: el::def(e, tsyn).known_type + 16384 }])];
+        }
+      } else {
+        tx = el_ex_assign::expression(e, vars, it);
+        if tx.tp is TyNull {
+          steps = [];
+        } else if struct_ref(e, el_types::base(tx.tp)) == pay {
+          if !e.first_pass {
+            if el_ir::reads_var(tx.code, rec) {
+              el::refuse(e, "a field append whose item reads the field's record");
+              return ex(ir::NdNull, ir::TyVoid);
+            }
+            steps = nullable_slot_write(e, vars, tsyn, at, tx.code, fresh: true);
+          }
+        } else {
+          if !el_types::is_unknown(tx.tp) {
+            el::refuse(e, "an item of a vector of nullable records that is no record of it: {type_kind(tx.tp)}");
+          }
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+      }
+      if !e.first_pass {
+        el_vars::set_var_type(vars, elm, ir::TyReference { n: el::variant_of(e, tsyn, "Some"), dep: [rec] });
+        ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+        ls += steps;
+        ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+      }
+      continue;
+    }
     sd = struct_literal_def(e, it);
     if sd >= 0 {
       if !el_types::is_equal(e, inner, ir::TyReference { n: sd, dep: [] }) {
@@ -1658,7 +1710,16 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   }
   // A local the first pass found borrowing another (`s = me(t)` later) is not built into:
   // `parse_object` builds its literal apart, in a `__ref_p2_N`, and binds it.
-  if !e.first_pass && !vars.vars[v].argument && len(el_types::deps(vt)) > 0 {
+  // `viewed_by_an_earlier_bind`: so is a local an earlier bind of this pass left viewing
+  // another's store on some path (`r = b.tp` in one arm, a fresh record in the other) — the
+  // type keeps only the last bind's borrows.
+  viewed_before = false;
+  for vd in vars.viewed[v] ?? [] {
+    if vd != v && vd != 65535 {
+      viewed_before = true;
+    }
+  }
+  if !e.first_pass && !vars.vars[v].argument && (len(el_types::deps(vt)) > 0 || viewed_before) {
     el_vars::mark_built(vars, v);
     // A variant's buffer is typed as its enum (`object_expr`'s `wt`), the record as the variant.
     wt = if el::def(e, d).def_type == el::DT_ENUM_VALUE { ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
@@ -1692,7 +1753,10 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   p2_mark = vars.work_ref_p2;
   vars.rebuild_attempt = watch_hit;
   vars.own_buffer_hit = false;
+  demote = if e.first_pass { -1 } else { demote_field(e, vars, v, d, fields) };
+  vars.demote_var = if demote < 0 { -1 } else { v };
   list = object_fields(e, vars, v, d, fields);
+  vars.demote_var = -1;
   vars.rebuild_attempt = false;
   if list == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1773,6 +1837,20 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     abandon_work_refs(vars, ref_mark, p2_mark);
     o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
+  }
+  // `demote_prelude` (`@FR-R-Demote`): where the local holds a record, its payload moves into
+  // a fresh child of its own store that becomes the field, the record — its number kept —
+  // left zeroed for the other fields (`OpDemoteRec`); where it is absent the literal's own
+  // prelude runs and the field is left absent.
+  if demote >= 0 && len(ops) >= 2 {
+    content = el_schema::out_of_line_content(e, el::def(e, d).attributes[demote]!.typedef[0]);
+    off = ir::NdInt { n: field_position(e, d, el::def(e, d).attributes[demote]!.name) };
+    hv = ir::NdVar { n: v };
+    present = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [hv]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [hv]));
+    moved = el_ir::v_block([el_ir::cl(e, "OpDemoteRec", [hv, off, ir::NdInt { n: el::def(e, content).known_type }])], ir::TyVoid, "demote");
+    fresh = el_ir::v_block([ops[0]!, ops[1]!, el_ir::cl(e, "OpSetInt4", [hv, off, ir::NdInt { n: 0 }])], ir::TyVoid, "demote_fresh");
+    rest = ops[2..];
+    ops = [el_ir::v_if(present, moved, fresh)] + rest;
   }
   // A promoted return buffer (an argument) is built into: its mint guarded to reuse a buffer
   // the caller handed in live, and no reset.
@@ -1895,6 +1973,53 @@ pub fn abandon_work_refs(vars: el_vars::Vars, ref_mark: integer, p2_mark: intege
   }
 }
 
+// Is the syntax at `n` the bare name `name`?
+fn is_bare_name(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: nm, member } => member == "" && nm == name,
+    _ => false
+  }
+}
+
+// `@FR-R-Demote`'s test: the literal of `d` built in place into local `v` gives `v` itself as
+// the whole value of one out-of-line field whose content is the literal's own type — the
+// struct, or for a variant its enum where `v` is of that enum — and reads `v` nowhere else.
+// The field's attribute number, or -1.
+pub fn demote_field(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields: vector<integer>) -> integer {
+  if vars.vars[v].argument || el_vars::is_compiler_generated(vars, v) {
+    return -1;
+  }
+  a = -1;
+  for fi in fields {
+    fe = -1;
+    fa = -1;
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, e: fv } => {
+        fe = fv ?? -1;
+        fa = attr_nr(el::def(e, d), fname);
+      },
+      _ => {}
+    }
+    if fe < 0 || fa < 0 {
+      return -1;
+    }
+    whole = is_bare_name(e, fe, el_vars::name_of(vars, v));
+    if whole && a < 0 {
+      a = fa;
+    } else if el_ex_assign::mentions_name(e, fe, el_vars::name_of(vars, v)) {
+      return -1;
+    }
+  }
+  if a < 0 || !el_schema::out_of_line(e, d, a) {
+    return -1;
+  }
+  content = el_schema::out_of_line_content(e, el::def(e, d).attributes[a]!.typedef[0]);
+  if el::def(e, d).def_type == el::DT_ENUM_VALUE {
+    return if content == el::def(e, d).parent && el_types::struct_enum_def(el_vars::tp(vars, v)) == content { a } else { -1 };
+  }
+  if content == d { a } else { -1 }
+}
+
 pub fn skip_free_named(vars: el_vars::Vars, n: text) {
   nr = el_vars::var(vars, n);
   if nr >= 0 && !vars.vars[nr].argument {
@@ -1986,6 +2111,19 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
             el::refuse(e, "a struct field that is quoted, valueless or not declared: {if quoted { "quoted" } else if fe == null { "valueless" } else { "undeclared" }}");
           }
           return null;
+        }
+        // `@FR-B-OutOfLine`: an out-of-line field is written through its child record.
+        if el_schema::out_of_line(e, d, a) {
+          ol = out_of_line_init(e, vars, r, d, a, fe!);
+          if ol == null {
+            return null;
+          }
+          // A demoted field is left alone: the prelude filled it.
+          if e.first_pass || !el_ir::empty_insert(ol!) {
+            list += [ol!];
+          }
+          found += [fname];
+          continue;
         }
         at = def.attributes[a]!.typedef[0];
         // A `vector<T>?` field is written as its dense twin is; a `null` marks the primed
@@ -2261,19 +2399,36 @@ pub fn nullable_set_null(e: el::El, syn: integer, to: ir::Node) -> ir::Node {
 // from `value`, an `S` that may be the null sentinel — held in a work-ref, then, where it is
 // present, the slot's old payload released, the discriminant set present and the payload
 // copied in; where it is absent, the slot set absent.
-pub fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_ref: ir::Node, value: ir::Node) -> vector<ir::Node> {
+pub fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_ref: ir::Node, value: ir::Node, fresh: boolean = false) -> vector<ir::Node> {
   sd = nullable_payload(e, syn);
   src = el_vars::work_ref(vars, ir::TyReference { n: sd, dep: [] });
   kt = el::def(e, syn).known_type;
   some_kt = el::def(e, el::variant_of(e, syn, "Some")).known_type;
   present: vector<ir::Node> = [];
-  if kt != el_schema::NO_TYPE {
+  // `@FR-H-Claim`: a FRESH slot (an element the construction just minted) holds no value to
+  // release; its payload copy is flagged a fresh destination and its absent arm only sets the tag.
+  if kt != el_schema::NO_TYPE && !fresh {
     present += [el_ir::cl(e, "OpClearKeyed", [slot_ref, ir::NdInt { n: kt }])];
   }
-  s_kt = ir::NdInt { n: el::def(e, sd).known_type };
-  present += [el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: src }, el_ir::cl(e, "OpGetField", [slot_ref, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, s_kt]), s_kt])];
+  s_kt = ir::NdInt { n: el::def(e, sd).known_type + (if fresh { 16384 } else { 0 }) };
+  pay_kt = ir::NdInt { n: el::def(e, sd).known_type };
+  present += [el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: src }, el_ir::cl(e, "OpGetField", [slot_ref, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, pay_kt]), s_kt])];
   test = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: src }])]);
-  [el_ir::v_set(src, value), el_ir::v_if(test, ir::NdInsert { items: present }, nullable_set_null(e, syn, slot_ref))]
+  absent = if fresh { el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 0, tp: el_schema::NO_TYPE }]) } else { nullable_set_null(e, syn, slot_ref) };
+  // `@FR-B-View`: a stash of a projection (`s.h`, `v[i]`) views the projection's root.
+  if !e.first_pass {
+    match el_ir::unspan(value) {
+      NdCall { def_nr: vd, args: va } => {
+        root = if starts_with(el::def(e, vd).name, "OpGet") && len(va) > 0 { place_root(e, va[0]) } else { -1 };
+        if root >= 0 {
+          el_vars::depend(vars, src, root);
+        }
+      },
+      NdTupleGet { var: tv } => { el_vars::depend(vars, src, tv); },
+      _ => {}
+    }
+  }
+  [el_ir::v_set(src, value), el_ir::v_if(test, ir::NdInsert { items: present }, absent)]
 }
 
 // `read_through_tag` (`emit_nullable_slot_read`, `@FR-L-Null-Tag`): a tagged `__nullable<S>`
@@ -2336,6 +2491,202 @@ pub fn nullable_some_literal(e: el::El, vars: el_vars::Vars, syn: integer, node:
   el_ir::v_block(list, ir::TyEnum { n: syn, is_ref: true, dep: [w] }, "NullableSome")
 }
 
+// The field place of out-of-line attribute `a` of record `d` at `r` and its content's row
+// (`out_of_line_kt`: `u16::MAX` on the first pass, before any layout).
+fn child_field(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) -> vector<ir::Node> {
+  at = el::def(e, d).attributes[a]!;
+  sd = el_schema::out_of_line_content(e, at.typedef[0]);
+  kt = if e.first_pass || sd < 0 { 65535 } else { el::def(e, sd).known_type };
+  [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: base + field_position(e, d, at.name) }, ir::NdInt { n: kt }]), ir::NdInt { n: kt }]
+}
+
+// `literal_in_child`'s test: every variable the literal's build names but its own record `w`
+// is a scalar or a text, and it builds no record inside it — the child is reset before the
+// field values are read.
+fn plain_child_literal(vars: el_vars::Vars, n: ir::Node, w: integer) -> boolean {
+  match n {
+    NdVar { n: x } => {
+      if x != w {
+        b = el_types::base(el_vars::tp(vars, x));
+        if !(is_scalar(el_vars::tp(vars, x)) || b is TyText) {
+          return false;
+        }
+      }
+    },
+    NdBlock { block } => {
+      if block[0].name == "Object" {
+        return false;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if !plain_child_literal(vars, c, w) {
+      return false;
+    }
+  }
+  true
+}
+
+// `out_of_line_set` (`@FR-B-OutOfLine`): the value at `fe` written into the out-of-line field
+// at `field` (content row `kt`, record `sd`).  `null` releases the child (`OpSetChildRec` of the
+// null sentinel); a literal of the record whose values read no record is built IN the child
+// (`literal_in_child`: `OpChildRecInPlace` where its own store was made, the build spliced), any
+// other such literal apart and copied in (`OpSetChildRec`); a local is copied in; a call that
+// gives its store away is copied in and that store freed (the type's 32768 bit).  A read of
+// another child (the move), a call answering a view of its argument (the write-back) and any
+// other value are refused by name.
+pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: integer, sd: integer, fe: integer) -> ir::Node? {
+  k = ir::NdInt { n: kt };
+  if e.p.nodes[fe] is SNull {
+    return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), k]);
+  }
+  // A struct enum's child is a literal of any of its variants.
+  vl = el_ex_pattern::variant_literal_def(e, fe);
+  literal = struct_literal_def(e, fe) == sd || (vl >= 0 && el::def(e, vl).parent == sd);
+  x = el_ex_assign::expression(e, vars, fe);
+  if e.first_pass {
+    return ir::NdInsert { items: [] };
+  }
+  if !literal {
+    xc = el_ir::unspan(x.code);
+    xd = match el_types::base(x.tp) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+    same = xd >= 0 && (xd == sd || (el::def(e, xd).def_type == el::DT_ENUM_VALUE && el::def(e, xd).parent == sd));
+    // The record the field lies in, handed to its own child, is demoted into it
+    // (`place_demote`, `OpDemoteRec`): not carried.
+    if same && xc is NdVar && xc == ir::NdVar { n: place_root(e, field) } {
+      // `object_into` moved the old record into this field already (`demote_prelude`).
+      if vars.demote_var == place_root(e, field) {
+        return ir::NdInsert { items: [] };
+      }
+      el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
+      return null;
+    }
+    if same && xc is NdVar {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
+    // A unit variant (`TVec { inner: TInt }`): its record, built in a work ref, set as the child.
+    if same && match xc { NdBlock { block: ub } => ub[0].name == "EnumUnitLit", _ => false } {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
+    // `write_back_call`: a call answering its argument or a record built in the caller's buffer
+    // (`t.left = insert(t.left, k)`) is bound as a borrow of the host, copied in where it must
+    // be, and a store the callee minted for this call — neither the host's nor the buffer's —
+    // released.
+    if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
+      wb = write_back_call(e, vars, field, k, xc);
+      if wb != null {
+        return wb;
+      }
+    }
+    // `move_child`: a read of a child rooted at this field's own child (`t.left = t.left.right`)
+    // installs that child's record by its number (`OpMoveChildRec`).
+    src = child_chain_of(e, field, xc);
+    if src != null {
+      return el_ir::cl(e, "OpMoveChildRec", [field, src!, k]);
+    }
+    if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + (if el_ex_match::gives_away_its_store(e, x.code) { 32768 } else { 0 }) }]);
+    }
+    el::refuse(e, "an out-of-line field given a value that is no literal, local or fresh call of its record");
+    return null;
+  }
+  bl = match el_ir::unspan(x.code) { NdBlock { block } => block[0], _ => { el::refuse(e, "an out-of-line field given a value that is no literal, local or fresh call of its record"); return null; } };
+  w = match el_ir::unspan(el_ir::last(bl.operators)) { NdVar { n } => n, _ => -1 };
+  made = -1;
+  for op in bl.operators {
+    match el_ir::unspan(op) {
+      NdCall { def_nr, args } => {
+        if el::def(e, def_nr).name == "OpDatabase" && el_ir::unspan(args[0] ?? ir::NdNull) == ir::NdVar { n: w } {
+          made = op#index;
+        }
+      },
+      _ => {}
+    }
+  }
+  plain = bl.name == "Object" && w >= 0 && made >= 0;
+  for op in bl.operators {
+    if !plain_child_literal(vars, op, w) {
+      plain = false;
+    }
+  }
+  if !plain {
+    return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+  }
+  ops: vector<ir::Node> = [];
+  for op in bl.operators {
+    if op#index == made {
+      ops += [el_ir::v_set(w, el_ir::cl(e, "OpChildRecInPlace", [field, k]))];
+    } else if op#index + 1 < len(bl.operators) {
+      ops += [op];
+    }
+  }
+  vars.vars[w].skip_free = true;
+  ir::NdInsert { items: ops }
+}
+
+// `Parser::write_back_call`, or null where `call` is no call of a function that answers a
+// borrowed view through a record buffer of its own.
+fn write_back_call(e: el::El, vars: el_vars::Vars, field: ir::Node, k: ir::Node, call: ir::Node) -> ir::Node? {
+  buf = -1;
+  match call {
+    NdCall { def_nr, args } => {
+      if returns_argument_view(el::def(e, def_nr)) {
+        buf = hidden_ref_arg(vars, args);
+      }
+    },
+    _ => {}
+  }
+  host = place_root(e, field);
+  if buf < 0 || host < 0 {
+    return null;
+  }
+  d = match el_types::base(el_vars::tp(vars, buf)) { TyReference { n } => n, _ => -1 };
+  if d < 0 {
+    return null;
+  }
+  r = el_vars::create_unique(vars, "written_back", ir::TyReference { n: d, dep: [host] });
+  el_vars::set_defined(vars, r);
+  vars.vars[r].skip_free = true;
+  rv = ir::NdVar { n: r };
+  release = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [rv, ir::NdVar { n: host }]), el_ir::cl(e, "OpFreeRefIfDistinct", [rv, ir::NdVar { n: buf }]), ir::NdNull);
+  el_ir::v_block([el_ir::v_set(r, call), el_ir::cl(e, "OpSetChildRec", [field, rv, k]), release], ir::TyVoid, "write_back_call")
+}
+
+// `Parser::child_chain_of`: the field address the value's own child sits in, where the value
+// is a chain of child reads (`OpRefFromChildRec(OpGetField(…))`) walked down to the child
+// `field` itself holds; null for any other value.
+fn child_chain_of(e: el::El, field: ir::Node, val: ir::Node) -> ir::Node? {
+  if !calls(e, val, "OpRefFromChildRec") {
+    return null;
+  }
+  src = match val { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+  cur = src;
+  for _step in 0..64 {
+    if !calls(e, cur, "OpGetField") {
+      return null;
+    }
+    base = match cur { NdCall { args } => if len(args) == 3 && el_ir::unspan(args[1]!) is NdInt { el_ir::unspan(args[0]!) } else { ir::NdNull }, _ => ir::NdNull };
+    if !calls(e, base, "OpRefFromChildRec") {
+      return null;
+    }
+    inner = match base { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+    if inner == field {
+      return src;
+    }
+    cur = inner;
+  }
+  null
+}
+
+// A literal's out-of-line field `a` of record `d` at `r`, given the value at `fe`.
+fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: integer, fe: integer) -> ir::Node? {
+  fk = child_field(e, d, a, r, 0);
+  sd = el_schema::out_of_line_content(e, el::def(e, d).attributes[a]!.typedef[0]);
+  kt = match fk[1]! { NdInt { n } => n, _ => 65535 };
+  out_of_line_set(e, vars, fk[0]!, kt, sd, fe)
+}
+
 // `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
 // type's default; a vector field its handle zeroed (twice: the prime, then the default's own
 // write); a struct field each of ITS fields' defaults, inline at its offset.
@@ -2344,6 +2695,11 @@ pub fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integ
   at = def.attributes[a]!;
   pos = base + field_position(e, d, at.name);
   ft = at.typedef[0];
+  // An omitted out-of-line field holds no child: `OpSetChildRec` of the null sentinel.
+  if el_schema::out_of_line(e, d, a) {
+    fk = child_field(e, d, a, r, base);
+    return [el_ir::cl(e, "OpSetChildRec", [fk[0]!, el_ir::cl(e, "OpNullRefSentinel", []), fk[1]!])];
+  }
   // An omitted `S?` field (`__nullable<S>`, @PLN25 E2a.4) is absent: the record's zero-init is
   // discriminant 0.
   if is_nullable_wrapper(e, ft) {

@@ -55,6 +55,23 @@ fn so_names_symbol(path: &std::path::Path, sym: &str) -> bool {
     fa::read(path).is_ok_and(|bytes| bytes.windows(sym.len()).any(|w| w == sym.as_bytes()))
 }
 
+/// Is rustc's `aarch64-linux-android` standard library installed?  `--print target-libdir`
+/// names the directory whether or not it exists, so the directory is asked.
+fn rust_android_target_installed() -> bool {
+    loft::platform::process::harness_command("rustc")
+        .args([
+            "--print",
+            "target-libdir",
+            "--target",
+            "aarch64-linux-android",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .is_some_and(|dir| !dir.is_empty() && loft::file_access::is_dir(dir.as_str()))
+}
+
 /// `--native-rust --native-android` (the rustc writer, kept beside the C default as the bisect
 /// path) on a non-trivial program (struct + fn + for-loop + string
 /// interpolation) produces a real AArch64 `NativeActivity` shared object — a valid
@@ -75,6 +92,16 @@ fn android_native_so_is_aarch64_elf() {
         && std::env::var_os("ANDROID_NDK_ROOT").is_none()
     {
         eprintln!("skipping: LOFT_ANDROID_BUILD_TEST set but no ANDROID_NDK_HOME/ANDROID_NDK_ROOT");
+        return;
+    }
+    // The rustc writer's leg needs rustc's own Android target as well as the NDK; the C path's
+    // job (`miri.yml`, "The C path's Android build test") installs only the NDK, so there this
+    // leg is skipped, not failed — the C leg beside it is the one that job keeps.
+    if !rust_android_target_installed() {
+        eprintln!(
+            "skipping the rustc writer's android leg: rustc's aarch64-linux-android target is not \
+             installed (rustup target add aarch64-linux-android)"
+        );
         return;
     }
     let src = r#"

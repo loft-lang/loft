@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function answering a keyed local of its own hands it back as it is (no buffer, the body typed without a borrow); a keyed local bound from such a call takes it by OpReplaceKeyed, the call's store freed after.
+// Prints: 50 2
+struct E { k: integer, v: integer }
+
+fn mkh(n: integer) -> hash<E[k]> {
+  h: hash<E[k]> = [E { k: n, v: n * 10 }];
+  h
+}
+
+fn more(n: integer) -> sorted<E[k]> {
+  s: sorted<E[k]> = [E { k: n, v: 1 }];
+  s += [E { k: n + 1, v: 2 }];
+  s
+}
+
+fn main() {
+  h = mkh(3);
+  g = more(4);
+  h = mkh(5);
+  println("{h[5].v} {g[5].v}");
+}

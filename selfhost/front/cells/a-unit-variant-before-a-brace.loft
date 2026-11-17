@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a unit variant directly before a `{` (`if e == Owned { … }`) leaves an unused `__ref_p2_N` declared: Rust's second pass first reads it as an object literal and backs out.  `Owned == e` mints none.
+// Prints: 10 10 10
+
+enum P { Owned, Borrowed { base: integer } }
+fn mk_p(x: integer) -> P? { if x > 1 { Borrowed { base: x } } else if x > 0 { Owned } else { null } }
+fn mk_d(x: integer) -> P { if x > 1 { Borrowed { base: x } } else { Owned } }
+fn fc(x: integer) -> integer { e = mk_p(x); if e == null { return 0; } if e == Owned { 10 } else { 2 } }
+fn fe(x: integer) -> integer { e = mk_d(x); if e == Owned { 10 } else { 2 } }
+fn ff(x: integer) -> integer { e = mk_p(x); if e == null { return 0; } if Owned == e { 10 } else { 2 } }
+fn main() { println("{fc(1)} {fe(1)} {ff(1)}"); }

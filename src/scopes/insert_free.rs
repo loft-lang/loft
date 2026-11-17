@@ -183,11 +183,23 @@ pub(super) fn is_scope_exit_cleanup(op: &Value, data: &Data) -> bool {
         // (`get_free_vars`' witness-buffer arm): `if OpDistinctStore(v, b₁) { if
         // OpDistinctStore(v, b₂) { OpFreeRef(v) } }`.  Read as the value, a `match` at a
         // function's tail answered that `if` (false) instead of its arm.
+        // …and the free of a store a closure record may have taken over (`@FR-L-CapOwn`,
+        // `capture_builds::free_unless_record_built` / `free_unless_leaver_holds`): `if <a
+        // record holds it> { null } else { <release> }`.  Read as the value, a tail `match`
+        // over a call — a block of its own, whose captured vector is released at its end —
+        // answered that `if` (null) from every arm (loft#2519; guarded by
+        // `tests/scripts/2519-a-tail-match-over-a-call-answers-its-arm-past-a-captured-release.loft`).
         Value::If(cond, then, els) => {
-            matches!(cond.unspan(), Value::Call(d, _) if data.def(*d).name() == "OpDistinctStore")
+            (matches!(cond.unspan(), Value::Call(d, _) if data.def(*d).name() == "OpDistinctStore")
                 && matches!(els.unspan(), Value::Null)
-                && is_scope_exit_cleanup(then, data)
+                && is_scope_exit_cleanup(then, data))
+                || (matches!(then.unspan(), Value::Null) && is_scope_exit_cleanup(els, data))
         }
+        // A release spelt as a sequence — the drop hook before the free, the detaches before
+        // the guarded free — is cleanup when it ends in one: an `Insert`'s value is its last.
+        Value::Insert(ops) => ops
+            .last()
+            .is_some_and(|last| is_scope_exit_cleanup(last, data)),
         _ => false,
     }
 }

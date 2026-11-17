@@ -45,15 +45,6 @@ pub fn fill_all(e: el::El) {
       }
     }
   }
-  // A struct whose fields reach it again — `Tree { left: Tree? }`, `A { b: B }` with
-  // `B { a: A? }` — is laid out with that field out of line, a child (`@FR-L-OutOfLine`): not
-  // carried.  Refused before any layout, as `fill_all` stops before laying out a cycle.
-  for d in 0..len(e.b.data.definitions) {
-    if el::def(e, d).source == e.source && (el::def(e, d).def_type == el::DT_STRUCT || el::def(e, d).def_type == el::DT_ENUM) && reaches(e, d, d, []) {
-      el::refuse(e, "a type whose fields contain it again (an out-of-line child)");
-      return;
-    }
-  }
   // `actual_types_deferred` before it: each enum the file declared, in definition order, a
   // schema enum of its name whose values its variants are, each variant valued its position
   // (`register_enum_db`, `stamp_enum_variants`).
@@ -75,6 +66,26 @@ pub fn fill_all(e: el::El) {
       disc = el::attribute("enum", ir::TyEnum { n: el::def_nr(e, "enumerate"), is_ref: false, dep: [] });
       disc.value = [ir::NdEnum { ord: ord, tp: 65535 }];
       e.b.data.definitions[d#index].attributes += [disc];
+    }
+  }
+  // A `vector<S?>` beside a keyed collection of `S` in one struct shares its records with it
+  // (`link_shared_nullable_views`: the keyed field is re-typed over `__nullable<S>`) — not
+  // carried: refused by name.
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_STRUCT || d.source != e.source {
+      continue;
+    }
+    for a in d.attributes {
+      tagged = match a.typedef[0] ?? ir::TyVoid { TyVector { inner } => match inner { TyEnum { n } => if starts_with(el::def(e, n).name, "__nullable<") { n } else { -1 }, _ => -1 }, _ => -1 };
+      if tagged < 0 {
+        continue;
+      }
+      for b in d.attributes {
+        k = el_types::keyed_elem(el_types::base(b.typedef[0] ?? ir::TyVoid));
+        if k >= 0 && "__nullable<{el::def(e, k).name}>" == el::def(e, tagged).name {
+          el::refuse(e, "a vector of nullable records beside a keyed collection of them in one struct");
+        }
+      }
     }
   }
   // Each `vector<T>` field's `main_vector<T>` wrapper (and `vector<T>`) where no construct made
@@ -284,13 +295,14 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
   // a known element (`??`'s default) has them made when the literal is built, `main_vector` first.
   match t {
     TyInteger { spec } => {
-      if narrow_early && el_types::narrow_width(spec) > 0 {
+      if narrow_early && (el_types::narrow_width(spec) > 0 || el_types::uint4(spec)) {
         vector_type(e, content_type(e, t));
       }
     },
     _ => {}
   }
-  if !typed {
+  // (A tagged `__nullable<S>` element's row follows its holder's: made where `main_vector` is filled.)
+  if !typed && !starts_with(nm, "__nullable<") {
     vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
@@ -354,8 +366,7 @@ fn synth_nullable_struct_fields(e: el::El) {
       }
       // `@FR-L-OutOfLine`: a `S?` whose `S` holds the host is out of line, record 0 its null.
       if holds_record(e, sd, host#index, []) {
-        el::refuse(e, "an out-of-line nullable record field");
-        return;
+        continue;
       }
       syn = nullable_enum_for(e, sd);
       if el::def(e, syn).known_type == NO_TYPE {
@@ -371,65 +382,11 @@ fn synth_nullable_struct_fields(e: el::El) {
   }
 }
 
-// The struct an embedded `S?` field holds (`synth_nullable_target`: a plain struct of the
-// program, not a type variable's placeholder), or -1.
-pub fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer {
-  match t {
-    TyOptional { inner } => {
-      match inner {
-        TyReference { n, dep } => {
-          if !dep.contains(el_types::MARKER) && el::def(e, n).def_type == el::DT_STRUCT && el::def(e, n).synthetic == "" && el_types::type_var(e, inner) < 0 {
-            return n;
-          }
-        },
-        _ => {}
-      }
-    },
-    _ => {}
-  }
-  -1
-}
+// (`nullable_record_of`, `nullable_enum_for`: `el_types`, where a `vector<S?>` asks too.)
+pub fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer { el_types::nullable_record_of(e, t) }
 
-// `Data::nullable_enum_for`: the synthetic `__nullable<S>` — a struct enum of a unit `Null`
-// (discriminant 1) and a `Some` (2) holding `payload: S` inline — made once per struct.  The
-// enum is keyed on the struct's own source (two libraries may each have a `Chunk`); its
-// variants are added under the current one, at the position the lexer stands on: the file's end.
 pub fn nullable_enum_for(e: el::El, sd: integer) -> integer {
-  name = "__nullable<{el::def(e, sd).name}>";
-  src = el::def(e, sd).source;
-  have = el::source_nr(e, src, name);
-  if have >= 0 {
-    return have;
-  }
-  at = el::pos_at(e, len(e.p.src) - 1);
-  own = e.source;
-  e.source = src;
-  en = el::add_def(e, name, at, el::DT_ENUM);
-  e.source = own;
-  self_tp = ir::TyEnum { n: en, is_ref: true, dep: [] };
-  el::set_returned(e, en, self_tp);
-  enumerate = el::def_nr(e, "enumerate");
-  nv = el::add_def(e, "Null", at, el::DT_ENUM_VALUE);
-  e.b.data.definitions[nv].parent = en;
-  el::set_returned(e, nv, self_tp);
-  null_attr = el::attribute("Null", self_tp);
-  null_attr.constant = true;
-  null_attr.value = [ir::NdEnum { ord: 1, tp: NO_TYPE }];
-  e.b.data.definitions[en].attributes += [null_attr];
-  sv = el::add_def(e, "Some", at, el::DT_ENUM_VALUE);
-  e.b.data.definitions[sv].parent = en;
-  el::set_returned(e, sv, self_tp);
-  some_attr = el::attribute("Some", self_tp);
-  some_attr.constant = true;
-  some_attr.value = [ir::NdEnum { ord: 2, tp: NO_TYPE }];
-  e.b.data.definitions[en].attributes += [some_attr];
-  disc = el::attribute("enum", ir::TyEnum { n: enumerate, is_ref: false, dep: [] });
-  disc.value = [ir::NdEnum { ord: 2, tp: NO_TYPE }];
-  e.b.data.definitions[sv].attributes += [disc, el::attribute("payload", ir::TyReference { n: sd, dep: [] })];
-  e.b.data.definitions[en].synthetic = "@PLN25 nullable-enum for embedded struct field";
-  e.b.data.definitions[nv].synthetic = "@PLN25 nullable-enum Null variant";
-  e.b.data.definitions[sv].synthetic = "@PLN25 nullable-enum Some variant";
-  en
+  el_types::nullable_enum_for(e, sd, el::pos_at(e, len(e.p.src) - 1))
 }
 
 // `typedef::fill_database` for a plain struct: a schema type under the struct's name, each
@@ -481,19 +438,23 @@ fn fill_database(e: el::El, d: integer) {
     if a.constant {
       continue;
     }
-    // A struct-enum field one of whose variants holds this record is an out-of-line child
-    // (`@FR-L-OutOfLine`, `field_is_out_of_line`): not carried.
-    se = el_types::struct_enum_def(a.typedef[0]);
-    if se >= 0 && holds_record(e, se, d, []) {
-      el::refuse(e, "a struct-enum field that would contain its host (an out-of-line child)");
-      return;
-    }
     // `τ?` is stored at `τ`'s own layout (`@FR-L-Null`).
     ft = el_types::base(a.typedef[0]);
-    c = match ft {
-      TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
-      _ => content_type(e, ft)
-    };
+    // `@FR-L-OutOfLine`: a field whose record holds its host is the number of a child record
+    // in the host's store, typed by the content it holds (`child_rec<S>`).
+    c = -1;
+    if out_of_line(e, d, a#index) {
+      sd = out_of_line_content(e, ft);
+      if el::def(e, sd).known_type == NO_TYPE {
+        fill_database(e, sd);
+      }
+      c = child_rec(e, el::def(e, sd).known_type);
+    } else {
+      c = match ft {
+        TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
+        _ => content_type(e, ft)
+      };
+    }
     if c < 0 {
       el::refuse(e, "a struct field of this type");
       return;
@@ -503,6 +464,52 @@ fn fill_database(e: el::El, d: integer) {
       set_field_nullable(e, s, f);
     }
   }
+}
+
+// `Data::field_is_out_of_line` (`@FR-L-OutOfLine`, @C159): attribute `a` of `d` is a record or
+// a struct enum — `S` or `S?`, no pointer — whose fields reach `d` again inline, so it cannot
+// lie inside its host.
+pub fn out_of_line(e: el::El, d: integer, a: integer) -> boolean {
+  at = el::def(e, d).attributes[a];
+  if at == null || at!.constant {
+    return false;
+  }
+  sd = out_of_line_content(e, at!.typedef[0] ?? ir::TyVoid);
+  sd >= 0 && holds_record(e, sd, d, [])
+}
+
+// The definition an out-of-line field of type `t` would hold: a plain struct's, or a struct
+// enum's (its row is the content: the child is any of its variants), not a pointer's and not
+// a compiler's own type; -1 for any other type.
+pub fn out_of_line_content(e: el::El, t: ir::TypeT) -> integer {
+  sd = match el_types::base(t) {
+    TyReference { n, dep } => if dep.contains(el_types::MARKER) || el::def(e, n).def_type != el::DT_STRUCT { -1 } else { n },
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    _ => -1
+  };
+  if sd >= 0 && !starts_with(el::def(e, sd).name, "__") { sd } else { -1 }
+}
+
+// `Stores::child_rec`: the store type `child_rec<name of content>` — a four-byte record number
+// in the host's store — made at the end of the table the first time it is asked for.
+pub fn child_rec(e: el::El, content: integer) -> integer {
+  name = "child_rec<{e.b.types[content].name}>";
+  t = schema_type(e, name);
+  if t >= 0 {
+    return t;
+  }
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: name,
+    parts: [ir::PtChildRec { content: content }],
+    keys: [],
+    complex: true,
+    linked: false,
+    size: 4,
+    align: 4,
+    field_groups: []
+  }];
+  num
 }
 
 // An enum field's store type: a variant's ordinal (`enumerate`) a plain byte, any other enum its
@@ -566,6 +573,9 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if el_types::narrow_width(spec) > 0 {
         return int_part(e, spec, el::NONE, false);
       }
+      if el_types::int4(spec) || el_types::uint4(spec) {
+        return int_part(e, spec, el::NONE, false);
+      }
       if spec.forced_size != 0 {
         return -1;
       }
@@ -578,7 +588,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     },
     TyEnum { n } => enum_content(e, n),
     // A nullable struct enum's slot is the enum's record (its null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: _ } => if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: ns } => if el_types::int4(ns) { int_part(e, ns, el::NONE, true) } else if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), _ => -1 },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),

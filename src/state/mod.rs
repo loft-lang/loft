@@ -8,7 +8,7 @@ pub(crate) mod codegen;
 pub mod debug;
 mod io;
 mod text;
-pub use text::text_timeline_summary;
+pub use text::{text_leak_violations, text_timeline_summary};
 
 use crate::data::{Context, Data, Type};
 pub use crate::database::Call;

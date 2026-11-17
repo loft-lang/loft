@@ -16,10 +16,13 @@ use loop_shape;
 use opt_names;
 use opt_non_sentinel;
 use opt_push;
+use opt_inputs;
 use opt_writes;
 use opt_facts;
 use opt_apart;
 use opt_wset;
+use cgen_types;
+use el_ir;
 
 // One vector a loop may hold: its path, the path's root variable, the expression naming it.
 pub struct Held {
@@ -34,7 +37,7 @@ fn def_name(b: ir::Bundle, d: integer) -> text {
 
 // `rebound_vars` with `close_over_links`: the variables the loop rebinds — a `Set`, a tuple
 // write, the re-mint of a hidden pass-2 buffer — and every link that may name one of them.
-fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boolean> {
+pub fn rebound_vars(b: ir::Bundle, d: ir::Definition, lp: ir::Block) -> vector<boolean> {
   count = len(d.variables.variables);
   rebound: vector<boolean> = [for _ in 0..count { false }];
   whole = ir::NdInsert { items: lp.operators };
@@ -146,6 +149,9 @@ pub struct Scalar {
   pub fld: integer,
   pub tp: integer,
   pub call: ir::Node,
+  // A sub-record path's `(record type, offset)` pairs a write evicts it by (`path_scalar`);
+  // empty for a bare variable's field, which `(tp, fld)` evicts.
+  pub evict: vector<integer>,
 }
 
 fn nothing() -> LoopHoist {
@@ -273,17 +279,44 @@ fn hoist_paths(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd
   text_grown = false;
   if blocked {
     if (env_variable("LOFT_NO_TEXT_SET_HEADER") ?? "0") != "0" {
-      return apart_hoist(b, w, facts, vd, lp);
+      return declined(b, w, facts, vd, lp);
     }
     again: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
     for op in lp.operators {
       if opt_writes::blocks_under(b, w, vd, op, tier + 16, again) {
-        return apart_hoist(b, w, facts, vd, lp);
+        return declined(b, w, facts, vd, lp);
       }
     }
     text_grown = true;
   }
   out = LoopHoist { vectors: vector_candidates(b, d, lp), pushes: [], mint_pushes: [], growth_free: true, sole_push: false, movers: [], scalars: [], declined: false };
+  // `@FR-R-Inputs` — what an admitted callee indexes off a vector the body passes it joins
+  // the candidates, re-spelled over the argument.
+  if opt_inputs::enabled() {
+    in_rebound = rebound_vars(b, d, lp);
+    for in_site in opt_inputs::calls_in(b, ir::NdInsert { items: lp.operators }) {
+      in_args = in_site.args;
+      in_fi = opt_inputs::of(b, w, in_site.d);
+      for in_h in in_fi.headers {
+        if in_h.p < len(in_args) {
+          in_root = -1;
+          in_apath = opt_push::vector_path(b, in_args[in_h.p]!, in_root);
+          if in_apath != "" && in_root < len(in_rebound) && !in_rebound[in_root]! {
+            in_key = in_apath + in_h.offs;
+            in_seen = false;
+            for in_q in out.vectors {
+              if in_q.path == in_key {
+                in_seen = true;
+              }
+            }
+            if !in_seen {
+              out.vectors += [Held { path: in_key, root: in_root, vector: opt_inputs::substitute_path(in_h.expr, in_h.p, in_args[in_h.p]!) }];
+            }
+          }
+        }
+      }
+    }
+  }
   pushes: vector<Held> = if tier & 4 != 0 { pushed_paths(b, lp) } else { [] };
   // The paths the body mints a record element into, each with whether every mint group on
   // it qualifies for the record push.
@@ -371,8 +404,10 @@ fn hoist_paths(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd
   if len(pushes) == 0 && len(mints) == 0 {
     return out;
   }
-  // A pushed path the body rebinds declines the loop (the rebound-mover clause is not
-  // carried).
+  // A pushed path the body rebinds declines the loop.  This is the rebound-mover clause
+  // (`LOFT_NO_REBOUND_MOVER`) as the C writer runs it: `FnWriter::verdict` hands `hoistable`
+  // no emitter-owned buffers, so `rebinds_alias_free` admits no rebind and the tier's other
+  // allowances (`blocks_header_hoist`) have nothing to name.
   rebound = rebound_vars(b, d, lp);
   for p in pushes {
     if rebound[p.root]! {
@@ -689,6 +724,52 @@ pub fn with_rebound(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Fact
   }
 }
 
+// `@FR-R-Header`'s growth half (`grown_apart_headers`, asked by the C alone): in a loop that
+// holds nothing but apart headers, a bare vector this activation owns alone that the loop grows
+// through statements of its own level is held with its base and derived again after each.
+// Answers the paths it added to `v`, which take a grown header.
+pub fn with_grown(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block, v: LoopHoist) -> vector<text> {
+  pending: vector<text> = [];
+  if len(v.pushes) > 0 || len(v.mint_pushes) > 0 || len(v.scalars) > 0 || (len(v.vectors) > 0 && !v.growth_free) {
+    return pending;
+  }
+  if !opt_facts::enabled() || (env_variable("LOFT_NO_APART_HEADERS") ?? "0") != "0" || (env_variable("LOFT_NO_GROWN_HEADER") ?? "0") != "0" {
+    return pending;
+  }
+  d = b.data.definitions[vd]!;
+  rebound = rebound_vars(b, d, lp);
+  candidates: vector<Held> = [];
+  for c in indexed_vectors(b, d, lp) {
+    if c.path.ends_with(":") && !rebound[c.root]! {
+      candidates += [c];
+    }
+  }
+  if len(candidates) == 0 {
+    return pending;
+  }
+  paths: vector<text> = [for c in candidates { c.path }];
+  roots: vector<integer> = [for c in candidates { c.root }];
+  lent: vector<boolean> = [for x in d.variables.variables { work_buffer_arg(d, x#index) }];
+  keep = opt_apart::grown_headers(b, w, facts, vd, lp, paths, roots, lent);
+  for c in candidates {
+    if !keep[c#index]! {
+      continue;
+    }
+    held = false;
+    for q in v.vectors {
+      if q.path == c.path {
+        held = true;
+      }
+    }
+    if !held {
+      pending += [c.path];
+      v.vectors += [c];
+      v.growth_free = true;
+    }
+  }
+  pending
+}
+
 fn scalar_getter(name: text) -> boolean {
   name == "OpGetInt" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull" || name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetSingle" || name == "OpGetFloat" || name == "OpGetBoolean" || name == "OpGetCharacter" || name == "OpGetEnum"
 }
@@ -731,13 +812,55 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
             }
           }
           if tp >= 0 && !known {
-            found += [Scalar { root: v, fld: fld, tp: tp, call: n }];
+            found += [Scalar { root: v, fld: fld, tp: tp, call: n, evict: [] }];
           }
         }
       },
       _ => {},
     }
   });
+  // `@FR-R-Inputs` — what an admitted callee reads of a record the body passes it, re-spelled
+  // over that argument: a variable's field, or a sub-record path's summed one.
+  if opt_inputs::enabled() {
+    for cs_site in opt_inputs::calls_in(b, whole) {
+      cs_args = cs_site.args;
+      cs_fi = opt_inputs::of(b, w, cs_site.d);
+      for cs_s in cs_fi.scalars {
+        if cs_s.p >= len(cs_args) {
+          continue;
+        }
+        cs_arg = cs_args[cs_s.p]!;
+        cs_c = match loop_shape::unspan(cs_arg) { NdVar { n: x } => x, _ => -1 };
+        cs_tp = if cs_c >= 0 && cs_c < len(rebound) && !rebound[cs_c]! { opt_wset::plain_tp(b, d.variables.variables[cs_c]!.type_def[0] ?? ir::TyVoid) } else { -1 };
+        if cs_tp >= 0 {
+          cs_known = false;
+          for cs_f in found {
+            if cs_f.root == cs_c && cs_f.fld == cs_s.fld {
+              cs_known = true;
+            }
+          }
+          if !cs_known {
+            found += [Scalar { root: cs_c, fld: cs_s.fld, tp: cs_tp, call: opt_inputs::substitute_path(cs_s.getter, cs_s.p, ir::NdVar { n: cs_c }), evict: [] }];
+          }
+        } else {
+          cs_sum = 0;
+          cs_evict: vector<integer> = [];
+          cs_r = opt_inputs::path_scalar(b, d, cs_arg, cs_s.fld, cs_sum, cs_evict);
+          if cs_r >= 0 && cs_r < len(rebound) && !rebound[cs_r]! {
+            cs_known = false;
+            for cs_f in found {
+              if cs_f.root == cs_r && cs_f.fld == cs_sum {
+                cs_known = true;
+              }
+            }
+            if !cs_known {
+              found += [Scalar { root: cs_r, fld: cs_sum, tp: -1, call: opt_inputs::substitute_path(cs_s.getter, cs_s.p, cs_arg), evict: cs_evict }];
+            }
+          }
+        }
+      }
+    }
+  }
   if len(found) == 0 {
     return out;
   }
@@ -750,7 +873,16 @@ pub fn hoistable(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, 
     }
   }
   for f in found {
-    if !opt_wset::evicts(written, f.tp, f.fld) {
+    stale = false;
+    if len(f.evict) == 0 {
+      stale = opt_wset::evicts(written, f.tp, f.fld);
+    }
+    for e in f.evict {
+      if e#index % 2 == 0 && opt_wset::evicts(written, e, f.evict[e#index + 1]!) {
+        stale = true;
+      }
+    }
+    if !stale {
       out.scalars += [f];
     }
   }
@@ -801,4 +933,340 @@ fn text_set_roots(b: ir::Bundle, lp: ir::Block) -> vector<integer> {
     }
   });
   if known[0]! { roots } else { [] }
+}
+
+// `declined`: what a loop the gate declines still holds — the apart headers, or, where those
+// hold nothing, `@FR-R-PushRec`'s apart-call clause (`apart_mint`).
+fn declined(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Facts, vd: integer, lp: ir::Block) -> LoopHoist {
+  apart = apart_hoist(b, w, facts, vd, lp);
+  if len(apart.vectors) == 0 {
+    minted = apart_mint(b, vd, lp);
+    if len(minted.mint_pushes) > 0 {
+      return minted;
+    }
+  }
+  apart
+}
+
+// `type_reaches`: can a value of type `t` hold a record of definition `target`, at any depth?
+// A type this walk does not know answers yes.
+fn type_reaches(b: ir::Bundle, t: ir::TypeT, target: integer, seen: vector<integer>) -> boolean {
+  match t {
+    TyInteger { spec: _ } => false,
+    TyBoolean => false,
+    TyFloat => false,
+    TySingle => false,
+    TyCharacter => false,
+    TyText { dep: _ } => false,
+    TyNull => false,
+    TyVoid => false,
+    TyNever => false,
+    TyEnum { n, is_ref, dep: _ } => is_ref && def_reaches(b, n, target, seen),
+    TyReference { n, dep: _ } => def_reaches(b, n, target, seen),
+    TySorted { n, keys: _, dep: _ } => def_reaches(b, n, target, seen),
+    TyIndex { n, keys: _, dep: _ } => def_reaches(b, n, target, seen),
+    TyRadix { n, names: _, dep: _ } => def_reaches(b, n, target, seen),
+    TyTrie { n, key: _, dep: _ } => def_reaches(b, n, target, seen),
+    TyHash { n, names: _, dep: _ } => def_reaches(b, n, target, seen),
+    TyVector { inner, dep: _ } => type_reaches(b, inner, target, seen),
+    TyOptional { inner } => type_reaches(b, inner, target, seen),
+    TyRefVar { inner } => type_reaches(b, inner, target, seen),
+    TyRewritten { inner } => type_reaches(b, inner, target, seen),
+    TyTuple { elems } => {
+      for e in elems {
+        if type_reaches(b, e, target, seen) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => true,
+  }
+}
+
+fn def_reaches(b: ir::Bundle, d: integer, target: integer, seen: vector<integer>) -> boolean {
+  if d == target || d < 0 || d >= len(b.data.definitions) {
+    return true;
+  }
+  if seen.contains(d) {
+    return false;
+  }
+  seen += [d];
+  for a in b.data.definitions[d]!.attributes {
+    if len(a.typedef) > 0 && type_reaches(b, a.typedef[0]!, target, seen) {
+      return true;
+    }
+  }
+  for c in b.data.definitions {
+    if c.parent == d && c.def_type == 4 && def_reaches(b, c#index, target, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+// The operands of `v` when it is a call of `name`; `found` false for any other node.
+fn call_named(b: ir::Bundle, v: ir::Node, name: text, found: &boolean) -> vector<ir::Node> {
+  found = false;
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == name {
+        found = true;
+        return args;
+      }
+      []
+    },
+    _ => [],
+  }
+}
+
+// `only_statement`: a branch's one statement (a block or insert of exactly one, or the branch
+// itself); `found` false where it holds more or fewer.
+fn only_statement(branch: ir::Node, found: &boolean) -> ir::Node {
+  found = true;
+  ops = match loop_shape::unspan(branch) {
+    NdBlock { block } => block[0].operators,
+    NdInsert { items } => items,
+    _ => return loop_shape::unspan(branch),
+  };
+  if len(ops) != 1 {
+    found = false;
+    return ir::NdNull;
+  }
+  ops[0]!
+}
+
+// The buffer a pool statement — `if OpRefIsNull(b) { <mint of b> } else OpClear(b, tp)` —
+// pools; -1 for any other statement.  `placed`: the mint is `b = OpPlaceRecord(host, tp)`
+// (`placed_pool_of`, also asked of the placement itself), else `OpDatabase(b, tp)`
+// (`pool_of`).
+fn pool_buffer(b: ir::Bundle, stmt: ir::Node, placed: boolean) -> integer {
+  cond = ir::NdNull;
+  mint_branch = ir::NdNull;
+  release = ir::NdNull;
+  match loop_shape::unspan(stmt) {
+    NdIf { cond: c, t, f } => {
+      cond = c;
+      mint_branch = t;
+      release = f;
+    },
+    _ => {
+      if !placed {
+        return -1;
+      }
+      tp = -1;
+      return placement(b, stmt, tp);
+    },
+  }
+  found = false;
+  test = call_named(b, cond, "OpRefIsNull", found);
+  if !found || len(test) != 1 {
+    return -1;
+  }
+  buf = loop_shape::var_of(loop_shape::unspan(test[0]));
+  if buf < 0 {
+    return -1;
+  }
+  one = false;
+  mint = only_statement(mint_branch, one);
+  if !one {
+    return -1;
+  }
+  tp = -1;
+  if placed {
+    if placement(b, mint, tp) != buf {
+      return -1;
+    }
+  } else {
+    db = call_named(b, mint, "OpDatabase", found);
+    if !found || len(db) != 2 || loop_shape::var_of(loop_shape::unspan(db[0])) != buf {
+      return -1;
+    }
+    tp = match db[1] { NdInt { n } => n, _ => -1 };
+    if tp < 0 || tp > 65535 {
+      return -1;
+    }
+  }
+  clear = call_named(b, release, "OpClear", found);
+  if !found || len(clear) != 2 || loop_shape::var_of(loop_shape::unspan(clear[0])) != buf {
+    return -1;
+  }
+  // `@FR-R-Reuse`'s reset clause sets `POOL_RESET` on the release's type.
+  match clear[1] {
+    NdInt { n } => if tp == n & 32767 { buf } else { -1 },
+    _ => -1,
+  }
+}
+
+// `b = OpPlaceRecord(host, tp)`: the buffer, with `tp`; -1 for any other statement.
+fn placement(b: ir::Bundle, s: ir::Node, tp: &integer) -> integer {
+  match loop_shape::unspan(s) {
+    NdSet { var, inner } => {
+      found = false;
+      args = call_named(b, inner, "OpPlaceRecord", found);
+      if !found || len(args) != 2 {
+        return -1;
+      }
+      tp = match args[1] { NdInt { n } => n, _ => -1 };
+      if tp < 0 || tp > 65535 { -1 } else { var }
+    },
+    _ => -1,
+  }
+}
+
+// Every node of the loop's body, in walk order.
+fn body_nodes(lp: ir::Block) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  opt_non_sentinel::walk(ir::NdInsert { items: lp.operators }, fn(n: ir::Node) { out += [n]; });
+  out
+}
+
+// `apart_fresh`: the variables FRESH each pass, to a fixed point — the elements minted on
+// `path`, a placed record, a pooled call buffer, the result of a call handed a fresh buffer as
+// its return buffer, and a field view into a fresh record.
+fn apart_fresh(b: ir::Bundle, d: ir::Definition, nodes: vector<ir::Node>, path: text) -> vector<boolean> {
+  fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+  grew = true;
+  while grew {
+    grew = false;
+    for n in nodes {
+      v = -1;
+      match n {
+        NdSet { var, inner } => {
+          match loop_shape::unspan(inner) {
+            NdCall { def_nr, args } => {
+              if def_nr >= 0 && def_nr < len(b.data.definitions) {
+                name = def_name(b, def_nr);
+                at = ""; r = -1; vtp = -1;
+                if name == "OpNewRecord" {
+                  opt_push::mint_target(b, d, name, args, at, r, vtp);
+                }
+                first = if len(args) > 0 { loop_shape::var_of(loop_shape::unspan(args[0])) } else { -1 };
+                ret = binds::hidden_return_buffer_attr(b.data.definitions[def_nr]!);
+                handed = if ret != null && ret! < len(args) { loop_shape::var_of(loop_shape::unspan(args[ret!]!)) } else { -1 };
+                tp = -1;
+                if (name == "OpNewRecord" && at != "" && at == path) || placement(b, n, tp) >= 0 || (name == "OpGetField" && first >= 0 && (fresh[first] ?? false)) || (handed >= 0 && (fresh[handed] ?? false)) {
+                  v = var;
+                }
+              }
+            },
+            _ => {},
+          }
+        },
+        NdIf { cond: _, t: _, f: _ } => {
+          v = pool_buffer(b, n, false);
+          if v < 0 {
+            v = pool_buffer(b, n, true);
+          }
+        },
+        _ => {},
+      }
+      if v >= 0 && v < len(fresh) && !fresh[v]! {
+        fresh[v] = true;
+        grew = true;
+      }
+    }
+  }
+  fresh
+}
+
+// The mint group's operators and a placement: the vector may stand as their first operand.
+fn host_op(name: text) -> boolean {
+  name == "OpPreAllocVector" || name == "OpNewRecord" || name == "OpFinishRecord" || name == "OpPlaceRecord"
+}
+
+// `apart_mentions_ok`'s walk: every variable `n` names must be `allowed` — save vector `p` as
+// the first operand of its own mint group or a placement — and no `CallRef`, `Parallel` or
+// `Yield` runs.
+fn mentions_ok(b: ir::Bundle, n: ir::Node, p: integer, allowed: vector<boolean>) -> boolean {
+  match loop_shape::unspan(n) {
+    NdVar { n: v } => return allowed[v] ?? false,
+    NdSet { var, inner: _ } => { if !(allowed[var] ?? false) { return false; } },
+    NdCallRef { var: _, args: _ } => return false,
+    NdParallel { arms: _ } => return false,
+    NdYield { inner: _ } => return false,
+    NdCall { def_nr, args } => {
+      if host_op(def_name(b, def_nr)) && len(args) > 0 && loop_shape::var_of(loop_shape::unspan(args[0])) == p {
+        for i in 1..len(args) {
+          if !mentions_ok(b, args[i]!, p, allowed) {
+            return false;
+          }
+        }
+        return true;
+      }
+    },
+    _ => {},
+  }
+  for c in el_ir::children(n) {
+    if !mentions_ok(b, c, p, allowed) {
+      return false;
+    }
+  }
+  true
+}
+
+// `apart_mint` (`@FR-R-PushRec`'s apart-call clause): the record-push header a loop the gate
+// declines still holds for the ONE vector it mints into, when every variable the body names
+// that can hold an element of that vector is fresh this pass and the vector itself stands only
+// as its own mint group's operand.  Answers that path as the loop's one mint push, or nothing.
+fn apart_mint(b: ir::Bundle, vd: integer, lp: ir::Block) -> LoopHoist {
+  // The push tier too: `LOFT_NO_PUSH_HOIST=1` promises a loop that pushes hoists nothing.
+  if (env_variable("LOFT_NO_MINT_HOIST") ?? "0") != "0" || (env_variable("LOFT_NO_RECORD_PUSH") ?? "0") != "0" || (env_variable("LOFT_NO_PUSH_HOIST") ?? "0") != "0" || (env_variable("LOFT_NO_APART_MINT") ?? "0") != "0" {
+    return nothing();
+  }
+  heap_push = (env_variable("LOFT_NO_HEAP_RECORD_PUSH") ?? "0") == "0";
+  d = b.data.definitions[vd]!;
+  nodes = body_nodes(lp);
+  target = "";
+  root = -1;
+  vector = ir::NdNull;
+  for n in nodes {
+    match n {
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr) == "OpNewRecord" {
+          at = ""; r = -1; vtp = -1;
+          found = opt_push::mint_target(b, d, "OpNewRecord", args, at, r, vtp);
+          if at == "" || !opt_push::mint_push_qualifies(b, vtp, heap_push) || (target != "" && target != at) {
+            return nothing();
+          }
+          if target == "" {
+            target = at;
+            root = r;
+            vector = found;
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  // A bare vector variable only.
+  if target == "" || !target.ends_with(":") {
+    return nothing();
+  }
+  elem = match cgen_types::base(d.variables.variables[root]!.type_def[0] ?? ir::TyVoid) {
+    TyVector { inner, dep: _ } => match cgen_types::base(inner) {
+      TyReference { n, dep: _ } => n,
+      TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+      _ => -1,
+    },
+    _ => -1,
+  };
+  if elem < 0 {
+    return nothing();
+  }
+  fresh = apart_fresh(b, d, nodes, target);
+  allowed: vector<boolean> = [];
+  for v in d.variables.variables {
+    seen: vector<integer> = [];
+    allowed += [fresh[v#index]! || !type_reaches(b, v.type_def[0] ?? ir::TyVoid, elem, seen)];
+  }
+  for op in lp.operators {
+    if !mentions_ok(b, op, root, allowed) {
+      return nothing();
+    }
+  }
+  out = nothing();
+  out.movers = [root];
+  out.mint_pushes = [Held { path: target, root: root, vector: vector }];
+  out
 }

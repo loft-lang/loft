@@ -1635,12 +1635,15 @@ fn captured_record_stand_down(ls: &mut Vec<Value>, function: &Function, data: &D
     }
 }
 
-/// `@FR-H-FreeTwice` — a captured vector local viewing its literal backing (`v` over
-/// `__vdb_N`) and that backing are two names for one store, and where a closure build is
-/// conditional each takes the same guarded release (`free_unless_record_built`: freed unless a
-/// record was built), so a run that skips the build frees the store twice.  Where the guarded
-/// releases hold both under one condition, the view's keeps its hook (the elements' drop runs
-/// once, ahead of the free) and gives up its free; the backing's is the store's one release.
+/// `@FR-H-FreeTwice` — a captured vector local viewing its backing (`v` over a literal's
+/// `__vdb_N`, or over the hidden result buffer `__ref_N` a call answered it in) and that backing
+/// are two names for one store, and where a closure build is conditional each takes the same
+/// guarded release (`free_unless_record_built`: freed unless a record was built), so a run that
+/// skips the build frees the store twice.  Where the guarded releases hold both under one
+/// condition, the view's keeps its hook (the elements' drop runs once, ahead of the free) and
+/// gives up its free; the backing's is the store's one release.  Which local the backing is does
+/// not matter: the view's one dependency names the store it lives in, and the backing's own
+/// guarded release under the same condition is what makes the view's a second one.
 /// `LOFT_NO_CAPTURED_VIEW_STAND_DOWN=1` restores the double release.
 fn captured_view_stand_down(guarded: &mut Vec<Value>, function: &Function, data: &Data) {
     if crate::env_once!(std::env::var_os("LOFT_NO_CAPTURED_VIEW_STAND_DOWN").is_some()) {
@@ -1681,7 +1684,7 @@ fn captured_view_stand_down(guarded: &mut Vec<Value>, function: &Function, data:
         let [b] = function.tp(*v).depend()[..] else {
             continue;
         };
-        if b == *v || b >= function.count() || !function.name(b).starts_with("__vdb_") {
+        if b == *v || b >= function.count() {
             continue;
         }
         let backing_too = shapes

@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `vector<u32>` is its own vector (`vector<integer(0, 4294967295)>` over `int_raw<0,false>`) at stride 4: each element built as a record (`OpSetInt4Raw`), read whole (`OpGetInt4Full`), written raw — a parameter, a literal, an append, an element write, a loop, a formatted vector.
+// Prints: 7 4000000000 3 5 [4000000000,3000000000,7]
+
+fn tot(v: vector<u32>) -> integer { s = 0; for x in v { s += x % 1000; } s }
+fn main() {
+  b: vector<u32> = [4000000000, 1];
+  b += [7];
+  b[1] = 3000000000;
+  e: vector<u32> = [];
+  e += [5];
+  println("{tot(b)} {b[0]} {len(b)} {e[0]} {b}");
+}

@@ -4487,6 +4487,18 @@ use a separate collection or add after the loop"
         var_nr: u16,
         skip_validate: bool,
     ) -> Type {
+        // `@FR-B-Ref-StoredRef` — a stored `reference<E>` field is WRITTEN as the field it is:
+        // its read answers `E` for a struct-enum (`Data::stored_ref_read`, `@FR-E-Eq`), but the
+        // assignment's target is the pointer, so it is typed as the field's `Reference(E)`
+        // again.  Typed by the read, `h.s = c` and `h.s = &c` copied `c` into whatever the field
+        // pointed at — a null field stored nothing — instead of repointing it, and `h.s = &c`
+        // was refused as a bare `&`.
+        let place_tp = if self.is_stored_ref_read(to) {
+            self.data.stored_ref_place(f_type.clone())
+        } else {
+            f_type.clone()
+        };
+        let f_type = &place_tp;
         // `x = ;` and `x += ;` — an assignment with no value.  The right side parsed as
         // nothing, so `x = ;` silently bound null and `x += ;` compiled to a program whose
         // later output vanished (loft#1800's library parser met it: the compiler accepted
@@ -12595,6 +12607,28 @@ use a separate collection or add after the loop"
         true
     }
 
+    /// Is a `&` write-through's right-hand side a READ of another record — which the caller's
+    /// binding must receive as a COPY (`@FR-B-Copy`)?  A field read and an ELEMENT read
+    /// (`OpGetVector`, and the `!` unwrap's `OpGetVectorNullable`), bare or inside the unwrap's
+    /// `ncr` block, which binds the read before its null check.  Not an out-of-line child
+    /// (`OpRefFromChildRec`): a link that walks a chain (`cur = cur.next`) or a front push
+    /// repoints there, and a copy per step copied the whole list each time (loft#2528's first
+    /// cure, which a suite run measured at 27 GB).  A construction or a call's result is a
+    /// store of its own, installed as it is.
+    fn amp_rhs_is_place(&self, code: &Value) -> bool {
+        match code.unspan() {
+            Value::Call(d, _) => matches!(
+                self.data.def(*d).name(),
+                "OpGetField" | "OpGetVector" | "OpGetVectorNullable"
+            ),
+            Value::Block(bl) if bl.name == "ncr" => match bl.operators.first().map(Value::unspan) {
+                Some(Value::Set(_, subject)) => self.amp_rhs_is_place(subject),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Handle `out = <struct field>` where `out: &T` and `T` is a struct; returns true
     /// if handled.
     ///
@@ -12668,7 +12702,16 @@ use a separate collection or add after the loop"
         // (`formal/binding.md` D-bind-42).  The field arm above materialises a VIEW, which is right
         // for both (loft#775).
         let bare_var_rhs = matches!(code.unspan(), Value::Var(rv) if *rv != var_nr);
-        if op != "=" || !(self.is_field(code) || bare_var_rhs) {
+        // loft#2528 — a PLACE is copied whatever its spelling: an element read
+        // (`out = args[1]!`, `out = h.items[1]!`) is the same view of another record a field
+        // read is, and installed as it was, the caller's local named that record — it aliased
+        // it, and its release freed the record's store under its owner.
+        let place_rhs = if crate::keys::amp_field_only() {
+            self.is_field(code)
+        } else {
+            self.amp_rhs_is_place(code)
+        };
+        if op != "=" || !(place_rhs || bare_var_rhs) {
             return false;
         }
         // Keyed on the IR SHAPE, not on the right-hand side's deps: deps accumulate

@@ -215,16 +215,32 @@ pub fn narrow_width(spec: ir::IntegerSpec) -> integer {
   if s == 1 || s == 2 { s } else { 0 }
 }
 
+// `i32` as an element (@PLN204): four bytes of the plain integer's range.  Its vector is NAMED
+// as the plain integer's (`vector<integer>`, the library's wrapper) and laid out at stride 4,
+// with the `Int4` push, read and write.
+pub fn int4(spec: ir::IntegerSpec) -> boolean {
+  spec.forced_size == 4 && spec.min == -2147483647 && spec.max == 2147483647
+}
+
+// `u32` as an element: four raw bytes of an unsigned range past `i32` (`int_raw<min,false>`).
+// Its vector is its own (`vector<integer(0, 4294967295)>`), each element built as a record
+// (`OpSetInt4Raw`) and read whole (`OpGetInt4Full`).
+pub fn uint4(spec: ir::IntegerSpec) -> boolean {
+  spec.forced_size == 4 && spec.min >= 0 && spec.max > 2147483647
+}
+
 pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else if narrow_width(spec) > 0 { "integer({spec.min}, {spec.max})" } else { "" },
+    // (A 64-bit literal's own type, `IntegerSpec::wide`, is the plain integer's element too.)
+    TyInteger { spec } => if int4(spec) || (spec.forced_size == 0 && spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295)) { "integer" } else if narrow_width(spec) > 0 || uint4(spec) { "integer({spec.min}, {spec.max})" } else { "" },
     TyText { dep: _ } => "text",
     TyBoolean => "boolean",
     TyFloat => "float",
     TySingle => "single",
     TyCharacter => "character",
     TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
-    TyEnum { n, is_ref } => if is_ref && starts_with(el::def(e, n).name, "__nullable<") { "" } else { el::def(e, n).name },
+    // (A tagged `__nullable<S>` — a `vector<S?>` element — is named as the enum it is.)
+    TyEnum { n } => el::def(e, n).name,
     // A nullable struct enum is named as its enum with the `?` (`Type::name`): its elements are
     // the enum's records, null the zero tag.
     // A nullable plain integer, float or boolean is named the same way (`vector<integer?>`):
@@ -234,6 +250,67 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
     _ => ""
   }
+}
+
+// The struct an embedded `S?` field holds (`synth_nullable_target`: a plain struct of the
+// program, not a type variable's placeholder), or -1.
+pub fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => {
+      match inner {
+        TyReference { n, dep } => {
+          if !dep.contains(MARKER) && el::def(e, n).def_type == el::DT_STRUCT && el::def(e, n).synthetic == "" && type_var(e, inner) < 0 {
+            return n;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// `Data::nullable_enum_for`: the synthetic `__nullable<S>` — a struct enum of a unit `Null`
+// (discriminant 1) and a `Some` (2) holding `payload: S` inline — made once per struct.  The
+// enum is keyed on the struct's own source (two libraries may each have a `Chunk`); its
+// variants are added under the current one, at the position `at` the lexer stands on (the
+// file's end for a field, the token after the `>` for a `vector<S?>`).
+pub fn nullable_enum_for(e: el::El, sd: integer, at: ir::Position) -> integer {
+  name = "__nullable<{el::def(e, sd).name}>";
+  src = el::def(e, sd).source;
+  have = el::source_nr(e, src, name);
+  if have >= 0 {
+    return have;
+  }
+  own = e.source;
+  e.source = src;
+  en = el::add_def(e, name, at, el::DT_ENUM);
+  e.source = own;
+  self_tp = ir::TyEnum { n: en, is_ref: true, dep: [] };
+  el::set_returned(e, en, self_tp);
+  enumerate = el::def_nr(e, "enumerate");
+  nv = el::add_def(e, "Null", at, el::DT_ENUM_VALUE);
+  e.b.data.definitions[nv].parent = en;
+  el::set_returned(e, nv, self_tp);
+  null_attr = el::attribute("Null", self_tp);
+  null_attr.constant = true;
+  null_attr.value = [ir::NdEnum { ord: 1, tp: el::NO_TYPE }];
+  e.b.data.definitions[en].attributes += [null_attr];
+  sv = el::add_def(e, "Some", at, el::DT_ENUM_VALUE);
+  e.b.data.definitions[sv].parent = en;
+  el::set_returned(e, sv, self_tp);
+  some_attr = el::attribute("Some", self_tp);
+  some_attr.constant = true;
+  some_attr.value = [ir::NdEnum { ord: 2, tp: el::NO_TYPE }];
+  e.b.data.definitions[en].attributes += [some_attr];
+  disc = el::attribute("enum", ir::TyEnum { n: enumerate, is_ref: false, dep: [] });
+  disc.value = [ir::NdEnum { ord: 2, tp: el::NO_TYPE }];
+  e.b.data.definitions[sv].attributes += [disc, el::attribute("payload", ir::TyReference { n: sd, dep: [] })];
+  e.b.data.definitions[en].synthetic = "@PLN25 nullable-enum for embedded struct field";
+  e.b.data.definitions[nv].synthetic = "@PLN25 nullable-enum Null variant";
+  e.b.data.definitions[sv].synthetic = "@PLN25 nullable-enum Some variant";
+  en
 }
 
 // The nullable scalars a vector's element may be, stored as the scalar itself: a plain
@@ -417,8 +494,22 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
           },
           _ => {}
         }
+        // `e2_nullable_elem` (@FR-L-Null-Tag): a `vector<S?>` of a program's plain struct stores
+        // the tagged `__nullable<S>`, minted here with the lexer past the closing `>`.
+        el_t = inner!;
+        if e.source != el::STD_SOURCE {
+          sd = nullable_record_of(e, el_t);
+          if sd >= 0 && el::def(e, sd).source != el::STD_SOURCE {
+            close = args[0];
+            match e.p.nodes[args[0]] { STy { at: ia } => { close = ia; }, _ => {} }
+            while close < len(e.p.src) && !(e.p.src[close] is Gt || e.p.src[close] is GtGlued) {
+              close += 1;
+            }
+            el_t = ir::TyEnum { n: nullable_enum_for(e, sd, el::pos_at(e, close + 1)), is_ref: true, dep: [] };
+          }
+        }
         // `parse_type`'s postfix `?`: the optional former over the collection.
-        v = ir::TyVector { inner: inner!, dep: [] };
+        v = ir::TyVector { inner: el_t, dep: [] };
         return if nullable { ir::TyOptional { inner: v } } else { v };
       }
       if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(dl) == 0 && limit == null && !not_null && assoc == "" {

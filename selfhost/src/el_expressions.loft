@@ -191,7 +191,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   // A record (or `τ?`) answered by an `if` of parameters, literals and nulls borrows those
   // parameters.
-  if rb >= 0 && e.first_pass && el_types::base(result) is TyReference {
+  // (Both passes: a recursive arm's borrow is known only once the first pass typed the function.)
+  if rb >= 0 && el_types::base(result) is TyReference {
     ps = if_tail_params(e, vars, code);
     if ps != null {
       r0 = el::def(e, e.context).returned[0];
@@ -270,8 +271,25 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   // A keyed result is delivered into the caller's collection (`OpReplaceKeyed` at the call),
   // its body typed without a borrow — not carried: refused by name.
+  // A keyed local of the body's own at the tail is answered as it is, the body typed as the
+  // collection without a borrow; any other tail is refused by name.
   if !e.first_pass && keyed_kind(el_types::base(result)) {
-    el::refuse(e, "a function returning a keyed collection");
+    kv = match body_tail(code) { NdVar { n } => if !vars.vars[n].argument && keyed_kind(el_types::base(el_vars::tp(vars, n))) && !(result is TyOptional) { n } else { -1 }, _ => -1 };
+    // A literal tail was built as the collection where it was read (`keyed_tail_literal`).
+    klit = match body_tail(code) { NdBlock { block } => block[0].name == "Vector" && keyed_kind(block[0].result[0] ?? ir::TyVoid), _ => false };
+    if klit {
+    } else if kv < 0 {
+      el::refuse(e, "a function returning a keyed collection");
+    } else {
+      match code {
+        NdBlock { block } => {
+          kb = block[0];
+          kb.result = [el_types::without_deps(el_types::base(result))];
+          code = ir::NdBlock { block: [kb] };
+        },
+        _ => {}
+      }
+    }
   }
   // A vector result has its own delivery; the record delivery below does not apply to it.
   if rb >= 0 && el_types::base(result) is TyVector {
@@ -298,8 +316,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   if rb >= 0 && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
     delivered = var_return(e, vars, code, rb);
+    if delivered == null {
+      // The branch copied whole types the body as the buffer's record (`view_answer`).
+      delivered = branch_view_return(e, vars, code, rb);
+      view_answer = delivered != null && !e.first_pass;
+    }
     if delivered != null {
       code = delivered!;
+      // A literal an earlier `return` answers is built into the buffer here too
+      // (`literal_exits_into_buffer`), beside a tail that hands a parameter back.
+      if !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
+        code = literal_exits_into_buffer(e, vars, code, rb, result);
+        if el_types::base(result) is TyReference {
+          code = stage_exits(e, vars, code, rb);
+        }
+      }
     } else if !e.first_pass {
       // A `??` tail viewing parameters alone answers that view (`MergeAttr`), before any
       // delivery is asked of it.
@@ -402,6 +433,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         // Where the arms are the answer the body is typed as the `if`, which borrows what either
         // arm does (`joined_deps`; a literal arm borrows nothing).
         ad = arms_deps(code);
+        // The body is typed with the result as this pass met it: a borrow the arms add now (a
+        // recursive arm's, known only after the first pass) reaches the declaration, not the body.
+        if ad != null && arms_answer && len(el_types::deps(result)) > 0 {
+          ad = [for dv in ad! if el_types::deps(result).contains(dv) { dv }];
+        }
         // A `return` that merged a parameter's borrow this pass (`record_return`'s `MergeAttr`)
         // is in the result now.
         now = el::def(e, e.context).returned[0];
@@ -807,7 +843,9 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
   bl = match code { NdBlock { block } => block[0], _ => return null };
   v = match el_ir::unspan(el_ir::last(bl.operators)) { NdVar { n } => n, _ => return null };
   ret = el::def(e, d).returned[0];
-  if !(el_types::base(ret) is TyReference) {
+  // A struct-enum parameter handed back is borrowed as a record parameter is (`MergeAttr`).
+  enum_param = el_types::struct_enum_def(ret) >= 0 && !(ret is TyOptional) && vars.vars[v]!.argument && !hidden_param(e, vars, v) && attr_nr(el::def(e, d), el_vars::name_of(vars, v)) >= 0;
+  if !(el_types::base(ret) is TyReference) && !enum_param {
     return null;
   }
   dep = el_types::deps(ret);
@@ -872,6 +910,134 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
   bl.operators[-1] = copy!;
   bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb])];
   ir::NdBlock { block: [bl] }
+}
+
+// `ref_return`'s copy leg for a BRANCH tail (`classify_ret_promotion` refuses to rename a
+// candidate that views an argument, loft#1482; `materialize_return_into` then copies the whole
+// branch): an `if` whose leaves are parameters, locals viewing only parameters (a match arm's
+// capture), and calls — with at least one such local — is copied into the caller's buffer as
+// one value.  A branch with a null leaf, a nullable local or a `return` inside is copied arm by
+// arm in Rust: not carried, so it answers null and the tail stays refused.
+pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir::Node? {
+  d = e.context;
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 || !(el_ir::unspan(el_ir::last(bl.operators)) is NdIf) {
+    return null;
+  }
+  ret = el::def(e, d).returned[0];
+  ba = attr_nr(el::def(e, d), "__retbuf");
+  td = heap_def(el_types::base(ret));
+  if td < 0 || ba < 0 {
+    return null;
+  }
+  views = branch_view_leaves(e, vars, el_ir::last(bl.operators));
+  if views <= 0 {
+    return null;
+  }
+  // A null arm is the result's absence: only a `τ?` result has one.
+  if branch_yields_null(e, el_ir::last(bl.operators)) && !(ret is TyOptional) {
+    return null;
+  }
+  dep = el_types::deps(ret);
+  if !dep.contains(ba) {
+    dep += [ba];
+  }
+  e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep)];
+  if e.first_pass {
+    return code;
+  }
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb]);
+  bl.operators[-1] = copy_arms(e, vars, el_ir::last(bl.operators), rb, td, owned);
+  bl.result = [if ret is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
+  ir::NdBlock { block: [bl] }
+}
+
+// `arms_yield_null`: does a branch answer `null` on some path?
+fn branch_yields_null(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => branch_yields_null(e, t) || branch_yields_null(e, f),
+    NdBlock { block } => block[0].name != "Object" && len(block[0].operators) > 0 && branch_yields_null(e, el_ir::last(block[0].operators)),
+    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    NdNull => true,
+    _ => false
+  }
+}
+
+// `materialize_return_into`: a branch that can answer null is copied ARM BY ARM, a null arm
+// left as it is; any other value is copied whole (`{ w = null; OpDatabase(w, kt);
+// OpCopyRecord(<value>, w, kt); w }`).
+fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => { return ir::NdSpan { pos: pos, inner: copy_arms(e, vars, inner, rb, td, owned) }; },
+    _ => {}
+  }
+  if branch_yields_null(e, n) {
+    match n {
+      NdIf { cond, t, f } => { return ir::NdIf { cond: cond, t: copy_arms(e, vars, t, rb, td, owned), f: copy_arms(e, vars, f, rb, td, owned) }; },
+      NdBlock { block } => {
+        ab = block[0];
+        ab.operators[len(ab.operators) - 1] = copy_arms(e, vars, el_ir::last(ab.operators), rb, td, owned);
+        // The block now yields the buffer or null, no longer a view of its local.
+        if el_types::base(ab.result[0] ?? ir::TyVoid) is TyReference {
+          ab.result = [owned];
+        }
+        return ir::NdBlock { block: [ab] };
+      },
+      _ => { return n; }
+    }
+  }
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [n, b, kt]), b], owned, "materialized_view_return")
+}
+
+// The leaves of a branch tail that are locals viewing only parameters; -1 where a leaf is
+// anything but a parameter, such a local, or a call of a function the program declares.
+fn branch_view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => {
+      a = branch_view_leaves(e, vars, t);
+      b = branch_view_leaves(e, vars, f);
+      if a < 0 || b < 0 { -1 } else { a + b }
+    },
+    NdBlock { block } => {
+      nm = block[0].name;
+      if nm == "join-arm-owner" {
+        return 0;
+      }
+      if (nm != "block" && nm != "match_arm") || len(block[0].operators) == 0 {
+        return -1;
+      }
+      // An arm that can leave the function is copied arm by arm.
+      for op in block[0].operators {
+        if el_ir::unspan(op) is NdReturn {
+          return -1;
+        }
+      }
+      branch_view_leaves(e, vars, el_ir::last(block[0].operators))
+    },
+    NdVar { n: v } => {
+      if el_vars::tp(vars, v) is TyOptional || heap_def(el_vars::tp(vars, v)) < 0 {
+        return -1;
+      }
+      if vars.vars[v]!.argument {
+        return 0;
+      }
+      for x in el_types::deps(el_vars::tp(vars, v)) {
+        if x == v || !vars.vars[x]!.argument {
+          return -1;
+        }
+      }
+      if len(el_types::deps(el_vars::tp(vars, v))) > 0 { 1 } else { -1 }
+    },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if starts_with(nm, "n_") || starts_with(nm, "t_") || (len(args) == 0 && nm == "OpNullRefSentinel") { 0 } else { -1 }
+    },
+    // The first pass's `null` arm, before it answers the sentinel.
+    NdNull => 0,
+    _ => -1
+  }
 }
 
 // `return_views_local`: the local's record borrows the store of a local of this frame, not only
@@ -1140,8 +1306,8 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
   tail = match code { NdBlock { block } => if block[0].name == "Object" { code } else { el_ir::unspan(el_ir::last(block[0].operators)) }, _ => code };
   match tail {
     NdIf { cond: _, t, f } => {
-      a = if_tail_params(e, vars, t);
-      b = if_tail_params(e, vars, f);
+      a = call_arm_params(e, vars, t) ?? if_tail_params(e, vars, t);
+      b = call_arm_params(e, vars, f) ?? if_tail_params(e, vars, f);
       if a == null || b == null {
         return null;
       }
@@ -1168,6 +1334,11 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
       if fr >= 0 && vars.vars[fr]!.argument {
         return [fr];
       }
+      // An element of a vector parameter (through its fields) borrows that parameter.
+      er = place_root(e, tail);
+      if er >= 0 && vars.vars[er]!.argument && el::def(e, def_nr).name == "OpGetVector" {
+        return [er];
+      }
       null
     },
     // The first pass's `null` arm, before it answers the sentinel.
@@ -1178,11 +1349,46 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
       if block[0].name == "Object" {
         return [];
       }
+      // A call arm given a home in this frame (`own_joined_call_arms`) borrows nothing.
+      if block[0].name == "join-arm-owner" {
+        return [];
+      }
       if block[0].name == "scalar_match" {
         mps = if_tail_params(e, vars, el_ir::last(block[0].operators));
         return mps;
       }
       null
+    },
+    _ => null
+  }
+}
+
+// An arm whose value is a call of a function the program declares: the parameters its answer
+// borrows, as the arm's block is typed (none for a call answering a fresh record, the callee's
+// borrowed arguments for one answering a view).  Null for any other arm.
+pub fn call_arm_params(e: el::El, vars: el_vars::Vars, arm: ir::Node) -> vector<integer>? {
+  match el_ir::unspan(arm) {
+    NdBlock { block } => {
+      if block[0].name != "block" || len(block[0].operators) != 1 {
+        return null;
+      }
+      match el_ir::unspan(block[0].operators[0]) {
+        NdCall { def_nr } => {
+          nm = el::def(e, def_nr).name;
+          if !(starts_with(nm, "n_") || starts_with(nm, "t_")) {
+            return null;
+          }
+          r: vector<integer> = [];
+          for d in el_types::deps(block[0].result[0] ?? ir::TyVoid) {
+            if d < 0 || d >= len(vars.vars) || !vars.vars[d]!.argument {
+              return null;
+            }
+            r += [d];
+          }
+          r
+        },
+        _ => null
+      }
     },
     _ => null
   }

@@ -888,6 +888,20 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       conv += [arg];
       continue;
     }
+    // `convert`'s tagged arm (`@FR-L-Null-Tag`, loft#1138): a `__nullable<S>` slot handed to an
+    // `S?` parameter is read through its tag, so absence arrives as the reference null.
+    if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(at)) {
+      if e.first_pass {
+        conv += [arg];
+        continue;
+      }
+      rx = el_ex_place::read_through_tag(e, vars, ex(arg, at));
+      if rx == null {
+        return null;
+      }
+      conv += [rx!.code];
+      continue;
+    }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
       conv += [c!];
@@ -1294,14 +1308,21 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
       nm = el_types::elem_name(e, inner);
       // The row is made wherever the element has one (`database.vector`), whatever made the
       // definition before — a literal's, a parameter's; the definition only where it is missing.
-      has_def = nm != "" && el::def_nr(e, "vector<{nm}>") >= 0;
+      // A nullable scalar's (`vector<float?>`) is the plain scalar's definition (`vector<float>`).
+      pbn = el_types::nullable_scalar_elem(e, inner);
+      dn = if pbn != "" { pbn } else { nm };
+      has_def = nm != "" && el::def_nr(e, "vector<{dn}>") >= 0;
       if nm == "" {
         return;
       }
       narrow = match inner {
-        TyInteger { spec } => spec.forced_size == 4,
+        TyInteger { spec } => spec.forced_size == 4 && !el_types::int4(spec) && !el_types::uint4(spec),
         _ => false
       };
+      // An `i32` element renders through its own rows (`vector<int<-2147483647,false>>`).
+      if match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec), _ => false } && !e.first_pass {
+        vk = el_schema::vector_type(e, el_schema::content_type(e, inner));
+      }
       if narrow {
         return;
       }
@@ -1314,8 +1335,8 @@ pub fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
       if vk < 0 || has_def {
         return;
       }
-      vd = el::add_def(e, "vector<{nm}>", el::pos_at(e, at), el::DT_VECTOR);
-      e.b.data.definitions[vd].parent = type_def_nr(e, inner);
+      vd = el::add_def(e, "vector<{dn}>", el::pos_at(e, at), el::DT_VECTOR);
+      e.b.data.definitions[vd].parent = if pbn != "" { el::source_nr(e, 0, pbn) } else { type_def_nr(e, inner) };
       e.b.data.definitions[vd].known_type = vk;
     },
     _ => {}
@@ -1398,9 +1419,20 @@ pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Nod
       vk = if nm == "" { -1 } else { vector_store(e, inner, nm) };
       // A 4-byte element (`vector<i32>`) is not carried; the 1- and 2-byte ones are.
       narrow = match inner {
-        TyInteger { spec } => spec.forced_size == 4,
+        TyInteger { spec } => spec.forced_size == 4 && !el_types::int4(spec) && !el_types::uint4(spec),
         _ => false
       };
+      // An `i32` element renders through its own rows (`vector<int<-2147483647,false>>`).
+      if match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec), _ => false } && !e.first_pass {
+        vk = el_schema::vector_type(e, el_schema::content_type(e, inner));
+      }
+      // A formatted `vector<float?>` (`integer?`, `boolean?`) makes the plain scalar's
+      // `vector<…>` definition where it is rendered — not carried: refused by name.
+      fbn = el_types::nullable_scalar_elem(e, inner);
+      if !e.first_pass && fbn != "" && el::def_nr(e, "vector<{fbn}>") < 0 {
+        el::refuse(e, "a formatted vector of nullable scalars whose plain vector has no definition yet");
+        return;
+      }
       // The first pass knows no row of a struct this file declares (`format_vector_row` answers
       // 0 there): the second pass's is the one kept.
       if vk < 0 && !narrow && e.first_pass && nm != "" {
@@ -1662,16 +1694,45 @@ pub fn and_presence(a: DivProof, b: DivProof) -> DivProof {
   if a.v >= 0 && a.then { a } else if b.v >= 0 && b.then { b } else { DivProof { v: -1, then: false } }
 }
 
-pub fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
+// The local whose tag `n` reads (`OpConvIntFromEnum(OpGetEnum(v, 0))`), or -1.
+pub fn tag_read_of(e: el::El, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdCall { def_nr: cv, args: ca } => {
+      if el::def(e, cv).name != "OpConvIntFromEnum" || len(ca) != 1 {
+        return -1;
+      }
+      match el_ir::unspan(ca[0]) {
+        NdCall { def_nr: gv, args: ga } => {
+          if el::def(e, gv).name != "OpGetEnum" || len(ga) != 2 || !is_zero(ga[1]!) {
+            return -1;
+          }
+          match el_ir::unspan(ga[0]) { NdVar { n: v } => v, _ => -1 }
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+pub fn presence_proof(e: el::El, vars: el_vars::Vars, test: ir::Node) -> DivProof {
   none = DivProof { v: -1, then: false };
   match test {
-    NdSpan { pos: _, inner } => presence_proof(e, inner),
+    NdSpan { pos: _, inner } => presence_proof(e, vars, inner),
     NdVar { n } => DivProof { v: n, then: true },
     // `a && b` (`if a { b } else { false }`): where it holds, both conjuncts do — either one's
     // presence proof is the conjunction's (`narrowings_from_condition`).
-    NdIf { cond, t, f } => if el_ir::unspan(t) == ir::NdBoolean { b: true } { presence_proof(e, cond) } else if el_ir::unspan(f) == ir::NdBoolean { b: false } { and_presence(presence_proof(e, cond), presence_proof(e, t)) } else { none },
+    NdIf { cond, t, f } => if el_ir::unspan(t) == ir::NdBoolean { b: true } { presence_proof(e, vars, cond) } else if el_ir::unspan(f) == ir::NdBoolean { b: false } { and_presence(presence_proof(e, vars, cond), presence_proof(e, vars, t)) } else { none },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
+      // `heap_null_test`'s tagged arm: `s == null` on a `__nullable<S>` local reads its tag
+      // (`OpEqInt(OpConvIntFromEnum(OpGetEnum(s, 0)), 0)`), proving it present where it fails.
+      if nm == "OpEqInt" && len(args) == 2 && is_zero(args[1]!) {
+        tagged = tag_read_of(e, args[0]!);
+        if tagged >= 0 && is_nullable_wrapper(e, el_vars::tp(vars, tagged)) {
+          return DivProof { v: tagged, then: false };
+        }
+      }
       if len(args) == 2 && (starts_with(nm, "OpEq") || starts_with(nm, "OpNe")) {
         for side in [0, 1] {
           match el_ir::unspan(args[side]!) {
@@ -1685,7 +1746,7 @@ pub fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
         return none;
       }
       if nm == "OpNot" {
-        inner = presence_proof(e, args[0]!);
+        inner = presence_proof(e, vars, args[0]!);
         return DivProof { v: inner.v, then: !inner.then };
       }
       if nm != "OpRefIsNull" && nm != "OpVectorIsNull" && !starts_with(nm, "OpConvBoolFrom") {
@@ -1781,7 +1842,7 @@ pub fn assume_condition(e: el::El, vars: el_vars::Vars, test: ir::Node, side: bo
   if dv.then == side {
     push_nonzero(vars, dv.v);
   }
-  pp = presence_proof(e, test);
+  pp = presence_proof(e, vars, test);
   if pp.then == side {
     push_present(vars, pp.v);
   }

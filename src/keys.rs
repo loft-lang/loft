@@ -3594,6 +3594,62 @@ pub fn buffer_fresh_copy_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
 }
 
+/// `LOFT_AMP_FIELD_ONLY=1` — a `&` write-through copies a right-hand FIELD read and a bare
+/// variable only, not an element read or a `!`-unwrapped projection (`Parser::amp_rhs_is_place`,
+/// loft#2528): such a place is installed as it is and the caller's local aliases it.
+#[must_use]
+pub fn amp_field_only() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_AMP_FIELD_ONLY"))
+}
+
+/// `LOFT_STRUCT_ELEMENT_SELF_READ_VIEW=1` — a literal written into an element of its root whose
+/// out-of-line field reads that element stages the read as a VIEW again, not a copy taken first
+/// (`Parser::parse_object`'s place staging, loft#2527): the literal's writes overwrite it first.
+#[must_use]
+pub fn struct_element_self_read_view() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_STRUCT_ELEMENT_SELF_READ_VIEW"))
+}
+
+/// `LOFT_NO_TEXT_TAIL_THROUGH_IF=1` — a text value block's tail local is homed at the function
+/// scope only where the block's last operator is that local (through value blocks), not where
+/// it is a leaf of an `if` (`scopes::scan`, loft#2526): its exit free then runs after the value.
+#[must_use]
+pub fn text_tail_through_if_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_TEXT_TAIL_THROUGH_IF"))
+}
+
+/// `LOFT_TAIL_READS_WHOLE_STATEMENT=1` — a return-buffer delivery is declined when the function's
+/// whole last STATEMENT reads the buffer local, not only the value it delivers
+/// (`Parser::delivered_leaf_reads`, loft#2525): a tail after an early `return` of that local
+/// is then answered as a raw view.
+#[must_use]
+pub fn tail_reads_whole_statement() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TAIL_READS_WHOLE_STATEMENT"))
+}
+
+/// `LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES=1` — a scalar capture, or a loop body's own local, that
+/// a loop assigns keeps a closure built as that loop's argument from being pass-confined
+/// (`closure_keep::capture_set_in`): the record then adopts the function-scope stores it
+/// captures beside it.
+#[must_use]
+pub fn loop_local_capture_unconfines() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES"))
+}
+
+/// `LOFT_NO_ENDED_CAPTURE_SCOPE=1` — a lambda's capture context offers a local whose binding
+/// ended in a block that closed before the lambda (`@FR-B-Scope`, loft#2523): the closure
+/// then shares the block's dead local.  The first bisect step for a capture of a block local.
+#[must_use]
+pub fn ended_capture_scope_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_ENDED_CAPTURE_SCOPE"))
+}
+
 /// `LOFT_NO_FRESH_COPY_OF_VIEW=1` — a reassignment from a call that reads the local and may
 /// answer a borrowed view keeps the plain pass-through even where the copy would land in a
 /// fresh store (`bind_lowering::re_arm`): the local then aliases what the call answered.

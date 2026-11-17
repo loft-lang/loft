@@ -23,6 +23,8 @@ pub struct Facts {
   // alone — it is the caller's buffer.
   pub adopted_v: integer,
   pub adopted_vdb: integer,
+  // `@FR-R-Alias`'s versioned copy: the pairs `[a, c, …]` a run-time test proved apart.
+  pub assumed: vector<integer>,
 }
 
 // `placed_locals` and `placed_hosts` of function `d`.
@@ -56,7 +58,7 @@ pub fn facts_of(b: ir::Bundle, d: integer) -> Facts {
       }
     });
   }
-  Facts { d: d, placed: placed, hosts: hosts, adopted_v: -1, adopted_vdb: -1 }
+  Facts { d: d, placed: placed, hosts: hosts, adopted_v: -1, adopted_vdb: -1, assumed: [] }
 }
 
 // The variables `cur`'s type depends on, but for itself.
@@ -166,12 +168,48 @@ fn distinct_at(b: ir::Bundle, facts: Facts, a: integer, c: integer, depth: integ
       return true;
     }
   }
+  if assumed(facts, a, c) {
+    return true;
+  }
   ta = terminal(b, facts, a);
   tc = terminal(b, facts, c);
   if ta < 0 || tc < 0 {
     return false;
   }
+  // A run-time test proved the two ROOTS apart: a view of a parameter's element lives in that
+  // parameter's store, so it is apart from whatever the parameter is apart from.
+  if assumed(facts, ta, tc) {
+    return true;
+  }
   ta != tc && (fresh(b, facts, ta) || fresh(b, facts, tc))
+}
+
+// Did a run-time test prove `a` and `c` apart (`assumed`, either order)?
+pub fn assumed(facts: Facts, a: integer, c: integer) -> boolean {
+  for x in facts.assumed {
+    if x#index % 2 == 0 {
+      y = facts.assumed[x#index + 1]!;
+      if (x == a && y == c) || (x == c && y == a) {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// `apart_from_argument`: is the store `x` names provably apart from the store of argument `p`?
+// Where `x`'s chain ends at a store this activation minted that is no argument itself, or where
+// a run-time test proved the pair apart.
+pub fn apart_from_argument(b: ir::Bundle, facts: Facts, p: integer, x: integer) -> boolean {
+  if assumed(facts, p, x) {
+    return true;
+  }
+  t = terminal(b, facts, x);
+  if t < 0 {
+    return false;
+  }
+  f = b.data.definitions[facts.d]!.variables;
+  assumed(facts, p, t) || (t != p && !f.variables[t]!.argument && fresh(b, facts, t))
 }
 
 // `distinct`: are the records `a` and `c` name proved to live in different stores?

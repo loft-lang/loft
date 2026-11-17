@@ -12,6 +12,11 @@ use cgen_tables;
 use cgen::(Cx);
 use loop_shape;
 use opt_hoist;
+use opt_apart;
+use cgen_lazy;
+use opt_below_len;
+use opt_version;
+use cgen_version;
 use opt_length;
 use opt_facts;
 use opt_push;
@@ -80,6 +85,7 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
   opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
+  pending_grown = opt_hoist::with_grown(x.b, x.writes, w.facts, w.index, lp, verdict);
   // `@FR-R-Scalar`: each record scalar the verdict admits is read once, into a local.
   for sc in verdict.scalars {
     known = false;
@@ -114,6 +120,10 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
   // A loop that grows a store holds its headers without their base (`kept_bases` without the
   // store facts).
   for v in verdict.vectors {
+    // A split table's local, or a walk's alias of one, is never built.
+    if cgen_lazy::is_table(w, v.root) {
+      continue;
+    }
     // `kept_bases`: a loop that grows no store keeps every base; beside a growth, the base
     // of a vector the store facts prove apart from every mover.
     base = if verdict.growth_free { 1 } else { 0 };
@@ -151,6 +161,9 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
     h = "h{len(w.decls) + 1}";
     w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
     line(w, ind, "{h} = loft_vh_of({as_ref(w, e)});");
+    if pending_grown.contains(v.path) {
+      w.grown_headers += [h];
+    }
     w.headers += [Header { path: v.path, name: h, frame: base }];
   }
   verdict
@@ -393,7 +406,7 @@ pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: in
     return;
   }
   d = opt_hoist::view_def_header(x.b, x.writes, w.index, ops, at, (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0");
-  if d < 0 || held_path(w, "{d}:") != "" {
+  if d < 0 || held_path(w, "{d}:") != "" || cgen_lazy::is_table(w, d) {
     return;
   }
   // The header the view's source is held under, with whether that one carries its base.
@@ -672,6 +685,23 @@ fn held_proof(x: Cx, w: W, v: ir::Node, held: text) -> text {
 
 // `index_arg`: an index the range facts prove non-negative is passed as such; the second
 // answer, in `nn`, is the suffix of the routine that takes it.
+// `guard_index` (`@FR-R-Base`'s guard clause): does a passed test keep the access at index
+// slot `idx` below the vector's length?  1 when `(R-Range)` also proves it non-negative — the
+// access names an element and takes no test; 0 when its sign is unproved — the `_lt`
+// accessors; -1 otherwise, and for a copy a rewrite made (`no_memo`), which the Rust writer's
+// address test cannot match.
+fn guard_index(x: Cx, w: W, idx: ir::Node) -> integer {
+  if w.no_memo > 0 || !opt_below_len::guarded(idx) {
+    return -1;
+  }
+  if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
+    return 0;
+  }
+  facts = if len(w.over) > 0 { w.over[len(w.over) - 1]! } else { w.rv };
+  r = opt_range::range(x.b, x.p, x.c, w.nn, facts, idx, 0) ?? return 0;
+  if r.lo >= 0 { 1 } else { 0 }
+}
+
 fn index_arg(x: Cx, w: W, idx: ir::Node, code: text, nn: &text) -> text {
   nn = "";
   if (env_variable("LOFT_NO_RANGE_ARITH") ?? "0") != "0" {
@@ -746,6 +776,8 @@ fn pa_reader(name: text, kind: &integer) -> text {
 pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = false;
   count = len(args);
+  // `@FR-R-Version`: a fast twin's element access its precondition proved (`version_raw`).
+  vf_raw = w.call_kind == opt_version::RAW;
   if (name == "OpGetVector" || name == "OpGetVectorNullable") && count == 3 {
     h = read_header(x, w, args[0]);
     if h == "" {
@@ -758,8 +790,12 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
       return E { code: "({held_proof(x, w, args[0], h)}, loft_vh_at_ref({h}, {size}, {counted}))", kind: K_REF };
     }
     i = as_int(w, cgen_fn::expr(x, w, args[2], ind));
-    nn = "";
-    index = index_arg(x, w, args[2], i, nn);
+    guard = guard_index(x, w, args[2]);
+    if guard == 1 {
+      return E { code: "({held_proof(x, w, args[0], h)}, loft_vh_at_ref({h}, {size}, {i}))", kind: K_REF };
+    }
+    nn = "_lt";
+    index = if guard == 0 { i } else { index_arg(x, w, args[2], i, nn) };
     proof = held_proof(x, w, args[0], h);
     if name == "OpGetVector" {
       return E { code: "({proof}, loft_vh_get_at{nn}({h}, {size}, {index}, {cgen_fn::site(w)}))", kind: K_REF };
@@ -787,19 +823,26 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     size = cgen_fn::literal(w, el.size, "element size") ?? return none();
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     k = if name == "OpGetInt" { K_INT } else { K_FLOAT };
-    counted = counter_index(x, w, el.idx, held);
+    counted = if vf_raw { "" } else { counter_index(x, w, el.idx, held) };
     if counted != "" {
       return E { code: "({held_proof(x, w, el.vec, held)}, {if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" }}({held}, {size}, {counted}, {fld}))", kind: k };
     }
     i = as_int(w, cgen_fn::expr(x, w, el.idx, ind));
+    if vf_raw {
+      return E { code: cgen_version::access(name, held, size, fld, i, "", false), kind: k };
+    }
+    guard = guard_index(x, w, el.idx);
+    if guard == 1 {
+      return E { code: "({held_proof(x, w, el.vec, held)}, {if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" }}({held}, {size}, {i}, {fld}))", kind: k };
+    }
     fits = grid_index(x, w, el.idx, held);
     if fits != "" {
       raw = if name == "OpGetInt" { "loft_vh_at_int" } else { "loft_vh_at_float" };
       checked = if name == "OpGetInt" { "loft_vh_get_int" } else { "loft_vh_get_float" };
       return E { code: "({held_proof(x, w, el.vec, held)}, {fits} ? {raw}({held}, {size}, {i}, {fld}) : {checked}{if el.report { "_at" } else { "" }}({held}, {size}, {i}, {fld}{if el.report { ", {cgen_fn::site(w)}" } else { "" }}))", kind: k };
     }
-    nn = "";
-    index = index_arg(x, w, el.idx, i, nn);
+    nn = "_lt";
+    index = if guard == 0 { i } else { index_arg(x, w, el.idx, i, nn) };
     proof = held_proof(x, w, el.vec, held);
     f = if name == "OpGetInt" { "loft_vh_get_int" } else { "loft_vh_get_float" };
     // An unreported read with no proof on its index goes through the push header itself.
@@ -832,16 +875,40 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     proof = held_proof(x, w, el.vec, held);
     counted = counter_index(x, w, el.idx, held);
     i = if counted != "" { "" } else { as_int(w, cgen_fn::expr(x, w, el.idx, ind)) };
-    nn = "";
-    index = if counted != "" { "" } else { index_arg(x, w, el.idx, i, nn) };
+    guard = if counted != "" || vf_raw { -1 } else { guard_index(x, w, el.idx) };
+    nn = "_lt";
+    index = if counted != "" || vf_raw { "" } else if guard >= 0 { i } else { index_arg(x, w, el.idx, i, nn) };
     addr = if counted != "" {
       "loft_vh_at_addr({held}, {size}, {counted})"
+    } else if vf_raw {
+      "loft_vh_at_addr({held}, {size}, {i})"
+    } else if guard == 1 {
+      "loft_vh_at_addr({held}, {size}, {index})"
     } else if el.report { "loft_vh_addr_at{nn}({held}, {size}, {index}, {cgen_fn::site(w)})" } else { "loft_vh_addr{nn}({held}, {size}, {index})" };
     if count == 3 {
       min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
       return E { code: "({proof}, {reader}({addr}, {fld}, {c_long(min)}))", kind: kind };
     }
     return E { code: "({proof}, {reader}({addr}, {fld}))", kind: kind };
+  }
+  // A fast twin writes a boolean element at its proven index; any other boolean write keeps
+  // the store's own path.
+  if name == "OpSetBoolean" && count == 3 && vf_raw {
+    el = elem_of(x, args[0]);
+    if !el.found {
+      return none();
+    }
+    held = held_vector(x, w, el.vec);
+    if held == "" {
+      return none();
+    }
+    done = true;
+    size = cgen_fn::literal(w, el.size, "element size") ?? return none();
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    pair = [el.idx, args[2]];
+    i = as_int(w, cgen_fn::arg(x, w, pair, 0, ind));
+    value = as_bool(w, cgen_fn::arg(x, w, pair, 1, ind));
+    return E { code: "({held_proof(x, w, el.vec, held)}, {cgen_version::access(name, held, size, fld, i, value, true)})", kind: K_VOID };
   }
   if (name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetInt4Raw") && count == 3 {
     el = elem_of(x, args[0]);
@@ -860,9 +927,17 @@ pub fn held_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     value = cgen_fn::arg(x, w, pair, 1, ind);
     f = if name == "OpSetInt" { "loft_vh_set_int" } else if name == "OpSetInt4Raw" { "loft_vh_set_u32" } else { "loft_vh_set_float" };
     code = if name == "OpSetFloat" { as_float(w, value) } else { as_int(w, value) };
+    if vf_raw {
+      return E { code: cgen_version::access(name, held, size, fld, i, code, true), kind: K_VOID };
+    }
+    guard = guard_index(x, w, el.idx);
+    if guard == 1 {
+      put = if name == "OpSetInt" { "loft_vh_put_int" } else if name == "OpSetInt4Raw" { "loft_vh_put_u32" } else { "loft_vh_put_float" };
+      return E { code: "({held_proof(x, w, el.vec, held)}, {put}({held}, {size}, {i}, {fld}, {code}))", kind: K_VOID };
+    }
     proof = held_proof(x, w, el.vec, held);
-    nn = "";
-    index = index_arg(x, w, el.idx, i, nn);
+    nn = "_lt";
+    index = if guard == 0 { i } else { index_arg(x, w, el.idx, i, nn) };
     if el.report {
       return E { code: "({proof}, {f}_at{nn}({held}, {size}, {index}, {fld}, {code}, {cgen_fn::site(w)}))", kind: K_VOID };
     }
@@ -1151,6 +1226,72 @@ fn grid_index(x: Cx, w: W, idx: ir::Node, held: text) -> text {
         wd = grid_c(w, width);
         return if h == "" || wd == "" { "" } else { "loft_grid_fits({held}, {h}, {wd})" };
       }
+    }
+  }
+  ""
+}
+
+// `refresh_grown_header`: after a growth statement, each grown header held for a vector it
+// names is derived again — but one the statement handed a `__kh` twin, which kept it current.
+pub fn refresh_grown(x: Cx, w: W, op: ir::Node, ind: integer) {
+  if len(w.grown_headers) == 0 {
+    return;
+  }
+  passed = w.kh_passed;
+  w.kh_passed = [];
+  for g in opt_apart::growth_args(x.b, op) {
+    path = "{g}:";
+    for hd in w.headers {
+      if hd.path == path && w.grown_headers.contains(hd.name) && !passed.contains(hd.name) {
+        line(w, ind, "{hd.name} = loft_vh_of({w.names[g]!});");
+      }
+    }
+  }
+}
+
+// `kept_header_arg`: the grown header, with its base, a call of `d` with `args` hands the
+// callee's `__kh` twin (`opt_apart::kept_growth_param`'s parameter), "" for none.
+pub fn kept_header_arg(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> text {
+  if len(w.grown_headers) == 0 || w.gen_elem != "" {
+    return "";
+  }
+  k = opt_apart::kept_growth_param(x.b, x.writes, d);
+  if k < 0 || k >= len(args) {
+    return "";
+  }
+  v = match loop_shape::unspan(args[k]!) {
+    NdVar { n } => n,
+    _ => return "",
+  };
+  path = "{v}:";
+  for i in rev(0..len(w.headers)) {
+    hd = w.headers[i]!;
+    if hd.path == path && hd.frame == 1 && w.grown_headers.contains(hd.name) {
+      return hd.name;
+    }
+  }
+  ""
+}
+
+// `verdict`: what loop `lp` may hold under the store facts as they stand — the hoistable paths,
+// the rebound apart headers and the growth half's — with nothing written; `ok` false where no
+// verdict is asked (a generator, `LOFT_NO_VECTOR_HOIST`).
+pub fn verdict(x: Cx, w: W, lp: ir::Block, ok: &boolean) -> opt_hoist::LoopHoist {
+  ok = enabled() && w.gen_elem == "";
+  v = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
+  if !ok {
+    return v;
+  }
+  opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, v);
+  opt_hoist::with_grown(x.b, x.writes, w.facts, w.index, lp, v);
+  v
+}
+
+// The header an enclosing loop holds for `path`, "" for none (`held_path`).
+pub fn held_header(w: W, path: text) -> text {
+  for i in rev(0..len(w.headers)) {
+    if w.headers[i]!.path == path {
+      return w.headers[i]!.name;
     }
   }
   ""

@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a whole write to an out-of-line field goes through its child record (out_of_line_set): a literal built in the child, null releasing it, a fresh call copied in and its store freed, a local copied in.
+// Prints: 2 true 3 9 5 9
+struct N { v: integer, next: N? }
+
+fn mk(v: integer) -> N { N { v: v } }
+
+fn main() {
+  h = N { v: 1 };
+  h.next = N { v: 2 };
+  a = h.next.v;
+  h.next = null;
+  b = h.next == null;
+  h.next = mk(3);
+  c = h.next.v;
+  o = N { v: 9 };
+  h.next = o;
+  d = h.next.v;
+  h.next.next = N { v: 5 };
+  println("{a} {b} {c} {d} {h.next.next.v} {o.v}");
+}

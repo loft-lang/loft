@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `vector<i32?>` is named `vector<integer?>` and laid out at stride 4 on a nullable row of its own (`vector<int<-2147483647,true>>`): `OpPushInt4` of the value or the integer null, `OpGetInt4`.
+// Prints: 24 -1 2 5
+
+fn fill_n(n: integer, x: i32?) -> vector<i32?> {
+  ls: vector<i32?> = [];
+  for _i in 0..n { ls += [x]; }
+  ls
+}
+fn main() {
+  a: vector<i32?> = [1, null, 3];
+  a += [null];
+  f = fill_n(2, 5);
+  s = 0;
+  for x in a { s += x ?? 10; }
+  println("{s} {a[1] ?? -1} {len(f)} {f[0] ?? -1}");
+}

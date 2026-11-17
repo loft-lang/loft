@@ -6965,7 +6965,7 @@ impl Parser {
             if !valid_enum || (is_struct && is_place(&subject, &self.data)) {
                 (subject, None)
             } else {
-                let v = self.create_unique("match_subj", &subject_type);
+                let v = self.create_match_subject(&subject_type);
                 self.vars.defined(v);
                 (Value::Var(v), Some((v, subject)))
             };
@@ -7111,6 +7111,20 @@ impl Parser {
                 self.expect_match_arm_arrow();
                 self.skip_match_arm_body();
                 self.end_pattern_arm();
+                continue;
+            }
+            // loft#2522 — a subject from a function declared lower in the file has no type on
+            // pass 1, so this loop, which reads a VARIANT pattern, cannot read a literal, slice
+            // or tuple one (`30 =>`, `[x, ..] =>`).  Pass 1 skips such a pattern to its `=>`
+            // and still parses the body, so what pass 1 registers from it stays in step with
+            // pass 2, which reads the arm by the subject's real type.
+            if subject_unresolved && !matches!(self.lexer.peek().has, LexItem::Identifier(_)) {
+                self.skip_unresolved_pattern();
+                self.expect_match_arm_arrow();
+                let mut arm_body = Value::Null;
+                self.parse_match_arm_body(&Type::Unknown(0), &mut arm_body);
+                self.end_pattern_arm();
+                self.lexer.has_token(",");
                 continue;
             }
             // `@FR-P-Cap` at the arm root — `whole: Rect { w, h } => …` binds the matched subject
@@ -9415,6 +9429,43 @@ impl Parser {
     /// token }"*, *"unexpected ')'"*) that aborts the run before the second pass emits the real
     /// reason, so the author is told about a comma instead of about the element type.  Measured
     /// on a repetition over a NON-enum element, which has always landed here.
+    /// Pass 1's reading of a pattern over a subject it cannot type yet (loft#2522): every token
+    /// up to the arm's `=>` at bracket depth 0.  The names the pattern binds are bound at an
+    /// unknown type, as `bind_forward_capture_list` binds a variant's, so the body that reads
+    /// them parses; pass 2 binds them by the real pattern.
+    fn skip_unresolved_pattern(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            match &self.lexer.peek().has.clone() {
+                LexItem::None => break,
+                LexItem::Token(t) if depth == 0 && (*t == "=>" || *t == "->") => break,
+                LexItem::Token(t) if *t == "[" || *t == "(" || *t == "{" => {
+                    depth += 1;
+                    self.lexer.cont();
+                }
+                LexItem::Token(t) if *t == "]" || *t == ")" || *t == "}" => {
+                    depth -= 1;
+                    self.lexer.cont();
+                }
+                LexItem::Identifier(name) if name != "_" && name != "if" => {
+                    let name = name.clone();
+                    self.lexer.cont();
+                    // A name followed by `(` or `{` is a variant or a struct, not a capture.
+                    if !self.lexer.peek_token("(") && !self.lexer.peek_token("{") {
+                        // Not marked defined: pass 2 binds the name to a variable of its own
+                        // pattern, and this one stays unknown and unread.
+                        let v = self.create_var(&name, &Type::Unknown(0));
+                        if v != u16::MAX {
+                            let before = self.name_capture(&name, v);
+                            self.pattern_binds_pending.push((name, before));
+                        }
+                    }
+                }
+                _ => self.lexer.cont(),
+            }
+        }
+    }
+
     fn skip_rest_of_slice(&mut self) {
         while !self.lexer.peek_token("]") && !matches!(self.lexer.peek().has, LexItem::None) {
             self.lexer.cont();
@@ -12357,7 +12408,7 @@ impl Parser {
         match_pos: &crate::lexer::Position,
     ) -> Type {
         // Store subject in a temp var to avoid re-evaluation.
-        let v = self.create_unique("match_subj", subject_type);
+        let v = self.create_match_subject(subject_type);
         self.vars.defined(v);
 
         self.lexer.token("{");
@@ -13572,7 +13623,7 @@ impl Parser {
             }
             _ => None,
         };
-        let v = subject_var.unwrap_or_else(|| self.create_unique("match_subj", subject_type));
+        let v = subject_var.unwrap_or_else(|| self.create_match_subject(subject_type));
         self.vars.defined(v);
         // `@FR-B-View`: the subject temp is a second name for the subject, so it borrows what
         // the subject borrows.  Pass 2 meets pass 1's variable, typed before the subject's
@@ -21883,11 +21934,22 @@ impl Parser {
         // holds only for the copy, not for the re-mint in front of it).  The work ref then
         // keeps its own store and is handed back, the callee-minted delivery `(O-Buffer)`
         // admits.
+        // Asked of the tail's DELIVERED leaves — what `materialize_return_into` copies — not of
+        // the whole last statement: a match arm that assigns the buffer local and returns it
+        // early (`deeper = f(…); if deeper != null { return deeper; }`) before a tail that
+        // never reads it was declined here, and the tail's view was answered raw (loft#2525).
         let tail_reads_buffer = matches!(
             ctx.ret.ret_promo_base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
         ) && self.return_buffer().is_some_and(|(_, buf_var)| {
-            buf_var != v && body.last().is_some_and(|t| t.reads_var(buf_var))
+            buf_var != v
+                && body.last().is_some_and(|t| {
+                    if crate::keys::tail_reads_whole_statement() {
+                        t.reads_var(buf_var)
+                    } else {
+                        Self::delivered_leaf_reads(t, buf_var, self.data.def_nr("OpDatabase"))
+                    }
+                })
         });
         if tail_reads_buffer {
             return RetPromotion::SkipJoinArm;
@@ -21916,6 +21978,39 @@ impl Parser {
             return RetPromotion::AwaitReservedBuffer;
         }
         RetPromotion::Grow
+    }
+
+    /// Does a value `materialize_return_into` would copy out of `tail` read `var`?  It descends
+    /// through CONTROL — the arms of an `if` (not its condition), a block's or an insert's last
+    /// operator, a span's value — and asks each leaf; a control statement before a leaf runs
+    /// before the buffer is re-minted, so it is not the copy's source.  A block that RE-MINTS a
+    /// record (an `OpDatabase` among its operators: a literal, a delivery already materialised
+    /// into a work ref) is a delivery itself and is asked whole — under `Bind { substitute }`
+    /// its re-mint becomes the buffer's own, and a read after it reads the wiped buffer
+    /// (loft#2292: `OpDatabase(class); OpCopyRecord(class, class)`).  Any other leaf, a
+    /// `return` included, is asked whole.
+    fn delivered_leaf_reads(tail: &Value, var: u16, remint: u32) -> bool {
+        match tail.unspan() {
+            Value::If(_, t, f) => {
+                Self::delivered_leaf_reads(t, var, remint)
+                    || Self::delivered_leaf_reads(f, var, remint)
+            }
+            Value::Block(bl)
+                if bl.name != "Object"
+                    && !bl
+                        .operators
+                        .iter()
+                        .any(|o| matches!(o.unspan(), Value::Call(d, _) if *d == remint)) =>
+            {
+                bl.operators
+                    .last()
+                    .is_some_and(|l| Self::delivered_leaf_reads(l, var, remint))
+            }
+            Value::Insert(ops) => ops
+                .last()
+                .is_some_and(|l| Self::delivered_leaf_reads(l, var, remint)),
+            other => other.reads_var(var),
+        }
     }
 
     /// Does any `return` in `body` READ `var` — directly, OR through a LOCAL

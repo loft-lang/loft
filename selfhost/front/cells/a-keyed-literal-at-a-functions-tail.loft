@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a literal at the tail of a function of a keyed collection is built as that collection in a __kvb_N of its own (parse_vector's keyed arm), nulled at the head.
+// Prints: 30 50 80
+struct E { k: integer, v: integer }
+
+fn mkc(n: integer) -> hash<E[k]> { [E { k: 3, v: n }, E { k: 5, v: 50 }] }
+fn mks() -> sorted<E[k]> { [E { k: 8, v: 80 }] }
+
+fn main() {
+  h = mkc(30);
+  s = mks();
+  println("{h[3].v} {h[5].v} {s[8].v}");
+}

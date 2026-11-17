@@ -1167,7 +1167,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // `@FR-N-Guard`: the then-block reads with what the condition proves where it holds.
   facts = el_ex_call::assume_condition(e, vars, c.code, true);
-  pp = el_ex_call::presence_proof(e, c.code);
+  pp = el_ex_call::presence_proof(e, vars, c.code);
   t = el_ex_assign::parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
   // The captures' bindings open the then-block; their names end with it.
   if len(bindings) > 0 {
@@ -1243,7 +1243,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     }
     // Both arms are typed as the else (`true_type = false_type`), whose dep on a store the arm
     // itself mints is no borrow (`arm_join_type`, `outside_deps`).
-    et = el_types::with_deps(f.tp, outside_deps(f.code, el_types::deps(f.tp)));
+    et = el_types::with_deps(f.tp, outside_deps(e, f.code, el_types::deps(f.tp)));
     t = ex(block_typed(tc, et), et);
     f = ex(f.code, et);
   }
@@ -1285,7 +1285,9 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
   // its arms typed as the variant.
   variant_null = f.tp is TyNull && !(t.tp is TyOptional) && el_expressions::variant_parent(e, t.tp) >= 0;
-  record_null = vector_null || variant_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
+  // A struct enum held at its enum beside a `null` arm joins as a record does (`(N-Join)`).
+  enum_rec_null = f.tp is TyNull && !(t.tp is TyOptional) && el_types::struct_enum_def(t.tp) >= 0 && !is_nullable_wrapper(e, t.tp);
+  record_null = vector_null || variant_null || enum_rec_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
   // A plain enum's null is `OpConvEnumFromNull` of its store type (`null_of`).
   enum_null = match t.tp { TyEnum { is_ref } => !is_ref, _ => false };
   // An arm already `τ?` of a plain scalar or a plain enum beside a `null` arm: the null is `τ`'s,
@@ -1319,13 +1321,13 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       ft = if variant_null { ir::TyEnum { n: el_expressions::variant_parent(e, t.tp), is_ref: true, dep: el_types::deps(t.tp) } } else { t.tp };
       return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: ft });
     }
-    nl = if vector_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
+    nl = if vector_null || enum_rec_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
     // A record arm's dep on a store it mints (a literal's `__ref_p2_N`) is its ownership
     // marker, not a borrow (`arm_join_type`, loft#978): the arms are typed without it.
     tt = t.tp;
     tc = t.code;
     if record_null && !vector_null {
-      td = outside_deps(t.code, el_types::deps(t.tp));
+      td = outside_deps(e, t.code, el_types::deps(t.tp));
       tt = el_types::with_deps(t.tp, td);
       tc = arm_typed(t.code, td);
     }
@@ -1381,8 +1383,8 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // literal arm's dep on the store it mints is no borrow (`arm_join_type`); each arm keeps its
   // own type.
   if (t.tp is TyOptional) != (f.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0 && struct_ref(e, el_types::base(t.tp)) == struct_ref(e, el_types::base(f.tp)) {
-    ds = outside_deps(t.code, el_types::deps(t.tp));
-    fd = outside_deps(f.code, el_types::deps(f.tp));
+    ds = outside_deps(e, t.code, el_types::deps(t.tp));
+    fd = outside_deps(e, f.code, el_types::deps(f.tp));
     for x in fd {
       if !ds.contains(x) {
         ds += [x];
@@ -1434,8 +1436,8 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // typed without it, and the `if` borrows what either arm still names.  A local the program
   // declares in the arm (`{ a: W = …; a }`) is a binding, not a marker: its dep is kept.
   if (el_types::base(t.tp) is TyReference || el_types::struct_enum_def(t.tp) >= 0) && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
-    td = keep_user_locals(vars, outside_deps(t.code, el_types::deps(t.tp)), el_types::deps(t.tp));
-    fd = keep_user_locals(vars, outside_deps(f.code, el_types::deps(f.tp)), el_types::deps(f.tp));
+    td = keep_user_locals(vars, outside_deps(e, t.code, el_types::deps(t.tp)), el_types::deps(t.tp));
+    fd = keep_user_locals(vars, outside_deps(e, f.code, el_types::deps(f.tp)), el_types::deps(f.tp));
     deps = td;
     for x in fd {
       if !deps.contains(x) {

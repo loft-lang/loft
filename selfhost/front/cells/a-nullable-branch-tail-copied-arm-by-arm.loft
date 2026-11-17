@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `τ?` answered by a branch with a `null` arm: a struct enum beside `null` joins to `T?` (`(N-Join)`), and `materialize_return_into` copies such a branch ARM BY ARM — the arm viewing its argument through a capture into the caller's buffer, the null arm left as it is; a parameter or its field beside `null` stays a view.
+// Prints: true 2 -1 2
+
+enum T { TInt, TOpt { inner: T } }
+struct S { n: integer }
+struct H { own: S, opt: S?, k: integer }
+
+fn pa(t: T, k: integer) -> T? { if k > 0 { match t { TOpt { inner } => inner, _ => t } } else { null } }
+fn pb(h: H, k: integer) -> S? { if k > 0 { h.own } else { null } }
+fn pd(a: S, k: integer) -> S? { if k > 0 { a } else { null } }
+
+fn main() {
+  t = TOpt { inner: TInt };
+  h = H { own: S { n: 2 }, opt: S { n: 3 }, k: 1 };
+  a = pa(t, 1);
+  b = pb(h, 1);
+  c = pd(h.own, 0);
+  d = pd(h.own, 1);
+  println("{a != null} {b.n ?? -1} {c.n ?? -1} {d.n ?? -1}");
+}

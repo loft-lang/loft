@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a tagged `S?` slot — a vector element, a field — handed to an `S?` parameter is read through its tag (`convert`'s tagged arm, loft#1138): absence arrives as the reference null.
+// Prints: 3 -1 6 -1
+
+struct S { a: integer }
+fn mk(n: integer) -> S { S { a: n } }
+struct H { item: S?, k: integer }
+fn show(s: S?) -> integer { s.a ?? -1 }
+fn main() {
+  v: vector<S?> = [mk(3), null];
+  h = H { item: mk(6), k: 1 };
+  g = H { k: 2 };
+  println("{show(v[0])} {show(v[1])} {show(h.item)} {show(g.item)}");
+}

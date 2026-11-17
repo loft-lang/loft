@@ -559,6 +559,38 @@ impl Run<'_> {
                     continue;
                 };
                 let offs = self.cascade_frees(r);
+                // `@FR-L-CapOwn` — a store is released ONCE.  The cascade frees each slot it
+                // names, so a store two of those slots hold — a capture that is a view of
+                // another capture's store, taken as an owner (loft#2523) — is freed once per
+                // slot.  Counted only where a slot names that one store: a slot that MAY hold
+                // several (a join) says nothing definite.
+                let mut sole: Vec<(SKey, Vec<i32>)> = Vec::new();
+                for (o, v) in m {
+                    if offs.as_ref().is_some_and(|f| !f.contains(o)) {
+                        continue;
+                    }
+                    if let [only] = Self::stores_of(&v.pts).as_slice() {
+                        match sole.iter_mut().find(|(k, _)| k == only) {
+                            Some((_, slots)) => slots.push(*o),
+                            None => sole.push((*only, vec![*o])),
+                        }
+                    }
+                }
+                for (k, slots) in &sole {
+                    if slots.len() > 1 {
+                        let name = self.var_name(w);
+                        self.find(
+                            "double-end",
+                            k.site,
+                            format!(
+                                "the record `{name}` releases one store through {} of its capture \
+                                 slots (offsets {slots:?}): a capture that views another \
+                                 capture's store is not an owner of it",
+                                slots.len()
+                            ),
+                        );
+                    }
+                }
                 for (o, v) in m {
                     if offs.as_ref().is_some_and(|f| !f.contains(o)) {
                         continue;

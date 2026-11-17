@@ -58,6 +58,9 @@ pub(crate) struct FieldSinks {
     /// projection place the literal is written into: the literal is parsed again, built apart
     /// and copied in (`Parser::inplace_place_declined`).
     decline_place: bool,
+    /// The literal is written into a PROJECTION place (`place_hint`), which can decline to the
+    /// build-apart road (`decline_place`); a whole-variable destination cannot.
+    projection_place: bool,
     /// `@FR-R-Demote` — the literal's destination variable, the fields whose value is that
     /// variable whole, how many other field values mention it, and (pass 2) the field the
     /// prelude already filled by moving the old record into it.
@@ -541,11 +544,22 @@ impl Parser {
     /// that bound it sits in a block this point is no longer inside.  Parameters and the
     /// compiler's own locals are bound for the whole function.
     pub(crate) fn binding_ended(&self, var: u16) -> bool {
-        if self.vars.is_argument(var) || self.vars.name(var).starts_with("__") {
+        self.binding_ended_in(&self.vars, self.context, var)
+    }
+
+    /// [`Self::binding_ended`] asked of another function's table — the enclosing function's,
+    /// where a lambda is about to be parsed and `self.vars` is already the lambda's own.
+    pub(crate) fn binding_ended_in(
+        &self,
+        vars: &crate::variables::Function,
+        context: u32,
+        var: u16,
+    ) -> bool {
+        if vars.is_argument(var) || vars.name(var).starts_with("__") {
             return false;
         }
         self.bound_in_block
-            .get(&(self.first_pass, self.context, var))
+            .get(&(self.first_pass, context, var))
             .is_some_and(|(b, _)| !self.block_open(*b))
     }
 
@@ -6185,8 +6199,36 @@ impl Parser {
             let staged = if let Some((xv, xoff)) = self_read_root
                 && self.reads_place(&value, xv, xoff)
             {
-                if xoff == crate::use_analysis::ANY_FIELD {
-                    !primed
+                // loft#2521, `@FR-B-Copy` — an OUT-OF-LINE field's value is copied in by its
+                // field write (`OpSetChildRec`), which runs after the writes before it; staged,
+                // the temp is a view of the place those writes overwrite (`e[0] = Wrap { tag:
+                // 7, inner: e[0]! }` copied the record with `tag` already over `Leaf.v`).  A
+                // projection place declines instead: the literal is built apart and copied in,
+                // every value read from the old record.
+                // Only an ENUM VARIANT literal declines: a struct literal's displaced child is
+                // MOVED into the new record (`@FR-R-Demote`'s place clause), which reads it before
+                // any write — a list push `h.next = Node { v, next: h.next }` declined copied the
+                // whole chain on every push.
+                if out_of_line
+                    && sinks.projection_place
+                    && self.data.def_type(td_nr) == DefType::EnumValue
+                {
+                    sinks.decline_place = true;
+                    false
+                } else if xoff == crate::use_analysis::ANY_FIELD {
+                    // loft#2527 — an element of the root itself (`e[0] = Node { v: 8, next:
+                    // e[0] }`) read by an OUT-OF-LINE field: staged as a view, the literal's
+                    // writes overwrite the element before the field write copies it in.  The
+                    // element is inline, so it is copied either way; the copy is taken first.
+                    if out_of_line
+                        && !crate::keys::struct_element_self_read_view()
+                        && let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists)
+                    {
+                        value = Value::Var(o);
+                        false
+                    } else {
+                        !primed
+                    }
                 } else if primed {
                     sinks.decline_place = true;
                     false
@@ -6852,6 +6894,7 @@ impl Parser {
         {
             self_read_root = Some(place);
             place_hint = Some(code.clone());
+            sinks.projection_place = true;
         }
         if let Value::Var(v_nr) = code
             && hint_is_the_whole_value

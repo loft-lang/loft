@@ -320,6 +320,16 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
     t = result;
   }
   discharged = false;
+  // `convert`'s tagged arm (`@FR-L-Null-Tag`): a `__nullable<S>` tail of a `-> S?` body is read
+  // through its tag, absence the reference null sentinel.
+  if context == "return from block" && len(l) > 0 && is_nullable_wrapper(e, t) && result is TyOptional && struct_ref(e, el_types::base(result)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(t)) {
+    rx = el_ex_place::read_through_tag(e, vars, ex(l[-1] ?? ir::NdNull, t));
+    if rx == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    l = l[..-1] + [rx!.code];
+    t = rx!.tp;
+  }
   converted = false;
   // A function body's tail is a store into its result (`convert_store`): converted to it, and
   // the body typed as the result even where the two are equal (a `u8` tail of `-> integer`).
@@ -554,7 +564,10 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     },
     // An empty `[]` with no element type yet answers `parse_vector`'s untyped marker
     // (`Insert([Null])`), which the position it is converted to builds (`empty_literal_to`).
-    SVecLit { items } => if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else { el_ex_pattern::vector_value(e, vars, n).x },
+    SVecLit { items } => {
+      kl = if len(items) == 0 { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
+      if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else { el_ex_pattern::vector_value(e, vars, n).x }
+    },
     SYield { from, e: ye } => el_ex_match::yield_expr(e, vars, from, ye),
     SComprehension { at: _ } => el_ex_match::comprehension_value(e, vars, n),
     SAs { at, e: ae, tp: at_tp, checked } => el_ex_match::cast_expr(e, vars, ae, at_tp),
@@ -955,7 +968,7 @@ fn root_name(e: el::El, n: integer) -> text {
 }
 
 // Does the syntax at `n` name `name` anywhere?
-fn mentions_name(e: el::El, n: integer, name: text) -> boolean {
+pub fn mentions_name(e: el::El, n: integer, name: text) -> boolean {
   match e.p.nodes[n] {
     SName { name: nm, member } => if member == "" && nm == name { return true; },
     _ => {}
@@ -1320,6 +1333,12 @@ pub fn type_name_of(e: el::El, vars: el_vars::Vars, st: integer?) -> Ex {
     STy { name: nm, member, args, keys, limit, nullable } => if member == "" && len(args) == 0 && len(keys) == 0 && limit == null && !nullable { nm } else { "" },
     _ => ""
   };
+  // `type_name(x.f)` is read as the type spelling `x` with an associated name: a value's field,
+  // which Rust reads as an expression — not carried.
+  if match e.p.nodes[st!] { STy { assoc } => assoc != "", _ => false } {
+    el::refuse(e, "a `type_name` of a field read");
+    return ex(ir::NdNull, text_t);
+  }
   for tv in e.type_vars {
     if tv.spelling == plain_name {
       el::refuse(e, "a `type_name` of a type variable");
@@ -1598,6 +1617,19 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
       }
     }
     if (el::def(e, pd).returned[0]) == ir::TyEnum { n: pd, is_ref: true, dep: [] } {
+      // A unit variant directly before a `{` (`if e == Owned { … }`): Rust's second pass first
+      // reads it as an object literal, minting that literal's `__ref_p2_N`, and backs out —
+      // the work ref stays declared.
+      if !e.first_pass && el::def(e, d).known_type != el_schema::NO_TYPE {
+        match e.p.nodes[vars.site] {
+          SName { at: na, member: nm } => {
+            if nm == "" && na + 1 < len(e.p.src) && e.p.src[na + 1] is LBrace {
+              el_vars::work_ref_p2(vars, ir::TyEnum { n: pd, is_ref: true, dep: [] });
+            }
+          },
+          _ => {}
+        }
+      }
       return unit_variant(e, vars, pd, d);
     }
   }
@@ -2535,6 +2567,15 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   vars.assign_target = v;
   x = expression(e, vars, rhs!);
   vars.assign_target = outer_target;
+  // `@FR-L-Null-Which`: a local spells `S?` as the pointer, so a tagged slot (a field, a vector
+  // element) bound to one is read through its tag here, on both passes; a `&` keeps the slot.
+  if op == "=" && is_nullable_wrapper(e, x.tp) && !(match e.p.nodes[rhs!] { SUnary { op: uo } => uo == "&", _ => false }) {
+    rx = el_ex_place::read_through_tag(e, vars, x);
+    if rx == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    x = rx!;
+  }
   // `@FR-B-Scope`, loft#1700: a bind after the name's block ended, at a type its old binding
   // refuses or that differs from it only in absence, is a new binding with a variable of its
   // own, named by the statement's position (`rebind_after_block`).
@@ -2601,6 +2642,26 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
         el_vars::make_independent(vars, v, src);
         kt = el_schema::keyed_type(e, el_types::base(kcur));
         return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+      },
+      // A call of a loft function answering a collection of its own: replaced into the local
+      // the same way, the call's store freed after (the type's 32768 bit).
+      // (A record or collection argument is bracketed against its store's free while the
+      // call runs — `protectable_ref_args` — which is not carried: refused below.)
+      NdCall { def_nr: cd } => {
+        plain_args = true;
+        for ca in el::def(e, cd).attributes {
+          cb = el_types::base(ca.typedef[0] ?? ir::TyVoid);
+          if !(is_scalar(cb) || cb is TyText) {
+            plain_args = false;
+          }
+        }
+        if plain_args && el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
+          el_vars::drop_use(vars, v);
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
+        }
+        el::refuse(e, "a keyed local bound from something other than a local");
+        return ex(ir::NdNull, ir::TyVoid);
       },
       _ => {
         el::refuse(e, "a keyed local bound from something other than a local");

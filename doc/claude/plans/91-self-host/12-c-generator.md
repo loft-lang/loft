@@ -281,7 +281,41 @@ declarations, temporaries, statements, calls, `if`) starts producing text.
 
 ### The rules still switched off in plain mode
 
-`cgen_w::PLAIN_SWITCHES` names them (18): `VALUE_RECORD`, `DISTINCT_VERSION`, `REBOUND_MOVER`, `APART_MINT`, `CALLEE_INPUTS`, `GROWN_HEADER`, `GUARD_BOUND`, `VERSION`, `TRANSIENT`, `DEFERRED_COPY`, `LOOP_RECORD`, `APART`, `APPEND_LOOP_WINDOW`, `APPEND_TWIN`, `HAND_OVER`, `VR_PTR`, `FNREF_PARK`, `FNREF_BUFFER`.
+`cgen_w::PLAIN_SWITCHES` names them (4).  Each one's reach — the bodies that change when the Rust writer runs it (`cgen_survey.py --plain --assume SWITCH --layer bodies`; corpus / benches (`--files`) / test-only programs (`--tests`), 2026-11-16; a rule that adds REFUSALS instead needs writer operators first):
+
+| switch | corpus | benches | tests |
+|---|---|---|---|
+| `VALUE_RECORD` | 510 | 114 | 175 |
+| `TRANSIENT` | 92 | 14 | 22 |
+| `APART` | 29 | 9 | 10 |
+| `DEFERRED_COPY` | 0 | 0 | 29 |
+
+Back in the writer: `KEYED_IN_PLACE` (`opt_keyed_place.loft`, `cgen_keyed.loft`), `TEXT_WINDOW`
+(`cgen_win::open_text_windows`), `APART_MINT` (`opt_hoist::apart_mint`), `VR_PTR` (`cgen_value.loft`; its
+`ValueRecords::params` half comes with `VALUE_RECORD`), `HAND_OVER` (`opt_hand_over.loft`, `cgen_rotate.loft`,
+the `__nk` twin), `GROWN_HEADER` (`opt_apart::grown_headers`, `kept_growth_param`, the `__kh` twin,
+`cgen_hoist::refresh_grown`), `FNREF_BUFFER` and `FNREF_PARK` (`cgen_fnref.loft`, the `loft_call<n>b`
+dispatchers), `DISTINCT_VERSION` (`cgen_loop::distinct_version`, the store facts' `assumed` pairs),
+`APPEND_TWIN` and `APPEND_LOOP_WINDOW` (`opt_append_twin.loft`, `cgen_append.loft`: the `__ap` twin,
+its window clause, the loop windows), `DESTINATION` (`opt_destination.loft`, `cgen_dest.loft`: the
+`__d` twin and the caller's chain), `CHAR_WALK` (`cgen_loop::char_walk_loop`), `LAZY_SPLIT` and
+`SPLIT_TABLE` (`cgen_lazy.loft`: the `loft_ls` iterator, the `loft_stab` table, its free at every
+exit; a borrowed bind leaves their pieces to their readers), `TESTED_BORROW`
+(`cgen_text::borrowed_assign`, the `loft_own<v>` text), `CALLEE_INPUTS` (`opt_inputs.loft`,
+`cgen_inputs.loft`: the `__inv` twin's inputs, the loop verdict's callee candidates, the hot
+helpers an `__inv` twin's loop reaches, the ranged twin's input seeds), `GUARD_BOUND`
+(`opt_below_len.loft`, the marked index slots below), `VERSION` (`opt_version.loft`,
+`cgen_version.loft`: the leaf plan, the `__vp` precondition, the loop prelude's `vg<k>` flags, the
+`__vf` fast twin, the guarded loop's version clause).  A rewrite that writes COPIES of IR nodes (the destination
+chain's call and arm statements, an append site's call, the rotate's call, the keyed in-place
+literal) writes them under `no_memo`: the Rust writer keys an invariant's memo and a guarded
+chain's admission by node address, which no copy carries.
+No port needed: `REBOUND_MOVER` (the C writer's `verdict` hands `hoistable` no owned buffers, so
+`rebinds_alias_free` declines every rebind on either side) and `LOOP_RECORD` (decided and applied in
+the IR, `opt::loop_record`; the C writes what the IR says).  Unswitched rules the tests corpus showed
+missing, ported on the way: `@FR-R-SliceArg`'s pooled carrier (`cgen_value::slice_carrier`).
+A rule is tried before it leaves the list with `CGEN_ON=LOFT_NO_X selfhost/bench/cgen_live.sh --diff FILE`
+(`LOFT_CGEN_ON` tells the generator).
 A rule leaves the list when both sides agree on the whole corpus with it on.  Where a coarse
 switch covers several clauses, its finer switches take its place first and each clause is
 ported on its own.
@@ -313,18 +347,28 @@ no drop in `pass` or in units equal to the Rust ones), a printed store report ma
 their output in `$LOFT_CGEN_OUT` (default `$TMPDIR/loft-cgen`); the shared setup is
 `cgen_env.sh`.
 
-### An open design question: a rule keyed on node identity
+### A rule keyed on node identity: the answer marked in the IR
 
-`opt/below_len.rs` (`LOFT_NO_GUARD_BOUND`, `@FR-R-Base`'s guard clause) answers the set of
-index nodes a passed test keeps below their vector's length BY ADDRESS, and the writer asks by
-address.  The loft writer cannot: a node collected into a vector is a copy (`&a == &b` finds no
-match — measured), and two equal `v[i]`, one under the test and one outside it, rule out asking
-by structure.  Three ways to carry it: the writer keeps the analysis' live facts itself, pushed
-at an `if` and killed where `visit` kills them (with save and restore around every loop it
-writes twice); the lowering marks a guarded index in the IR, which both writers then read; a
-path or ordinal key, which the writer has no way to know.  The second is the direction the
-other rules took (@PLN211) and changes the Rust side.  Until it is decided the switch stays in
-`PLAIN_SWITCHES`.
+Several Rust analyses answer a set of IR nodes BY ADDRESS and the writer asks by address:
+`opt/below_len.rs` (`@FR-R-Base`'s guard clause, the index slots a passed test keeps below the
+length), `@FR-R-Version`'s plan (the decided `if`s, the raw accesses, the plain operators),
+`@FR-R-DeferredCopy`'s binds, part of `@FR-R-ValueLocal`.  A loft node handed around is a copy
+(`&a == &b` finds no match — measured), and two equal nodes, one in the set and one outside it,
+rule out asking by structure.  The loft writer carries the answer IN the IR instead: the analysis
+writes the function's code again with each answered node wrapped in a marker span (`line` 0, a
+reserved `pos`), once per function before its first body is written (`opt_below_len::mark`,
+`Cx::guards_marked`).  Every position reader skips a span at line 0 and every `unspan` sees
+through it, so nothing else changes; the writer asks the slot it holds (`opt_below_len::guarded`).
+A copy a rewrite makes keeps the marker, which the Rust address test cannot match: the writer
+asks only outside such copies (`no_memo`).  The Rust side is unchanged.
+`@FR-R-Version` keys its plan by node too: its analysis runs on a NUMBERED copy (each call and
+each `if` condition in an ID span, numbered in a pre-order the markers do not move), and a plan
+that holds rewrites the leaf's and its callees' code with each planned node's ID turned into its
+kind's marker (`DECIDED_T`/`DECIDED_F` on a condition, `RAW` or `PLAIN` around a call); a
+caller's calls of a leaf are numbered as SITE spans before its first body is written.  The
+writer reads a call's marker in `expr_value` (`W.call_kind`, `W.call_site`, saved around the
+call); `stmt` hands a marked call statement to `dropped` with its span, and a line-0 span notes
+no frame site of its own.
 
 ## What decides a step is done
 
@@ -396,6 +440,16 @@ came out 64-bit from the image.
 | `selfhost/src/opt_text_borrow.loft`, `opt_store_text_borrow.loft` | `src/opt/text_borrow.rs` (`borrowed_text_walks`, `text_escapes_with`), `opt::hoist::borrowed_discharge_temps`, `src/opt/store_text_borrow.rs` | whole for what the C writer asks (`local_roots`); the walk's re-read (`TextBorrow.read`) is not kept |
 | `selfhost/src/cgen_texts.loft` | `borrowed_texts`, `literal_views`, `view_bind`, `work_view_bind` in `src/c/body.rs` | whole; the writer does not write a text yet |
 | `selfhost/src/cgen_natives.loft` | `native_c`, `host_native_c`, `json_native_c` in `src/c/mod.rs` | generated: `selfhost/bench/cgen_natives_gen.py` (`--check` says when it is out of date) |
+| `selfhost/src/opt_keyed_place.loft`, `cgen_keyed.loft` | `src/opt/keyed_place.rs`; `keyed_in_place`, `stage_literal_writes` of `src/c/body/keyed.rs` | whole: `@FR-R-InPlaceLiteral`'s keyed clause; a rewrite's C operand is an `NdRawExpr` the writer names with `raw_expr` (`FnWriter::raw`) |
+| `selfhost/src/cgen_value.loft` | `Cx::vr_ptr_params`, `vr_param_read_only`, `tuple_arg_address` | `@FR-R-ValueRecord`'s pointer clause for the IR's tuples; the value records' half waits for `VALUE_RECORD` |
+| `selfhost/src/opt_hand_over.loft`, `cgen_rotate.loft` | `src/lower/hand_over.rs`, `Stores::plain_vectors_of`; `rotate_site`, `nokeep` of `src/c/body.rs` | `@FR-R-HandOver`'s rotate clause and its `__nk` twin; an apart source (`apr_rotate`) waits for `APART` |
+| `selfhost/src/cgen_fnref.loft` | `src/c/body/loop_record.rs`; the kept-buffer half of `opaque_callref_stmt`, `call_ref` and `src/c/fnval.rs` | `@FR-R-FnRefBuffer` and its frame clause (the park slots) |
+| `selfhost/src/opt_append_twin.loft`, `cgen_append.loft` | `src/opt/append_twin.rs`; `append_site`, `append_call`, `append_twin`, `append_twin_buffer_op`, `apw_operator`, `open_loop_windows` of `src/c/body.rs`; `Cx::ap_window` | `@FR-R-AppendTwin` with its window and loop clauses |
+| `selfhost/src/opt_destination.loft`, `cgen_dest.loft` | `src/lower/destination.rs`; `destination_site`, `destination_level`, `destination_names`, `dest_scalar_set`, `dest_return` of `src/c/body.rs` | `@FR-R-Destination` |
+| `selfhost/src/cgen_lazy.loft` | `lazy_split_bind`, `lazy_split_op`, `split_tab_bind`, `split_tab_op` of `src/c/body.rs`; the `loft_stab` part of `FnWriter::new` and `epilogue` | `@FR-R-LazySplit`, `@FR-R-SplitTable` |
+| `selfhost/src/opt_inputs.loft`, `cgen_inputs.loft` | `callee_inputs`, `path_scalar`, `substitute_path`, `input_header_at` of `src/opt/hoist.rs`; `inv_inputs`, `twin_scalar_shape`, `Cx::hot_helpers` of `src/c/mod.rs`; `twin_inputs` of `src/c/body.rs`; `twin_seeds`, `scalar_inputs_ranged` of `src/opt/ranged_call.rs` | `@FR-R-Inputs` |
+| `selfhost/src/opt_below_len.loft` | `src/opt/below_len.rs`, `forward_walk::check_body`; `guard_index` of `src/c/body.rs` | `@FR-R-Base`'s guard clause |
+| `selfhost/src/opt_version.loft`, `cgen_version.loft` | `src/opt/version.rs`; `src/c/body/version.rs`; `version_fast`, the `version_raw`/`version_decided` sites and the call's fast form in `src/c/body.rs` | `@FR-R-Version` |
 | `selfhost/front/cgen.loft` | `loft --emit-c` | `cgen <image> <out.c> <src/c dir> [--debug]`, `cgen <image> <out> --layer shapes|reach|functions`; exit 3 with `not carried: <what>` |
 
 The generator reads the runtime's headers from `src/c` (and `loft-ffi/include/loft_ffi.h`) at
@@ -418,6 +472,7 @@ Each was fixed where it was met, with its guard (rule 2 and 3 of the port).
 | loft#2497 | a walk `for x in f()` over a call's vector of a record declared later is refused, or — the record in a module that uses this one back — leaks the vector — **open**: filed with both repros; the writer's shared records are declared in `cgen_w.loft`, before the files that walk them | none yet |
 | loft#2499 | a `match` with a leaving arm, last in an `if` branch that has an `else`, was dropped: the arm that matched did not run (silent) | `tests/scripts/2499-…loft` |
 | loft#2498 | the C backend's transient form of a record registered itself as its own member | `tests/scripts/2498-…loft` |
+| loft#2519 | a tail `match` over a call's result answered null from every arm once an arm built a vector a lambda captures (silent on the interpreter, refused by the C backend): the captured vector's guarded release (`free_unless_record_built`) was read as the match block's value — fixed in `is_scope_exit_cleanup` (`src/scopes/insert_free.rs`) | `tests/scripts/2519-a-tail-match-over-a-call-answers-its-arm-past-a-captured-release.loft` |
 | loft#2485 | a bind after its block ended moved the ended binding's type (a false gating warning), and a per-loop binding never ended | `tests/callarg_nstore.rs` |
 | (no issue) | a text function whose tail `match` reads a type declared below, called from above, aborted the compiler on the H5 two-pass contract: pass 2 promoted a work text to a hidden parameter pass 1 never published — fixed in `text_return` (pass 2 follows pass 1 for compiler temps too; 97b9527f3), and `deliver_body` answers its `match` directly again | loft-suite `calls/F-Ret/a-text-match-over-types-declared-below-returns-through-every-caller.loft` |
 | (no issue) | `x = f(…) ?? return null` inside `f` itself (a recursive discharge) left `x` a view and leaked the copy once per call: the call-owns verdict asked `is_loft_defined`, false for the function being parsed — fixed in `null_coalesce_exit` (e0ec9e9e6) | loft-suite `heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft` |
